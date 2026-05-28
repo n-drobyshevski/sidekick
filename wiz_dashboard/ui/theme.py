@@ -21,3 +21,17 @@ def load_css() -> None:
     css = _css_text()
     if css:
         st.markdown(f"<style>\n{css}\n</style>", unsafe_allow_html=True)
+
+
+_COMPACT_CSS = """
+.metric-card { padding: 6px 10px; }
+.metric-value { font-size: 1.125rem; }
+.mttr-row { padding: 5px 0; }
+[data-testid="stDataFrame"] tbody tr { height: 28px; }
+"""
+
+
+def apply_density(dense: bool) -> None:
+    """Apply compact spacing without the old inline <script> attribute hack."""
+    if dense:
+        st.markdown(f"<style>{_COMPACT_CSS}</style>", unsafe_allow_html=True)
