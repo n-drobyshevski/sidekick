@@ -11,8 +11,10 @@ import pandas as pd
 import streamlit as st
 
 from wiz_dashboard.config import SEVERITY_COLORS, SEVERITY_ORDER
+from wiz_dashboard.data import history
 from wiz_dashboard.data.client import fetch_findings
 from wiz_dashboard.data.transform import extract_nodes, nodes_to_dataframe
+from wiz_dashboard.domain.metrics import calculate_mttr
 from wiz_dashboard.domain.severity import count_by_severity, normalize_severity
 from wiz_dashboard.models import schema
 from wiz_dashboard.ui import charts
@@ -89,7 +91,26 @@ def _run_scan(force: bool, has_creds: bool) -> None:
     st.session_state["os_raw"] = results
     st.session_state["os_prev_counts"] = prev
     st.session_state["os_counts"] = count_by_severity(df)
+    _record_mttr_snapshot(df, st.session_state["os_counts"])
     ui.show_toast(f"Loaded {len(nodes):,} findings", "success")
+
+
+def _record_mttr_snapshot(df, counts, filename=None) -> None:
+    """Persist today's overall median MTTR (only when one can be computed)."""
+    try:
+        _, overall = calculate_mttr(df)
+        median = overall.get("mttr_median")
+        if median is None or pd.isna(median):
+            return
+        history.record_snapshot(
+            median_days=float(median),
+            resolved=overall.get("resolved", 0),
+            open_=overall.get("open", 0),
+            counts=counts,
+            filename=filename or history.HISTORY_FILENAME,
+        )
+    except Exception:
+        pass
 
 
 def _severity_cards(counts, prev=None):
@@ -113,6 +134,9 @@ def _render_flat(df) -> None:
 
     ui.section_label("Remediation performance")
     ui.render_mttr_widget(df)
+
+    ui.section_label("MTTR trend (daily median)")
+    charts.mttr_trend(history.load_history())
 
     _filter_and_table(df)
 

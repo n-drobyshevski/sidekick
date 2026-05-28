@@ -14,3 +14,4 @@ wiz_config.json
 
 # Local runtime cache
 last_results.json
+mttr_history.json
