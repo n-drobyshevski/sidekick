@@ -5,6 +5,8 @@ Handles BOTH Wiz response shapes:
 * grouped-by-asset -> severity counts from analytics + asset table (MTTR N/A)
 """
 
+from html import escape as html_escape
+
 import pandas as pd
 import streamlit as st
 
@@ -122,7 +124,7 @@ def _render_grouped(nodes) -> None:
         "MTTR/SLA need per-finding timestamps, which grouped responses omit."
     )
     ui.section_label("Assets")
-    _show_table(nodes_to_dataframe(nodes), key="grouped_csv")
+    _show_table(nodes_to_dataframe(nodes), key="grouped_csv", nodes=nodes)
 
 
 @st.fragment
@@ -150,10 +152,10 @@ def _filter_and_table(df) -> None:
         view = df[df["severity"].apply(normalize_severity).isin(selected)]
     else:
         view = df
-    _show_table(view, full=df, key="flat_csv")
+    _show_table(view, full=df, key="flat_csv", nodes=st.session_state.get("os_nodes"))
 
 
-def _show_table(view, full=None, key="csv") -> None:
+def _show_table(view, full=None, key="csv", nodes=None) -> None:
     full = view if full is None else full
     if view.empty:
         st.caption("No findings match the current filter.")
@@ -161,8 +163,16 @@ def _show_table(view, full=None, key="csv") -> None:
     preferred = [c for c in PREFERRED_COLS if c in view.columns]
     rest = [c for c in view.columns if c not in preferred and not c.startswith("_")]
     ordered = view[preferred + rest]
-    st.dataframe(ordered, width="stretch", hide_index=True, height=520)
-    st.caption(f"{len(view):,} of {len(full):,} rows shown.")
+    event = st.dataframe(
+        ordered,
+        width="stretch",
+        hide_index=True,
+        height=520,
+        on_select="rerun",
+        selection_mode="single-row",
+        key=f"{key}_table",
+    )
+    st.caption(f"{len(view):,} of {len(full):,} rows shown · select a row to drill in.")
     st.download_button(
         "Download CSV",
         data=ordered.to_csv(index=False).encode("utf-8"),
@@ -170,6 +180,7 @@ def _show_table(view, full=None, key="csv") -> None:
         mime="text/csv",
         key=key,
     )
+    _maybe_open_drilldown(ordered, event, nodes, key)
 
 
 def _sev_from_query(present):
@@ -178,3 +189,105 @@ def _sev_from_query(present):
         return list(present)
     chosen = [s for s in raw.upper().split(",") if s in present]
     return chosen or list(present)
+
+
+# --------------------------------------------------------------------------- #
+#  Drill-down dialog (single-row selection on the findings/assets table)
+# --------------------------------------------------------------------------- #
+_SUMMARY_FIELDS = [
+    ("Severity", ("severity",)),
+    ("Status", ("status",)),
+    ("Asset", ("vulnerableAsset.name",)),
+    ("Asset type", ("vulnerableAsset.type",)),
+    ("Cloud", ("vulnerableAsset.cloudPlatform", "cloudPlatform")),
+    ("First detected", ("firstDetectedAt", "firstSeenAt")),
+    ("Resolved", ("resolvedAt",)),
+    ("Fixed version", ("fixedVersion",)),
+    ("Total findings", ("analytics.totalFindingCount",)),
+    ("Critical", ("analytics.criticalSeverityFindingCount",)),
+]
+
+
+def _record_to_dict(series) -> dict:
+    """A table row (pandas Series) -> clean, JSON-able dict (drop NaN and _private)."""
+    out = {}
+    for k, v in series.items():
+        if str(k).startswith("_"):
+            continue
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            continue
+        if hasattr(v, "item"):
+            try:
+                v = v.item()
+            except Exception:
+                v = str(v)
+        out[str(k)] = v
+    return out
+
+
+def _summary_fields(record: dict):
+    """Pick the key display fields that are present, in a stable order."""
+    fields = []
+    for label, candidates in _SUMMARY_FIELDS:
+        for k in candidates:
+            v = record.get(k)
+            if v not in (None, ""):
+                fields.append((label, str(v)))
+                break
+    return fields
+
+
+def _raw_node(ordered, pos, nodes):
+    """Map a displayed-row position back to its original raw node, when available."""
+    if not nodes:
+        return None
+    try:
+        idx = int(ordered.index[pos])
+    except Exception:
+        return None
+    return nodes[idx] if 0 <= idx < len(nodes) else None
+
+
+def _maybe_open_drilldown(ordered, event, nodes, key) -> None:
+    rows = getattr(getattr(event, "selection", None), "rows", None) or []
+    shown_key = f"{key}_shown"
+    if not rows:
+        st.session_state.pop(shown_key, None)
+        return
+    pos = rows[0]
+    # Guard against reopening the dialog on the rerun that follows dismissing it.
+    if st.session_state.get(shown_key) == pos:
+        return
+    st.session_state[shown_key] = pos
+    _finding_dialog(_record_to_dict(ordered.iloc[pos]), _raw_node(ordered, pos, nodes))
+
+
+@st.dialog("Finding details", width="large")
+def _finding_dialog(record: dict, raw=None) -> None:
+    title = (
+        record.get("name")
+        or record.get("vulnerableAsset.name")
+        or record.get("id")
+        or "Details"
+    )
+    st.markdown(f"#### {html_escape(str(title))}")
+
+    sev = record.get("severity")
+    if sev:
+        color = SEVERITY_COLORS.get(normalize_severity(sev), "#6b7280")
+        st.markdown(
+            f'<span class="status-pill" style="background:{color}22; color:{color};">'
+            f"{html_escape(str(sev))}</span>",
+            unsafe_allow_html=True,
+        )
+
+    fields = _summary_fields(record)
+    if fields:
+        cols = st.columns(2)
+        for i, (label, value) in enumerate(fields):
+            with cols[i % 2]:
+                st.caption(label)
+                st.markdown(f"**{html_escape(value)}**")
+
+    with st.expander("Raw JSON", expanded=False):
+        st.json(raw if raw is not None else record)
