@@ -1,7 +1,6 @@
 """Characterization tests for severity / MTTR / formatting logic."""
 
 import pandas as pd
-import pytest
 
 
 def test_normalize_severity(app):
@@ -50,16 +49,16 @@ def test_calculate_mttr_grouped_fixture_is_empty(app, fixture_text):
     assert app.calculate_mttr(df) == ({}, {})
 
 
-@pytest.mark.xfail(
-    raises=TypeError,
-    strict=True,
-    reason=(
-        "PRE-EXISTING BUG: when findings have firstDetectedAt but NO resolvedAt "
-        "column (the dry-run path), the all-NaT _resolved column is tz-naive and "
-        "subtracting the tz-aware _first_seen raises TypeError. Fixed in the metrics "
-        "refactor (Step 2/6) -- this xfail will turn XPASS and must become a real assert."
-    ),
-)
-def test_calculate_mttr_without_resolved_column_BUG(app, flat_sample):
+def test_calculate_mttr_without_resolved_column(app, flat_sample):
+    # Regression for the pre-existing tz bug: a findings frame with firstDetectedAt
+    # but NO resolvedAt column used to raise "Cannot subtract tz-naive and tz-aware".
+    # After the metrics refactor it computes cleanly -- the lone CRITICAL finding is open.
     df = app.nodes_to_dataframe(app.extract_nodes(flat_sample))
-    app.calculate_mttr(df)
+    per, overall = app.calculate_mttr(df)
+    crit = per["CRITICAL"]
+    assert crit["open"] == 1
+    assert crit["resolved"] == 0
+    assert crit["mttr_median"] is None
+    assert crit["sla_pct"] is None
+    assert overall["open"] == 1
+    assert overall["resolved"] == 0

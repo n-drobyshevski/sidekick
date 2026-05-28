@@ -485,96 +485,21 @@ def _run_os_vulns_internal(dry_run=True, use_config=False, config=None):
     return coerce_results(results)
 
 
-def load_wiz_config():
-    p = Path("wiz_config.json")
-    if not p.exists():
-        return {}
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+from wiz_dashboard.config import (  # noqa: E402 -- re-export of relocated logic
+    CACHE_FILENAME,
+    DEFAULT_CACHE_TTL_MINUTES,
+    SEVERITY_COLORS,
+    SEVERITY_ORDER,
+    SLA_TARGETS,
+    load_wiz_config,
+)
 
 
-def coerce_results(results):
-    """Normalize dict/list/json-string/python-repr-string into a plain object."""
-    if isinstance(results, (dict, list)):
-        return results
-    if isinstance(results, str):
-        s = results.strip()
-        try:
-            return json.loads(s)
-        except json.JSONDecodeError:
-            pass
-        try:
-            parsed = ast.literal_eval(s)
-            if isinstance(parsed, (dict, list)):
-                return parsed
-        except (ValueError, SyntaxError):
-            pass
-    return results
-
-
-def extract_nodes(results):
-    results = coerce_results(results)
-    if not results:
-        return []
-    if isinstance(results, list) and results and isinstance(results[0], dict):
-        merged = []
-        ok = False
-        for page in results:
-            if isinstance(page, dict):
-                sub = extract_nodes(page)
-                if sub:
-                    merged.extend(sub)
-                    ok = True
-        if ok:
-            return merged
-    if isinstance(results, dict):
-        if "data" in results and isinstance(results["data"], dict):
-            data = results["data"]
-            if "vulnerabilityFindings" in data:
-                vf = data["vulnerabilityFindings"]
-                if isinstance(vf, dict) and "nodes" in vf:
-                    return vf.get("nodes") or []
-            for v in data.values():
-                if isinstance(v, dict) and "nodes" in v:
-                    return v.get("nodes") or []
-        if "nodes" in results:
-            return results.get("nodes") or []
-    if isinstance(results, list):
-        return results
-    return [results]
-
-
-def nodes_to_dataframe(nodes):
-    if not nodes:
-        return pd.DataFrame()
-    if isinstance(nodes, dict):
-        nodes = [nodes]
-    cleaned = []
-    for item in nodes:
-        if isinstance(item, dict):
-            cleaned.append(item)
-            continue
-        if isinstance(item, str):
-            for parser in (json.loads, ast.literal_eval):
-                try:
-                    p = parser(item)
-                    if isinstance(p, dict):
-                        cleaned.append(p)
-                        break
-                except Exception:
-                    pass
-            else:
-                cleaned.append({"_raw": str(item)})
-                continue
-            continue
-        cleaned.append({"_raw": str(item)})
-    try:
-        return pd.json_normalize(cleaned, sep=".")
-    except Exception:
-        cols = sorted({k for row in cleaned for k in row.keys()})
-        return pd.DataFrame([{k: r.get(k) for k in cols} for r in cleaned])
+from wiz_dashboard.data.transform import (  # noqa: E402 -- re-export of relocated logic
+    coerce_results,
+    extract_nodes,
+    nodes_to_dataframe,
+)
 
 
 # Optional HTML sanitization helpers (use bleach if available)
@@ -672,8 +597,7 @@ def sanitize_html(html_text, allow_style=False):
 # ------------------
 # Caching helpers
 # ------------------
-CACHE_FILENAME = "last_results.json"
-DEFAULT_CACHE_TTL_MINUTES = 60
+# CACHE_FILENAME / DEFAULT_CACHE_TTL_MINUTES come from wiz_dashboard.config (imported above).
 
 
 def save_cache(results, filename: str = CACHE_FILENAME) -> None:
@@ -761,145 +685,19 @@ def get_findings_with_cache(
 ## ============================================================
 #  HELPERS — severity / formatting
 # ============================================================
-SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"]
-SEVERITY_COLORS = {
-    "CRITICAL": "#ef4444",
-    "HIGH": "#f97316",
-    "MEDIUM": "#eab308",
-    "LOW": "#3b82f6",
-    "INFO": "#6b7280",
-    "UNKNOWN": "#4b5563",
-}
-# Standard VM SLAs (days). Tweak per your remediation policy.
-SLA_TARGETS = {"CRITICAL": 7, "HIGH": 14, "MEDIUM": 30, "LOW": 90, "INFO": 180}
+# SEVERITY_ORDER / SEVERITY_COLORS / SLA_TARGETS come from wiz_dashboard.config (imported above).
 
 
-def normalize_severity(sev):
-    if not isinstance(sev, str):
-        return "UNKNOWN"
-    s = sev.upper().strip()
-    if s in ("INFORMATIONAL", "INFO"):
-        return "INFO"
-    return s if s in SEVERITY_ORDER else "UNKNOWN"
+from wiz_dashboard.domain.severity import (  # noqa: E402 -- re-export of relocated logic
+    count_by_severity,
+    normalize_severity,
+)
 
 
-def count_by_severity(df):
-    if df.empty or "severity" not in df.columns:
-        return {}
-    return df["severity"].apply(normalize_severity).value_counts().to_dict()
+from wiz_dashboard.domain.formatting import format_duration  # noqa: E402
 
 
-def format_duration(days):
-    """Human-friendly duration. None/NaN → em-dash."""
-    if days is None or pd.isna(days):
-        return "—"
-    if days < 1 / 24:
-        return "<1h"
-    if days < 1:
-        return f"{int(round(days*24))}h"
-    if days < 30:
-        return f"{days:.1f}d"
-    if days < 365:
-        return f"{days/30:.1f}mo"
-    return f"{days/365:.1f}y"
-
-
-def _find_col(df, *candidates):
-    """Return first column whose name contains any candidate (case-insensitive)."""
-    cols = {c.lower(): c for c in df.columns}
-    for cand in candidates:
-        for low, orig in cols.items():
-            if cand.lower() in low:
-                return orig
-    return None
-
-
-# ============================================================
-#  MTTR
-# ============================================================
-def calculate_mttr(df):
-    """MTTR by severity. Returns (per_sev_dict, overall_dict)."""
-    if df.empty:
-        return {}, {}
-
-    first_seen_col = _find_col(df, "firstSeenAt", "firstDetectedAt", "createdAt")
-    resolved_col = _find_col(df, "resolvedAt", "remediatedAt", "fixedAt")
-    status_col = _find_col(df, "status")
-
-    if not first_seen_col:
-        return {}, {}
-
-    work = df.copy()
-    work["_sev"] = (
-        work["severity"].apply(normalize_severity)
-        if "severity" in work.columns
-        else "UNKNOWN"
-    )
-    work["_first_seen"] = pd.to_datetime(
-        work[first_seen_col], errors="coerce", utc=True
-    )
-    work["_resolved"] = (
-        pd.to_datetime(work[resolved_col], errors="coerce", utc=True)
-        if resolved_col
-        else pd.NaT
-    )
-
-    # If status exists but no resolved timestamp, only count closed findings
-    if status_col and not resolved_col:
-        resolved_mask = (
-            work[status_col]
-            .astype(str)
-            .str.upper()
-            .isin({"RESOLVED", "REMEDIATED", "FIXED", "CLOSED"})
-        )
-        work.loc[~resolved_mask, "_resolved"] = pd.NaT
-
-    now = pd.Timestamp.now(tz="UTC")
-    work["_mttr_days"] = (
-        work["_resolved"] - work["_first_seen"]
-    ).dt.total_seconds() / 86400
-    work["_age_days"] = (now - work["_first_seen"]).dt.total_seconds() / 86400
-
-    per_sev = {}
-    for sev in SEVERITY_ORDER:
-        sub = work[work["_sev"] == sev]
-        if sub.empty:
-            continue
-        resolved = sub.dropna(subset=["_mttr_days"])
-        open_ = sub[sub["_resolved"].isna() & sub["_first_seen"].notna()]
-        target = SLA_TARGETS.get(sev)
-        within_sla = (
-            (resolved["_mttr_days"] <= target).sum()
-            if target and not resolved.empty
-            else 0
-        )
-        per_sev[sev] = {
-            "mttr_mean": resolved["_mttr_days"].mean() if not resolved.empty else None,
-            "mttr_median": (
-                resolved["_mttr_days"].median() if not resolved.empty else None
-            ),
-            "resolved": len(resolved),
-            "open": len(open_),
-            "open_age_p50": open_["_age_days"].median() if not open_.empty else None,
-            "open_age_p90": (
-                open_["_age_days"].quantile(0.9) if not open_.empty else None
-            ),
-            "sla_target": target,
-            "sla_compliant": int(within_sla),
-            "sla_pct": (
-                (within_sla / len(resolved) * 100)
-                if not resolved.empty and target
-                else None
-            ),
-        }
-
-    overall = {
-        "mttr_mean": work.dropna(subset=["_mttr_days"])["_mttr_days"].mean(),
-        "mttr_median": work.dropna(subset=["_mttr_days"])["_mttr_days"].median(),
-        "resolved": int(work["_resolved"].notna().sum()),
-        "open": int(work["_resolved"].isna().sum()),
-    }
-    return per_sev, overall
+from wiz_dashboard.domain.metrics import calculate_mttr  # noqa: E402
 
 
 # ============================================================
