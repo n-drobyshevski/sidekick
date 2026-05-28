@@ -1,0 +1,378 @@
+/* === Enable light-dark() === */
+:root, .stApp { color-scheme: light dark; }
+
+/* === Semantic tokens (auto-adapt to theme) === */
+:root {
+    --surface-1:        light-dark(rgba(0,0,0,0.025),  rgba(255,255,255,0.025));
+    --surface-1-hover:  light-dark(rgba(0,0,0,0.05),   rgba(255,255,255,0.05));
+    --surface-2:        light-dark(rgba(0,0,0,0.04),   rgba(255,255,255,0.04));
+    --sidebar-bg:       light-dark(rgba(248,248,250,0.98), rgba(10,10,11,0.98));
+    --border-1:         light-dark(rgba(0,0,0,0.08),   rgba(255,255,255,0.06));
+    --border-2:         light-dark(rgba(0,0,0,0.14),   rgba(255,255,255,0.12));
+    --border-dashed:    light-dark(rgba(0,0,0,0.14),   rgba(255,255,255,0.1));
+    --text-1:           light-dark(rgba(0,0,0,0.9),    rgba(255,255,255,1));
+    --text-2:           light-dark(rgba(0,0,0,0.65),   rgba(250,250,250,0.65));
+    --text-3:           light-dark(rgba(0,0,0,0.5),    rgba(250,250,250,0.5));
+    --text-muted:       light-dark(rgba(0,0,0,0.4),    rgba(250,250,250,0.4));
+    --nav-hover:        light-dark(rgba(0,0,0,0.05),   rgba(255,255,255,0.05));
+    --nav-active:       light-dark(rgba(0,0,0,0.08),   rgba(255,255,255,0.08));
+    --nav-active-hover: light-dark(rgba(0,0,0,0.11),   rgba(255,255,255,0.11));
+    --btn-primary-bg:       light-dark(#0a0a0a, #ffffff);
+    --btn-primary-fg:       light-dark(#ffffff, #0a0a0a);
+    --btn-primary-bg-hover: light-dark(#27272a, #e5e5e5);
+}
+
+/* === Typography === */
+html, body, [class*="css"], .stApp {
+    font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI',
+                 Roboto, 'Helvetica Neue', sans-serif;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+}
+h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; }
+h1 { font-size: 1.5rem; margin: 0; }
+h2 { font-size: 1.125rem; }
+h3 { font-size: 1rem; }
+
+/* === Container === */
+.block-container {
+    padding-top: 1.5rem !important;
+    padding-bottom: 2rem !important;
+    max-width: 1500px;
+    transition: max-width 0.15s ease;
+}
+/* Compact density */
+.stApp[data-density="compact"] .metric-card { padding: 6px 10px; }
+.stApp[data-density="compact"] .metric-value { font-size: 1.125rem; }
+.stApp[data-density="compact"] .mttr-row { padding: 5px 0; }
+.stApp[data-density="compact"] [data-testid="stDataFrame"] tbody tr { height: 28px; }
+
+/* === Page header === */
+.page-header {
+    display: flex; align-items: flex-end; justify-content: space-between;
+    gap: 24px; padding-bottom: 16px; margin-bottom: 20px;
+    border-bottom: 1px solid var(--border-1);
+}
+.subtitle {
+    color: var(--text-3);
+    font-size: 0.8125rem;
+    margin-top: 4px;
+}
+
+/* === Section label === */
+.section-label {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    margin: 1rem 0 0.5rem 0;
+}
+
+/* === Metric cards === */
+.metric-card {
+    background: var(--surface-1);
+    border: 1px solid var(--border-1);
+    padding: 10px 14px;
+    border-radius: 8px;
+    transition: border-color 0.15s ease;
+}
+.metric-card:hover { border-color: var(--border-2); }
+.metric-label {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 0.6875rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-2);
+    margin-bottom: 6px;
+}
+.metric-value {
+    font-size: 1.375rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+    color: var(--text-1);
+    display: flex; align-items: baseline; gap: 6px;
+}
+.metric-delta { font-size: 0.75rem; font-weight: 500; }
+.delta-up   { color: #dc2626; }  /* more vulns = bad */
+.delta-down { color: #16a34a; }
+.delta-flat { color: var(--text-3); }
+.sev-dot {
+    display: inline-block;
+    width: 7px; height: 7px;
+    border-radius: 2px;
+    flex-shrink: 0;
+}
+
+/* === Status pill (saturated colors work on both themes) === */
+.status-pill {
+    display: inline-flex; align-items: center;
+    padding: 3px 9px;
+    border-radius: 5px;
+    font-size: 0.7rem;
+    font-weight: 500;
+}
+.status-ok   { background: rgba(34,197,94,0.12);  color: #16a34a; }
+.status-warn { background: rgba(234,179,8,0.12);  color: #ca8a04; }
+
+/* === Hide Streamlit built-in icons === */
+[data-testid="stAlert"] svg,
+.stAlert svg,
+[data-testid="stNotification"] svg,
+[data-testid="stTooltipIcon"],
+[data-testid="stWidgetLabelHelp"],
+[data-testid="stMetricDeltaIcon-Up"],
+[data-testid="stMetricDeltaIcon-Down"],
+[data-baseweb="form-control-help"] svg { display: none !important; }
+[data-testid="stAlert"] > div:first-child,
+.stAlert > div:first-child { padding-left: 0 !important; }
+
+/* === Alerts (less boxy, theme-aware) === */
+[data-testid="stAlert"] {
+    background: var(--surface-1) !important;
+    border: 1px solid var(--border-1) !important;
+    border-left: 3px solid currentColor !important;
+    border-radius: 6px !important;
+    padding: 8px 12px !important;
+    font-size: 0.8125rem !important;
+}
+
+/* === SIDEBAR === */
+[data-testid="stSidebar"] {
+    background: var(--sidebar-bg);
+    border-right: 1px solid var(--border-1);
+}
+[data-testid="stSidebar"] > div:first-child { padding-top: 1.25rem; }
+[data-testid="stSidebar"] .block-container { padding: 1rem 0.75rem; }
+
+.sidebar-brand {
+    padding: 4px 12px 16px 12px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--text-1);
+    border-bottom: 1px solid var(--border-1);
+    margin-bottom: 12px;
+}
+.sidebar-brand .sub {
+    font-size: 0.7rem;
+    font-weight: 400;
+    color: var(--text-3);
+    margin-top: 2px;
+}
+
+[data-testid="stSidebar"] .section-label {
+    margin: 12px 12px 6px 12px;
+    font-size: 0.65rem;
+}
+
+/* Sidebar nav buttons */
+[data-testid="stSidebar"] .stButton { margin: 0; }
+[data-testid="stSidebar"] .stButton button {
+    background: transparent !important;
+    border: none !important;
+    color: var(--text-2) !important;
+    text-align: left !important;
+    justify-content: flex-start !important;
+    padding: 6px 12px !important;
+    height: auto !important;
+    min-height: 32px !important;
+    font-size: 0.8125rem !important;
+    font-weight: 450 !important;
+    border-radius: 6px !important;
+    margin: 1px 0 !important;
+    width: 100% !important;
+    box-shadow: none !important;
+    transition: background 0.1s ease, color 0.1s ease !important;
+}
+[data-testid="stSidebar"] .stButton button:hover {
+    background: var(--nav-hover) !important;
+    color: var(--text-1) !important;
+}
+[data-testid="stSidebar"] .stButton button[kind="primary"] {
+    background: var(--nav-active) !important;
+    color: var(--text-1) !important;
+    font-weight: 500 !important;
+}
+[data-testid="stSidebar"] .stButton button[kind="primary"]:hover {
+    background: var(--nav-active-hover) !important;
+}
+
+.sidebar-footer {
+    position: sticky; bottom: 0;
+    padding: 12px;
+    border-top: 1px solid var(--border-1);
+    margin-top: 20px;
+    font-size: 0.7rem;
+    color: var(--text-3);
+}
+
+/* === Tabs === */
+[data-testid="stTabs"] [data-baseweb="tab-list"] {
+    gap: 2px;
+    border-bottom: 1px solid var(--border-1);
+}
+[data-testid="stTabs"] [data-baseweb="tab"] {
+    padding: 8px 14px;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--text-2);
+}
+[data-testid="stTabs"] [aria-selected="true"] { color: var(--text-1); }
+
+/* === Main buttons === */
+.main .stButton button {
+    border-radius: 6px;
+    font-weight: 500;
+    font-size: 0.8125rem;
+    padding: 4px 12px;
+    min-height: 32px;
+    height: auto;
+    border: 1px solid var(--border-1);
+    background: var(--surface-1);
+    color: var(--text-1);
+}
+.main .stButton button:hover {
+    background: var(--surface-1-hover);
+    border-color: var(--border-2);
+}
+.main .stButton button[kind="primary"] {
+    background: var(--btn-primary-bg) !important;
+    color: var(--btn-primary-fg) !important;
+    border: none !important;
+}
+.main .stButton button[kind="primary"]:hover {
+    background: var(--btn-primary-bg-hover) !important;
+}
+/* Ensure main buttons sit inline and have spacing to avoid overlap */
+.main .stButton { display: inline-block; margin-right: 8px; }
+
+/* === Inputs === */
+.stTextInput input,
+.stMultiSelect [data-baseweb="select"] > div {
+    border-radius: 6px;
+    font-size: 0.8125rem;
+    min-height: 32px;
+}
+.stTextInput label, .stMultiSelect label, .stSelectbox label {
+    font-size: 0.75rem !important;
+    color: var(--text-2) !important;
+    margin-bottom: 4px !important;
+}
+
+/* === Dataframe === */
+[data-testid="stDataFrame"] {
+    border: 1px solid var(--border-1);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+/* === Dividers === */
+hr { margin: 1rem 0; border-color: var(--border-1); }
+
+/* === Empty state === */
+.empty-state {
+    text-align: center;
+    padding: 4rem 1rem;
+    border: 1px dashed var(--border-dashed);
+    border-radius: 12px;
+    background: var(--surface-1);
+}
+.empty-state h3 { margin: 0 0 4px 0; font-weight: 500; font-size: 1rem; color: var(--text-1); }
+.empty-state p  { color: var(--text-3); margin: 0 0 12px 0; font-size: 0.8125rem; }
+.empty-state code {
+    font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
+    font-size: 0.75rem;
+    background: var(--surface-2);
+    padding: 1px 5px;
+    border-radius: 3px;
+}
+
+/* === Captions === */
+[data-testid="stCaption"] {
+    font-size: 0.7rem;
+    color: var(--text-3);
+}
+
+/* === MTTR widget === */
+.mttr-card {
+    background: var(--surface-1);
+    border: 1px solid var(--border-1);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 16px;
+}
+.mttr-head {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    padding-bottom: 12px; margin-bottom: 8px;
+    border-bottom: 1px solid var(--border-1);
+}
+.mttr-title { font-size: 0.8125rem; font-weight: 600; color: var(--text-1); }
+.mttr-sub   { font-size: 0.7rem; color: var(--text-3); margin-top: 2px; }
+.mttr-big   { display: flex; align-items: baseline; gap: 8px; }
+.mttr-big-val {
+    font-size: 1.5rem; font-weight: 600;
+    letter-spacing: -0.02em; color: var(--text-1);
+    font-variant-numeric: tabular-nums;
+}
+.mttr-big-lbl { font-size: 0.7rem; color: var(--text-3); }
+
+.mttr-row {
+    display: grid;
+    grid-template-columns: 100px 1fr 70px 80px 70px;
+    gap: 12px; align-items: center;
+    padding: 8px 0;
+    font-size: 0.8125rem;
+    border-bottom: 1px solid var(--border-1);
+}
+.mttr-row:last-child { border-bottom: none; }
+.mttr-sev    { display: flex; align-items: center; gap: 8px; font-weight: 500; color: var(--text-1); }
+.mttr-bar    {
+    position: relative; height: 6px;
+    background: var(--surface-2);
+    border-radius: 3px;
+}
+.mttr-bar-fill {
+    position: absolute; left: 0; top: 0; bottom: 0;
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+.mttr-bar-marker {
+    position: absolute; top: -3px; bottom: -3px;
+    width: 2px; background: var(--text-2); opacity: 0.55;
+}
+.mttr-val    { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-1); }
+.mttr-sla    {
+    text-align: right; font-variant-numeric: tabular-nums;
+    color: var(--text-3); font-size: 0.75rem;
+}
+.mttr-pct    {
+    text-align: right; font-variant-numeric: tabular-nums;
+    font-weight: 500; font-size: 0.75rem;
+}
+.mttr-pct-ok   { color: #16a34a; }
+.mttr-pct-warn { color: #ca8a04; }
+.mttr-pct-bad  { color: #dc2626; }
+.mttr-row-head {
+    font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--text-muted); padding-bottom: 6px;
+    border-bottom: 1px solid var(--border-1);
+}
+
+/* === Severity chips (filter) === */
+.chips-wrap { margin-bottom: 8px; }
+
+/* === Skeleton loader === */
+.skel {
+    background: var(--surface-2);
+    border-radius: 4px;
+    animation: skel 1.4s ease-in-out infinite;
+}
+.skel-line { height: 10px; margin-bottom: 6px; }
+.skel-line.tall { height: 22px; width: 55%; }
+.skel-line.short { width: 35%; }
+@keyframes skel {
+    0%, 100% { opacity: 0.45; }
+    50%      { opacity: 0.9; }
+}

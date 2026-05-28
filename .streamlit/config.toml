@@ -1,0 +1,13 @@
+# Streamlit configuration.
+#
+# The custom stylesheet (wiz_dashboard/assets/styles.css, injected via
+# wiz_dashboard.ui.theme.load_css) styles the bespoke widgets. This [theme] block
+# sets the native accent colour and font. `base` is intentionally left unset so the
+# app follows the viewer's light/dark system preference (the CSS uses light-dark()).
+[theme]
+primaryColor = "#2563eb"
+font = "sans-serif"
+
+[browser]
+# Security tooling: don't phone home with usage stats.
+gatherUsageStats = false
