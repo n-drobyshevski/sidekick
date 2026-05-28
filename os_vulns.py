@@ -12,6 +12,7 @@ except Exception:
 import json
 import argparse
 import csv
+import os
 import sys
 from typing import Any, Dict, List, Optional
 
@@ -592,6 +593,58 @@ VARIABLES = {
 }
 
 
+# Sample response for --dry-run / offline testing (flat per-finding shape).
+SAMPLE_RESULTS: Dict[str, Any] = {
+    "data": {
+        "vulnerabilityFindings": {
+            "nodes": [
+                {
+                    "id": "dry-1",
+                    "name": "sample-vuln",
+                    "severity": "CRITICAL",
+                    "vulnerableAsset": {"name": "vm-sample"},
+                    "fixedVersion": "1.2.3",
+                    "firstDetectedAt": "2026-05-27T00:00:00Z",
+                }
+            ]
+        }
+    }
+}
+
+
+def fetch_findings(dry_run: bool = True, config: Optional[Dict[str, Any]] = None) -> Any:
+    """Fetch the raw Wiz vulnerability-findings response.
+
+    Importable entry point shared by the CLI (`main`) and the Streamlit app, so
+    the app no longer has to shell out via runpy.
+
+    Args:
+        dry_run: when True, return bundled ``SAMPLE_RESULTS`` without calling the API.
+        config: optional ``{"wiz_client_id", "wiz_client_secret"}`` injected into the
+            environment for the SDK when running live.
+
+    Returns:
+        The raw response object from the Wiz SDK (typically a dict), or
+        ``SAMPLE_RESULTS`` in dry-run mode.
+
+    Raises:
+        RuntimeError: in live mode when ``wiz_sdk`` is not installed.
+    """
+    if dry_run:
+        return SAMPLE_RESULTS
+    if WizAPIClient is None:
+        raise RuntimeError(
+            "wiz_sdk not installed; either install it or run with --dry-run"
+        )
+    if isinstance(config, dict):
+        if config.get("wiz_client_id"):
+            os.environ["WIZ_CLIENT_ID"] = config["wiz_client_id"]
+        if config.get("wiz_client_secret"):
+            os.environ["WIZ_CLIENT_SECRET"] = config["wiz_client_secret"]
+    client = WizAPIClient()
+    return client.query(QUERY, VARIABLES)
+
+
 def main():
     """Fetch data from Wiz and format output (table/json/csv)."""
 
@@ -743,32 +796,13 @@ def main():
     args = parser.parse_args()
 
     if args.dry_run:
-        # sample data for local testing without credentials
-        results = {
-            "data": {
-                "vulnerabilityFindings": {
-                    "nodes": [
-                        {
-                            "id": "dry-1",
-                            "name": "sample-vuln",
-                            "severity": "CRITICAL",
-                            "vulnerableAsset": {"name": "vm-sample"},
-                            "fixedVersion": "1.2.3",
-                            "firstDetectedAt": "2026-05-27T00:00:00Z",
-                        }
-                    ]
-                }
-            }
-        }
+        results = fetch_findings(dry_run=True)
     else:
-        if WizAPIClient is None:
-            print(
-                "wiz_sdk not installed; either install it or run with --dry-run",
-                file=sys.stderr,
-            )
+        try:
+            results = fetch_findings(dry_run=False)
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
             sys.exit(1)
-        client = WizAPIClient()
-        results = client.query(QUERY, VARIABLES)
 
     if args.format == "json":
         format_json(results, out_file=args.output)

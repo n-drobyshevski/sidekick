@@ -468,45 +468,21 @@ DEFAULT_PAGE = "wiz_os"
 #  BACKEND
 # ============================================================
 def _run_os_vulns_internal(dry_run=True, use_config=False, config=None):
-    cwd = Path(__file__).parent
-    old_cwd = os.getcwd()
-    old_argv = sys.argv.copy()
-    saved_env = {}
+    """Fetch findings by importing os_vulns directly (no subprocess/runpy)."""
+    if use_config and config is None:
+        try:
+            config = load_wiz_config()
+        except Exception:
+            config = None
     try:
-        os.chdir(cwd)
-        if use_config and config is None:
-            try:
-                config = load_wiz_config()
-            except Exception:
-                config = None
-        if use_config and isinstance(config, dict):
-            for k in ("WIZ_CLIENT_ID", "WIZ_CLIENT_SECRET"):
-                saved_env[k] = os.environ.get(k)
-            if config.get("wiz_client_id"):
-                os.environ["WIZ_CLIENT_ID"] = config.get("wiz_client_id")
-            if config.get("wiz_client_secret"):
-                os.environ["WIZ_CLIENT_SECRET"] = config.get("wiz_client_secret")
-        sys.argv = (
-            ["OS_vulns.py", "--dry-run", "--format", "json"]
-            if dry_run
-            else ["OS_vulns.py", "--format", "json"]
+        import os_vulns
+
+        results = os_vulns.fetch_findings(
+            dry_run=dry_run, config=config if use_config else None
         )
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            runpy.run_path("OS_vulns.py", run_name="__main__")
-        out = buf.getvalue().strip()
-        if not out:
-            return None
-        return coerce_results(out)
-    finally:
-        sys.argv = old_argv
-        if saved_env:
-            for k, v in saved_env.items():
-                if v is None:
-                    os.environ.pop(k, None)
-                else:
-                    os.environ[k] = v
-        os.chdir(old_cwd)
+    except Exception:
+        return None
+    return coerce_results(results)
 
 
 def load_wiz_config():
