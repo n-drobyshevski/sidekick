@@ -1,0 +1,16 @@
+# Virtual environments
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Streamlit secrets / local config (never commit credentials)
+.streamlit/secrets.toml
+wiz_config.json
+
+# Local runtime cache
+last_results.json

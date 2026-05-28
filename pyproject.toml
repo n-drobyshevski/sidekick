@@ -1,0 +1,14 @@
+[project]
+name = "wiz-dashboard"
+version = "0.1.0"
+description = "Streamlit dashboard for Wiz security findings (OS vulnerabilities, MTTR/SLA analytics)."
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
