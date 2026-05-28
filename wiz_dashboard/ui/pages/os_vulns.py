@@ -15,6 +15,7 @@ from wiz_dashboard.data.client import fetch_findings
 from wiz_dashboard.data.transform import extract_nodes, nodes_to_dataframe
 from wiz_dashboard.domain.severity import count_by_severity, normalize_severity
 from wiz_dashboard.models import schema
+from wiz_dashboard.ui import charts
 from wiz_dashboard.ui import components as ui
 
 PREFERRED_COLS = [
@@ -105,8 +106,10 @@ def _severity_cards(counts, prev=None):
 
 
 def _render_flat(df) -> None:
+    counts = count_by_severity(df)
     ui.section_label("Severity breakdown")
-    _severity_cards(count_by_severity(df), st.session_state.get("os_prev_counts", {}))
+    _severity_cards(counts, st.session_state.get("os_prev_counts", {}))
+    charts.severity_bar(counts)
 
     ui.section_label("Remediation performance")
     ui.render_mttr_widget(df)
@@ -119,6 +122,7 @@ def _render_grouped(nodes) -> None:
     counts = schema.severity_counts_from_groups(groups)
     ui.section_label("Severity breakdown (grouped by asset)")
     _severity_cards(counts)
+    charts.severity_bar(counts)
     st.caption(
         f"{len(groups):,} assets · {sum(counts.values()):,} findings. "
         "MTTR/SLA need per-finding timestamps, which grouped responses omit."
