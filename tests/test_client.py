@@ -11,10 +11,11 @@ def test_fetch_findings_dry_run_shape():
     assert nodes[0]["severity"] == "CRITICAL"
 
 
-def test_run_os_vulns_internal_matches_fetch_findings(app):
-    # The app's internal fetch now delegates to os_vulns.fetch_findings (no runpy).
-    internal = app._run_os_vulns_internal(dry_run=True)
-    assert internal == os_vulns.fetch_findings(dry_run=True)
-    nodes = app.extract_nodes(internal)
+def test_cached_client_dry_run(app):
+    # The cached data layer delegates to os_vulns.fetch_findings.
+    from wiz_dashboard.data.client import fetch_findings
+
+    results = fetch_findings(dry_run=True)
+    nodes = app.extract_nodes(results)
     assert len(nodes) == 1
     assert nodes[0]["id"] == "dry-1"

@@ -14,10 +14,21 @@ FIXTURE_PATH = REPO_ROOT / "os_vulns_response_exemple.json"
 
 @pytest.fixture(scope="session")
 def app():
-    """The monolith module. Top-level Streamlit calls are no-ops in bare mode."""
-    import streamlit_app
+    """Namespace of the relocated pure-logic functions (formerly the monolith)."""
+    import types
 
-    return streamlit_app
+    from wiz_dashboard.data import transform
+    from wiz_dashboard.domain import formatting, metrics, severity
+
+    return types.SimpleNamespace(
+        coerce_results=transform.coerce_results,
+        extract_nodes=transform.extract_nodes,
+        nodes_to_dataframe=transform.nodes_to_dataframe,
+        count_by_severity=severity.count_by_severity,
+        normalize_severity=severity.normalize_severity,
+        calculate_mttr=metrics.calculate_mttr,
+        format_duration=formatting.format_duration,
+    )
 
 
 @pytest.fixture
