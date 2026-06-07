@@ -1,25 +1,120 @@
-/* === Enable light-dark() === */
-:root, .stApp { color-scheme: light dark; }
+/* === Light theme === */
+:root, .stApp { color-scheme: light; }
 
-/* === Semantic tokens (auto-adapt to theme) === */
+/* === Design tokens ===
+   The base look (page/sidebar background, borders, corner radius, dataframe border,
+   categorical chart colours, fonts) is carried by NATIVE theming in
+   .streamlit/config.toml. This sheet only styles bespoke widgets native theming
+   can't express, and its tokens MIRROR config.toml (Streamlit 1.57 does not expose
+   its theme as --st-* properties to app-injected CSS, only inside st.components.v2).
+
+   The [data-testid="..."] selectors below couple to Streamlit's internal DOM
+   (verified against Streamlit 1.57) and are the only way to style those widgets;
+   revisit on major Streamlit upgrades if styling regresses. Deliberately RETAINED
+   (not redundant with native theming) because each adds shadcn polish native lacks:
+     - sidebar nav links / section headers  (active pill, uppercase group labels)
+     - buttons  (surface bg + soft shadow + 36px height; neutral near-black PRIMARY —
+                 native primaryColor would render the primary button blue)
+     - text/select inputs  (36px density + 12px muted labels)
+     - tabs  (underline style)            - alerts  (card look)
+   Removed in favour of native theming: dataframe border/radius, hr colour.
+
+   Naming: shadcn/ui semantic tokens (--background, --card, --muted-foreground,
+   --sidebar-*, --primary, --ring, --radius-*) are layered on top of the
+   surface/text tokens so components read like a shadcn theme while keeping the
+   project's blue accent and severity palette. */
 :root {
-    --surface-1:        light-dark(rgba(0,0,0,0.025),  rgba(255,255,255,0.025));
-    --surface-1-hover:  light-dark(rgba(0,0,0,0.05),   rgba(255,255,255,0.05));
-    --surface-2:        light-dark(rgba(0,0,0,0.04),   rgba(255,255,255,0.04));
-    --sidebar-bg:       light-dark(rgba(248,248,250,0.98), rgba(10,10,11,0.98));
-    --border-1:         light-dark(rgba(0,0,0,0.08),   rgba(255,255,255,0.06));
-    --border-2:         light-dark(rgba(0,0,0,0.14),   rgba(255,255,255,0.12));
-    --border-dashed:    light-dark(rgba(0,0,0,0.14),   rgba(255,255,255,0.1));
-    --text-1:           light-dark(rgba(0,0,0,0.9),    rgba(255,255,255,1));
-    --text-2:           light-dark(rgba(0,0,0,0.65),   rgba(250,250,250,0.65));
-    --text-3:           light-dark(rgba(0,0,0,0.5),    rgba(250,250,250,0.5));
-    --text-muted:       light-dark(rgba(0,0,0,0.4),    rgba(250,250,250,0.4));
-    --nav-hover:        light-dark(rgba(0,0,0,0.05),   rgba(255,255,255,0.05));
-    --nav-active:       light-dark(rgba(0,0,0,0.08),   rgba(255,255,255,0.08));
-    --nav-active-hover: light-dark(rgba(0,0,0,0.11),   rgba(255,255,255,0.11));
-    --btn-primary-bg:       light-dark(#0a0a0a, #ffffff);
-    --btn-primary-fg:       light-dark(#ffffff, #0a0a0a);
-    --btn-primary-bg-hover: light-dark(#27272a, #e5e5e5);
+    /* --- base surfaces / text / borders ---
+       These literals deliberately MIRROR the native theme in .streamlit/config.toml,
+       which is the source of truth for native widgets (page/sidebar background,
+       borders, radius, dataframe). Streamlit 1.57 does NOT expose its theme as --st-*
+       custom properties to app-injected CSS (only inside st.components.v2 scope), so we
+       mirror the values here rather than reference them — keep the two in sync on edit.
+       Surfaces are kept slightly translucent so they composite cleanly over the native
+       white/secondary backgrounds. Role-specific tints (hover, nav active pill, neutral
+       primary button, SLA-bullet track) have no native equivalent and live only here. */
+    --surface-1:        rgba(0,0,0,0.025);  /* cards / secondary buttons (~ secondaryBackgroundColor) */
+    --surface-1-hover:  rgba(0,0,0,0.05);    /* hover tint */
+    --surface-2:        rgba(0,0,0,0.04);    /* muted track (must read darker than cards) */
+    --sidebar-bg:       #f8f8fa;             /* == [theme.sidebar] backgroundColor */
+    --border-1:         #e6e6e9;             /* == [theme] borderColor */
+    --border-2:         rgba(0,0,0,0.14);    /* stronger border (hover/input) */
+    --text-1:           #171717;             /* == [theme] textColor */
+    --text-2:           rgba(0,0,0,0.65);
+    --text-3:           rgba(0,0,0,0.5);
+    --nav-hover:        rgba(0,0,0,0.05);
+    --nav-active:       rgba(0,0,0,0.08);
+    --nav-active-hover: rgba(0,0,0,0.11);
+    --btn-primary-bg:       #0a0a0a;         /* neutral shadcn primary (deliberate) */
+    --btn-primary-fg:       #fafafa;
+    --btn-primary-bg-hover: #27272a;
+
+    /* Accent — == [theme] primaryColor */
+    --accent:           #2563eb;
+    --focus-ring:       #2563eb;
+
+    /* --- shadcn semantic aliases (mapped onto the tokens above) --- */
+    --background:        transparent;            /* Streamlit owns the page bg */
+    --foreground:        var(--text-1);
+    --card:              var(--surface-1);
+    --card-foreground:   var(--text-1);
+    --muted:             var(--surface-2);
+    --muted-foreground:  var(--text-2);
+    --border:            var(--border-1);
+    --input:             var(--border-2);
+    --ring:              var(--focus-ring);
+    --primary:           var(--btn-primary-bg);
+    --primary-foreground:var(--btn-primary-fg);
+
+    /* shadcn sidebar token set */
+    --sidebar:                   var(--sidebar-bg);
+    --sidebar-foreground:        var(--text-2);
+    --sidebar-foreground-strong: var(--text-1);
+    --sidebar-muted:             var(--text-3);
+    --sidebar-accent:            var(--nav-active);
+    --sidebar-accent-foreground: var(--text-1);
+    --sidebar-border:            var(--border-1);
+    --sidebar-ring:              var(--focus-ring);
+
+    /* Severity FILL tokens — mirror config.py:SEVERITY_COLORS (chart/accents) */
+    --sev-critical: #dc2626;
+    --sev-high:     #ea580c;
+    --sev-medium:   #d97706;
+    --sev-low:      #2563eb;
+    --sev-info:     #64748b;
+    --sev-unknown:  #475569;
+    /* Severity TEXT tokens for badges — darkened to keep >=4.5:1 on a pale tint. */
+    --sev-critical-text: #b91c1c;
+    --sev-high-text:     #c2410c;
+    --sev-medium-text:   #b45309;
+    --sev-low-text:      #1d4ed8;
+    --sev-info-text:     #475569;
+    --sev-unknown-text:  #334155;
+
+    /* Type scale (modular) */
+    --fs-xs:   0.75rem;    /* 12px — captions, badges */
+    --fs-sm:   0.8125rem;  /* 13px — labels, controls, table */
+    --fs-base: 0.875rem;   /* 14px — body */
+    --fs-md:   1rem;       /* 16px — h3 */
+    --fs-lg:   1.125rem;   /* 18px — h2 */
+    --fs-xl:   1.5rem;     /* 24px — h1 / hero values */
+
+    /* Spacing scale (4 / 8 rhythm) */
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 24px;
+    --space-6: 32px;
+    --space-7: 48px;
+
+    /* Radius scale (shadcn convention: base radius + derived sm/md/lg/xl).
+       --radius mirrors [theme] baseRadius in config.toml; sm/md/lg/xl derive from it. */
+    --radius:    0.625rem;                  /* 10px (== baseRadius) */
+    --radius-sm: calc(var(--radius) - 4px); /* 6px  — badges, pills */
+    --radius-md: calc(var(--radius) - 2px); /* 8px  — buttons, inputs, nav items */
+    --radius-lg: var(--radius);             /* 10px — alerts, dataframe */
+    --radius-xl: calc(var(--radius) + 4px); /* 14px — cards */
 }
 
 /* === Typography === */
@@ -28,351 +123,566 @@ html, body, [class*="css"], .stApp {
                  Roboto, 'Helvetica Neue', sans-serif;
     font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
 }
-h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; }
-h1 { font-size: 1.5rem; margin: 0; }
-h2 { font-size: 1.125rem; }
-h3 { font-size: 1rem; }
+/* Heading scale (compact, instrument-grade). Streamlit renders st.title / header /
+   subheader AND markdown headings inside [data-testid="stHeadingWithActionElements"] and
+   sizes them large (h1 ~44px, h2 ~36px) via higher-specificity selectors, so the bare
+   element rules below never reached them and the design scale was silently lost. The
+   scoped block re-asserts the scale there with !important (this file's established
+   override pattern). Custom-HTML headings (the finding Sheet's .vuln-sheet__* h2/h3 live
+   OUTSIDE this wrapper) keep their own sizes; the bare baseline carries weight / spacing
+   to any stray heading. h2 stays compact (15px, not 18px) so dense dashboards scan and the
+   heading order stays sequential (h1 -> h2). */
+h1, h2, h3, h4, h5, h6 { font-weight: 600; letter-spacing: -0.02em; line-height: 1.3; }
+[data-testid="stHeadingWithActionElements"] :is(h1, h2, h3, h4, h5, h6) {
+    font-weight: 600 !important;
+    letter-spacing: -0.02em !important;
+    line-height: 1.3 !important;
+}
+[data-testid="stHeadingWithActionElements"] h1 {
+    font-size: var(--fs-xl) !important;      /* 24px — page title (st.title) */
+    line-height: 1.2 !important;
+    margin: 0 !important;
+}
+[data-testid="stHeadingWithActionElements"] h2 {
+    font-size: 0.9375rem !important;          /* 15px — compact section label (section_label) */
+    margin: var(--space-3) 0 var(--space-1) !important;
+}
+[data-testid="stHeadingWithActionElements"] h3 { font-size: var(--fs-md) !important; }    /* 16px */
+[data-testid="stHeadingWithActionElements"] h4 { font-size: var(--fs-base) !important; }  /* 14px */
+[data-testid="stHeadingWithActionElements"] h5 {
+    font-size: var(--fs-sm) !important; color: var(--muted-foreground);
+}
+[data-testid="stHeadingWithActionElements"] h6 {
+    font-size: var(--fs-xs) !important; color: var(--muted-foreground);
+}
+.stMarkdown p, [data-testid="stMarkdownContainer"] p { line-height: 1.5; }
+
+/* Tabular figures so counts / MTTR / dates don't jitter between values */
+[data-testid="stMetric"],
+[data-testid="stMetricValue"],
+[data-testid="stDataFrame"],
+[data-testid="stCaption"],
+.kpi-card__value,
+.sev-badge {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum';
+}
 
 /* === Container === */
 .block-container {
-    padding-top: 1.5rem !important;
-    padding-bottom: 2rem !important;
+    padding-top: var(--space-5) !important;
+    padding-bottom: var(--space-6) !important;
     max-width: 1500px;
-    transition: max-width 0.15s ease;
-}
-/* Compact density */
-.stApp[data-density="compact"] .metric-card { padding: 6px 10px; }
-.stApp[data-density="compact"] .metric-value { font-size: 1.125rem; }
-.stApp[data-density="compact"] .mttr-row { padding: 5px 0; }
-.stApp[data-density="compact"] [data-testid="stDataFrame"] tbody tr { height: 28px; }
-
-/* === Page header === */
-.page-header {
-    display: flex; align-items: flex-end; justify-content: space-between;
-    gap: 24px; padding-bottom: 16px; margin-bottom: 20px;
-    border-bottom: 1px solid var(--border-1);
-}
-.subtitle {
-    color: var(--text-3);
-    font-size: 0.8125rem;
-    margin-top: 4px;
+    /* No transition on max-width: animating a layout property thrashes reflow, and the
+       density toggle re-renders the page anyway, so the change is effectively instant. */
 }
 
-/* === Section label === */
-.section-label {
-    font-size: 0.6875rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--text-muted);
-    margin: 1rem 0 0.5rem 0;
+/* === Focus visibility (a11y CRITICAL — never remove focus rings) === */
+:where(a, button, input, select, textarea, [role="button"], [tabindex]):focus-visible,
+[data-testid="stBaseButton-primary"]:focus-visible,
+[data-testid="stBaseButton-secondary"]:focus-visible,
+[data-baseweb="tab"]:focus-visible {
+    outline: 2px solid var(--ring) !important;
+    outline-offset: 2px !important;
+    border-radius: var(--radius-md);
 }
 
-/* === Metric cards === */
-.metric-card {
-    background: var(--surface-1);
-    border: 1px solid var(--border-1);
-    padding: 10px 14px;
-    border-radius: 8px;
-    transition: border-color 0.15s ease;
+/* === Respect reduced-motion === */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+        scroll-behavior: auto !important;
+    }
 }
-.metric-card:hover { border-color: var(--border-2); }
-.metric-label {
-    display: flex; align-items: center; gap: 6px;
-    font-size: 0.6875rem;
-    font-weight: 500;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--text-2);
-    margin-bottom: 6px;
+
+/* === Finding-details Sheet (restyled st.dialog -> shadcn side="right") ===
+   Couples to Streamlit 1.57's BaseWeb Modal DOM (verified against the installed
+   frontend): [data-testid="stDialog"] is the OVERLAY/scrim (a stable Streamlit
+   test-id); the panel inside is [role="dialog"] and carries width / min-width /
+   4-corner border-radius as INLINE styles, so the resets below need !important.
+   Scoped to ONLY this dialog via the .vuln-sheet-marker sentinel that
+   _finding_sheet() injects as its first child, so the classic centered dialog is
+   untouched and a selector miss degrades to a normal centered dialog. Revisit the
+   [role="dialog"] / "> div" selectors on major Streamlit upgrades. */
+[data-testid="stDialog"]:has(.vuln-sheet-marker) > div {           /* DialogContainer */
+    align-items: stretch !important;
+    justify-content: flex-end !important;
+    padding: 0 !important;
 }
-.metric-value {
-    font-size: 1.375rem;
+[data-testid="stDialog"]:has(.vuln-sheet-marker) [role="dialog"],
+[data-testid="stDialog"]:has(.vuln-sheet-marker) > div > div {     /* panel (+ positional fallback) */
+    position: fixed !important;
+    inset-block: 0 !important;
+    right: 0 !important;
+    left: auto !important;
+    height: 100vh !important;
+    height: 100dvh !important;          /* dvh wins where supported (mobile chrome) */
+    max-height: 100vh !important;
+    width: min(520px, 92vw) !important;
+    min-width: 0 !important;            /* defeat inline minWidth */
+    max-width: none !important;
+    margin: 0 !important;
+    border-radius: 0 !important;        /* defeat inline corner radii (sheet edge is flush) */
+    border-left: 1px solid var(--border) !important;
+    box-shadow: -8px 0 24px -8px rgba(0,0,0,0.18), -2px 0 8px -4px rgba(0,0,0,0.10);
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;        /* inner body scrolls, not the panel */
+    padding: 0 !important;
+    animation: vuln-sheet-in 220ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+/* slide-in-from-right; the reduced-motion block above already zeroes its duration */
+@keyframes vuln-sheet-in {
+    from { transform: translateX(100%); }
+    to   { transform: translateX(0); }
+}
+/* Body scroll region (the panel's content wrapper). Verify the "> div" depth
+   against the running app if a Streamlit upgrade changes the nesting. */
+[data-testid="stDialog"]:has(.vuln-sheet-marker) [role="dialog"] > div {
+    flex: 1 1 auto;
+    min-height: 0;                      /* let the flex child shrink so it can scroll */
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: var(--space-5) var(--space-5) var(--space-6);   /* ~ shadcn p-6 */
+}
+@media (max-width: 640px) {             /* phones: full-bleed sheet */
+    [data-testid="stDialog"]:has(.vuln-sheet-marker) [role="dialog"] {
+        width: 100vw !important;
+        border-left: none !important;
+    }
+}
+
+/* Sheet header + chips */
+.vuln-sheet__header {
+    display: flex; flex-direction: column; gap: var(--space-2);
+    padding-bottom: var(--space-4);
+    border-bottom: 1px solid var(--border);
+    margin-bottom: var(--space-4);
+}
+.vuln-sheet__title {
+    font-size: var(--fs-lg);            /* shadcn SheetTitle: text-lg, semibold */
     font-weight: 600;
     letter-spacing: -0.02em;
-    line-height: 1.1;
-    color: var(--text-1);
-    display: flex; align-items: baseline; gap: 6px;
+    margin: 0;
+    word-break: break-word;             /* long CVE / detailedName wraps cleanly */
 }
-.metric-delta { font-size: 0.75rem; font-weight: 500; }
-.delta-up   { color: #dc2626; }  /* more vulns = bad */
-.delta-down { color: #16a34a; }
-.delta-flat { color: var(--text-3); }
-.sev-dot {
-    display: inline-block;
-    width: 7px; height: 7px;
-    border-radius: 2px;
-    flex-shrink: 0;
+.vuln-sheet__chips { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+.vuln-sheet__chip {
+    display: inline-flex; align-items: center;
+    padding: 2px 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--card);
+    font-size: var(--fs-xs);
+    color: var(--muted-foreground);
+    white-space: nowrap;
+}
+.status-pill--neutral { background: var(--muted); color: var(--muted-foreground); }
+
+/* Sheet sections + key/value definition list */
+.vuln-sheet__section { margin-bottom: var(--space-5); }
+.vuln-sheet__section:last-of-type { margin-bottom: 0; }
+.vuln-sheet__section-title {
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+    margin: 0 0 var(--space-2);
+}
+.vuln-kv { display: grid; grid-template-columns: 1fr; gap: 0; margin: 0; }
+.vuln-kv__row {
+    display: grid;
+    grid-template-columns: minmax(120px, 38%) 1fr;
+    gap: var(--space-3);
+    padding: var(--space-2) 0;
+    border-bottom: 1px solid var(--border);
+    align-items: baseline;
+}
+.vuln-kv__row:last-child { border-bottom: none; }
+.vuln-kv__key { font-size: var(--fs-sm); color: var(--muted-foreground); margin: 0; }
+.vuln-kv__val {
+    font-size: var(--fs-sm);
+    color: var(--foreground);
+    margin: 0;
+    word-break: break-word;
+    font-variant-numeric: tabular-nums;   /* dates / percentages don't jitter */
 }
 
-/* === Status pill (saturated colors work on both themes) === */
+/* Severity accent on the sheet header (colour set inline via --sev) + subtitle line */
+.vuln-sheet__header {
+    border-left: 3px solid var(--sev, var(--accent));
+    padding-left: var(--space-3);
+}
+.vuln-sheet__subtitle {
+    font-size: var(--fs-sm);
+    color: var(--muted-foreground);
+    margin: 2px 0 0;
+    word-break: break-word;
+}
+
+/* === Sheet: at-a-glance risk strip (CVSS/EPSS stat tiles + risk chips) === */
+.vuln-risk { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-5); }
+.vuln-stat {
+    flex: 1 1 88px; min-width: 80px;
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--card);
+}
+.vuln-stat__label {
+    font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--muted-foreground);
+}
+.vuln-stat__value {
+    font-size: var(--fs-md); font-weight: 600; color: var(--foreground);
+    line-height: 1.2; margin-top: 2px; font-variant-numeric: tabular-nums;
+}
+.vuln-stat__sub { font-size: var(--fs-xs); color: var(--muted-foreground); font-weight: 500; }
+.risk-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+.risk-chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 9px; border-radius: var(--radius-sm);
+    font-size: var(--fs-xs); font-weight: 600; white-space: nowrap;
+    border: 1px solid transparent;
+}
+/* Redundant non-colour signal: a leading dot in the chip's own text colour. */
+.risk-chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+.risk-chip--danger { background: color-mix(in srgb, var(--sev-critical) 12%, transparent); color: var(--sev-critical-text); border-color: color-mix(in srgb, var(--sev-critical) 28%, transparent); }
+.risk-chip--warn   { background: color-mix(in srgb, var(--sev-high) 12%, transparent);     color: var(--sev-high-text);     border-color: color-mix(in srgb, var(--sev-high) 28%, transparent); }
+.risk-chip--info   { background: color-mix(in srgb, var(--sev-low) 12%, transparent);      color: var(--sev-low-text);      border-color: color-mix(in srgb, var(--sev-low) 28%, transparent); }
+
+/* Description paragraph block (long text reads better than a KV row) */
+.vuln-desc { font-size: var(--fs-sm); color: var(--foreground); line-height: 1.55; margin: 0; white-space: pre-wrap; word-break: break-word; }
+
+/* Tags rendered as chips (not a JSON blob) */
+.vuln-tags { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.tag-chip {
+    display: inline-flex; align-items: baseline; gap: 4px; max-width: 100%;
+    padding: 2px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--card); font-size: var(--fs-xs); color: var(--foreground);
+}
+.tag-chip__k { color: var(--muted-foreground); }
+.tag-chip__v { font-variant-numeric: tabular-nums; word-break: break-all; }
+
+/* Grouped findings breakdown: per-severity count bars (fill colour via --sev) */
+.vuln-breakdown { display: flex; flex-direction: column; gap: var(--space-2); }
+.vuln-breakdown__row { display: grid; grid-template-columns: 90px 1fr auto; gap: var(--space-3); align-items: center; }
+.vuln-breakdown__label { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--foreground); }
+.vuln-breakdown__track { height: 8px; border-radius: 4px; background: var(--muted); overflow: hidden; }
+.vuln-breakdown__fill { height: 100%; border-radius: 4px; background: var(--sev, var(--accent)); }
+.vuln-breakdown__count { font-size: var(--fs-sm); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* Raw catch-all: native <details> styled as a section */
+.vuln-raw { margin-top: var(--space-2); }
+.vuln-raw > summary {
+    cursor: pointer;
+    font-size: var(--fs-xs); font-weight: 600; letter-spacing: 0.05em;
+    text-transform: uppercase; color: var(--muted-foreground);
+    padding: var(--space-1) 0;
+}
+.vuln-raw[open] > summary { margin-bottom: var(--space-2); }
+
+/* === Status pill (tints + text tuned for >=4.5:1 on the light tint) === */
 .status-pill {
     display: inline-flex; align-items: center;
     padding: 3px 9px;
-    border-radius: 5px;
-    font-size: 0.7rem;
+    border-radius: var(--radius-sm);
+    font-size: var(--fs-xs);
     font-weight: 500;
 }
-.status-ok   { background: rgba(34,197,94,0.12);  color: #16a34a; }
-.status-warn { background: rgba(234,179,8,0.12);  color: #ca8a04; }
+.status-ok   { background: rgba(34,197,94,0.14);  color: #15803d; }
+.status-warn { background: rgba(234,179,8,0.16);   color: #a16207; }
+.status-bad  { background: rgba(220,38,38,0.12);   color: #b91c1c; }
 
-/* === Hide Streamlit built-in icons === */
-[data-testid="stAlert"] svg,
-.stAlert svg,
-[data-testid="stNotification"] svg,
-[data-testid="stTooltipIcon"],
-[data-testid="stWidgetLabelHelp"],
-[data-testid="stMetricDeltaIcon-Up"],
-[data-testid="stMetricDeltaIcon-Down"],
-[data-baseweb="form-control-help"] svg { display: none !important; }
-[data-testid="stAlert"] > div:first-child,
-.stAlert > div:first-child { padding-left: 0 !important; }
+/* === Severity badge (shadcn-style pill: tint bg + text token + glyph) === */
+.sev-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    line-height: 1.4;
+    white-space: nowrap;
+}
+.sev-badge--critical { background: color-mix(in srgb, var(--sev-critical) 14%, transparent); color: var(--sev-critical-text); }
+.sev-badge--high     { background: color-mix(in srgb, var(--sev-high) 14%, transparent);     color: var(--sev-high-text); }
+.sev-badge--medium   { background: color-mix(in srgb, var(--sev-medium) 16%, transparent);   color: var(--sev-medium-text); }
+.sev-badge--low      { background: color-mix(in srgb, var(--sev-low) 14%, transparent);      color: var(--sev-low-text); }
+.sev-badge--info     { background: color-mix(in srgb, var(--sev-info) 16%, transparent);     color: var(--sev-info-text); }
+.sev-badge--unknown  { background: color-mix(in srgb, var(--sev-unknown) 16%, transparent);  color: var(--sev-unknown-text); }
 
-/* === Alerts (less boxy, theme-aware) === */
+/* === Severity dot (CSS-drawn; replaces emoji glyphs in all HTML contexts) === */
+.sev-dot {
+    display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+    background: var(--sev-unknown); flex: none; vertical-align: middle;
+}
+.sev-dot--critical { background: var(--sev-critical); }
+.sev-dot--high     { background: var(--sev-high); }
+.sev-dot--medium   { background: var(--sev-medium); }
+.sev-dot--low      { background: var(--sev-low); }
+.sev-dot--info     { background: var(--sev-info); }
+.sev-dot--unknown  { background: var(--sev-unknown); }
+
+/* === "Needs attention" callout rows (status dots replace status emoji) === */
+.attn-row { display: flex; align-items: center; gap: 8px; font-size: var(--fs-sm); color: var(--foreground); padding: 2px 0; }
+.attn-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--sev-unknown); }
+.attn-dot--danger { background: var(--sev-critical); }
+.attn-dot--warn   { background: var(--sev-high); }
+.attn-dot--info   { background: var(--sev-info); }
+.attn-dot--ok     { background: #16a34a; }
+
+/* === KPI card (shadcn Card: neutral surface + full border + soft shadow).
+   Severity colour is carried by the glyph in the label (e.g. "🔴 Critical"),
+   not a structural border, so the card stays clean and on-style. === */
+.kpi-row { display: flex; flex-wrap: wrap; gap: var(--space-3); margin: var(--space-1) 0 var(--space-2); }
+.kpi-card {
+    flex: 1 1 0; min-width: 150px;
+    padding: var(--space-4);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    background: var(--card);
+    box-shadow: 0 1px 2px 0 rgba(0,0,0,0.05);
+}
+.kpi-card__label { font-size: var(--fs-xs); color: var(--muted-foreground); font-weight: 500;
+                   display: flex; align-items: center; gap: 5px; }
+.kpi-card__value { font-size: var(--fs-xl); font-weight: 600; color: var(--card-foreground);
+                   letter-spacing: -0.02em; line-height: 1.2; margin-top: 6px; }
+.kpi-card__delta { font-size: var(--fs-xs); font-weight: 500; margin-top: 6px; }
+/* Coloured by good/bad (semantic), while the arrow glyph shows actual direction. */
+.kpi-card__delta--bad  { color: #b91c1c; }
+.kpi-card__delta--good { color: #15803d; }
+.kpi-card__delta--flat { color: var(--text-3); }
+/* Secondary "· ±N%" change appended after the absolute delta. Rendered in muted neutral
+   ink (NOT a transparency of the bad/good colour, which fell to ~3.9:1 at 12px) so it stays
+   secondary to the raw number while clearing WCAG AA. */
+.kpi-card__delta-pct { color: var(--muted-foreground); }
+
+/* === Stat-list card (one shadcn Card, a labelled row per metric). The vertical
+   counterpart to the .kpi-row band — used by the severity breakdown (Critical→Low) and
+   the MTTR KPIs. Each row carries meaning by label (+ optional dot/delta), never colour
+   alone; the value is right-aligned with tabular figures so the column stays aligned. === */
+.stat-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    background: var(--card);
+    box-shadow: 0 1px 2px 0 rgba(0,0,0,0.05);
+    padding: 0 var(--space-4);
+    margin: var(--space-1) 0 var(--space-2);
+}
+.stat-card__row {
+    display: flex; align-items: center; gap: var(--space-3);
+    padding: var(--space-3) 0;
+    border-top: 1px solid var(--border);
+}
+.stat-card__row:first-child { border-top: 0; }
+.stat-card__name {
+    display: flex; align-items: center; gap: var(--space-2);
+    flex: 1 1 auto; min-width: 0;
+    font-size: var(--fs-sm); font-weight: 500; color: var(--foreground);
+}
+.stat-card__value {
+    margin-left: auto;
+    font-size: var(--fs-lg); font-weight: 600; color: var(--card-foreground);
+    font-variant-numeric: tabular-nums; letter-spacing: -0.01em; line-height: 1;
+}
+/* Reuse the KPI delta colours, but drop the card's top margin in this row context. */
+.stat-card__row .kpi-card__delta {
+    margin-top: 0; min-width: 58px; text-align: right; font-variant-numeric: tabular-nums;
+}
+
+/* === SLA bullet (progress vs target) === */
+.sla-bullet { width: 100%; height: 8px; border-radius: 4px;
+              background: var(--muted); position: relative; overflow: hidden; }
+.sla-bullet__fill { height: 100%; border-radius: 4px; }
+.sla-bullet__fill--ok   { background: #16a34a; }
+.sla-bullet__fill--warn { background: #d97706; }
+.sla-bullet__fill--bad  { background: #dc2626; }
+
+/* === Alerts (shadcn Alert: full border + rounded-lg + leading icon kept) === */
 [data-testid="stAlert"] {
-    background: var(--surface-1) !important;
-    border: 1px solid var(--border-1) !important;
-    border-left: 3px solid currentColor !important;
-    border-radius: 6px !important;
-    padding: 8px 12px !important;
+    background: var(--card) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: var(--radius-lg) !important;
+    padding: 12px 16px !important;
     font-size: 0.8125rem !important;
 }
 
-/* === SIDEBAR === */
+/* === SIDEBAR (shadcn-style: group labels + menu buttons + active pill) === */
 [data-testid="stSidebar"] {
-    background: var(--sidebar-bg);
-    border-right: 1px solid var(--border-1);
+    background: var(--sidebar);
+    border-right: 1px solid var(--sidebar-border);
 }
-[data-testid="stSidebar"] > div:first-child { padding-top: 1.25rem; }
-[data-testid="stSidebar"] .block-container { padding: 1rem 0.75rem; }
 
+/* Group label (shadcn SidebarGroupLabel) — st.navigation section headers */
+[data-testid="stNavSectionHeader"] {
+    padding: 14px 12px 4px 12px !important;
+    margin: 0 !important;
+}
+[data-testid="stNavSectionHeader"] [data-testid="stMarkdownContainer"] p {
+    font-size: 0.6875rem !important;   /* ~11px */
+    font-weight: 600 !important;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--sidebar-muted) !important;
+    margin: 0 !important;
+}
+[data-testid="stNavSectionHeader"] [data-testid="stIconMaterial"] {
+    color: var(--sidebar-muted);
+    font-size: 1rem;
+    opacity: 0.6;
+}
+
+/* Menu button (shadcn SidebarMenuButton) — the nav link */
+[data-testid="stSidebarNavLink"] {
+    display: flex; align-items: center; gap: 8px;
+    border-radius: var(--radius-md) !important;
+    padding: 6px 8px !important;
+    margin: 1px 8px !important;
+    min-height: 32px;
+    color: var(--sidebar-foreground) !important;
+    transition: background 0.12s ease, color 0.12s ease;
+}
+[data-testid="stSidebarNavLink"] p {
+    font-size: 0.8125rem !important;
+    font-weight: 450 !important;
+}
+[data-testid="stSidebarNavLink"] [data-testid="stIconMaterial"] {
+    font-size: 1.125rem;
+    color: var(--sidebar-muted);
+}
+[data-testid="stSidebarNavLink"]:hover {
+    background: var(--nav-hover) !important;
+    color: var(--sidebar-foreground-strong) !important;
+}
+[data-testid="stSidebarNavLink"]:hover [data-testid="stIconMaterial"] {
+    color: var(--sidebar-foreground-strong);
+}
+/* Active item (shadcn isActive) */
+[data-testid="stSidebarNavLink"][aria-current="page"] {
+    background: var(--sidebar-accent) !important;
+    color: var(--sidebar-accent-foreground) !important;
+}
+[data-testid="stSidebarNavLink"][aria-current="page"] p { font-weight: 600 !important; }
+[data-testid="stSidebarNavLink"][aria-current="page"] [data-testid="stIconMaterial"] {
+    color: var(--sidebar-accent-foreground);
+}
+[data-testid="stSidebarNavLink"]:focus-visible {
+    outline: 2px solid var(--sidebar-ring) !important;
+    outline-offset: 2px;
+}
+
+/* Brand header (shadcn SidebarHeader) */
 .sidebar-brand {
-    padding: 4px 12px 16px 12px;
+    display: flex; flex-direction: column;
+    padding: 2px 12px 14px 12px;
     font-size: 0.875rem;
     font-weight: 600;
     letter-spacing: -0.01em;
-    color: var(--text-1);
-    border-bottom: 1px solid var(--border-1);
-    margin-bottom: 12px;
+    color: var(--sidebar-foreground-strong);
 }
 .sidebar-brand .sub {
     font-size: 0.7rem;
     font-weight: 400;
-    color: var(--text-3);
+    color: var(--sidebar-muted);
     margin-top: 2px;
 }
 
-[data-testid="stSidebar"] .section-label {
-    margin: 12px 12px 6px 12px;
-    font-size: 0.65rem;
-}
-
-/* Sidebar nav buttons */
-[data-testid="stSidebar"] .stButton { margin: 0; }
-[data-testid="stSidebar"] .stButton button {
-    background: transparent !important;
-    border: none !important;
-    color: var(--text-2) !important;
-    text-align: left !important;
-    justify-content: flex-start !important;
-    padding: 6px 12px !important;
-    height: auto !important;
-    min-height: 32px !important;
-    font-size: 0.8125rem !important;
-    font-weight: 450 !important;
-    border-radius: 6px !important;
-    margin: 1px 0 !important;
-    width: 100% !important;
-    box-shadow: none !important;
-    transition: background 0.1s ease, color 0.1s ease !important;
-}
-[data-testid="stSidebar"] .stButton button:hover {
-    background: var(--nav-hover) !important;
-    color: var(--text-1) !important;
-}
-[data-testid="stSidebar"] .stButton button[kind="primary"] {
-    background: var(--nav-active) !important;
-    color: var(--text-1) !important;
-    font-weight: 500 !important;
-}
-[data-testid="stSidebar"] .stButton button[kind="primary"]:hover {
-    background: var(--nav-active-hover) !important;
-}
-
+/* Footer (shadcn SidebarFooter) */
 .sidebar-footer {
-    position: sticky; bottom: 0;
-    padding: 12px;
-    border-top: 1px solid var(--border-1);
-    margin-top: 20px;
+    padding: 12px 4px 4px 4px;
+    border-top: 1px solid var(--sidebar-border);
+    margin-top: 16px;
     font-size: 0.7rem;
-    color: var(--text-3);
+    color: var(--sidebar-muted);
 }
 
-/* === Tabs === */
+/* === Tabs (shadcn underline style) === */
 [data-testid="stTabs"] [data-baseweb="tab-list"] {
     gap: 2px;
-    border-bottom: 1px solid var(--border-1);
+    border-bottom: 1px solid var(--border);
 }
 [data-testid="stTabs"] [data-baseweb="tab"] {
     padding: 8px 14px;
     font-size: 0.8125rem;
     font-weight: 500;
-    color: var(--text-2);
+    color: var(--muted-foreground);
 }
-[data-testid="stTabs"] [aria-selected="true"] { color: var(--text-1); }
+[data-testid="stTabs"] [aria-selected="true"] { color: var(--foreground); }
 
-/* === Main buttons === */
-.main .stButton button {
-    border-radius: 6px;
+/* === Buttons (shadcn: default = bordered surface, primary = solid neutral) ===
+   Scoped to BOTH the main area and the sidebar so the global sidebar "Run scan" CTA
+   matches the on-page buttons (native theming would otherwise paint the sidebar
+   primary button blue). Sidebar nav links are stSidebarNavLink, not stButton, so this
+   only touches real buttons. */
+:is([data-testid="stMain"], [data-testid="stSidebar"]) [data-testid="stButton"] button {
+    border-radius: var(--radius-md);
     font-weight: 500;
-    font-size: 0.8125rem;
-    padding: 4px 12px;
-    min-height: 32px;
+    font-size: var(--fs-sm);
+    padding: 6px 14px;
+    min-height: 36px;           /* shadcn h-9 */
     height: auto;
-    border: 1px solid var(--border-1);
+    border: 1px solid var(--border);
     background: var(--surface-1);
-    color: var(--text-1);
+    color: var(--foreground);
+    box-shadow: 0 1px 2px 0 rgba(0,0,0,0.04);
+    transition: background 0.15s ease, border-color 0.15s ease;
 }
-.main .stButton button:hover {
+:is([data-testid="stMain"], [data-testid="stSidebar"]) [data-testid="stButton"] button:hover {
     background: var(--surface-1-hover);
     border-color: var(--border-2);
 }
-.main .stButton button[kind="primary"] {
-    background: var(--btn-primary-bg) !important;
-    color: var(--btn-primary-fg) !important;
-    border: none !important;
+:is([data-testid="stMain"], [data-testid="stSidebar"]) button[kind="primary"] {
+    background: var(--primary) !important;
+    color: var(--primary-foreground) !important;
+    border: 1px solid transparent !important;
 }
-.main .stButton button[kind="primary"]:hover {
+:is([data-testid="stMain"], [data-testid="stSidebar"]) button[kind="primary"]:hover {
     background: var(--btn-primary-bg-hover) !important;
 }
-/* Ensure main buttons sit inline and have spacing to avoid overlap */
-.main .stButton { display: inline-block; margin-right: 8px; }
 
-/* === Inputs === */
+/* === Inputs (shadcn: rounded-md, h-9, subtle border) === */
+[data-testid="stTextInput"] input,
 .stTextInput input,
-.stMultiSelect [data-baseweb="select"] > div {
-    border-radius: 6px;
+.stMultiSelect [data-baseweb="select"] > div,
+.stSelectbox [data-baseweb="select"] > div {
+    border-radius: var(--radius-md);
     font-size: 0.8125rem;
-    min-height: 32px;
+    min-height: 36px;
 }
 .stTextInput label, .stMultiSelect label, .stSelectbox label {
     font-size: 0.75rem !important;
-    color: var(--text-2) !important;
+    color: var(--muted-foreground) !important;
     margin-bottom: 4px !important;
 }
 
-/* === Dataframe === */
-[data-testid="stDataFrame"] {
-    border: 1px solid var(--border-1);
-    border-radius: 8px;
-    overflow: hidden;
-}
+/* === Dataframe ===
+   Border + corner radius now come from native theming (dataframeBorderColor +
+   baseRadius in config.toml), so no [data-testid="stDataFrame"] rule is needed. */
 
 /* === Dividers === */
-hr { margin: 1rem 0; border-color: var(--border-1); }
+hr { margin: 1rem 0; }  /* color comes from native [theme] borderColor */
 
-/* === Empty state === */
-.empty-state {
-    text-align: center;
-    padding: 4rem 1rem;
-    border: 1px dashed var(--border-dashed);
-    border-radius: 12px;
-    background: var(--surface-1);
-}
-.empty-state h3 { margin: 0 0 4px 0; font-weight: 500; font-size: 1rem; color: var(--text-1); }
-.empty-state p  { color: var(--text-3); margin: 0 0 12px 0; font-size: 0.8125rem; }
-.empty-state code {
-    font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
-    font-size: 0.75rem;
-    background: var(--surface-2);
-    padding: 1px 5px;
-    border-radius: 3px;
+/* === Captions ===
+   st.caption now renders inside [data-testid="stCaptionContainer"] (the old stCaption
+   test-id no longer exists, so the previous rule was dead). Set 12px so captions sit
+   below 14px body for a clear size step. Color is deliberately left to Streamlit's native
+   muted ink (~0.6 alpha ≈ 4.67:1, passes AA); the old --text-3 (~0.5 alpha ≈ 3.95:1) was
+   sub-AA for this small text, so it is intentionally NOT reapplied. */
+[data-testid="stCaptionContainer"],
+[data-testid="stCaptionContainer"] p {
+    font-size: var(--fs-xs) !important;
 }
 
-/* === Captions === */
-[data-testid="stCaption"] {
-    font-size: 0.7rem;
-    color: var(--text-3);
-}
-
-/* === MTTR widget === */
-.mttr-card {
-    background: var(--surface-1);
-    border: 1px solid var(--border-1);
-    border-radius: 10px;
-    padding: 14px 16px;
-    margin-bottom: 16px;
-}
-.mttr-head {
-    display: flex; align-items: flex-start; justify-content: space-between;
-    padding-bottom: 12px; margin-bottom: 8px;
-    border-bottom: 1px solid var(--border-1);
-}
-.mttr-title { font-size: 0.8125rem; font-weight: 600; color: var(--text-1); }
-.mttr-sub   { font-size: 0.7rem; color: var(--text-3); margin-top: 2px; }
-.mttr-big   { display: flex; align-items: baseline; gap: 8px; }
-.mttr-big-val {
-    font-size: 1.5rem; font-weight: 600;
-    letter-spacing: -0.02em; color: var(--text-1);
-    font-variant-numeric: tabular-nums;
-}
-.mttr-big-lbl { font-size: 0.7rem; color: var(--text-3); }
-
-.mttr-row {
-    display: grid;
-    grid-template-columns: 100px 1fr 70px 80px 70px;
-    gap: 12px; align-items: center;
-    padding: 8px 0;
-    font-size: 0.8125rem;
-    border-bottom: 1px solid var(--border-1);
-}
-.mttr-row:last-child { border-bottom: none; }
-.mttr-sev    { display: flex; align-items: center; gap: 8px; font-weight: 500; color: var(--text-1); }
-.mttr-bar    {
-    position: relative; height: 6px;
-    background: var(--surface-2);
-    border-radius: 3px;
-}
-.mttr-bar-fill {
-    position: absolute; left: 0; top: 0; bottom: 0;
-    border-radius: 3px;
-    transition: width 0.3s ease;
-}
-.mttr-bar-marker {
-    position: absolute; top: -3px; bottom: -3px;
-    width: 2px; background: var(--text-2); opacity: 0.55;
-}
-.mttr-val    { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-1); }
-.mttr-sla    {
-    text-align: right; font-variant-numeric: tabular-nums;
-    color: var(--text-3); font-size: 0.75rem;
-}
-.mttr-pct    {
-    text-align: right; font-variant-numeric: tabular-nums;
-    font-weight: 500; font-size: 0.75rem;
-}
-.mttr-pct-ok   { color: #16a34a; }
-.mttr-pct-warn { color: #ca8a04; }
-.mttr-pct-bad  { color: #dc2626; }
-.mttr-row-head {
-    font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.08em;
-    color: var(--text-muted); padding-bottom: 6px;
-    border-bottom: 1px solid var(--border-1);
-}
-
-/* === Severity chips (filter) === */
-.chips-wrap { margin-bottom: 8px; }
-
-/* === Skeleton loader === */
-.skel {
-    background: var(--surface-2);
-    border-radius: 4px;
-    animation: skel 1.4s ease-in-out infinite;
-}
-.skel-line { height: 10px; margin-bottom: 6px; }
-.skel-line.tall { height: 22px; width: 55%; }
-.skel-line.short { width: 35%; }
-@keyframes skel {
-    0%, 100% { opacity: 0.45; }
-    50%      { opacity: 0.9; }
+/* === Help-tooltip target size (WCAG 2.5.8) ===
+   Streamlit renders the "?" help triggers at 16px. Expand the hover/focus hit area to 24px
+   with a pseudo-element so the target meets the minimum without resizing the glyph or
+   shifting layout (the visual icon and surrounding text stay put). */
+[data-testid="stTooltipHoverTarget"] { position: relative; }
+[data-testid="stTooltipHoverTarget"]::after {
+    content: "";
+    position: absolute;
+    inset: -4px;            /* 16px glyph + 4px each side = 24px hit area */
 }

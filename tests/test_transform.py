@@ -20,13 +20,12 @@ def test_extract_nodes_paginated_list(app, flat_sample):
     assert len(nodes) == 2
 
 
-def test_extract_nodes_malformed_fixture_is_raw(app, fixture_text):
-    # KNOWN: the committed fixture is malformed JSON (two concatenated docs) and
-    # grouped-by-asset. Current behavior: JSON parse fails -> extract_nodes returns
-    # the raw string wrapped in a list. Pinned here so the refactor must be deliberate.
+def test_extract_nodes_committed_fixture_grouped(app, fixture_text):
+    # The committed fixture is now valid JSON in the grouped-by-asset shape; extract_nodes
+    # coerces the JSON text and digs out the 10 grouped asset nodes.
     nodes = app.extract_nodes(fixture_text)
-    assert len(nodes) == 1
-    assert isinstance(nodes[0], str)
+    assert len(nodes) == 10
+    assert all(isinstance(n, dict) and "analytics" in n for n in nodes)
 
 
 def test_nodes_to_dataframe_columns(app, flat_sample):

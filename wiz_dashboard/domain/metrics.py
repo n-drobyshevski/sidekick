@@ -2,7 +2,7 @@
 
 import pandas as pd
 
-from wiz_dashboard.config import SEVERITY_ORDER, SLA_TARGETS
+from wiz_dashboard.config import RESOLVED_STATUSES, SEVERITY_ORDER, SLA_TARGETS
 from wiz_dashboard.domain.severity import normalize_severity
 
 
@@ -17,7 +17,12 @@ def _find_col(df, *candidates):
 
 
 def calculate_mttr(df):
-    """MTTR by severity. Returns (per_sev_dict, overall_dict)."""
+    """MTTR by severity for ONE scan. Returns (per_sev_dict, overall_dict).
+
+    Single-scan path: trusts the API's first-seen / resolved timestamps within this
+    response. The durable, lifecycle-based equivalent is ``lifecycle.mttr_from_ledger``;
+    both share ``_summarize`` so the output contract is identical.
+    """
     if df.empty:
         return {}, {}
 
@@ -51,11 +56,28 @@ def calculate_mttr(df):
             work[status_col]
             .astype(str)
             .str.upper()
-            .isin({"RESOLVED", "REMEDIATED", "FIXED", "CLOSED"})
+            .isin(RESOLVED_STATUSES)
         )
         work.loc[~resolved_mask, "_resolved"] = pd.NaT
 
-    now = pd.Timestamp.now(tz="UTC")
+    return _summarize(work)
+
+
+def _summarize(work, *, now=None):
+    """Reduce a frame with ``_sev`` / ``_first_seen`` / ``_resolved`` (UTC) to
+    ``(per_sev, overall)``.
+
+    Shared by ``calculate_mttr`` (single scan) and ``lifecycle.mttr_from_ledger`` (the
+    durable base) so both emit the same shape ``render_mttr_widget`` / ``sla_bullets``
+    consume. ``now`` defaults to the current UTC instant (overridable for deterministic
+    tests of open-age percentiles).
+    """
+    if work is None or work.empty:
+        return {}, {}
+
+    work = work.copy()
+    if now is None:
+        now = pd.Timestamp.now(tz="UTC")
     work["_mttr_days"] = (
         work["_resolved"] - work["_first_seen"]
     ).dt.total_seconds() / 86400
@@ -101,3 +123,18 @@ def calculate_mttr(df):
         "open": int(work["_resolved"].isna().sum()),
     }
     return per_sev, overall
+
+
+def overall_sla_oldest(per_sev):
+    """Overall In-SLA % and oldest-open age (days) from a per-severity summary, matching
+    the headline KPIs: SLA = total within-target ÷ total resolved (×100); oldest = the max
+    over severities of the p90 open age. Returns ``(sla_pct | None, oldest_days | None)``.
+
+    ``ledger.load_trend_df`` reconstructs the same two quantities from the base directly
+    (per scan date) for the trend / KPI change badges — keep the definitions in sync."""
+    compliant = sum(d.get("sla_compliant", 0) for d in per_sev.values())
+    resolved = sum(d.get("resolved", 0) for d in per_sev.values())
+    sla = (compliant / resolved * 100) if resolved else None
+    p90s = [d.get("open_age_p90") for d in per_sev.values() if d.get("open_age_p90") is not None]
+    oldest = max(p90s) if p90s else None
+    return sla, oldest

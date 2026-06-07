@@ -57,6 +57,22 @@ def extract_nodes(results):
     return [results]
 
 
+def df_signature(df) -> str:
+    """Cheap, stable signature for cache-keying computations derived from ``df``.
+
+    Used with the ``@st.cache_data`` ``(sig, _df)`` idiom so the (potentially large)
+    DataFrame isn't hashed on every rerun -- only this string is. Falls back to a
+    shape+columns key when cells aren't hashable (e.g. list-valued columns).
+    """
+    if df is None or getattr(df, "empty", True):
+        return "empty"
+    try:
+        h = int(pd.util.hash_pandas_object(df, index=True).sum())
+    except Exception:
+        h = hash(tuple(map(str, df.columns)))
+    return f"{df.shape}|{tuple(df.columns)}|{h}"
+
+
 def nodes_to_dataframe(nodes):
     if not nodes:
         return pd.DataFrame()

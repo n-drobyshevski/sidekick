@@ -12,6 +12,36 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURE_PATH = REPO_ROOT / "os_vulns_response_exemple.json"
 
 
+@pytest.fixture(autouse=True)
+def _isolated_ledger(tmp_path, monkeypatch):
+    """Point the durable ledger at a per-test temp dir and reset its caches.
+
+    Without this, any test that triggers a scan (e.g. clicking ``os_run``) would write a
+    real ``./data/ledger.db`` in the repo and leak state into later tests — notably the
+    MTTR empty-state test, which needs the ledger to be empty. ``config.DATA_DIR`` is read
+    at call time, so monkeypatching it isolates every read/write to ``tmp_path``.
+    """
+    from wiz_dashboard import config
+    from wiz_dashboard.data import history
+    from wiz_dashboard.ui.pages import _derived
+
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path / "data")
+    # Also keep the legacy daily-median file out of the repo when a test triggers a scan.
+    monkeypatch.setattr(history, "HISTORY_FILENAME", str(tmp_path / "mttr_history.json"))
+    caches = (
+        _derived.ledger_mttr_cached,
+        _derived.ledger_scans_cached,
+        _derived.ledger_base_cached,
+        _derived.ledger_trend_cached,
+        _derived.previous_severity_counts_cached,
+    )
+    for c in caches:
+        c.clear()
+    yield
+    for c in caches:
+        c.clear()
+
+
 @pytest.fixture(scope="session")
 def app():
     """Namespace of the relocated pure-logic functions (formerly the monolith)."""
@@ -33,8 +63,20 @@ def app():
 
 @pytest.fixture
 def fixture_text():
-    """Raw text of the committed sample response (note: malformed + grouped-by-asset)."""
+    """Raw text of the committed sample response (valid JSON, grouped-by-asset)."""
     return FIXTURE_PATH.read_text(encoding="utf-8")
+
+
+@pytest.fixture
+def grouped_sample():
+    """Parsed committed grouped-by-asset response (the real Wiz API shape).
+
+    The 10-asset ``os_vulns_response_exemple.json`` is now valid JSON and serves as the
+    default dry-run sample; this fixture loads it for end-to-end ingestion tests.
+    """
+    import json
+
+    return json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
 
 
 @pytest.fixture

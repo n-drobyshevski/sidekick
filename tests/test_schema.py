@@ -1,5 +1,6 @@
 """Tests for the dual-shape pydantic schema layer (handles flat + grouped responses)."""
 
+from wiz_dashboard.data.transform import extract_nodes
 from wiz_dashboard.models import schema
 
 
@@ -58,3 +59,22 @@ def test_severity_counts_from_groups():
         [g for g in groups if isinstance(g, schema.AssetGroup)]
     )
     assert counts == {"CRITICAL": 120, "HIGH": 2}
+
+
+def test_committed_example_is_valid_grouped_response(grouped_sample):
+    """The repaired os_vulns_response_exemple.json parses end-to-end as grouped data."""
+    nodes = extract_nodes(grouped_sample)
+    assert len(nodes) == 10
+    assert schema.is_grouped_shape(nodes)
+    groups = [g for g in schema.parse_nodes(nodes) if isinstance(g, schema.AssetGroup)]
+    counts = schema.severity_counts_from_groups(groups)
+    assert counts == {"CRITICAL": 494}
+
+
+def test_vulnerable_asset_captures_enriched_fields(grouped_sample):
+    """The enriched VulnerableAsset model surfaces the real grouped fields."""
+    nodes = extract_nodes(grouped_sample)
+    asset = schema.VulnerableAsset.model_validate(nodes[0]["vulnerableAsset"])
+    assert asset.externalId
+    assert asset.subscriptionName
+    assert isinstance(asset.tags, dict) and asset.tags

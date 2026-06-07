@@ -40,9 +40,9 @@ wiz_dashboard/
   domain/ severity.py        metrics.py (MTTR/SLA)   formatting.py
   models/ schema.py          # pydantic models (handles flat AND grouped responses)
   ui/     components.py       sanitize.py   theme.py
-          pages/             # os_vulns, cloud, identity, reports, exports
+          pages/             # os_vulns, reports, exports
   assets/ styles.css         # custom widget CSS (loaded once via load_css)
-.streamlit/config.toml      # native [theme] (accent/fonts; follows system light/dark)
+.streamlit/config.toml      # native [theme] (accent/fonts; pinned to light)
 tests/                      # pytest unit tests + AppTest smoke/scan
 ```
 

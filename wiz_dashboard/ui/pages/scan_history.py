@@ -1,0 +1,270 @@
+"""Scan History page: the durable base of vulnerabilities tracked across scans.
+
+A consumer page (like MTTR / Reports): it reads the SQLite ledger that every scan writes
+to (via ``ui.scan._persist_scan``) and never fetches on its own. This is where the saved
+scans, the deduplicated vulnerability base, and the lifecycle-derived MTTR live — the
+data that makes MTTR correct over time.
+"""
+
+import logging
+
+import pandas as pd
+import streamlit as st
+
+from wiz_dashboard.config import SEVERITY_COLORS, SEVERITY_GLYPHS, SEVERITY_ORDER
+from wiz_dashboard.data import ledger
+from wiz_dashboard.domain.formatting import format_duration
+from wiz_dashboard.domain.severity import normalize_severity
+from wiz_dashboard.ui import charts
+from wiz_dashboard.ui import components as ui
+from wiz_dashboard.ui.pages import _derived
+
+logger = logging.getLogger(__name__)
+
+_CVE_RE = r"CVE-\d{4}-\d+"
+
+# Lifecycle-first column order for the base table (only those present are shown).
+_BASE_PREFERRED = [
+    "severity", "cve", "asset_name", "asset_type", "cloud", "status",
+    "first_seen", "resolved_at", "age_days", "mttr_days",
+    "resolution_src", "reopened_count", "last_seen",
+]
+_BASE_LABELS = {
+    "asset_name": "Asset", "asset_type": "Type", "cloud": "Cloud", "status": "Status",
+    "resolution_src": "Resolved via", "reopened_count": "Reopened", "last_seen": "Last seen",
+}
+
+
+def page():
+    ui.render_page_header(
+        "Scan History",
+        "Durable base of vulnerabilities tracked across scans — the source of correct MTTR",
+    )
+
+    scans = _derived.ledger_scans_cached()
+    base = _derived.ledger_base_cached()
+
+    if scans is None or scans.empty:
+        ui.empty_state(
+            "No scans saved yet",
+            "Run a scan from the sidebar or the **OS vulnerabilities** page — every scan "
+            "is saved here and reconciled into the vulnerability base.",
+        )
+        return
+
+    _kpis(base)
+
+    ui.section_label("Saved scans")
+    selected = _scans_table(scans)
+    _delete_controls(scans, selected)
+
+    ui.section_label("Vulnerability base (ledger)")
+    _base_table(base)
+
+    trend = _derived.ledger_trend_cached()
+    ui.section_label("Open vs resolved (over time)")
+    charts.open_resolved_trend(trend)
+    ui.section_label("MTTR trend (median over time)")
+    charts.mttr_trend(trend)
+
+
+def _kpis(base) -> None:
+    _, overall = _derived.ledger_mttr_cached()
+    tracked = 0 if base is None or base.empty else len(base)
+    open_n = int((base["status"] == "OPEN").sum()) if tracked else 0
+    resolved_n = int((base["status"] == "RESOLVED").sum()) if tracked else 0
+    median = overall.get("mttr_median") if overall else None
+    ui.kpi_row(
+        [
+            {"label": "Tracked (all-time)", "value": f"{tracked:,}", "accent": "var(--accent)",
+             "help": "Distinct vulnerabilities ever observed across all saved scans."},
+            {"label": "Currently open", "value": f"{open_n:,}", "accent": SEVERITY_COLORS["HIGH"],
+             "help": "Vulnerabilities still awaiting remediation."},
+            {"label": "Resolved all-time", "value": f"{resolved_n:,}", "accent": "#16a34a",
+             "inverse": False,
+             "help": "Remediated — resolved by the API or by disappearing from a later scan."},
+            {"label": "Median MTTR", "value": format_duration(median), "accent": "var(--accent)",
+             "inverse": False,
+             "help": "Median days from first seen to resolved, across the durable base."},
+        ]
+    )
+
+
+def _selected_scan_ids(scans, rows) -> list:
+    """Map dataframe selection row positions to ``scan_id``s, dropping any out-of-range
+    index. The dataframe's selection state can outlive a delete that shrank the table,
+    so a stored position may point past the current frame — that maps to no scan, never
+    an ``IndexError``."""
+    n = len(scans)
+    ids = scans["scan_id"]
+    return [ids.iloc[i] for i in (rows or []) if 0 <= i < n]
+
+
+def _scans_table(scans) -> list:
+    """Render the saved-scans table (multi-row selectable) and return the selected
+    ``scan_id``s. Selection indices are positional in ``scans`` (newest first); the
+    widget key carries a nonce so a delete (which shrinks the table) discards the now-
+    stale selection instead of carrying a past-the-end index into the smaller frame."""
+    cols = [c for c in ("ts", "mode", "shape", "total", "new_count", "resolved_count",
+                        "reopened_count") if c in scans.columns]
+    event = st.dataframe(
+        scans[cols],
+        hide_index=True,
+        width="stretch",
+        on_select="rerun",
+        selection_mode="multi-row",
+        key=f"sh_scans_{st.session_state.get('sh_scans_nonce', 0)}",
+        column_config={
+            "ts": st.column_config.DatetimeColumn("When", format="YYYY-MM-DD HH:mm"),
+            "mode": st.column_config.TextColumn("Mode"),
+            "shape": st.column_config.TextColumn("Shape"),
+            "total": st.column_config.NumberColumn("Findings"),
+            "new_count": st.column_config.NumberColumn("＋ New", help="First seen in this scan"),
+            "resolved_count": st.column_config.NumberColumn(
+                "－ Resolved", help="Resolved in this scan (incl. disappeared)"
+            ),
+            "reopened_count": st.column_config.NumberColumn("↺ Reopened"),
+        },
+    )
+    rows = (event.selection.get("rows") if event and event.selection else None) or []
+    return _selected_scan_ids(scans, rows)
+
+
+def _delete_controls(scans, selected_ids) -> None:
+    """A primary "Delete selected" button that opens the confirm dialog."""
+    if not selected_ids:
+        return
+    if st.button(f"Delete selected ({len(selected_ids)})", type="primary", key="sh_delete"):
+        _confirm_delete(scans, selected_ids)
+
+
+@st.dialog("Delete scans?")
+def _confirm_delete(scans, selected_ids) -> None:
+    st.write(
+        f"Delete **{len(selected_ids)}** scan(s)? This rebuilds the vulnerability ledger "
+        "and recomputes MTTR as if the scan(s) never ran."
+    )
+    chosen = scans[scans["scan_id"].isin(selected_ids)]
+    for _, r in chosen.iterrows():
+        when = r["ts"].strftime("%Y-%m-%d %H:%M") if pd.notna(r["ts"]) else str(r["scan_id"])
+        total = f"{int(r['total']):,} findings" if pd.notna(r.get("total")) else "? findings"
+        st.markdown(f"- **{when}** · {r['mode']} · {total}")
+    c1, c2 = st.columns(2)
+    if c1.button("Cancel", key="sh_del_cancel", width="stretch"):
+        st.rerun()
+    if c2.button("Delete", type="primary", key="sh_del_confirm", width="stretch"):
+        if _perform_delete(selected_ids) is not None:
+            # The delete shrank the table; bump the dataframe key so the now-stale
+            # positional row-selection is discarded instead of indexing past the frame.
+            st.session_state["sh_scans_nonce"] = (
+                st.session_state.get("sh_scans_nonce", 0) + 1
+            )
+        st.rerun()
+
+
+def _base_table(base) -> None:
+    if base is None or base.empty:
+        st.info("No vulnerabilities in the base yet — grouped-by-asset scans don't populate it.")
+        return
+
+    with st.container(horizontal=True):
+        statuses = sorted(base["status"].dropna().unique().tolist())
+        status_sel = st.multiselect("Status", statuses, default=statuses, key="sh_status")
+        present = set(base["severity"].dropna().map(normalize_severity))
+        sev_opts = [s for s in SEVERITY_ORDER if s in present]
+        sev_sel = st.multiselect("Severity", sev_opts, default=sev_opts, key="sh_sev")
+    query = st.text_input(
+        "Search", key="sh_q", placeholder="Filter by CVE or asset name",
+        label_visibility="collapsed",
+    )
+
+    view = base
+    if status_sel:
+        view = view[view["status"].isin(status_sel)]
+    if sev_sel:
+        view = view[view["severity"].map(normalize_severity).isin(sev_sel)]
+    if query:
+        hay = (
+            view["cve"].astype(str) + " " + view["asset_name"].astype(str)
+        ).str.lower()
+        view = view[hay.str.contains(query.lower(), regex=False, na=False)]
+
+    if view.empty:
+        st.info("No vulnerabilities match the current filters.")
+        return
+
+    display, cfg = _base_display(view)
+    st.dataframe(display, hide_index=True, width="stretch", height=460, column_config=cfg)
+    st.caption(f"{len(view):,} of {len(base):,} vulnerabilities")
+    st.download_button(
+        "Download CSV",
+        data=view.drop(columns=["latest_json"], errors="ignore").to_csv(index=False).encode("utf-8"),
+        file_name="vuln_base.csv",
+        mime="text/csv",
+        key="sh_csv",
+    )
+
+
+def _base_display(view):
+    cols = [c for c in _BASE_PREFERRED if c in view.columns]
+    df = view[cols].copy()
+    cfg = {}
+    if "severity" in df.columns:
+        df["severity"] = df["severity"].map(_sev_glyph)
+        cfg["severity"] = st.column_config.TextColumn("Severity")
+    if "cve" in df.columns:
+        nonnull = df["cve"].dropna().astype(str)
+        if len(nonnull) == len(df) and nonnull.str.fullmatch(_CVE_RE, case=False).all():
+            df["cve"] = "https://nvd.nist.gov/vuln/detail/" + df["cve"].astype(str)
+            cfg["cve"] = st.column_config.LinkColumn(
+                "CVE", help="Open on the NVD", display_text=f"({_CVE_RE})"
+            )
+        else:
+            cfg["cve"] = st.column_config.TextColumn("CVE")
+    for col, label in (("first_seen", "First seen"), ("resolved_at", "Resolved"),
+                       ("last_seen", "Last seen")):
+        if col in df.columns:
+            cfg[col] = st.column_config.DatetimeColumn(label, format="YYYY-MM-DD")
+    if "age_days" in df.columns:
+        cfg["age_days"] = st.column_config.NumberColumn(
+            "Age (days)", format="%.1f", help="Days open (now − first seen)."
+        )
+    if "mttr_days" in df.columns:
+        cfg["mttr_days"] = st.column_config.NumberColumn(
+            "MTTR (days)", format="%.1f", help="Days from first seen to resolved."
+        )
+    for col, label in _BASE_LABELS.items():
+        if col in df.columns and col not in cfg:
+            if col == "reopened_count":
+                cfg[col] = st.column_config.NumberColumn(label)
+            else:
+                cfg[col] = st.column_config.TextColumn(label)
+    return df, cfg
+
+
+def _sev_glyph(value):
+    if not isinstance(value, str) or not value:
+        return value
+    return f"{SEVERITY_GLYPHS.get(normalize_severity(value), '')} {value}".strip()
+
+
+def _perform_delete(scan_ids):
+    """Delete scans, rebuild the ledger, refresh caches, and toast. Returns the summary
+    dict, or None if the rebuild was refused (surfaced as a warning)."""
+    try:
+        summary = ledger.delete_scans(scan_ids)
+    except ledger.LedgerRebuildError as exc:
+        ui.show_toast(str(exc), "warning")
+        return None
+    except Exception:  # noqa: BLE001 -- a locked/unwritable DB shouldn't crash the page
+        logger.warning("Failed to delete scans %s", scan_ids, exc_info=True)
+        ui.show_toast("Couldn't delete the selected scan(s) — the base was left unchanged.",
+                      "error")
+        return None
+    _derived.clear_ledger_caches()
+    ui.show_toast(
+        f"Deleted {summary['deleted']} scan(s); ledger rebuilt — "
+        f"{summary['scans']} scans, {summary['tracked']:,} tracked vulns",
+        "success",
+    )
+    return summary

@@ -11,9 +11,12 @@ except Exception:
 
 import json
 import argparse
+import concurrent.futures
 import csv
+import functools
 import os
 import sys
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 ####
@@ -594,44 +597,199 @@ VARIABLES = {
 
 
 # Sample response for --dry-run / offline testing (flat per-finding shape).
+#
+# A realistic spread so the dashboard is fully populated offline: every severity,
+# a mix of resolved (with resolvedAt) and still-open findings, SLA outcomes that
+# both meet and miss their target, and varied assets / types / clouds / statuses so
+# the filters have options. All names are CVE ids so the table's NVD link column
+# activates. Dates are fixed absolute timestamps (not relative to "now") so MTTR and
+# severity counts are deterministic; SLA targets are CRITICAL 7 / HIGH 14 / MEDIUM 30
+# / LOW 90 / INFO 180 days (see config.SLA_TARGETS).
+def _finding(
+    fid, cve, severity, asset, atype, cloud, fixed, first, resolved=None, **extra
+):
+    """Build one sample finding. ``**extra`` merges rich Wiz fields onto the node
+    (e.g. cvssv3, epssProbability, hasExploit, description); a ``vulnerableAsset``
+    dict in ``extra`` deep-merges into the asset sub-object. Used to enrich a few
+    findings so the details sheet's full-schema sections are visible under --dry-run."""
+    node = {
+        "id": fid,
+        "name": cve,
+        "severity": severity,
+        "status": "RESOLVED" if resolved else "OPEN",
+        "vulnerableAsset": {"name": asset, "type": atype, "cloudPlatform": cloud},
+        "fixedVersion": fixed,
+        "firstDetectedAt": f"{first}T00:00:00Z",
+    }
+    if resolved:
+        node["resolvedAt"] = f"{resolved}T00:00:00Z"
+    asset_extra = extra.pop("vulnerableAsset", None)
+    if isinstance(asset_extra, dict):
+        node["vulnerableAsset"].update(asset_extra)
+    node.update(extra)
+    return node
+
+
 SAMPLE_RESULTS: Dict[str, Any] = {
     "data": {
         "vulnerabilityFindings": {
             "nodes": [
-                {
-                    "id": "dry-1",
-                    "name": "sample-vuln",
-                    "severity": "CRITICAL",
-                    "vulnerableAsset": {"name": "vm-sample"},
-                    "fixedVersion": "1.2.3",
-                    "firstDetectedAt": "2026-05-27T00:00:00Z",
-                }
+                # CRITICAL (SLA 7d): median ~5d (in SLA), with one breach + two open.
+                _finding("dry-c1", "CVE-2026-1001", "CRITICAL", "web-prod-01", "VIRTUAL_MACHINE", "AWS", "1.2.3", "2026-04-01", "2026-04-04"),
+                _finding("dry-c2", "CVE-2026-1002", "CRITICAL", "web-prod-02", "VIRTUAL_MACHINE", "AWS", "1.2.4", "2026-04-10", "2026-04-15"),
+                # dry-c3 / dry-c4 / dry-h1 are enriched with the full Wiz field set so the
+                # details sheet's scoring / exploitability / asset / tags sections demo offline.
+                _finding(
+                    "dry-c3", "CVE-2026-1003", "CRITICAL", "registry/api:2.1", "CONTAINER_IMAGE", "GCP", "2.2.0", "2026-03-20", "2026-04-01",
+                    description="Heap overflow in libfoo allows unauthenticated remote code execution via a crafted request.",
+                    detailedName="libfoo 1.4.2", recommendedVersion="2.2.0", detectionMethod="CONTAINER_IMAGE_SBOM",
+                    publishedDate="2026-03-15T00:00:00Z", lastDetectedAt="2026-03-31T00:00:00Z",
+                    hasExploit=True, hasCisaKevExploit=True, cisaKevReleaseDate="2026-03-18T00:00:00Z",
+                    cisaKevDueDate="2026-04-08T00:00:00Z", validatedInRuntime=True, usedInCodeResult="USED",
+                    epssSeverity="CRITICAL", epssPercentile=0.974, epssProbability=0.88,
+                    weightedSeverity="CRITICAL", vendorSeverity="CRITICAL", nvdSeverity="CRITICAL", cnaScore=9.8,
+                    cvssv3={"score": 9.8, "vectorString": "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"},
+                    remediationPullRequestAvailable=True, hasTriggerableRemediation=True,
+                    vulnerableAsset={
+                        "id": "img-001", "externalId": "sha256:abc123ef",
+                        "subscriptionName": "prod-registry", "subscriptionExternalId": "gcp-proj-prod",
+                        "operatingSystem": "Debian 12", "hasWideInternetExposure": True,
+                        "tags": {"team": "platform", "env": "prod", "pii": "false"},
+                    },
+                ),
+                _finding(
+                    "dry-c4", "CVE-2026-1004", "CRITICAL", "db-prod-01", "VIRTUAL_MACHINE", "Azure", "14.2", "2026-03-01",
+                    description="Privilege escalation in the SQL engine lets a low-privileged role gain superuser.",
+                    detailedName="postgres 14.1", recommendedVersion="14.2", detectionMethod="OS_PACKAGE",
+                    publishedDate="2026-02-20T00:00:00Z", reachability="NETWORK",
+                    hasExploit=True, hasCisaKevExploit=False, validatedInRuntime=False,
+                    epssSeverity="MEDIUM", epssPercentile=0.62, epssProbability=0.21,
+                    vendorSeverity="HIGH", nvdSeverity="CRITICAL", cnaScore=8.8,
+                    cvssv3={"score": 8.8, "vectorString": "AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"},
+                    vulnerableAsset={
+                        "id": "vm-azure-01", "externalId": "/subscriptions/xyz/db-prod-01",
+                        "subscriptionName": "core-prod", "subscriptionExternalId": "azure-sub-001",
+                        "operatingSystem": "Ubuntu 22.04", "hasLimitedInternetExposure": True,
+                        "tags": {"env": "prod", "owner": "dba", "tier": "data"},
+                    },
+                ),
+                _finding("dry-c5", "CVE-2026-1005", "CRITICAL", "edge-gw-01", "VIRTUAL_MACHINE", "AWS", "3.0.1", "2026-02-15"),
+                # HIGH (SLA 14d): median ~19d (BREACHING), plus one open.
+                _finding(
+                    "dry-h1", "CVE-2026-2001", "HIGH", "api-staging-02", "VIRTUAL_MACHINE", "AWS", "5.1.0", "2026-04-01", "2026-04-17",
+                    description="Authentication bypass in the API gateway under a race condition.",
+                    detailedName="gateway 5.0.9", recommendedVersion="5.1.0", detectionMethod="OS_PACKAGE",
+                    hasExploit=False, epssSeverity="MEDIUM", epssPercentile=0.71, epssProbability=0.34,
+                    vendorSeverity="HIGH", nvdSeverity="HIGH",
+                    cvssv3={"score": 7.5, "vectorString": "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"},
+                    vulnerableAsset={
+                        "subscriptionName": "staging", "externalId": "i-0abc123",
+                        "operatingSystem": "Amazon Linux 2", "tags": {"env": "staging"},
+                    },
+                ),
+                _finding("dry-h2", "CVE-2026-2002", "HIGH", "registry/worker:1.4", "CONTAINER_IMAGE", "GCP", "1.5.0", "2026-03-25", "2026-04-14"),
+                _finding("dry-h3", "CVE-2026-2003", "HIGH", "batch-fn-01", "SERVERLESS", "AWS", "0.9.2", "2026-04-05", "2026-04-23"),
+                _finding("dry-h4", "CVE-2026-2004", "HIGH", "cache-prod-03", "VIRTUAL_MACHINE", "Azure", "7.0.0", "2026-03-10", "2026-04-01"),
+                _finding("dry-h5", "CVE-2026-2005", "HIGH", "web-prod-03", "VIRTUAL_MACHINE", "AWS", "1.3.0", "2026-04-20"),
+                # MEDIUM (SLA 30d): median ~25d (in SLA), plus one open.
+                _finding("dry-m1", "CVE-2026-3001", "MEDIUM", "analytics-01", "VIRTUAL_MACHINE", "GCP", "2.4.1", "2026-03-01", "2026-03-19"),
+                _finding("dry-m2", "CVE-2026-3002", "MEDIUM", "registry/etl:3.0", "CONTAINER_IMAGE", "AWS", "3.1.0", "2026-03-10", "2026-04-04"),
+                _finding("dry-m3", "CVE-2026-3003", "MEDIUM", "report-svc-02", "SERVERLESS", "Azure", "1.1.2", "2026-02-20", "2026-03-27"),
+                _finding("dry-m4", "CVE-2026-3004", "MEDIUM", "queue-prod-01", "VIRTUAL_MACHINE", "AWS", "5.5.0", "2026-04-15"),
+                # LOW (SLA 90d): both resolved well within target.
+                _finding("dry-l1", "CVE-2026-4001", "LOW", "dev-box-07", "VIRTUAL_MACHINE", "GCP", "0.4.0", "2026-02-01", "2026-03-13"),
+                _finding("dry-l2", "CVE-2026-4002", "LOW", "registry/docs:1.0", "CONTAINER_IMAGE", "AWS", "1.0.1", "2026-01-15", "2026-03-26"),
+                # INFO (SLA 180d): one resolved.
+                _finding("dry-i1", "CVE-2026-5001", "INFO", "legacy-vm-12", "VIRTUAL_MACHINE", "Azure", "8.0.0", "2026-01-05", "2026-05-05"),
             ]
         }
     }
 }
 
 
-def fetch_findings(dry_run: bool = True, config: Optional[Dict[str, Any]] = None) -> Any:
+# Committed grouped-by-asset sample (the real Wiz response shape). Lives next to this
+# module so the path resolves regardless of the working directory.
+GROUPED_SAMPLE_PATH = Path(__file__).resolve().parent / "os_vulns_response_exemple.json"
+
+# Minimal safety net if the committed grouped sample is missing/unreadable, so the
+# dry-run never crashes. This is a fallback, NOT the demo data — the real sample is the
+# 10-asset committed file loaded by ``_grouped_sample``.
+_GROUPED_FALLBACK: Dict[str, Any] = {
+    "data": {
+        "vulnerabilityFindingsGroupedByValues": {
+            "nodes": [
+                {
+                    "id": "grp-fallback-1",
+                    "vulnerableAsset": {
+                        "id": "fallback-asset-1",
+                        "type": "VIRTUAL_MACHINE",
+                        "name": "sample-vm-01",
+                        "cloudPlatform": "AWS",
+                    },
+                    "analytics": {
+                        "vulnerableAssetCount": 1,
+                        "totalFindingCount": 1,
+                        "criticalSeverityFindingCount": 1,
+                        "highSeverityFindingCount": 0,
+                        "mediumSeverityFindingCount": 0,
+                        "lowSeverityFindingCount": 0,
+                        "informationalSeverityFindingCount": 0,
+                    },
+                }
+            ],
+            "pageInfo": {"hasNextPage": False, "endCursor": None},
+        }
+    }
+}
+
+
+@functools.lru_cache(maxsize=1)
+def _grouped_sample() -> Dict[str, Any]:
+    """Load the committed grouped-by-asset sample response (memoized).
+
+    Returns the parsed ``os_vulns_response_exemple.json`` (the real Wiz
+    ``vulnerabilityFindingsGroupedByValues`` shape). Degrades to ``_GROUPED_FALLBACK``
+    if the file is missing or unparseable, so ``--dry-run`` never raises.
+    """
+    try:
+        return json.loads(GROUPED_SAMPLE_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return _GROUPED_FALLBACK
+
+
+def fetch_findings(
+    dry_run: bool = True,
+    config: Optional[Dict[str, Any]] = None,
+    timeout_seconds: float = 60.0,
+    sample_shape: str = "grouped",
+) -> Any:
     """Fetch the raw Wiz vulnerability-findings response.
 
     Importable entry point shared by the CLI (`main`) and the Streamlit app, so
     the app no longer has to shell out via runpy.
 
     Args:
-        dry_run: when True, return bundled ``SAMPLE_RESULTS`` without calling the API.
+        dry_run: when True, return bundled sample data without calling the API.
         config: optional ``{"wiz_client_id", "wiz_client_secret"}`` injected into the
             environment for the SDK when running live.
+        timeout_seconds: hard deadline for the live API call. The blocking SDK call
+            runs in a worker thread so a hung endpoint can't freeze the Streamlit
+            server; exceeding the deadline raises ``TimeoutError``.
+        sample_shape: which dry-run sample to return -- ``"grouped"`` (default) yields
+            the committed grouped-by-asset response (mirrors the real API); ``"flat"``
+            yields the per-finding ``SAMPLE_RESULTS`` that powers MTTR/SLA/ledger offline.
+            Ignored when ``dry_run`` is False.
 
     Returns:
-        The raw response object from the Wiz SDK (typically a dict), or
-        ``SAMPLE_RESULTS`` in dry-run mode.
+        The raw response object from the Wiz SDK (typically a dict), or a bundled
+        sample (grouped or flat) in dry-run mode.
 
     Raises:
         RuntimeError: in live mode when ``wiz_sdk`` is not installed.
+        TimeoutError: in live mode when the API does not respond within the deadline.
     """
     if dry_run:
-        return SAMPLE_RESULTS
+        return _grouped_sample() if sample_shape == "grouped" else SAMPLE_RESULTS
     if WizAPIClient is None:
         raise RuntimeError(
             "wiz_sdk not installed; either install it or run with --dry-run"
@@ -642,7 +800,19 @@ def fetch_findings(dry_run: bool = True, config: Optional[Dict[str, Any]] = None
         if config.get("wiz_client_secret"):
             os.environ["WIZ_CLIENT_SECRET"] = config["wiz_client_secret"]
     client = WizAPIClient()
-    return client.query(QUERY, VARIABLES)
+    # Run the blocking SDK call in a worker thread and abandon it if it overruns,
+    # so a hung Wiz endpoint can never freeze the dashboard. shutdown(wait=False)
+    # avoids blocking on a still-running thread once we've given up on it.
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = pool.submit(client.query, QUERY, VARIABLES)
+    try:
+        return future.result(timeout=timeout_seconds)
+    except concurrent.futures.TimeoutError as exc:
+        raise TimeoutError(
+            f"Wiz API did not respond within {timeout_seconds:.0f}s"
+        ) from exc
+    finally:
+        pool.shutdown(wait=False)
 
 
 def main():
@@ -791,12 +961,19 @@ def main():
         help="Use sample data without calling the Wiz API",
     )
     parser.add_argument(
+        "--dry-run-shape",
+        choices=["grouped", "flat"],
+        default="grouped",
+        help="Which --dry-run sample to use: 'grouped' (default, mirrors the real "
+        "grouped-by-asset API response) or 'flat' (per-finding sample with MTTR/SLA data)",
+    )
+    parser.add_argument(
         "--debug", action="store_true", help="Print diagnostic info about API response"
     )
     args = parser.parse_args()
 
     if args.dry_run:
-        results = fetch_findings(dry_run=True)
+        results = fetch_findings(dry_run=True, sample_shape=args.dry_run_shape)
     else:
         try:
             results = fetch_findings(dry_run=False)

@@ -1,0 +1,76 @@
+"""Shared, cached derivations over a loaded findings DataFrame.
+
+The pure domain functions stay un-decorated (and unit-tested directly); these thin
+wrappers memoize their results so reruns that don't change the data don't recompute
+counts/MTTR or re-read the history file from disk. The leading-``_`` on ``_df`` tells
+Streamlit to key only on ``sig`` instead of hashing the frame.
+
+These live here (rather than inside a single page) so every page that needs them shares
+one cache: the OS-vulnerabilities scan clears ``history_cached`` after writing a snapshot,
+and the MTTR page must observe that same invalidation.
+"""
+
+import streamlit as st
+
+from wiz_dashboard.data import history, ledger
+from wiz_dashboard.domain import lifecycle
+from wiz_dashboard.domain.metrics import calculate_mttr
+from wiz_dashboard.domain.severity import count_by_severity
+
+
+@st.cache_data(show_spinner=False)
+def counts_cached(sig: str, _df):
+    return count_by_severity(_df)
+
+
+@st.cache_data(show_spinner=False)
+def mttr_cached(sig: str, _df):
+    return calculate_mttr(_df)
+
+
+@st.cache_data(show_spinner=False)
+def history_cached():
+    return history.load_history()
+
+
+# ---- Durable ledger derivations (cleared by ui.scan._persist_scan after each scan) ----
+# These read the SQLite base rather than the in-session DataFrame, so MTTR/History pages
+# reflect lifecycles observed across ALL saved scans, not just the current one.
+@st.cache_data(show_spinner=False)
+def ledger_mttr_cached():
+    return lifecycle.mttr_from_ledger(ledger.load_open_and_resolved())
+
+
+@st.cache_data(show_spinner=False)
+def ledger_scans_cached():
+    return ledger.load_scans_df()
+
+
+@st.cache_data(show_spinner=False)
+def ledger_base_cached():
+    return ledger.load_base_df()
+
+
+@st.cache_data(show_spinner=False)
+def ledger_trend_cached():
+    return ledger.load_trend_df()
+
+
+@st.cache_data(show_spinner=False)
+def previous_severity_counts_cached():
+    """Durable previous-flat-scan per-severity counts — the cross-session baseline for the
+    severity breakdown's change badges (cheap on the OS page's filter-fragment reruns)."""
+    return ledger.previous_severity_counts()
+
+
+def clear_ledger_caches() -> None:
+    """Invalidate every durable-ledger derivation. Call after any write OR delete that
+    changes the SQLite base so consumer pages (Scan History / MTTR) reflect it."""
+    for cached in (
+        ledger_mttr_cached,
+        ledger_scans_cached,
+        ledger_base_cached,
+        ledger_trend_cached,
+        previous_severity_counts_cached,
+    ):
+        cached.clear()

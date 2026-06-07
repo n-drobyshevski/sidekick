@@ -26,24 +26,28 @@ def test_same_day_upsert(tmp_path):
 def test_load_missing_is_empty(tmp_path):
     df = history.load_history(str(tmp_path / "nope.json"))
     assert df.empty
-    assert list(df.columns) == ["date", "median_days", "resolved", "open", "total"]
+    assert list(df.columns) == [
+        "date", "median_days", "resolved", "open", "total", "sla_pct", "oldest_open_days"
+    ]
 
 
 def test_record_snapshot_glue_records_when_median_present(tmp_path, resolved_sample, app):
-    from wiz_dashboard.ui.pages import os_vulns
+    # The scan side-effects (incl. the MTTR snapshot) live in ui.scan, shared by the OS
+    # page and the global sidebar trigger.
+    from wiz_dashboard.ui import scan
 
     f = str(tmp_path / "h.json")
     df = app.nodes_to_dataframe(app.extract_nodes(resolved_sample))
-    os_vulns._record_mttr_snapshot(df, app.count_by_severity(df), filename=f)
+    scan._record_mttr_snapshot(df, app.count_by_severity(df), filename=f)
     hist = history.load_history(f)
     assert len(hist) == 1
     assert hist["median_days"].iloc[0] == 7.0
 
 
 def test_record_snapshot_glue_skips_without_median(tmp_path, flat_sample, app):
-    from wiz_dashboard.ui.pages import os_vulns
+    from wiz_dashboard.ui import scan
 
     f = str(tmp_path / "h.json")
     df = app.nodes_to_dataframe(app.extract_nodes(flat_sample))
-    os_vulns._record_mttr_snapshot(df, {}, filename=f)
+    scan._record_mttr_snapshot(df, {}, filename=f)
     assert history.load_history(f).empty  # no resolvedAt column -> nothing recorded

@@ -15,3 +15,11 @@ wiz_config.json
 # Local runtime cache
 last_results.json
 mttr_history.json
+
+# Durable scan archive + vulnerability ledger (SQLite + raw scan JSON).
+# Anchored to the repo root so it does NOT also ignore the wiz_dashboard/data source
+# package (the bare `data/` rule did, silently hiding demo.py / ledger.py).
+/data/
+
+# Local tooling scratch (Playwright MCP snapshots/screenshots/console logs)
+.playwright-mcp/

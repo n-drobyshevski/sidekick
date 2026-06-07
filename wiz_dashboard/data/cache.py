@@ -2,12 +2,16 @@
 
 import datetime
 import json
+import logging
 from pathlib import Path
 
 from wiz_dashboard.config import CACHE_FILENAME, DEFAULT_CACHE_TTL_MINUTES
 
+logger = logging.getLogger(__name__)
 
-def save_cache(results, filename: str = CACHE_FILENAME) -> None:
+
+def save_cache(results, filename: str = CACHE_FILENAME) -> bool:
+    """Write the snapshot. Never raises; logs and returns False on failure."""
     try:
         obj = {
             "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -16,9 +20,11 @@ def save_cache(results, filename: str = CACHE_FILENAME) -> None:
         Path(filename).write_text(
             json.dumps(obj, indent=2, default=str, ensure_ascii=False), encoding="utf-8"
         )
+        return True
     except Exception:
-        # Never fail the app over a cache-write problem.
-        pass
+        # Never fail the app over a cache-write problem -- but make it visible.
+        logger.warning("Failed to write cache snapshot to %s", filename, exc_info=True)
+        return False
 
 
 def load_cache(
@@ -46,6 +52,7 @@ def load_cache(
             return None
         return data.get("results")
     except Exception:
+        logger.warning("Failed to read cache snapshot from %s", filename, exc_info=True)
         return None
 
 

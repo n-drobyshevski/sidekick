@@ -1,12 +1,33 @@
 # Streamlit configuration.
 #
-# The custom stylesheet (wiz_dashboard/assets/styles.css, injected via
-# wiz_dashboard.ui.theme.load_css) styles the bespoke widgets. This [theme] block
-# sets the native accent colour and font. `base` is intentionally left unset so the
-# app follows the viewer's light/dark system preference (the CSS uses light-dark()).
+# Native theming carries the base look: surfaces, borders, radius, fonts and the
+# categorical chart palette all live here now (Streamlit 1.49+). The custom
+# stylesheet (wiz_dashboard/assets/styles.css, injected via
+# wiz_dashboard.ui.theme.load_css) only styles bespoke widgets that native theming
+# can't express (KPI cards, severity badges, SLA bullets, sidebar nav polish) and
+# rebases its tokens onto the exposed --st-* CSS variables.
+#
+# `base = "light"` pins the app to the light theme regardless of the viewer's system
+# preference (the CSS and the severity palette are light-tuned).
 [theme]
-primaryColor = "#2563eb"
-font = "sans-serif"
+base = "light"
+primaryColor = "#2563eb"                 # blue brand / data / focus accent
+backgroundColor = "#ffffff"              # page background (Streamlit owns it)
+secondaryBackgroundColor = "#f8f8fa"     # cards, st.metric, sidebar (~ old --surface / --sidebar-bg)
+textColor = "#171717"                    # ~ old --text-1 (rgba(0,0,0,0.9)) flattened on white
+borderColor = "#e6e6e9"                  # ~ old --border-1 (rgba(0,0,0,0.08)) flattened on white
+dataframeBorderColor = "#e6e6e9"
+baseRadius = "0.625rem"                  # == old --radius (10px); sm/md/lg/xl derived in CSS
+font = "sans-serif"                      # keep the system font stack (no external fonts)
+headingFont = "sans-serif"
+# Categorical chart colours, ordered to match config.py:SEVERITY_ORDER so any
+# unstyled categorical chart inherits the severity palette. Explicit per-mark
+# colour scales in ui/charts.py still take precedence over these.
+chartCategoricalColors = ["#dc2626", "#ea580c", "#d97706", "#2563eb", "#64748b", "#475569"]
+
+[theme.sidebar]
+backgroundColor = "#f8f8fa"              # == --sidebar-bg (opaque; drops the old 0.98 alpha)
+borderColor = "#e6e6e9"                  # == --sidebar-border
 
 [browser]
 # Security tooling: don't phone home with usage stats.

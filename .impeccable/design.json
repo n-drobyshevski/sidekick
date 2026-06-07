@@ -1,0 +1,178 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-06-07T00:00:00Z",
+  "title": "Design System: Wiz Security Dashboard",
+  "extensions": {
+    "colorMeta": {
+      "signal-blue": {
+        "role": "primary",
+        "displayName": "Signal Blue",
+        "canonical": "#2563eb",
+        "tonalRamp": ["#0c1b3a", "#15296b", "#1d4ed8", "#2563eb", "#4f86f0", "#84acf6", "#b9d0fb", "#e4edfe"]
+      },
+      "graphite": {
+        "role": "secondary",
+        "displayName": "Graphite",
+        "canonical": "#0a0a0a",
+        "tonalRamp": ["#0a0a0a", "#171717", "#27272a", "#3f3f46", "#52525b", "#71717a", "#a1a1aa", "#d4d4d8"]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "#171717",
+        "tonalRamp": ["#0a0a0a", "#171717", "#404040", "#525252", "#737373", "#a3a3a3", "#d4d4d4", "#f5f5f5"]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Cool Surface",
+        "canonical": "#f8f8fa",
+        "tonalRamp": ["#18181b", "#27272a", "#52525b", "#71717a", "#a1a1aa", "#d4d4d8", "#e6e6e9", "#f8f8fa"]
+      },
+      "sev-critical": {
+        "role": "tertiary",
+        "displayName": "Critical Red",
+        "canonical": "#dc2626",
+        "tonalRamp": ["#450a0a", "#7f1d1d", "#b91c1c", "#dc2626", "#ef4444", "#f87171", "#fca5a5", "#fee2e2"]
+      },
+      "sev-high": {
+        "role": "tertiary",
+        "displayName": "High Orange",
+        "canonical": "#ea580c",
+        "tonalRamp": ["#431407", "#7c2d12", "#c2410c", "#ea580c", "#f97316", "#fb923c", "#fdba74", "#ffedd5"]
+      },
+      "sev-medium": {
+        "role": "tertiary",
+        "displayName": "Medium Amber",
+        "canonical": "#d97706",
+        "tonalRamp": ["#451a03", "#78350f", "#b45309", "#d97706", "#f59e0b", "#fbbf24", "#fcd34d", "#fef3c7"]
+      },
+      "sev-low": {
+        "role": "tertiary",
+        "displayName": "Low Blue",
+        "canonical": "#2563eb",
+        "tonalRamp": ["#0c1b3a", "#15296b", "#1d4ed8", "#2563eb", "#4f86f0", "#84acf6", "#b9d0fb", "#e4edfe"]
+      },
+      "sev-info": {
+        "role": "tertiary",
+        "displayName": "Info Slate",
+        "canonical": "#64748b",
+        "tonalRamp": ["#020617", "#1e293b", "#334155", "#475569", "#64748b", "#94a3b8", "#cbd5e1", "#f1f5f9"]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display / h1", "purpose": "Page titles and hero metric values. The 24px ceiling; the app never shouts." },
+      "title": { "displayName": "Title / h3", "purpose": "Card and subsection titles." },
+      "body": { "displayName": "Body", "purpose": "Default text; prose capped 65-75ch, data may run denser." },
+      "label": { "displayName": "Label", "purpose": "Uppercase section titles, control labels, badges, sidebar group headers." }
+    },
+    "shadows": [
+      { "name": "card-whisper", "value": "0 1px 2px 0 rgba(0,0,0,0.05)", "purpose": "Resting shadow on KPI and stat-list cards. Reads as a surface, not a float." },
+      { "name": "button-rest", "value": "0 1px 2px 0 rgba(0,0,0,0.04)", "purpose": "Secondary buttons at rest." },
+      { "name": "sheet-overlay", "value": "-8px 0 24px -8px rgba(0,0,0,0.18), -2px 0 8px -4px rgba(0,0,0,0.10)", "purpose": "The single real elevation: the right-anchored finding Sheet over the page it covers." }
+    ],
+    "motion": [
+      { "name": "control", "value": "150ms ease", "purpose": "Button and nav-link hover / focus / border transitions." },
+      { "name": "sheet-in", "value": "220ms cubic-bezier(0.32, 0.72, 0, 1)", "purpose": "Finding Sheet slide-in from the right (ease-out). Reduced-motion zeroes the duration." }
+    ],
+    "breakpoints": [
+      { "name": "phone", "value": "640px", "purpose": "Finding Sheet goes full-bleed at or below this width." },
+      { "name": "content-max", "value": "1500px", "purpose": "Max width of the main block container." }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one committing action per context (e.g. Run scan). Solid near-black, deliberately not blue.",
+      "html": "<button class=\"ds-btn-primary\">Run scan</button>",
+      "css": ".ds-btn-primary { background:#0a0a0a; color:#fafafa; border:1px solid transparent; border-radius:8px; font-weight:500; font-size:0.8125rem; padding:6px 14px; min-height:36px; box-shadow:0 1px 2px 0 rgba(0,0,0,0.04); cursor:pointer; transition:background .15s ease; } .ds-btn-primary:hover { background:#27272a; } .ds-btn-primary:focus-visible { outline:2px solid #2563eb; outline-offset:2px; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "The everyday button: bordered surface with a one-pixel rest shadow.",
+      "html": "<button class=\"ds-btn-secondary\">Refresh</button>",
+      "css": ".ds-btn-secondary { background:rgba(0,0,0,0.025); color:#171717; border:1px solid #e6e6e9; border-radius:8px; font-weight:500; font-size:0.8125rem; padding:6px 14px; min-height:36px; box-shadow:0 1px 2px 0 rgba(0,0,0,0.04); cursor:pointer; transition:background .15s ease, border-color .15s ease; } .ds-btn-secondary:hover { background:rgba(0,0,0,0.05); border-color:rgba(0,0,0,0.14); } .ds-btn-secondary:focus-visible { outline:2px solid #2563eb; outline-offset:2px; }"
+    },
+    {
+      "name": "Severity Badge",
+      "kind": "chip",
+      "refersTo": "badge-critical",
+      "description": "Severity pill: same-hue tint fill, darkened severity text token, leading CSS dot. Meaning carried by text and shape, not color alone.",
+      "html": "<span class=\"ds-sev-badge ds-sev-badge--critical\" role=\"status\" aria-label=\"Severity: Critical\"><span class=\"ds-sev-dot\"></span>Critical</span>",
+      "css": ".ds-sev-badge { display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:6px; font-size:0.75rem; font-weight:600; line-height:1.4; white-space:nowrap; font-variant-numeric:tabular-nums; } .ds-sev-badge--critical { background:color-mix(in srgb, #dc2626 14%, transparent); color:#b91c1c; } .ds-sev-dot { width:9px; height:9px; border-radius:50%; background:#dc2626; flex:none; }"
+    },
+    {
+      "name": "KPI Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Headline metric card: muted label with optional severity dot, large tabular value, good/bad delta chip (arrow shows direction, color shows good/bad).",
+      "html": "<div class=\"ds-kpi-card\"><div class=\"ds-kpi-card__label\"><span class=\"ds-kpi-dot\"></span>Critical</div><div class=\"ds-kpi-card__value\">12</div><div class=\"ds-kpi-card__delta ds-kpi-card__delta--bad\"><span aria-hidden=\"true\">▲</span> +3</div></div>",
+      "css": ".ds-kpi-card { box-sizing:border-box; min-width:150px; padding:16px; border:1px solid #e6e6e9; border-radius:14px; background:rgba(0,0,0,0.025); box-shadow:0 1px 2px 0 rgba(0,0,0,0.05); font-family:-apple-system,BlinkMacSystemFont,Inter,'Segoe UI',Roboto,sans-serif; } .ds-kpi-card__label { font-size:0.75rem; color:rgba(0,0,0,0.65); font-weight:500; display:flex; align-items:center; gap:5px; } .ds-kpi-dot { width:9px; height:9px; border-radius:50%; background:#dc2626; flex:none; } .ds-kpi-card__value { font-size:1.5rem; font-weight:600; color:#171717; letter-spacing:-0.02em; line-height:1.2; margin-top:6px; font-variant-numeric:tabular-nums; } .ds-kpi-card__delta { font-size:0.75rem; font-weight:500; margin-top:6px; font-variant-numeric:tabular-nums; } .ds-kpi-card__delta--bad { color:#b91c1c; }"
+    },
+    {
+      "name": "Status Pill",
+      "kind": "chip",
+      "refersTo": "status-bad",
+      "description": "SLA / state verdict: tinted background plus same-hue text. OK / Warn / Bad.",
+      "html": "<span class=\"ds-status-pill ds-status-pill--bad\">Breached</span>",
+      "css": ".ds-status-pill { display:inline-flex; align-items:center; padding:3px 9px; border-radius:6px; font-size:0.75rem; font-weight:500; } .ds-status-pill--bad { background:rgba(220,38,38,0.12); color:#b91c1c; }"
+    },
+    {
+      "name": "SLA Bullet",
+      "kind": "custom",
+      "refersTo": "sla-bullet",
+      "description": "Thin progress bar vs an SLA target, colored by the 90/70 policy thresholds (green >=90, amber >=70, red below).",
+      "html": "<div class=\"ds-sla-bullet\" role=\"progressbar\" aria-valuenow=\"82\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-label=\"In SLA 82 percent\"><div class=\"ds-sla-bullet__fill\" style=\"width:82%\"></div></div>",
+      "css": ".ds-sla-bullet { width:100%; height:8px; border-radius:4px; background:rgba(0,0,0,0.04); position:relative; overflow:hidden; } .ds-sla-bullet__fill { height:100%; border-radius:4px; background:#d97706; }"
+    },
+    {
+      "name": "Sidebar Nav Link",
+      "kind": "nav",
+      "refersTo": "nav-link",
+      "description": "shadcn-style sidebar item. Rounded hover tint; active item gets a neutral accent pill (not blue) and weight 600.",
+      "html": "<nav class=\"ds-nav\"><a class=\"ds-nav-link ds-nav-link--active\" href=\"#\" aria-current=\"page\"><span class=\"ds-nav-ico\"></span>OS vulnerabilities</a><a class=\"ds-nav-link\" href=\"#\"><span class=\"ds-nav-ico\"></span>MTTR &amp; SLA</a></nav>",
+      "css": ".ds-nav { display:flex; flex-direction:column; gap:2px; background:#f8f8fa; padding:8px; border-radius:10px; width:220px; } .ds-nav-link { display:flex; align-items:center; gap:8px; border-radius:8px; padding:6px 8px; min-height:32px; color:rgba(0,0,0,0.65); font-size:0.8125rem; font-weight:450; text-decoration:none; transition:background .12s ease, color .12s ease; } .ds-nav-ico { width:16px; height:16px; border-radius:4px; background:rgba(0,0,0,0.25); flex:none; } .ds-nav-link:hover { background:rgba(0,0,0,0.05); color:#171717; } .ds-nav-link--active { background:rgba(0,0,0,0.08); color:#171717; font-weight:600; } .ds-nav-link:focus-visible { outline:2px solid #2563eb; outline-offset:2px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Audit Ledger",
+    "overview": "This dashboard is a ledger of risk, not a billboard for it. Every figure on screen is meant to be defensible: a number a security analyst can act on and a leader can put in front of an auditor without flinching. The visual system earns trust the way a good ledger does, through exactness, consistency, and restraint. Surfaces are quiet near-white planes ruled by hairline borders; ink is near-black; figures are set in tabular numerals so columns line up and values never jitter as they update. Color is rationed like ink in a ledger and spent only on genuine meaning: a severity level, an SLA breach, a state change. Because the field is calm, a single critical-red badge reads instantly. The build emulates shadcn/ui entirely in CSS over native Streamlit theming, so it feels like a modern product tool rather than a security-vendor console. Components are tactile and confident: the primary action commits in solid near-black, controls sit at a comfortable 36px height, and surfaces carry a one-pixel shadow that makes them feel like real cards.",
+    "keyCharacteristics": [
+      "Neutral by default; saturated color reserved for severity, state, and SLA verdicts.",
+      "Tabular numerals everywhere figures appear, so values stay aligned and stable.",
+      "Flat surfaces ruled by hairline borders; depth appears only on demand.",
+      "Meaning never carried by color alone: every severity and status pairs color with a dot, glyph, or label.",
+      "Familiar product-tool vocabulary (shadcn-grade), light theme only."
+    ],
+    "rules": [
+      { "name": "The Rationed Ink Rule", "body": "Saturated color is spent only on meaning: severity, state, or an SLA verdict. If a color is on screen, it is answering a question about risk. Neutral is the default; decorative color is forbidden.", "section": "colors" },
+      { "name": "The Two-Token Severity Rule", "body": "Severity always carries two tokens: a vivid fill for marks and dots, and a darker text token for any colored label. Never set severity text in the fill color on a tint; it will fail contrast.", "section": "colors" },
+      { "name": "The Tabular Figures Rule", "body": "Any number that updates or sits in a column is set in tabular numerals. Always. A jittering metric reads as untrustworthy.", "section": "typography" },
+      { "name": "The No-Display-Font Rule", "body": "Labels, buttons, and data are never set in a display or decorative face. One family, weight contrast only.", "section": "typography" },
+      { "name": "The Whisper-Or-Lift Rule", "body": "A surface gets either a one-pixel whisper (it is a card) or a real shadow (it is an overlay). Nothing in between. Mid-weight ambient shadows on in-page content are forbidden; that is the dated-app tell.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do keep the field neutral and ration saturated color to severity, state, and SLA verdicts.",
+      "Do pair every severity and status with a non-color signal: a dot, glyph, or text label.",
+      "Do use the two-token severity system: vivid fill for marks and dots, darker text token for any colored label.",
+      "Do set every figure in tabular numerals.",
+      "Do let the primary action commit in solid Graphite (#0a0a0a); keep Signal Blue (#2563eb) for data, focus, and accent.",
+      "Do define depth with hairline borders and the one-pixel card whisper; reserve real shadow for overlays like the Sheet.",
+      "Do keep edits to styles.css in sync with the native tokens in .streamlit/config.toml; native theming is the source of truth.",
+      "Do keep focus rings and a prefers-reduced-motion alternative on every interactive element and animation."
+    ],
+    "donts": [
+      "Don't ship generic SaaS-cream with gradient accents or a big-number hero-metric template. The page is true white, the palette light-tuned.",
+      "Don't build noisy security-vendor theater: no walls of red and orange cells, no gauges, no blinking risk drama.",
+      "Don't fall into dated enterprise density: no gray-on-gray Splunk-style tables, no density without hierarchy.",
+      "Don't add consumer-playful flourish: no mascots, illustrations, or marketing decoration in a security tool.",
+      "Don't use a colored side-stripe (border-left greater than 1px) as a decorative accent on cards, list items, or alerts.",
+      "Don't apply background-clip: text gradient text anywhere. Emphasis comes from weight and size.",
+      "Don't introduce a second type family or a display font for labels, buttons, or data.",
+      "Don't add mid-weight ambient shadows to in-page content; a surface is either a one-pixel-whisper card or a real-shadow overlay."
+    ]
+  }
+}

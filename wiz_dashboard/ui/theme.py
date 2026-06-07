@@ -24,10 +24,8 @@ def load_css() -> None:
 
 
 _COMPACT_CSS = """
-.metric-card { padding: 6px 10px; }
-.metric-value { font-size: 1.125rem; }
-.mttr-row { padding: 5px 0; }
 [data-testid="stDataFrame"] tbody tr { height: 28px; }
+[data-testid="stMetric"] { padding: 6px 10px; }
 """
 
 

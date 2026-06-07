@@ -22,7 +22,11 @@ class VulnerableAsset(BaseModel):
     type: Optional[str] = None
     name: Optional[str] = None
     cloudPlatform: Optional[str] = None
+    externalId: Optional[str] = None
+    subscriptionId: Optional[str] = None
     subscriptionName: Optional[str] = None
+    subscriptionExternalId: Optional[str] = None
+    tags: Optional[Dict[str, str]] = None
 
 
 class Finding(BaseModel):
