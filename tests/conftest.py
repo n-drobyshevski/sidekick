@@ -16,7 +16,7 @@ FIXTURE_PATH = REPO_ROOT / "os_vulns_response_exemple.json"
 def _isolated_ledger(tmp_path, monkeypatch):
     """Point the durable ledger at a per-test temp dir and reset its caches.
 
-    Without this, any test that triggers a scan (e.g. clicking ``os_run``) would write a
+    Without this, any test that triggers a scan (e.g. clicking ``sidebar_run``) would write a
     real ``./data/ledger.db`` in the repo and leak state into later tests — notably the
     MTTR empty-state test, which needs the ledger to be empty. ``config.DATA_DIR`` is read
     at call time, so monkeypatching it isolates every read/write to ``tmp_path``.

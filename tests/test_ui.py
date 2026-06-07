@@ -10,8 +10,6 @@ from wiz_dashboard.ui import components
 
 def test_components_render_without_error(resolved_sample, app):
     df = app.nodes_to_dataframe(app.extract_nodes(resolved_sample))
-    components.metric_card("Critical", "3", color="#ef4444", delta=2)
-    components.metric_skeleton()
     components.section_label("Section")
     components.empty_state("Nothing", "body <b>html</b>")
     components.render_mttr_widget(df)  # exercises calculate_mttr + the native MTTR table

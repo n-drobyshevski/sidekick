@@ -611,31 +611,6 @@ def kpi_row(items) -> None:
     st.markdown(f'<div class="kpi-row">{cards}</div>', unsafe_allow_html=True)
 
 
-def metric_card(label, value, color=None, delta=None, delta_suffix="", help=None):
-    """A KPI card. When ``color`` is given it renders an accent-bordered custom card
-    (the ``color`` is finally honored); otherwise it falls back to native
-    ``st.metric`` with ``delta_color="inverse"`` (rising = red = worse for vuln
-    counts). Both treat a rising value as "bad"."""
-    if color:
-        st.markdown(
-            _kpi_card_html(label, value, delta=delta, delta_suffix=delta_suffix,
-                           accent=color, help=help),
-            unsafe_allow_html=True,
-        )
-        return
-    delta_arg = None
-    d = _fmt_delta_number(delta)
-    if d is not None:
-        delta_arg = f"{d}{delta_suffix}" if delta_suffix else d
-    st.metric(label=label, value=value, delta=delta_arg,
-              delta_color="inverse", border=True, help=help)
-
-
-def metric_skeleton(label="—"):
-    """Placeholder metric shown before a scan has loaded any data."""
-    st.metric(label=label, value="—", border=True)
-
-
 # The breakdown card shows only the four actionable severities (Info/Unknown omitted),
 # ordered severest-first. Derived from SEVERITY_ORDER so the ordering stays in one place.
 _BREAKDOWN_SEVERITIES = [s for s in SEVERITY_ORDER if s not in ("INFO", "UNKNOWN")]
@@ -809,39 +784,28 @@ def empty_state(title, body):
         st.markdown(body)
 
 
-def page_scaffold(title, subtitle, *, run_key, run_label="Run scan", show_refresh=True):
-    """Header + primary Run / secondary Refresh buttons shared by all data pages.
-
-    Returns ``(run, refresh)`` booleans. Keeps page top sections structurally
-    identical across OS / Cloud / Identity.
-    """
-    render_page_header(title, subtitle)
-    # Horizontal container so the buttons size to their content and wrap cleanly on
-    # narrow viewports. (The old fixed st.columns([1,1,6]) ratio squeezed each button
-    # into a ~55px column below ~800px, wrapping the label to one character per line.)
-    with st.container(horizontal=True):
-        run = st.button(run_label, type="primary", key=run_key)
-        refresh = (
-            st.button("Refresh", key=f"{run_key}_refresh") if show_refresh else False
-        )
-    return run, refresh
-
-
 def show_toast(message, kind="success"):
     """Native toast with a kind-appropriate icon."""
     st.toast(str(message), icon=_TOAST_ICONS.get(kind))
 
 
-def show_exception(exc: Exception, title: str = "Error") -> None:
-    """Display an error with an expandable traceback and a download button."""
+def show_exception(exc: Exception, title: str = "Something went wrong", hint: str = None) -> None:
+    """Plain-language error + a collapsed technical-details panel.
+
+    ``title`` is the human headline and ``hint`` an actionable next step; both read for a
+    non-engineer. The raw exception message and traceback are tucked into a collapsed
+    "Technical details" expander (with a download), so a failure stays calm and useful
+    instead of dumping a Python stack as the headline.
+    """
     try:
         tb = traceback.format_exc()
     except Exception:
         tb = str(exc)
 
-    st.error(f"{title}: {str(exc)}")
+    st.error(f"**{title}**" + (f"  \n{hint}" if hint else ""))
 
-    with st.expander("Show error details", expanded=False):
+    with st.expander("Technical details", expanded=False):
+        st.caption("Share this with an engineer if the problem keeps happening.")
         try:
             st.code(tb, language="text")
         except Exception:

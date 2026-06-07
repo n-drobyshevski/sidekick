@@ -70,8 +70,9 @@ def run_scan(force: bool, has_creds: bool, sample_shape: str | None = None) -> N
             status.update(label="Querying Wiz…")
             # Dry-run sample shape (ignored live): "grouped" mirrors the real API;
             # "flat" keeps per-finding MTTR/SLA data. An explicit override (e.g. the
-            # degroup button) wins; otherwise use the sidebar toggle, defaulting grouped.
-            shape = sample_shape or st.session_state.get("dry_run_shape", "grouped")
+            # degroup button) wins; otherwise use the sidebar toggle, defaulting flat so
+            # the first scan carries the lifecycle data the headline MTTR/SLA lens needs.
+            shape = sample_shape or st.session_state.get("dry_run_shape", "flat")
             # In dry-run, step a per-session sequence so each scan returns a different
             # synthetic snapshot (see data.demo) — that's what makes the scan-over-scan
             # severity badges show non-zero deltas offline. seq 0 is the unchanged baseline;
@@ -109,7 +110,12 @@ def run_scan(force: bool, has_creds: bool, sample_shape: str | None = None) -> N
             _derived.history_cached.clear()  # a fresh snapshot was just written; reflect it
             status.update(label=f"Loaded {len(nodes):,} findings", state="complete")
     except Exception as exc:  # noqa: BLE001 -- surfaced to the user with a traceback
-        ui.show_exception(exc, title="Run scan failed")
+        ui.show_exception(
+            exc,
+            title="The scan couldn't finish.",
+            hint="Check your Wiz credentials in `wiz_config.json`, or run a dry-run with "
+            "sample data. Your previously loaded findings are unchanged.",
+        )
         return
     ui.show_toast(f"Loaded {len(nodes):,} findings", "success")
 

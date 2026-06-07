@@ -35,8 +35,8 @@ def test_page_renders_after_persist(tmp_path, monkeypatch):
 
 def test_run_scan_persists_to_ledger(tmp_path):
     # The single scan writer must reconcile a flat scan into the durable base + set deltas.
-    # Force the flat dry-run shape (the grouped default carries no per-finding identity, so
-    # it archives without reconciliation -- see test_run_scan_grouped_default_archives).
+    # The dry-run default is now flat, but set it explicitly so the test states its intent
+    # (a grouped scan carries no per-finding identity -- see test_run_scan_grouped_archives).
     script = (
         "import streamlit as st\n"
         "from wiz_dashboard.ui import scan\n"
@@ -50,12 +50,13 @@ def test_run_scan_persists_to_ledger(tmp_path):
     assert at.session_state["scan_deltas"]["new_count"] == 17
 
 
-def test_run_scan_grouped_default_archives(tmp_path):
-    # The default dry-run shape is grouped-by-asset: the scan writer archives it (zero
-    # reconciliation deltas) without raising, mirroring the real Wiz response.
+def test_run_scan_grouped_archives(tmp_path):
+    # A grouped-by-asset scan is archived (zero reconciliation deltas) without raising,
+    # mirroring the real Wiz response (no per-finding identity to reconcile). The dry-run
+    # default is now flat, so request the grouped shape explicitly via the sample override.
     script = (
         "from wiz_dashboard.ui import scan\n"
-        "scan.run_scan(force=False, has_creds=False)\n"
+        "scan.run_scan(force=False, has_creds=False, sample_shape='grouped')\n"
     )
     at = AppTest.from_string(script, default_timeout=60).run()
     assert not at.exception, at.exception

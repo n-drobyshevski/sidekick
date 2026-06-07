@@ -64,8 +64,11 @@ def _sidebar_extras() -> bool:
         # "Grouped" mirrors the real grouped-by-asset API response (severity counts only);
         # "Flat" uses the per-finding sample so MTTR / SLA / ledger demo offline. Stored as
         # st.session_state["dry_run_shape"] and read by scan.run_scan on the next scan.
+        # Defaults to FLAT so the first dry-run scan carries lifecycle data and the OS page's
+        # remediation posture (Median MTTR / In SLA) — the product's headline lens — populates
+        # immediately; "Grouped" stays one click away for the realistic-shape / degroup demo.
         if not has_creds:
-            st.session_state.setdefault("dry_run_shape", "grouped")
+            st.session_state.setdefault("dry_run_shape", "flat")
             # Let other views move this toggle (e.g. the grouped page's "Show individual
             # findings" button requests "flat"). The page can't set the widget key
             # directly — this sidebar widget is built before the page runs — so it stashes
@@ -75,19 +78,19 @@ def _sidebar_extras() -> bool:
                 st.session_state["dry_run_shape"] = pending
                 st.session_state.pop("dry_run_shape_label", None)
             shape_label = st.segmented_control(
-                "Dry-run sample",
-                options=["Grouped (realistic)", "Flat (MTTR demo)"],
-                default="Grouped (realistic)"
+                "Sample data",
+                options=["Grouped by asset", "Individual findings"],
+                default="Grouped by asset"
                 if st.session_state["dry_run_shape"] == "grouped"
-                else "Flat (MTTR demo)",
+                else "Individual findings",
                 key="dry_run_shape_label",
-                help="Without credentials the dashboard uses sample data. **Grouped** "
-                "mirrors the real Wiz response (per-asset severity counts). **Flat** uses "
-                "per-finding sample data so MTTR, SLA and the ledger populate. Pick a shape, "
-                "then **Run scan**.",
+                help="Without credentials the dashboard loads sample data. "
+                "**Grouped by asset** matches the real Wiz response (per-asset severity "
+                "counts). **Individual findings** loads per-finding records, so MTTR, SLA "
+                "and the remediation history fill in. Pick one, then **Run scan**.",
             )
             st.session_state["dry_run_shape"] = (
-                "flat" if shape_label == "Flat (MTTR demo)" else "grouped"
+                "flat" if shape_label == "Individual findings" else "grouped"
             )
 
         dense = st.toggle(

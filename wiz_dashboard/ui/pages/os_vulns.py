@@ -1,8 +1,14 @@
-"""OS vulnerabilities page: severity breakdown, MTTR/SLA, findings table + export.
+"""OS vulnerabilities page: scan-summary band, severity breakdown, findings table.
 
 Handles BOTH Wiz response shapes:
-* flat per-finding -> severity cards (with deltas) + MTTR/SLA + filter + table
-* grouped-by-asset -> severity counts from analytics + asset table (MTTR N/A)
+* flat per-finding -> summary band + severity breakdown (with deltas) + filter/group + table
+* grouped-by-asset -> summary band + severity counts from analytics + asset table
+
+The scan-summary band (Total / Open / Resolved for flat; Assets / Total for grouped) describes
+THIS scan only, so it agrees with the findings table. The cross-scan remediation analytics —
+Median MTTR, In-SLA %, the trend — live on the MTTR & SLA page, reached via the band's link, so
+no two surfaces show different remediation numbers. Severity counts appear once (breakdown card
++ bar), never echoed in the band.
 """
 
 import re
@@ -51,14 +57,13 @@ def page():
 
 
 def render(has_creds: bool) -> None:
-    run, refresh = ui.page_scaffold(
+    # Scanning is owned by the global sidebar trigger (app.py), which runs before this page
+    # and writes the os_* session state — so the page only renders the result. This avoids a
+    # second, identical "Run scan" CTA on the landing page (one primary action per context).
+    ui.render_page_header(
         "OS vulnerabilities",
         "CVEs discovered on host workloads via Wiz Security Graph",
-        run_key="os_run",
     )
-
-    if run or refresh:
-        scan.run_scan(force=refresh, has_creds=has_creds)
 
     nodes = st.session_state.get("os_nodes")
     df = st.session_state.get("os_df", pd.DataFrame())
@@ -66,8 +71,8 @@ def render(has_creds: bool) -> None:
     if not nodes:
         ui.empty_state(
             "No findings loaded",
-            "Click **Run scan** to query Wiz. Without credentials a dry-run "
-            "with sample data is used.",
+            "Run a scan from the **sidebar** to query Wiz. Without credentials a "
+            "dry-run with sample data is used.",
         )
         ui.section_label("Severity breakdown")
         ui.severity_skeleton()
@@ -99,68 +104,53 @@ def _severity_prev():
     return st.session_state.get("os_prev_counts") or _derived.previous_severity_counts_cached()
 
 
-def _change(cur, prev):
-    """``{delta, pct}`` for a value vs its previous reading: the absolute change always, the
-    ``· ±N%`` only on a non-zero base (a count rising from 0 shows the absolute alone) —
-    matching the severity breakdown / MTTR chips. ``{}`` when there's no baseline."""
-    if prev is None:
-        return {}
-    return {"delta": cur - prev, "pct": ((cur - prev) / prev * 100) if prev else None}
+def _mttr_link() -> None:
+    """Page-link from the posture band to the MTTR & SLA detail (the trend + per-severity
+    posture live there). Uses the Page objects ``app.py`` shares; silently absent when the
+    registry isn't populated (e.g. a unit test rendering this view in isolation)."""
+    mttr_page = st.session_state.get("_pages", {}).get("MTTR & SLA")
+    if mttr_page is not None:
+        st.page_link(mttr_page, label="View MTTR & SLA", icon=":material/trending_up:")
 
 
-def _hero_flat(df, counts, prev_counts) -> None:
-    """At-a-glance KPI band above the severity breakdown (flat shape).
+def _scan_summary_band(*, total, df=None, n_assets=None) -> None:
+    """Scan-summary band — counts for THIS scan + a pointer to the remediation analytics.
 
-    Remediation/MTTR KPIs live on the dedicated MTTR & SLA page now, so this band is
-    severity-focused: total plus the top three severities, each with a scan-over-scan
-    change chip — absolute delta plus the muted ``· ±N%``, consistent with the severity
-    breakdown list below. ``prev_counts`` is the same baseline that list uses (in-session
-    or the durable fallback), so a count missing from it simply shows no chip.
+    Every figure here describes the current response, so it agrees with the findings table
+    below (no scope mismatch). The cross-scan remediation analytics — Median MTTR, In-SLA %,
+    the trend — live solely on the MTTR & SLA page, reached via the link, so two surfaces can
+    never show different remediation numbers ("one verdict, one place"). Severity counts stay
+    out of the band too; they appear once in the breakdown card + bar below.
+
+    ``Assets`` (grouped shape) replaces Open/Resolved, since a grouped-by-asset response
+    carries no per-finding open/resolved state.
     """
-    total = int(len(df))
-    prev_total = sum(prev_counts.values()) if prev_counts else None
-
-    def _sev_change(sev):
-        return _change(int(counts.get(sev, 0)), prev_counts[sev]) if (
-            prev_counts and sev in prev_counts) else {}
-
-    ui.kpi_row(
-        [
-            {"label": "Total findings", "value": f"{total:,}", "accent": "var(--accent)",
-             **_change(total, prev_total)},
-            {"label": "Critical", "value": f"{int(counts.get('CRITICAL', 0)):,}",
-             "glyph_html": ui.sev_dot_html("CRITICAL"), "accent": SEVERITY_COLORS["CRITICAL"],
-             **_sev_change("CRITICAL")},
-            {"label": "High", "value": f"{int(counts.get('HIGH', 0)):,}",
-             "glyph_html": ui.sev_dot_html("HIGH"), "accent": SEVERITY_COLORS["HIGH"],
-             **_sev_change("HIGH")},
-            {"label": "Medium", "value": f"{int(counts.get('MEDIUM', 0)):,}",
-             "glyph_html": ui.sev_dot_html("MEDIUM"), "accent": SEVERITY_COLORS["MEDIUM"],
-             **_sev_change("MEDIUM")},
-        ]
-    )
-
-
-def _hero_grouped(counts, n_assets) -> None:
-    """KPI band for the grouped-by-asset shape (counts only; no MTTR/SLA)."""
-    ui.kpi_row(
-        [
-            {"label": "Assets", "value": f"{n_assets:,}", "accent": "var(--accent)"},
-            {"label": "Total findings", "value": f"{sum(counts.values()):,}", "accent": "var(--accent)"},
-            {"label": "Critical", "value": f"{counts.get('CRITICAL', 0):,}",
-             "glyph_html": ui.sev_dot_html("CRITICAL"), "accent": SEVERITY_COLORS["CRITICAL"]},
-            {"label": "High", "value": f"{counts.get('HIGH', 0):,}",
-             "glyph_html": ui.sev_dot_html("HIGH"), "accent": SEVERITY_COLORS["HIGH"]},
-        ]
-    )
+    cards = []
+    if n_assets is not None:
+        cards.append({"label": "Assets", "value": f"{n_assets:,}", "accent": "var(--accent)"})
+    cards.append({"label": "Total findings", "value": f"{total:,}", "accent": "var(--accent)"})
+    if df is not None and not df.empty:
+        _per_sev, overall = _derived.mttr_cached(df_signature(df), df)
+        if overall:
+            cards.append({
+                "label": "Open", "value": f"{int(overall.get('open', 0)):,}",
+                "accent": SEVERITY_COLORS["HIGH"],
+                "help": "Findings in this scan still awaiting remediation.",
+            })
+            cards.append({
+                "label": "Resolved", "value": f"{int(overall.get('resolved', 0)):,}",
+                "accent": "#16a34a", "inverse": False,
+                "help": "Findings in this scan with a recorded remediation.",
+            })
+    ui.kpi_row(cards)
+    _mttr_link()
 
 
 def _render_flat(df) -> None:
     sig = df_signature(df)
     counts = _derived.counts_cached(sig, df)
-    prev = _severity_prev()  # same baseline as the breakdown card (durable fallback)
 
-    _hero_flat(df, counts, prev)
+    _scan_summary_band(total=int(len(df)), df=df)
 
     # The severity breakdown card + click-to-filter bar render as a 2-column row inside
     # the filter fragment, so a bar-click cross-filters the table on a cheap fragment
@@ -172,7 +162,7 @@ def _render_grouped(nodes, has_creds) -> None:
     groups = [g for g in schema.parse_nodes(nodes) if isinstance(g, schema.AssetGroup)]
     counts = schema.severity_counts_from_groups(groups)
 
-    _hero_grouped(counts, len(groups))
+    _scan_summary_band(total=sum(counts.values()), n_assets=len(groups))
 
     ui.section_label("Severity breakdown (grouped by asset)")
     bd_col, bar_col = st.columns(2, gap="large")
@@ -227,6 +217,30 @@ def _qp_list(param, present):
         return []
     allowed = set(present)
     return [x for x in raw.split(",") if x in allowed]
+
+
+# Filter/search/group widget keys + the query params they mirror — cleared together by the
+# "Clear filters" reset so one click returns the toolbar to its defaults. ``os_sev_chart*``
+# are the click-to-filter chart's selection + its guard, cleared too so a stale bar-click
+# doesn't immediately re-narrow the severity pills after a reset.
+_FILTER_KEYS = (
+    "os_sev_filter", "os_status_filter", "os_type_filter", "os_cloud_filter",
+    "os_search", "os_group_by", "os_sev_chart", "os_sev_chart_prev",
+)
+_FILTER_QUERY_PARAMS = ("sev", "status", "atype", "cloud", "q", "group")
+
+
+def _reset_filters() -> None:
+    """Clear every findings filter/search/group control + its query param, then rerun so the
+    widgets re-instantiate at their defaults (all severities, no filters, flat table)."""
+    for k in _FILTER_KEYS:
+        st.session_state.pop(k, None)
+    for q in _FILTER_QUERY_PARAMS:
+        try:
+            del st.query_params[q]
+        except KeyError:
+            pass
+    st.rerun()
 
 
 @st.fragment
@@ -287,7 +301,20 @@ def _filter_and_table(df, counts) -> None:
     name_col = _col(df, "name")
     asset_col = _col(df, "vulnerableAsset.name")
 
-    fc = st.columns([2, 2, 2, 3])
+    # One filter+view toolbar row: the text/select filters plus Group by, so the controls
+    # read as a single bar instead of stacking under three separate section labels. Group by
+    # is a VIEW option ("menu like filters"): its state mirrors to ?group= like the filters
+    # and is applied AFTER filtering, so the groups reflect the current filtered view. Only
+    # fields present in this shape are offered; "None" keeps the flat table.
+    group_opts = ["None"]
+    if "severity" in df.columns:
+        group_opts.append("Severity")
+    if type_col:
+        group_opts.append("Asset type")
+    if cloud_col:
+        group_opts.append("Cloud")
+
+    fc = st.columns([2, 2, 2, 3, 3])
     status_sel = (
         fc[0].multiselect("Status", _present(df, status_col),
                           default=_qp_list("status", _present(df, status_col)),
@@ -308,6 +335,12 @@ def _filter_and_table(df, counts) -> None:
     )
     query = fc[3].text_input("Search", value=st.query_params.get("q", ""),
                              placeholder="CVE or asset name…", key="os_search")
+    group_label = fc[4].segmented_control(
+        "Group by",
+        options=group_opts,
+        default=_group_from_query(group_opts),
+        key="os_group_by",
+    )
 
     if status_col:
         st.query_params["status"] = ",".join(status_sel)
@@ -316,6 +349,22 @@ def _filter_and_table(df, counts) -> None:
     if cloud_col:
         st.query_params["cloud"] = ",".join(cloud_sel)
     st.query_params["q"] = query or ""
+    st.query_params["group"] = GROUP_LABEL_TO_MODE.get(group_label or "None", "")
+
+    # One-click escape from a narrowed view — shown only when something is actually filtered
+    # (so the toolbar stays clean at rest). Clears every control + query param and reruns.
+    filters_active = (
+        (norm is not None and set(sev_selected) != set(present))
+        or bool(status_sel) or bool(type_sel) or bool(cloud_sel) or bool(query)
+        or (group_label not in (None, "None"))
+    )
+    if filters_active and st.columns([2, 8])[0].button(
+        "Clear filters",
+        key="os_clear_filters",
+        icon=":material/filter_alt_off:",
+        help="Reset severity, filters, search and grouping to their defaults.",
+    ):
+        _reset_filters()
 
     view = df[norm.isin(sev_selected)] if norm is not None else df
     if status_sel and status_col:
@@ -330,27 +379,6 @@ def _filter_and_table(df, counts) -> None:
             if c:
                 mask = mask | view[c].astype(str).str.contains(query, case=False, na=False, regex=False)
         view = view[mask]
-
-    # Group by — a single-select view option (a "menu like filters"): its state is
-    # mirrored to session_state + ?group= just like the filters, and it's applied AFTER
-    # filtering so the groups reflect the current filtered view. Only offer fields that
-    # exist in this response shape; "None" keeps today's flat table.
-    group_opts = ["None"]
-    if "severity" in df.columns:
-        group_opts.append("Severity")
-    if type_col:
-        group_opts.append("Asset type")
-    if cloud_col:
-        group_opts.append("Cloud")
-    ui.section_label("Group by")
-    group_label = st.segmented_control(
-        "Group by",
-        options=group_opts,
-        default=_group_from_query(group_opts),
-        key="os_group_by",
-        label_visibility="collapsed",
-    )
-    st.query_params["group"] = GROUP_LABEL_TO_MODE.get(group_label or "None", "")
 
     ui.section_label("Findings")
     mode = GROUP_LABEL_TO_MODE.get(group_label or "None")

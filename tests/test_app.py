@@ -20,7 +20,7 @@ def test_app_loads_default_page():
 
 def test_dry_run_scan_renders_severity_cards():
     at = _at().run()
-    at.button(key="os_run").click().run()
+    at.button(key="sidebar_run").click().run()  # scanning is owned by the global sidebar trigger
     assert not at.exception
     # The flat dry-run sample has CRITICAL findings. Severity cards render as
     # accent-colored custom KPI cards (a CSS severity dot + the label "Critical")
@@ -30,7 +30,7 @@ def test_dry_run_scan_renders_severity_cards():
 
 def test_dry_run_scan_then_exports_has_data():
     at = _at().run()
-    at.button(key="os_run").click().run()
+    at.button(key="sidebar_run").click().run()
     assert not at.exception
     assert "os_df" in at.session_state
     df = at.session_state["os_df"]
@@ -77,10 +77,11 @@ def test_mttr_widget_can_hide_overall_headline():
 
 
 def test_os_page_no_longer_renders_mttr_sections():
-    # MTTR moved to its own page: after a dry-run scan, the OS page should not emit the
-    # "Remediation performance" / "MTTR trend" section labels (section_label -> "## ...").
+    # MTTR detail lives on its own page: after a scan, the OS page may show a compact posture
+    # band (a "Median MTTR" card) + a link, but NOT the full "Remediation performance" /
+    # "MTTR trend" section labels (section_label -> "## ...").
     at = _at().run()
-    at.button(key="os_run").click().run()
+    at.button(key="sidebar_run").click().run()
     assert not at.exception
     assert not any("Remediation performance" in m.value for m in at.markdown)
     assert not any("MTTR trend" in m.value for m in at.markdown)
@@ -187,12 +188,15 @@ def test_run_scan_sample_shape_override_beats_session():
 
 
 def test_degroup_button_loads_individual_findings():
-    # Default dry-run shape is grouped: a scan renders the grouped-by-asset view, and the
+    # With the grouped shape selected, a scan renders the grouped-by-asset view, and the
     # "Show individual findings" button re-fetches the flat shape so the page degroups.
+    # (The dry-run default is now flat, so select grouped explicitly before scanning.)
     from wiz_dashboard.models import schema
 
-    at = _at().run()
-    at.button(key="os_run").click().run()
+    at = _at()
+    at.session_state["dry_run_shape"] = "grouped"
+    at.run()
+    at.button(key="sidebar_run").click().run()
     assert not at.exception
     assert schema.is_grouped_shape(at.session_state["os_nodes"])  # grouped first
     at.button(key="os_degroup").click().run()
@@ -250,25 +254,30 @@ def test_dry_run_scans_evolve_so_badges_have_deltas():
     assert at.session_state["p2"] == at.session_state["c1"]    # scan 2's baseline is scan 1
 
 
-def test_os_hero_flat_shows_pct_badges():
-    # The KPI card band (Total / Critical / High / Medium) now carries the muted "· ±N%"
-    # evolution chip, consistent with the severity breakdown list below it.
+def test_os_scan_summary_band_shows_current_scan_counts_not_cross_scan_mttr():
+    # The OS-page top band summarizes THIS scan (Total / Open / Resolved) so it agrees with
+    # the findings table. The cross-scan Median MTTR / In-SLA live on the MTTR & SLA page
+    # (reached via the band's link), NOT here — so two surfaces can't show different numbers.
+    # Severity counts stay in the breakdown card, not the band.
     script = (
         "from wiz_dashboard.data.transform import extract_nodes, nodes_to_dataframe\n"
-        "from wiz_dashboard.domain.severity import count_by_severity\n"
         "from wiz_dashboard.ui.pages import os_vulns\n"
-        "cur = [{'id':'a1','name':'CVE-2026-1','severity':'CRITICAL','vulnerableAsset.name':'vm-1'},"
-        "{'id':'a3','name':'CVE-2026-3','severity':'CRITICAL','vulnerableAsset.name':'vm-3'},"
-        "{'id':'a2','name':'CVE-2026-2','severity':'HIGH','vulnerableAsset.name':'vm-2'}]\n"
-        "df = nodes_to_dataframe(extract_nodes({'data':{'vulnerabilityFindings':{'nodes':cur}}}))\n"
-        "os_vulns._hero_flat(df, count_by_severity(df), {'CRITICAL': 1, 'HIGH': 1})\n"
+        "sample = {'data': {'vulnerabilityFindings': {'nodes': ["
+        "{'id':'a','severity':'HIGH','status':'RESOLVED',"
+        "'firstDetectedAt':'2026-04-01T00:00:00Z','resolvedAt':'2026-04-08T00:00:00Z'},"
+        "{'id':'b','severity':'CRITICAL','status':'OPEN',"
+        "'firstDetectedAt':'2026-05-01T00:00:00Z','resolvedAt':None}]}}}\n"
+        "df = nodes_to_dataframe(extract_nodes(sample))\n"
+        "os_vulns._render_flat(df)\n"
     )
     at = AppTest.from_string(script, default_timeout=30).run()
     assert not at.exception
     blob = "".join(m.value for m in at.markdown)
-    assert "kpi-card__delta-pct" in blob   # KPI band carries the percent chip
-    assert "100%" in blob                  # Critical 1 -> 2 == +100%
-    assert "50%" in blob                   # Total 2 -> 3 == +50%
+    assert "Total findings" in blob
+    assert "awaiting remediation" in blob   # the Open card (current scan)
+    assert "recorded remediation" in blob   # the Resolved card (current scan)
+    assert "Median MTTR" not in blob   # cross-scan analytics live on MTTR & SLA, not the band
+    assert "In SLA" not in blob
 
 
 def test_os_severity_breakdown_shows_pct_badge_from_durable_baseline():
