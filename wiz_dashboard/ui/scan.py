@@ -34,17 +34,12 @@ def freshness_caption(meta, scans_df) -> str:
     anywhere does it prompt the first scan. ``scans_df`` is ``ledger.load_scans_df()`` (newest
     first) or ``None`` (callers skip the read when ``meta`` is present)."""
     if meta:
-        return (
-            f"Last scan · {meta['count']:,} findings · {meta['mode']} · {meta['at']}"
-        )
+        return f"Last scan · {meta['count']:,} findings · {meta['at']}"
     if scans_df is not None and not getattr(scans_df, "empty", True):
         row = scans_df.iloc[0]
         ts = row.get("ts")
         when = ts.strftime("%Y-%m-%d %H:%M UTC") if pd.notna(ts) else "unknown time"
-        return (
-            f"Saved base · {int(row.get('total', 0)):,} findings · "
-            f"{row.get('mode', 'dry-run')} · last scan {when}"
-        )
+        return f"Saved base · {int(row.get('total', 0)):,} findings · last scan {when}"
     return "No scan yet. Click **Run scan** to load findings."
 
 

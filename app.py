@@ -6,6 +6,8 @@ Uses the native multipage API (st.navigation / st.Page). Page implementations li
 in wiz_dashboard/ui/pages/; shared logic in wiz_dashboard/{config,data,domain,models}.
 """
 
+from pathlib import Path
+
 import streamlit as st
 
 from wiz_dashboard.config import load_wiz_config
@@ -20,8 +22,12 @@ from wiz_dashboard.ui.pages import (
     scan_history,
 )
 
+# Brand wordmark asset, resolved package-relative (like theme.CSS_PATH) so it loads
+# regardless of the directory `streamlit run` is launched from.
+LOGO_PATH = Path(__file__).resolve().parent / "wiz_dashboard" / "assets" / "logo.svg"
+
 st.set_page_config(
-    page_title="Wiz Dashboard",
+    page_title="Wiz Sidekick",
     page_icon=None,
     layout="wide",
     initial_sidebar_state="expanded",
@@ -30,12 +36,18 @@ theme.load_css()
 
 
 def _sidebar_extras() -> bool:
-    """Sidebar: brand, global scan trigger + freshness, density toggle, creds footer.
+    """Sidebar: brand wordmark (st.logo, above the nav), a Scan zone (global trigger +
+    mode hint + freshness), a Display zone (sample shape + density), and the creds footer.
 
     Returns whether Wiz credentials are present. Runs before ``nav.run()``, so a scan
     triggered here populates session state before the active page renders — every page
     (not just OS vulnerabilities) can kick off and immediately reflect a scan.
     """
+    # Brand wordmark in the sidebar header slot. st.logo renders ABOVE the auto-generated
+    # nav (which owns the top of st.sidebar), so identity sits at the very top of the rail
+    # and the previously-blank top gap is reclaimed; it also shows in the app's top-left.
+    st.logo(str(LOGO_PATH), size="large")
+
     cfg = load_wiz_config()
     has_creds = bool(cfg.get("wiz_client_id") and cfg.get("wiz_client_secret"))
 
@@ -46,27 +58,41 @@ def _sidebar_extras() -> bool:
 
     run = refresh = False
     with st.sidebar:
-        st.markdown(
-            '<div class="sidebar-brand">Wiz Dashboard'
-            '<div class="sub">Security observability</div></div>',
-            unsafe_allow_html=True,
-        )
+        # --- Scan: the rail's first body zone. Streamlit renders sidebar content BELOW the
+        # auto nav, so "first" means first under the nav; the brand moved up to st.logo to
+        # free this slot. This is the app's sole scan trigger (the OS page deliberately drops
+        # its own, see os_vulns.render). No keyboard accelerator — Streamlit exposes no
+        # first-class button keybinding; the placement fix shortens the mouse trip instead. ---
+        st.markdown('<div class="sidebar-section-label">Scan</div>', unsafe_allow_html=True)
         # Global scan trigger — the same scan.run_scan the OS page calls (one writer of
         # the os_* session state), reachable from every page.
         with st.container(horizontal=True):
             run = st.button("Run scan", type="primary", key="sidebar_run")
-            refresh = st.button("Refresh", key="sidebar_refresh")
+            refresh = st.button(
+                "Refresh",
+                key="sidebar_refresh",
+                help="Clear the cached results and re-query, even when findings are already "
+                "loaded. Use this to force a fresh pull.",
+            )
+        # Mode hint AT the action: what Run scan will do before the click (live query vs.
+        # dry-run sample). Deliberately states the mode and effect ONLY — the credential
+        # state belongs to the footer pill and what's loaded belongs to the freshness line
+        # below, so no single fact is printed in the rail more than once.
+        st.caption("Live · queries Wiz" if has_creds else "Dry-run · loads sample data")
         # Placeholder filled AFTER the scan below, so the freshness line reflects the run
         # that may happen this same pass (rendering it inline here would lag by one click).
         freshness = st.empty()
 
+        # --- Display: view preferences (dry-run sample shape, plus table/metric density). ---
+        st.markdown('<div class="sidebar-section-label">Display</div>', unsafe_allow_html=True)
+
         # Dry-run sample shape — only meaningful without credentials (live ignores it).
-        # "Grouped" mirrors the real grouped-by-asset API response (severity counts only);
-        # "Flat" uses the per-finding sample so MTTR / SLA / ledger demo offline. Stored as
-        # st.session_state["dry_run_shape"] and read by scan.run_scan on the next scan.
-        # Defaults to FLAT so the first dry-run scan carries lifecycle data and the OS page's
-        # remediation posture (Median MTTR / In SLA) — the product's headline lens — populates
-        # immediately; "Grouped" stays one click away for the realistic-shape / degroup demo.
+        # "Asset summary" mirrors the real grouped-by-asset API response (severity counts
+        # only); "Findings detail" uses the per-finding sample so MTTR / SLA / ledger demo
+        # offline. Stored as st.session_state["dry_run_shape"] and read by scan.run_scan on
+        # the next scan. Defaults to FLAT (Findings detail) so the first dry-run scan carries
+        # lifecycle data and the OS page's remediation posture (Median MTTR / In SLA) — the
+        # product's headline lens — populates immediately; the summary stays one click away.
         if not has_creds:
             st.session_state.setdefault("dry_run_shape", "flat")
             # Let other views move this toggle (e.g. the grouped page's "Show individual
@@ -77,20 +103,20 @@ def _sidebar_extras() -> bool:
             if pending in ("grouped", "flat"):
                 st.session_state["dry_run_shape"] = pending
                 st.session_state.pop("dry_run_shape_label", None)
-            shape_label = st.segmented_control(
-                "Sample data",
-                options=["Grouped by asset", "Individual findings"],
-                default="Grouped by asset"
+            preview_label = st.segmented_control(
+                "Preview as",
+                options=["Asset summary", "Findings detail"],
+                default="Asset summary"
                 if st.session_state["dry_run_shape"] == "grouped"
-                else "Individual findings",
+                else "Findings detail",
                 key="dry_run_shape_label",
                 help="Without credentials the dashboard loads sample data. "
-                "**Grouped by asset** matches the real Wiz response (per-asset severity "
-                "counts). **Individual findings** loads per-finding records, so MTTR, SLA "
+                "**Asset summary** matches the real Wiz response (per-asset severity "
+                "counts). **Findings detail** loads per-finding records, so MTTR, SLA "
                 "and the remediation history fill in. Pick one, then **Run scan**.",
             )
             st.session_state["dry_run_shape"] = (
-                "flat" if shape_label == "Individual findings" else "grouped"
+                "flat" if preview_label == "Findings detail" else "grouped"
             )
 
         dense = st.toggle(
@@ -100,10 +126,16 @@ def _sidebar_extras() -> bool:
             "Your choice is remembered via the URL (?dense=1).",
         )
 
+        # role="status" so a screen reader announces the credential/mode state, matching how
+        # DESIGN.md treats status pills; the visible text already carries the non-color signal.
         pill = (
-            '<span class="status-pill status-ok">Credentials loaded</span>'
+            '<span class="status-pill status-ok" role="status" '
+            'aria-label="Credential status: credentials loaded, live mode">'
+            "Credentials loaded</span>"
             if has_creds
-            else '<span class="status-pill status-warn">No credentials</span>'
+            else '<span class="status-pill status-warn" role="status" '
+            'aria-label="Credential status: no credentials, running in dry-run mode with '
+            'sample data">No credentials</span>'
         )
         st.markdown(f'<div class="sidebar-footer">{pill}</div>', unsafe_allow_html=True)
 

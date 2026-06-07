@@ -136,7 +136,7 @@ def test_freshness_caption_prefers_session_then_base_then_prompt():
     # 1) An in-session scan wins and reports its own metadata.
     meta = {"count": 1234, "mode": "live", "at": "2026-06-07 13:38 UTC"}
     session_msg = scan.freshness_caption(meta, None)
-    assert "1,234 findings" in session_msg and "live" in session_msg
+    assert "1,234 findings" in session_msg and "2026-06-07 13:38 UTC" in session_msg
 
     # 2) No in-session scan, but the durable base has scans -> summarise the base so a page
     #    full of saved data never reads "No scan yet".

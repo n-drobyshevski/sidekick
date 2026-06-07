@@ -597,20 +597,26 @@ h1, h2, h3, h4, h5, h6 { font-weight: 600; letter-spacing: -0.02em; line-height:
     outline-offset: 2px;
 }
 
-/* Brand header (shadcn SidebarHeader) */
-.sidebar-brand {
-    display: flex; flex-direction: column;
-    padding: 2px 12px 14px 12px;
-    font-size: 0.875rem;
-    font-weight: 600;
-    letter-spacing: -0.01em;
-    color: var(--sidebar-foreground-strong);
+/* Brand wordmark (shadcn SidebarHeader) — now an st.logo asset that Streamlit renders
+   above the nav (testid stSidebarLogo). size="large" owns its dimensions; nudge it 8px right
+   so the wordmark's mark aligns with the nav column (links are inset 8px). */
+[data-testid="stSidebarLogo"] {
+    margin-left: 8px;
 }
-.sidebar-brand .sub {
-    font-size: 0.7rem;
-    font-weight: 400;
+
+/* Section label inside the sidebar body (SCAN / DISPLAY). Deliberately NOT an h2
+   (ui.section_label) — it mirrors the nav group-header treatment (SECURITY / DATA) so the
+   body zones read as the same family, stays out of the page heading order, and the hairline
+   gives the lower rail the grouping rhythm the controls otherwise lacked. */
+.sidebar-section-label {
+    margin: 10px 8px 0 8px;
+    padding: 12px 4px 4px 4px;
+    border-top: 1px solid var(--sidebar-border);
+    font-size: 0.6875rem;   /* ~11px — matches stNavSectionHeader */
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
     color: var(--sidebar-muted);
-    margin-top: 2px;
 }
 
 /* Footer (shadcn SidebarFooter) */
