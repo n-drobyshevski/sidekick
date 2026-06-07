@@ -165,3 +165,45 @@ def test_sla_bullet_thresholds():
     # clamps + tolerates junk
     assert "width:100%" in components.sla_bullet_html(150)
     assert "sla-bullet__fill--bad" in components.sla_bullet_html(None)
+
+
+def test_sla_state_shared_policy():
+    # One source of truth for the In-SLA verdict (>=90 ok, >=70 warn, below bad), shared by
+    # the posture bars and the breakdown-table glyph so they can never disagree.
+    assert components.sla_state(95) == "ok"
+    assert components.sla_state(90) == "ok"
+    assert components.sla_state(89.9) == "warn"
+    assert components.sla_state(70) == "warn"
+    assert components.sla_state(69) == "bad"
+
+
+def test_sla_posture_html_attainment_present_only_and_policy():
+    html = components.sla_posture_html({
+        # 41% resolved-in-target -> below 70 -> bad; median 51d -> "1.7mo" context
+        "CRITICAL": {"sla_pct": 41.0, "sla_target": 7, "mttr_median": 51.0, "resolved": 5, "open": 3},
+        # 95% -> ok
+        "HIGH": {"sla_pct": 95.0, "sla_target": 14, "mttr_median": 6.0, "resolved": 8, "open": 0},
+        # INFO excluded by policy (matches the four-level severity breakdown)
+        "INFO": {"sla_pct": 100.0, "sla_target": 180, "mttr_median": 1.0, "resolved": 2, "open": 0},
+        # no attainment (nothing resolved) -> no lane
+        "LOW": {"sla_pct": None, "sla_target": 90, "mttr_median": None, "resolved": 0, "open": 4},
+    })
+    # Attainment %, coloured on the shared 90/70 policy (the SAME metric as the table glyph,
+    # not median-vs-target) so a lane can't read compliant in one place and breached in another.
+    assert "41% in SLA" in html and "sla-posture__pct--bad" in html
+    assert "95% in SLA" in html and "sla-posture__pct--ok" in html
+    # States its target, carries the median as muted context, reuses the a11y progressbar bullet.
+    assert "≤7d" in html and "median 1.7mo" in html and "5 resolved" in html and "3 open" in html
+    assert 'role="progressbar"' in html and "sev-dot--critical" in html
+    # Present-only: INFO excluded; a severity with nothing resolved shows no lane.
+    assert "Info" not in html and "Low" not in html
+
+
+def test_sla_posture_html_empty_is_blank_and_render_is_safe():
+    assert components.sla_posture_html({}) == ""
+    # No attainment figure anywhere -> no lanes -> blank (renderer falls back to a caption).
+    assert components.sla_posture_html({"LOW": {"sla_pct": None, "sla_target": 90}}) == ""
+    components.sla_posture({})  # caption path, must not raise
+    components.sla_posture({
+        "MEDIUM": {"sla_pct": 80.0, "sla_target": 30, "mttr_median": 22.0, "resolved": 3, "open": 1}
+    })

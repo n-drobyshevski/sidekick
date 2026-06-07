@@ -68,7 +68,7 @@ def _summarize(work, *, now=None):
     ``(per_sev, overall)``.
 
     Shared by ``calculate_mttr`` (single scan) and ``lifecycle.mttr_from_ledger`` (the
-    durable base) so both emit the same shape ``render_mttr_widget`` / ``sla_bullets``
+    durable base) so both emit the same shape ``render_mttr_widget`` / ``sla_posture``
     consume. ``now`` defaults to the current UTC instant (overridable for deterministic
     tests of open-age percentiles).
     """

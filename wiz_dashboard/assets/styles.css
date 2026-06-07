@@ -493,13 +493,36 @@ h1, h2, h3, h4, h5, h6 { font-weight: 600; letter-spacing: -0.02em; line-height:
     margin-top: 0; min-width: 58px; text-align: right; font-variant-numeric: tabular-nums;
 }
 
-/* === SLA bullet (progress vs target) === */
+/* === SLA bullet (attainment progress bar, coloured on the 90/70 policy) === */
 .sla-bullet { width: 100%; height: 8px; border-radius: 4px;
               background: var(--muted); position: relative; overflow: hidden; }
 .sla-bullet__fill { height: 100%; border-radius: 4px; }
 .sla-bullet__fill--ok   { background: #16a34a; }
 .sla-bullet__fill--warn { background: #d97706; }
 .sla-bullet__fill--bad  { background: #dc2626; }
+
+/* === SLA posture (per-severity attainment list; reuses .sla-bullet) ===
+   The hero SLA view on the MTTR & Overview pages. One row per severity: a target-stating
+   label + the attainment % (coloured on the same 90/70 policy as the bar fill and the
+   breakdown-table glyph) + the .sla-bullet progress bar + muted median/counts context.
+   Replaces the old Altair median-vs-target small-multiples so the SLA verdict is ONE metric
+   everywhere, and so the posture is real text + an aria progressbar rather than opaque SVG.
+   The pct text tokens are the darkened status colours (>=4.5:1 on white); meaning is also
+   carried by the % number, the bar and the severity dot, never colour alone. */
+.sla-posture { display: flex; flex-direction: column; gap: var(--space-4);
+               margin: var(--space-1) 0 var(--space-2); }
+.sla-posture__row { display: flex; flex-direction: column; gap: 5px; }
+.sla-posture__head { display: flex; align-items: baseline;
+                     justify-content: space-between; gap: var(--space-3); }
+.sla-posture__lane { display: inline-flex; align-items: center; gap: var(--space-2);
+                     font-size: var(--fs-sm); font-weight: 500; color: var(--foreground); }
+.sla-posture__pct { font-size: var(--fs-sm); font-weight: 600;
+                    font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sla-posture__pct--ok   { color: #15803d; }
+.sla-posture__pct--warn { color: #a16207; }
+.sla-posture__pct--bad  { color: #b91c1c; }
+.sla-posture__sub { font-size: var(--fs-xs); color: var(--muted-foreground);
+                    font-variant-numeric: tabular-nums; }
 
 /* === Alerts (shadcn Alert: full border + rounded-lg + leading icon kept) === */
 [data-testid="stAlert"] {

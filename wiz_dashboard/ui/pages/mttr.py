@@ -160,7 +160,7 @@ def _hero(per_sev, overall, prev=None) -> None:
 
 
 def _kpi_and_posture(per_sev, overall, source_caption, prev=None) -> None:
-    """Headline KPI stat-list card + the SLA-posture bullets, side by side (2 columns).
+    """Headline KPI stat-list card + the SLA-posture bars, side by side (2 columns).
 
     Both data paths (durable base / current scan) share this layout; only the source
     caption under the KPI card differs. ``prev`` carries previous-scan values for the KPI
@@ -172,9 +172,9 @@ def _kpi_and_posture(per_sev, overall, source_caption, prev=None) -> None:
         st.caption(source_caption)
     with posture_col:
         ui.section_label("SLA posture")
-        charts.sla_bullets(per_sev)
+        ui.sla_posture(per_sev)
         st.caption(
-            "Median time-to-remediate per severity vs its SLA target (the ≤N-day in each "
-            "label and the dark tick). Green is within SLA, red is over. Open the "
-            "per-severity breakdown below for the full table."
+            "Share of resolved findings that met their SLA target, per severity, on the same "
+            "90/70 policy as the breakdown table below (green ≥90%, amber ≥70%, red below). The "
+            "median time-to-remediate shows as context, not the verdict."
         )

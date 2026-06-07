@@ -47,8 +47,11 @@ def page():
         charts.mttr_trend(history)
 
     ui.section_label("SLA posture")
-    st.caption("Median time-to-remediate per severity vs its SLA target — green within, red over.")
-    charts.sla_bullets(per_sev)
+    st.caption(
+        "Share of resolved findings that met their SLA target, per severity "
+        "(green ≥90%, amber ≥70%, red below)."
+    )
+    ui.sla_posture(per_sev)
 
     _quick_links()
 

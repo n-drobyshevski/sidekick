@@ -83,7 +83,7 @@ def mttr_from_ledger(ledger_rows, *, now=None):
     ``ledger_rows``: iterable of mappings with ``severity``, ``first_seen``, ``status``
     and ``resolved_at``. MTTR-days = ``resolved_at - first_seen``; open age =
     ``now - first_seen``. Returns the exact shape of ``metrics.calculate_mttr`` so the
-    MTTR hero, ``render_mttr_widget`` and ``sla_bullets`` render it unchanged. Returns
+    MTTR hero, ``render_mttr_widget`` and ``sla_posture`` render it unchanged. Returns
     ``({}, {})`` when there are no rows.
     """
     rows = list(ledger_rows)

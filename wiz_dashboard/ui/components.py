@@ -702,15 +702,31 @@ def severity_cards(counts, prev=None):
 
 
 # --------------------------------------------------------------------------- #
-#  SLA bullet (progress vs target)
+#  SLA attainment: one policy, one verdict everywhere
 # --------------------------------------------------------------------------- #
+# The single source of truth for the "In SLA?" verdict. ``sla_pct`` (share of resolved
+# findings remediated within target) drives the colour at >=90 / >=70 across the SLA
+# posture bars, the breakdown-table status glyph, and the bullet — so a severity can never
+# read compliant in one place and breached in another. This deliberately keys on attainment
+# (% within target), NOT on median-vs-target: those are different questions, and mixing them
+# is what let a lane show "over target" and "compliant" at the same time.
+SLA_OK_PCT = 90
+SLA_WARN_PCT = 70
+_SLA_GLYPH = {"ok": "✅", "warn": "⚠️", "bad": "🚨"}
+
+
+def sla_state(pct) -> str:
+    """Map an In-SLA percentage to the shared ``ok`` / ``warn`` / ``bad`` policy state."""
+    return "ok" if pct >= SLA_OK_PCT else "warn" if pct >= SLA_WARN_PCT else "bad"
+
+
 def sla_bullet_html(pct) -> str:
-    """A thin progress bar coloured by the 90/70 SLA policy thresholds."""
+    """A thin progress bar coloured by the shared 90/70 SLA-attainment policy."""
     try:
         p = max(0.0, min(100.0, float(pct)))
     except (TypeError, ValueError):
         p = 0.0
-    state = "ok" if p >= 90 else "warn" if p >= 70 else "bad"
+    state = sla_state(p)
     return (
         f'<div class="sla-bullet" role="progressbar" aria-valuenow="{p:.0f}" '
         f'aria-valuemin="0" aria-valuemax="100" aria-label="In SLA {p:.0f} percent">'
@@ -721,6 +737,60 @@ def sla_bullet_html(pct) -> str:
 
 def sla_bullet(pct) -> None:
     st.markdown(sla_bullet_html(pct), unsafe_allow_html=True)
+
+
+def sla_posture_html(per_sev) -> str:
+    """Build the per-severity SLA-attainment posture: one labelled progress bar per severity
+    showing the share of resolved findings that met their SLA target, coloured on the shared
+    90/70 policy (the SAME metric as the 'In SLA' KPI and the breakdown table's status glyph).
+
+    The median time-to-remediate rides along as muted context, never as the verdict, so the
+    posture, the KPI and the table always agree. Present-only: a severity shows a lane only when
+    it has an attainment figure (i.e. something resolved) AND an SLA target; INFO is excluded to
+    match the severity breakdown's four levels. Returns ``""`` when no severity qualifies, so the
+    renderer can fall back to a caption."""
+    rows = []
+    for sev in SEVERITY_ORDER:
+        if sev == "INFO":
+            continue
+        d = per_sev.get(sev)
+        if not d:
+            continue
+        pct = d.get("sla_pct")
+        target = d.get("sla_target")
+        if pct is None or not target:
+            continue
+        state = sla_state(pct)
+        resolved = int(d.get("resolved", 0))
+        open_ = int(d.get("open", 0))
+        sub = f"median {format_duration(d.get('mttr_median'))} · {resolved:,} resolved"
+        if open_:
+            sub += f" · {open_:,} open"
+        rows.append(
+            '<div class="sla-posture__row">'
+            '<div class="sla-posture__head">'
+            f'<span class="sla-posture__lane">{sev_dot_html(sev)}'
+            f'{_html.escape(sev.title())} · ≤{int(target)}d</span>'
+            f'<span class="sla-posture__pct sla-posture__pct--{state}">'
+            f'{pct:.0f}% in SLA</span></div>'
+            f'{sla_bullet_html(pct)}'
+            f'<div class="sla-posture__sub">{_html.escape(sub)}</div>'
+            '</div>'
+        )
+    return f'<div class="sla-posture">{"".join(rows)}</div>' if rows else ""
+
+
+def sla_posture(
+    per_sev,
+    *,
+    empty="No remediation data yet. SLA posture builds up as findings are resolved.",
+) -> None:
+    """Render the per-severity SLA-attainment posture, or a caption when nothing is resolved."""
+    html = sla_posture_html(per_sev)
+    if not html:
+        st.caption(empty)
+        return
+    st.markdown(html, unsafe_allow_html=True)
 
 
 def section_label(text):
@@ -823,14 +893,9 @@ def render_mttr_widget(df, mttr=None, *, show_overall=True):
         if not d:
             continue
         pct = d.get("sla_pct")
-        if pct is None:
-            badge = "—"
-        elif pct >= 90:
-            badge = "✅"
-        elif pct >= 70:
-            badge = "⚠️"
-        else:
-            badge = "🚨"
+        # Same 90/70 policy as the SLA posture bars (sla_state), so the table's glyph and the
+        # posture's colour never disagree for a severity.
+        badge = "—" if pct is None else _SLA_GLYPH[sla_state(pct)]
         sla = d.get("sla_target")
         rows.append(
             {

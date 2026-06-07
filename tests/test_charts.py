@@ -76,50 +76,6 @@ def test_renderers_do_not_raise():
     charts.open_resolved_trend(None)
 
 
-def test_build_sla_bullets_none_without_median_or_target():
-    # Nothing resolved (no median) or no SLA target -> no lanes -> None.
-    assert charts.build_sla_bullets({}) is None
-    assert charts.build_sla_bullets({"CRITICAL": {"mttr_median": None, "sla_target": 7}}) is None
-    assert charts.build_sla_bullets({"HIGH": {"mttr_median": 5.0, "sla_target": None}}) is None
-
-
-def test_build_sla_bullets_builds_faceted_bullet_with_met_missed_colors():
-    per_sev = {
-        # within SLA (median 5 <= target 7) -> "met"
-        "CRITICAL": {"mttr_median": 5.0, "sla_target": 7, "sla_pct": 67.0, "resolved": 3, "open": 2},
-        # over SLA (median 19 > target 14) -> "missed"
-        "HIGH": {"mttr_median": 19.0, "sla_target": 14, "sla_pct": 0.0, "resolved": 4, "open": 1},
-    }
-    chart = charts.build_sla_bullets(per_sev)
-    assert chart is not None
-    spec = chart.to_dict()  # raises if the Vega-Lite spec is invalid
-    assert "facet" in spec  # one lane (small multiple) per severity
-    blob = json.dumps(spec)
-    # measure bar (median) + target tick (sla_target) + met/missed colour encoding
-    assert "median" in blob and "target" in blob
-    assert "#16a34a" in blob and "#dc2626" in blob
-
-
-def test_sla_bullets_renders_without_error():
-    charts.sla_bullets({})  # empty -> caption path, must not raise
-    charts.sla_bullets(
-        {"LOW": {"mttr_median": 40.0, "sla_target": 90, "sla_pct": 100.0, "resolved": 2, "open": 0}}
-    )
-
-
-def test_build_sla_bullets_lane_states_target_and_friendly_median():
-    # As the promoted "hero", each lane states its own SLA target and shows the median in
-    # the same friendly units as the table (format_duration), so the bullets are
-    # self-explanatory without the now-demoted per-severity table.
-    per_sev = {
-        "CRITICAL": {"mttr_median": 51.0, "sla_target": 7, "sla_pct": 20.0, "resolved": 5, "open": 3}
-    }
-    spec = charts.build_sla_bullets(per_sev).to_dict()
-    blob = json.dumps(spec)
-    assert "1.7mo" in blob  # friendly median (51d -> 1.7mo), matching the table's Median column
-    assert "7d" in blob     # SLA target shown in the lane label, not only on an axis
-
-
 def test_build_severity_chart_selectable_adds_selection_param():
     # selectable -> a point-selection param is attached so on_select reports clicks.
     sel_spec = charts.build_severity_chart({"CRITICAL": 3}, selectable=True).to_dict()
