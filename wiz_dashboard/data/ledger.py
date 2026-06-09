@@ -442,6 +442,22 @@ def load_scans_df(db_path=None) -> pd.DataFrame:
     return df.sort_values("ts", ascending=False).reset_index(drop=True)
 
 
+def load_latest_scan_payload(db_path=None):
+    """Return ``(payload, row)`` for the most recent saved scan, or ``(None, None)``.
+
+    ``payload`` is that scan's archived raw findings (re-readable for an offline redraw);
+    ``row`` is its ``scans``-table metadata (``ts``, ``mode``, ``total``, ``shape`` …).
+    No Wiz query — this is the durable-base read behind the sidebar "Refresh", which
+    redraws from already-saved data instead of taking a new measurement. ``(None, None)``
+    when no scan has ever been saved or its archived payload is missing/unreadable.
+    """
+    df = load_scans_df(db_path)
+    if df is None or df.empty:
+        return None, None
+    row = df.iloc[0]  # load_scans_df is newest-first
+    return _read_raw_payload(row.get("raw_path")), row
+
+
 def load_base_df(db_path=None) -> pd.DataFrame:
     """The vulnerability ledger with computed ``mttr_days`` and open ``age_days``."""
     path = _resolve(db_path)

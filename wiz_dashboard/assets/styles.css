@@ -375,6 +375,27 @@ h1, h2, h3, h4, h5, h6 { font-weight: 600; letter-spacing: -0.02em; line-height:
 .vuln-breakdown__fill { height: 100%; border-radius: 4px; background: var(--sev, var(--accent)); }
 .vuln-breakdown__count { font-size: var(--fs-sm); font-weight: 600; font-variant-numeric: tabular-nums; }
 
+/* Compact per-group stats strip (grouped findings view): a thin proportional severity
+   bar + dot/count legend, then a muted meta line. Severity meaning is carried by the dot
+   + label + number; the bar is decorative reinforcement only. */
+.group-stats { display: flex; flex-direction: column; gap: var(--space-2); margin: 0 0 var(--space-3); }
+.group-stats__bar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--muted); }
+.group-stats__seg { height: 100%; min-width: 2px; }
+.group-stats__chips { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-3); align-items: center; }
+.group-stat-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: var(--fs-xs); color: var(--foreground);
+    font-variant-numeric: tabular-nums;
+}
+.group-stat-chip__label { color: var(--muted-foreground); font-weight: 500; }
+.group-stat-chip b { font-weight: 600; }
+.group-stats__meta {
+    display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4);
+    font-size: var(--fs-xs); color: var(--muted-foreground);
+    font-variant-numeric: tabular-nums;
+}
+.group-stats__meta b { color: var(--foreground); font-weight: 600; }
+
 /* Raw catch-all: native <details> styled as a section */
 .vuln-raw { margin-top: var(--space-2); }
 .vuln-raw > summary {
@@ -487,6 +508,15 @@ h1, h2, h3, h4, h5, h6 { font-weight: 600; letter-spacing: -0.02em; line-height:
     margin-left: auto;
     font-size: var(--fs-lg); font-weight: 600; color: var(--card-foreground);
     font-variant-numeric: tabular-nums; letter-spacing: -0.01em; line-height: 1;
+}
+/* Value + optional resolved/open sub-line stacked right-aligned. */
+.stat-card__value-group {
+    margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 1px;
+}
+.stat-card__value-group .stat-card__value { margin-left: 0; }
+.stat-card__sub-value {
+    font-size: var(--fs-xs); color: var(--muted-foreground);
+    font-variant-numeric: tabular-nums; white-space: nowrap;
 }
 /* Reuse the KPI delta colours, but drop the card's top margin in this row context. */
 .stat-card__row .kpi-card__delta {
@@ -671,6 +701,24 @@ h1, h2, h3, h4, h5, h6 { font-weight: 600; letter-spacing: -0.02em; line-height:
 :is([data-testid="stMain"], [data-testid="stSidebar"]) button[kind="primary"]:hover {
     background: var(--btn-primary-bg-hover) !important;
 }
+/* Sidebar action buttons (Run scan / Refresh) — tighter than main-area buttons.
+   The secondary "Refresh" sits beside the solid near-black primary, so the default faint
+   surface read as disabled. Give the SIDEBAR secondary a crisper fill + a clearly visible
+   border (and a distinct hover) so it reads as plainly clickable — without promoting it to
+   a second primary. The primary's own background/border use !important above, so it keeps
+   its near-black look; these only retint the secondary. Scoped to the sidebar, so the rest
+   of the app's secondary buttons are untouched. */
+[data-testid="stSidebar"] [data-testid="stButton"] button {
+    padding: 3px 10px;
+    min-height: 30px;
+    font-size: var(--fs-xs);
+    background: var(--surface-2);
+    border-color: var(--border-2);
+}
+[data-testid="stSidebar"] [data-testid="stButton"] button:hover {
+    background: var(--surface-1-hover);
+    border-color: var(--border-2);
+}
 
 /* === Inputs (shadcn: rounded-md, h-9, subtle border) === */
 [data-testid="stTextInput"] input,
@@ -715,3 +763,8 @@ hr { margin: 1rem 0; }  /* color comes from native [theme] borderColor */
     position: absolute;
     inset: -4px;            /* 16px glyph + 4px each side = 24px hit area */
 }
+/* When help= is set on a button/link, Streamlit wraps the WHOLE control in the hover
+   target, so the absolute ::after overlay would otherwise sit on top and swallow every
+   click (e.g. the sidebar "Refresh" button, which carries help text, became unclickable).
+   The control is already a large target, so drop the overlay entirely in that case. */
+[data-testid="stTooltipHoverTarget"]:has(button, a)::after { content: none; }

@@ -28,6 +28,11 @@ def _isolated_ledger(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DATA_DIR", tmp_path / "data")
     # Also keep the legacy daily-median file out of the repo when a test triggers a scan.
     monkeypatch.setattr(history, "HISTORY_FILENAME", str(tmp_path / "mttr_history.json"))
+    # Some tests reassign _derived.history_cached to a plain lambda (to isolate from the
+    # local history file). That mutates the shared module attribute, so snapshot and restore
+    # the real CachedFunc here — otherwise the leaked lambda (which lacks .clear()) breaks
+    # any later test whose code path clears the history cache.
+    orig_history_cached = _derived.history_cached
     caches = (
         _derived.ledger_mttr_cached,
         _derived.ledger_scans_cached,
@@ -38,6 +43,7 @@ def _isolated_ledger(tmp_path, monkeypatch):
     for c in caches:
         c.clear()
     yield
+    _derived.history_cached = orig_history_cached
     for c in caches:
         c.clear()
 

@@ -12,9 +12,9 @@ except Exception:
 import json
 import argparse
 import concurrent.futures
+import copy
 import csv
 import functools
-import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -577,14 +577,20 @@ QUERY = """
 # The variables sent along with the above query
 VARIABLES = {
     "orderBy": {"field": "RELATED_ISSUE_SEVERITY", "direction": "DESC"},
-    "includeRelatedIssueAnalytics": True,
-    "includeRelatedSourceMappedIssueAnalytics": True,
+    # The dashboard never reads these four expensive per-finding joins (they only ever
+    # surfaced as raw rows in the drill-down's "All other fields" catch-all). Each is the
+    # slowest part of a Wiz vuln query -- a server-side join run for every finding -- so
+    # disabling them via their @include(if:...) guards is the single biggest speedup.
+    "includeRelatedIssueAnalytics": False,
+    "includeRelatedSourceMappedIssueAnalytics": False,
     "includeTotalCount": False,
-    "includePostureIssues": True,
-    "fetchPrivilegedActionRequests": True,
-    "first": 60,
+    "includePostureIssues": False,
+    "fetchPrivilegedActionRequests": False,
+    # Page size for the cursor-paginated connection. The Wiz console defaults to 60, but
+    # the connection accepts up to 500 -- using the max cuts the number of sequential
+    # round trips ~8x (the dominant cost of a large scan) without changing results.
+    "first": 500,
     "filterBy": {
-        "severity": ["CRITICAL"],
         "hasFix": True,
         "projectIdV2": {"equals": ["1dfea0cf-834f-5522-b797-bee5aaf09251"]},
         "assetType": ["VIRTUAL_MACHINE"],
@@ -762,6 +768,7 @@ def fetch_findings(
     config: Optional[Dict[str, Any]] = None,
     timeout_seconds: float = 60.0,
     sample_shape: str = "grouped",
+    progress: Optional[Any] = None,
 ) -> Any:
     """Fetch the raw Wiz vulnerability-findings response.
 
@@ -779,6 +786,10 @@ def fetch_findings(
             the committed grouped-by-asset response (mirrors the real API); ``"flat"``
             yields the per-finding ``SAMPLE_RESULTS`` that powers MTTR/SLA/ledger offline.
             Ignored when ``dry_run`` is False.
+        progress: optional ``callable(pages_done: int, findings_so_far: int)`` invoked
+            after each page is fetched (live mode only), so callers can surface live
+            pagination progress. Exceptions raised by the callback are swallowed so a
+            UI hiccup can never abort the scan.
 
     Returns:
         The raw response object from the Wiz SDK (typically a dict), or a bundled
@@ -794,17 +805,38 @@ def fetch_findings(
         raise RuntimeError(
             "wiz_sdk not installed; either install it or run with --dry-run"
         )
+    # Pass credentials directly to the client (the SDK's documented pattern) rather than
+    # relying on process env vars. Fall back to env-var/file config when none are supplied
+    # so the SDK's own resolution still applies.
+    conf = None
     if isinstance(config, dict):
-        if config.get("wiz_client_id"):
-            os.environ["WIZ_CLIENT_ID"] = config["wiz_client_id"]
-        if config.get("wiz_client_secret"):
-            os.environ["WIZ_CLIENT_SECRET"] = config["wiz_client_secret"]
-    client = WizAPIClient()
-    # Run the blocking SDK call in a worker thread and abandon it if it overruns,
-    # so a hung Wiz endpoint can never freeze the dashboard. shutdown(wait=False)
-    # avoids blocking on a still-running thread once we've given up on it.
+        cid = config.get("wiz_client_id")
+        secret = config.get("wiz_client_secret")
+        if cid and secret:
+            conf = {"wiz_client_id": cid, "wiz_client_secret": secret}
+    client = WizAPIClient(conf=conf) if conf else WizAPIClient()
+    # Walk every page of the cursor-paginated connection. A single query only returns
+    # the first ``VARIABLES["first"]`` findings; without this loop the dashboard silently
+    # caps at one page (the bug where the console shows more criticals than we load).
+    # Re-wrap the merged nodes in the canonical envelope so the cached/disk-snapshot path
+    # and ``extract_nodes`` treat a live fetch exactly like a dry-run sample.
+    nodes = _fetch_all_findings(client, timeout_seconds, progress=progress)
+    return {"data": {"vulnerabilityFindings": {"nodes": nodes}}}
+
+
+# Safety cap on page-walking so a misbehaving cursor can never loop forever. At the
+# default page size (``VARIABLES["first"]``) this still allows tens of thousands of findings.
+_MAX_PAGES = 1000
+
+
+def _query_page(client, variables, timeout_seconds) -> Any:
+    """Run one blocking SDK query in a worker thread, abandoning it if it overruns.
+
+    Keeps a hung Wiz endpoint from freezing the dashboard; ``shutdown(wait=False)`` avoids
+    blocking on a thread we've already given up on.
+    """
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    future = pool.submit(client.query, QUERY, VARIABLES)
+    future = pool.submit(client.query, QUERY, variables)
     try:
         return future.result(timeout=timeout_seconds)
     except concurrent.futures.TimeoutError as exc:
@@ -813,6 +845,97 @@ def fetch_findings(
         ) from exc
     finally:
         pool.shutdown(wait=False)
+
+
+def _vulnerability_findings(page: Any) -> Dict[str, Any]:
+    """Locate the ``vulnerabilityFindings`` connection (``nodes`` + ``pageInfo``) in one page.
+
+    Coerces an SDK result / JSON string / dict into a plain dict, then walks it to find the
+    connection payload. Returns ``{}`` when none is present.
+    """
+    if isinstance(page, str):
+        try:
+            page = json.loads(page)
+        except Exception:
+            return {}
+    if not isinstance(page, (dict, list)):
+        coerced = None
+        for method in ("to_dict", "as_dict"):
+            fn = getattr(page, method, None)
+            if callable(fn):
+                try:
+                    cand = fn()
+                    if isinstance(cand, (dict, list)):
+                        coerced = cand
+                        break
+                except Exception:
+                    pass
+        if coerced is None:
+            to_json = getattr(page, "to_json", None)
+            if callable(to_json):
+                try:
+                    cand = json.loads(to_json())
+                    if isinstance(cand, (dict, list)):
+                        coerced = cand
+                except Exception:
+                    pass
+        if coerced is None:
+            data = getattr(page, "data", None)
+            coerced = data if isinstance(data, (dict, list)) else {}
+        page = coerced
+
+    def walk(obj):
+        if isinstance(obj, dict):
+            vf = obj.get("vulnerabilityFindings")
+            if isinstance(vf, dict) and "nodes" in vf:
+                return vf
+            if "nodes" in obj and isinstance(obj["nodes"], list):
+                return obj
+            for value in obj.values():
+                found = walk(value)
+                if found is not None:
+                    return found
+        elif isinstance(obj, list):
+            for value in obj:
+                found = walk(value)
+                if found is not None:
+                    return found
+        return None
+
+    return walk(page) or {}
+
+
+def _fetch_all_findings(client, timeout_seconds, progress=None) -> List[Dict[str, Any]]:
+    """Page through ``vulnerabilityFindings`` until ``hasNextPage`` is false, merging nodes.
+
+    ``progress`` (optional ``callable(pages_done, findings_so_far)``) is invoked after each
+    page so callers can surface live progress; its exceptions are swallowed so a flaky UI
+    callback can never abort the fetch.
+    """
+    all_nodes: List[Dict[str, Any]] = []
+    cursor: Optional[str] = None
+    seen_cursors = set()
+    pages = 0
+    for _ in range(_MAX_PAGES):
+        variables = copy.deepcopy(VARIABLES)
+        variables["after"] = cursor
+        connection = _vulnerability_findings(_query_page(client, variables, timeout_seconds))
+        all_nodes.extend(connection.get("nodes") or [])
+        pages += 1
+        if callable(progress):
+            try:
+                progress(pages, len(all_nodes))
+            except Exception:
+                pass
+        page_info = connection.get("pageInfo") or {}
+        if not page_info.get("hasNextPage"):
+            break
+        cursor = page_info.get("endCursor")
+        # Guard against a missing/repeating cursor that would otherwise spin forever.
+        if not cursor or cursor in seen_cursors:
+            break
+        seen_cursors.add(cursor)
+    return all_nodes
 
 
 def main():

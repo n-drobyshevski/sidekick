@@ -137,3 +137,112 @@ def test_fetch_findings_times_out(monkeypatch):
             os_vulns.fetch_findings(dry_run=False, timeout_seconds=0.1)
     finally:
         release.set()
+
+
+def test_live_fetch_follows_pagination(monkeypatch):
+    """A live fetch walks every page via pageInfo.endCursor, not just the first one."""
+
+    pages = {
+        None: {
+            "data": {
+                "vulnerabilityFindings": {
+                    "nodes": [{"id": "c1", "severity": "CRITICAL"},
+                              {"id": "c2", "severity": "CRITICAL"}],
+                    "pageInfo": {"hasNextPage": True, "endCursor": "cur1"},
+                }
+            }
+        },
+        "cur1": {
+            "data": {
+                "vulnerabilityFindings": {
+                    "nodes": [{"id": "c3", "severity": "CRITICAL"}],
+                    "pageInfo": {"hasNextPage": True, "endCursor": "cur2"},
+                }
+            }
+        },
+        "cur2": {
+            "data": {
+                "vulnerabilityFindings": {
+                    "nodes": [{"id": "h1", "severity": "HIGH"}],
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                }
+            }
+        },
+    }
+    seen_cursors = []
+
+    class PagingClient:
+        def query(self, query, variables):
+            cursor = variables.get("after")
+            seen_cursors.append(cursor)
+            return pages[cursor]
+
+    monkeypatch.setattr(os_vulns, "WizAPIClient", PagingClient)
+    results = os_vulns.fetch_findings(dry_run=False)
+
+    nodes = results["data"]["vulnerabilityFindings"]["nodes"]
+    assert [n["id"] for n in nodes] == ["c1", "c2", "c3", "h1"]  # every page merged
+    assert seen_cursors == [None, "cur1", "cur2"]  # followed the cursor chain in order
+
+
+def test_live_fetch_reports_progress_per_page(monkeypatch):
+    """The progress callback fires once per page with cumulative findings counts."""
+
+    pages = {
+        None: {"data": {"vulnerabilityFindings": {
+            "nodes": [{"id": "a"}, {"id": "b"}],
+            "pageInfo": {"hasNextPage": True, "endCursor": "c1"}}}},
+        "c1": {"data": {"vulnerabilityFindings": {
+            "nodes": [{"id": "c"}],
+            "pageInfo": {"hasNextPage": False, "endCursor": None}}}},
+    }
+
+    class PagingClient:
+        def query(self, query, variables):
+            return pages[variables.get("after")]
+
+    monkeypatch.setattr(os_vulns, "WizAPIClient", PagingClient)
+    seen = []
+    os_vulns.fetch_findings(dry_run=False, progress=lambda p, n: seen.append((p, n)))
+    assert seen == [(1, 2), (2, 3)]  # (page, cumulative findings) after each page
+
+
+def test_progress_callback_errors_do_not_abort_fetch(monkeypatch):
+    """A throwing progress callback is swallowed so the scan still completes."""
+
+    pages = {
+        None: {"data": {"vulnerabilityFindings": {
+            "nodes": [{"id": "a"}],
+            "pageInfo": {"hasNextPage": False, "endCursor": None}}}},
+    }
+
+    class PagingClient:
+        def query(self, query, variables):
+            return pages[variables.get("after")]
+
+    def boom(*_a):
+        raise RuntimeError("ui blew up")
+
+    monkeypatch.setattr(os_vulns, "WizAPIClient", PagingClient)
+    results = os_vulns.fetch_findings(dry_run=False, progress=boom)
+    assert len(results["data"]["vulnerabilityFindings"]["nodes"]) == 1
+
+
+def test_live_fetch_stops_on_repeating_cursor(monkeypatch):
+    """A cursor that never advances can't spin the page loop forever."""
+
+    class StuckClient:
+        def query(self, query, variables):
+            return {
+                "data": {
+                    "vulnerabilityFindings": {
+                        "nodes": [{"id": "x", "severity": "LOW"}],
+                        "pageInfo": {"hasNextPage": True, "endCursor": "same"},
+                    }
+                }
+            }
+
+    monkeypatch.setattr(os_vulns, "WizAPIClient", StuckClient)
+    results = os_vulns.fetch_findings(dry_run=False)
+    # First page collected, then the repeated "same" cursor halts the walk.
+    assert len(results["data"]["vulnerabilityFindings"]["nodes"]) == 2

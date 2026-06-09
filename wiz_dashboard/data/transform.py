@@ -7,7 +7,17 @@ import pandas as pd
 
 
 def coerce_results(results):
-    """Normalize dict/list/json-string/python-repr-string into a plain object."""
+    """Normalize dict/list/json-string/python-repr-string/SDK-result into a plain object.
+
+    The Wiz SDK returns a ``WizAPIResult`` wrapper that holds a live SSL socket and so
+    can't be pickled by ``st.cache_data``. This converts it (and any similar wrapper) to
+    plain Python data so the cached ``fetch_findings`` value is serializable. The SDK's
+    ``.nodes`` property is preferred because it spans *all* paginated pages (unlike
+    ``.data``, which is only the last page); the nodes are re-wrapped in the canonical
+    ``{"data": {"vulnerabilityFindings": {"nodes": [...]}}}`` envelope that
+    ``extract_nodes`` understands. ``to_json()`` (the SDK's own serializer, also
+    page-aware) and the unwrapped ``.data`` dict are fallbacks.
+    """
     if isinstance(results, (dict, list)):
         return results
     if isinstance(results, str):
@@ -22,6 +32,39 @@ def coerce_results(results):
                 return parsed
         except (ValueError, SyntaxError):
             pass
+        return results
+    # SDK wrapper objects (e.g. WizAPIResult): not pickle-safe (live SSL socket).
+    # Prefer .nodes — it aggregates every paginated page — wrapped in the envelope
+    # extract_nodes expects.
+    try:
+        nodes = getattr(results, "nodes", None)
+        if isinstance(nodes, list):
+            return {"data": {"vulnerabilityFindings": {"nodes": nodes}}}
+    except Exception:
+        pass
+    # to_json(): the SDK's own page-aware serializer (string of dict or list of pages).
+    for method in ("to_json", "to_dict", "as_dict"):
+        fn = getattr(results, method, None)
+        if callable(fn):
+            try:
+                candidate = fn()
+                if isinstance(candidate, str):
+                    candidate = json.loads(candidate)
+                if isinstance(candidate, (dict, list)):
+                    return candidate
+            except Exception:
+                pass
+    # Last resort: the (current-page-only) data dict, re-wrapped so extract_nodes can
+    # find data.<group>.nodes.
+    for attr in ("data", "raw"):
+        try:
+            candidate = getattr(results, attr, None)
+        except Exception:
+            candidate = None
+        if isinstance(candidate, dict):
+            return candidate if "data" in candidate else {"data": candidate}
+        if isinstance(candidate, list):
+            return candidate
     return results
 
 

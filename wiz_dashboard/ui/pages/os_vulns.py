@@ -17,6 +17,7 @@ import pandas as pd
 import streamlit as st
 
 from wiz_dashboard.config import (
+    RESOLVED_STATUSES,
     SEVERITY_COLORS,
     SEVERITY_GLYPHS,
     SEVERITY_ORDER,
@@ -45,10 +46,21 @@ PREFERRED_COLS = [
     "fixedVersion",
 ]
 
-# "Group by" options: control label -> internal mode / query-param token. The atype and
-# cloud tokens are shared with the matching filters so a grouped URL reads naturally
-# (e.g. ?group=cloud), and "None" (no grouping) restores the single flat table.
-GROUP_LABEL_TO_MODE = {"Severity": "severity", "Asset type": "atype", "Cloud": "cloud"}
+# "Group by" options: control label -> (query-param token, candidate columns). The first
+# candidate column present in the response shape wins, so an option is only offered when its
+# field exists. Tokens are shared with the matching filters where they overlap (atype, cloud)
+# so a grouped URL reads naturally (e.g. ?group=cloud); "None" (no grouping) restores the
+# single flat table. Severity is special-cased downstream (normalized + severest-first);
+# every other option splits on the raw column value, busiest group first.
+GROUP_OPTIONS = {
+    "Severity": ("severity", ["severity"]),
+    "Status": ("status", ["status"]),
+    "Asset type": ("atype", ["vulnerableAsset.type", "type"]),
+    "Cloud": ("cloud", ["vulnerableAsset.cloudPlatform", "cloudPlatform"]),
+    "Asset": ("asset", ["vulnerableAsset.name"]),
+    "Subscription": ("subscription", ["vulnerableAsset.subscriptionName"]),
+}
+GROUP_LABEL_TO_MODE = {label: token for label, (token, _) in GROUP_OPTIONS.items()}
 _MODE_TO_LABEL = {v: k for k, v in GROUP_LABEL_TO_MODE.items()}
 
 
@@ -90,8 +102,8 @@ def render(has_creds: bool) -> None:
     _maybe_render_drilldown()
 
 
-def _severity_cards(counts, prev=None):
-    ui.severity_cards(counts, prev)
+def _severity_cards(counts, prev=None, per_sev=None):
+    ui.severity_cards(counts, prev, per_sev=per_sev)
 
 
 def _severity_prev():
@@ -152,10 +164,13 @@ def _render_flat(df) -> None:
 
     _scan_summary_band(total=int(len(df)), df=df)
 
+    # per_sev provides per-severity open/resolved counts for the breakdown card sub-lines.
+    per_sev, _overall = _derived.mttr_cached(sig, df)
+
     # The severity breakdown card + click-to-filter bar render as a 2-column row inside
     # the filter fragment, so a bar-click cross-filters the table on a cheap fragment
     # rerun (shared rerun scope with the pills).
-    _filter_and_table(df, counts)
+    _filter_and_table(df, counts, per_sev or {})
 
 
 def _render_grouped(nodes, has_creds) -> None:
@@ -188,7 +203,6 @@ def _render_grouped(nodes, has_creds) -> None:
         "work. In dry-run this loads the flat sample dataset (the grouped response "
         "carries only counts).",
     ):
-        st.session_state["_pending_dry_run_shape"] = "flat"  # keep the sidebar toggle in sync
         scan.run_scan(force=True, has_creds=has_creds, sample_shape="flat")
         st.rerun()  # re-render via the flat branch now that os_nodes is flat
     ui.section_label("Assets")
@@ -244,7 +258,7 @@ def _reset_filters() -> None:
 
 
 @st.fragment
-def _filter_and_table(df, counts) -> None:
+def _filter_and_table(df, counts, per_sev=None) -> None:
     """Severity chart + filters + table, in a fragment so a filter change doesn't
     recompute MTTR for the whole page.
 
@@ -263,7 +277,7 @@ def _filter_and_table(df, counts) -> None:
     ui.section_label("Severity breakdown")
     bd_col, bar_col = st.columns(2, gap="large")
     with bd_col:
-        _severity_cards(counts, prev)
+        _severity_cards(counts, prev, per_sev=per_sev)
     with bar_col:
         chart_rendered, chart_sel = charts.severity_bar_select(counts, key="os_sev_chart")
         if chart_rendered:
@@ -306,13 +320,8 @@ def _filter_and_table(df, counts) -> None:
     # is a VIEW option ("menu like filters"): its state mirrors to ?group= like the filters
     # and is applied AFTER filtering, so the groups reflect the current filtered view. Only
     # fields present in this shape are offered; "None" keeps the flat table.
-    group_opts = ["None"]
-    if "severity" in df.columns:
-        group_opts.append("Severity")
-    if type_col:
-        group_opts.append("Asset type")
-    if cloud_col:
-        group_opts.append("Cloud")
+    group_cols = _group_columns(df)
+    group_opts = ["None", *group_cols]
 
     fc = st.columns([2, 2, 2, 3, 3])
     status_sel = (
@@ -335,10 +344,10 @@ def _filter_and_table(df, counts) -> None:
     )
     query = fc[3].text_input("Search", value=st.query_params.get("q", ""),
                              placeholder="CVE or asset name…", key="os_search")
-    group_label = fc[4].segmented_control(
+    group_label = fc[4].selectbox(
         "Group by",
         options=group_opts,
-        default=_group_from_query(group_opts),
+        index=group_opts.index(_group_from_query(group_opts)),
         key="os_group_by",
     )
 
@@ -386,7 +395,7 @@ def _filter_and_table(df, counts) -> None:
     if not mode or view.empty:
         _show_table(view, full=df, key="flat_csv", nodes=nodes)
     else:
-        _show_grouped(view, df, "flat_csv", nodes, mode, type_col, cloud_col)
+        _show_grouped(view, df, "flat_csv", nodes, mode, group_cols[group_label])
 
 
 _CVE_RE = r"CVE-\d{4}-\d+"
@@ -502,40 +511,151 @@ def _show_table(view, full=None, key="csv", nodes=None) -> None:
     _export_button(view, key)
 
 
-def _grouped_frames(view, mode, type_col, cloud_col):
+def _group_columns(df):
+    """Ordered ``{label: column}`` of the 'Group by' options available for ``df``.
+
+    Walks ``GROUP_OPTIONS`` in declaration order, keeping only options whose field is
+    present in this response shape (first matching candidate column wins). Pure, so the
+    available-option set is unit-testable without Streamlit.
+    """
+    out = {}
+    for label, (_token, cands) in GROUP_OPTIONS.items():
+        col = _col(df, *cands)
+        if col is not None:
+            out[label] = col
+    return out
+
+
+def _grouped_frames(view, mode, col):
     """Split ``view`` into ordered ``[(label, subframe), ...]`` for the group mode.
 
-    severity -> SEVERITY_ORDER (present values only, severest first); atype/cloud -> the
-    raw column values, busiest group first. Pure (no Streamlit) so ordering/splitting is
-    unit-testable; each subframe keeps ``view``'s index so the drill-down still resolves.
+    severity -> SEVERITY_ORDER (present values only, severest first); every other mode ->
+    the raw ``col`` values, busiest group first. Pure (no Streamlit) so ordering/splitting
+    is unit-testable; each subframe keeps ``view``'s index so the drill-down still resolves.
     """
     if mode == "severity":
         keys = normalize_severity_series(view["severity"])
         order = [s for s in SEVERITY_ORDER if s in set(keys)]
     else:
-        col = type_col if mode == "atype" else cloud_col
         keys = view[col].astype(str)
         order = list(keys.value_counts().index)  # busiest group first
     return [(g, view[keys == g]) for g in order]
 
 
-def _show_grouped(view, full, key, nodes, mode, type_col, cloud_col) -> None:
+def _group_stats(sub, mode, total):
+    """Compact per-group insight numbers for the grouped findings view (pure pandas).
+
+    Returns the dict the header + strip renderers consume:
+
+    * ``n`` — findings in this group; ``share`` — ``n / total`` (this group's slice of
+      the filtered set, 0..1).
+    * ``severity`` — ``{SEV: count}`` for present severities, severest-first. Empty in
+      severity mode (every row shares one severity, so a distribution is meaningless).
+    * ``open`` / ``resolved`` — split from ``status`` (a finding whose status isn't a
+      resolved-state counts as open); ``None`` when the response has no ``status`` column.
+    * ``assets`` — distinct ``vulnerableAsset.name``; ``None`` when that column is absent
+      or when grouping *by* asset (where it's a constant 1 and adds nothing).
+
+    Pure (no Streamlit) so ordering/counting stays unit-testable.
+    """
+    n = len(sub)
+    stats = {"n": n, "share": (n / total if total else 0.0)}
+
+    if mode != "severity" and "severity" in sub.columns:
+        vc = normalize_severity_series(sub["severity"]).value_counts()
+        stats["severity"] = {s: int(vc[s]) for s in SEVERITY_ORDER if s in vc.index}
+    else:
+        stats["severity"] = {}
+
+    if "status" in sub.columns:
+        norm = sub["status"].astype("string").str.upper().str.strip()
+        resolved = int(norm.isin(RESOLVED_STATUSES).sum())
+        stats["open"], stats["resolved"] = n - resolved, resolved
+    else:
+        stats["open"] = stats["resolved"] = None
+
+    if mode != "asset" and "vulnerableAsset.name" in sub.columns:
+        stats["assets"] = int(sub["vulnerableAsset.name"].nunique(dropna=True))
+    else:
+        stats["assets"] = None
+
+    return stats
+
+
+def _group_header(label, mode, stats):
+    """Expander header for one group.
+
+    Severity mode leads with its own glyph + label + count (unchanged). Every other mode
+    appends a compact severest-first glyph summary (e.g. ``🔴 12  🟠 20``) so groups can be
+    compared *while collapsed* — the glyph is the non-color signal the design bar requires.
+    """
+    n = stats["n"]
+    if mode == "severity":
+        return f"{SEVERITY_GLYPHS.get(label, '')} {label} · {n:,}".strip()
+    head = f"{label} · {n:,}"
+    sev = stats.get("severity") or {}
+    if sev:
+        glyphs = "  ".join(f"{SEVERITY_GLYPHS.get(s, '')} {v:,}" for s, v in sev.items())
+        head = f"{head}  ·  {glyphs}"
+    return head
+
+
+def _group_stats_strip_html(stats):
+    """Compact stats strip shown above a group's table, or ``""`` when there's nothing.
+
+    A thin proportional severity bar + a dot/count legend (only when a severity *mix*
+    exists), then a muted meta line: open/resolved split, distinct assets, and the group's
+    share of the filtered set. Severity meaning is carried by the dot + label + number, so
+    it never rests on color alone; the bar is decorative reinforcement (``aria-hidden``).
+    """
+    sev = stats.get("severity") or {}
+    parts = []
+    if sev:
+        denom = sum(sev.values()) or 1
+        segs = "".join(
+            f'<span class="group-stats__seg" aria-hidden="true" '
+            f'style="width:{v / denom:.4%};background:var(--sev-{s.lower()})"></span>'
+            for s, v in sev.items()
+        )
+        chips = "".join(
+            f'<span class="group-stat-chip">{ui.sev_dot_html(s)}'
+            f'<span class="group-stat-chip__label">{s.title()}</span>'
+            f'<b>{v:,}</b></span>'
+            for s, v in sev.items()
+        )
+        parts.append(f'<div class="group-stats__bar">{segs}</div>')
+        parts.append(f'<div class="group-stats__chips">{chips}</div>')
+
+    meta = []
+    if stats.get("open") is not None:
+        meta.append(f'<span><b>{stats["open"]:,}</b> open</span>')
+        meta.append(f'<span><b>{stats["resolved"]:,}</b> resolved</span>')
+    if stats.get("assets") is not None:
+        noun = "asset" if stats["assets"] == 1 else "assets"
+        meta.append(f'<span><b>{stats["assets"]:,}</b> {noun}</span>')
+    meta.append(f'<span><b>{stats["share"]:.0%}</b> of findings</span>')
+    parts.append(f'<div class="group-stats__meta">{"".join(meta)}</div>')
+
+    return f'<div class="group-stats">{"".join(parts)}</div>'
+
+
+def _show_grouped(view, full, key, nodes, mode, col) -> None:
     """Findings split into collapsible per-group sections — one count-labelled expander
-    per group value, each holding that group's own findings table. The column picker
-    renders once above all groups; one CSV export covers the whole filtered set."""
+    per group value, each holding a compact stats strip + that group's findings table. The
+    column picker renders once above all groups; one CSV export covers the whole filtered set."""
     cols = _column_choice(view, key)
     nonce = st.session_state.get("os_editor_nonce", 0)
-    groups = _grouped_frames(view, mode, type_col, cloud_col)
+    groups = _grouped_frames(view, mode, col)
+    total = len(view)
     for i, (label, sub) in enumerate(groups):
-        # Severity headers carry the glyph (a non-color signal, matching the table's
-        # severity column); others show value + count. The busiest/severest group is
-        # open by default, the rest start collapsed (progressive disclosure).
-        if mode == "severity":
-            header = f"{SEVERITY_GLYPHS.get(label, '')} {label} · {len(sub):,}".strip()
-        else:
-            header = f"{label} · {len(sub):,}"
+        stats = _group_stats(sub, mode, total)
+        # Header carries a collapsed-state at-a-glance summary (severity glyphs / severity
+        # mode's own glyph). The busiest/severest group opens by default; the rest start
+        # collapsed (progressive disclosure).
+        header = _group_header(label, mode, stats)
         height = min(38 * (len(sub) + 1) + 3, 420)  # compact for small groups
         with st.expander(header, expanded=(i == 0)):
+            st.markdown(_group_stats_strip_html(stats), unsafe_allow_html=True)
             _editor(sub, cols, f"{key}_g{i}_editor_{nonce}", nodes, height=height)
     st.caption(
         f"{len(view):,} findings across {len(groups)} group(s) · "

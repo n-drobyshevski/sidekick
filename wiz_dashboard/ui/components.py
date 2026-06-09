@@ -478,8 +478,29 @@ def _flat_body(record, raw, consumed):
     return ident + scoring + exploit + asset + lifecycle + remediation
 
 
+def _group_stats_html(record, raw, consumed):
+    """Headline analytics tiles for a grouped node: total findings + asset count.
+
+    These two ``analytics`` fields are the summary numbers of a grouped-by-value
+    node (the actual ``vulnerabilityFindingsGroupedByValues`` shape) and would
+    otherwise be invisible — the per-severity breakdown ignores them and the
+    catch-all skips the whole ``analytics.`` prefix."""
+    consumed.update(["analytics.totalFindingCount", "analytics.vulnerableAssetCount"])
+    tiles = []
+    total = _resolve(record, raw, ["analytics.totalFindingCount"])
+    if total is not None:
+        tiles.append(_stat("Total findings", _fmt_cell(total, "score")))
+    assets = _resolve(record, raw, ["analytics.vulnerableAssetCount"])
+    if assets is not None:
+        tiles.append(_stat("Vulnerable assets", _fmt_cell(assets, "score")))
+    if not tiles:
+        return ""
+    return f'<div class="vuln-risk">{"".join(tiles)}</div>'
+
+
 def _grouped_body(record, raw, consumed):
-    """Findings breakdown + asset/context sections for a grouped-by-asset node."""
+    """Summary stats + findings breakdown + asset/context for a grouped-by-asset node."""
+    stats = _group_stats_html(record, raw, consumed)
     breakdown = _breakdown_section(record, raw, consumed)
     asset = _section("Affected asset", [
         _row(record, raw, consumed, "Asset", ["vulnerableAsset.name"]),
@@ -498,7 +519,7 @@ def _grouped_body(record, raw, consumed):
         _row(record, raw, consumed, "Project", ["project"]),
         _row(record, raw, consumed, "Detection method", ["detectionMethod"]),
     ])
-    return breakdown + asset + context
+    return stats + breakdown + asset + context
 
 
 def vuln_detail_html(record: dict, raw=None) -> str:
@@ -629,11 +650,20 @@ def stat_list_card(items) -> None:
     rows = []
     for it in items:
         title = f' title="{_html.escape(str(it["help"]))}"' if it.get("help") else ""
+        if it.get("sub_value"):
+            value_html = (
+                f'<span class="stat-card__value-group">'
+                f'<span class="stat-card__value">{_html.escape(str(it.get("value", "—")))}</span>'
+                f'<span class="stat-card__sub-value">{_html.escape(str(it["sub_value"]))}</span>'
+                f'</span>'
+            )
+        else:
+            value_html = f'<span class="stat-card__value">{_html.escape(str(it.get("value", "—")))}</span>'
         rows.append(
             '<div class="stat-card__row">'
             f'<span class="stat-card__name"{title}>'
             f'{it.get("glyph_html") or ""}{_html.escape(str(it.get("label", "")))}</span>'
-            f'<span class="stat-card__value">{_html.escape(str(it.get("value", "—")))}</span>'
+            f'{value_html}'
             f'{_delta_html(it.get("delta"), inverse=it.get("inverse", True), suffix=it.get("delta_suffix", ""), pct=it.get("pct"), abs_text=it.get("abs_text"))}'
             "</div>"
         )
@@ -651,28 +681,34 @@ def severity_skeleton():
     )
 
 
-def severity_cards(counts, prev=None):
+def severity_cards(counts, prev=None, per_sev=None):
     """The severity breakdown as ONE card with a row per level (Critical→Low).
 
     A single shadcn Card (see ``stat_list_card``) stacks four rows, each pairing a colour
     dot + text label with the count (tabular figures) and an optional scan-over-scan change
     chip — absolute count plus % vs the previous scan (rising = worse). Shared by every
     findings page (OS / Cloud / Identity); Info/Unknown are omitted by design (see
-    ``_BREAKDOWN_SEVERITIES``). ``prev`` is a previous ``{severity: count}`` mapping."""
+    ``_BREAKDOWN_SEVERITIES``). ``prev`` is a previous ``{severity: count}`` mapping.
+    ``per_sev`` is the MTTR per-severity dict (``{sev: {"open": N, "resolved": N, …}}``)
+    used to render an "N open · N resolved" sub-line under each count."""
     items = []
     for sev in _BREAKDOWN_SEVERITIES:
         cur = counts.get(sev, 0)
         p = prev.get(sev) if prev else None
-        items.append(
-            {
-                "label": sev.title(),
-                "glyph_html": sev_dot_html(sev),
-                "value": f"{cur:,}",
-                "delta": (cur - p) if p is not None else None,
-                # % needs a non-zero base; a count rising from 0 shows the absolute only.
-                "pct": ((cur - p) / p * 100) if p not in (None, 0) else None,
-            }
-        )
+        item = {
+            "label": sev.title(),
+            "glyph_html": sev_dot_html(sev),
+            "value": f"{cur:,}",
+            "delta": (cur - p) if p is not None else None,
+            # % needs a non-zero base; a count rising from 0 shows the absolute only.
+            "pct": ((cur - p) / p * 100) if p not in (None, 0) else None,
+        }
+        if per_sev and sev in per_sev:
+            sev_data = per_sev[sev]
+            open_ = sev_data.get("open", 0)
+            resolved = sev_data.get("resolved", 0)
+            item["sub_value"] = f"{open_:,} open · {resolved:,} resolved"
+        items.append(item)
     stat_list_card(items)
 
 

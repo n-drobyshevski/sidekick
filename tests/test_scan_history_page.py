@@ -68,7 +68,103 @@ def test_run_scan_grouped_archives(tmp_path):
     assert len(at.session_state["os_nodes"]) == 10
 
 
-def test_clear_ledger_caches_invalidates():
+def test_autoload_hydrates_fresh_session_from_saved_scan(tmp_path):
+    # A fresh session with a prior saved scan must auto-load it (no Wiz query, no new
+    # snapshot, no os_nodes pre-set), so the dashboard opens on data, not an empty state.
+    script = (
+        "import streamlit as st\n"
+        "from wiz_dashboard.ui import scan\n"
+        "from wiz_dashboard.data import ledger\n"
+        "st.session_state['dry_run_shape'] = 'flat'\n"
+        "scan.run_scan(force=False, has_creds=False)\n"
+        "st.session_state['before'] = len(ledger.load_scans_df())\n"
+        # Simulate a brand-new session: drop the in-session view but keep the durable base.
+        "for k in ('os_nodes','os_df','os_raw','os_counts','os_prev_counts',"
+        "'last_scan_meta','_autoload_tried'):\n"
+        "    st.session_state.pop(k, None)\n"
+        "st.session_state['loaded'] = scan.autoload_latest_scan()\n"
+        "st.session_state['after'] = len(ledger.load_scans_df())\n"
+    )
+    at = AppTest.from_string(script, default_timeout=60).run()
+    assert not at.exception, at.exception
+    assert at.session_state["loaded"] is True
+    assert at.session_state["os_nodes"]
+    assert at.session_state["os_counts"]
+    assert "last_scan_meta" in at.session_state
+    # Auto-load is a pure read: it must not add a second saved scan.
+    assert at.session_state["before"] == at.session_state["after"] == 1
+
+
+def test_autoload_noop_when_data_already_loaded(tmp_path):
+    # Auto-load must never clobber an in-session scan (e.g. one the user just ran).
+    script = (
+        "import streamlit as st\n"
+        "from wiz_dashboard.ui import scan\n"
+        "st.session_state['dry_run_shape'] = 'flat'\n"
+        "scan.run_scan(force=False, has_creds=False)\n"
+        "st.session_state['count_before'] = len(st.session_state['os_nodes'])\n"
+        "st.session_state['loaded'] = scan.autoload_latest_scan()\n"
+        "st.session_state['count_after'] = len(st.session_state['os_nodes'])\n"
+    )
+    at = AppTest.from_string(script, default_timeout=60).run()
+    assert not at.exception, at.exception
+    assert at.session_state["loaded"] is False
+    assert at.session_state["count_before"] == at.session_state["count_after"]
+
+
+def test_autoload_noop_and_marks_tried_when_base_empty(tmp_path):
+    # With an empty durable base, auto-load loads nothing, raises nothing, and sets the
+    # one-shot guard so repeated reruns don't keep re-reading SQLite.
+    script = (
+        "import streamlit as st\n"
+        "from wiz_dashboard.ui import scan\n"
+        "st.session_state['loaded'] = scan.autoload_latest_scan()\n"
+    )
+    at = AppTest.from_string(script, default_timeout=60).run()
+    assert not at.exception, at.exception
+    assert at.session_state["loaded"] is False
+    assert "os_nodes" not in at.session_state
+    assert at.session_state["_autoload_tried"] is True
+
+
+def test_reload_scan_redraws_without_new_snapshot(tmp_path):
+    # Refresh = reload the last saved scan into the os_* session state WITHOUT querying
+    # Wiz or adding a new scan row. Run a scan to save one snapshot, wipe the in-session
+    # view, then reload and prove it rebuilt the view while the saved scan count held.
+    script = (
+        "import streamlit as st\n"
+        "from wiz_dashboard.ui import scan\n"
+        "from wiz_dashboard.data import ledger\n"
+        "st.session_state['dry_run_shape'] = 'flat'\n"
+        "scan.run_scan(force=False, has_creds=False)\n"
+        "st.session_state['scans_before'] = len(ledger.load_scans_df())\n"
+        "for k in ('os_nodes','os_df','os_raw','os_counts','os_prev_counts','last_scan_meta'):\n"
+        "    st.session_state.pop(k, None)\n"
+        "scan.reload_scan()\n"
+        "st.session_state['scans_after'] = len(ledger.load_scans_df())\n"
+    )
+    at = AppTest.from_string(script, default_timeout=60).run()
+    assert not at.exception, at.exception
+    # The view was rebuilt purely from the durable base.
+    assert at.session_state["os_nodes"]
+    assert at.session_state["os_counts"]
+    assert "last_scan_meta" in at.session_state
+    # Refresh is a read: it must not add a second saved scan.
+    assert at.session_state["scans_before"] == 1
+    assert at.session_state["scans_after"] == 1
+
+
+def test_reload_scan_without_saved_scan_warns(tmp_path):
+    # With an empty durable base, Refresh leaves the session untouched (no os_* keys) and
+    # doesn't raise — it just nudges the user to run a scan first.
+    script = (
+        "from wiz_dashboard.ui import scan\n"
+        "scan.reload_scan()\n"
+    )
+    at = AppTest.from_string(script, default_timeout=60).run()
+    assert not at.exception, at.exception
+    assert "os_nodes" not in at.session_state
+    assert "last_scan_meta" not in at.session_state
     # The shared helper must actually invalidate the caches, not just run: a cached
     # (stale) read keeps returning the old value until clear_ledger_caches() is called.
     from wiz_dashboard.data import ledger

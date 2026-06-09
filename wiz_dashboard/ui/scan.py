@@ -15,7 +15,7 @@ import streamlit as st
 
 from wiz_dashboard.data import history, ledger
 from wiz_dashboard.data.client import fetch_findings
-from wiz_dashboard.data.transform import extract_nodes, nodes_to_dataframe
+from wiz_dashboard.data.transform import extract_nodes, nodes_to_dataframe, coerce_results
 from wiz_dashboard.domain.metrics import calculate_mttr, overall_sla_oldest
 from wiz_dashboard.domain.severity import count_by_severity
 from wiz_dashboard.models import schema
@@ -46,10 +46,15 @@ def freshness_caption(meta, scans_df) -> str:
 def run_scan(force: bool, has_creds: bool, sample_shape: str | None = None) -> None:
     """Fetch findings (dry-run without creds), parse them, and store in session state.
 
-    ``force`` clears the fetch cache first (the "Refresh" path). Writes ``os_nodes`` /
-    ``os_df`` / ``os_raw`` / ``os_prev_counts`` / ``os_counts`` and ``last_scan_meta``,
-    records the MTTR snapshot, and invalidates the cached history so the trend reflects
-    it. Errors are surfaced with a downloadable traceback instead of crashing the page.
+    ``force`` clears the fetch cache first (the OS page's "Show individual findings"
+    degroup path, which must re-fetch the flat sample even within the cache TTL). Writes
+    ``os_nodes`` / ``os_df`` / ``os_raw`` / ``os_prev_counts`` / ``os_counts`` and
+    ``last_scan_meta``, records the MTTR snapshot, and invalidates the cached history so
+    the trend reflects it. Errors are surfaced with a downloadable traceback instead of
+    crashing the page.
+
+    Contrast with ``reload_scan`` (the sidebar "Refresh"), which redraws from the last
+    *saved* scan and writes no new snapshot.
 
     ``sample_shape`` overrides the dry-run sample shape for this one fetch (e.g. the
     grouped view's "Show individual findings" button forces ``"flat"``); when ``None``
@@ -61,8 +66,9 @@ def run_scan(force: bool, has_creds: bool, sample_shape: str | None = None) -> N
     try:
         # st.status shows the scan as discrete steps; if the block raises, Streamlit
         # marks the status "error" automatically and we surface the traceback below.
-        with st.status("Running scan…", expanded=False) as status:
-            status.update(label="Querying Wiz…")
+        with st.status("Running scan…", expanded=True) as status:
+            mode_label = "Wiz API" if has_creds else "sample data"
+            status.update(label=f"Connecting to {mode_label}…")
             # Dry-run sample shape (ignored live): "grouped" mirrors the real API;
             # "flat" keeps per-finding MTTR/SLA data. An explicit override (e.g. the
             # degroup button) wins; otherwise use the sidebar toggle, defaulting flat so
@@ -76,9 +82,19 @@ def run_scan(force: bool, has_creds: bool, sample_shape: str | None = None) -> N
             if not has_creds:
                 sample_seq = int(st.session_state.get("dry_run_seq", 0))
                 st.session_state["dry_run_seq"] = sample_seq + 1
+
+            # Live fetch pages through the cursor connection; surface each page as it lands
+            # so a multi-thousand-finding scan shows steady progress instead of a stalled
+            # "Querying Wiz…". Fires only on a live cache-miss (dry-run/cache-hit are instant).
+            def _on_page(pages, found):
+                noun = "page" if pages == 1 else "pages"
+                status.update(label=f"Querying Wiz… {found:,} findings across {pages} {noun}")
+
+            status.update(label="Querying Wiz…")
             results = fetch_findings(
                 dry_run=not has_creds, use_config=has_creds,
                 sample_shape=shape, sample_seq=sample_seq,
+                _progress=_on_page if has_creds else None,
             )
             if results is None:
                 status.update(label="Scan produced no output", state="error")
@@ -86,9 +102,9 @@ def run_scan(force: bool, has_creds: bool, sample_shape: str | None = None) -> N
                 return
             status.update(label="Parsing findings…")
             nodes = extract_nodes(results)
-            status.update(label=f"Building table ({len(nodes):,} findings)…")
+            status.update(label=f"Building findings table ({len(nodes):,} findings)…")
             df = nodes_to_dataframe(nodes)
-            status.update(label="Computing metrics…")
+            status.update(label="Computing severity & MTTR metrics…")
             st.session_state["os_nodes"] = nodes
             st.session_state["os_df"] = df
             st.session_state["os_raw"] = results
@@ -113,6 +129,96 @@ def run_scan(force: bool, has_creds: bool, sample_shape: str | None = None) -> N
         )
         return
     ui.show_toast(f"Loaded {len(nodes):,} findings", "success")
+
+
+def _apply_saved_payload(payload, row) -> int:
+    """Rebuild the ``os_*`` session state from a saved scan's archived payload.
+
+    The shared core behind both the sidebar "Refresh" (``reload_scan``) and the fresh-session
+    auto-load (``autoload_latest_scan``): a pure session write — it re-parses the payload and
+    sets ``os_nodes`` / ``os_df`` / ``os_raw`` / ``os_prev_counts`` / ``os_counts`` and
+    ``last_scan_meta``, then re-reads the durable derivations. It performs **no Wiz query and
+    writes no new snapshot** (no ledger row, no MTTR point), so it can never add a data point.
+    ``row`` is the ``scans``-table metadata for the payload. Returns the finding count; raises
+    on a malformed payload (callers decide how to surface it).
+    """
+    results = coerce_results(payload)
+    nodes = extract_nodes(results)
+    df = nodes_to_dataframe(nodes)
+    prev = st.session_state.get("os_counts", {})
+    st.session_state["os_nodes"] = nodes
+    st.session_state["os_df"] = df
+    st.session_state["os_raw"] = results
+    st.session_state["os_prev_counts"] = prev
+    st.session_state["os_counts"] = count_by_severity(df)
+    ts = row.get("ts")
+    when = (
+        ts.strftime("%Y-%m-%d %H:%M UTC")
+        if ts is not None and pd.notna(ts)
+        else datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    )
+    st.session_state["last_scan_meta"] = {
+        "count": len(nodes),
+        "mode": row.get("mode", "unknown"),
+        "at": when,
+    }
+    # Re-read the durable derivations so Scan History / MTTR reflect the saved base, but do
+    # NOT persist or record a snapshot — reloading adds no new data point.
+    _derived.clear_ledger_caches()
+    _derived.history_cached.clear()
+    return len(nodes)
+
+
+def reload_scan() -> None:
+    """Redraw the in-session view from the most recent *saved* scan — the sidebar "Refresh".
+
+    Unlike ``run_scan``, this performs **no Wiz query and writes no new snapshot**: it
+    re-reads the latest scan archived in the durable base, rebuilds the ``os_*`` session
+    state from it, and recomputes the view. Repeated clicks therefore never add duplicate
+    ledger rows or same-day MTTR points — it's a pure read. Clears the cached ledger
+    derivations (and the history cache) so consumer pages re-read the latest saved base.
+    When nothing has ever been saved, it nudges the user to run a scan first.
+    """
+    payload, row = ledger.load_latest_scan_payload()
+    if payload is None:
+        ui.show_toast("Nothing to refresh yet — run a scan first to save findings.", "warning")
+        return
+    try:
+        count = _apply_saved_payload(payload, row)
+    except Exception as exc:  # noqa: BLE001 -- surfaced to the user with a traceback
+        ui.show_exception(
+            exc,
+            title="The view couldn't be refreshed.",
+            hint="The last saved scan couldn't be reloaded. Run a fresh scan to re-query "
+            "Wiz, or check the durable base under `data/`.",
+        )
+        return
+    ui.show_toast(f"Refreshed from the last saved scan · {count:,} findings", "success")
+
+
+def autoload_latest_scan() -> bool:
+    """Hydrate a fresh session from the most recent saved scan so the app opens on data.
+
+    On a new session nothing is loaded, so the dashboard would otherwise greet the user with
+    an empty state even when prior scans are saved. This silently rebuilds the ``os_*`` state
+    from the latest archived scan — no Wiz query, no new snapshot, no toast (the sidebar
+    freshness line already announces it). A no-op (returns ``False``) when findings are
+    already loaded, when nothing has ever been saved, or once it has tried this session — the
+    ``_autoload_tried`` flag stops the empty-base case re-reading SQLite on every rerun.
+    Returns ``True`` only when it loaded a scan into the session.
+    """
+    if st.session_state.get("os_nodes") or st.session_state.get("_autoload_tried"):
+        return False
+    st.session_state["_autoload_tried"] = True
+    payload, row = ledger.load_latest_scan_payload()
+    if payload is None:
+        return False
+    try:
+        _apply_saved_payload(payload, row)
+    except Exception:  # noqa: BLE001 -- a bad archive must not block app startup
+        logger.warning("Auto-load of the latest saved scan failed", exc_info=True)
+        return False
+    return True
 
 
 def _persist_scan(nodes, df, results, *, mode, db_path=None) -> None:

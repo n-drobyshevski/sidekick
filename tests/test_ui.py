@@ -131,11 +131,13 @@ def test_vuln_detail_html_grouped_node_breakdown_and_tags():
     raw = {
         "vulnerableAsset": {"name": "gke-x", "cloudPlatform": "GCP",
                             "tags": {"cluster": "inix", "env": "prod"}},
-        "analytics": {"criticalSeverityFindingCount": 63, "totalFindingCount": 63},
+        "analytics": {"criticalSeverityFindingCount": 63, "totalFindingCount": 63,
+                      "vulnerableAssetCount": 1},
     }
     html = components.vuln_detail_html(record, raw)
     assert "Findings breakdown" in html
     assert "vuln-breakdown__fill" in html and "width:100%" in html  # all-critical
+    assert "Total findings" in html and "Vulnerable assets" in html  # analytics tiles
     assert "Affected asset" in html
     assert "tag-chip" in html and "cluster" in html
     assert "Exploitability" not in html  # grouped: no flat per-finding sections

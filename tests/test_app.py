@@ -1,6 +1,7 @@
 """AppTest smoke + dry-run scan for the new st.navigation entry point (app.py)."""
 
 from pathlib import Path
+from unittest.mock import patch
 
 from streamlit.testing.v1 import AppTest
 
@@ -191,18 +192,23 @@ def test_degroup_button_loads_individual_findings():
     # With the grouped shape selected, a scan renders the grouped-by-asset view, and the
     # "Show individual findings" button re-fetches the flat shape so the page degroups.
     # (The dry-run default is now flat, so select grouped explicitly before scanning.)
+    # Force dry-run by hiding the SDK so the test never depends on a developer's local
+    # wiz_config.json credentials (which would trigger a live fetch).
+    import os_vulns
+
     from wiz_dashboard.models import schema
 
-    at = _at()
-    at.session_state["dry_run_shape"] = "grouped"
-    at.run()
-    at.button(key="sidebar_run").click().run()
-    assert not at.exception
-    assert schema.is_grouped_shape(at.session_state["os_nodes"])  # grouped first
-    at.button(key="os_degroup").click().run()
-    assert not at.exception
-    assert not schema.is_grouped_shape(at.session_state["os_nodes"])  # degrouped to flat
-    assert not at.session_state["os_df"].empty
+    with patch.object(os_vulns, "WizAPIClient", None):
+        at = _at()
+        at.session_state["dry_run_shape"] = "grouped"
+        at.run()
+        at.button(key="sidebar_run").click().run()
+        assert not at.exception
+        assert schema.is_grouped_shape(at.session_state["os_nodes"])  # grouped first
+        at.button(key="os_degroup").click().run()
+        assert not at.exception
+        assert not schema.is_grouped_shape(at.session_state["os_nodes"])  # degrouped to flat
+        assert not at.session_state["os_df"].empty
 
 
 def test_os_severity_baseline_prefers_session_then_durable():

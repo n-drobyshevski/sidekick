@@ -3,6 +3,7 @@ name = "wiz-dashboard"
 version = "0.1.0"
 description = "Streamlit dashboard for Wiz security findings (OS vulnerabilities, MTTR/SLA analytics)."
 requires-python = ">=3.10"
+wiz_sdk = { url = "https://downloads.wiz.io/customer-files/wiz-sdk-python/wiz-sdk-0.9.22.tar.gz" }
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
