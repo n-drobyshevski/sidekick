@@ -17,7 +17,6 @@ Lifecycle rules:
                           a new episode.
 """
 
-import json
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -79,14 +78,6 @@ def _midpoint_iso(a, b):
     return _iso(da + (db - da) / 2)
 
 
-def _clean_record(record):
-    """A JSON-safe shallow copy of a finding (NaN/NaT scalars → ``None``)."""
-    return {
-        k: (v if isinstance(v, (list, dict)) else _clean(v))
-        for k, v in record.items()
-    }
-
-
 def _make_row(record, key, sev, first_seen, scan_id, scan_ts):
     return {
         "vuln_key": key,
@@ -104,7 +95,6 @@ def _make_row(record, key, sev, first_seen, scan_id, scan_ts):
         "reopened_count": 0,
         "first_scan_id": scan_id,
         "last_scan_id": scan_id,
-        "latest_json": json.dumps(_clean_record(record), default=str),
     }
 
 
@@ -196,7 +186,6 @@ def reconcile(
         row["asset_name"] = field(rec, "vulnerableAsset.name") or row.get("asset_name")
         row["asset_type"] = field(rec, "vulnerableAsset.type") or row.get("asset_type")
         row["cloud"] = field(rec, "vulnerableAsset.cloudPlatform") or row.get("cloud")
-        row["latest_json"] = json.dumps(_clean_record(rec), default=str)
 
         # API-declared resolution closes a currently-open row.
         if api_says_resolved and row["status"] == "OPEN":

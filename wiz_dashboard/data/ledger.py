@@ -11,8 +11,10 @@ so tests can point at a ``tmp_path``. Writes never assume the DB exists — ``in
 idempotent and lazy.
 """
 
+import gzip
 import json
 import logging
+import os
 import re
 import shutil
 import sqlite3
@@ -29,12 +31,20 @@ from wiz_dashboard.data.transform import extract_nodes
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+# v2: dropped ``vuln_ledger.latest_json`` — a full finding payload per row that nothing
+# ever read (the raw archive keeps the complete finding), yet dominated the DB's size and
+# was deserialized on every persist and every Scan History load.
+SCHEMA_VERSION = 2
+
+# gzip trades a once-per-scan compression cost for ~10x smaller archives; level 6 because
+# higher levels barely shrink JSON further while getting markedly slower.
+_GZIP_LEVEL = 6
+_GZIP_MAGIC = b"\x1f\x8b"
 
 LEDGER_COLUMNS = [
     "vuln_key", "cve", "severity", "asset_id", "asset_name", "asset_type", "cloud",
     "first_seen", "last_seen", "status", "resolved_at", "resolution_src",
-    "reopened_count", "first_scan_id", "last_scan_id", "latest_json",
+    "reopened_count", "first_scan_id", "last_scan_id",
 ]
 
 _SCANS_COLUMNS = [
@@ -98,8 +108,7 @@ def init_db(db_path=None) -> None:
                     resolution_src TEXT,
                     reopened_count INTEGER DEFAULT 0,
                     first_scan_id TEXT,
-                    last_scan_id TEXT,
-                    latest_json TEXT
+                    last_scan_id TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_ledger_status ON vuln_ledger(status);
                 CREATE INDEX IF NOT EXISTS idx_ledger_severity ON vuln_ledger(severity);
@@ -117,9 +126,76 @@ def init_db(db_path=None) -> None:
             )
             if conn.execute("SELECT COUNT(*) FROM schema_meta").fetchone()[0] == 0:
                 conn.execute("INSERT INTO schema_meta (version) VALUES (?)", (SCHEMA_VERSION,))
+        _migrate(conn)
     finally:
         conn.close()
     _archive_dir(db_path).mkdir(parents=True, exist_ok=True)
+
+
+def _migrate(conn) -> None:
+    """Upgrade an existing DB to ``SCHEMA_VERSION`` in place.
+
+    v1 → v2 drops ``vuln_ledger.latest_json``. ``BEGIN IMMEDIATE`` + a version re-check
+    keep concurrent sessions from racing the migration; the VACUUM that actually reclaims
+    the dropped column's space is best-effort (it can't run inside a transaction and may
+    lose a lock race) — a skipped VACUUM just defers reclamation to the next start.
+    """
+    row = conn.execute("SELECT version FROM schema_meta").fetchone()
+    if row is None or row[0] >= SCHEMA_VERSION:
+        return
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        row = conn.execute("SELECT version FROM schema_meta").fetchone()
+        if row is not None and row[0] < SCHEMA_VERSION:
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(vuln_ledger)")}
+            if "latest_json" in cols:
+                try:
+                    conn.execute("ALTER TABLE vuln_ledger DROP COLUMN latest_json")
+                except sqlite3.OperationalError:
+                    # SQLite < 3.35 has no DROP COLUMN: rebuild the table without it.
+                    keep = ",".join(LEDGER_COLUMNS)
+                    conn.execute("ALTER TABLE vuln_ledger RENAME TO vuln_ledger_v1")
+                    conn.execute(
+                        """
+                        CREATE TABLE vuln_ledger (
+                            vuln_key TEXT PRIMARY KEY,
+                            cve TEXT,
+                            severity TEXT,
+                            asset_id TEXT,
+                            asset_name TEXT,
+                            asset_type TEXT,
+                            cloud TEXT,
+                            first_seen TEXT NOT NULL,
+                            last_seen TEXT NOT NULL,
+                            status TEXT NOT NULL,
+                            resolved_at TEXT,
+                            resolution_src TEXT,
+                            reopened_count INTEGER DEFAULT 0,
+                            first_scan_id TEXT,
+                            last_scan_id TEXT
+                        )
+                        """
+                    )
+                    conn.execute(
+                        f"INSERT INTO vuln_ledger ({keep}) SELECT {keep} FROM vuln_ledger_v1"
+                    )
+                    conn.execute("DROP TABLE vuln_ledger_v1")
+                    conn.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_ledger_status ON vuln_ledger(status)"
+                    )
+                    conn.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_ledger_severity ON vuln_ledger(severity)"
+                    )
+            conn.execute("UPDATE schema_meta SET version=?", (SCHEMA_VERSION,))
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    try:
+        conn.execute("VACUUM")
+    except Exception:
+        logger.warning("Post-migration VACUUM skipped; space reclaimed on a later start.",
+                       exc_info=True)
 
 
 def _now_iso() -> str:
@@ -163,17 +239,27 @@ def _upsert_ledger(conn, rows):
 
 
 def _archive_raw(db_path, scan_id, payload):
-    """Write the raw scan JSON; returns the path or None (never raises)."""
+    """Write the raw scan JSON, gzipped; returns the path or None (never raises).
+
+    Atomic (tmp + ``os.replace``): a half-written archive must never be left behind —
+    delete→rebuild refuses to run when a survivor's archive is unreadable. ``json.dump``
+    streams into the gzip handle so the ~100s-of-MB serialized text never exists in
+    memory alongside the payload.
+    """
+    tmp = None
     try:
         safe = re.sub(r"[^0-9A-Za-z._-]", "", scan_id) or "scan"
-        path = _archive_dir(db_path) / f"{safe}.json"
+        path = _archive_dir(db_path) / f"{safe}.json.gz"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(payload, default=str, ensure_ascii=False), encoding="utf-8"
-        )
+        tmp = path.with_name(path.name + ".tmp")
+        with gzip.open(tmp, "wt", encoding="utf-8", compresslevel=_GZIP_LEVEL) as fh:
+            json.dump(payload, fh, default=str, ensure_ascii=False)
+        os.replace(tmp, path)
         return str(path)
     except Exception:
         logger.warning("Failed to archive raw scan %s", scan_id, exc_info=True)
+        if tmp is not None:
+            Path(tmp).unlink(missing_ok=True)
         return None
 
 
@@ -275,14 +361,27 @@ class LedgerRebuildError(RuntimeError):
     payload is missing). Raised BEFORE any data is mutated, so the delete is refused."""
 
 
+def _is_gzip(path) -> bool:
+    """Whether the file starts with the gzip magic bytes (content, not extension —
+    ``scans.raw_path`` may point at a pre-compression plain ``.json`` archive)."""
+    with open(path, "rb") as fh:
+        return fh.read(2) == _GZIP_MAGIC
+
+
 def _read_raw_payload(raw_path):
-    """Load an archived scan payload from disk; None if absent/unreadable."""
+    """Load an archived scan payload from disk; None if absent/unreadable.
+
+    Reads both gzipped (current) and plain-JSON (pre-compression) archives, sniffed by
+    magic bytes, so data dirs written before the gzip change stay readable forever."""
     if not raw_path:
         return None
     p = Path(raw_path)
     if not p.exists():
         return None
     try:
+        if _is_gzip(p):
+            with gzip.open(p, "rt", encoding="utf-8") as fh:
+                return json.load(fh)
         return json.loads(p.read_text(encoding="utf-8"))
     except Exception:
         logger.warning("Failed to read archived scan payload %s", raw_path, exc_info=True)
@@ -415,6 +514,26 @@ def delete_scans(scan_ids, db_path=None) -> dict:
         raise
     else:
         bak.unlink(missing_ok=True)
+
+    # Replay re-archives survivors in the current (gzipped) format; a pre-compression
+    # survivor's stored raw_path therefore changes (.json -> .json.gz). Drop the
+    # superseded plain files so rebuilds don't strand orphans (best-effort; the parsed-
+    # frame snapshot is shared by both paths and stays).
+    conn = _connect(db_path)
+    try:
+        fresh_paths = {
+            r["scan_id"]: r["raw_path"]
+            for r in conn.execute("SELECT scan_id, raw_path FROM scans")
+        }
+    finally:
+        conn.close()
+    for r in survivors:
+        old, new = r["raw_path"], fresh_paths.get(r["scan_id"])
+        if old and new and old != new:
+            try:
+                Path(old).unlink(missing_ok=True)
+            except Exception:
+                logger.warning("Couldn't remove superseded archive %s", old, exc_info=True)
 
     # Remove the deleted scans' archived payloads and their parsed-frame snapshots
     # (best-effort; survivors keep theirs).
@@ -616,3 +735,67 @@ def load_trend_df(db_path=None) -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows, columns=cols)
+
+
+# --------------------------------------------------------------------------- #
+#  Maintenance
+# --------------------------------------------------------------------------- #
+def compact_archives(db_path=None) -> dict:
+    """Gzip any pre-compression plain-JSON scan archives in place (one-time upgrade).
+
+    Correctness never depends on this — ``_read_raw_payload`` sniffs and reads both
+    formats — it only reclaims the ~10x disk difference for scans archived before the
+    gzip change. Per-file: stream to ``<path>.gz`` (tmp + ``os.replace``), verify the
+    new file reads back, repoint ``scans.raw_path``, then unlink the plain file. The
+    parsed-frame snapshot pairs with both paths (same stem), so it is untouched.
+    Never raises; failures are logged and counted. Returns
+    ``{"compressed", "skipped", "failed"}``.
+    """
+    counts = {"compressed": 0, "skipped": 0, "failed": 0}
+    db_path = _resolve(db_path)
+    if not db_path.exists():
+        return counts
+    conn = _connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT scan_id, raw_path FROM scans WHERE raw_path IS NOT NULL"
+        ).fetchall()
+    finally:
+        conn.close()
+    for r in rows:
+        old = Path(r["raw_path"])
+        try:
+            if not old.exists() or _is_gzip(old):
+                counts["skipped"] += 1
+                continue
+            new = old.with_name(old.name + ".gz")
+            tmp = new.with_name(new.name + ".tmp")
+            try:
+                with open(old, "rb") as src, gzip.open(
+                    tmp, "wb", compresslevel=_GZIP_LEVEL
+                ) as dst:
+                    shutil.copyfileobj(src, dst)
+                os.replace(tmp, new)
+            finally:
+                Path(tmp).unlink(missing_ok=True)
+            if _read_raw_payload(str(new)) is None:  # verify before dropping the original
+                Path(new).unlink(missing_ok=True)
+                counts["failed"] += 1
+                continue
+            conn = _connect(db_path)
+            try:
+                with conn:
+                    conn.execute(
+                        "UPDATE scans SET raw_path=? WHERE scan_id=?",
+                        (str(new), r["scan_id"]),
+                    )
+            finally:
+                conn.close()
+            old.unlink(missing_ok=True)
+            counts["compressed"] += 1
+        except Exception:
+            logger.warning("Couldn't compact archive %s", old, exc_info=True)
+            counts["failed"] += 1
+    if counts["compressed"] or counts["failed"]:
+        logger.info("Archive compaction: %s", counts)
+    return counts

@@ -28,9 +28,15 @@ _SUFFIX = ".df.pkl"
 
 
 def snapshot_path_for(raw_path) -> Path:
-    """The snapshot path that belongs to a raw archive path (same directory + stem)."""
+    """The snapshot path that belongs to a raw archive path (same directory + stem).
+
+    Strips a trailing ``.gz`` first so gzipped (``<id>.json.gz``) and pre-compression
+    plain (``<id>.json``) archives pair with the SAME ``<id>.df.pkl`` — otherwise
+    ``Path("x.json.gz").stem`` is ``"x.json"`` and every existing snapshot (plus the
+    delete-flow's snapshot unlink) would silently unpair."""
     p = Path(raw_path)
-    return p.with_name(p.stem + _SUFFIX)
+    name = p.name.removesuffix(".gz")
+    return p.with_name(Path(name).stem + _SUFFIX)
 
 
 def write_snapshot(raw_path, df) -> str | None:

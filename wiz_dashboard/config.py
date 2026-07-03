@@ -5,7 +5,9 @@ from pathlib import Path
 from typing import Dict
 
 # ---- Local result cache (disk "last known good" snapshot) ----
-CACHE_FILENAME = "last_results.json"
+# Gzipped: the snapshot is a full scan's findings (~100s of MB plain), rewritten on
+# every live fetch. data.cache reads the pre-compression plain file as a fallback.
+CACHE_FILENAME = "last_results.json.gz"
 DEFAULT_CACHE_TTL_MINUTES = 60
 
 # ---- Live Wiz API deadline ----
