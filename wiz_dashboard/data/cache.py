@@ -4,6 +4,7 @@ import datetime
 import gzip
 import json
 import logging
+import os
 import re
 from pathlib import Path
 
@@ -44,6 +45,7 @@ def _open_text(path):
 
 def save_cache(results, filename: str = CACHE_FILENAME) -> bool:
     """Write the snapshot. Never raises; logs and returns False on failure."""
+    tmp = None
     try:
         obj = {
             "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -52,27 +54,58 @@ def save_cache(results, filename: str = CACHE_FILENAME) -> bool:
         # Compact JSON (pretty-printing roughly doubles the dump time of a snapshot
         # nothing human reads), streamed through gzip so the full scan's findings cost
         # ~10x less disk and no second in-memory serialized copy. Dict order keeps
-        # "ts" first — peek_saved_at reads only the head.
-        with gzip.open(
-            filename, "wt", encoding="utf-8", compresslevel=_GZIP_LEVEL
-        ) as fh:
+        # "ts" first — peek_saved_at reads only the head. Atomic (tmp + os.replace):
+        # compressing a full scan takes seconds, and a crash mid-write must not
+        # truncate the previous last-known-good snapshot.
+        p = Path(filename)
+        tmp = p.with_name(p.name + ".tmp")
+        with gzip.open(tmp, "wt", encoding="utf-8", compresslevel=_GZIP_LEVEL) as fh:
             json.dump(obj, fh, default=str, ensure_ascii=False)
+        os.replace(tmp, p)
+        if p.suffix == ".gz":
+            # This snapshot supersedes a pre-compression plain twin — reclaim it (it
+            # is a full uncompressed findings payload) instead of shadowing it forever.
+            p.with_name(p.name.removesuffix(".gz")).unlink(missing_ok=True)
         return True
     except Exception:
         # Never fail the app over a cache-write problem -- but make it visible.
         logger.warning("Failed to write cache snapshot to %s", filename, exc_info=True)
+        if tmp is not None:
+            try:
+                Path(tmp).unlink(missing_ok=True)
+            except Exception:
+                pass
         return False
+
+
+def _read_snapshot(filename):
+    """Parse the snapshot dict, falling back from a corrupt ``.gz`` (e.g. a write that
+    predates the atomic tmp+replace) to a still-valid plain twin. ``None`` if neither
+    exists or parses."""
+    p = _resolve_existing(filename)
+    if p is None:
+        return None
+    candidates = [p]
+    if p.suffix == ".gz":
+        twin = p.with_name(p.name.removesuffix(".gz"))
+        if twin.exists():
+            candidates.append(twin)
+    for c in candidates:
+        try:
+            with _open_text(c) as fh:
+                return json.load(fh)
+        except Exception:
+            logger.warning("Failed to read cache snapshot from %s", c, exc_info=True)
+    return None
 
 
 def load_cache(
     filename: str = CACHE_FILENAME, max_age_minutes: int = DEFAULT_CACHE_TTL_MINUTES
 ):
-    p = _resolve_existing(filename)
-    if p is None:
-        return None
     try:
-        with _open_text(p) as fh:
-            data = json.load(fh)
+        data = _read_snapshot(filename)
+        if data is None:
+            return None
         ts = data.get("ts")
         if not ts:
             return data.get("results")

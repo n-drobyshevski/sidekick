@@ -68,7 +68,9 @@ def _archive_dir(db_path):
 def _connect(db_path):
     path = _resolve(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path))
+    # 30s busy timeout (not the 5s default): the one-time v1->v2 migration rewrites the
+    # whole vuln_ledger table, and a concurrent session must wait it out, not error.
+    conn = sqlite3.connect(str(path), timeout=30.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
@@ -143,7 +145,14 @@ def _migrate(conn) -> None:
     row = conn.execute("SELECT version FROM schema_meta").fetchone()
     if row is None or row[0] >= SCHEMA_VERSION:
         return
-    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+    except sqlite3.OperationalError:
+        # Another session holds the write lock (most likely running this very
+        # migration). Don't fail the caller — v1 stays readable/writable with the
+        # extra column ignored, and the next init_db retries.
+        logger.warning("Schema migration deferred: database is locked by another session.")
+        return
     try:
         row = conn.execute("SELECT version FROM schema_meta").fetchone()
         if row is not None and row[0] < SCHEMA_VERSION:
@@ -226,7 +235,10 @@ def _latest_scan(conn):
 
 
 def _load_ledger_map(conn):
-    return {r["vuln_key"]: dict(r) for r in conn.execute("SELECT * FROM vuln_ledger")}
+    # Explicit columns (not *): on a not-yet-migrated v1 DB this must not haul the
+    # dropped-in-v2 latest_json blobs (a full findings payload) into every reconcile.
+    cols = ",".join(LEDGER_COLUMNS)
+    return {r["vuln_key"]: dict(r) for r in conn.execute(f"SELECT {cols} FROM vuln_ledger")}
 
 
 def _upsert_ledger(conn, rows):
@@ -372,12 +384,17 @@ def _read_raw_payload(raw_path):
     """Load an archived scan payload from disk; None if absent/unreadable.
 
     Reads both gzipped (current) and plain-JSON (pre-compression) archives, sniffed by
-    magic bytes, so data dirs written before the gzip change stay readable forever."""
+    magic bytes, so data dirs written before the gzip change stay readable forever.
+    A stored plain path whose file was since compacted to ``.gz`` (stale session state,
+    or a DB restored from ``.bak`` after a compaction) resolves to the sibling."""
     if not raw_path:
         return None
     p = Path(raw_path)
     if not p.exists():
-        return None
+        sibling = p.with_name(p.name + ".gz") if p.suffix != ".gz" else None
+        if sibling is None or not sibling.exists():
+            return None
+        p = sibling
     try:
         if _is_gzip(p):
             with gzip.open(p, "rt", encoding="utf-8") as fh:
@@ -536,8 +553,10 @@ def delete_scans(scan_ids, db_path=None) -> dict:
                 logger.warning("Couldn't remove superseded archive %s", old, exc_info=True)
 
     # Remove the deleted scans' archived payloads and their parsed-frame snapshots
-    # (best-effort; survivors keep theirs).
+    # (best-effort; survivors keep theirs — guard on BOTH their pre-replay and freshly
+    # re-archived paths, since replay may have moved a legacy survivor to .json.gz).
     survivor_paths = {r["raw_path"] for r in survivors if r["raw_path"]}
+    survivor_paths.update(p for p in fresh_paths.values() if p)
     for r in rows:
         if r["scan_id"] in present and r["raw_path"] and r["raw_path"] not in survivor_paths:
             try:
@@ -609,7 +628,9 @@ def load_base_df(db_path=None) -> pd.DataFrame:
         return pd.DataFrame(columns=LEDGER_COLUMNS + ["mttr_days", "age_days"])
     conn = _connect(db_path)
     try:
-        df = pd.read_sql_query("SELECT * FROM vuln_ledger", conn)
+        # Explicit columns (not *): keeps a not-yet-migrated v1 DB from shipping its
+        # latest_json blobs into the Scan History frame (and its CSV export).
+        df = pd.read_sql_query(f"SELECT {','.join(LEDGER_COLUMNS)} FROM vuln_ledger", conn)
     finally:
         conn.close()
     if df.empty:
@@ -755,13 +776,23 @@ def compact_archives(db_path=None) -> dict:
     db_path = _resolve(db_path)
     if not db_path.exists():
         return counts
-    conn = _connect(db_path)
     try:
-        rows = conn.execute(
-            "SELECT scan_id, raw_path FROM scans WHERE raw_path IS NOT NULL"
-        ).fetchall()
-    finally:
-        conn.close()
+        # Also the schema-migration hook for read-only deployments: init_db is otherwise
+        # reached only from the persist writers, and a dashboard used purely to review
+        # existing history would never shed its v1 latest_json bloat.
+        init_db(db_path)
+        conn = _connect(db_path)
+        try:
+            rows = conn.execute(
+                "SELECT scan_id, raw_path FROM scans WHERE raw_path IS NOT NULL"
+            ).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        # Never let start-up maintenance take the app down over a corrupt/locked DB.
+        logger.warning("Archive compaction skipped: ledger unreadable.", exc_info=True)
+        return counts
+    all_paths = {r["raw_path"] for r in rows}
     for r in rows:
         old = Path(r["raw_path"])
         try:
@@ -769,6 +800,13 @@ def compact_archives(db_path=None) -> dict:
                 counts["skipped"] += 1
                 continue
             new = old.with_name(old.name + ".gz")
+            if str(new) in all_paths:
+                # The target name is another scan's live archive (a sanitized-scan_id
+                # collision) — never clobber it; reads-both keeps the plain file valid.
+                logger.warning("Archive compaction skipped for %s: %s belongs to "
+                               "another scan.", old, new)
+                counts["skipped"] += 1
+                continue
             tmp = new.with_name(new.name + ".tmp")
             try:
                 with open(old, "rb") as src, gzip.open(

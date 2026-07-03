@@ -60,3 +60,33 @@ def test_peek_saved_at_reads_gzip_head(tmp_path):
     out = cache.peek_saved_at(f)
     assert out != "an unknown time"
     assert "UTC" in out
+
+
+def test_save_cache_is_atomic_and_reclaims_plain_twin(tmp_path):
+    # A successful gzip save supersedes (and removes) the pre-upgrade plain twin —
+    # otherwise the biggest uncompressed copy is shadowed but never reclaimed — and
+    # leaves no tmp litter behind.
+    import json
+
+    plain = tmp_path / "last_results.json"
+    plain.write_text(json.dumps({"ts": "old", "results": {"old": True}}), encoding="utf-8")
+    f = str(tmp_path / "last_results.json.gz")
+    assert cache.save_cache({"new": True}, filename=f) is True
+    assert not plain.exists()
+    assert not list(tmp_path.glob("*.tmp"))
+    assert cache.load_cache(f, max_age_minutes=None) == {"new": True}
+
+
+def test_corrupt_gz_falls_back_to_plain_twin(tmp_path):
+    # A truncated .gz (pre-atomic-write era, or disk trouble) must not shadow a
+    # still-valid plain snapshot.
+    import json
+
+    results = {"data": {"nodes": [{"id": "x"}]}}
+    (tmp_path / "last_results.json").write_text(
+        json.dumps({"ts": "2026-07-01T00:00:00+00:00", "results": results}),
+        encoding="utf-8",
+    )
+    (tmp_path / "last_results.json.gz").write_bytes(b"\x1f\x8b\x08\x00truncated")
+    got = cache.load_cache(str(tmp_path / "last_results.json.gz"), max_age_minutes=None)
+    assert got == results
