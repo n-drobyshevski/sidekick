@@ -207,3 +207,37 @@ def test_sla_posture_html_empty_is_blank_and_render_is_safe():
     components.sla_posture({
         "MEDIUM": {"sla_pct": 80.0, "sla_target": 30, "mttr_median": 22.0, "resolved": 3, "open": 1}
     })
+
+
+def test_fetch_fraction_maps_progress_into_fetch_share():
+    from wiz_dashboard.ui import scan
+
+    # No usable total -> no percentage (the label alone carries progress).
+    assert scan._fetch_fraction(500, None) is None
+    assert scan._fetch_fraction(500, 0) is None
+    assert scan._fetch_fraction(500, -1) is None
+    # Fetch progress scales into the fetch phase's share of the overall bar…
+    assert scan._fetch_fraction(0, 1000) == 0.0
+    assert scan._fetch_fraction(500, 1000) == 0.5 * scan._FETCH_SHARE
+    # …and clamps at the share even if the server under-reported the total.
+    assert scan._fetch_fraction(2000, 1000) == scan._FETCH_SHARE
+    # The post-fetch phases always sit above whatever the fetch could reach.
+    assert scan._FETCH_SHARE < scan._PHASE_PARSE < scan._PHASE_TABLE < scan._PHASE_PERSIST < 1.0
+
+
+def test_page_bounds_clamps_and_slices():
+    # (page, start, end, n_pages) — page requests clamp into range.
+    assert components._page_bounds(1000, 250, 0) == (0, 0, 250, 4)
+    assert components._page_bounds(1000, 250, 3) == (3, 750, 1000, 4)
+    assert components._page_bounds(1000, 250, 99) == (3, 750, 1000, 4)   # clamp high
+    assert components._page_bounds(1000, 250, -5) == (0, 0, 250, 4)      # clamp low
+    # Ragged last page ends at n, and a sub-page frame is a single full page.
+    assert components._page_bounds(1001, 250, 4) == (4, 1000, 1001, 5)
+    assert components._page_bounds(10, 250, 0) == (0, 0, 10, 1)
+    assert components._page_bounds(0, 250, 0) == (0, 0, 0, 1)
+
+
+def test_paginate_small_frame_passthrough(app):
+    df = pd.DataFrame({"a": range(50)})
+    out = components.paginate(df, "t_pg_small")
+    assert out is df  # under the smallest page size: no controls, no slice

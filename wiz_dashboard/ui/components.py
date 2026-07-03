@@ -945,3 +945,108 @@ def render_page_header(title, subtitle):
     st.title(title)
     st.caption(subtitle)
     st.divider()
+
+
+def _page_bounds(n, size, page):
+    """Clamp ``page`` for ``n`` rows at ``size`` rows/page -> ``(page, start, end, n_pages)``.
+
+    Pure math (no Streamlit) so the pager's slicing is unit-testable."""
+    size = max(1, int(size))
+    n_pages = max(1, -(-int(n) // size))
+    page = max(0, min(int(page), n_pages - 1))
+    start = page * size
+    return page, start, min(start + size, int(n)), n_pages
+
+
+def paginate(view, key, *, sizes=(100, 250, 500), default=250, reset_token=""):
+    """Server-side pager: render compact page controls and return the current page's slice.
+
+    Streamlit's grid virtualizes rendering but not transport — every rerun Arrow-serializes
+    the whole frame it's handed over the websocket, which is what makes a 100k-row table
+    feel broken. Slicing server-side keeps each render to one page. ``.iloc`` slicing
+    preserves the frame's index, so drill-down/selection handlers keep resolving rows.
+
+    Small frames (``len(view) <= min(sizes)``) render as before — no controls, no slice.
+    The page position lives in ``st.session_state[f"{key}_pnum"]`` and snaps back to the
+    first page whenever ``reset_token`` changes (new data or changed filters make the old
+    offset meaningless). Native widgets only, so focus rings and keyboard use come free.
+    """
+    n = len(view)
+    if n <= min(sizes):
+        return view
+    size_key, page_key, token_key = f"{key}_psize", f"{key}_pnum", f"{key}_ptok"
+    if st.session_state.get(token_key) != reset_token:
+        st.session_state[token_key] = reset_token
+        st.session_state[page_key] = 0
+
+    row = st.columns([2, 4, 1.2, 1.2], gap="small", vertical_alignment="bottom")
+    size = row[0].selectbox(
+        "Rows per page",
+        options=list(sizes),
+        index=list(sizes).index(default) if default in sizes else 0,
+        key=size_key,
+    )
+    current = st.session_state.get(page_key, 0)
+    _, _, _, n_pages = _page_bounds(n, size, current)
+    if row[2].button("Previous", key=f"{key}_pprev", disabled=current <= 0, width="stretch"):
+        current -= 1
+    if row[3].button("Next", key=f"{key}_pnext", disabled=current >= n_pages - 1, width="stretch"):
+        current += 1
+    page, start, end, n_pages = _page_bounds(n, size, current)
+    st.session_state[page_key] = page
+    row[1].caption(f"Page {page + 1} of {n_pages:,} · rows {start + 1:,}–{end:,} of {n:,}")
+    return view.iloc[start:end]
+
+
+# Above this many rows a download's payload is built on demand (two-step Prepare ->
+# Download) instead of on every rerun. Small/sample data keeps the one-click button.
+DEFERRED_DOWNLOAD_THRESHOLD = 2000
+
+
+def deferred_download(label, build, *, file_name, mime, key, row_count, sig,
+                      threshold=DEFERRED_DOWNLOAD_THRESHOLD, disabled=False, **button_kwargs):
+    """Download button whose payload is built lazily once the data is large.
+
+    ``st.download_button`` needs its payload up front, so a full-frame ``to_csv()`` /
+    ``json.dumps()`` otherwise runs on EVERY rerun of the page — seconds of work per
+    interaction at 100k+ rows, thrown away unless the user actually downloads.
+
+    * ``row_count <= threshold``: build eagerly and render a plain download button —
+      identical one-click UX to before.
+    * larger: render a "Prepare …" button. Clicking it calls ``build()`` once, stashes
+      ``(sig, payload)`` in session state, and reruns (fragment-scoped when inside a
+      fragment) so the real download button takes its place. A changed ``sig`` (new scan,
+      different filters) invalidates the stashed payload and shows Prepare again — one
+      payload per ``key`` is kept, so memory stays bounded.
+
+    ``build`` is a zero-arg callable returning bytes.
+    """
+    if disabled or row_count <= threshold:
+        st.download_button(
+            label, data=b"" if disabled else build(), file_name=file_name, mime=mime,
+            key=key, disabled=disabled, **button_kwargs,
+        )
+        return
+    payload_key = f"{key}_payload"
+    stashed = st.session_state.get(payload_key)
+    if stashed and stashed[0] == sig:
+        st.download_button(
+            label, data=stashed[1], file_name=file_name, mime=mime, key=key, **button_kwargs,
+        )
+        return
+    st.session_state.pop(payload_key, None)
+    prepare_label = (
+        label.replace("Download", "Prepare", 1) if "Download" in label else f"Prepare {label}"
+    )
+    if st.button(
+        prepare_label,
+        key=f"{key}_prepare",
+        help=f"Builds the export ({row_count:,} rows) on demand, then offers the download.",
+        icon=":material/build:",
+        **{k: v for k, v in button_kwargs.items() if k in ("width", "use_container_width")},
+    ):
+        st.session_state[payload_key] = (sig, build())
+        try:
+            st.rerun(scope="fragment")
+        except Exception:  # not inside a fragment -- plain app rerun
+            st.rerun()

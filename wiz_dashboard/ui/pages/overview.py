@@ -12,7 +12,6 @@ import pandas as pd
 import streamlit as st
 
 from wiz_dashboard.config import SEVERITY_COLORS, SEVERITY_ORDER
-from wiz_dashboard.data.transform import df_signature
 from wiz_dashboard.domain.formatting import format_duration
 from wiz_dashboard.models import schema
 from wiz_dashboard.ui import charts
@@ -69,7 +68,7 @@ def _source_counts(info):
         groups = [g for g in schema.parse_nodes(nodes) if isinstance(g, schema.AssetGroup)]
         return schema.severity_counts_from_groups(groups), True
     df = info["df"]
-    return _derived.counts_cached(df_signature(df), df), False
+    return _derived.counts_cached(_derived.df_token(df, info["prefix"]), df), False
 
 
 def _aggregate(sources):
@@ -81,6 +80,7 @@ def _aggregate(sources):
     sections explain why they're empty)."""
     agg_counts = {}
     flat_frames = []
+    flat_tokens = []
     grouped_count = 0
     for info in sources.values():
         counts, grouped = _source_counts(info)
@@ -90,10 +90,14 @@ def _aggregate(sources):
             grouped_count += 1
         elif info["df"] is not None and not info["df"].empty:
             flat_frames.append(info["df"])
+            flat_tokens.append(_derived.df_token(info["df"], info["prefix"]))
 
     if flat_frames:
         combined = pd.concat(flat_frames, ignore_index=True)
-        per_sev, overall = _derived.mttr_cached(df_signature(combined), combined)
+        # Key the concatenation on its parts' tokens — hashing the combined frame would
+        # reintroduce the full-frame walk the tokens exist to avoid.
+        combined_sig = "|".join(flat_tokens) + f":{len(combined)}"
+        per_sev, overall = _derived.mttr_cached(combined_sig, combined)
     else:
         per_sev, overall = {}, {}
     grouped_only = grouped_count == len(sources)

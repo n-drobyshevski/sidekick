@@ -36,3 +36,20 @@ def test_df_signature_stable_and_sensitive():
     mutated.loc[0, "severity"] = "CRITICAL"
     assert df_signature(mutated) != sig  # changed data -> changed signature
     assert df_signature(pd.DataFrame()) == "empty"
+
+
+def test_series_categorical_fast_path_matches_scalar():
+    # The ingestion layer dictionary-encodes severity; the categorical fast path must be
+    # element-for-element identical to the scalar path, including mixed-type categories
+    # (123), missing values (None) and unknowns — and still return plain object dtype.
+    s = pd.Series(_SAMPLES, dtype="category")
+    out = normalize_severity_series(s)
+    assert out.dtype == object
+    assert list(out) == [normalize_severity(x) for x in _SAMPLES]
+
+
+def test_count_by_severity_on_categorical_column():
+    df = pd.DataFrame({"severity": pd.Series(_SAMPLES, dtype="category")})
+    expected = pd.DataFrame({"severity": _SAMPLES})["severity"].apply(
+        normalize_severity).value_counts().to_dict()
+    assert count_by_severity(df) == expected

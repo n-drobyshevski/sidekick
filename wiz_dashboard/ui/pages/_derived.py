@@ -13,9 +13,27 @@ and the MTTR page must observe that same invalidation.
 import streamlit as st
 
 from wiz_dashboard.data import history, ledger
+from wiz_dashboard.data.transform import df_signature
 from wiz_dashboard.domain import lifecycle
 from wiz_dashboard.domain.metrics import calculate_mttr
 from wiz_dashboard.domain.severity import count_by_severity
+
+
+def df_token(df, prefix: str = "os") -> str:
+    """Cheap cache key for a loaded findings frame.
+
+    The session writers (``ui.scan``) stamp a fresh ``{prefix}_df_token`` whenever they
+    load data, so pages key the cached derivations on a session-state lookup instead of
+    re-hashing the whole frame every rerun (``df_signature`` walks every cell — a real
+    per-rerun cost at 100k+ rows). When no writer stamped a token (tests seeding
+    ``{prefix}_df`` directly), fall back to one ``df_signature`` hash and memoize it for
+    the rest of the session."""
+    key = f"{prefix}_df_token"
+    token = st.session_state.get(key)
+    if not token:
+        token = df_signature(df)
+        st.session_state[key] = token
+    return token
 
 
 @st.cache_data(show_spinner=False)

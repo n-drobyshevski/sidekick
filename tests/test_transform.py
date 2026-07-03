@@ -42,3 +42,21 @@ def test_nodes_to_dataframe_raw_fallback(app):
 def test_nodes_to_dataframe_empty(app):
     assert app.nodes_to_dataframe([]).empty
     assert app.nodes_to_dataframe(None).empty
+
+
+def test_nodes_to_dataframe_categorizes_low_cardinality_columns(app, flat_sample):
+    import pandas as pd
+
+    df = app.nodes_to_dataframe(app.extract_nodes(flat_sample))
+    # Dictionary-encoded at ingestion (memory + Arrow-payload win at 100k+ rows)…
+    assert isinstance(df["severity"].dtype, pd.CategoricalDtype)
+    # …while the values still round-trip as the plain strings every consumer expects.
+    sev = df["severity"].iloc[0]
+    assert isinstance(sev, str)
+    assert df.to_dict("records")[0]["severity"] == sev
+
+    # A list-valued or otherwise unhashable column is left untouched rather than raising.
+    mixed = app.nodes_to_dataframe([{"severity": "HIGH", "status": ["OPEN"]},
+                                    {"severity": "LOW", "status": ["RESOLVED"]}])
+    assert isinstance(mixed["severity"].dtype, pd.CategoricalDtype)
+    assert mixed["status"].dtype == object

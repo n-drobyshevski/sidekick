@@ -14,7 +14,7 @@ import streamlit as st
 from wiz_dashboard.config import SEVERITY_COLORS, SEVERITY_GLYPHS, SEVERITY_ORDER
 from wiz_dashboard.data import ledger
 from wiz_dashboard.domain.formatting import format_duration
-from wiz_dashboard.domain.severity import normalize_severity
+from wiz_dashboard.domain.severity import normalize_severity, normalize_severity_series
 from wiz_dashboard.ui import charts
 from wiz_dashboard.ui import components as ui
 from wiz_dashboard.ui.pages import _derived
@@ -167,10 +167,13 @@ def _base_table(base) -> None:
         st.info("No vulnerabilities in the base yet — grouped-by-asset scans don't populate it.")
         return
 
+    # Normalize severities once per rerun (vectorized) and reuse for both the option
+    # list and the row mask below, instead of a per-row map over the whole base twice.
+    norm_sev = normalize_severity_series(base["severity"])
     with st.container(horizontal=True):
         statuses = sorted(base["status"].dropna().unique().tolist())
         status_sel = st.multiselect("Status", statuses, default=statuses, key="sh_status")
-        present = set(base["severity"].dropna().map(normalize_severity))
+        present = set(norm_sev.unique())
         sev_opts = [s for s in SEVERITY_ORDER if s in present]
         sev_sel = st.multiselect("Severity", sev_opts, default=sev_opts, key="sh_sev")
     query = st.text_input(
@@ -182,7 +185,7 @@ def _base_table(base) -> None:
     if status_sel:
         view = view[view["status"].isin(status_sel)]
     if sev_sel:
-        view = view[view["severity"].map(normalize_severity).isin(sev_sel)]
+        view = view[norm_sev.loc[view.index].isin(sev_sel)]
     if query:
         hay = (
             view["cve"].astype(str) + " " + view["asset_name"].astype(str)
@@ -193,15 +196,22 @@ def _base_table(base) -> None:
         st.info("No vulnerabilities match the current filters.")
         return
 
-    display, cfg = _base_display(view)
+    # Slice server-side before rendering: st.dataframe re-serializes whatever frame it's
+    # handed to the browser on every rerun, so the all-time base must never ship whole.
+    reset_token = f"{len(base)}|{len(view)}|{view.index[0]}|{view.index[-1]}"
+    page_view = ui.paginate(view, "sh_base", reset_token=reset_token)
+    display, cfg = _base_display(page_view)
     st.dataframe(display, hide_index=True, width="stretch", height=460, column_config=cfg)
     st.caption(f"{len(view):,} of {len(base):,} vulnerabilities")
-    st.download_button(
+    ui.deferred_download(
         "Download CSV",
-        data=view.drop(columns=["latest_json"], errors="ignore").to_csv(index=False).encode("utf-8"),
+        lambda: view.drop(columns=["latest_json"], errors="ignore")
+        .to_csv(index=False).encode("utf-8"),
         file_name="vuln_base.csv",
         mime="text/csv",
         key="sh_csv",
+        row_count=len(view),
+        sig=reset_token,
     )
 
 

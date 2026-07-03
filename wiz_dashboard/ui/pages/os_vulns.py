@@ -22,7 +22,7 @@ from wiz_dashboard.config import (
     SEVERITY_GLYPHS,
     SEVERITY_ORDER,
 )
-from wiz_dashboard.data.transform import df_signature, nodes_to_dataframe
+from wiz_dashboard.data.transform import nodes_to_dataframe
 from wiz_dashboard.domain.severity import (
     normalize_severity,
     normalize_severity_series,
@@ -142,7 +142,7 @@ def _scan_summary_band(*, total, df=None, n_assets=None) -> None:
         cards.append({"label": "Assets", "value": f"{n_assets:,}", "accent": "var(--accent)"})
     cards.append({"label": "Total findings", "value": f"{total:,}", "accent": "var(--accent)"})
     if df is not None and not df.empty:
-        _per_sev, overall = _derived.mttr_cached(df_signature(df), df)
+        _per_sev, overall = _derived.mttr_cached(_derived.df_token(df), df)
         if overall:
             cards.append({
                 "label": "Open", "value": f"{int(overall.get('open', 0)):,}",
@@ -159,7 +159,7 @@ def _scan_summary_band(*, total, df=None, n_assets=None) -> None:
 
 
 def _render_flat(df) -> None:
-    sig = df_signature(df)
+    sig = _derived.df_token(df)
     counts = _derived.counts_cached(sig, df)
 
     _scan_summary_band(total=int(len(df)), df=df)
@@ -218,10 +218,25 @@ def _col(df, *cands):
 
 
 def _present(df, col):
-    """Sorted unique non-blank string values of ``col`` (for filter options)."""
+    """Sorted unique non-blank string values of ``col`` (for filter options).
+
+    Deduplicates via ``.unique()`` (one C pass; codes-based and near-free on the
+    ingestion layer's categorical columns) before any per-value Python work, instead of
+    stringifying all 100k+ rows into a set."""
     if not col or col not in df.columns:
         return []
-    return sorted({str(v) for v in df[col].dropna().tolist() if str(v).strip()})
+    return sorted({str(v) for v in df[col].dropna().unique() if str(v).strip()})
+
+
+def _matches(series, selected):
+    """Boolean mask: rows whose value's string form is one of ``selected``.
+
+    Categorical columns match on their handful of categories instead of re-stringifying
+    every row; other dtypes keep the ``str()`` coercion the option list was built with."""
+    if isinstance(series.dtype, pd.CategoricalDtype):
+        wanted = [c for c in series.cat.categories if str(c) in set(selected)]
+        return series.isin(wanted)
+    return series.astype(str).isin(selected)
 
 
 def _qp_list(param, present):
@@ -287,7 +302,7 @@ def _filter_and_table(df, counts, per_sev=None) -> None:
     # Normalize severities once (vectorized) and reuse for both the option list
     # and the row filter, instead of running normalize_severity per-row twice.
     norm = normalize_severity_series(df["severity"]) if "severity" in df.columns else None
-    present = [s for s in SEVERITY_ORDER if s in set(norm)] if norm is not None else list(SEVERITY_ORDER)
+    present = [s for s in SEVERITY_ORDER if s in set(norm.unique())] if norm is not None else list(SEVERITY_ORDER)
 
     # Reconcile a NEW chart click into the pills' state *before* the pills widget is
     # instantiated (a widget key can't be mutated once its widget has rendered this run).
@@ -324,21 +339,24 @@ def _filter_and_table(df, counts, per_sev=None) -> None:
     group_opts = ["None", *group_cols]
 
     fc = st.columns([2, 2, 2, 3, 3])
+    status_opts = _present(df, status_col)
+    type_opts = _present(df, type_col)
+    cloud_opts = _present(df, cloud_col)
     status_sel = (
-        fc[0].multiselect("Status", _present(df, status_col),
-                          default=_qp_list("status", _present(df, status_col)),
+        fc[0].multiselect("Status", status_opts,
+                          default=_qp_list("status", status_opts),
                           key="os_status_filter", placeholder="All")
         if status_col else []
     )
     type_sel = (
-        fc[1].multiselect("Asset type", _present(df, type_col),
-                          default=_qp_list("atype", _present(df, type_col)),
+        fc[1].multiselect("Asset type", type_opts,
+                          default=_qp_list("atype", type_opts),
                           key="os_type_filter", placeholder="All")
         if type_col else []
     )
     cloud_sel = (
-        fc[2].multiselect("Cloud", _present(df, cloud_col),
-                          default=_qp_list("cloud", _present(df, cloud_col)),
+        fc[2].multiselect("Cloud", cloud_opts,
+                          default=_qp_list("cloud", cloud_opts),
                           key="os_cloud_filter", placeholder="All")
         if cloud_col else []
     )
@@ -377,11 +395,11 @@ def _filter_and_table(df, counts, per_sev=None) -> None:
 
     view = df[norm.isin(sev_selected)] if norm is not None else df
     if status_sel and status_col:
-        view = view[view[status_col].astype(str).isin(status_sel)]
+        view = view[_matches(view[status_col], status_sel)]
     if type_sel and type_col:
-        view = view[view[type_col].astype(str).isin(type_sel)]
+        view = view[_matches(view[type_col], type_sel)]
     if cloud_sel and cloud_col:
-        view = view[view[cloud_col].astype(str).isin(cloud_sel)]
+        view = view[_matches(view[cloud_col], cloud_sel)]
     if query:
         mask = pd.Series(False, index=view.index)
         for c in (name_col, asset_col):
@@ -486,14 +504,18 @@ def _editor(subview, cols, editor_key, nodes, height=520) -> None:
 
 def _export_button(view, key) -> None:
     """One CSV download of the full filtered rows (all public columns), not just the
-    visible ones — and, when grouped, the whole filtered set rather than per group."""
-    export_df = view[[c for c in view.columns if not str(c).startswith("_")]]
-    st.download_button(
+    visible ones — and, when grouped, the whole filtered set rather than per group.
+    Deferred at scale: the full-frame CSV is only encoded when the user asks for it."""
+    export_cols = [c for c in view.columns if not str(c).startswith("_")]
+    sig = f"{_derived.df_token(view)}|{len(view)}|{view.index[0]}|{view.index[-1]}"
+    ui.deferred_download(
         "Download CSV",
-        data=export_df.to_csv(index=False).encode("utf-8"),
+        lambda: view[export_cols].to_csv(index=False).encode("utf-8"),
         file_name="os_findings.csv",
         mime="text/csv",
         key=key,
+        row_count=len(view),
+        sig=sig,
     )
 
 
@@ -503,8 +525,17 @@ def _show_table(view, full=None, key="csv", nodes=None) -> None:
         st.info("No findings match the current filters — clear them to see all.")
         return
     cols = _column_choice(view, key)
+    # Only the current page is handed to the editor: st.data_editor serializes whatever
+    # frame it's given to the browser on every rerun, which is what made a 100k-row scan
+    # feel frozen. The pager snaps back to page 1 when the data (df_token) or the filter
+    # result (length / boundary rows) changes, since the old offset is then meaningless.
+    reset_token = f"{_derived.df_token(full)}|{len(view)}|{view.index[0]}|{view.index[-1]}"
+    page_view = ui.paginate(view, key, reset_token=reset_token)
     nonce = st.session_state.get("os_editor_nonce", 0)
-    _editor(view, cols, f"{key}_editor_{nonce}", nodes)
+    page_no = st.session_state.get(f"{key}_pnum", 0)
+    # The page number is part of the editor key so flipping pages can never replay one
+    # page's lingering checkbox state onto another page's rows.
+    _editor(page_view, cols, f"{key}_editor_{nonce}_p{page_no}", nodes)
     shown = f"{len(view):,} of {len(full):,}"
     suffix = " (filtered)" if len(view) != len(full) else ""
     st.caption(f"{shown} rows shown{suffix} · tick a row's Open box to view details.")
@@ -639,6 +670,15 @@ def _group_stats_strip_html(stats):
     return f'<div class="group-stats">{"".join(parts)}</div>'
 
 
+# Render caps for grouped mode. A high-cardinality Group by (e.g. Asset) over a 100k-row
+# scan would otherwise spawn thousands of expanders each holding its own st.data_editor —
+# every one serialized to the browser per rerun. The caps bound render cost while the
+# group *stats* (headers, strips, counts) stay computed over the full filtered set, and
+# the CSV export still covers every row.
+_GROUPS_RENDER_CAP = 30
+_GROUP_ROWS_CAP = 250
+
+
 def _show_grouped(view, full, key, nodes, mode, col) -> None:
     """Findings split into collapsible per-group sections — one count-labelled expander
     per group value, each holding a compact stats strip + that group's findings table. The
@@ -647,16 +687,27 @@ def _show_grouped(view, full, key, nodes, mode, col) -> None:
     nonce = st.session_state.get("os_editor_nonce", 0)
     groups = _grouped_frames(view, mode, col)
     total = len(view)
-    for i, (label, sub) in enumerate(groups):
+    for i, (label, sub) in enumerate(groups[:_GROUPS_RENDER_CAP]):
         stats = _group_stats(sub, mode, total)
         # Header carries a collapsed-state at-a-glance summary (severity glyphs / severity
         # mode's own glyph). The busiest/severest group opens by default; the rest start
         # collapsed (progressive disclosure).
         header = _group_header(label, mode, stats)
-        height = min(38 * (len(sub) + 1) + 3, 420)  # compact for small groups
+        shown = sub.iloc[:_GROUP_ROWS_CAP]
+        height = min(38 * (len(shown) + 1) + 3, 420)  # compact for small groups
         with st.expander(header, expanded=(i == 0)):
             st.markdown(_group_stats_strip_html(stats), unsafe_allow_html=True)
-            _editor(sub, cols, f"{key}_g{i}_editor_{nonce}", nodes, height=height)
+            _editor(shown, cols, f"{key}_g{i}_editor_{nonce}", nodes, height=height)
+            if len(sub) > _GROUP_ROWS_CAP:
+                st.caption(
+                    f"Showing the first {_GROUP_ROWS_CAP:,} of {len(sub):,} findings in "
+                    "this group — narrow the filters, or download the CSV for all of them."
+                )
+    hidden_groups = len(groups) - _GROUPS_RENDER_CAP
+    if hidden_groups > 0:
+        st.caption(
+            f"…and {hidden_groups:,} more group(s) not shown — narrow the filters to see them."
+        )
     st.caption(
         f"{len(view):,} findings across {len(groups)} group(s) · "
         "tick a row's Open box to view details."

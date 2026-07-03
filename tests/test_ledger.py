@@ -411,3 +411,46 @@ def test_corrupt_survivor_archive_refuses(tmp_path):
     assert len(ledger.load_scans_df(db)) == 3
     assert _ledger_rows(db) == before
     assert not _P(str(db) + ".bak").exists()
+
+
+def test_persist_from_raw_nodes_matches_records_path(tmp_path, app):
+    # A live scan now feeds reconcile the raw nested nodes; the flattened-records shape
+    # (the old path, still what replayed pre-change archives used) must yield the
+    # identical base and deltas — vuln_key/field read both shapes.
+    nodes = app.extract_nodes(os_vulns.SAMPLE_RESULTS)
+    db_nodes, db_records = tmp_path / "nodes.db", tmp_path / "records.db"
+    d_nodes = ledger.persist_flat_scan(
+        nodes, mode="dry-run", raw=os_vulns.SAMPLE_RESULTS,
+        db_path=db_nodes, scan_id="2026-05-29T10:00:00Z",
+    )
+    d_records = ledger.persist_flat_scan(
+        _flat_records(app), mode="dry-run", raw=os_vulns.SAMPLE_RESULTS,
+        db_path=db_records, scan_id="2026-05-29T10:00:00Z",
+    )
+    assert d_nodes == d_records
+    cols = ["vuln_key", "severity", "status", "first_seen", "resolved_at", "reopened_count"]
+    base_nodes = ledger.load_base_df(db_nodes)[cols].sort_values("vuln_key").reset_index(drop=True)
+    base_records = ledger.load_base_df(db_records)[cols].sort_values("vuln_key").reset_index(drop=True)
+    assert base_nodes.equals(base_records)
+
+
+def test_delete_rebuild_replays_raw_nodes_faithfully(tmp_path, app):
+    # Two scans persisted from raw nodes; deleting the middle one replays the survivor
+    # from its archived payload via extract_nodes — the rebuilt base must equal a fresh
+    # single-scan persist of that survivor.
+    nodes = app.extract_nodes(os_vulns.SAMPLE_RESULTS)
+    db = _db(tmp_path)
+    ledger.persist_flat_scan(nodes, mode="dry-run", raw=os_vulns.SAMPLE_RESULTS,
+                             db_path=db, scan_id="2026-05-29T10:00:00Z")
+    ledger.persist_flat_scan(nodes, mode="dry-run", raw=os_vulns.SAMPLE_RESULTS,
+                             db_path=db, scan_id="2026-05-30T10:00:00Z")
+    ledger.delete_scans(["2026-05-29T10:00:00Z"], db_path=db)
+
+    fresh = _db(tmp_path.joinpath("fresh"))
+    fresh.parent.mkdir(exist_ok=True)
+    ledger.persist_flat_scan(nodes, mode="dry-run", raw=os_vulns.SAMPLE_RESULTS,
+                             db_path=fresh, scan_id="2026-05-30T10:00:00Z")
+    cols = ["vuln_key", "severity", "status", "first_seen", "resolved_at"]
+    rebuilt = ledger.load_base_df(db)[cols].sort_values("vuln_key").reset_index(drop=True)
+    expected = ledger.load_base_df(fresh)[cols].sort_values("vuln_key").reset_index(drop=True)
+    assert rebuilt.equals(expected)

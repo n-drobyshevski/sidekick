@@ -46,7 +46,9 @@ def _use_disk_cache_or_raise(reason: str, exc: Exception):
     return coerce_results(snapshot)
 
 
-@st.cache_data(ttl=DEFAULT_CACHE_TTL_MINUTES * 60, show_spinner=False)
+# max_entries bounds how many pickled result sets the cache retains: at 100k+ findings
+# each entry is hundreds of MB, so old sample-shape/seq variants must not accumulate.
+@st.cache_data(ttl=DEFAULT_CACHE_TTL_MINUTES * 60, show_spinner=False, max_entries=2)
 def fetch_findings(dry_run: bool = True, use_config: bool = False,
                    sample_shape: str = "grouped", sample_seq: int = 0,
                    _progress=None):
@@ -62,7 +64,7 @@ def fetch_findings(dry_run: bool = True, use_config: bool = False,
     the on-disk snapshot (with a visible "stale data" warning) so the UI degrades gracefully
     instead of silently pretending a cached scan is fresh.
 
-    ``_progress`` (optional ``callable(pages_done, findings_so_far)``) reports live
+    ``_progress`` (optional ``callable(pages_done, findings_so_far, total)``) reports live
     pagination progress on a live fetch. The leading underscore keeps it out of the
     ``st.cache_data`` key, so a cache hit stays instant and the callback simply doesn't fire.
     """
