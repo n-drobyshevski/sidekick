@@ -9,7 +9,7 @@ import os_vulns
 
 def test_fetch_findings_dry_run_default_is_grouped():
     # The dry-run now defaults to the grouped-by-asset shape, mirroring the real Wiz
-    # response (the committed os_vulns_response_exemple.json: 10 assets, all critical).
+    # response (the committed os_vulns_grouped_response_example.json: 10 assets, all critical).
     results = os_vulns.fetch_findings(dry_run=True)
     grouped = results["data"]["vulnerabilityFindingsGroupedByValues"]["nodes"]
     assert len(grouped) == 10

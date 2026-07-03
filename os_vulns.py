@@ -715,7 +715,14 @@ SAMPLE_RESULTS: Dict[str, Any] = {
 
 # Committed grouped-by-asset sample (the real Wiz response shape). Lives next to this
 # module so the path resolves regardless of the working directory.
-GROUPED_SAMPLE_PATH = Path(__file__).resolve().parent / "os_vulns_response_exemple.json"
+#
+# NOTE: ``os_vulns_response_exemple.json`` (no "grouped" in its name) is a *separate*
+# committed fixture: an exact mock of what the real live ``QUERY`` above returns --
+# the flat ``vulnerabilityFindings`` connection with every requested field populated
+# (cvssv3, epss, exploit flags, etc.). It documents the true live response shape but
+# is not wired into ``fetch_findings`` (which uses ``SAMPLE_RESULTS`` for the "flat"
+# dry-run sample, kept separately so MTTR/SLA/ledger demos are unaffected).
+GROUPED_SAMPLE_PATH = Path(__file__).resolve().parent / "os_vulns_grouped_response_example.json"
 
 # Minimal safety net if the committed grouped sample is missing/unreadable, so the
 # dry-run never crashes. This is a fallback, NOT the demo data — the real sample is the
@@ -753,7 +760,7 @@ _GROUPED_FALLBACK: Dict[str, Any] = {
 def _grouped_sample() -> Dict[str, Any]:
     """Load the committed grouped-by-asset sample response (memoized).
 
-    Returns the parsed ``os_vulns_response_exemple.json`` (the real Wiz
+    Returns the parsed ``os_vulns_grouped_response_example.json`` (the real Wiz
     ``vulnerabilityFindingsGroupedByValues`` shape). Degrades to ``_GROUPED_FALLBACK``
     if the file is missing or unparseable, so ``--dry-run`` never raises.
     """

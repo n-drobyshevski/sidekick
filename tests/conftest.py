@@ -9,7 +9,9 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-FIXTURE_PATH = REPO_ROOT / "os_vulns_response_exemple.json"
+# The grouped-by-asset shape (vulnerabilityFindingsGroupedByValues); the real live
+# QUERY's flat shape has its own exact mock at os_vulns_response_exemple.json.
+FIXTURE_PATH = REPO_ROOT / "os_vulns_grouped_response_example.json"
 
 
 @pytest.fixture(autouse=True)
@@ -77,8 +79,8 @@ def fixture_text():
 def grouped_sample():
     """Parsed committed grouped-by-asset response (the real Wiz API shape).
 
-    The 10-asset ``os_vulns_response_exemple.json`` is now valid JSON and serves as the
-    default dry-run sample; this fixture loads it for end-to-end ingestion tests.
+    The 10-asset ``os_vulns_grouped_response_example.json`` is valid JSON and serves as
+    the default dry-run sample; this fixture loads it for end-to-end ingestion tests.
     """
     import json
 

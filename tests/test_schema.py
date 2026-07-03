@@ -62,7 +62,7 @@ def test_severity_counts_from_groups():
 
 
 def test_committed_example_is_valid_grouped_response(grouped_sample):
-    """The repaired os_vulns_response_exemple.json parses end-to-end as grouped data."""
+    """The repaired os_vulns_grouped_response_example.json parses end-to-end as grouped data."""
     nodes = extract_nodes(grouped_sample)
     assert len(nodes) == 10
     assert schema.is_grouped_shape(nodes)
