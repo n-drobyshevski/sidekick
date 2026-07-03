@@ -272,6 +272,9 @@ def _perform_delete(scan_ids):
                       "error")
         return None
     _derived.clear_ledger_caches()
+    # The shared saved-scan objects may belong to a deleted scan — drop them so no
+    # session keeps serving a frame whose archive/snapshot no longer exists.
+    _derived.clear_scan_resources()
     ui.show_toast(
         f"Deleted {summary['deleted']} scan(s); ledger rebuilt — "
         f"{summary['scans']} scans, {summary['tracked']:,} tracked vulns",

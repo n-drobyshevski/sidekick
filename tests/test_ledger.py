@@ -454,3 +454,53 @@ def test_delete_rebuild_replays_raw_nodes_faithfully(tmp_path, app):
     rebuilt = ledger.load_base_df(db)[cols].sort_values("vuln_key").reset_index(drop=True)
     expected = ledger.load_base_df(fresh)[cols].sort_values("vuln_key").reset_index(drop=True)
     assert rebuilt.equals(expected)
+
+
+def test_persist_with_df_writes_snapshot_and_delete_removes_it(tmp_path, app):
+    from wiz_dashboard.data import snapshot
+
+    nodes = app.extract_nodes(os_vulns.SAMPLE_RESULTS)
+    df = app.nodes_to_dataframe(nodes)
+    db = _db(tmp_path)
+    ledger.persist_flat_scan(nodes, mode="dry-run", raw=os_vulns.SAMPLE_RESULTS,
+                             db_path=db, scan_id="2026-05-29T10:00:00Z", df=df)
+    ledger.persist_flat_scan(nodes, mode="dry-run", raw=os_vulns.SAMPLE_RESULTS,
+                             db_path=db, scan_id="2026-05-30T10:00:00Z", df=df)
+    scans = ledger.load_scans_df(db).set_index("scan_id")
+    snap_old = snapshot.snapshot_path_for(scans.loc["2026-05-29T10:00:00Z", "raw_path"])
+    snap_new = snapshot.snapshot_path_for(scans.loc["2026-05-30T10:00:00Z", "raw_path"])
+    assert snap_old.exists() and snap_new.exists()
+    # The snapshot restores the very frame that was persisted.
+    restored = snapshot.read_snapshot(scans.loc["2026-05-30T10:00:00Z", "raw_path"])
+    assert restored.equals(df)
+
+    ledger.delete_scans(["2026-05-29T10:00:00Z"], db_path=db)
+    assert not snap_old.exists()   # deleted scan's snapshot removed…
+    assert snap_new.exists()       # …survivor keeps its own
+
+
+def test_rebuild_works_with_snapshots_absent(tmp_path, app):
+    # Snapshots are a start-up cache, never a correctness dependency: a delete->rebuild
+    # over archives that never had snapshots must succeed unchanged.
+    nodes = app.extract_nodes(os_vulns.SAMPLE_RESULTS)
+    db = _db(tmp_path)
+    ledger.persist_flat_scan(nodes, mode="dry-run", raw=os_vulns.SAMPLE_RESULTS,
+                             db_path=db, scan_id="2026-05-29T10:00:00Z")
+    ledger.persist_flat_scan(nodes, mode="dry-run", raw=os_vulns.SAMPLE_RESULTS,
+                             db_path=db, scan_id="2026-05-30T10:00:00Z")
+    summary = ledger.delete_scans(["2026-05-29T10:00:00Z"], db_path=db)
+    assert summary["scans"] == 1
+    assert len(ledger.load_base_df(db)) == 17
+
+
+def test_load_latest_scan_row_metadata_only(tmp_path, app):
+    db = _db(tmp_path)
+    assert ledger.load_latest_scan_row(db) is None
+    nodes = app.extract_nodes(os_vulns.SAMPLE_RESULTS)
+    ledger.persist_flat_scan(nodes, mode="dry-run", raw=os_vulns.SAMPLE_RESULTS,
+                             db_path=db, scan_id="2026-05-29T10:00:00Z")
+    row = ledger.load_latest_scan_row(db)
+    assert row["scan_id"] == "2026-05-29T10:00:00Z"
+    assert row["shape"] == "flat"
+    assert int(row["total"]) == 17
+    assert row["raw_path"]

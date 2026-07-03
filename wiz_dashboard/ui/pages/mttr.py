@@ -12,9 +12,9 @@ import streamlit as st
 from wiz_dashboard.config import SEVERITY_COLORS
 from wiz_dashboard.domain import metrics
 from wiz_dashboard.domain.formatting import format_duration
-from wiz_dashboard.models import schema
 from wiz_dashboard.ui import charts
 from wiz_dashboard.ui import components as ui
+from wiz_dashboard.ui import scan
 from wiz_dashboard.ui.pages import _derived
 
 
@@ -60,7 +60,7 @@ def page():
         # card already carries median / resolved / open).
         with st.expander("Per-severity breakdown", expanded=False):
             ui.render_mttr_widget(df, mttr=(per_sev, overall), show_overall=False)
-    elif not df.empty and not schema.is_grouped_shape(nodes):
+    elif not df.empty and scan.loaded_shape(nodes) != "grouped":
         sig = _derived.df_token(df)
         per_sev, overall = _derived.mttr_cached(sig, df)
         _kpi_and_posture(

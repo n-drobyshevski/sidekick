@@ -9,7 +9,6 @@ the scan's side-effects can never drift between the two entry points.
 
 import logging
 from datetime import datetime, timezone
-from uuid import uuid4
 
 import pandas as pd
 import streamlit as st
@@ -18,7 +17,6 @@ from wiz_dashboard.data import history, ledger
 from wiz_dashboard.data.client import fetch_findings
 from wiz_dashboard.data.transform import extract_nodes, nodes_to_dataframe, coerce_results
 from wiz_dashboard.domain.metrics import calculate_mttr, overall_sla_oldest
-from wiz_dashboard.domain.severity import count_by_severity
 from wiz_dashboard.models import schema
 from wiz_dashboard.ui import components as ui
 from wiz_dashboard.ui.pages import _derived
@@ -145,15 +143,25 @@ def run_scan(force: bool, has_creds: bool, sample_shape: str | None = None) -> N
             bar.progress(_PHASE_TABLE, text=f"Building findings table ({len(nodes):,} findings)…")
             df = nodes_to_dataframe(nodes)
             status.update(label="Computing severity & MTTR metrics…")
+            # The scan's identity doubles as the durable idempotency key (persist) and the
+            # cross-session cache token: every session that later loads this scan keys its
+            # cached derivations on the same string, so counts/MTTR compute once per scan,
+            # not once per browser session (see _derived.df_token / counts_cached).
+            # Microsecond resolution: two scans in the same second must not share an
+            # identity, or the second would be served the first's cached derivations.
+            scan_id = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            token = f"saved:{scan_id}"
+            shape_kind = "grouped" if schema.is_grouped_shape(nodes) else "flat"
             st.session_state["os_nodes"] = nodes
             st.session_state["os_df"] = df
             st.session_state["os_raw"] = results
-            # Fresh cache token per data load: pages key their cached derivations on this
-            # instead of re-hashing the 100k+-row frame on every rerun (_derived.df_token).
-            st.session_state["os_df_token"] = uuid4().hex
+            st.session_state["os_shape"] = shape_kind
+            st.session_state["os_scan_id"] = scan_id
+            st.session_state["os_raw_path"] = None  # this session already holds nodes/raw
+            st.session_state["os_df_token"] = token
             _drop_deferred_payloads()
             st.session_state["os_prev_counts"] = prev
-            st.session_state["os_counts"] = count_by_severity(df)
+            st.session_state["os_counts"] = _derived.counts_cached(token, df)
             st.session_state["last_scan_meta"] = {
                 "count": len(nodes),
                 "mode": "live" if has_creds else "dry-run",
@@ -161,7 +169,8 @@ def run_scan(force: bool, has_creds: bool, sample_shape: str | None = None) -> N
             }
             status.update(label="Saving scan & reconciling ledger…")
             bar.progress(_PHASE_PERSIST, text="Saving scan & reconciling ledger…")
-            _persist_scan(nodes, df, results, mode="live" if has_creds else "dry-run")
+            _persist_scan(nodes, df, results, mode="live" if has_creds else "dry-run",
+                          scan_id=scan_id)
             _record_mttr_snapshot(df, st.session_state["os_counts"])
             _derived.history_cached.clear()  # a fresh snapshot was just written; reflect it
             bar.progress(1.0, text=f"Loaded {len(nodes):,} findings")
@@ -178,45 +187,123 @@ def run_scan(force: bool, has_creds: bool, sample_shape: str | None = None) -> N
     ui.show_toast(f"Loaded {len(nodes):,} findings", "success")
 
 
-def _apply_saved_payload(payload, row) -> int:
-    """Rebuild the ``os_*`` session state from a saved scan's archived payload.
+def _hydrate_from_saved(row, *, clear_caches: bool) -> int:
+    """Rebuild the ``os_*`` session state from the most recent *saved* scan's metadata row.
 
-    The shared core behind both the sidebar "Refresh" (``reload_scan``) and the fresh-session
-    auto-load (``autoload_latest_scan``): a pure session write — it re-parses the payload and
-    sets ``os_nodes`` / ``os_df`` / ``os_raw`` / ``os_prev_counts`` / ``os_counts`` and
-    ``last_scan_meta``, then re-reads the durable derivations. It performs **no Wiz query and
-    writes no new snapshot** (no ledger row, no MTTR point), so it can never add a data point.
-    ``row`` is the ``scans``-table metadata for the payload. Returns the finding count; raises
-    on a malformed payload (callers decide how to surface it).
+    The shared core behind both the sidebar "Refresh" (``reload_scan``) and the
+    fresh-session auto-load (``autoload_latest_scan``). No Wiz query, no ledger row, no
+    MTTR point — it can never add a data point.
+
+    Flat scans take the fast path: the parsed frame comes from the shared cross-session
+    loader (``_derived.scan_frame_cached`` — disk snapshot first, JSON archive fallback
+    with snapshot backfill) and the raw nested nodes are DEFERRED (``os_nodes`` /
+    ``os_raw`` = ``None``) until something actually needs their contents — drill-down or
+    raw export — via ``ensure_nodes``/``ensure_raw``. Grouped scans parse the payload
+    eagerly: they're the small case and their render walks the nodes.
+
+    ``clear_caches`` re-reads the durable derivations — wanted for the explicit Refresh
+    (pick up external changes), deliberately skipped on autoload: a fresh session changes
+    no durable data, and the clears are process-global, so doing them per new tab would
+    thrash every other session's warm caches.
+
+    Returns the finding count; raises when neither snapshot nor archive is loadable
+    (callers decide how to surface it).
     """
-    results = coerce_results(payload)
-    nodes = extract_nodes(results)
-    df = nodes_to_dataframe(nodes)
+    scan_id = str(row.get("scan_id"))
+    raw_path = row.get("raw_path")
+    shape = str(row.get("shape") or "flat")
+    token = f"saved:{scan_id}"  # scan-keyed, NOT per-session — see run_scan
+    source = None
+    if shape == "grouped":
+        payload = _derived.raw_payload_cached(scan_id, raw_path)
+        if payload is None:
+            raise FileNotFoundError(f"Archived scan payload missing or unreadable: {raw_path}")
+        raw = coerce_results(payload)
+        nodes = extract_nodes(raw)
+        df = nodes_to_dataframe(nodes)
+    else:
+        df, source = _derived.scan_frame_cached(scan_id, raw_path)
+        nodes = None
+        raw = None
+
     prev = st.session_state.get("os_counts", {})
     st.session_state["os_nodes"] = nodes
     st.session_state["os_df"] = df
-    st.session_state["os_raw"] = results
-    # Same fresh-token contract as run_scan (see _derived.df_token).
-    st.session_state["os_df_token"] = uuid4().hex
+    st.session_state["os_raw"] = raw
+    st.session_state["os_shape"] = shape
+    st.session_state["os_scan_id"] = scan_id
+    st.session_state["os_raw_path"] = raw_path
+    st.session_state["os_df_token"] = token
     _drop_deferred_payloads()
     st.session_state["os_prev_counts"] = prev
-    st.session_state["os_counts"] = count_by_severity(df)
+    st.session_state["os_counts"] = _derived.counts_cached(token, df)
     ts = row.get("ts")
     when = (
         ts.strftime("%Y-%m-%d %H:%M UTC")
         if ts is not None and pd.notna(ts)
         else datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     )
+    count = int(row.get("total") or len(df))
     st.session_state["last_scan_meta"] = {
-        "count": len(nodes),
+        "count": count,
         "mode": row.get("mode", "unknown"),
         "at": when,
     }
-    # Re-read the durable derivations so Scan History / MTTR reflect the saved base, but do
-    # NOT persist or record a snapshot — reloading adds no new data point.
-    _derived.clear_ledger_caches()
-    _derived.history_cached.clear()
-    return len(nodes)
+    if clear_caches:
+        _derived.clear_ledger_caches()
+        _derived.history_cached.clear()
+    if source == "archive":
+        # The slow path ran (old archive with no snapshot yet) — it backfilled one, so
+        # say so; the snapshot fast path stays silent by design.
+        ui.show_toast("Rebuilt findings from the raw archive — wrote a snapshot for "
+                      "faster start-up next time.", "info")
+    return count
+
+
+def ensure_raw():
+    """The raw response envelope for the loaded scan, hydrating it on first use.
+
+    The flat-scan fast path defers this (100MB-scale JSON parse) — only the raw-JSON
+    export needs the envelope. ``None`` when nothing is loadable."""
+    raw = st.session_state.get("os_raw")
+    if raw is not None:
+        return raw
+    scan_id = st.session_state.get("os_scan_id")
+    raw_path = st.session_state.get("os_raw_path")
+    if not scan_id or not raw_path:
+        return None
+    payload = _derived.raw_payload_cached(scan_id, raw_path)
+    if payload is None:
+        return None
+    raw = coerce_results(payload)
+    st.session_state["os_raw"] = raw
+    return raw
+
+
+def ensure_nodes() -> list:
+    """The raw nested node list for the loaded scan, hydrating it on first use.
+
+    Only node *contents* need this (drill-down's raw view, exports); routing/counts run
+    off the frame and the ``os_shape`` key. Returns ``[]`` when nothing is loadable."""
+    nodes = st.session_state.get("os_nodes")
+    if nodes is not None:
+        return nodes
+    raw = ensure_raw()
+    nodes = extract_nodes(raw) if raw is not None else []
+    st.session_state["os_nodes"] = nodes
+    return nodes
+
+
+def loaded_shape(nodes=None) -> str:
+    """``"flat"`` or ``"grouped"`` for the loaded scan, without forcing lazy nodes to load.
+
+    Prefers the ``os_shape`` key (stamped by every session writer); falls back to
+    sniffing the nodes for sessions seeded directly (tests, legacy state)."""
+    shape = st.session_state.get("os_shape")
+    if shape in ("flat", "grouped"):
+        return shape
+    ns = nodes if nodes is not None else st.session_state.get("os_nodes")
+    return "grouped" if ns and schema.is_grouped_shape(ns) else "flat"
 
 
 def reload_scan() -> None:
@@ -229,12 +316,12 @@ def reload_scan() -> None:
     derivations (and the history cache) so consumer pages re-read the latest saved base.
     When nothing has ever been saved, it nudges the user to run a scan first.
     """
-    payload, row = ledger.load_latest_scan_payload()
-    if payload is None:
+    row = ledger.load_latest_scan_row()
+    if row is None:
         ui.show_toast("Nothing to refresh yet — run a scan first to save findings.", "warning")
         return
     try:
-        count = _apply_saved_payload(payload, row)
+        count = _hydrate_from_saved(row, clear_caches=True)
     except Exception as exc:  # noqa: BLE001 -- surfaced to the user with a traceback
         ui.show_exception(
             exc,
@@ -257,21 +344,30 @@ def autoload_latest_scan() -> bool:
     ``_autoload_tried`` flag stops the empty-base case re-reading SQLite on every rerun.
     Returns ``True`` only when it loaded a scan into the session.
     """
-    if st.session_state.get("os_nodes") or st.session_state.get("_autoload_tried"):
+    # os_scan_id (not just os_nodes) guards the loaded state: on the lazy fast path
+    # os_nodes stays None, and the old truthiness check would re-fire every rerun.
+    if (
+        st.session_state.get("os_scan_id")
+        or st.session_state.get("os_nodes")
+        or st.session_state.get("_autoload_tried")
+    ):
         return False
     st.session_state["_autoload_tried"] = True
-    payload, row = ledger.load_latest_scan_payload()
-    if payload is None:
+    row = ledger.load_latest_scan_row()  # metadata only — never parses the archive
+    if row is None:
         return False
     try:
-        _apply_saved_payload(payload, row)
+        total = int(row.get("total") or 0)
+        label = f"Loading saved scan · {total:,} findings…" if total else "Loading saved scan…"
+        with st.spinner(label):
+            _hydrate_from_saved(row, clear_caches=False)
     except Exception:  # noqa: BLE001 -- a bad archive must not block app startup
         logger.warning("Auto-load of the latest saved scan failed", exc_info=True)
         return False
     return True
 
 
-def _persist_scan(nodes, df, results, *, mode, db_path=None) -> None:
+def _persist_scan(nodes, df, results, *, mode, db_path=None, scan_id=None) -> None:
     """Save this scan to the durable base and reconcile the vulnerability ledger.
 
     Grouped-by-asset responses are archived but skip per-vuln reconciliation (no
@@ -282,14 +378,20 @@ def _persist_scan(nodes, df, results, *, mode, db_path=None) -> None:
     """
     try:
         if schema.is_grouped_shape(nodes):
-            deltas = ledger.persist_grouped_scan(nodes, mode=mode, raw=results, db_path=db_path)
+            deltas = ledger.persist_grouped_scan(
+                nodes, mode=mode, raw=results, db_path=db_path, scan_id=scan_id
+            )
         else:
             # The raw nodes carry everything reconciliation reads (vuln_key/field walk
             # nested dicts), so skip materializing 100k+ wide row-dicts from the frame.
             # ledger._records_from_payload feeds replay the same shape — keep them in sync.
-            deltas = ledger.persist_flat_scan(nodes, mode=mode, raw=results, db_path=db_path)
+            # Passing df writes the parsed-frame snapshot other sessions start up from.
+            deltas = ledger.persist_flat_scan(
+                nodes, mode=mode, raw=results, db_path=db_path, scan_id=scan_id, df=df
+            )
         st.session_state["scan_deltas"] = deltas
         _derived.clear_ledger_caches()
+        _derived.clear_scan_resources()  # a new scan changes which frame is "latest"
     except Exception:
         logger.warning("Failed to persist scan to ledger", exc_info=True)
         ui.show_toast("Couldn't save this scan to the durable base.", "warning")
