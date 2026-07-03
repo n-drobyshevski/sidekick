@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 import streamlit as st
 
 from wiz_dashboard.ui import components as ui
+from wiz_dashboard.ui import scan
 from wiz_dashboard.ui.pages import _derived, _findings
 
 
@@ -38,7 +39,16 @@ def page():
         def build_csv(clean=clean):
             return clean.to_csv(index=False).encode("utf-8")
 
-        def build_json(raw=raw, label=label):
+        # On the start-up fast path the raw envelope is deferred (os_raw is None while
+        # its archive is loadable) — the builder hydrates it on click via ensure_raw,
+        # so visiting this page never forces the 100MB-scale JSON parse.
+        raw_available = raw is not None or (
+            prefix == "os" and bool(st.session_state.get("os_raw_path"))
+        )
+
+        def build_json(raw=raw, label=label, prefix=prefix):
+            if raw is None and prefix == "os":
+                raw = scan.ensure_raw()
             # exported_at is stamped when the payload is actually built.
             payload = {"exported_at": _stamp(), "source": label, "findings": raw}
             return json.dumps(payload, indent=2, default=str, ensure_ascii=False).encode("utf-8")
@@ -63,7 +73,7 @@ def page():
                 file_name=f"{prefix}_findings.json",
                 mime="application/json",
                 width="stretch",
-                disabled=raw is None,
+                disabled=not raw_available,
                 key=f"{prefix}_export_json",
                 row_count=len(clean),
                 sig=token,

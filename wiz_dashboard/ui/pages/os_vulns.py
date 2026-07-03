@@ -78,9 +78,12 @@ def render(has_creds: bool) -> None:
     )
 
     nodes = st.session_state.get("os_nodes")
-    df = st.session_state.get("os_df", pd.DataFrame())
+    df = st.session_state.get("os_df")
+    df = df if df is not None else pd.DataFrame()
 
-    if not nodes:
+    # On the start-up fast path os_nodes is deliberately None (lazy — see scan.ensure_nodes)
+    # while os_df is populated, so "nothing loaded" must consider both.
+    if df.empty and not nodes:
         ui.empty_state(
             "No findings loaded",
             "Run a scan from the **sidebar** to query Wiz. Without credentials a "
@@ -90,8 +93,8 @@ def render(has_creds: bool) -> None:
         ui.severity_skeleton()
         return
 
-    if schema.is_grouped_shape(nodes):
-        _render_grouped(nodes, has_creds)
+    if scan.loaded_shape(nodes) == "grouped":
+        _render_grouped(nodes or scan.ensure_nodes(), has_creds)
     else:
         _render_flat(df)
 
@@ -777,6 +780,12 @@ def _handle_open_tick(edited, frame, nodes) -> None:
     ticked = next((i for i, v in enumerate(edited["Open"].tolist()) if bool(v)), None)
     if ticked is None:
         return
+    if nodes is None:
+        # Lazy fast path: the raw nodes weren't needed until this first drill-down.
+        # One archive parse (shared cross-session afterwards); a failed load degrades
+        # to the record-dict sheet because _raw_node tolerates empty nodes.
+        with st.spinner("Loading finding details…"):
+            nodes = scan.ensure_nodes()
     st.session_state["os_drill_record"] = _record_to_dict(frame.iloc[ticked])
     st.session_state["os_drill_raw"] = _raw_node(frame, ticked, nodes)
     st.session_state["os_drill_pending"] = True

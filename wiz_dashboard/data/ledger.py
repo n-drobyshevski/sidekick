@@ -24,6 +24,7 @@ import pandas as pd
 from wiz_dashboard import config
 from wiz_dashboard.domain import reconcile
 from wiz_dashboard.domain.severity import normalize_severity
+from wiz_dashboard.data import snapshot
 from wiz_dashboard.data.transform import extract_nodes
 
 logger = logging.getLogger(__name__)
@@ -180,11 +181,17 @@ def _archive_raw(db_path, scan_id, payload):
 #  Writers
 # --------------------------------------------------------------------------- #
 def persist_flat_scan(records, *, mode, raw=None, db_path=None, scan_id=None,
-                      disappearance_mode=None):
+                      disappearance_mode=None, df=None):
     """Save a flat per-finding scan and reconcile the ledger. Returns scan deltas.
 
     Idempotent: saving a scan whose ``scan_id`` already exists is a no-op (returns the
     stored deltas). ``scan_id`` defaults to the current UTC second.
+
+    ``df`` (optional): the already-parsed findings DataFrame for this scan. When given,
+    a parsed-frame snapshot is written beside the raw archive so app start-up can restore
+    the frame without re-parsing 100k+ nested nodes (see ``data.snapshot``). Replay paths
+    (delete→rebuild) pass no ``df``; survivors' existing snapshots stay valid because
+    their data is unchanged, and nothing in the rebuild depends on snapshots.
     """
     records = list(records)
     db_path = _resolve(db_path)
@@ -209,6 +216,8 @@ def persist_flat_scan(records, *, mode, raw=None, db_path=None, scan_id=None,
             disappearance_mode=disappearance_mode, prev_scan_ts=prev_scan_ts,
         )
         raw_path = _archive_raw(db_path, scan_id, raw if raw is not None else records)
+        if df is not None and raw_path:
+            snapshot.write_snapshot(raw_path, df)  # best-effort; start-up fast path
 
         with conn:
             conn.execute(
@@ -407,12 +416,14 @@ def delete_scans(scan_ids, db_path=None) -> dict:
     else:
         bak.unlink(missing_ok=True)
 
-    # Remove the deleted scans' archived payloads (best-effort; survivors keep theirs).
+    # Remove the deleted scans' archived payloads and their parsed-frame snapshots
+    # (best-effort; survivors keep theirs).
     survivor_paths = {r["raw_path"] for r in survivors if r["raw_path"]}
     for r in rows:
         if r["scan_id"] in present and r["raw_path"] and r["raw_path"] not in survivor_paths:
             try:
                 Path(r["raw_path"]).unlink(missing_ok=True)
+                snapshot.snapshot_path_for(r["raw_path"]).unlink(missing_ok=True)
             except Exception:
                 logger.warning("Couldn't remove archived scan %s", r["raw_path"], exc_info=True)
 
@@ -442,6 +453,18 @@ def load_scans_df(db_path=None) -> pd.DataFrame:
         return df
     df["ts"] = pd.to_datetime(df["ts"], errors="coerce", utc=True)
     return df.sort_values("ts", ascending=False).reset_index(drop=True)
+
+
+def load_latest_scan_row(db_path=None):
+    """Metadata of the most recent saved scan (``scans``-table row) or ``None``.
+
+    The metadata-first read behind the start-up fast path: gives ``scan_id`` /
+    ``raw_path`` / ``shape`` / ``total`` without touching (or parsing) the archived JSON,
+    so hydration can restore from the parsed-frame snapshot and defer the raw payload."""
+    df = load_scans_df(db_path)
+    if df is None or df.empty:
+        return None
+    return df.iloc[0]  # newest-first
 
 
 def load_latest_scan_payload(db_path=None):

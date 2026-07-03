@@ -41,6 +41,11 @@ def _isolated_ledger(tmp_path, monkeypatch):
         _derived.ledger_base_cached,
         _derived.ledger_trend_cached,
         _derived.previous_severity_counts_cached,
+        # st.cache_resource is process-global: without clearing, one test's saved-scan
+        # frame/payload (keyed by a per-second scan_id that CAN repeat across fast
+        # tests) would be served to the next test's different tmp_path ledger.
+        _derived.scan_frame_cached,
+        _derived.raw_payload_cached,
     )
     for c in caches:
         c.clear()

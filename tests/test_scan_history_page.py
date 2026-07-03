@@ -80,17 +80,25 @@ def test_autoload_hydrates_fresh_session_from_saved_scan(tmp_path):
         "st.session_state['before'] = len(ledger.load_scans_df())\n"
         # Simulate a brand-new session: drop the in-session view but keep the durable base.
         "for k in ('os_nodes','os_df','os_raw','os_counts','os_prev_counts',"
-        "'last_scan_meta','_autoload_tried'):\n"
+        "'last_scan_meta','_autoload_tried','os_scan_id','os_shape','os_raw_path',"
+        "'os_df_token'):\n"
         "    st.session_state.pop(k, None)\n"
         "st.session_state['loaded'] = scan.autoload_latest_scan()\n"
         "st.session_state['after'] = len(ledger.load_scans_df())\n"
+        # The flat fast path defers the raw nodes; ensure_nodes hydrates them on demand.
+        "st.session_state['n_lazy_nodes'] = len(scan.ensure_nodes())\n"
     )
     at = AppTest.from_string(script, default_timeout=60).run()
     assert not at.exception, at.exception
     assert at.session_state["loaded"] is True
-    assert at.session_state["os_nodes"]
+    # New hydration contract: the frame + routing metadata are loaded eagerly, the raw
+    # nested nodes lazily (os_nodes may be None until first drill-down/export).
+    assert not at.session_state["os_df"].empty
+    assert at.session_state["os_shape"] == "flat"
+    assert at.session_state["os_scan_id"]
     assert at.session_state["os_counts"]
     assert "last_scan_meta" in at.session_state
+    assert at.session_state["n_lazy_nodes"] == 17  # ensure_nodes re-hydrated the archive
     # Auto-load is a pure read: it must not add a second saved scan.
     assert at.session_state["before"] == at.session_state["after"] == 1
 
@@ -138,15 +146,17 @@ def test_reload_scan_redraws_without_new_snapshot(tmp_path):
         "st.session_state['dry_run_shape'] = 'flat'\n"
         "scan.run_scan(force=False, has_creds=False)\n"
         "st.session_state['scans_before'] = len(ledger.load_scans_df())\n"
-        "for k in ('os_nodes','os_df','os_raw','os_counts','os_prev_counts','last_scan_meta'):\n"
+        "for k in ('os_nodes','os_df','os_raw','os_counts','os_prev_counts',"
+        "'last_scan_meta','os_scan_id','os_shape','os_raw_path','os_df_token'):\n"
         "    st.session_state.pop(k, None)\n"
         "scan.reload_scan()\n"
         "st.session_state['scans_after'] = len(ledger.load_scans_df())\n"
     )
     at = AppTest.from_string(script, default_timeout=60).run()
     assert not at.exception, at.exception
-    # The view was rebuilt purely from the durable base.
-    assert at.session_state["os_nodes"]
+    # The view was rebuilt purely from the durable base (frame eager, raw nodes lazy).
+    assert not at.session_state["os_df"].empty
+    assert at.session_state["os_shape"] == "flat"
     assert at.session_state["os_counts"]
     assert "last_scan_meta" in at.session_state
     # Refresh is a read: it must not add a second saved scan.
@@ -240,3 +250,58 @@ def test_selected_scan_ids_ignores_stale_out_of_range_indices():
     assert scan_history._selected_scan_ids(scans, [1, 5]) == ["b"]  # keep valid, drop stale
     assert scan_history._selected_scan_ids(scans, []) == []
     assert scan_history._selected_scan_ids(scans, None) == []
+
+
+def test_autoload_survives_missing_archive_via_snapshot(tmp_path):
+    # The frame snapshot alone is enough to open the app on data: with the raw JSON
+    # archive gone, autoload hydrates from the snapshot and the lazy raw-node load
+    # degrades to an empty list instead of failing startup.
+    script = (
+        "import streamlit as st\n"
+        "from pathlib import Path\n"
+        "from wiz_dashboard.ui import scan\n"
+        "from wiz_dashboard.data import ledger\n"
+        "st.session_state['dry_run_shape'] = 'flat'\n"
+        "scan.run_scan(force=False, has_creds=False)\n"
+        "row = ledger.load_latest_scan_row()\n"
+        "Path(row['raw_path']).unlink()\n"
+        "for k in ('os_nodes','os_df','os_raw','os_counts','os_prev_counts',"
+        "'last_scan_meta','_autoload_tried','os_scan_id','os_shape','os_raw_path',"
+        "'os_df_token'):\n"
+        "    st.session_state.pop(k, None)\n"
+        "st.session_state['loaded'] = scan.autoload_latest_scan()\n"
+        "st.session_state['n_nodes'] = len(scan.ensure_nodes())\n"
+    )
+    at = AppTest.from_string(script, default_timeout=60).run()
+    assert not at.exception, at.exception
+    assert at.session_state["loaded"] is True
+    assert not at.session_state["os_df"].empty     # hydrated purely from the snapshot
+    assert at.session_state["n_nodes"] == 0        # raw nodes unavailable -> degrade, not crash
+
+
+def test_autoload_falls_back_to_archive_and_backfills_snapshot(tmp_path):
+    # Old archives (persisted before snapshots existed) still load: the JSON fallback
+    # parses the archive AND writes the missing snapshot so the next cold start is fast.
+    script = (
+        "import streamlit as st\n"
+        "from wiz_dashboard.ui import scan\n"
+        "from wiz_dashboard.data import ledger, snapshot\n"
+        "st.session_state['dry_run_shape'] = 'flat'\n"
+        "scan.run_scan(force=False, has_creds=False)\n"
+        "row = ledger.load_latest_scan_row()\n"
+        "snap = snapshot.snapshot_path_for(row['raw_path'])\n"
+        "snap.unlink()\n"
+        "for k in ('os_nodes','os_df','os_raw','os_counts','os_prev_counts',"
+        "'last_scan_meta','_autoload_tried','os_scan_id','os_shape','os_raw_path',"
+        "'os_df_token'):\n"
+        "    st.session_state.pop(k, None)\n"
+        "from wiz_dashboard.ui.pages import _derived\n"
+        "_derived.clear_scan_resources()\n"
+        "st.session_state['loaded'] = scan.autoload_latest_scan()\n"
+        "st.session_state['backfilled'] = snap.exists()\n"
+    )
+    at = AppTest.from_string(script, default_timeout=60).run()
+    assert not at.exception, at.exception
+    assert at.session_state["loaded"] is True
+    assert not at.session_state["os_df"].empty
+    assert at.session_state["backfilled"] is True  # slow path healed itself
