@@ -8,6 +8,12 @@ from typing import Dict
 CACHE_FILENAME = "last_results.json"
 DEFAULT_CACHE_TTL_MINUTES = 60
 
+# ---- Live Wiz API deadline ----
+# Mirrors os_vulns.DEFAULT_TIMEOUT_SECONDS; kept here too (rather than importing os_vulns,
+# which pulls in the wiz_sdk import machinery) so config stays a lightweight, dependency-free
+# module. Overridable per-tenant via a "wiz_api_timeout_seconds" key in wiz_config.json.
+DEFAULT_WIZ_API_TIMEOUT_SECONDS = 120.0
+
 # ---- Severity taxonomy ----
 SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"]
 # Light-theme severity palette: Altair renders charts to SVG and can't read CSS vars,

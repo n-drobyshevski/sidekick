@@ -13,6 +13,39 @@ from wiz_dashboard.data.transform import coerce_results
 logger = logging.getLogger(__name__)
 
 
+def _use_disk_cache_or_raise(reason: str, exc: Exception):
+    """Shared fallback: return the coerced disk snapshot, or re-raise a friendly error.
+
+    On success, surfaces a visible ``st.warning`` (not just a log line) so the analyst
+    knows they're looking at a stale, previously-saved scan rather than fresh live data --
+    Streamlit replays this warning on every cache hit for this result, not just the miss
+    that triggered it, so the "stale data" banner stays up for as long as the fallback
+    result stays cached. When no snapshot exists, re-raises ``exc``'s type with a message
+    that says so plainly, chained to the original for a full traceback.
+    """
+    snapshot = disk_cache.load_cache()
+    if snapshot is None:
+        logger.warning("%s; no disk cache available", reason, exc_info=True)
+        message = (
+            f"{reason}, and no previously saved scan is available to fall back to. "
+            "Check your network connection / Wiz credentials and try again."
+        )
+        try:
+            raise type(exc)(message) from exc
+        except TypeError:
+            # Some exception types don't accept a single string arg -- fall back to a
+            # plain RuntimeError rather than letting that construction failure mask the
+            # real error.
+            raise RuntimeError(message) from exc
+    logger.warning("%s; falling back to disk cache", reason, exc_info=True)
+    saved_at = disk_cache.peek_saved_at()
+    st.warning(
+        f"⚠️ {reason}. Showing the last saved scan from **{saved_at}** instead of live data.",
+        icon="⚠️",
+    )
+    return coerce_results(snapshot)
+
+
 @st.cache_data(ttl=DEFAULT_CACHE_TTL_MINUTES * 60, show_spinner=False)
 def fetch_findings(dry_run: bool = True, use_config: bool = False,
                    sample_shape: str = "grouped", sample_seq: int = 0,
@@ -26,7 +59,8 @@ def fetch_findings(dry_run: bool = True, use_config: bool = False,
     and is ignored in live mode. ``sample_seq`` steps the *flat* dry-run sample through the
     evolving demo snapshots (see ``data.demo``) so scan-over-scan badges show non-zero
     deltas offline; ``0`` is the unchanged baseline. On a live-fetch failure we fall back to
-    the on-disk snapshot so the UI degrades gracefully.
+    the on-disk snapshot (with a visible "stale data" warning) so the UI degrades gracefully
+    instead of silently pretending a cached scan is fresh.
 
     ``_progress`` (optional ``callable(pages_done, findings_so_far)``) reports live
     pagination progress on a live fetch. The leading underscore keeps it out of the
@@ -40,14 +74,7 @@ def fetch_findings(dry_run: bool = True, use_config: bool = False,
             raw = os_vulns.fetch_findings(dry_run=dry_run, config=cfg,
                                           sample_shape=sample_shape, progress=_progress)
     except TimeoutError as exc:
-        logger.warning("Wiz API timed out, falling back to disk cache", exc_info=True)
-        snapshot = disk_cache.load_cache()
-        if snapshot is not None:
-            return coerce_results(snapshot)
-        raise TimeoutError(
-            "The Wiz API did not respond in time. Check your network connection and try again. "
-            "Previously saved findings are shown if available."
-        ) from exc
+        return _use_disk_cache_or_raise("The Wiz API did not respond in time", exc)
     except RuntimeError as exc:
         msg = str(exc)
         if "wiz_sdk not installed" in msg:
@@ -63,17 +90,9 @@ def fetch_findings(dry_run: bool = True, use_config: bool = False,
                 "Check that wiz_client_id and wiz_client_secret in wiz_config.json are correct "
                 "and that the service account has the required permissions."
             ) from exc
-        snapshot = disk_cache.load_cache()
-        if snapshot is not None:
-            logger.warning("Live fetch failed (%s), using disk cache", msg, exc_info=True)
-            return coerce_results(snapshot)
-        raise
+        return _use_disk_cache_or_raise(f"Live fetch failed ({msg})", exc)
     except Exception as exc:
-        logger.warning("Unexpected error during fetch, falling back to disk cache", exc_info=True)
-        snapshot = disk_cache.load_cache()
-        if snapshot is not None:
-            return coerce_results(snapshot)
-        raise
+        return _use_disk_cache_or_raise(f"Unexpected error during fetch ({exc})", exc)
 
     results = coerce_results(raw)
     if results is None or not isinstance(results, (dict, list)):
@@ -85,3 +104,4 @@ def fetch_findings(dry_run: bool = True, use_config: bool = False,
     if not dry_run and results is not None:
         disk_cache.save_cache(results)
     return results
+

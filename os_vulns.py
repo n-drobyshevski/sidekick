@@ -16,6 +16,7 @@ import copy
 import csv
 import functools
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -770,10 +771,26 @@ def _grouped_sample() -> Dict[str, Any]:
         return _GROUPED_FALLBACK
 
 
+# The Wiz SDK's own client (see ``wiz_sdk.common.DEFAULT_WIZ_API_TIMEOUT``) expects a
+# single query to legitimately take up to 360s: it retries 429/500/502/503/504 responses
+# internally with exponential backoff (1+2+4+8+16+32 = 63s of sleeping alone) before ever
+# raising. A 60s outer deadline routinely aborted the SDK's own in-flight retry loop --
+# that mismatch, not a genuinely dead connection, was the usual cause of the "did not
+# respond within 60s" fallback-to-cache. 120s gives the SDK realistic room to recover from
+# a transient rate-limit/5xx without making a truly hung socket block the dashboard for
+# the SDK's full 360s budget.
+DEFAULT_TIMEOUT_SECONDS = 120.0
+# One extra attempt per page after a timeout, so a single transient stall (e.g. a slow DNS
+# lookup or momentary network blip) doesn't have to fall all the way back to the disk
+# cache. Retrying a *genuinely* hung socket is a no-op (it will simply time out again), so
+# this stays cheap in the worst case.
+_QUERY_MAX_RETRIES = 1
+
+
 def fetch_findings(
     dry_run: bool = True,
     config: Optional[Dict[str, Any]] = None,
-    timeout_seconds: float = 60.0,
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
     sample_shape: str = "grouped",
     progress: Optional[Any] = None,
 ) -> Any:
@@ -785,10 +802,13 @@ def fetch_findings(
     Args:
         dry_run: when True, return bundled sample data without calling the API.
         config: optional ``{"wiz_client_id", "wiz_client_secret"}`` injected into the
-            environment for the SDK when running live.
-        timeout_seconds: hard deadline for the live API call. The blocking SDK call
-            runs in a worker thread so a hung endpoint can't freeze the Streamlit
-            server; exceeding the deadline raises ``TimeoutError``.
+            environment for the SDK when running live. An optional ``"wiz_api_timeout_seconds"``
+            key overrides ``timeout_seconds`` (lets ops tune the deadline per-tenant via
+            ``wiz_config.json`` without a code change).
+        timeout_seconds: hard deadline for a single page's live API call. The blocking SDK
+            call runs in a worker thread so a hung endpoint can't freeze the Streamlit
+            server; exceeding the deadline retries once (see ``_QUERY_MAX_RETRIES``) and
+            then raises ``TimeoutError``. Defaults to ``DEFAULT_TIMEOUT_SECONDS``.
         sample_shape: which dry-run sample to return -- ``"grouped"`` (default) yields
             the committed grouped-by-asset response (mirrors the real API); ``"flat"``
             yields the per-finding ``SAMPLE_RESULTS`` that powers MTTR/SLA/ledger offline.
@@ -804,7 +824,8 @@ def fetch_findings(
 
     Raises:
         RuntimeError: in live mode when ``wiz_sdk`` is not installed.
-        TimeoutError: in live mode when the API does not respond within the deadline.
+        TimeoutError: in live mode when the API does not respond within the deadline
+            (after retries).
     """
     if dry_run:
         return _grouped_sample() if sample_shape == "grouped" else SAMPLE_RESULTS
@@ -821,6 +842,14 @@ def fetch_findings(
         secret = config.get("wiz_client_secret")
         if cid and secret:
             conf = {"wiz_client_id": cid, "wiz_client_secret": secret}
+        # Let ops override the deadline per-tenant (e.g. a Wiz org with a lot of rate
+        # limiting) via wiz_config.json without touching code.
+        override = config.get("wiz_api_timeout_seconds")
+        if override:
+            try:
+                timeout_seconds = float(override)
+            except (TypeError, ValueError):
+                pass
     client = WizAPIClient(conf=conf) if conf else WizAPIClient()
     # Walk every page of the cursor-paginated connection. A single query only returns
     # the first ``VARIABLES["first"]`` findings; without this loop the dashboard silently
@@ -836,22 +865,38 @@ def fetch_findings(
 _MAX_PAGES = 1000
 
 
-def _query_page(client, variables, timeout_seconds) -> Any:
+def _query_page(client, variables, timeout_seconds, max_retries: int = _QUERY_MAX_RETRIES) -> Any:
     """Run one blocking SDK query in a worker thread, abandoning it if it overruns.
 
     Keeps a hung Wiz endpoint from freezing the dashboard; ``shutdown(wait=False)`` avoids
-    blocking on a thread we've already given up on.
+    blocking on a thread we've already given up on -- the abandoned thread (and whatever
+    socket it's holding) is left to die on its own rather than being awaited.
+
+    Retries once (``max_retries``) after a short backoff before giving up: a stall caused by
+    a momentary network blip or the SDK's own internal rate-limit backoff clears on the next
+    attempt, while a genuinely dead connection will simply time out again just as fast --
+    so the retry is cheap in the worst case but can save a whole scan from falling back to
+    the disk cache over a one-off hiccup.
     """
-    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    future = pool.submit(client.query, QUERY, variables)
-    try:
-        return future.result(timeout=timeout_seconds)
-    except concurrent.futures.TimeoutError as exc:
-        raise TimeoutError(
-            f"Wiz API did not respond within {timeout_seconds:.0f}s"
-        ) from exc
-    finally:
-        pool.shutdown(wait=False)
+    last_exc: Optional[BaseException] = None
+    for attempt in range(max_retries + 1):
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        try:
+            future = pool.submit(client.query, QUERY, variables)
+            return future.result(timeout=timeout_seconds)
+        except concurrent.futures.TimeoutError as exc:
+            last_exc = exc
+            if attempt < max_retries:
+                # Cap the backoff so a small configured timeout (e.g. in tests) doesn't
+                # sleep longer than the deadline it's retrying against.
+                time.sleep(min(2.0, timeout_seconds))
+                continue
+        finally:
+            pool.shutdown(wait=False)
+    raise TimeoutError(
+        f"Wiz API did not respond within {timeout_seconds:.0f}s "
+        f"(after {max_retries + 1} attempt{'s' if max_retries else ''})"
+    ) from last_exc
 
 
 def _vulnerability_findings(page: Any) -> Dict[str, Any]:

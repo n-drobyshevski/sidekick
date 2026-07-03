@@ -3,6 +3,7 @@
 import datetime
 import json
 import logging
+import re
 from pathlib import Path
 
 from wiz_dashboard.config import CACHE_FILENAME, DEFAULT_CACHE_TTL_MINUTES
@@ -54,6 +55,29 @@ def load_cache(
     except Exception:
         logger.warning("Failed to read cache snapshot from %s", filename, exc_info=True)
         return None
+
+
+def peek_saved_at(filename: str = CACHE_FILENAME) -> str:
+    """Best-effort human-readable timestamp of the on-disk snapshot, for UI messaging.
+
+    Reads only the first few KB of the file and regex-extracts the leading ``"ts"`` field
+    -- ``save_cache`` always writes it first -- instead of ``json.loads``-ing the whole
+    file, which can be very large (a full scan's worth of findings) and would otherwise
+    make a simple "when was this saved" check as slow as a full cache load.
+
+    Never raises and never returns None -- falls back to "an unknown time" so callers can
+    always interpolate it into a sentence without their own None-check.
+    """
+    try:
+        with open(filename, "r", encoding="utf-8") as fh:
+            head = fh.read(4096)
+        match = re.search(r'"ts"\s*:\s*"([^"]+)"', head)
+        if not match:
+            return "an unknown time"
+        dt = datetime.datetime.fromisoformat(match.group(1))
+        return dt.strftime("%Y-%m-%d %H:%M UTC")
+    except Exception:
+        return "an unknown time"
 
 
 def clear_cache(filename: str = CACHE_FILENAME) -> None:
