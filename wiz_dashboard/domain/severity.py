@@ -24,6 +24,15 @@ def normalize_severity_series(s: pd.Series) -> pd.Series:
     maps to ``"INFO"``. Returned values are plain ``str`` (object dtype) so callers
     that build dicts get the same keys as the scalar path.
     """
+    if isinstance(s.dtype, pd.CategoricalDtype):
+        # Fast path for the ingestion layer's dictionary-encoded columns: normalize the
+        # handful of categories instead of walking 100k+ rows. ``Series.map`` on a
+        # categorical maps the categories, not the elements.
+        mapping = {cat: normalize_severity(cat) for cat in s.cat.categories}
+        norm = s.map(mapping)
+        if isinstance(norm.dtype, pd.CategoricalDtype):
+            norm = norm.astype(object)
+        return norm.fillna("UNKNOWN").astype(object)
     norm = s.astype("string").str.upper().str.strip().replace(_ALIASES)
     norm = norm.where(norm.isin(SEVERITY_ORDER), "UNKNOWN")
     return norm.fillna("UNKNOWN").astype(object)

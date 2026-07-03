@@ -9,6 +9,7 @@ the scan's side-effects can never drift between the two entry points.
 
 import logging
 from datetime import datetime, timezone
+from uuid import uuid4
 
 import pandas as pd
 import streamlit as st
@@ -23,6 +24,24 @@ from wiz_dashboard.ui import components as ui
 from wiz_dashboard.ui.pages import _derived
 
 logger = logging.getLogger(__name__)
+
+# Share of the scan progress bar given to the API fetch. Fetching dominates a live scan's
+# wall clock (hundreds of thousands of findings over a paginated connection), so it gets
+# the bulk of the bar; the remainder is stepped through the parse/persist phases below.
+_FETCH_SHARE = 0.7
+_PHASE_PARSE = 0.75
+_PHASE_TABLE = 0.85
+_PHASE_PERSIST = 0.95
+
+
+def _fetch_fraction(found: int, total) -> float | None:
+    """Overall-bar fraction for ``found`` of ``total`` fetched findings.
+
+    Returns ``None`` when the server didn't report a usable total — the caller must then
+    skip the bar rather than invent a percentage."""
+    if not isinstance(total, (int, float)) or total <= 0:
+        return None
+    return min(found / total, 1.0) * _FETCH_SHARE
 
 
 def freshness_caption(meta, scans_df) -> str:
@@ -41,6 +60,15 @@ def freshness_caption(meta, scans_df) -> str:
         when = ts.strftime("%Y-%m-%d %H:%M UTC") if pd.notna(ts) else "unknown time"
         return f"Saved base · {int(row.get('total', 0)):,} findings · last scan {when}"
     return "No scan yet. Click **Run scan** to load findings."
+
+
+def _drop_deferred_payloads() -> None:
+    """Free any stashed deferred-download payloads (see ``ui.deferred_download``).
+
+    A fresh data load invalidates them anyway (their sig embeds the old token); dropping
+    them here keeps multi-megabyte CSV/JSON blobs from outliving the data they describe."""
+    for key in [k for k in st.session_state if str(k).endswith("_payload")]:
+        st.session_state.pop(key, None)
 
 
 def run_scan(force: bool, has_creds: bool, sample_shape: str | None = None) -> None:
@@ -83,12 +111,22 @@ def run_scan(force: bool, has_creds: bool, sample_shape: str | None = None) -> N
                 sample_seq = int(st.session_state.get("dry_run_seq", 0))
                 st.session_state["dry_run_seq"] = sample_seq + 1
 
+            # One progress bar for the whole scan, living inside the status container.
+            # The fetch drives it via totalCount when the server reports one; the
+            # parse/persist phases step through the remainder so the bar always ends full.
+            bar = st.progress(0.0, text="Querying Wiz…")
+
             # Live fetch pages through the cursor connection; surface each page as it lands
             # so a multi-thousand-finding scan shows steady progress instead of a stalled
             # "Querying Wiz…". Fires only on a live cache-miss (dry-run/cache-hit are instant).
-            def _on_page(pages, found):
+            def _on_page(pages, found, total):
                 noun = "page" if pages == 1 else "pages"
                 status.update(label=f"Querying Wiz… {found:,} findings across {pages} {noun}")
+                frac = _fetch_fraction(found, total)
+                # Without a server-reported total the label alone carries progress --
+                # never show a made-up percentage.
+                if frac is not None:
+                    bar.progress(frac, text=f"Fetched {found:,} of {int(total):,} findings")
 
             status.update(label="Querying Wiz…")
             results = fetch_findings(
@@ -101,13 +139,19 @@ def run_scan(force: bool, has_creds: bool, sample_shape: str | None = None) -> N
                 st.error("Scan produced no output. Check credentials or os_vulns.py.")
                 return
             status.update(label="Parsing findings…")
+            bar.progress(_PHASE_PARSE, text="Parsing findings…")
             nodes = extract_nodes(results)
             status.update(label=f"Building findings table ({len(nodes):,} findings)…")
+            bar.progress(_PHASE_TABLE, text=f"Building findings table ({len(nodes):,} findings)…")
             df = nodes_to_dataframe(nodes)
             status.update(label="Computing severity & MTTR metrics…")
             st.session_state["os_nodes"] = nodes
             st.session_state["os_df"] = df
             st.session_state["os_raw"] = results
+            # Fresh cache token per data load: pages key their cached derivations on this
+            # instead of re-hashing the 100k+-row frame on every rerun (_derived.df_token).
+            st.session_state["os_df_token"] = uuid4().hex
+            _drop_deferred_payloads()
             st.session_state["os_prev_counts"] = prev
             st.session_state["os_counts"] = count_by_severity(df)
             st.session_state["last_scan_meta"] = {
@@ -116,9 +160,12 @@ def run_scan(force: bool, has_creds: bool, sample_shape: str | None = None) -> N
                 "at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
             }
             status.update(label="Saving scan & reconciling ledger…")
+            bar.progress(_PHASE_PERSIST, text="Saving scan & reconciling ledger…")
             _persist_scan(nodes, df, results, mode="live" if has_creds else "dry-run")
             _record_mttr_snapshot(df, st.session_state["os_counts"])
             _derived.history_cached.clear()  # a fresh snapshot was just written; reflect it
+            bar.progress(1.0, text=f"Loaded {len(nodes):,} findings")
+            bar.empty()  # the collapsed status line carries the final message
             status.update(label=f"Loaded {len(nodes):,} findings", state="complete")
     except Exception as exc:  # noqa: BLE001 -- surfaced to the user with a traceback
         ui.show_exception(
@@ -149,6 +196,9 @@ def _apply_saved_payload(payload, row) -> int:
     st.session_state["os_nodes"] = nodes
     st.session_state["os_df"] = df
     st.session_state["os_raw"] = results
+    # Same fresh-token contract as run_scan (see _derived.df_token).
+    st.session_state["os_df_token"] = uuid4().hex
+    _drop_deferred_payloads()
     st.session_state["os_prev_counts"] = prev
     st.session_state["os_counts"] = count_by_severity(df)
     ts = row.get("ts")
@@ -234,9 +284,10 @@ def _persist_scan(nodes, df, results, *, mode, db_path=None) -> None:
         if schema.is_grouped_shape(nodes):
             deltas = ledger.persist_grouped_scan(nodes, mode=mode, raw=results, db_path=db_path)
         else:
-            deltas = ledger.persist_flat_scan(
-                df.to_dict("records"), mode=mode, raw=results, db_path=db_path
-            )
+            # The raw nodes carry everything reconciliation reads (vuln_key/field walk
+            # nested dicts), so skip materializing 100k+ wide row-dicts from the frame.
+            # ledger._records_from_payload feeds replay the same shape — keep them in sync.
+            deltas = ledger.persist_flat_scan(nodes, mode=mode, raw=results, db_path=db_path)
         st.session_state["scan_deltas"] = deltas
         _derived.clear_ledger_caches()
     except Exception:

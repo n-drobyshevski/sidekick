@@ -116,6 +116,35 @@ def df_signature(df) -> str:
     return f"{df.shape}|{tuple(df.columns)}|{h}"
 
 
+# Low-cardinality string columns worth dictionary-encoding after flattening. ``category``
+# dtype shrinks a 100k+-row frame's memory severalfold AND the Arrow payload
+# st.dataframe/st.data_editor serialize to the browser on every render (Arrow encodes
+# categoricals dictionary-style). Values compare equal to their plain-string selves, so
+# filters/groupbys downstream are unaffected.
+_CATEGORY_COLUMNS = (
+    "severity",
+    "status",
+    "detectionMethod",
+    "vendorSeverity",
+    "nvdSeverity",
+    "epssSeverity",
+    "vulnerableAsset.type",
+    "vulnerableAsset.cloudPlatform",
+    "vulnerableAsset.region",
+    "vulnerableAsset.subscriptionName",
+)
+
+
+def _categorize(df):
+    for col in _CATEGORY_COLUMNS:
+        if col in df.columns:
+            try:
+                df[col] = df[col].astype("category")
+            except (TypeError, ValueError):
+                pass  # unhashable cells (e.g. lists) -- leave the column as-is
+    return df
+
+
 def nodes_to_dataframe(nodes):
     if not nodes:
         return pd.DataFrame()
@@ -141,7 +170,8 @@ def nodes_to_dataframe(nodes):
             continue
         cleaned.append({"_raw": str(item)})
     try:
-        return pd.json_normalize(cleaned, sep=".")
+        df = pd.json_normalize(cleaned, sep=".")
     except Exception:
         cols = sorted({k for row in cleaned for k in row.keys()})
-        return pd.DataFrame([{k: r.get(k) for k in cols} for r in cleaned])
+        df = pd.DataFrame([{k: r.get(k) for k in cols} for r in cleaned])
+    return _categorize(df)

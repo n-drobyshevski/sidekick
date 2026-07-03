@@ -18,7 +18,6 @@ Lifecycle rules:
 """
 
 import json
-from copy import deepcopy
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -133,7 +132,10 @@ def reconcile(
         ``(updated_ledger, observations, deltas)`` where ``deltas`` is
         ``{new_count, resolved_count, reopened_count}``.
     """
-    updated = deepcopy(existing_ledger)
+    # Ledger rows are flat dicts of scalars, so a per-row shallow copy gives the same
+    # don't-mutate-the-input guarantee as deepcopy at a fraction of the cost (deepcopy
+    # walked every cell of a 100k+-row ledger on every scan).
+    updated = {key: dict(row) for key, row in existing_ledger.items()}
     seen = set()
     observations = []
     new_count = resolved_count = reopened_count = 0

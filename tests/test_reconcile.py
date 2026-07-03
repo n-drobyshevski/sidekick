@@ -109,3 +109,14 @@ def test_nan_resolvedat_from_dataframe_does_not_resolve():
     led, _, d = reconcile.reconcile([rec], {}, S1, S1, None)
     assert led["id:a"]["status"] == "OPEN"
     assert d["resolved_count"] == 0
+
+
+def test_reconcile_does_not_mutate_existing_ledger():
+    # The prior ledger is copied per-row (not deepcopied) — reconcile must still never
+    # write through to its input, or an in-memory caller would see phantom updates.
+    led1, _, _ = reconcile.reconcile([_rec("a")], {}, S1, S1, None)
+    frozen = {k: dict(v) for k, v in led1.items()}
+    reconcile.reconcile(
+        [_rec("a", status="RESOLVED", resolvedAt=S2)], led1, S2, S2, S1
+    )
+    assert led1 == frozen  # input ledger untouched by the second reconcile

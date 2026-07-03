@@ -18,8 +18,10 @@ def save_cache(results, filename: str = CACHE_FILENAME) -> bool:
             "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "results": results,
         }
+        # Compact JSON: at 100k+ findings, pretty-printing roughly doubles the dump time
+        # and file size of a snapshot nothing human reads.
         Path(filename).write_text(
-            json.dumps(obj, indent=2, default=str, ensure_ascii=False), encoding="utf-8"
+            json.dumps(obj, default=str, ensure_ascii=False), encoding="utf-8"
         )
         return True
     except Exception:

@@ -203,8 +203,10 @@ def test_live_fetch_reports_progress_per_page(monkeypatch):
 
     monkeypatch.setattr(os_vulns, "WizAPIClient", PagingClient)
     seen = []
-    os_vulns.fetch_findings(dry_run=False, progress=lambda p, n: seen.append((p, n)))
-    assert seen == [(1, 2), (2, 3)]  # (page, cumulative findings) after each page
+    os_vulns.fetch_findings(dry_run=False, progress=lambda p, n, t: seen.append((p, n, t)))
+    # (page, cumulative findings, totalCount) after each page; no totalCount in the
+    # payload -> total is None on every call.
+    assert seen == [(1, 2, None), (2, 3, None)]
 
 
 def test_progress_callback_errors_do_not_abort_fetch(monkeypatch):
@@ -246,3 +248,97 @@ def test_live_fetch_stops_on_repeating_cursor(monkeypatch):
     results = os_vulns.fetch_findings(dry_run=False)
     # First page collected, then the repeated "same" cursor halts the walk.
     assert len(results["data"]["vulnerabilityFindings"]["nodes"]) == 2
+
+
+def test_live_fetch_probes_max_page_size_and_total_count(monkeypatch):
+    """Pages request the 5000 max, and totalCount is asked for on the first page only."""
+
+    pages = {
+        None: {"data": {"vulnerabilityFindings": {
+            "nodes": [{"id": "a"}, {"id": "b"}],
+            "pageInfo": {"hasNextPage": True, "endCursor": "c1"},
+            "totalCount": 3}}},
+        "c1": {"data": {"vulnerabilityFindings": {
+            "nodes": [{"id": "c"}],
+            "pageInfo": {"hasNextPage": False, "endCursor": None}}}},
+    }
+    seen_variables = []
+
+    class PagingClient:
+        def query(self, query, variables):
+            seen_variables.append(variables)
+            return pages[variables.get("after")]
+
+    monkeypatch.setattr(os_vulns, "WizAPIClient", PagingClient)
+    seen = []
+    os_vulns.fetch_findings(dry_run=False, progress=lambda p, n, t: seen.append((p, n, t)))
+
+    assert [v["first"] for v in seen_variables] == [os_vulns.PAGE_SIZE_MAX] * 2
+    # totalCount is an expensive server-side join -- first page only.
+    assert [v["includeTotalCount"] for v in seen_variables] == [True, False]
+    # The first page's totalCount reaches the progress callback on every page.
+    assert seen == [(1, 2, 3), (2, 3, 3)]
+
+
+def test_live_fetch_falls_back_when_max_page_size_raises(monkeypatch):
+    """A tenant that rejects first=5000 with an error still yields a full fetch at 500."""
+
+    pages = {
+        None: {"data": {"vulnerabilityFindings": {
+            "nodes": [{"id": "a"}],
+            "pageInfo": {"hasNextPage": True, "endCursor": "c1"},
+            "totalCount": 2}}},
+        "c1": {"data": {"vulnerabilityFindings": {
+            "nodes": [{"id": "b"}],
+            "pageInfo": {"hasNextPage": False, "endCursor": None}}}},
+    }
+    seen_firsts = []
+
+    class PickyClient:
+        def query(self, query, variables):
+            seen_firsts.append(variables["first"])
+            if variables["first"] > os_vulns.PAGE_SIZE_FALLBACK:
+                raise RuntimeError("first exceeds maximum")
+            return pages[variables.get("after")]
+
+    monkeypatch.setattr(os_vulns, "WizAPIClient", PickyClient)
+    results = os_vulns.fetch_findings(dry_run=False)
+
+    nodes = results["data"]["vulnerabilityFindings"]["nodes"]
+    assert [n["id"] for n in nodes] == ["a", "b"]  # cursor chain still fully walked
+    # One rejected probe at the max, then the whole walk at the fallback size.
+    assert seen_firsts == [os_vulns.PAGE_SIZE_MAX,
+                           os_vulns.PAGE_SIZE_FALLBACK, os_vulns.PAGE_SIZE_FALLBACK]
+
+
+def test_live_fetch_falls_back_on_errors_only_payload(monkeypatch):
+    """A rejected first=5000 that surfaces as a GraphQL errors payload (no connection)
+    retries at 500 instead of silently completing with zero findings."""
+
+    class ErrorPayloadClient:
+        def query(self, query, variables):
+            if variables["first"] > os_vulns.PAGE_SIZE_FALLBACK:
+                return {"errors": [{"message": "first exceeds maximum size"}]}
+            return {"data": {"vulnerabilityFindings": {
+                "nodes": [{"id": "a"}],
+                "pageInfo": {"hasNextPage": False, "endCursor": None}}}}
+
+    monkeypatch.setattr(os_vulns, "WizAPIClient", ErrorPayloadClient)
+    results = os_vulns.fetch_findings(dry_run=False)
+    assert [n["id"] for n in results["data"]["vulnerabilityFindings"]["nodes"]] == ["a"]
+
+
+def test_live_fetch_error_after_first_page_still_raises(monkeypatch):
+    """The fallback only guards the first-page size probe -- a mid-walk failure is real."""
+
+    class FlakyClient:
+        def query(self, query, variables):
+            if variables.get("after") is None:
+                return {"data": {"vulnerabilityFindings": {
+                    "nodes": [{"id": "a"}],
+                    "pageInfo": {"hasNextPage": True, "endCursor": "c1"}}}}
+            raise RuntimeError("boom mid-walk")
+
+    monkeypatch.setattr(os_vulns, "WizAPIClient", FlakyClient)
+    with pytest.raises(RuntimeError, match="boom mid-walk"):
+        os_vulns.fetch_findings(dry_run=False)

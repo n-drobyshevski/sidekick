@@ -575,6 +575,16 @@ QUERY = """
 """
 
 
+# Page size for the cursor-paginated connection. The Wiz console defaults to 60, but
+# ``vulnerabilityFindings`` accepts up to 5000 -- an outlier; most Wiz connections cap at
+# 500. At ~118k findings that's ~24 sequential round trips instead of ~237, and the round
+# trips are the dominant cost of a large scan. Page-size limits are tenant-shaped, so
+# ``_fetch_all_findings`` probes the max on the first page and drops to the conservative
+# fallback if the tenant rejects it.
+PAGE_SIZE_MAX = 5000
+PAGE_SIZE_FALLBACK = 500
+
+
 # The variables sent along with the above query
 VARIABLES = {
     "orderBy": {"field": "RELATED_ISSUE_SEVERITY", "direction": "DESC"},
@@ -587,10 +597,9 @@ VARIABLES = {
     "includeTotalCount": False,
     "includePostureIssues": False,
     "fetchPrivilegedActionRequests": False,
-    # Page size for the cursor-paginated connection. The Wiz console defaults to 60, but
-    # the connection accepts up to 500 -- using the max cuts the number of sequential
-    # round trips ~8x (the dominant cost of a large scan) without changing results.
-    "first": 500,
+    # Baseline page size; ``_page_variables`` overrides this per page (max first, with a
+    # fallback -- see PAGE_SIZE_MAX above). Kept here so a bare VARIABLES copy still pages.
+    "first": PAGE_SIZE_FALLBACK,
     "filterBy": {
         "hasFix": True,
         "projectIdV2": {"equals": ["1dfea0cf-834f-5522-b797-bee5aaf09251"]},
@@ -813,10 +822,12 @@ def fetch_findings(
             the committed grouped-by-asset response (mirrors the real API); ``"flat"``
             yields the per-finding ``SAMPLE_RESULTS`` that powers MTTR/SLA/ledger offline.
             Ignored when ``dry_run`` is False.
-        progress: optional ``callable(pages_done: int, findings_so_far: int)`` invoked
-            after each page is fetched (live mode only), so callers can surface live
-            pagination progress. Exceptions raised by the callback are swallowed so a
-            UI hiccup can never abort the scan.
+        progress: optional ``callable(pages_done: int, findings_so_far: int, total: Optional[int])``
+            invoked after each page is fetched (live mode only), so callers can surface
+            live pagination progress. ``total`` is the connection's ``totalCount`` from
+            the first page (or ``None`` when the server didn't report one), letting the
+            caller render a real completion fraction. Exceptions raised by the callback
+            are swallowed so a UI hiccup can never abort the scan.
 
     Returns:
         The raw response object from the Wiz SDK (typically a dict), or a bundled
@@ -957,26 +968,68 @@ def _vulnerability_findings(page: Any) -> Dict[str, Any]:
     return walk(page) or {}
 
 
+def _page_variables(cursor, page_size, *, want_total: bool) -> Dict[str, Any]:
+    """``VARIABLES`` specialised for one page: cursor, page size, and optional totalCount.
+
+    ``totalCount`` is one of the expensive server-side joins deliberately disabled in
+    ``VARIABLES``; requesting it on the first page only is what lets the UI show a real
+    progress fraction without paying that join again on every subsequent page.
+    """
+    variables = copy.deepcopy(VARIABLES)
+    variables["after"] = cursor
+    variables["first"] = page_size
+    variables["includeTotalCount"] = bool(want_total)
+    return variables
+
+
 def _fetch_all_findings(client, timeout_seconds, progress=None) -> List[Dict[str, Any]]:
     """Page through ``vulnerabilityFindings`` until ``hasNextPage`` is false, merging nodes.
 
-    ``progress`` (optional ``callable(pages_done, findings_so_far)``) is invoked after each
-    page so callers can surface live progress; its exceptions are swallowed so a flaky UI
-    callback can never abort the fetch.
+    Pages at ``PAGE_SIZE_MAX``, deciding once on the first page whether the tenant accepts
+    it: a rejected page size surfaces either as an exception or as a GraphQL errors-only
+    payload (which ``_vulnerability_findings`` coerces to ``{}``), and either signal retries
+    the first page at ``PAGE_SIZE_FALLBACK`` before giving up. Whatever size the first page
+    settles on is kept for the rest of the walk.
+
+    ``progress`` (optional ``callable(pages_done, findings_so_far, total)``) is invoked
+    after each page so callers can surface live progress; ``total`` is the connection's
+    ``totalCount`` from the first page, or ``None`` when the server didn't report one.
+    Callback exceptions are swallowed so a flaky UI callback can never abort the fetch.
     """
     all_nodes: List[Dict[str, Any]] = []
     cursor: Optional[str] = None
     seen_cursors = set()
     pages = 0
+    page_size = PAGE_SIZE_MAX
+    total: Optional[int] = None
     for _ in range(_MAX_PAGES):
-        variables = copy.deepcopy(VARIABLES)
-        variables["after"] = cursor
-        connection = _vulnerability_findings(_query_page(client, variables, timeout_seconds))
+        first_page = pages == 0
+        variables = _page_variables(cursor, page_size, want_total=first_page)
+        try:
+            connection = _vulnerability_findings(_query_page(client, variables, timeout_seconds))
+        except Exception:
+            # First page at the probed max: assume the tenant rejected the size (a timeout
+            # is also plausibly a too-heavy page) and retry once at the safe fallback.
+            # Anything after that is a genuine failure and propagates as before.
+            if not (first_page and page_size > PAGE_SIZE_FALLBACK):
+                raise
+            page_size = PAGE_SIZE_FALLBACK
+            variables = _page_variables(cursor, page_size, want_total=True)
+            connection = _vulnerability_findings(_query_page(client, variables, timeout_seconds))
+        if first_page and not connection and page_size > PAGE_SIZE_FALLBACK:
+            # A rejected ``first`` can also come back as an errors-only payload with no
+            # connection at all -- without this retry the scan would "succeed" with 0 rows.
+            page_size = PAGE_SIZE_FALLBACK
+            variables = _page_variables(cursor, page_size, want_total=True)
+            connection = _vulnerability_findings(_query_page(client, variables, timeout_seconds))
+        if first_page:
+            raw_total = connection.get("totalCount")
+            total = raw_total if isinstance(raw_total, int) and raw_total >= 0 else None
         all_nodes.extend(connection.get("nodes") or [])
         pages += 1
         if callable(progress):
             try:
-                progress(pages, len(all_nodes))
+                progress(pages, len(all_nodes), total)
             except Exception:
                 pass
         page_info = connection.get("pageInfo") or {}

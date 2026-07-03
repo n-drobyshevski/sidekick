@@ -1,7 +1,9 @@
 """Exports page: download each loaded findings source as CSV or raw JSON.
 
 Every source that has been scanned gets its own CSV + raw-JSON download, each
-stamped with export metadata.
+stamped with export metadata. Payloads are built on demand at scale (see
+``deferred_download``) — encoding a 100k-row CSV or JSON dump on every rerun is
+exactly the cost this page used to pay for downloads nobody clicked.
 """
 
 import json
@@ -10,7 +12,11 @@ from datetime import datetime, timezone
 import streamlit as st
 
 from wiz_dashboard.ui import components as ui
-from wiz_dashboard.ui.pages import _findings
+from wiz_dashboard.ui.pages import _derived, _findings
+
+
+def _stamp() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def page():
@@ -24,32 +30,42 @@ def page():
         )
         return
 
-    exported_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
     for label, info in sources.items():
         df, raw, prefix = info["df"], info["raw"], info["prefix"]
         clean = df[[c for c in df.columns if not str(c).startswith("_")]]
+        token = _derived.df_token(df, prefix)
+
+        def build_csv(clean=clean):
+            return clean.to_csv(index=False).encode("utf-8")
+
+        def build_json(raw=raw, label=label):
+            # exported_at is stamped when the payload is actually built.
+            payload = {"exported_at": _stamp(), "source": label, "findings": raw}
+            return json.dumps(payload, indent=2, default=str, ensure_ascii=False).encode("utf-8")
 
         ui.section_label(label)
         c1, c2 = st.columns(2)
         with c1:
-            st.download_button(
+            ui.deferred_download(
                 "Download CSV",
-                data=clean.to_csv(index=False).encode("utf-8"),
+                build_csv,
                 file_name=f"{prefix}_findings.csv",
                 mime="text/csv",
                 width="stretch",
                 key=f"{prefix}_export_csv",
+                row_count=len(clean),
+                sig=token,
             )
         with c2:
-            payload = {"exported_at": exported_at, "source": label, "findings": raw}
-            st.download_button(
+            ui.deferred_download(
                 "Download raw JSON",
-                data=json.dumps(payload, indent=2, default=str, ensure_ascii=False).encode("utf-8"),
+                build_json,
                 file_name=f"{prefix}_findings.json",
                 mime="application/json",
                 width="stretch",
                 disabled=raw is None,
                 key=f"{prefix}_export_json",
+                row_count=len(clean),
+                sig=token,
             )
-        st.caption(f"{len(clean):,} findings · {len(clean.columns)} columns · exported_at {exported_at}.")
+        st.caption(f"{len(clean):,} findings · {len(clean.columns)} columns.")

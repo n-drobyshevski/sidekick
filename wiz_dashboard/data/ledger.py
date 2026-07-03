@@ -24,7 +24,7 @@ import pandas as pd
 from wiz_dashboard import config
 from wiz_dashboard.domain import reconcile
 from wiz_dashboard.domain.severity import normalize_severity
-from wiz_dashboard.data.transform import extract_nodes, nodes_to_dataframe
+from wiz_dashboard.data.transform import extract_nodes
 
 logger = logging.getLogger(__name__)
 
@@ -281,10 +281,12 @@ def _read_raw_payload(raw_path):
 
 
 def _records_from_payload(payload):
-    """Reconstruct a flat scan's per-finding records from its archived payload, using the
-    same extract->normalize pipeline as a live scan (so replay is byte-faithful)."""
-    df = nodes_to_dataframe(extract_nodes(payload))
-    return df.to_dict("records") if not df.empty else []
+    """Reconstruct a flat scan's per-finding records from its archived payload.
+
+    Returns the raw nested nodes — the same shape ``ui.scan._persist_scan`` feeds a live
+    persist (``vuln_key``/``field`` walk nested dicts), so delete->rebuild replay stays
+    byte-faithful with the original reconciliation without a frame round-trip."""
+    return extract_nodes(payload) or []
 
 
 def _restore_db(db_path, bak):
