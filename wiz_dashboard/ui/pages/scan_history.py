@@ -205,8 +205,7 @@ def _base_table(base) -> None:
     st.caption(f"{len(view):,} of {len(base):,} vulnerabilities")
     ui.deferred_download(
         "Download CSV",
-        lambda: view.drop(columns=["latest_json"], errors="ignore")
-        .to_csv(index=False).encode("utf-8"),
+        lambda: view.to_csv(index=False).encode("utf-8"),
         file_name="vuln_base.csv",
         mime="text/csv",
         key="sh_csv",

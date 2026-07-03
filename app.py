@@ -12,6 +12,7 @@ import streamlit as st
 
 import os_vulns as os_vulns_module
 from wiz_dashboard.config import load_wiz_config
+from wiz_dashboard.data import ledger
 from wiz_dashboard.ui import scan, theme
 from wiz_dashboard.ui.pages import (
     _derived,
@@ -128,7 +129,16 @@ def _sidebar_extras() -> bool:
     return has_creds
 
 
+@st.cache_resource
+def _compact_legacy_archives() -> dict:
+    """One-time (per process) upgrade of pre-gzip plain-JSON scan archives. Never
+    raises and reads-both means it's purely a disk-space reclaim — see
+    ``ledger.compact_archives``."""
+    return ledger.compact_archives()
+
+
 def main() -> None:
+    _compact_legacy_archives()
     st.session_state["has_creds"] = _sidebar_extras()
 
     # Build the Page objects once and share them so consumer pages can render

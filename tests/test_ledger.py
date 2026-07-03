@@ -504,3 +504,231 @@ def test_load_latest_scan_row_metadata_only(tmp_path, app):
     assert row["shape"] == "flat"
     assert int(row["total"]) == 17
     assert row["raw_path"]
+
+
+# --------------------------------------------------------------------------- #
+#  Gzipped archives + schema v2 (latest_json dropped)
+# --------------------------------------------------------------------------- #
+def _make_legacy_plain(db, scan_id):
+    """Rewrite a scan's gzipped archive as pre-compression plain JSON and repoint its
+    ``scans.raw_path`` — the exact on-disk state of a data dir written before the
+    gzip change (upgrade fixture)."""
+    import gzip
+    from pathlib import Path
+
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            "SELECT raw_path FROM scans WHERE scan_id=?", (scan_id,)
+        ).fetchone()
+        gz = Path(row["raw_path"])
+        plain = gz.with_name(gz.name.removesuffix(".gz"))
+        with gzip.open(gz, "rt", encoding="utf-8") as fh:
+            plain.write_text(fh.read(), encoding="utf-8")
+        gz.unlink()
+        conn.execute("UPDATE scans SET raw_path=? WHERE scan_id=?", (str(plain), scan_id))
+        conn.commit()
+    finally:
+        conn.close()
+    return plain
+
+
+def test_archive_is_gzip_and_roundtrips(tmp_path, app):
+    db = _db(tmp_path)
+    ledger.persist_flat_scan(_flat_records(app), mode="dry-run", raw=os_vulns.SAMPLE_RESULTS,
+                             db_path=db, scan_id="2026-05-29T10:00:00Z")
+    raw_path = ledger.load_scans_df(db)["raw_path"].iloc[0]
+    assert raw_path.endswith(".json.gz")
+    with open(raw_path, "rb") as fh:
+        assert fh.read(2) == b"\x1f\x8b"
+    payload, _row = ledger.load_latest_scan_payload(db)
+    assert payload == os_vulns.SAMPLE_RESULTS
+
+
+def test_legacy_plain_json_archive_still_readable(tmp_path, app):
+    # A pre-gzip data dir (plain .json archives) keeps working with zero migration:
+    # the reader sniffs content, not extension.
+    db = _db(tmp_path)
+    ledger.persist_flat_scan(_flat_records(app), mode="dry-run", raw=os_vulns.SAMPLE_RESULTS,
+                             db_path=db, scan_id="2026-05-29T10:00:00Z")
+    plain = _make_legacy_plain(db, "2026-05-29T10:00:00Z")
+    assert plain.suffix == ".json"
+    payload, row = ledger.load_latest_scan_payload(db)
+    assert payload == os_vulns.SAMPLE_RESULTS
+    assert row["raw_path"] == str(plain)
+
+
+def test_replay_migrates_legacy_survivor_archive(tmp_path, app):
+    # Delete/rebuild replays survivors through the current writer, so a legacy plain
+    # survivor comes out re-archived as .json.gz with the superseded .json removed.
+    from pathlib import Path
+
+    nodes = app.extract_nodes(os_vulns.SAMPLE_RESULTS)
+    db = _db(tmp_path)
+    ledger.persist_flat_scan(nodes, mode="dry-run", raw=os_vulns.SAMPLE_RESULTS,
+                             db_path=db, scan_id="2026-05-29T10:00:00Z")
+    ledger.persist_flat_scan(nodes, mode="dry-run", raw=os_vulns.SAMPLE_RESULTS,
+                             db_path=db, scan_id="2026-05-30T10:00:00Z")
+    plain = _make_legacy_plain(db, "2026-05-29T10:00:00Z")
+
+    ledger.delete_scans(["2026-05-30T10:00:00Z"], db_path=db)
+
+    survivor = ledger.load_scans_df(db).set_index("scan_id").loc["2026-05-29T10:00:00Z"]
+    assert survivor["raw_path"].endswith(".json.gz")
+    assert Path(survivor["raw_path"]).exists()
+    assert not plain.exists()  # superseded plain archive cleaned up
+    assert len(ledger.load_base_df(db)) == 17
+
+
+def test_schema_v1_migrates_to_v2(tmp_path, app):
+    # Hand-build a v1 DB (latest_json column + data, schema_meta version=1) and assert
+    # init_db upgrades it in place without losing rows.
+    db = _db(tmp_path)
+    conn = sqlite3.connect(db)
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE scans (scan_id TEXT PRIMARY KEY, ts TEXT NOT NULL,
+                mode TEXT NOT NULL, shape TEXT NOT NULL, total INTEGER NOT NULL,
+                new_count INTEGER DEFAULT 0, resolved_count INTEGER DEFAULT 0,
+                reopened_count INTEGER DEFAULT 0, raw_path TEXT);
+            CREATE TABLE vuln_ledger (vuln_key TEXT PRIMARY KEY, cve TEXT, severity TEXT,
+                asset_id TEXT, asset_name TEXT, asset_type TEXT, cloud TEXT,
+                first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, status TEXT NOT NULL,
+                resolved_at TEXT, resolution_src TEXT, reopened_count INTEGER DEFAULT 0,
+                first_scan_id TEXT, last_scan_id TEXT, latest_json TEXT);
+            CREATE INDEX idx_ledger_status ON vuln_ledger(status);
+            CREATE INDEX idx_ledger_severity ON vuln_ledger(severity);
+            CREATE TABLE observations (scan_id TEXT NOT NULL, vuln_key TEXT NOT NULL,
+                present INTEGER NOT NULL, severity TEXT, status TEXT,
+                PRIMARY KEY (scan_id, vuln_key));
+            CREATE TABLE schema_meta (version INTEGER NOT NULL);
+            INSERT INTO schema_meta (version) VALUES (1);
+            INSERT INTO scans VALUES ('2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z',
+                'dry-run', 'flat', 1, 1, 0, 0, NULL);
+            INSERT INTO vuln_ledger VALUES ('id:x1', 'CVE-2026-1', 'HIGH', NULL, 'vm-1',
+                NULL, NULL, '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z', 'OPEN',
+                NULL, NULL, 0, '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z',
+                '{"id": "x1"}');
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    ledger.init_db(db)
+
+    conn = sqlite3.connect(db)
+    try:
+        assert conn.execute("SELECT version FROM schema_meta").fetchone()[0] == 2
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(vuln_ledger)")}
+        assert "latest_json" not in cols
+    finally:
+        conn.close()
+    base = ledger.load_base_df(db)
+    assert len(base) == 1
+    assert base["vuln_key"].iloc[0] == "id:x1"
+    # The migrated DB is fully writable: a follow-up scan reconciles normally.
+    ledger.persist_flat_scan(
+        [{"id": "x1", "name": "CVE-2026-1", "severity": "HIGH",
+          "vulnerableAsset.name": "vm-1"}],
+        mode="dry-run", db_path=db, scan_id="2026-05-02T00:00:00Z",
+    )
+    assert len(ledger.load_scans_df(db)) == 2
+
+
+def test_compact_archives_gzips_legacy_in_place(tmp_path, app):
+    from pathlib import Path
+
+    nodes = app.extract_nodes(os_vulns.SAMPLE_RESULTS)
+    db = _db(tmp_path)
+    ledger.persist_flat_scan(nodes, mode="dry-run", raw=os_vulns.SAMPLE_RESULTS,
+                             db_path=db, scan_id="2026-05-29T10:00:00Z")
+    ledger.persist_flat_scan(nodes, mode="dry-run", raw=os_vulns.SAMPLE_RESULTS,
+                             db_path=db, scan_id="2026-05-30T10:00:00Z")
+    plain = _make_legacy_plain(db, "2026-05-29T10:00:00Z")
+
+    counts = ledger.compact_archives(db)
+    assert counts == {"compressed": 1, "skipped": 1, "failed": 0}
+    scans = ledger.load_scans_df(db).set_index("scan_id")
+    migrated = scans.loc["2026-05-29T10:00:00Z", "raw_path"]
+    assert migrated.endswith(".json.gz")
+    assert Path(migrated).exists()
+    assert not plain.exists()
+    payload, _row = ledger.load_latest_scan_payload(db)
+    assert payload == os_vulns.SAMPLE_RESULTS
+    # Second run is a no-op.
+    assert ledger.compact_archives(db) == {"compressed": 0, "skipped": 2, "failed": 0}
+
+
+def test_compact_archives_never_raises_on_corrupt_db(tmp_path):
+    # Start-up maintenance must not take the app down: a truncated/schemaless
+    # ledger.db yields zero counts, not an exception.
+    db = _db(tmp_path)
+    db.write_bytes(b"not a sqlite database")
+    assert ledger.compact_archives(db) == {"compressed": 0, "skipped": 0, "failed": 0}
+
+
+def test_compact_archives_migrates_v1_schema(tmp_path):
+    # compact_archives is the migration hook for read-only deployments (persist is the
+    # only other init_db caller): a v1 DB gets its latest_json dropped at app start
+    # even if no new scan is ever run.
+    db = _db(tmp_path)
+    conn = sqlite3.connect(db)
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE scans (scan_id TEXT PRIMARY KEY, ts TEXT NOT NULL,
+                mode TEXT NOT NULL, shape TEXT NOT NULL, total INTEGER NOT NULL,
+                new_count INTEGER DEFAULT 0, resolved_count INTEGER DEFAULT 0,
+                reopened_count INTEGER DEFAULT 0, raw_path TEXT);
+            CREATE TABLE vuln_ledger (vuln_key TEXT PRIMARY KEY, cve TEXT, severity TEXT,
+                asset_id TEXT, asset_name TEXT, asset_type TEXT, cloud TEXT,
+                first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, status TEXT NOT NULL,
+                resolved_at TEXT, resolution_src TEXT, reopened_count INTEGER DEFAULT 0,
+                first_scan_id TEXT, last_scan_id TEXT, latest_json TEXT);
+            CREATE TABLE observations (scan_id TEXT NOT NULL, vuln_key TEXT NOT NULL,
+                present INTEGER NOT NULL, severity TEXT, status TEXT,
+                PRIMARY KEY (scan_id, vuln_key));
+            CREATE TABLE schema_meta (version INTEGER NOT NULL);
+            INSERT INTO schema_meta (version) VALUES (1);
+            INSERT INTO vuln_ledger VALUES ('id:x1', 'CVE-2026-1', 'HIGH', NULL, 'vm-1',
+                NULL, NULL, '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z', 'OPEN',
+                NULL, NULL, 0, '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z', '{}');
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    # load_base_df must exclude the v1 blob column even BEFORE migration (Scan History
+    # renders — and CSV-exports — this frame).
+    assert "latest_json" not in ledger.load_base_df(db).columns
+
+    ledger.compact_archives(db)
+    conn = sqlite3.connect(db)
+    try:
+        assert conn.execute("SELECT version FROM schema_meta").fetchone()[0] == 2
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(vuln_ledger)")}
+        assert "latest_json" not in cols
+    finally:
+        conn.close()
+
+
+def test_read_raw_payload_falls_back_to_gz_sibling(tmp_path, app):
+    # A stored plain raw_path whose file was compacted to .gz (stale session state, or
+    # a DB restored from .bak after a compaction) resolves to the sibling archive.
+    db = _db(tmp_path)
+    ledger.persist_flat_scan(_flat_records(app), mode="dry-run", raw=os_vulns.SAMPLE_RESULTS,
+                             db_path=db, scan_id="2026-05-29T10:00:00Z")
+    gz_path = ledger.load_scans_df(db)["raw_path"].iloc[0]
+    stale_plain = gz_path.removesuffix(".gz")
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute("UPDATE scans SET raw_path=?", (stale_plain,))
+        conn.commit()
+    finally:
+        conn.close()
+    payload, _row = ledger.load_latest_scan_payload(db)
+    assert payload == os_vulns.SAMPLE_RESULTS

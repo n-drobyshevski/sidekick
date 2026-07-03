@@ -55,3 +55,11 @@ def test_write_snapshot_never_raises(tmp_path):
     # Unwritable destination -> None, no exception (start-up fast path is best-effort).
     missing_dir = tmp_path / "nope" / "scan-3.json"
     assert snapshot.write_snapshot(missing_dir, _frame()) is None
+
+
+def test_snapshot_path_pairs_gz_and_plain(tmp_path):
+    # Gzipped and pre-compression plain archives must map to the SAME snapshot file,
+    # or every existing .df.pkl (and the delete-flow's snapshot unlink) would unpair.
+    gz = snapshot.snapshot_path_for(tmp_path / "scan-1.json.gz")
+    plain = snapshot.snapshot_path_for(tmp_path / "scan-1.json")
+    assert gz == plain == tmp_path / "scan-1.df.pkl"
