@@ -325,3 +325,74 @@ def test_finding_sheet_body_renders():
     )
     at = AppTest.from_string(script, default_timeout=30).run()
     assert not at.exception
+
+
+def _sidebar_button(at, key):
+    matches = [b for b in at.get("button") if b.key == key]
+    assert matches, f"button {key} not rendered"
+    return matches[0]
+
+
+def test_quick_refresh_disabled_without_baseline():
+    at = AppTest.from_file("app.py", default_timeout=60).run()
+    assert not at.exception, at.exception
+    assert _sidebar_button(at, "sidebar_quick").disabled  # no flat baseline yet
+
+
+def test_quick_refresh_merges_demo_delta_and_records_incremental_scan():
+    at = AppTest.from_file("app.py", default_timeout=120).run()
+    assert not at.exception, at.exception
+    at.session_state["dry_run_shape"] = "flat"
+    _sidebar_button(at, "sidebar_run").click()
+    at.run()
+    assert not at.exception, at.exception
+    baseline_counts = dict(at.session_state["os_counts"])
+
+    _sidebar_button(at, "sidebar_quick").click()
+    at.run()
+    assert not at.exception, at.exception
+
+    from wiz_dashboard.data import ledger
+
+    scans = ledger.load_scans_df()
+    assert list(scans["mode"]) [0] == "dry-run-incremental"  # newest row is the merge
+    assert len(scans) == 2
+    # The merged view moved to the next demo scenario's OPEN mix (badges have deltas).
+    assert at.session_state["os_counts"] != baseline_counts
+    assert at.session_state["last_scan_meta"]["mode"] == "dry-run-incremental"
+    # The merged set = baseline ∪ delta: total grew to include resolved + new findings.
+    assert at.session_state["last_scan_meta"]["count"] >= sum(baseline_counts.values())
+
+
+def test_quick_refresh_empty_delta_short_circuits():
+    at = AppTest.from_file("app.py", default_timeout=120).run()
+    at.session_state["dry_run_shape"] = "flat"
+    _sidebar_button(at, "sidebar_run").click()
+    at.run()
+    assert not at.exception, at.exception
+
+    from wiz_dashboard.data import ledger
+
+    # Force an empty delta: rewind the demo sequence so the quick refresh diffs a scan
+    # against itself (seq 0 -> baseline has no predecessor -> empty delta envelope).
+    at.session_state["dry_run_seq"] = 0
+    meta_before = dict(at.session_state["last_scan_meta"])
+    _sidebar_button(at, "sidebar_quick").click()
+    at.run()
+    assert not at.exception, at.exception
+    # No new scan row, and the freshness metadata was left untouched (no fake freshness).
+    assert len(ledger.load_scans_df()) == 1
+    assert dict(at.session_state["last_scan_meta"]) == meta_before
+
+
+def test_quick_refresh_tenant_rejection_disables_button():
+    at = AppTest.from_file("app.py", default_timeout=120).run()
+    at.session_state["dry_run_shape"] = "flat"
+    _sidebar_button(at, "sidebar_run").click()
+    at.run()
+    assert not at.exception, at.exception
+
+    # Simulate the tenant rejecting the updatedAt filter on the next quick refresh.
+    at.session_state["_delta_unsupported"] = True
+    at.run()
+    assert _sidebar_button(at, "sidebar_quick").disabled
