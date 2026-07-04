@@ -802,6 +802,7 @@ def fetch_findings(
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
     sample_shape: str = "grouped",
     progress: Optional[Any] = None,
+    extra_filter_by: Optional[Dict[str, Any]] = None,
 ) -> Any:
     """Fetch the raw Wiz vulnerability-findings response.
 
@@ -828,6 +829,13 @@ def fetch_findings(
             the first page (or ``None`` when the server didn't report one), letting the
             caller render a real completion fraction. Exceptions raised by the callback
             are swallowed so a UI hiccup can never abort the scan.
+        extra_filter_by: optional additional ``filterBy`` keys merged on top of the
+            baseline ``VARIABLES`` filter for THIS call only (e.g.
+            ``{"updatedAt": {"after": iso}}`` for an incremental refresh). Live mode
+            only — dry-run samples ignore it (the offline delta comes from
+            ``wiz_dashboard.data.demo.incremental_flat_sample``). When set, an
+            errors-only first page raises ``WizDeltaFilterError`` instead of returning
+            0 findings (see ``_fetch_all_findings``).
 
     Returns:
         The raw response object from the Wiz SDK (typically a dict), or a bundled
@@ -867,7 +875,8 @@ def fetch_findings(
     # caps at one page (the bug where the console shows more criticals than we load).
     # Re-wrap the merged nodes in the canonical envelope so the cached/disk-snapshot path
     # and ``extract_nodes`` treat a live fetch exactly like a dry-run sample.
-    nodes = _fetch_all_findings(client, timeout_seconds, progress=progress)
+    nodes = _fetch_all_findings(client, timeout_seconds, progress=progress,
+                                extra_filter_by=extra_filter_by)
     return {"data": {"vulnerabilityFindings": {"nodes": nodes}}}
 
 
@@ -968,21 +977,40 @@ def _vulnerability_findings(page: Any) -> Dict[str, Any]:
     return walk(page) or {}
 
 
-def _page_variables(cursor, page_size, *, want_total: bool) -> Dict[str, Any]:
+class WizDeltaFilterError(RuntimeError):
+    """The tenant returned no ``vulnerabilityFindings`` connection for a delta query.
+
+    Raised only when an ``extra_filter_by`` (incremental) fetch gets an errors-only first
+    page: for a plain full scan that shape is tolerated (0 findings), but for a delta it
+    almost certainly means the injected filter (e.g. ``updatedAt``) was rejected — and
+    silently returning 0 nodes would be indistinguishable from a genuinely empty delta,
+    letting the caller re-persist a stale baseline as "fresh"."""
+
+
+def _page_variables(cursor, page_size, *, want_total: bool,
+                    extra_filter_by: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """``VARIABLES`` specialised for one page: cursor, page size, and optional totalCount.
 
     ``totalCount`` is one of the expensive server-side joins deliberately disabled in
     ``VARIABLES``; requesting it on the first page only is what lets the UI show a real
     progress fraction without paying that join again on every subsequent page.
+
+    ``extra_filter_by`` merges additional keys into ``filterBy`` AFTER the deepcopy, so
+    the baseline filters survive — critically ``status: ["OPEN","RESOLVED"]``, without
+    which Wiz's default filter hides RESOLVED findings and an incremental fetch would
+    silently miss every resolution.
     """
     variables = copy.deepcopy(VARIABLES)
     variables["after"] = cursor
     variables["first"] = page_size
     variables["includeTotalCount"] = bool(want_total)
+    if extra_filter_by:
+        variables["filterBy"].update(copy.deepcopy(extra_filter_by))
     return variables
 
 
-def _fetch_all_findings(client, timeout_seconds, progress=None) -> List[Dict[str, Any]]:
+def _fetch_all_findings(client, timeout_seconds, progress=None,
+                        extra_filter_by: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     """Page through ``vulnerabilityFindings`` until ``hasNextPage`` is false, merging nodes.
 
     Pages at ``PAGE_SIZE_MAX``, deciding once on the first page whether the tenant accepts
@@ -995,6 +1023,12 @@ def _fetch_all_findings(client, timeout_seconds, progress=None) -> List[Dict[str
     after each page so callers can surface live progress; ``total`` is the connection's
     ``totalCount`` from the first page, or ``None`` when the server didn't report one.
     Callback exceptions are swallowed so a flaky UI callback can never abort the fetch.
+
+    ``extra_filter_by`` (per-invocation ``filterBy`` additions — the incremental-refresh
+    seam) rides along on EVERY page, including both first-page fallback retries: a filter
+    dropped on a retry would silently turn a delta into a partial full scan. When it is
+    set and the first page still has no connection after the retries, the walk raises
+    ``WizDeltaFilterError`` instead of "succeeding" with 0 nodes.
     """
     all_nodes: List[Dict[str, Any]] = []
     cursor: Optional[str] = None
@@ -1004,7 +1038,8 @@ def _fetch_all_findings(client, timeout_seconds, progress=None) -> List[Dict[str
     total: Optional[int] = None
     for _ in range(_MAX_PAGES):
         first_page = pages == 0
-        variables = _page_variables(cursor, page_size, want_total=first_page)
+        variables = _page_variables(cursor, page_size, want_total=first_page,
+                                    extra_filter_by=extra_filter_by)
         try:
             connection = _vulnerability_findings(_query_page(client, variables, timeout_seconds))
         except Exception:
@@ -1014,14 +1049,22 @@ def _fetch_all_findings(client, timeout_seconds, progress=None) -> List[Dict[str
             if not (first_page and page_size > PAGE_SIZE_FALLBACK):
                 raise
             page_size = PAGE_SIZE_FALLBACK
-            variables = _page_variables(cursor, page_size, want_total=True)
+            variables = _page_variables(cursor, page_size, want_total=True,
+                                        extra_filter_by=extra_filter_by)
             connection = _vulnerability_findings(_query_page(client, variables, timeout_seconds))
         if first_page and not connection and page_size > PAGE_SIZE_FALLBACK:
             # A rejected ``first`` can also come back as an errors-only payload with no
             # connection at all -- without this retry the scan would "succeed" with 0 rows.
             page_size = PAGE_SIZE_FALLBACK
-            variables = _page_variables(cursor, page_size, want_total=True)
+            variables = _page_variables(cursor, page_size, want_total=True,
+                                        extra_filter_by=extra_filter_by)
             connection = _vulnerability_findings(_query_page(client, variables, timeout_seconds))
+        if first_page and not connection and extra_filter_by is not None:
+            raise WizDeltaFilterError(
+                "Wiz returned no vulnerabilityFindings connection for the delta query — "
+                "the tenant may not support the injected filter "
+                f"({', '.join(extra_filter_by)})."
+            )
         if first_page:
             raw_total = connection.get("totalCount")
             total = raw_total if isinstance(raw_total, int) and raw_total >= 0 else None

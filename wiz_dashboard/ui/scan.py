@@ -139,43 +139,8 @@ def run_scan(force: bool, has_creds: bool, sample_shape: str | None = None) -> N
             status.update(label="Parsing findings…")
             bar.progress(_PHASE_PARSE, text="Parsing findings…")
             nodes = extract_nodes(results)
-            status.update(label=f"Building findings table ({len(nodes):,} findings)…")
-            bar.progress(_PHASE_TABLE, text=f"Building findings table ({len(nodes):,} findings)…")
-            df = nodes_to_dataframe(nodes)
-            status.update(label="Computing severity & MTTR metrics…")
-            # The scan's identity doubles as the durable idempotency key (persist) and the
-            # cross-session cache token: every session that later loads this scan keys its
-            # cached derivations on the same string, so counts/MTTR compute once per scan,
-            # not once per browser session (see _derived.df_token / counts_cached).
-            # Microsecond resolution: two scans in the same second must not share an
-            # identity, or the second would be served the first's cached derivations.
-            scan_id = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-            token = f"saved:{scan_id}"
-            shape_kind = "grouped" if schema.is_grouped_shape(nodes) else "flat"
-            st.session_state["os_nodes"] = nodes
-            st.session_state["os_df"] = df
-            st.session_state["os_raw"] = results
-            st.session_state["os_shape"] = shape_kind
-            st.session_state["os_scan_id"] = scan_id
-            st.session_state["os_raw_path"] = None  # this session already holds nodes/raw
-            st.session_state["os_df_token"] = token
-            _drop_deferred_payloads()
-            st.session_state["os_prev_counts"] = prev
-            st.session_state["os_counts"] = _derived.counts_cached(token, df)
-            st.session_state["last_scan_meta"] = {
-                "count": len(nodes),
-                "mode": "live" if has_creds else "dry-run",
-                "at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-            }
-            status.update(label="Saving scan & reconciling ledger…")
-            bar.progress(_PHASE_PERSIST, text="Saving scan & reconciling ledger…")
-            _persist_scan(nodes, df, results, mode="live" if has_creds else "dry-run",
-                          scan_id=scan_id)
-            _record_mttr_snapshot(df, st.session_state["os_counts"])
-            _derived.history_cached.clear()  # a fresh snapshot was just written; reflect it
-            bar.progress(1.0, text=f"Loaded {len(nodes):,} findings")
-            bar.empty()  # the collapsed status line carries the final message
-            status.update(label=f"Loaded {len(nodes):,} findings", state="complete")
+            count = _commit_scan(nodes, results, mode="live" if has_creds else "dry-run",
+                                 status=status, bar=bar, prev_counts=prev)
     except Exception as exc:  # noqa: BLE001 -- surfaced to the user with a traceback
         ui.show_exception(
             exc,
@@ -184,7 +149,55 @@ def run_scan(force: bool, has_creds: bool, sample_shape: str | None = None) -> N
             "sample data. Your previously loaded findings are unchanged.",
         )
         return
-    ui.show_toast(f"Loaded {len(nodes):,} findings", "success")
+    ui.show_toast(f"Loaded {count:,} findings", "success")
+
+
+def _commit_scan(nodes, results, *, mode: str, status, bar, prev_counts) -> int:
+    """Shared post-fetch pipeline: build the frame, stamp the session, persist, snapshot.
+
+    The single writer of a NEW scan's side effects, used by both the full ``run_scan``
+    and the incremental quick refresh so the two can never drift: frame build → scan
+    identity/token → ``os_*`` session stamp → durable persist (ledger + archive + frame
+    snapshot) → MTTR history point. ``status``/``bar`` are the caller's ``st.status`` and
+    ``st.progress`` handles. Returns the finding count.
+    """
+    status.update(label=f"Building findings table ({len(nodes):,} findings)…")
+    bar.progress(_PHASE_TABLE, text=f"Building findings table ({len(nodes):,} findings)…")
+    df = nodes_to_dataframe(nodes)
+    status.update(label="Computing severity & MTTR metrics…")
+    # The scan's identity doubles as the durable idempotency key (persist) and the
+    # cross-session cache token: every session that later loads this scan keys its
+    # cached derivations on the same string, so counts/MTTR compute once per scan,
+    # not once per browser session (see _derived.df_token / counts_cached).
+    # Microsecond resolution: two scans in the same second must not share an
+    # identity, or the second would be served the first's cached derivations.
+    scan_id = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    token = f"saved:{scan_id}"
+    shape_kind = "grouped" if schema.is_grouped_shape(nodes) else "flat"
+    st.session_state["os_nodes"] = nodes
+    st.session_state["os_df"] = df
+    st.session_state["os_raw"] = results
+    st.session_state["os_shape"] = shape_kind
+    st.session_state["os_scan_id"] = scan_id
+    st.session_state["os_raw_path"] = None  # this session already holds nodes/raw
+    st.session_state["os_df_token"] = token
+    _drop_deferred_payloads()
+    st.session_state["os_prev_counts"] = prev_counts
+    st.session_state["os_counts"] = _derived.counts_cached(token, df)
+    st.session_state["last_scan_meta"] = {
+        "count": len(nodes),
+        "mode": mode,
+        "at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+    }
+    status.update(label="Saving scan & reconciling ledger…")
+    bar.progress(_PHASE_PERSIST, text="Saving scan & reconciling ledger…")
+    _persist_scan(nodes, df, results, mode=mode, scan_id=scan_id)
+    _record_mttr_snapshot(df, st.session_state["os_counts"])
+    _derived.history_cached.clear()  # a fresh snapshot was just written; reflect it
+    bar.progress(1.0, text=f"Loaded {len(nodes):,} findings")
+    bar.empty()  # the collapsed status line carries the final message
+    status.update(label=f"Loaded {len(nodes):,} findings", state="complete")
+    return len(nodes)
 
 
 def _hydrate_from_saved(row, *, clear_caches: bool) -> int:

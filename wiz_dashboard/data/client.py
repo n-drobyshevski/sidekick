@@ -107,3 +107,34 @@ def fetch_findings(dry_run: bool = True, use_config: bool = False,
         disk_cache.save_cache(results)
     return results
 
+
+def fetch_findings_delta(since_iso, *, has_creds: bool, sample_seq: int = 0,
+                         _progress=None):
+    """Fetch only findings changed since ``since_iso`` — the incremental-refresh read.
+
+    Deliberately UNCACHED (no ``st.cache_data``): a delta is one or two requests and must
+    always be fresh — a memoized delta could re-apply stale changes over a newer baseline.
+    Also deliberately NO disk-cache fallback: ``last_results.json`` holds a stale *full*
+    snapshot, and serving that as a "delta" would let delta-wins merging regress newer
+    baseline fields — so failures raise instead of degrading. ``WizDeltaFilterError``
+    (tenant rejected the ``updatedAt`` filter) propagates untouched so the orchestrator
+    can disable the feature with a specific message.
+
+    Live mode injects ``{"updatedAt": {"after": since_iso}}`` on top of the baseline
+    ``filterBy`` (which keeps ``status`` incl. RESOLVED, so resolutions are returned as
+    RESOLVED nodes). Dry-run returns the offline demo delta for ``sample_seq``.
+    """
+    if not has_creds:
+        return demo.incremental_flat_sample(sample_seq)
+    cfg = load_wiz_config()
+    raw = os_vulns.fetch_findings(
+        dry_run=False, config=cfg, progress=_progress,
+        extra_filter_by={"updatedAt": {"after": since_iso}},
+    )
+    results = coerce_results(raw)
+    if results is None or not isinstance(results, (dict, list)):
+        raise ValueError(
+            f"Wiz API returned an unexpected delta response type ({type(raw).__name__})."
+        )
+    return results
+

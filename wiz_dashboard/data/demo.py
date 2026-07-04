@@ -73,3 +73,35 @@ def evolving_flat_sample(seq: int = 0):
     if seq <= 0:
         return os_vulns.SAMPLE_RESULTS
     return _scenario_response(_SCENARIOS[(seq - 1) % len(_SCENARIOS)])
+
+
+def incremental_flat_sample(seq: int):
+    """Raw flat DELTA between demo scans ``seq - 1`` and ``seq`` — the offline stand-in
+    for a live ``updatedAt``-filtered incremental fetch.
+
+    Ids present only in scan ``seq`` are emitted as their new OPEN findings; ids present
+    only in scan ``seq - 1`` are emitted as ``status=RESOLVED`` nodes with a deterministic
+    ``resolvedAt``. That mirrors how the live API reports change: a resolution arrives as
+    a re-listed RESOLVED node (API-declared), never as an absence — an incremental fetch
+    genuinely cannot observe disappearances. Returns the canonical envelope with an empty
+    ``nodes`` list when nothing changed. ``seq <= 0`` is the baseline scan itself, which
+    has no predecessor to diff against → empty delta.
+    """
+    if seq <= 0:
+        return {"data": {"vulnerabilityFindings": {"nodes": []}}}
+    prev_nodes = evolving_flat_sample(seq - 1)["data"]["vulnerabilityFindings"]["nodes"]
+    curr_nodes = evolving_flat_sample(seq)["data"]["vulnerabilityFindings"]["nodes"]
+    prev_by_id = {n["id"]: n for n in prev_nodes}
+    curr_ids = {n["id"] for n in curr_nodes}
+
+    delta = [n for n in curr_nodes if n["id"] not in prev_by_id]  # new findings
+    # Deterministic per-seq resolution stamp (no clocks — the demo stays reproducible).
+    resolved_at = f"2026-05-{min(seq, 28):02d}T12:00:00Z"
+    for node in prev_nodes:
+        if node["id"] in curr_ids:
+            continue
+        gone = dict(node)  # never mutate the scenario/baseline node
+        gone["status"] = "RESOLVED"
+        gone["resolvedAt"] = resolved_at
+        delta.append(gone)
+    return {"data": {"vulnerabilityFindings": {"nodes": delta}}}
