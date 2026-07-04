@@ -342,3 +342,154 @@ def test_live_fetch_error_after_first_page_still_raises(monkeypatch):
     monkeypatch.setattr(os_vulns, "WizAPIClient", FlakyClient)
     with pytest.raises(RuntimeError, match="boom mid-walk"):
         os_vulns.fetch_findings(dry_run=False)
+
+
+def test_delta_filter_rides_every_page_with_baseline_filters(monkeypatch):
+    """extra_filter_by lands in filterBy on every page, merged OVER the baseline filters
+    (status incl. RESOLVED must survive, or the delta would miss resolutions)."""
+
+    pages = {
+        None: {"data": {"vulnerabilityFindings": {
+            "nodes": [{"id": "a"}],
+            "pageInfo": {"hasNextPage": True, "endCursor": "c1"}}}},
+        "c1": {"data": {"vulnerabilityFindings": {
+            "nodes": [{"id": "b"}],
+            "pageInfo": {"hasNextPage": False, "endCursor": None}}}},
+    }
+    seen_variables = []
+
+    class PagingClient:
+        def query(self, query, variables):
+            seen_variables.append(variables)
+            return pages[variables.get("after")]
+
+    monkeypatch.setattr(os_vulns, "WizAPIClient", PagingClient)
+    since = {"updatedAt": {"after": "2026-07-01T00:00:00Z"}}
+    results = os_vulns.fetch_findings(dry_run=False, extra_filter_by=since)
+
+    assert len(results["data"]["vulnerabilityFindings"]["nodes"]) == 2
+    for v in seen_variables:
+        assert v["filterBy"]["updatedAt"] == {"after": "2026-07-01T00:00:00Z"}
+        assert v["filterBy"]["status"] == ["OPEN", "RESOLVED"]  # baseline filter intact
+
+
+def test_delta_filter_survives_page_size_fallback(monkeypatch):
+    """Both first-page fallback retries must re-carry the extra filter — a dropped filter
+    would silently turn the delta into a partial full scan."""
+
+    seen = []
+
+    class PickyClient:
+        def query(self, query, variables):
+            seen.append(variables)
+            if variables["first"] > os_vulns.PAGE_SIZE_FALLBACK:
+                raise RuntimeError("first exceeds maximum")
+            return {"data": {"vulnerabilityFindings": {
+                "nodes": [{"id": "a"}],
+                "pageInfo": {"hasNextPage": False, "endCursor": None}}}}
+
+    monkeypatch.setattr(os_vulns, "WizAPIClient", PickyClient)
+    since = {"updatedAt": {"after": "2026-07-01T00:00:00Z"}}
+    results = os_vulns.fetch_findings(dry_run=False, extra_filter_by=since)
+
+    assert len(results["data"]["vulnerabilityFindings"]["nodes"]) == 1
+    assert len(seen) == 2  # rejected max probe + fallback retry
+    for v in seen:
+        assert v["filterBy"]["updatedAt"] == {"after": "2026-07-01T00:00:00Z"}
+
+
+def test_delta_errors_only_payload_raises_not_zero_findings(monkeypatch):
+    """With a delta filter, an errors-only first page must raise WizDeltaFilterError —
+    silently returning 0 nodes would be indistinguishable from an empty delta and let
+    a stale baseline be re-persisted as fresh. Without the filter, the tolerant 0-node
+    behavior is unchanged (regression guard)."""
+
+    class ErrorsOnlyClient:
+        def query(self, query, variables):
+            return {"errors": [{"message": "unknown filter field updatedAt"}]}
+
+    monkeypatch.setattr(os_vulns, "WizAPIClient", ErrorsOnlyClient)
+    with pytest.raises(os_vulns.WizDeltaFilterError):
+        os_vulns.fetch_findings(
+            dry_run=False, extra_filter_by={"updatedAt": {"after": "2026-07-01T00:00:00Z"}}
+        )
+
+    # Same payload WITHOUT the delta filter: tolerated as an empty (0-finding) scan.
+    results = os_vulns.fetch_findings(dry_run=False)
+    assert results["data"]["vulnerabilityFindings"]["nodes"] == []
+
+
+def test_extra_filter_does_not_mutate_module_variables(monkeypatch):
+    """The per-call filter merge must never leak into the module-global VARIABLES."""
+
+    class OnePageClient:
+        def query(self, query, variables):
+            return {"data": {"vulnerabilityFindings": {
+                "nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}}}}
+
+    monkeypatch.setattr(os_vulns, "WizAPIClient", OnePageClient)
+    os_vulns.fetch_findings(dry_run=False,
+                            extra_filter_by={"updatedAt": {"after": "2026-07-01T00:00:00Z"}})
+    assert "updatedAt" not in os_vulns.VARIABLES["filterBy"]
+
+
+def test_incremental_flat_sample_diffs_scenarios():
+    """The offline delta between demo scans n-1 and n, merged over scan n-1, must yield
+    scan n's OPEN set — with removed findings present as API-RESOLVED nodes, never as
+    absences (an incremental fetch cannot observe disappearances)."""
+    from wiz_dashboard.data import demo
+    from wiz_dashboard.data.transform import merge_nodes
+
+    for seq in (1, 2, 3):
+        prev = demo.evolving_flat_sample(seq - 1)["data"]["vulnerabilityFindings"]["nodes"]
+        curr = demo.evolving_flat_sample(seq)["data"]["vulnerabilityFindings"]["nodes"]
+        delta = demo.incremental_flat_sample(seq)["data"]["vulnerabilityFindings"]["nodes"]
+
+        merged = merge_nodes(prev, delta)
+        open_ids = {n["id"] for n in merged if n.get("status") != "RESOLVED"
+                    and not n.get("resolvedAt")}
+        assert open_ids == {n["id"] for n in curr}
+        # Removed findings arrive as RESOLVED nodes with a resolvedAt stamp.
+        removed = {n["id"] for n in prev} - {n["id"] for n in curr}
+        resolved_in_delta = {n["id"] for n in delta if n.get("status") == "RESOLVED"}
+        assert removed <= resolved_in_delta
+        assert all(n.get("resolvedAt") for n in delta if n.get("status") == "RESOLVED")
+
+    # Baseline scan has no predecessor -> empty delta envelope.
+    assert demo.incremental_flat_sample(0)["data"]["vulnerabilityFindings"]["nodes"] == []
+
+
+def test_fetch_findings_delta_dry_run_and_no_disk_fallback(monkeypatch):
+    from wiz_dashboard.data import client, demo
+
+    # Dry-run: the demo delta for the given seq, no API involved.
+    out = client.fetch_findings_delta("2026-07-01T00:00:00Z", has_creds=False, sample_seq=1)
+    assert out == demo.incremental_flat_sample(1)
+
+    # Live failure: raises — never serves the stale FULL disk snapshot as a "delta".
+    def boom(*a, **k):
+        raise RuntimeError("live API down")
+
+    disk_reads = []
+    monkeypatch.setattr(client.os_vulns, "fetch_findings", boom)
+    monkeypatch.setattr(client.disk_cache, "load_cache",
+                        lambda *a, **k: disk_reads.append(1) or {"data": {}})
+    with pytest.raises(RuntimeError, match="live API down"):
+        client.fetch_findings_delta("2026-07-01T00:00:00Z", has_creds=True)
+    assert not disk_reads  # the fallback path was never consulted
+
+
+def test_fetch_findings_delta_injects_updated_at(monkeypatch):
+    from wiz_dashboard.data import client
+
+    captured = {}
+
+    def fake_fetch(**kwargs):
+        captured.update(kwargs)
+        return {"data": {"vulnerabilityFindings": {"nodes": [{"id": "d1"}]}}}
+
+    monkeypatch.setattr(client.os_vulns, "fetch_findings", fake_fetch)
+    out = client.fetch_findings_delta("2026-07-01T00:00:00Z", has_creds=True)
+    assert captured["extra_filter_by"] == {"updatedAt": {"after": "2026-07-01T00:00:00Z"}}
+    assert captured["dry_run"] is False
+    assert out["data"]["vulnerabilityFindings"]["nodes"][0]["id"] == "d1"

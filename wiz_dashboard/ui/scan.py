@@ -13,9 +13,16 @@ from datetime import datetime, timezone
 import pandas as pd
 import streamlit as st
 
+from os_vulns import WizDeltaFilterError
+from wiz_dashboard.data import cache as disk_cache
 from wiz_dashboard.data import history, ledger
-from wiz_dashboard.data.client import fetch_findings
-from wiz_dashboard.data.transform import extract_nodes, nodes_to_dataframe, coerce_results
+from wiz_dashboard.data.client import fetch_findings, fetch_findings_delta
+from wiz_dashboard.data.transform import (
+    coerce_results,
+    extract_nodes,
+    merge_nodes,
+    nodes_to_dataframe,
+)
 from wiz_dashboard.domain.metrics import calculate_mttr, overall_sla_oldest
 from wiz_dashboard.models import schema
 from wiz_dashboard.ui import components as ui
@@ -139,43 +146,8 @@ def run_scan(force: bool, has_creds: bool, sample_shape: str | None = None) -> N
             status.update(label="Parsing findings…")
             bar.progress(_PHASE_PARSE, text="Parsing findings…")
             nodes = extract_nodes(results)
-            status.update(label=f"Building findings table ({len(nodes):,} findings)…")
-            bar.progress(_PHASE_TABLE, text=f"Building findings table ({len(nodes):,} findings)…")
-            df = nodes_to_dataframe(nodes)
-            status.update(label="Computing severity & MTTR metrics…")
-            # The scan's identity doubles as the durable idempotency key (persist) and the
-            # cross-session cache token: every session that later loads this scan keys its
-            # cached derivations on the same string, so counts/MTTR compute once per scan,
-            # not once per browser session (see _derived.df_token / counts_cached).
-            # Microsecond resolution: two scans in the same second must not share an
-            # identity, or the second would be served the first's cached derivations.
-            scan_id = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-            token = f"saved:{scan_id}"
-            shape_kind = "grouped" if schema.is_grouped_shape(nodes) else "flat"
-            st.session_state["os_nodes"] = nodes
-            st.session_state["os_df"] = df
-            st.session_state["os_raw"] = results
-            st.session_state["os_shape"] = shape_kind
-            st.session_state["os_scan_id"] = scan_id
-            st.session_state["os_raw_path"] = None  # this session already holds nodes/raw
-            st.session_state["os_df_token"] = token
-            _drop_deferred_payloads()
-            st.session_state["os_prev_counts"] = prev
-            st.session_state["os_counts"] = _derived.counts_cached(token, df)
-            st.session_state["last_scan_meta"] = {
-                "count": len(nodes),
-                "mode": "live" if has_creds else "dry-run",
-                "at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-            }
-            status.update(label="Saving scan & reconciling ledger…")
-            bar.progress(_PHASE_PERSIST, text="Saving scan & reconciling ledger…")
-            _persist_scan(nodes, df, results, mode="live" if has_creds else "dry-run",
-                          scan_id=scan_id)
-            _record_mttr_snapshot(df, st.session_state["os_counts"])
-            _derived.history_cached.clear()  # a fresh snapshot was just written; reflect it
-            bar.progress(1.0, text=f"Loaded {len(nodes):,} findings")
-            bar.empty()  # the collapsed status line carries the final message
-            status.update(label=f"Loaded {len(nodes):,} findings", state="complete")
+            count = _commit_scan(nodes, results, mode="live" if has_creds else "dry-run",
+                                 status=status, bar=bar, prev_counts=prev)
     except Exception as exc:  # noqa: BLE001 -- surfaced to the user with a traceback
         ui.show_exception(
             exc,
@@ -184,7 +156,195 @@ def run_scan(force: bool, has_creds: bool, sample_shape: str | None = None) -> N
             "sample data. Your previously loaded findings are unchanged.",
         )
         return
-    ui.show_toast(f"Loaded {len(nodes):,} findings", "success")
+    ui.show_toast(f"Loaded {count:,} findings", "success")
+
+
+def _commit_scan(nodes, results, *, mode: str, status, bar, prev_counts) -> int:
+    """Shared post-fetch pipeline: build the frame, stamp the session, persist, snapshot.
+
+    The single writer of a NEW scan's side effects, used by both the full ``run_scan``
+    and the incremental quick refresh so the two can never drift: frame build → scan
+    identity/token → ``os_*`` session stamp → durable persist (ledger + archive + frame
+    snapshot) → MTTR history point. ``status``/``bar`` are the caller's ``st.status`` and
+    ``st.progress`` handles. Returns the finding count.
+    """
+    status.update(label=f"Building findings table ({len(nodes):,} findings)…")
+    bar.progress(_PHASE_TABLE, text=f"Building findings table ({len(nodes):,} findings)…")
+    df = nodes_to_dataframe(nodes)
+    status.update(label="Computing severity & MTTR metrics…")
+    # The scan's identity doubles as the durable idempotency key (persist) and the
+    # cross-session cache token: every session that later loads this scan keys its
+    # cached derivations on the same string, so counts/MTTR compute once per scan,
+    # not once per browser session (see _derived.df_token / counts_cached).
+    # Microsecond resolution: two scans in the same second must not share an
+    # identity, or the second would be served the first's cached derivations.
+    scan_id = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    token = f"saved:{scan_id}"
+    shape_kind = "grouped" if schema.is_grouped_shape(nodes) else "flat"
+    st.session_state["os_nodes"] = nodes
+    st.session_state["os_df"] = df
+    st.session_state["os_raw"] = results
+    st.session_state["os_shape"] = shape_kind
+    st.session_state["os_scan_id"] = scan_id
+    st.session_state["os_raw_path"] = None  # this session already holds nodes/raw
+    st.session_state["os_df_token"] = token
+    _drop_deferred_payloads()
+    st.session_state["os_prev_counts"] = prev_counts
+    st.session_state["os_counts"] = _derived.counts_cached(token, df)
+    st.session_state["last_scan_meta"] = {
+        "count": len(nodes),
+        "mode": mode,
+        "at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+    }
+    status.update(label="Saving scan & reconciling ledger…")
+    bar.progress(_PHASE_PERSIST, text="Saving scan & reconciling ledger…")
+    _persist_scan(nodes, df, results, mode=mode, scan_id=scan_id)
+    _record_mttr_snapshot(df, st.session_state["os_counts"])
+    _derived.history_cached.clear()  # a fresh snapshot was just written; reflect it
+    bar.progress(1.0, text=f"Loaded {len(nodes):,} findings")
+    bar.empty()  # the collapsed status line carries the final message
+    status.update(label=f"Loaded {len(nodes):,} findings", state="complete")
+    return len(nodes)
+
+
+# Watermark overlap for the incremental (updatedAt-filtered) fetch. scans.ts is stamped
+# AFTER the fetch finishes, so a finding updated mid-fetch after its page was read falls
+# before the recorded timestamp; the overlap must cover a full-scan fetch duration plus
+# app↔Wiz clock skew. Over-fetching is harmless: re-listed unchanged findings merge and
+# reconcile idempotently.
+DELTA_OVERLAP_MINUTES = 15
+# Beyond this baseline age, warn before an incremental: how long Wiz keeps resolved
+# findings queryable is not publicly documented, so a very stale watermark may miss
+# resolutions — a full scan is the safe refresh at that point.
+DELTA_BASELINE_STALE_DAYS = 7
+
+
+def run_incremental_scan(has_creds: bool) -> None:
+    """Quick refresh: fetch only findings changed since the last flat scan and merge
+    them into that baseline — then commit the merged set exactly like a full scan.
+
+    One ``updatedAt``-filtered query (the pattern Wiz's own integrations use) returns new
+    findings AND resolutions (re-listed as RESOLVED nodes with ``resolvedAt``). What it
+    can NEVER return is a finding hard-deleted from the tenant (e.g. a decommissioned
+    asset) — deletion has no API signal, so absence is only observable by a full scan.
+    Because the merged set re-lists every baseline finding, reconcile's
+    resolve-by-disappearance branch is structurally inert here: nothing falsely resolves,
+    and deletions wait for the next full "Run scan". The sidebar says so.
+    """
+    row = ledger.load_latest_flat_scan_row()
+    if row is None:
+        ui.show_toast("Run a full scan first — quick refresh needs a baseline to merge into.",
+                      "warning")
+        return
+    prev = st.session_state.get("os_counts", {})
+    try:
+        with st.status("Quick refresh…", expanded=True) as status:
+            ts = row.get("ts")
+            if ts is None or pd.isna(ts):
+                ui.show_toast("The saved baseline has no timestamp — run a full scan.",
+                              "warning")
+                status.update(label="Baseline unusable", state="error")
+                return
+            if pd.Timestamp.now(tz="UTC") - ts > pd.Timedelta(days=DELTA_BASELINE_STALE_DAYS):
+                st.warning(
+                    f"The baseline scan is over {DELTA_BASELINE_STALE_DAYS} days old. "
+                    "Wiz's retention of resolved findings at that age is unverified, so a "
+                    "quick refresh may miss older resolutions — a full scan is safer.",
+                    icon="⚠️",
+                )
+            since_iso = (ts - pd.Timedelta(minutes=DELTA_OVERLAP_MINUTES)).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
+
+            bar = st.progress(0.0, text="Loading baseline scan…")
+            status.update(label="Loading baseline scan…")
+            scan_id = str(row["scan_id"])
+            if st.session_state.get("os_scan_id") == scan_id:
+                baseline_nodes = ensure_nodes()
+            else:
+                payload = _derived.raw_payload_cached(scan_id, row.get("raw_path"))
+                baseline_nodes = extract_nodes(coerce_results(payload)) if payload else []
+            if not baseline_nodes:
+                status.update(label="Baseline archive unavailable", state="error")
+                st.error(
+                    "The baseline scan's archive couldn't be read, so there is nothing "
+                    "to merge into. Run a full scan."
+                )
+                return
+
+            # Dry-run steps the same demo sequence as run_scan, so full and quick scans
+            # share one offline timeline (read the current seq, then advance it).
+            sample_seq = 0
+            if not has_creds:
+                sample_seq = int(st.session_state.get("dry_run_seq", 0))
+                st.session_state["dry_run_seq"] = sample_seq + 1
+
+            def _on_delta_page(pages, found, total):
+                noun = "page" if pages == 1 else "pages"
+                status.update(
+                    label=f"Fetching changes… {found:,} changed findings across {pages} {noun}"
+                )
+                frac = _fetch_fraction(found, total)
+                if frac is not None:
+                    bar.progress(frac, text=f"Fetched {found:,} of {int(total):,} changed findings")
+
+            status.update(label=f"Fetching findings changed since {since_iso}…")
+            delta_raw = fetch_findings_delta(
+                since_iso, has_creds=has_creds, sample_seq=sample_seq,
+                _progress=_on_delta_page if has_creds else None,
+            )
+            delta_nodes = extract_nodes(delta_raw)
+
+            if not delta_nodes:
+                # Nothing changed: recording a scan would archive ~100MB of identical
+                # payload for zero information and zero-out the change badges — so no
+                # scan row, no snapshot, no MTTR point, and last_scan_meta stays put.
+                bar.empty()
+                status.update(label="Up to date — no changes reported by Wiz",
+                              state="complete")
+                ui.show_toast(
+                    f"Up to date — no changes since {since_iso}. Deletions aren't "
+                    "checked; run a full scan to reconcile removals.", "info",
+                )
+                return
+
+            status.update(label=f"Merging {len(delta_nodes):,} changed findings into "
+                                f"{len(baseline_nodes):,} baseline findings…")
+            merged = merge_nodes(baseline_nodes, delta_nodes)
+            results = {"data": {"vulnerabilityFindings": {"nodes": merged}}}
+            total_count = _commit_scan(
+                merged, results,
+                mode="incremental" if has_creds else "dry-run-incremental",
+                status=status, bar=bar, prev_counts=prev,
+            )
+            # The full-fetch cache still holds the PRE-incremental payload; a later
+            # "Run scan" served from it would persist stale data and falsely
+            # disappearance-resolve everything this delta just added.
+            fetch_findings.clear()
+            # Keep the live-failure fallback snapshot as fresh as what we just persisted.
+            disk_cache.save_cache(results)
+    except WizDeltaFilterError:
+        # The tenant rejected the updatedAt filter. Disable the feature for this session
+        # with a plain explanation — and never auto-run a full scan: a "quick" click must
+        # not surprise the user with a multi-minute fetch.
+        st.session_state["_delta_unsupported"] = True
+        st.error(
+            "This Wiz tenant rejected the incremental (updatedAt) query, so quick "
+            "refresh isn't available here. Use **Run scan** instead."
+        )
+        return
+    except Exception as exc:  # noqa: BLE001 -- surfaced to the user with a traceback
+        ui.show_exception(
+            exc,
+            title="The quick refresh couldn't finish.",
+            hint="Your previously loaded findings are unchanged. Try again, or run a "
+            "full scan from the sidebar.",
+        )
+        return
+    ui.show_toast(
+        f"Quick refresh · {len(delta_nodes):,} changed findings merged · "
+        f"{total_count:,} total", "success",
+    )
 
 
 def _hydrate_from_saved(row, *, clear_caches: bool) -> int:

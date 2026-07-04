@@ -8,6 +8,7 @@ in wiz_dashboard/ui/pages/; shared logic in wiz_dashboard/{config,data,domain,mo
 
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
 import os_vulns as os_vulns_module
@@ -85,11 +86,54 @@ def _sidebar_extras() -> bool:
                 "re-querying Wiz or recording a new snapshot. Use **Run scan** to take a "
                 "fresh measurement.",
             )
+        # Quick refresh: the incremental measurement — one updatedAt-filtered query merged
+        # into the saved baseline. Needs a flat baseline to merge into; disabled (with the
+        # reason as help text) rather than hidden so the capability stays discoverable.
+        scans_df = _derived.ledger_scans_cached()
+        has_flat_baseline = (
+            scans_df is not None and not scans_df.empty
+            and (scans_df["shape"] == "flat").any()
+        )
+        delta_unsupported = bool(st.session_state.get("_delta_unsupported"))
+        if delta_unsupported:
+            quick_help = "This Wiz tenant rejected the incremental query — use Run scan."
+        elif not has_flat_baseline:
+            quick_help = "Needs a baseline: run a full scan first."
+        else:
+            quick_help = (
+                "Fetch only findings changed since the last scan and merge them into the "
+                "saved baseline — seconds instead of minutes. **Cannot detect findings "
+                "deleted from Wiz** (e.g. decommissioned hosts); run a full scan "
+                "periodically to reconcile removals."
+            )
+        quick = st.button(
+            "Quick refresh",
+            key="sidebar_quick",
+            icon=":material/update:",
+            use_container_width=True,
+            disabled=delta_unsupported or not has_flat_baseline,
+            help=quick_help,
+        )
         # Mode hint AT the action: what Run scan will do before the click (live query vs.
         # dry-run sample). Deliberately states the mode and effect ONLY — the credential
         # state belongs to the footer pill and what's loaded belongs to the freshness line
         # below, so no single fact is printed in the rail more than once.
         st.caption("Live · queries Wiz" if has_creds else "Dry-run · loads sample data")
+        # Periodic-reconciliation nudge: when the freshest data is an incremental merge,
+        # say how stale the deletion picture is (quick refresh can't observe removals).
+        if has_flat_baseline:
+            flat_rows = scans_df[scans_df["shape"] == "flat"]
+            if "incremental" in str(flat_rows.iloc[0].get("mode", "")):
+                full_rows = flat_rows[
+                    ~flat_rows["mode"].astype(str).str.contains("incremental", na=False)
+                ]
+                if not full_rows.empty and pd.notna(full_rows.iloc[0]["ts"]):
+                    age = (pd.Timestamp.now(tz="UTC") - full_rows.iloc[0]["ts"]).days
+                    noun = "day" if age == 1 else "days"
+                    st.caption(
+                        f"Last full scan {age} {noun} ago — deletions reconcile only "
+                        "on full scans."
+                    )
         # Placeholder filled AFTER the scan below, so the freshness line reflects the run
         # that may happen this same pass (rendering it inline here would lag by one click).
         freshness = st.empty()
@@ -115,6 +159,8 @@ def _sidebar_extras() -> bool:
     # dashboard opens on data instead of an empty state (silent; once per session).
     if run:
         scan.run_scan(force=False, has_creds=has_creds)
+    elif quick:
+        scan.run_incremental_scan(has_creds=has_creds)
     elif refresh:
         scan.reload_scan()
     else:

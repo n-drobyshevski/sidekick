@@ -60,3 +60,38 @@ def test_nodes_to_dataframe_categorizes_low_cardinality_columns(app, flat_sample
                                     {"severity": "LOW", "status": ["RESOLVED"]}])
     assert isinstance(mixed["severity"].dtype, pd.CategoricalDtype)
     assert mixed["status"].dtype == object
+
+
+def test_merge_nodes_delta_wins_new_appended_inputs_untouched(app):
+    from wiz_dashboard.data.transform import merge_nodes
+
+    baseline = [
+        {"id": "v1", "severity": "HIGH", "status": "OPEN"},
+        {"id": "v2", "severity": "LOW", "status": "OPEN"},
+    ]
+    delta = [
+        {"id": "v2", "severity": "LOW", "status": "RESOLVED", "resolvedAt": "2026-07-01T00:00:00Z"},
+        {"id": "v3", "severity": "MEDIUM", "status": "OPEN"},
+        # intra-delta duplicate: the LAST occurrence must win (freshest page)
+        {"id": "v3", "severity": "CRITICAL", "status": "OPEN"},
+    ]
+    baseline_before = [dict(n) for n in baseline]
+    delta_before = [dict(n) for n in delta]
+
+    merged = merge_nodes(baseline, delta)
+
+    assert [n["id"] for n in merged] == ["v1", "v2", "v3"]  # order kept, new appended
+    assert merged[1]["status"] == "RESOLVED"                # delta replaced baseline node
+    assert merged[2]["severity"] == "CRITICAL"              # last duplicate won
+    assert baseline == baseline_before and delta == delta_before  # inputs never mutated
+    assert merged[0] is baseline[0]  # untouched nodes shared by reference (no copies)
+
+
+def test_merge_nodes_empty_edges(app):
+    from wiz_dashboard.data.transform import merge_nodes
+
+    base = [{"id": "v1"}]
+    assert merge_nodes(base, []) == base
+    assert merge_nodes(base, None) == base
+    assert [n["id"] for n in merge_nodes([], [{"id": "v9"}])] == ["v9"]
+    assert merge_nodes(None, None) == []

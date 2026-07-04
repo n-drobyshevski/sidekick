@@ -5,6 +5,8 @@ import json
 
 import pandas as pd
 
+from wiz_dashboard.domain.lifecycle import vuln_key
+
 
 def coerce_results(results):
     """Normalize dict/list/json-string/python-repr-string/SDK-result into a plain object.
@@ -98,6 +100,27 @@ def extract_nodes(results):
     if isinstance(results, list):
         return results
     return [results]
+
+
+def merge_nodes(baseline_nodes, delta_nodes):
+    """Merge an incremental delta into a full baseline node set → new full node set.
+
+    Keyed by ``lifecycle.vuln_key`` (``"id:<id>"`` for real API nodes): a delta node
+    replaces its baseline counterpart in place (order preserved), genuinely new delta
+    nodes are appended in delta order, and an intra-delta duplicate key keeps the LAST
+    occurrence (the freshest page wins). Neither input is mutated — the baseline is
+    typically the ``cache_resource``-shared archived payload, which must stay pristine —
+    and node dicts are shared by reference, so merging ~100k nodes copies no payloads.
+    """
+    by_key = {}
+    for node in delta_nodes or []:
+        by_key[vuln_key(node)] = node  # later duplicate wins
+    merged = []
+    for node in baseline_nodes or []:
+        merged.append(by_key.pop(vuln_key(node), node))
+    # Whatever the delta introduced that the baseline never had (dict preserves order).
+    merged.extend(by_key.values())
+    return merged
 
 
 def df_signature(df) -> str:

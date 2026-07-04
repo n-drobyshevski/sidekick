@@ -605,6 +605,21 @@ def load_latest_scan_row(db_path=None):
     return df.iloc[0]  # newest-first
 
 
+def load_latest_flat_scan_row(db_path=None):
+    """Metadata of the most recent saved FLAT scan, or ``None``.
+
+    The incremental quick refresh needs a per-finding baseline to merge into; the newest
+    scan overall may be grouped-by-asset, which has no mergeable per-finding payload —
+    so the baseline lookup filters on shape."""
+    df = load_scans_df(db_path)
+    if df is None or df.empty:
+        return None
+    flat = df[df["shape"] == "flat"]
+    if flat.empty:
+        return None
+    return flat.iloc[0]  # newest-first
+
+
 def load_latest_scan_payload(db_path=None):
     """Return ``(payload, row)`` for the most recent saved scan, or ``(None, None)``.
 

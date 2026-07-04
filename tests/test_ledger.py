@@ -732,3 +732,68 @@ def test_read_raw_payload_falls_back_to_gz_sibling(tmp_path, app):
         conn.close()
     payload, _row = ledger.load_latest_scan_payload(db)
     assert payload == os_vulns.SAMPLE_RESULTS
+
+
+def _mk(fid, sev="HIGH", status="OPEN", resolved_at=None):
+    node = {
+        "id": fid, "name": f"CVE-2026-{fid}", "severity": sev, "status": status,
+        "vulnerableAsset": {"name": "vm-1", "type": "VIRTUAL_MACHINE"},
+        "firstDetectedAt": "2026-05-01T00:00:00Z",
+    }
+    if resolved_at:
+        node["resolvedAt"] = resolved_at
+    return node
+
+
+def test_merged_incremental_never_false_resolves_and_replays(tmp_path):
+    from wiz_dashboard.data.transform import merge_nodes
+
+    db = _db(tmp_path)
+    # Full baseline scan A: v1 and v2 open.
+    baseline = [_mk("v1"), _mk("v2")]
+    ledger.persist_flat_scan(baseline, mode="live", raw={"data": {"vulnerabilityFindings": {"nodes": baseline}}},
+                             db_path=db, scan_id="2026-07-01T10:00:00Z")
+    # Incremental scan B: delta = v2 resolved (API-declared) + v3 new; merged over A.
+    delta = [_mk("v2", status="RESOLVED", resolved_at="2026-07-02T09:00:00Z"), _mk("v3")]
+    merged = merge_nodes(baseline, delta)
+    deltas = ledger.persist_flat_scan(
+        merged, mode="incremental",
+        raw={"data": {"vulnerabilityFindings": {"nodes": merged}}},
+        db_path=db, scan_id="2026-07-02T10:00:00Z",
+    )
+    assert deltas == {"new_count": 1, "resolved_count": 1, "reopened_count": 0}
+
+    base = ledger.load_base_df(db).set_index("vuln_key")
+    # v1 was untouched by the delta but re-listed by the merge: it must stay OPEN —
+    # the disappearance branch is structurally inert on a merged persist.
+    assert base.loc["id:v1", "status"] == "OPEN"
+    assert base.loc["id:v2", "status"] == "RESOLVED"
+    assert base.loc["id:v2", "resolution_src"] == "api"
+    assert base.loc["id:v3", "status"] == "OPEN"
+    # Change-badge baseline reads scan A's observation set (full set was written).
+    prev_counts = ledger.previous_severity_counts(db)
+    assert prev_counts == {"HIGH": 2}
+
+    # The merged archive is a full faithful payload: deleting the incremental scan
+    # replays A alone and lands exactly on A's state.
+    ledger.delete_scans(["2026-07-02T10:00:00Z"], db_path=db)
+    base = ledger.load_base_df(db).set_index("vuln_key")
+    assert set(base.index) == {"id:v1", "id:v2"}
+    assert (base["status"] == "OPEN").all()
+
+
+def test_load_latest_flat_scan_row_skips_grouped(tmp_path):
+    db = _db(tmp_path)
+    assert ledger.load_latest_flat_scan_row(db) is None
+    ledger.persist_flat_scan([_mk("v1")], mode="live",
+                             raw={"data": {"vulnerabilityFindings": {"nodes": [_mk("v1")]}}},
+                             db_path=db, scan_id="2026-07-01T10:00:00Z")
+    # A newer grouped scan must not be offered as a merge baseline.
+    grouped = [{"id": "g1", "vulnerableAsset": {"name": "vm-1"},
+                "analytics": {"criticalSeverityFindingCount": 1, "totalFindingCount": 1}}]
+    ledger.persist_grouped_scan(grouped, mode="live", db_path=db,
+                                scan_id="2026-07-02T10:00:00Z")
+    row = ledger.load_latest_scan_row(db)
+    assert row["shape"] == "grouped"          # newest overall is grouped…
+    flat_row = ledger.load_latest_flat_scan_row(db)
+    assert flat_row["scan_id"] == "2026-07-01T10:00:00Z"  # …but the baseline is the flat one
