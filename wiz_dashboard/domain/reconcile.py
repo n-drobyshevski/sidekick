@@ -107,6 +107,8 @@ def reconcile(
     *,
     disappearance_mode="scan_ts",
     prev_scan_ts=None,
+    scanned_severities=None,
+    prev_scan_id_by_severity=None,
 ):
     """Reconcile one flat scan against the prior ledger.
 
@@ -117,6 +119,17 @@ def reconcile(
         prev_scan_id: the immediately-previous scan's id, or ``None`` for the first scan.
         disappearance_mode: ``"scan_ts"`` (default) or ``"midpoint"`` for the inferred
             resolution timestamp; ``prev_scan_ts`` is required for ``"midpoint"``.
+        scanned_severities: the severity scope of THIS scan (iterable of normalized
+            uppercase values), or ``None`` for an unscoped scan. Out-of-scope OPEN rows
+            are exempt from disappearance resolution — their absence is expected, not a
+            remediation signal. Their lifecycle simply pauses until they're scanned again.
+        prev_scan_id_by_severity: ``{severity: scan_id}`` of the most recent prior scan
+            whose scope *included* each severity. Replaces ``prev_scan_id`` in the
+            disappearance guard per-severity, so a finding that vanished while its
+            severity went unscanned still resolves on the first scan that covers it
+            again (``resolved_at`` = that scan's ts — conservative, same tradeoff as
+            ``DISAPPEARANCE_RESOLUTION="scan_ts"``). Severities missing from the map
+            fall back to ``prev_scan_id``.
 
     Returns:
         ``(updated_ledger, observations, deltas)`` where ``deltas`` is
@@ -206,10 +219,16 @@ def reconcile(
 
     # Disappearance: OPEN vulns present in the immediately-previous scan but absent now.
     if prev_scan_id is not None:
+        scope = set(scanned_severities) if scanned_severities is not None else None
         for key, row in updated.items():
             if key in seen or row["status"] == "RESOLVED":
                 continue
-            if row.get("last_scan_id") != prev_scan_id:
+            sev_row = row.get("severity")
+            if scope is not None and sev_row not in scope:
+                # This severity wasn't scanned — absence is expected, not resolution.
+                continue
+            expected_prev = (prev_scan_id_by_severity or {}).get(sev_row, prev_scan_id)
+            if row.get("last_scan_id") != expected_prev:
                 continue
             if disappearance_mode == "midpoint" and prev_scan_ts:
                 row["resolved_at"] = _midpoint_iso(prev_scan_ts, scan_ts_iso)

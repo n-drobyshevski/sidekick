@@ -21,18 +21,26 @@ from wiz_dashboard.ui.pages import _derived
 def page():
     ui.render_page_header("MTTR & SLA", "Remediation performance for OS findings")
 
-    df = st.session_state.get("os_df", pd.DataFrame())
+    df, sig = _derived.display_view()
     nodes = st.session_state.get("os_nodes")
+    scope = _derived.display_scope()
+    if scope:
+        st.caption(
+            f"Showing {' + '.join(s.title() for s in scope)} — the display filter "
+            "(Settings) applies to every metric and trend on this page."
+        )
 
     # Prefer the durable ledger: MTTR computed from lifecycles observed across ALL saved
     # scans (so vulns that disappeared between scans count as resolved). Fall back to the
     # current scan's snapshot when the base is still empty.
-    ledger_mttr = _derived.ledger_mttr_cached()
+    ledger_mttr = _derived.ledger_mttr_cached(scope)
     ledger_has = bool(ledger_mttr and ledger_mttr[0])
 
     # Trend: ledger-reconstructed open/resolved/median over time, with the legacy daily
-    # MTTR history as a fallback before the base has data.
-    trend_df = _derived.ledger_trend_cached()
+    # MTTR history as a fallback before the base has data. (The legacy history file is
+    # whole-scan medians and can't be severity-filtered; the ledger trend above is the
+    # scoped source and wins whenever the base has data.)
+    trend_df = _derived.ledger_trend_cached(scope)
     history_df = _derived.history_cached()
     trend = trend_df if (trend_df is not None and not trend_df.empty) else history_df
     no_trend = trend is None or getattr(trend, "empty", True)
@@ -61,7 +69,6 @@ def page():
         with st.expander("Per-severity breakdown", expanded=False):
             ui.render_mttr_widget(df, mttr=(per_sev, overall), show_overall=False)
     elif not df.empty and scan.loaded_shape(nodes) != "grouped":
-        sig = _derived.df_token(df)
         per_sev, overall = _derived.mttr_cached(sig, df)
         _kpi_and_posture(
             per_sev,

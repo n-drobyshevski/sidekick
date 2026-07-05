@@ -59,9 +59,7 @@ def page():
             mime="text/csv",
             key="report_dl",
             row_count=sum(len(info["df"]) for info in selected.values()),
-            sig="|".join(
-                _derived.df_token(info["df"], info["prefix"]) for info in selected.values()
-            ),
+            sig="|".join(info["sig"] for info in selected.values()),
         )
     else:
         if fmt == "Markdown":
@@ -85,7 +83,7 @@ def _source_summary(info):
     Radio/multiselect reruns of this page used to recompute both aggregates over the
     full frame; keying on the scan token makes every rerun after the first a lookup."""
     df = info["df"]
-    token = _derived.df_token(df, info["prefix"])
+    token = info["sig"]  # display-scoped token from loaded_sources
     counts = _derived.counts_cached(token, df)
     _, overall = _derived.mttr_cached(token, df)
     return counts, overall

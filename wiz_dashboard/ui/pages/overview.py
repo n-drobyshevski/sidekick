@@ -68,7 +68,9 @@ def _source_counts(info):
         groups = [g for g in schema.parse_nodes(nodes) if isinstance(g, schema.AssetGroup)]
         return schema.severity_counts_from_groups(groups), True
     df = info["df"]
-    return _derived.counts_cached(_derived.df_token(df, info["prefix"]), df), False
+    # info["sig"] is the display-scoped token from loaded_sources — never df_token the
+    # filtered frame (that reads the FULL frame's session token and collides the caches).
+    return _derived.counts_cached(info["sig"], df), False
 
 
 def _aggregate(sources):
@@ -90,7 +92,7 @@ def _aggregate(sources):
             grouped_count += 1
         elif info["df"] is not None and not info["df"].empty:
             flat_frames.append(info["df"])
-            flat_tokens.append(_derived.df_token(info["df"], info["prefix"]))
+            flat_tokens.append(info["sig"])
 
     if flat_frames:
         combined = pd.concat(flat_frames, ignore_index=True)

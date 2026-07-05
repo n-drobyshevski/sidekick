@@ -34,7 +34,10 @@ logger = logging.getLogger(__name__)
 # v2: dropped ``vuln_ledger.latest_json`` — a full finding payload per row that nothing
 # ever read (the raw archive keeps the complete finding), yet dominated the DB's size and
 # was deserialized on every persist and every Scan History load.
-SCHEMA_VERSION = 2
+# v3: added ``scans.severities`` — the severity scope a scan was fetched with (JSON array;
+# NULL = all severities), so reconciliation never resolves-by-disappearance a severity
+# that simply wasn't scanned, and delete→rebuild replays stay scope-faithful.
+SCHEMA_VERSION = 3
 
 # gzip trades a once-per-scan compression cost for ~10x smaller archives; level 6 because
 # higher levels barely shrink JSON further while getting markedly slower.
@@ -49,8 +52,42 @@ LEDGER_COLUMNS = [
 
 _SCANS_COLUMNS = [
     "scan_id", "ts", "mode", "shape", "total",
-    "new_count", "resolved_count", "reopened_count", "raw_path",
+    "new_count", "resolved_count", "reopened_count", "raw_path", "severities",
 ]
+
+
+# --------------------------------------------------------------------------- #
+#  Severity-scope (de)serialization for the ``scans.severities`` column
+# --------------------------------------------------------------------------- #
+def serialize_severities(sevs):
+    """Canonical JSON for a scan's severity scope; ``None`` means "all severities".
+
+    A scope covering every selectable severity IS an unscoped scan (the fetch emits no
+    filter), so it collapses to ``None`` — keeping full-scope scans byte-identical to
+    pre-v3 history in every reader.
+    """
+    if sevs is None:
+        return None
+    vals = {normalize_severity(s) for s in sevs if isinstance(s, str)}
+    vals &= set(config.SELECTABLE_SEVERITIES)
+    if not vals or vals == set(config.SELECTABLE_SEVERITIES):
+        return None
+    return json.dumps([s for s in config.SEVERITY_ORDER if s in vals])
+
+
+def parse_severities(text):
+    """Inverse of ``serialize_severities``: ordered tuple, or ``None`` for all/invalid."""
+    if not isinstance(text, str) or not text:
+        return None
+    try:
+        vals = json.loads(text)
+    except Exception:
+        return None
+    if not isinstance(vals, list):
+        return None
+    chosen = {normalize_severity(v) for v in vals if isinstance(v, str)}
+    out = tuple(s for s in config.SEVERITY_ORDER if s in chosen)
+    return out or None
 
 
 # --------------------------------------------------------------------------- #
@@ -93,7 +130,8 @@ def init_db(db_path=None) -> None:
                     new_count INTEGER DEFAULT 0,
                     resolved_count INTEGER DEFAULT 0,
                     reopened_count INTEGER DEFAULT 0,
-                    raw_path TEXT
+                    raw_path TEXT,
+                    severities TEXT
                 );
                 CREATE TABLE IF NOT EXISTS vuln_ledger (
                     vuln_key TEXT PRIMARY KEY,
@@ -137,14 +175,17 @@ def init_db(db_path=None) -> None:
 def _migrate(conn) -> None:
     """Upgrade an existing DB to ``SCHEMA_VERSION`` in place.
 
-    v1 → v2 drops ``vuln_ledger.latest_json``. ``BEGIN IMMEDIATE`` + a version re-check
-    keep concurrent sessions from racing the migration; the VACUUM that actually reclaims
-    the dropped column's space is best-effort (it can't run inside a transaction and may
-    lose a lock race) — a skipped VACUUM just defers reclamation to the next start.
+    v1 → v2 drops ``vuln_ledger.latest_json``; v2 → v3 adds ``scans.severities``
+    (nullable — every historical scan correctly reads as unscoped). ``BEGIN IMMEDIATE``
+    + a version re-check keep concurrent sessions from racing the migration; the VACUUM
+    that actually reclaims the v1 dropped column's space is best-effort (it can't run
+    inside a transaction and may lose a lock race) — a skipped VACUUM just defers
+    reclamation to the next start.
     """
     row = conn.execute("SELECT version FROM schema_meta").fetchone()
     if row is None or row[0] >= SCHEMA_VERSION:
         return
+    dropped_latest_json = False
     try:
         conn.execute("BEGIN IMMEDIATE")
     except sqlite3.OperationalError:
@@ -158,6 +199,7 @@ def _migrate(conn) -> None:
         if row is not None and row[0] < SCHEMA_VERSION:
             cols = {r[1] for r in conn.execute("PRAGMA table_info(vuln_ledger)")}
             if "latest_json" in cols:
+                dropped_latest_json = True
                 try:
                     conn.execute("ALTER TABLE vuln_ledger DROP COLUMN latest_json")
                 except sqlite3.OperationalError:
@@ -195,11 +237,16 @@ def _migrate(conn) -> None:
                     conn.execute(
                         "CREATE INDEX IF NOT EXISTS idx_ledger_severity ON vuln_ledger(severity)"
                     )
+            scan_cols = {r[1] for r in conn.execute("PRAGMA table_info(scans)")}
+            if "severities" not in scan_cols:
+                conn.execute("ALTER TABLE scans ADD COLUMN severities TEXT")
             conn.execute("UPDATE schema_meta SET version=?", (SCHEMA_VERSION,))
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")
         raise
+    if not dropped_latest_json:
+        return  # v2→v3 only adds a column; nothing to reclaim.
     try:
         conn.execute("VACUUM")
     except Exception:
@@ -232,6 +279,30 @@ def _existing_scan_deltas(conn, scan_id):
 def _latest_scan(conn):
     row = conn.execute("SELECT scan_id, ts FROM scans ORDER BY ts DESC LIMIT 1").fetchone()
     return (row["scan_id"], row["ts"]) if row else None
+
+
+def _prev_scan_id_by_severity(conn):
+    """``{severity: scan_id}`` of the most recent prior scan whose scope covered it.
+
+    Feeds ``reconcile``'s per-severity disappearance guard: a finding that vanished while
+    its severity went unscanned must still resolve on the first scan that covers it again.
+    NULL / unparseable ``severities`` means unscoped (covers everything), so an
+    all-unscoped history maps every severity to the latest scan id — exactly the legacy
+    single ``prev_scan_id`` guard. Mirrors ``_latest_scan``'s newest-first-by-ts ordering
+    and, like it, considers scans of every shape (a grouped scan interposing between flat
+    scans blocks disappearance resolution today; the map preserves that conservatism).
+    """
+    remaining = set(config.SEVERITY_ORDER)
+    mapping = {}
+    for r in conn.execute("SELECT scan_id, severities FROM scans ORDER BY ts DESC"):
+        scope = parse_severities(r["severities"])
+        covered = set(remaining) if scope is None else remaining & set(scope)
+        for sev in covered:
+            mapping[sev] = r["scan_id"]
+        remaining -= covered
+        if not remaining:
+            break
+    return mapping or None
 
 
 def _load_ledger_map(conn):
@@ -279,7 +350,7 @@ def _archive_raw(db_path, scan_id, payload):
 #  Writers
 # --------------------------------------------------------------------------- #
 def persist_flat_scan(records, *, mode, raw=None, db_path=None, scan_id=None,
-                      disappearance_mode=None, df=None):
+                      disappearance_mode=None, df=None, scanned_severities=None):
     """Save a flat per-finding scan and reconcile the ledger. Returns scan deltas.
 
     Idempotent: saving a scan whose ``scan_id`` already exists is a no-op (returns the
@@ -290,6 +361,10 @@ def persist_flat_scan(records, *, mode, raw=None, db_path=None, scan_id=None,
     the frame without re-parsing 100k+ nested nodes (see ``data.snapshot``). Replay paths
     (delete→rebuild) pass no ``df``; survivors' existing snapshots stay valid because
     their data is unchanged, and nothing in the rebuild depends on snapshots.
+
+    ``scanned_severities`` (optional): the severity scope this scan was fetched with
+    (``None`` = all). Recorded on the ``scans`` row and passed to ``reconcile`` so
+    out-of-scope OPEN rows are never falsely resolved by disappearance.
     """
     records = list(records)
     db_path = _resolve(db_path)
@@ -298,6 +373,8 @@ def persist_flat_scan(records, *, mode, raw=None, db_path=None, scan_id=None,
     scan_ts = scan_id
     if disappearance_mode is None:
         disappearance_mode = config.DISAPPEARANCE_RESOLUTION
+    severities_text = serialize_severities(scanned_severities)
+    scope = parse_severities(severities_text)  # canonical tuple, or None for unscoped
 
     conn = _connect(db_path)
     try:
@@ -307,11 +384,14 @@ def persist_flat_scan(records, *, mode, raw=None, db_path=None, scan_id=None,
         prev = _latest_scan(conn)
         prev_scan_id = prev[0] if prev else None
         prev_scan_ts = prev[1] if prev else None
+        prev_by_sev = _prev_scan_id_by_severity(conn) if prev_scan_id is not None else None
         existing_ledger = _load_ledger_map(conn)
 
         updated, observations, deltas = reconcile.reconcile(
             records, existing_ledger, scan_id, scan_ts, prev_scan_id,
             disappearance_mode=disappearance_mode, prev_scan_ts=prev_scan_ts,
+            scanned_severities=(set(scope) if scope is not None else None),
+            prev_scan_id_by_severity=prev_by_sev,
         )
         raw_path = _archive_raw(db_path, scan_id, raw if raw is not None else records)
         if df is not None and raw_path:
@@ -323,7 +403,7 @@ def persist_flat_scan(records, *, mode, raw=None, db_path=None, scan_id=None,
                 f"VALUES ({','.join('?' for _ in _SCANS_COLUMNS)})",
                 (scan_id, scan_ts, mode, "flat", len(records),
                  deltas["new_count"], deltas["resolved_count"], deltas["reopened_count"],
-                 raw_path),
+                 raw_path, severities_text),
             )
             _upsert_ledger(conn, updated.values())
             if observations:
@@ -338,12 +418,14 @@ def persist_flat_scan(records, *, mode, raw=None, db_path=None, scan_id=None,
         conn.close()
 
 
-def persist_grouped_scan(nodes, *, mode, raw=None, db_path=None, scan_id=None):
+def persist_grouped_scan(nodes, *, mode, raw=None, db_path=None, scan_id=None,
+                         scanned_severities=None):
     """Archive a grouped-by-asset scan WITHOUT per-vuln reconciliation.
 
     Grouped responses carry per-asset severity counts but no per-finding identity or
     timestamps, so they can't advance lifecycles. We still record the scan (for the
-    history) and archive the raw payload. Returns zero deltas.
+    history) and archive the raw payload — including its severity scope, for an honest
+    Scan History. Returns zero deltas.
     """
     db_path = _resolve(db_path)
     init_db(db_path)
@@ -358,7 +440,8 @@ def persist_grouped_scan(nodes, *, mode, raw=None, db_path=None, scan_id=None):
             conn.execute(
                 f"INSERT INTO scans ({','.join(_SCANS_COLUMNS)}) "
                 f"VALUES ({','.join('?' for _ in _SCANS_COLUMNS)})",
-                (scan_id, scan_id, mode, "grouped", len(nodes), 0, 0, 0, raw_path),
+                (scan_id, scan_id, mode, "grouped", len(nodes), 0, 0, 0, raw_path,
+                 serialize_severities(scanned_severities)),
             )
         return zero
     finally:
@@ -462,6 +545,9 @@ def delete_scans(scan_ids, db_path=None) -> dict:
     if not targets or not db_path.exists():
         return zero
 
+    # Migrate first: the replay below writes v3 columns (scans.severities) through
+    # _reinsert_scan_row before any persist_* call gets a chance to run init_db.
+    init_db(db_path)
     conn = _connect(db_path)
     try:
         rows = [dict(r) for r in conn.execute(
@@ -518,13 +604,17 @@ def delete_scans(scan_ids, db_path=None) -> dict:
                     persist_grouped_scan(
                         extract_nodes(payload), mode=r["mode"], raw=payload,
                         db_path=db_path, scan_id=r["scan_id"],
+                        scanned_severities=parse_severities(r.get("severities")),
                     )
             else:
                 # Replay uses the current config.DISAPPEARANCE_RESOLUTION (same as the original
-                # persist, which never overrides it); it isn't stored per-scan.
+                # persist, which never overrides it); it isn't stored per-scan. The severity
+                # scope IS stored per-scan and must ride along, or a rebuild would falsely
+                # mass-resolve severities the original scan never covered.
                 persist_flat_scan(
                     _records_from_payload(payload), mode=r["mode"], raw=payload,
                     db_path=db_path, scan_id=r["scan_id"],
+                    scanned_severities=parse_severities(r.get("severities")),
                 )
     except Exception:
         _restore_db(db_path, bak)
@@ -716,7 +806,7 @@ def previous_severity_counts(db_path=None) -> dict:
     return counts
 
 
-def load_trend_df(db_path=None) -> pd.DataFrame:
+def load_trend_df(db_path=None, severities=None) -> pd.DataFrame:
     """Open / resolved / median-MTTR / In-SLA% / oldest-open over time, from the ledger.
 
     For each saved flat scan timestamp, counts ledger vulns open vs resolved *as of* that
@@ -724,10 +814,16 @@ def load_trend_df(db_path=None) -> pd.DataFrame:
     the oldest-open age (max over severities of the p90 open age), matching the headline
     KPIs (see ``metrics.overall_sla_oldest``). A self-consistent cumulative trend that
     feeds ``charts.mttr_trend`` / ``charts.open_resolved_trend`` and the KPI change badges.
+
+    ``severities`` (optional iterable) restricts the trend to those severities plus
+    UNKNOWN — the display-filter path. ``None`` computes over everything.
     """
     cols = ["date", "open", "resolved", "median_days", "sla_pct", "oldest_open_days"]
     scans = load_scans_df(db_path)
     base = load_base_df(db_path)
+    if severities is not None and not base.empty:
+        keep = set(severities) | {"UNKNOWN"}
+        base = base[base["severity"].map(normalize_severity).isin(keep)]
     if scans.empty or base.empty:
         return pd.DataFrame(columns=cols)
     flat_ts = sorted(t for t in scans.loc[scans["shape"] == "flat", "ts"] if pd.notna(t))

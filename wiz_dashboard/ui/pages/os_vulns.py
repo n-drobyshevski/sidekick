@@ -78,12 +78,14 @@ def render(has_creds: bool) -> None:
     )
 
     nodes = st.session_state.get("os_nodes")
-    df = st.session_state.get("os_df")
-    df = df if df is not None else pd.DataFrame()
+    full_df = st.session_state.get("os_df")
+    full_df = full_df if full_df is not None else pd.DataFrame()
+    df, sig = _derived.display_view()
+    scope = _derived.display_scope()
 
     # On the start-up fast path os_nodes is deliberately None (lazy — see scan.ensure_nodes)
     # while os_df is populated, so "nothing loaded" must consider both.
-    if df.empty and not nodes:
+    if full_df.empty and not nodes:
         ui.empty_state(
             "No findings loaded",
             "Run a scan from the **sidebar** to query Wiz. Without credentials a "
@@ -93,10 +95,27 @@ def render(has_creds: bool) -> None:
         ui.severity_skeleton()
         return
 
+    if scope and scan.loaded_shape(nodes) != "grouped":
+        if df.empty and not full_df.empty:
+            # Data IS loaded — it's all outside the display filter. Distinct from the
+            # no-scan empty state, and the fix is a Settings change, not a scan.
+            ui.empty_state(
+                "All findings are hidden by the display filter",
+                f"The last scan holds {len(full_df):,} findings, but none match the "
+                "current display filter. Widen it on the **Settings** page.",
+            )
+            return
+        hidden = len(full_df) - len(df)
+        if hidden > 0:
+            st.caption(
+                f"Showing {' + '.join(s.title() for s in scope)} · {hidden:,} findings "
+                "outside the display filter are hidden (Settings)."
+            )
+
     if scan.loaded_shape(nodes) == "grouped":
         _render_grouped(nodes or scan.ensure_nodes(), has_creds)
     else:
-        _render_flat(df)
+        _render_flat(df, sig)
 
     # Open the detail panel here, at APP scope. The flat table renders inside an
     # @st.fragment, and a dialog opened during a fragment-scoped rerun does not render
@@ -106,7 +125,9 @@ def render(has_creds: bool) -> None:
 
 
 def _severity_cards(counts, prev=None, per_sev=None):
-    ui.severity_cards(counts, prev, per_sev=per_sev)
+    # Out-of-display-scope severities are omitted (not rendered as a misleading 0);
+    # render() already captions the active filter above.
+    ui.severity_cards(counts, prev, per_sev=per_sev, scope=_derived.display_scope())
 
 
 def _severity_prev():
@@ -115,8 +136,13 @@ def _severity_prev():
     Prefer the in-session previous scan (``os_prev_counts``); when that's empty — a fresh
     session's first scan — fall back to the durable ledger's previous flat scan. That
     fallback is what makes the % badges appear across sessions, the same way the MTTR KPIs
-    read their baseline from the durable trend (see ``mttr._prev_from_trend``)."""
-    return st.session_state.get("os_prev_counts") or _derived.previous_severity_counts_cached()
+    read their baseline from the durable trend (see ``mttr._prev_from_trend``). Both paths
+    honor the display filter so a delta never compares a filtered count to a full one."""
+    scope = _derived.display_scope()
+    prev = st.session_state.get("os_prev_counts")
+    if prev:
+        return _derived.filter_counts(prev, scope)
+    return _derived.previous_severity_counts_cached(scope)
 
 
 def _mttr_link() -> None:
@@ -128,7 +154,7 @@ def _mttr_link() -> None:
         st.page_link(mttr_page, label="View MTTR & SLA", icon=":material/trending_up:")
 
 
-def _scan_summary_band(*, total, df=None, n_assets=None) -> None:
+def _scan_summary_band(*, total, df=None, n_assets=None, sig=None) -> None:
     """Scan-summary band — counts for THIS scan + a pointer to the remediation analytics.
 
     Every figure here describes the current response, so it agrees with the findings table
@@ -145,7 +171,7 @@ def _scan_summary_band(*, total, df=None, n_assets=None) -> None:
         cards.append({"label": "Assets", "value": f"{n_assets:,}", "accent": "var(--accent)"})
     cards.append({"label": "Total findings", "value": f"{total:,}", "accent": "var(--accent)"})
     if df is not None and not df.empty:
-        _per_sev, overall = _derived.mttr_cached(_derived.df_token(df), df)
+        _per_sev, overall = _derived.mttr_cached(sig or _derived.df_token(df), df)
         if overall:
             cards.append({
                 "label": "Open", "value": f"{int(overall.get('open', 0)):,}",
@@ -161,11 +187,13 @@ def _scan_summary_band(*, total, df=None, n_assets=None) -> None:
     _mttr_link()
 
 
-def _render_flat(df) -> None:
-    sig = _derived.df_token(df)
+def _render_flat(df, sig=None) -> None:
+    # ``sig`` is the display-scoped token from render(); the df_token fallback covers
+    # tests that call this directly with an unfiltered frame.
+    sig = sig or _derived.df_token(df)
     counts = _derived.counts_cached(sig, df)
 
-    _scan_summary_band(total=int(len(df)), df=df)
+    _scan_summary_band(total=int(len(df)), df=df, sig=sig)
 
     # per_sev provides per-severity open/resolved counts for the breakdown card sub-lines.
     per_sev, _overall = _derived.mttr_cached(sig, df)
@@ -178,7 +206,13 @@ def _render_flat(df) -> None:
 
 def _render_grouped(nodes, has_creds) -> None:
     groups = [g for g in schema.parse_nodes(nodes) if isinstance(g, schema.AssetGroup)]
-    counts = schema.severity_counts_from_groups(groups)
+    scope = _derived.display_scope()
+    counts = _derived.filter_counts(schema.severity_counts_from_groups(groups), scope)
+    if scope:
+        st.caption(
+            f"Showing {' + '.join(s.title() for s in scope)} — severities outside the "
+            "display filter are hidden (Settings)."
+        )
 
     _scan_summary_band(total=sum(counts.values()), n_assets=len(groups))
 

@@ -41,8 +41,9 @@ def page():
         "Durable base of vulnerabilities tracked across scans — the source of correct MTTR",
     )
 
+    scope = _derived.display_scope()
     scans = _derived.ledger_scans_cached()
-    base = _derived.ledger_base_cached()
+    base = _derived.ledger_base_cached(scope)
 
     if scans is None or scans.empty:
         ui.empty_state(
@@ -52,7 +53,14 @@ def page():
         )
         return
 
-    _kpis(base)
+    if scope:
+        st.caption(
+            f"Showing {' + '.join(s.title() for s in scope)} — KPIs, the vulnerability "
+            "base and the trends follow the display filter (Settings). The saved-scans "
+            "table always lists every scan."
+        )
+
+    _kpis(base, scope)
 
     ui.section_label("Saved scans")
     selected = _scans_table(scans)
@@ -61,15 +69,15 @@ def page():
     ui.section_label("Vulnerability base (ledger)")
     _base_table(base)
 
-    trend = _derived.ledger_trend_cached()
+    trend = _derived.ledger_trend_cached(scope)
     ui.section_label("Open vs resolved (over time)")
     charts.open_resolved_trend(trend)
     ui.section_label("MTTR trend (median over time)")
     charts.mttr_trend(trend)
 
 
-def _kpis(base) -> None:
-    _, overall = _derived.ledger_mttr_cached()
+def _kpis(base, scope=None) -> None:
+    _, overall = _derived.ledger_mttr_cached(scope)
     tracked = 0 if base is None or base.empty else len(base)
     open_n = int((base["status"] == "OPEN").sum()) if tracked else 0
     resolved_n = int((base["status"] == "RESOLVED").sum()) if tracked else 0
@@ -106,9 +114,18 @@ def _scans_table(scans) -> list:
     widget key carries a nonce so a delete (which shrinks the table) discards the now-
     stale selection instead of carrying a past-the-end index into the smaller frame."""
     cols = [c for c in ("ts", "mode", "shape", "total", "new_count", "resolved_count",
-                        "reopened_count") if c in scans.columns]
+                        "reopened_count", "severities") if c in scans.columns]
+    view = scans[cols]
+    if "severities" in view.columns:
+        # Render the stored scope as readable text; NULL (unscoped) reads "All".
+        view = view.assign(
+            severities=view["severities"].map(
+                lambda s: (" + ".join(x.title() for x in ledger.parse_severities(s) or ())
+                           or "All")
+            )
+        )
     event = st.dataframe(
-        scans[cols],
+        view,
         hide_index=True,
         width="stretch",
         on_select="rerun",
@@ -124,6 +141,9 @@ def _scans_table(scans) -> list:
                 "－ Resolved", help="Resolved in this scan (incl. disappeared)"
             ),
             "reopened_count": st.column_config.NumberColumn("↺ Reopened"),
+            "severities": st.column_config.TextColumn(
+                "Scope", help="Severities this scan pulled from Wiz ('All' = unscoped)"
+            ),
         },
     )
     rows = (event.selection.get("rows") if event and event.selection else None) or []

@@ -37,10 +37,15 @@ def test_run_scan_persists_to_ledger(tmp_path):
     # The single scan writer must reconcile a flat scan into the durable base + set deltas.
     # The dry-run default is now flat, but set it explicitly so the test states its intent
     # (a grouped scan carries no per-finding identity -- see test_run_scan_grouped_archives).
+    # Widen the fetch scope to all severities: this test pins the FULL 17-finding sample
+    # semantics (the default Critical+High scope is pinned by test_run_scan_default_scope).
     script = (
         "import streamlit as st\n"
+        "from wiz_dashboard import config\n"
+        "from wiz_dashboard.data import settings\n"
         "from wiz_dashboard.ui import scan\n"
         "from wiz_dashboard.data import ledger\n"
+        "settings.set_fetch_severities(config.SELECTABLE_SEVERITIES)\n"
         "st.session_state['dry_run_shape'] = 'flat'\n"
         "scan.run_scan(force=False, has_creds=False)\n"
     )
@@ -48,6 +53,28 @@ def test_run_scan_persists_to_ledger(tmp_path):
     assert not at.exception, at.exception
     assert "scan_deltas" in at.session_state
     assert at.session_state["scan_deltas"]["new_count"] == 17
+
+
+def test_run_scan_default_scope_filters_sample_and_records_scope(tmp_path):
+    # With no settings saved, the default Critical+High scope filters the dry-run flat
+    # sample AND is recorded on the persisted scan row (honest coverage).
+    script = (
+        "import streamlit as st\n"
+        "from wiz_dashboard.ui import scan\n"
+        "from wiz_dashboard.data import ledger\n"
+        "st.session_state['dry_run_shape'] = 'flat'\n"
+        "scan.run_scan(force=False, has_creds=False)\n"
+        "row = ledger.load_scans_df().iloc[0]\n"
+        "st.session_state['stored_scope'] = ledger.parse_severities(row['severities'])\n"
+    )
+    at = AppTest.from_string(script, default_timeout=60).run()
+    assert not at.exception, at.exception
+    counts = at.session_state["os_counts"]
+    assert set(counts) <= {"CRITICAL", "HIGH"}  # nothing outside the scope leaks in
+    assert sum(counts.values()) == len(at.session_state["os_nodes"])
+    assert at.session_state["os_scan_scope"] == ("CRITICAL", "HIGH")
+    assert at.session_state["stored_scope"] == ("CRITICAL", "HIGH")
+    assert at.session_state["last_scan_meta"]["severities"] == ("CRITICAL", "HIGH")
 
 
 def test_run_scan_grouped_archives(tmp_path):
@@ -73,8 +100,11 @@ def test_autoload_hydrates_fresh_session_from_saved_scan(tmp_path):
     # snapshot, no os_nodes pre-set), so the dashboard opens on data, not an empty state.
     script = (
         "import streamlit as st\n"
+        "from wiz_dashboard import config\n"
+        "from wiz_dashboard.data import settings\n"
         "from wiz_dashboard.ui import scan\n"
         "from wiz_dashboard.data import ledger\n"
+        "settings.set_fetch_severities(config.SELECTABLE_SEVERITIES)\n"
         "st.session_state['dry_run_shape'] = 'flat'\n"
         "scan.run_scan(force=False, has_creds=False)\n"
         "st.session_state['before'] = len(ledger.load_scans_df())\n"

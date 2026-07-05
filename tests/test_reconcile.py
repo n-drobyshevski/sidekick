@@ -111,6 +111,83 @@ def test_nan_resolvedat_from_dataframe_does_not_resolve():
     assert d["resolved_count"] == 0
 
 
+def test_scoped_scan_leaves_out_of_scope_open_row_untouched():
+    # Wide scan sees a MEDIUM; a later Critical+High-scoped scan must NOT resolve it by
+    # disappearance — its severity simply wasn't scanned.
+    led, _, _ = reconcile.reconcile([_rec("a"), _rec("m", sev="MEDIUM")], {}, S1, S1, None)
+    led, obs, d = reconcile.reconcile(
+        [_rec("a")], led, S2, S2, S1, scanned_severities={"CRITICAL", "HIGH"}
+    )
+    row = led["id:m"]
+    assert row["status"] == "OPEN"
+    assert row["resolved_at"] is None
+    assert d["resolved_count"] == 0
+    # No phantom present=0 observation for the unscanned severity either.
+    assert all(o["vuln_key"] != "id:m" for o in obs)
+
+
+def test_scoped_scan_still_resolves_in_scope_disappearance():
+    # Regression: scoping must not weaken normal disappearance for scanned severities.
+    led, _, _ = reconcile.reconcile([_rec("a", sev="HIGH")], {}, S1, S1, None)
+    led, _, d = reconcile.reconcile(
+        [], led, S2, S2, S1, scanned_severities={"CRITICAL", "HIGH"}
+    )
+    assert led["id:a"]["status"] == "RESOLVED"
+    assert led["id:a"]["resolution_src"] == "disappeared"
+    assert d["resolved_count"] == 1
+
+
+def test_unscoped_scan_behavior_unchanged():
+    # scanned_severities=None must be byte-identical to the pre-scope behavior.
+    led_a, obs_a, d_a = reconcile.reconcile([_rec("a")], {}, S1, S1, None)
+    led_b, obs_b, d_b = reconcile.reconcile(
+        [_rec("a")], {}, S1, S1, None, scanned_severities=None, prev_scan_id_by_severity=None
+    )
+    assert (led_a, obs_a, d_a) == (led_b, obs_b, d_b)
+
+
+def test_widen_again_resolves_finding_that_vanished_while_unscanned():
+    # Sequence: wide S1 (MEDIUM appears) -> scoped S2, S3 (MEDIUM unscanned, vanishes
+    # meanwhile) -> wide S4. The MEDIUM must resolve on S4 via the per-severity prev map,
+    # even though its last_scan_id (S1) no longer equals the plain prev_scan_id (S3).
+    S4 = "2026-05-04T00:00:00Z"
+    ch = {"CRITICAL", "HIGH"}
+    led, _, _ = reconcile.reconcile([_rec("a"), _rec("m", sev="MEDIUM")], {}, S1, S1, None)
+    led, _, _ = reconcile.reconcile([_rec("a")], led, S2, S2, S1, scanned_severities=ch)
+    led, _, _ = reconcile.reconcile([_rec("a")], led, S3, S3, S2, scanned_severities=ch)
+    assert led["id:m"]["status"] == "OPEN"  # paused, not falsely resolved
+
+    # Wide scan S4: for MEDIUM the last scan that covered it was S1.
+    prev_map = {"CRITICAL": S3, "HIGH": S3, "MEDIUM": S1, "LOW": S1, "INFO": S1}
+    led, _, d = reconcile.reconcile(
+        [_rec("a")], led, S4, S4, S3, prev_scan_id_by_severity=prev_map
+    )
+    row = led["id:m"]
+    assert row["status"] == "RESOLVED"
+    assert row["resolution_src"] == "disappeared"
+    assert row["resolved_at"] == S4  # conservative: first scan that could observe it
+    assert d["resolved_count"] == 1
+    assert led["id:a"]["status"] == "OPEN"  # survivor untouched
+
+
+def test_widen_again_keeps_surviving_out_of_scope_row_open():
+    # Same widen sequence, but the MEDIUM is still present on the wide scan: it must be
+    # re-listed as OPEN with last_seen advanced, never resolved.
+    S4 = "2026-05-04T00:00:00Z"
+    ch = {"CRITICAL", "HIGH"}
+    led, _, _ = reconcile.reconcile([_rec("a"), _rec("m", sev="MEDIUM")], {}, S1, S1, None)
+    led, _, _ = reconcile.reconcile([_rec("a")], led, S2, S2, S1, scanned_severities=ch)
+    prev_map = {"CRITICAL": S2, "HIGH": S2, "MEDIUM": S1, "LOW": S1, "INFO": S1}
+    led, _, d = reconcile.reconcile(
+        [_rec("a"), _rec("m", sev="MEDIUM")], led, S4, S4, S2,
+        prev_scan_id_by_severity=prev_map,
+    )
+    row = led["id:m"]
+    assert row["status"] == "OPEN"
+    assert row["last_seen"] == S4
+    assert d["resolved_count"] == 0
+
+
 def test_reconcile_does_not_mutate_existing_ledger():
     # The prior ledger is copied per-row (not deepcopied) — reconcile must still never
     # write through to its input, or an in-memory caller would see phantom updates.

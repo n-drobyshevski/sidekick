@@ -43,6 +43,22 @@ SEVERITY_GLYPHS = {
 # Standard VM SLAs (days). Tweak per your remediation policy.
 SLA_TARGETS = {"CRITICAL": 7, "HIGH": 14, "MEDIUM": 30, "LOW": 90, "INFO": 180}
 
+# ---- User-adjustable severity scope (Settings page; persisted in data/settings.json) ----
+# UNKNOWN is a local normalization bucket, never an API value — not user-selectable.
+SELECTABLE_SEVERITIES = tuple(s for s in SEVERITY_ORDER if s != "UNKNOWN")
+# Fresh-install defaults for what scans pull from Wiz and what the UI shows.
+DEFAULT_FETCH_SEVERITIES = ("CRITICAL", "HIGH")
+DEFAULT_DISPLAY_SEVERITIES = ("CRITICAL", "HIGH")
+# App severity -> Wiz API enum for the GraphQL filterBy.severity filter (the API spells
+# INFO as INFORMATIONAL; domain.severity normalizes the reverse direction).
+API_SEVERITY_VALUES = {
+    "CRITICAL": "CRITICAL",
+    "HIGH": "HIGH",
+    "MEDIUM": "MEDIUM",
+    "LOW": "LOW",
+    "INFO": "INFORMATIONAL",
+}
+
 # Statuses (from the API side) that mean a finding is remediated/closed — the MTTR
 # stop-clock. Shared by metrics.calculate_mttr and the ledger reconciliation.
 RESOLVED_STATUSES = {"RESOLVED", "REMEDIATED", "FIXED", "CLOSED"}

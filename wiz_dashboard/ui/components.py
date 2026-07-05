@@ -681,7 +681,7 @@ def severity_skeleton():
     )
 
 
-def severity_cards(counts, prev=None, per_sev=None):
+def severity_cards(counts, prev=None, per_sev=None, scope=None):
     """The severity breakdown as ONE card with a row per level (Critical→Low).
 
     A single shadcn Card (see ``stat_list_card``) stacks four rows, each pairing a colour
@@ -690,9 +690,18 @@ def severity_cards(counts, prev=None, per_sev=None):
     findings page (OS / Cloud / Identity); Info/Unknown are omitted by design (see
     ``_BREAKDOWN_SEVERITIES``). ``prev`` is a previous ``{severity: count}`` mapping.
     ``per_sev`` is the MTTR per-severity dict (``{sev: {"open": N, "resolved": N, …}}``)
-    used to render an "N open · N resolved" sub-line under each count."""
+    used to render an "N open · N resolved" sub-line under each count.
+
+    ``scope`` (optional severity iterable — the display filter) omits out-of-scope rows
+    entirely rather than rendering a misleading ``0`` ("0 medium" would read as
+    scanned-and-clean when the severity is merely hidden). Callers surface the scope in
+    a caption; the card itself stays quiet."""
+    rows = (
+        [s for s in _BREAKDOWN_SEVERITIES if s in set(scope)]
+        if scope else _BREAKDOWN_SEVERITIES
+    )
     items = []
-    for sev in _BREAKDOWN_SEVERITIES:
+    for sev in rows:
         cur = counts.get(sev, 0)
         p = prev.get(sev) if prev else None
         item = {
