@@ -10,13 +10,19 @@ one cache: the OS-vulnerabilities scan clears ``history_cached`` after writing a
 and the MTTR page must observe that same invalidation.
 """
 
+import pandas as pd
 import streamlit as st
 
-from wiz_dashboard.data import history, ledger, snapshot
+from wiz_dashboard import config
+from wiz_dashboard.data import history, ledger, settings, snapshot
 from wiz_dashboard.data.transform import df_signature, extract_nodes, nodes_to_dataframe
 from wiz_dashboard.domain import lifecycle
 from wiz_dashboard.domain.metrics import calculate_mttr
-from wiz_dashboard.domain.severity import count_by_severity
+from wiz_dashboard.domain.severity import (
+    count_by_severity,
+    normalize_severity,
+    normalize_severity_series,
+)
 
 
 def df_token(df, prefix: str = "os") -> str:
@@ -79,6 +85,56 @@ def clear_scan_resources() -> None:
     raw_payload_cached.clear()
 
 
+# ---- Display filter (Settings → "shown in the interface") -------------------------- #
+# The persisted display scope hides out-of-scope severities from EVERY view and
+# analytic ("hide everywhere"); the data stays in session state and the ledger, so
+# widening the scope brings it straight back. UNKNOWN (unclassifiable) rows are never
+# hidden: they signal a normalization surprise, and hiding anomalies would be dishonest.
+def display_scope():
+    """The persisted display filter, or ``None`` when it covers every severity."""
+    scope = settings.get_display_severities()
+    return None if set(scope) == set(config.SELECTABLE_SEVERITIES) else scope
+
+
+def scope_keep(scope) -> set:
+    """The severities a scope keeps visible (the scope itself + UNKNOWN)."""
+    return set(scope) | {"UNKNOWN"}
+
+
+@st.cache_data(show_spinner=False)
+def display_df_cached(sig: str, _scope, _df):
+    """``_df`` filtered to the display scope. ``sig`` embeds the scope (see
+    ``display_view``); ``_scope``/``_df`` stay out of the cache key."""
+    if not _scope or _df is None or getattr(_df, "empty", True) or "severity" not in _df.columns:
+        return _df
+    return _df[normalize_severity_series(_df["severity"]).isin(scope_keep(_scope))]
+
+
+def display_view(prefix: str = "os"):
+    """``(df, sig)`` for the loaded findings frame under the display scope.
+
+    The drop-in replacement for reading ``{prefix}_df`` from session state directly:
+    pages MUST key downstream cached derivations on the returned ``sig``, never on
+    ``df_token`` of the filtered frame (``df_token`` reads the session token stamped for
+    the FULL frame and would collide the two)."""
+    full = st.session_state.get(f"{prefix}_df")
+    full = full if full is not None else pd.DataFrame()
+    base_sig = df_token(full, prefix)
+    scope = display_scope()
+    if not scope or full.empty:
+        return full, base_sig
+    sig = f"{base_sig}|show:{','.join(scope)}"
+    return display_df_cached(sig, scope, full), sig
+
+
+def filter_counts(counts, scope):
+    """A per-severity count dict restricted to the display scope (UNKNOWN kept)."""
+    if not counts or not scope:
+        return counts
+    keep = scope_keep(scope)
+    return {k: v for k, v in counts.items() if k in keep}
+
+
 @st.cache_data(show_spinner=False)
 def counts_cached(sig: str, _df):
     return count_by_severity(_df)
@@ -96,10 +152,16 @@ def history_cached():
 
 # ---- Durable ledger derivations (cleared by ui.scan._persist_scan after each scan) ----
 # These read the SQLite base rather than the in-session DataFrame, so MTTR/History pages
-# reflect lifecycles observed across ALL saved scans, not just the current one.
+# reflect lifecycles observed across ALL saved scans, not just the current one. Each takes
+# the display scope as a cache-key argument (pass ``display_scope()``); ``None`` means
+# unfiltered, and both variants can stay warm side by side.
 @st.cache_data(show_spinner=False)
-def ledger_mttr_cached():
-    return lifecycle.mttr_from_ledger(ledger.load_open_and_resolved())
+def ledger_mttr_cached(scope=None):
+    rows = ledger.load_open_and_resolved()
+    if scope:
+        keep = scope_keep(scope)
+        rows = [r for r in rows if normalize_severity(r.get("severity")) in keep]
+    return lifecycle.mttr_from_ledger(rows)
 
 
 @st.cache_data(show_spinner=False)
@@ -108,20 +170,23 @@ def ledger_scans_cached():
 
 
 @st.cache_data(show_spinner=False)
-def ledger_base_cached():
-    return ledger.load_base_df()
+def ledger_base_cached(scope=None):
+    df = ledger.load_base_df()
+    if scope and not df.empty and "severity" in df.columns:
+        df = df[normalize_severity_series(df["severity"]).isin(scope_keep(scope))]
+    return df
 
 
 @st.cache_data(show_spinner=False)
-def ledger_trend_cached():
-    return ledger.load_trend_df()
+def ledger_trend_cached(scope=None):
+    return ledger.load_trend_df(severities=scope)
 
 
 @st.cache_data(show_spinner=False)
-def previous_severity_counts_cached():
+def previous_severity_counts_cached(scope=None):
     """Durable previous-flat-scan per-severity counts — the cross-session baseline for the
     severity breakdown's change badges (cheap on the OS page's filter-fragment reruns)."""
-    return ledger.previous_severity_counts()
+    return filter_counts(ledger.previous_severity_counts(), scope)
 
 
 def clear_ledger_caches() -> None:

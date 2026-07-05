@@ -15,7 +15,7 @@ import streamlit as st
 
 from os_vulns import WizDeltaFilterError
 from wiz_dashboard.data import cache as disk_cache
-from wiz_dashboard.data import history, ledger
+from wiz_dashboard.data import history, ledger, settings
 from wiz_dashboard.data.client import fetch_findings, fetch_findings_delta
 from wiz_dashboard.data.transform import (
     coerce_results,
@@ -23,6 +23,7 @@ from wiz_dashboard.data.transform import (
     merge_nodes,
     nodes_to_dataframe,
 )
+from wiz_dashboard.domain.formatting import format_bytes
 from wiz_dashboard.domain.metrics import calculate_mttr, overall_sla_oldest
 from wiz_dashboard.models import schema
 from wiz_dashboard.ui import components as ui
@@ -49,21 +50,41 @@ def _fetch_fraction(found: int, total) -> float | None:
     return min(found / total, 1.0) * _FETCH_SHARE
 
 
+def scope_label(scope):
+    """Human label for a severity-scope tuple ("Critical + High"); ``None`` when unscoped."""
+    if not scope:
+        return None
+    return " + ".join(str(s).title() for s in scope)
+
+
+def current_fetch_scope():
+    """The saved fetch scope as ``reconcile``/persist expect it: a canonical tuple, or
+    ``None`` when the scope covers every selectable severity (an unscoped scan)."""
+    scope = settings.get_fetch_severities()
+    return None if settings.api_severity_filter(scope) is None else scope
+
+
 def freshness_caption(meta, scans_df) -> str:
     """The sidebar freshness line.
 
     Prefers this session's scan (``meta`` = ``last_scan_meta``). When there's no in-session
     scan but the durable base already holds scans, summarise its most recent one, so a page
     rendered from saved data never reads a misleading "No scan yet". Only when nothing exists
-    anywhere does it prompt the first scan. ``scans_df`` is ``ledger.load_scans_df()`` (newest
-    first) or ``None`` (callers skip the read when ``meta`` is present)."""
+    anywhere does it prompt the first scan. A severity-scoped scan says so ("Critical + High
+    only") — honest state: the reader must know the count doesn't cover everything.
+    ``scans_df`` is ``ledger.load_scans_df()`` (newest first) or ``None`` (callers skip the
+    read when ``meta`` is present)."""
     if meta:
-        return f"Last scan · {meta['count']:,} findings · {meta['at']}"
+        label = scope_label(meta.get("severities"))
+        suffix = f" · {label} only" if label else ""
+        return f"Last scan · {meta['count']:,} findings · {meta['at']}{suffix}"
     if scans_df is not None and not getattr(scans_df, "empty", True):
         row = scans_df.iloc[0]
         ts = row.get("ts")
         when = ts.strftime("%Y-%m-%d %H:%M UTC") if pd.notna(ts) else "unknown time"
-        return f"Saved base · {int(row.get('total', 0)):,} findings · last scan {when}"
+        label = scope_label(ledger.parse_severities(row.get("severities")))
+        suffix = f" · {label} only" if label else ""
+        return f"Saved base · {int(row.get('total', 0)):,} findings · last scan {when}{suffix}"
     return "No scan yet. Click **Run scan** to load findings."
 
 
@@ -133,10 +154,20 @@ def run_scan(force: bool, has_creds: bool, sample_shape: str | None = None) -> N
                 if frac is not None:
                     bar.progress(frac, text=f"Fetched {found:,} of {int(total):,} findings")
 
+            # Read the fetch scope ONCE and use the same value for fetch and persist —
+            # a mid-scan Settings save must never split the two.
+            fetch_scope = current_fetch_scope()
+            if fetch_scope is not None and shape == "grouped":
+                # Grouped dry-run samples carry per-severity counts, not per-finding
+                # rows, so the scope can't filter them — say so instead of pretending.
+                st.caption("Severity scope doesn't apply to the grouped sample; "
+                           "showing all severities.")
+
             status.update(label="Querying Wiz…")
             results = fetch_findings(
                 dry_run=not has_creds, use_config=has_creds,
                 sample_shape=shape, sample_seq=sample_seq,
+                severities=fetch_scope,
                 _progress=_on_page if has_creds else None,
             )
             if results is None:
@@ -147,7 +178,8 @@ def run_scan(force: bool, has_creds: bool, sample_shape: str | None = None) -> N
             bar.progress(_PHASE_PARSE, text="Parsing findings…")
             nodes = extract_nodes(results)
             count = _commit_scan(nodes, results, mode="live" if has_creds else "dry-run",
-                                 status=status, bar=bar, prev_counts=prev)
+                                 status=status, bar=bar, prev_counts=prev,
+                                 scanned_severities=fetch_scope)
     except Exception as exc:  # noqa: BLE001 -- surfaced to the user with a traceback
         ui.show_exception(
             exc,
@@ -159,14 +191,17 @@ def run_scan(force: bool, has_creds: bool, sample_shape: str | None = None) -> N
     ui.show_toast(f"Loaded {count:,} findings", "success")
 
 
-def _commit_scan(nodes, results, *, mode: str, status, bar, prev_counts) -> int:
+def _commit_scan(nodes, results, *, mode: str, status, bar, prev_counts,
+                 scanned_severities=None) -> int:
     """Shared post-fetch pipeline: build the frame, stamp the session, persist, snapshot.
 
     The single writer of a NEW scan's side effects, used by both the full ``run_scan``
     and the incremental quick refresh so the two can never drift: frame build → scan
     identity/token → ``os_*`` session stamp → durable persist (ledger + archive + frame
     snapshot) → MTTR history point. ``status``/``bar`` are the caller's ``st.status`` and
-    ``st.progress`` handles. Returns the finding count.
+    ``st.progress`` handles. ``scanned_severities`` is the severity scope this scan was
+    fetched with (``None`` = all); it is stamped on the session and recorded with the
+    persisted scan. Returns the finding count.
     """
     status.update(label=f"Building findings table ({len(nodes):,} findings)…")
     bar.progress(_PHASE_TABLE, text=f"Building findings table ({len(nodes):,} findings)…")
@@ -191,14 +226,17 @@ def _commit_scan(nodes, results, *, mode: str, status, bar, prev_counts) -> int:
     _drop_deferred_payloads()
     st.session_state["os_prev_counts"] = prev_counts
     st.session_state["os_counts"] = _derived.counts_cached(token, df)
+    st.session_state["os_scan_scope"] = scanned_severities
     st.session_state["last_scan_meta"] = {
         "count": len(nodes),
         "mode": mode,
         "at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        "severities": scanned_severities,
     }
     status.update(label="Saving scan & reconciling ledger…")
     bar.progress(_PHASE_PERSIST, text="Saving scan & reconciling ledger…")
-    _persist_scan(nodes, df, results, mode=mode, scan_id=scan_id)
+    _persist_scan(nodes, df, results, mode=mode, scan_id=scan_id,
+                  scanned_severities=scanned_severities)
     _record_mttr_snapshot(df, st.session_state["os_counts"])
     _derived.history_cached.clear()  # a fresh snapshot was just written; reflect it
     bar.progress(1.0, text=f"Loaded {len(nodes):,} findings")
@@ -256,6 +294,18 @@ def run_incremental_scan(has_creds: bool) -> None:
                 "%Y-%m-%dT%H:%M:%SZ"
             )
 
+            # A delta always rides the BASELINE's severity scope, never the current
+            # Settings value: the merged set must stay coherent with the baseline it's
+            # merged into (a mixed-scope merge would claim coverage it doesn't have).
+            baseline_scope = ledger.parse_severities(row.get("severities"))
+            if current_fetch_scope() != baseline_scope:
+                st.warning(
+                    "The scan scope changed since the last full scan. Quick refresh "
+                    f"keeps the previous scope ({scope_label(baseline_scope) or 'all severities'}); "
+                    "run a full scan to apply the new one.",
+                    icon="⚠️",
+                )
+
             bar = st.progress(0.0, text="Loading baseline scan…")
             status.update(label="Loading baseline scan…")
             scan_id = str(row["scan_id"])
@@ -291,6 +341,7 @@ def run_incremental_scan(has_creds: bool) -> None:
             status.update(label=f"Fetching findings changed since {since_iso}…")
             delta_raw = fetch_findings_delta(
                 since_iso, has_creds=has_creds, sample_seq=sample_seq,
+                severities=baseline_scope,
                 _progress=_on_delta_page if has_creds else None,
             )
             delta_nodes = extract_nodes(delta_raw)
@@ -316,6 +367,7 @@ def run_incremental_scan(has_creds: bool) -> None:
                 merged, results,
                 mode="incremental" if has_creds else "dry-run-incremental",
                 status=status, bar=bar, prev_counts=prev,
+                scanned_severities=baseline_scope,  # the merged set's honest coverage
             )
             # The full-fetch cache still holds the PRE-incremental payload; a later
             # "Run scan" served from it would persist stale data and falsely
@@ -404,10 +456,13 @@ def _hydrate_from_saved(row, *, clear_caches: bool) -> int:
         else datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     )
     count = int(row.get("total") or len(df))
+    saved_scope = ledger.parse_severities(row.get("severities"))
+    st.session_state["os_scan_scope"] = saved_scope
     st.session_state["last_scan_meta"] = {
         "count": count,
         "mode": row.get("mode", "unknown"),
         "at": when,
+        "severities": saved_scope,
     }
     if clear_caches:
         _derived.clear_ledger_caches()
@@ -527,7 +582,8 @@ def autoload_latest_scan() -> bool:
     return True
 
 
-def _persist_scan(nodes, df, results, *, mode, db_path=None, scan_id=None) -> None:
+def _persist_scan(nodes, df, results, *, mode, db_path=None, scan_id=None,
+                  scanned_severities=None) -> None:
     """Save this scan to the durable base and reconcile the vulnerability ledger.
 
     Grouped-by-asset responses are archived but skip per-vuln reconciliation (no
@@ -538,6 +594,8 @@ def _persist_scan(nodes, df, results, *, mode, db_path=None, scan_id=None) -> No
     """
     try:
         if schema.is_grouped_shape(nodes):
+            # Grouped scans only exist in dry-run, where the sample is NOT severity-
+            # filtered — recording a scope on them would claim a coverage they don't have.
             deltas = ledger.persist_grouped_scan(
                 nodes, mode=mode, raw=results, db_path=db_path, scan_id=scan_id
             )
@@ -547,7 +605,8 @@ def _persist_scan(nodes, df, results, *, mode, db_path=None, scan_id=None) -> No
             # ledger._records_from_payload feeds replay the same shape — keep them in sync.
             # Passing df writes the parsed-frame snapshot other sessions start up from.
             deltas = ledger.persist_flat_scan(
-                nodes, mode=mode, raw=results, db_path=db_path, scan_id=scan_id, df=df
+                nodes, mode=mode, raw=results, db_path=db_path, scan_id=scan_id, df=df,
+                scanned_severities=scanned_severities,
             )
         st.session_state["scan_deltas"] = deltas
         _derived.clear_ledger_caches()
@@ -555,6 +614,35 @@ def _persist_scan(nodes, df, results, *, mode, db_path=None, scan_id=None) -> No
     except Exception:
         logger.warning("Failed to persist scan to ledger", exc_info=True)
         ui.show_toast("Couldn't save this scan to the durable base.", "warning")
+        return
+    _auto_compact(db_path=db_path)
+
+
+def _auto_compact(db_path=None) -> None:
+    """Run retention compaction after a successful persist.
+
+    Retention is on by default (180 days), so the toast below is deliberate: the first
+    real seal must never be silent. A no-op run (nothing old enough) shows nothing.
+    Mirrors ``_persist_scan``'s contract — a failure here never breaks the scan.
+    """
+    try:
+        if not settings.get_auto_compact():
+            return
+        days = settings.get_retention_days()
+        if days is None:
+            return
+        result = ledger.compact_ledger(days, db_path=db_path)
+        if result.get("no_op"):
+            return
+        _derived.clear_ledger_caches()
+        freed = result["archive_bytes_freed"] + result["db_bytes_freed"]
+        ui.show_toast(
+            f"Compacted {result['scans_sealed']} old scan(s) — "
+            f"{result['episodes_created']} closed finding(s) rolled up, "
+            f"{format_bytes(freed)} reclaimed.", "info",
+        )
+    except Exception:
+        logger.warning("Auto-compaction failed", exc_info=True)
 
 
 def _record_mttr_snapshot(df, counts, filename=None) -> None:

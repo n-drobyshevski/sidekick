@@ -22,6 +22,7 @@ from wiz_dashboard.ui.pages import (
     os_vulns,
     reports,
     scan_history,
+    settings as settings_page,
 )
 
 # Brand wordmark asset, resolved package-relative (like theme.CSS_PATH) so it loads
@@ -119,6 +120,11 @@ def _sidebar_extras() -> bool:
         # state belongs to the footer pill and what's loaded belongs to the freshness line
         # below, so no single fact is printed in the rail more than once.
         st.caption("Live · queries Wiz" if has_creds else "Dry-run · loads sample data")
+        # Severity scope AT the action too: what the next Run scan will pull. Text-only
+        # (no color semantics); silent when the scope covers everything.
+        scope_text = scan.scope_label(scan.current_fetch_scope())
+        if scope_text:
+            st.caption(f"Scope: {scope_text}")
         # Periodic-reconciliation nudge: when the freshest data is an incremental merge,
         # say how stale the deletion picture is (quick refresh can't observe removals).
         if has_flat_baseline:
@@ -213,6 +219,12 @@ def main() -> None:
         "Exports": st.Page(
             exports.page, title="Exports", icon=":material/download:", url_path="exports"
         ),
+        "Settings": st.Page(
+            settings_page.page,
+            title="Settings",
+            icon=":material/settings:",
+            url_path="settings",
+        ),
     }
     st.session_state["_pages"] = pages
 
@@ -224,6 +236,7 @@ def main() -> None:
                 pages["Scan History"],
             ],
             "Data": [pages["Reports"], pages["Exports"]],
+            "Preferences": [pages["Settings"]],
         }
     )
     nav.run()

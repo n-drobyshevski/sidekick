@@ -621,9 +621,12 @@ def test_schema_v1_migrates_to_v2(tmp_path, app):
 
     conn = sqlite3.connect(db)
     try:
-        assert conn.execute("SELECT version FROM schema_meta").fetchone()[0] == 2
+        assert (conn.execute("SELECT version FROM schema_meta").fetchone()[0]
+                == ledger.SCHEMA_VERSION)
         cols = {r[1] for r in conn.execute("PRAGMA table_info(vuln_ledger)")}
         assert "latest_json" not in cols
+        scan_cols = {r[1] for r in conn.execute("PRAGMA table_info(scans)")}
+        assert "severities" in scan_cols  # v3 lands in the same migration pass
     finally:
         conn.close()
     base = ledger.load_base_df(db)
@@ -709,7 +712,8 @@ def test_compact_archives_migrates_v1_schema(tmp_path):
     ledger.compact_archives(db)
     conn = sqlite3.connect(db)
     try:
-        assert conn.execute("SELECT version FROM schema_meta").fetchone()[0] == 2
+        assert (conn.execute("SELECT version FROM schema_meta").fetchone()[0]
+                == ledger.SCHEMA_VERSION)
         cols = {r[1] for r in conn.execute("PRAGMA table_info(vuln_ledger)")}
         assert "latest_json" not in cols
     finally:
@@ -780,6 +784,152 @@ def test_merged_incremental_never_false_resolves_and_replays(tmp_path):
     base = ledger.load_base_df(db).set_index("vuln_key")
     assert set(base.index) == {"id:v1", "id:v2"}
     assert (base["status"] == "OPEN").all()
+
+
+# --------------------------------------------------------------------------- #
+#  Severity scope (schema v3: scans.severities)
+# --------------------------------------------------------------------------- #
+def test_serialize_parse_severities_roundtrip():
+    assert ledger.serialize_severities(None) is None
+    assert ledger.parse_severities(None) is None
+    assert ledger.parse_severities("not json") is None
+    text = ledger.serialize_severities(("HIGH", "CRITICAL"))
+    assert ledger.parse_severities(text) == ("CRITICAL", "HIGH")  # canonical order
+    # Full selectable scope IS an unscoped scan — collapses to NULL.
+    from wiz_dashboard import config
+    assert ledger.serialize_severities(config.SELECTABLE_SEVERITIES) is None
+
+
+def test_persist_records_severity_scope_column(tmp_path):
+    db = _db(tmp_path)
+    ledger.persist_flat_scan([_mk("v1")], mode="dry-run", db_path=db,
+                             scan_id="2026-05-01T00:00:00Z",
+                             scanned_severities=("CRITICAL", "HIGH"))
+    ledger.persist_flat_scan([_mk("v2")], mode="dry-run", db_path=db,
+                             scan_id="2026-05-02T00:00:00Z")
+    scans = ledger.load_scans_df(db).set_index("scan_id")
+    assert ledger.parse_severities(scans.loc["2026-05-01T00:00:00Z", "severities"]) == \
+        ("CRITICAL", "HIGH")
+    assert scans.loc["2026-05-02T00:00:00Z", "severities"] is None  # unscoped -> NULL
+
+
+def test_scoped_scan_never_false_resolves_unscanned_severity(tmp_path):
+    # Wide scan (HIGH + MEDIUM open), then a Critical+High-scoped scan that naturally
+    # omits the MEDIUM: it must stay OPEN, while a genuinely-disappeared HIGH resolves.
+    db = _db(tmp_path)
+    wide = [_mk("h1", sev="HIGH"), _mk("m1", sev="MEDIUM")]
+    ledger.persist_flat_scan(wide, mode="dry-run", db_path=db,
+                             scan_id="2026-05-01T00:00:00Z")
+    ledger.persist_flat_scan([], mode="dry-run", db_path=db,
+                             scan_id="2026-05-02T00:00:00Z",
+                             scanned_severities=("CRITICAL", "HIGH"))
+    base = ledger.load_base_df(db).set_index("vuln_key")
+    assert base.loc["id:m1", "status"] == "OPEN"          # unscanned -> untouched
+    assert base.loc["id:h1", "status"] == "RESOLVED"       # in-scope -> disappeared
+    assert base.loc["id:h1", "resolution_src"] == "disappeared"
+
+
+def test_widen_after_scoped_scans_resolves_vanished_medium(tmp_path):
+    # [wide, scoped, scoped, wide]: a MEDIUM present only in scan 1 must resolve on
+    # scan 4 (the first scan that could observe its absence), not leak OPEN forever.
+    db = _db(tmp_path)
+    ch = ("CRITICAL", "HIGH")
+    ledger.persist_flat_scan([_mk("h1", sev="HIGH"), _mk("m1", sev="MEDIUM")],
+                             mode="dry-run", db_path=db, scan_id="2026-05-01T00:00:00Z")
+    ledger.persist_flat_scan([_mk("h1", sev="HIGH")], mode="dry-run", db_path=db,
+                             scan_id="2026-05-02T00:00:00Z", scanned_severities=ch)
+    ledger.persist_flat_scan([_mk("h1", sev="HIGH")], mode="dry-run", db_path=db,
+                             scan_id="2026-05-03T00:00:00Z", scanned_severities=ch)
+    assert ledger.load_base_df(db).set_index("vuln_key").loc["id:m1", "status"] == "OPEN"
+
+    ledger.persist_flat_scan([_mk("h1", sev="HIGH")], mode="dry-run", db_path=db,
+                             scan_id="2026-05-04T00:00:00Z")  # wide again
+    base = ledger.load_base_df(db).set_index("vuln_key")
+    assert base.loc["id:m1", "status"] == "RESOLVED"
+    assert base.loc["id:m1", "resolution_src"] == "disappeared"
+    assert base.loc["id:h1", "status"] == "OPEN"  # survivor untouched
+
+
+def test_delete_rebuild_replays_severity_scope_faithfully(tmp_path):
+    # Wide scan A, scoped scan B (MEDIUM legitimately absent), plus an unrelated scan C.
+    # Deleting C replays A and B; the rebuild must NOT mass-resolve the MEDIUM (the
+    # false-resolution regression a scope-blind replay would produce).
+    db = _db(tmp_path)
+    wide = [_mk("h1", sev="HIGH"), _mk("m1", sev="MEDIUM")]
+    ledger.persist_flat_scan(wide, mode="dry-run",
+                             raw={"data": {"vulnerabilityFindings": {"nodes": wide}}},
+                             db_path=db, scan_id="2026-05-01T00:00:00Z")
+    scoped = [_mk("h1", sev="HIGH")]
+    ledger.persist_flat_scan(scoped, mode="dry-run",
+                             raw={"data": {"vulnerabilityFindings": {"nodes": scoped}}},
+                             db_path=db, scan_id="2026-05-02T00:00:00Z",
+                             scanned_severities=("CRITICAL", "HIGH"))
+    third = [_mk("h1", sev="HIGH")]
+    ledger.persist_flat_scan(third, mode="dry-run",
+                             raw={"data": {"vulnerabilityFindings": {"nodes": third}}},
+                             db_path=db, scan_id="2026-05-03T00:00:00Z",
+                             scanned_severities=("CRITICAL", "HIGH"))
+
+    ledger.delete_scans(["2026-05-03T00:00:00Z"], db_path=db)
+
+    base = ledger.load_base_df(db).set_index("vuln_key")
+    assert base.loc["id:m1", "status"] == "OPEN"  # scope survived the replay
+    disappeared = base[base["resolution_src"] == "disappeared"]
+    assert disappeared.empty
+    # The surviving scoped scan still carries its stored scope.
+    scans = ledger.load_scans_df(db).set_index("scan_id")
+    assert ledger.parse_severities(scans.loc["2026-05-02T00:00:00Z", "severities"]) == \
+        ("CRITICAL", "HIGH")
+
+
+def test_schema_v2_migrates_to_v3(tmp_path):
+    # Hand-build a v2 DB (no scans.severities, version=2); init_db must add the column,
+    # bump the version, and read historical rows as unscoped (NULL).
+    db = _db(tmp_path)
+    conn = sqlite3.connect(db)
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE scans (scan_id TEXT PRIMARY KEY, ts TEXT NOT NULL,
+                mode TEXT NOT NULL, shape TEXT NOT NULL, total INTEGER NOT NULL,
+                new_count INTEGER DEFAULT 0, resolved_count INTEGER DEFAULT 0,
+                reopened_count INTEGER DEFAULT 0, raw_path TEXT);
+            CREATE TABLE vuln_ledger (vuln_key TEXT PRIMARY KEY, cve TEXT, severity TEXT,
+                asset_id TEXT, asset_name TEXT, asset_type TEXT, cloud TEXT,
+                first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, status TEXT NOT NULL,
+                resolved_at TEXT, resolution_src TEXT, reopened_count INTEGER DEFAULT 0,
+                first_scan_id TEXT, last_scan_id TEXT);
+            CREATE TABLE observations (scan_id TEXT NOT NULL, vuln_key TEXT NOT NULL,
+                present INTEGER NOT NULL, severity TEXT, status TEXT,
+                PRIMARY KEY (scan_id, vuln_key));
+            CREATE TABLE schema_meta (version INTEGER NOT NULL);
+            INSERT INTO schema_meta (version) VALUES (2);
+            INSERT INTO scans VALUES ('2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z',
+                'dry-run', 'flat', 1, 1, 0, 0, NULL);
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    ledger.init_db(db)
+
+    conn = sqlite3.connect(db)
+    try:
+        assert (conn.execute("SELECT version FROM schema_meta").fetchone()[0]
+                == ledger.SCHEMA_VERSION)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(scans)")}
+        assert "severities" in cols
+        assert conn.execute(
+            "SELECT severities FROM scans WHERE scan_id='2026-05-01T00:00:00Z'"
+        ).fetchone()[0] is None
+    finally:
+        conn.close()
+    # The migrated DB accepts a scoped follow-up scan.
+    ledger.persist_flat_scan([_mk("v1")], mode="dry-run", db_path=db,
+                             scan_id="2026-05-02T00:00:00Z",
+                             scanned_severities=("CRITICAL", "HIGH"))
+    assert len(ledger.load_scans_df(db)) == 2
 
 
 def test_load_latest_flat_scan_row_skips_grouped(tmp_path):

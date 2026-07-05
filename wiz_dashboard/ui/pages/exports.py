@@ -31,10 +31,16 @@ def page():
         )
         return
 
+    if _derived.display_scope():
+        st.caption(
+            "CSV exports follow the display filter (Settings). Raw JSON is always the "
+            "verbatim API payload of the last scan."
+        )
+
     for label, info in sources.items():
         df, raw, prefix = info["df"], info["raw"], info["prefix"]
         clean = df[[c for c in df.columns if not str(c).startswith("_")]]
-        token = _derived.df_token(df, prefix)
+        token = info["sig"]  # display-scoped token from loaded_sources
 
         def build_csv(clean=clean):
             return clean.to_csv(index=False).encode("utf-8")

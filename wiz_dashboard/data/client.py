@@ -8,9 +8,30 @@ import os_vulns
 from wiz_dashboard.config import DEFAULT_CACHE_TTL_MINUTES, load_wiz_config
 from wiz_dashboard.data import cache as disk_cache
 from wiz_dashboard.data import demo
+from wiz_dashboard.data.settings import api_severity_filter
 from wiz_dashboard.data.transform import coerce_results
+from wiz_dashboard.domain.severity import normalize_severity
 
 logger = logging.getLogger(__name__)
+
+
+def _filter_sample_nodes(raw, severities):
+    """Apply the severity scope to a dry-run *flat* sample envelope.
+
+    Live scans filter server-side; offline the scope must still visibly work, so the
+    demo nodes are filtered post-load by normalized severity. Returns a new envelope
+    (nodes themselves are shared, not copied). Grouped samples carry per-severity
+    *counts*, not per-finding rows, and pass through unfiltered elsewhere.
+    """
+    if severities is None:
+        return raw
+    scope = set(severities)
+    try:
+        nodes = raw["data"]["vulnerabilityFindings"]["nodes"]
+    except (KeyError, TypeError):
+        return raw
+    kept = [n for n in nodes if normalize_severity(n.get("severity")) in scope]
+    return {"data": {"vulnerabilityFindings": {"nodes": kept}}}
 
 
 def _use_disk_cache_or_raise(reason: str, exc: Exception):
@@ -51,32 +72,54 @@ def _use_disk_cache_or_raise(reason: str, exc: Exception):
 @st.cache_data(ttl=DEFAULT_CACHE_TTL_MINUTES * 60, show_spinner=False, max_entries=2)
 def fetch_findings(dry_run: bool = True, use_config: bool = False,
                    sample_shape: str = "grouped", sample_seq: int = 0,
-                   _progress=None):
+                   severities: tuple = None, _progress=None):
     """Fetch + normalize findings, memoized for the configured TTL.
 
-    Cache key is (dry_run, use_config, sample_shape, sample_seq) -- never the secret. The
-    OS page's "Show individual findings" degroup path calls ``fetch_findings.clear()`` to
-    force a re-fetch within the TTL. ``sample_shape`` selects the dry-run sample ("grouped"
-    mirrors the real API; "flat" keeps MTTR/SLA data)
+    Cache key is (dry_run, use_config, sample_shape, sample_seq, severities) -- never the
+    secret. The OS page's "Show individual findings" degroup path calls
+    ``fetch_findings.clear()`` to force a re-fetch within the TTL. ``sample_shape`` selects
+    the dry-run sample ("grouped" mirrors the real API; "flat" keeps MTTR/SLA data)
     and is ignored in live mode. ``sample_seq`` steps the *flat* dry-run sample through the
     evolving demo snapshots (see ``data.demo``) so scan-over-scan badges show non-zero
     deltas offline; ``0`` is the unchanged baseline. On a live-fetch failure we fall back to
     the on-disk snapshot (with a visible "stale data" warning) so the UI degrades gracefully
     instead of silently pretending a cached scan is fresh.
 
+    ``severities`` (canonical ordered tuple from ``settings.get_fetch_severities``, or
+    ``None`` for all) scopes the pull: live mode filters server-side via ``filterBy``
+    (the whole point — smaller payloads, faster scans); dry-run filters the flat sample
+    post-load so the setting visibly works offline. A scope covering every selectable
+    severity emits no filter and is byte-identical to the unscoped call. Being a real
+    cache-key argument, a scope change is a natural cache miss — no ``.clear()`` needed.
+
     ``_progress`` (optional ``callable(pages_done, findings_so_far, total)``) reports live
     pagination progress on a live fetch. The leading underscore keeps it out of the
     ``st.cache_data`` key, so a cache hit stays instant and the callback simply doesn't fire.
     """
     cfg = load_wiz_config() if use_config else None
+    api_values = api_severity_filter(severities) if severities is not None else None
     try:
         if dry_run and sample_shape == "flat":
-            raw = demo.evolving_flat_sample(sample_seq)
+            raw = _filter_sample_nodes(
+                demo.evolving_flat_sample(sample_seq),
+                severities if api_values is not None else None,
+            )
         else:
+            extra = {"severity": api_values} if api_values is not None else None
             raw = os_vulns.fetch_findings(dry_run=dry_run, config=cfg,
-                                          sample_shape=sample_shape, progress=_progress)
+                                          sample_shape=sample_shape, progress=_progress,
+                                          extra_filter_by=extra)
     except TimeoutError as exc:
         return _use_disk_cache_or_raise("The Wiz API did not respond in time", exc)
+    except os_vulns.WizDeltaFilterError as exc:
+        # The tenant rejected the injected filterBy — with a severity scope that means
+        # the severity filter itself. Serving the stale disk snapshot here would silently
+        # mask a misconfiguration, so surface the specific cause instead.
+        raise RuntimeError(
+            "The Wiz tenant rejected the severity-scoped query. Set the scan scope to "
+            "all severities in Settings and re-run, or verify the tenant supports the "
+            "vulnerabilityFindings severity filter."
+        ) from exc
     except RuntimeError as exc:
         msg = str(exc)
         if "wiz_sdk not installed" in msg:
@@ -109,7 +152,7 @@ def fetch_findings(dry_run: bool = True, use_config: bool = False,
 
 
 def fetch_findings_delta(since_iso, *, has_creds: bool, sample_seq: int = 0,
-                         _progress=None):
+                         severities: tuple = None, _progress=None):
     """Fetch only findings changed since ``since_iso`` — the incremental-refresh read.
 
     Deliberately UNCACHED (no ``st.cache_data``): a delta is one or two requests and must
@@ -123,13 +166,21 @@ def fetch_findings_delta(since_iso, *, has_creds: bool, sample_seq: int = 0,
     Live mode injects ``{"updatedAt": {"after": since_iso}}`` on top of the baseline
     ``filterBy`` (which keeps ``status`` incl. RESOLVED, so resolutions are returned as
     RESOLVED nodes). Dry-run returns the offline demo delta for ``sample_seq``.
+
+    ``severities`` MUST be the **baseline scan's stored scope** (see
+    ``ledger.parse_severities``), never the current Settings value: the merged result has
+    to stay coherent with the baseline it's merged into. ``None`` means unscoped.
     """
     if not has_creds:
-        return demo.incremental_flat_sample(sample_seq)
+        return _filter_sample_nodes(demo.incremental_flat_sample(sample_seq), severities)
     cfg = load_wiz_config()
+    extra = {"updatedAt": {"after": since_iso}}
+    api_values = api_severity_filter(severities) if severities is not None else None
+    if api_values is not None:
+        extra["severity"] = api_values
     raw = os_vulns.fetch_findings(
         dry_run=False, config=cfg, progress=_progress,
-        extra_filter_by={"updatedAt": {"after": since_iso}},
+        extra_filter_by=extra,
     )
     results = coerce_results(raw)
     if results is None or not isinstance(results, (dict, list)):
