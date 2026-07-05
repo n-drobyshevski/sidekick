@@ -20,7 +20,17 @@ from wiz_dashboard.ui.pages import _derived
 
 def page():
     ui.render_page_header("MTTR & SLA", "Remediation performance for OS findings")
+    _body()
 
+
+@st.fragment
+def _body() -> None:
+    """Everything below the header, as one fragment. The Domain selectbox scopes every
+    metric and trend on the page (the KPI badges read the trend via ``_prev_from_trend``),
+    so the regions can't rerun independently of each other — but they *can* rerun
+    independently of the app chrome: changing the domain reruns only this body, skipping
+    the sidebar/scan/nav script. Zero-arg by design: fragment args are captured at the
+    last full run, so all inputs are re-read here via session state and cached getters."""
     df, sig = _derived.display_view()
     nodes = st.session_state.get("os_nodes")
     scope = _derived.display_scope()
