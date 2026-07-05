@@ -81,6 +81,43 @@ class TestDisplayClamp:
         assert settings.get_display_severities() == ("HIGH",)
 
 
+class TestDomains:
+    def test_missing_config_reads_as_off(self):
+        assert settings.get_domains() == {"version": 0, "items": []}
+        assert settings.domains_version() == 0
+
+    def test_set_bumps_version_monotonically(self):
+        items = [{"id": "dom-1", "name": "Payments", "rules": []}]
+        settings.set_domains(items)
+        assert settings.domains_version() == 1
+        settings.set_domains(items)
+        assert settings.domains_version() == 2
+        assert settings.get_domains()["items"] == items
+
+    def test_order_is_preserved(self):
+        items = [{"id": "dom-b", "name": "B", "rules": []},
+                 {"id": "dom-a", "name": "A", "rules": []}]
+        settings.set_domains(items)
+        assert [i["name"] for i in settings.get_domains()["items"]] == ["B", "A"]
+
+    def test_malformed_items_dropped_on_read_and_write(self):
+        settings.set_domains([{"name": "Ok", "rules": []}, "junk", {"rules": []},
+                              {"name": "  ", "rules": []}])
+        assert [i["name"] for i in settings.get_domains()["items"]] == ["Ok"]
+        _settings_file().write_text(
+            json.dumps({"domains": {"version": "x", "items": {"not": "a list"}}}),
+            encoding="utf-8",
+        )
+        assert settings.get_domains() == {"version": 0, "items": []}
+
+    def test_other_keys_survive_a_domains_save(self):
+        settings.set_fetch_severities(("CRITICAL",))
+        settings.set_domains([{"id": "d", "name": "X", "rules": []}])
+        assert settings.get_fetch_severities() == ("CRITICAL",)
+        settings.set_fetch_severities(("CRITICAL", "HIGH"))
+        assert settings.get_domains()["items"][0]["name"] == "X"
+
+
 class TestApiFilter:
     def test_info_maps_to_informational(self):
         assert settings.api_severity_filter(("INFO",)) == ["INFORMATIONAL"]

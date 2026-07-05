@@ -27,6 +27,7 @@ from wiz_dashboard.domain.severity import (
     normalize_severity,
     normalize_severity_series,
 )
+from wiz_dashboard.domain import domain_rules
 from wiz_dashboard.models import schema
 from wiz_dashboard.ui import charts
 from wiz_dashboard.ui import components as ui
@@ -39,6 +40,7 @@ PREFERRED_COLS = [
     "name",
     "vulnerableAsset.name",
     "vulnerableAsset.type",
+    "domain",
     "firstDetectedAt",
     "firstSeenAt",
     "resolvedAt",
@@ -59,6 +61,9 @@ GROUP_OPTIONS = {
     "Cloud": ("cloud", ["vulnerableAsset.cloudPlatform", "cloudPlatform"]),
     "Asset": ("asset", ["vulnerableAsset.name"]),
     "Subscription": ("subscription", ["vulnerableAsset.subscriptionName"]),
+    # The domain FILTER mirrors to ?dom= (not ?domain=) so ?group=domain&dom=X can't
+    # collide; the ``domain`` column exists only when domains are configured.
+    "Domain": ("domain", ["domain"]),
 }
 GROUP_LABEL_TO_MODE = {label: token for label, (token, _) in GROUP_OPTIONS.items()}
 _MODE_TO_LABEL = {v: k for k, v in GROUP_LABEL_TO_MODE.items()}
@@ -81,6 +86,7 @@ def render(has_creds: bool) -> None:
     full_df = st.session_state.get("os_df")
     full_df = full_df if full_df is not None else pd.DataFrame()
     df, sig = _derived.display_view()
+    df, sig = _derived.domain_view(df, sig)
     scope = _derived.display_scope()
 
     # On the start-up fast path os_nodes is deliberately None (lazy — see scan.ensure_nodes)
@@ -291,9 +297,10 @@ def _qp_list(param, present):
 # doesn't immediately re-narrow the severity pills after a reset.
 _FILTER_KEYS = (
     "os_sev_filter", "os_status_filter", "os_type_filter", "os_cloud_filter",
-    "os_search", "os_group_by", "os_sev_chart", "os_sev_chart_prev",
+    "os_domain_filter", "os_search", "os_group_by", "os_sev_chart",
+    "os_sev_chart_prev",
 )
-_FILTER_QUERY_PARAMS = ("sev", "status", "atype", "cloud", "q", "group")
+_FILTER_QUERY_PARAMS = ("sev", "status", "atype", "cloud", "dom", "q", "group")
 
 
 def _reset_filters() -> None:
@@ -366,6 +373,7 @@ def _filter_and_table(df, counts, per_sev=None) -> None:
     cloud_col = _col(df, "vulnerableAsset.cloudPlatform", "cloudPlatform")
     name_col = _col(df, "name")
     asset_col = _col(df, "vulnerableAsset.name")
+    domain_col = _col(df, "domain")
 
     # One filter+view toolbar row: the text/select filters plus Group by, so the controls
     # read as a single bar instead of stacking under three separate section labels. Group by
@@ -375,10 +383,18 @@ def _filter_and_table(df, counts, per_sev=None) -> None:
     group_cols = _group_columns(df)
     group_opts = ["None", *group_cols]
 
-    fc = st.columns([2, 2, 2, 3, 3])
+    fc = st.columns([2, 2, 2, 2, 3, 3] if domain_col else [2, 2, 2, 3, 3])
     status_opts = _present(df, status_col)
     type_opts = _present(df, type_col)
     cloud_opts = _present(df, cloud_col)
+    # Domain options keep PRIORITY order (Unassigned last), not _present's alphabetical.
+    domain_opts = []
+    if domain_col:
+        present_domains = set(_present(df, domain_col))
+        domain_opts = [
+            n for n in domain_rules.domain_names(_derived.domains_config()[0])
+            if n in present_domains
+        ]
     status_sel = (
         fc[0].multiselect("Status", status_opts,
                           default=_qp_list("status", status_opts),
@@ -397,9 +413,15 @@ def _filter_and_table(df, counts, per_sev=None) -> None:
                           key="os_cloud_filter", placeholder="All")
         if cloud_col else []
     )
-    query = fc[3].text_input("Search", value=st.query_params.get("q", ""),
-                             placeholder="CVE or asset name…", key="os_search")
-    group_label = fc[4].selectbox(
+    domain_sel = (
+        fc[3].multiselect("Domain", domain_opts,
+                          default=_qp_list("dom", domain_opts),
+                          key="os_domain_filter", placeholder="All")
+        if domain_col else []
+    )
+    query = fc[-2].text_input("Search", value=st.query_params.get("q", ""),
+                              placeholder="CVE or asset name…", key="os_search")
+    group_label = fc[-1].selectbox(
         "Group by",
         options=group_opts,
         index=group_opts.index(_group_from_query(group_opts)),
@@ -412,6 +434,8 @@ def _filter_and_table(df, counts, per_sev=None) -> None:
         st.query_params["atype"] = ",".join(type_sel)
     if cloud_col:
         st.query_params["cloud"] = ",".join(cloud_sel)
+    if domain_col:
+        st.query_params["dom"] = ",".join(domain_sel)
     st.query_params["q"] = query or ""
     st.query_params["group"] = GROUP_LABEL_TO_MODE.get(group_label or "None", "")
 
@@ -419,8 +443,8 @@ def _filter_and_table(df, counts, per_sev=None) -> None:
     # (so the toolbar stays clean at rest). Clears every control + query param and reruns.
     filters_active = (
         (norm is not None and set(sev_selected) != set(present))
-        or bool(status_sel) or bool(type_sel) or bool(cloud_sel) or bool(query)
-        or (group_label not in (None, "None"))
+        or bool(status_sel) or bool(type_sel) or bool(cloud_sel) or bool(domain_sel)
+        or bool(query) or (group_label not in (None, "None"))
     )
     if filters_active and st.columns([2, 8])[0].button(
         "Clear filters",
@@ -437,6 +461,8 @@ def _filter_and_table(df, counts, per_sev=None) -> None:
         view = view[_matches(view[type_col], type_sel)]
     if cloud_sel and cloud_col:
         view = view[_matches(view[cloud_col], cloud_sel)]
+    if domain_sel and domain_col:
+        view = view[_matches(view[domain_col], domain_sel)]
     if query:
         mask = pd.Series(False, index=view.index)
         for c in (name_col, asset_col):
@@ -478,6 +504,8 @@ def _table_display(ordered):
     if "severity" in df.columns:
         df["severity"] = df["severity"].map(_sev_with_glyph)
         cfg["severity"] = st.column_config.TextColumn("Severity")
+    if "domain" in df.columns:
+        cfg["domain"] = st.column_config.TextColumn("Domain")
     return df, cfg
 
 

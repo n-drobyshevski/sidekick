@@ -13,6 +13,7 @@ import streamlit as st
 
 from wiz_dashboard.config import SEVERITY_COLORS, SEVERITY_GLYPHS, SEVERITY_ORDER
 from wiz_dashboard.data import ledger
+from wiz_dashboard.domain import domain_rules
 from wiz_dashboard.domain.formatting import format_duration
 from wiz_dashboard.domain.severity import normalize_severity, normalize_severity_series
 from wiz_dashboard.ui import charts
@@ -25,13 +26,14 @@ _CVE_RE = r"CVE-\d{4}-\d+"
 
 # Lifecycle-first column order for the base table (only those present are shown).
 _BASE_PREFERRED = [
-    "severity", "cve", "asset_name", "asset_type", "cloud", "status",
+    "severity", "cve", "asset_name", "asset_type", "cloud", "domain", "status",
     "first_seen", "resolved_at", "age_days", "mttr_days",
     "resolution_src", "reopened_count", "last_seen",
 ]
 _BASE_LABELS = {
-    "asset_name": "Asset", "asset_type": "Type", "cloud": "Cloud", "status": "Status",
-    "resolution_src": "Resolved via", "reopened_count": "Reopened", "last_seen": "Last seen",
+    "asset_name": "Asset", "asset_type": "Type", "cloud": "Cloud", "domain": "Domain",
+    "status": "Status", "resolution_src": "Resolved via", "reopened_count": "Reopened",
+    "last_seen": "Last seen",
 }
 
 
@@ -43,7 +45,12 @@ def page():
 
     scope = _derived.display_scope()
     scans = _derived.ledger_scans_cached()
-    base = _derived.ledger_base_cached(scope)
+    items, rules_version = _derived.domains_config()
+    base = (
+        _derived.ledger_base_domains_cached(scope, rules_version)
+        if items
+        else _derived.ledger_base_cached(scope)
+    )
 
     if scans is None or scans.empty:
         ui.empty_state(
@@ -232,6 +239,18 @@ def _base_table(base) -> None:
         present = set(norm_sev.unique())
         sev_opts = [s for s in SEVERITY_ORDER if s in present]
         sev_sel = st.multiselect("Severity", sev_opts, default=sev_opts, key="sh_sev")
+        domain_sel = []
+        if "domain" in base.columns:
+            # Priority order (Unassigned last), matching the OS-page filter.
+            present_domains = set(base["domain"].dropna().unique())
+            domain_opts = [
+                n for n in domain_rules.domain_names(_derived.domains_config()[0])
+                if n in present_domains
+            ]
+            if domain_opts:
+                domain_sel = st.multiselect(
+                    "Domain", domain_opts, key="sh_domain", placeholder="All"
+                )
     query = st.text_input(
         "Search", key="sh_q", placeholder="Filter by CVE or asset name",
         label_visibility="collapsed",
@@ -242,6 +261,8 @@ def _base_table(base) -> None:
         view = view[view["status"].isin(status_sel)]
     if sev_sel:
         view = view[norm_sev.loc[view.index].isin(sev_sel)]
+    if domain_sel and "domain" in view.columns:
+        view = view[view["domain"].isin(domain_sel)]
     if query:
         hay = (
             view["cve"].astype(str) + " " + view["asset_name"].astype(str)

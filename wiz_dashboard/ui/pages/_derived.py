@@ -16,7 +16,7 @@ import streamlit as st
 from wiz_dashboard import config
 from wiz_dashboard.data import history, ledger, settings, snapshot
 from wiz_dashboard.data.transform import df_signature, extract_nodes, nodes_to_dataframe
-from wiz_dashboard.domain import lifecycle
+from wiz_dashboard.domain import domain_rules, lifecycle
 from wiz_dashboard.domain.metrics import calculate_mttr
 from wiz_dashboard.domain.severity import (
     count_by_severity,
@@ -135,6 +135,91 @@ def filter_counts(counts, scope):
     return {k: v for k, v in counts.items() if k in keep}
 
 
+# ---- Domain triage (Settings → "Domains") ------------------------------------------ #
+# The domain assignment is never stored: it is derived from the persisted rule inputs
+# + the CURRENT rules. Every cached derivation below keys on the settings
+# ``domains.version`` token (bumped on each save), so a rule edit self-invalidates on
+# the next rerun — the same freshness mechanism as ``display_scope()``. When no domains
+# are configured the feature is invisible: ``domain_view`` is a passthrough and pages
+# render no domain widgets.
+def domains_config():
+    """``(items, version)`` — one settings read per call; ``[]`` disables the feature."""
+    d = settings.get_domains()
+    return d["items"], d["version"]
+
+
+@st.cache_data(show_spinner=False)
+def domain_frame_cached(sig: str, rules_version: int, _df):
+    """``_df`` with a ``domain`` column appended (``df.assign`` — the shared cached
+    frame is never mutated; the copy is paid once per ``(sig, rules_version)``)."""
+    compiled = domain_rules.compile_domains(settings.get_domains()["items"])
+    return _df.assign(domain=domain_rules.assign_domains_frame(_df, compiled))
+
+
+def domain_view(df, sig):
+    """``(df_with_domain, sig')`` for a loaded findings frame under the current rules.
+
+    ``sig'`` embeds the rules version so every downstream cache (counts, MTTR,
+    pagination reset tokens) keys correctly across rule edits. Passthrough (same
+    ``df``/``sig``) when no domains are configured or the frame is empty."""
+    items, version = domains_config()
+    if not items or df is None or getattr(df, "empty", True):
+        return df, sig
+    sig2 = f"{sig}|dom:{version}"
+    return domain_frame_cached(sig2, version, df), sig2
+
+
+@st.cache_data(show_spinner=False)
+def ledger_base_domains_cached(scope=None, rules_version: int = 0):
+    """``ledger_base_cached(scope)`` with a ``domain`` column (compacted episodes pin
+    to Unassigned). Passthrough copy semantics match ``domain_frame_cached``."""
+    df = ledger_base_cached(scope)
+    if df is None or df.empty:
+        return df
+    compiled = domain_rules.compile_domains(settings.get_domains()["items"])
+    return df.assign(domain=domain_rules.assign_domains_ledger(df, compiled))
+
+
+@st.cache_data(show_spinner=False)
+def ledger_domain_mttr_cached(scope=None, rules_version: int = 0):
+    """``{domain_name: (per_sev, overall)}`` from the durable ledger, per domain.
+
+    Domains appear in priority order (then Unassigned) and only when they have rows."""
+    df = ledger_base_domains_cached(scope, rules_version)
+    if df is None or df.empty or "domain" not in df.columns:
+        return {}
+    items, _ = domains_config()
+    out = {}
+    for name in domain_rules.domain_names(items):
+        sub = df[df["domain"] == name]
+        if sub.empty:
+            continue
+        rows = sub[["vuln_key", "severity", "first_seen", "status", "resolved_at"]]
+        out[name] = lifecycle.mttr_from_ledger(rows.to_dict("records"))
+    return out
+
+
+@st.cache_data(show_spinner=False)
+def ledger_trend_domain_cached(scope=None, rules_version: int = 0, domain: str = ""):
+    """The ledger trend (open/resolved/median/SLA over time) restricted to one domain.
+
+    Same shape as ``ledger_trend_cached`` (feeds the same charts); computed by
+    filtering the domain-annotated base frame and reusing the pure trend builder."""
+    base = ledger_base_domains_cached(scope, rules_version)
+    if base is None or base.empty or "domain" not in base.columns:
+        return pd.DataFrame()
+    return ledger._trend_from_frames(ledger_scans_cached(), base[base["domain"] == domain])
+
+
+def clear_domain_caches() -> None:
+    """Drop domain-derived caches after a rules save/reorder/delete. Correctness does
+    not depend on this (the version key already isolates entries); it just bounds
+    memory and drops dead entries eagerly."""
+    for cached in (domain_frame_cached, ledger_base_domains_cached,
+                   ledger_domain_mttr_cached, ledger_trend_domain_cached):
+        cached.clear()
+
+
 @st.cache_data(show_spinner=False)
 def counts_cached(sig: str, _df):
     return count_by_severity(_df)
@@ -198,5 +283,10 @@ def clear_ledger_caches() -> None:
         ledger_base_cached,
         ledger_trend_cached,
         previous_severity_counts_cached,
+        # composers over ledger_base_cached — a new scan changes ledger contents,
+        # hence the domain assignments derived over it
+        ledger_base_domains_cached,
+        ledger_domain_mttr_cached,
+        ledger_trend_domain_cached,
     ):
         cached.clear()

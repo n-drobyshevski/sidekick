@@ -27,7 +27,7 @@ from wiz_dashboard.data import ledger, settings
 from wiz_dashboard.domain.formatting import format_bytes
 from wiz_dashboard.ui import components as ui
 from wiz_dashboard.ui import scan
-from wiz_dashboard.ui.pages import _derived
+from wiz_dashboard.ui.pages import _derived, _domains_section
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +150,9 @@ def page():
         settings.set_display_severities(tuple(display_sel))
         st.session_state["_settings_saved_toast"] = True
         st.rerun()
+
+    # ---- Domains (rule-based triage) ------------------------------------------------ #
+    _domains_section.render()
 
     # ---- Data retention ------------------------------------------------------------ #
     ui.section_label("Data retention")

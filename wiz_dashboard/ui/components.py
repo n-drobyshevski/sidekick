@@ -69,6 +69,18 @@ def severity_badge(sev) -> None:
     st.markdown(severity_badge_html(sev), unsafe_allow_html=True)
 
 
+def domain_chip_html(name) -> str:
+    """A neutral chip for a triage domain name.
+
+    Deliberately colorless (Rationed Ink Rule): a domain states ownership, not risk,
+    so it reuses the neutral status-pill treatment. Meaning is the text itself."""
+    return (
+        f'<span class="status-pill status-pill--neutral" '
+        f'aria-label="Domain: {_html.escape(str(name))}">'
+        f'{_html.escape(str(name))}</span>'
+    )
+
+
 # --------------------------------------------------------------------------- #
 #  Finding-detail "Sheet" body (custom HTML for the right-anchored drill-down
 #  drawer). Shape-aware: a flat per-finding record gets a risk strip + scoring /
@@ -206,7 +218,7 @@ def _stat(label, value_html, sub=None):
 
 def _header_html(record, raw, consumed):
     """Title + severity-coloured accent + subtitle (asset · cloud · type) + chips."""
-    consumed.update(["name", "id", "severity", "status"])
+    consumed.update(["name", "id", "severity", "status", "domain"])
     title = (
         record.get("name")
         or _resolve(record, raw, ["vulnerableAsset.name"])
@@ -237,6 +249,10 @@ def _header_html(record, raw, consumed):
         resolved = str(status).upper() in RESOLVED_STATUSES
         cls = "status-ok" if resolved else "status-pill--neutral"
         chips.append(f'<span class="status-pill {cls}">{_html.escape(str(status))}</span>')
+    domain = record.get("domain")
+    if domain and str(domain).strip():
+        # Neutral by design (Rationed Ink): a domain is ownership, not risk.
+        chips.append(domain_chip_html(domain))
     chips_html = (
         f'<div class="vuln-sheet__chips">{"".join(chips)}</div>' if chips else ""
     )

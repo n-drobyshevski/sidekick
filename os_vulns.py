@@ -651,8 +651,13 @@ SAMPLE_RESULTS: Dict[str, Any] = {
         "vulnerabilityFindings": {
             "nodes": [
                 # CRITICAL (SLA 7d): median ~5d (in SLA), with one breach + two open.
-                _finding("dry-c1", "CVE-2026-1001", "CRITICAL", "web-prod-01", "VIRTUAL_MACHINE", "AWS", "1.2.3", "2026-04-01", "2026-04-04"),
-                _finding("dry-c2", "CVE-2026-1002", "CRITICAL", "web-prod-02", "VIRTUAL_MACHINE", "AWS", "1.2.4", "2026-04-10", "2026-04-15"),
+                # Most findings carry a subscription + tags so rule-based domain triage
+                # (Settings → Domains) is demoable offline across all three condition
+                # types: tag match, name regex, subscription.
+                _finding("dry-c1", "CVE-2026-1001", "CRITICAL", "web-prod-01", "VIRTUAL_MACHINE", "AWS", "1.2.3", "2026-04-01", "2026-04-04",
+                         vulnerableAsset={"subscriptionName": "core-prod", "tags": {"team": "web", "env": "prod"}}),
+                _finding("dry-c2", "CVE-2026-1002", "CRITICAL", "web-prod-02", "VIRTUAL_MACHINE", "AWS", "1.2.4", "2026-04-10", "2026-04-15",
+                         vulnerableAsset={"subscriptionName": "core-prod", "tags": {"team": "web", "env": "prod"}}),
                 # dry-c3 / dry-c4 / dry-h1 are enriched with the full Wiz field set so the
                 # details sheet's scoring / exploitability / asset / tags sections demo offline.
                 _finding(
@@ -689,7 +694,8 @@ SAMPLE_RESULTS: Dict[str, Any] = {
                         "tags": {"env": "prod", "owner": "dba", "tier": "data"},
                     },
                 ),
-                _finding("dry-c5", "CVE-2026-1005", "CRITICAL", "edge-gw-01", "VIRTUAL_MACHINE", "AWS", "3.0.1", "2026-02-15"),
+                _finding("dry-c5", "CVE-2026-1005", "CRITICAL", "edge-gw-01", "VIRTUAL_MACHINE", "AWS", "3.0.1", "2026-02-15",
+                         vulnerableAsset={"subscriptionName": "core-prod", "tags": {"team": "platform", "env": "prod"}}),
                 # HIGH (SLA 14d): median ~19d (BREACHING), plus one open.
                 _finding(
                     "dry-h1", "CVE-2026-2001", "HIGH", "api-staging-02", "VIRTUAL_MACHINE", "AWS", "5.1.0", "2026-04-01", "2026-04-17",
@@ -703,19 +709,30 @@ SAMPLE_RESULTS: Dict[str, Any] = {
                         "operatingSystem": "Amazon Linux 2", "tags": {"env": "staging"},
                     },
                 ),
-                _finding("dry-h2", "CVE-2026-2002", "HIGH", "registry/worker:1.4", "CONTAINER_IMAGE", "GCP", "1.5.0", "2026-03-25", "2026-04-14"),
-                _finding("dry-h3", "CVE-2026-2003", "HIGH", "batch-fn-01", "SERVERLESS", "AWS", "0.9.2", "2026-04-05", "2026-04-23"),
-                _finding("dry-h4", "CVE-2026-2004", "HIGH", "cache-prod-03", "VIRTUAL_MACHINE", "Azure", "7.0.0", "2026-03-10", "2026-04-01"),
-                _finding("dry-h5", "CVE-2026-2005", "HIGH", "web-prod-03", "VIRTUAL_MACHINE", "AWS", "1.3.0", "2026-04-20"),
+                _finding("dry-h2", "CVE-2026-2002", "HIGH", "registry/worker:1.4", "CONTAINER_IMAGE", "GCP", "1.5.0", "2026-03-25", "2026-04-14",
+                         vulnerableAsset={"subscriptionName": "prod-registry", "tags": {"team": "platform", "env": "prod"}}),
+                _finding("dry-h3", "CVE-2026-2003", "HIGH", "batch-fn-01", "SERVERLESS", "AWS", "0.9.2", "2026-04-05", "2026-04-23",
+                         vulnerableAsset={"subscriptionName": "core-prod", "tags": {"team": "data", "env": "prod"}}),
+                _finding("dry-h4", "CVE-2026-2004", "HIGH", "cache-prod-03", "VIRTUAL_MACHINE", "Azure", "7.0.0", "2026-03-10", "2026-04-01",
+                         vulnerableAsset={"subscriptionName": "core-prod", "tags": {"team": "web", "env": "prod"}}),
+                _finding("dry-h5", "CVE-2026-2005", "HIGH", "web-prod-03", "VIRTUAL_MACHINE", "AWS", "1.3.0", "2026-04-20",
+                         vulnerableAsset={"subscriptionName": "core-prod", "tags": {"team": "web", "env": "prod"}}),
                 # MEDIUM (SLA 30d): median ~25d (in SLA), plus one open.
-                _finding("dry-m1", "CVE-2026-3001", "MEDIUM", "analytics-01", "VIRTUAL_MACHINE", "GCP", "2.4.1", "2026-03-01", "2026-03-19"),
-                _finding("dry-m2", "CVE-2026-3002", "MEDIUM", "registry/etl:3.0", "CONTAINER_IMAGE", "AWS", "3.1.0", "2026-03-10", "2026-04-04"),
-                _finding("dry-m3", "CVE-2026-3003", "MEDIUM", "report-svc-02", "SERVERLESS", "Azure", "1.1.2", "2026-02-20", "2026-03-27"),
-                _finding("dry-m4", "CVE-2026-3004", "MEDIUM", "queue-prod-01", "VIRTUAL_MACHINE", "AWS", "5.5.0", "2026-04-15"),
+                _finding("dry-m1", "CVE-2026-3001", "MEDIUM", "analytics-01", "VIRTUAL_MACHINE", "GCP", "2.4.1", "2026-03-01", "2026-03-19",
+                         vulnerableAsset={"subscriptionName": "analytics", "tags": {"team": "data", "env": "prod"}}),
+                _finding("dry-m2", "CVE-2026-3002", "MEDIUM", "registry/etl:3.0", "CONTAINER_IMAGE", "AWS", "3.1.0", "2026-03-10", "2026-04-04",
+                         vulnerableAsset={"subscriptionName": "prod-registry", "tags": {"team": "data", "env": "prod"}}),
+                _finding("dry-m3", "CVE-2026-3003", "MEDIUM", "report-svc-02", "SERVERLESS", "Azure", "1.1.2", "2026-02-20", "2026-03-27",
+                         vulnerableAsset={"subscriptionName": "analytics", "tags": {"team": "data"}}),
+                _finding("dry-m4", "CVE-2026-3004", "MEDIUM", "queue-prod-01", "VIRTUAL_MACHINE", "AWS", "5.5.0", "2026-04-15",
+                         vulnerableAsset={"subscriptionName": "core-prod", "tags": {"team": "platform", "env": "prod"}}),
                 # LOW (SLA 90d): both resolved well within target.
-                _finding("dry-l1", "CVE-2026-4001", "LOW", "dev-box-07", "VIRTUAL_MACHINE", "GCP", "0.4.0", "2026-02-01", "2026-03-13"),
-                _finding("dry-l2", "CVE-2026-4002", "LOW", "registry/docs:1.0", "CONTAINER_IMAGE", "AWS", "1.0.1", "2026-01-15", "2026-03-26"),
-                # INFO (SLA 180d): one resolved.
+                _finding("dry-l1", "CVE-2026-4001", "LOW", "dev-box-07", "VIRTUAL_MACHINE", "GCP", "0.4.0", "2026-02-01", "2026-03-13",
+                         vulnerableAsset={"subscriptionName": "staging", "tags": {"env": "dev"}}),
+                _finding("dry-l2", "CVE-2026-4002", "LOW", "registry/docs:1.0", "CONTAINER_IMAGE", "AWS", "1.0.1", "2026-01-15", "2026-03-26",
+                         vulnerableAsset={"subscriptionName": "prod-registry", "tags": {"team": "web", "env": "prod"}}),
+                # INFO (SLA 180d): one resolved. No tags/subscription on purpose — the
+                # "legacy-" name-regex condition is its only route into a domain.
                 _finding("dry-i1", "CVE-2026-5001", "INFO", "legacy-vm-12", "VIRTUAL_MACHINE", "Azure", "8.0.0", "2026-01-05", "2026-05-05"),
             ]
         }

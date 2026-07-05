@@ -146,6 +146,59 @@ def set_auto_compact(enabled) -> None:
     save_settings(d)
 
 
+def _clean_domain_items(items) -> list:
+    """Structurally valid domain items only (non-dict / blank-name entries dropped).
+
+    Lenient like ``_canonical``: a hand-edited or partially corrupt file degrades to
+    the salvageable subset instead of erroring. Deep rule validation is the editor's
+    job (``domain_rules.validate_domains``); the engine itself fails closed on any
+    malformed rule that slips through.
+    """
+    if not isinstance(items, list):
+        return []
+    return [
+        item
+        for item in items
+        if isinstance(item, dict)
+        and isinstance(item.get("name"), str)
+        and item["name"].strip()
+    ]
+
+
+def get_domains() -> dict:
+    """The domain-triage config: ``{"version": int, "items": [...]}``.
+
+    ``items`` is the priority-ordered domain list (first match wins); ``version``
+    increases on every save and keys every cached domain derivation. Missing or
+    invalid config reads as ``{"version": 0, "items": []}`` — feature off.
+    """
+    raw = load_settings().get("domains")
+    if not isinstance(raw, dict):
+        return {"version": 0, "items": []}
+    try:
+        version = max(int(raw.get("version", 0)), 0)
+    except (TypeError, ValueError):
+        version = 0
+    return {"version": version, "items": _clean_domain_items(raw.get("items"))}
+
+
+def set_domains(items) -> None:
+    """Persist the domain list (order = priority), bumping ``version``."""
+    d = load_settings()
+    current = d.get("domains") if isinstance(d.get("domains"), dict) else {}
+    try:
+        version = max(int(current.get("version", 0)), 0)
+    except (TypeError, ValueError):
+        version = 0
+    d["domains"] = {"version": version + 1, "items": _clean_domain_items(items)}
+    save_settings(d)
+
+
+def domains_version() -> int:
+    """The current domains config version (cheap cache-key read)."""
+    return get_domains()["version"]
+
+
 def api_severity_filter(severities):
     """GraphQL ``filterBy.severity`` values for a scope, or ``None`` when unscoped.
 

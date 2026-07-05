@@ -26,6 +26,51 @@ def test_init_creates_schema(tmp_path):
     assert ledger.load_open_and_resolved(db) == []
 
 
+def test_backfill_rule_inputs_fills_null_rows_from_snapshot(tmp_path, app):
+    db = _db(tmp_path)
+    records = [
+        {"id": "b1", "name": "CVE-2026-1", "severity": "HIGH",
+         "vulnerableAsset.name": "vm-1",
+         "vulnerableAsset.subscriptionName": "core-prod",
+         "vulnerableAsset.tags.env": "prod"},
+        {"id": "b2", "name": "CVE-2026-2", "severity": "LOW",
+         "vulnerableAsset.name": "vm-2"},
+    ]
+    ledger.persist_flat_scan(
+        records, mode="dry-run",
+        raw={"data": {"vulnerabilityFindings": {"nodes": [
+            {"id": "b1", "name": "CVE-2026-1", "severity": "HIGH",
+             "vulnerableAsset": {"name": "vm-1", "subscriptionName": "core-prod",
+                                 "tags": {"env": "prod"}}},
+            {"id": "b2", "name": "CVE-2026-2", "severity": "LOW",
+             "vulnerableAsset": {"name": "vm-2"}},
+        ]}}},
+        db_path=db, scan_id="2026-05-29T10:00:00Z",
+    )
+    # simulate pre-v5 rows: null out the persisted inputs
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute("UPDATE vuln_ledger SET subscription_name=NULL, "
+                     "subscription_ext_id=NULL, tags_json=NULL")
+        conn.commit()
+    finally:
+        conn.close()
+
+    counts = ledger.backfill_rule_inputs(db)
+    assert counts["updated"] == 1  # only b1 has inputs to restore
+    base = ledger.load_base_df(db)
+    b1 = base[base["vuln_key"] == "id:b1"].iloc[0]
+    assert b1["subscription_name"] == "core-prod"
+    assert b1["tags_json"] == '{"env": "prod"}'
+
+
+def test_backfill_rule_inputs_never_raises_without_data(tmp_path):
+    assert ledger.backfill_rule_inputs(tmp_path / "nope.db") == {"updated": 0}
+    db = _db(tmp_path)
+    ledger.init_db(db)
+    assert ledger.backfill_rule_inputs(db) == {"updated": 0}
+
+
 def test_persist_flat_scan_roundtrip(tmp_path, app):
     db = _db(tmp_path)
     deltas = ledger.persist_flat_scan(

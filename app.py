@@ -185,8 +185,11 @@ def _sidebar_extras() -> bool:
 def _compact_legacy_archives() -> dict:
     """One-time (per process) upgrade of pre-gzip plain-JSON scan archives. Never
     raises and reads-both means it's purely a disk-space reclaim — see
-    ``ledger.compact_archives``."""
-    return ledger.compact_archives()
+    ``ledger.compact_archives``. Piggybacks the v5 domain-rule-input backfill (also
+    best-effort; see ``ledger.backfill_rule_inputs``)."""
+    counts = ledger.compact_archives()
+    ledger.backfill_rule_inputs()
+    return counts
 
 
 def main() -> None:

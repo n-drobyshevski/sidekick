@@ -188,6 +188,55 @@ def test_widen_again_keeps_surviving_out_of_scope_row_open():
     assert d["resolved_count"] == 0
 
 
+def test_make_row_carries_rule_inputs_from_nested_and_dotted_records():
+    nested = {
+        "id": "n1", "name": "CVE-2026-2", "severity": "HIGH",
+        "vulnerableAsset": {
+            "name": "vm-2", "type": "VM",
+            "subscriptionName": "core-prod",
+            "subscriptionExternalId": "gcp-proj-x",
+            "tags": {"env": "prod", "team": "platform"},
+        },
+    }
+    dotted = _rec(
+        "d1",
+        **{
+            "vulnerableAsset.subscriptionName": "staging",
+            "vulnerableAsset.tags.env": "staging",
+        },
+    )
+    led, _, _ = reconcile.reconcile([nested, dotted], {}, S1, S1, None)
+    row = led["id:n1"]
+    assert row["subscription_name"] == "core-prod"
+    assert row["subscription_ext_id"] == "gcp-proj-x"
+    assert row["tags_json"] == '{"env": "prod", "team": "platform"}'  # sorted keys
+    row = led["id:d1"]
+    assert row["subscription_name"] == "staging"
+    assert row["tags_json"] == '{"env": "staging"}'
+
+
+def test_rule_inputs_refresh_on_next_scan_and_keep_prior_when_omitted():
+    led, _, _ = reconcile.reconcile(
+        [_rec("a", **{"vulnerableAsset.subscriptionName": "old-sub",
+                      "vulnerableAsset.tags.env": "prod"})],
+        {}, S1, S1, None,
+    )
+    # next scan re-lists the finding with a new subscription and NO tags
+    led, _, _ = reconcile.reconcile(
+        [_rec("a", **{"vulnerableAsset.subscriptionName": "new-sub"})],
+        led, S2, S2, S1,
+    )
+    row = led["id:a"]
+    assert row["subscription_name"] == "new-sub"          # latest observation wins
+    assert row["tags_json"] == '{"env": "prod"}'          # prior kept when omitted
+
+
+def test_tags_json_none_when_asset_has_no_tags():
+    led, _, _ = reconcile.reconcile([_rec("a")], {}, S1, S1, None)
+    assert led["id:a"]["tags_json"] is None
+    assert led["id:a"]["subscription_name"] is None
+
+
 def test_reconcile_does_not_mutate_existing_ledger():
     # The prior ledger is copied per-row (not deepcopied) — reconcile must still never
     # write through to its input, or an in-memory caller would see phantom updates.

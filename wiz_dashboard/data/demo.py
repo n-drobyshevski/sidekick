@@ -32,11 +32,19 @@ _SEV_CODE = {"CRITICAL": 1, "HIGH": 2, "MEDIUM": 3, "LOW": 4, "INFO": 5}
 # filters stay populated) and spread-out first-detected dates (so MTTR isn't degenerate
 # when a finding later disappears). No clocks/randomness: the demo is fully reproducible.
 _ASSETS = [
-    ("web-prod-01", "VIRTUAL_MACHINE", "AWS"),
-    ("registry/api:2.1", "CONTAINER_IMAGE", "GCP"),
-    ("db-prod-01", "VIRTUAL_MACHINE", "Azure"),
-    ("batch-fn-01", "SERVERLESS", "AWS"),
-    ("cache-prod-03", "VIRTUAL_MACHINE", "Azure"),
+    # (name, type, cloud, subscriptionName, tags): subscription + tags feed the
+    # rule-based domain triage (Settings → Domains), so evolving demo scans persist
+    # real rule inputs into the ledger and the domain surfaces demo offline.
+    ("web-prod-01", "VIRTUAL_MACHINE", "AWS", "core-prod",
+     {"team": "web", "env": "prod"}),
+    ("registry/api:2.1", "CONTAINER_IMAGE", "GCP", "prod-registry",
+     {"team": "platform", "env": "prod"}),
+    ("db-prod-01", "VIRTUAL_MACHINE", "Azure", "core-prod",
+     {"team": "data", "env": "prod", "tier": "data"}),
+    ("batch-fn-01", "SERVERLESS", "AWS", "core-prod",
+     {"team": "data", "env": "prod"}),
+    ("cache-prod-03", "VIRTUAL_MACHINE", "Azure", "core-prod",
+     {"team": "web", "env": "prod"}),
 ]
 _FIRST_DATES = [
     "2026-01-10", "2026-02-05", "2026-02-20", "2026-03-01",
@@ -46,14 +54,15 @@ _FIRST_DATES = [
 
 def _finding(severity, i):
     """One deterministic OPEN finding for ``(severity, index)`` — stable id across scans."""
-    asset, atype, cloud = _ASSETS[i % len(_ASSETS)]
+    asset, atype, cloud, subscription, tags = _ASSETS[i % len(_ASSETS)]
     first = _FIRST_DATES[(i + _SEV_CODE[severity]) % len(_FIRST_DATES)]
     return {
         "id": f"demo-{severity.lower()}-{i}",
         "name": f"CVE-2026-{_SEV_CODE[severity]}{i:03d}",
         "severity": severity,
         "status": "OPEN",
-        "vulnerableAsset": {"name": asset, "type": atype, "cloudPlatform": cloud},
+        "vulnerableAsset": {"name": asset, "type": atype, "cloudPlatform": cloud,
+                            "subscriptionName": subscription, "tags": dict(tags)},
         "fixedVersion": "1.0.0",
         "firstDetectedAt": f"{first}T00:00:00Z",
     }

@@ -28,10 +28,10 @@ import pandas as pd
 
 from wiz_dashboard import config
 from wiz_dashboard.domain import reconcile
-from wiz_dashboard.domain.lifecycle import mttr_from_ledger
+from wiz_dashboard.domain.lifecycle import field, mttr_from_ledger, vuln_key
 from wiz_dashboard.domain.severity import normalize_severity
 from wiz_dashboard.data import snapshot
-from wiz_dashboard.data.transform import extract_nodes
+from wiz_dashboard.data.transform import extract_nodes, nodes_to_dataframe
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,13 @@ logger = logging.getLogger(__name__)
 # ``scans`` row forever (the trend x-axis and Scan History need the timestamps) but lose
 # their raw archive, snapshot and observations; their resolved vulns live on as exact
 # episode rows so MTTR/SLA/trend stay bit-identical.
-SCHEMA_VERSION = 4
+# v5: domain-triage rule inputs — ``vuln_ledger.subscription_name`` /
+# ``subscription_ext_id`` / ``tags_json`` (all nullable; historical rows honestly read
+# "inputs unknown" until re-listed by a scan). The domain assignment itself is never
+# stored: it is derived at read time from these inputs + the current rules, so editing
+# rules re-triages instantly. ``resolved_episodes`` deliberately does NOT carry them —
+# sealed episodes classify as Unassigned (visible degradation, not a silent hole).
+SCHEMA_VERSION = 5
 
 # gzip trades a once-per-scan compression cost for ~10x smaller archives; level 6 because
 # higher levels barely shrink JSON further while getting markedly slower.
@@ -57,7 +63,15 @@ LEDGER_COLUMNS = [
     "vuln_key", "cve", "severity", "asset_id", "asset_name", "asset_type", "cloud",
     "first_seen", "last_seen", "status", "resolved_at", "resolution_src",
     "reopened_count", "first_scan_id", "last_scan_id",
+    # v5 domain-triage rule inputs (appended last: every writer/reader builds tuples
+    # via ``row.get(c) for c in LEDGER_COLUMNS``, so appending is order-safe)
+    "subscription_name", "subscription_ext_id", "tags_json",
 ]
+
+# The v1→v2 table rebuild (SQLite < 3.35) recreates ``vuln_ledger`` with the pre-v5
+# DDL; it must copy only the columns that exist in a v1 table. Frozen on purpose —
+# the v5 ALTERs run right after in the same migration pass.
+_V4_LEDGER_COLUMNS = LEDGER_COLUMNS[:15]
 
 _SCANS_COLUMNS = [
     "scan_id", "ts", "mode", "shape", "total",
@@ -158,7 +172,10 @@ def init_db(db_path=None) -> None:
                     resolution_src TEXT,
                     reopened_count INTEGER DEFAULT 0,
                     first_scan_id TEXT,
-                    last_scan_id TEXT
+                    last_scan_id TEXT,
+                    subscription_name TEXT,
+                    subscription_ext_id TEXT,
+                    tags_json TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_ledger_status ON vuln_ledger(status);
                 CREATE INDEX IF NOT EXISTS idx_ledger_severity ON vuln_ledger(severity);
@@ -242,7 +259,9 @@ def _migrate(conn) -> None:
                     conn.execute("ALTER TABLE vuln_ledger DROP COLUMN latest_json")
                 except sqlite3.OperationalError:
                     # SQLite < 3.35 has no DROP COLUMN: rebuild the table without it.
-                    keep = ",".join(LEDGER_COLUMNS)
+                    # Pre-v5 column list on purpose: a v1 table has none of the v5
+                    # columns; the v5 ALTERs below add them right after.
+                    keep = ",".join(_V4_LEDGER_COLUMNS)
                     conn.execute("ALTER TABLE vuln_ledger RENAME TO vuln_ledger_v1")
                     conn.execute(
                         """
@@ -282,6 +301,12 @@ def _migrate(conn) -> None:
                 conn.execute(
                     "ALTER TABLE scans ADD COLUMN sealed INTEGER NOT NULL DEFAULT 0"
                 )
+            # v4 → v5: nullable domain-rule inputs. Re-read PRAGMA — the v1 rebuild
+            # above may have recreated the table since ``cols`` was computed.
+            ledger_cols = {r[1] for r in conn.execute("PRAGMA table_info(vuln_ledger)")}
+            for col in ("subscription_name", "subscription_ext_id", "tags_json"):
+                if col not in ledger_cols:
+                    conn.execute(f"ALTER TABLE vuln_ledger ADD COLUMN {col} TEXT")
             conn.execute("UPDATE schema_meta SET version=?", (SCHEMA_VERSION,))
         conn.execute("COMMIT")
     except Exception:
@@ -1295,8 +1320,11 @@ def _base_df(conn) -> pd.DataFrame:
     # Explicit columns (not *): keeps a not-yet-migrated v1 DB from shipping its
     # latest_json blobs into the Scan History frame (and its CSV export). Compacted
     # resolved vulns ride along with placeholder asset fields — '(compacted)' is a
-    # visible, honest degradation, not a silent hole in the stats.
-    cols = ",".join(LEDGER_COLUMNS)
+    # visible, honest degradation, not a silent hole in the stats. Columns a
+    # not-yet-migrated pre-v5 DB lacks are selected as NULL so read-only loaders
+    # keep working (and the frame shape stays stable) before init_db ever runs.
+    present = {r[1] for r in conn.execute("PRAGMA table_info(vuln_ledger)")}
+    cols = ",".join(c if c in present else f"NULL AS {c}" for c in LEDGER_COLUMNS)
     query = f"SELECT {cols} FROM vuln_ledger"
     if _has_episodes(conn):
         query += (
@@ -1305,7 +1333,9 @@ def _base_df(conn) -> pd.DataFrame:
             " NULL AS asset_type, NULL AS cloud,"
             " e.first_seen, e.resolved_at AS last_seen, 'RESOLVED' AS status,"
             " e.resolved_at, e.resolution_src, e.reopened_count,"
-            " NULL AS first_scan_id, NULL AS last_scan_id "
+            " NULL AS first_scan_id, NULL AS last_scan_id,"
+            " NULL AS subscription_name, NULL AS subscription_ext_id,"
+            " NULL AS tags_json "
             + _EPISODE_FILTER
         )
     df = pd.read_sql_query(query, conn)
@@ -1472,6 +1502,79 @@ def _trend_from_frames(scans, base, severities=None) -> pd.DataFrame:
 # --------------------------------------------------------------------------- #
 #  Maintenance
 # --------------------------------------------------------------------------- #
+def backfill_rule_inputs(db_path=None) -> dict:
+    """Best-effort one-time fill of the v5 domain-rule inputs on pre-v5 ledger rows.
+
+    Rows written before v5 carry NULL ``subscription_name``/``subscription_ext_id``/
+    ``tags_json``. Open rows heal on their next scan (the latest-observation block in
+    ``reconcile``); this backfill closes the gap for rows present in the newest flat
+    scan's parsed frame without waiting for one. Rows absent from that frame (older
+    resolutions) stay NULL — name-regex domains still classify them via ``asset_name``.
+    Never raises. Returns ``{"updated": int}``.
+    """
+    counts = {"updated": 0}
+    try:
+        path = _resolve(db_path)
+        if not path.exists():
+            return counts
+        conn = _connect(db_path)
+        try:
+            if not _table_exists(conn, "vuln_ledger"):
+                return counts
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(vuln_ledger)")}
+            if "tags_json" not in cols:  # not yet migrated (locked race) — next start
+                return counts
+            pending = conn.execute(
+                "SELECT COUNT(*) FROM vuln_ledger WHERE subscription_name IS NULL "
+                "AND subscription_ext_id IS NULL AND tags_json IS NULL"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        if not pending:
+            return counts
+        row = load_latest_flat_scan_row(db_path)
+        if row is None:
+            return counts
+        raw_path = row.get("raw_path")
+        df = snapshot.read_snapshot(raw_path) if raw_path else None
+        if df is None:
+            payload = _read_raw_payload(raw_path)
+            if payload is None:
+                return counts
+            df = nodes_to_dataframe(extract_nodes(payload))
+        if df is None or df.empty:
+            return counts
+        updates = []
+        for rec in df.to_dict("records"):
+            sub = field(rec, "vulnerableAsset.subscriptionName") or None
+            ext = field(
+                rec,
+                "vulnerableAsset.subscriptionExternalId",
+                "vulnerableAsset.subscriptionId",
+            ) or None
+            tags = reconcile._tags_json(rec)
+            if sub or ext or tags:
+                updates.append((sub, ext, tags, vuln_key(rec)))
+        if not updates:
+            return counts
+        conn = _connect(db_path)
+        try:
+            with conn:
+                cur = conn.executemany(
+                    "UPDATE vuln_ledger SET subscription_name=?, subscription_ext_id=?, "
+                    "tags_json=? WHERE vuln_key=? AND subscription_name IS NULL "
+                    "AND subscription_ext_id IS NULL AND tags_json IS NULL",
+                    updates,
+                )
+                counts["updated"] = cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+        finally:
+            conn.close()
+    except Exception:
+        # Start-up maintenance must never take the app down.
+        logger.warning("Domain rule-input backfill skipped.", exc_info=True)
+    return counts
+
+
 def compact_archives(db_path=None) -> dict:
     """Gzip any pre-compression plain-JSON scan archives in place (one-time upgrade).
 

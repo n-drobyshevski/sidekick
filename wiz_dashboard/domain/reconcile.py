@@ -17,6 +17,7 @@ Lifecycle rules:
                           a new episode.
 """
 
+import json
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -78,6 +79,36 @@ def _midpoint_iso(a, b):
     return _iso(da + (db - da) / 2)
 
 
+_TAGS_PREFIX = "vulnerableAsset.tags."
+
+
+def _tags_json(record):
+    """The asset's tags as canonical JSON (sorted keys), or ``None`` when absent.
+
+    Accepts the nested raw node (``vulnerableAsset.tags`` dict) and the flattened
+    ``vulnerableAsset.tags.<key>`` record shape. Sorted keys keep delete→rebuild and
+    compaction-checkpoint replays byte-stable.
+    """
+    va = record.get("vulnerableAsset")
+    tags = va.get("tags") if isinstance(va, dict) else None
+    if not isinstance(tags, dict):
+        flat = record.get("vulnerableAsset.tags")
+        tags = flat if isinstance(flat, dict) else None
+    if tags is None:
+        tags = {
+            k[len(_TAGS_PREFIX):]: v
+            for k, v in record.items()
+            if k.startswith(_TAGS_PREFIX) and _clean(v) is not None
+        }
+    tags = {str(k): v for k, v in tags.items() if _clean(v) is not None or v == ""}
+    if not tags:
+        return None
+    try:
+        return json.dumps(tags, sort_keys=True, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return None
+
+
 def _make_row(record, key, sev, first_seen, scan_id, scan_ts):
     return {
         "vuln_key": key,
@@ -87,6 +118,12 @@ def _make_row(record, key, sev, first_seen, scan_id, scan_ts):
         "asset_name": field(record, "vulnerableAsset.name") or None,
         "asset_type": field(record, "vulnerableAsset.type") or None,
         "cloud": field(record, "vulnerableAsset.cloudPlatform") or None,
+        "subscription_name": field(record, "vulnerableAsset.subscriptionName") or None,
+        "subscription_ext_id": field(
+            record, "vulnerableAsset.subscriptionExternalId", "vulnerableAsset.subscriptionId"
+        )
+        or None,
+        "tags_json": _tags_json(record),
         "first_seen": first_seen,
         "last_seen": scan_ts,
         "status": "OPEN",
@@ -199,6 +236,13 @@ def reconcile(
         row["asset_name"] = field(rec, "vulnerableAsset.name") or row.get("asset_name")
         row["asset_type"] = field(rec, "vulnerableAsset.type") or row.get("asset_type")
         row["cloud"] = field(rec, "vulnerableAsset.cloudPlatform") or row.get("cloud")
+        row["subscription_name"] = field(rec, "vulnerableAsset.subscriptionName") or row.get(
+            "subscription_name"
+        )
+        row["subscription_ext_id"] = field(
+            rec, "vulnerableAsset.subscriptionExternalId", "vulnerableAsset.subscriptionId"
+        ) or row.get("subscription_ext_id")
+        row["tags_json"] = _tags_json(rec) or row.get("tags_json")
 
         # API-declared resolution closes a currently-open row.
         if api_says_resolved and row["status"] == "OPEN":

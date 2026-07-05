@@ -453,6 +453,125 @@ def test_schema_v3_migrates_to_v4(tmp_path):
         conn.close()
 
 
+def test_schema_v4_migrates_to_v5(tmp_path):
+    """A v4 DB gains the three nullable rule-input columns and the version stamp."""
+    db = _db(tmp_path)
+    conn = sqlite3.connect(db)
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE scans (scan_id TEXT PRIMARY KEY, ts TEXT NOT NULL,
+                mode TEXT NOT NULL, shape TEXT NOT NULL, total INTEGER NOT NULL,
+                new_count INTEGER DEFAULT 0, resolved_count INTEGER DEFAULT 0,
+                reopened_count INTEGER DEFAULT 0, raw_path TEXT, severities TEXT,
+                sealed INTEGER NOT NULL DEFAULT 0);
+            CREATE TABLE vuln_ledger (vuln_key TEXT PRIMARY KEY, cve TEXT, severity TEXT,
+                asset_id TEXT, asset_name TEXT, asset_type TEXT, cloud TEXT,
+                first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, status TEXT NOT NULL,
+                resolved_at TEXT, resolution_src TEXT, reopened_count INTEGER DEFAULT 0,
+                first_scan_id TEXT, last_scan_id TEXT);
+            CREATE TABLE observations (scan_id TEXT NOT NULL, vuln_key TEXT NOT NULL,
+                present INTEGER NOT NULL, severity TEXT, status TEXT,
+                PRIMARY KEY (scan_id, vuln_key));
+            CREATE TABLE schema_meta (version INTEGER NOT NULL);
+            INSERT INTO schema_meta (version) VALUES (4);
+            INSERT INTO vuln_ledger VALUES ('id:x1', 'CVE-2026-1', 'HIGH', NULL, 'vm-1',
+                NULL, NULL, '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z', 'OPEN',
+                NULL, NULL, 0, NULL, NULL);
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    ledger.init_db(db)
+
+    conn = sqlite3.connect(db)
+    try:
+        assert (conn.execute("SELECT version FROM schema_meta").fetchone()[0]
+                == ledger.SCHEMA_VERSION)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(vuln_ledger)")}
+        assert {"subscription_name", "subscription_ext_id", "tags_json"} <= cols
+        row = conn.execute(
+            "SELECT subscription_name, subscription_ext_id, tags_json "
+            "FROM vuln_ledger WHERE vuln_key='id:x1'"
+        ).fetchone()
+        assert row == (None, None, None)  # historical rows honestly read "unknown"
+    finally:
+        conn.close()
+    # the migrated row still loads (NULL inputs, no crash) and classifies later
+    df = ledger.load_base_df(db)
+    assert list(df["subscription_name"]) == [None]
+
+
+def test_pre_v5_db_readable_without_migration(tmp_path):
+    """A v4 DB opened by a read-only loader (no init_db) must not crash on the
+    missing v5 columns — they surface as NULL in the base frame."""
+    db = _db(tmp_path)
+    conn = sqlite3.connect(db)
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE vuln_ledger (vuln_key TEXT PRIMARY KEY, cve TEXT, severity TEXT,
+                asset_id TEXT, asset_name TEXT, asset_type TEXT, cloud TEXT,
+                first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, status TEXT NOT NULL,
+                resolved_at TEXT, resolution_src TEXT, reopened_count INTEGER DEFAULT 0,
+                first_scan_id TEXT, last_scan_id TEXT);
+            CREATE TABLE schema_meta (version INTEGER NOT NULL);
+            INSERT INTO schema_meta (version) VALUES (4);
+            INSERT INTO vuln_ledger VALUES ('id:x1', 'CVE-2026-1', 'HIGH', NULL, 'vm-1',
+                NULL, NULL, '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z', 'OPEN',
+                NULL, NULL, 0, NULL, NULL);
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    df = ledger.load_base_df(db)
+    assert len(df) == 1
+    assert "tags_json" in df.columns
+    assert df["tags_json"].isna().all()
+
+
+def test_compaction_gate_passes_with_populated_v5_columns(tmp_path):
+    """The stats-identity gate must not roll back over rule-input columns (they feed
+    neither MTTR nor trend), and sealed episodes surface with NULL inputs."""
+    db = _db(tmp_path)
+    ledger.persist_flat_scan(
+        [_a1(),
+         _rec("a2", "CRITICAL", first="2026-01-01T00:00:00Z"),
+         _rec("a3", "MEDIUM", first="2025-12-20T00:00:00Z",
+              resolved="2026-01-02T00:00:00Z")],
+        mode="dry-run", db_path=db, scan_id=O1,
+    )
+    # a2 disappears in O2 → resolves; carries inputs from O1? (none set) — give a1 inputs
+    ledger.persist_flat_scan(
+        [dict(_a1(), **{"vulnerableAsset.subscriptionName": "core-prod",
+                        "vulnerableAsset.tags.env": "prod"})],
+        mode="dry-run", db_path=db, scan_id=O2,
+    )
+    ledger.persist_flat_scan([_a1()], mode="dry-run", db_path=db, scan_id=O3)
+    ledger.persist_flat_scan([_a1()], mode="dry-run", db_path=db, scan_id=R1)
+    ledger.persist_flat_scan([_a1()], mode="dry-run", db_path=db, scan_id=R2)
+
+    base = ledger.load_base_df(db)
+    a1 = base[base["vuln_key"] == "id:a1"].iloc[0]
+    assert a1["subscription_name"] == "core-prod"
+    assert a1["tags_json"] == '{"env": "prod"}'
+
+    before = _stats(db)
+    result = ledger.compact_ledger(RETENTION, db_path=db, now=NOW)
+    assert result["no_op"] is False and result["episodes_created"] >= 1
+    assert _stats(db) == before  # gate held, nothing rolled back
+
+    after = ledger.load_base_df(db)
+    a1 = after[after["vuln_key"] == "id:a1"].iloc[0]
+    assert a1["subscription_name"] == "core-prod"  # live row keeps its inputs
+    episodes = after[after["asset_name"] == "(compacted)"]
+    assert not episodes.empty
+    assert episodes["tags_json"].isna().all()  # episodes carry no inputs
+
+
 def test_pre_v4_db_readable_without_migration(tmp_path):
     """A v3 DB opened by a read-only loader (no init_db) must not crash on the missing
     episodes table — the union is skipped when the table is absent."""

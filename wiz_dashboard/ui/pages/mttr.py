@@ -10,7 +10,7 @@ import pandas as pd
 import streamlit as st
 
 from wiz_dashboard.config import SEVERITY_COLORS
-from wiz_dashboard.domain import metrics
+from wiz_dashboard.domain import domain_rules, metrics
 from wiz_dashboard.domain.formatting import format_duration
 from wiz_dashboard.ui import charts
 from wiz_dashboard.ui import components as ui
@@ -30,19 +30,43 @@ def page():
             "(Settings) applies to every metric and trend on this page."
         )
 
+    # Domain scope (Settings → Domains): one domain at a time — an MTTR verdict is
+    # ambiguous when two domains' findings are pooled. Offered only when domains are
+    # configured AND the ledger already classifies rows into at least one of them.
+    items, rules_version = _derived.domains_config()
+    domain_mttr = _derived.ledger_domain_mttr_cached(scope, rules_version) if items else {}
+    domain_sel = None
+    if domain_mttr:
+        names = [n for n in domain_rules.domain_names(items) if n in domain_mttr]
+        choice = st.selectbox(
+            "Domain",
+            ["All domains", *names],
+            key="mttr_domain",
+            help="Scope every metric and trend on this page to one triage domain.",
+        )
+        if choice and choice != "All domains":
+            domain_sel = choice
+
     # Prefer the durable ledger: MTTR computed from lifecycles observed across ALL saved
     # scans (so vulns that disappeared between scans count as resolved). Fall back to the
     # current scan's snapshot when the base is still empty.
-    ledger_mttr = _derived.ledger_mttr_cached(scope)
+    if domain_sel:
+        ledger_mttr = domain_mttr.get(domain_sel, ({}, {}))
+    else:
+        ledger_mttr = _derived.ledger_mttr_cached(scope)
     ledger_has = bool(ledger_mttr and ledger_mttr[0])
 
     # Trend: ledger-reconstructed open/resolved/median over time, with the legacy daily
     # MTTR history as a fallback before the base has data. (The legacy history file is
-    # whole-scan medians and can't be severity-filtered; the ledger trend above is the
-    # scoped source and wins whenever the base has data.)
-    trend_df = _derived.ledger_trend_cached(scope)
-    history_df = _derived.history_cached()
-    trend = trend_df if (trend_df is not None and not trend_df.empty) else history_df
+    # whole-scan medians and can't be severity- or domain-filtered; the ledger trend is
+    # the scoped source and wins whenever the base has data.)
+    if domain_sel:
+        trend_df = _derived.ledger_trend_domain_cached(scope, rules_version, domain_sel)
+        trend = trend_df
+    else:
+        trend_df = _derived.ledger_trend_cached(scope)
+        history_df = _derived.history_cached()
+        trend = trend_df if (trend_df is not None and not trend_df.empty) else history_df
     no_trend = trend is None or getattr(trend, "empty", True)
     prev_kpis = _prev_from_trend(trend)  # previous-scan baseline for the KPI change badges
 
@@ -56,13 +80,13 @@ def page():
 
     if ledger_has:
         per_sev, overall = ledger_mttr
-        _kpi_and_posture(
-            per_sev,
-            overall,
-            "MTTR source: **durable base**. Lifecycles observed across all saved scans "
-            "(a vuln that disappears between scans counts as resolved).",
-            prev_kpis,
+        source = (
+            f"MTTR source: **durable base**, scoped to the **{domain_sel}** domain."
+            if domain_sel
+            else "MTTR source: **durable base**. Lifecycles observed across all saved "
+                 "scans (a vuln that disappears between scans counts as resolved)."
         )
+        _kpi_and_posture(per_sev, overall, source, prev_kpis)
         # Per-severity detail is demoted to an expander: the SLA-posture bullets above are
         # the hero. show_overall=False keeps the widget to just the table (the Key metrics
         # card already carries median / resolved / open).
@@ -86,11 +110,59 @@ def page():
             "history below; re-run with a flat (per-finding) response for the breakdown."
         )
 
+    if domain_mttr and not domain_sel:
+        _by_domain_section(items, domain_mttr, scope, rules_version)
+
     ui.section_label("MTTR trend (median over time)")
     charts.mttr_trend(trend)
 
     ui.section_label("Open vs resolved (over time)")
     charts.open_resolved_trend(trend)
+
+
+def _by_domain_section(items, domain_mttr, scope, rules_version) -> None:
+    """Per-domain remediation posture: one row per triage domain, busiest first.
+
+    The leadership read ("which team is behind"): open load, resolved volume, median
+    MTTR and the same In-SLA verdict the headline uses — per domain. Unassigned sorts
+    last regardless of size; it's the triage backlog, not a team."""
+    ui.section_label("By domain")
+    rows = []
+    for name in domain_rules.domain_names(items):
+        if name not in domain_mttr:
+            continue
+        per_sev, overall = domain_mttr[name]
+        sla, _oldest = metrics.overall_sla_oldest(per_sev)
+        rows.append({
+            "Domain": name,
+            "Open": int(overall.get("open", 0)),
+            "Resolved": int(overall.get("resolved", 0)),
+            "Median MTTR": format_duration(overall.get("mttr_median")),
+            "In SLA %": round(sla) if sla is not None else None,
+        })
+    rows.sort(key=lambda r: (r["Domain"] == domain_rules.UNASSIGNED, -r["Open"]))
+    st.dataframe(
+        pd.DataFrame(rows),
+        hide_index=True,
+        width="stretch",
+        column_config={
+            "In SLA %": st.column_config.ProgressColumn(
+                "In SLA", min_value=0, max_value=100, format="%d%%",
+                help="Share of resolved findings remediated within their SLA target.",
+            ),
+        },
+    )
+    base = _derived.ledger_base_domains_cached(scope, rules_version)
+    compacted = (
+        int((base["asset_name"] == "(compacted)").sum())
+        if base is not None and not base.empty and "asset_name" in base.columns
+        else 0
+    )
+    if compacted:
+        st.caption(
+            f"{compacted:,} compacted resolved finding(s) predate their asset data and "
+            "are counted under Unassigned."
+        )
 
 
 def _prev_from_trend(trend):
