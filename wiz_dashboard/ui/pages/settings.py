@@ -70,6 +70,44 @@ def page():
     if compact_toast:
         ui.show_toast(compact_toast, "success")
 
+    _severity_scope()
+
+    # ---- Domains (rule-based triage) ------------------------------------------------ #
+    _domains_section.render()
+
+    # ---- Data retention ------------------------------------------------------------ #
+    _retention()
+    # A dialog opened during a fragment rerun won't render, so the "Compact now" button
+    # inside the retention fragment stashes the window and full-reruns; the confirm
+    # opens here, at app scope. pop (not get): an X-dismissal must not reopen it.
+    pending = st.session_state.pop("_compact_pending", None)
+    if pending is not None:
+        _confirm_compact(pending)
+
+    # ---- Saved state -------------------------------------------------------------- #
+    ui.section_label("Saved settings")
+    st.markdown(
+        f"<div>Pulling from Wiz:&nbsp; {_badges(settings.get_fetch_severities())}</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "<div>Showing in the interface:&nbsp; "
+        f"{_badges(settings.get_display_severities())}</div>",
+        unsafe_allow_html=True,
+    )
+    if st.session_state.get("has_creds") is False:
+        st.caption(
+            "Dry-run mode: the scan scope filters the bundled sample data, so you can "
+            "preview the behavior without credentials."
+        )
+
+
+@st.fragment
+def _severity_scope() -> None:
+    """Scan-scope pills, display pills and Save as ONE fragment: the display pills'
+    options derive from the scan-scope selection, so the two must rerun together —
+    but toggling a pill no longer reruns the whole script. Save's ``st.rerun()``
+    (app scope by default) still propagates the persisted change everywhere."""
     saved_fetch = settings.get_fetch_severities()
     saved_display = settings.get_display_severities()
     _pending_scope_notice(saved_fetch)
@@ -151,10 +189,12 @@ def page():
         st.session_state["_settings_saved_toast"] = True
         st.rerun()
 
-    # ---- Domains (rule-based triage) ------------------------------------------------ #
-    _domains_section.render()
 
-    # ---- Data retention ------------------------------------------------------------ #
+@st.fragment
+def _retention() -> None:
+    """Retention toggles + Save/Compact as one fragment. The compact confirm is a
+    dialog, which can't open during a fragment rerun — "Compact now" stashes the
+    window in ``_compact_pending`` and full-reruns; ``page()`` opens the dialog."""
     ui.section_label("Data retention")
     st.caption(
         "Scans older than the retention window are **sealed**: every chart and "
@@ -191,23 +231,8 @@ def page():
             ui.show_toast("Retention settings saved", "success")
         if st.button("Compact now", key="settings_compact_now", disabled=not enabled,
                      icon=":material/compress:"):
-            _confirm_compact(int(days))
-
-    # ---- Saved state -------------------------------------------------------------- #
-    ui.section_label("Saved settings")
-    st.markdown(
-        f"<div>Pulling from Wiz:&nbsp; {_badges(saved_fetch)}</div>",
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        f"<div>Showing in the interface:&nbsp; {_badges(saved_display)}</div>",
-        unsafe_allow_html=True,
-    )
-    if st.session_state.get("has_creds") is False:
-        st.caption(
-            "Dry-run mode: the scan scope filters the bundled sample data, so you can "
-            "preview the behavior without credentials."
-        )
+            st.session_state["_compact_pending"] = int(days)
+            st.rerun()
 
 
 @st.dialog("Compact old data?")

@@ -174,6 +174,35 @@ def render() -> None:
         "everywhere the moment rules change — nothing is rewritten in the scan history."
     )
 
+    _rows()
+
+    # Both dialogs open HERE, at render()'s app scope — a dialog invoked during a
+    # fragment rerun won't render, so the row buttons inside _rows set their
+    # open-flags and full-rerun to reach these invocations.
+    if st.session_state.get("dom_editor_open"):
+        _domain_editor()
+
+    # Delete confirm uses the same open-flag pattern as the editor: the dialog is
+    # re-invoked on every run while the target is set, so its own buttons stay live
+    # across the rerun their click triggers.
+    target = st.session_state.get("dom_delete_target")
+    if target:
+        items = settings.get_domains()["items"]
+        item = next((it for it in items if it.get("id") == target), None)
+        if item is None:
+            st.session_state.pop("dom_delete_target", None)
+        else:
+            _confirm_delete(item)
+
+
+@st.fragment
+def _rows() -> None:
+    """The domain list (reorder/edit/delete rows + Add) as one fragment: plain row
+    interactions rerun only this region. Buttons whose outcome must escape the
+    fragment full-rerun explicitly — reorder via ``_persist``'s app-scope rerun
+    (assignments change on every page), and each dialog-opening button after setting
+    its open-flag (a dialog invoked during a fragment rerun won't render, so
+    ``render()`` opens it at app scope)."""
     toast = st.session_state.pop("_domains_toast", None)
     if toast:
         ui.show_toast(toast, "success")
@@ -186,20 +215,7 @@ def render() -> None:
 
     if st.button("Add domain", key="dom_add", icon=":material/add:"):
         _open_editor(None)
-
-    if st.session_state.get("dom_editor_open"):
-        _domain_editor()
-
-    # Delete confirm uses the same open-flag pattern as the editor: the dialog is
-    # re-invoked on every run while the target is set, so its own buttons stay live
-    # across the rerun their click triggers.
-    target = st.session_state.get("dom_delete_target")
-    if target:
-        item = next((it for it in items if it.get("id") == target), None)
-        if item is None:
-            st.session_state.pop("dom_delete_target", None)
-        else:
-            _confirm_delete(item)
+        st.rerun()
 
 
 def _section_match_counts(items):
