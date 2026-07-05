@@ -168,3 +168,24 @@ def test_finding_sheet_carries_domain_chip():
     assert 'aria-label="Domain: Web"' in html
     # consumed by the header — the catch-all must not echo it as a raw "domain" row
     assert ">domain<" not in html
+
+
+def test_mttr_domain_select_rescopes_metrics():
+    # Interacting with the domain selectbox (inside the page-body fragment) must
+    # re-scope the KPI source caption to the chosen domain.
+    guarded_persist = (
+        "from wiz_dashboard.data import ledger as _l\n"
+        "if _l.load_scans_df().empty:\n"
+        + "".join("    " + line + "\n" for line in _PERSIST_SAMPLE.strip().splitlines())
+    )
+    at = _run(
+        _SEED + guarded_persist +
+        "from wiz_dashboard.ui.pages import mttr\n"
+        "mttr.page()\n"
+    )
+    sel = next(s for s in at.selectbox if s.key == "mttr_domain")
+    domain = next(o for o in sel.options if o != "All domains")
+    sel.select(domain)
+    at.run()
+    assert not at.exception, at.exception
+    assert any(f"scoped to the **{domain}** domain" in str(c.value) for c in at.caption)

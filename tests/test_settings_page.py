@@ -177,3 +177,17 @@ def test_display_view_all_hidden_yields_empty_state():
         "os_vulns.render(has_creds=False)\n"
     )
     assert any("hidden by the display filter" in m.value for m in at.markdown)
+
+
+def test_compact_stash_opens_confirm_dialog():
+    # "Compact now" lives inside the retention fragment and can only stash the window;
+    # page() pops _compact_pending and opens the confirm dialog at app scope. With an
+    # empty ledger the preview is a no-op, so the dialog shows its Close button.
+    at = AppTest.from_string(
+        "from wiz_dashboard.ui.pages import settings as sp\nsp.page()\n",
+        default_timeout=60,
+    )
+    at.session_state["_compact_pending"] = 180
+    at.run()
+    assert not at.exception, at.exception
+    assert [b for b in at.get("button") if b.key == "settings_compact_close"]

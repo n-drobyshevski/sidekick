@@ -399,3 +399,36 @@ def test_delete_controls_keep_unsealed_selection(tmp_path):
     assert any("can't be deleted" in c.value for c in at.caption)
     delete = [b for b in at.get("button") if b.key == "sh_delete"]
     assert delete and "(1)" in delete[0].label
+
+
+def test_delete_stash_opens_confirm_and_deletes(tmp_path):
+    # The delete button lives inside the saved-scans fragment and can only stash the
+    # selection (a dialog opened during a fragment rerun won't render); page() pops
+    # sh_delete_pending and opens the confirm at app scope. Drive that wiring end to
+    # end. AppTest replays the whole script each .run() and page() POPS the stash, so
+    # the flag is re-seeded before the click-run (the dialog open-flag memory pattern).
+    script = (
+        "from wiz_dashboard.data import ledger\n"
+        "from wiz_dashboard.ui.pages import _derived, scan_history\n"
+        "if ledger.load_scans_df().empty:\n"
+        "    ledger.persist_flat_scan([{'id': 'x1', 'name': 'CVE-2026-1',"
+        " 'severity': 'HIGH', 'vulnerableAsset.name': 'vm-1'}],"
+        " mode='dry-run', scan_id='2026-05-01T00:00:00Z')\n"
+        "    ledger.persist_flat_scan([{'id': 'x2', 'name': 'CVE-2026-2',"
+        " 'severity': 'HIGH', 'vulnerableAsset.name': 'vm-2'}],"
+        " mode='dry-run', scan_id='2026-05-02T00:00:00Z')\n"
+        "    _derived.clear_ledger_caches()\n"
+        "scan_history.page()\n"
+    )
+    at = AppTest.from_string(script, default_timeout=60)
+    at.session_state["sh_delete_pending"] = ["2026-05-02T00:00:00Z"]
+    at.run()
+    assert not at.exception, at.exception
+    confirm = [b for b in at.get("button") if b.key == "sh_del_confirm"]
+    assert confirm, "stash must open the confirm dialog at app scope"
+    confirm[0].click()
+    at.session_state["sh_delete_pending"] = ["2026-05-02T00:00:00Z"]
+    at.run()
+    assert not at.exception, at.exception
+    from wiz_dashboard.data import ledger
+    assert set(ledger.load_scans_df()["scan_id"]) == {"2026-05-01T00:00:00Z"}

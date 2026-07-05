@@ -46,11 +46,13 @@ def page():
     scope = _derived.display_scope()
     scans = _derived.ledger_scans_cached()
     items, rules_version = _derived.domains_config()
-    base = (
+    # Warm the shared base cache HERE, serially: the KPI and base-table fragments
+    # below run on parallel threads and both need it — one page-scope read turns
+    # their getter calls into hits instead of two concurrent cold misses.
+    if items:
         _derived.ledger_base_domains_cached(scope, rules_version)
-        if items
-        else _derived.ledger_base_cached(scope)
-    )
+    else:
+        _derived.ledger_base_cached(scope)
 
     if scans is None or scans.empty:
         ui.empty_state(
@@ -67,7 +69,7 @@ def page():
             "table always lists every scan."
         )
 
-    _kpis(base, scope)
+    _kpis()
 
     ui.section_label("Saved scans")
     _scans_and_delete()
@@ -82,24 +84,45 @@ def page():
     ui.section_label("Vulnerability base (ledger)")
     _base_table()
 
-    trend = _derived.ledger_trend_cached(scope)
+    _trend_charts()
+
+
+@ui.parallel_fragment
+def _scans_and_delete() -> None:
+    """Saved-scans table + delete button as one fragment: row (de)selection reruns only
+    this region, not the whole page. Zero-arg — the scans frame is re-read via the
+    cached getter (a hit), never captured as a fragment argument. Parallel-safe: the
+    only session-state write (``sh_delete_pending``) happens on a button click, i.e.
+    during a sequential fragment rerun, and the confirm dialog opens from page()."""
+    scans = _derived.ledger_scans_cached()
+    selected = _scans_table(scans)
+    _delete_controls(scans, selected)
+
+
+@ui.parallel_fragment
+def _trend_charts() -> None:
+    """Trend charts as a parallel fragment: the ledger-trend reconstruction is the
+    heaviest cold-path computation on this page, so on the full rerun right after a
+    scan persist / delete / compaction it overlaps with the KPI and table sections
+    instead of serializing behind them. Writes no session-state keys."""
+    trend = _derived.ledger_trend_cached(_derived.display_scope())
     ui.section_label("Open vs resolved (over time)")
     charts.open_resolved_trend(trend)
     ui.section_label("MTTR trend (median over time)")
     charts.mttr_trend(trend)
 
 
-@st.fragment
-def _scans_and_delete() -> None:
-    """Saved-scans table + delete button as one fragment: row (de)selection reruns only
-    this region, not the whole page. Zero-arg — the scans frame is re-read via the
-    cached getter (a hit), never captured as a fragment argument."""
-    scans = _derived.ledger_scans_cached()
-    selected = _scans_table(scans)
-    _delete_controls(scans, selected)
-
-
-def _kpis(base, scope=None) -> None:
+@ui.parallel_fragment
+def _kpis() -> None:
+    """KPI band as a parallel fragment: on a full rerun its ledger-MTTR read runs
+    concurrently with the other sections. Writes no session-state keys."""
+    scope = _derived.display_scope()
+    items, rules_version = _derived.domains_config()
+    base = (
+        _derived.ledger_base_domains_cached(scope, rules_version)
+        if items
+        else _derived.ledger_base_cached(scope)
+    )
     _, overall = _derived.ledger_mttr_cached(scope)
     tracked = 0 if base is None or base.empty else len(base)
     open_n = int((base["status"] == "OPEN").sum()) if tracked else 0
@@ -234,11 +257,13 @@ def _confirm_delete(scans, selected_ids) -> None:
         st.rerun()
 
 
-@st.fragment
+@ui.parallel_fragment
 def _base_table() -> None:
     """Filter toolbar + paginated base table as one fragment: every filter / search /
     pager / download interaction reruns only this region. Zero-arg — the base is
-    re-read via the cached getters (hits), never captured as a fragment argument."""
+    re-read via the cached getters (hits), never captured as a fragment argument.
+    Parallel-safe: writes only its own keys (``sh_base_*`` pager, ``sh_csv_payload``),
+    and only on widget interaction (sequential fragment reruns)."""
     scope = _derived.display_scope()
     items, rules_version = _derived.domains_config()
     base = (

@@ -8,6 +8,7 @@ contrast-safe). All dynamic text is HTML-escaped before injection.
 """
 
 import html as _html
+import os
 import traceback
 
 import pandas as pd
@@ -25,6 +26,18 @@ from wiz_dashboard.domain.metrics import calculate_mttr
 from wiz_dashboard.domain.severity import normalize_severity
 
 _TOAST_ICONS = {"success": "✅", "info": "ℹ️", "warning": "⚠️", "error": "🚨"}
+
+
+def parallel_fragment(fn):
+    """``st.fragment(parallel=True)`` (Streamlit ≥1.58): during a full-app rerun the
+    fragment runs on a worker thread, concurrently with other parallel fragments and
+    the main script; fragment reruns stay sequential. Rules for a parallel fragment:
+    write only your own session-state keys, and never call ``st.dialog`` outside a
+    widget-interaction branch. ``WIZ_DISABLE_PARALLEL_FRAGMENTS`` degrades to a plain
+    (sequential) fragment — an escape hatch for AppTest or debugging."""
+    if os.environ.get("WIZ_DISABLE_PARALLEL_FRAGMENTS"):
+        return st.fragment(fn)
+    return st.fragment(parallel=True)(fn)
 
 # Severity -> CSS modifier suffix (matches .sev-badge--* / --sev-* tokens in CSS).
 _SEV_CLASS = {
