@@ -19,7 +19,14 @@ from wiz_dashboard.ui.pages import _derived, _findings
 
 def page():
     ui.render_page_header("Reports", "Ad-hoc security summary across your loaded findings")
+    _controls_and_preview()
 
+
+@st.fragment
+def _controls_and_preview() -> None:
+    """Source picker, format radio, preview and downloads as one fragment: toggling a
+    source or format reruns only this region, not the app chrome. Zero-arg — the loaded
+    sources are re-read here (cache-hit aggregates), never captured as fragment args."""
     sources = _findings.loaded_sources()
     if not sources:
         ui.empty_state(
