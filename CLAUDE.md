@@ -24,7 +24,7 @@ Before any UI or design work, read:
 - **shadcn/ui is emulated in CSS only** — no React, no component bridge. Native Streamlit
   theming (`.streamlit/config.toml`) is the source of truth for base surfaces, borders, radius,
   fonts, and the categorical chart palette. `wiz_dashboard/assets/styles.css` mirrors those
-  values (Streamlit 1.57 does not expose its theme as `--st-*` vars to injected CSS) and styles
+  values (Streamlit 1.58 does not expose its theme as `--st-*` vars to injected CSS) and styles
   only the bespoke widgets native theming can't express. Edit the two in sync.
 - **Blue accent is `#2563eb`** (brand / data / focus). Primary buttons are a neutral near-black
   (`#0a0a0a`) by deliberate choice, not the blue `primaryColor`.
