@@ -74,6 +74,16 @@ SCAN_ARCHIVE_DIRNAME = "scans"  # raw per-scan JSON, under DATA_DIR
 #   "midpoint" -> halfway between the previous and current scan
 DISAPPEARANCE_RESOLUTION = "scan_ts"
 
+# ---- Retention / compaction of old, closed data (Settings page; data.ledger) ----
+# Scans older than the retention window are "sealed": their resolved vulns roll up into
+# exact episode rows (MTTR/SLA/trend stay bit-identical) and their per-scan artifacts
+# (observations, raw archive, snapshot) are pruned. Sealed scans can't be deleted.
+DEFAULT_RETENTION_DAYS = 180
+RETENTION_MIN_DAYS = 30  # guardrail: never seal anything younger than this
+# The newest flat scan is the quick-refresh merge baseline (raw archive must survive);
+# the second-newest feeds the severity change badges from its observations.
+MIN_UNSEALED_FLAT_SCANS = 2
+
 
 def load_wiz_config(path: str = "wiz_config.json") -> Dict:
     """Load optional Wiz credentials from JSON; returns {} if absent or invalid."""

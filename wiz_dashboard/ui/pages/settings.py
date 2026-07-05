@@ -13,12 +13,23 @@ scope pauses lifecycle tracking for the excluded severities (they are kept OPEN 
 ledger, never falsely resolved; see ``domain.reconcile``).
 """
 
+import logging
+
 import streamlit as st
 
-from wiz_dashboard.config import SELECTABLE_SEVERITIES, SEVERITY_GLYPHS
+from wiz_dashboard.config import (
+    DEFAULT_RETENTION_DAYS,
+    RETENTION_MIN_DAYS,
+    SELECTABLE_SEVERITIES,
+    SEVERITY_GLYPHS,
+)
 from wiz_dashboard.data import ledger, settings
+from wiz_dashboard.domain.formatting import format_bytes
 from wiz_dashboard.ui import components as ui
 from wiz_dashboard.ui import scan
+from wiz_dashboard.ui.pages import _derived
+
+logger = logging.getLogger(__name__)
 
 
 def _sev_option_label(sev: str) -> str:
@@ -55,6 +66,9 @@ def page():
     if st.session_state.pop("_settings_saved_toast", False):
         ui.show_toast("Settings saved — the scan scope applies on the next full scan",
                       "success")
+    compact_toast = st.session_state.pop("_settings_compact_toast", None)
+    if compact_toast:
+        ui.show_toast(compact_toast, "success")
 
     saved_fetch = settings.get_fetch_severities()
     saved_display = settings.get_display_severities()
@@ -137,6 +151,45 @@ def page():
         st.session_state["_settings_saved_toast"] = True
         st.rerun()
 
+    # ---- Data retention ------------------------------------------------------------ #
+    ui.section_label("Data retention")
+    st.caption(
+        "Scans older than the retention window are **sealed**: every chart and "
+        "MTTR/SLA number stays exact, but per-asset detail, raw scan JSON and the "
+        "ability to delete those scans are permanently removed. The two most recent "
+        "full scans always stay."
+    )
+    saved_days = settings.get_retention_days()
+    enabled = st.toggle(
+        "Compact old data", value=saved_days is not None, key="settings_retention_on"
+    )
+    days = st.number_input(
+        "Retention window (days)",
+        min_value=RETENTION_MIN_DAYS,
+        max_value=3650,
+        value=int(saved_days or DEFAULT_RETENTION_DAYS),
+        step=30,
+        key="settings_retention_days",
+        disabled=not enabled,
+    )
+    auto = st.toggle(
+        "Compact automatically after each scan",
+        value=settings.get_auto_compact(),
+        key="settings_auto_compact",
+        disabled=not enabled,
+        help="Runs right after a scan is saved; does nothing until history is older "
+             "than the retention window.",
+    )
+    with st.container(horizontal=True):
+        if st.button("Save retention", key="settings_retention_save",
+                     icon=":material/save:"):
+            settings.set_retention_days(int(days) if enabled else None)
+            settings.set_auto_compact(bool(auto))
+            ui.show_toast("Retention settings saved", "success")
+        if st.button("Compact now", key="settings_compact_now", disabled=not enabled,
+                     icon=":material/compress:"):
+            _confirm_compact(int(days))
+
     # ---- Saved state -------------------------------------------------------------- #
     ui.section_label("Saved settings")
     st.markdown(
@@ -152,3 +205,63 @@ def page():
             "Dry-run mode: the scan scope filters the bundled sample data, so you can "
             "preview the behavior without credentials."
         )
+
+
+@st.dialog("Compact old data?")
+def _confirm_compact(days: int) -> None:
+    """Dry-run preview → explicit confirm → real compaction with a reclaimed-space toast.
+
+    The preview runs the identical selection + checkpoint replay as the real thing
+    (``dry_run=True``), so the numbers the user confirms are exact, not estimates.
+    """
+    try:
+        preview = ledger.compact_ledger(days, dry_run=True)
+    except ledger.LedgerRebuildError as exc:
+        st.error(str(exc))
+        if st.button("Close", key="settings_compact_close"):
+            st.rerun()
+        return
+    if preview["no_op"]:
+        st.info(
+            f"Nothing to compact — no sealable scans are older than {days} days "
+            "(the two most recent full scans always stay)."
+        )
+        if st.button("Close", key="settings_compact_close"):
+            st.rerun()
+        return
+    st.write(
+        f"**{preview['scans_sealed']}** scan(s) will be sealed and "
+        f"**{preview['episodes_created']}** closed finding(s) rolled up into the "
+        f"compacted baseline, pruning {preview['observations_pruned']:,} observation "
+        f"row(s) and about {format_bytes(preview['archive_bytes_freed'])} of archives. "
+        "MTTR, SLA and every trend stay exactly the same."
+    )
+    st.warning(
+        "Per-asset detail and raw JSON for the sealed scans are removed permanently, "
+        "and sealed scans can no longer be deleted from the history.",
+        icon="⚠️",
+    )
+    c1, c2 = st.columns(2)
+    if c1.button("Cancel", key="settings_compact_cancel", width="stretch"):
+        st.rerun()
+    if c2.button("Compact", type="primary", key="settings_compact_confirm",
+                 width="stretch"):
+        try:
+            result = ledger.compact_ledger(days)
+        except ledger.LedgerRebuildError as exc:
+            ui.show_toast(str(exc), "warning")
+            st.rerun()
+            return
+        except Exception:  # noqa: BLE001 -- a locked DB shouldn't crash the page
+            logger.warning("Compaction failed", exc_info=True)
+            ui.show_toast("Compaction failed — the base was left unchanged.", "error")
+            st.rerun()
+            return
+        _derived.clear_ledger_caches()
+        freed = result["archive_bytes_freed"] + result["db_bytes_freed"]
+        st.session_state["_settings_compact_toast"] = (
+            f"Compacted {result['scans_sealed']} scan(s) — "
+            f"{result['episodes_created']} closed finding(s) rolled up, "
+            f"{format_bytes(freed)} reclaimed. Stats verified identical."
+        )
+        st.rerun()

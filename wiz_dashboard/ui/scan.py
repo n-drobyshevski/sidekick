@@ -23,6 +23,7 @@ from wiz_dashboard.data.transform import (
     merge_nodes,
     nodes_to_dataframe,
 )
+from wiz_dashboard.domain.formatting import format_bytes
 from wiz_dashboard.domain.metrics import calculate_mttr, overall_sla_oldest
 from wiz_dashboard.models import schema
 from wiz_dashboard.ui import components as ui
@@ -613,6 +614,35 @@ def _persist_scan(nodes, df, results, *, mode, db_path=None, scan_id=None,
     except Exception:
         logger.warning("Failed to persist scan to ledger", exc_info=True)
         ui.show_toast("Couldn't save this scan to the durable base.", "warning")
+        return
+    _auto_compact(db_path=db_path)
+
+
+def _auto_compact(db_path=None) -> None:
+    """Run retention compaction after a successful persist.
+
+    Retention is on by default (180 days), so the toast below is deliberate: the first
+    real seal must never be silent. A no-op run (nothing old enough) shows nothing.
+    Mirrors ``_persist_scan``'s contract — a failure here never breaks the scan.
+    """
+    try:
+        if not settings.get_auto_compact():
+            return
+        days = settings.get_retention_days()
+        if days is None:
+            return
+        result = ledger.compact_ledger(days, db_path=db_path)
+        if result.get("no_op"):
+            return
+        _derived.clear_ledger_caches()
+        freed = result["archive_bytes_freed"] + result["db_bytes_freed"]
+        ui.show_toast(
+            f"Compacted {result['scans_sealed']} old scan(s) — "
+            f"{result['episodes_created']} closed finding(s) rolled up, "
+            f"{format_bytes(freed)} reclaimed.", "info",
+        )
+    except Exception:
+        logger.warning("Auto-compaction failed", exc_info=True)
 
 
 def _record_mttr_snapshot(df, counts, filename=None) -> None:

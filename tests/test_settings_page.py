@@ -117,6 +117,52 @@ def test_display_filter_hides_severities_on_consumer_pages():
     assert any("display filter" in c.value for c in at.caption)
 
 
+def test_retention_controls_render_with_defaults():
+    at = _run(
+        "from wiz_dashboard.ui.pages import settings as sp\n"
+        "sp.page()\n"
+    )
+    assert _widget(at, "settings_retention_on").value is True  # retention ON by default
+    assert _widget(at, "settings_retention_days").value == 180
+    assert _widget(at, "settings_auto_compact").value is True
+    compact = [b for b in at.get("button") if b.key == "settings_compact_now"][0]
+    assert not compact.disabled
+
+
+def test_save_retention_persists():
+    at = _run(
+        "from wiz_dashboard.ui.pages import settings as sp\n"
+        "sp.page()\n"
+    )
+    _widget(at, "settings_retention_days").set_value(365)
+    _widget(at, "settings_auto_compact").set_value(False)
+    at.run()
+    assert not at.exception
+    [b for b in at.get("button") if b.key == "settings_retention_save"][0].click()
+    at.run()
+    assert not at.exception
+    on_disk = json.loads(_settings_file().read_text(encoding="utf-8"))
+    assert on_disk["retention_days"] == 365
+    assert on_disk["auto_compact"] is False
+
+
+def test_retention_off_persists_none_and_disables_compact_now():
+    at = _run(
+        "from wiz_dashboard.ui.pages import settings as sp\n"
+        "sp.page()\n"
+    )
+    _widget(at, "settings_retention_on").set_value(False)
+    at.run()
+    assert not at.exception
+    compact = [b for b in at.get("button") if b.key == "settings_compact_now"][0]
+    assert compact.disabled
+    [b for b in at.get("button") if b.key == "settings_retention_save"][0].click()
+    at.run()
+    assert not at.exception
+    on_disk = json.loads(_settings_file().read_text(encoding="utf-8"))
+    assert on_disk["retention_days"] is None
+
+
 def test_display_view_all_hidden_yields_empty_state():
     at = _run(
         "import streamlit as st\n"

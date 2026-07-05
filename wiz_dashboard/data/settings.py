@@ -108,6 +108,44 @@ def set_display_severities(sevs) -> None:
     save_settings(d)
 
 
+def get_retention_days():
+    """Retention window in days for compacting old, closed data — or ``None`` (off).
+
+    Default is ``config.DEFAULT_RETENTION_DAYS`` (retention ON out of the box; disable
+    on the Settings page). Stored values are clamped to ``config.RETENTION_MIN_DAYS``
+    so a hand-edited settings file can never seal fresh history.
+    """
+    raw = load_settings().get("retention_days", config.DEFAULT_RETENTION_DAYS)
+    if raw is None:
+        return None
+    try:
+        return max(int(raw), config.RETENTION_MIN_DAYS)
+    except (TypeError, ValueError):
+        return config.DEFAULT_RETENTION_DAYS
+
+
+def set_retention_days(days) -> None:
+    """Persist the retention window; ``None`` turns compaction off."""
+    d = load_settings()
+    if days is None:
+        d["retention_days"] = None
+    else:
+        d["retention_days"] = max(int(days), config.RETENTION_MIN_DAYS)
+    save_settings(d)
+
+
+def get_auto_compact() -> bool:
+    """Whether a successful scan persist also runs compaction (default: on)."""
+    val = load_settings().get("auto_compact", True)
+    return bool(val) if isinstance(val, bool) else True
+
+
+def set_auto_compact(enabled) -> None:
+    d = load_settings()
+    d["auto_compact"] = bool(enabled)
+    save_settings(d)
+
+
 def api_severity_filter(severities):
     """GraphQL ``filterBy.severity`` values for a scope, or ``None`` when unscoped.
 

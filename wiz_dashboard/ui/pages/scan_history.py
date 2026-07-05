@@ -114,7 +114,7 @@ def _scans_table(scans) -> list:
     widget key carries a nonce so a delete (which shrinks the table) discards the now-
     stale selection instead of carrying a past-the-end index into the smaller frame."""
     cols = [c for c in ("ts", "mode", "shape", "total", "new_count", "resolved_count",
-                        "reopened_count", "severities") if c in scans.columns]
+                        "reopened_count", "severities", "sealed") if c in scans.columns]
     view = scans[cols]
     if "severities" in view.columns:
         # Render the stored scope as readable text; NULL (unscoped) reads "All".
@@ -123,6 +123,11 @@ def _scans_table(scans) -> list:
                 lambda s: (" + ".join(x.title() for x in ledger.parse_severities(s) or ())
                            or "All")
             )
+        )
+    if "sealed" in view.columns:
+        # Glyph + word, not color: sealed rows are part of the compacted baseline.
+        view = view.assign(
+            sealed=view["sealed"].map(lambda v: "🔒 Sealed" if v else "")
         )
     event = st.dataframe(
         view,
@@ -144,6 +149,11 @@ def _scans_table(scans) -> list:
             "severities": st.column_config.TextColumn(
                 "Scope", help="Severities this scan pulled from Wiz ('All' = unscoped)"
             ),
+            "sealed": st.column_config.TextColumn(
+                "Sealed",
+                help="Part of the compacted baseline — raw archive pruned; the scan "
+                     "can no longer be deleted (Settings → Data retention).",
+            ),
         },
     )
     rows = (event.selection.get("rows") if event and event.selection else None) or []
@@ -151,9 +161,24 @@ def _scans_table(scans) -> list:
 
 
 def _delete_controls(scans, selected_ids) -> None:
-    """A primary "Delete selected" button that opens the confirm dialog."""
+    """A primary "Delete selected" button that opens the confirm dialog.
+
+    Sealed scans are excluded up front (with a caption saying so) — the backend would
+    refuse them anyway (``SealedScanError``), but the UI shouldn't offer a delete it
+    knows will be refused."""
     if not selected_ids:
         return
+    if "sealed" in scans.columns:
+        sealed_ids = set(scans.loc[scans["sealed"].astype(bool), "scan_id"])
+        sealed_picked = [s for s in selected_ids if s in sealed_ids]
+        if sealed_picked:
+            st.caption(
+                f"{len(sealed_picked)} selected scan(s) are sealed (compacted "
+                "baseline) and can't be deleted."
+            )
+        selected_ids = [s for s in selected_ids if s not in sealed_ids]
+        if not selected_ids:
+            return
     if st.button(f"Delete selected ({len(selected_ids)})", type="primary", key="sh_delete"):
         _confirm_delete(scans, selected_ids)
 
@@ -186,6 +211,17 @@ def _base_table(base) -> None:
     if base is None or base.empty:
         st.info("No vulnerabilities in the base yet — grouped-by-asset scans don't populate it.")
         return
+
+    compacted_n = (
+        int((base["asset_name"] == "(compacted)").sum())
+        if "asset_name" in base.columns else 0
+    )
+    if compacted_n:
+        st.caption(
+            f"{compacted_n:,} resolved finding(s) are compacted: their timestamps, "
+            "severity and CVE are exact (all stats include them), but per-asset "
+            "detail and raw JSON are no longer available."
+        )
 
     # Normalize severities once per rerun (vectorized) and reuse for both the option
     # list and the row mask below, instead of a per-row map over the whole base twice.
