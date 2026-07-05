@@ -70,17 +70,33 @@ def page():
     _kpis(base, scope)
 
     ui.section_label("Saved scans")
-    selected = _scans_table(scans)
-    _delete_controls(scans, selected)
+    _scans_and_delete()
+    # A dialog opened during a fragment rerun won't render (see the OS-page drilldown),
+    # so the delete button inside the fragment stashes the selection and full-reruns;
+    # the confirm dialog opens here, at app scope. pop (not get): an X-dismissal must
+    # not reopen the dialog on the next rerun.
+    pending = st.session_state.pop("sh_delete_pending", None)
+    if pending:
+        _confirm_delete(scans, pending)
 
     ui.section_label("Vulnerability base (ledger)")
-    _base_table(base)
+    _base_table()
 
     trend = _derived.ledger_trend_cached(scope)
     ui.section_label("Open vs resolved (over time)")
     charts.open_resolved_trend(trend)
     ui.section_label("MTTR trend (median over time)")
     charts.mttr_trend(trend)
+
+
+@st.fragment
+def _scans_and_delete() -> None:
+    """Saved-scans table + delete button as one fragment: row (de)selection reruns only
+    this region, not the whole page. Zero-arg — the scans frame is re-read via the
+    cached getter (a hit), never captured as a fragment argument."""
+    scans = _derived.ledger_scans_cached()
+    selected = _scans_table(scans)
+    _delete_controls(scans, selected)
 
 
 def _kpis(base, scope=None) -> None:
@@ -187,7 +203,11 @@ def _delete_controls(scans, selected_ids) -> None:
         if not selected_ids:
             return
     if st.button(f"Delete selected ({len(selected_ids)})", type="primary", key="sh_delete"):
-        _confirm_delete(scans, selected_ids)
+        # Stash + full rerun instead of opening the dialog here: this runs inside the
+        # saved-scans fragment, and a dialog opened during a fragment rerun won't
+        # render. page() pops the stash and opens the confirm at app scope.
+        st.session_state["sh_delete_pending"] = list(selected_ids)
+        st.rerun()
 
 
 @st.dialog("Delete scans?")
@@ -214,7 +234,18 @@ def _confirm_delete(scans, selected_ids) -> None:
         st.rerun()
 
 
-def _base_table(base) -> None:
+@st.fragment
+def _base_table() -> None:
+    """Filter toolbar + paginated base table as one fragment: every filter / search /
+    pager / download interaction reruns only this region. Zero-arg — the base is
+    re-read via the cached getters (hits), never captured as a fragment argument."""
+    scope = _derived.display_scope()
+    items, rules_version = _derived.domains_config()
+    base = (
+        _derived.ledger_base_domains_cached(scope, rules_version)
+        if items
+        else _derived.ledger_base_cached(scope)
+    )
     if base is None or base.empty:
         st.info("No vulnerabilities in the base yet — grouped-by-asset scans don't populate it.")
         return
