@@ -1,0 +1,217 @@
+// Shared DOM helpers and components: element builder, severity badges, KPI tiles,
+// change chips, toasts, pager, CSV download, dialogs, and the finding sheet shell.
+
+export function el(tag, attrs, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === null || v === undefined || v === false) continue;
+    if (k === "class") node.className = v;
+    else if (k === "text") node.textContent = v;
+    else if (k === "html") node.innerHTML = v; // trusted, builder-side strings only
+    else if (k.startsWith("on") && typeof v === "function") {
+      node.addEventListener(k.slice(2), v);
+    } else if (v === true) node.setAttribute(k, "");
+    else node.setAttribute(k, String(v));
+  }
+  for (const child of children.flat()) {
+    if (child === null || child === undefined || child === false) continue;
+    node.append(child instanceof Node ? child : document.createTextNode(String(child)));
+  }
+  return node;
+}
+
+export function clear(node) {
+  while (node.firstChild) node.removeChild(node.firstChild);
+  return node;
+}
+
+/** Severity badge: tinted pill + dot + label (never color alone). */
+export function sevBadge(sev) {
+  const s = String(sev || "UNKNOWN").toUpperCase();
+  return el(
+    "span",
+    { class: `sev-badge sev-${s}`, role: "status", "aria-label": `Severity ${s}` },
+    el("span", { class: "sev-dot", "aria-hidden": "true" }),
+    s,
+  );
+}
+
+export function statusPill(kind, text) {
+  return el("span", { class: `pill ${kind}` }, text);
+}
+
+/** Signed change chip vs a previous value. up = worse (red) for counts of risk. */
+export function changeChip(current, previous, { invert = false } = {}) {
+  if (previous === null || previous === undefined || Number.isNaN(previous)) return null;
+  const delta = current - previous;
+  if (!delta) return el("span", { class: "chg flat", "aria-label": "unchanged" }, "±0");
+  const worse = invert ? delta < 0 : delta > 0;
+  const cls = worse ? "up" : "down";
+  const sign = delta > 0 ? "+" : "";
+  return el("span", { class: `chg ${cls}` }, `${sign}${round1(delta)}`);
+}
+
+export function round1(v) {
+  return Math.round(v * 10) / 10;
+}
+
+export function fmtDays(v) {
+  if (v === null || v === undefined || Number.isNaN(v)) return "—";
+  if (v < 1 / 24) return "<1h";
+  if (v < 1) return `${Math.round(v * 24)}h`;
+  if (v < 30) return `${v.toFixed(1)}d`;
+  if (v < 365) return `${(v / 30).toFixed(1)}mo`;
+  return `${(v / 365).toFixed(1)}y`;
+}
+
+export function fmtDate(iso) {
+  if (!iso) return "—";
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return String(iso);
+  return new Date(t).toISOString().slice(0, 10);
+}
+
+export function fmtDateTime(iso) {
+  if (!iso) return "—";
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return String(iso);
+  return new Date(t).toISOString().replace("T", " ").slice(0, 16) + " UTC";
+}
+
+export function kpiCard(label, value, sub, chip) {
+  return el(
+    "div",
+    { class: "kpi-card" },
+    el("div", { class: "kpi-label" }, label),
+    el("div", { class: "kpi-value num" }, value, chip || null),
+    sub ? el("div", { class: "kpi-sub" }, sub) : null,
+  );
+}
+
+export function toast(message, kind) {
+  let host = document.getElementById("toasts");
+  if (!host) {
+    host = el("div", { id: "toasts" });
+    document.body.append(host);
+  }
+  const t = el("div", { class: `toast ${kind || ""}`, role: "status" }, message);
+  host.append(t);
+  setTimeout(() => t.remove(), 6000);
+}
+
+export function pager(page, pageCount, total, onPage) {
+  if (pageCount <= 1) {
+    return el("div", { class: "pager" }, `${total.toLocaleString()} rows`);
+  }
+  return el(
+    "div",
+    { class: "pager" },
+    el("button", { onclick: () => onPage(page - 1), disabled: page <= 0 }, "‹ Prev"),
+    `Page ${page + 1} of ${pageCount} — ${total.toLocaleString()} rows`,
+    el("button", { onclick: () => onPage(page + 1), disabled: page >= pageCount - 1 }, "Next ›"),
+  );
+}
+
+/** Client-side file download from a text payload. */
+export function downloadText(filename, text, mime) {
+  const blob = new Blob([text], { type: mime || "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = el("a", { href: url, download: filename });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+/** Modal confirm dialog; resolves true/false. */
+export function confirmDialog({ title, body, confirmLabel = "Confirm", danger = false }) {
+  return new Promise((resolve) => {
+    const dlg = el(
+      "dialog",
+      {},
+      el("h3", {}, title),
+      typeof body === "string" ? el("p", { class: "muted" }, body) : body,
+      el(
+        "div",
+        { class: "dialog-actions" },
+        el("button", { onclick: () => done(false) }, "Cancel"),
+        el(
+          "button",
+          { class: danger ? "danger" : "primary", onclick: () => done(true) },
+          confirmLabel,
+        ),
+      ),
+    );
+    function done(v) {
+      dlg.close();
+      dlg.remove();
+      resolve(v);
+    }
+    dlg.addEventListener("cancel", () => done(false));
+    document.body.append(dlg);
+    dlg.showModal();
+  });
+}
+
+/** Right-anchored sheet (the signature drill-down overlay). Returns {close}. */
+export function openSheet(renderBody) {
+  const scrim = el("div", { class: "sheet-scrim" });
+  const sheet = el("aside", {
+    class: "sheet",
+    role: "dialog",
+    "aria-modal": "true",
+    "aria-label": "Finding detail",
+    tabindex: "-1",
+  });
+  const prevFocus = document.activeElement;
+  function close() {
+    scrim.classList.remove("open");
+    sheet.classList.remove("open");
+    document.removeEventListener("keydown", onKey);
+    setTimeout(() => {
+      scrim.remove();
+      sheet.remove();
+      if (prevFocus && prevFocus.focus) prevFocus.focus();
+    }, 240);
+  }
+  function onKey(e) {
+    if (e.key === "Escape") close();
+    if (e.key === "Tab") {
+      // basic focus trap
+      const focusables = sheet.querySelectorAll("button, a[href], input, select, [tabindex]");
+      if (!focusables.length) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        last.focus();
+        e.preventDefault();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        first.focus();
+        e.preventDefault();
+      }
+    }
+  }
+  scrim.addEventListener("click", close);
+  document.addEventListener("keydown", onKey);
+  document.body.append(scrim, sheet);
+  renderBody(sheet, close);
+  requestAnimationFrame(() => {
+    scrim.classList.add("open");
+    sheet.classList.add("open");
+    sheet.focus();
+  });
+  return { close };
+}
+
+export function emptyState(message, hint) {
+  return el(
+    "div",
+    { class: "empty" },
+    el("div", {}, message),
+    hint ? el("div", { class: "small", style: "margin-top:6px" }, hint) : null,
+  );
+}
+
+export function sectionLabel(text) {
+  return el("h2", { class: "section-label" }, text);
+}
