@@ -85,6 +85,17 @@ rejected the client id/secret; `Step 2 FAIL … 401/Unauthorized` = the token is
 **client id + secret** (exchanged for a short-lived token), not a durable bearer token —
 so `WIZ_CLIENT_ID`/`WIZ_CLIENT_SECRET` is the robust configuration.
 
+## Scan progress
+
+A running scan shows a live progress card in the sidebar scan zone (phase, findings
+count, elapsed) with a **Details** drawer and a **Stop** button; it survives page reloads
+(re-seeded from the in-flight job) since progress is flushed to the `jobs` tab per page.
+Stop is honored during the fetch phase — before the `scans` row is committed — so a
+cancelled scan leaves no partial data. The determinate **percentage** needs the
+`total_count` column: **re-run `setup()` once** after deploying this (it appends the new
+header via `ensureTabs`). Until then the bar is a working/indeterminate bar with live
+counts — no error, just no percent.
+
 ## Development
 
 ```

@@ -46,7 +46,8 @@ export const TAB_HEADERS: Record<string, string[]> = {
   [TABS.schemaMeta]: ["version"],
   [TABS.jobs]: [
     "job_id", "kind", "phase", "scan_id", "cursor", "page", "findings_so_far",
-    "page_size", "params_json", "journal_ref", "error", "started_at", "updated_at",
+    "page_size", "total_count", "params_json", "journal_ref", "error",
+    "started_at", "updated_at",
   ],
 };
 

@@ -27,6 +27,7 @@ function api_getScanHistory(p) { return Server.api.getScanHistory(p); }
 function api_getBaseRows(p) { return Server.api.getBaseRows(p); }
 function api_runScan(p) { return Server.api.runScan(p); }
 function api_getJobStatus(p) { return Server.api.getJobStatus(p); }
+function api_cancelScan(p) { return Server.api.cancelScan(p); }
 function api_deleteScans(p) { return Server.api.deleteScans(p); }
 function api_getReport(p) { return Server.api.getReport(p); }
 function api_getExportCsv(p) { return Server.api.getExportCsv(p); }

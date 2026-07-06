@@ -1,6 +1,7 @@
 // Wiz Sidekick SPA shell: sidebar navigation, scan zone, hash router.
 
 import { call } from "./api.js";
+import { renderScanCard, openScanDetails } from "./scanProgress.js";
 import { bootstrap, invalidateBootstrap, parseHash } from "./store.js";
 import { clear, el, statusPill, toast } from "./ui.js";
 import { renderOverview } from "./pages/overview.js";
@@ -22,6 +23,10 @@ const PAGES = {
 const app = document.getElementById("app");
 let mainEl = null;
 let jobPoller = null;
+let scanCardHost = null; // the progress-card slot in the current scan zone
+let scanButtonsRow = null; // the Run/Quick buttons, hidden while a job runs
+let stoppingJobId = null; // optimistic "Stopping…" until the server confirms CANCELLED
+let lastJob = null; // most recent JobRow, for an immediate repaint on Stop
 
 async function boot() {
   clear(app);
@@ -89,7 +94,9 @@ function renderSidebar(sidebar, data) {
     },
     "Quick refresh",
   );
-  zone.append(runBtn, quickBtn);
+  scanButtonsRow = el("div", { class: "scan-buttons" }, runBtn, quickBtn);
+  scanCardHost = el("div", {}); // filled by the poller while a job runs
+  zone.append(scanCardHost, scanButtonsRow);
   if (data) {
     zone.append(
       el("div", { class: "scan-caption" },
@@ -109,7 +116,12 @@ function renderSidebar(sidebar, data) {
     } else {
       zone.append(el("div", { class: "scan-caption" }, "No scan saved yet."));
     }
-    if (data.activeJob) watchJob(data.activeJob.job_id);
+    // Seed the card immediately from the bootstrap job, then keep it live — this is
+    // what makes progress survive a page reload mid-scan.
+    if (data.activeJob) {
+      paintCard(data.activeJob);
+      watchJob(data.activeJob.job_id);
+    }
   }
   sidebar.append(zone);
 }
@@ -119,12 +131,46 @@ async function startScan(incremental, btn) {
   try {
     const res = await call("api_runScan", { incremental });
     toast(res.message);
-    if (res.jobId) watchJob(res.jobId);
-    else refresh();
+    if (res.jobId) {
+      stoppingJobId = null;
+      watchJob(res.jobId);
+    } else {
+      refresh();
+    }
   } catch (e) {
     toast(String(e.message || e), "error");
   } finally {
     btn.disabled = false;
+  }
+}
+
+/** Render the progress card for a job and hide the Run/Quick buttons. */
+function paintCard(job) {
+  if (!scanCardHost) return;
+  lastJob = job;
+  const stopping = stoppingJobId === job.job_id && job.phase !== "CANCELLED";
+  renderScanCard(scanCardHost, job, {
+    onDetails: () => openScanDetails(job),
+    onStop: stopping ? null : () => requestStop(job.job_id),
+    stopping,
+  });
+  if (scanButtonsRow) scanButtonsRow.style.display = "none";
+}
+
+function clearCard() {
+  if (scanCardHost) clear(scanCardHost);
+  if (scanButtonsRow) scanButtonsRow.style.display = "";
+}
+
+async function requestStop(jobId) {
+  stoppingJobId = jobId;
+  if (lastJob && lastJob.job_id === jobId) paintCard(lastJob); // instant "Stopping…"
+  try {
+    const res = await call("api_cancelScan", { jobId });
+    toast(res.message || "Stopping scan…");
+  } catch (e) {
+    stoppingJobId = null;
+    toast(String(e.message || e), "error");
   }
 }
 
@@ -133,14 +179,27 @@ function watchJob(jobId) {
   jobPoller = setInterval(async () => {
     try {
       const job = await call("api_getJobStatus", { jobId });
-      if (!job) return stopWatch();
+      if (!job) {
+        stopWatch();
+        clearCard();
+        return;
+      }
       if (job.phase === "DONE") {
         stopWatch();
         toast("Scan complete.");
         refresh();
+      } else if (job.phase === "CANCELLED") {
+        stopWatch();
+        stoppingJobId = null;
+        toast("Scan stopped.");
+        refresh();
       } else if (job.phase === "FAILED") {
         stopWatch();
+        paintCard(job); // leave the failure visible; buttons return for a retry
+        if (scanButtonsRow) scanButtonsRow.style.display = "";
         toast(job.error || "Scan failed.", "error");
+      } else {
+        paintCard(job);
       }
     } catch {
       /* transient poll errors are fine */

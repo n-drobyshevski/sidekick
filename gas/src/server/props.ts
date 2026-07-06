@@ -31,6 +31,10 @@ export function setProp(key: string, value: string): void {
   PropertiesService.getScriptProperties().setProperty(key, value);
 }
 
+export function deleteProp(key: string): void {
+  PropertiesService.getScriptProperties().deleteProperty(key);
+}
+
 /**
  * Which auth mode the configured secrets select, or null if none is usable.
  * A raw `WIZ_API_TOKEN` (used directly as a bearer token) takes precedence over the

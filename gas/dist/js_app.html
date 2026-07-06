@@ -22,43 +22,6 @@
     });
   }
 
-  // src/client/js/store.js
-  var bootstrapData = null;
-  async function bootstrap(force) {
-    if (!bootstrapData || force) bootstrapData = await call("api_bootstrap");
-    return bootstrapData;
-  }
-  function invalidateBootstrap() {
-    bootstrapData = null;
-  }
-  function parseHash() {
-    const hash = location.hash.replace(/^#\/?/, "");
-    const [pathPart, queryPart] = hash.split("?");
-    const params = {};
-    if (queryPart) {
-      for (const pair of queryPart.split("&")) {
-        if (!pair) continue;
-        const [k, v] = pair.split("=");
-        params[decodeURIComponent(k)] = decodeURIComponent(v || "");
-      }
-    }
-    return { route: pathPart || "overview", params };
-  }
-  function buildHash(route2, params) {
-    const q = Object.entries(params || {}).filter(([, v]) => v !== "" && v !== null && v !== void 0).map(([k, v]) => "".concat(encodeURIComponent(k), "=").concat(encodeURIComponent(v))).join("&");
-    return "#/".concat(route2).concat(q ? "?" + q : "");
-  }
-  function setParams(params) {
-    const { route: route2 } = parseHash();
-    history.replaceState(null, "", buildHash(route2, params));
-  }
-  function listSplit(v) {
-    return v ? String(v).split(",").filter(Boolean) : [];
-  }
-  function listJoin(arr) {
-    return (arr || []).join(",");
-  }
-
   // src/client/js/ui.js
   function el(tag, attrs, ...children) {
     const node = document.createElement(tag);
@@ -93,6 +56,19 @@
   }
   function statusPill(kind, text) {
     return el("span", { class: "pill ".concat(kind) }, text);
+  }
+  function progressBar(pct, state = "") {
+    const determinate = typeof pct === "number" && !Number.isNaN(pct);
+    const attrs = {
+      class: "progress-track".concat(determinate ? "" : " indeterminate").concat(state ? " " + state : ""),
+      role: "progressbar",
+      "aria-valuemin": "0",
+      "aria-valuemax": "100"
+    };
+    if (determinate) attrs["aria-valuenow"] = String(Math.round(pct));
+    const fill2 = el("div", { class: "progress-fill" });
+    if (determinate) fill2.style.width = "".concat(Math.max(0, Math.min(100, pct)), "%");
+    return el("div", attrs, fill2);
   }
   function changeChip(current, previous, { invert = false } = {}) {
     if (previous === null || previous === void 0 || Number.isNaN(previous)) return null;
@@ -254,6 +230,193 @@
   }
   function sectionLabel(text) {
     return el("h2", { class: "section-label" }, text);
+  }
+
+  // src/client/js/scanProgress.js
+  var STEPS = [
+    { key: "FETCHING", label: "Fetch" },
+    { key: "RECONCILING", label: "Reconcile" },
+    { key: "PERSISTING", label: "Persist" }
+  ];
+  var PHASE_LABEL = {
+    FETCHING: "Fetching findings",
+    RECONCILING: "Reconciling",
+    PERSISTING: "Saving",
+    REPLAYING: "Saving",
+    DONE: "Complete",
+    FAILED: "Failed",
+    CANCELLED: "Cancelled"
+  };
+  var STALL_MS = 15e3;
+  function parseMs(iso) {
+    const t = Date.parse(iso || "");
+    return Number.isNaN(t) ? null : t;
+  }
+  function fmtElapsed(ms) {
+    if (ms === null || ms < 0) return "";
+    const s = Math.floor(ms / 1e3);
+    const m = Math.floor(s / 60);
+    const h = Math.floor(m / 60);
+    const two = (n) => String(n).padStart(2, "0");
+    return h > 0 ? "".concat(h, ":").concat(two(m % 60), ":").concat(two(s % 60)) : "".concat(m, ":").concat(two(s % 60));
+  }
+  function scanProgressView(job, nowMs) {
+    const phase = String(job.phase || "");
+    const state = phase === "DONE" ? "done" : phase === "FAILED" ? "failed" : phase === "CANCELLED" ? "cancelled" : "running";
+    const activeIdx = STEPS.findIndex((s) => s.key === phase);
+    const steps2 = STEPS.map((s, i) => {
+      let status;
+      if (state === "done") status = "done";
+      else if (activeIdx === -1) status = state === "running" ? "todo" : "done";
+      else if (i < activeIdx) status = "done";
+      else if (i === activeIdx) status = "active";
+      else status = "todo";
+      return { key: s.key, label: s.label, status };
+    });
+    const findings = Number(job.findings_so_far || 0);
+    const total = Number(job.total_count || 0);
+    const page = Number(job.page || 0);
+    let pct = null;
+    if (state === "done") pct = 100;
+    else if (phase === "FETCHING" && total > 0) {
+      pct = Math.min(99, Math.round(findings / total * 100));
+    }
+    const startedMs = parseMs(job.started_at);
+    const updatedMs = parseMs(job.updated_at);
+    const stalled = state === "running" && phase === "FETCHING" && updatedMs !== null && nowMs - updatedMs > STALL_MS;
+    let phaseLabel = PHASE_LABEL[phase] || phase || "Working";
+    if (stalled) phaseLabel = "Waiting for next step\u2026";
+    const countsParts = [];
+    if (findings > 0 || state !== "running") {
+      countsParts.push("".concat(findings.toLocaleString(), " findings"));
+      if (total > 0) countsParts.push("of ".concat(total.toLocaleString()));
+    }
+    if (page > 0 && state === "running") countsParts.push("page ".concat(page));
+    const countsText = countsParts.join(" \xB7 ");
+    return {
+      state,
+      phase,
+      phaseLabel,
+      steps: steps2,
+      pct,
+      countsText,
+      elapsedText: fmtElapsed(startedMs === null ? null : nowMs - startedMs),
+      stalled,
+      canStop: state === "running" && phase === "FETCHING",
+      error: job.error || ""
+    };
+  }
+  function scanMode(job) {
+    try {
+      const p = JSON.parse(job.params_json || "{}");
+      return p.incremental ? "Quick refresh" : "Full scan";
+    } catch {
+      return "Scan";
+    }
+  }
+  function renderScanCard(host, job, { onStop, onDetails, nowMs, stopping } = {}) {
+    const v = scanProgressView(job, nowMs || Date.now());
+    clear(host);
+    host.className = "scan-progress ".concat(v.state);
+    const head = el(
+      "div",
+      { class: "scan-progress-head" },
+      el("span", { class: "scan-progress-phase" }, stopping ? "Stopping\u2026" : v.phaseLabel),
+      v.elapsedText ? el("span", { class: "scan-progress-elapsed" }, v.elapsedText) : null
+    );
+    const bar = progressBar(v.pct, v.state === "running" ? "" : v.state);
+    const counts = el(
+      "div",
+      { class: "scan-progress-counts" },
+      v.state === "failed" ? v.error || "Scan failed." : v.state === "cancelled" ? "Scan stopped." : v.countsText || "Starting\u2026"
+    );
+    const actions = el("div", { class: "scan-progress-actions" });
+    if (onDetails) {
+      actions.append(el("button", { class: "linklike", onclick: onDetails }, "Details"));
+    }
+    if (v.canStop && onStop) {
+      actions.append(el("button", { class: "linklike danger", onclick: onStop }, "Stop"));
+    }
+    host.append(head, bar, counts, actions);
+    return v;
+  }
+  function openScanDetails(job, nowMs) {
+    const v = scanProgressView(job, nowMs || Date.now());
+    return openSheet((sheet, close) => {
+      const stepper = el("div", { class: "scan-steps" });
+      for (const s of v.steps) {
+        const glyph = s.status === "done" ? "\u2713" : s.status === "active" ? "\u25CF" : "\u25CB";
+        stepper.append(
+          el(
+            "div",
+            { class: "scan-step ".concat(s.status) },
+            el("span", { class: "scan-step-dot", "aria-hidden": "true" }, glyph),
+            el("span", {}, s.label)
+          )
+        );
+      }
+      sheet.append(
+        el("h2", {}, "Scan progress"),
+        el("div", { class: "muted small", style: "margin-bottom:12px" }, scanMode(job)),
+        stepper,
+        progressBar(v.pct, v.state === "running" ? "" : v.state),
+        el(
+          "dl",
+          { class: "scan-detail-grid" },
+          el("dt", {}, "Status"),
+          el("dd", {}, v.phaseLabel),
+          el("dt", {}, "Findings"),
+          el("dd", {}, "".concat(Number(job.findings_so_far || 0).toLocaleString()) + (Number(job.total_count || 0) > 0 ? " of ".concat(Number(job.total_count).toLocaleString()) : "")),
+          el("dt", {}, "Pages"),
+          el("dd", {}, String(job.page || 0)),
+          el("dt", {}, "Elapsed"),
+          el("dd", {}, v.elapsedText || "\u2014")
+        ),
+        v.error ? el("div", { class: "scan-detail-error" }, v.error) : null,
+        el(
+          "div",
+          { class: "sheet-actions", style: "margin-top:16px" },
+          el("button", { class: "primary", onclick: close }, "Close")
+        )
+      );
+    });
+  }
+
+  // src/client/js/store.js
+  var bootstrapData = null;
+  async function bootstrap(force) {
+    if (!bootstrapData || force) bootstrapData = await call("api_bootstrap");
+    return bootstrapData;
+  }
+  function invalidateBootstrap() {
+    bootstrapData = null;
+  }
+  function parseHash() {
+    const hash = location.hash.replace(/^#\/?/, "");
+    const [pathPart, queryPart] = hash.split("?");
+    const params = {};
+    if (queryPart) {
+      for (const pair of queryPart.split("&")) {
+        if (!pair) continue;
+        const [k, v] = pair.split("=");
+        params[decodeURIComponent(k)] = decodeURIComponent(v || "");
+      }
+    }
+    return { route: pathPart || "overview", params };
+  }
+  function buildHash(route2, params) {
+    const q = Object.entries(params || {}).filter(([, v]) => v !== "" && v !== null && v !== void 0).map(([k, v]) => "".concat(encodeURIComponent(k), "=").concat(encodeURIComponent(v))).join("&");
+    return "#/".concat(route2).concat(q ? "?" + q : "");
+  }
+  function setParams(params) {
+    const { route: route2 } = parseHash();
+    history.replaceState(null, "", buildHash(route2, params));
+  }
+  function listSplit(v) {
+    return v ? String(v).split(",").filter(Boolean) : [];
+  }
+  function listJoin(arr) {
+    return (arr || []).join(",");
   }
 
   // node_modules/@kurkle/color/dist/color.esm.js
@@ -16330,6 +16493,10 @@
   var app = document.getElementById("app");
   var mainEl = null;
   var jobPoller = null;
+  var scanCardHost = null;
+  var scanButtonsRow = null;
+  var stoppingJobId = null;
+  var lastJob = null;
   async function boot() {
     clear(app);
     const sidebar = el("nav", { class: "sidebar", "aria-label": "Main navigation" });
@@ -16393,7 +16560,9 @@
       },
       "Quick refresh"
     );
-    zone.append(runBtn, quickBtn);
+    scanButtonsRow = el("div", { class: "scan-buttons" }, runBtn, quickBtn);
+    scanCardHost = el("div", {});
+    zone.append(scanCardHost, scanButtonsRow);
     if (data) {
       zone.append(
         el(
@@ -16414,7 +16583,10 @@
       } else {
         zone.append(el("div", { class: "scan-caption" }, "No scan saved yet."));
       }
-      if (data.activeJob) watchJob(data.activeJob.job_id);
+      if (data.activeJob) {
+        paintCard(data.activeJob);
+        watchJob(data.activeJob.job_id);
+      }
     }
     sidebar.append(zone);
   }
@@ -16423,12 +16595,42 @@
     try {
       const res = await call("api_runScan", { incremental });
       toast(res.message);
-      if (res.jobId) watchJob(res.jobId);
-      else refresh();
+      if (res.jobId) {
+        stoppingJobId = null;
+        watchJob(res.jobId);
+      } else {
+        refresh();
+      }
     } catch (e) {
       toast(String(e.message || e), "error");
     } finally {
       btn.disabled = false;
+    }
+  }
+  function paintCard(job) {
+    if (!scanCardHost) return;
+    lastJob = job;
+    const stopping = stoppingJobId === job.job_id && job.phase !== "CANCELLED";
+    renderScanCard(scanCardHost, job, {
+      onDetails: () => openScanDetails(job),
+      onStop: stopping ? null : () => requestStop(job.job_id),
+      stopping
+    });
+    if (scanButtonsRow) scanButtonsRow.style.display = "none";
+  }
+  function clearCard() {
+    if (scanCardHost) clear(scanCardHost);
+    if (scanButtonsRow) scanButtonsRow.style.display = "";
+  }
+  async function requestStop(jobId) {
+    stoppingJobId = jobId;
+    if (lastJob && lastJob.job_id === jobId) paintCard(lastJob);
+    try {
+      const res = await call("api_cancelScan", { jobId });
+      toast(res.message || "Stopping scan\u2026");
+    } catch (e) {
+      stoppingJobId = null;
+      toast(String(e.message || e), "error");
     }
   }
   function watchJob(jobId) {
@@ -16436,14 +16638,27 @@
     jobPoller = setInterval(async () => {
       try {
         const job = await call("api_getJobStatus", { jobId });
-        if (!job) return stopWatch();
+        if (!job) {
+          stopWatch();
+          clearCard();
+          return;
+        }
         if (job.phase === "DONE") {
           stopWatch();
           toast("Scan complete.");
           refresh();
+        } else if (job.phase === "CANCELLED") {
+          stopWatch();
+          stoppingJobId = null;
+          toast("Scan stopped.");
+          refresh();
         } else if (job.phase === "FAILED") {
           stopWatch();
+          paintCard(job);
+          if (scanButtonsRow) scanButtonsRow.style.display = "";
           toast(job.error || "Scan failed.", "error");
+        } else {
+          paintCard(job);
         }
       } catch {
       }

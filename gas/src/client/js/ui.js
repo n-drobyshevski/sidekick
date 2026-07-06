@@ -40,6 +40,25 @@ export function statusPill(kind, text) {
   return el("span", { class: `pill ${kind}` }, text);
 }
 
+/**
+ * A track/fill progress bar. `pct` 0–100 renders a determinate fill; `null` renders an
+ * indeterminate (animated, with a static reduced-motion fallback) bar. `state` tints
+ * the fill ("" | "failed" | "cancelled" | "done").
+ */
+export function progressBar(pct, state = "") {
+  const determinate = typeof pct === "number" && !Number.isNaN(pct);
+  const attrs = {
+    class: `progress-track${determinate ? "" : " indeterminate"}${state ? " " + state : ""}`,
+    role: "progressbar",
+    "aria-valuemin": "0",
+    "aria-valuemax": "100",
+  };
+  if (determinate) attrs["aria-valuenow"] = String(Math.round(pct));
+  const fill = el("div", { class: "progress-fill" });
+  if (determinate) fill.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+  return el("div", attrs, fill);
+}
+
 /** Signed change chip vs a previous value. up = worse (red) for counts of risk. */
 export function changeChip(current, previous, { invert = false } = {}) {
   if (previous === null || previous === undefined || Number.isNaN(previous)) return null;
