@@ -19,7 +19,7 @@ persist → delete-replay → compaction flows against the SQLite implementation
 | Storage | `src/server/` | `sheetsDb` (header-mapped tabs), `archiveStore` (Drive gzip JSON), `ledgerStore` (commit-record writes + journals), `settingsStore`, `historyStore`, `jobsStore` |
 | Wiz client | `src/server/wizClient.ts` | OAuth client-credentials + GraphQL on UrlFetchApp; `wizQuery.ts` is generated verbatim from `os_vulns.py` |
 | Scan jobs | `src/server/scanJobs.ts` | resumable page walk (6-min limit) via one-shot trigger continuation |
-| Web app | `src/client/` | hash-routed SPA served by `doGet`; Chart.js 4 from CDN; DESIGN.md system in `styles.css` |
+| Web app | `src/client/` | hash-routed SPA served by `doGet`; Chart.js 4 bundled into `js_app.html` (no CDN); DESIGN.md system in `styles.css` |
 
 ### How SQLite transactions were replaced
 
@@ -94,7 +94,7 @@ Things node tests cannot cover — verify after the first deployment:
       multi-hop scan completes and the one-shot trigger cleans itself up.
 - [ ] Kill an execution mid-persist (editor Stop) → next write logs the journal
       recovery and the `scans` tab shows no phantom scan.
-- [ ] Web app at `/exec`: Chart.js CDN loads, Blob CSV download works in the IFRAME
+- [ ] Web app at `/exec`: charts render (Chart.js bundled, no CDN fetch), Blob CSV download works in the IFRAME
       sandbox, the drill-down sheet traps focus and closes on ESC, hash deep links
       (`#/overview?sev=CRITICAL&q=log4j`) restore filters.
 - [ ] Quick refresh on a tenant that rejects `updatedAt` filters surfaces the
