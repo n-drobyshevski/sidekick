@@ -7,7 +7,7 @@ import { severityBar } from "../charts.js";
 import { bootstrap, listJoin, listSplit, setParams } from "../store.js";
 import {
   changeChip, clear, confirmDialog, downloadText, el, emptyState, fmtDate, kpiCard,
-  openSheet, pager, sectionLabel, sevBadge, toast,
+  nvdUrl, openSheet, pager, sectionLabel, sevBadge, toast,
 } from "../ui.js";
 
 export async function renderOverview(main, params) {
@@ -295,7 +295,7 @@ export async function renderOverview(main, params) {
         "aria-label": `Open detail for ${r.name}` },
         el("td", {}, sevBadge(r._sev)),
         el("td", {}, el("a", {
-          href: `https://nvd.nist.gov/vuln/detail/${encodeURIComponent(r.name || "")}`,
+          href: nvdUrl(r.name),
           target: "_blank", rel: "noopener",
           onclick: (e) => e.stopPropagation(),
         }, r.name || "—")),
@@ -369,7 +369,7 @@ export async function renderOverview(main, params) {
         el("div", { class: "sheet-section" },
           el("a", {
             class: "btn", target: "_blank", rel: "noopener",
-            href: `https://nvd.nist.gov/vuln/detail/${encodeURIComponent(rec.name || "")}`,
+            href: nvdUrl(rec.name),
             style: "text-decoration:none; display:inline-block; padding:6px 14px",
           }, "Open in NVD ↗"),
         ),

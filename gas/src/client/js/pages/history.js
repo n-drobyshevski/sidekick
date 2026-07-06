@@ -6,7 +6,7 @@ import { openResolvedLines, trendLine } from "../charts.js";
 import { bootstrap } from "../store.js";
 import {
   clear, confirmDialog, downloadText, el, emptyState, fmtDays, fmtDate, fmtDateTime,
-  kpiCard, pager, sectionLabel, sevBadge, toast,
+  kpiCard, nvdUrl, pager, sectionLabel, sevBadge, toast,
 } from "../ui.js";
 
 export async function renderHistory(main, _params, ctx) {
@@ -185,7 +185,7 @@ export async function renderHistory(main, _params, ctx) {
       tbody.append(el("tr", {},
         el("td", {}, sevBadge(r.severity)),
         el("td", {}, r.cve
-          ? el("a", { href: `https://nvd.nist.gov/vuln/detail/${encodeURIComponent(r.cve)}`,
+          ? el("a", { href: nvdUrl(r.cve),
               target: "_blank", rel: "noopener" }, r.cve)
           : "—"),
         el("td", { title: r.asset_name || "" }, r.asset_name || "—"),

@@ -45,8 +45,8 @@
     return { route: pathPart || "overview", params };
   }
   function buildHash(route2, params) {
-    const q = Object.entries(params || {}).filter(([, v]) => v !== "" && v !== null && v !== void 0).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&");
-    return `#/${route2}${q ? "?" + q : ""}`;
+    const q = Object.entries(params || {}).filter(([, v]) => v !== "" && v !== null && v !== void 0).map(([k, v]) => "".concat(encodeURIComponent(k), "=").concat(encodeURIComponent(v))).join("&");
+    return "#/".concat(route2).concat(q ? "?" + q : "");
   }
   function setParams(params) {
     const { route: route2 } = parseHash();
@@ -86,13 +86,13 @@
     const s = String(sev || "UNKNOWN").toUpperCase();
     return el(
       "span",
-      { class: `sev-badge sev-${s}`, role: "status", "aria-label": `Severity ${s}` },
+      { class: "sev-badge sev-".concat(s), role: "status", "aria-label": "Severity ".concat(s) },
       el("span", { class: "sev-dot", "aria-hidden": "true" }),
       s
     );
   }
   function statusPill(kind, text) {
-    return el("span", { class: `pill ${kind}` }, text);
+    return el("span", { class: "pill ".concat(kind) }, text);
   }
   function changeChip(current, previous, { invert = false } = {}) {
     if (previous === null || previous === void 0 || Number.isNaN(previous)) return null;
@@ -101,7 +101,10 @@
     const worse = invert ? delta < 0 : delta > 0;
     const cls = worse ? "up" : "down";
     const sign2 = delta > 0 ? "+" : "";
-    return el("span", { class: `chg ${cls}` }, `${sign2}${round1(delta)}`);
+    return el("span", { class: "chg ".concat(cls) }, "".concat(sign2).concat(round1(delta)));
+  }
+  function nvdUrl(id) {
+    return ["https:", "", "nvd.nist.gov", "vuln", "detail", encodeURIComponent(id || "")].join("/");
   }
   function round1(v) {
     return Math.round(v * 10) / 10;
@@ -109,10 +112,10 @@
   function fmtDays(v) {
     if (v === null || v === void 0 || Number.isNaN(v)) return "\u2014";
     if (v < 1 / 24) return "<1h";
-    if (v < 1) return `${Math.round(v * 24)}h`;
-    if (v < 30) return `${v.toFixed(1)}d`;
-    if (v < 365) return `${(v / 30).toFixed(1)}mo`;
-    return `${(v / 365).toFixed(1)}y`;
+    if (v < 1) return "".concat(Math.round(v * 24), "h");
+    if (v < 30) return "".concat(v.toFixed(1), "d");
+    if (v < 365) return "".concat((v / 30).toFixed(1), "mo");
+    return "".concat((v / 365).toFixed(1), "y");
   }
   function fmtDate(iso) {
     if (!iso) return "\u2014";
@@ -141,19 +144,19 @@
       host = el("div", { id: "toasts" });
       document.body.append(host);
     }
-    const t = el("div", { class: `toast ${kind || ""}`, role: "status" }, message);
+    const t = el("div", { class: "toast ".concat(kind || ""), role: "status" }, message);
     host.append(t);
     setTimeout(() => t.remove(), 6e3);
   }
   function pager(page, pageCount, total, onPage) {
     if (pageCount <= 1) {
-      return el("div", { class: "pager" }, `${total.toLocaleString()} rows`);
+      return el("div", { class: "pager" }, "".concat(total.toLocaleString(), " rows"));
     }
     return el(
       "div",
       { class: "pager" },
       el("button", { onclick: () => onPage(page - 1), disabled: page <= 0 }, "\u2039 Prev"),
-      `Page ${page + 1} of ${pageCount} \u2014 ${total.toLocaleString()} rows`,
+      "Page ".concat(page + 1, " of ").concat(pageCount, " \u2014 ").concat(total.toLocaleString(), " rows"),
       el("button", { onclick: () => onPage(page + 1), disabled: page >= pageCount - 1 }, "Next \u203A")
     );
   }
@@ -411,7 +414,7 @@
     const h = a[0];
     const s = n2p(a[1]);
     const l = n2p(a[2]);
-    return v.a < 255 ? `hsla(${h}, ${s}%, ${l}%, ${b2n(v.a)})` : `hsl(${h}, ${s}%, ${l}%)`;
+    return v.a < 255 ? "hsla(".concat(h, ", ").concat(s, "%, ").concat(l, "%, ").concat(b2n(v.a), ")") : "hsl(".concat(h, ", ").concat(s, "%, ").concat(l, "%)");
   }
   var map = {
     x: "dark",
@@ -648,7 +651,7 @@
     };
   }
   function rgbString(v) {
-    return v && (v.a < 255 ? `rgba(${v.r}, ${v.g}, ${v.b}, ${b2n(v.a)})` : `rgb(${v.r}, ${v.g}, ${v.b})`);
+    return v && (v.a < 255 ? "rgba(".concat(v.r, ", ").concat(v.g, ", ").concat(v.b, ", ").concat(b2n(v.a), ")") : "rgb(".concat(v.r, ", ").concat(v.g, ", ").concat(v.b, ")"));
   }
   var to = (v) => v <= 31308e-7 ? v * 12.92 : Math.pow(v, 1 / 2.4) * 1.055 - 0.055;
   var from = (v) => v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
@@ -2534,13 +2537,13 @@
       const vPixel = pointCurrent[valueAxis];
       if (pointBefore) {
         delta = (iPixel - pointBefore[indexAxis]) / 3;
-        pointCurrent[`cp1${indexAxis}`] = iPixel - delta;
-        pointCurrent[`cp1${valueAxis}`] = vPixel - delta * mK[i];
+        pointCurrent["cp1".concat(indexAxis)] = iPixel - delta;
+        pointCurrent["cp1".concat(valueAxis)] = vPixel - delta * mK[i];
       }
       if (pointAfter) {
         delta = (pointAfter[indexAxis] - iPixel) / 3;
-        pointCurrent[`cp2${indexAxis}`] = iPixel + delta;
-        pointCurrent[`cp2${valueAxis}`] = vPixel + delta * mK[i];
+        pointCurrent["cp2".concat(indexAxis)] = iPixel + delta;
+        pointCurrent["cp2".concat(valueAxis)] = vPixel + delta * mK[i];
       }
     }
   }
@@ -2765,8 +2768,8 @@
     chart.width = Math.floor(chart.width);
     const canvas = chart.canvas;
     if (canvas.style && (forceStyle || !canvas.style.height && !canvas.style.width)) {
-      canvas.style.height = `${chart.height}px`;
-      canvas.style.width = `${chart.width}px`;
+      canvas.style.height = "".concat(chart.height, "px");
+      canvas.style.width = "".concat(chart.width, "px");
     }
     if (chart.currentDevicePixelRatio !== pixelRatio || canvas.height !== deviceHeight || canvas.width !== deviceWidth) {
       chart.currentDevicePixelRatio = pixelRatio;
@@ -3642,7 +3645,7 @@
     return stacked || stacked === void 0 && meta.stack !== void 0;
   }
   function getStackKey(indexScale, valueScale, meta) {
-    return `${indexScale.id}.${valueScale.id}.${meta.stack || meta.type}`;
+    return "".concat(indexScale.id, ".").concat(valueScale.id, ".").concat(meta.stack || meta.type);
   }
   function getUserBounds(scale) {
     const { min, max, minDefined, maxDefined } = scale.getUserBounds();
@@ -4118,7 +4121,7 @@
       const config = this.chart.config;
       const scopeKeys = config.datasetElementScopeKeys(this._type, elementType);
       const prefixes = active ? [
-        `${elementType}Hover`,
+        "".concat(elementType, "Hover"),
         "hover",
         elementType,
         ""
@@ -4139,7 +4142,7 @@
     _resolveAnimations(index2, transition, active) {
       const chart = this.chart;
       const cache = this._cachedDataOpts;
-      const cacheKey = `animation-${transition}`;
+      const cacheKey = "animation-".concat(transition);
       const cached = cache[cacheKey];
       if (cached) {
         return cached;
@@ -8371,7 +8374,7 @@
         return axis;
       }
     }
-    throw new Error(`Cannot determine type of '${id}' axis. Please provide 'axis' or 'position' option.`);
+    throw new Error("Cannot determine type of '".concat(id, "' axis. Please provide 'axis' or 'position' option."));
   }
   function getAxisFromDataset(id, axis, dataset) {
     if (dataset[axis + "AxisID"] === id) {
@@ -8399,10 +8402,10 @@
     Object.keys(configScales).forEach((id) => {
       const scaleConf = configScales[id];
       if (!isObject(scaleConf)) {
-        return console.error(`Invalid scale configuration for scale: ${id}`);
+        return console.error("Invalid scale configuration for scale: ".concat(id));
       }
       if (scaleConf._proxy) {
-        return console.warn(`Ignoring resolver passed as options for scale: ${id}`);
+        return console.warn("Ignoring resolver passed as options for scale: ".concat(id));
       }
       const axis = determineAxis(id, scaleConf, retrieveAxisFromDatasets(id, config), defaults.scales[scaleConf.type]);
       const defaultId = getDefaultScaleIDFromAxis(axis, chartIndexAxis);
@@ -8519,29 +8522,29 @@
     datasetScopeKeys(datasetType) {
       return cachedKeys(datasetType, () => [
         [
-          `datasets.${datasetType}`,
+          "datasets.".concat(datasetType),
           ""
         ]
       ]);
     }
     datasetAnimationScopeKeys(datasetType, transition) {
-      return cachedKeys(`${datasetType}.transition.${transition}`, () => [
+      return cachedKeys("".concat(datasetType, ".transition.").concat(transition), () => [
         [
-          `datasets.${datasetType}.transitions.${transition}`,
-          `transitions.${transition}`
+          "datasets.".concat(datasetType, ".transitions.").concat(transition),
+          "transitions.".concat(transition)
         ],
         [
-          `datasets.${datasetType}`,
+          "datasets.".concat(datasetType),
           ""
         ]
       ]);
     }
     datasetElementScopeKeys(datasetType, elementType) {
-      return cachedKeys(`${datasetType}-${elementType}`, () => [
+      return cachedKeys("".concat(datasetType, "-").concat(elementType), () => [
         [
-          `datasets.${datasetType}.elements.${elementType}`,
-          `datasets.${datasetType}`,
-          `elements.${elementType}`,
+          "datasets.".concat(datasetType, ".elements.").concat(elementType),
+          "datasets.".concat(datasetType),
+          "elements.".concat(elementType),
           ""
         ]
       ]);
@@ -8549,9 +8552,9 @@
     pluginScopeKeys(plugin) {
       const id = plugin.id;
       const type = this.type;
-      return cachedKeys(`${type}-plugin-${id}`, () => [
+      return cachedKeys("".concat(type, "-plugin-").concat(id), () => [
         [
-          `plugins.${id}`,
+          "plugins.".concat(id),
           ...plugin.additionalOptionScopes || []
         ]
       ]);
@@ -10670,7 +10673,7 @@
             decimated = minMaxDecimation(data, start, count, availableWidth);
             break;
           default:
-            throw new Error(`Unsupported decimation algorithm '${options.algorithm}'`);
+            throw new Error("Unsupported decimation algorithm '".concat(options.algorithm, "'"));
         }
         dataset._decimated = decimated;
       });
@@ -13246,7 +13249,7 @@
       if (stepSize) {
         maxTicks = Math.ceil(this.max / stepSize) - Math.floor(this.min / stepSize) + 1;
         if (maxTicks > 1e3) {
-          console.warn(`scales.${this.id}.ticks.stepSize: ${stepSize} would result generating up to ${maxTicks} ticks. Limiting to 1000.`);
+          console.warn("scales.".concat(this.id, ".ticks.stepSize: ").concat(stepSize, " would result generating up to ").concat(maxTicks, " ticks. Limiting to 1000."));
           maxTicks = 1e3;
         }
       } else {
@@ -14746,7 +14749,7 @@
         const active = state.sev.includes(sev);
         pillRow.append(
           el("button", {
-            class: `sev-pill sev-${sev}`,
+            class: "sev-pill sev-".concat(sev),
             "aria-pressed": active ? "true" : "false",
             onclick: () => {
               toggle(state.sev, sev);
@@ -14837,7 +14840,7 @@
       const sel = el(
         "select",
         { multiple: false, "aria-label": label },
-        el("option", { value: "" }, `All`),
+        el("option", { value: "" }, "All"),
         ...options.map((o) => el("option", { value: o, selected: selected.includes(o) || null }, o))
       );
       sel.addEventListener("change", () => {
@@ -14873,7 +14876,7 @@
         kpiCard(
           "Total findings",
           total.toLocaleString(),
-          `scan ${boot2.latestScan.ts.slice(0, 10)} \u2014 ${boot2.latestScan.mode}`
+          "scan ".concat(boot2.latestScan.ts.slice(0, 10), " \u2014 ").concat(boot2.latestScan.mode)
         ),
         kpiCard("Showing", res.total.toLocaleString(), hasFilters() ? "filtered" : "all displayed severities"),
         ...boot2.palette.order.filter((s) => boot2.counts[s]).slice(0, 2).map((s) => kpiCard(
@@ -14927,17 +14930,17 @@
       tableHost.append(el(
         "p",
         { class: "muted small" },
-        `${res.total.toLocaleString()} findings in ${res.groups.length} group(s)` + (res.groups.length >= 30 ? " (showing the 30 largest)" : "")
+        "".concat(res.total.toLocaleString(), " findings in ").concat(res.groups.length, " group(s)") + (res.groups.length >= 30 ? " (showing the 30 largest)" : "")
       ));
       for (const g of res.groups) {
         const det = el("details", { class: "card", style: "margin-bottom:10px; padding:10px 16px" });
-        const sevBits = boot2.palette.order.filter((s) => g.sevCounts[s]).map((s) => `${s} ${g.sevCounts[s]}`).join(" \xB7 ");
+        const sevBits = boot2.palette.order.filter((s) => g.sevCounts[s]).map((s) => "".concat(s, " ").concat(g.sevCounts[s])).join(" \xB7 ");
         det.append(
           el(
             "summary",
             { style: "cursor:pointer" },
             el("strong", {}, g.key),
-            `  \u2014  ${g.count} finding(s)`,
+            "  \u2014  ".concat(g.count, " finding(s)"),
             el("span", { class: "small muted", style: "margin-left:8px" }, sevBits)
           )
         );
@@ -14949,7 +14952,7 @@
               body.append(el(
                 "p",
                 { class: "small muted" },
-                `Showing the first ${g.rows.length} of ${g.count}.`
+                "Showing the first ".concat(g.rows.length, " of ").concat(g.count, ".")
               ));
             }
           }
@@ -14991,11 +14994,11 @@
             class: "clickable",
             tabindex: "0",
             role: "button",
-            "aria-label": `Open detail for ${r.name}`
+            "aria-label": "Open detail for ".concat(r.name)
           },
           el("td", {}, sevBadge(r._sev)),
           el("td", {}, el("a", {
-            href: `https://nvd.nist.gov/vuln/detail/${encodeURIComponent(r.name || "")}`,
+            href: nvdUrl(r.name),
             target: "_blank",
             rel: "noopener",
             onclick: (e) => e.stopPropagation()
@@ -15029,7 +15032,7 @@
         sheet.append(
           el(
             "div",
-            { class: "sheet-header", style: `border-left-color: ${boot2.palette.colors[row._sev] || "#e6e6e9"}` },
+            { class: "sheet-header", style: "border-left-color: ".concat(boot2.palette.colors[row._sev] || "#e6e6e9") },
             el(
               "div",
               {},
@@ -15049,7 +15052,7 @@
         try {
           detail = await call("api_getFindingDetail", { vulnKey: row._vuln_key });
         } catch (e) {
-          clear(body).append(el("p", { class: "muted" }, `Couldn't load detail: ${e.message}`));
+          clear(body).append(el("p", { class: "muted" }, "Couldn't load detail: ".concat(e.message)));
           return;
         }
         clear(body);
@@ -15094,7 +15097,7 @@
               class: "btn",
               target: "_blank",
               rel: "noopener",
-              href: `https://nvd.nist.gov/vuln/detail/${encodeURIComponent(rec.name || "")}`,
+              href: nvdUrl(rec.name),
               style: "text-decoration:none; display:inline-block; padding:6px 14px"
             }, "Open in NVD \u2197")
           )
@@ -15129,7 +15132,7 @@
       if (big) {
         const go = await confirmDialog({
           title: "Prepare CSV?",
-          body: `This will build a CSV of ${boot2.latestScan.total.toLocaleString()} rows on the server.`,
+          body: "This will build a CSV of ".concat(boot2.latestScan.total.toLocaleString(), " rows on the server."),
           confirmLabel: "Prepare & download"
         });
         if (!go) return;
@@ -15146,7 +15149,7 @@
         });
         downloadText(res.filename, res.content, "text/csv;charset=utf-8");
       } catch (e) {
-        toast(`Export failed: ${e.message}`, "error");
+        toast("Export failed: ".concat(e.message), "error");
       }
     }
   }
@@ -15216,7 +15219,7 @@
       const miniDefs = [
         [
           "In SLA",
-          mttr.slaPct !== null ? `${mttr.slaPct.toFixed(1)}%` : "\u2014",
+          mttr.slaPct !== null ? "".concat(mttr.slaPct.toFixed(1), "%") : "\u2014",
           prev && prev.sla_pct !== null && mttr.slaPct !== null ? changeChip(mttr.slaPct, prev.sla_pct, { invert: true }) : null
         ],
         [
@@ -15239,7 +15242,7 @@
         el(
           "div",
           { class: "hero" },
-          el("div", { class: "label" }, "Median MTTR" + (domain ? ` \u2014 ${domain}` : "")),
+          el("div", { class: "label" }, "Median MTTR" + (domain ? " \u2014 ".concat(domain) : "")),
           el(
             "div",
             { class: "hero-value num" },
@@ -15249,7 +15252,7 @@
           el(
             "div",
             { class: "hero-src" },
-            `${mttr.rowCount.toLocaleString()} tracked lifecycle(s) in the durable base`
+            "".concat(mttr.rowCount.toLocaleString(), " tracked lifecycle(s) in the durable base")
           ),
           minis
         )
@@ -15326,8 +15329,8 @@
           el("td", { class: "num" }, d.open),
           el("td", { class: "num" }, fmtDays(d.open_age_p50)),
           el("td", { class: "num" }, fmtDays(d.open_age_p90)),
-          el("td", { class: "num" }, d.sla_target ? `${d.sla_target}d` : "\u2014"),
-          el("td", { class: "num" }, d.sla_pct !== null ? `${d.sla_pct.toFixed(0)}%` : "\u2014")
+          el("td", { class: "num" }, d.sla_target ? "".concat(d.sla_target, "d") : "\u2014"),
+          el("td", { class: "num" }, d.sla_pct !== null ? "".concat(d.sla_pct.toFixed(0), "%") : "\u2014")
         ));
       }
       table.append(tbody);
@@ -15346,17 +15349,17 @@
             el(
               "div",
               { class: "sla-line" },
-              el("span", {}, sevBadge(sev), ` target ${d.sla_target}d`),
-              el("span", { class: "num" }, `${d.sla_pct.toFixed(1)}% \u2014 ${stateWord}`)
+              el("span", {}, sevBadge(sev), " target ".concat(d.sla_target, "d")),
+              el("span", { class: "num" }, "".concat(d.sla_pct.toFixed(1), "% \u2014 ").concat(stateWord))
             ),
             el(
               "div",
               {
                 class: "sla-track",
                 role: "img",
-                "aria-label": `${sev}: ${d.sla_pct.toFixed(1)} percent within SLA (${stateWord})`
+                "aria-label": "".concat(sev, ": ").concat(d.sla_pct.toFixed(1), " percent within SLA (").concat(stateWord, ")")
               },
-              el("div", { class: `sla-fill ${state}`, style: `width:${Math.min(d.sla_pct, 100)}%` })
+              el("div", { class: "sla-fill ".concat(state), style: "width:".concat(Math.min(d.sla_pct, 100), "%") })
             )
           )
         );
@@ -15421,7 +15424,7 @@
       for (const s of scans) {
         const cb = el("input", {
           type: "checkbox",
-          "aria-label": `Select scan ${s.ts}`,
+          "aria-label": "Select scan ".concat(s.ts),
           disabled: s.sealed ? true : null,
           title: s.sealed ? "Sealed scans are part of the compacted baseline and can't be deleted." : null
         });
@@ -15429,7 +15432,7 @@
           if (cb.checked) selected.add(s.scan_id);
           else selected.delete(s.scan_id);
           deleteBtn.disabled = !selected.size;
-          deleteBtn.textContent = selected.size ? `Delete selected (${selected.size})` : "Delete selected";
+          deleteBtn.textContent = selected.size ? "Delete selected (".concat(selected.size, ")") : "Delete selected";
         });
         tbody.append(el(
           "tr",
@@ -15439,8 +15442,8 @@
           el("td", {}, s.mode),
           el("td", {}, s.shape),
           el("td", { class: "num" }, s.total.toLocaleString()),
-          el("td", { class: "num" }, s.new_count ? `+${s.new_count}` : "0"),
-          el("td", { class: "num" }, s.resolved_count ? `\u2212${s.resolved_count}` : "0"),
+          el("td", { class: "num" }, s.new_count ? "+".concat(s.new_count) : "0"),
+          el("td", { class: "num" }, s.resolved_count ? "\u2212".concat(s.resolved_count) : "0"),
           el("td", { class: "num" }, s.reopened_count || "0"),
           el("td", {}, s.severities ? JSON.parse(s.severities).join(", ") : "all"),
           el("td", {}, s.sealed ? "Sealed" : "")
@@ -15454,7 +15457,7 @@
       async function onDelete() {
         const ids = [...selected];
         const ok = await confirmDialog({
-          title: `Delete ${ids.length} scan(s)?`,
+          title: "Delete ".concat(ids.length, " scan(s)?"),
           body: el(
             "div",
             {},
@@ -15469,10 +15472,10 @@
         deleteBtn.textContent = "Rebuilding\u2026";
         try {
           const res = await call("api_deleteScans", { scanIds: ids });
-          toast(`Deleted ${res.deleted} scan(s); ${res.tracked.toLocaleString()} vulnerabilities tracked.`);
+          toast("Deleted ".concat(res.deleted, " scan(s); ").concat(res.tracked.toLocaleString(), " vulnerabilities tracked."));
           ctx.refresh();
         } catch (e) {
-          toast(e.kind === "sealed" ? e.message : `Delete failed: ${e.message}`, "error");
+          toast(e.kind === "sealed" ? e.message : "Delete failed: ".concat(e.message), "error");
           deleteBtn.disabled = false;
           deleteBtn.textContent = "Delete selected";
         }
@@ -15596,7 +15599,7 @@
           {},
           el("td", {}, sevBadge(r.severity)),
           el("td", {}, r.cve ? el("a", {
-            href: `https://nvd.nist.gov/vuln/detail/${encodeURIComponent(r.cve)}`,
+            href: nvdUrl(r.cve),
             target: "_blank",
             rel: "noopener"
           }, r.cve) : "\u2014"),
@@ -15622,7 +15625,7 @@
         const res = await call("api_getExportCsv", { source: "base" });
         downloadText(res.filename, res.content, "text/csv;charset=utf-8");
       } catch (e) {
-        toast(`Export failed: ${e.message}`, "error");
+        toast("Export failed: ".concat(e.message), "error");
       }
     }
   }
@@ -15698,7 +15701,7 @@
         const mime = format === "json" ? "application/json" : format === "csv" ? "text/csv;charset=utf-8" : "text/markdown;charset=utf-8";
         downloadText(res.filename, res.content, mime);
       } catch (e) {
-        toast(`Report failed: ${e.message}`, "error");
+        toast("Report failed: ".concat(e.message), "error");
       } finally {
         generateBtn.disabled = false;
       }
@@ -15722,7 +15725,7 @@
       el(
         "p",
         { class: "muted small" },
-        `Scan ${boot2.latestScan.ts.slice(0, 16).replace("T", " ")} UTC \u2014 ${boot2.latestScan.total.toLocaleString()} finding(s), ${boot2.latestScan.mode}.`
+        "Scan ".concat(boot2.latestScan.ts.slice(0, 16).replace("T", " "), " UTC \u2014 ") + "".concat(boot2.latestScan.total.toLocaleString(), " finding(s), ").concat(boot2.latestScan.mode, ".")
       )
     );
     const row = el("div", { style: "display:flex; gap:8px; flex-wrap:wrap" });
@@ -15738,7 +15741,7 @@
         const res = await call("api_getExportCsv", { source: "findings" });
         downloadText(res.filename, res.content, "text/csv;charset=utf-8");
       } catch (e) {
-        toast(`Export failed: ${e.message}`, "error");
+        toast("Export failed: ".concat(e.message), "error");
       } finally {
         csvBtn.disabled = false;
       }
@@ -15765,7 +15768,7 @@
             { href: res.folderUrl, target: "_blank", rel: "noopener" },
             "Open the archive folder in Drive \u2197"
           ),
-          ` \u2014 ${res.urls.length} gzipped page file(s):`
+          " \u2014 ".concat(res.urls.length, " gzipped page file(s):")
         ));
         const ul = el("ul", { class: "small" });
         for (const u of res.urls) {
@@ -15774,7 +15777,7 @@
         rawHost.append(ul);
       } catch (e) {
         clear(rawHost);
-        toast(`Raw export failed: ${e.message}`, "error");
+        toast("Raw export failed: ".concat(e.message), "error");
       } finally {
         rawBtn.disabled = false;
       }
@@ -15805,7 +15808,7 @@
           el(
             "div",
             { class: "domain-row" },
-            el("span", { class: "muted small num" }, `${i + 1}.`),
+            el("span", { class: "muted small num" }, "".concat(i + 1, ".")),
             el(
               "div",
               { class: "grow" },
@@ -15813,18 +15816,18 @@
               el(
                 "span",
                 { class: "muted small", style: "margin-left:8px" },
-                `${ruleCount} rule(s)`
+                "".concat(ruleCount, " rule(s)")
               )
             ),
             el("button", {
               onclick: () => move(i, -1),
               disabled: i === 0,
-              "aria-label": `Move ${item.name} up`
+              "aria-label": "Move ".concat(item.name, " up")
             }, "\u2191"),
             el("button", {
               onclick: () => move(i, 1),
               disabled: i === items.length - 1,
-              "aria-label": `Move ${item.name} down`
+              "aria-label": "Move ".concat(item.name, " down")
             }, "\u2193"),
             el("button", { onclick: () => openEditor(i) }, "Edit"),
             el("button", { class: "danger", onclick: () => remove(i) }, "Delete")
@@ -15839,7 +15842,7 @@
     }
     async function remove(i) {
       const ok = await confirmDialog({
-        title: `Delete domain \u201C${items[i].name}\u201D?`,
+        title: "Delete domain \u201C".concat(items[i].name, "\u201D?"),
         body: "Findings it claimed fall through to lower-priority domains or Unassigned.",
         confirmLabel: "Delete",
         danger: true
@@ -15859,7 +15862,7 @@
         toast("Domains saved.");
         ctx.refresh();
       } catch (e) {
-        toast(`Save failed: ${e.message}`, "error");
+        toast("Save failed: ".concat(e.message), "error");
       } finally {
         saveBtn.disabled = false;
       }
@@ -15879,7 +15882,7 @@
       const dlg = el(
         "dialog",
         {},
-        el("h3", {}, index2 !== null ? `Edit \u201C${editing.name}\u201D` : "Add domain"),
+        el("h3", {}, index2 !== null ? "Edit \u201C".concat(editing.name, "\u201D") : "Add domain"),
         el("label", { class: "field-label" }, "Name"),
         nameInput,
         el(
@@ -15915,7 +15918,7 @@
           ruleCard.append(el(
             "div",
             { class: "label", style: "margin-bottom:6px" },
-            `Rule ${ri + 1}`,
+            "Rule ".concat(ri + 1),
             editing.rules.length > 1 ? el("button", { class: "link", style: "float:right", onclick: () => {
               editing.rules.splice(ri, 1);
               renderRules();
@@ -16028,9 +16031,9 @@
           else candidate.push(entry);
           const res = await call("api_previewDomains", { items: candidate });
           const mine = res.perDomain[entry.name] || { count: 0, samples: [] };
-          previewHost.textContent = `${name} matches ${mine.count} of ${res.total} finding(s)` + (mine.samples.length ? ` \u2014 e.g. ${mine.samples.join(", ")}` : "");
+          previewHost.textContent = "".concat(name, " matches ").concat(mine.count, " of ").concat(res.total, " finding(s)") + (mine.samples.length ? " \u2014 e.g. ".concat(mine.samples.join(", ")) : "");
         } catch (e) {
-          previewHost.textContent = `Preview unavailable: ${e.message}`;
+          previewHost.textContent = "Preview unavailable: ".concat(e.message);
         }
       }
       function commit() {
@@ -16078,7 +16081,7 @@
       const node = el("div", { class: "pill-row", role: "group" });
       for (const sev of options) {
         const btn = el("button", {
-          class: `sev-pill sev-${sev}`,
+          class: "sev-pill sev-".concat(sev),
           "aria-pressed": selected.includes(sev) ? "true" : "false",
           onclick: () => {
             const i = selected.indexOf(sev);
@@ -16111,10 +16114,10 @@
           fetch: fetchPills.selected,
           display: displayPills.selected
         });
-        toast(`Saved \u2014 scanning ${res.fetchSeverities.join(", ")}; showing ${res.displaySeverities.join(", ")}.`);
+        toast("Saved \u2014 scanning ".concat(res.fetchSeverities.join(", "), "; showing ").concat(res.displaySeverities.join(", "), "."));
         ctx.refresh();
       } catch (e) {
-        toast(`Save failed: ${e.message}`, "error");
+        toast("Save failed: ".concat(e.message), "error");
         saveScopeBtn.disabled = false;
       }
     }
@@ -16191,7 +16194,7 @@
         toast("Retention settings saved.");
         ctx.refresh();
       } catch (e) {
-        toast(`Save failed: ${e.message}`, "error");
+        toast("Save failed: ".concat(e.message), "error");
       }
     }
     async function compactNow() {
@@ -16200,7 +16203,7 @@
       try {
         preview = await call("api_compact", { dryRun: true });
       } catch (e) {
-        toast(`Preview failed: ${e.message}`, "error");
+        toast("Preview failed: ".concat(e.message), "error");
         return;
       }
       if (preview.no_op) {
@@ -16212,11 +16215,11 @@
         body: el(
           "div",
           {},
-          el("p", {}, `${preview.scans_sealed} scan(s) will be sealed and ${preview.episodes_created} closed finding(s) rolled into episode rows. ${preview.observations_pruned} observation(s) and their raw archives are pruned.`),
+          el("p", {}, "".concat(preview.scans_sealed, " scan(s) will be sealed and ") + "".concat(preview.episodes_created, " closed finding(s) rolled into episode rows. ") + "".concat(preview.observations_pruned, " observation(s) and their raw archives are pruned.")),
           el(
             "p",
             { class: "small muted" },
-            `Floor: ${(_a2 = preview.floor_ts) != null ? _a2 : "\u2014"}. MTTR, SLA, and trends are verified unchanged before the compaction commits.`
+            "Floor: ".concat((_a2 = preview.floor_ts) != null ? _a2 : "\u2014", ". MTTR, SLA, and trends are verified ") + "unchanged before the compaction commits."
           )
         ),
         confirmLabel: "Compact"
@@ -16224,10 +16227,10 @@
       if (!ok) return;
       try {
         const res = await call("api_compact", { dryRun: false });
-        toast(`Compacted ${res.scans_sealed} scan(s) \u2014 ${res.episodes_created} episode(s) created.`);
+        toast("Compacted ".concat(res.scans_sealed, " scan(s) \u2014 ").concat(res.episodes_created, " episode(s) created."));
         ctx.refresh();
       } catch (e) {
-        toast(`Compaction failed: ${e.message}`, "error");
+        toast("Compaction failed: ".concat(e.message), "error");
       }
     }
     try {
@@ -16237,7 +16240,7 @@
       main.append(el(
         "p",
         { class: "muted small" },
-        `${stats.cellCount.toLocaleString()} of ${stats.cellLimit.toLocaleString()} spreadsheet cells in use (${pct}%) \u2014 ${stats.scanCount} scan(s), ${stats.sealedCount} sealed, ${stats.trackedVulns.toLocaleString()} tracked vulnerabilities.` + (stats.cellCount > 6e6 ? " \u26A0 Approaching the 10M-cell ceiling \u2014 lower the retention window." : "")
+        "".concat(stats.cellCount.toLocaleString(), " of ").concat(stats.cellLimit.toLocaleString(), " spreadsheet ") + "cells in use (".concat(pct, "%) \u2014 ").concat(stats.scanCount, " scan(s), ").concat(stats.sealedCount, " sealed, ") + "".concat(stats.trackedVulns.toLocaleString(), " tracked vulnerabilities.") + (stats.cellCount > 6e6 ? " \u26A0 Approaching the 10M-cell ceiling \u2014 lower the retention window." : "")
       ));
     } catch {
     }
@@ -16295,8 +16298,8 @@
         el(
           "a",
           {
-            class: `nav-link${key === active ? " active" : ""}`,
-            href: `#/${key}`,
+            class: "nav-link".concat(key === active ? " active" : ""),
+            href: "#/".concat(key),
             "aria-current": key === active ? "page" : null
           },
           page.title
@@ -16328,7 +16331,7 @@
           el(
             "div",
             { class: "scan-caption" },
-            `Last scan ${data.latestScan.ts.slice(0, 16).replace("T", " ")} UTC` + (age >= 2 ? ` \u2014 ${age} days ago` : "")
+            "Last scan ".concat(data.latestScan.ts.slice(0, 16).replace("T", " "), " UTC") + (age >= 2 ? " \u2014 ".concat(age, " days ago") : "")
           )
         );
       } else {
@@ -16380,9 +16383,9 @@
   async function route() {
     const { route: key, params } = parseHash();
     const page = PAGES[key] || PAGES.overview;
-    document.title = `${page.title} \u2014 Wiz Sidekick`;
+    document.title = "".concat(page.title, " \u2014 Wiz Sidekick");
     document.querySelectorAll(".nav-link").forEach((a) => {
-      const isActive = a.getAttribute("href") === `#/${key}`;
+      const isActive = a.getAttribute("href") === "#/".concat(key);
       a.classList.toggle("active", isActive);
       if (isActive) a.setAttribute("aria-current", "page");
       else a.removeAttribute("aria-current");
