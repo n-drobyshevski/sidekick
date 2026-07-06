@@ -4,16 +4,57 @@
 // parity) and inline for fast feedback.
 
 import { call } from "../api.js";
-import { clear, confirmDialog, el, toast } from "../ui.js";
+import { EXPORT_KIND, parseDomainsImport } from "../domainsImport.js";
+import { clear, confirmDialog, downloadText, el, toast } from "../ui.js";
 
 export function renderDomainsEditor(host, boot, ctx) {
   let items = JSON.parse(JSON.stringify(boot.settings.domains.items || []));
 
   const listHost = el("div", {});
   const addBtn = el("button", { onclick: () => openEditor(null) }, "Add domain");
+  const exportBtn = el("button", { onclick: exportJson }, "Export JSON");
+  const fileInput = el("input", {
+    type: "file", accept: "application/json", style: "display:none",
+    "aria-hidden": "true", tabindex: "-1",
+  });
+  fileInput.addEventListener("change", importJson);
+  const importBtn = el("button", { onclick: () => fileInput.click() }, "Import JSON");
   const saveBtn = el("button", { class: "primary", onclick: save }, "Save domains");
-  host.append(listHost, el("div", { style: "display:flex; gap:8px; margin-top:10px" }, addBtn, saveBtn));
+  host.append(listHost, el("div", { style: "display:flex; gap:8px; margin-top:10px" },
+    addBtn, exportBtn, importBtn, saveBtn, fileInput));
   renderList();
+
+  function exportJson() {
+    // Snapshots the list as currently edited (not necessarily saved) — same
+    // {kind, items} shape the Streamlit dashboard exports and imports.
+    downloadText(
+      "wiz_domains.json",
+      JSON.stringify({ kind: EXPORT_KIND, items }, null, 2),
+      "application/json",
+    );
+  }
+
+  async function importJson() {
+    const file = fileInput.files && fileInput.files[0];
+    fileInput.value = ""; // re-selecting the same file must re-fire change
+    if (!file) return;
+    const res = parseDomainsImport(await file.text());
+    if (res.error) {
+      toast(res.error, "warn");
+      return;
+    }
+    const ok = await confirmDialog({
+      title: "Replace all domains?",
+      body: `Import ${res.items.length} domain(s), replacing the current list of ` +
+        `${items.length}. Nothing is stored until you press Save domains.`,
+      confirmLabel: "Replace",
+      danger: true,
+    });
+    if (!ok) return;
+    items = res.items;
+    renderList();
+    toast(`Imported ${res.items.length} domain(s) — press Save domains to persist.`);
+  }
 
   function renderList() {
     clear(listHost);

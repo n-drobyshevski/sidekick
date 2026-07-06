@@ -191,3 +191,105 @@ def test_mttr_domain_select_rescopes_metrics():
     assert any(
         f"scoped to the {domain} domain" in str(m.value) for m in at.markdown
     )  # the hero-stat source line, rendered inside the hero markdown
+
+
+# ------------------------------------------------------------- export / import
+def test_export_json_is_portable_and_round_trips():
+    from wiz_dashboard.ui.pages import _domains_section as ds
+
+    text = ds.domains_export_json(DOMAINS)
+    assert '"id"' not in text and '"version"' not in text
+    data = __import__("json").loads(text)
+    assert data["kind"] == ds.EXPORT_KIND
+    items, errors = ds.parse_domains_import(text)
+    assert errors == []
+    assert [it["name"] for it in items] == ["Web", "Registry", "Legacy"]
+    assert [it["rules"] for it in items] == [d["rules"] for d in DOMAINS]
+
+
+def test_import_accepts_wrapper_and_bare_array_and_backfills_ids():
+    import json
+    import re as _re
+
+    from wiz_dashboard.ui.pages import _domains_section as ds
+
+    portable = [{"name": d["name"], "rules": d["rules"]} for d in DOMAINS]
+    for payload in (
+        {"kind": ds.EXPORT_KIND, "items": portable},   # canonical export
+        {"version": 9, "items": DOMAINS},              # raw settings wrapper (ids present)
+        portable,                                      # bare array
+    ):
+        items, errors = ds.parse_domains_import(json.dumps(payload))
+        assert errors == []
+        ids = [it["id"] for it in items]
+        assert all(_re.fullmatch(r"dom-[0-9a-f]{8}", i) for i in ids)  # always fresh
+        assert len(set(ids)) == len(ids)
+        assert ids != [d["id"] for d in DOMAINS]
+
+
+def test_import_rejects_bad_payloads():
+    from wiz_dashboard.ui.pages import _domains_section as ds
+
+    items, errors = ds.parse_domains_import("{nope")
+    assert items == [] and errors[0].startswith("Not valid JSON")
+    items, errors = ds.parse_domains_import('{"foo": 1}')
+    assert items == [] and errors[0].startswith("Unrecognized format")
+    items, errors = ds.parse_domains_import('[{"name": "A"}, 42]')
+    assert items == [] and errors == ["Item 2: expected an object."]
+
+
+def test_import_surfaces_validator_errors():
+    import json
+
+    from wiz_dashboard.ui.pages import _domains_section as ds
+
+    rules = [{"conditions": [{"type": "tag", "key": "team", "value": None}]}]
+    dupes = [{"name": "Web", "rules": rules}, {"name": "web", "rules": rules}]
+    _, errors = ds.parse_domains_import(json.dumps(dupes))
+    assert any("duplicate name" in e for e in errors)
+    _, errors = ds.parse_domains_import(json.dumps([{"name": "Unassigned", "rules": rules}]))
+    assert any("reserved" in e for e in errors)
+    _, errors = ds.parse_domains_import(
+        json.dumps([{"name": "R", "rules": [{"conditions": [{"type": "name_regex", "pattern": "x" * 201}]}]}])
+    )
+    assert any("longer than" in e for e in errors)
+
+
+def test_export_import_buttons_render_and_dialog_opens():
+    at = _run(_SEED + "from wiz_dashboard.ui.pages import settings as sp\nsp.page()\n")
+    dl = [d for d in at.get("download_button") if d.label == "Export JSON"]
+    assert dl and not dl[0].disabled
+    imp = [b for b in at.get("button") if b.key == "dom_import"][0]
+    imp.click()
+    at.run()
+    assert not at.exception, at.exception
+    # dialog is open: the uploader and its action buttons exist
+    assert at.get("file_uploader")
+    confirm = [b for b in at.get("button") if b.key == "dom_import_confirm"]
+    assert confirm and confirm[0].disabled  # no file selected yet
+    assert [b for b in at.get("button") if b.key == "dom_import_cancel"]
+
+
+def test_export_button_disabled_without_domains():
+    at = _run("from wiz_dashboard.ui.pages import settings as sp\nsp.page()\n")
+    dl = [d for d in at.get("download_button") if d.label == "Export JSON"]
+    assert dl and dl[0].disabled
+
+
+def test_imported_items_persist_through_set_domains():
+    # The dialog's confirm path is settings.set_domains via _persist; AppTest can't
+    # drive st.file_uploader, so exercise the same persistence directly.
+    import json
+
+    from wiz_dashboard.ui.pages import _domains_section as ds
+
+    settings.set_domains(DOMAINS)
+    before = settings.get_domains()
+    exported = ds.domains_export_json(before["items"])
+    items, errors = ds.parse_domains_import(exported)
+    assert errors == []
+    settings.set_domains(items)
+    after = settings.get_domains()
+    assert after["version"] == before["version"] + 1
+    assert [it["name"] for it in after["items"]] == [it["name"] for it in before["items"]]
+    assert [it["rules"] for it in after["items"]] == [it["rules"] for it in before["items"]]

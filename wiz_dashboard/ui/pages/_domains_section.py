@@ -15,6 +15,7 @@ in widget state keyed by uid (``dom_c_<uid>_*``) — so removing a condition nev
 another condition's widget state.
 """
 
+import json
 import re
 import uuid
 
@@ -33,6 +34,52 @@ _TYPE_LABELS = {
 _LABEL_TYPES = {v: k for k, v in _TYPE_LABELS.items()}
 
 _EDITOR_KEYS = ("dom_editor_open", "dom_editor_target", "dom_edit_rules", "dom_edit_name")
+
+EXPORT_KIND = "wiz-sidekick-domains"
+
+
+# --------------------------------------------------------------------------- #
+#  JSON export / import (pure helpers — also the interchange format with the
+#  GAS rebuild, which reads/writes the same {"kind", "items"} snapshot)
+# --------------------------------------------------------------------------- #
+def domains_export_json(items) -> str:
+    """Portable snapshot of the domain rules. Editor ``id``s and the settings
+    ``version`` are stripped: neither exists in the GAS app's items, and a fresh
+    id is minted on import anyway."""
+    portable = [{"name": it.get("name"), "rules": it.get("rules") or []} for it in items or []]
+    return json.dumps({"kind": EXPORT_KIND, "items": portable}, indent=2, ensure_ascii=False)
+
+
+def parse_domains_import(text: str) -> tuple[list, list[str]]:
+    """Exported domains JSON → ``(persistable items, errors)``.
+
+    Accepts the canonical export ({"kind": ..., "items": [...]}), a raw settings
+    wrapper ({"version": ..., "items": [...]}) or a bare JSON array. Items get
+    fresh ``dom-<hex8>`` ids — the row widgets key off id, so foreign ids must
+    never survive an import. Deep validation is ``domain_rules.validate_domains``,
+    the same gate the editor dialog uses."""
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        return [], [f"Not valid JSON: {exc}"]
+    if isinstance(data, dict) and isinstance(data.get("items"), list):
+        raw = data["items"]
+    elif isinstance(data, list):
+        raw = data
+    else:
+        return [], ['Unrecognized format — expected {"items": [...]} or a JSON array.']
+    items = []
+    for i, entry in enumerate(raw, start=1):
+        if not isinstance(entry, dict):
+            return [], [f"Item {i}: expected an object."]
+        items.append(
+            {
+                "id": f"dom-{uuid.uuid4().hex[:8]}",
+                "name": entry.get("name"),
+                "rules": entry.get("rules") or [],
+            }
+        )
+    return items, domain_rules.validate_domains(items)
 
 
 # --------------------------------------------------------------------------- #
@@ -182,6 +229,9 @@ def render() -> None:
     if st.session_state.get("dom_editor_open"):
         _domain_editor()
 
+    if st.session_state.get("dom_import_open"):
+        _import_dialog()
+
     # Delete confirm uses the same open-flag pattern as the editor: the dialog is
     # re-invoked on every run while the target is set, so its own buttons stay live
     # across the rerun their click triggers.
@@ -213,9 +263,22 @@ def _rows() -> None:
     for i, item in enumerate(items):
         _domain_row(items, i, item, counts, total)
 
-    if st.button("Add domain", key="dom_add", icon=":material/add:"):
-        _open_editor(None)
-        st.rerun()
+    with st.container(horizontal=True):
+        if st.button("Add domain", key="dom_add", icon=":material/add:"):
+            _open_editor(None)
+            st.rerun()
+        st.download_button(
+            "Export JSON",
+            data=domains_export_json(items).encode("utf-8"),
+            file_name="wiz_domains.json",
+            mime="application/json",
+            key="dom_export",
+            icon=":material/download:",
+            disabled=not items,
+        )
+        if st.button("Import JSON", key="dom_import", icon=":material/upload:"):
+            st.session_state["dom_import_open"] = True
+            st.rerun()
 
 
 def _section_match_counts(items):
@@ -395,6 +458,41 @@ def _editor_preview(built) -> None:
 # --------------------------------------------------------------------------- #
 #  Delete confirmation
 # --------------------------------------------------------------------------- #
+@st.dialog("Import domains")
+def _import_dialog() -> None:
+    st.write(
+        "Load a domains JSON exported from this app or the GAS rebuild. "
+        "Importing **replaces the entire current list**."
+    )
+    file = st.file_uploader("Domain rules JSON", type=["json"], key="dom_import_file")
+    items, errors = [], []
+    if file is not None:
+        try:
+            items, errors = parse_domains_import(file.getvalue().decode("utf-8"))
+        except UnicodeDecodeError:
+            errors = ["File is not UTF-8 text."]
+        for err in errors:
+            st.warning(err, icon="⚠️")
+        if not errors:
+            current = settings.get_domains()["items"]
+            names = ", ".join(str(it["name"]) for it in items)
+            st.write(
+                f"Replaces the current {len(current)} domain(s) with "
+                f"{len(items)} imported: **{names}**."
+            )
+    c1, c2 = st.columns(2)
+    if c1.button("Cancel", key="dom_import_cancel", width="stretch"):
+        st.session_state.pop("dom_import_open", None)
+        st.rerun()
+    if c2.button(
+        "Replace domains", type="primary", key="dom_import_confirm",
+        width="stretch", icon=":material/upload:",
+        disabled=file is None or bool(errors),
+    ):
+        st.session_state.pop("dom_import_open", None)
+        _persist(items, f"Imported {len(items)} domain(s)")
+
+
 @st.dialog("Delete domain?")
 def _confirm_delete(item) -> None:
     name = item.get("name", "")
