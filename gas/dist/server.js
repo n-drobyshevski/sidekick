@@ -25,7 +25,8 @@ var Server = (() => {
     doGet: () => doGet,
     include: () => include,
     jobs: () => scanJobs_exports,
-    setup: () => setup
+    setup: () => setup,
+    wizDiagnostic: () => wizDiagnostic
   });
 
   // src/server/main.ts
@@ -497,33 +498,6 @@ var Server = (() => {
     return notes.join("\n");
   }
 
-  // src/server/api.ts
-  var api_exports = {};
-  __export(api_exports, {
-    bootstrap: () => bootstrap,
-    compact: () => compact,
-    deleteScans: () => deleteScans2,
-    getBaseRows: () => getBaseRows,
-    getDomains: () => getDomains3,
-    getExportCsv: () => getExportCsv,
-    getExportRawUrl: () => getExportRawUrl,
-    getFindingDetail: () => getFindingDetail,
-    getFindings: () => getFindings,
-    getJobStatus: () => getJobStatus,
-    getMttr: () => getMttr,
-    getMttrTrend: () => getMttrTrend,
-    getReport: () => getReport,
-    getScanHistory: () => getScanHistory,
-    getSettings: () => getSettings,
-    getStorageStats: () => getStorageStats,
-    previewDomains: () => previewDomains,
-    runScan: () => runScan,
-    saveDomains: () => saveDomains,
-    setAutoCompact: () => setAutoCompact2,
-    setRetention: () => setRetention,
-    setSeverities: () => setSeverities
-  });
-
   // src/domain/config.ts
   var SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
   var SEVERITY_COLORS = {
@@ -564,6 +538,384 @@ var Server = (() => {
   var DEFAULT_RETENTION_DAYS = 180;
   var RETENTION_MIN_DAYS = 30;
   var MIN_UNSEALED_FLAT_SCANS = 2;
+
+  // src/domain/severity.ts
+  function normalizeSeverity(sev) {
+    if (typeof sev !== "string") return "UNKNOWN";
+    const s = sev.toUpperCase().trim();
+    if (s === "INFORMATIONAL" || s === "INFO") return "INFO";
+    return SEVERITY_ORDER.includes(s) ? s : "UNKNOWN";
+  }
+  function countBySeverity(records) {
+    var _a;
+    if (!records.length || !records.some((r) => "severity" in r)) return {};
+    const counts = {};
+    for (const rec of records) {
+      const sev = normalizeSeverity(rec["severity"]);
+      counts[sev] = ((_a = counts[sev]) != null ? _a : 0) + 1;
+    }
+    return counts;
+  }
+
+  // src/domain/settingsLogic.ts
+  function canonicalSeverities(values, defaults) {
+    if (!Array.isArray(values)) return [...defaults];
+    const chosen = new Set(
+      values.filter((v) => typeof v === "string").map(normalizeSeverity).filter((s) => SELECTABLE_SEVERITIES.includes(s))
+    );
+    if (!chosen.size) return [...defaults];
+    return SEVERITY_ORDER.filter((s) => chosen.has(s));
+  }
+  function getFetchSeverities(settings) {
+    return canonicalSeverities(settings["fetch_severities"], DEFAULT_FETCH_SEVERITIES);
+  }
+  function getDisplaySeverities(settings) {
+    const fetch = getFetchSeverities(settings);
+    const disp = canonicalSeverities(settings["display_severities"], DEFAULT_DISPLAY_SEVERITIES);
+    const clamped = disp.filter((s) => fetch.includes(s));
+    return clamped.length ? clamped : fetch;
+  }
+  function withFetchSeverities(settings, sevs) {
+    const d = { ...settings };
+    const fetch = canonicalSeverities(sevs, DEFAULT_FETCH_SEVERITIES);
+    d["fetch_severities"] = fetch;
+    const disp = canonicalSeverities(d["display_severities"], fetch);
+    const clamped = disp.filter((s) => fetch.includes(s));
+    d["display_severities"] = clamped.length ? clamped : [...fetch];
+    return d;
+  }
+  function withDisplaySeverities(settings, sevs) {
+    const d = { ...settings };
+    const fetch = canonicalSeverities(d["fetch_severities"], DEFAULT_FETCH_SEVERITIES);
+    const disp = canonicalSeverities(sevs, DEFAULT_DISPLAY_SEVERITIES);
+    const clamped = disp.filter((s) => fetch.includes(s));
+    d["display_severities"] = clamped.length ? clamped : [...fetch];
+    return d;
+  }
+  function getRetentionDays(settings) {
+    const raw = "retention_days" in settings ? settings["retention_days"] : DEFAULT_RETENTION_DAYS;
+    if (raw === null) return null;
+    const n = typeof raw === "number" ? Math.trunc(raw) : parseInt(String(raw), 10);
+    if (Number.isNaN(n)) return DEFAULT_RETENTION_DAYS;
+    return Math.max(n, RETENTION_MIN_DAYS);
+  }
+  function withRetentionDays(settings, days) {
+    const d = { ...settings };
+    d["retention_days"] = days === null ? null : Math.max(Math.trunc(days), RETENTION_MIN_DAYS);
+    return d;
+  }
+  function getAutoCompact(settings) {
+    const val = "auto_compact" in settings ? settings["auto_compact"] : true;
+    return typeof val === "boolean" ? val : true;
+  }
+  function withAutoCompact(settings, enabled) {
+    return { ...settings, auto_compact: Boolean(enabled) };
+  }
+  function cleanDomainItems(items) {
+    if (!Array.isArray(items)) return [];
+    return items.filter(
+      (item) => item !== null && typeof item === "object" && !Array.isArray(item) && typeof item["name"] === "string" && item["name"].trim() !== ""
+    );
+  }
+  function getDomains(settings) {
+    var _a;
+    const raw = settings["domains"];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { version: 0, items: [] };
+    const r = raw;
+    let version = 0;
+    const v = Number((_a = r["version"]) != null ? _a : 0);
+    if (Number.isFinite(v)) version = Math.max(Math.trunc(v), 0);
+    return { version, items: cleanDomainItems(r["items"]) };
+  }
+  function withDomains(settings, items) {
+    const current = getDomains(settings);
+    return {
+      ...settings,
+      domains: { version: current.version + 1, items: cleanDomainItems(items) }
+    };
+  }
+  function apiSeverityFilter(severities) {
+    const sevs = canonicalSeverities(severities, DEFAULT_FETCH_SEVERITIES);
+    if (new Set(sevs).size === SELECTABLE_SEVERITIES.length) return null;
+    return sevs.map((s) => API_SEVERITY_VALUES[s]);
+  }
+
+  // src/server/wizQuery.ts
+  var QUERY = "\n    query VulnerabilityFindingsTable($filterBy: VulnerabilityFindingFilters, $first: Int, $after: String, $orderBy: VulnerabilityFindingOrder = {direction: DESC, field: CREATED_AT}, $includeRelatedIssueAnalytics: Boolean = false, $includeRelatedSourceMappedIssueAnalytics: Boolean = false, $includeTotalCount: Boolean = false, $includePostureIssues: Boolean = false, $fetchPrivilegedActionRequests: Boolean = false) {\n      vulnerabilityFindings(\n        filterBy: $filterBy\n        first: $first\n        after: $after\n        orderBy: $orderBy\n      ) {\n        nodes {\n          ...VulnerabilityFindingFragment\n          ...DuplicateFindingBadge\n          transitivity\n          rootComponent {\n            name\n          }\n          isHighProfileThreat\n          vendorSeverity\n          nvdSeverity\n          weightedSeverity\n          hasExploit\n          usedInCodeResult\n          hasCisaKevExploit\n          cisaKevReleaseDate\n          cisaKevDueDate\n          score\n          epssSeverity\n          epssPercentile\n          epssProbability\n          categories\n          hasInitialAccessPotential\n          isClientSide\n          affectedBySettings\n          codeLibraryLanguage\n          exploitabilityValidationStatus\n          cvssv2 {\n            attackVector\n            attackComplexity\n            confidentialityImpact\n            integrityImpact\n            privilegesRequired\n            userInteractionRequired\n            vectorString\n            scope\n          }\n          cvssv3 {\n            attackVector\n            attackComplexity\n            confidentialityImpact\n            integrityImpact\n            privilegesRequired\n            userInteractionRequired\n            vectorString\n            scope\n          }\n          effectiveAvailabilityImpact\n          cnaScore\n          vendorScore\n          relatedIssueAnalytics @include(if: $includeRelatedIssueAnalytics) {\n            ...VulnerabilityFindingRelatedIssueAnalyticsFragment\n          }\n          relatedSourceMappedIssueAnalytics @include(if: $includeRelatedSourceMappedIssueAnalytics) {\n            ...VulnerabilityFindingRelatedIssueAnalyticsFragment\n          }\n          postureIssues @include(if: $includePostureIssues) {\n            ...PostureIssuePopoverListRecord\n          }\n          privilegedActionRequests @include(if: $fetchPrivilegedActionRequests) {\n            ...PendingUpdateVulnerabilityFindingStatusRequest\n          }\n        }\n        pageInfo {\n          hasNextPage\n          endCursor\n        }\n        totalCount @include(if: $includeTotalCount)\n      }\n    }\n   \n        fragment VulnerabilityFindingFragment on VulnerabilityFinding {\n      id\n      name\n      detailedName\n      description\n      severity\n      status\n      fixedVersion\n      detectionMethod\n      firstDetectedAt\n      firstDetectedAtSource\n      lastDetectedAt\n      resolvedAt\n      validatedInRuntime\n      runtimeValidationResult\n      reachability\n      hasTriggerableRemediation\n      remediationPullRequestAvailable\n      dataSourceName\n      fixDate\n      fixDateBefore\n      publishedDate\n      version\n      versionResolutionPrimarySource {\n        type\n        version\n      }\n      isOperatingSystemEndOfLife\n      recommendedVersion\n      locationPath\n      artifactType {\n        ...SBOMArtifactTypeFragment\n      }\n      projects {\n        id\n        name\n        slug\n        isFolder\n      }\n      ignoreRules {\n        id\n      }\n      note {\n        id\n        text\n      }\n      layerMetadata {\n        id\n        details\n        isBaseLayer\n        layerHash\n      }\n      vulnerableAsset {\n        ... on VulnerableAssetBase {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          externalId\n          providerUniqueId\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetVirtualMachine {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystem\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          imageName\n          imageId\n          imageNativeType\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          computeInstanceGroup {\n            id\n            externalId\n            name\n            replicaCount\n            tags\n          }\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetServerless {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetContainerImage {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          repository {\n            vertexId\n            name\n          }\n          registry {\n            vertexId\n            name\n          }\n          scanSource\n          executionControllers {\n            ...VulnerableAssetExecutionControllerDetails\n          }\n          graphEntity {\n            ...VulnerabilityContainerImageGraphEntityExecutionContext\n          }\n          nativeType\n          tagReferences\n          imageTags\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetContainer {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          executionControllers {\n            ...VulnerableAssetExecutionControllerDetails\n          }\n          nativeType\n          isUsedOnPrem\n        }\n        ... on VulnerableAssetRepositoryBranch {\n          id\n          type\n          name\n          cloudPlatform\n          repositoryId\n          repositoryName\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetIde {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetEndpoint {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetPaaSResource {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetVirtualMachineImage {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetNetworkAddress {\n          subscriptionId\n          subscriptionName\n          subscriptionExternalId\n          tags\n          address\n          addressType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetCommon {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetDevice {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n          operatingSystem\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n        }\n      }\n      sourceMappedCodeFindings {\n        id\n        remediationPullRequestAvailable\n      }\n    }\n   \n\n\n        fragment SBOMArtifactTypeFragment on SBOMArtifactType {\n      group\n      codeLibraryLanguage\n      osPackageManager\n      hostedTechnology {\n        id\n        name\n        icon\n      }\n      plugin\n      custom\n      ciComponent\n    }\n   \n\n\n        fragment VulnerabilityFindingOperatingSystemDistribution on Technology {\n      id\n      name\n      icon\n    }\n   \n\n\n        fragment VulnerableAssetExecutionControllerDetails on VulnerableAssetExecutionController {\n      id\n      entityType\n      externalId\n      providerUniqueId\n      name\n      subscriptionExternalId\n      subscriptionId\n      subscriptionName\n      ancestors {\n        id\n        name\n        entityType\n        externalId\n        providerUniqueId\n      }\n    }\n   \n\n\n        fragment VulnerabilityContainerImageGraphEntityExecutionContext on GraphEntity {\n      id\n      providerUniqueId\n      type\n      containerImageExecutionContextAnalyticsV3 {\n        totalResourceCount\n        nativeType {\n          nativeType\n          count\n        }\n      }\n    }\n   \n\n\n        fragment DuplicateFindingBadge on VulnerabilityFinding {\n      id\n      origin\n      duplicateOf {\n        id\n        name\n        origin\n        vulnerableAsset {\n          ... on VulnerableAssetBase {\n            id\n            name\n          }\n        }\n      }\n    }\n   \n\n\n        fragment VulnerabilityFindingRelatedIssueAnalyticsFragment on VulnerabilityFindingRelatedIssueAnalytics {\n      issueCount\n      informationalSeverityCount\n      lowSeverityCount\n      mediumSeverityCount\n      highSeverityCount\n      criticalSeverityCount\n    }\n   \n\n\n        fragment PostureIssuePopoverListRecord on PostureIssue {\n      id\n      name\n      type\n      entity {\n        providerUniqueId\n        id\n        type\n      }\n    }\n   \n\n\n        fragment PendingUpdateVulnerabilityFindingStatusRequest on PrivilegedActionRequest {\n      ...PendingStatusRequestBanner\n      ...PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams\n    }\n   \n\n\n        fragment PendingStatusRequestBanner on PrivilegedActionRequest {\n      id\n      type\n      status\n      createdAt\n      createdBy {\n        id\n        name\n        email\n      }\n      params {\n        ... on PrivilegedActionRequestUpdateIssueStatusParams {\n          issueStatus: status\n        }\n        ... on PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams {\n          findingStatus: status\n        }\n        ... on PrivilegedActionRequestCreateIgnoreRuleParams {\n          ignoreRuleName: name\n        }\n      }\n    }\n   \n\n\n        fragment PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams on PrivilegedActionRequest {\n      id\n      params {\n        ... on PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams {\n          status\n        }\n      }\n      subject {\n        ... on VulnerabilityFinding {\n          id\n          status\n        }\n      }\n    }\n";
+  var BASE_VARIABLES = {
+    "orderBy": {
+      "field": "RELATED_ISSUE_SEVERITY",
+      "direction": "DESC"
+    },
+    "includeRelatedIssueAnalytics": false,
+    "includeRelatedSourceMappedIssueAnalytics": false,
+    "includeTotalCount": false,
+    "includePostureIssues": false,
+    "fetchPrivilegedActionRequests": false,
+    "first": 500,
+    "filterBy": {
+      "hasFix": true,
+      "projectIdV2": {
+        "equals": [
+          "1dfea0cf-834f-5522-b797-bee5aaf09251"
+        ]
+      },
+      "assetType": [
+        "VIRTUAL_MACHINE"
+      ],
+      "detectionMethod": [
+        "OS"
+      ],
+      "status": [
+        "OPEN",
+        "RESOLVED"
+      ],
+      "detailedNameV2": {
+        "notEquals": [
+          "openssl",
+          "python",
+          "vim"
+        ]
+      },
+      "assetIsRepresentativeResource": false
+    }
+  };
+  var PAGE_SIZE = 500;
+  var PAGE_SIZE_FALLBACK = 250;
+  var MAX_PAGES = 1e3;
+
+  // src/server/wizClient.ts
+  var WizQueryError = class extends Error {
+  };
+  var WizDeltaFilterError = class extends WizQueryError {
+  };
+  var TOKEN_CACHE_KEY = "wiz_token";
+  function getToken(forceRefresh = false) {
+    var _a, _b;
+    const staticToken = getProp(PROP_KEYS.wizApiToken);
+    if (staticToken && staticToken.trim()) return staticToken.trim();
+    const cache = CacheService.getScriptCache();
+    if (!forceRefresh) {
+      const cached = cache.get(TOKEN_CACHE_KEY);
+      if (cached) return cached;
+    }
+    const authUrl = (_a = getProp(PROP_KEYS.wizAuthUrl)) != null ? _a : DEFAULT_WIZ_AUTH_URL;
+    const response = UrlFetchApp.fetch(authUrl, {
+      method: "post",
+      contentType: "application/x-www-form-urlencoded",
+      payload: {
+        grant_type: "client_credentials",
+        audience: "wiz-api",
+        client_id: requireProp(PROP_KEYS.wizClientId),
+        client_secret: requireProp(PROP_KEYS.wizClientSecret)
+      },
+      muteHttpExceptions: true
+    });
+    if (response.getResponseCode() !== 200) {
+      throw new WizQueryError(
+        `Wiz token request failed (${response.getResponseCode()}): ` + response.getContentText().slice(0, 500)
+      );
+    }
+    const body = JSON.parse(response.getContentText());
+    const token = body["access_token"];
+    if (typeof token !== "string" || !token) {
+      throw new WizQueryError("Wiz token response carried no access_token.");
+    }
+    const expiresIn = Number((_b = body["expires_in"]) != null ? _b : 3600);
+    const ttl = Math.max(60, Math.min(Math.trunc(expiresIn) - 300, 21600));
+    cache.put(TOKEN_CACHE_KEY, token, ttl);
+    return token;
+  }
+  function baseVariables() {
+    return JSON.parse(JSON.stringify(BASE_VARIABLES));
+  }
+  function buildVariables(options = {}) {
+    var _a, _b;
+    const vars = baseVariables();
+    const filterBy = vars["filterBy"];
+    const projectId = getProp(PROP_KEYS.wizProjectIdV2);
+    if (projectId) filterBy["projectIdV2"] = { equals: [projectId] };
+    const sevFilter = options.severities === void 0 ? null : apiSeverityFilter(options.severities);
+    if (sevFilter) filterBy["severity"] = sevFilter;
+    for (const [k, v] of Object.entries((_a = options.extraFilterBy) != null ? _a : {})) filterBy[k] = v;
+    vars["first"] = (_b = options.first) != null ? _b : PAGE_SIZE;
+    if (options.after) vars["after"] = options.after;
+    vars["includeTotalCount"] = Boolean(options.includeTotalCount);
+    return vars;
+  }
+  function queryPage(variables, isDeltaFetch = false) {
+    var _a, _b, _c, _d;
+    const apiUrl = requireProp(PROP_KEYS.wizApiUrl);
+    let token = getToken();
+    let lastError = "";
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const response = UrlFetchApp.fetch(apiUrl, {
+        method: "post",
+        contentType: "application/json",
+        headers: { Authorization: `Bearer ${token}` },
+        payload: JSON.stringify({ query: QUERY, variables }),
+        muteHttpExceptions: true
+      });
+      const code = response.getResponseCode();
+      if (code === 401 && attempt === 0 && !getProp(PROP_KEYS.wizApiToken)) {
+        token = getToken(true);
+        continue;
+      }
+      if (code === 429 || code >= 500) {
+        lastError = `HTTP ${code}`;
+        Utilities.sleep(1e3 * Math.pow(2, attempt));
+        continue;
+      }
+      if (code !== 200) {
+        const hint = code === 401 && getProp(PROP_KEYS.wizApiToken) ? " \u2014 WIZ_API_TOKEN was rejected; it may have expired. Refresh it, or set WIZ_CLIENT_ID/WIZ_CLIENT_SECRET for auto-refresh." : "";
+        throw new WizQueryError(
+          `Wiz query failed (HTTP ${code})${hint}: ${response.getContentText().slice(0, 500)}`
+        );
+      }
+      const body = JSON.parse(response.getContentText());
+      const data = body["data"];
+      const connection = data == null ? void 0 : data["vulnerabilityFindings"];
+      if (!connection) {
+        const errors = JSON.stringify((_a = body["errors"]) != null ? _a : body).slice(0, 500);
+        if (isDeltaFetch) {
+          throw new WizDeltaFilterError(`Wiz rejected the incremental filter: ${errors}`);
+        }
+        throw new WizQueryError(`Wiz response carried no findings connection: ${errors}`);
+      }
+      const pageInfo = (_b = connection["pageInfo"]) != null ? _b : {};
+      const rawTotal = connection["totalCount"];
+      return {
+        nodes: (_c = connection["nodes"]) != null ? _c : [],
+        hasNextPage: Boolean(pageInfo["hasNextPage"]),
+        endCursor: (_d = pageInfo["endCursor"]) != null ? _d : null,
+        totalCount: typeof rawTotal === "number" ? rawTotal : null
+      };
+    }
+    throw new WizQueryError(`Wiz query failed after retries (${lastError}).`);
+  }
+  function fetchPage(options) {
+    var _a;
+    const common = {
+      severities: options.severities,
+      extraFilterBy: options.extraFilterBy,
+      after: (_a = options.cursor) != null ? _a : null,
+      includeTotalCount: options.pageNumber === 0
+    };
+    const isDelta = Boolean(options.extraFilterBy && Object.keys(options.extraFilterBy).length);
+    try {
+      return queryPage(buildVariables({ ...common, first: PAGE_SIZE }), isDelta);
+    } catch (e) {
+      if (e instanceof WizDeltaFilterError) throw e;
+      return queryPage(buildVariables({ ...common, first: PAGE_SIZE_FALLBACK }), isDelta);
+    }
+  }
+
+  // src/server/diagnostics.ts
+  function preview(value) {
+    if (!value || !value.trim()) return "(unset)";
+    const v = value.trim();
+    if (v.length <= 10) return `${v.length} chars`;
+    return `${v.length} chars, ${v.slice(0, 4)}\u2026${v.slice(-4)}`;
+  }
+  function secretPreview(value) {
+    return value && value.trim() ? `(set, ${value.trim().length} chars)` : "(unset)";
+  }
+  function wizDiagnostic() {
+    var _a;
+    const lines = [];
+    const log = (m) => {
+      lines.push(m);
+      console.log(m);
+    };
+    const apiUrl = getProp(PROP_KEYS.wizApiUrl);
+    const authUrl = (_a = getProp(PROP_KEYS.wizAuthUrl)) != null ? _a : DEFAULT_WIZ_AUTH_URL;
+    const token = getProp(PROP_KEYS.wizApiToken);
+    const clientId = getProp(PROP_KEYS.wizClientId);
+    const clientSecret = getProp(PROP_KEYS.wizClientSecret);
+    const projectId = getProp(PROP_KEYS.wizProjectIdV2);
+    const mode = resolveWizAuthMode(token, clientId, clientSecret);
+    log("=== Wiz diagnostic ===");
+    log(`WIZ_API_URL:        ${apiUrl || "(unset!)"}`);
+    log(`Auth mode:          ${mode != null ? mode : "(none)"}`);
+    log(`WIZ_API_TOKEN:      ${preview(token)}`);
+    log(`WIZ_CLIENT_ID:      ${preview(clientId)}`);
+    log(`WIZ_CLIENT_SECRET:  ${secretPreview(clientSecret)}`);
+    if (mode === "oauth") log(`WIZ_AUTH_URL:       ${authUrl}`);
+    log(`WIZ_PROJECT_ID_V2:  ${projectId || "(unset \u2014 querying all projects)"}`);
+    if (!apiUrl) {
+      log("FAIL: WIZ_API_URL is required, e.g. https://api.<region>.app.wiz.io/graphql.");
+      return lines.join("\n");
+    }
+    if (mode === null) {
+      log(
+        "FAIL: no usable credentials \u2014 the app runs in dry-run mode. Set WIZ_API_TOKEN, or WIZ_CLIENT_ID + WIZ_CLIENT_SECRET."
+      );
+      return lines.join("\n");
+    }
+    let bearer = "";
+    try {
+      bearer = getToken(true);
+      log(
+        mode === "token" ? `Step 1 OK: using raw WIZ_API_TOKEN (${preview(bearer)}).` : `Step 1 OK: OAuth exchange minted an access token (${preview(bearer)}).`
+      );
+    } catch (e) {
+      log(`Step 1 FAIL: could not obtain a token \u2014 ${e.message}`);
+      log(
+        mode === "oauth" ? "\u2192 The token endpoint rejected the client credentials. Verify WIZ_CLIENT_ID / WIZ_CLIENT_SECRET (regenerate the service account in Wiz), and that WIZ_AUTH_URL matches the auth host shown on the service-account page." : "\u2192 WIZ_API_TOKEN is unusable. A Wiz GraphQL service account gives a client id + secret, not a durable token; use WIZ_CLIENT_ID / WIZ_CLIENT_SECRET."
+      );
+      return lines.join("\n");
+    }
+    try {
+      const page = queryPage(buildVariables({ first: 1 }));
+      log(`Step 2 OK: query succeeded \u2014 ${page.nodes.length} finding(s) on page 1.`);
+      log("=== All checks passed. Live scans should work. ===");
+    } catch (e) {
+      const msg = e.message;
+      log(`Step 2 FAIL: the query was rejected \u2014 ${msg}`);
+      if (/HTTP 401|HTTP 403|Unauthorized/i.test(msg)) {
+        log(
+          "\u2192 401/403/Unauthorized: the token was not accepted (expired, invalid, or minted for a different tenant). Confirm the service account targets this tenant."
+        );
+      } else if (/HTTP 404/i.test(msg)) {
+        log(
+          "\u2192 404: WIZ_API_URL host/path is wrong \u2014 it must be https://api.<region>.app.wiz.io/graphql for your tenant's region."
+        );
+      } else {
+        log(
+          '\u2192 If the body names a field (e.g. "Cannot query field"), the service account lacks permission for it or the tenant schema differs.'
+        );
+      }
+      return lines.join("\n");
+    }
+    return lines.join("\n");
+  }
+
+  // src/server/api.ts
+  var api_exports = {};
+  __export(api_exports, {
+    bootstrap: () => bootstrap,
+    compact: () => compact,
+    deleteScans: () => deleteScans2,
+    getBaseRows: () => getBaseRows,
+    getDomains: () => getDomains3,
+    getExportCsv: () => getExportCsv,
+    getExportRawUrl: () => getExportRawUrl,
+    getFindingDetail: () => getFindingDetail,
+    getFindings: () => getFindings,
+    getJobStatus: () => getJobStatus,
+    getMttr: () => getMttr,
+    getMttrTrend: () => getMttrTrend,
+    getReport: () => getReport,
+    getScanHistory: () => getScanHistory,
+    getSettings: () => getSettings,
+    getStorageStats: () => getStorageStats,
+    previewDomains: () => previewDomains,
+    runScan: () => runScan,
+    saveDomains: () => saveDomains,
+    setAutoCompact: () => setAutoCompact2,
+    setRetention: () => setRetention,
+    setSeverities: () => setSeverities
+  });
 
   // src/domain/util.ts
   function present(v) {
@@ -942,24 +1294,6 @@ var Server = (() => {
       h4 = h4 + e >>> 0;
     }
     return [h0, h1, h2, h3, h4].map((x) => x.toString(16).padStart(8, "0")).join("");
-  }
-
-  // src/domain/severity.ts
-  function normalizeSeverity(sev) {
-    if (typeof sev !== "string") return "UNKNOWN";
-    const s = sev.toUpperCase().trim();
-    if (s === "INFORMATIONAL" || s === "INFO") return "INFO";
-    return SEVERITY_ORDER.includes(s) ? s : "UNKNOWN";
-  }
-  function countBySeverity(records) {
-    var _a;
-    if (!records.length || !records.some((r) => "severity" in r)) return {};
-    const counts = {};
-    for (const rec of records) {
-      const sev = normalizeSeverity(rec["severity"]);
-      counts[sev] = ((_a = counts[sev]) != null ? _a : 0) + 1;
-    }
-    return counts;
   }
 
   // src/domain/metrics.ts
@@ -2244,89 +2578,6 @@ var Server = (() => {
     return plan.result;
   }
 
-  // src/domain/settingsLogic.ts
-  function canonicalSeverities(values, defaults) {
-    if (!Array.isArray(values)) return [...defaults];
-    const chosen = new Set(
-      values.filter((v) => typeof v === "string").map(normalizeSeverity).filter((s) => SELECTABLE_SEVERITIES.includes(s))
-    );
-    if (!chosen.size) return [...defaults];
-    return SEVERITY_ORDER.filter((s) => chosen.has(s));
-  }
-  function getFetchSeverities(settings) {
-    return canonicalSeverities(settings["fetch_severities"], DEFAULT_FETCH_SEVERITIES);
-  }
-  function getDisplaySeverities(settings) {
-    const fetch = getFetchSeverities(settings);
-    const disp = canonicalSeverities(settings["display_severities"], DEFAULT_DISPLAY_SEVERITIES);
-    const clamped = disp.filter((s) => fetch.includes(s));
-    return clamped.length ? clamped : fetch;
-  }
-  function withFetchSeverities(settings, sevs) {
-    const d = { ...settings };
-    const fetch = canonicalSeverities(sevs, DEFAULT_FETCH_SEVERITIES);
-    d["fetch_severities"] = fetch;
-    const disp = canonicalSeverities(d["display_severities"], fetch);
-    const clamped = disp.filter((s) => fetch.includes(s));
-    d["display_severities"] = clamped.length ? clamped : [...fetch];
-    return d;
-  }
-  function withDisplaySeverities(settings, sevs) {
-    const d = { ...settings };
-    const fetch = canonicalSeverities(d["fetch_severities"], DEFAULT_FETCH_SEVERITIES);
-    const disp = canonicalSeverities(sevs, DEFAULT_DISPLAY_SEVERITIES);
-    const clamped = disp.filter((s) => fetch.includes(s));
-    d["display_severities"] = clamped.length ? clamped : [...fetch];
-    return d;
-  }
-  function getRetentionDays(settings) {
-    const raw = "retention_days" in settings ? settings["retention_days"] : DEFAULT_RETENTION_DAYS;
-    if (raw === null) return null;
-    const n = typeof raw === "number" ? Math.trunc(raw) : parseInt(String(raw), 10);
-    if (Number.isNaN(n)) return DEFAULT_RETENTION_DAYS;
-    return Math.max(n, RETENTION_MIN_DAYS);
-  }
-  function withRetentionDays(settings, days) {
-    const d = { ...settings };
-    d["retention_days"] = days === null ? null : Math.max(Math.trunc(days), RETENTION_MIN_DAYS);
-    return d;
-  }
-  function getAutoCompact(settings) {
-    const val = "auto_compact" in settings ? settings["auto_compact"] : true;
-    return typeof val === "boolean" ? val : true;
-  }
-  function withAutoCompact(settings, enabled) {
-    return { ...settings, auto_compact: Boolean(enabled) };
-  }
-  function cleanDomainItems(items) {
-    if (!Array.isArray(items)) return [];
-    return items.filter(
-      (item) => item !== null && typeof item === "object" && !Array.isArray(item) && typeof item["name"] === "string" && item["name"].trim() !== ""
-    );
-  }
-  function getDomains(settings) {
-    var _a;
-    const raw = settings["domains"];
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { version: 0, items: [] };
-    const r = raw;
-    let version = 0;
-    const v = Number((_a = r["version"]) != null ? _a : 0);
-    if (Number.isFinite(v)) version = Math.max(Math.trunc(v), 0);
-    return { version, items: cleanDomainItems(r["items"]) };
-  }
-  function withDomains(settings, items) {
-    const current = getDomains(settings);
-    return {
-      ...settings,
-      domains: { version: current.version + 1, items: cleanDomainItems(items) }
-    };
-  }
-  function apiSeverityFilter(severities) {
-    const sevs = canonicalSeverities(severities, DEFAULT_FETCH_SEVERITIES);
-    if (new Set(sevs).size === SELECTABLE_SEVERITIES.length) return null;
-    return sevs.map((s) => API_SEVERITY_VALUES[s]);
-  }
-
   // src/server/settingsStore.ts
   function loadSettings() {
     const out = {};
@@ -2592,176 +2843,6 @@ var Server = (() => {
   // src/server/sampleData.ts
   var SAMPLE_FLAT = { "data": { "vulnerabilityFindings": { "nodes": [{ "id": "vf_2b1c9e4a-6f3d-4a2b-9c1e-8d7f6a5b4c3d", "name": "CVE-2025-32463", "detailedName": "sudo 1.9.13p3-1ubuntu3.4", "description": "A flaw was found in sudo's chroot handling that allows a local user with limited sudo privileges to escalate to root by supplying a crafted /etc/nsswitch.conf inside a controlled chroot.", "severity": "CRITICAL", "status": "OPEN", "fixedVersion": "1.9.15p2-3ubuntu2", "detectionMethod": "OS_PACKAGE", "firstDetectedAt": "2026-04-01T08:12:44Z", "firstDetectedAtSource": "SCHEDULED_SCAN", "lastDetectedAt": "2026-06-09T08:39:37Z", "resolvedAt": null, "validatedInRuntime": true, "runtimeValidationResult": "CONFIRMED", "reachability": "NETWORK", "hasTriggerableRemediation": false, "remediationPullRequestAvailable": false, "dataSourceName": "Wiz Sensor", "fixDate": null, "fixDateBefore": null, "publishedDate": "2026-03-28T00:00:00Z", "version": "1.9.13p3-1ubuntu3.4", "versionResolutionPrimarySource": { "type": "OS_PACKAGE_MANAGER", "version": "1.9.13p3-1ubuntu3.4" }, "isOperatingSystemEndOfLife": false, "recommendedVersion": "1.9.15p2-3ubuntu2", "locationPath": "/usr/bin/sudo", "artifactType": { "group": "OS_PACKAGE", "codeLibraryLanguage": null, "osPackageManager": "DPKG", "hostedTechnology": null, "plugin": false, "custom": false, "ciComponent": false }, "projects": [{ "id": "1dfea0cf-834f-5522-b797-bee5aaf09251", "name": "Production", "slug": "production", "isFolder": false }], "ignoreRules": [], "note": null, "layerMetadata": null, "vulnerableAsset": { "id": "b06695d5-b271-58f3-9e27-c5b97658142e", "type": "VIRTUAL_MACHINE", "name": "web-prod-01", "cloudPlatform": "AWS", "subscriptionName": "prod-account", "subscriptionExternalId": "111122223333", "subscriptionId": "2b2211fb-742f-5566-af67-ab8992b58cfb", "tags": { "env": "prod", "team": "platform", "owner": "sre" }, "operatingSystem": "Ubuntu", "operatingSystemDistribution": { "id": "os-ubuntu-2404", "name": "Ubuntu 24.04", "icon": "ubuntu" }, "imageName": "ami-0a1b2c3d4e5f6a7b8", "imageId": "ami-0a1b2c3d4e5f6a7b8", "imageNativeType": "AMI", "hasLimitedInternetExposure": false, "hasWideInternetExposure": true, "isAccessibleFromVPN": false, "isAccessibleFromOtherVnets": false, "isAccessibleFromOtherSubscriptions": false, "computeInstanceGroup": { "id": "asg-web-prod", "externalId": "asg-web-prod-01", "name": "web-prod-asg", "replicaCount": 4, "tags": { "env": "prod" } }, "nativeType": "ec2", "isUsedOnPrem": false, "resourceGroupExternalId": null }, "sourceMappedCodeFindings": [], "transitivity": null, "rootComponent": null, "isHighProfileThreat": true, "vendorSeverity": "CRITICAL", "nvdSeverity": "HIGH", "weightedSeverity": "CRITICAL", "hasExploit": true, "usedInCodeResult": null, "hasCisaKevExploit": true, "cisaKevReleaseDate": "2026-04-03T00:00:00Z", "cisaKevDueDate": "2026-04-24T00:00:00Z", "score": 9.3, "epssSeverity": "CRITICAL", "epssPercentile": 0.981, "epssProbability": 0.91, "categories": ["PRIVILEGE_ESCALATION"], "hasInitialAccessPotential": false, "isClientSide": false, "affectedBySettings": false, "codeLibraryLanguage": null, "exploitabilityValidationStatus": "EXPLOITABLE", "cvssv2": null, "cvssv3": { "attackVector": "LOCAL", "attackComplexity": "LOW", "confidentialityImpact": "HIGH", "integrityImpact": "HIGH", "privilegesRequired": "LOW", "userInteractionRequired": false, "vectorString": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H", "scope": "UNCHANGED" }, "effectiveAvailabilityImpact": "HIGH", "cnaScore": 7.8, "vendorScore": 9.3, "origin": "CONTEXTUAL", "duplicateOf": null }, { "id": "vf_7a4e1f2b-3c5d-4e6f-8a9b-1c2d3e4f5a6b", "name": "CVE-2026-0985", "detailedName": "openssl 3.0.13-0ubuntu3.4", "description": "An out-of-bounds read in the X.509 certificate parser can cause a denial of service when processing a malformed certificate chain.", "severity": "HIGH", "status": "RESOLVED", "fixedVersion": "3.0.13-0ubuntu3.6", "detectionMethod": "OS_PACKAGE", "firstDetectedAt": "2026-03-11T14:02:09Z", "firstDetectedAtSource": "SCHEDULED_SCAN", "lastDetectedAt": "2026-03-25T06:11:52Z", "resolvedAt": "2026-03-26T09:45:00Z", "validatedInRuntime": false, "runtimeValidationResult": null, "reachability": "NETWORK", "hasTriggerableRemediation": true, "remediationPullRequestAvailable": true, "dataSourceName": "Wiz Sensor", "fixDate": "2026-03-26T09:45:00Z", "fixDateBefore": null, "publishedDate": "2026-02-18T00:00:00Z", "version": "3.0.13-0ubuntu3.4", "versionResolutionPrimarySource": { "type": "OS_PACKAGE_MANAGER", "version": "3.0.13-0ubuntu3.4" }, "isOperatingSystemEndOfLife": false, "recommendedVersion": "3.0.13-0ubuntu3.6", "locationPath": "/usr/lib/x86_64-linux-gnu/libssl.so.3", "artifactType": { "group": "OS_PACKAGE", "codeLibraryLanguage": null, "osPackageManager": "DPKG", "hostedTechnology": null, "plugin": false, "custom": false, "ciComponent": false }, "projects": [{ "id": "1dfea0cf-834f-5522-b797-bee5aaf09251", "name": "Production", "slug": "production", "isFolder": false }], "ignoreRules": [], "note": { "id": "note-91f2", "text": "Patched during the March maintenance window." }, "layerMetadata": null, "vulnerableAsset": { "id": "66457926-3513-53eb-a09f-0e90b6f4feff", "type": "VIRTUAL_MACHINE", "name": "api-prod-02", "cloudPlatform": "Azure", "subscriptionName": "core-prod", "subscriptionExternalId": "azure-sub-001", "subscriptionId": "1fafc3d1-bbe3-5d13-8698-3df1f4514e37", "tags": { "env": "prod", "tier": "api" }, "operatingSystem": "Ubuntu", "operatingSystemDistribution": { "id": "os-ubuntu-2204", "name": "Ubuntu 22.04", "icon": "ubuntu" }, "imageName": null, "imageId": null, "imageNativeType": null, "hasLimitedInternetExposure": true, "hasWideInternetExposure": false, "isAccessibleFromVPN": true, "isAccessibleFromOtherVnets": false, "isAccessibleFromOtherSubscriptions": false, "computeInstanceGroup": null, "nativeType": "virtualMachine", "isUsedOnPrem": false, "resourceGroupExternalId": "rg-core-prod" }, "sourceMappedCodeFindings": [], "transitivity": "DIRECT", "rootComponent": { "name": "openssl" }, "isHighProfileThreat": false, "vendorSeverity": "HIGH", "nvdSeverity": "MEDIUM", "weightedSeverity": "HIGH", "hasExploit": false, "usedInCodeResult": null, "hasCisaKevExploit": false, "cisaKevReleaseDate": null, "cisaKevDueDate": null, "score": 7.5, "epssSeverity": "MEDIUM", "epssPercentile": 0.44, "epssProbability": 0.06, "categories": ["DENIAL_OF_SERVICE"], "hasInitialAccessPotential": false, "isClientSide": false, "affectedBySettings": false, "codeLibraryLanguage": null, "exploitabilityValidationStatus": "NOT_EXPLOITABLE", "cvssv2": null, "cvssv3": { "attackVector": "NETWORK", "attackComplexity": "HIGH", "confidentialityImpact": "NONE", "integrityImpact": "NONE", "privilegesRequired": "NONE", "userInteractionRequired": false, "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:N/I:N/A:H", "scope": "UNCHANGED" }, "effectiveAvailabilityImpact": "HIGH", "cnaScore": 7.5, "vendorScore": 7.5, "origin": "CONTEXTUAL", "duplicateOf": null }, { "id": "vf_9c3d5e6f-4a2b-4c1d-8e7f-6a5b4c3d2e1f", "name": "CVE-2026-1442", "detailedName": "glibc 2.35-0ubuntu3.8", "description": "A buffer overflow in the DNS stub resolver can be triggered by a malicious DNS response, potentially leading to remote code execution in services performing name resolution.", "severity": "MEDIUM", "status": "OPEN", "fixedVersion": "2.35-0ubuntu3.9", "detectionMethod": "OS_PACKAGE", "firstDetectedAt": "2026-05-02T11:30:18Z", "firstDetectedAtSource": "SCHEDULED_SCAN", "lastDetectedAt": "2026-06-11T10:07:38Z", "resolvedAt": null, "validatedInRuntime": false, "runtimeValidationResult": null, "reachability": null, "hasTriggerableRemediation": false, "remediationPullRequestAvailable": false, "dataSourceName": "Wiz Sensor", "fixDate": null, "fixDateBefore": "2026-08-02T00:00:00Z", "publishedDate": "2026-04-22T00:00:00Z", "version": "2.35-0ubuntu3.8", "versionResolutionPrimarySource": { "type": "OS_PACKAGE_MANAGER", "version": "2.35-0ubuntu3.8" }, "isOperatingSystemEndOfLife": false, "recommendedVersion": "2.35-0ubuntu3.9", "locationPath": "/lib/x86_64-linux-gnu/libc.so.6", "artifactType": { "group": "OS_PACKAGE", "codeLibraryLanguage": null, "osPackageManager": "DPKG", "hostedTechnology": null, "plugin": false, "custom": false, "ciComponent": false }, "projects": [{ "id": "1dfea0cf-834f-5522-b797-bee5aaf09251", "name": "Production", "slug": "production", "isFolder": false }], "ignoreRules": [{ "id": "ignore-rule-4471" }], "note": null, "layerMetadata": null, "vulnerableAsset": { "id": "3aabb810-5c5d-5603-922e-e21fe60d8d73", "type": "VIRTUAL_MACHINE", "name": "batch-worker-03", "cloudPlatform": "GCP", "subscriptionName": "inix-tt4k", "subscriptionExternalId": "inix-tt4k", "subscriptionId": "86a11580-2086-56a7-88d2-27f405958fcb", "tags": { "env": "prod", "cluster_name": "inix-gke-eu-pr" }, "operatingSystem": "Ubuntu", "operatingSystemDistribution": { "id": "os-ubuntu-2204", "name": "Ubuntu 22.04", "icon": "ubuntu" }, "imageName": null, "imageId": null, "imageNativeType": null, "hasLimitedInternetExposure": false, "hasWideInternetExposure": false, "isAccessibleFromVPN": false, "isAccessibleFromOtherVnets": false, "isAccessibleFromOtherSubscriptions": false, "computeInstanceGroup": { "id": "gke-inix-gke-eu-pr-n4-shared", "externalId": "gke-inix-gke-eu-pr-n4-shared-19b3", "name": "n4-shared-19b3", "replicaCount": 12, "tags": { "goog-k8s-cluster-name": "inix-gke-eu-pr" } }, "nativeType": "instance", "isUsedOnPrem": false, "resourceGroupExternalId": null }, "sourceMappedCodeFindings": [], "transitivity": null, "rootComponent": null, "isHighProfileThreat": false, "vendorSeverity": "MEDIUM", "nvdSeverity": "MEDIUM", "weightedSeverity": "MEDIUM", "hasExploit": false, "usedInCodeResult": null, "hasCisaKevExploit": false, "cisaKevReleaseDate": null, "cisaKevDueDate": null, "score": 5.9, "epssSeverity": "LOW", "epssPercentile": 0.21, "epssProbability": 0.01, "categories": ["REMOTE_CODE_EXECUTION"], "hasInitialAccessPotential": true, "isClientSide": false, "affectedBySettings": true, "codeLibraryLanguage": null, "exploitabilityValidationStatus": "UNKNOWN", "cvssv2": { "attackVector": "NETWORK", "attackComplexity": "MEDIUM", "confidentialityImpact": "PARTIAL", "integrityImpact": "PARTIAL", "privilegesRequired": null, "userInteractionRequired": false, "vectorString": "AV:N/AC:M/Au:N/C:P/I:P/A:P", "scope": null }, "cvssv3": { "attackVector": "NETWORK", "attackComplexity": "HIGH", "confidentialityImpact": "LOW", "integrityImpact": "LOW", "privilegesRequired": "NONE", "userInteractionRequired": false, "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:L/A:L", "scope": "UNCHANGED" }, "effectiveAvailabilityImpact": "LOW", "cnaScore": 5.9, "vendorScore": 5.9, "origin": "CONTEXTUAL", "duplicateOf": null }, { "id": "vf_1e2d3c4b-5a6f-4e8d-9c1b-2a3b4c5d6e7f", "name": "CVE-2025-58234", "detailedName": "linux-image-6.8.0-1015-aws 6.8.0-1015.16", "description": "A use-after-free in the kernel's netfilter subsystem allows a local unprivileged user to crash the system or potentially escalate privileges.", "severity": "LOW", "status": "RESOLVED", "fixedVersion": "6.8.0-1016.17", "detectionMethod": "OS_PACKAGE", "firstDetectedAt": "2026-01-20T05:44:11Z", "lastDetectedAt": "2026-02-09T07:00:00Z", "firstDetectedAtSource": "SCHEDULED_SCAN", "resolvedAt": "2026-02-10T13:22:00Z", "validatedInRuntime": false, "runtimeValidationResult": null, "reachability": "INTERNAL", "hasTriggerableRemediation": false, "remediationPullRequestAvailable": false, "dataSourceName": "Wiz Sensor", "fixDate": "2026-02-10T13:22:00Z", "fixDateBefore": null, "publishedDate": "2025-12-30T00:00:00Z", "version": "6.8.0-1015.16", "versionResolutionPrimarySource": { "type": "OS_PACKAGE_MANAGER", "version": "6.8.0-1015.16" }, "isOperatingSystemEndOfLife": false, "recommendedVersion": "6.8.0-1016.17", "locationPath": "/boot/vmlinuz-6.8.0-1015-aws", "artifactType": { "group": "OS_PACKAGE", "codeLibraryLanguage": null, "osPackageManager": "DPKG", "hostedTechnology": null, "plugin": false, "custom": false, "ciComponent": false }, "projects": [{ "id": "1dfea0cf-834f-5522-b797-bee5aaf09251", "name": "Production", "slug": "production", "isFolder": false }], "ignoreRules": [], "note": null, "layerMetadata": null, "vulnerableAsset": { "id": "c433c9a9-e631-5d56-8bd8-3c1cddd93103", "type": "VIRTUAL_MACHINE", "name": "dev-box-07", "cloudPlatform": "AWS", "subscriptionName": "dev-account", "subscriptionExternalId": "444455556666", "subscriptionId": "f391b2ee-ffdf-58e1-a3af-a59bfeaba3dc", "tags": { "env": "dev" }, "operatingSystem": "Amazon Linux", "operatingSystemDistribution": { "id": "os-al2023", "name": "Amazon Linux 2023", "icon": "amazon-linux" }, "imageName": "ami-0f1e2d3c4b5a6f7e8", "imageId": "ami-0f1e2d3c4b5a6f7e8", "imageNativeType": "AMI", "hasLimitedInternetExposure": false, "hasWideInternetExposure": false, "isAccessibleFromVPN": true, "isAccessibleFromOtherVnets": false, "isAccessibleFromOtherSubscriptions": false, "computeInstanceGroup": null, "nativeType": "ec2", "isUsedOnPrem": false, "resourceGroupExternalId": null }, "sourceMappedCodeFindings": [], "transitivity": null, "rootComponent": null, "isHighProfileThreat": false, "vendorSeverity": "LOW", "nvdSeverity": "LOW", "weightedSeverity": "LOW", "hasExploit": false, "usedInCodeResult": null, "hasCisaKevExploit": false, "cisaKevReleaseDate": null, "cisaKevDueDate": null, "score": 3.3, "epssSeverity": "LOW", "epssPercentile": 0.08, "epssProbability": 1e-3, "categories": ["PRIVILEGE_ESCALATION", "DENIAL_OF_SERVICE"], "hasInitialAccessPotential": false, "isClientSide": false, "affectedBySettings": false, "codeLibraryLanguage": null, "exploitabilityValidationStatus": "NOT_EXPLOITABLE", "cvssv2": null, "cvssv3": { "attackVector": "LOCAL", "attackComplexity": "HIGH", "confidentialityImpact": "NONE", "integrityImpact": "NONE", "privilegesRequired": "LOW", "userInteractionRequired": false, "vectorString": "CVSS:3.1/AV:L/AC:H/PR:L/UI:N/S:U/C:N/I:N/A:L", "scope": "UNCHANGED" }, "effectiveAvailabilityImpact": "LOW", "cnaScore": 3.3, "vendorScore": 3.3, "origin": "CONTEXTUAL", "duplicateOf": null }], "pageInfo": { "hasNextPage": false, "endCursor": null } } } };
   var SAMPLE_GROUPED = { "data": { "vulnerabilityFindingsGroupedByValues": { "nodes": [{ "id": "CLCh_PAJEgEBIigKJhokYjA2Njk1ZDUtYjI3MS01OGYzLTllMjctYzViOTc2NTgxNDJl", "project": null, "baseContainerImage": null, "vcsOrganization": null, "locationPath": null, "kubernetesCluster": null, "containerService": null, "kubernetesNamespace": null, "computeInstanceGroup": null, "applicationService": null, "environment": null, "cloudPlatform": null, "vulnerableAsset": { "id": "b06695d5-b271-58f3-9e27-c5b97658142e", "type": "VIRTUAL_MACHINE", "name": "gke-inix-gke-eu-pr-n4-shared-19b3-fc6dab19-05ru", "cloudPlatform": "GCP", "externalId": "4787123027339367533", "subscriptionId": "2b2211fb-742f-5566-af67-ab8992b58cfb", "subscriptionName": "inix-tt4k", "subscriptionExternalId": "inix-tt4k", "tags": { "cluster_name": "inix-gke-eu-pr", "gke-inix-eu-pr-nodes-europe-west4": "gke-inix-eu-pr-nodes-europe-west4", "gke-inix-gke-eu-pr": "gke-inix-gke-eu-pr", "gke-inix-gke-eu-pr-b3192bb3-node": "gke-inix-gke-eu-pr-b3192bb3-node", "gke-inix-gke-eu-pr-n4-shared": "gke-inix-gke-eu-pr-n4-shared", "goog-gke-cluster-id-base32": "wmmsxm4ye5fsxldvevyserwhpfnupmogu4ausbma6yys6hfhup2q", "goog-gke-cost-management": "", "goog-gke-node": "", "goog-gke-node-pool-provisioning-model": "on-demand", "goog-k8s-cluster-location": "europe-west4", "goog-k8s-cluster-name": "inix-gke-eu-pr", "goog-k8s-node-pool-name": "n4-shared-19b3", "goog-terraform-provisioned": "true", "project": "inix-tt4k", "tag-inix-gke-eu-pr-ingress": "tag-inix-gke-eu-pr-ingress" } }, "vulnerableAssetType": null, "vulnerableAssetTags": null, "cloudAccount": null, "resourceGroup": null, "containerRegistry": null, "containerRepository": null, "vcsRepository": null, "vcsCodeAuthor": null, "detailedName": null, "fixedVersion": null, "recommendedVersion": null, "artifactType": null, "detectionMethod": null, "analytics": { "vulnerableAssetCount": 1, "totalFindingCount": 63, "criticalSeverityFindingCount": 63, "highSeverityFindingCount": 0, "mediumSeverityFindingCount": 0, "lowSeverityFindingCount": 0, "informationalSeverityFindingCount": 0 }, "virtualMachineImage": null, "operatingSystemDistribution": null, "name": null, "originFinding": null, "originFindingPolicy": null, "origin": null, "sourceMappedCodeFinding": null, "sourceMappedCodeRepository": null, "sourceMappedCodeResource": null }, { "id": "CLCh_PAJEgEBIigKJhokNjY0NTc5MjYtMzUxMy01M2ViLWEwOWYtMGU5MGI2ZjRmZWZm", "project": null, "baseContainerImage": null, "vcsOrganization": null, "locationPath": null, "kubernetesCluster": null, "containerService": null, "kubernetesNamespace": null, "computeInstanceGroup": null, "applicationService": null, "environment": null, "cloudPlatform": null, "vulnerableAsset": { "id": "66457926-3513-53eb-a09f-0e90b6f4feff", "type": "VIRTUAL_MACHINE", "name": "ENMFV0APP02", "cloudPlatform": "Alibaba", "externalId": "i-uf623aepimaj7zev1n25", "subscriptionId": "1fafc3d1-bbe3-5d13-8698-3df1f4514e37", "subscriptionName": "ENMS-PP", "subscriptionExternalId": "1985932850711133", "tags": { "Account": "1985932850711133", "Base_nsg_type": "VMPPD", "Domain": "VMM", "Env": "preprod", "Environment": "PREPROD", "Project": "ENM", "Terraform": "yes", "Vendor": "aliyun" } }, "vulnerableAssetType": null, "vulnerableAssetTags": null, "cloudAccount": null, "resourceGroup": null, "containerRegistry": null, "containerRepository": null, "vcsRepository": null, "vcsCodeAuthor": null, "detailedName": null, "fixedVersion": null, "recommendedVersion": null, "artifactType": null, "detectionMethod": null, "analytics": { "vulnerableAssetCount": 1, "totalFindingCount": 57, "criticalSeverityFindingCount": 57, "highSeverityFindingCount": 0, "mediumSeverityFindingCount": 0, "lowSeverityFindingCount": 0, "informationalSeverityFindingCount": 0 }, "virtualMachineImage": null, "operatingSystemDistribution": null, "name": null, "originFinding": null, "originFindingPolicy": null, "origin": null, "sourceMappedCodeFinding": null, "sourceMappedCodeRepository": null, "sourceMappedCodeResource": null }, { "id": "CLCh_PAJEgEBIigKJhokM2FhYmI4MTAtNWM1ZC01NjAzLTkyMmUtZTIxZmU2MGQ4ZDcz", "project": null, "baseContainerImage": null, "vcsOrganization": null, "locationPath": null, "kubernetesCluster": null, "containerService": null, "kubernetesNamespace": null, "computeInstanceGroup": null, "applicationService": null, "environment": null, "cloudPlatform": null, "vulnerableAsset": { "id": "3aabb810-5c5d-5603-922e-e21fe60d8d73", "type": "VIRTUAL_MACHINE", "name": "ENMFV0APP01", "cloudPlatform": "Alibaba", "externalId": "i-uf6eef938p2fzi1of1en", "subscriptionId": "1fafc3d1-bbe3-5d13-8698-3df1f4514e37", "subscriptionName": "ENMS-PP", "subscriptionExternalId": "1985932850711133", "tags": { "Account": "1985932850711133", "Base_nsg_type": "VMPPD", "Domain": "VMM", "Env": "preprod", "Environment": "PREPROD", "Project": "ENM", "Terraform": "yes", "Vendor": "aliyun" } }, "vulnerableAssetType": null, "vulnerableAssetTags": null, "cloudAccount": null, "resourceGroup": null, "containerRegistry": null, "containerRepository": null, "vcsRepository": null, "vcsCodeAuthor": null, "detailedName": null, "fixedVersion": null, "recommendedVersion": null, "artifactType": null, "detectionMethod": null, "analytics": { "vulnerableAssetCount": 1, "totalFindingCount": 57, "criticalSeverityFindingCount": 57, "highSeverityFindingCount": 0, "mediumSeverityFindingCount": 0, "lowSeverityFindingCount": 0, "informationalSeverityFindingCount": 0 }, "virtualMachineImage": null, "operatingSystemDistribution": null, "name": null, "originFinding": null, "originFindingPolicy": null, "origin": null, "sourceMappedCodeFinding": null, "sourceMappedCodeRepository": null, "sourceMappedCodeResource": null }, { "id": "CLCh_PAJEgEBIigKJhokYzQzM2M5YTktZTYzMS01ZDU2LThiZDgtM2MxY2RkZDkzMTAz", "project": null, "baseContainerImage": null, "vcsOrganization": null, "locationPath": null, "kubernetesCluster": null, "containerService": null, "kubernetesNamespace": null, "computeInstanceGroup": null, "applicationService": null, "environment": null, "cloudPlatform": null, "vulnerableAsset": { "id": "c433c9a9-e631-5d56-8bd8-3c1cddd93103", "type": "VIRTUAL_MACHINE", "name": "gke-vctech-gke-eu-pp-n4-shared-0d05f181-ep29", "cloudPlatform": "GCP", "externalId": "7603203856350539437", "subscriptionId": "86a11580-2086-56a7-88d2-27f405958fcb", "subscriptionName": "INIX-VCTECH", "subscriptionExternalId": "inix-vctech-0alr", "tags": { "cost_center": "50001z0536-001", "gke-vctech-gke-eu-pp": "gke-vctech-gke-eu-pp", "gke-vctech-gke-eu-pp-6830a116-node": "gke-vctech-gke-eu-pp-6830a116-node", "gke-vctech-gke-eu-pp-shared": "gke-vctech-gke-eu-pp-shared", "goog-fleet-project": "464185428346", "goog-gke-cluster-id-base32": "naykcfw275ezfoxzjnzpvvbquab2ieq336dell4s2ntdywfh43gq", "goog-gke-cost-management": "", "goog-gke-node": "", "goog-gke-node-pool-provisioning-model": "on-demand", "goog-k8s-cluster-location": "europe-west4", "goog-k8s-cluster-name": "vctech-gke-eu-pp", "goog-k8s-node-pool-name": "n4-shared", "net-gkenodes-inix-azae-prod-europe-west4": "net-gkenodes-inix-azae-prod-europe-west4", "net-main-gkenodes": "net-main-gkenodes", "owner": "jkrawc50", "project": "vctech-gke-eu-pp", "tag-vctech-gke-eu-pp-client": "tag-vctech-gke-eu-pp-client", "terraform": "true" } }, "vulnerableAssetType": null, "vulnerableAssetTags": null, "cloudAccount": null, "resourceGroup": null, "containerRegistry": null, "containerRepository": null, "vcsRepository": null, "vcsCodeAuthor": null, "detailedName": null, "fixedVersion": null, "recommendedVersion": null, "artifactType": null, "detectionMethod": null, "analytics": { "vulnerableAssetCount": 1, "totalFindingCount": 56, "criticalSeverityFindingCount": 56, "highSeverityFindingCount": 0, "mediumSeverityFindingCount": 0, "lowSeverityFindingCount": 0, "informationalSeverityFindingCount": 0 }, "virtualMachineImage": null, "operatingSystemDistribution": null, "name": null, "originFinding": null, "originFindingPolicy": null, "origin": null, "sourceMappedCodeFinding": null, "sourceMappedCodeRepository": null, "sourceMappedCodeResource": null }, { "id": "CLCh_PAJEgEBIigKJhokY2UwMGQ3ODQtMmE5OC01NjRlLThkM2UtYjZhYzNmNjQ5Mjdk", "project": null, "baseContainerImage": null, "vcsOrganization": null, "locationPath": null, "kubernetesCluster": null, "containerService": null, "kubernetesNamespace": null, "computeInstanceGroup": null, "applicationService": null, "environment": null, "cloudPlatform": null, "vulnerableAsset": { "id": "ce00d784-2a98-564e-8d3e-b6ac3f64927d", "type": "VIRTUAL_MACHINE", "name": "gke-inix-gke-eu-pp-pdk-72ab-941a6f69-fqrw", "cloudPlatform": "GCP", "externalId": "1511864616192343110", "subscriptionId": "f391b2ee-ffdf-58e1-a3af-a59bfeaba3dc", "subscriptionName": "inix-horsprod-n0wq", "subscriptionExternalId": "inix-horsprod-n0wq", "tags": { "cluster_name": "inix-gke-eu-pp", "gke-inix-eu-pp-nodes-europe-west4": "gke-inix-eu-pp-nodes-europe-west4", "gke-inix-gke-eu-pp": "gke-inix-gke-eu-pp", "gke-inix-gke-eu-pp-988606d9-node": "gke-inix-gke-eu-pp-988606d9-node", "gke-inix-gke-eu-pp-pdk": "gke-inix-gke-eu-pp-pdk", "goog-fleet-project": "inix-horsprod-n0wq", "goog-gke-cluster-id-base32": "tcdanwnkgndvzlohnlhmoapayhybvkjeqbfuokve2ufprzvps45q", "goog-gke-cost-management": "", "goog-gke-node": "", "goog-gke-node-pool-provisioning-model": "spot", "goog-k8s-cluster-location": "europe-west4", "goog-k8s-cluster-name": "inix-gke-eu-pp", "goog-k8s-node-pool-name": "pdk-72ab", "goog-terraform-provisioned": "true", "project": "inix-horsprod-n0wq", "tag-inix-gke-eu-pp-ingress": "tag-inix-gke-eu-pp-ingress" } }, "vulnerableAssetType": null, "vulnerableAssetTags": null, "cloudAccount": null, "resourceGroup": null, "containerRegistry": null, "containerRepository": null, "vcsRepository": null, "vcsCodeAuthor": null, "detailedName": null, "fixedVersion": null, "recommendedVersion": null, "artifactType": null, "detectionMethod": null, "analytics": { "vulnerableAssetCount": 1, "totalFindingCount": 49, "criticalSeverityFindingCount": 49, "highSeverityFindingCount": 0, "mediumSeverityFindingCount": 0, "lowSeverityFindingCount": 0, "informationalSeverityFindingCount": 0 }, "virtualMachineImage": null, "operatingSystemDistribution": null, "name": null, "originFinding": null, "originFindingPolicy": null, "origin": null, "sourceMappedCodeFinding": null, "sourceMappedCodeRepository": null, "sourceMappedCodeResource": null }, { "id": "CLCh_PAJEgEBIigKJhokMTRlODJlYTAtOTgwNC01ZDJlLWE2OWUtNjhkNjg4NTU3OGY4", "project": null, "baseContainerImage": null, "vcsOrganization": null, "locationPath": null, "kubernetesCluster": null, "containerService": null, "kubernetesNamespace": null, "computeInstanceGroup": null, "applicationService": null, "environment": null, "cloudPlatform": null, "vulnerableAsset": { "id": "14e82ea0-9804-5d2e-a69e-68d6885578f8", "type": "VIRTUAL_MACHINE", "name": "gke-vctech-gke-eu-pr-n4-shared-c8e798db-duig", "cloudPlatform": "GCP", "externalId": "3799583756770569928", "subscriptionId": "86a11580-2086-56a7-88d2-27f405958fcb", "subscriptionName": "INIX-VCTECH", "subscriptionExternalId": "inix-vctech-0alr", "tags": { "cost_center": "50001z0536-001", "gke-vctech-gke-eu-pr": "gke-vctech-gke-eu-pr", "gke-vctech-gke-eu-pr-860fef39-node": "gke-vctech-gke-eu-pr-860fef39-node", "gke-vctech-gke-eu-pr-shared": "gke-vctech-gke-eu-pr-shared", "goog-gke-cluster-id-base32": "qyh66omu7jhr3bmgaftrfvltkjzc5ifdvowuvqm4dikservhcbua", "goog-gke-cost-management": "", "goog-gke-node": "", "goog-gke-node-pool-provisioning-model": "on-demand", "goog-k8s-cluster-location": "europe-west4", "goog-k8s-cluster-name": "vctech-gke-eu-pr", "goog-k8s-node-pool-name": "n4-shared", "net-gkenodes-inix-azae-prod-europe-west4": "net-gkenodes-inix-azae-prod-europe-west4", "net-main-gkenodes": "net-main-gkenodes", "owner": "jkrawc50", "project": "vctech-gke-eu-pr", "tag-vctech-gke-eu-pr-client": "tag-vctech-gke-eu-pr-client", "terraform": "true" } }, "vulnerableAssetType": null, "vulnerableAssetTags": null, "cloudAccount": null, "resourceGroup": null, "containerRegistry": null, "containerRepository": null, "vcsRepository": null, "vcsCodeAuthor": null, "detailedName": null, "fixedVersion": null, "recommendedVersion": null, "artifactType": null, "detectionMethod": null, "analytics": { "vulnerableAssetCount": 1, "totalFindingCount": 49, "criticalSeverityFindingCount": 49, "highSeverityFindingCount": 0, "mediumSeverityFindingCount": 0, "lowSeverityFindingCount": 0, "informationalSeverityFindingCount": 0 }, "virtualMachineImage": null, "operatingSystemDistribution": null, "name": null, "originFinding": null, "originFindingPolicy": null, "origin": null, "sourceMappedCodeFinding": null, "sourceMappedCodeRepository": null, "sourceMappedCodeResource": null }, { "id": "CLCh_PAJEgEBIigKJhokYjQ2ZWYyZDMtNTEyMS01YTg4LWFkMTEtNzNhNDYwZjI0OWFm", "project": null, "baseContainerImage": null, "vcsOrganization": null, "locationPath": null, "kubernetesCluster": null, "containerService": null, "kubernetesNamespace": null, "computeInstanceGroup": null, "applicationService": null, "environment": null, "cloudPlatform": null, "vulnerableAsset": { "id": "b46ef2d3-5121-5a88-ad11-73a460f249af", "type": "VIRTUAL_MACHINE", "name": "ENMFN0APP01", "cloudPlatform": "Alibaba", "externalId": "i-uf67w5ntp88b10tn592w", "subscriptionId": "d7297fe3-6ae8-59e5-b456-5050a1ca195b", "subscriptionName": "ENMS-pr", "subscriptionExternalId": "1950243589136840", "tags": { "Account": "1950243589136840", "Base_nsg_type": "VMPRD", "Domain": "VMM", "Env": "production", "Environment": "PROD", "Project": "ENM", "Terraform": "yes", "Vendor": "aliyun" } }, "vulnerableAssetType": null, "vulnerableAssetTags": null, "cloudAccount": null, "resourceGroup": null, "containerRegistry": null, "containerRepository": null, "vcsRepository": null, "vcsCodeAuthor": null, "detailedName": null, "fixedVersion": null, "recommendedVersion": null, "artifactType": null, "detectionMethod": null, "analytics": { "vulnerableAssetCount": 1, "totalFindingCount": 43, "criticalSeverityFindingCount": 43, "highSeverityFindingCount": 0, "mediumSeverityFindingCount": 0, "lowSeverityFindingCount": 0, "informationalSeverityFindingCount": 0 }, "virtualMachineImage": null, "operatingSystemDistribution": null, "name": null, "originFinding": null, "originFindingPolicy": null, "origin": null, "sourceMappedCodeFinding": null, "sourceMappedCodeRepository": null, "sourceMappedCodeResource": null }, { "id": "CLCh_PAJEgEBIigKJhokYjM0YTQ1YmEtZTg2MC01NTc5LWE3MzYtNzYzMmQ0NTdlYjIw", "project": null, "baseContainerImage": null, "vcsOrganization": null, "locationPath": null, "kubernetesCluster": null, "containerService": null, "kubernetesNamespace": null, "computeInstanceGroup": null, "applicationService": null, "environment": null, "cloudPlatform": null, "vulnerableAsset": { "id": "b34a45ba-e860-5579-a736-7632d457eb20", "type": "VIRTUAL_MACHINE", "name": "ENMFN0APP02", "cloudPlatform": "Alibaba", "externalId": "i-uf60a6i74bym0d8wjtx0", "subscriptionId": "d7297fe3-6ae8-59e5-b456-5050a1ca195b", "subscriptionName": "ENMS-pr", "subscriptionExternalId": "1950243589136840", "tags": { "Account": "1950243589136840", "Base_nsg_type": "VMPRD", "Domain": "VMM", "Env": "production", "Environment": "PROD", "Project": "ENM", "Terraform": "yes", "Vendor": "aliyun" } }, "vulnerableAssetType": null, "vulnerableAssetTags": null, "cloudAccount": null, "resourceGroup": null, "containerRegistry": null, "containerRepository": null, "vcsRepository": null, "vcsCodeAuthor": null, "detailedName": null, "fixedVersion": null, "recommendedVersion": null, "artifactType": null, "detectionMethod": null, "analytics": { "vulnerableAssetCount": 1, "totalFindingCount": 43, "criticalSeverityFindingCount": 43, "highSeverityFindingCount": 0, "mediumSeverityFindingCount": 0, "lowSeverityFindingCount": 0, "informationalSeverityFindingCount": 0 }, "virtualMachineImage": null, "operatingSystemDistribution": null, "name": null, "originFinding": null, "originFindingPolicy": null, "origin": null, "sourceMappedCodeFinding": null, "sourceMappedCodeRepository": null, "sourceMappedCodeResource": null }, { "id": "CLCh_PAJEgEBIigKJhokYzk4Mjg1MjktODNiZS01YTU4LTlhOGEtYTA5NGY3MGE3MjZh", "project": null, "baseContainerImage": null, "vcsOrganization": null, "locationPath": null, "kubernetesCluster": null, "containerService": null, "kubernetesNamespace": null, "computeInstanceGroup": null, "applicationService": null, "environment": null, "cloudPlatform": null, "vulnerableAsset": { "id": "c9828529-83be-5a58-9a8a-a094f70a726a", "type": "VIRTUAL_MACHINE", "name": "gke-vctech-gke-eu-pr-n4-shared-ada1118f-g9m6", "cloudPlatform": "GCP", "externalId": "8251205178823763465", "subscriptionId": "86a11580-2086-56a7-88d2-27f405958fcb", "subscriptionName": "INIX-VCTECH", "subscriptionExternalId": "inix-vctech-0alr", "tags": { "cost_center": "50001z0536-001", "gke-vctech-gke-eu-pr": "gke-vctech-gke-eu-pr", "gke-vctech-gke-eu-pr-860fef39-node": "gke-vctech-gke-eu-pr-860fef39-node", "gke-vctech-gke-eu-pr-shared": "gke-vctech-gke-eu-pr-shared", "goog-gke-cluster-id-base32": "qyh66omu7jhr3bmgaftrfvltkjzc5ifdvowuvqm4dikservhcbua", "goog-gke-cost-management": "", "goog-gke-node": "", "goog-gke-node-pool-provisioning-model": "on-demand", "goog-k8s-cluster-location": "europe-west4", "goog-k8s-cluster-name": "vctech-gke-eu-pr", "goog-k8s-node-pool-name": "n4-shared", "net-gkenodes-inix-azae-prod-europe-west4": "net-gkenodes-inix-azae-prod-europe-west4", "net-main-gkenodes": "net-main-gkenodes", "owner": "jkrawc50", "project": "vctech-gke-eu-pr", "tag-vctech-gke-eu-pr-client": "tag-vctech-gke-eu-pr-client", "terraform": "true" } }, "vulnerableAssetType": null, "vulnerableAssetTags": null, "cloudAccount": null, "resourceGroup": null, "containerRegistry": null, "containerRepository": null, "vcsRepository": null, "vcsCodeAuthor": null, "detailedName": null, "fixedVersion": null, "recommendedVersion": null, "artifactType": null, "detectionMethod": null, "analytics": { "vulnerableAssetCount": 1, "totalFindingCount": 42, "criticalSeverityFindingCount": 42, "highSeverityFindingCount": 0, "mediumSeverityFindingCount": 0, "lowSeverityFindingCount": 0, "informationalSeverityFindingCount": 0 }, "virtualMachineImage": null, "operatingSystemDistribution": null, "name": null, "originFinding": null, "originFindingPolicy": null, "origin": null, "sourceMappedCodeFinding": null, "sourceMappedCodeRepository": null, "sourceMappedCodeResource": null }, { "id": "CLCh_PAJEgEBIigKJhokOWQzNDg5N2UtNDRjZi01YTU1LThmZjctYjE5NmZhNWU4ZmQ4", "project": null, "baseContainerImage": null, "vcsOrganization": null, "locationPath": null, "kubernetesCluster": null, "containerService": null, "kubernetesNamespace": null, "computeInstanceGroup": null, "applicationService": null, "environment": null, "cloudPlatform": null, "vulnerableAsset": { "id": "9d34897e-44cf-5a55-8ff7-b196fa5e8fd8", "type": "VIRTUAL_MACHINE", "name": "gke-vctech-gke-eu-pp-n4-shared-c95b019b-qhwp", "cloudPlatform": "GCP", "externalId": "5646838182778991520", "subscriptionId": "86a11580-2086-56a7-88d2-27f405958fcb", "subscriptionName": "INIX-VCTECH", "subscriptionExternalId": "inix-vctech-0alr", "tags": { "cost_center": "50001z0536-001", "gke-vctech-gke-eu-pp": "gke-vctech-gke-eu-pp", "gke-vctech-gke-eu-pp-6830a116-node": "gke-vctech-gke-eu-pp-6830a116-node", "gke-vctech-gke-eu-pp-shared": "gke-vctech-gke-eu-pp-shared", "goog-fleet-project": "464185428346", "goog-gke-cluster-id-base32": "naykcfw275ezfoxzjnzpvvbquab2ieq336dell4s2ntdywfh43gq", "goog-gke-cost-management": "", "goog-gke-node": "", "goog-gke-node-pool-provisioning-model": "on-demand", "goog-k8s-cluster-location": "europe-west4", "goog-k8s-cluster-name": "vctech-gke-eu-pp", "goog-k8s-node-pool-name": "n4-shared", "net-gkenodes-inix-azae-prod-europe-west4": "net-gkenodes-inix-azae-prod-europe-west4", "net-main-gkenodes": "net-main-gkenodes", "owner": "jkrawc50", "project": "vctech-gke-eu-pp", "tag-vctech-gke-eu-pp-client": "tag-vctech-gke-eu-pp-client", "terraform": "true" } }, "vulnerableAssetType": null, "vulnerableAssetTags": null, "cloudAccount": null, "resourceGroup": null, "containerRegistry": null, "containerRepository": null, "vcsRepository": null, "vcsCodeAuthor": null, "detailedName": null, "fixedVersion": null, "recommendedVersion": null, "artifactType": null, "detectionMethod": null, "analytics": { "vulnerableAssetCount": 1, "totalFindingCount": 35, "criticalSeverityFindingCount": 35, "highSeverityFindingCount": 0, "mediumSeverityFindingCount": 0, "lowSeverityFindingCount": 0, "informationalSeverityFindingCount": 0 }, "virtualMachineImage": null, "operatingSystemDistribution": null, "name": null, "originFinding": null, "originFindingPolicy": null, "origin": null, "sourceMappedCodeFinding": null, "sourceMappedCodeRepository": null, "sourceMappedCodeResource": null }], "pageInfo": { "hasNextPage": true, "endCursor": "eyJmaWVsZHMiOlt7IkZpZWxkIjoiY3JpdGljYWxTZXZlcml0eUZpbmRpbmdDb3VudCIsIlZhbHVlIjozNX0seyJGaWVsZCI6ImhpZ2hTZXZlcml0eUZpbmRpbmdDb3VudCIsIlZhbHVlIjowfSx7IkZpZWxkIjoibWVkaXVtU2V2ZXJpdHlGaW5kaW5nQ291bnQiLCJWYWx1ZSI6MH0seyJGaWVsZCI6Imxvd1NldmVyaXR5RmluZGluZ0NvdW50IiwiVmFsdWUiOjB9LHsiRmllbGQiOiJpbmZvcm1hdGlvbmFsU2V2ZXJpdHlGaW5kaW5nQ291bnQiLCJWYWx1ZSI6MH0seyJGaWVsZCI6Imdyb3VwQnlLZXkiLCJWYWx1ZSI6IjlkMzQ4OTdlLTQ0Y2YtNWE1NS04ZmY3LWIxOTZmYTVlOGZkOCJ9XX0=" } } } };
-
-  // src/server/wizQuery.ts
-  var QUERY = "\n    query VulnerabilityFindingsTable($filterBy: VulnerabilityFindingFilters, $first: Int, $after: String, $orderBy: VulnerabilityFindingOrder = {direction: DESC, field: CREATED_AT}, $includeRelatedIssueAnalytics: Boolean = false, $includeRelatedSourceMappedIssueAnalytics: Boolean = false, $includeTotalCount: Boolean = false, $includePostureIssues: Boolean = false, $fetchPrivilegedActionRequests: Boolean = false) {\n      vulnerabilityFindings(\n        filterBy: $filterBy\n        first: $first\n        after: $after\n        orderBy: $orderBy\n      ) {\n        nodes {\n          ...VulnerabilityFindingFragment\n          ...DuplicateFindingBadge\n          transitivity\n          rootComponent {\n            name\n          }\n          isHighProfileThreat\n          vendorSeverity\n          nvdSeverity\n          weightedSeverity\n          hasExploit\n          usedInCodeResult\n          hasCisaKevExploit\n          cisaKevReleaseDate\n          cisaKevDueDate\n          score\n          epssSeverity\n          epssPercentile\n          epssProbability\n          categories\n          hasInitialAccessPotential\n          isClientSide\n          affectedBySettings\n          codeLibraryLanguage\n          exploitabilityValidationStatus\n          cvssv2 {\n            attackVector\n            attackComplexity\n            confidentialityImpact\n            integrityImpact\n            privilegesRequired\n            userInteractionRequired\n            vectorString\n            scope\n          }\n          cvssv3 {\n            attackVector\n            attackComplexity\n            confidentialityImpact\n            integrityImpact\n            privilegesRequired\n            userInteractionRequired\n            vectorString\n            scope\n          }\n          effectiveAvailabilityImpact\n          cnaScore\n          vendorScore\n          relatedIssueAnalytics @include(if: $includeRelatedIssueAnalytics) {\n            ...VulnerabilityFindingRelatedIssueAnalyticsFragment\n          }\n          relatedSourceMappedIssueAnalytics @include(if: $includeRelatedSourceMappedIssueAnalytics) {\n            ...VulnerabilityFindingRelatedIssueAnalyticsFragment\n          }\n          postureIssues @include(if: $includePostureIssues) {\n            ...PostureIssuePopoverListRecord\n          }\n          privilegedActionRequests @include(if: $fetchPrivilegedActionRequests) {\n            ...PendingUpdateVulnerabilityFindingStatusRequest\n          }\n        }\n        pageInfo {\n          hasNextPage\n          endCursor\n        }\n        totalCount @include(if: $includeTotalCount)\n      }\n    }\n   \n        fragment VulnerabilityFindingFragment on VulnerabilityFinding {\n      id\n      name\n      detailedName\n      description\n      severity\n      status\n      fixedVersion\n      detectionMethod\n      firstDetectedAt\n      firstDetectedAtSource\n      lastDetectedAt\n      resolvedAt\n      validatedInRuntime\n      runtimeValidationResult\n      reachability\n      hasTriggerableRemediation\n      remediationPullRequestAvailable\n      dataSourceName\n      fixDate\n      fixDateBefore\n      publishedDate\n      version\n      versionResolutionPrimarySource {\n        type\n        version\n      }\n      isOperatingSystemEndOfLife\n      recommendedVersion\n      locationPath\n      artifactType {\n        ...SBOMArtifactTypeFragment\n      }\n      projects {\n        id\n        name\n        slug\n        isFolder\n      }\n      ignoreRules {\n        id\n      }\n      note {\n        id\n        text\n      }\n      layerMetadata {\n        id\n        details\n        isBaseLayer\n        layerHash\n      }\n      vulnerableAsset {\n        ... on VulnerableAssetBase {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          externalId\n          providerUniqueId\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetVirtualMachine {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystem\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          imageName\n          imageId\n          imageNativeType\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          computeInstanceGroup {\n            id\n            externalId\n            name\n            replicaCount\n            tags\n          }\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetServerless {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetContainerImage {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          repository {\n            vertexId\n            name\n          }\n          registry {\n            vertexId\n            name\n          }\n          scanSource\n          executionControllers {\n            ...VulnerableAssetExecutionControllerDetails\n          }\n          graphEntity {\n            ...VulnerabilityContainerImageGraphEntityExecutionContext\n          }\n          nativeType\n          tagReferences\n          imageTags\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetContainer {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          executionControllers {\n            ...VulnerableAssetExecutionControllerDetails\n          }\n          nativeType\n          isUsedOnPrem\n        }\n        ... on VulnerableAssetRepositoryBranch {\n          id\n          type\n          name\n          cloudPlatform\n          repositoryId\n          repositoryName\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetIde {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetEndpoint {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetPaaSResource {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetVirtualMachineImage {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetNetworkAddress {\n          subscriptionId\n          subscriptionName\n          subscriptionExternalId\n          tags\n          address\n          addressType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetCommon {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetDevice {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n          operatingSystem\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n        }\n      }\n      sourceMappedCodeFindings {\n        id\n        remediationPullRequestAvailable\n      }\n    }\n   \n\n\n        fragment SBOMArtifactTypeFragment on SBOMArtifactType {\n      group\n      codeLibraryLanguage\n      osPackageManager\n      hostedTechnology {\n        id\n        name\n        icon\n      }\n      plugin\n      custom\n      ciComponent\n    }\n   \n\n\n        fragment VulnerabilityFindingOperatingSystemDistribution on Technology {\n      id\n      name\n      icon\n    }\n   \n\n\n        fragment VulnerableAssetExecutionControllerDetails on VulnerableAssetExecutionController {\n      id\n      entityType\n      externalId\n      providerUniqueId\n      name\n      subscriptionExternalId\n      subscriptionId\n      subscriptionName\n      ancestors {\n        id\n        name\n        entityType\n        externalId\n        providerUniqueId\n      }\n    }\n   \n\n\n        fragment VulnerabilityContainerImageGraphEntityExecutionContext on GraphEntity {\n      id\n      providerUniqueId\n      type\n      containerImageExecutionContextAnalyticsV3 {\n        totalResourceCount\n        nativeType {\n          nativeType\n          count\n        }\n      }\n    }\n   \n\n\n        fragment DuplicateFindingBadge on VulnerabilityFinding {\n      id\n      origin\n      duplicateOf {\n        id\n        name\n        origin\n        vulnerableAsset {\n          ... on VulnerableAssetBase {\n            id\n            name\n          }\n        }\n      }\n    }\n   \n\n\n        fragment VulnerabilityFindingRelatedIssueAnalyticsFragment on VulnerabilityFindingRelatedIssueAnalytics {\n      issueCount\n      informationalSeverityCount\n      lowSeverityCount\n      mediumSeverityCount\n      highSeverityCount\n      criticalSeverityCount\n    }\n   \n\n\n        fragment PostureIssuePopoverListRecord on PostureIssue {\n      id\n      name\n      type\n      entity {\n        providerUniqueId\n        id\n        type\n      }\n    }\n   \n\n\n        fragment PendingUpdateVulnerabilityFindingStatusRequest on PrivilegedActionRequest {\n      ...PendingStatusRequestBanner\n      ...PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams\n    }\n   \n\n\n        fragment PendingStatusRequestBanner on PrivilegedActionRequest {\n      id\n      type\n      status\n      createdAt\n      createdBy {\n        id\n        name\n        email\n      }\n      params {\n        ... on PrivilegedActionRequestUpdateIssueStatusParams {\n          issueStatus: status\n        }\n        ... on PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams {\n          findingStatus: status\n        }\n        ... on PrivilegedActionRequestCreateIgnoreRuleParams {\n          ignoreRuleName: name\n        }\n      }\n    }\n   \n\n\n        fragment PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams on PrivilegedActionRequest {\n      id\n      params {\n        ... on PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams {\n          status\n        }\n      }\n      subject {\n        ... on VulnerabilityFinding {\n          id\n          status\n        }\n      }\n    }\n";
-  var BASE_VARIABLES = {
-    "orderBy": {
-      "field": "RELATED_ISSUE_SEVERITY",
-      "direction": "DESC"
-    },
-    "includeRelatedIssueAnalytics": false,
-    "includeRelatedSourceMappedIssueAnalytics": false,
-    "includeTotalCount": false,
-    "includePostureIssues": false,
-    "fetchPrivilegedActionRequests": false,
-    "first": 500,
-    "filterBy": {
-      "hasFix": true,
-      "projectIdV2": {
-        "equals": [
-          "1dfea0cf-834f-5522-b797-bee5aaf09251"
-        ]
-      },
-      "assetType": [
-        "VIRTUAL_MACHINE"
-      ],
-      "detectionMethod": [
-        "OS"
-      ],
-      "status": [
-        "OPEN",
-        "RESOLVED"
-      ],
-      "detailedNameV2": {
-        "notEquals": [
-          "openssl",
-          "python",
-          "vim"
-        ]
-      },
-      "assetIsRepresentativeResource": false
-    }
-  };
-  var PAGE_SIZE = 500;
-  var PAGE_SIZE_FALLBACK = 250;
-  var MAX_PAGES = 1e3;
-
-  // src/server/wizClient.ts
-  var WizQueryError = class extends Error {
-  };
-  var WizDeltaFilterError = class extends WizQueryError {
-  };
-  var TOKEN_CACHE_KEY = "wiz_token";
-  function getToken(forceRefresh = false) {
-    var _a, _b;
-    const staticToken = getProp(PROP_KEYS.wizApiToken);
-    if (staticToken && staticToken.trim()) return staticToken.trim();
-    const cache = CacheService.getScriptCache();
-    if (!forceRefresh) {
-      const cached = cache.get(TOKEN_CACHE_KEY);
-      if (cached) return cached;
-    }
-    const authUrl = (_a = getProp(PROP_KEYS.wizAuthUrl)) != null ? _a : DEFAULT_WIZ_AUTH_URL;
-    const response = UrlFetchApp.fetch(authUrl, {
-      method: "post",
-      contentType: "application/x-www-form-urlencoded",
-      payload: {
-        grant_type: "client_credentials",
-        audience: "wiz-api",
-        client_id: requireProp(PROP_KEYS.wizClientId),
-        client_secret: requireProp(PROP_KEYS.wizClientSecret)
-      },
-      muteHttpExceptions: true
-    });
-    if (response.getResponseCode() !== 200) {
-      throw new WizQueryError(
-        `Wiz token request failed (${response.getResponseCode()}): ` + response.getContentText().slice(0, 500)
-      );
-    }
-    const body = JSON.parse(response.getContentText());
-    const token = body["access_token"];
-    if (typeof token !== "string" || !token) {
-      throw new WizQueryError("Wiz token response carried no access_token.");
-    }
-    const expiresIn = Number((_b = body["expires_in"]) != null ? _b : 3600);
-    const ttl = Math.max(60, Math.min(Math.trunc(expiresIn) - 300, 21600));
-    cache.put(TOKEN_CACHE_KEY, token, ttl);
-    return token;
-  }
-  function baseVariables() {
-    return JSON.parse(JSON.stringify(BASE_VARIABLES));
-  }
-  function buildVariables(options = {}) {
-    var _a, _b;
-    const vars = baseVariables();
-    const filterBy = vars["filterBy"];
-    const projectId = getProp(PROP_KEYS.wizProjectIdV2);
-    if (projectId) filterBy["projectIdV2"] = { equals: [projectId] };
-    const sevFilter = options.severities === void 0 ? null : apiSeverityFilter(options.severities);
-    if (sevFilter) filterBy["severity"] = sevFilter;
-    for (const [k, v] of Object.entries((_a = options.extraFilterBy) != null ? _a : {})) filterBy[k] = v;
-    vars["first"] = (_b = options.first) != null ? _b : PAGE_SIZE;
-    if (options.after) vars["after"] = options.after;
-    vars["includeTotalCount"] = Boolean(options.includeTotalCount);
-    return vars;
-  }
-  function queryPage(variables, isDeltaFetch = false) {
-    var _a, _b, _c, _d;
-    const apiUrl = requireProp(PROP_KEYS.wizApiUrl);
-    let token = getToken();
-    let lastError = "";
-    for (let attempt = 0; attempt < 4; attempt++) {
-      const response = UrlFetchApp.fetch(apiUrl, {
-        method: "post",
-        contentType: "application/json",
-        headers: { Authorization: `Bearer ${token}` },
-        payload: JSON.stringify({ query: QUERY, variables }),
-        muteHttpExceptions: true
-      });
-      const code = response.getResponseCode();
-      if (code === 401 && attempt === 0 && !getProp(PROP_KEYS.wizApiToken)) {
-        token = getToken(true);
-        continue;
-      }
-      if (code === 429 || code >= 500) {
-        lastError = `HTTP ${code}`;
-        Utilities.sleep(1e3 * Math.pow(2, attempt));
-        continue;
-      }
-      if (code !== 200) {
-        const hint = code === 401 && getProp(PROP_KEYS.wizApiToken) ? " \u2014 WIZ_API_TOKEN was rejected; it may have expired. Refresh it, or set WIZ_CLIENT_ID/WIZ_CLIENT_SECRET for auto-refresh." : "";
-        throw new WizQueryError(
-          `Wiz query failed (HTTP ${code})${hint}: ${response.getContentText().slice(0, 500)}`
-        );
-      }
-      const body = JSON.parse(response.getContentText());
-      const data = body["data"];
-      const connection = data == null ? void 0 : data["vulnerabilityFindings"];
-      if (!connection) {
-        const errors = JSON.stringify((_a = body["errors"]) != null ? _a : body).slice(0, 500);
-        if (isDeltaFetch) {
-          throw new WizDeltaFilterError(`Wiz rejected the incremental filter: ${errors}`);
-        }
-        throw new WizQueryError(`Wiz response carried no findings connection: ${errors}`);
-      }
-      const pageInfo = (_b = connection["pageInfo"]) != null ? _b : {};
-      const rawTotal = connection["totalCount"];
-      return {
-        nodes: (_c = connection["nodes"]) != null ? _c : [],
-        hasNextPage: Boolean(pageInfo["hasNextPage"]),
-        endCursor: (_d = pageInfo["endCursor"]) != null ? _d : null,
-        totalCount: typeof rawTotal === "number" ? rawTotal : null
-      };
-    }
-    throw new WizQueryError(`Wiz query failed after retries (${lastError}).`);
-  }
-  function fetchPage(options) {
-    var _a;
-    const common = {
-      severities: options.severities,
-      extraFilterBy: options.extraFilterBy,
-      after: (_a = options.cursor) != null ? _a : null,
-      includeTotalCount: options.pageNumber === 0
-    };
-    const isDelta = Boolean(options.extraFilterBy && Object.keys(options.extraFilterBy).length);
-    try {
-      return queryPage(buildVariables({ ...common, first: PAGE_SIZE }), isDelta);
-    } catch (e) {
-      if (e instanceof WizDeltaFilterError) throw e;
-      return queryPage(buildVariables({ ...common, first: PAGE_SIZE_FALLBACK }), isDelta);
-    }
-  }
 
   // src/server/scanJobs.ts
   var BUDGET_MS = 27e4;

@@ -74,6 +74,17 @@ persist → delete-replay → compaction flows against the SQLite implementation
 6. Deploy: **Deploy → New deployment → Web app** (execute as you, access: domain),
    or `npm run deploy`.
 
+## Troubleshooting Wiz connectivity
+
+If scans fail or the app stays in dry-run, run **`wizDiagnostic()`** from the GAS editor
+(select it in the function dropdown → Run) and read the **Execution log**. It reports the
+resolved auth mode and URLs (secrets redacted), then runs the real token exchange and a
+1-row query, and names the exact failing step — e.g. `Step 1 FAIL` = the token endpoint
+rejected the client id/secret; `Step 2 FAIL … 401/Unauthorized` = the token isn't accepted;
+`… 404` = `WIZ_API_URL` host/path is wrong. Note: a Wiz GraphQL service account issues a
+**client id + secret** (exchanged for a short-lived token), not a durable bearer token —
+so `WIZ_CLIENT_ID`/`WIZ_CLIENT_SECRET` is the robust configuration.
+
 ## Development
 
 ```
