@@ -12,6 +12,7 @@ import { calculateMttr, overallSlaOldest } from "../domain/metrics";
 import { extractNodes, mergeNodes } from "../domain/transform";
 import { nowIso, parseTs, toIso, type Rec } from "../domain/util";
 import * as archive from "./archiveStore";
+import { buildFrame, pageOfFromRuns } from "./frameCore";
 import * as history from "./historyStore";
 import { activeJob, createJob, getJob, newJobId, updateJob, type JobRow } from "./jobsStore";
 import * as ledgerStore from "./ledgerStore";
@@ -102,6 +103,21 @@ interface ScanParams {
   extraFilterBy: Rec | null;
   incremental: boolean;
   baselineScanId: string | null;
+}
+
+// ---------------------------------------------------------------- findings frame
+// The frame (built in frameCore.ts) moves currentScan()'s per-request flatten + sha1
+// pass into the scan job, where it runs once per scan instead of once per RPC. The
+// records handed to persistFlatScan stay untouched — the frame is a separate derived
+// artifact, so nothing extra flows into the fixture-locked reconcile path.
+
+function writeFrameSafely(scanId: string, records: Rec[], pageOf: ((i: number) => number) | null): void {
+  try {
+    archive.writeFrame(scanId, buildFrame(records, pageOf));
+  } catch (e) {
+    // The frame is an optimization only — currentScan() falls back to slim.json.gz.
+    console.warn(`Failed to write findings frame for ${scanId}: ${e}`);
+  }
 }
 
 function envelope(nodes: Rec[]): Rec {
@@ -234,6 +250,7 @@ function dryRunScan(options: { incremental?: boolean; sampleShape?: string }): S
   archive.writeScanPage(scanId, 1, envelope(nodes));
   const slim = nodes.map(slimRecord);
   archive.writeSlimRecords(scanId, slim);
+  writeFrameSafely(scanId, slim, () => 1);
   ledgerStore.persistFlatScan(slim, {
     mode: options.incremental ? "dry-run-incremental" : "dry-run",
     scanId,
@@ -252,6 +269,8 @@ function step(job: JobRow, budgetMs = BUDGET_MS): void {
   const params = JSON.parse(job.params_json ?? "{}") as ScanParams;
   const scanId = job.scan_id!;
   let slim: Rec[] = job.page > 0 ? ((archive.readSlimRecords(scanId) as Rec[]) ?? []) : [];
+  const pageRuns: Array<[number, number]> =
+    job.page > 0 ? (archive.readPageRuns(scanId) ?? []) : [];
   let cursor = job.cursor;
   let page = job.page;
   let findings = job.findings_so_far;
@@ -274,6 +293,7 @@ function step(job: JobRow, budgetMs = BUDGET_MS): void {
       // finish) occupies page-0001..N and stays the payload replay reads.
       archive.writeScanPage(scanId, pageName, envelope(result.nodes));
       slim.push(...result.nodes.map(slimRecord));
+      pageRuns.push([pageName, result.nodes.length]);
       page += 1;
       findings += result.nodes.length;
       cursor = result.endCursor;
@@ -284,12 +304,14 @@ function step(job: JobRow, budgetMs = BUDGET_MS): void {
       if (!result.hasNextPage || page >= MAX_PAGES) break;
       if (Date.now() - started > budgetMs) {
         archive.writeSlimRecords(scanId, slim);
+        archive.writePageRuns(scanId, pageRuns);
         scheduleContinuation();
         return;
       }
     }
 
     archive.writeSlimRecords(scanId, slim);
+    archive.writePageRuns(scanId, pageRuns);
     updateJob(job.job_id, { phase: "RECONCILING" });
     finishScan(job.job_id, scanId, params, slim);
   } catch (e) {
@@ -340,6 +362,10 @@ function finishScan(jobId: string, scanId: string, params: ScanParams, slim: Rec
       archive.writeScanPage(scanId, pageNo++, envelope(records.slice(i, i + 500)));
     }
     archive.writeSlimRecords(scanId, records);
+    // Merged pages are deterministic 500-record chunks — _page by arithmetic.
+    writeFrameSafely(scanId, records, (i) => Math.floor(i / 500) + 1);
+  } else {
+    writeFrameSafely(scanId, records, pageOfFromRuns(archive.readPageRuns(scanId), records.length));
   }
 
   updateJob(jobId, { phase: "PERSISTING", scan_id: scanId });

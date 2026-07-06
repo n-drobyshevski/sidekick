@@ -40,10 +40,8 @@ export async function renderMttr(main, params) {
 
   async function load() {
     clear(heroHost).append(el("p", { class: "muted" }, "Computing…"));
-    const [mttr, trends] = await Promise.all([
-      call("api_getMttr", { domain }),
-      call("api_getMttrTrend", {}),
-    ]);
+    // One batched RPC — summary and trends share a single ledger-state load server-side.
+    const { mttr, trends } = await call("api_getMttrPage", { domain });
     renderHero(mttr, trends);
     renderCharts(trends);
     renderSla(mttr);

@@ -213,16 +213,24 @@ export function getFindingDetail(p?: unknown): ApiResult {
     const scan = findings.currentScan();
     if (!scan || !key) return { record: null, raw: null };
     const record = scan.records.find((r) => r["_vuln_key"] === key) ?? null;
-    // The raw node (full fields) lives in the scan's page archive; search pages with
-    // early exit — the sheet opens for one finding at a time.
+    // The raw node (full fields) lives in the scan's page archive. The frame tags each
+    // record with its page, so normally exactly one page file is read; scans persisted
+    // before the frame existed fall back to walking the whole archive.
     let raw: Rec | null = null;
-    const row = ledgerStore.loadScanRows().find((s) => s.scan_id === scan.scanId);
-    const payload = row ? archive.readScanPayload(row.raw_ref) : null;
-    if (payload && Array.isArray(payload)) {
-      for (const page of payload) {
-        const nodes = extractNodes(page);
-        raw = (nodes.find((n) => vulnKey(n) === key) as Rec) ?? null;
-        if (raw) break;
+    const pageNo = record && typeof record["_page"] === "number" ? record["_page"] : null;
+    if (pageNo !== null) {
+      const page = archive.readScanPage(scan.scanId, pageNo);
+      if (page) raw = (extractNodes(page).find((n) => vulnKey(n) === key) as Rec) ?? null;
+    }
+    if (!raw) {
+      const row = ledgerStore.loadScanRows().find((s) => s.scan_id === scan.scanId);
+      const payload = row ? archive.readScanPayload(row.raw_ref) : null;
+      if (payload && Array.isArray(payload)) {
+        for (const page of payload) {
+          const nodes = extractNodes(page);
+          raw = (nodes.find((n) => vulnKey(n) === key) as Rec) ?? null;
+          if (raw) break;
+        }
       }
     }
     return { record, raw };
@@ -231,92 +239,114 @@ export function getFindingDetail(p?: unknown): ApiResult {
 
 // ----------------------------------------------------------------------------- MTTR
 
+function mttrData(p?: unknown): Rec {
+  const domain = String((p as Rec)?.["domain"] ?? "");
+  let rows: Rec[] = ledgerStore.loadBaseRows() as unknown as Rec[];
+  if (domain) {
+    const compiled = compileDomains(settingsStore.getDomains().items);
+    rows = rows.filter((r) => assignDomain(r, compiled) === domain);
+  }
+  const { perSev, overall } = mttrFromLedger(rows);
+  const { slaPct, oldestDays } = overallSlaOldest(perSev);
+  return { perSev, overall, slaPct, oldestDays, rowCount: rows.length };
+}
+
+function mttrTrendData(p?: unknown): Rec {
+  const severities = ((p as Rec)?.["severities"] as string[]) ?? null;
+  return {
+    history: history.loadHistory(),
+    trend: ledgerStore.loadTrend(severities),
+  };
+}
+
 export function getMttr(p?: unknown): ApiResult {
-  return run(() => {
-    const domain = String((p as Rec)?.["domain"] ?? "");
-    let rows: Rec[] = ledgerStore.loadBaseRows() as unknown as Rec[];
-    if (domain) {
-      const compiled = compileDomains(settingsStore.getDomains().items);
-      rows = rows.filter((r) => assignDomain(r, compiled) === domain);
-    }
-    const { perSev, overall } = mttrFromLedger(rows);
-    const { slaPct, oldestDays } = overallSlaOldest(perSev);
-    return { perSev, overall, slaPct, oldestDays, rowCount: rows.length };
-  });
+  return run(() => mttrData(p));
 }
 
 export function getMttrTrend(p?: unknown): ApiResult {
-  return run(() => {
-    const severities = ((p as Rec)?.["severities"] as string[]) ?? null;
-    return {
-      history: history.loadHistory(),
-      trend: ledgerStore.loadTrend(severities),
-    };
-  });
+  return run(() => mttrTrendData(p));
+}
+
+/** MTTR page in one round trip (summary + trends share one state load). */
+export function getMttrPage(p?: unknown): ApiResult {
+  return run(() => ({ mttr: mttrData(p), trends: mttrTrendData(p) }));
 }
 
 // --------------------------------------------------------------------- scan history
 
+function scanHistoryData(): Rec {
+  const scans = ledgerStore.loadScanRows().slice().reverse(); // newest first
+  const base = ledgerStore.loadBaseRows();
+  const open = base.filter((r) => r.status === "OPEN").length;
+  const resolved = base.filter((r) => r.status === "RESOLVED").length;
+  const { overall } = mttrFromLedger(base as unknown as Rec[]);
+  return {
+    scans,
+    kpis: {
+      tracked: base.length,
+      open,
+      resolvedAllTime: resolved,
+      medianMttr: overall.mttr_median ?? null,
+    },
+  };
+}
+
 export function getScanHistory(_p?: unknown): ApiResult {
-  return run(() => {
-    const scans = ledgerStore.loadScanRows().reverse(); // newest first
-    const base = ledgerStore.loadBaseRows();
-    const open = base.filter((r) => r.status === "OPEN").length;
-    const resolved = base.filter((r) => r.status === "RESOLVED").length;
-    const { overall } = mttrFromLedger(base as unknown as Rec[]);
-    return {
-      scans,
-      kpis: {
-        tracked: base.length,
-        open,
-        resolvedAllTime: resolved,
-        medianMttr: overall.mttr_median ?? null,
-      },
-    };
-  });
+  return run(() => scanHistoryData());
+}
+
+/** History page in one round trip: scans + KPIs + trends + the first base page. */
+export function getHistoryPage(p?: unknown): ApiResult {
+  return run(() => ({
+    history: scanHistoryData(),
+    trends: mttrTrendData(p),
+    base: baseRowsData(p),
+  }));
+}
+
+function baseRowsData(p?: unknown): Rec {
+  const params = (p ?? {}) as Rec;
+  let rows = ledgerStore.loadBaseRows() as unknown as Rec[];
+  const compiled = compileDomains(settingsStore.getDomains().items);
+  if (compiled.length) {
+    rows = rows.map((r) => ({ ...r, _domain: assignDomain(r, compiled) }));
+  }
+  const statuses = (params["statuses"] as string[]) ?? [];
+  const severities = (params["severities"] as string[]) ?? [];
+  const domains = (params["domains"] as string[]) ?? [];
+  const q = String(params["q"] ?? "").trim().toLowerCase();
+  if (statuses.length) {
+    const keep = new Set(statuses.map((s) => s.toUpperCase()));
+    rows = rows.filter((r) => keep.has(String(r["status"] ?? "").toUpperCase()));
+  }
+  if (severities.length) {
+    const keep = new Set(severities.map(normalizeSeverity));
+    rows = rows.filter((r) => keep.has(normalizeSeverity(r["severity"])));
+  }
+  if (domains.length) {
+    const keep = new Set(domains);
+    rows = rows.filter((r) => keep.has(String(r["_domain"] ?? UNASSIGNED)));
+  }
+  if (q) {
+    rows = rows.filter(
+      (r) =>
+        String(r["cve"] ?? "").toLowerCase().includes(q) ||
+        String(r["asset_name"] ?? "").toLowerCase().includes(q),
+    );
+  }
+  const pageSize = Math.min(Number(params["pageSize"] ?? 100), 500);
+  const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
+  const page = Math.min(Math.max(Number(params["page"] ?? 0), 0), pageCount - 1);
+  return {
+    rows: rows.slice(page * pageSize, (page + 1) * pageSize),
+    total: rows.length,
+    page,
+    pageCount,
+  };
 }
 
 export function getBaseRows(p?: unknown): ApiResult {
-  return run(() => {
-    const params = (p ?? {}) as Rec;
-    let rows = ledgerStore.loadBaseRows() as unknown as Rec[];
-    const compiled = compileDomains(settingsStore.getDomains().items);
-    if (compiled.length) {
-      rows = rows.map((r) => ({ ...r, _domain: assignDomain(r, compiled) }));
-    }
-    const statuses = (params["statuses"] as string[]) ?? [];
-    const severities = (params["severities"] as string[]) ?? [];
-    const domains = (params["domains"] as string[]) ?? [];
-    const q = String(params["q"] ?? "").trim().toLowerCase();
-    if (statuses.length) {
-      const keep = new Set(statuses.map((s) => s.toUpperCase()));
-      rows = rows.filter((r) => keep.has(String(r["status"] ?? "").toUpperCase()));
-    }
-    if (severities.length) {
-      const keep = new Set(severities.map(normalizeSeverity));
-      rows = rows.filter((r) => keep.has(normalizeSeverity(r["severity"])));
-    }
-    if (domains.length) {
-      const keep = new Set(domains);
-      rows = rows.filter((r) => keep.has(String(r["_domain"] ?? UNASSIGNED)));
-    }
-    if (q) {
-      rows = rows.filter(
-        (r) =>
-          String(r["cve"] ?? "").toLowerCase().includes(q) ||
-          String(r["asset_name"] ?? "").toLowerCase().includes(q),
-      );
-    }
-    const pageSize = Math.min(Number(params["pageSize"] ?? 100), 500);
-    const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
-    const page = Math.min(Math.max(Number(params["page"] ?? 0), 0), pageCount - 1);
-    return {
-      rows: rows.slice(page * pageSize, (page + 1) * pageSize),
-      total: rows.length,
-      page,
-      pageCount,
-    };
-  });
+  return run(() => baseRowsData(p));
 }
 
 // ------------------------------------------------------------------ jobs & mutations

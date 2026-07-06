@@ -332,54 +332,59 @@ export async function renderOverview(main, params) {
           el("button", { onclick: close, "aria-label": "Close detail" }, "✕"),
         ),
       );
-      const body = el("div", { class: "sheet-body" }, el("p", { class: "muted" }, "Loading detail…"));
+      const body = el("div", { class: "sheet-body" });
       sheet.append(body);
-      let detail;
-      try {
-        detail = await call("api_getFindingDetail", { vulnKey: row._vuln_key });
-      } catch (e) {
-        clear(body).append(el("p", { class: "muted" }, `Couldn't load detail: ${e.message}`));
-        return;
-      }
-      clear(body);
-      const rec = detail.record || row;
-      body.append(
-        kvSection("Finding", {
-          CVE: rec.name, Component: rec.detailedName, Severity: rec._sev ?? rec.severity,
-          Status: rec.status, "Fixed version": rec.fixedVersion,
-          "Detection method": rec.detectionMethod, Source: rec.dataSourceName,
-        }),
-        kvSection("Risk", {
-          "CVSS score": rec.score, "Vendor severity": rec.vendorSeverity,
-          "NVD severity": rec.nvdSeverity, "EPSS severity": rec.epssSeverity,
-          "EPSS probability": rec.epssProbability,
-          "Exploit available": rec.hasExploit ? "Yes" : "No",
-          "CISA KEV": rec.hasCisaKevExploit ? "Yes" : "No",
-        }),
-        kvSection("Asset", {
-          Name: rec["vulnerableAsset.name"], Type: rec["vulnerableAsset.type"],
-          Cloud: rec["vulnerableAsset.cloudPlatform"],
-          Subscription: rec["vulnerableAsset.subscriptionName"],
-          OS: rec["vulnerableAsset.operatingSystem"], Region: rec["vulnerableAsset.region"],
-        }),
-        kvSection("Lifecycle", {
-          "First detected": rec.firstDetectedAt, "Last detected": rec.lastDetectedAt,
-          Resolved: rec.resolvedAt, Published: rec.publishedDate,
-        }),
-        el("div", { class: "sheet-section" },
-          el("a", {
-            class: "btn", target: "_blank", rel: "noopener",
-            href: nvdUrl(rec.name),
-            style: "text-decoration:none; display:inline-block; padding:6px 14px",
-          }, "Open in NVD ↗"),
-        ),
-      );
-      if (detail.raw) {
-        const details = el("details", { class: "sheet-section" },
-          el("summary", { class: "label", style: "cursor:pointer" }, "Raw JSON"),
+
+      // The table row already carries most displayed fields — paint the sheet
+      // instantly from it, then upgrade with the full record + raw JSON when the
+      // detail RPC lands (it fills detection method, EPSS probability, region, …).
+      const paint = (rec) => {
+        clear(body);
+        body.append(
+          kvSection("Finding", {
+            CVE: rec.name, Component: rec.detailedName, Severity: rec._sev ?? rec.severity,
+            Status: rec.status, "Fixed version": rec.fixedVersion,
+            "Detection method": rec.detectionMethod, Source: rec.dataSourceName,
+          }),
+          kvSection("Risk", {
+            "CVSS score": rec.score, "Vendor severity": rec.vendorSeverity,
+            "NVD severity": rec.nvdSeverity, "EPSS severity": rec.epssSeverity,
+            "EPSS probability": rec.epssProbability,
+            "Exploit available": rec.hasExploit ? "Yes" : "No",
+            "CISA KEV": rec.hasCisaKevExploit ? "Yes" : "No",
+          }),
+          kvSection("Asset", {
+            Name: rec["vulnerableAsset.name"], Type: rec["vulnerableAsset.type"],
+            Cloud: rec["vulnerableAsset.cloudPlatform"],
+            Subscription: rec["vulnerableAsset.subscriptionName"],
+            OS: rec["vulnerableAsset.operatingSystem"], Region: rec["vulnerableAsset.region"],
+          }),
+          kvSection("Lifecycle", {
+            "First detected": rec.firstDetectedAt, "Last detected": rec.lastDetectedAt,
+            Resolved: rec.resolvedAt, Published: rec.publishedDate,
+          }),
+          el("div", { class: "sheet-section" },
+            el("a", {
+              class: "btn", target: "_blank", rel: "noopener",
+              href: nvdUrl(rec.name),
+              style: "text-decoration:none; display:inline-block; padding:6px 14px",
+            }, "Open in NVD ↗"),
+          ),
         );
-        details.append(el("pre", { class: "raw-json" }, JSON.stringify(detail.raw, null, 2)));
-        body.append(details);
+      };
+      paint(row);
+      try {
+        const detail = await call("api_getFindingDetail", { vulnKey: row._vuln_key });
+        paint(detail.record || row);
+        if (detail.raw) {
+          const details = el("details", { class: "sheet-section" },
+            el("summary", { class: "label", style: "cursor:pointer" }, "Raw JSON"),
+          );
+          details.append(el("pre", { class: "raw-json" }, JSON.stringify(detail.raw, null, 2)));
+          body.append(details);
+        }
+      } catch (e) {
+        body.append(el("p", { class: "small muted" }, `Couldn't load full detail: ${e.message}`));
       }
     });
   }

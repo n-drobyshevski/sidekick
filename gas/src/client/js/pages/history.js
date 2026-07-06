@@ -10,12 +10,10 @@ import {
 } from "../ui.js";
 
 export async function renderHistory(main, _params, ctx) {
-  // All four fetches are independent — fire them together so the page pays one
-  // round-trip of latency instead of four (each RPC is a fresh GAS execution).
+  // One batched RPC serves the whole page (scans + KPIs + trends + first base page);
+  // server-side the three parts share a single ledger-state load.
   const bootPromise = bootstrap();
-  const dataPromise = call("api_getScanHistory", {});
-  const trendsPromise = call("api_getMttrTrend", {});
-  const firstBasePromise = call("api_getBaseRows", {
+  const pagePromise = call("api_getHistoryPage", {
     statuses: [], severities: [], domains: [], q: "", page: 0, pageSize: 100,
   });
 
@@ -33,7 +31,8 @@ export async function renderHistory(main, _params, ctx) {
   main.append(kpiRow, sectionLabel("Saved scans"), scansHost, chartsHost,
     sectionLabel("Vulnerability base"), baseHost);
 
-  const data = await dataPromise;
+  const pageData = await pagePromise;
+  const data = pageData.history;
   if (!data.scans.length) {
     clear(scansHost).append(emptyState("No scans saved yet."));
   }
@@ -119,7 +118,7 @@ export async function renderHistory(main, _params, ctx) {
   }
 
   // ---- trend charts
-  const trends = await trendsPromise;
+  const trends = pageData.trends;
   if (trends.trend.length) {
     const openResolvedCanvas = el("canvas", { id: "hist-open-resolved" });
     const mttrCanvas = el("canvas", { id: "hist-mttr" });
@@ -164,7 +163,7 @@ export async function renderHistory(main, _params, ctx) {
     el("button", { onclick: exportBaseCsv }, "Download CSV"),
   );
 
-  await loadBase(firstBasePromise);
+  await loadBase(Promise.resolve(pageData.base));
 
   function reload() { filters.page = 0; loadBase(); }
 

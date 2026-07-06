@@ -31,7 +31,9 @@ function api_getFindings(p) { return timedApi_("getFindings", p); }
 function api_getFindingDetail(p) { return timedApi_("getFindingDetail", p); }
 function api_getMttr(p) { return timedApi_("getMttr", p); }
 function api_getMttrTrend(p) { return timedApi_("getMttrTrend", p); }
+function api_getMttrPage(p) { return timedApi_("getMttrPage", p); }
 function api_getScanHistory(p) { return timedApi_("getScanHistory", p); }
+function api_getHistoryPage(p) { return timedApi_("getHistoryPage", p); }
 function api_getBaseRows(p) { return timedApi_("getBaseRows", p); }
 function api_runScan(p) { return timedApi_("runScan", p); }
 function api_getJobStatus(p) { return timedApi_("getJobStatus", p); }

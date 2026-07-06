@@ -30,20 +30,35 @@ export function currentScan(): CurrentScan | null {
     memo = null;
     return memo;
   }
-  let slim = archive.readSlimRecords(row.scan_id) as Rec[] | null;
-  if (!slim) {
-    const payload = archive.readScanPayload(row.raw_ref);
-    slim = payload ? extractNodes(payload) : [];
-  }
   const domains = settingsStore.getDomains();
   const compiled = compileDomains(domains.items);
-  const records = (slim ?? []).map((n) => {
-    const flat = flattenNode(n);
-    flat["_vuln_key"] = vulnKey(n);
-    flat["_sev"] = normalizeSeverity(flat["severity"]);
-    flat["_domain"] = compiled.length ? assignDomain(flat, compiled) : UNASSIGNED;
-    return flat;
-  });
+
+  // Fast path: the scan job precomputed the flattened + sha1-keyed frame. Only the
+  // cheap request-dependent fields are attached here — _sev, and _domain, which is
+  // deliberately not baked into the frame so domain-settings edits never stale it.
+  const frame = archive.readFrame(row.scan_id) as Rec[] | null;
+  let records: Rec[];
+  if (frame) {
+    records = frame.map((flat) => {
+      flat["_sev"] = normalizeSeverity(flat["severity"]);
+      flat["_domain"] = compiled.length ? assignDomain(flat, compiled) : UNASSIGNED;
+      return flat;
+    });
+  } else {
+    // Scans persisted before the frame existed: flatten + hash from slim as before.
+    let slim = archive.readSlimRecords(row.scan_id) as Rec[] | null;
+    if (!slim) {
+      const payload = archive.readScanPayload(row.raw_ref);
+      slim = payload ? extractNodes(payload) : [];
+    }
+    records = (slim ?? []).map((n) => {
+      const flat = flattenNode(n);
+      flat["_vuln_key"] = vulnKey(n);
+      flat["_sev"] = normalizeSeverity(flat["severity"]);
+      flat["_domain"] = compiled.length ? assignDomain(flat, compiled) : UNASSIGNED;
+      return flat;
+    });
+  }
   memo = {
     scanId: row.scan_id,
     ts: row.ts,

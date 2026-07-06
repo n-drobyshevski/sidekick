@@ -93,6 +93,13 @@ export function writeScanPage(scanId: string, pageNumber: number, payload: unkno
   return writeGzJson(scanFolder(scanId), name, payload).getId();
 }
 
+/** One raw archive page by number, or null (missing/unreadable). */
+export function readScanPage(scanId: string, pageNumber: number): unknown | null {
+  const name = `page-${String(pageNumber).padStart(4, "0")}.json.gz`;
+  const files = scanFolder(scanId).getFilesByName(name);
+  return files.hasNext() ? parseGzBlob(files.next().getBlob()) : null;
+}
+
 export function writeSlimRecords(scanId: string, records: unknown[]): string {
   return writeGzJson(scanFolder(scanId), "slim.json.gz", records).getId();
 }
@@ -102,6 +109,41 @@ export function readSlimRecords(scanId: string): unknown[] | null {
   if (!files.hasNext()) return null;
   const parsed = parseGzBlob(files.next().getBlob());
   return Array.isArray(parsed) ? parsed : null;
+}
+
+// ------------------------------------------------------------------ findings frame
+// The precomputed "current frame": slim records already flattened to dotted keys with
+// _vuln_key (sha1) and _page (the raw archive page holding the full node) attached.
+// Written once by the scan job so read RPCs skip the flatten + hash pass over the
+// whole scan on every request. The name is versioned — bump it when the record shape
+// changes so stale frames read as absent and readers fall back to slim.json.gz.
+const FRAME_NAME = "frame-v1.json.gz";
+
+export function writeFrame(scanId: string, records: unknown[]): string {
+  return writeGzJson(scanFolder(scanId), FRAME_NAME, records).getId();
+}
+
+export function readFrame(scanId: string): unknown[] | null {
+  const files = scanFolder(scanId).getFilesByName(FRAME_NAME);
+  if (!files.hasNext()) return null;
+  const parsed = parseGzBlob(files.next().getBlob());
+  return Array.isArray(parsed) ? parsed : null;
+}
+
+// Page-run spill: [pageNumber, recordCount] per fetched page, in slim-record order.
+// Written next to the slim spill on every scan hop so finishScan can attach _page to
+// the frame even when the page walk spanned several continuation executions.
+const PAGE_RUNS_NAME = "pageruns.json.gz";
+
+export function writePageRuns(scanId: string, runs: Array<[number, number]>): void {
+  writeGzJson(scanFolder(scanId), PAGE_RUNS_NAME, runs);
+}
+
+export function readPageRuns(scanId: string): Array<[number, number]> | null {
+  const files = scanFolder(scanId).getFilesByName(PAGE_RUNS_NAME);
+  if (!files.hasNext()) return null;
+  const parsed = parseGzBlob(files.next().getBlob());
+  return Array.isArray(parsed) ? (parsed as Array<[number, number]>) : null;
 }
 
 /**
