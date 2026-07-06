@@ -3,6 +3,7 @@
 // global functions; everything else lives on the bundled `Server` global (server.js).
 
 function doGet(e) { return Server.doGet(e); }
+function include(f) { return Server.include(f); }
 
 // One-time setup: creates the ledger spreadsheet tabs, Drive folders, and the daily
 // scan trigger, and records their IDs in Script Properties. Run from the GAS editor.
