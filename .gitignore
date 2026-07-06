@@ -24,3 +24,6 @@ mttr_history.json
 
 # Local tooling scratch (Playwright MCP snapshots/screenshots/console logs)
 .playwright-mcp/
+
+# Local GAS dev harness build output (gas/dev/serve.mjs writes it per page load)
+gas/dev/server.dev.js
