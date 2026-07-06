@@ -15784,14 +15784,86 @@
     }
   }
 
+  // src/client/js/domainsImport.js
+  var EXPORT_KIND = "wiz-sidekick-domains";
+  function parseDomainsImport(text) {
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      return { error: "Not valid JSON: " + e.message };
+    }
+    let raw;
+    if (Array.isArray(data)) raw = data;
+    else if (data && typeof data === "object" && Array.isArray(data.items)) raw = data.items;
+    else return { error: 'Unrecognized format \u2014 expected {"items": [...]} or a JSON array.' };
+    const items = [];
+    for (let i = 0; i < raw.length; i++) {
+      const entry = raw[i];
+      if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+        return { error: "Item ".concat(i + 1, ": expected an object.") };
+      }
+      if (typeof entry.name !== "string" || !entry.name.trim()) {
+        return { error: "Item ".concat(i + 1, ": missing name.") };
+      }
+      items.push({ name: entry.name, rules: Array.isArray(entry.rules) ? entry.rules : [] });
+    }
+    return { items };
+  }
+
   // src/client/js/pages/domainsEditor.js
   function renderDomainsEditor(host, boot2, ctx) {
     let items = JSON.parse(JSON.stringify(boot2.settings.domains.items || []));
     const listHost = el("div", {});
     const addBtn = el("button", { onclick: () => openEditor(null) }, "Add domain");
+    const exportBtn = el("button", { onclick: exportJson }, "Export JSON");
+    const fileInput = el("input", {
+      type: "file",
+      accept: "application/json",
+      style: "display:none",
+      "aria-hidden": "true",
+      tabindex: "-1"
+    });
+    fileInput.addEventListener("change", importJson);
+    const importBtn = el("button", { onclick: () => fileInput.click() }, "Import JSON");
     const saveBtn = el("button", { class: "primary", onclick: save }, "Save domains");
-    host.append(listHost, el("div", { style: "display:flex; gap:8px; margin-top:10px" }, addBtn, saveBtn));
+    host.append(listHost, el(
+      "div",
+      { style: "display:flex; gap:8px; margin-top:10px" },
+      addBtn,
+      exportBtn,
+      importBtn,
+      saveBtn,
+      fileInput
+    ));
     renderList();
+    function exportJson() {
+      downloadText(
+        "wiz_domains.json",
+        JSON.stringify({ kind: EXPORT_KIND, items }, null, 2),
+        "application/json"
+      );
+    }
+    async function importJson() {
+      const file = fileInput.files && fileInput.files[0];
+      fileInput.value = "";
+      if (!file) return;
+      const res = parseDomainsImport(await file.text());
+      if (res.error) {
+        toast(res.error, "warn");
+        return;
+      }
+      const ok = await confirmDialog({
+        title: "Replace all domains?",
+        body: "Import ".concat(res.items.length, " domain(s), replacing the current list of ") + "".concat(items.length, ". Nothing is stored until you press Save domains."),
+        confirmLabel: "Replace",
+        danger: true
+      });
+      if (!ok) return;
+      items = res.items;
+      renderList();
+      toast("Imported ".concat(res.items.length, " domain(s) \u2014 press Save domains to persist."));
+    }
     function renderList() {
       clear(listHost);
       if (!items.length) {
