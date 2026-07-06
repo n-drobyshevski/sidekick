@@ -9,7 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_load_css_reads_stylesheet():
-    text = theme._css_text()
+    text = theme._css_text(theme.CSS_PATH.stat().st_mtime)
     # Light-only theme: the sheet carries no dual-mode light-dark() values and pins
     # color-scheme to light. Layout CSS survives the native-component migration; the
     # bespoke .metric-card/.mttr-card rules were deleted once st.metric/column_config

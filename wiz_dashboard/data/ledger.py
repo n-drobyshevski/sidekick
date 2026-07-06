@@ -1502,6 +1502,40 @@ def _trend_from_frames(scans, base, severities=None) -> pd.DataFrame:
 # --------------------------------------------------------------------------- #
 #  Maintenance
 # --------------------------------------------------------------------------- #
+def needs_startup_maintenance(db_path=None) -> bool:
+    """Whether start-up maintenance has any likely work to do.
+
+    Used to keep app boot fast once legacy upgrades are complete: probe with cheap
+    ``EXISTS`` queries instead of scanning every saved archive on every process start.
+    ``True`` is conservative (on probe errors we defer to the full maintenance path).
+    """
+    path = _resolve(db_path)
+    if not path.exists():
+        return False
+    conn = _connect(db_path)
+    try:
+        if conn.execute(
+            "SELECT 1 FROM scans WHERE raw_path IS NOT NULL "
+            "AND raw_path NOT LIKE '%.gz' LIMIT 1"
+        ).fetchone():
+            return True
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(vuln_ledger)")}
+        required = {"subscription_name", "subscription_ext_id", "tags_json"}
+        if not required.issubset(cols):
+            return True
+        if conn.execute(
+            "SELECT 1 FROM vuln_ledger WHERE subscription_name IS NULL "
+            "AND subscription_ext_id IS NULL AND tags_json IS NULL LIMIT 1"
+        ).fetchone():
+            return True
+        return False
+    except Exception:
+        # Probe failures should not suppress correctness-maintenance work.
+        return True
+    finally:
+        conn.close()
+
+
 def backfill_rule_inputs(db_path=None) -> dict:
     """Best-effort one-time fill of the v5 domain-rule inputs on pre-v5 ledger rows.
 

@@ -187,6 +187,8 @@ def _compact_legacy_archives() -> dict:
     raises and reads-both means it's purely a disk-space reclaim — see
     ``ledger.compact_archives``. Piggybacks the v5 domain-rule-input backfill (also
     best-effort; see ``ledger.backfill_rule_inputs``)."""
+    if not ledger.needs_startup_maintenance():
+        return {"compressed": 0, "skipped": 0, "failed": 0}
     counts = ledger.compact_archives()
     ledger.backfill_rule_inputs()
     return counts

@@ -171,7 +171,11 @@ h1, h2, h3, h4, h5, h6 { font-weight: 600; letter-spacing: -0.02em; line-height:
 
 /* === Container === */
 .block-container {
-    padding-top: var(--space-5) !important;
+    /* Streamlit's fixed stHeader (Stop/Deploy/kebab toolbar) sits at 3.75rem tall,
+       opaque, above the content. padding-top must clear it or the first elements
+       on a page -- st.info banners, st.progress bars, etc. -- render partially
+       underneath it and appear clipped. Header height + a small breathing gap. */
+    padding-top: calc(3.75rem + var(--space-3)) !important;
     padding-bottom: var(--space-6) !important;
     max-width: 1500px;
     /* No transition on max-width: animating a layout property thrashes reflow, and the

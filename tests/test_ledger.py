@@ -71,6 +71,48 @@ def test_backfill_rule_inputs_never_raises_without_data(tmp_path):
     assert ledger.backfill_rule_inputs(db) == {"updated": 0}
 
 
+def test_needs_startup_maintenance_false_without_db(tmp_path):
+    assert ledger.needs_startup_maintenance(tmp_path / "nope.db") is False
+
+
+def test_needs_startup_maintenance_true_for_legacy_plain_archive(tmp_path, app):
+    db = _db(tmp_path)
+    ledger.persist_flat_scan(
+        _flat_records(app), mode="dry-run", raw=os_vulns.SAMPLE_RESULTS,
+        db_path=db, scan_id="2026-05-29T10:00:00Z",
+    )
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute(
+            "UPDATE vuln_ledger SET subscription_name='known', "
+            "subscription_ext_id='known', tags_json='{}'"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    assert ledger.needs_startup_maintenance(db) is False
+    _make_legacy_plain(db, "2026-05-29T10:00:00Z")
+    assert ledger.needs_startup_maintenance(db) is True
+
+
+def test_needs_startup_maintenance_true_for_pending_domain_backfill(tmp_path, app):
+    db = _db(tmp_path)
+    ledger.persist_flat_scan(
+        _flat_records(app), mode="dry-run", raw=os_vulns.SAMPLE_RESULTS,
+        db_path=db, scan_id="2026-05-29T10:00:00Z",
+    )
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute(
+            "UPDATE vuln_ledger SET subscription_name=NULL, "
+            "subscription_ext_id=NULL, tags_json=NULL"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    assert ledger.needs_startup_maintenance(db) is True
+
+
 def test_persist_flat_scan_roundtrip(tmp_path, app):
     db = _db(tmp_path)
     deltas = ledger.persist_flat_scan(
