@@ -64,6 +64,9 @@ export function swrCall(name, params, onFresh) {
 
 // ------------------------------------------------------------------- hash routing
 
+// Old bookmarks/links to the pages merged into Data keep working.
+const ROUTE_ALIASES = { reports: "data", exports: "data" };
+
 export function parseHash() {
   const hash = location.hash.replace(/^#\/?/, "");
   const [pathPart, queryPart] = hash.split("?");
@@ -75,7 +78,7 @@ export function parseHash() {
       params[decodeURIComponent(k)] = decodeURIComponent(v || "");
     }
   }
-  return { route: pathPart || "overview", params };
+  return { route: ROUTE_ALIASES[pathPart] || pathPart || "overview", params };
 }
 
 export function buildHash(route, params) {

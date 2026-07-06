@@ -5,7 +5,7 @@
 import { nowIso, type Rec } from "../domain/util";
 import { appendRows, readAll, updateWhere, TABS } from "./sheetsDb";
 
-export type JobKind = "scan" | "delete" | "compact";
+export type JobKind = "scan" | "delete" | "compact" | "import";
 export type JobPhase =
   | "FETCHING"
   | "RECONCILING"

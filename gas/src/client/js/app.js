@@ -7,16 +7,14 @@ import { clear, el, statusPill, toast } from "./ui.js";
 import { renderOverview } from "./pages/overview.js";
 import { renderMttr } from "./pages/mttr.js";
 import { renderHistory } from "./pages/history.js";
-import { renderReports } from "./pages/reports.js";
-import { renderExports } from "./pages/exports.js";
+import { renderData } from "./pages/data.js";
 import { renderSettings } from "./pages/settings.js";
 
 const PAGES = {
   overview: { title: "OS vulnerabilities", group: "Security", render: renderOverview },
   mttr: { title: "MTTR & SLA", group: "Security", render: renderMttr },
   scan_history: { title: "Scan History", group: "Security", render: renderHistory },
-  reports: { title: "Reports", group: "Data", render: renderReports },
-  exports: { title: "Exports", group: "Data", render: renderExports },
+  data: { title: "Data", group: "Data", render: renderData },
   settings: { title: "Settings", group: "Preferences", render: renderSettings },
 };
 

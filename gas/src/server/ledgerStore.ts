@@ -11,6 +11,12 @@
 
 import type { Checkpoint } from "../domain/compaction";
 import {
+  importBundleCore,
+  ImportValidationError,
+  type ImportCounts,
+  type MigrationBundle,
+} from "../domain/importMerge";
+import {
   baseRows,
   emptyState,
   latestScan,
@@ -360,6 +366,90 @@ export function deleteScans(scanIds: string[], jobId?: string): DeleteResult {
     archive.trashFile(r.obs_ref);
   }
   return result;
+}
+
+// -------------------------------------------------------------------------- import
+
+/**
+ * Merge a legacy Streamlit migration bundle into the ledger (journaled, one-shot).
+ * Imported scans arrive sealed with no raw archives; a synthetic compaction
+ * checkpoint pins them as the rebuild baseline, and the existing GAS scans are
+ * replayed over the imported history (see domain/importMerge.ts).
+ */
+export function importBundle(bundle: MigrationBundle): ImportCounts {
+  const state = loadState();
+  if (readAll(TABS.compactions).length) {
+    throw new ImportValidationError(
+      "This ledger already has a compaction record (a prior compaction or import) — " +
+        "the one-shot migration import needs a never-compacted ledger.",
+    );
+  }
+  const nowMs = Date.now();
+  const compactionId = `imp-${nowIso(nowMs).replace(/[:]/g, "")}`;
+
+  // Pure merge first: every validation throw lands BEFORE any tab/Drive write.
+  const { state: merged, checkpoint, observationsByScan, counts } = importBundleCore(
+    state,
+    bundle,
+    readPayloadForRow,
+    { compactionId },
+  );
+  if (!counts.scans_imported && !counts.vulns_imported && !counts.episodes_imported) {
+    return counts;
+  }
+
+  const jobId = newJobId("import", nowMs);
+  const journalRef = archive.writeJournal(jobId, state);
+  createJob(
+    {
+      job_id: jobId,
+      kind: "import",
+      phase: "REPLAYING",
+      scan_id: null,
+      cursor: null,
+      page: 0,
+      findings_so_far: 0,
+      page_size: 0,
+      total_count: 0,
+      params_json: JSON.stringify({
+        scans: counts.scans_imported,
+        vulns: counts.vulns_imported,
+        episodes: counts.episodes_imported,
+      }),
+      journal_ref: journalRef,
+      error: null,
+    },
+    nowMs,
+  );
+
+  // Regenerate the replayed GAS scans' obs files (imported scans stay obs-less).
+  for (const row of merged.scans) {
+    const obs = observationsByScan[row.scan_id];
+    if (obs) row.obs_ref = archive.writeObservations(row.scan_id, obs);
+  }
+
+  // The synthetic compaction record — without it, delete-rebuild would replay from
+  // nothing and silently drop every imported ledger row.
+  const checkpointRef = archive.writeCheckpoint(compactionId, checkpoint);
+  appendRows(TABS.compactions, [
+    {
+      compaction_id: compactionId,
+      ts: nowIso(nowMs),
+      floor_scan_id: checkpoint.floor_scan_id,
+      floor_ts: checkpoint.floor_ts,
+      scans_sealed: counts.scans_imported,
+      episodes_created: counts.episodes_imported + counts.episodes_converted,
+      observations_pruned: 0,
+      archive_bytes_freed: 0,
+      db_bytes_freed: 0,
+      checkpoint_ref: checkpointRef,
+    },
+  ]);
+
+  writeStateTables(merged);
+  updateJob(jobId, { phase: "DONE" }, nowMs);
+  archive.trashFile(journalRef);
+  return counts;
 }
 
 // -------------------------------------------------------------------------- compact

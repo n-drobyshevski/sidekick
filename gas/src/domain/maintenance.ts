@@ -18,11 +18,12 @@ import {
   persistGroupedScan,
   reinsertScanRow,
   scansAsc,
+  type EpisodeRow,
   type LedgerState,
   type ScanRow,
 } from "./ledgerCore";
 import { mttrFromLedger } from "./lifecycle";
-import type { Observation } from "./reconcile";
+import type { LedgerRow, Observation } from "./reconcile";
 import { extractNodes } from "./transform";
 import { trendFromFrames } from "./trend";
 import { nowIso, parseTs, type Rec } from "./util";
@@ -36,6 +37,112 @@ export type PayloadReader = (row: ScanRow) => unknown | null;
 /** Raw nested nodes from an archived payload (ledger._records_from_payload). */
 export function recordsFromPayload(payload: unknown): Rec[] {
   return extractNodes(payload) ?? [];
+}
+
+export interface ReplayItem {
+  row: ScanRow;
+  payload: unknown | null;
+}
+
+/**
+ * Pre-load + validate every UNSEALED row's payload BEFORE the caller mutates
+ * anything. A flat scan with a missing payload throws LedgerRebuildError with
+ * `missingMsg(scanId)` as the message.
+ */
+export function loadReplayPayloads(
+  rows: ScanRow[],
+  readPayload: PayloadReader,
+  missingMsg: (scanId: string) => string,
+): ReplayItem[] {
+  const replay: ReplayItem[] = [];
+  for (const r of rows) {
+    if (r.sealed) continue;
+    const payload = readPayload(r);
+    if (payload === null && r.shape === "flat") {
+      throw new LedgerRebuildError(missingMsg(r.scan_id));
+    }
+    replay.push({ row: r, payload });
+  }
+  return replay;
+}
+
+/**
+ * Replay pre-validated scans into `rebuilt` in the given order, re-running the
+ * persist writers. Returns each replayed flat scan's observations (for the caller
+ * to re-write obs files).
+ */
+export function replayScans(
+  rebuilt: LedgerState,
+  replay: ReplayItem[],
+): Record<string, Observation[]> {
+  const observationsByScan: Record<string, Observation[]> = {};
+  for (const { row, payload } of replay) {
+    if (row.shape === "grouped") {
+      if (payload === null) {
+        // Grouped scans don't affect the ledger; the stored row alone is faithful.
+        reinsertScanRow(rebuilt, row);
+      } else {
+        persistGroupedScan(rebuilt, extractNodes(payload), {
+          mode: row.mode,
+          scanId: row.scan_id,
+          scannedSeverities: parseSeverities(row.severities),
+          rawRef: row.raw_ref,
+        });
+      }
+    } else {
+      const { observations } = persistFlatScan(rebuilt, recordsFromPayload(payload), {
+        mode: row.mode,
+        scanId: row.scan_id,
+        scannedSeverities: parseSeverities(row.severities),
+        rawRef: row.raw_ref,
+        obsRef: row.obs_ref,
+      });
+      observationsByScan[row.scan_id] = observations;
+    }
+  }
+  return observationsByScan;
+}
+
+/**
+ * Live ledger rows that roll into resolved_episodes at a seal floor: only
+ * checkpoint-RESOLVED rows whose live state is untouched post-floor — still
+ * RESOLVED with the same resolved_at, last seen by a sealed scan.
+ */
+export function settledEpisodeRows(
+  checkpointLedger: LedgerRow[],
+  ledger: Record<string, LedgerRow>,
+  sealedIds: Set<string>,
+): LedgerRow[] {
+  const episodes: LedgerRow[] = [];
+  for (const cpRow of checkpointLedger) {
+    if (cpRow.status !== "RESOLVED") continue;
+    const live = ledger[cpRow.vuln_key];
+    if (
+      live === undefined ||
+      live.status !== "RESOLVED" ||
+      live.resolved_at !== cpRow.resolved_at ||
+      !sealedIds.has(live.last_scan_id ?? "")
+    ) {
+      continue;
+    }
+    episodes.push(live);
+  }
+  return episodes;
+}
+
+/** A converted ledger row as its resolved_episodes record. */
+export function toEpisodeRow(live: LedgerRow, compactionId: string): EpisodeRow {
+  return {
+    vuln_key: live.vuln_key,
+    cve: live.cve,
+    severity: live.severity,
+    first_seen: live.first_seen,
+    resolved_at: live.resolved_at,
+    resolution_src: live.resolution_src,
+    reopened_count: Number(live.reopened_count ?? 0),
+    compaction_id: compactionId,
+    superseded_by_scan: null,
+  };
 }
 
 export interface DeleteResult {
@@ -82,18 +189,13 @@ export function deleteScansCore(
   const survivors = rows.filter((r) => !present.has(r.scan_id));
 
   // Pre-load + validate every UNSEALED survivor's payload BEFORE mutating anything.
-  const replay: Array<{ row: ScanRow; payload: unknown | null }> = [];
-  for (const r of survivors) {
-    if (r.sealed) continue;
-    const payload = readPayload(r);
-    if (payload === null && r.shape === "flat") {
-      throw new LedgerRebuildError(
-        `Cannot delete: the archived payload for surviving scan ${r.scan_id} is ` +
-          `missing, so the ledger can't be rebuilt.`,
-      );
-    }
-    replay.push({ row: r, payload });
-  }
+  const replay = loadReplayPayloads(
+    survivors,
+    readPayload,
+    (scanId) =>
+      `Cannot delete: the archived payload for surviving scan ${scanId} is ` +
+      `missing, so the ledger can't be rebuilt.`,
+  );
 
   // Rebuild: sealed scans rows stay; the checkpoint's ledger (minus keys already in
   // resolved_episodes) seeds vuln_ledger; supersessions reset (post-floor survivors
@@ -110,31 +212,7 @@ export function deleteScansCore(
     }
   }
 
-  const observationsByScan: Record<string, Observation[]> = {};
-  for (const { row, payload } of replay) {
-    if (row.shape === "grouped") {
-      if (payload === null) {
-        // Grouped scans don't affect the ledger; the stored row alone is faithful.
-        reinsertScanRow(rebuilt, row);
-      } else {
-        persistGroupedScan(rebuilt, extractNodes(payload), {
-          mode: row.mode,
-          scanId: row.scan_id,
-          scannedSeverities: parseSeverities(row.severities),
-          rawRef: row.raw_ref,
-        });
-      }
-    } else {
-      const { observations } = persistFlatScan(rebuilt, recordsFromPayload(payload), {
-        mode: row.mode,
-        scanId: row.scan_id,
-        scannedSeverities: parseSeverities(row.severities),
-        rawRef: row.raw_ref,
-        obsRef: row.obs_ref,
-      });
-      observationsByScan[row.scan_id] = observations;
-    }
-  }
+  const observationsByScan = replayScans(rebuilt, replay);
 
   return {
     state: rebuilt,
@@ -318,23 +396,9 @@ export function compactLedgerCore(
   const floorRow = flatCandidates.length ? flatCandidates[flatCandidates.length - 1] : null;
   const checkpoint = buildCheckpoint(rows, newly, prevCheckpoint, floorRow, readPayload);
 
-  // Episode conversion: only checkpoint-RESOLVED rows whose live state is untouched
-  // post-floor — still RESOLVED with the same resolved_at, last seen by a sealed scan.
+  // Episode conversion at the seal floor (shared with the migration import).
   const sealedIds = new Set(candidates.map((r) => r.scan_id));
-  const episodes = [];
-  for (const cpRow of checkpoint.ledger) {
-    if (cpRow.status !== "RESOLVED") continue;
-    const live = state.ledger[cpRow.vuln_key];
-    if (
-      live === undefined ||
-      live.status !== "RESOLVED" ||
-      live.resolved_at !== cpRow.resolved_at ||
-      !sealedIds.has(live.last_scan_id ?? "")
-    ) {
-      continue;
-    }
-    episodes.push(live);
-  }
+  const episodes = settledEpisodeRows(checkpoint.ledger, state.ledger, sealedIds);
 
   const newlyIds = newly.map((r) => r.scan_id);
   const obsCount = newlyIds.reduce(
@@ -364,17 +428,7 @@ export function compactLedgerCore(
     ledger: {},
     episodes: [
       ...state.episodes.map((e) => ({ ...e })),
-      ...episodes.map((e) => ({
-        vuln_key: e.vuln_key,
-        cve: e.cve,
-        severity: e.severity,
-        first_seen: e.first_seen,
-        resolved_at: e.resolved_at,
-        resolution_src: e.resolution_src,
-        reopened_count: Number(e.reopened_count ?? 0),
-        compaction_id: options.compactionId,
-        superseded_by_scan: null,
-      })),
+      ...episodes.map((e) => toEpisodeRow(e, options.compactionId)),
     ],
   };
   const converted = new Set(episodes.map((e) => e.vuln_key));
