@@ -4,8 +4,9 @@
 // Creates (when absent) and records in Script Properties:
 //   LEDGER_SPREADSHEET_ID  — "Wiz Sidekick Ledger" spreadsheet with all tabs
 //   ARCHIVE_FOLDER_ID      — "wiz-sidekick" Drive folder with the archive skeleton
-// and installs the daily scan trigger. Wiz credentials (WIZ_CLIENT_ID/SECRET/API_URL,
-// WIZ_PROJECT_ID_V2) must be set by hand — setup() never touches secrets.
+// and installs the daily scan trigger. Wiz credentials must be set by hand — setup()
+// never touches secrets: WIZ_API_URL, WIZ_PROJECT_ID_V2, and either WIZ_API_TOKEN (a
+// raw bearer token) or WIZ_CLIENT_ID/WIZ_CLIENT_SECRET (OAuth client-credentials).
 
 import { ensureFolders } from "./archiveStore";
 import { DEFAULT_WIZ_AUTH_URL, getProp, PROP_KEYS, setProp } from "./props";

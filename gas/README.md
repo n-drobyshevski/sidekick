@@ -59,10 +59,17 @@ persist → delete-replay → compaction flows against the SQLite implementation
    spreadsheet, the `wiz-sidekick` Drive folder skeleton, the daily scan trigger
    (05:00 UTC), and records their ids in Script Properties.
 5. Set the remaining Script Properties by hand (never committed anywhere):
-   - `WIZ_CLIENT_ID` / `WIZ_CLIENT_SECRET` — a Wiz service account
    - `WIZ_API_URL` — your tenant GraphQL endpoint, e.g. `https://api.<region>.app.wiz.io/graphql`
+   - Authentication — pick **one**:
+     - `WIZ_API_TOKEN` — a Wiz service-account bearer token, used directly (simplest;
+       matches `js_request_exemple.js`). It **expires and is not auto-refreshed**, so the
+       daily scan will 401 once it lapses — good for quick validation, less so for the
+       standing schedule.
+     - `WIZ_CLIENT_ID` / `WIZ_CLIENT_SECRET` — a Wiz service account; the app performs the
+       OAuth client-credentials exchange and auto-refreshes the token. Preferred for the
+       daily scan. (`WIZ_AUTH_URL` defaults to `https://auth.app.wiz.io/oauth/token`.)
+     - If both are set, `WIZ_API_TOKEN` wins.
    - `WIZ_PROJECT_ID_V2` — the Wiz project id the scan is scoped to
-   - (`WIZ_AUTH_URL` defaults to `https://auth.app.wiz.io/oauth/token`)
    Without credentials the app runs in dry-run mode over sample data.
 6. Deploy: **Deploy → New deployment → Web app** (execute as you, access: domain),
    or `npm run deploy`.
