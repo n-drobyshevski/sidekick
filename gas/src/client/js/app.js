@@ -65,6 +65,11 @@ function renderSidebar(sidebar, data) {
         {
           class: `nav-link${key === active ? " active" : ""}`,
           href: `#/${key}`,
+          // index.html sets <base target="_top"> so external links escape the GAS
+          // sandbox iframe. Without an explicit _self, hash links inherit it and
+          // navigate the top window to the sandbox's own googleusercontent URL —
+          // which, loaded bare, is a blank page. _self keeps routing in-frame.
+          target: "_self",
           "aria-current": key === active ? "page" : null,
         },
         page.title,

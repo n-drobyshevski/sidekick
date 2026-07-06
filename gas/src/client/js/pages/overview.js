@@ -7,7 +7,7 @@ import { severityBar } from "../charts.js";
 import { bootstrap, listJoin, listSplit, setParams } from "../store.js";
 import {
   changeChip, clear, confirmDialog, downloadText, el, emptyState, fmtDate, kpiCard,
-  openSheet, pager, sectionLabel, sevBadge, toast,
+  nvdUrl, openSheet, pager, sectionLabel, sevBadge, toast,
 } from "../ui.js";
 
 export async function renderOverview(main, params) {
@@ -16,7 +16,7 @@ export async function renderOverview(main, params) {
     el("h1", {}, "OS vulnerabilities"),
     el("p", { class: "page-sub" },
       "CVEs with a fix available on host workloads, from the Wiz Security Graph. ",
-      el("a", { href: "#/mttr" }, "Remediation performance →"),
+      el("a", { href: "#/mttr", target: "_self" }, "Remediation performance →"),
     ),
   );
 
@@ -41,11 +41,12 @@ export async function renderOverview(main, params) {
   };
 
   const kpiRow = el("div", { class: "kpi-row" });
+  const sevChartCanvas = el("canvas", { id: "sev-chart" });
   const chartCard = el("div", { class: "chart-card" },
     el("h3", {}, "Severity breakdown"),
     el("div", { class: "small muted", style: "margin-bottom:8px" },
       "Click a bar to filter the table; click again to clear."),
-    el("div", { class: "chart-box" }, el("canvas", { id: "sev-chart" })),
+    el("div", { class: "chart-box" }, sevChartCanvas),
   );
   const sevCards = el("div", { class: "kpi-row", style: "margin-top:14px" });
   const filterBar = el("div", { class: "filter-bar", role: "search" });
@@ -209,12 +210,14 @@ export async function renderOverview(main, params) {
     );
 
     // Severity chart + cards reflect the filtered set.
-    severityBar(document.getElementById("sev-chart"), res.counts, boot.palette, (sev) => {
-      toggle(state.sev, sev);
-      state.page = 0;
-      mirror();
-      buildFilterBar();
-      load();
+    requestAnimationFrame(() => {
+      severityBar(sevChartCanvas, res.counts, boot.palette, (sev) => {
+        toggle(state.sev, sev);
+        state.page = 0;
+        mirror();
+        buildFilterBar();
+        load();
+      });
     });
 
     clear(sevCards);
@@ -292,7 +295,7 @@ export async function renderOverview(main, params) {
         "aria-label": `Open detail for ${r.name}` },
         el("td", {}, sevBadge(r._sev)),
         el("td", {}, el("a", {
-          href: `https://nvd.nist.gov/vuln/detail/${encodeURIComponent(r.name || "")}`,
+          href: nvdUrl(r.name),
           target: "_blank", rel: "noopener",
           onclick: (e) => e.stopPropagation(),
         }, r.name || "—")),
@@ -366,7 +369,7 @@ export async function renderOverview(main, params) {
         el("div", { class: "sheet-section" },
           el("a", {
             class: "btn", target: "_blank", rel: "noopener",
-            href: `https://nvd.nist.gov/vuln/detail/${encodeURIComponent(rec.name || "")}`,
+            href: nvdUrl(rec.name),
             style: "text-decoration:none; display:inline-block; padding:6px 14px",
           }, "Open in NVD ↗"),
         ),

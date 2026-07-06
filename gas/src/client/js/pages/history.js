@@ -6,7 +6,7 @@ import { openResolvedLines, trendLine } from "../charts.js";
 import { bootstrap } from "../store.js";
 import {
   clear, confirmDialog, downloadText, el, emptyState, fmtDays, fmtDate, fmtDateTime,
-  kpiCard, pager, sectionLabel, sevBadge, toast,
+  kpiCard, nvdUrl, pager, sectionLabel, sevBadge, toast,
 } from "../ui.js";
 
 export async function renderHistory(main, _params, ctx) {
@@ -112,16 +112,21 @@ export async function renderHistory(main, _params, ctx) {
   // ---- trend charts
   const trends = await call("api_getMttrTrend", {});
   if (trends.trend.length) {
+    const openResolvedCanvas = el("canvas", { id: "hist-open-resolved" });
+    const mttrCanvas = el("canvas", { id: "hist-mttr" });
+
     chartsHost.append(
       el("div", { class: "chart-card" }, el("h3", {}, "Open vs resolved"),
-        el("div", { class: "chart-box" }, el("canvas", { id: "hist-open-resolved" }))),
+        el("div", { class: "chart-box" }, openResolvedCanvas)),
       el("div", { class: "chart-card" }, el("h3", {}, "MTTR trend"),
-        el("div", { class: "chart-box" }, el("canvas", { id: "hist-mttr" }))),
+        el("div", { class: "chart-box" }, mttrCanvas)),
     );
-    openResolvedLines(document.getElementById("hist-open-resolved"), trends.trend);
-    trendLine(document.getElementById("hist-mttr"),
-      trends.trend.filter((t) => t.median_days !== null)
-        .map((t) => ({ x: t.date, y: t.median_days })), { yLabel: "days" });
+    requestAnimationFrame(() => {
+      openResolvedLines(openResolvedCanvas, trends.trend);
+      trendLine(mttrCanvas,
+        trends.trend.filter((t) => t.median_days !== null)
+          .map((t) => ({ x: t.date, y: t.median_days })), { yLabel: "days" });
+    });
   }
 
   // ---- vulnerability base
@@ -180,7 +185,7 @@ export async function renderHistory(main, _params, ctx) {
       tbody.append(el("tr", {},
         el("td", {}, sevBadge(r.severity)),
         el("td", {}, r.cve
-          ? el("a", { href: `https://nvd.nist.gov/vuln/detail/${encodeURIComponent(r.cve)}`,
+          ? el("a", { href: nvdUrl(r.cve),
               target: "_blank", rel: "noopener" }, r.cve)
           : "—"),
         el("td", { title: r.asset_name || "" }, r.asset_name || "—"),
