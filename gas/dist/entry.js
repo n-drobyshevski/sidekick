@@ -9,6 +9,10 @@ function include(f) { return Server.include(f); }
 // scan trigger, and records their IDs in Script Properties. Run from the GAS editor.
 function setup() { return Server.setup(); }
 
+// Wiz connectivity check — run from the GAS editor to validate credentials; it prints
+// which auth/query step fails (secret-safe) to the execution log. Never used by a scan.
+function wizDiagnostic() { return Server.wizDiagnostic(); }
+
 // Trigger handlers (names referenced by ScriptApp.newTrigger calls).
 function trigger_dailyScan() { Server.jobs.dailyScan(); }
 function trigger_continueScan(e) { Server.jobs.continueJob(e); }
