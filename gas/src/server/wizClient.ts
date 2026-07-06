@@ -1,0 +1,168 @@
+// Wiz GraphQL client on UrlFetchApp — the replacement for the wiz_sdk usage in
+// os_vulns.py. OAuth2 client-credentials token cached in CacheService; QUERY and the
+// baseline VARIABLES are verbatim from os_vulns.py (wizQuery.ts is generated).
+
+import { apiSeverityFilter } from "../domain/settingsLogic";
+import type { Rec } from "../domain/util";
+import { DEFAULT_WIZ_AUTH_URL, getProp, PROP_KEYS, requireProp } from "./props";
+import { BASE_VARIABLES, MAX_PAGES, PAGE_SIZE, PAGE_SIZE_FALLBACK, QUERY } from "./wizQuery";
+
+export class WizQueryError extends Error {}
+
+/** The tenant rejected an injected (incremental) filter — quick refresh must degrade. */
+export class WizDeltaFilterError extends WizQueryError {}
+
+const TOKEN_CACHE_KEY = "wiz_token";
+
+export function getToken(forceRefresh = false): string {
+  const cache = CacheService.getScriptCache();
+  if (!forceRefresh) {
+    const cached = cache.get(TOKEN_CACHE_KEY);
+    if (cached) return cached;
+  }
+  const authUrl = getProp(PROP_KEYS.wizAuthUrl) ?? DEFAULT_WIZ_AUTH_URL;
+  const response = UrlFetchApp.fetch(authUrl, {
+    method: "post",
+    contentType: "application/x-www-form-urlencoded",
+    payload: {
+      grant_type: "client_credentials",
+      audience: "wiz-api",
+      client_id: requireProp(PROP_KEYS.wizClientId),
+      client_secret: requireProp(PROP_KEYS.wizClientSecret),
+    },
+    muteHttpExceptions: true,
+  });
+  if (response.getResponseCode() !== 200) {
+    throw new WizQueryError(
+      `Wiz token request failed (${response.getResponseCode()}): ` +
+        response.getContentText().slice(0, 500),
+    );
+  }
+  const body = JSON.parse(response.getContentText()) as Rec;
+  const token = body["access_token"];
+  if (typeof token !== "string" || !token) {
+    throw new WizQueryError("Wiz token response carried no access_token.");
+  }
+  const expiresIn = Number(body["expires_in"] ?? 3600);
+  const ttl = Math.max(60, Math.min(Math.trunc(expiresIn) - 300, 21_600));
+  cache.put(TOKEN_CACHE_KEY, token, ttl);
+  return token;
+}
+
+export interface PageResult {
+  nodes: Rec[];
+  hasNextPage: boolean;
+  endCursor: string | null;
+  totalCount: number | null;
+}
+
+/** Deep-ish clone of the baseline variables (they contain nested filter objects). */
+function baseVariables(): Rec {
+  return JSON.parse(JSON.stringify(BASE_VARIABLES)) as Rec;
+}
+
+export interface VariableOptions {
+  severities?: string[] | null; // scan scope; null/full scope -> no severity filter
+  extraFilterBy?: Rec | null; // e.g. {updatedAt: {after: iso}} for incremental
+  first?: number;
+  after?: string | null;
+  includeTotalCount?: boolean;
+}
+
+export function buildVariables(options: VariableOptions = {}): Rec {
+  const vars = baseVariables();
+  const filterBy = vars["filterBy"] as Rec;
+  const projectId = getProp(PROP_KEYS.wizProjectIdV2);
+  if (projectId) filterBy["projectIdV2"] = { equals: [projectId] };
+  const sevFilter =
+    options.severities === undefined ? null : apiSeverityFilter(options.severities);
+  if (sevFilter) filterBy["severity"] = sevFilter;
+  for (const [k, v] of Object.entries(options.extraFilterBy ?? {})) filterBy[k] = v;
+  vars["first"] = options.first ?? PAGE_SIZE;
+  if (options.after) vars["after"] = options.after;
+  vars["includeTotalCount"] = Boolean(options.includeTotalCount);
+  return vars;
+}
+
+/** One GraphQL POST with retry on 429/5xx and one token refresh on 401. */
+export function queryPage(variables: Rec, isDeltaFetch = false): PageResult {
+  const apiUrl = requireProp(PROP_KEYS.wizApiUrl);
+  let token = getToken();
+  let lastError = "";
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const response = UrlFetchApp.fetch(apiUrl, {
+      method: "post",
+      contentType: "application/json",
+      headers: { Authorization: `Bearer ${token}` },
+      payload: JSON.stringify({ query: QUERY, variables }),
+      muteHttpExceptions: true,
+    });
+    const code = response.getResponseCode();
+    if (code === 401 && attempt === 0) {
+      token = getToken(true);
+      continue;
+    }
+    if (code === 429 || code >= 500) {
+      lastError = `HTTP ${code}`;
+      Utilities.sleep(1000 * Math.pow(2, attempt));
+      continue;
+    }
+    if (code !== 200) {
+      throw new WizQueryError(
+        `Wiz query failed (HTTP ${code}): ${response.getContentText().slice(0, 500)}`,
+      );
+    }
+    const body = JSON.parse(response.getContentText()) as Rec;
+    const data = body["data"] as Rec | undefined;
+    const connection = data?.["vulnerabilityFindings"] as Rec | undefined;
+    if (!connection) {
+      const errors = JSON.stringify(body["errors"] ?? body).slice(0, 500);
+      // An errors-only response on a delta fetch almost certainly means the tenant
+      // rejected the injected filter (e.g. updatedAt) — the WizDeltaFilterError signal
+      // client.fetch_findings_delta relies on.
+      if (isDeltaFetch) {
+        throw new WizDeltaFilterError(`Wiz rejected the incremental filter: ${errors}`);
+      }
+      throw new WizQueryError(`Wiz response carried no findings connection: ${errors}`);
+    }
+    const pageInfo = (connection["pageInfo"] as Rec) ?? {};
+    const rawTotal = connection["totalCount"];
+    return {
+      nodes: (connection["nodes"] as Rec[]) ?? [],
+      hasNextPage: Boolean(pageInfo["hasNextPage"]),
+      endCursor: (pageInfo["endCursor"] as string | null) ?? null,
+      totalCount: typeof rawTotal === "number" ? rawTotal : null,
+    };
+  }
+  throw new WizQueryError(`Wiz query failed after retries (${lastError}).`);
+}
+
+export interface FetchPageOptions {
+  severities?: string[] | null;
+  extraFilterBy?: Rec | null;
+  cursor?: string | null;
+  pageNumber: number; // 0-based; page 0 requests totalCount for progress
+}
+
+/**
+ * Fetch one page of the findings walk, falling back once to the smaller page size
+ * (the port of the first-page size probe; GAS caps at 500/250 for the 50MB response
+ * and V8 heap limits — never the Python 5000).
+ */
+export function fetchPage(options: FetchPageOptions): PageResult {
+  const common = {
+    severities: options.severities,
+    extraFilterBy: options.extraFilterBy,
+    after: options.cursor ?? null,
+    includeTotalCount: options.pageNumber === 0,
+  };
+  const isDelta = Boolean(options.extraFilterBy && Object.keys(options.extraFilterBy).length);
+  try {
+    return queryPage(buildVariables({ ...common, first: PAGE_SIZE }), isDelta);
+  } catch (e) {
+    if (e instanceof WizDeltaFilterError) throw e;
+    return queryPage(buildVariables({ ...common, first: PAGE_SIZE_FALLBACK }), isDelta);
+  }
+}
+
+export { MAX_PAGES, PAGE_SIZE, PAGE_SIZE_FALLBACK };
