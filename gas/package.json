@@ -14,7 +14,7 @@
     "deploy": "npm run push && clasp deploy"
   },
   "devDependencies": {
-    "@google/clasp": "^2.4.2",
+    "@google/clasp": "^3.3.0",
     "@types/google-apps-script": "^1.0.83",
     "esbuild": "^0.21.5",
     "typescript": "^5.4.5",

@@ -1,6 +1,5 @@
+# dist/ build outputs are committed on purpose: they enable no-toolchain deployment
+# (copy-paste into the Apps Script editor) on machines where npm is blocked.
+# Rebuild with `npm run build` and commit the result after source changes.
 node_modules/
-dist/server.js
-dist/js_app.html
-dist/styles.html
-dist/index.html
 .clasprc.json
