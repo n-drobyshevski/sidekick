@@ -1,0 +1,8 @@
+/* Placeholder — the full DESIGN.md port lands in Phase 4. */
+:root {
+  --accent: #2563eb;
+}
+body {
+  font-family: system-ui, sans-serif;
+  margin: 0;
+}
