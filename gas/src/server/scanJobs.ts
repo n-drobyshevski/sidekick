@@ -16,7 +16,7 @@ import * as history from "./historyStore";
 import { activeJob, createJob, getJob, newJobId, updateJob, type JobRow } from "./jobsStore";
 import * as ledgerStore from "./ledgerStore";
 import { recoverIfNeeded, withScriptLock } from "./locks";
-import { hasWizCredentials } from "./props";
+import { deleteProp, getProp, hasWizCredentials, setProp } from "./props";
 import { SAMPLE_FLAT, SAMPLE_GROUPED } from "./sampleData";
 import * as settingsStore from "./settingsStore";
 import { fetchPage, MAX_PAGES, WizDeltaFilterError } from "./wizClient";
@@ -27,6 +27,44 @@ const CONTINUE_DELAY_MS = 30_000;
 const CONTINUE_HANDLER = "trigger_continueScan";
 const DELTA_OVERLAP_MINUTES = 15;
 const STALE_JOB_MS = 30 * 60_000; // no update + no pending trigger = crashed job
+
+// Cancel is signalled through a Script Property (lock-free) rather than the jobs tab:
+// a running hop holds the mutation lock for its whole duration, so a lock-bound write
+// would block. The fetch loop polls this flag between pages and bails.
+class ScanCancelled extends Error {}
+const cancelKey = (jobId: string) => `CANCEL_${jobId}`;
+function isCancelRequested(jobId: string): boolean {
+  return Boolean(getProp(cancelKey(jobId)));
+}
+function clearCancel(jobId: string): void {
+  deleteProp(cancelKey(jobId));
+}
+
+/**
+ * Request cancellation of a running scan (lock-free). Honored only during FETCHING —
+ * once RECONCILING/PERSISTING starts, the `scans` row is imminent and the job finishes
+ * (seconds). Returns immediately; the job flips to CANCELLED on the next page boundary.
+ */
+export function cancelScan(jobId: string): { jobId: string; message: string } {
+  const job = getJob(jobId);
+  if (!job || job.kind !== "scan") return { jobId, message: "No such scan." };
+  if (job.phase === "DONE" || job.phase === "FAILED" || job.phase === "CANCELLED") {
+    return { jobId, message: "Scan already finished." };
+  }
+  setProp(cancelKey(jobId), "1");
+  return { jobId, message: "Stopping scan…" };
+}
+
+/** Mark a FETCHING job cancelled and drop its partial (never-committed) archive. */
+function finalizeCancel(job: JobRow): void {
+  try {
+    if (job.scan_id) archive.trashScanArchive(archive.scanFolder(job.scan_id).getId());
+  } catch {
+    // best-effort cleanup — the scan row was never appended, so nothing is committed
+  }
+  updateJob(job.job_id, { phase: "CANCELLED", error: null });
+  clearCancel(job.job_id);
+}
 
 // Slim records: the subset of node fields reconciliation and the findings table read.
 // Raw pages in Drive keep the full nodes for the drill-down detail and raw exports.
@@ -99,6 +137,7 @@ export function startScan(options: { incremental?: boolean; sampleShape?: string
       page: 0,
       findings_so_far: 0,
       page_size: 0,
+      total_count: 0,
       params_json: JSON.stringify({
         mode: "live",
         severities: settingsStore.getFetchSeverities(),
@@ -125,6 +164,7 @@ function reclaimStaleJob(job: JobRow): boolean {
     (t) => t.getHandlerFunction() === CONTINUE_HANDLER,
   );
   if (hasTrigger) return false;
+  clearCancel(job.job_id);
   updateJob(job.job_id, {
     phase: "FAILED",
     error: "Reclaimed: the job stalled with no pending continuation.",
@@ -154,6 +194,7 @@ function startIncremental(): StartResult {
     page: 0,
     findings_so_far: 0,
     page_size: 0,
+    total_count: 0,
     params_json: JSON.stringify({
       mode: "incremental",
       severities: baselineScope,
@@ -214,9 +255,14 @@ function step(job: JobRow, budgetMs = BUDGET_MS): void {
   let cursor = job.cursor;
   let page = job.page;
   let findings = job.findings_so_far;
+  let totalCount = job.total_count;
 
   try {
     for (;;) {
+      // Stop-button check: bail before spending another Wiz page. Honored only here,
+      // during FETCHING — nothing is committed yet (the scans row is appended last).
+      if (isCancelRequested(job.job_id)) throw new ScanCancelled();
+
       const result = fetchPage({
         severities: params.severities,
         extraFilterBy: params.extraFilterBy,
@@ -231,7 +277,9 @@ function step(job: JobRow, budgetMs = BUDGET_MS): void {
       page += 1;
       findings += result.nodes.length;
       cursor = result.endCursor;
-      updateJob(job.job_id, { cursor, page, findings_so_far: findings });
+      // totalCount arrives only on page 0; keep it once seen so the UI can show a %.
+      if (result.totalCount !== null) totalCount = result.totalCount;
+      updateJob(job.job_id, { cursor, page, findings_so_far: findings, total_count: totalCount });
 
       if (!result.hasNextPage || page >= MAX_PAGES) break;
       if (Date.now() - started > budgetMs) {
@@ -245,7 +293,12 @@ function step(job: JobRow, budgetMs = BUDGET_MS): void {
     updateJob(job.job_id, { phase: "RECONCILING" });
     finishScan(job.job_id, scanId, params, slim);
   } catch (e) {
+    if (e instanceof ScanCancelled) {
+      finalizeCancel(job);
+      return;
+    }
     if (e instanceof WizDeltaFilterError) {
+      clearCancel(job.job_id);
       updateJob(job.job_id, {
         phase: "FAILED",
         error:
@@ -254,12 +307,16 @@ function step(job: JobRow, budgetMs = BUDGET_MS): void {
       });
       return;
     }
+    clearCancel(job.job_id);
     updateJob(job.job_id, { phase: "FAILED", error: String(e).slice(0, 1000) });
     throw e;
   }
 }
 
 function finishScan(jobId: string, scanId: string, params: ScanParams, slim: Rec[]): void {
+  // Past FETCHING the scan finishes (seconds) rather than cancelling; drop any pending
+  // Stop request so its flag can't outlive the job.
+  clearCancel(jobId);
   let records = slim;
   if (params.incremental) {
     if (!slim.length) {
@@ -359,6 +416,10 @@ export function continueJob(_e?: unknown): void {
     const job = activeJob();
     if (!job || job.kind !== "scan") return;
     if (job.phase === "FETCHING") {
+      if (isCancelRequested(job.job_id)) {
+        finalizeCancel(job);
+        return;
+      }
       step(job);
     } else if (job.phase === "RECONCILING") {
       const params = JSON.parse(job.params_json ?? "{}") as ScanParams;

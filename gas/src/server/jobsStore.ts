@@ -12,7 +12,8 @@ export type JobPhase =
   | "PERSISTING"
   | "REPLAYING"
   | "DONE"
-  | "FAILED";
+  | "FAILED"
+  | "CANCELLED";
 
 export interface JobRow {
   job_id: string;
@@ -23,6 +24,10 @@ export interface JobRow {
   page: number;
   findings_so_far: number;
   page_size: number;
+  // Total findings the tenant reports for this scan's filter (fetched on page 0).
+  // 0 = unknown (older deployment without the column, or a tenant that omits it) →
+  // the progress UI falls back to an indeterminate bar.
+  total_count: number;
   params_json: string | null;
   journal_ref: string | null;
   error: string | null;
@@ -60,6 +65,7 @@ export function listJobs(): JobRow[] {
     page: Number(r["page"] ?? 0),
     findings_so_far: Number(r["findings_so_far"] ?? 0),
     page_size: Number(r["page_size"] ?? 0),
+    total_count: Number(r["total_count"] ?? 0),
     params_json: (r["params_json"] as string | null) ?? null,
     journal_ref: (r["journal_ref"] as string | null) ?? null,
     error: (r["error"] as string | null) ?? null,
@@ -72,7 +78,7 @@ export function getJob(jobId: string): JobRow | null {
   return listJobs().find((j) => j.job_id === jobId) ?? null;
 }
 
-const TERMINAL: JobPhase[] = ["DONE", "FAILED"];
+const TERMINAL: JobPhase[] = ["DONE", "FAILED", "CANCELLED"];
 
 /** The single in-flight job, or null (jobs are single-flight across kinds). */
 export function activeJob(): JobRow | null {

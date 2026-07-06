@@ -63,6 +63,9 @@ var Server = (() => {
   function setProp(key, value) {
     PropertiesService.getScriptProperties().setProperty(key, value);
   }
+  function deleteProp(key) {
+    PropertiesService.getScriptProperties().deleteProperty(key);
+  }
   function resolveWizAuthMode(token, clientId, clientSecret) {
     if (token && token.trim()) return "token";
     if (clientId && clientSecret) return "oauth";
@@ -328,6 +331,7 @@ var Server = (() => {
       "page",
       "findings_so_far",
       "page_size",
+      "total_count",
       "params_json",
       "journal_ref",
       "error",
@@ -894,6 +898,7 @@ var Server = (() => {
   var api_exports = {};
   __export(api_exports, {
     bootstrap: () => bootstrap,
+    cancelScan: () => cancelScan2,
     compact: () => compact,
     deleteScans: () => deleteScans2,
     getBaseRows: () => getBaseRows,
@@ -2261,7 +2266,7 @@ var Server = (() => {
   }
   function listJobs() {
     return readAll(TABS.jobs).map((r) => {
-      var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
+      var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
       return {
         job_id: String((_a = r["job_id"]) != null ? _a : ""),
         kind: (_b = r["kind"]) != null ? _b : "scan",
@@ -2271,11 +2276,12 @@ var Server = (() => {
         page: Number((_f = r["page"]) != null ? _f : 0),
         findings_so_far: Number((_g = r["findings_so_far"]) != null ? _g : 0),
         page_size: Number((_h = r["page_size"]) != null ? _h : 0),
-        params_json: (_i = r["params_json"]) != null ? _i : null,
-        journal_ref: (_j = r["journal_ref"]) != null ? _j : null,
-        error: (_k = r["error"]) != null ? _k : null,
-        started_at: String((_l = r["started_at"]) != null ? _l : ""),
-        updated_at: String((_m = r["updated_at"]) != null ? _m : "")
+        total_count: Number((_i = r["total_count"]) != null ? _i : 0),
+        params_json: (_j = r["params_json"]) != null ? _j : null,
+        journal_ref: (_k = r["journal_ref"]) != null ? _k : null,
+        error: (_l = r["error"]) != null ? _l : null,
+        started_at: String((_m = r["started_at"]) != null ? _m : ""),
+        updated_at: String((_n = r["updated_at"]) != null ? _n : "")
       };
     });
   }
@@ -2283,7 +2289,7 @@ var Server = (() => {
     var _a;
     return (_a = listJobs().find((j) => j.job_id === jobId)) != null ? _a : null;
   }
-  var TERMINAL = ["DONE", "FAILED"];
+  var TERMINAL = ["DONE", "FAILED", "CANCELLED"];
   function activeJob() {
     var _a;
     return (_a = listJobs().find((j) => !TERMINAL.includes(j.phase))) != null ? _a : null;
@@ -2402,6 +2408,7 @@ var Server = (() => {
         page: 0,
         findings_so_far: records.length,
         page_size: 0,
+        total_count: 0,
         params_json: null,
         journal_ref: journalRef,
         error: null
@@ -2495,6 +2502,7 @@ var Server = (() => {
         page: 0,
         findings_so_far: 0,
         page_size: 0,
+        total_count: 0,
         params_json: JSON.stringify({ scanIds }),
         journal_ref: journalRef,
         error: null
@@ -2552,6 +2560,7 @@ var Server = (() => {
         page: 0,
         findings_so_far: 0,
         page_size: 0,
+        total_count: 0,
         params_json: JSON.stringify({ retentionDays }),
         journal_ref: journalRef,
         error: null
@@ -2833,6 +2842,7 @@ var Server = (() => {
   // src/server/scanJobs.ts
   var scanJobs_exports = {};
   __export(scanJobs_exports, {
+    cancelScan: () => cancelScan,
     continueJob: () => continueJob,
     dailyScan: () => dailyScan,
     jobStatus: () => jobStatus,
@@ -2851,6 +2861,32 @@ var Server = (() => {
   var CONTINUE_HANDLER = "trigger_continueScan";
   var DELTA_OVERLAP_MINUTES = 15;
   var STALE_JOB_MS = 30 * 6e4;
+  var ScanCancelled = class extends Error {
+  };
+  var cancelKey = (jobId) => `CANCEL_${jobId}`;
+  function isCancelRequested(jobId) {
+    return Boolean(getProp(cancelKey(jobId)));
+  }
+  function clearCancel(jobId) {
+    deleteProp(cancelKey(jobId));
+  }
+  function cancelScan(jobId) {
+    const job = getJob(jobId);
+    if (!job || job.kind !== "scan") return { jobId, message: "No such scan." };
+    if (job.phase === "DONE" || job.phase === "FAILED" || job.phase === "CANCELLED") {
+      return { jobId, message: "Scan already finished." };
+    }
+    setProp(cancelKey(jobId), "1");
+    return { jobId, message: "Stopping scan\u2026" };
+  }
+  function finalizeCancel(job) {
+    try {
+      if (job.scan_id) trashScanArchive(scanFolder(job.scan_id).getId());
+    } catch {
+    }
+    updateJob(job.job_id, { phase: "CANCELLED", error: null });
+    clearCancel(job.job_id);
+  }
   var SLIM_TOP = [
     "id",
     "name",
@@ -2927,6 +2963,7 @@ var Server = (() => {
         page: 0,
         findings_so_far: 0,
         page_size: 0,
+        total_count: 0,
         params_json: JSON.stringify({
           mode: "live",
           severities: getFetchSeverities2(),
@@ -2948,6 +2985,7 @@ var Server = (() => {
       (t) => t.getHandlerFunction() === CONTINUE_HANDLER
     );
     if (hasTrigger) return false;
+    clearCancel(job.job_id);
     updateJob(job.job_id, {
       phase: "FAILED",
       error: "Reclaimed: the job stalled with no pending continuation."
@@ -2975,6 +3013,7 @@ var Server = (() => {
       page: 0,
       findings_so_far: 0,
       page_size: 0,
+      total_count: 0,
       params_json: JSON.stringify({
         mode: "incremental",
         severities: baselineScope,
@@ -3028,8 +3067,10 @@ var Server = (() => {
     let cursor = job.cursor;
     let page = job.page;
     let findings = job.findings_so_far;
+    let totalCount = job.total_count;
     try {
       for (; ; ) {
+        if (isCancelRequested(job.job_id)) throw new ScanCancelled();
         const result = fetchPage({
           severities: params.severities,
           extraFilterBy: params.extraFilterBy,
@@ -3042,7 +3083,8 @@ var Server = (() => {
         page += 1;
         findings += result.nodes.length;
         cursor = result.endCursor;
-        updateJob(job.job_id, { cursor, page, findings_so_far: findings });
+        if (result.totalCount !== null) totalCount = result.totalCount;
+        updateJob(job.job_id, { cursor, page, findings_so_far: findings, total_count: totalCount });
         if (!result.hasNextPage || page >= MAX_PAGES) break;
         if (Date.now() - started > budgetMs) {
           writeSlimRecords(scanId, slim);
@@ -3054,18 +3096,25 @@ var Server = (() => {
       updateJob(job.job_id, { phase: "RECONCILING" });
       finishScan(job.job_id, scanId, params, slim);
     } catch (e) {
+      if (e instanceof ScanCancelled) {
+        finalizeCancel(job);
+        return;
+      }
       if (e instanceof WizDeltaFilterError) {
+        clearCancel(job.job_id);
         updateJob(job.job_id, {
           phase: "FAILED",
           error: "The tenant rejected the updatedAt filter \u2014 quick refresh is unavailable; run a full scan."
         });
         return;
       }
+      clearCancel(job.job_id);
       updateJob(job.job_id, { phase: "FAILED", error: String(e).slice(0, 1e3) });
       throw e;
     }
   }
   function finishScan(jobId, scanId, params, slim) {
+    clearCancel(jobId);
     let records = slim;
     if (params.incremental) {
       if (!slim.length) {
@@ -3152,6 +3201,10 @@ var Server = (() => {
       const job = activeJob();
       if (!job || job.kind !== "scan") return;
       if (job.phase === "FETCHING") {
+        if (isCancelRequested(job.job_id)) {
+          finalizeCancel(job);
+          return;
+        }
         step(job);
       } else if (job.phase === "RECONCILING") {
         const params = JSON.parse((_a = job.params_json) != null ? _a : "{}");
@@ -3449,6 +3502,12 @@ var Server = (() => {
       var _a;
       const jobId = String((_a = p == null ? void 0 : p["jobId"]) != null ? _a : "");
       return jobId ? getJob(jobId) : activeJobSummary();
+    });
+  }
+  function cancelScan2(p) {
+    return run(() => {
+      var _a;
+      return cancelScan(String((_a = p == null ? void 0 : p["jobId"]) != null ? _a : ""));
     });
   }
   function deleteScans2(p) {

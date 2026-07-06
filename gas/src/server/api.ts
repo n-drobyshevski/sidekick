@@ -338,6 +338,10 @@ export function getJobStatus(p?: unknown): ApiResult {
   });
 }
 
+export function cancelScan(p?: unknown): ApiResult {
+  return run(() => scanJobs.cancelScan(String((p as Rec)?.["jobId"] ?? "")));
+}
+
 export function deleteScans(p?: unknown): ApiResult {
   const scanIds = (((p as Rec)?.["scanIds"] as string[]) ?? []).map(String);
   return mutate(() => ledgerStore.deleteScans(scanIds));
