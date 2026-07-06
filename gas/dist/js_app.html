@@ -14691,7 +14691,7 @@
         "p",
         { class: "page-sub" },
         "CVEs with a fix available on host workloads, from the Wiz Security Graph. ",
-        el("a", { href: "#/mttr" }, "Remediation performance \u2192")
+        el("a", { href: "#/mttr", target: "_self" }, "Remediation performance \u2192")
       )
     );
     if (!boot2.latestScan) {
@@ -16300,6 +16300,11 @@
           {
             class: "nav-link".concat(key === active ? " active" : ""),
             href: "#/".concat(key),
+            // index.html sets <base target="_top"> so external links escape the GAS
+            // sandbox iframe. Without an explicit _self, hash links inherit it and
+            // navigate the top window to the sandbox's own googleusercontent URL —
+            // which, loaded bare, is a blank page. _self keeps routing in-frame.
+            target: "_self",
             "aria-current": key === active ? "page" : null
           },
           page.title
