@@ -29,6 +29,7 @@ function timedApi_(name, p) {
 function api_bootstrap(p) { return timedApi_("bootstrap", p); }
 function api_getFindings(p) { return timedApi_("getFindings", p); }
 function api_getFindingDetail(p) { return timedApi_("getFindingDetail", p); }
+function api_getInsights(p) { return timedApi_("getInsights", p); }
 function api_getMttr(p) { return timedApi_("getMttr", p); }
 function api_getMttrTrend(p) { return timedApi_("getMttrTrend", p); }
 function api_getMttrPage(p) { return timedApi_("getMttrPage", p); }

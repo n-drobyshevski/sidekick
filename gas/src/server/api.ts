@@ -17,6 +17,7 @@ import { normalizeSeverity } from "../domain/severity";
 import { validateBundle } from "../domain/importMerge";
 import { SealedScanError, LedgerRebuildError } from "../domain/maintenance";
 import { parseTs, present, type Rec } from "../domain/util";
+import * as insights from "../domain/insights";
 import * as archive from "./archiveStore";
 import * as findings from "./findings";
 import * as history from "./historyStore";
@@ -262,6 +263,42 @@ export function getFindingDetail(p?: unknown): ApiResult {
     }
     return { record, raw };
   });
+}
+
+// --------------------------------------------------------------------------- insights
+
+/**
+ * Everything the insights view needs in one round trip: exploitability summary,
+ * risk concentration, aging, movement, top CVEs, and all six breakdown groupings
+ * (so the client's grouping switch repaints with zero RPCs). Current-scan blocks
+ * read the frame (only it has exploit/exposure fields); aging and movement read
+ * the durable ledger.
+ */
+function insightsData(): Rec {
+  const scan = findings.currentScan();
+  if (!scan) return { flatScan: false };
+  const recs = scan.records;
+  const base = ledgerStore.loadBaseRows();
+  const latestFlat = ledgerStore.latestFlatScanRow();
+  const breakdowns: Rec = {};
+  for (const key of Object.keys(insights.BREAKDOWN_KEYS)) {
+    breakdowns[key] = insights.breakdown(recs, key);
+  }
+  return {
+    flatScan: true,
+    scan: { scanId: scan.scanId, ts: scan.ts, total: scan.total },
+    exploit: insights.exploitSummary(recs),
+    topAssets: insights.topAssets(recs, 10),
+    aging: insights.ageBuckets(base),
+    movement: insights.movement(base, latestFlat, ledgerStore.loadScanRows().length),
+    topCves: insights.topCves(recs, 10),
+    breakdowns,
+  };
+}
+
+export function getInsights(_p?: unknown): ApiResult {
+  // 1h TTL like the MTTR summary: aging carries wall-clock-relative day counts.
+  return run(() => cached("insights", null, insightsData, 3600));
 }
 
 // ----------------------------------------------------------------------------- MTTR

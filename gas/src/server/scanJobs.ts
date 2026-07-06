@@ -79,6 +79,9 @@ const SLIM_TOP = [
 const SLIM_ASSET = [
   "id", "name", "type", "cloudPlatform", "region", "subscriptionName",
   "subscriptionExternalId", "subscriptionId", "tags", "operatingSystem",
+  // Exposure signals for the insights view. Additive: frames persisted before this
+  // simply lack the keys, and the client reports exposure as "not captured".
+  "hasWideInternetExposure", "hasLimitedInternetExposure",
 ];
 
 export function slimRecord(node: Rec): Rec {
