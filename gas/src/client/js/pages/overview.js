@@ -41,11 +41,12 @@ export async function renderOverview(main, params) {
   };
 
   const kpiRow = el("div", { class: "kpi-row" });
+  const sevChartCanvas = el("canvas", { id: "sev-chart" });
   const chartCard = el("div", { class: "chart-card" },
     el("h3", {}, "Severity breakdown"),
     el("div", { class: "small muted", style: "margin-bottom:8px" },
       "Click a bar to filter the table; click again to clear."),
-    el("div", { class: "chart-box" }, el("canvas", { id: "sev-chart" })),
+    el("div", { class: "chart-box" }, sevChartCanvas),
   );
   const sevCards = el("div", { class: "kpi-row", style: "margin-top:14px" });
   const filterBar = el("div", { class: "filter-bar", role: "search" });
@@ -209,12 +210,14 @@ export async function renderOverview(main, params) {
     );
 
     // Severity chart + cards reflect the filtered set.
-    severityBar(document.getElementById("sev-chart"), res.counts, boot.palette, (sev) => {
-      toggle(state.sev, sev);
-      state.page = 0;
-      mirror();
-      buildFilterBar();
-      load();
+    requestAnimationFrame(() => {
+      severityBar(sevChartCanvas, res.counts, boot.palette, (sev) => {
+        toggle(state.sev, sev);
+        state.page = 0;
+        mirror();
+        buildFilterBar();
+        load();
+      });
     });
 
     clear(sevCards);

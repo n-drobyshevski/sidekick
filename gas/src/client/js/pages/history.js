@@ -112,16 +112,21 @@ export async function renderHistory(main, _params, ctx) {
   // ---- trend charts
   const trends = await call("api_getMttrTrend", {});
   if (trends.trend.length) {
+    const openResolvedCanvas = el("canvas", { id: "hist-open-resolved" });
+    const mttrCanvas = el("canvas", { id: "hist-mttr" });
+
     chartsHost.append(
       el("div", { class: "chart-card" }, el("h3", {}, "Open vs resolved"),
-        el("div", { class: "chart-box" }, el("canvas", { id: "hist-open-resolved" }))),
+        el("div", { class: "chart-box" }, openResolvedCanvas)),
       el("div", { class: "chart-card" }, el("h3", {}, "MTTR trend"),
-        el("div", { class: "chart-box" }, el("canvas", { id: "hist-mttr" }))),
+        el("div", { class: "chart-box" }, mttrCanvas)),
     );
-    openResolvedLines(document.getElementById("hist-open-resolved"), trends.trend);
-    trendLine(document.getElementById("hist-mttr"),
-      trends.trend.filter((t) => t.median_days !== null)
-        .map((t) => ({ x: t.date, y: t.median_days })), { yLabel: "days" });
+    requestAnimationFrame(() => {
+      openResolvedLines(openResolvedCanvas, trends.trend);
+      trendLine(mttrCanvas,
+        trends.trend.filter((t) => t.median_days !== null)
+          .map((t) => ({ x: t.date, y: t.median_days })), { yLabel: "days" });
+    });
   }
 
   // ---- vulnerability base

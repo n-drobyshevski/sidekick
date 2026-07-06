@@ -14709,6 +14709,7 @@
       page: Number(params.page || 0)
     };
     const kpiRow = el("div", { class: "kpi-row" });
+    const sevChartCanvas = el("canvas", { id: "sev-chart" });
     const chartCard = el(
       "div",
       { class: "chart-card" },
@@ -14718,7 +14719,7 @@
         { class: "small muted", style: "margin-bottom:8px" },
         "Click a bar to filter the table; click again to clear."
       ),
-      el("div", { class: "chart-box" }, el("canvas", { id: "sev-chart" }))
+      el("div", { class: "chart-box" }, sevChartCanvas)
     );
     const sevCards = el("div", { class: "kpi-row", style: "margin-top:14px" });
     const filterBar = el("div", { class: "filter-bar", role: "search" });
@@ -14882,12 +14883,14 @@
           changeChip(boot2.counts[s], boot2.prevCounts[s])
         ))
       );
-      severityBar(document.getElementById("sev-chart"), res.counts, boot2.palette, (sev) => {
-        toggle(state.sev, sev);
-        state.page = 0;
-        mirror();
-        buildFilterBar();
-        load();
+      requestAnimationFrame(() => {
+        severityBar(sevChartCanvas, res.counts, boot2.palette, (sev) => {
+          toggle(state.sev, sev);
+          state.page = 0;
+          mirror();
+          buildFilterBar();
+          load();
+        });
       });
       clear(sevCards);
       for (const sev of boot2.palette.order) {
@@ -15254,38 +15257,37 @@
     }
     function renderCharts(trends) {
       clear(chartsHost);
+      const mttrCanvas = el("canvas", { id: "mttr-trend" });
+      const openResolvedCanvas = el("canvas", { id: "open-resolved" });
       const points = trends.trend.length ? trends.trend.map((t) => ({ x: t.date, y: t.median_days })) : trends.history.map((h) => ({ x: h.date, y: h.median_days }));
       if (points.length) {
-        const mttrCard = el(
+        chartsHost.append(el(
           "div",
           { class: "chart-card" },
           el("h3", {}, "MTTR trend"),
-          el("div", { class: "chart-box" }, el("canvas", { id: "mttr-trend" }))
-        );
-        chartsHost.append(mttrCard);
+          el("div", { class: "chart-box" }, mttrCanvas)
+        ));
       }
       if (trends.trend.length) {
         chartsHost.append(el(
           "div",
           { class: "chart-card" },
           el("h3", {}, "Open vs resolved"),
-          el("div", { class: "chart-box" }, el("canvas", { id: "open-resolved" }))
+          el("div", { class: "chart-box" }, openResolvedCanvas)
         ));
       }
       if (!chartsHost.hasChildNodes()) {
         chartsHost.append(emptyState("Trends appear after two saved scans."));
         return;
       }
-      if (points.length) {
-        trendLine(
-          document.getElementById("mttr-trend"),
-          points.filter((p) => p.y !== null),
-          { yLabel: "days" }
-        );
-      }
-      if (trends.trend.length) {
-        openResolvedLines(document.getElementById("open-resolved"), trends.trend);
-      }
+      requestAnimationFrame(() => {
+        if (points.length) {
+          trendLine(mttrCanvas, points.filter((p) => p.y !== null), { yLabel: "days" });
+        }
+        if (trends.trend.length) {
+          openResolvedLines(openResolvedCanvas, trends.trend);
+        }
+      });
     }
     function renderSla(mttr) {
       clear(slaHost);
@@ -15478,26 +15480,30 @@
     }
     const trends = await call("api_getMttrTrend", {});
     if (trends.trend.length) {
+      const openResolvedCanvas = el("canvas", { id: "hist-open-resolved" });
+      const mttrCanvas = el("canvas", { id: "hist-mttr" });
       chartsHost.append(
         el(
           "div",
           { class: "chart-card" },
           el("h3", {}, "Open vs resolved"),
-          el("div", { class: "chart-box" }, el("canvas", { id: "hist-open-resolved" }))
+          el("div", { class: "chart-box" }, openResolvedCanvas)
         ),
         el(
           "div",
           { class: "chart-card" },
           el("h3", {}, "MTTR trend"),
-          el("div", { class: "chart-box" }, el("canvas", { id: "hist-mttr" }))
+          el("div", { class: "chart-box" }, mttrCanvas)
         )
       );
-      openResolvedLines(document.getElementById("hist-open-resolved"), trends.trend);
-      trendLine(
-        document.getElementById("hist-mttr"),
-        trends.trend.filter((t) => t.median_days !== null).map((t) => ({ x: t.date, y: t.median_days })),
-        { yLabel: "days" }
-      );
+      requestAnimationFrame(() => {
+        openResolvedLines(openResolvedCanvas, trends.trend);
+        trendLine(
+          mttrCanvas,
+          trends.trend.filter((t) => t.median_days !== null).map((t) => ({ x: t.date, y: t.median_days })),
+          { yLabel: "days" }
+        );
+      });
     }
     const filters = { statuses: [], severities: [], domains: [], q: "", page: 0 };
     const filterBar = el("div", { class: "filter-bar" });

@@ -95,31 +95,36 @@ export async function renderMttr(main, params) {
 
   function renderCharts(trends) {
     clear(chartsHost);
+    const mttrCanvas = el("canvas", { id: "mttr-trend" });
+    const openResolvedCanvas = el("canvas", { id: "open-resolved" });
+
     const points = trends.trend.length
       ? trends.trend.map((t) => ({ x: t.date, y: t.median_days }))
       : trends.history.map((h) => ({ x: h.date, y: h.median_days }));
+
     if (points.length) {
-      const mttrCard = el("div", { class: "chart-card" },
+      chartsHost.append(el("div", { class: "chart-card" },
         el("h3", {}, "MTTR trend"),
-        el("div", { class: "chart-box" }, el("canvas", { id: "mttr-trend" })));
-      chartsHost.append(mttrCard);
+        el("div", { class: "chart-box" }, mttrCanvas)));
     }
     if (trends.trend.length) {
       chartsHost.append(el("div", { class: "chart-card" },
         el("h3", {}, "Open vs resolved"),
-        el("div", { class: "chart-box" }, el("canvas", { id: "open-resolved" }))));
+        el("div", { class: "chart-box" }, openResolvedCanvas)));
     }
     if (!chartsHost.hasChildNodes()) {
       chartsHost.append(emptyState("Trends appear after two saved scans."));
       return;
     }
-    if (points.length) {
-      trendLine(document.getElementById("mttr-trend"),
-        points.filter((p) => p.y !== null), { yLabel: "days" });
-    }
-    if (trends.trend.length) {
-      openResolvedLines(document.getElementById("open-resolved"), trends.trend);
-    }
+
+    requestAnimationFrame(() => {
+      if (points.length) {
+        trendLine(mttrCanvas, points.filter((p) => p.y !== null), { yLabel: "days" });
+      }
+      if (trends.trend.length) {
+        openResolvedLines(openResolvedCanvas, trends.trend);
+      }
+    });
   }
 
   function renderSla(mttr) {
