@@ -39,6 +39,7 @@ var Server = (() => {
 
   // src/server/props.ts
   var PROP_KEYS = {
+    wizApiToken: "WIZ_API_TOKEN",
     wizClientId: "WIZ_CLIENT_ID",
     wizClientSecret: "WIZ_CLIENT_SECRET",
     wizAuthUrl: "WIZ_AUTH_URL",
@@ -61,8 +62,17 @@ var Server = (() => {
   function setProp(key, value) {
     PropertiesService.getScriptProperties().setProperty(key, value);
   }
+  function resolveWizAuthMode(token, clientId, clientSecret) {
+    if (token && token.trim()) return "token";
+    if (clientId && clientSecret) return "oauth";
+    return null;
+  }
   function hasWizCredentials() {
-    return Boolean(getProp(PROP_KEYS.wizClientId) && getProp(PROP_KEYS.wizClientSecret) && getProp(PROP_KEYS.wizApiUrl));
+    return Boolean(getProp(PROP_KEYS.wizApiUrl)) && resolveWizAuthMode(
+      getProp(PROP_KEYS.wizApiToken),
+      getProp(PROP_KEYS.wizClientId),
+      getProp(PROP_KEYS.wizClientSecret)
+    ) !== null;
   }
 
   // src/server/archiveStore.ts
@@ -2635,6 +2645,8 @@ var Server = (() => {
   var TOKEN_CACHE_KEY = "wiz_token";
   function getToken(forceRefresh = false) {
     var _a, _b;
+    const staticToken = getProp(PROP_KEYS.wizApiToken);
+    if (staticToken && staticToken.trim()) return staticToken.trim();
     const cache = CacheService.getScriptCache();
     if (!forceRefresh) {
       const cached = cache.get(TOKEN_CACHE_KEY);
@@ -2698,7 +2710,7 @@ var Server = (() => {
         muteHttpExceptions: true
       });
       const code = response.getResponseCode();
-      if (code === 401 && attempt === 0) {
+      if (code === 401 && attempt === 0 && !getProp(PROP_KEYS.wizApiToken)) {
         token = getToken(true);
         continue;
       }
@@ -2708,8 +2720,9 @@ var Server = (() => {
         continue;
       }
       if (code !== 200) {
+        const hint = code === 401 && getProp(PROP_KEYS.wizApiToken) ? " \u2014 WIZ_API_TOKEN was rejected; it may have expired. Refresh it, or set WIZ_CLIENT_ID/WIZ_CLIENT_SECRET for auto-refresh." : "";
         throw new WizQueryError(
-          `Wiz query failed (HTTP ${code}): ${response.getContentText().slice(0, 500)}`
+          `Wiz query failed (HTTP ${code})${hint}: ${response.getContentText().slice(0, 500)}`
         );
       }
       const body = JSON.parse(response.getContentText());

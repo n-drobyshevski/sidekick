@@ -1,6 +1,8 @@
 // Wiz GraphQL client on UrlFetchApp — the replacement for the wiz_sdk usage in
-// os_vulns.py. OAuth2 client-credentials token cached in CacheService; QUERY and the
-// baseline VARIABLES are verbatim from os_vulns.py (wizQuery.ts is generated).
+// os_vulns.py. Auth is either a raw service-account bearer token (WIZ_API_TOKEN, used
+// directly) or an OAuth2 client-credentials exchange (WIZ_CLIENT_ID/WIZ_CLIENT_SECRET,
+// token cached in CacheService); the token takes precedence. QUERY and the baseline
+// VARIABLES are verbatim from os_vulns.py (wizQuery.ts is generated).
 
 import { apiSeverityFilter } from "../domain/settingsLogic";
 import type { Rec } from "../domain/util";
@@ -15,6 +17,11 @@ export class WizDeltaFilterError extends WizQueryError {}
 const TOKEN_CACHE_KEY = "wiz_token";
 
 export function getToken(forceRefresh = false): string {
+  // A raw service-account token is used verbatim — no OAuth exchange, nothing to cache
+  // or refresh (forceRefresh is a no-op here; a rejected token is reported by queryPage).
+  const staticToken = getProp(PROP_KEYS.wizApiToken);
+  if (staticToken && staticToken.trim()) return staticToken.trim();
+
   const cache = CacheService.getScriptCache();
   if (!forceRefresh) {
     const cached = cache.get(TOKEN_CACHE_KEY);
@@ -98,7 +105,8 @@ export function queryPage(variables: Rec, isDeltaFetch = false): PageResult {
       muteHttpExceptions: true,
     });
     const code = response.getResponseCode();
-    if (code === 401 && attempt === 0) {
+    // A static WIZ_API_TOKEN can't be refreshed, so only retry-with-refresh in OAuth mode.
+    if (code === 401 && attempt === 0 && !getProp(PROP_KEYS.wizApiToken)) {
       token = getToken(true);
       continue;
     }
@@ -108,8 +116,13 @@ export function queryPage(variables: Rec, isDeltaFetch = false): PageResult {
       continue;
     }
     if (code !== 200) {
+      const hint =
+        code === 401 && getProp(PROP_KEYS.wizApiToken)
+          ? " — WIZ_API_TOKEN was rejected; it may have expired. Refresh it, or set " +
+            "WIZ_CLIENT_ID/WIZ_CLIENT_SECRET for auto-refresh."
+          : "";
       throw new WizQueryError(
-        `Wiz query failed (HTTP ${code}): ${response.getContentText().slice(0, 500)}`,
+        `Wiz query failed (HTTP ${code})${hint}: ${response.getContentText().slice(0, 500)}`,
       );
     }
     const body = JSON.parse(response.getContentText()) as Rec;

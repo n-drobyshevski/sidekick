@@ -2,6 +2,7 @@
 // in the GAS editor) and read everywhere else.
 
 export const PROP_KEYS = {
+  wizApiToken: "WIZ_API_TOKEN",
   wizClientId: "WIZ_CLIENT_ID",
   wizClientSecret: "WIZ_CLIENT_SECRET",
   wizAuthUrl: "WIZ_AUTH_URL",
@@ -30,8 +31,30 @@ export function setProp(key: string, value: string): void {
   PropertiesService.getScriptProperties().setProperty(key, value);
 }
 
+/**
+ * Which auth mode the configured secrets select, or null if none is usable.
+ * A raw `WIZ_API_TOKEN` (used directly as a bearer token) takes precedence over the
+ * `WIZ_CLIENT_ID`/`WIZ_CLIENT_SECRET` OAuth client-credentials exchange. Pure so the
+ * precedence is unit-testable without GAS globals.
+ */
+export function resolveWizAuthMode(
+  token: string | null,
+  clientId: string | null,
+  clientSecret: string | null,
+): "token" | "oauth" | null {
+  if (token && token.trim()) return "token";
+  if (clientId && clientSecret) return "oauth";
+  return null;
+}
+
 /** Whether live Wiz credentials are configured (else the app is dry-run only). */
 export function hasWizCredentials(): boolean {
-  return Boolean(getProp(PROP_KEYS.wizClientId) && getProp(PROP_KEYS.wizClientSecret) &&
-    getProp(PROP_KEYS.wizApiUrl));
+  return (
+    Boolean(getProp(PROP_KEYS.wizApiUrl)) &&
+    resolveWizAuthMode(
+      getProp(PROP_KEYS.wizApiToken),
+      getProp(PROP_KEYS.wizClientId),
+      getProp(PROP_KEYS.wizClientSecret),
+    ) !== null
+  );
 }
