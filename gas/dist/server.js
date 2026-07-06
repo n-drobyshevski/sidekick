@@ -725,8 +725,8 @@ var Server = (() => {
     if (staticToken && staticToken.trim()) return staticToken.trim();
     const cache = CacheService.getScriptCache();
     if (!forceRefresh) {
-      const cached = cache.get(TOKEN_CACHE_KEY);
-      if (cached) return cached;
+      const cached2 = cache.get(TOKEN_CACHE_KEY);
+      if (cached2) return cached2;
     }
     const authUrl = (_a = getProp(PROP_KEYS.wizAuthUrl)) != null ? _a : DEFAULT_WIZ_AUTH_URL;
     const response = UrlFetchApp.fetch(authUrl, {
@@ -2322,6 +2322,80 @@ var Server = (() => {
     return (_a = listJobs().find((j) => !TERMINAL.includes(j.phase))) != null ? _a : null;
   }
 
+  // src/server/serverCache.ts
+  var VERSION_PROP = "DATA_VERSION";
+  var KEY_PREFIX = "wsk";
+  var CHUNK_CHARS = 9e4;
+  var DEFAULT_TTL_SEC = 21600;
+  function dataVersion() {
+    var _a;
+    return (_a = getProp(VERSION_PROP)) != null ? _a : "0";
+  }
+  function bumpDataVersion() {
+    setProp(VERSION_PROP, String(Date.now()));
+  }
+  function cacheKey(name, params, version) {
+    const paramsHash = sha1Hex(JSON.stringify(params != null ? params : null)).slice(0, 12);
+    return `${KEY_PREFIX}:${version}:${name}:${paramsHash}`;
+  }
+  function splitChunks(s, size = CHUNK_CHARS) {
+    const out = [];
+    for (let i = 0; i < s.length; i += size) out.push(s.slice(i, i + size));
+    return out.length ? out : [""];
+  }
+  function cachePutJson(key, value, ttlSec = DEFAULT_TTL_SEC, chunkChars = CHUNK_CHARS) {
+    const json = JSON.stringify(value);
+    const gz = Utilities.gzip(Utilities.newBlob(json, "application/json"));
+    const packed = Utilities.base64Encode(gz.getBytes());
+    const chunks = splitChunks(packed, chunkChars);
+    const entries = { [`${key}:m`]: String(chunks.length) };
+    chunks.forEach((c, i) => {
+      entries[`${key}:${i}`] = c;
+    });
+    CacheService.getScriptCache().putAll(entries, ttlSec);
+  }
+  function cacheGetJson(key) {
+    const cache = CacheService.getScriptCache();
+    const meta = cache.get(`${key}:m`);
+    if (!meta) return void 0;
+    const n = Number(meta);
+    if (!Number.isInteger(n) || n < 1) return void 0;
+    const names = [];
+    for (let i = 0; i < n; i++) names.push(`${key}:${i}`);
+    const got = cache.getAll(names);
+    let packed = "";
+    for (const name of names) {
+      const chunk = got[name];
+      if (chunk === void 0 || chunk === null) return void 0;
+      packed += chunk;
+    }
+    const bytes = Utilities.base64Decode(packed);
+    const json = Utilities.ungzip(
+      Utilities.newBlob(bytes, "application/x-gzip")
+    ).getDataAsString("UTF-8");
+    return JSON.parse(json);
+  }
+  function cached(name, params, compute, ttlSec = DEFAULT_TTL_SEC) {
+    let key = null;
+    try {
+      key = cacheKey(name, params, dataVersion());
+      const hit = cacheGetJson(key);
+      if (hit !== void 0) return hit;
+    } catch (e) {
+      console.warn(`Cache read failed for ${name}: ${e}`);
+      key = null;
+    }
+    const value = compute();
+    if (key) {
+      try {
+        cachePutJson(key, value, ttlSec);
+      } catch (e) {
+        console.warn(`Cache write failed for ${name}: ${e}`);
+      }
+    }
+    return value;
+  }
+
   // src/server/ledgerStore.ts
   function rowToScan(r) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
@@ -2368,6 +2442,7 @@ var Server = (() => {
   function invalidateLedgerMemos() {
     scanRowsMemo = void 0;
     stateMemo = void 0;
+    bumpDataVersion();
   }
   function loadScanRows() {
     if (scanRowsMemo === void 0) {
@@ -2662,6 +2737,7 @@ var Server = (() => {
       }))
     );
     settingsMemo = settings;
+    bumpDataVersion();
   }
   var getFetchSeverities2 = () => getFetchSeverities(loadSettings());
   var getDisplaySeverities2 = () => getDisplaySeverities(loadSettings());
@@ -2830,6 +2906,7 @@ var Server = (() => {
       });
       records.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
       overwrite(TABS.mttrHistory, records);
+      bumpDataVersion();
       return true;
     } catch (e) {
       console.warn(`Failed to write MTTR history: ${e}`);
@@ -3331,53 +3408,58 @@ var Server = (() => {
     );
   }
   function bootstrap(_p) {
-    return run(() => {
-      var _a;
-      const settings = loadSettings();
-      const scan = currentScan();
-      const latest = latestScanRow();
-      const counts = {};
-      if (scan) {
-        for (const r of scan.records) {
-          const sev = String(r["_sev"]);
-          counts[sev] = ((_a = counts[sev]) != null ? _a : 0) + 1;
-        }
+    return run(() => ({
+      // The core is a pure function of ledger + settings state — cached per DATA_VERSION.
+      ...cached("bootstrapCore", null, bootstrapCore),
+      // Live per-request fields: never cached (activeJob changes every poll tick).
+      dataVersion: dataVersion(),
+      hasCredentials: hasWizCredentials(),
+      activeJob: activeJobSummary()
+    }));
+  }
+  function bootstrapCore() {
+    var _a;
+    const scan = currentScan();
+    const latest = latestScanRow();
+    const counts = {};
+    if (scan) {
+      for (const r of scan.records) {
+        const sev = String(r["_sev"]);
+        counts[sev] = ((_a = counts[sev]) != null ? _a : 0) + 1;
       }
-      return {
-        palette: {
-          order: SEVERITY_ORDER,
-          colors: SEVERITY_COLORS,
-          glyphs: SEVERITY_GLYPHS,
-          slaTargets: SLA_TARGETS,
-          selectable: SELECTABLE_SEVERITIES
-        },
-        settings: {
-          fetchSeverities: getFetchSeverities2(),
-          displaySeverities: getDisplaySeverities2(),
-          retentionDays: getRetentionDays2(),
-          autoCompact: getAutoCompact2(),
-          domains: getDomains2()
-        },
-        hasCredentials: hasWizCredentials(),
-        latestScan: latest ? {
-          scanId: latest.scan_id,
-          ts: latest.ts,
-          mode: latest.mode,
-          shape: latest.shape,
-          total: latest.total,
-          severities: latest.severities
-        } : null,
-        counts,
-        prevCounts: previousSeverityCounts(),
-        domainNames: domainNames(getDomains2().items),
-        activeJob: activeJobSummary(),
-        filterOptions: scan ? {
-          statuses: distinct(scan.records, "status"),
-          assetTypes: distinct(scan.records, "vulnerableAsset.type"),
-          clouds: distinct(scan.records, "vulnerableAsset.cloudPlatform")
-        } : { statuses: [], assetTypes: [], clouds: [] }
-      };
-    });
+    }
+    return {
+      palette: {
+        order: SEVERITY_ORDER,
+        colors: SEVERITY_COLORS,
+        glyphs: SEVERITY_GLYPHS,
+        slaTargets: SLA_TARGETS,
+        selectable: SELECTABLE_SEVERITIES
+      },
+      settings: {
+        fetchSeverities: getFetchSeverities2(),
+        displaySeverities: getDisplaySeverities2(),
+        retentionDays: getRetentionDays2(),
+        autoCompact: getAutoCompact2(),
+        domains: getDomains2()
+      },
+      latestScan: latest ? {
+        scanId: latest.scan_id,
+        ts: latest.ts,
+        mode: latest.mode,
+        shape: latest.shape,
+        total: latest.total,
+        severities: latest.severities
+      } : null,
+      counts,
+      prevCounts: previousSeverityCounts(),
+      domainNames: domainNames(getDomains2().items),
+      filterOptions: scan ? {
+        statuses: distinct(scan.records, "status"),
+        assetTypes: distinct(scan.records, "vulnerableAsset.type"),
+        clouds: distinct(scan.records, "vulnerableAsset.cloudPlatform")
+      } : { statuses: [], assetTypes: [], clouds: [] }
+    };
   }
   function activeJobSummary() {
     var _a;
@@ -3511,14 +3593,26 @@ var Server = (() => {
       trend: loadTrend(severities)
     };
   }
+  var cachedMttrData = (p) => {
+    var _a;
+    return cached("mttr", { domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "") }, () => mttrData(p), 3600);
+  };
+  var cachedMttrTrendData = (p) => {
+    var _a;
+    return cached(
+      "mttrTrend",
+      { severities: (_a = p == null ? void 0 : p["severities"]) != null ? _a : null },
+      () => mttrTrendData(p)
+    );
+  };
   function getMttr(p) {
-    return run(() => mttrData(p));
+    return run(() => cachedMttrData(p));
   }
   function getMttrTrend(p) {
-    return run(() => mttrTrendData(p));
+    return run(() => cachedMttrTrendData(p));
   }
   function getMttrPage(p) {
-    return run(() => ({ mttr: mttrData(p), trends: mttrTrendData(p) }));
+    return run(() => ({ mttr: cachedMttrData(p), trends: cachedMttrTrendData(p) }));
   }
   function scanHistoryData() {
     var _a;
@@ -3537,13 +3631,16 @@ var Server = (() => {
       }
     };
   }
+  var cachedScanHistoryData = () => cached("scanHistory", null, scanHistoryData);
   function getScanHistory(_p) {
-    return run(() => scanHistoryData());
+    return run(() => cachedScanHistoryData());
   }
   function getHistoryPage(p) {
     return run(() => ({
-      history: scanHistoryData(),
-      trends: mttrTrendData(p),
+      history: cachedScanHistoryData(),
+      trends: cachedMttrTrendData(p),
+      // Base rows stay uncached: their filter params are combinatorial and the state
+      // load is shared with the parts above via the per-execution memo anyway.
       base: baseRowsData(p)
     }));
   }
@@ -3836,17 +3933,19 @@ var Server = (() => {
     });
   }
   function getStorageStats(_p) {
-    return run(() => {
-      const scans = loadScanRows();
-      return {
-        cellCount: cellCount(),
-        cellLimit: 1e7,
-        scanCount: scans.length,
-        sealedCount: scans.filter((s) => s.sealed).length,
-        oldestScanTs: scans.length ? scans[0].ts : null,
-        trackedVulns: loadBaseRows().length
-      };
-    });
+    return run(
+      () => cached("storageStats", null, () => {
+        const scans = loadScanRows();
+        return {
+          cellCount: cellCount(),
+          cellLimit: 1e7,
+          scanCount: scans.length,
+          sealedCount: scans.filter((s) => s.sealed).length,
+          oldestScanTs: scans.length ? scans[0].ts : null,
+          trackedVulns: loadBaseRows().length
+        };
+      })
+    );
   }
   return __toCommonJS(server_exports);
 })();

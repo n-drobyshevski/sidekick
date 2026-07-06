@@ -35,6 +35,7 @@ import { trendFromFrames, type TrendPoint } from "../domain/trend";
 import { nowIso, type Rec } from "../domain/util";
 import * as archive from "./archiveStore";
 import { createJob, newJobId, updateJob } from "./jobsStore";
+import { bumpDataVersion } from "./serverCache";
 import { appendRows, overwrite, readAll, TABS } from "./sheetsDb";
 
 // ------------------------------------------------------------------ state load/save
@@ -90,6 +91,8 @@ let stateMemo: LedgerState | undefined;
 export function invalidateLedgerMemos(): void {
   scanRowsMemo = undefined;
   stateMemo = undefined;
+  // Every ledger write also stales the cross-request derived caches.
+  bumpDataVersion();
 }
 
 /** Scans tab only (cheap; enough for history/meta reads). */

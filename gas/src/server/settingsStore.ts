@@ -3,6 +3,7 @@
 
 import * as logic from "../domain/settingsLogic";
 import type { Rec } from "../domain/util";
+import { bumpDataVersion } from "./serverCache";
 import { readAll, overwrite, TABS } from "./sheetsDb";
 
 // Per-execution memo: every settings getter below funnels through loadSettings(),
@@ -40,6 +41,8 @@ export function saveSettings(settings: Rec): void {
     })),
   );
   settingsMemo = settings;
+  // Settings feed the cached bootstrap payload and _domain assignment.
+  bumpDataVersion();
 }
 
 export const getFetchSeverities = (): string[] => logic.getFetchSeverities(loadSettings());
