@@ -1,0 +1,84 @@
+{
+ "cases": [
+  {
+   "input": {
+    "id": "abc-123",
+    "name": "CVE-2024-0001"
+   },
+   "expected": "id:abc-123"
+  },
+  {
+   "input": {
+    "id": "  abc-123  "
+   },
+   "expected": "id:abc-123"
+  },
+  {
+   "input": {
+    "id": ""
+   },
+   "expected": "h:500fdcc0491c0a59"
+  },
+  {
+   "input": {
+    "name": "CVE-2024-0001",
+    "vulnerableAsset.id": "vm-1",
+    "vulnerableAsset.type": "VIRTUAL_MACHINE",
+    "vulnerableAsset.cloudPlatform": "AWS",
+    "detailedName": "openssl"
+   },
+   "expected": "h:5d7da3e3da48262b"
+  },
+  {
+   "input": {
+    "name": "CVE-2024-0001",
+    "vulnerableAsset": {
+     "id": "vm-1",
+     "type": "VIRTUAL_MACHINE",
+     "cloudPlatform": "AWS"
+    },
+    "detailedName": "openssl"
+   },
+   "expected": "h:5d7da3e3da48262b"
+  },
+  {
+   "input": {
+    "name": "CVE-2024-0002",
+    "vulnerableAsset": {
+     "name": "worker-7"
+    },
+    "detailedNameV2": "vim"
+   },
+   "expected": "h:3b78356f75d15302"
+  },
+  {
+   "input": {
+    "name": "CVE-2024-0003"
+   },
+   "expected": "h:5d62996d83503e8a"
+  },
+  {
+   "input": {},
+   "expected": "h:500fdcc0491c0a59"
+  },
+  {
+   "input": {
+    "name": "CVE-2024-0004",
+    "assetId": "asset-9",
+    "type": "VM",
+    "cloudPlatform": "azure",
+    "detailedNameV2": "python"
+   },
+   "expected": "h:89222af85ca5a71d"
+  },
+  {
+   "input": {
+    "name": "CVE-\u00dcn\u00efcode",
+    "vulnerableAsset": {
+     "name": "s\u00ebrver"
+    }
+   },
+   "expected": "h:243a9d5ac8296892"
+  }
+ ]
+}

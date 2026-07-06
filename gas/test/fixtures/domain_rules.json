@@ -1,0 +1,147 @@
+{
+ "items": [
+  {
+   "name": "Payments",
+   "rules": [
+    {
+     "conditions": [
+      {
+       "type": "tag",
+       "key": "team",
+       "value": "payments"
+      }
+     ]
+    },
+    {
+     "conditions": [
+      {
+       "type": "name_regex",
+       "pattern": "^pay-"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Data Platform",
+   "rules": [
+    {
+     "conditions": [
+      {
+       "type": "subscription",
+       "values": [
+        "data-prod",
+        "555"
+       ]
+      },
+      {
+       "type": "tag",
+       "key": "env",
+       "value": "prod"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "AnyTag",
+   "rules": [
+    {
+     "conditions": [
+      {
+       "type": "tag",
+       "key": "owner",
+       "value": null
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "BadRegex",
+   "rules": [
+    {
+     "conditions": [
+      {
+       "type": "name_regex",
+       "pattern": "("
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "EmptyRule",
+   "rules": [
+    {
+     "conditions": []
+    }
+   ]
+  }
+ ],
+ "records": [
+  {
+   "vulnerableAsset.name": "pay-gateway-1",
+   "vulnerableAsset.tags.env": "prod"
+  },
+  {
+   "vulnerableAsset": {
+    "name": "PAY-batch",
+    "tags": {
+     "team": "PAYMENTS "
+    }
+   }
+  },
+  {
+   "vulnerableAsset.name": "etl-1",
+   "vulnerableAsset.subscriptionName": "Data-Prod",
+   "vulnerableAsset.tags.env": "PROD"
+  },
+  {
+   "vulnerableAsset.name": "etl-2",
+   "vulnerableAsset.subscriptionName": "data-prod",
+   "vulnerableAsset.tags.env": "stage"
+  },
+  {
+   "vulnerableAsset.name": "misc",
+   "vulnerableAsset.tags.owner": ""
+  },
+  {
+   "asset_name": "pay-ledger",
+   "subscription_name": null,
+   "tags_json": "{\"team\": \"payments\"}"
+  },
+  {
+   "asset_name": "(compacted)"
+  },
+  {
+   "asset_name": "etl-3",
+   "subscription_ext_id": "555",
+   "tags_json": "{\"env\": \"prod\"}"
+  },
+  {
+   "vulnerableAsset.name": "nothing-matches"
+  }
+ ],
+ "expected": {
+  "assignments": [
+   "Payments",
+   "Payments",
+   "Data Platform",
+   "Unassigned",
+   "Unassigned",
+   "Payments",
+   "Unassigned",
+   "Data Platform",
+   "Unassigned"
+  ],
+  "names": [
+   "Payments",
+   "Data Platform",
+   "AnyTag",
+   "BadRegex",
+   "EmptyRule",
+   "Unassigned"
+  ]
+ }
+}

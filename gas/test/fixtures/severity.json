@@ -1,0 +1,68 @@
+{
+ "cases": [
+  {
+   "input": "CRITICAL",
+   "expected": "CRITICAL"
+  },
+  {
+   "input": "critical",
+   "expected": "CRITICAL"
+  },
+  {
+   "input": " high ",
+   "expected": "HIGH"
+  },
+  {
+   "input": "INFORMATIONAL",
+   "expected": "INFO"
+  },
+  {
+   "input": "informational",
+   "expected": "INFO"
+  },
+  {
+   "input": "Info",
+   "expected": "INFO"
+  },
+  {
+   "input": "MEDIUM",
+   "expected": "MEDIUM"
+  },
+  {
+   "input": "LOW",
+   "expected": "LOW"
+  },
+  {
+   "input": "UNKNOWN",
+   "expected": "UNKNOWN"
+  },
+  {
+   "input": "bogus",
+   "expected": "UNKNOWN"
+  },
+  {
+   "input": "",
+   "expected": "UNKNOWN"
+  },
+  {
+   "input": "   ",
+   "expected": "UNKNOWN"
+  },
+  {
+   "input": null,
+   "expected": "UNKNOWN"
+  },
+  {
+   "input": 42,
+   "expected": "UNKNOWN"
+  },
+  {
+   "input": "HIGHER",
+   "expected": "UNKNOWN"
+  },
+  {
+   "input": "critical\n",
+   "expected": "CRITICAL"
+  }
+ ]
+}

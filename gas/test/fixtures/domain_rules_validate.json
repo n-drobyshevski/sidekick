@@ -1,0 +1,88 @@
+{
+ "items": [
+  "not-a-dict",
+  {
+   "name": "  "
+  },
+  {
+   "name": "Unassigned",
+   "rules": [
+    {
+     "conditions": [
+      {
+       "type": "tag",
+       "key": "a"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "A,B",
+   "rules": []
+  },
+  {
+   "name": "Dup",
+   "rules": [
+    {
+     "conditions": [
+      {
+       "type": "bogus"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "dup",
+   "rules": [
+    {
+     "conditions": [
+      {
+       "type": "tag",
+       "key": " "
+      }
+     ]
+    },
+    {
+     "conditions": [
+      {
+       "type": "name_regex",
+       "pattern": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+     ]
+    },
+    {
+     "conditions": [
+      {
+       "type": "name_regex",
+       "pattern": "("
+      }
+     ]
+    },
+    {
+     "conditions": [
+      {
+       "type": "subscription",
+       "values": []
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "expected": [
+  "Domain 1: not a valid entry.",
+  "Domain 2: name is required.",
+  "Domain 2: needs at least one rule.",
+  "Domain \u201cUnassigned\u201d: \u201cUnassigned\u201d is reserved.",
+  "Domain \u201cA,B\u201d: names cannot contain commas.",
+  "Domain \u201cA,B\u201d: needs at least one rule.",
+  "Domain \u201cDup\u201d, rule 1, condition 1: unknown condition type 'bogus'.",
+  "Domain \u201cdup\u201d: duplicate name.",
+  "Domain \u201cdup\u201d, rule 1, condition 1: tag key is required.",
+  "Domain \u201cdup\u201d, rule 2, condition 1: pattern is longer than 200 characters.",
+  "Domain \u201cdup\u201d, rule 3, condition 1: pattern does not compile (missing ), unterminated subpattern at position 0).",
+  "Domain \u201cdup\u201d, rule 4, condition 1: pick at least one subscription."
+ ]
+}

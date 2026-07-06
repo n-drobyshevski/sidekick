@@ -1,0 +1,78 @@
+{
+ "now": "2026-07-01T00:00:00Z",
+ "rows": [
+  {
+   "severity": "CRITICAL",
+   "first_seen": "2026-06-01T00:00:00Z",
+   "status": "RESOLVED",
+   "resolved_at": "2026-06-04T00:00:00Z"
+  },
+  {
+   "severity": "CRITICAL",
+   "first_seen": "2026-06-10T00:00:00Z",
+   "status": "OPEN",
+   "resolved_at": null
+  },
+  {
+   "severity": "HIGH",
+   "first_seen": "2026-05-01T00:00:00Z",
+   "status": "RESOLVED",
+   "resolved_at": "2026-05-25T00:00:00Z"
+  },
+  {
+   "severity": "HIGH",
+   "first_seen": "2026-02-01T00:00:00Z",
+   "status": "OPEN",
+   "resolved_at": null
+  },
+  {
+   "severity": "LOW",
+   "first_seen": null,
+   "status": "OPEN",
+   "resolved_at": null
+  }
+ ],
+ "expected": {
+  "per_sev": {
+   "CRITICAL": {
+    "mttr_mean": 3.0,
+    "mttr_median": 3.0,
+    "resolved": 1,
+    "open": 1,
+    "open_age_p50": 21.0,
+    "open_age_p90": 21.0,
+    "sla_target": 7,
+    "sla_compliant": 1,
+    "sla_pct": 100.0
+   },
+   "HIGH": {
+    "mttr_mean": 24.0,
+    "mttr_median": 24.0,
+    "resolved": 1,
+    "open": 1,
+    "open_age_p50": 150.0,
+    "open_age_p90": 150.0,
+    "sla_target": 14,
+    "sla_compliant": 0,
+    "sla_pct": 0.0
+   },
+   "LOW": {
+    "mttr_mean": null,
+    "mttr_median": null,
+    "resolved": 0,
+    "open": 0,
+    "open_age_p50": null,
+    "open_age_p90": null,
+    "sla_target": 90,
+    "sla_compliant": 0,
+    "sla_pct": null
+   }
+  },
+  "overall": {
+   "mttr_mean": 13.5,
+   "mttr_median": 13.5,
+   "resolved": 2,
+   "open": 3
+  }
+ }
+}
