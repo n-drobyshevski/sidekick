@@ -9,6 +9,9 @@ wiz_sdk = { url = "https://downloads.wiz.io/customer-files/wiz-sdk-python/wiz-sd
 pythonpath = ["."]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    "slow: full-volume demo generation (deselect with -m 'not slow')",
+]
 
 [tool.ruff]
 line-length = 100

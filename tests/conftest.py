@@ -4,9 +4,17 @@ These pin the *current* behavior of the monolith before the refactor, then
 travel with the functions as they move into the wiz_dashboard package.
 """
 
+import os
 from pathlib import Path
 
 import pytest
+
+# Shrink the dry-run demo volume (default 5k CRITICAL / 60k HIGH) before anything imports
+# the app: AppTest suites trigger real dry-run scans, and 65k full-fidelity nodes per run
+# would crawl. CRITICAL=6 / HIGH=11 keeps one RESOLVED node per severity (i % 12 == 5) so
+# MTTR/SLA paths stay exercised. demo.demo_volume() reads the env at call time, so tests
+# can still monkeypatch.setenv their own volume.
+os.environ.setdefault("WIZ_DEMO_VOLUME", "CRITICAL=6,HIGH=11")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 # The grouped-by-asset shape (vulnerabilityFindingsGroupedByValues); the real live

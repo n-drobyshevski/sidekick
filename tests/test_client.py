@@ -40,9 +40,13 @@ def test_cached_client_dry_run(app):
     grouped = app.extract_nodes(fetch_findings(dry_run=True))
     assert len(grouped) == 10  # grouped-by-asset is the default dry-run shape
 
+    # The flat dry-run path serves the generated full-fidelity demo sample at the
+    # configured volume (conftest pins WIZ_DEMO_VOLUME small for the suite).
+    from wiz_dashboard.data import demo
+
     flat = app.extract_nodes(fetch_findings(dry_run=True, sample_shape="flat"))
-    assert len(flat) == 17
-    assert flat[0]["id"] == "dry-c1"
+    assert len(flat) == sum(demo.demo_volume().values())
+    assert flat[0]["id"].startswith("demo-")
 
 
 def _sev_counts(resp):
@@ -53,11 +57,15 @@ def _sev_counts(resp):
 
 
 def test_evolving_flat_sample_seq0_is_the_baseline():
-    # seq 0 is the familiar SAMPLE_RESULTS, so the first dry-run scan (and every test that
-    # doesn't opt into evolution) sees today's data unchanged.
+    # seq 0 is the generated full-fidelity baseline at demo_volume() counts, memoized so
+    # every non-evolving caller sees the identical snapshot object.
     from wiz_dashboard.data import demo
 
-    assert demo.evolving_flat_sample(0) is os_vulns.SAMPLE_RESULTS
+    base = demo.evolving_flat_sample(0)
+    assert base is demo.evolving_flat_sample(0)  # lru_cache: one shared snapshot
+    assert _sev_counts(base) == {s: n for s, n in demo.demo_volume().items() if n}
+    page = base["data"]["vulnerabilityFindings"]["pageInfo"]
+    assert page == {"hasNextPage": False, "endCursor": None}
 
 
 def test_evolving_flat_sample_changes_each_scan_and_cycles():
@@ -71,7 +79,7 @@ def test_evolving_flat_sample_changes_each_scan_and_cycles():
 
     # The first evolution differs from the baseline, and every adjacent scan differs from
     # the one before it — guaranteeing the deltas are visible on each successive scan.
-    base = _sev_counts(os_vulns.SAMPLE_RESULTS)
+    base = _sev_counts(demo.evolving_flat_sample(0))
     assert counts[1] != base
     for a, b in zip(counts, counts[1:]):
         assert a != b
@@ -93,7 +101,7 @@ def test_cached_client_threads_sample_seq():
 
     fetch_findings.clear()
     base = fetch_findings(dry_run=True, sample_shape="flat", sample_seq=0)
-    assert base["data"]["vulnerabilityFindings"]["nodes"][0]["id"] == "dry-c1"
+    assert base["data"]["vulnerabilityFindings"]["nodes"][0]["id"].startswith("demo-")
     evo = fetch_findings(dry_run=True, sample_shape="flat", sample_seq=2)
     assert _sev_counts(evo) == _sev_counts(demo.evolving_flat_sample(2))
     assert _sev_counts(evo) != _sev_counts(base)
@@ -448,7 +456,9 @@ def test_incremental_flat_sample_diffs_scenarios():
         merged = merge_nodes(prev, delta)
         open_ids = {n["id"] for n in merged if n.get("status") != "RESOLVED"
                     and not n.get("resolvedAt")}
-        assert open_ids == {n["id"] for n in curr}
+        # The generated snapshots contain their own share of RESOLVED findings, so the
+        # invariant is against scan n's OPEN set, not its full node set.
+        assert open_ids == {n["id"] for n in curr if n.get("status") != "RESOLVED"}
         # Removed findings arrive as RESOLVED nodes with a resolvedAt stamp.
         removed = {n["id"] for n in prev} - {n["id"] for n in curr}
         resolved_in_delta = {n["id"] for n in delta if n.get("status") == "RESOLVED"}

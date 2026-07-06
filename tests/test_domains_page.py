@@ -111,7 +111,7 @@ def test_os_page_domain_filter_column_and_assignments():
         "dfd, sig = _derived.domain_view(*_derived.display_view())\n"
         "st.session_state['domains_present'] = sorted(set(dfd['domain']))\n"
         "st.session_state['legacy_domain'] = dfd.loc["
-        "dfd['vulnerableAsset.name'] == 'legacy-vm-12', 'domain'].iloc[0]\n"
+        "dfd['vulnerableAsset.name'].str.startswith('legacy-'), 'domain'].iloc[0]\n"
         "from wiz_dashboard.ui.pages import os_vulns\n"
         "os_vulns.render(has_creds=False)\n"
     )
