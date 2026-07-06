@@ -16,7 +16,7 @@ export async function renderOverview(main, params) {
     el("h1", {}, "OS vulnerabilities"),
     el("p", { class: "page-sub" },
       "CVEs with a fix available on host workloads, from the Wiz Security Graph. ",
-      el("a", { href: "#/mttr" }, "Remediation performance →"),
+      el("a", { href: "#/mttr", target: "_self" }, "Remediation performance →"),
     ),
   );
 
