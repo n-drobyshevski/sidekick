@@ -51,6 +51,15 @@ export function changeChip(current, previous, { invert = false } = {}) {
   return el("span", { class: `chg ${cls}` }, `${sign}${round1(delta)}`);
 }
 
+// NVD link for a CVE id. Built so no literal `//` byte sequence appears in the bundle:
+// SSL-inspecting middleboxes have been observed stripping "comments" from the served
+// page and truncating lines at a bare `//`. The join (which esbuild cannot constant-
+// fold, unlike `"a" + "b"`) yields "https://nvd.nist.gov/vuln/detail/<id>" at runtime;
+// the build guard in esbuild.config.mjs enforces the invariant.
+export function nvdUrl(id) {
+  return ["https:", "", "nvd.nist.gov", "vuln", "detail", encodeURIComponent(id || "")].join("/");
+}
+
 export function round1(v) {
   return Math.round(v * 10) / 10;
 }
