@@ -69,10 +69,16 @@ export function sheet(tab: string): GoogleAppsScript.Spreadsheet.Sheet {
 
 /** Create any missing tab with its frozen header row (idempotent). */
 export function ensureTabs(ss: GoogleAppsScript.Spreadsheet.Spreadsheet): void {
+  // All timestamps are canonical ISO strings; the spreadsheet timezone must never
+  // reinterpret them (and Sheets must not auto-coerce them into locale Dates).
+  ss.setSpreadsheetTimeZone("Etc/UTC");
   for (const [tab, headers] of Object.entries(TAB_HEADERS)) {
     let sh = ss.getSheetByName(tab);
     if (!sh) {
       sh = ss.insertSheet(tab);
+      // Plain-text format everywhere: ISO timestamps and JSON blobs round-trip
+      // byte-stable instead of becoming Date cells in the sheet's locale.
+      sh.getRange(1, 1, sh.getMaxRows(), sh.getMaxColumns()).setNumberFormat("@");
       sh.getRange(1, 1, 1, headers.length).setValues([headers]);
       sh.setFrozenRows(1);
     } else {
@@ -140,7 +146,9 @@ export function overwrite(tab: string, rows: Rec[]): void {
   if (lastRow > 1) sh.getRange(2, 1, lastRow - 1, lastCol).clearContent();
   if (!rows.length) return;
   const grid = rows.map((r) => headers.map((h) => toCell(r[h])));
-  sh.getRange(2, 1, grid.length, headers.length).setValues(grid);
+  const range = sh.getRange(2, 1, grid.length, headers.length);
+  range.setNumberFormat("@"); // rows added beyond the original grid stay plain text
+  range.setValues(grid);
 }
 
 /** Append rows in one batched write. */
@@ -150,7 +158,9 @@ export function appendRows(tab: string, rows: Rec[]): void {
   const lastCol = Math.max(sh.getLastColumn(), 1);
   const headers = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(String).filter(Boolean);
   const grid = rows.map((r) => headers.map((h) => toCell(r[h])));
-  sh.getRange(sh.getLastRow() + 1, 1, grid.length, headers.length).setValues(grid);
+  const range = sh.getRange(sh.getLastRow() + 1, 1, grid.length, headers.length);
+  range.setNumberFormat("@");
+  range.setValues(grid);
 }
 
 /** Update the first row where keyColumn === keyValue (returns false when absent). */

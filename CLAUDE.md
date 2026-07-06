@@ -9,6 +9,12 @@ host workloads, severity breakdowns, and MTTR / SLA remediation analytics with a
 scan history. Entry point is `app.py` (`st.navigation` / `st.Page`); pages live in
 `wiz_dashboard/ui/pages/`, shared logic in `wiz_dashboard/{config,data,domain,models}`.
 
+`gas/` holds a full Google Apps Script rebuild of the same product (Google Sheets ledger +
+Drive archives + HtmlService SPA). The Python `wiz_dashboard/domain/` layer is its behavioral
+spec: `gas/test/export_*.py` generate golden fixtures by running this code, and the TypeScript
+ports are tested against them — after changing the Python domain layer, regenerate the fixtures
+and run `cd gas && npm run check`. See `gas/README.md`.
+
 ## Design Context
 
 Before any UI or design work, read:
