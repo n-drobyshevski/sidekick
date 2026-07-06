@@ -59,13 +59,16 @@ export function parseSeverities(text: unknown): string[] | null {
  * first scan newer than cutoff (sealed history must stay a prefix) and never reaches
  * the last MIN_UNSEALED_FLAT_SCANS flat scans.
  */
-export function selectSealCandidates(rows: Rec[], cutoffMs: number): Rec[] {
-  const flatIds = rows.filter((r) => r["shape"] === "flat").map((r) => r["scan_id"]);
+export function selectSealCandidates<T extends { scan_id: unknown; ts: unknown; shape: unknown }>(
+  rows: T[],
+  cutoffMs: number,
+): T[] {
+  const flatIds = rows.filter((r) => r.shape === "flat").map((r) => r.scan_id);
   const protectedIds = new Set(flatIds.slice(-MIN_UNSEALED_FLAT_SCANS));
-  const candidates: Rec[] = [];
+  const candidates: T[] = [];
   for (const r of rows) {
-    if (protectedIds.has(r["scan_id"])) break;
-    const ts = parseTs(r["ts"]);
+    if (protectedIds.has(r.scan_id)) break;
+    const ts = parseTs(r.ts);
     if (ts === null || ts > cutoffMs) break;
     candidates.push(r);
   }
