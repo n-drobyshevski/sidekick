@@ -97,7 +97,8 @@
     --fs-base: 0.875rem;   /* 14px — body */
     --fs-md:   1rem;       /* 16px — h3 */
     --fs-lg:   1.125rem;   /* 18px — h2 */
-    --fs-xl:   1.5rem;     /* 24px — h1 / hero values */
+    --fs-xl:   1.5rem;     /* 24px — h1 / KPI-card values */
+    --fs-2xl:  2rem;       /* 32px — the one-per-page hero metric value only */
 
     /* Spacing scale (4 / 8 rhythm) */
     --space-1: 4px;
@@ -522,6 +523,46 @@ h1, h2, h3, h4, h5, h6 { font-weight: 600; letter-spacing: -0.02em; line-height:
 .stat-card__row .kpi-card__delta {
     margin-top: 0; min-width: 58px; text-align: right; font-variant-numeric: tabular-nums;
 }
+
+/* === Hero stat (the one-per-page headline metric; MTTR & SLA page) ===
+   Borderless by design: the hero is page-level type, not a card among cards, so it
+   dominates by size (--fs-2xl vs the minis' --fs-lg), top-left position and whitespace —
+   never by decoration (no gradient, no accent stripe). The complementary mini-stats sit
+   below a hairline, each a muted label over a tabular value; deltas reuse the shared
+   .kpi-card__delta chip (arrow + sign carry direction, colour is redundant). */
+.hero-stat { margin: var(--space-1) 0 var(--space-2); }
+.hero-stat__label {
+    font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase;
+    letter-spacing: .05em; color: var(--muted-foreground);
+}
+.hero-stat__main {
+    display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap;
+    margin-top: var(--space-2);
+}
+.hero-stat__value {
+    font-size: var(--fs-2xl); font-weight: 600; line-height: 1.1;
+    letter-spacing: -0.02em; font-variant-numeric: tabular-nums;
+    color: var(--card-foreground);
+}
+.hero-stat__main .kpi-card__delta { margin-top: 0; font-variant-numeric: tabular-nums; }
+.hero-stat__sub {
+    margin-top: var(--space-2);
+    font-size: var(--fs-xs); color: var(--muted-foreground); max-width: 65ch;
+}
+.hero-stat__strip {
+    display: flex; flex-wrap: wrap; gap: var(--space-3) var(--space-6);
+    margin-top: var(--space-5); padding-top: var(--space-4);
+    border-top: 1px solid var(--border);
+}
+.hero-stat__mini { display: flex; flex-direction: column; gap: 3px; }
+.hero-stat__mini-label {
+    font-size: var(--fs-xs); font-weight: 500; color: var(--muted-foreground);
+}
+.hero-stat__mini-value {
+    font-size: var(--fs-lg); font-weight: 600; color: var(--card-foreground);
+    font-variant-numeric: tabular-nums; letter-spacing: -0.01em; line-height: 1.15;
+}
+.hero-stat__mini .kpi-card__delta { margin-top: 0; }
 
 /* === SLA bullet (attainment progress bar, coloured on the 90/70 policy) === */
 .sla-bullet { width: 100%; height: 8px; border-radius: 4px;

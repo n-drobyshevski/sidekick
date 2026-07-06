@@ -699,6 +699,56 @@ def stat_list_card(items) -> None:
     st.markdown(f'<div class="stat-card">{"".join(rows)}</div>', unsafe_allow_html=True)
 
 
+def hero_stat_html(item, strip=()) -> str:
+    """Build the one-per-page hero metric: label + display-scale value + change chip +
+    optional muted sub-caption, with a quiet strip of complementary mini-stats beneath.
+
+    ``item``: the hero metric dict — ``label`` + ``value`` (required); optional ``delta``
+    (+ ``delta_suffix`` / ``inverse`` / ``pct`` / ``abs_text``) for the change chip,
+    ``help`` (hover title on the label), and ``sub`` (a plain-text source/context line
+    under the value). ``strip``: iterable of mini-stat dicts (same keys minus ``sub``),
+    rendered as label-over-value pairs separated from the hero by a hairline. Borderless
+    by design — the hero reads as page-level type, not one card among many."""
+    title = f' title="{_html.escape(str(item["help"]))}"' if item.get("help") else ""
+    delta = _delta_html(
+        item.get("delta"), inverse=item.get("inverse", True),
+        suffix=item.get("delta_suffix", ""), pct=item.get("pct"),
+        abs_text=item.get("abs_text"),
+    )
+    sub = (
+        f'<div class="hero-stat__sub">{_html.escape(str(item["sub"]))}</div>'
+        if item.get("sub") else ""
+    )
+    minis = []
+    for it in strip:
+        mini_title = f' title="{_html.escape(str(it["help"]))}"' if it.get("help") else ""
+        mini_delta = _delta_html(
+            it.get("delta"), inverse=it.get("inverse", True),
+            suffix=it.get("delta_suffix", ""), pct=it.get("pct"),
+            abs_text=it.get("abs_text"),
+        )
+        minis.append(
+            f'<div class="hero-stat__mini"{mini_title}>'
+            f'<span class="hero-stat__mini-label">{_html.escape(str(it.get("label", "")))}</span>'
+            f'<span class="hero-stat__mini-value">{_html.escape(str(it.get("value", "—")))}</span>'
+            f'{mini_delta}</div>'
+        )
+    strip_html = f'<div class="hero-stat__strip">{"".join(minis)}</div>' if minis else ""
+    return (
+        '<div class="hero-stat">'
+        f'<div class="hero-stat__label"{title}>{_html.escape(str(item.get("label", "")))}</div>'
+        f'<div class="hero-stat__main">'
+        f'<span class="hero-stat__value">{_html.escape(str(item.get("value", "—")))}</span>'
+        f'{delta}</div>'
+        f'{sub}{strip_html}</div>'
+    )
+
+
+def hero_stat(item, strip=()) -> None:
+    """Render the one-per-page hero metric (see ``hero_stat_html``)."""
+    st.markdown(hero_stat_html(item, strip), unsafe_allow_html=True)
+
+
 def severity_skeleton():
     """Placeholder severity breakdown (em-dash rows) shown before a scan has loaded.
 
@@ -902,7 +952,7 @@ def render_mttr_widget(df, mttr=None, *, show_overall=True):
     cached one); when omitted it is computed from ``df``.
 
     ``show_overall`` renders the "Overall median MTTR" headline metric + resolved/open
-    caption above the table. The MTTR page passes ``False`` because its Key metrics card
+    caption above the table. The MTTR page passes ``False`` because its hero stat
     already shows median / resolved / open, so repeating them here is redundant; standalone
     callers (and the OS-page legacy use) keep the headline by default.
     """

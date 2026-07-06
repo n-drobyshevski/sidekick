@@ -172,7 +172,7 @@ def test_finding_sheet_carries_domain_chip():
 
 def test_mttr_domain_select_rescopes_metrics():
     # Interacting with the domain selectbox (inside the page-body fragment) must
-    # re-scope the KPI source caption to the chosen domain.
+    # re-scope the hero's source line to the chosen domain.
     guarded_persist = (
         "from wiz_dashboard.data import ledger as _l\n"
         "if _l.load_scans_df().empty:\n"
@@ -188,4 +188,6 @@ def test_mttr_domain_select_rescopes_metrics():
     sel.select(domain)
     at.run()
     assert not at.exception, at.exception
-    assert any(f"scoped to the **{domain}** domain" in str(c.value) for c in at.caption)
+    assert any(
+        f"scoped to the {domain} domain" in str(m.value) for m in at.markdown
+    )  # the hero-stat source line, rendered inside the hero markdown

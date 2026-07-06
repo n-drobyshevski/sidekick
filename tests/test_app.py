@@ -104,9 +104,10 @@ def test_mttr_page_empty_state_without_scan():
 
 
 def test_mttr_page_renders_headline_after_findings_loaded():
-    # With flat per-finding data in session, the MTTR page's headline is the Key metrics
-    # card ("Median MTTR"); the per-severity widget no longer repeats it as an "Overall
-    # median MTTR" st.metric -- the card above already shows it (de-duplicated).
+    # With flat per-finding data in session, the MTTR page's headline is the hero stat
+    # ("Median MTTR" at display scale, complementary stats in the mini strip); the
+    # per-severity widget no longer repeats it as an "Overall median MTTR" st.metric --
+    # the hero above already shows it (de-duplicated).
     script = (
         "import pandas as pd\n"
         "import streamlit as st\n"
@@ -125,7 +126,11 @@ def test_mttr_page_renders_headline_after_findings_loaded():
     )
     at = AppTest.from_string(script, default_timeout=30).run()
     assert not at.exception
-    assert any("Median MTTR" in m.value for m in at.markdown)  # Key metrics card headline
+    blob = "\n".join(m.value for m in at.markdown)
+    assert "Median MTTR" in blob                       # hero headline present
+    assert 'class="hero-stat"' in blob                 # rendered as the hero stat, not a card row
+    assert "hero-stat__mini" in blob                   # complementary strip present
+    assert "Key metrics" not in blob                   # old section label is gone
     assert not any("Overall median MTTR" in m.label for m in at.metric)  # no duplicate metric
 
 

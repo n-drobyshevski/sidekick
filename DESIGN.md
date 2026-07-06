@@ -148,7 +148,8 @@ Status verdicts reuse a fixed trio: **OK** `#15803d`, **Warn** `#a16207`, **Bad*
 **Character:** Neutral, legible, and dense-capable. A single well-tuned sans carries headings, labels, body, and data. OpenType features `cv02 cv03 cv04 cv11` are enabled for cleaner letterforms, and `tabular-nums` is forced wherever figures appear (metrics, dataframes, badges, KPI values) so numbers stay column-aligned and do not jitter between updates.
 
 ### Hierarchy
-- **Display / h1** (600, `1.5rem` / 24px, line-height 1.2, letter-spacing `-0.02em`): Page titles and hero metric values. The ceiling; this app never shouts.
+- **Hero value** (600, `2rem` / 32px, letter-spacing `-0.02em`, tabular): The single page-hero metric value (Median MTTR on the MTTR & SLA page). At most one per page, and only ever a data value, never a heading; headings keep the 1.5rem display ceiling. This is the one sanctioned step above display, spent where the number *is* the page.
+- **Display / h1** (600, `1.5rem` / 24px, line-height 1.2, letter-spacing `-0.02em`): Page titles and KPI-card values. The heading ceiling; this app never shouts.
 - **Section label / h2** (600, `0.9375rem` / 15px): The `section_label()` heading above a group of widgets. Deliberately compact, below the type scale's 18px, so dense pages stay scannable while heading order stays sequential (h1 then h2).
 - **Title / h3** (600, `1rem` / 16px): Card and subsection titles.
 - **Body** (400, `0.875rem` / 14px, line-height 1.5): Default text. Prose capped at 65 to 75ch; data tables may run denser.
@@ -199,6 +200,9 @@ Components are **tactile and confident**: comfortable 36px control heights, surf
 
 ### Navigation
 - **Style:** A shadcn-style sidebar. Group headers are `11px` uppercase muted labels; nav links are `13px` with a Material icon, `8px` radius, rounded hover tint. The active item gets a neutral accent pill (not blue) and bumps to weight 600. Focus shows the blue ring. The sidebar is a cooler surface (`#f8f8fa`) with a hairline right border.
+
+### Hero Stat
+The one-per-page headline metric (`hero_stat()`), used where a single number is the page's reason to exist (Median MTTR on MTTR & SLA). Deliberately **borderless**: an uppercase muted label, the value at the 2rem hero step with its change chip beside it, and a muted plain-text source line. The complementary mini-stats (label over an 18px tabular value, optional change chip) sit below a hairline rule inside the same block. Dominance comes from size, top-left position, and whitespace, never from a card, gradient, or accent stripe.
 
 ### Signature Component: The Finding Sheet
 A right-anchored drawer (a restyled `st.dialog`) that slides in over a scrim at `min(520px, 92vw)`, full-bleed on phones. It is shape-aware: a flat per-finding record shows a CVSS/EPSS risk strip, scoring, exploitability, asset, lifecycle/SLA, and remediation sections; a grouped-by-asset node shows a per-severity findings breakdown. The header carries a severity-colored left accent set inline from the finding's own severity. Slides in over `220ms` on an ease-out curve; the reduced-motion path zeroes the duration.

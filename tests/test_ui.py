@@ -209,6 +209,37 @@ def test_sla_posture_html_empty_is_blank_and_render_is_safe():
     })
 
 
+def test_hero_stat_html_structure_and_strip():
+    html = components.hero_stat_html(
+        {"label": "Median MTTR", "value": "12.4d", "sub": "MTTR source: durable base.",
+         "help": "Median days from first detection to remediation.",
+         "delta": -1.2, "abs_text": "1.2d", "pct": -9.0},
+        [
+            {"label": "In SLA", "value": "86%", "inverse": False, "delta": 2, "delta_suffix": "pp"},
+            {"label": "Open", "value": "1,987"},
+        ],
+    )
+    # Hero: label + display-scale value + change chip + plain-text source line.
+    assert 'class="hero-stat__label"' in html and "Median MTTR" in html
+    assert '<span class="hero-stat__value">12.4d</span>' in html
+    assert "kpi-card__delta--good" in html and "▼" in html and "−1.2d" in html and "9%" in html
+    assert '<div class="hero-stat__sub">MTTR source: durable base.</div>' in html
+    assert 'title="Median days from first detection to remediation."' in html
+    # Strip: one mini per complementary stat; a mini without a delta gets no chip.
+    assert html.count('class="hero-stat__mini"') == 2
+    assert "In SLA" in html and "86%" in html and "+2pp" in html
+    assert "1,987" in html
+
+
+def test_hero_stat_html_escapes_and_optional_parts():
+    html = components.hero_stat_html({"label": "<b>x</b>", "value": "1<2", "sub": "a & b"})
+    # Untrusted text is escaped everywhere it lands.
+    assert "&lt;b&gt;x&lt;/b&gt;" in html and "1&lt;2" in html and "a &amp; b" in html
+    # No delta, no sub-items -> no chip, no strip.
+    assert "kpi-card__delta" not in html and "hero-stat__strip" not in html
+    components.hero_stat({"label": "Median MTTR", "value": "—"})  # render path must not raise
+
+
 def test_fetch_fraction_maps_progress_into_fetch_share():
     from wiz_dashboard.ui import scan
 

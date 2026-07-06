@@ -9,7 +9,6 @@ MTTR history file, so they show up even before a scan in the current session.
 import pandas as pd
 import streamlit as st
 
-from wiz_dashboard.config import SEVERITY_COLORS
 from wiz_dashboard.domain import domain_rules, metrics
 from wiz_dashboard.domain.formatting import format_duration
 from wiz_dashboard.ui import charts
@@ -91,15 +90,15 @@ def _body() -> None:
     if ledger_has:
         per_sev, overall = ledger_mttr
         source = (
-            f"MTTR source: **durable base**, scoped to the **{domain_sel}** domain."
+            f"MTTR source: durable base, scoped to the {domain_sel} domain."
             if domain_sel
-            else "MTTR source: **durable base**. Lifecycles observed across all saved "
+            else "MTTR source: durable base. Lifecycles observed across all saved "
                  "scans (a vuln that disappears between scans counts as resolved)."
         )
         _kpi_and_posture(per_sev, overall, source, prev_kpis)
-        # Per-severity detail is demoted to an expander: the SLA-posture bullets above are
-        # the hero. show_overall=False keeps the widget to just the table (the Key metrics
-        # card already carries median / resolved / open).
+        # Per-severity detail is demoted to an expander: Median MTTR above is the hero.
+        # show_overall=False keeps the widget to just the table (the hero stat already
+        # carries median / resolved / open).
         with st.expander("Per-severity breakdown", expanded=False):
             ui.render_mttr_widget(df, mttr=(per_sev, overall), show_overall=False)
     elif not df.empty and scan.loaded_shape(nodes) != "grouped":
@@ -107,7 +106,7 @@ def _body() -> None:
         _kpi_and_posture(
             per_sev,
             overall,
-            "MTTR source: **current scan only**. Run scans over time to build the "
+            "MTTR source: current scan only. Run scans over time to build the "
             "durable base and get lifecycle-accurate MTTR.",
             prev_kpis,
         )
@@ -192,18 +191,19 @@ def _prev_from_trend(trend):
     return out
 
 
-def _hero(per_sev, overall, prev=None) -> None:
-    """Headline remediation KPIs as a stat-list card. Each metric carries an absolute + %
-    change vs the previous scan (``prev`` from ``_prev_from_trend``), shown only where a
-    historical baseline exists."""
+def _hero(per_sev, overall, source, prev=None) -> None:
+    """The page hero: Median MTTR at display scale (the metric this page exists for),
+    with the four complementary stats demoted to a quiet mini-stat strip beneath it.
+    Each metric keeps its absolute + % change vs the previous scan (``prev`` from
+    ``_prev_from_trend``), shown only where a historical baseline exists. ``source`` is
+    the plain-text data-source line rendered under the hero value."""
     prev = prev or {}
     sla, oldest = metrics.overall_sla_oldest(per_sev)
     med = overall.get("mttr_median")
     resolved_cur = int(overall.get("resolved", 0))
     open_cur = int(overall.get("open", 0))
 
-    med_item = {"label": "Median MTTR", "value": format_duration(med),
-                "accent": "var(--accent)",
+    med_item = {"label": "Median MTTR", "value": format_duration(med), "sub": source,
                 "help": "Median days from first detection to remediation."}
     pm = prev.get("median_days")
     if med is not None and not pd.isna(med) and pm:  # truthy base avoids /0
@@ -211,7 +211,7 @@ def _hero(per_sev, overall, prev=None) -> None:
         med_item.update(delta=dd, abs_text=format_duration(abs(dd)), pct=dd / pm * 100)
 
     sla_item = {"label": "In SLA", "value": (f"{sla:.0f}%" if sla is not None else "—"),
-                "accent": "#16a34a", "inverse": False,
+                "inverse": False,
                 "help": "Share of resolved findings remediated within their SLA target."}
     ps = prev.get("sla_pct")
     if sla is not None and ps:
@@ -221,15 +221,13 @@ def _hero(per_sev, overall, prev=None) -> None:
         sla_item.update(delta=round(float(sla) - float(ps)), delta_suffix="pp")
 
     oldest_item = {"label": "Oldest open", "value": format_duration(oldest),
-                   "accent": SEVERITY_COLORS["HIGH"],
                    "help": "90th-percentile age of currently-open findings."}
     po_age = prev.get("oldest_open_days")
     if oldest is not None and po_age:
         dd = float(oldest) - float(po_age)
         oldest_item.update(delta=dd, abs_text=format_duration(abs(dd)), pct=dd / po_age * 100)
 
-    res_item = {"label": "Resolved", "value": f"{resolved_cur:,}",
-                "accent": "#16a34a", "inverse": False,
+    res_item = {"label": "Resolved", "value": f"{resolved_cur:,}", "inverse": False,
                 "help": "Findings with a recorded remediation."}
     pr = prev.get("resolved")
     if pr is not None:
@@ -237,27 +235,24 @@ def _hero(per_sev, overall, prev=None) -> None:
                         pct=((resolved_cur - pr) / pr * 100) if pr else None)
 
     open_item = {"label": "Open", "value": f"{open_cur:,}",
-                 "accent": SEVERITY_COLORS["HIGH"],
                  "help": "Findings still awaiting remediation."}
     po = prev.get("open")
     if po is not None:
         open_item.update(delta=open_cur - po,
                          pct=((open_cur - po) / po * 100) if po else None)
 
-    ui.stat_list_card([med_item, sla_item, oldest_item, res_item, open_item])
+    ui.hero_stat(med_item, [sla_item, oldest_item, res_item, open_item])
 
 
 def _kpi_and_posture(per_sev, overall, source_caption, prev=None) -> None:
-    """Headline KPI stat-list card + the SLA-posture bars, side by side (2 columns).
+    """The Median MTTR hero + the SLA-posture bars, side by side (2 columns).
 
     Both data paths (durable base / current scan) share this layout; only the source
-    caption under the KPI card differs. ``prev`` carries previous-scan values for the KPI
-    change badges. Each column: heading → content → footnote caption, so the tops align."""
+    line under the hero value differs. ``prev`` carries previous-scan values for the
+    change badges."""
     kpi_col, posture_col = st.columns(2, gap="large")
     with kpi_col:
-        ui.section_label("Key metrics")
-        _hero(per_sev, overall, prev)
-        st.caption(source_caption)
+        _hero(per_sev, overall, source_caption, prev)
     with posture_col:
         ui.section_label("SLA posture")
         ui.sla_posture(per_sev)
