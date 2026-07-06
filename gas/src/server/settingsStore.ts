@@ -5,7 +5,13 @@ import * as logic from "../domain/settingsLogic";
 import type { Rec } from "../domain/util";
 import { readAll, overwrite, TABS } from "./sheetsDb";
 
+// Per-execution memo: every settings getter below funnels through loadSettings(),
+// so without it a single request re-reads the settings tab once per getter. Module
+// state dies with the GAS execution, so this can never serve cross-request data.
+let settingsMemo: Rec | undefined;
+
 export function loadSettings(): Rec {
+  if (settingsMemo !== undefined) return settingsMemo;
   const out: Rec = {};
   for (const row of readAll(TABS.settings)) {
     const key = row["key"];
@@ -21,6 +27,7 @@ export function loadSettings(): Rec {
       console.warn(`Unreadable settings value for ${key}; ignoring`);
     }
   }
+  settingsMemo = out;
   return out;
 }
 
@@ -32,6 +39,7 @@ export function saveSettings(settings: Rec): void {
       value_json: JSON.stringify(value ?? null),
     })),
   );
+  settingsMemo = settings;
 }
 
 export const getFetchSeverities = (): string[] => logic.getFetchSeverities(loadSettings());

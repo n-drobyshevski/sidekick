@@ -7,13 +7,21 @@ export function call(name, params) {
       reject(new Error("google.script.run unavailable (open via the web app URL)"));
       return;
     }
+    const t0 = performance.now();
+    const done = () => {
+      console.debug("[rpc] " + name + " " + Math.round(performance.now() - t0) + "ms");
+    };
     google.script.run
       .withSuccessHandler((res) => {
+        done();
         if (res && res.ok) resolve(res.data);
         else reject(Object.assign(new Error((res && res.error) || "Unknown server error"),
           { kind: res && res.errorKind }));
       })
-      .withFailureHandler((err) => reject(err instanceof Error ? err : new Error(String(err))))
+      .withFailureHandler((err) => {
+        done();
+        reject(err instanceof Error ? err : new Error(String(err)));
+      })
       [name](params || {});
   });
 }

@@ -2336,20 +2336,31 @@ var Server = (() => {
       tags_json: (_r = r["tags_json"]) != null ? _r : null
     };
   }
+  var scanRowsMemo;
+  var stateMemo;
+  function invalidateLedgerMemos() {
+    scanRowsMemo = void 0;
+    stateMemo = void 0;
+  }
   function loadScanRows() {
-    return scansAsc(readAll(TABS.scans).map(rowToScan));
+    if (scanRowsMemo === void 0) {
+      scanRowsMemo = scansAsc(readAll(TABS.scans).map(rowToScan));
+    }
+    return scanRowsMemo;
   }
   function scanRowExists(scanId) {
-    return readAll(TABS.scans).some((r) => r["scan_id"] === scanId);
+    return loadScanRows().some((s) => s.scan_id === scanId);
   }
   function loadState(useSnapshot = true) {
+    if (useSnapshot && stateMemo !== void 0) return stateMemo;
     const state = emptyState();
-    state.scans = loadScanRows();
+    state.scans = loadScanRows().slice();
     if (useSnapshot) {
       const snap = readLedgerSnapshot();
       if (snap) {
         state.ledger = snap.ledger;
         state.episodes = snap.episodes;
+        stateMemo = state;
         return state;
       }
     }
@@ -2371,6 +2382,7 @@ var Server = (() => {
         superseded_by_scan: (_i = r["superseded_by_scan"]) != null ? _i : null
       };
     });
+    if (useSnapshot) stateMemo = state;
     return state;
   }
   function writeStateTables(state) {
@@ -2378,6 +2390,7 @@ var Server = (() => {
     overwrite(TABS.episodes, state.episodes);
     overwrite(TABS.scans, scansAsc(state.scans));
     writeLedgerSnapshot(state);
+    invalidateLedgerMemos();
   }
   function persistFlatScan2(records, options) {
     var _a, _b, _c;
@@ -2426,6 +2439,7 @@ var Server = (() => {
     overwrite(TABS.episodes, state.episodes);
     writeLedgerSnapshot(state);
     if (scanRow) appendRows(TABS.scans, [scanRow]);
+    invalidateLedgerMemos();
     updateJob(jobId, { phase: "DONE" });
     trashFile(journalRef);
     return { deltas, scanRow };
@@ -2439,7 +2453,10 @@ var Server = (() => {
       scannedSeverities: (_b = options.scannedSeverities) != null ? _b : null,
       rawRef: (_c = options.rawRef) != null ? _c : null
     });
-    if (scanRow) appendRows(TABS.scans, [scanRow]);
+    if (scanRow) {
+      appendRows(TABS.scans, [scanRow]);
+      invalidateLedgerMemos();
+    }
     return { deltas, scanRow };
   }
   var readPayloadForRow = (row) => readScanPayload(row.raw_ref);
@@ -2588,7 +2605,9 @@ var Server = (() => {
   }
 
   // src/server/settingsStore.ts
+  var settingsMemo;
   function loadSettings() {
+    if (settingsMemo !== void 0) return settingsMemo;
     const out = {};
     for (const row of readAll(TABS.settings)) {
       const key = row["key"];
@@ -2604,6 +2623,7 @@ var Server = (() => {
         console.warn(`Unreadable settings value for ${key}; ignoring`);
       }
     }
+    settingsMemo = out;
     return out;
   }
   function saveSettings(settings) {
@@ -2614,6 +2634,7 @@ var Server = (() => {
         value_json: JSON.stringify(value != null ? value : null)
       }))
     );
+    settingsMemo = settings;
   }
   var getFetchSeverities2 = () => getFetchSeverities(loadSettings());
   var getDisplaySeverities2 = () => getDisplaySeverities(loadSettings());

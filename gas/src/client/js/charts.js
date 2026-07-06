@@ -1,8 +1,27 @@
 // Chart.js wrappers themed to DESIGN.md: severity bar (click-to-filter), MTTR trend
 // line, open-vs-resolved dual line. Chart.js 4 is bundled (no CDN) so the app works
-// behind proxies that block or rewrite third-party script hosts.
+// behind proxies that block or rewrite third-party script hosts. Only the components
+// these three chart types use are registered — chart.js/auto would pull in every
+// controller/scale/plugin and roughly double the bundle's Chart.js footprint.
 
-import Chart from "chart.js/auto";
+import {
+  BarController,
+  BarElement,
+  CategoryScale,
+  Chart,
+  Filler,
+  Legend,
+  LinearScale,
+  LineController,
+  LineElement,
+  PointElement,
+  Tooltip,
+} from "chart.js";
+
+Chart.register(
+  BarController, BarElement, CategoryScale, Filler, Legend,
+  LinearScale, LineController, LineElement, PointElement, Tooltip,
+);
 
 const FONT = {
   family:

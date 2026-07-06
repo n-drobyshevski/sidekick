@@ -10,7 +10,16 @@ import {
 } from "../ui.js";
 
 export async function renderHistory(main, _params, ctx) {
-  const boot = await bootstrap();
+  // All four fetches are independent — fire them together so the page pays one
+  // round-trip of latency instead of four (each RPC is a fresh GAS execution).
+  const bootPromise = bootstrap();
+  const dataPromise = call("api_getScanHistory", {});
+  const trendsPromise = call("api_getMttrTrend", {});
+  const firstBasePromise = call("api_getBaseRows", {
+    statuses: [], severities: [], domains: [], q: "", page: 0, pageSize: 100,
+  });
+
+  const boot = await bootPromise;
   main.append(
     el("h1", {}, "Scan History"),
     el("p", { class: "page-sub" },
@@ -24,7 +33,7 @@ export async function renderHistory(main, _params, ctx) {
   main.append(kpiRow, sectionLabel("Saved scans"), scansHost, chartsHost,
     sectionLabel("Vulnerability base"), baseHost);
 
-  const data = await call("api_getScanHistory", {});
+  const data = await dataPromise;
   if (!data.scans.length) {
     clear(scansHost).append(emptyState("No scans saved yet."));
   }
@@ -110,7 +119,7 @@ export async function renderHistory(main, _params, ctx) {
   }
 
   // ---- trend charts
-  const trends = await call("api_getMttrTrend", {});
+  const trends = await trendsPromise;
   if (trends.trend.length) {
     const openResolvedCanvas = el("canvas", { id: "hist-open-resolved" });
     const mttrCanvas = el("canvas", { id: "hist-mttr" });
@@ -155,7 +164,7 @@ export async function renderHistory(main, _params, ctx) {
     el("button", { onclick: exportBaseCsv }, "Download CSV"),
   );
 
-  await loadBase();
+  await loadBase(firstBasePromise);
 
   function reload() { filters.page = 0; loadBase(); }
 
@@ -167,9 +176,9 @@ export async function renderHistory(main, _params, ctx) {
     return el("div", { class: "field" }, el("label", { class: "field-label" }, label), sel);
   }
 
-  async function loadBase() {
+  async function loadBase(prefetched) {
     clear(tableHost).append(el("p", { class: "muted" }, "Loading base…"));
-    const res = await call("api_getBaseRows", { ...filters, pageSize: 100 });
+    const res = await (prefetched || call("api_getBaseRows", { ...filters, pageSize: 100 }));
     clear(tableHost);
     if (!res.rows.length) {
       tableHost.append(emptyState("Nothing tracked matches these filters."));
