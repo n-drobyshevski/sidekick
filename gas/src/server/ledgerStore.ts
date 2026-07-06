@@ -35,6 +35,7 @@ import { trendFromFrames, type TrendPoint } from "../domain/trend";
 import { nowIso, type Rec } from "../domain/util";
 import * as archive from "./archiveStore";
 import { createJob, newJobId, updateJob } from "./jobsStore";
+import { bumpDataVersion } from "./serverCache";
 import { appendRows, overwrite, readAll, TABS } from "./sheetsDb";
 
 // ------------------------------------------------------------------ state load/save
@@ -79,13 +80,31 @@ function rowToLedger(r: Rec): LedgerRow {
   };
 }
 
+// Per-execution memos. A single request hits loadScanRows()/loadState() several
+// times (bootstrap alone reads scans 3×); module state dies with the execution, so
+// memoizing is free of cross-request staleness. Every write path below calls
+// invalidateLedgerMemos() after touching the tabs/snapshot so reads-after-write
+// inside the same execution (recovery, mutation endpoints) see fresh data.
+let scanRowsMemo: ScanRow[] | undefined;
+let stateMemo: LedgerState | undefined;
+
+export function invalidateLedgerMemos(): void {
+  scanRowsMemo = undefined;
+  stateMemo = undefined;
+  // Every ledger write also stales the cross-request derived caches.
+  bumpDataVersion();
+}
+
 /** Scans tab only (cheap; enough for history/meta reads). */
 export function loadScanRows(): ScanRow[] {
-  return scansAsc(readAll(TABS.scans).map(rowToScan));
+  if (scanRowsMemo === undefined) {
+    scanRowsMemo = scansAsc(readAll(TABS.scans).map(rowToScan));
+  }
+  return scanRowsMemo;
 }
 
 export function scanRowExists(scanId: string): boolean {
-  return readAll(TABS.scans).some((r) => r["scan_id"] === scanId);
+  return loadScanRows().some((s) => s.scan_id === scanId);
 }
 
 /**
@@ -94,13 +113,16 @@ export function scanRowExists(scanId: string): boolean {
  * the snapshot on the next write.
  */
 export function loadState(useSnapshot = true): LedgerState {
+  if (useSnapshot && stateMemo !== undefined) return stateMemo;
   const state = emptyState();
-  state.scans = loadScanRows();
+  // Sliced so a mutation core pushing its new scan row never grows the memoized array.
+  state.scans = loadScanRows().slice();
   if (useSnapshot) {
     const snap = archive.readLedgerSnapshot();
     if (snap) {
       state.ledger = snap.ledger;
       state.episodes = snap.episodes;
+      stateMemo = state;
       return state;
     }
   }
@@ -119,6 +141,7 @@ export function loadState(useSnapshot = true): LedgerState {
     compaction_id: String(r["compaction_id"] ?? ""),
     superseded_by_scan: (r["superseded_by_scan"] as string | null) ?? null,
   }));
+  if (useSnapshot) stateMemo = state;
   return state;
 }
 
@@ -128,6 +151,7 @@ export function writeStateTables(state: LedgerState): void {
   overwrite(TABS.episodes, state.episodes as unknown as Rec[]);
   overwrite(TABS.scans, scansAsc(state.scans) as unknown as Rec[]);
   archive.writeLedgerSnapshot(state);
+  invalidateLedgerMemos();
 }
 
 // ------------------------------------------------------------------------- persist
@@ -202,6 +226,7 @@ export function persistFlatScan(
 
   // 5. Commit: the scans row lands last.
   if (scanRow) appendRows(TABS.scans, [scanRow as unknown as Rec]);
+  invalidateLedgerMemos();
 
   updateJob(jobId, { phase: "DONE" });
   archive.trashFile(journalRef);
@@ -225,7 +250,10 @@ export function persistGroupedScan(
     scannedSeverities: options.scannedSeverities ?? null,
     rawRef: options.rawRef ?? null,
   });
-  if (scanRow) appendRows(TABS.scans, [scanRow as unknown as Rec]);
+  if (scanRow) {
+    appendRows(TABS.scans, [scanRow as unknown as Rec]);
+    invalidateLedgerMemos();
+  }
   return { deltas, scanRow };
 }
 

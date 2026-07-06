@@ -2,6 +2,7 @@
 // latest wins (the port of wiz_dashboard/data/history.py).
 
 import type { Rec } from "../domain/util";
+import { bumpDataVersion } from "./serverCache";
 import { readAll, overwrite, TABS } from "./sheetsDb";
 
 function todayIso(now?: number): string {
@@ -42,6 +43,7 @@ export function recordSnapshot(
     });
     records.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
     overwrite(TABS.mttrHistory, records as unknown as Rec[]);
+    bumpDataVersion();
     return true;
   } catch (e) {
     console.warn(`Failed to write MTTR history: ${e}`);

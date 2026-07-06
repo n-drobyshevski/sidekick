@@ -3,14 +3,30 @@
 
 import { call } from "../api.js";
 import { openResolvedLines, trendLine } from "../charts.js";
-import { bootstrap } from "../store.js";
+import { bootstrap, swrCall } from "../store.js";
 import {
   clear, confirmDialog, downloadText, el, emptyState, fmtDays, fmtDate, fmtDateTime,
   kpiCard, nvdUrl, pager, sectionLabel, sevBadge, toast,
 } from "../ui.js";
 
 export async function renderHistory(main, _params, ctx) {
-  const boot = await bootstrap();
+  // One batched RPC serves the whole page (scans + KPIs + trends + first base page);
+  // server-side the three parts share a single ledger-state load. Revisits paint
+  // instantly from the session cache and repaint only if revalidated data differs.
+  const bootPromise = bootstrap();
+  let baseTouched = false; // once the user filters/pages the base, SWR leaves it alone
+  const pagePromise = swrCall(
+    "api_getHistoryPage",
+    { statuses: [], severities: [], domains: [], q: "", page: 0, pageSize: 100 },
+    (fresh) => {
+      paintKpis(fresh.history.kpis);
+      paintScans(fresh.history.scans);
+      paintTrends(fresh.trends);
+      if (!baseTouched) renderBase(fresh.base);
+    },
+  );
+
+  const boot = await bootPromise;
   main.append(
     el("h1", {}, "Scan History"),
     el("p", { class: "page-sub" },
@@ -24,20 +40,25 @@ export async function renderHistory(main, _params, ctx) {
   main.append(kpiRow, sectionLabel("Saved scans"), scansHost, chartsHost,
     sectionLabel("Vulnerability base"), baseHost);
 
-  const data = await call("api_getScanHistory", {});
-  if (!data.scans.length) {
-    clear(scansHost).append(emptyState("No scans saved yet."));
+  const pageData = await pagePromise;
+  const data = pageData.history;
+  paintKpis(data.kpis);
+  paintScans(data.scans);
+
+  function paintKpis(kpis) {
+    clear(kpiRow).append(
+      kpiCard("Tracked (all-time)", kpis.tracked.toLocaleString()),
+      kpiCard("Currently open", kpis.open.toLocaleString()),
+      kpiCard("Resolved all-time", kpis.resolvedAllTime.toLocaleString()),
+      kpiCard("Median MTTR", fmtDays(kpis.medianMttr)),
+    );
   }
 
-  kpiRow.append(
-    kpiCard("Tracked (all-time)", data.kpis.tracked.toLocaleString()),
-    kpiCard("Currently open", data.kpis.open.toLocaleString()),
-    kpiCard("Resolved all-time", data.kpis.resolvedAllTime.toLocaleString()),
-    kpiCard("Median MTTR", fmtDays(data.kpis.medianMttr)),
-  );
-
   // ---- saved scans table with delete flow
-  if (data.scans.length) renderScans(data.scans);
+  function paintScans(scans) {
+    if (scans.length) renderScans(scans);
+    else clear(scansHost).append(emptyState("No scans saved yet."));
+  }
 
   function renderScans(scans) {
     clear(scansHost);
@@ -110,8 +131,11 @@ export async function renderHistory(main, _params, ctx) {
   }
 
   // ---- trend charts
-  const trends = await call("api_getMttrTrend", {});
-  if (trends.trend.length) {
+  paintTrends(pageData.trends);
+
+  function paintTrends(trends) {
+    clear(chartsHost);
+    if (!trends.trend.length) return;
     const openResolvedCanvas = el("canvas", { id: "hist-open-resolved" });
     const mttrCanvas = el("canvas", { id: "hist-mttr" });
 
@@ -155,7 +179,7 @@ export async function renderHistory(main, _params, ctx) {
     el("button", { onclick: exportBaseCsv }, "Download CSV"),
   );
 
-  await loadBase();
+  renderBase(pageData.base);
 
   function reload() { filters.page = 0; loadBase(); }
 
@@ -168,8 +192,13 @@ export async function renderHistory(main, _params, ctx) {
   }
 
   async function loadBase() {
+    baseTouched = true;
     clear(tableHost).append(el("p", { class: "muted" }, "Loading base…"));
     const res = await call("api_getBaseRows", { ...filters, pageSize: 100 });
+    renderBase(res);
+  }
+
+  function renderBase(res) {
     clear(tableHost);
     if (!res.rows.length) {
       tableHost.append(emptyState("Nothing tracked matches these filters."));

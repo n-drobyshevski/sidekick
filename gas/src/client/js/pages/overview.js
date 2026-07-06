@@ -4,7 +4,7 @@
 
 import { call } from "../api.js";
 import { severityBar } from "../charts.js";
-import { bootstrap, listJoin, listSplit, setParams } from "../store.js";
+import { bootstrap, listJoin, listSplit, setParams, swrCall } from "../store.js";
 import {
   changeChip, clear, confirmDialog, downloadText, el, emptyState, fmtDate, kpiCard,
   nvdUrl, openSheet, pager, sectionLabel, sevBadge, toast,
@@ -39,6 +39,12 @@ export async function renderOverview(main, params) {
     group: params.group || "",
     page: Number(params.page || 0),
   };
+
+  // Under this ceiling the full table projection ships once and filtering runs in
+  // the browser (see localResult); above it every interaction stays a server query.
+  const CLIENT_FILTER_MAX = 3000;
+  let clientMode = boot.latestScan.total <= CLIENT_FILTER_MAX;
+  let allRows = null;
 
   const kpiRow = el("div", { class: "kpi-row" });
   const sevChartCanvas = el("canvas", { id: "sev-chart" });
@@ -179,18 +185,117 @@ export async function renderOverview(main, params) {
 
   async function load() {
     clear(tableHost).append(el("p", { class: "muted" }, "Loading findings…"));
-    const res = await call("api_getFindings", {
-      severities: state.sev.length ? state.sev : undefined,
-      statuses: state.status,
-      assetTypes: state.atype,
-      clouds: state.cloud,
-      domains: state.dom,
-      q: state.q,
-      groupBy: state.group,
-      page: state.page,
-      pageSize: 100,
-    });
+    let res = clientMode ? await localResult() : null;
+    if (!res) {
+      res = await call("api_getFindings", {
+        severities: state.sev.length ? state.sev : undefined,
+        statuses: state.status,
+        assetTypes: state.atype,
+        clouds: state.cloud,
+        domains: state.dom,
+        q: state.q,
+        groupBy: state.group,
+        page: state.page,
+        pageSize: 100,
+      });
+    }
+    renderResult(res);
+  }
 
+  /**
+   * Client-side filter mode for moderate scans: fetch the full table projection once
+   * (session-cached, revalidated in the background), then every severity toggle,
+   * keystroke, group change, and page flip is pure local compute — zero RPCs.
+   */
+  async function localResult() {
+    if (!allRows) {
+      const full = await swrCall(
+        "api_getFindings",
+        { severities: boot.settings.displaySeverities, all: true },
+        (fresh) => {
+          if (fresh.all) {
+            allRows = fresh.rows;
+            load();
+          }
+        },
+      );
+      if (!full.all) {
+        clientMode = false; // the server declined (result set over its ceiling)
+        return null;
+      }
+      allRows = full.rows;
+    }
+    return computeLocal(allRows);
+  }
+
+  // Local mirror of the server's applyFilters + grouping + paging over table rows.
+  function computeLocal(rows) {
+    let out = rows;
+    if (state.sev.length) {
+      const keep = new Set(state.sev.map((s) => s.toUpperCase()));
+      out = out.filter((r) => keep.has(String(r._sev)));
+    }
+    if (state.status.length) {
+      const keep = new Set(state.status.map((s) => s.toUpperCase()));
+      out = out.filter((r) => keep.has(String(r.status || "").toUpperCase()));
+    }
+    if (state.atype.length) {
+      const keep = new Set(state.atype);
+      out = out.filter((r) => keep.has(String(r["vulnerableAsset.type"] || "")));
+    }
+    if (state.cloud.length) {
+      const keep = new Set(state.cloud);
+      out = out.filter((r) => keep.has(String(r["vulnerableAsset.cloudPlatform"] || "")));
+    }
+    if (state.dom.length) {
+      const keep = new Set(state.dom);
+      out = out.filter((r) => keep.has(String(r._domain || "Unassigned")));
+    }
+    if (state.q.trim()) {
+      const q = state.q.trim().toLowerCase();
+      out = out.filter((r) =>
+        String(r.name || "").toLowerCase().includes(q) ||
+        String(r["vulnerableAsset.name"] || "").toLowerCase().includes(q));
+    }
+    const counts = {};
+    for (const r of out) counts[r._sev] = (counts[r._sev] || 0) + 1;
+
+    if (state.group) {
+      const col = {
+        severity: "_sev", status: "status", atype: "vulnerableAsset.type",
+        cloud: "vulnerableAsset.cloudPlatform", asset: "vulnerableAsset.name",
+        subscription: "vulnerableAsset.subscriptionName", domain: "_domain",
+      }[state.group] || "_sev";
+      const groups = new Map();
+      for (const r of out) {
+        const v = r[col];
+        const k = v === null || v === undefined || v === "" ? "(none)" : String(v);
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k).push(r);
+      }
+      const ordered = [...groups.entries()]
+        .sort((a, b) => b[1].length - a[1].length)
+        .slice(0, 30); // same caps as the server path
+      return {
+        rows: [], total: out.length, counts, page: 0, pageCount: 0,
+        groups: ordered.map(([key, groupRows]) => {
+          const sevCounts = {};
+          for (const r of groupRows) sevCounts[r._sev] = (sevCounts[r._sev] || 0) + 1;
+          return { key, count: groupRows.length, sevCounts, rows: groupRows.slice(0, 250) };
+        }),
+      };
+    }
+
+    const pageSize = 100;
+    const pageCount = Math.max(1, Math.ceil(out.length / pageSize));
+    const page = Math.min(Math.max(state.page, 0), pageCount - 1);
+    return {
+      rows: out.slice(page * pageSize, (page + 1) * pageSize),
+      total: out.length, counts, page, pageCount, groups: null,
+    };
+  }
+
+  function renderResult(res) {
     // KPI band (unfiltered headline; filtered count shows on the table).
     clear(kpiRow);
     const total = Object.values(boot.counts).reduce((a, b) => a + b, 0);
@@ -332,54 +437,59 @@ export async function renderOverview(main, params) {
           el("button", { onclick: close, "aria-label": "Close detail" }, "✕"),
         ),
       );
-      const body = el("div", { class: "sheet-body" }, el("p", { class: "muted" }, "Loading detail…"));
+      const body = el("div", { class: "sheet-body" });
       sheet.append(body);
-      let detail;
-      try {
-        detail = await call("api_getFindingDetail", { vulnKey: row._vuln_key });
-      } catch (e) {
-        clear(body).append(el("p", { class: "muted" }, `Couldn't load detail: ${e.message}`));
-        return;
-      }
-      clear(body);
-      const rec = detail.record || row;
-      body.append(
-        kvSection("Finding", {
-          CVE: rec.name, Component: rec.detailedName, Severity: rec._sev ?? rec.severity,
-          Status: rec.status, "Fixed version": rec.fixedVersion,
-          "Detection method": rec.detectionMethod, Source: rec.dataSourceName,
-        }),
-        kvSection("Risk", {
-          "CVSS score": rec.score, "Vendor severity": rec.vendorSeverity,
-          "NVD severity": rec.nvdSeverity, "EPSS severity": rec.epssSeverity,
-          "EPSS probability": rec.epssProbability,
-          "Exploit available": rec.hasExploit ? "Yes" : "No",
-          "CISA KEV": rec.hasCisaKevExploit ? "Yes" : "No",
-        }),
-        kvSection("Asset", {
-          Name: rec["vulnerableAsset.name"], Type: rec["vulnerableAsset.type"],
-          Cloud: rec["vulnerableAsset.cloudPlatform"],
-          Subscription: rec["vulnerableAsset.subscriptionName"],
-          OS: rec["vulnerableAsset.operatingSystem"], Region: rec["vulnerableAsset.region"],
-        }),
-        kvSection("Lifecycle", {
-          "First detected": rec.firstDetectedAt, "Last detected": rec.lastDetectedAt,
-          Resolved: rec.resolvedAt, Published: rec.publishedDate,
-        }),
-        el("div", { class: "sheet-section" },
-          el("a", {
-            class: "btn", target: "_blank", rel: "noopener",
-            href: nvdUrl(rec.name),
-            style: "text-decoration:none; display:inline-block; padding:6px 14px",
-          }, "Open in NVD ↗"),
-        ),
-      );
-      if (detail.raw) {
-        const details = el("details", { class: "sheet-section" },
-          el("summary", { class: "label", style: "cursor:pointer" }, "Raw JSON"),
+
+      // The table row already carries most displayed fields — paint the sheet
+      // instantly from it, then upgrade with the full record + raw JSON when the
+      // detail RPC lands (it fills detection method, EPSS probability, region, …).
+      const paint = (rec) => {
+        clear(body);
+        body.append(
+          kvSection("Finding", {
+            CVE: rec.name, Component: rec.detailedName, Severity: rec._sev ?? rec.severity,
+            Status: rec.status, "Fixed version": rec.fixedVersion,
+            "Detection method": rec.detectionMethod, Source: rec.dataSourceName,
+          }),
+          kvSection("Risk", {
+            "CVSS score": rec.score, "Vendor severity": rec.vendorSeverity,
+            "NVD severity": rec.nvdSeverity, "EPSS severity": rec.epssSeverity,
+            "EPSS probability": rec.epssProbability,
+            "Exploit available": rec.hasExploit ? "Yes" : "No",
+            "CISA KEV": rec.hasCisaKevExploit ? "Yes" : "No",
+          }),
+          kvSection("Asset", {
+            Name: rec["vulnerableAsset.name"], Type: rec["vulnerableAsset.type"],
+            Cloud: rec["vulnerableAsset.cloudPlatform"],
+            Subscription: rec["vulnerableAsset.subscriptionName"],
+            OS: rec["vulnerableAsset.operatingSystem"], Region: rec["vulnerableAsset.region"],
+          }),
+          kvSection("Lifecycle", {
+            "First detected": rec.firstDetectedAt, "Last detected": rec.lastDetectedAt,
+            Resolved: rec.resolvedAt, Published: rec.publishedDate,
+          }),
+          el("div", { class: "sheet-section" },
+            el("a", {
+              class: "btn", target: "_blank", rel: "noopener",
+              href: nvdUrl(rec.name),
+              style: "text-decoration:none; display:inline-block; padding:6px 14px",
+            }, "Open in NVD ↗"),
+          ),
         );
-        details.append(el("pre", { class: "raw-json" }, JSON.stringify(detail.raw, null, 2)));
-        body.append(details);
+      };
+      paint(row);
+      try {
+        const detail = await call("api_getFindingDetail", { vulnKey: row._vuln_key });
+        paint(detail.record || row);
+        if (detail.raw) {
+          const details = el("details", { class: "sheet-section" },
+            el("summary", { class: "label", style: "cursor:pointer" }, "Raw JSON"),
+          );
+          details.append(el("pre", { class: "raw-json" }, JSON.stringify(detail.raw, null, 2)));
+          body.append(details);
+        }
+      } catch (e) {
+        body.append(el("p", { class: "small muted" }, `Couldn't load full detail: ${e.message}`));
       }
     });
   }

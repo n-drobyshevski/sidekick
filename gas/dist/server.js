@@ -133,11 +133,36 @@ var Server = (() => {
     const name = `page-${String(pageNumber).padStart(4, "0")}.json.gz`;
     return writeGzJson(scanFolder(scanId), name, payload).getId();
   }
+  function readScanPage(scanId, pageNumber) {
+    const name = `page-${String(pageNumber).padStart(4, "0")}.json.gz`;
+    const files = scanFolder(scanId).getFilesByName(name);
+    return files.hasNext() ? parseGzBlob(files.next().getBlob()) : null;
+  }
   function writeSlimRecords(scanId, records) {
     return writeGzJson(scanFolder(scanId), "slim.json.gz", records).getId();
   }
   function readSlimRecords(scanId) {
     const files = scanFolder(scanId).getFilesByName("slim.json.gz");
+    if (!files.hasNext()) return null;
+    const parsed = parseGzBlob(files.next().getBlob());
+    return Array.isArray(parsed) ? parsed : null;
+  }
+  var FRAME_NAME = "frame-v1.json.gz";
+  function writeFrame(scanId, records) {
+    return writeGzJson(scanFolder(scanId), FRAME_NAME, records).getId();
+  }
+  function readFrame(scanId) {
+    const files = scanFolder(scanId).getFilesByName(FRAME_NAME);
+    if (!files.hasNext()) return null;
+    const parsed = parseGzBlob(files.next().getBlob());
+    return Array.isArray(parsed) ? parsed : null;
+  }
+  var PAGE_RUNS_NAME = "pageruns.json.gz";
+  function writePageRuns(scanId, runs) {
+    writeGzJson(scanFolder(scanId), PAGE_RUNS_NAME, runs);
+  }
+  function readPageRuns(scanId) {
+    const files = scanFolder(scanId).getFilesByName(PAGE_RUNS_NAME);
     if (!files.hasNext()) return null;
     const parsed = parseGzBlob(files.next().getBlob());
     return Array.isArray(parsed) ? parsed : null;
@@ -700,8 +725,8 @@ var Server = (() => {
     if (staticToken && staticToken.trim()) return staticToken.trim();
     const cache = CacheService.getScriptCache();
     if (!forceRefresh) {
-      const cached = cache.get(TOKEN_CACHE_KEY);
-      if (cached) return cached;
+      const cached2 = cache.get(TOKEN_CACHE_KEY);
+      if (cached2) return cached2;
     }
     const authUrl = (_a = getProp(PROP_KEYS.wizAuthUrl)) != null ? _a : DEFAULT_WIZ_AUTH_URL;
     const response = UrlFetchApp.fetch(authUrl, {
@@ -907,8 +932,10 @@ var Server = (() => {
     getExportRawUrl: () => getExportRawUrl,
     getFindingDetail: () => getFindingDetail,
     getFindings: () => getFindings,
+    getHistoryPage: () => getHistoryPage,
     getJobStatus: () => getJobStatus,
     getMttr: () => getMttr,
+    getMttrPage: () => getMttrPage,
     getMttrTrend: () => getMttrTrend,
     getReport: () => getReport,
     getScanHistory: () => getScanHistory,
@@ -2295,6 +2322,80 @@ var Server = (() => {
     return (_a = listJobs().find((j) => !TERMINAL.includes(j.phase))) != null ? _a : null;
   }
 
+  // src/server/serverCache.ts
+  var VERSION_PROP = "DATA_VERSION";
+  var KEY_PREFIX = "wsk";
+  var CHUNK_CHARS = 9e4;
+  var DEFAULT_TTL_SEC = 21600;
+  function dataVersion() {
+    var _a;
+    return (_a = getProp(VERSION_PROP)) != null ? _a : "0";
+  }
+  function bumpDataVersion() {
+    setProp(VERSION_PROP, String(Date.now()));
+  }
+  function cacheKey(name, params, version) {
+    const paramsHash = sha1Hex(JSON.stringify(params != null ? params : null)).slice(0, 12);
+    return `${KEY_PREFIX}:${version}:${name}:${paramsHash}`;
+  }
+  function splitChunks(s, size = CHUNK_CHARS) {
+    const out = [];
+    for (let i = 0; i < s.length; i += size) out.push(s.slice(i, i + size));
+    return out.length ? out : [""];
+  }
+  function cachePutJson(key, value, ttlSec = DEFAULT_TTL_SEC, chunkChars = CHUNK_CHARS) {
+    const json = JSON.stringify(value);
+    const gz = Utilities.gzip(Utilities.newBlob(json, "application/json"));
+    const packed = Utilities.base64Encode(gz.getBytes());
+    const chunks = splitChunks(packed, chunkChars);
+    const entries = { [`${key}:m`]: String(chunks.length) };
+    chunks.forEach((c, i) => {
+      entries[`${key}:${i}`] = c;
+    });
+    CacheService.getScriptCache().putAll(entries, ttlSec);
+  }
+  function cacheGetJson(key) {
+    const cache = CacheService.getScriptCache();
+    const meta = cache.get(`${key}:m`);
+    if (!meta) return void 0;
+    const n = Number(meta);
+    if (!Number.isInteger(n) || n < 1) return void 0;
+    const names = [];
+    for (let i = 0; i < n; i++) names.push(`${key}:${i}`);
+    const got = cache.getAll(names);
+    let packed = "";
+    for (const name of names) {
+      const chunk = got[name];
+      if (chunk === void 0 || chunk === null) return void 0;
+      packed += chunk;
+    }
+    const bytes = Utilities.base64Decode(packed);
+    const json = Utilities.ungzip(
+      Utilities.newBlob(bytes, "application/x-gzip")
+    ).getDataAsString("UTF-8");
+    return JSON.parse(json);
+  }
+  function cached(name, params, compute, ttlSec = DEFAULT_TTL_SEC) {
+    let key = null;
+    try {
+      key = cacheKey(name, params, dataVersion());
+      const hit = cacheGetJson(key);
+      if (hit !== void 0) return hit;
+    } catch (e) {
+      console.warn(`Cache read failed for ${name}: ${e}`);
+      key = null;
+    }
+    const value = compute();
+    if (key) {
+      try {
+        cachePutJson(key, value, ttlSec);
+      } catch (e) {
+        console.warn(`Cache write failed for ${name}: ${e}`);
+      }
+    }
+    return value;
+  }
+
   // src/server/ledgerStore.ts
   function rowToScan(r) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
@@ -2336,20 +2437,32 @@ var Server = (() => {
       tags_json: (_r = r["tags_json"]) != null ? _r : null
     };
   }
+  var scanRowsMemo;
+  var stateMemo;
+  function invalidateLedgerMemos() {
+    scanRowsMemo = void 0;
+    stateMemo = void 0;
+    bumpDataVersion();
+  }
   function loadScanRows() {
-    return scansAsc(readAll(TABS.scans).map(rowToScan));
+    if (scanRowsMemo === void 0) {
+      scanRowsMemo = scansAsc(readAll(TABS.scans).map(rowToScan));
+    }
+    return scanRowsMemo;
   }
   function scanRowExists(scanId) {
-    return readAll(TABS.scans).some((r) => r["scan_id"] === scanId);
+    return loadScanRows().some((s) => s.scan_id === scanId);
   }
   function loadState(useSnapshot = true) {
+    if (useSnapshot && stateMemo !== void 0) return stateMemo;
     const state = emptyState();
-    state.scans = loadScanRows();
+    state.scans = loadScanRows().slice();
     if (useSnapshot) {
       const snap = readLedgerSnapshot();
       if (snap) {
         state.ledger = snap.ledger;
         state.episodes = snap.episodes;
+        stateMemo = state;
         return state;
       }
     }
@@ -2371,6 +2484,7 @@ var Server = (() => {
         superseded_by_scan: (_i = r["superseded_by_scan"]) != null ? _i : null
       };
     });
+    if (useSnapshot) stateMemo = state;
     return state;
   }
   function writeStateTables(state) {
@@ -2378,6 +2492,7 @@ var Server = (() => {
     overwrite(TABS.episodes, state.episodes);
     overwrite(TABS.scans, scansAsc(state.scans));
     writeLedgerSnapshot(state);
+    invalidateLedgerMemos();
   }
   function persistFlatScan2(records, options) {
     var _a, _b, _c;
@@ -2426,6 +2541,7 @@ var Server = (() => {
     overwrite(TABS.episodes, state.episodes);
     writeLedgerSnapshot(state);
     if (scanRow) appendRows(TABS.scans, [scanRow]);
+    invalidateLedgerMemos();
     updateJob(jobId, { phase: "DONE" });
     trashFile(journalRef);
     return { deltas, scanRow };
@@ -2439,7 +2555,10 @@ var Server = (() => {
       scannedSeverities: (_b = options.scannedSeverities) != null ? _b : null,
       rawRef: (_c = options.rawRef) != null ? _c : null
     });
-    if (scanRow) appendRows(TABS.scans, [scanRow]);
+    if (scanRow) {
+      appendRows(TABS.scans, [scanRow]);
+      invalidateLedgerMemos();
+    }
     return { deltas, scanRow };
   }
   var readPayloadForRow = (row) => readScanPayload(row.raw_ref);
@@ -2588,7 +2707,9 @@ var Server = (() => {
   }
 
   // src/server/settingsStore.ts
+  var settingsMemo;
   function loadSettings() {
+    if (settingsMemo !== void 0) return settingsMemo;
     const out = {};
     for (const row of readAll(TABS.settings)) {
       const key = row["key"];
@@ -2604,6 +2725,7 @@ var Server = (() => {
         console.warn(`Unreadable settings value for ${key}; ignoring`);
       }
     }
+    settingsMemo = out;
     return out;
   }
   function saveSettings(settings) {
@@ -2614,6 +2736,8 @@ var Server = (() => {
         value_json: JSON.stringify(value != null ? value : null)
       }))
     );
+    settingsMemo = settings;
+    bumpDataVersion();
   }
   var getFetchSeverities2 = () => getFetchSeverities(loadSettings());
   var getDisplaySeverities2 = () => getDisplaySeverities(loadSettings());
@@ -2645,20 +2769,30 @@ var Server = (() => {
       memo = null;
       return memo;
     }
-    let slim = readSlimRecords(row.scan_id);
-    if (!slim) {
-      const payload = readScanPayload(row.raw_ref);
-      slim = payload ? extractNodes(payload) : [];
-    }
     const domains = getDomains2();
     const compiled = compileDomains(domains.items);
-    const records = (slim != null ? slim : []).map((n) => {
-      const flat = flattenNode(n);
-      flat["_vuln_key"] = vulnKey(n);
-      flat["_sev"] = normalizeSeverity(flat["severity"]);
-      flat["_domain"] = compiled.length ? assignDomain(flat, compiled) : UNASSIGNED;
-      return flat;
-    });
+    const frame = readFrame(row.scan_id);
+    let records;
+    if (frame) {
+      records = frame.map((flat) => {
+        flat["_sev"] = normalizeSeverity(flat["severity"]);
+        flat["_domain"] = compiled.length ? assignDomain(flat, compiled) : UNASSIGNED;
+        return flat;
+      });
+    } else {
+      let slim = readSlimRecords(row.scan_id);
+      if (!slim) {
+        const payload = readScanPayload(row.raw_ref);
+        slim = payload ? extractNodes(payload) : [];
+      }
+      records = (slim != null ? slim : []).map((n) => {
+        const flat = flattenNode(n);
+        flat["_vuln_key"] = vulnKey(n);
+        flat["_sev"] = normalizeSeverity(flat["severity"]);
+        flat["_domain"] = compiled.length ? assignDomain(flat, compiled) : UNASSIGNED;
+        return flat;
+      });
+    }
     memo = {
       scanId: row.scan_id,
       ts: row.ts,
@@ -2772,6 +2906,7 @@ var Server = (() => {
       });
       records.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
       overwrite(TABS.mttrHistory, records);
+      bumpDataVersion();
       return true;
     } catch (e) {
       console.warn(`Failed to write MTTR history: ${e}`);
@@ -2849,6 +2984,25 @@ var Server = (() => {
     slimRecord: () => slimRecord,
     startScan: () => startScan
   });
+
+  // src/server/frameCore.ts
+  function buildFrame(records, pageOf) {
+    return records.map((n, i) => {
+      const flat = flattenNode(n);
+      flat["_vuln_key"] = vulnKey(n);
+      if (pageOf) flat["_page"] = pageOf(i);
+      return flat;
+    });
+  }
+  function pageOfFromRuns(runs, total) {
+    if (!runs) return null;
+    const pages = [];
+    for (const [page, count] of runs) {
+      for (let k = 0; k < count; k++) pages.push(page);
+    }
+    if (pages.length !== total) return null;
+    return (i) => pages[i];
+  }
 
   // src/server/sampleData.ts
   var SAMPLE_FLAT = { "data": { "vulnerabilityFindings": { "nodes": [{ "id": "vf_2b1c9e4a-6f3d-4a2b-9c1e-8d7f6a5b4c3d", "name": "CVE-2025-32463", "detailedName": "sudo 1.9.13p3-1ubuntu3.4", "description": "A flaw was found in sudo's chroot handling that allows a local user with limited sudo privileges to escalate to root by supplying a crafted /etc/nsswitch.conf inside a controlled chroot.", "severity": "CRITICAL", "status": "OPEN", "fixedVersion": "1.9.15p2-3ubuntu2", "detectionMethod": "OS_PACKAGE", "firstDetectedAt": "2026-04-01T08:12:44Z", "firstDetectedAtSource": "SCHEDULED_SCAN", "lastDetectedAt": "2026-06-09T08:39:37Z", "resolvedAt": null, "validatedInRuntime": true, "runtimeValidationResult": "CONFIRMED", "reachability": "NETWORK", "hasTriggerableRemediation": false, "remediationPullRequestAvailable": false, "dataSourceName": "Wiz Sensor", "fixDate": null, "fixDateBefore": null, "publishedDate": "2026-03-28T00:00:00Z", "version": "1.9.13p3-1ubuntu3.4", "versionResolutionPrimarySource": { "type": "OS_PACKAGE_MANAGER", "version": "1.9.13p3-1ubuntu3.4" }, "isOperatingSystemEndOfLife": false, "recommendedVersion": "1.9.15p2-3ubuntu2", "locationPath": "/usr/bin/sudo", "artifactType": { "group": "OS_PACKAGE", "codeLibraryLanguage": null, "osPackageManager": "DPKG", "hostedTechnology": null, "plugin": false, "custom": false, "ciComponent": false }, "projects": [{ "id": "1dfea0cf-834f-5522-b797-bee5aaf09251", "name": "Production", "slug": "production", "isFolder": false }], "ignoreRules": [], "note": null, "layerMetadata": null, "vulnerableAsset": { "id": "b06695d5-b271-58f3-9e27-c5b97658142e", "type": "VIRTUAL_MACHINE", "name": "web-prod-01", "cloudPlatform": "AWS", "subscriptionName": "prod-account", "subscriptionExternalId": "111122223333", "subscriptionId": "2b2211fb-742f-5566-af67-ab8992b58cfb", "tags": { "env": "prod", "team": "platform", "owner": "sre" }, "operatingSystem": "Ubuntu", "operatingSystemDistribution": { "id": "os-ubuntu-2404", "name": "Ubuntu 24.04", "icon": "ubuntu" }, "imageName": "ami-0a1b2c3d4e5f6a7b8", "imageId": "ami-0a1b2c3d4e5f6a7b8", "imageNativeType": "AMI", "hasLimitedInternetExposure": false, "hasWideInternetExposure": true, "isAccessibleFromVPN": false, "isAccessibleFromOtherVnets": false, "isAccessibleFromOtherSubscriptions": false, "computeInstanceGroup": { "id": "asg-web-prod", "externalId": "asg-web-prod-01", "name": "web-prod-asg", "replicaCount": 4, "tags": { "env": "prod" } }, "nativeType": "ec2", "isUsedOnPrem": false, "resourceGroupExternalId": null }, "sourceMappedCodeFindings": [], "transitivity": null, "rootComponent": null, "isHighProfileThreat": true, "vendorSeverity": "CRITICAL", "nvdSeverity": "HIGH", "weightedSeverity": "CRITICAL", "hasExploit": true, "usedInCodeResult": null, "hasCisaKevExploit": true, "cisaKevReleaseDate": "2026-04-03T00:00:00Z", "cisaKevDueDate": "2026-04-24T00:00:00Z", "score": 9.3, "epssSeverity": "CRITICAL", "epssPercentile": 0.981, "epssProbability": 0.91, "categories": ["PRIVILEGE_ESCALATION"], "hasInitialAccessPotential": false, "isClientSide": false, "affectedBySettings": false, "codeLibraryLanguage": null, "exploitabilityValidationStatus": "EXPLOITABLE", "cvssv2": null, "cvssv3": { "attackVector": "LOCAL", "attackComplexity": "LOW", "confidentialityImpact": "HIGH", "integrityImpact": "HIGH", "privilegesRequired": "LOW", "userInteractionRequired": false, "vectorString": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H", "scope": "UNCHANGED" }, "effectiveAvailabilityImpact": "HIGH", "cnaScore": 7.8, "vendorScore": 9.3, "origin": "CONTEXTUAL", "duplicateOf": null }, { "id": "vf_7a4e1f2b-3c5d-4e6f-8a9b-1c2d3e4f5a6b", "name": "CVE-2026-0985", "detailedName": "openssl 3.0.13-0ubuntu3.4", "description": "An out-of-bounds read in the X.509 certificate parser can cause a denial of service when processing a malformed certificate chain.", "severity": "HIGH", "status": "RESOLVED", "fixedVersion": "3.0.13-0ubuntu3.6", "detectionMethod": "OS_PACKAGE", "firstDetectedAt": "2026-03-11T14:02:09Z", "firstDetectedAtSource": "SCHEDULED_SCAN", "lastDetectedAt": "2026-03-25T06:11:52Z", "resolvedAt": "2026-03-26T09:45:00Z", "validatedInRuntime": false, "runtimeValidationResult": null, "reachability": "NETWORK", "hasTriggerableRemediation": true, "remediationPullRequestAvailable": true, "dataSourceName": "Wiz Sensor", "fixDate": "2026-03-26T09:45:00Z", "fixDateBefore": null, "publishedDate": "2026-02-18T00:00:00Z", "version": "3.0.13-0ubuntu3.4", "versionResolutionPrimarySource": { "type": "OS_PACKAGE_MANAGER", "version": "3.0.13-0ubuntu3.4" }, "isOperatingSystemEndOfLife": false, "recommendedVersion": "3.0.13-0ubuntu3.6", "locationPath": "/usr/lib/x86_64-linux-gnu/libssl.so.3", "artifactType": { "group": "OS_PACKAGE", "codeLibraryLanguage": null, "osPackageManager": "DPKG", "hostedTechnology": null, "plugin": false, "custom": false, "ciComponent": false }, "projects": [{ "id": "1dfea0cf-834f-5522-b797-bee5aaf09251", "name": "Production", "slug": "production", "isFolder": false }], "ignoreRules": [], "note": { "id": "note-91f2", "text": "Patched during the March maintenance window." }, "layerMetadata": null, "vulnerableAsset": { "id": "66457926-3513-53eb-a09f-0e90b6f4feff", "type": "VIRTUAL_MACHINE", "name": "api-prod-02", "cloudPlatform": "Azure", "subscriptionName": "core-prod", "subscriptionExternalId": "azure-sub-001", "subscriptionId": "1fafc3d1-bbe3-5d13-8698-3df1f4514e37", "tags": { "env": "prod", "tier": "api" }, "operatingSystem": "Ubuntu", "operatingSystemDistribution": { "id": "os-ubuntu-2204", "name": "Ubuntu 22.04", "icon": "ubuntu" }, "imageName": null, "imageId": null, "imageNativeType": null, "hasLimitedInternetExposure": true, "hasWideInternetExposure": false, "isAccessibleFromVPN": true, "isAccessibleFromOtherVnets": false, "isAccessibleFromOtherSubscriptions": false, "computeInstanceGroup": null, "nativeType": "virtualMachine", "isUsedOnPrem": false, "resourceGroupExternalId": "rg-core-prod" }, "sourceMappedCodeFindings": [], "transitivity": "DIRECT", "rootComponent": { "name": "openssl" }, "isHighProfileThreat": false, "vendorSeverity": "HIGH", "nvdSeverity": "MEDIUM", "weightedSeverity": "HIGH", "hasExploit": false, "usedInCodeResult": null, "hasCisaKevExploit": false, "cisaKevReleaseDate": null, "cisaKevDueDate": null, "score": 7.5, "epssSeverity": "MEDIUM", "epssPercentile": 0.44, "epssProbability": 0.06, "categories": ["DENIAL_OF_SERVICE"], "hasInitialAccessPotential": false, "isClientSide": false, "affectedBySettings": false, "codeLibraryLanguage": null, "exploitabilityValidationStatus": "NOT_EXPLOITABLE", "cvssv2": null, "cvssv3": { "attackVector": "NETWORK", "attackComplexity": "HIGH", "confidentialityImpact": "NONE", "integrityImpact": "NONE", "privilegesRequired": "NONE", "userInteractionRequired": false, "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:N/I:N/A:H", "scope": "UNCHANGED" }, "effectiveAvailabilityImpact": "HIGH", "cnaScore": 7.5, "vendorScore": 7.5, "origin": "CONTEXTUAL", "duplicateOf": null }, { "id": "vf_9c3d5e6f-4a2b-4c1d-8e7f-6a5b4c3d2e1f", "name": "CVE-2026-1442", "detailedName": "glibc 2.35-0ubuntu3.8", "description": "A buffer overflow in the DNS stub resolver can be triggered by a malicious DNS response, potentially leading to remote code execution in services performing name resolution.", "severity": "MEDIUM", "status": "OPEN", "fixedVersion": "2.35-0ubuntu3.9", "detectionMethod": "OS_PACKAGE", "firstDetectedAt": "2026-05-02T11:30:18Z", "firstDetectedAtSource": "SCHEDULED_SCAN", "lastDetectedAt": "2026-06-11T10:07:38Z", "resolvedAt": null, "validatedInRuntime": false, "runtimeValidationResult": null, "reachability": null, "hasTriggerableRemediation": false, "remediationPullRequestAvailable": false, "dataSourceName": "Wiz Sensor", "fixDate": null, "fixDateBefore": "2026-08-02T00:00:00Z", "publishedDate": "2026-04-22T00:00:00Z", "version": "2.35-0ubuntu3.8", "versionResolutionPrimarySource": { "type": "OS_PACKAGE_MANAGER", "version": "2.35-0ubuntu3.8" }, "isOperatingSystemEndOfLife": false, "recommendedVersion": "2.35-0ubuntu3.9", "locationPath": "/lib/x86_64-linux-gnu/libc.so.6", "artifactType": { "group": "OS_PACKAGE", "codeLibraryLanguage": null, "osPackageManager": "DPKG", "hostedTechnology": null, "plugin": false, "custom": false, "ciComponent": false }, "projects": [{ "id": "1dfea0cf-834f-5522-b797-bee5aaf09251", "name": "Production", "slug": "production", "isFolder": false }], "ignoreRules": [{ "id": "ignore-rule-4471" }], "note": null, "layerMetadata": null, "vulnerableAsset": { "id": "3aabb810-5c5d-5603-922e-e21fe60d8d73", "type": "VIRTUAL_MACHINE", "name": "batch-worker-03", "cloudPlatform": "GCP", "subscriptionName": "inix-tt4k", "subscriptionExternalId": "inix-tt4k", "subscriptionId": "86a11580-2086-56a7-88d2-27f405958fcb", "tags": { "env": "prod", "cluster_name": "inix-gke-eu-pr" }, "operatingSystem": "Ubuntu", "operatingSystemDistribution": { "id": "os-ubuntu-2204", "name": "Ubuntu 22.04", "icon": "ubuntu" }, "imageName": null, "imageId": null, "imageNativeType": null, "hasLimitedInternetExposure": false, "hasWideInternetExposure": false, "isAccessibleFromVPN": false, "isAccessibleFromOtherVnets": false, "isAccessibleFromOtherSubscriptions": false, "computeInstanceGroup": { "id": "gke-inix-gke-eu-pr-n4-shared", "externalId": "gke-inix-gke-eu-pr-n4-shared-19b3", "name": "n4-shared-19b3", "replicaCount": 12, "tags": { "goog-k8s-cluster-name": "inix-gke-eu-pr" } }, "nativeType": "instance", "isUsedOnPrem": false, "resourceGroupExternalId": null }, "sourceMappedCodeFindings": [], "transitivity": null, "rootComponent": null, "isHighProfileThreat": false, "vendorSeverity": "MEDIUM", "nvdSeverity": "MEDIUM", "weightedSeverity": "MEDIUM", "hasExploit": false, "usedInCodeResult": null, "hasCisaKevExploit": false, "cisaKevReleaseDate": null, "cisaKevDueDate": null, "score": 5.9, "epssSeverity": "LOW", "epssPercentile": 0.21, "epssProbability": 0.01, "categories": ["REMOTE_CODE_EXECUTION"], "hasInitialAccessPotential": true, "isClientSide": false, "affectedBySettings": true, "codeLibraryLanguage": null, "exploitabilityValidationStatus": "UNKNOWN", "cvssv2": { "attackVector": "NETWORK", "attackComplexity": "MEDIUM", "confidentialityImpact": "PARTIAL", "integrityImpact": "PARTIAL", "privilegesRequired": null, "userInteractionRequired": false, "vectorString": "AV:N/AC:M/Au:N/C:P/I:P/A:P", "scope": null }, "cvssv3": { "attackVector": "NETWORK", "attackComplexity": "HIGH", "confidentialityImpact": "LOW", "integrityImpact": "LOW", "privilegesRequired": "NONE", "userInteractionRequired": false, "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:L/A:L", "scope": "UNCHANGED" }, "effectiveAvailabilityImpact": "LOW", "cnaScore": 5.9, "vendorScore": 5.9, "origin": "CONTEXTUAL", "duplicateOf": null }, { "id": "vf_1e2d3c4b-5a6f-4e8d-9c1b-2a3b4c5d6e7f", "name": "CVE-2025-58234", "detailedName": "linux-image-6.8.0-1015-aws 6.8.0-1015.16", "description": "A use-after-free in the kernel's netfilter subsystem allows a local unprivileged user to crash the system or potentially escalate privileges.", "severity": "LOW", "status": "RESOLVED", "fixedVersion": "6.8.0-1016.17", "detectionMethod": "OS_PACKAGE", "firstDetectedAt": "2026-01-20T05:44:11Z", "lastDetectedAt": "2026-02-09T07:00:00Z", "firstDetectedAtSource": "SCHEDULED_SCAN", "resolvedAt": "2026-02-10T13:22:00Z", "validatedInRuntime": false, "runtimeValidationResult": null, "reachability": "INTERNAL", "hasTriggerableRemediation": false, "remediationPullRequestAvailable": false, "dataSourceName": "Wiz Sensor", "fixDate": "2026-02-10T13:22:00Z", "fixDateBefore": null, "publishedDate": "2025-12-30T00:00:00Z", "version": "6.8.0-1015.16", "versionResolutionPrimarySource": { "type": "OS_PACKAGE_MANAGER", "version": "6.8.0-1015.16" }, "isOperatingSystemEndOfLife": false, "recommendedVersion": "6.8.0-1016.17", "locationPath": "/boot/vmlinuz-6.8.0-1015-aws", "artifactType": { "group": "OS_PACKAGE", "codeLibraryLanguage": null, "osPackageManager": "DPKG", "hostedTechnology": null, "plugin": false, "custom": false, "ciComponent": false }, "projects": [{ "id": "1dfea0cf-834f-5522-b797-bee5aaf09251", "name": "Production", "slug": "production", "isFolder": false }], "ignoreRules": [], "note": null, "layerMetadata": null, "vulnerableAsset": { "id": "c433c9a9-e631-5d56-8bd8-3c1cddd93103", "type": "VIRTUAL_MACHINE", "name": "dev-box-07", "cloudPlatform": "AWS", "subscriptionName": "dev-account", "subscriptionExternalId": "444455556666", "subscriptionId": "f391b2ee-ffdf-58e1-a3af-a59bfeaba3dc", "tags": { "env": "dev" }, "operatingSystem": "Amazon Linux", "operatingSystemDistribution": { "id": "os-al2023", "name": "Amazon Linux 2023", "icon": "amazon-linux" }, "imageName": "ami-0f1e2d3c4b5a6f7e8", "imageId": "ami-0f1e2d3c4b5a6f7e8", "imageNativeType": "AMI", "hasLimitedInternetExposure": false, "hasWideInternetExposure": false, "isAccessibleFromVPN": true, "isAccessibleFromOtherVnets": false, "isAccessibleFromOtherSubscriptions": false, "computeInstanceGroup": null, "nativeType": "ec2", "isUsedOnPrem": false, "resourceGroupExternalId": null }, "sourceMappedCodeFindings": [], "transitivity": null, "rootComponent": null, "isHighProfileThreat": false, "vendorSeverity": "LOW", "nvdSeverity": "LOW", "weightedSeverity": "LOW", "hasExploit": false, "usedInCodeResult": null, "hasCisaKevExploit": false, "cisaKevReleaseDate": null, "cisaKevDueDate": null, "score": 3.3, "epssSeverity": "LOW", "epssPercentile": 0.08, "epssProbability": 1e-3, "categories": ["PRIVILEGE_ESCALATION", "DENIAL_OF_SERVICE"], "hasInitialAccessPotential": false, "isClientSide": false, "affectedBySettings": false, "codeLibraryLanguage": null, "exploitabilityValidationStatus": "NOT_EXPLOITABLE", "cvssv2": null, "cvssv3": { "attackVector": "LOCAL", "attackComplexity": "HIGH", "confidentialityImpact": "NONE", "integrityImpact": "NONE", "privilegesRequired": "LOW", "userInteractionRequired": false, "vectorString": "CVSS:3.1/AV:L/AC:H/PR:L/UI:N/S:U/C:N/I:N/A:L", "scope": "UNCHANGED" }, "effectiveAvailabilityImpact": "LOW", "cnaScore": 3.3, "vendorScore": 3.3, "origin": "CONTEXTUAL", "duplicateOf": null }], "pageInfo": { "hasNextPage": false, "endCursor": null } } } };
@@ -2940,6 +3094,13 @@ var Server = (() => {
       out["vulnerableAsset"] = slim;
     }
     return out;
+  }
+  function writeFrameSafely(scanId, records, pageOf) {
+    try {
+      writeFrame(scanId, buildFrame(records, pageOf));
+    } catch (e) {
+      console.warn(`Failed to write findings frame for ${scanId}: ${e}`);
+    }
   }
   function envelope(nodes) {
     return { data: { vulnerabilityFindings: { nodes } } };
@@ -3049,6 +3210,7 @@ var Server = (() => {
     writeScanPage(scanId, 1, envelope(nodes));
     const slim = nodes.map(slimRecord);
     writeSlimRecords(scanId, slim);
+    writeFrameSafely(scanId, slim, () => 1);
     persistFlatScan2(slim, {
       mode: options.incremental ? "dry-run-incremental" : "dry-run",
       scanId,
@@ -3059,11 +3221,12 @@ var Server = (() => {
     return { jobId: null, message: "Dry-run scan saved." };
   }
   function step(job, budgetMs = BUDGET_MS) {
-    var _a, _b;
+    var _a, _b, _c;
     const started = Date.now();
     const params = JSON.parse((_a = job.params_json) != null ? _a : "{}");
     const scanId = job.scan_id;
     let slim = job.page > 0 ? (_b = readSlimRecords(scanId)) != null ? _b : [] : [];
+    const pageRuns = job.page > 0 ? (_c = readPageRuns(scanId)) != null ? _c : [] : [];
     let cursor = job.cursor;
     let page = job.page;
     let findings = job.findings_so_far;
@@ -3080,6 +3243,7 @@ var Server = (() => {
         const pageName = params.incremental ? page + 1001 : page + 1;
         writeScanPage(scanId, pageName, envelope(result.nodes));
         slim.push(...result.nodes.map(slimRecord));
+        pageRuns.push([pageName, result.nodes.length]);
         page += 1;
         findings += result.nodes.length;
         cursor = result.endCursor;
@@ -3088,11 +3252,13 @@ var Server = (() => {
         if (!result.hasNextPage || page >= MAX_PAGES) break;
         if (Date.now() - started > budgetMs) {
           writeSlimRecords(scanId, slim);
+          writePageRuns(scanId, pageRuns);
           scheduleContinuation();
           return;
         }
       }
       writeSlimRecords(scanId, slim);
+      writePageRuns(scanId, pageRuns);
       updateJob(job.job_id, { phase: "RECONCILING" });
       finishScan(job.job_id, scanId, params, slim);
     } catch (e) {
@@ -3136,6 +3302,9 @@ var Server = (() => {
         writeScanPage(scanId, pageNo++, envelope(records.slice(i, i + 500)));
       }
       writeSlimRecords(scanId, records);
+      writeFrameSafely(scanId, records, (i) => Math.floor(i / 500) + 1);
+    } else {
+      writeFrameSafely(scanId, records, pageOfFromRuns(readPageRuns(scanId), records.length));
     }
     updateJob(jobId, { phase: "PERSISTING", scan_id: scanId });
     persistFlatScan2(records, {
@@ -3239,53 +3408,58 @@ var Server = (() => {
     );
   }
   function bootstrap(_p) {
-    return run(() => {
-      var _a;
-      const settings = loadSettings();
-      const scan = currentScan();
-      const latest = latestScanRow();
-      const counts = {};
-      if (scan) {
-        for (const r of scan.records) {
-          const sev = String(r["_sev"]);
-          counts[sev] = ((_a = counts[sev]) != null ? _a : 0) + 1;
-        }
+    return run(() => ({
+      // The core is a pure function of ledger + settings state — cached per DATA_VERSION.
+      ...cached("bootstrapCore", null, bootstrapCore),
+      // Live per-request fields: never cached (activeJob changes every poll tick).
+      dataVersion: dataVersion(),
+      hasCredentials: hasWizCredentials(),
+      activeJob: activeJobSummary()
+    }));
+  }
+  function bootstrapCore() {
+    var _a;
+    const scan = currentScan();
+    const latest = latestScanRow();
+    const counts = {};
+    if (scan) {
+      for (const r of scan.records) {
+        const sev = String(r["_sev"]);
+        counts[sev] = ((_a = counts[sev]) != null ? _a : 0) + 1;
       }
-      return {
-        palette: {
-          order: SEVERITY_ORDER,
-          colors: SEVERITY_COLORS,
-          glyphs: SEVERITY_GLYPHS,
-          slaTargets: SLA_TARGETS,
-          selectable: SELECTABLE_SEVERITIES
-        },
-        settings: {
-          fetchSeverities: getFetchSeverities2(),
-          displaySeverities: getDisplaySeverities2(),
-          retentionDays: getRetentionDays2(),
-          autoCompact: getAutoCompact2(),
-          domains: getDomains2()
-        },
-        hasCredentials: hasWizCredentials(),
-        latestScan: latest ? {
-          scanId: latest.scan_id,
-          ts: latest.ts,
-          mode: latest.mode,
-          shape: latest.shape,
-          total: latest.total,
-          severities: latest.severities
-        } : null,
-        counts,
-        prevCounts: previousSeverityCounts(),
-        domainNames: domainNames(getDomains2().items),
-        activeJob: activeJobSummary(),
-        filterOptions: scan ? {
-          statuses: distinct(scan.records, "status"),
-          assetTypes: distinct(scan.records, "vulnerableAsset.type"),
-          clouds: distinct(scan.records, "vulnerableAsset.cloudPlatform")
-        } : { statuses: [], assetTypes: [], clouds: [] }
-      };
-    });
+    }
+    return {
+      palette: {
+        order: SEVERITY_ORDER,
+        colors: SEVERITY_COLORS,
+        glyphs: SEVERITY_GLYPHS,
+        slaTargets: SLA_TARGETS,
+        selectable: SELECTABLE_SEVERITIES
+      },
+      settings: {
+        fetchSeverities: getFetchSeverities2(),
+        displaySeverities: getDisplaySeverities2(),
+        retentionDays: getRetentionDays2(),
+        autoCompact: getAutoCompact2(),
+        domains: getDomains2()
+      },
+      latestScan: latest ? {
+        scanId: latest.scan_id,
+        ts: latest.ts,
+        mode: latest.mode,
+        shape: latest.shape,
+        total: latest.total,
+        severities: latest.severities
+      } : null,
+      counts,
+      prevCounts: previousSeverityCounts(),
+      domainNames: domainNames(getDomains2().items),
+      filterOptions: scan ? {
+        statuses: distinct(scan.records, "status"),
+        assetTypes: distinct(scan.records, "vulnerableAsset.type"),
+        clouds: distinct(scan.records, "vulnerableAsset.cloudPlatform")
+      } : { statuses: [], assetTypes: [], clouds: [] }
+    };
   }
   function activeJobSummary() {
     var _a;
@@ -3336,6 +3510,17 @@ var Server = (() => {
           }))
         };
       }
+      if (params["all"] === true && filtered.length <= CLIENT_ALL_MAX) {
+        return {
+          rows: filtered.map(tableRow),
+          total: filtered.length,
+          counts,
+          page: 0,
+          pageCount: 1,
+          groups: null,
+          all: true
+        };
+      }
       const pageSize = Math.min(Number((_i = params["pageSize"]) != null ? _i : 100), 500);
       const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
       const page = Math.min(Math.max(Number((_j = params["page"]) != null ? _j : 0), 0), pageCount - 1);
@@ -3349,6 +3534,7 @@ var Server = (() => {
       };
     });
   }
+  var CLIENT_ALL_MAX = 3e3;
   function groupKeyFn(groupBy) {
     var _a;
     const col = {
@@ -3374,116 +3560,152 @@ var Server = (() => {
   }
   function getFindingDetail(p) {
     return run(() => {
-      var _a, _b, _c;
+      var _a, _b, _c, _d;
       const key = String((_a = p == null ? void 0 : p["vulnKey"]) != null ? _a : "");
       const scan = currentScan();
       if (!scan || !key) return { record: null, raw: null };
       const record = (_b = scan.records.find((r) => r["_vuln_key"] === key)) != null ? _b : null;
       let raw = null;
-      const row = loadScanRows().find((s) => s.scan_id === scan.scanId);
-      const payload = row ? readScanPayload(row.raw_ref) : null;
-      if (payload && Array.isArray(payload)) {
-        for (const page of payload) {
-          const nodes = extractNodes(page);
-          raw = (_c = nodes.find((n) => vulnKey(n) === key)) != null ? _c : null;
-          if (raw) break;
+      const pageNo = record && typeof record["_page"] === "number" ? record["_page"] : null;
+      if (pageNo !== null) {
+        const page = readScanPage(scan.scanId, pageNo);
+        if (page) raw = (_c = extractNodes(page).find((n) => vulnKey(n) === key)) != null ? _c : null;
+      }
+      if (!raw) {
+        const row = loadScanRows().find((s) => s.scan_id === scan.scanId);
+        const payload = row ? readScanPayload(row.raw_ref) : null;
+        if (payload && Array.isArray(payload)) {
+          for (const page of payload) {
+            const nodes = extractNodes(page);
+            raw = (_d = nodes.find((n) => vulnKey(n) === key)) != null ? _d : null;
+            if (raw) break;
+          }
         }
       }
       return { record, raw };
     });
   }
+  function mttrData(p) {
+    var _a;
+    const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
+    let rows = loadBaseRows();
+    if (domain) {
+      const compiled = compileDomains(getDomains2().items);
+      rows = rows.filter((r) => assignDomain(r, compiled) === domain);
+    }
+    const { perSev, overall } = mttrFromLedger(rows);
+    const { slaPct, oldestDays } = overallSlaOldest(perSev);
+    return { perSev, overall, slaPct, oldestDays, rowCount: rows.length };
+  }
+  function mttrTrendData(p) {
+    var _a;
+    const severities = (_a = p == null ? void 0 : p["severities"]) != null ? _a : null;
+    return {
+      history: loadHistory(),
+      trend: loadTrend(severities)
+    };
+  }
+  var cachedMttrData = (p) => {
+    var _a;
+    return cached("mttr", { domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "") }, () => mttrData(p), 3600);
+  };
+  var cachedMttrTrendData = (p) => {
+    var _a;
+    return cached(
+      "mttrTrend",
+      { severities: (_a = p == null ? void 0 : p["severities"]) != null ? _a : null },
+      () => mttrTrendData(p)
+    );
+  };
   function getMttr(p) {
-    return run(() => {
-      var _a;
-      const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
-      let rows = loadBaseRows();
-      if (domain) {
-        const compiled = compileDomains(getDomains2().items);
-        rows = rows.filter((r) => assignDomain(r, compiled) === domain);
-      }
-      const { perSev, overall } = mttrFromLedger(rows);
-      const { slaPct, oldestDays } = overallSlaOldest(perSev);
-      return { perSev, overall, slaPct, oldestDays, rowCount: rows.length };
-    });
+    return run(() => cachedMttrData(p));
   }
   function getMttrTrend(p) {
-    return run(() => {
-      var _a;
-      const severities = (_a = p == null ? void 0 : p["severities"]) != null ? _a : null;
-      return {
-        history: loadHistory(),
-        trend: loadTrend(severities)
-      };
-    });
+    return run(() => cachedMttrTrendData(p));
   }
+  function getMttrPage(p) {
+    return run(() => ({ mttr: cachedMttrData(p), trends: cachedMttrTrendData(p) }));
+  }
+  function scanHistoryData() {
+    var _a;
+    const scans = loadScanRows().slice().reverse();
+    const base = loadBaseRows();
+    const open = base.filter((r) => r.status === "OPEN").length;
+    const resolved = base.filter((r) => r.status === "RESOLVED").length;
+    const { overall } = mttrFromLedger(base);
+    return {
+      scans,
+      kpis: {
+        tracked: base.length,
+        open,
+        resolvedAllTime: resolved,
+        medianMttr: (_a = overall.mttr_median) != null ? _a : null
+      }
+    };
+  }
+  var cachedScanHistoryData = () => cached("scanHistory", null, scanHistoryData);
   function getScanHistory(_p) {
-    return run(() => {
-      var _a;
-      const scans = loadScanRows().reverse();
-      const base = loadBaseRows();
-      const open = base.filter((r) => r.status === "OPEN").length;
-      const resolved = base.filter((r) => r.status === "RESOLVED").length;
-      const { overall } = mttrFromLedger(base);
-      return {
-        scans,
-        kpis: {
-          tracked: base.length,
-          open,
-          resolvedAllTime: resolved,
-          medianMttr: (_a = overall.mttr_median) != null ? _a : null
+    return run(() => cachedScanHistoryData());
+  }
+  function getHistoryPage(p) {
+    return run(() => ({
+      history: cachedScanHistoryData(),
+      trends: cachedMttrTrendData(p),
+      // Base rows stay uncached: their filter params are combinatorial and the state
+      // load is shared with the parts above via the per-execution memo anyway.
+      base: baseRowsData(p)
+    }));
+  }
+  function baseRowsData(p) {
+    var _a, _b, _c, _d, _e, _f;
+    const params = p != null ? p : {};
+    let rows = loadBaseRows();
+    const compiled = compileDomains(getDomains2().items);
+    if (compiled.length) {
+      rows = rows.map((r) => ({ ...r, _domain: assignDomain(r, compiled) }));
+    }
+    const statuses = (_a = params["statuses"]) != null ? _a : [];
+    const severities = (_b = params["severities"]) != null ? _b : [];
+    const domains = (_c = params["domains"]) != null ? _c : [];
+    const q = String((_d = params["q"]) != null ? _d : "").trim().toLowerCase();
+    if (statuses.length) {
+      const keep = new Set(statuses.map((s) => s.toUpperCase()));
+      rows = rows.filter((r) => {
+        var _a2;
+        return keep.has(String((_a2 = r["status"]) != null ? _a2 : "").toUpperCase());
+      });
+    }
+    if (severities.length) {
+      const keep = new Set(severities.map(normalizeSeverity));
+      rows = rows.filter((r) => keep.has(normalizeSeverity(r["severity"])));
+    }
+    if (domains.length) {
+      const keep = new Set(domains);
+      rows = rows.filter((r) => {
+        var _a2;
+        return keep.has(String((_a2 = r["_domain"]) != null ? _a2 : UNASSIGNED));
+      });
+    }
+    if (q) {
+      rows = rows.filter(
+        (r) => {
+          var _a2, _b2;
+          return String((_a2 = r["cve"]) != null ? _a2 : "").toLowerCase().includes(q) || String((_b2 = r["asset_name"]) != null ? _b2 : "").toLowerCase().includes(q);
         }
-      };
-    });
+      );
+    }
+    const pageSize = Math.min(Number((_e = params["pageSize"]) != null ? _e : 100), 500);
+    const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
+    const page = Math.min(Math.max(Number((_f = params["page"]) != null ? _f : 0), 0), pageCount - 1);
+    return {
+      rows: rows.slice(page * pageSize, (page + 1) * pageSize),
+      total: rows.length,
+      page,
+      pageCount
+    };
   }
   function getBaseRows(p) {
-    return run(() => {
-      var _a, _b, _c, _d, _e, _f;
-      const params = p != null ? p : {};
-      let rows = loadBaseRows();
-      const compiled = compileDomains(getDomains2().items);
-      if (compiled.length) {
-        rows = rows.map((r) => ({ ...r, _domain: assignDomain(r, compiled) }));
-      }
-      const statuses = (_a = params["statuses"]) != null ? _a : [];
-      const severities = (_b = params["severities"]) != null ? _b : [];
-      const domains = (_c = params["domains"]) != null ? _c : [];
-      const q = String((_d = params["q"]) != null ? _d : "").trim().toLowerCase();
-      if (statuses.length) {
-        const keep = new Set(statuses.map((s) => s.toUpperCase()));
-        rows = rows.filter((r) => {
-          var _a2;
-          return keep.has(String((_a2 = r["status"]) != null ? _a2 : "").toUpperCase());
-        });
-      }
-      if (severities.length) {
-        const keep = new Set(severities.map(normalizeSeverity));
-        rows = rows.filter((r) => keep.has(normalizeSeverity(r["severity"])));
-      }
-      if (domains.length) {
-        const keep = new Set(domains);
-        rows = rows.filter((r) => {
-          var _a2;
-          return keep.has(String((_a2 = r["_domain"]) != null ? _a2 : UNASSIGNED));
-        });
-      }
-      if (q) {
-        rows = rows.filter(
-          (r) => {
-            var _a2, _b2;
-            return String((_a2 = r["cve"]) != null ? _a2 : "").toLowerCase().includes(q) || String((_b2 = r["asset_name"]) != null ? _b2 : "").toLowerCase().includes(q);
-          }
-        );
-      }
-      const pageSize = Math.min(Number((_e = params["pageSize"]) != null ? _e : 100), 500);
-      const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
-      const page = Math.min(Math.max(Number((_f = params["page"]) != null ? _f : 0), 0), pageCount - 1);
-      return {
-        rows: rows.slice(page * pageSize, (page + 1) * pageSize),
-        total: rows.length,
-        page,
-        pageCount
-      };
-    });
+    return run(() => baseRowsData(p));
   }
   function runScan(p) {
     const params = p != null ? p : {};
@@ -3723,17 +3945,19 @@ var Server = (() => {
     });
   }
   function getStorageStats(_p) {
-    return run(() => {
-      const scans = loadScanRows();
-      return {
-        cellCount: cellCount(),
-        cellLimit: 1e7,
-        scanCount: scans.length,
-        sealedCount: scans.filter((s) => s.sealed).length,
-        oldestScanTs: scans.length ? scans[0].ts : null,
-        trackedVulns: loadBaseRows().length
-      };
-    });
+    return run(
+      () => cached("storageStats", null, () => {
+        const scans = loadScanRows();
+        return {
+          cellCount: cellCount(),
+          cellLimit: 1e7,
+          scanCount: scans.length,
+          sealedCount: scans.filter((s) => s.sealed).length,
+          oldestScanTs: scans.length ? scans[0].ts : null,
+          trackedVulns: loadBaseRows().length
+        };
+      })
+    );
   }
   return __toCommonJS(server_exports);
 })();

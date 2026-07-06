@@ -2,7 +2,7 @@
 
 import { call } from "./api.js";
 import { renderScanCard, openScanDetails } from "./scanProgress.js";
-import { bootstrap, invalidateBootstrap, parseHash } from "./store.js";
+import { bootstrap, invalidateBootstrap, invalidateRpcCache, parseHash } from "./store.js";
 import { clear, el, statusPill, toast } from "./ui.js";
 import { renderOverview } from "./pages/overview.js";
 import { renderMttr } from "./pages/mttr.js";
@@ -214,6 +214,7 @@ function stopWatch() {
 
 export async function refresh() {
   invalidateBootstrap();
+  invalidateRpcCache();
   await boot();
 }
 

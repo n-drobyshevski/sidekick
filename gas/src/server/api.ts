@@ -24,6 +24,7 @@ import * as ledgerStore from "./ledgerStore";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
 import { hasWizCredentials } from "./props";
 import * as scanJobs from "./scanJobs";
+import { cached, dataVersion } from "./serverCache";
 import * as settingsStore from "./settingsStore";
 import { cellCount } from "./sheetsDb";
 
@@ -62,56 +63,62 @@ function mutate<T>(fn: () => T): ApiResult<T> {
 // ------------------------------------------------------------------------ bootstrap
 
 export function bootstrap(_p?: unknown): ApiResult {
-  return run(() => {
-    const settings = settingsStore.loadSettings();
-    const scan = findings.currentScan();
-    const latest = ledgerStore.latestScanRow();
-    const counts: Record<string, number> = {};
-    if (scan) {
-      for (const r of scan.records) {
-        const sev = String(r["_sev"]);
-        counts[sev] = (counts[sev] ?? 0) + 1;
-      }
+  return run(() => ({
+    // The core is a pure function of ledger + settings state — cached per DATA_VERSION.
+    ...(cached("bootstrapCore", null, bootstrapCore) as Rec),
+    // Live per-request fields: never cached (activeJob changes every poll tick).
+    dataVersion: dataVersion(),
+    hasCredentials: hasWizCredentials(),
+    activeJob: activeJobSummary(),
+  }));
+}
+
+function bootstrapCore(): Rec {
+  const scan = findings.currentScan();
+  const latest = ledgerStore.latestScanRow();
+  const counts: Record<string, number> = {};
+  if (scan) {
+    for (const r of scan.records) {
+      const sev = String(r["_sev"]);
+      counts[sev] = (counts[sev] ?? 0) + 1;
     }
-    return {
-      palette: {
-        order: SEVERITY_ORDER,
-        colors: SEVERITY_COLORS,
-        glyphs: SEVERITY_GLYPHS,
-        slaTargets: SLA_TARGETS,
-        selectable: SELECTABLE_SEVERITIES,
-      },
-      settings: {
-        fetchSeverities: settingsStore.getFetchSeverities(),
-        displaySeverities: settingsStore.getDisplaySeverities(),
-        retentionDays: settingsStore.getRetentionDays(),
-        autoCompact: settingsStore.getAutoCompact(),
-        domains: settingsStore.getDomains(),
-      },
-      hasCredentials: hasWizCredentials(),
-      latestScan: latest
-        ? {
-            scanId: latest.scan_id,
-            ts: latest.ts,
-            mode: latest.mode,
-            shape: latest.shape,
-            total: latest.total,
-            severities: latest.severities,
-          }
-        : null,
-      counts,
-      prevCounts: ledgerStore.previousSeverityCounts(),
-      domainNames: domainNames(settingsStore.getDomains().items),
-      activeJob: activeJobSummary(),
-      filterOptions: scan
-        ? {
-            statuses: findings.distinct(scan.records, "status"),
-            assetTypes: findings.distinct(scan.records, "vulnerableAsset.type"),
-            clouds: findings.distinct(scan.records, "vulnerableAsset.cloudPlatform"),
-          }
-        : { statuses: [], assetTypes: [], clouds: [] },
-    };
-  });
+  }
+  return {
+    palette: {
+      order: SEVERITY_ORDER,
+      colors: SEVERITY_COLORS,
+      glyphs: SEVERITY_GLYPHS,
+      slaTargets: SLA_TARGETS,
+      selectable: SELECTABLE_SEVERITIES,
+    },
+    settings: {
+      fetchSeverities: settingsStore.getFetchSeverities(),
+      displaySeverities: settingsStore.getDisplaySeverities(),
+      retentionDays: settingsStore.getRetentionDays(),
+      autoCompact: settingsStore.getAutoCompact(),
+      domains: settingsStore.getDomains(),
+    },
+    latestScan: latest
+      ? {
+          scanId: latest.scan_id,
+          ts: latest.ts,
+          mode: latest.mode,
+          shape: latest.shape,
+          total: latest.total,
+          severities: latest.severities,
+        }
+      : null,
+    counts,
+    prevCounts: ledgerStore.previousSeverityCounts(),
+    domainNames: domainNames(settingsStore.getDomains().items),
+    filterOptions: scan
+      ? {
+          statuses: findings.distinct(scan.records, "status"),
+          assetTypes: findings.distinct(scan.records, "vulnerableAsset.type"),
+          clouds: findings.distinct(scan.records, "vulnerableAsset.cloudPlatform"),
+        }
+      : { statuses: [], assetTypes: [], clouds: [] },
+  };
 }
 
 function activeJobSummary(): Rec | null {
@@ -170,6 +177,22 @@ export function getFindings(p?: unknown): ApiResult {
       };
     }
 
+    // Full-projection mode for the client-side filter path: small scans ship every
+    // row once so the browser can filter/search/group/paginate with zero further
+    // RPCs. Larger result sets answer with the normal first page (all: absent) and
+    // the client falls back to server-side filtering.
+    if (params["all"] === true && filtered.length <= CLIENT_ALL_MAX) {
+      return {
+        rows: filtered.map(findings.tableRow),
+        total: filtered.length,
+        counts,
+        page: 0,
+        pageCount: 1,
+        groups: null,
+        all: true,
+      };
+    }
+
     const pageSize = Math.min(Number(params["pageSize"] ?? 100), 500);
     const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
     const page = Math.min(Math.max(Number(params["page"] ?? 0), 0), pageCount - 1);
@@ -183,6 +206,9 @@ export function getFindings(p?: unknown): ApiResult {
     };
   });
 }
+
+// Row ceiling for getFindings all-mode (~1–2 MB of table-projected JSON).
+const CLIENT_ALL_MAX = 3000;
 
 function groupKeyFn(groupBy: string): (r: Rec) => string {
   const col: Record<string, string> = {
@@ -213,16 +239,24 @@ export function getFindingDetail(p?: unknown): ApiResult {
     const scan = findings.currentScan();
     if (!scan || !key) return { record: null, raw: null };
     const record = scan.records.find((r) => r["_vuln_key"] === key) ?? null;
-    // The raw node (full fields) lives in the scan's page archive; search pages with
-    // early exit — the sheet opens for one finding at a time.
+    // The raw node (full fields) lives in the scan's page archive. The frame tags each
+    // record with its page, so normally exactly one page file is read; scans persisted
+    // before the frame existed fall back to walking the whole archive.
     let raw: Rec | null = null;
-    const row = ledgerStore.loadScanRows().find((s) => s.scan_id === scan.scanId);
-    const payload = row ? archive.readScanPayload(row.raw_ref) : null;
-    if (payload && Array.isArray(payload)) {
-      for (const page of payload) {
-        const nodes = extractNodes(page);
-        raw = (nodes.find((n) => vulnKey(n) === key) as Rec) ?? null;
-        if (raw) break;
+    const pageNo = record && typeof record["_page"] === "number" ? record["_page"] : null;
+    if (pageNo !== null) {
+      const page = archive.readScanPage(scan.scanId, pageNo);
+      if (page) raw = (extractNodes(page).find((n) => vulnKey(n) === key) as Rec) ?? null;
+    }
+    if (!raw) {
+      const row = ledgerStore.loadScanRows().find((s) => s.scan_id === scan.scanId);
+      const payload = row ? archive.readScanPayload(row.raw_ref) : null;
+      if (payload && Array.isArray(payload)) {
+        for (const page of payload) {
+          const nodes = extractNodes(page);
+          raw = (nodes.find((n) => vulnKey(n) === key) as Rec) ?? null;
+          if (raw) break;
+        }
       }
     }
     return { record, raw };
@@ -231,92 +265,131 @@ export function getFindingDetail(p?: unknown): ApiResult {
 
 // ----------------------------------------------------------------------------- MTTR
 
+function mttrData(p?: unknown): Rec {
+  const domain = String((p as Rec)?.["domain"] ?? "");
+  let rows: Rec[] = ledgerStore.loadBaseRows() as unknown as Rec[];
+  if (domain) {
+    const compiled = compileDomains(settingsStore.getDomains().items);
+    rows = rows.filter((r) => assignDomain(r, compiled) === domain);
+  }
+  const { perSev, overall } = mttrFromLedger(rows);
+  const { slaPct, oldestDays } = overallSlaOldest(perSev);
+  return { perSev, overall, slaPct, oldestDays, rowCount: rows.length };
+}
+
+function mttrTrendData(p?: unknown): Rec {
+  const severities = ((p as Rec)?.["severities"] as string[]) ?? null;
+  return {
+    history: history.loadHistory(),
+    trend: ledgerStore.loadTrend(severities),
+  };
+}
+
+// Cached per DATA_VERSION, keyed on exactly the params each computation reads — so
+// the single and batched endpoints share entries regardless of extra params.
+// The MTTR summary carries wall-clock-relative open ages (p50/p90/oldest), so its
+// TTL is 1h — a ≤0.04-day drift — instead of the 6h the version-keyed data allows.
+const cachedMttrData = (p?: unknown) =>
+  cached("mttr", { domain: String((p as Rec)?.["domain"] ?? "") }, () => mttrData(p), 3600);
+const cachedMttrTrendData = (p?: unknown) =>
+  cached(
+    "mttrTrend",
+    { severities: ((p as Rec)?.["severities"] as string[]) ?? null },
+    () => mttrTrendData(p),
+  );
+
 export function getMttr(p?: unknown): ApiResult {
-  return run(() => {
-    const domain = String((p as Rec)?.["domain"] ?? "");
-    let rows: Rec[] = ledgerStore.loadBaseRows() as unknown as Rec[];
-    if (domain) {
-      const compiled = compileDomains(settingsStore.getDomains().items);
-      rows = rows.filter((r) => assignDomain(r, compiled) === domain);
-    }
-    const { perSev, overall } = mttrFromLedger(rows);
-    const { slaPct, oldestDays } = overallSlaOldest(perSev);
-    return { perSev, overall, slaPct, oldestDays, rowCount: rows.length };
-  });
+  return run(() => cachedMttrData(p));
 }
 
 export function getMttrTrend(p?: unknown): ApiResult {
-  return run(() => {
-    const severities = ((p as Rec)?.["severities"] as string[]) ?? null;
-    return {
-      history: history.loadHistory(),
-      trend: ledgerStore.loadTrend(severities),
-    };
-  });
+  return run(() => cachedMttrTrendData(p));
+}
+
+/** MTTR page in one round trip (summary + trends share one state load). */
+export function getMttrPage(p?: unknown): ApiResult {
+  return run(() => ({ mttr: cachedMttrData(p), trends: cachedMttrTrendData(p) }));
 }
 
 // --------------------------------------------------------------------- scan history
 
+function scanHistoryData(): Rec {
+  const scans = ledgerStore.loadScanRows().slice().reverse(); // newest first
+  const base = ledgerStore.loadBaseRows();
+  const open = base.filter((r) => r.status === "OPEN").length;
+  const resolved = base.filter((r) => r.status === "RESOLVED").length;
+  const { overall } = mttrFromLedger(base as unknown as Rec[]);
+  return {
+    scans,
+    kpis: {
+      tracked: base.length,
+      open,
+      resolvedAllTime: resolved,
+      medianMttr: overall.mttr_median ?? null,
+    },
+  };
+}
+
+const cachedScanHistoryData = () => cached("scanHistory", null, scanHistoryData);
+
 export function getScanHistory(_p?: unknown): ApiResult {
-  return run(() => {
-    const scans = ledgerStore.loadScanRows().reverse(); // newest first
-    const base = ledgerStore.loadBaseRows();
-    const open = base.filter((r) => r.status === "OPEN").length;
-    const resolved = base.filter((r) => r.status === "RESOLVED").length;
-    const { overall } = mttrFromLedger(base as unknown as Rec[]);
-    return {
-      scans,
-      kpis: {
-        tracked: base.length,
-        open,
-        resolvedAllTime: resolved,
-        medianMttr: overall.mttr_median ?? null,
-      },
-    };
-  });
+  return run(() => cachedScanHistoryData());
+}
+
+/** History page in one round trip: scans + KPIs + trends + the first base page. */
+export function getHistoryPage(p?: unknown): ApiResult {
+  return run(() => ({
+    history: cachedScanHistoryData(),
+    trends: cachedMttrTrendData(p),
+    // Base rows stay uncached: their filter params are combinatorial and the state
+    // load is shared with the parts above via the per-execution memo anyway.
+    base: baseRowsData(p),
+  }));
+}
+
+function baseRowsData(p?: unknown): Rec {
+  const params = (p ?? {}) as Rec;
+  let rows = ledgerStore.loadBaseRows() as unknown as Rec[];
+  const compiled = compileDomains(settingsStore.getDomains().items);
+  if (compiled.length) {
+    rows = rows.map((r) => ({ ...r, _domain: assignDomain(r, compiled) }));
+  }
+  const statuses = (params["statuses"] as string[]) ?? [];
+  const severities = (params["severities"] as string[]) ?? [];
+  const domains = (params["domains"] as string[]) ?? [];
+  const q = String(params["q"] ?? "").trim().toLowerCase();
+  if (statuses.length) {
+    const keep = new Set(statuses.map((s) => s.toUpperCase()));
+    rows = rows.filter((r) => keep.has(String(r["status"] ?? "").toUpperCase()));
+  }
+  if (severities.length) {
+    const keep = new Set(severities.map(normalizeSeverity));
+    rows = rows.filter((r) => keep.has(normalizeSeverity(r["severity"])));
+  }
+  if (domains.length) {
+    const keep = new Set(domains);
+    rows = rows.filter((r) => keep.has(String(r["_domain"] ?? UNASSIGNED)));
+  }
+  if (q) {
+    rows = rows.filter(
+      (r) =>
+        String(r["cve"] ?? "").toLowerCase().includes(q) ||
+        String(r["asset_name"] ?? "").toLowerCase().includes(q),
+    );
+  }
+  const pageSize = Math.min(Number(params["pageSize"] ?? 100), 500);
+  const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
+  const page = Math.min(Math.max(Number(params["page"] ?? 0), 0), pageCount - 1);
+  return {
+    rows: rows.slice(page * pageSize, (page + 1) * pageSize),
+    total: rows.length,
+    page,
+    pageCount,
+  };
 }
 
 export function getBaseRows(p?: unknown): ApiResult {
-  return run(() => {
-    const params = (p ?? {}) as Rec;
-    let rows = ledgerStore.loadBaseRows() as unknown as Rec[];
-    const compiled = compileDomains(settingsStore.getDomains().items);
-    if (compiled.length) {
-      rows = rows.map((r) => ({ ...r, _domain: assignDomain(r, compiled) }));
-    }
-    const statuses = (params["statuses"] as string[]) ?? [];
-    const severities = (params["severities"] as string[]) ?? [];
-    const domains = (params["domains"] as string[]) ?? [];
-    const q = String(params["q"] ?? "").trim().toLowerCase();
-    if (statuses.length) {
-      const keep = new Set(statuses.map((s) => s.toUpperCase()));
-      rows = rows.filter((r) => keep.has(String(r["status"] ?? "").toUpperCase()));
-    }
-    if (severities.length) {
-      const keep = new Set(severities.map(normalizeSeverity));
-      rows = rows.filter((r) => keep.has(normalizeSeverity(r["severity"])));
-    }
-    if (domains.length) {
-      const keep = new Set(domains);
-      rows = rows.filter((r) => keep.has(String(r["_domain"] ?? UNASSIGNED)));
-    }
-    if (q) {
-      rows = rows.filter(
-        (r) =>
-          String(r["cve"] ?? "").toLowerCase().includes(q) ||
-          String(r["asset_name"] ?? "").toLowerCase().includes(q),
-      );
-    }
-    const pageSize = Math.min(Number(params["pageSize"] ?? 100), 500);
-    const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
-    const page = Math.min(Math.max(Number(params["page"] ?? 0), 0), pageCount - 1);
-    return {
-      rows: rows.slice(page * pageSize, (page + 1) * pageSize),
-      total: rows.length,
-      page,
-      pageCount,
-    };
-  });
+  return run(() => baseRowsData(p));
 }
 
 // ------------------------------------------------------------------ jobs & mutations
@@ -560,15 +633,18 @@ export function previewDomains(p?: unknown): ApiResult {
 // ---------------------------------------------------------------------------- misc
 
 export function getStorageStats(_p?: unknown): ApiResult {
-  return run(() => {
-    const scans = ledgerStore.loadScanRows();
-    return {
-      cellCount: cellCount(),
-      cellLimit: 10_000_000,
-      scanCount: scans.length,
-      sealedCount: scans.filter((s) => s.sealed).length,
-      oldestScanTs: scans.length ? scans[0].ts : null,
-      trackedVulns: ledgerStore.loadBaseRows().length,
-    };
-  });
+  // cellCount() walks every sheet in the spreadsheet — cache it per DATA_VERSION.
+  return run(() =>
+    cached("storageStats", null, () => {
+      const scans = ledgerStore.loadScanRows();
+      return {
+        cellCount: cellCount(),
+        cellLimit: 10_000_000,
+        scanCount: scans.length,
+        sealedCount: scans.filter((s) => s.sealed).length,
+        oldestScanTs: scans.length ? scans[0].ts : null,
+        trackedVulns: ledgerStore.loadBaseRows().length,
+      };
+    }),
+  );
 }

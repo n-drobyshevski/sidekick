@@ -36,6 +36,10 @@ const clientResult = await build({
   // backticks unbalanced, and killed the whole app with a SyntaxError. No backticks
   // in the output = no line of the bundle can be re-lexed that way.
   supported: { "template-literal": false },
+  // Minified — the bundle ships inline in every doGet response, so size is first-paint
+  // latency. The middlebox guard below re-checks the minified output, so any construct
+  // minification introduces that the proxy would corrupt still fails the build.
+  minify: true,
   write: false,
   logLevel: "info",
 });
