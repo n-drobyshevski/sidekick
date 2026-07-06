@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 
 import streamlit as st
 
+from wiz_dashboard.data import migrate
 from wiz_dashboard.ui import components as ui
 from wiz_dashboard.ui import scan
 from wiz_dashboard.ui.pages import _derived, _findings
@@ -20,8 +21,36 @@ def _stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _migration_section():
+    """Full-history bundle for the GAS rebuild's Data page importer.
+
+    Reads the SQLite ledger + mttr_history.json from disk, so it renders (and stays
+    downloadable) even when no findings source is loaded in this session.
+    """
+    counts = migrate.bundle_counts()
+    ui.section_label("Migration")
+    ui.deferred_download(
+        "Download migration bundle",
+        migrate.bundle_json_bytes,
+        file_name=f"wiz_migration_bundle_{_stamp()[:10]}.json",
+        mime="application/json",
+        key="migration_bundle",
+        row_count=counts["vulns"],
+        sig=f"{counts['scans']}:{counts['vulns']}:{counts['episodes']}:{counts['history']}",
+        disabled=counts["scans"] == 0 and counts["history"] == 0,
+    )
+    st.caption(
+        f"{counts['scans']:,} scans · {counts['vulns']:,} tracked vulnerabilities · "
+        f"{counts['episodes']:,} resolved episodes · {counts['history']:,} MTTR history "
+        "points. Import this on the GAS dashboard's Data page; raw scan archives stay "
+        "on this machine."
+    )
+
+
 def page():
     ui.render_page_header("Exports", "Download any loaded findings source as CSV or JSON")
+
+    _migration_section()
 
     sources = _findings.loaded_sources()
     if not sources:

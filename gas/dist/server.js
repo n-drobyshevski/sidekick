@@ -941,6 +941,7 @@ var Server = (() => {
     getScanHistory: () => getScanHistory,
     getSettings: () => getSettings,
     getStorageStats: () => getStorageStats,
+    importMigration: () => importMigration,
     previewDomains: () => previewDomains,
     runScan: () => runScan,
     saveDomains: () => saveDomains,
@@ -2007,47 +2008,19 @@ var Server = (() => {
     var _a;
     return (_a = extractNodes(payload)) != null ? _a : [];
   }
-  function deleteScansCore(state, scanIds, readPayload, checkpoint, now) {
-    var _a;
-    const targets = new Set([...scanIds].filter(Boolean));
-    const zero = { deleted: 0, scans: 0, tracked: 0 };
-    if (!targets.size) {
-      return { state, result: zero, observationsByScan: {} };
-    }
-    const rows = scansAsc(state.scans);
-    const present2 = new Set(rows.filter((r) => targets.has(r.scan_id)).map((r) => r.scan_id));
-    if (!present2.size) {
-      return { state, result: zero, observationsByScan: {} };
-    }
-    const sealedTargets = rows.filter((r) => present2.has(r.scan_id) && r.sealed).map((r) => r.scan_id).sort();
-    if (sealedTargets.length) {
-      throw new SealedScanError(
-        `Cannot delete sealed scan(s) ${sealedTargets.join(", ")}: they are part of the compacted baseline (their raw archives were pruned), so their effects can no longer be un-replayed.`
-      );
-    }
-    const survivors = rows.filter((r) => !present2.has(r.scan_id));
+  function loadReplayPayloads(rows, readPayload, missingMsg) {
     const replay = [];
-    for (const r of survivors) {
+    for (const r of rows) {
       if (r.sealed) continue;
       const payload = readPayload(r);
       if (payload === null && r.shape === "flat") {
-        throw new LedgerRebuildError(
-          `Cannot delete: the archived payload for surviving scan ${r.scan_id} is missing, so the ledger can't be rebuilt.`
-        );
+        throw new LedgerRebuildError(missingMsg(r.scan_id));
       }
       replay.push({ row: r, payload });
     }
-    const rebuilt = {
-      scans: survivors.filter((r) => r.sealed).map((r) => ({ ...r })),
-      ledger: {},
-      episodes: state.episodes.map((e) => ({ ...e, superseded_by_scan: null }))
-    };
-    if (checkpoint !== null) {
-      const episodeKeys = new Set(state.episodes.map((e) => e.vuln_key));
-      for (const row of (_a = checkpoint.ledger) != null ? _a : []) {
-        if (!episodeKeys.has(row.vuln_key)) rebuilt.ledger[row.vuln_key] = { ...row };
-      }
-    }
+    return replay;
+  }
+  function replayScans(rebuilt, replay) {
     const observationsByScan = {};
     for (const { row, payload } of replay) {
       if (row.shape === "grouped") {
@@ -2072,6 +2045,71 @@ var Server = (() => {
         observationsByScan[row.scan_id] = observations;
       }
     }
+    return observationsByScan;
+  }
+  function settledEpisodeRows(checkpointLedger, ledger, sealedIds) {
+    var _a;
+    const episodes = [];
+    for (const cpRow of checkpointLedger) {
+      if (cpRow.status !== "RESOLVED") continue;
+      const live = ledger[cpRow.vuln_key];
+      if (live === void 0 || live.status !== "RESOLVED" || live.resolved_at !== cpRow.resolved_at || !sealedIds.has((_a = live.last_scan_id) != null ? _a : "")) {
+        continue;
+      }
+      episodes.push(live);
+    }
+    return episodes;
+  }
+  function toEpisodeRow(live, compactionId) {
+    var _a;
+    return {
+      vuln_key: live.vuln_key,
+      cve: live.cve,
+      severity: live.severity,
+      first_seen: live.first_seen,
+      resolved_at: live.resolved_at,
+      resolution_src: live.resolution_src,
+      reopened_count: Number((_a = live.reopened_count) != null ? _a : 0),
+      compaction_id: compactionId,
+      superseded_by_scan: null
+    };
+  }
+  function deleteScansCore(state, scanIds, readPayload, checkpoint, now) {
+    var _a;
+    const targets = new Set([...scanIds].filter(Boolean));
+    const zero = { deleted: 0, scans: 0, tracked: 0 };
+    if (!targets.size) {
+      return { state, result: zero, observationsByScan: {} };
+    }
+    const rows = scansAsc(state.scans);
+    const present2 = new Set(rows.filter((r) => targets.has(r.scan_id)).map((r) => r.scan_id));
+    if (!present2.size) {
+      return { state, result: zero, observationsByScan: {} };
+    }
+    const sealedTargets = rows.filter((r) => present2.has(r.scan_id) && r.sealed).map((r) => r.scan_id).sort();
+    if (sealedTargets.length) {
+      throw new SealedScanError(
+        `Cannot delete sealed scan(s) ${sealedTargets.join(", ")}: they are part of the compacted baseline (their raw archives were pruned), so their effects can no longer be un-replayed.`
+      );
+    }
+    const survivors = rows.filter((r) => !present2.has(r.scan_id));
+    const replay = loadReplayPayloads(
+      survivors,
+      readPayload,
+      (scanId) => `Cannot delete: the archived payload for surviving scan ${scanId} is missing, so the ledger can't be rebuilt.`
+    );
+    const rebuilt = {
+      scans: survivors.filter((r) => r.sealed).map((r) => ({ ...r })),
+      ledger: {},
+      episodes: state.episodes.map((e) => ({ ...e, superseded_by_scan: null }))
+    };
+    if (checkpoint !== null) {
+      const episodeKeys = new Set(state.episodes.map((e) => e.vuln_key));
+      for (const row of (_a = checkpoint.ledger) != null ? _a : []) {
+        if (!episodeKeys.has(row.vuln_key)) rebuilt.ledger[row.vuln_key] = { ...row };
+      }
+    }
+    const observationsByScan = replayScans(rebuilt, replay);
     return {
       state: rebuilt,
       result: {
@@ -2157,7 +2195,7 @@ var Server = (() => {
     );
   }
   function compactLedgerCore(state, retentionDays, prevCheckpoint, readPayload, options) {
-    var _a, _b, _c;
+    var _a, _b;
     const dryRun = Boolean(options.dryRun);
     const result = {
       no_op: true,
@@ -2195,15 +2233,7 @@ var Server = (() => {
     const floorRow = flatCandidates.length ? flatCandidates[flatCandidates.length - 1] : null;
     const checkpoint = buildCheckpoint(rows, newly, prevCheckpoint, floorRow, readPayload);
     const sealedIds = new Set(candidates.map((r) => r.scan_id));
-    const episodes = [];
-    for (const cpRow of checkpoint.ledger) {
-      if (cpRow.status !== "RESOLVED") continue;
-      const live = state.ledger[cpRow.vuln_key];
-      if (live === void 0 || live.status !== "RESOLVED" || live.resolved_at !== cpRow.resolved_at || !sealedIds.has((_b = live.last_scan_id) != null ? _b : "")) {
-        continue;
-      }
-      episodes.push(live);
-    }
+    const episodes = settledEpisodeRows(checkpoint.ledger, state.ledger, sealedIds);
     const newlyIds = newly.map((r) => r.scan_id);
     const obsCount = newlyIds.reduce(
       (acc, id) => {
@@ -2216,7 +2246,7 @@ var Server = (() => {
     result.scans_sealed = newly.length;
     result.episodes_created = episodes.length;
     result.observations_pruned = obsCount;
-    result.archive_bytes_freed = (_c = options.archiveBytes) != null ? _c : 0;
+    result.archive_bytes_freed = (_b = options.archiveBytes) != null ? _b : 0;
     result.floor_scan_id = checkpoint.floor_scan_id;
     result.floor_ts = checkpoint.floor_ts;
     if (dryRun) return { result, checkpoint, newly, state: null, compactionId: null };
@@ -2229,20 +2259,7 @@ var Server = (() => {
       ledger: {},
       episodes: [
         ...state.episodes.map((e) => ({ ...e })),
-        ...episodes.map((e) => {
-          var _a2;
-          return {
-            vuln_key: e.vuln_key,
-            cve: e.cve,
-            severity: e.severity,
-            first_seen: e.first_seen,
-            resolved_at: e.resolved_at,
-            resolution_src: e.resolution_src,
-            reopened_count: Number((_a2 = e.reopened_count) != null ? _a2 : 0),
-            compaction_id: options.compactionId,
-            superseded_by_scan: null
-          };
-        })
+        ...episodes.map((e) => toEpisodeRow(e, options.compactionId))
       ]
     };
     const converted = new Set(episodes.map((e) => e.vuln_key));
@@ -2274,6 +2291,268 @@ var Server = (() => {
       db_bytes_freed: plan.result.db_bytes_freed,
       checkpoint_ref: checkpointRef
     };
+  }
+
+  // src/domain/importMerge.ts
+  var MIGRATION_KIND = "wiz-sidekick-migration";
+  var MIGRATION_VERSION = 1;
+  var MAX_SCANS = 500;
+  var MAX_LEDGER_ROWS = 2e5;
+  var MAX_EPISODES = 2e5;
+  var MAX_HISTORY_ROWS = 5e3;
+  var ImportValidationError = class extends Error {
+  };
+  function asArray(value, name) {
+    if (value === void 0 || value === null) return [];
+    if (!Array.isArray(value)) {
+      throw new ImportValidationError(`Bundle field "${name}" must be a list.`);
+    }
+    for (const item of value) {
+      if (item === null || typeof item !== "object" || Array.isArray(item)) {
+        throw new ImportValidationError(`Bundle field "${name}" must contain objects.`);
+      }
+    }
+    return value;
+  }
+  function validateBundle(data) {
+    var _a;
+    if (data === null || typeof data !== "object" || Array.isArray(data)) {
+      throw new ImportValidationError("The uploaded file is not a migration bundle.");
+    }
+    const rec = data;
+    if (rec["kind"] !== MIGRATION_KIND) {
+      throw new ImportValidationError(
+        `Not a migration bundle (kind ${JSON.stringify((_a = rec["kind"]) != null ? _a : null)}).`
+      );
+    }
+    const version = Number(rec["version"]);
+    if (version !== MIGRATION_VERSION) {
+      throw new ImportValidationError(
+        `Unsupported bundle version ${rec["version"]} \u2014 this app understands version ${MIGRATION_VERSION}. The bundle may come from a newer exporter.`
+      );
+    }
+    const scans = asArray(rec["scans"], "scans");
+    const ledger = asArray(rec["ledger"], "ledger");
+    const episodes = asArray(rec["episodes"], "episodes");
+    const mttrHistory = asArray(rec["mttr_history"], "mttr_history");
+    if (scans.length > MAX_SCANS) {
+      throw new ImportValidationError(
+        `Bundle has ${scans.length} scans \u2014 over the ${MAX_SCANS}-scan import limit.`
+      );
+    }
+    if (ledger.length > MAX_LEDGER_ROWS) {
+      throw new ImportValidationError(
+        `Bundle has ${ledger.length} ledger rows \u2014 over the ${MAX_LEDGER_ROWS}-row limit.`
+      );
+    }
+    if (episodes.length > MAX_EPISODES) {
+      throw new ImportValidationError(
+        `Bundle has ${episodes.length} episodes \u2014 over the ${MAX_EPISODES}-row limit.`
+      );
+    }
+    if (mttrHistory.length > MAX_HISTORY_ROWS) {
+      throw new ImportValidationError(
+        `Bundle has ${mttrHistory.length} history rows \u2014 over the ${MAX_HISTORY_ROWS}-row limit.`
+      );
+    }
+    for (const s of scans) {
+      if (typeof s["scan_id"] !== "string" || !s["scan_id"] || typeof s["ts"] !== "string" || !s["ts"]) {
+        throw new ImportValidationError("Every bundle scan needs string scan_id and ts.");
+      }
+    }
+    for (const [name, rows] of [["ledger", ledger], ["episodes", episodes]]) {
+      for (const r of rows) {
+        if (typeof r["vuln_key"] !== "string" || !r["vuln_key"]) {
+          throw new ImportValidationError(`Every bundle ${name} row needs a string vuln_key.`);
+        }
+      }
+    }
+    return {
+      kind: MIGRATION_KIND,
+      version,
+      exported_at: typeof rec["exported_at"] === "string" ? rec["exported_at"] : null,
+      scans,
+      ledger,
+      episodes,
+      mttr_history: mttrHistory
+    };
+  }
+  var str = (v) => v === null || v === void 0 || v === "" ? null : String(v);
+  function coerceScan(r) {
+    var _a, _b, _c, _d, _e;
+    return {
+      scan_id: String(r["scan_id"]),
+      ts: String(r["ts"]),
+      mode: String((_a = r["mode"]) != null ? _a : "import"),
+      shape: r["shape"] === "grouped" ? "grouped" : "flat",
+      total: Number((_b = r["total"]) != null ? _b : 0),
+      new_count: Number((_c = r["new_count"]) != null ? _c : 0),
+      resolved_count: Number((_d = r["resolved_count"]) != null ? _d : 0),
+      reopened_count: Number((_e = r["reopened_count"]) != null ? _e : 0),
+      raw_ref: null,
+      obs_ref: null,
+      severities: str(r["severities"]),
+      sealed: 1
+    };
+  }
+  function coerceLedger(r) {
+    var _a, _b;
+    return {
+      vuln_key: String(r["vuln_key"]),
+      cve: str(r["cve"]),
+      severity: str(r["severity"]),
+      asset_id: str(r["asset_id"]),
+      asset_name: str(r["asset_name"]),
+      asset_type: str(r["asset_type"]),
+      cloud: str(r["cloud"]),
+      first_seen: str(r["first_seen"]),
+      last_seen: str(r["last_seen"]),
+      status: String((_a = r["status"]) != null ? _a : "OPEN"),
+      resolved_at: str(r["resolved_at"]),
+      resolution_src: str(r["resolution_src"]),
+      reopened_count: Number((_b = r["reopened_count"]) != null ? _b : 0),
+      first_scan_id: str(r["first_scan_id"]),
+      last_scan_id: str(r["last_scan_id"]),
+      subscription_name: str(r["subscription_name"]),
+      subscription_ext_id: str(r["subscription_ext_id"]),
+      tags_json: str(r["tags_json"])
+    };
+  }
+  function coerceEpisode(r) {
+    var _a, _b;
+    return {
+      vuln_key: String(r["vuln_key"]),
+      cve: str(r["cve"]),
+      severity: str(r["severity"]),
+      first_seen: str(r["first_seen"]),
+      resolved_at: str(r["resolved_at"]),
+      resolution_src: str(r["resolution_src"]),
+      reopened_count: Number((_a = r["reopened_count"]) != null ? _a : 0),
+      compaction_id: String((_b = r["compaction_id"]) != null ? _b : "import"),
+      superseded_by_scan: str(r["superseded_by_scan"])
+    };
+  }
+  function importBundleCore(state, bundle, readPayload, options) {
+    const existingRows = scansAsc(state.scans);
+    const sealedExisting = existingRows.filter((r) => r.sealed).map((r) => r.scan_id);
+    if (sealedExisting.length) {
+      throw new ImportValidationError(
+        `This ledger already has compacted (sealed) history (${sealedExisting.join(", ")}) \u2014 two compacted histories can't be merged. Import into a ledger that has never been compacted.`
+      );
+    }
+    const existingIds = new Set(existingRows.map((r) => r.scan_id));
+    const seen = /* @__PURE__ */ new Set();
+    const imported = [];
+    let skipped = 0;
+    for (const raw of bundle.scans) {
+      const row = coerceScan(raw);
+      if (seen.has(row.scan_id) || existingIds.has(row.scan_id)) {
+        skipped += 1;
+        continue;
+      }
+      seen.add(row.scan_id);
+      imported.push(row);
+    }
+    const importedAsc = scansAsc(imported);
+    const badTs = importedAsc.filter((r) => parseTs(r.ts) === null).map((r) => r.scan_id);
+    if (badTs.length) {
+      throw new ImportValidationError(
+        `Bundle scan(s) ${badTs.join(", ")} have unparseable timestamps.`
+      );
+    }
+    if (importedAsc.length && existingRows.length) {
+      const newestImported = importedAsc[importedAsc.length - 1];
+      const oldestExisting = existingRows[0];
+      const newestMs = parseTs(newestImported.ts);
+      const oldestMs = parseTs(oldestExisting.ts);
+      if (oldestMs === null || newestMs === null || newestMs >= oldestMs) {
+        throw new ImportValidationError(
+          `Imported history must be strictly older than this ledger's: bundle scan ${newestImported.scan_id} is not older than existing scan ${oldestExisting.scan_id}. Delete the overlapping scans on one side first.`
+        );
+      }
+    }
+    const importedIds = new Set(importedAsc.map((r) => r.scan_id));
+    const importedCount = importedAsc.length;
+    const rebuilt = {
+      scans: importedAsc,
+      ledger: {},
+      episodes: bundle.episodes.map(coerceEpisode)
+    };
+    for (const raw of bundle.ledger) {
+      const row = coerceLedger(raw);
+      rebuilt.ledger[row.vuln_key] = row;
+    }
+    const vulnsImported = Object.keys(rebuilt.ledger).length;
+    const flats = importedAsc.filter((r) => r.shape === "flat");
+    const floorRow = flats.length ? flats[flats.length - 1] : null;
+    const checkpoint = {
+      version: CHECKPOINT_VERSION,
+      floor_scan_id: floorRow ? floorRow.scan_id : null,
+      floor_ts: floorRow ? floorRow.ts : null,
+      ledger: Object.values(rebuilt.ledger).map((r) => ({ ...r }))
+    };
+    const replay = loadReplayPayloads(
+      existingRows,
+      readPayload,
+      (scanId) => `Cannot import: the archived payload for existing scan ${scanId} is missing, so it can't be replayed over the imported history.`
+    );
+    const observationsByScan = replayScans(rebuilt, replay);
+    const converted = settledEpisodeRows(checkpoint.ledger, rebuilt.ledger, importedIds);
+    for (const live of converted) {
+      rebuilt.episodes.push(toEpisodeRow(live, options.compactionId));
+      delete rebuilt.ledger[live.vuln_key];
+    }
+    return {
+      state: rebuilt,
+      checkpoint,
+      observationsByScan,
+      counts: {
+        scans_imported: importedCount,
+        scans_skipped: skipped,
+        vulns_imported: vulnsImported,
+        episodes_imported: bundle.episodes.length,
+        episodes_converted: converted.length,
+        scans_replayed: replay.length
+      }
+    };
+  }
+  function mergeMttrHistory(existing, imported) {
+    var _a, _b, _c, _d;
+    const byDate = /* @__PURE__ */ new Map();
+    for (const r of existing) {
+      const date = r["date"];
+      if (typeof date === "string" && !Number.isNaN(Date.parse(date))) {
+        byDate.set(date.slice(0, 10), r);
+      }
+    }
+    let added = 0;
+    let skipped = 0;
+    for (const r of imported) {
+      const date = r["date"];
+      if (typeof date !== "string" || Number.isNaN(Date.parse(date))) {
+        skipped += 1;
+        continue;
+      }
+      const key = date.slice(0, 10);
+      if (byDate.has(key)) {
+        skipped += 1;
+        continue;
+      }
+      byDate.set(key, {
+        date: key,
+        median_days: Number((_a = r["median_days"]) != null ? _a : 0),
+        resolved: Number((_b = r["resolved"]) != null ? _b : 0),
+        open: Number((_c = r["open"]) != null ? _c : 0),
+        total: Number((_d = r["total"]) != null ? _d : 0),
+        sla_pct: r["sla_pct"] === null || r["sla_pct"] === void 0 ? null : Number(r["sla_pct"]),
+        oldest_open_days: r["oldest_open_days"] === null || r["oldest_open_days"] === void 0 ? null : Number(r["oldest_open_days"])
+      });
+      added += 1;
+    }
+    const rows = [...byDate.values()].sort(
+      (a, b) => String(a["date"]) < String(b["date"]) ? -1 : String(a["date"]) > String(b["date"]) ? 1 : 0
+    );
+    return { rows, added, skipped };
   }
 
   // src/server/jobsStore.ts
@@ -2642,6 +2921,71 @@ var Server = (() => {
     }
     return result;
   }
+  function importBundle(bundle) {
+    const state = loadState();
+    if (readAll(TABS.compactions).length) {
+      throw new ImportValidationError(
+        "This ledger already has a compaction record (a prior compaction or import) \u2014 the one-shot migration import needs a never-compacted ledger."
+      );
+    }
+    const nowMs = Date.now();
+    const compactionId = `imp-${nowIso(nowMs).replace(/[:]/g, "")}`;
+    const { state: merged, checkpoint, observationsByScan, counts } = importBundleCore(
+      state,
+      bundle,
+      readPayloadForRow,
+      { compactionId }
+    );
+    if (!counts.scans_imported && !counts.vulns_imported && !counts.episodes_imported) {
+      return counts;
+    }
+    const jobId = newJobId("import", nowMs);
+    const journalRef = writeJournal(jobId, state);
+    createJob(
+      {
+        job_id: jobId,
+        kind: "import",
+        phase: "REPLAYING",
+        scan_id: null,
+        cursor: null,
+        page: 0,
+        findings_so_far: 0,
+        page_size: 0,
+        total_count: 0,
+        params_json: JSON.stringify({
+          scans: counts.scans_imported,
+          vulns: counts.vulns_imported,
+          episodes: counts.episodes_imported
+        }),
+        journal_ref: journalRef,
+        error: null
+      },
+      nowMs
+    );
+    for (const row of merged.scans) {
+      const obs = observationsByScan[row.scan_id];
+      if (obs) row.obs_ref = writeObservations(row.scan_id, obs);
+    }
+    const checkpointRef = writeCheckpoint(compactionId, checkpoint);
+    appendRows(TABS.compactions, [
+      {
+        compaction_id: compactionId,
+        ts: nowIso(nowMs),
+        floor_scan_id: checkpoint.floor_scan_id,
+        floor_ts: checkpoint.floor_ts,
+        scans_sealed: counts.scans_imported,
+        episodes_created: counts.episodes_imported + counts.episodes_converted,
+        observations_pruned: 0,
+        archive_bytes_freed: 0,
+        db_bytes_freed: 0,
+        checkpoint_ref: checkpointRef
+      }
+    ]);
+    writeStateTables(merged);
+    updateJob(jobId, { phase: "DONE" }, nowMs);
+    trashFile(journalRef);
+    return counts;
+  }
   function compactLedger(retentionDays, dryRun = false, now) {
     const state = loadState();
     const prevCheckpoint = latestCheckpoint();
@@ -2912,6 +3256,17 @@ var Server = (() => {
       console.warn(`Failed to write MTTR history: ${e}`);
       return false;
     }
+  }
+  function importHistory(imported) {
+    const { rows, added, skipped } = mergeMttrHistory(
+      loadHistory(),
+      imported
+    );
+    if (added) {
+      overwrite(TABS.mttrHistory, rows);
+      bumpDataVersion();
+    }
+    return { added, skipped };
   }
   function loadHistory() {
     var _a, _b, _c, _d;
@@ -3743,6 +4098,14 @@ var Server = (() => {
     const days = params["retentionDays"] !== void 0 ? Number(params["retentionDays"]) : getRetentionDays2();
     if (dryRun) return run(() => compactLedger(days, true));
     return mutate(() => compactLedger(days, false));
+  }
+  function importMigration(p) {
+    return mutate(() => {
+      const bundle = validateBundle(p == null ? void 0 : p["bundle"]);
+      const counts = importBundle(bundle);
+      const hist = importHistory(bundle.mttr_history);
+      return { ...counts, history_added: hist.added, history_skipped: hist.skipped };
+    });
   }
   var REPORT_SOURCE = "OS vulnerabilities";
   function getReport(p) {

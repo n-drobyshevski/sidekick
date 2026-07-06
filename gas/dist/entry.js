@@ -50,4 +50,5 @@ function api_getDomains(p) { return timedApi_("getDomains", p); }
 function api_saveDomains(p) { return timedApi_("saveDomains", p); }
 function api_previewDomains(p) { return timedApi_("previewDomains", p); }
 function api_compact(p) { return timedApi_("compact", p); }
+function api_importMigration(p) { return timedApi_("importMigration", p); }
 function api_getStorageStats(p) { return timedApi_("getStorageStats", p); }

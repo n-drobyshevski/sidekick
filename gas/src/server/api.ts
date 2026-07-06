@@ -14,6 +14,7 @@ import { mttrFromLedger, vulnKey } from "../domain/lifecycle";
 import { extractNodes } from "../domain/transform";
 import { overallSlaOldest } from "../domain/metrics";
 import { normalizeSeverity } from "../domain/severity";
+import { validateBundle } from "../domain/importMerge";
 import { SealedScanError, LedgerRebuildError } from "../domain/maintenance";
 import { parseTs, present, type Rec } from "../domain/util";
 import * as archive from "./archiveStore";
@@ -429,6 +430,18 @@ export function compact(p?: unknown): ApiResult {
       : settingsStore.getRetentionDays();
   if (dryRun) return run(() => ledgerStore.compactLedger(days, true));
   return mutate(() => ledgerStore.compactLedger(days, false));
+}
+
+// --------------------------------------------------------------------------- import
+
+/** One-shot migration import: a Streamlit bundle merged into the ledger + history. */
+export function importMigration(p?: unknown): ApiResult {
+  return mutate(() => {
+    const bundle = validateBundle((p as Rec)?.["bundle"]);
+    const counts = ledgerStore.importBundle(bundle);
+    const hist = history.importHistory(bundle.mttr_history);
+    return { ...counts, history_added: hist.added, history_skipped: hist.skipped };
+  });
 }
 
 // -------------------------------------------------------------------------- reports

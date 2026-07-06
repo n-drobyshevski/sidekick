@@ -1,6 +1,7 @@
 // Persistent MTTR history on the `mttr_history` tab — one snapshot per UTC day,
 // latest wins (the port of wiz_dashboard/data/history.py).
 
+import { mergeMttrHistory } from "../domain/importMerge";
 import type { Rec } from "../domain/util";
 import { bumpDataVersion } from "./serverCache";
 import { readAll, overwrite, TABS } from "./sheetsDb";
@@ -49,6 +50,23 @@ export function recordSnapshot(
     console.warn(`Failed to write MTTR history: ${e}`);
     return false;
   }
+}
+
+/**
+ * Merge imported (migration-bundle) history rows into the tab: existing rows win on
+ * date collisions, imported rows fill missing dates. Deliberately NOT recordSnapshot —
+ * an import must never mint a today-dated point.
+ */
+export function importHistory(imported: Rec[]): { added: number; skipped: number } {
+  const { rows, added, skipped } = mergeMttrHistory(
+    loadHistory() as unknown as Rec[],
+    imported,
+  );
+  if (added) {
+    overwrite(TABS.mttrHistory, rows);
+    bumpDataVersion();
+  }
+  return { added, skipped };
 }
 
 /** History rows sorted by date (invalid dates dropped). */
