@@ -1,5 +1,8 @@
 // Chart.js wrappers themed to DESIGN.md: severity bar (click-to-filter), MTTR trend
-// line, open-vs-resolved dual line. Chart.js 4 is loaded from CDN as a global.
+// line, open-vs-resolved dual line. Chart.js 4 is bundled (no CDN) so the app works
+// behind proxies that block or rewrite third-party script hosts.
+
+import Chart from "chart.js/auto";
 
 const FONT = {
   family:
@@ -44,7 +47,7 @@ function baseOptions() {
 }
 
 function destroyExisting(canvas) {
-  const existing = window.Chart.getChart(canvas);
+  const existing = Chart.getChart(canvas);
   if (existing) existing.destroy();
 }
 
@@ -62,7 +65,7 @@ export function severityBar(canvas, counts, palette, onClickSeverity) {
   opts.onHover = (evt, elements) => {
     evt.native.target.style.cursor = elements.length && onClickSeverity ? "pointer" : "default";
   };
-  return new window.Chart(canvas, {
+  return new Chart(canvas, {
     type: "bar",
     data: {
       labels: sevs,
@@ -87,7 +90,7 @@ export function trendLine(canvas, points, { yLabel } = {}) {
   if (yLabel) {
     opts.scales.y.title = { display: true, text: yLabel, font: FONT, color: INK2 };
   }
-  return new window.Chart(canvas, {
+  return new Chart(canvas, {
     type: "line",
     data: {
       labels: points.map((p) => p.x.slice(0, 10)),
@@ -112,7 +115,7 @@ export function openResolvedLines(canvas, points) {
   destroyExisting(canvas);
   const opts = baseOptions();
   opts.plugins.legend = { display: true, labels: { font: FONT, color: INK2, boxHeight: 2 } };
-  return new window.Chart(canvas, {
+  return new Chart(canvas, {
     type: "line",
     data: {
       labels: points.map((p) => p.date.slice(0, 10)),
