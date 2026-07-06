@@ -1,0 +1,110 @@
+{
+ "cases": [
+  {
+   "input": {
+    "data": {
+     "vulnerabilityFindings": {
+      "nodes": [
+       {
+        "id": "a"
+       },
+       {
+        "id": "b"
+       }
+      ]
+     }
+    }
+   },
+   "expected": [
+    {
+     "id": "a"
+    },
+    {
+     "id": "b"
+    }
+   ]
+  },
+  {
+   "input": {
+    "data": {
+     "somethingElse": {
+      "nodes": [
+       {
+        "id": "c"
+       }
+      ]
+     }
+    }
+   },
+   "expected": [
+    {
+     "id": "c"
+    }
+   ]
+  },
+  {
+   "input": {
+    "nodes": [
+     {
+      "id": "d"
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "d"
+    }
+   ]
+  },
+  {
+   "input": [
+    {
+     "data": {
+      "vulnerabilityFindings": {
+       "nodes": [
+        {
+         "id": "e"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "data": {
+      "vulnerabilityFindings": {
+       "nodes": [
+        {
+         "id": "f"
+        }
+       ]
+      }
+     }
+    }
+   ],
+   "expected": [
+    {
+     "id": "e"
+    },
+    {
+     "id": "f"
+    }
+   ]
+  },
+  {
+   "input": "{\"data\": {\"vulnerabilityFindings\": {\"nodes\": [{\"id\": \"g\"}]}}}",
+   "expected": [
+    {
+     "id": "g"
+    }
+   ]
+  },
+  {
+   "input": null,
+   "expected": []
+  },
+  {
+   "input": [],
+   "expected": []
+  }
+ ]
+}

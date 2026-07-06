@@ -1,0 +1,118 @@
+{
+ "now": "2026-07-01T00:00:00Z",
+ "records": [
+  {
+   "severity": "CRITICAL",
+   "firstDetectedAt": "2026-06-01T00:00:00Z",
+   "resolvedAt": "2026-06-05T12:00:00Z"
+  },
+  {
+   "severity": "CRITICAL",
+   "firstDetectedAt": "2026-06-10T00:00:00Z"
+  },
+  {
+   "severity": "CRITICAL",
+   "firstDetectedAt": "2026-06-02T00:00:00Z",
+   "resolvedAt": "2026-06-20T00:00:00Z"
+  },
+  {
+   "severity": "HIGH",
+   "firstDetectedAt": "2026-05-01T00:00:00Z",
+   "resolvedAt": "2026-05-10T00:00:00Z"
+  },
+  {
+   "severity": "high",
+   "firstDetectedAt": "2026-04-01T00:00:00Z"
+  },
+  {
+   "severity": "HIGH",
+   "firstDetectedAt": "2026-03-01T00:00:00Z"
+  },
+  {
+   "severity": "HIGH",
+   "firstDetectedAt": "2026-06-25T00:00:00Z"
+  },
+  {
+   "severity": "MEDIUM",
+   "firstDetectedAt": "bogus"
+  },
+  {
+   "severity": "INFORMATIONAL",
+   "firstDetectedAt": "2026-06-01T00:00:00Z",
+   "resolvedAt": "2026-06-02T00:00:00Z"
+  },
+  {
+   "severity": null,
+   "firstDetectedAt": "2026-06-01T00:00:00Z"
+  }
+ ],
+ "expected": {
+  "per_sev": {
+   "CRITICAL": {
+    "mttr_mean": 11.25,
+    "mttr_median": 11.25,
+    "resolved": 2,
+    "open": 1,
+    "open_age_p50": 21.0,
+    "open_age_p90": 21.0,
+    "sla_target": 7,
+    "sla_compliant": 1,
+    "sla_pct": 50.0
+   },
+   "HIGH": {
+    "mttr_mean": 9.0,
+    "mttr_median": 9.0,
+    "resolved": 1,
+    "open": 3,
+    "open_age_p50": 91.0,
+    "open_age_p90": 115.8,
+    "sla_target": 14,
+    "sla_compliant": 1,
+    "sla_pct": 100.0
+   },
+   "MEDIUM": {
+    "mttr_mean": null,
+    "mttr_median": null,
+    "resolved": 0,
+    "open": 0,
+    "open_age_p50": null,
+    "open_age_p90": null,
+    "sla_target": 30,
+    "sla_compliant": 0,
+    "sla_pct": null
+   },
+   "INFO": {
+    "mttr_mean": 1.0,
+    "mttr_median": 1.0,
+    "resolved": 1,
+    "open": 0,
+    "open_age_p50": null,
+    "open_age_p90": null,
+    "sla_target": 180,
+    "sla_compliant": 1,
+    "sla_pct": 100.0
+   },
+   "UNKNOWN": {
+    "mttr_mean": null,
+    "mttr_median": null,
+    "resolved": 0,
+    "open": 1,
+    "open_age_p50": 30.0,
+    "open_age_p90": 30.0,
+    "sla_target": null,
+    "sla_compliant": 0,
+    "sla_pct": null
+   }
+  },
+  "overall": {
+   "mttr_mean": 8.125,
+   "mttr_median": 6.75,
+   "resolved": 4,
+   "open": 6
+  },
+  "overall_sla_oldest": {
+   "sla_pct": 75.0,
+   "oldest_days": 115.8
+  }
+ }
+}

@@ -1,0 +1,99 @@
+{
+ "cases": [
+  {
+   "input": {
+    "record": {
+     "vulnerableAsset.name": "vm-a"
+    },
+    "keys": [
+     "vulnerableAsset.name"
+    ]
+   },
+   "expected": "vm-a"
+  },
+  {
+   "input": {
+    "record": {
+     "vulnerableAsset": {
+      "name": "vm-b"
+     }
+    },
+    "keys": [
+     "vulnerableAsset.name"
+    ]
+   },
+   "expected": "vm-b"
+  },
+  {
+   "input": {
+    "record": {
+     "vulnerableAsset.name": "",
+     "vulnerableAsset": {
+      "name": "vm-c"
+     }
+    },
+    "keys": [
+     "vulnerableAsset.name"
+    ]
+   },
+   "expected": "vm-c"
+  },
+  {
+   "input": {
+    "record": {
+     "a": null,
+     "b": "x"
+    },
+    "keys": [
+     "a",
+     "b"
+    ]
+   },
+   "expected": "x"
+  },
+  {
+   "input": {
+    "record": {
+     "a": null,
+     "b": "y"
+    },
+    "keys": [
+     "a",
+     "b"
+    ]
+   },
+   "expected": "y"
+  },
+  {
+   "input": {
+    "record": {},
+    "keys": [
+     "missing"
+    ]
+   },
+   "expected": ""
+  },
+  {
+   "input": {
+    "record": {
+     "n": 0
+    },
+    "keys": [
+     "n"
+    ]
+   },
+   "expected": "0"
+  },
+  {
+   "input": {
+    "record": {
+     "n": false
+    },
+    "keys": [
+     "n"
+    ]
+   },
+   "expected": "False"
+  }
+ ]
+}

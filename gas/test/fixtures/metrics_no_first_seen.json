@@ -1,0 +1,12 @@
+{
+ "records": [
+  {
+   "severity": "HIGH",
+   "status": "OPEN"
+  }
+ ],
+ "expected": {
+  "per_sev": {},
+  "overall": {}
+ }
+}
