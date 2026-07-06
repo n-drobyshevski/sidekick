@@ -19,6 +19,49 @@ export function invalidateBootstrap() {
   bootstrapData = null;
 }
 
+// -------------------------------------------------------- RPC session cache + SWR
+
+const rpcCache = new Map();
+
+function rpcKey(name, params) {
+  return name + ":" + JSON.stringify(params || {});
+}
+
+/** Cleared from the same seam as invalidateBootstrap (app.refresh after mutations). */
+export function invalidateRpcCache() {
+  rpcCache.clear();
+}
+
+/**
+ * Stale-while-revalidate call: a revisit resolves instantly from the session cache
+ * while the RPC refetches in the background — onFresh fires only when the
+ * revalidated payload actually differs, so pages repaint on real changes and stay
+ * put otherwise. First visit is just a plain call.
+ */
+export function swrCall(name, params, onFresh) {
+  const key = rpcKey(name, params);
+  const fetchFresh = () =>
+    call(name, params).then((data) => {
+      rpcCache.set(key, Promise.resolve(data));
+      return data;
+    });
+  const hit = rpcCache.get(key);
+  if (!hit) {
+    const p = fetchFresh().catch((e) => {
+      rpcCache.delete(key);
+      throw e;
+    });
+    rpcCache.set(key, p);
+    return p;
+  }
+  Promise.all([hit, fetchFresh()])
+    .then(([stale, fresh]) => {
+      if (onFresh && JSON.stringify(stale) !== JSON.stringify(fresh)) onFresh(fresh);
+    })
+    .catch(() => {}); // a failed background revalidation keeps the stale view
+  return hit;
+}
+
 // ------------------------------------------------------------------- hash routing
 
 export function parseHash() {

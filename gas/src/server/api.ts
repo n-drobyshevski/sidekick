@@ -177,6 +177,22 @@ export function getFindings(p?: unknown): ApiResult {
       };
     }
 
+    // Full-projection mode for the client-side filter path: small scans ship every
+    // row once so the browser can filter/search/group/paginate with zero further
+    // RPCs. Larger result sets answer with the normal first page (all: absent) and
+    // the client falls back to server-side filtering.
+    if (params["all"] === true && filtered.length <= CLIENT_ALL_MAX) {
+      return {
+        rows: filtered.map(findings.tableRow),
+        total: filtered.length,
+        counts,
+        page: 0,
+        pageCount: 1,
+        groups: null,
+        all: true,
+      };
+    }
+
     const pageSize = Math.min(Number(params["pageSize"] ?? 100), 500);
     const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
     const page = Math.min(Math.max(Number(params["page"] ?? 0), 0), pageCount - 1);
@@ -190,6 +206,9 @@ export function getFindings(p?: unknown): ApiResult {
     };
   });
 }
+
+// Row ceiling for getFindings all-mode (~1–2 MB of table-projected JSON).
+const CLIENT_ALL_MAX = 3000;
 
 function groupKeyFn(groupBy: string): (r: Rec) => string {
   const col: Record<string, string> = {

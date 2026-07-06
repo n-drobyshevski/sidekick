@@ -1,9 +1,8 @@
 // MTTR & SLA — remediation performance from the durable ledger. Hero stat, trend
 // charts, per-severity SLA table, posture bars. Never fetches from Wiz.
 
-import { call } from "../api.js";
 import { openResolvedLines, trendLine } from "../charts.js";
-import { bootstrap } from "../store.js";
+import { bootstrap, swrCall } from "../store.js";
 import { changeChip, clear, el, emptyState, fmtDays, sectionLabel, sevBadge } from "../ui.js";
 
 export async function renderMttr(main, params) {
@@ -40,11 +39,15 @@ export async function renderMttr(main, params) {
 
   async function load() {
     clear(heroHost).append(el("p", { class: "muted" }, "Computing…"));
-    // One batched RPC — summary and trends share a single ledger-state load server-side.
-    const { mttr, trends } = await call("api_getMttrPage", { domain });
-    renderHero(mttr, trends);
-    renderCharts(trends);
-    renderSla(mttr);
+    // One batched RPC — summary and trends share a single ledger-state load
+    // server-side. Revisits paint instantly from the session cache and repaint in
+    // the background only if the revalidated data differs.
+    const paint = (data) => {
+      renderHero(data.mttr, data.trends);
+      renderCharts(data.trends);
+      renderSla(data.mttr);
+    };
+    paint(await swrCall("api_getMttrPage", { domain }, paint));
   }
 
   function renderHero(mttr, trends) {

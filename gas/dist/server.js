@@ -3510,6 +3510,17 @@ var Server = (() => {
           }))
         };
       }
+      if (params["all"] === true && filtered.length <= CLIENT_ALL_MAX) {
+        return {
+          rows: filtered.map(tableRow),
+          total: filtered.length,
+          counts,
+          page: 0,
+          pageCount: 1,
+          groups: null,
+          all: true
+        };
+      }
       const pageSize = Math.min(Number((_i = params["pageSize"]) != null ? _i : 100), 500);
       const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
       const page = Math.min(Math.max(Number((_j = params["page"]) != null ? _j : 0), 0), pageCount - 1);
@@ -3523,6 +3534,7 @@ var Server = (() => {
       };
     });
   }
+  var CLIENT_ALL_MAX = 3e3;
   function groupKeyFn(groupBy) {
     var _a;
     const col = {
