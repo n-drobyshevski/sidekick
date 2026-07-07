@@ -4126,11 +4126,21 @@ var Server = (() => {
       return { record, raw };
     });
   }
-  function insightsData() {
+  function insightsData(p) {
+    var _a;
     const scan = currentScan();
     if (!scan) return { flatScan: false };
-    const recs = scan.records;
-    const base = loadBaseRows();
+    const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
+    let recs = scan.records;
+    let base = loadBaseRows();
+    if (domain) {
+      recs = recs.filter((r) => {
+        var _a2;
+        return String((_a2 = r["_domain"]) != null ? _a2 : UNASSIGNED) === domain;
+      });
+      const compiled = compileDomains(getDomains2().items);
+      base = base.filter((r) => assignDomain(r, compiled) === domain);
+    }
     const latestFlat = latestFlatScanRow();
     const breakdowns = {};
     for (const key of Object.keys(BREAKDOWN_KEYS)) {
@@ -4138,7 +4148,13 @@ var Server = (() => {
     }
     return {
       flatScan: true,
+      domain,
       scan: { scanId: scan.scanId, ts: scan.ts, total: scan.total },
+      // Domain-scoped severity counts + total so the Overview headline can stay
+      // coherent under a filter (the KPI band otherwise reads whole-scan bootstrap
+      // counts). Movement's new/resolved/reopened remain chain-wide — see below.
+      counts: sevCountsOf(recs),
+      total: recs.length,
       exploit: exploitSummary(recs),
       topAssets: topAssets(recs, 10),
       aging: ageBuckets(base),
@@ -4147,8 +4163,13 @@ var Server = (() => {
       breakdowns
     };
   }
-  function getInsights(_p) {
-    return run(() => cached("insights", null, insightsData, 3600));
+  function getInsights(p) {
+    return run(
+      () => {
+        var _a;
+        return cached("insights", { domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "") }, () => insightsData(p), 3600);
+      }
+    );
   }
   function mttrData(p) {
     var _a;
@@ -4329,16 +4350,23 @@ var Server = (() => {
   var REPORT_SOURCE = "OS vulnerabilities";
   function getReport(p) {
     return run(() => {
-      var _a, _b, _c, _d;
+      var _a, _b, _c, _d, _e;
       const params = p != null ? p : {};
       const format = String((_a = params["format"]) != null ? _a : "markdown");
       const scan = currentScan();
       if (!scan) return { content: "", filename: "", matrix: [] };
+      const domains = (_b = params["domains"]) != null ? _b : [];
       const displayed = applyFilters(scan.records, {
-        severities: getDisplaySeverities2()
+        severities: getDisplaySeverities2(),
+        domains
       });
       const counts = sevCountsOf(displayed);
-      const { perSev, overall } = mttrFromLedger(loadBaseRows());
+      let baseRows2 = loadBaseRows();
+      if (domains.length) {
+        const compiled = compileDomains(getDomains2().items);
+        baseRows2 = baseRows2.filter((r) => domains.includes(assignDomain(r, compiled)));
+      }
+      const { perSev, overall } = mttrFromLedger(baseRows2);
       const generated = (/* @__PURE__ */ new Date()).toISOString().replace(/\.\d{3}Z$/, "Z");
       const matrix = [
         {
@@ -4348,8 +4376,8 @@ var Server = (() => {
             return [s, (_a2 = counts[s]) != null ? _a2 : 0];
           })),
           total: displayed.length,
-          medianMttr: (_b = overall.mttr_median) != null ? _b : null,
-          open: (_c = overall.open) != null ? _c : 0
+          medianMttr: (_c = overall.mttr_median) != null ? _c : null,
+          open: (_d = overall.open) != null ? _d : 0
         }
       ];
       if (format === "json") {
@@ -4382,7 +4410,7 @@ var Server = (() => {
         `| **Total** | **${displayed.length}** |`,
         "",
         `Median MTTR: ${overall.mttr_median != null ? overall.mttr_median.toFixed(1) + " days" : "\u2014"}`,
-        `Open findings: ${(_d = overall.open) != null ? _d : 0}`
+        `Open findings: ${(_e = overall.open) != null ? _e : 0}`
       ].join("\n");
       return { content: md, filename: `wiz-report-${generated.slice(0, 10)}.md`, matrix };
     });

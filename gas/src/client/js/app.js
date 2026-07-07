@@ -20,6 +20,10 @@ const PAGES = {
 
 const app = document.getElementById("app");
 let mainEl = null;
+// The global "Value Chain" filter, shared by every page. "" = the whole chain (no
+// filter). Module-level so it survives route() (which only re-renders mainEl, never
+// the sidebar) and page navigation — nav links carry no state.
+let activeDomain = "";
 let jobPoller = null;
 let scanCardHost = null; // the progress-card slot in the current scan zone
 let scanButtonsRow = null; // the Run/Quick buttons, hidden while a job runs
@@ -120,6 +124,29 @@ function renderSidebar(sidebar, data) {
       paintCard(data.activeJob);
       watchJob(data.activeJob.job_id);
     }
+  }
+
+  // Global "Value Chain" filter — one domain selector shared by every page, at the
+  // top of the bottom cluster (above the scan controls). Only shown when more than
+  // one value chain is configured; otherwise every page is already the whole chain.
+  if (data && data.domainNames && data.domainNames.length > 1) {
+    // Drop a stale selection if its value chain was removed from settings.
+    if (activeDomain && !data.domainNames.includes(activeDomain)) activeDomain = "";
+    const sel = el(
+      "select",
+      { "aria-label": "Filter by value chain" },
+      el("option", { value: "" }, "Value Chain"),
+      ...data.domainNames.map((d) =>
+        el("option", { value: d, selected: d === activeDomain || null }, d)),
+    );
+    sel.addEventListener("change", () => {
+      activeDomain = sel.value;
+      route();
+    });
+    zone.prepend(
+      el("div", { class: "sidebar-filter" },
+        el("label", { class: "field-label" }, "Value chain"), sel),
+    );
   }
   sidebar.append(zone);
 }
@@ -229,7 +256,7 @@ async function route() {
   });
   clear(mainEl);
   try {
-    await page.render(mainEl, params, { refresh });
+    await page.render(mainEl, params, { refresh, domain: activeDomain });
   } catch (e) {
     clear(mainEl).append(
       el("div", { class: "empty" },

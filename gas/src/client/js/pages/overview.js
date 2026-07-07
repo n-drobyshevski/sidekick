@@ -25,7 +25,7 @@ const BREAKDOWN_OPTIONS = [
 ];
 const DEFAULT_BY = "atype";
 
-export async function renderOverview(main, params) {
+export async function renderOverview(main, params, ctx) {
   const boot = await bootstrap();
   main.append(
     el("h1", {}, "OS vulnerabilities"),
@@ -68,13 +68,21 @@ export async function renderOverview(main, params) {
     renderHeadline(data);
     renderInsights(data);
   };
-  paint(await swrCall("api_getInsights", {}, paint));
+  paint(await swrCall("api_getInsights", { domain: ctx.domain || "" }, paint));
 
-  /** KPI band + severity breakdown — headline counts come from bootstrap so they
-   *  match the sidebar; `insights` (when loaded) adds the Open count. */
+  /** KPI band + severity breakdown. At the whole-chain view ("Value Chain") counts
+   *  come from bootstrap so they match the sidebar and survive grouped scans. Under a
+   *  Value Chain filter they come from the (domain-scoped) insights payload instead —
+   *  otherwise the band would read whole-scan while Open below it is filtered. No
+   *  per-chain baseline exists, so the scan-over-scan change chips are dropped there. */
   function renderHeadline(insights) {
     clear(kpiRow);
-    const total = Object.values(boot.counts).reduce((a, b) => a + b, 0);
+    const filtered = !!(ctx.domain && insights && insights.flatScan);
+    const counts = filtered ? insights.counts : boot.counts;
+    const total = filtered
+      ? insights.total
+      : Object.values(boot.counts).reduce((a, b) => a + b, 0);
+    const chip = (s) => (filtered ? null : changeChip(boot.counts[s], boot.prevCounts[s]));
     kpiRow.append(
       kpiCard("Total findings", total.toLocaleString(),
         `scan ${boot.latestScan.ts.slice(0, 10)} — ${boot.latestScan.mode}`),
@@ -82,23 +90,22 @@ export async function renderOverview(main, params) {
         ? insights.exploit.open.toLocaleString() : "…",
         "awaiting remediation"),
       ...boot.palette.order
-        .filter((s) => boot.counts[s])
+        .filter((s) => counts[s])
         .slice(0, 2)
-        .map((s) => kpiCard(s, boot.counts[s].toLocaleString(),
-          null, changeChip(boot.counts[s], boot.prevCounts[s]))),
+        .map((s) => kpiCard(s, counts[s].toLocaleString(), null, chip(s))),
     );
     requestAnimationFrame(() => {
-      severityBar(sevChartCanvas, boot.counts, boot.palette);
+      severityBar(sevChartCanvas, counts, boot.palette);
     });
     const cards = clear(sevSection.lastChild);
     for (const sev of boot.palette.order) {
-      if (!boot.counts[sev]) continue;
+      if (!counts[sev]) continue;
       cards.append(
         el("div", { class: "kpi-card" },
           sevBadge(sev),
           el("div", { class: "kpi-value num" },
-            boot.counts[sev].toLocaleString(),
-            changeChip(boot.counts[sev], boot.prevCounts[sev]),
+            counts[sev].toLocaleString(),
+            chip(sev),
           ),
         ),
       );
@@ -223,6 +230,11 @@ export async function renderOverview(main, params) {
         kpiCard("Reopened", m.reopenedCount.toLocaleString(), "back after being resolved"),
         kpiCard("Persisting", m.persisting.toLocaleString(), "open since an earlier scan"),
       ));
+      if (ctx.domain) {
+        insightsHost.append(el("p", { class: "small muted", style: "margin:8px 0 0" },
+          "New / Resolved / Reopened are chain-wide — scan-over-scan deltas can't be " +
+          "split by value chain. Persisting reflects this value chain."));
+      }
     }
 
     if (insights.topCves.length) {

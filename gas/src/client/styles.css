@@ -121,6 +121,10 @@ html, body {
 .scan-caption { font-size: 12px; color: var(--text-3); }
 .scan-buttons { display: flex; gap: 8px; }
 
+/* Global Value Chain filter — sits at the top of the bottom cluster. The select
+   spans the rail so long chain names don't clip. */
+.sidebar-filter select { width: 100%; }
+
 /* Scan progress card (persistent, non-modal; lives in the scan zone while a job runs) */
 .scan-progress {
   display: flex;

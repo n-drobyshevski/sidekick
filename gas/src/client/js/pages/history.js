@@ -14,10 +14,12 @@ export async function renderHistory(main, _params, ctx) {
   // server-side the three parts share a single ledger-state load. Revisits paint
   // instantly from the session cache and repaint only if revalidated data differs.
   const bootPromise = bootstrap();
+  // Scope the vulnerability base to the global Value Chain filter ("" = whole chain).
+  const domainFilter = ctx.domain ? [ctx.domain] : [];
   let baseTouched = false; // once the user filters/pages the base, SWR leaves it alone
   const pagePromise = swrCall(
     "api_getHistoryPage",
-    { statuses: [], severities: [], domains: [], q: "", page: 0, pageSize: 100 },
+    { statuses: [], severities: [], domains: domainFilter, q: "", page: 0, pageSize: 100 },
     (fresh) => {
       paintKpis(fresh.history.kpis);
       paintScans(fresh.history.scans);
@@ -154,7 +156,8 @@ export async function renderHistory(main, _params, ctx) {
   }
 
   // ---- vulnerability base
-  const filters = { statuses: [], severities: [], domains: [], q: "", page: 0 };
+  // domains is driven by the sidebar's global Value Chain filter, not a per-page control.
+  const filters = { statuses: [], severities: [], domains: domainFilter, q: "", page: 0 };
   const filterBar = el("div", { class: "filter-bar" });
   const tableHost = el("div", {});
   baseHost.append(filterBar, tableHost);
@@ -163,10 +166,6 @@ export async function renderHistory(main, _params, ctx) {
     select("Status", ["OPEN", "RESOLVED"], (v) => { filters.statuses = v ? [v] : []; reload(); }),
     select("Severity", boot.palette.selectable, (v) => { filters.severities = v ? [v] : []; reload(); }),
   );
-  if (boot.domainNames.length > 1) {
-    filterBar.append(select("Domain", boot.domainNames,
-      (v) => { filters.domains = v ? [v] : []; reload(); }));
-  }
   const search = el("input", { type: "search", placeholder: "CVE or asset…",
     "aria-label": "Search the vulnerability base" });
   let deb;

@@ -5,7 +5,7 @@ import { openResolvedLines, trendLine } from "../charts.js";
 import { bootstrap, swrCall } from "../store.js";
 import { changeChip, clear, el, emptyState, fmtDays, sectionLabel, sevBadge } from "../ui.js";
 
-export async function renderMttr(main, params) {
+export async function renderMttr(main, _params, ctx) {
   const boot = await bootstrap();
   main.append(
     el("h1", {}, "MTTR & SLA"),
@@ -13,27 +13,13 @@ export async function renderMttr(main, params) {
       "How fast risk gets closed, measured over observed lifecycles in the durable base."),
   );
 
-  const controls = el("div", { class: "filter-bar" });
   const heroHost = el("div", {});
   const chartsHost = el("div", { class: "chart-grid" });
   const slaHost = el("div", {});
-  main.append(controls, heroHost, chartsHost, slaHost);
+  main.append(heroHost, chartsHost, slaHost);
 
-  let domain = params.dom || "";
-  if (boot.domainNames.length > 1) {
-    const sel = el("select", { "aria-label": "Domain" },
-      el("option", { value: "" }, "All domains"),
-      ...boot.domainNames.map((d) => el("option", { value: d, selected: d === domain || null }, d)),
-    );
-    sel.addEventListener("change", () => {
-      domain = sel.value;
-      load();
-    });
-    controls.append(el("div", { class: "field" },
-      el("label", { class: "field-label" }, "Domain"), sel));
-  } else {
-    controls.remove();
-  }
+  // Scope comes from the global Value Chain filter in the sidebar; "" = whole chain.
+  const domain = ctx.domain || "";
 
   await load();
 
@@ -116,6 +102,10 @@ export async function renderMttr(main, params) {
     if (!chartsHost.hasChildNodes()) {
       chartsHost.append(emptyState("Trends appear after two saved scans."));
       return;
+    }
+    if (domain) {
+      chartsHost.append(el("p", { class: "small muted", style: "grid-column:1/-1; margin:0" },
+        "Trends span every value chain — per-chain history isn't stored."));
     }
 
     requestAnimationFrame(() => {

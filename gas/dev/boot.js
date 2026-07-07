@@ -35,6 +35,23 @@
   }
   console.log(`[dev] seeded ${SEED_SCANS} dry-run scans`);
 
+  // Seed a few value chains so the sidebar's global Value Chain filter (and the
+  // Overview "by domain" breakdown) are exercisable in dev. Sample asset names encode
+  // their role (web-prod-01, db-replica-02, …), so name_regex rules partition the
+  // fleet cleanly with nothing left Unassigned. Dev-only — dev/ is never bundled.
+  const domainSeed = Server.api.saveDomains({
+    items: [
+      { name: "Customer-facing", rules: [{ conditions: [{ type: "name_regex", pattern: "^(web-prod|api-prod|edge-proxy)" }] }] },
+      { name: "Data & batch", rules: [{ conditions: [{ type: "name_regex", pattern: "^(db-replica|cache-node|batch-worker)" }] }] },
+      { name: "Build & dev", rules: [{ conditions: [{ type: "name_regex", pattern: "^(dev-box|ci-runner)" }] }] },
+    ],
+  });
+  if (!domainSeed.ok || domainSeed.data?.saved === false) {
+    console.error("[dev] seed value chains failed:", domainSeed.error || domainSeed.data?.errors);
+  } else {
+    console.log("[dev] seeded 3 value chains");
+  }
+
   // Dev-only, URL-gated in-flight scan seed for exercising the progress card / details
   // sheet (?seedJob=running or ?seedJob=stuck). Writes a non-terminal jobs row directly
   // so api_bootstrap surfaces it as activeJob. Never shipped — dev/ is not bundled.
