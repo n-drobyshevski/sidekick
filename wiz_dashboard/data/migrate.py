@@ -121,8 +121,18 @@ def _settled_before(resolved_at, cutoff_iso: str) -> bool:
     return bool(resolved_at) and str(resolved_at) < cutoff_iso
 
 
+def _slim_open_row(r: dict) -> dict:
+    """An open vuln reduced to identity + age. A GAS scan re-discovers it by ``vuln_key``
+    and refills every other field, and reconcile keeps ``first_seen`` earliest-known — so
+    the heavy per-row detail (``tags_json``, asset name, severity …) is redundant with the
+    next scan and only bloats the import. Resolved rows are never slimmed (they won't be
+    re-scanned)."""
+    return {"vuln_key": r["vuln_key"], "first_seen": r.get("first_seen")}
+
+
 def build_split_bundles(
-    db_path=None, history_filename=history.HISTORY_FILENAME, cutoff_iso: str | None = None
+    db_path=None, history_filename=history.HISTORY_FILENAME, cutoff_iso: str | None = None,
+    slim_open: bool = False,
 ) -> tuple[dict, dict]:
     """Partition the full bundle into ``(live, archive)`` at ``cutoff_iso``.
 
@@ -131,6 +141,10 @@ def build_split_bundles(
     else — every open vuln, every recent resolution, all scans, and the whole MTTR history —
     stays live. The two bundles are an exact, lossless partition of the ledger/episode rows.
     ``cutoff_iso=None`` puts everything in ``live`` (archive empty).
+
+    ``slim_open`` shrinks the live bundle for GAS apps that scan Wiz: open ledger rows carry
+    only ``{vuln_key, first_seen}`` (the next scan refills the rest, preserving the age).
+    Resolved live rows, episodes, and the archive keep full fidelity.
     """
     full = build_migration_bundle(db_path, history_filename)
     live_ledger, arch_ledger, live_eps, arch_eps = [], [], [], []
@@ -138,7 +152,12 @@ def build_split_bundles(
         old = cutoff_iso is not None and r.get("status") == "RESOLVED" and _settled_before(
             r.get("resolved_at"), cutoff_iso
         )
-        (arch_ledger if old else live_ledger).append(r)
+        if old:
+            arch_ledger.append(r)
+        elif slim_open and r.get("status") != "RESOLVED":
+            live_ledger.append(_slim_open_row(r))
+        else:
+            live_ledger.append(r)
     for r in full["episodes"]:
         old = cutoff_iso is not None and _settled_before(r.get("resolved_at"), cutoff_iso)
         (arch_eps if old else live_eps).append(r)
@@ -198,9 +217,9 @@ def split_counts(db_path=None, history_filename=history.HISTORY_FILENAME,
 
 
 def live_bundle_json_bytes(db_path=None, history_filename=history.HISTORY_FILENAME,
-                           cutoff_iso: str | None = None) -> bytes:
+                           cutoff_iso: str | None = None, slim_open: bool = False) -> bytes:
     """The live (importable) half of the split as compact UTF-8 JSON bytes."""
-    live, _ = build_split_bundles(db_path, history_filename, cutoff_iso)
+    live, _ = build_split_bundles(db_path, history_filename, cutoff_iso, slim_open)
     return json.dumps(live, default=str, ensure_ascii=False).encode("utf-8")
 
 
