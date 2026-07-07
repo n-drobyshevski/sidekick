@@ -152,7 +152,10 @@ export async function renderMttr(main, _params, ctx) {
 
   function renderSla(mttr) {
     clear(slaHost);
-    const sevs = boot.palette.order.filter((s) => mttr.perSev[s]);
+    // Only severities enabled in the display setting appear in the per-severity
+    // breakdown (table + posture bars) — matches the OS-vulns severity breakdown.
+    const displaySet = new Set(boot.settings.displaySeverities);
+    const sevs = boot.palette.order.filter((s) => mttr.perSev[s] && displaySet.has(s));
     if (!sevs.length) return;
 
     slaHost.append(sectionLabel("Remediation by severity"));
