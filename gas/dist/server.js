@@ -1253,6 +1253,9 @@ var Server = (() => {
     }
     return UNASSIGNED;
   }
+  function assignDomains(records, compiled) {
+    return records.map((r) => assignDomain(r, compiled));
+  }
 
   // src/domain/sha1.ts
   function utf8Bytes(s) {
@@ -4191,6 +4194,38 @@ var Server = (() => {
       trend: loadTrend(severities)
     };
   }
+  function mttrByDomainData() {
+    var _a, _b, _c;
+    const rows = loadBaseRows();
+    const items = getDomains2().items;
+    const compiled = compileDomains(items);
+    const assigned = assignDomains(rows, compiled);
+    const buckets = /* @__PURE__ */ new Map();
+    rows.forEach((r, i) => {
+      var _a2;
+      const name = (_a2 = assigned[i]) != null ? _a2 : UNASSIGNED;
+      let arr = buckets.get(name);
+      if (!arr) buckets.set(name, arr = []);
+      arr.push(r);
+    });
+    const out = [];
+    for (const name of domainNames(items)) {
+      const drows = buckets.get(name);
+      if (!drows || !drows.length) continue;
+      const { perSev, overall } = mttrFromLedger(drows);
+      const { slaPct, oldestDays } = overallSlaOldest(perSev);
+      out.push({
+        domain: name,
+        median: (_a = overall.mttr_median) != null ? _a : null,
+        slaPct,
+        oldestDays,
+        open: (_b = overall.open) != null ? _b : 0,
+        resolved: (_c = overall.resolved) != null ? _c : 0,
+        tracked: drows.length
+      });
+    }
+    return { rows: out };
+  }
   var cachedMttrData = (p) => {
     var _a;
     return cached("mttr", { domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "") }, () => mttrData(p), 3600);
@@ -4203,6 +4238,7 @@ var Server = (() => {
       () => mttrTrendData(p)
     );
   };
+  var cachedMttrByDomainData = () => cached("mttrByDomain", null, mttrByDomainData, 3600);
   function getMttr(p) {
     return run(() => cachedMttrData(p));
   }
@@ -4210,7 +4246,13 @@ var Server = (() => {
     return run(() => cachedMttrTrendData(p));
   }
   function getMttrPage(p) {
-    return run(() => ({ mttr: cachedMttrData(p), trends: cachedMttrTrendData(p) }));
+    var _a;
+    const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
+    return run(() => ({
+      mttr: cachedMttrData(p),
+      trends: cachedMttrTrendData(p),
+      byDomain: domain ? null : cachedMttrByDomainData()
+    }));
   }
   function scanHistoryData() {
     var _a;
