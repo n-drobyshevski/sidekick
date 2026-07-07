@@ -4317,7 +4317,16 @@ var Server = (() => {
   }
   function importMigration(p) {
     return mutate(() => {
-      const bundle = validateBundle(p == null ? void 0 : p["bundle"]);
+      const params = p != null ? p : {};
+      const raw = typeof params["gzipB64"] === "string" ? JSON.parse(
+        Utilities.ungzip(
+          Utilities.newBlob(
+            Utilities.base64Decode(params["gzipB64"]),
+            "application/x-gzip"
+          )
+        ).getDataAsString("UTF-8")
+      ) : params["bundle"];
+      const bundle = validateBundle(raw);
       const counts = importBundle(bundle);
       const hist = importHistory(bundle.mttr_history);
       return { ...counts, history_added: hist.added, history_skipped: hist.skipped };

@@ -6,9 +6,27 @@
 export const MIGRATION_KIND = "wiz-sidekick-migration";
 export const MIGRATION_VERSION = 1;
 
-// Conservative single-RPC guard: google.script.run payload limits are undocumented,
-// and past them the call fails opaquely — refuse client-side with a real message.
-export const MAX_BUNDLE_BYTES = 10 * 1024 * 1024;
+// Single-RPC guard. The bundle is gzipped before it crosses google.script.run (see
+// gzipToBase64), so this ceiling is on the raw JSON on disk: ~64MB of JSON compresses to
+// a few MB on the wire and still parses within one server execution. Larger than that is
+// beyond what the Sheets-backed ledger can absorb anyway — export a windowed live bundle.
+export const MAX_BUNDLE_BYTES = 64 * 1024 * 1024;
+
+/**
+ * gzip `text` and base64-encode it for a compact google.script.run argument, or null when
+ * the browser lacks CompressionStream (caller then falls back to the uncompressed path).
+ */
+export async function gzipToBase64(text) {
+  if (typeof CompressionStream === "undefined") return null;
+  const stream = new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"));
+  const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
+  let binary = "";
+  const CHUNK = 0x8000; // chunk the fromCharCode call so a big array can't overflow the stack
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
 
 const TABLE_NAMES = ["scans", "ledger", "episodes", "mttr_history"];
 
