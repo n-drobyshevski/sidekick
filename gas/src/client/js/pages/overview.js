@@ -124,20 +124,26 @@ export async function renderOverview(main, params, ctx) {
         "closed in this scan"),
     );
     requestAnimationFrame(() => {
-      severityBar(sevChartCanvas, counts, boot.palette);
+      // The breakdown only shows severities enabled in the display setting — a
+      // severity the user hasn't turned on (e.g. Low/Medium) is omitted, not zeroed.
+      const displaySet = new Set(boot.settings.displaySeverities);
+      const shown = {};
+      for (const s of boot.palette.order) if (displaySet.has(s) && counts[s]) shown[s] = counts[s];
+      severityBar(sevChartCanvas, shown, boot.palette);
     });
     renderSevCard(insights, filtered, counts);
   }
 
   /** Severity breakdown card (mirrors the Streamlit stat list): one row per severity
-   *  CRITICAL–LOW (INFO/UNKNOWN omitted), each a color dot + label, the count with an
-   *  "N open · N resolved" split, and a delta chip vs the previous scan. The split
-   *  needs the insights payload; the delta is dropped under a Value Chain filter (no
-   *  per-chain baseline), matching the headline. */
+   *  CRITICAL–LOW (INFO/UNKNOWN omitted) that is enabled in the display setting, each a
+   *  color dot + label, the count with an "N open · N resolved" split, and a delta chip
+   *  vs the previous scan. The split needs the insights payload; the delta is dropped
+   *  under a Value Chain filter (no per-chain baseline), matching the headline. */
   function renderSevCard(insights, filtered, counts) {
     const sevStats = insights && insights.flatScan ? insights.sevStats : null;
+    const displaySet = new Set(boot.settings.displaySeverities);
     const card = el("div", { class: "stat-card" });
-    for (const sev of ["CRITICAL", "HIGH", "MEDIUM", "LOW"]) {
+    for (const sev of ["CRITICAL", "HIGH", "MEDIUM", "LOW"].filter((s) => displaySet.has(s))) {
       const count = counts[sev] || 0;
       const stat = sevStats && sevStats[sev];
       card.append(
