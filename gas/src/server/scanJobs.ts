@@ -65,23 +65,25 @@ export function cancelScan(jobId: string): { jobId: string; message: string } {
 }
 
 /**
- * Finalize a scan the cooperative flag can never reach. Liveness probe: a running hop
- * holds the script lock for its whole duration and schedules its continuation trigger
- * *inside* that lock — so if we acquire the lock instantly AND no continuation trigger is
- * pending, nothing is running or scheduled and the FETCHING job is dead. A live hop simply
- * fails the tryLock, so this never blocks and never races a running scan.
+ * Finalize a scan the cooperative flag can't reach. The script lock is the liveness probe:
+ * a running hop holds it for its whole duration, so acquiring it instantly means no hop is
+ * executing. In FETCHING/RECONCILING nothing is committed yet (the `scans` row lands last),
+ * so it's safe to reap now — even if a continuation trigger is still listed. A *dead* trigger
+ * (killed execution, exhausted trigger quota) stays listed but never fires; trusting it here
+ * is what pinned the job in "Stopping…" forever. We delete any stray trigger and cancel; if
+ * one somehow fires afterward, continueJob finds the job terminal and no-ops. A live hop just
+ * fails the tryLock and the cooperative flag handles it.
  */
 function forceStopIfOrphaned(jobId: string): boolean {
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(1000)) return false; // a hop holds it → cooperative cancel will fire
+  if (!lock.tryLock(1000)) return false; // a hop holds it → the cooperative flag will fire
   try {
     const job = getJob(jobId);
-    if (!job || job.kind !== "scan" || job.phase !== "FETCHING") return false;
-    const pending = ScriptApp.getProjectTriggers().some(
-      (t) => t.getHandlerFunction() === CONTINUE_HANDLER,
-    );
-    if (pending) return false; // a hop is scheduled → let it honor the flag
-    clearContinuationTriggers(); // defensive: reap any stragglers
+    if (!job || job.kind !== "scan") return false;
+    // Only pre-commit phases are safe to reap; PERSISTING/REPLAYING is mid-write territory
+    // that recoverIfNeeded() rolls back from the journal instead.
+    if (job.phase !== "FETCHING" && job.phase !== "RECONCILING") return false;
+    clearContinuationTriggers(); // drop any (possibly dead) pending hop
     finalizeCancel(job); // trashes the never-committed archive, phase → CANCELLED
     return true;
   } finally {
@@ -206,20 +208,20 @@ export function startScan(options: { incremental?: boolean; sampleShape?: string
 }
 
 /**
- * A job with no progress for STALE_JOB_MS and no pending continuation trigger died
- * mid-flight (e.g. a killed execution). Mark it failed so a fresh scan can start.
+ * A job with no progress for STALE_JOB_MS died mid-flight (e.g. a killed execution). This
+ * runs inside startScan's lock, so no hop can be executing — a stale job is definitively
+ * dead, and any continuation trigger still listed is dead too (a live one fires within
+ * minutes). Delete the stray trigger and fail the job so a fresh scan can start. (Trusting a
+ * leftover trigger here used to wedge recovery: a dead trigger blocked both Stop and re-run.)
  */
 function reclaimStaleJob(job: JobRow): boolean {
   const updated = parseTs(job.updated_at);
   if (updated !== null && Date.now() - updated < STALE_JOB_MS) return false;
-  const hasTrigger = ScriptApp.getProjectTriggers().some(
-    (t) => t.getHandlerFunction() === CONTINUE_HANDLER,
-  );
-  if (hasTrigger) return false;
+  clearContinuationTriggers();
   clearCancel(job.job_id);
   updateJob(job.job_id, {
     phase: "FAILED",
-    error: "Reclaimed: the job stalled with no pending continuation.",
+    error: "Reclaimed: the job stalled with no progress.",
   });
   return true;
 }
