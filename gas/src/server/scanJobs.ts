@@ -44,7 +44,12 @@ function clearCancel(jobId: string): void {
 /**
  * Request cancellation of a running scan (lock-free). Honored only during FETCHING —
  * once RECONCILING/PERSISTING starts, the `scans` row is imminent and the job finishes
- * (seconds). Returns immediately; the job flips to CANCELLED on the next page boundary.
+ * (seconds). Returns immediately; a live scan flips to CANCELLED on the next page boundary.
+ *
+ * An *orphaned* scan — one whose execution died between deleting its continuation trigger
+ * and scheduling the next, so no hop is running and none is scheduled — would never read
+ * the cooperative flag and would sit "running" forever (the Stop button appears dead). We
+ * detect that here and finalize it immediately.
  */
 export function cancelScan(jobId: string): { jobId: string; message: string } {
   const job = getJob(jobId);
@@ -52,8 +57,36 @@ export function cancelScan(jobId: string): { jobId: string; message: string } {
   if (job.phase === "DONE" || job.phase === "FAILED" || job.phase === "CANCELLED") {
     return { jobId, message: "Scan already finished." };
   }
+  // Raise the cooperative flag first: a live fetch hop honors it at the next page
+  // boundary, and continueJob honors it before its next hop.
   setProp(cancelKey(jobId), "1");
-  return { jobId, message: "Stopping scan…" };
+  // Then try to reap it directly, in case nothing is alive to honor the flag.
+  return { jobId, message: forceStopIfOrphaned(jobId) ? "Scan stopped." : "Stopping scan…" };
+}
+
+/**
+ * Finalize a scan the cooperative flag can never reach. Liveness probe: a running hop
+ * holds the script lock for its whole duration and schedules its continuation trigger
+ * *inside* that lock — so if we acquire the lock instantly AND no continuation trigger is
+ * pending, nothing is running or scheduled and the FETCHING job is dead. A live hop simply
+ * fails the tryLock, so this never blocks and never races a running scan.
+ */
+function forceStopIfOrphaned(jobId: string): boolean {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(1000)) return false; // a hop holds it → cooperative cancel will fire
+  try {
+    const job = getJob(jobId);
+    if (!job || job.kind !== "scan" || job.phase !== "FETCHING") return false;
+    const pending = ScriptApp.getProjectTriggers().some(
+      (t) => t.getHandlerFunction() === CONTINUE_HANDLER,
+    );
+    if (pending) return false; // a hop is scheduled → let it honor the flag
+    clearContinuationTriggers(); // defensive: reap any stragglers
+    finalizeCancel(job); // trashes the never-committed archive, phase → CANCELLED
+    return true;
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 /** Mark a FETCHING job cancelled and drop its partial (never-committed) archive. */
