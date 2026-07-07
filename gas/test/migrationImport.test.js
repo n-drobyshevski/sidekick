@@ -73,6 +73,6 @@ describe("parseMigrationBundle", () => {
   });
 
   it("exposes a sane RPC size guard", () => {
-    expect(MAX_BUNDLE_BYTES).toBe(10 * 1024 * 1024);
+    expect(MAX_BUNDLE_BYTES).toBe(64 * 1024 * 1024);
   });
 });

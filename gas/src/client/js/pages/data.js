@@ -2,7 +2,7 @@
 // import, merged from the former Reports and Exports pages.
 
 import { call } from "../api.js";
-import { MAX_BUNDLE_BYTES, parseMigrationBundle } from "../migrationImport.js";
+import { MAX_BUNDLE_BYTES, gzipToBase64, parseMigrationBundle } from "../migrationImport.js";
 import { bootstrap } from "../store.js";
 import {
   clear,
@@ -219,7 +219,11 @@ function renderImportSection(main, ctx) {
     clear(statusHost).append(el("p", { class: "muted small" },
       "Importing… replaying existing scans over the bundle."));
     try {
-      const out = await call("api_importMigration", { bundle: res.bundle });
+      // Compress the payload before it crosses google.script.run — a raw multi-MB object
+      // argument fails opaquely. Fall back to the plain object when gzip isn't available.
+      const gzipB64 = await gzipToBase64(JSON.stringify(res.bundle));
+      const out = await call("api_importMigration",
+        gzipB64 ? { gzipB64 } : { bundle: res.bundle });
       toast(`Imported ${out.scans_imported} scan(s), ${out.vulns_imported} tracked ` +
         `vulnerabilities, ${out.history_added} history point(s).`);
       ctx.refresh();

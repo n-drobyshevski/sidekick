@@ -1,5 +1,6 @@
 """Tests for the migration-bundle exporter (wiz_dashboard.data.migrate)."""
 
+import gzip
 import json
 
 from wiz_dashboard.data import history, ledger, migrate
@@ -123,3 +124,85 @@ def test_bundle_counts_and_json_round_trip(tmp_path):
     assert parsed["kind"] == migrate.BUNDLE_KIND
     assert len(parsed["scans"]) == counts["scans"]
     assert len(parsed["ledger"]) == counts["vulns"]
+
+
+# ------------------------------------------------------------------- windowed split
+
+_CUTOFF = "2026-03-01T00:00:00Z"  # A resolved 2026-05-28 (live), B resolved 2025-12-30 (old)
+
+
+def _keys(rows):
+    return sorted(r["vuln_key"] for r in rows)
+
+
+def test_split_is_a_lossless_partition(tmp_path):
+    db = _db(tmp_path)
+    _seed(db)
+    ledger.compact_ledger(30, db_path=db, now=NOW)  # create some episodes to split too
+    hist = tmp_path / "none.json"
+    full = migrate.build_migration_bundle(db, hist)
+    live, arch = migrate.build_split_bundles(db, hist, _CUTOFF)
+
+    for table in ("ledger", "episodes"):
+        assert _keys(live[table]) + _keys(arch[table]) == sorted(_keys(full[table])), table
+        live_keys, arch_keys = set(_keys(live[table])), set(_keys(arch[table]))
+        assert not (live_keys & arch_keys), f"{table} overlaps"
+    # Scans and MTTR history ride entirely in the live half; archive carries neither.
+    assert live["scans"] == full["scans"]
+    assert live["mttr_history"] == full["mttr_history"]
+    assert arch["scans"] == [] and arch["mttr_history"] == []
+    assert live["kind"] == migrate.BUNDLE_KIND
+    assert arch["kind"] == migrate.ARCHIVE_KIND
+
+
+def test_split_keeps_open_and_recent_archives_settled_old(tmp_path):
+    db = _db(tmp_path)
+    _seed(db)
+    live, arch = migrate.build_split_bundles(db, _db(tmp_path).with_name("none.json"), _CUTOFF)
+
+    # Every archived row is settled-and-old; every live row is open or recently resolved.
+    for r in arch["ledger"]:
+        assert r["status"] == "RESOLVED" and r["resolved_at"] < _CUTOFF
+    for r in live["ledger"]:
+        assert r["status"] != "RESOLVED" or (r["resolved_at"] or "9") >= _CUTOFF
+    for r in arch["episodes"]:
+        assert r["resolved_at"] < _CUTOFF
+    # B resolved 2025-12-30 lands in the archive; A (2026-05-28) and open C/E stay live.
+    assert "B" not in " ".join(_keys(live["ledger"]))  # crude: no B vuln in live
+    arch_cves = {r["cve"] for r in arch["ledger"]}
+    assert "CVE-B" in arch_cves
+
+
+def test_split_none_cutoff_is_all_live(tmp_path):
+    db = _db(tmp_path)
+    _seed(db)
+    hist = _db(tmp_path).with_name("none.json")
+    full = migrate.build_migration_bundle(db, hist)
+    live, arch = migrate.build_split_bundles(db, hist, None)
+    assert _keys(live["ledger"]) == _keys(full["ledger"])
+    assert arch["ledger"] == [] and arch["episodes"] == []
+
+
+def test_split_counts_match_bundles(tmp_path):
+    db = _db(tmp_path)
+    _seed(db)
+    ledger.compact_ledger(30, db_path=db, now=NOW)
+    hist = _db(tmp_path).with_name("none.json")
+    live, arch = migrate.build_split_bundles(db, hist, _CUTOFF)
+    sc = migrate.split_counts(db, hist, _CUTOFF)
+    assert sc["live_vulns"] == len(live["ledger"])
+    assert sc["archive_vulns"] == len(arch["ledger"])
+    assert sc["live_episodes"] == len(live["episodes"])
+    assert sc["archive_episodes"] == len(arch["episodes"])
+    assert sc["scans"] == len(live["scans"])
+
+
+def test_live_and_archive_download_bytes(tmp_path):
+    db = _db(tmp_path)
+    _seed(db)
+    hist = _db(tmp_path).with_name("none.json")
+    live = json.loads(migrate.live_bundle_json_bytes(db, hist, _CUTOFF).decode("utf-8"))
+    assert live["kind"] == migrate.BUNDLE_KIND
+    raw = gzip.decompress(migrate.archive_bundle_gz_bytes(db, hist, _CUTOFF))
+    arch = json.loads(raw.decode("utf-8"))
+    assert arch["kind"] == migrate.ARCHIVE_KIND

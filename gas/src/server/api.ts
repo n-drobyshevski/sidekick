@@ -475,7 +475,21 @@ export function compact(p?: unknown): ApiResult {
 /** One-shot migration import: a Streamlit bundle merged into the ledger + history. */
 export function importMigration(p?: unknown): ApiResult {
   return mutate(() => {
-    const bundle = validateBundle((p as Rec)?.["bundle"]);
+    const params = (p ?? {}) as Rec;
+    // The client gzips the bundle to fit google.script.run; ungzip here. Older/no-gzip
+    // callers still send the parsed object as `bundle`.
+    const raw =
+      typeof params["gzipB64"] === "string"
+        ? JSON.parse(
+            Utilities.ungzip(
+              Utilities.newBlob(
+                Utilities.base64Decode(params["gzipB64"] as string),
+                "application/x-gzip",
+              ),
+            ).getDataAsString("UTF-8"),
+          )
+        : params["bundle"];
+    const bundle = validateBundle(raw);
     const counts = ledgerStore.importBundle(bundle);
     const hist = history.importHistory(bundle.mttr_history);
     return { ...counts, history_added: hist.added, history_skipped: hist.skipped };
