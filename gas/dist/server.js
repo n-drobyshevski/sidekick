@@ -32,7 +32,7 @@ var Server = (() => {
   // src/server/main.ts
   function doGet(_e) {
     const template = HtmlService.createTemplateFromFile("index");
-    return template.evaluate().setTitle("Wiz Sidekick").addMetaTag("viewport", "width=device-width, initial-scale=1").setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT);
+    return template.evaluate().setTitle("Wiz Sidekick OS").addMetaTag("viewport", "width=device-width, initial-scale=1").setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT);
   }
   function include(filename) {
     return HtmlService.createHtmlOutputFromFile(filename).getContent();
@@ -541,7 +541,7 @@ var Server = (() => {
   }
 
   // src/server/setup.ts
-  var SPREADSHEET_NAME = "Wiz Sidekick Ledger";
+  var SPREADSHEET_NAME = "Wiz Sidekick OS Ledger";
   var FOLDER_NAME = "wiz-sidekick";
   var DAILY_TRIGGER_HANDLER = "trigger_dailyScan";
   var DAILY_TRIGGER_HOUR = 5;

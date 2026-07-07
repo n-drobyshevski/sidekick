@@ -1,4 +1,4 @@
-// Wiz Sidekick SPA shell: sidebar navigation, scan zone, hash router.
+// Wiz Sidekick OS SPA shell: sidebar navigation, scan zone, hash router.
 
 import { call } from "./api.js";
 import { renderScanCard, openScanDetails } from "./scanProgress.js";
@@ -284,7 +284,7 @@ async function route() {
   const seq = ++routeSeq;
   const { route: key, params } = parseHash();
   const page = PAGES[key] || PAGES.overview;
-  document.title = `${page.title} — Wiz Sidekick`;
+  document.title = `${page.title} — Wiz Sidekick OS`;
   // active nav state
   document.querySelectorAll(".nav-link").forEach((a) => {
     const isActive = a.getAttribute("href") === `#/${key}`;

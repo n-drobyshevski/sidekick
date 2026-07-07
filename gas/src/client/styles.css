@@ -1,4 +1,4 @@
-/* Wiz Sidekick — the DESIGN.md visual system ("The Audit Ledger") ported to the GAS
+/* Wiz Sidekick OS — the DESIGN.md visual system ("The Audit Ledger") ported to the GAS
    web app. Light theme only; neutral field; saturated color rationed to severity,
    state, and SLA verdicts. Two-token severity rule: --sev-* fills for marks/dots,
    --sev-*-text for any colored label. */

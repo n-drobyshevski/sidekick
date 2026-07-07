@@ -2,7 +2,7 @@ export function doGet(_e: GoogleAppsScript.Events.DoGet): GoogleAppsScript.HTML.
   const template = HtmlService.createTemplateFromFile("index");
   return template
     .evaluate()
-    .setTitle("Wiz Sidekick")
+    .setTitle("Wiz Sidekick OS")
     .addMetaTag("viewport", "width=device-width, initial-scale=1")
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT);
 }

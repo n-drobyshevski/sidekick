@@ -105,6 +105,6 @@ createServer(async (req, res) => {
     res.end(`dev server error:\n${detail}`);
   }
 }).listen(PORT, () => {
-  console.log(`Wiz Sidekick local dev: http://localhost:${PORT}`);
+  console.log(`Wiz Sidekick OS local dev: http://localhost:${PORT}`);
   console.log("Edit gas/src/** and refresh — each page load rebuilds and reseeds.");
 });

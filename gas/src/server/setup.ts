@@ -2,7 +2,7 @@
 // first clasp push (and again after schema additions — ensureTabs appends new headers).
 //
 // Creates (when absent) and records in Script Properties:
-//   LEDGER_SPREADSHEET_ID  — "Wiz Sidekick Ledger" spreadsheet with all tabs
+//   LEDGER_SPREADSHEET_ID  — "Wiz Sidekick OS Ledger" spreadsheet with all tabs
 //   ARCHIVE_FOLDER_ID      — "wiz-sidekick" Drive folder with the archive skeleton
 // and installs the daily scan trigger. Wiz credentials must be set by hand — setup()
 // never touches secrets: WIZ_API_URL, WIZ_PROJECT_ID_V2, and either WIZ_API_TOKEN (a
@@ -12,7 +12,7 @@ import { ensureFolders } from "./archiveStore";
 import { DEFAULT_WIZ_AUTH_URL, getProp, PROP_KEYS, setProp } from "./props";
 import { ensureTabs } from "./sheetsDb";
 
-const SPREADSHEET_NAME = "Wiz Sidekick Ledger";
+const SPREADSHEET_NAME = "Wiz Sidekick OS Ledger";
 const FOLDER_NAME = "wiz-sidekick";
 const DAILY_TRIGGER_HANDLER = "trigger_dailyScan";
 const DAILY_TRIGGER_HOUR = 5; // UTC
