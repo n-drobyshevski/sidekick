@@ -470,7 +470,7 @@ function scheduleContinuation(): void {
 }
 
 /** Remove all one-shot continuation triggers (each firing re-arms if needed). */
-function clearContinuationTriggers(): void {
+export function clearContinuationTriggers(): void {
   for (const t of ScriptApp.getProjectTriggers()) {
     if (t.getHandlerFunction() === CONTINUE_HANDLER) ScriptApp.deleteTrigger(t);
   }

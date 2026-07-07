@@ -572,6 +572,20 @@ export function importStatus(p?: unknown): ApiResult {
   });
 }
 
+/** Wipe the ledger back to a fresh, never-compacted state (so a migration import can run). */
+export function resetLedger(): ApiResult {
+  return mutate(() => {
+    // Best-effort: drop any continuation trigger first so a running scan can't repopulate the
+    // tabs after the wipe (a stray one no-ops once the jobs tab is cleared, but stop it early).
+    try {
+      scanJobs.clearContinuationTriggers();
+    } catch (e) {
+      console.warn(`resetLedger: continuation-trigger cleanup skipped: ${e}`);
+    }
+    return ledgerStore.resetLedger();
+  });
+}
+
 // -------------------------------------------------------------------------- reports
 
 const REPORT_SOURCE = "OS vulnerabilities";

@@ -184,6 +184,10 @@ function renderImportSection(main, ctx) {
       "Merge a migration bundle exported from the Streamlit app's Exports page into " +
       "this ledger. Imported scans arrive sealed — their raw archives stay on the old " +
       "machine — and the merge is one-time: it can't be undone from here."),
+    el("p", { class: "muted small" },
+      "A large (sharded .zip) bundle needs a fresh, never-scanned ledger. If this ledger " +
+      "already has scans, use Reset ledger first, then import and run a Wiz scan to refill " +
+      "open-vulnerability detail."),
   );
   const fileInput = el("input", {
     type: "file", accept: "application/json", multiple: "", style: "display:none",
@@ -192,12 +196,68 @@ function renderImportSection(main, ctx) {
   fileInput.addEventListener("change", importFiles);
   const importBtn = el("button", { class: "primary", onclick: () => fileInput.click() },
     "Import migration bundle…");
+  const resetBtn = el("button", { class: "danger", onclick: resetLedger }, "Reset ledger…");
   const statusHost = el("div", { style: "margin-top:10px" });
-  card.append(el("div", { style: "display:flex; gap:8px" }, importBtn, fileInput), statusHost);
+  card.append(
+    el("div", { style: "display:flex; gap:8px" }, importBtn, resetBtn, fileInput),
+    statusHost,
+  );
   main.append(card);
 
   const setStatus = (msg) =>
     clear(statusHost).append(el("p", { class: "muted small" }, msg));
+
+  // The server's fresh-ledger guard (one-shot or sharded) rejects a non-empty ledger. Detect
+  // it so the import path can offer an inline reset-and-retry instead of a dead-end error.
+  const isNotEmptyError = (e) =>
+    /fresh|already has (scans|a compaction)/i.test((e && e.message) || "");
+
+  // Standalone reset: wipe the ledger to a fresh, never-compacted state.
+  async function resetLedger() {
+    const ok = await confirmDialog({
+      title: "Reset the GAS ledger?",
+      body: "Permanently clears ALL scans, tracked vulnerabilities, resolved episodes, and " +
+        "MTTR history from this GAS ledger. Raw archives on the old machine are unaffected. " +
+        "Use this before importing a migration bundle into a ledger that already has data, " +
+        "then run a Wiz scan to refill open-vulnerability detail. This can't be undone.",
+      confirmLabel: "Reset ledger",
+      danger: true,
+    });
+    if (!ok) return;
+    resetBtn.disabled = true;
+    setStatus("Resetting ledger…");
+    try {
+      const out = await call("api_resetLedger");
+      toast(`Cleared ${out.scans} scan(s), ${out.vulns} tracked vulnerabilities, ` +
+        `${out.episodes} resolved episode(s), ${out.compactions} compaction record(s).`);
+      clear(statusHost);
+      ctx.refresh();
+    } catch (e) {
+      clear(statusHost);
+      toast(`Reset failed: ${e.message}`, "error");
+    } finally {
+      resetBtn.disabled = false;
+    }
+  }
+
+  // On a fresh-ledger rejection, offer to reset and retry the same (already-parsed) import.
+  // Returns true when the caller should retry; false to surface the original error.
+  async function offerResetRetry(e) {
+    if (!isNotEmptyError(e)) return false;
+    const ok = await confirmDialog({
+      title: "Reset ledger and import?",
+      body: "This ledger isn't empty, so the import can't run. Reset it — permanently clearing " +
+        "all scans, tracked vulnerabilities, resolved episodes, and MTTR history in GAS — then " +
+        "import? Raw archives on the old machine are unaffected; run a Wiz scan afterward to " +
+        "refill open-vulnerability detail.",
+      confirmLabel: "Reset & import",
+      danger: true,
+    });
+    if (!ok) return false;
+    setStatus("Resetting ledger…");
+    await call("api_resetLedger");
+    return true;
+  }
 
   async function importFiles() {
     const files = [...(fileInput.files || [])];
@@ -239,14 +299,18 @@ function renderImportSection(main, ctx) {
       danger: true,
     });
     if (!ok) return;
+    return runSingle(res.bundle);
+  }
+
+  async function runSingle(bundle) {
     importBtn.disabled = true;
     setStatus("Importing… replaying existing scans over the bundle.");
     try {
       // Compress the payload before it crosses google.script.run — a raw multi-MB object
       // argument fails opaquely. Fall back to the plain object when gzip isn't available.
-      const gzipB64 = await gzipToBase64(JSON.stringify(res.bundle));
+      const gzipB64 = await gzipToBase64(JSON.stringify(bundle));
       const out = await call("api_importMigration",
-        gzipB64 ? { gzipB64 } : { bundle: res.bundle });
+        gzipB64 ? { gzipB64 } : { bundle });
       toast(`Imported ${out.scans_imported} scan(s), ${out.vulns_imported} tracked ` +
         `vulnerabilities, ${out.history_added} history point(s).`);
       clear(statusHost);
@@ -254,6 +318,7 @@ function renderImportSection(main, ctx) {
     } catch (e) {
       clear(statusHost);
       importBtn.disabled = false;
+      if (await offerResetRetry(e)) return runSingle(bundle);
       toast(`Import failed: ${e.message}`, "error");
     }
   }
@@ -271,6 +336,11 @@ function renderImportSection(main, ctx) {
       danger: true,
     });
     if (!ok) return;
+    return runSharded(cls);
+  }
+
+  async function runSharded(cls) {
+    const n = cls.shards.length;
     importBtn.disabled = true;
     try {
       setStatus("Starting import…");
@@ -295,6 +365,8 @@ function renderImportSection(main, ctx) {
       ctx.refresh();
     } catch (e) {
       importBtn.disabled = false;
+      // A fresh-ledger rejection happens at begin, before any shard is applied — reset and retry.
+      if (await offerResetRetry(e)) return runSharded(cls);
       setStatus("Import interrupted — re-select the same files to resume where it stopped.");
       toast(`Import failed: ${e.message}`, "error");
     }

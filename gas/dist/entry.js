@@ -57,4 +57,5 @@ function api_importShard(p) { return timedApi_("importShard", p); }
 function api_importFinalize(p) { return timedApi_("importFinalize", p); }
 function api_importAbort(p) { return timedApi_("importAbort", p); }
 function api_importStatus(p) { return timedApi_("importStatus", p); }
+function api_resetLedger(p) { return timedApi_("resetLedger", p); }
 function api_getStorageStats(p) { return timedApi_("getStorageStats", p); }
