@@ -1012,6 +1012,7 @@ var Server = (() => {
     importShard: () => importShard,
     importStatus: () => importStatus,
     previewDomains: () => previewDomains,
+    resetLedger: () => resetLedger2,
     runScan: () => runScan,
     saveDomains: () => saveDomains,
     setAutoCompact: () => setAutoCompact2,
@@ -3569,6 +3570,22 @@ var Server = (() => {
     if (active) updateJob(active.job.job_id, { phase: "CANCELLED", error: null });
     return { aborted: true };
   }
+  function resetLedger() {
+    const counts = {
+      scans: loadScanRows().length,
+      vulns: dataRowCount(TABS.vulnLedger),
+      episodes: dataRowCount(TABS.episodes),
+      compactions: readAll(TABS.compactions).length
+    };
+    overwrite(TABS.scans, []);
+    overwrite(TABS.vulnLedger, []);
+    overwrite(TABS.episodes, []);
+    overwrite(TABS.compactions, []);
+    overwrite(TABS.jobs, []);
+    trashLedgerSnapshot();
+    invalidateLedgerMemos();
+    return counts;
+  }
   function compactLedger(retentionDays, dryRun = false, now) {
     const state = loadState();
     const prevCheckpoint = latestCheckpoint();
@@ -3859,6 +3876,7 @@ var Server = (() => {
   var scanJobs_exports = {};
   __export(scanJobs_exports, {
     cancelScan: () => cancelScan,
+    clearContinuationTriggers: () => clearContinuationTriggers,
     continueJob: () => continueJob,
     dailyScan: () => dailyScan,
     jobStatus: () => jobStatus,
@@ -4750,6 +4768,16 @@ var Server = (() => {
       var _a;
       const jobId = String((_a = (p != null ? p : {})["jobId"]) != null ? _a : "");
       return jobId ? getJob(jobId) : activeJobSummary();
+    });
+  }
+  function resetLedger2() {
+    return mutate(() => {
+      try {
+        clearContinuationTriggers();
+      } catch (e) {
+        console.warn(`resetLedger: continuation-trigger cleanup skipped: ${e}`);
+      }
+      return resetLedger();
     });
   }
   var REPORT_SOURCE = "OS vulnerabilities";

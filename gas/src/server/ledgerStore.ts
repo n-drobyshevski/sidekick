@@ -696,6 +696,44 @@ export function importAbortSharded(sessionId: string): { aborted: boolean } {
   return { aborted: true };
 }
 
+// --------------------------------------------------------------------------- reset
+
+export interface ResetCounts {
+  scans: number;
+  vulns: number;
+  episodes: number;
+  compactions: number;
+}
+
+/**
+ * Return the ledger to a fresh, never-compacted state so a migration import can run.
+ *
+ * The sharded import (importBeginSharded) requires an empty ledger, and any scan — live or
+ * dry-run — leaves a scans row, so there's otherwise no way back to a fresh ledger. This
+ * clears the scans / vuln_ledger / resolved_episodes / compactions / jobs tabs and trashes
+ * the fast-read snapshot. Clearing `jobs` drops any stuck scan/import job: activeImportJob()
+ * then returns null (so the next importBeginSharded runs its guard rather than "resuming" a
+ * phantom session), and a stray continuation trigger fires once, finds no active job in
+ * continueJob(), and self-deletes. Drive raw archives (scans/obs/checkpoints) are left in
+ * place — harmless scan-id-keyed orphans that no remaining row references.
+ */
+export function resetLedger(): ResetCounts {
+  const counts: ResetCounts = {
+    scans: loadScanRows().length,
+    vulns: dataRowCount(TABS.vulnLedger),
+    episodes: dataRowCount(TABS.episodes),
+    compactions: readAll(TABS.compactions).length,
+  };
+  overwrite(TABS.scans, []);
+  overwrite(TABS.vulnLedger, []);
+  overwrite(TABS.episodes, []);
+  overwrite(TABS.compactions, []);
+  overwrite(TABS.jobs, []);
+  archive.trashLedgerSnapshot();
+  invalidateLedgerMemos();
+  return counts;
+}
+
 // -------------------------------------------------------------------------- compact
 
 /** Journaled compaction (ledger.compact_ledger semantics; checkpoint on Drive). */
