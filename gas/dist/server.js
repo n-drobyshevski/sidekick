@@ -3553,7 +3553,24 @@ var Server = (() => {
       return { jobId, message: "Scan already finished." };
     }
     setProp(cancelKey(jobId), "1");
-    return { jobId, message: "Stopping scan\u2026" };
+    return { jobId, message: forceStopIfOrphaned(jobId) ? "Scan stopped." : "Stopping scan\u2026" };
+  }
+  function forceStopIfOrphaned(jobId) {
+    const lock = LockService.getScriptLock();
+    if (!lock.tryLock(1e3)) return false;
+    try {
+      const job = getJob(jobId);
+      if (!job || job.kind !== "scan" || job.phase !== "FETCHING") return false;
+      const pending = ScriptApp.getProjectTriggers().some(
+        (t) => t.getHandlerFunction() === CONTINUE_HANDLER
+      );
+      if (pending) return false;
+      clearContinuationTriggers();
+      finalizeCancel(job);
+      return true;
+    } finally {
+      lock.releaseLock();
+    }
   }
   function finalizeCancel(job) {
     try {
