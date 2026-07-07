@@ -989,7 +989,6 @@ var Server = (() => {
     cancelScan: () => cancelScan2,
     compact: () => compact,
     deleteScans: () => deleteScans2,
-    getBaseRows: () => getBaseRows,
     getDomains: () => getDomains3,
     getExportCsv: () => getExportCsv,
     getExportRawUrl: () => getExportRawUrl,
@@ -4628,62 +4627,8 @@ var Server = (() => {
   function getHistoryPage(p) {
     return run(() => ({
       history: cachedScanHistoryData(),
-      trends: cachedMttrTrendData(p),
-      // Base rows stay uncached: their filter params are combinatorial and the state
-      // load is shared with the parts above via the per-execution memo anyway.
-      base: baseRowsData(p)
+      trends: cachedMttrTrendData(p)
     }));
-  }
-  function baseRowsData(p) {
-    var _a, _b, _c, _d, _e, _f;
-    const params = p != null ? p : {};
-    let rows = loadBaseRows();
-    const compiled = compileDomains(getDomains2().items);
-    if (compiled.length) {
-      rows = rows.map((r) => ({ ...r, _domain: assignDomain(r, compiled) }));
-    }
-    const statuses = (_a = params["statuses"]) != null ? _a : [];
-    const severities = (_b = params["severities"]) != null ? _b : [];
-    const domains = (_c = params["domains"]) != null ? _c : [];
-    const q = String((_d = params["q"]) != null ? _d : "").trim().toLowerCase();
-    if (statuses.length) {
-      const keep = new Set(statuses.map((s) => s.toUpperCase()));
-      rows = rows.filter((r) => {
-        var _a2;
-        return keep.has(String((_a2 = r["status"]) != null ? _a2 : "").toUpperCase());
-      });
-    }
-    if (severities.length) {
-      const keep = new Set(severities.map(normalizeSeverity));
-      rows = rows.filter((r) => keep.has(normalizeSeverity(r["severity"])));
-    }
-    if (domains.length) {
-      const keep = new Set(domains);
-      rows = rows.filter((r) => {
-        var _a2;
-        return keep.has(String((_a2 = r["_domain"]) != null ? _a2 : UNASSIGNED));
-      });
-    }
-    if (q) {
-      rows = rows.filter(
-        (r) => {
-          var _a2, _b2;
-          return String((_a2 = r["cve"]) != null ? _a2 : "").toLowerCase().includes(q) || String((_b2 = r["asset_name"]) != null ? _b2 : "").toLowerCase().includes(q);
-        }
-      );
-    }
-    const pageSize = Math.min(Number((_e = params["pageSize"]) != null ? _e : 100), 500);
-    const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
-    const page = Math.min(Math.max(Number((_f = params["page"]) != null ? _f : 0), 0), pageCount - 1);
-    return {
-      rows: rows.slice(page * pageSize, (page + 1) * pageSize),
-      total: rows.length,
-      page,
-      pageCount
-    };
-  }
-  function getBaseRows(p) {
-    return run(() => baseRowsData(p));
   }
   function runScan(p) {
     const params = p != null ? p : {};
@@ -4854,41 +4799,17 @@ var Server = (() => {
   }
   function getExportCsv(p) {
     return run(() => {
-      var _a, _b, _c, _d, _e, _f, _g;
+      var _a, _b, _c, _d, _e, _f;
       const params = p != null ? p : {};
-      const which = String((_a = params["source"]) != null ? _a : "findings");
-      if (which === "base") {
-        const rows = loadBaseRows();
-        const cols2 = [
-          "vuln_key",
-          "cve",
-          "severity",
-          "status",
-          "asset_name",
-          "asset_type",
-          "cloud",
-          "first_seen",
-          "last_seen",
-          "resolved_at",
-          "resolution_src",
-          "reopened_count",
-          "mttr_days",
-          "age_days",
-          "subscription_name"
-        ];
-        const lines2 = [cols2.join(",")];
-        for (const r of rows) lines2.push(cols2.map((c) => csvCell(r[c])).join(","));
-        return { content: lines2.join("\r\n"), filename: "wiz-vulnerability-base.csv" };
-      }
       const scan = currentScan();
       if (!scan) return { content: "", filename: "" };
       const filtered = applyFilters(scan.records, {
-        severities: (_b = params["severities"]) != null ? _b : getDisplaySeverities2(),
-        statuses: (_c = params["statuses"]) != null ? _c : [],
-        assetTypes: (_d = params["assetTypes"]) != null ? _d : [],
-        clouds: (_e = params["clouds"]) != null ? _e : [],
-        domains: (_f = params["domains"]) != null ? _f : [],
-        q: (_g = params["q"]) != null ? _g : ""
+        severities: (_a = params["severities"]) != null ? _a : getDisplaySeverities2(),
+        statuses: (_b = params["statuses"]) != null ? _b : [],
+        assetTypes: (_c = params["assetTypes"]) != null ? _c : [],
+        clouds: (_d = params["clouds"]) != null ? _d : [],
+        domains: (_e = params["domains"]) != null ? _e : [],
+        q: (_f = params["q"]) != null ? _f : ""
       });
       const cols = TABLE_COLUMNS.filter((c) => !c.startsWith("_"));
       const lines = [cols.join(",")];

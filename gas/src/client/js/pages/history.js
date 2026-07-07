@@ -1,46 +1,38 @@
 // Scan History — the durable ledger: saved scans (multi-select delete with sealed
-// protection), the vulnerability base with filters + CSV, and trend charts.
+// protection) and trend charts.
 
 import { call } from "../api.js";
 import { openResolvedLines, trendLine } from "../charts.js";
-import { bootstrap, swrCall } from "../store.js";
+import { swrCall } from "../store.js";
 import {
-  clear, confirmDialog, downloadText, el, emptyState, fmtDays, fmtDate, fmtDateTime,
-  kpiCard, nvdUrl, pager, sectionLabel, sevBadge, toast,
+  clear, confirmDialog, el, emptyState, fmtDays, fmtDateTime,
+  kpiCard, sectionLabel, toast,
 } from "../ui.js";
 
 export async function renderHistory(main, _params, ctx) {
-  // One batched RPC serves the whole page (scans + KPIs + trends + first base page);
-  // server-side the three parts share a single ledger-state load. Revisits paint
-  // instantly from the session cache and repaint only if revalidated data differs.
-  const bootPromise = bootstrap();
-  // Scope the vulnerability base to the global Value Chain filter ("" = whole chain).
-  const domainFilter = ctx.domain ? [ctx.domain] : [];
-  let baseTouched = false; // once the user filters/pages the base, SWR leaves it alone
+  // One batched RPC serves the whole page (scans + KPIs + trends); server-side the
+  // parts share a single ledger-state load. Revisits paint instantly from the session
+  // cache and repaint only if revalidated data differs.
   const pagePromise = swrCall(
     "api_getHistoryPage",
-    { statuses: [], severities: [], domains: domainFilter, q: "", page: 0, pageSize: 100 },
+    {},
     (fresh) => {
       paintKpis(fresh.history.kpis);
       paintScans(fresh.history.scans);
       paintTrends(fresh.trends);
-      if (!baseTouched) renderBase(fresh.base);
     },
   );
 
-  const boot = await bootPromise;
   main.append(
     el("h1", {}, "Scan History"),
     el("p", { class: "page-sub" },
-      "Every saved scan and the deduplicated vulnerability base reconciled from them."),
+      "Every saved scan retained in the durable ledger, with remediation trends."),
   );
 
   const kpiRow = el("div", { class: "kpi-row" });
   const scansHost = el("div", {});
   const chartsHost = el("div", { class: "chart-grid", style: "margin-top:20px" });
-  const baseHost = el("div", {});
-  main.append(kpiRow, sectionLabel("Saved scans"), scansHost, chartsHost,
-    sectionLabel("Vulnerability base"), baseHost);
+  main.append(kpiRow, sectionLabel("Saved scans"), scansHost, chartsHost);
 
   const pageData = await pagePromise;
   const data = pageData.history;
@@ -153,93 +145,5 @@ export async function renderHistory(main, _params, ctx) {
         trends.trend.filter((t) => t.median_days !== null)
           .map((t) => ({ x: t.date, y: t.median_days })), { yLabel: "days" });
     });
-  }
-
-  // ---- vulnerability base
-  // domains is driven by the sidebar's global Value Chain filter, not a per-page control.
-  const filters = { statuses: [], severities: [], domains: domainFilter, q: "", page: 0 };
-  const filterBar = el("div", { class: "filter-bar" });
-  const tableHost = el("div", {});
-  baseHost.append(filterBar, tableHost);
-
-  filterBar.append(
-    select("Status", ["OPEN", "RESOLVED"], (v) => { filters.statuses = v ? [v] : []; reload(); }),
-    select("Severity", boot.palette.selectable, (v) => { filters.severities = v ? [v] : []; reload(); }),
-  );
-  const search = el("input", { type: "search", placeholder: "CVE or asset…",
-    "aria-label": "Search the vulnerability base" });
-  let deb;
-  search.addEventListener("input", () => {
-    clearTimeout(deb);
-    deb = setTimeout(() => { filters.q = search.value; reload(); }, 300);
-  });
-  filterBar.append(
-    el("div", { class: "field" }, el("label", { class: "field-label" }, "Search"), search),
-    el("button", { onclick: exportBaseCsv }, "Download CSV"),
-  );
-
-  renderBase(pageData.base);
-
-  function reload() { filters.page = 0; loadBase(); }
-
-  function select(label, options, onChange) {
-    const sel = el("select", { "aria-label": label },
-      el("option", { value: "" }, "All"),
-      ...options.map((o) => el("option", { value: o }, o)));
-    sel.addEventListener("change", () => onChange(sel.value));
-    return el("div", { class: "field" }, el("label", { class: "field-label" }, label), sel);
-  }
-
-  async function loadBase() {
-    baseTouched = true;
-    clear(tableHost).append(el("p", { class: "muted" }, "Loading base…"));
-    const res = await call("api_getBaseRows", { ...filters, pageSize: 100 });
-    renderBase(res);
-  }
-
-  function renderBase(res) {
-    clear(tableHost);
-    if (!res.rows.length) {
-      tableHost.append(emptyState("Nothing tracked matches these filters."));
-      return;
-    }
-    const table = el("table", { class: "data" },
-      el("thead", {}, el("tr", {},
-        ...["Severity", "CVE", "Asset", "Status", "First seen", "Resolved", "MTTR",
-          "Open age", "Reopens", "Source"].map((h) => el("th", { scope: "col" }, h)))),
-    );
-    const tbody = el("tbody", {});
-    for (const r of res.rows) {
-      tbody.append(el("tr", {},
-        el("td", {}, sevBadge(r.severity)),
-        el("td", {}, r.cve
-          ? el("a", { href: nvdUrl(r.cve),
-              target: "_blank", rel: "noopener" }, r.cve)
-          : "—"),
-        el("td", { title: r.asset_name || "" }, r.asset_name || "—"),
-        el("td", {}, r.status),
-        el("td", { class: "num" }, fmtDate(r.first_seen)),
-        el("td", { class: "num" }, fmtDate(r.resolved_at)),
-        el("td", { class: "num" }, fmtDays(r.mttr_days)),
-        el("td", { class: "num" }, fmtDays(r.age_days)),
-        el("td", { class: "num" }, r.reopened_count || "0"),
-        el("td", {}, r.resolution_src || ""),
-      ));
-    }
-    table.append(tbody);
-    tableHost.append(el("div", { class: "table-wrap" }, table));
-    tableHost.append(pager(res.page, res.pageCount, res.total, (p) => {
-      filters.page = p;
-      loadBase();
-    }));
-  }
-
-  async function exportBaseCsv() {
-    try {
-      const res = await call("api_getExportCsv", { source: "base" });
-      downloadText(res.filename, res.content, "text/csv;charset=utf-8");
-    } catch (e) {
-      toast(`Export failed: ${e.message}`, "error");
-    }
   }
 }
