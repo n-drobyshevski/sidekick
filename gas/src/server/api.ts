@@ -291,10 +291,6 @@ function insightsData(p?: unknown): Rec {
     base = base.filter((r) => assignDomain(r as unknown as Rec, compiled) === domain);
   }
   const latestFlat = ledgerStore.latestFlatScanRow();
-  const breakdowns: Rec = {};
-  for (const key of Object.keys(insights.BREAKDOWN_KEYS)) {
-    breakdowns[key] = insights.breakdown(recs, key);
-  }
   return {
     flatScan: true,
     domain,
@@ -310,8 +306,6 @@ function insightsData(p?: unknown): Rec {
     topAssets: insights.topAssets(recs, 10),
     aging: insights.ageBuckets(base),
     movement: insights.movement(base, latestFlat, ledgerStore.loadScanRows().length),
-    topCves: insights.topCves(recs, 10),
-    breakdowns,
   };
 }
 
@@ -321,6 +315,34 @@ export function getInsights(p?: unknown): ApiResult {
   return run(() =>
     cached("insights", { domain: String((p as Rec)?.["domain"] ?? "") }, () => insightsData(p), 3600),
   );
+}
+
+// ------------------------------------------------------------------------- grouping
+
+/** Frame records for the current scan, scoped to a Value Chain ("" = whole chain). */
+function scopedFrameRecords(domain: string): Rec[] {
+  const scan = findings.currentScan();
+  if (!scan) return [];
+  if (!domain) return scan.records;
+  return scan.records.filter((r) => String(r["_domain"] ?? UNASSIGNED) === domain);
+}
+
+/** The multi-level breakdown tree for an ordered list of grouping dimensions. */
+function groupingData(p?: unknown): Rec {
+  const scan = findings.currentScan();
+  if (!scan) return { flatScan: false, keys: [], groups: [] };
+  const domain = String((p as Rec)?.["domain"] ?? "");
+  const raw = (p as Rec)?.["keys"];
+  const keys = (Array.isArray(raw) ? (raw as unknown[]).map(String) : [])
+    .filter((k) => k in insights.GROUP_COLUMNS);
+  return { flatScan: true, keys, groups: insights.groupTree(scopedFrameRecords(domain), keys) };
+}
+
+export function getGrouping(p?: unknown): ApiResult {
+  const domain = String((p as Rec)?.["domain"] ?? "");
+  const raw = (p as Rec)?.["keys"];
+  const keys = Array.isArray(raw) ? (raw as unknown[]).map(String) : [];
+  return run(() => cached("grouping", { domain, keys }, () => groupingData(p), 3600));
 }
 
 // ----------------------------------------------------------------------------- MTTR

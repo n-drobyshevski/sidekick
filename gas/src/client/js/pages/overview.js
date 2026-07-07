@@ -1,12 +1,12 @@
 // OS vulnerabilities — the default page. Insights over the current scan and the
 // durable ledger instead of a findings table (Wiz already has one of those):
 // KPI band, severity breakdown, exploitability summary, risk concentration, aging
-// of open findings, scan-over-scan movement, and a configurable grouping breakdown.
+// of open findings, scan-over-scan movement, and a multi-level grouping breakdown.
 
 import { hBar, severityBar, stackedAgeBar } from "../charts.js";
 import { bootstrap, setParams, swrCall } from "../store.js";
 import {
-  clear, el, emptyState, kpiCard, nvdUrl, sectionLabel, sevBadge,
+  clear, el, emptyState, kpiCard, nvdUrl, sectionLabel,
 } from "../ui.js";
 
 // Keep in sync with AGE_BUCKET_LABELS in src/domain/insights.ts (the client bundle
@@ -36,16 +36,17 @@ function deltaChip(current, previous) {
   );
 }
 
-// Grouping options for the configurable breakdown section. Domain has its own
-// dedicated "By domain" section (renderByDomain), so it's not offered here.
-const BREAKDOWN_OPTIONS = [
-  ["subscription", "Subscription"],
+// Groupable dimensions for the multi-level Breakdown table (value -> label). Mirrors
+// GROUP_COLUMNS in src/domain/insights.ts (the client bundle can't import the TS module).
+const GROUP_DIMENSIONS = [
+  ["domain", "Domain"],
   ["asset", "Asset"],
   ["atype", "Asset type"],
   ["cloud", "Cloud"],
   ["os", "Operating system"],
+  ["subscription", "Subscription"],
+  ["cve", "CVE"],
 ];
-const DEFAULT_BY = "atype";
 
 export async function renderOverview(main, params, ctx) {
   const boot = await bootstrap();
@@ -65,8 +66,16 @@ export async function renderOverview(main, params, ctx) {
     return;
   }
 
-  const validBy = BREAKDOWN_OPTIONS.map(([v]) => v);
-  const state = { by: validBy.includes(params.by) ? params.by : DEFAULT_BY };
+  // Ordered grouping path for the Breakdown table, persisted across insights repaints.
+  // Seeded from the URL (?by=domain,asset) or a default: the value chain's domains at
+  // the whole-chain view, else asset type. Mutated in place (splice/push) so the closure
+  // reference stays stable.
+  const groupDims = GROUP_DIMENSIONS.map(([v]) => v);
+  const paramKeys = [...new Set((params.by || "").split(",").map((s) => s.trim()))]
+    .filter((k) => groupDims.includes(k));
+  const groupKeys = paramKeys.length
+    ? paramKeys
+    : (!ctx.domain && boot.domainNames.length > 1 ? ["domain"] : ["atype"]);
 
   const kpiRow = el("div", { class: "kpi-row" });
   const sevChartCanvas = el("canvas", { id: "sev-chart" });
@@ -169,42 +178,10 @@ export async function renderOverview(main, params, ctx) {
     }
 
     renderExploitability(insights);
-    renderByDomain(insights);
     renderConcentration(insights);
     renderAging(insights);
     renderMovement(insights);
-    renderBreakdown(insights);
-  }
-
-  // -------------------------------------------------------------------- by domain
-
-  /** How the value chain splits across its domains — shown only at the whole-chain
-   *  view (a single-domain filter makes this one row). Uses the domain grouping the
-   *  server already computes in insights.breakdowns. */
-  function renderByDomain(insights) {
-    if (ctx.domain || boot.domainNames.length < 2) return;
-    const groups = insights.breakdowns.domain || [];
-    if (!groups.length) return;
-    insightsHost.append(sectionLabel("By domain"));
-    insightsHost.append(el("p", { class: "small muted", style: "margin:-6px 0 10px" },
-      "How the value chain's findings split across the domains that compose it."));
-    const list = el("div", { class: "rank-list" });
-    for (const g of groups) {
-      list.append(el("div", { class: "rank-row" },
-        el("div", {},
-          el("div", {}, el("strong", {}, g.key),
-            el("span", { class: "small muted", style: "margin-left:8px" },
-              `${Math.round(g.share * 100)}% of findings`)),
-          el("div", { style: "margin-top:4px" }, mixStrip(g.sevCounts)),
-          el("div", { class: "small muted", style: "margin-top:2px" }, mixText(g.sevCounts)),
-        ),
-        el("div", { class: "num" },
-          el("div", {}, `${g.total.toLocaleString()} total`),
-          el("div", { class: "small muted" }, `${g.open.toLocaleString()} open`),
-        ),
-      ));
-    }
-    insightsHost.append(list);
+    renderBreakdown();
   }
 
   // ------------------------------------------------------- exploitability & priority
@@ -307,87 +284,154 @@ export async function renderOverview(main, params, ctx) {
           "split by value chain. Persisting reflects this value chain."));
       }
     }
-
-    if (insights.topCves.length) {
-      const table = el("table", { class: "data" },
-        el("thead", {}, el("tr", {},
-          ...["CVE", "Severity", "Assets", "Findings", "Risk"]
-            .map((h) => el("th", { scope: "col" }, h)))),
-      );
-      const tbody = el("tbody", {});
-      for (const c of insights.topCves) {
-        const risky = [];
-        if (c.kev) risky.push("KEV");
-        if (c.exploit) risky.push("Exploit");
-        tbody.append(el("tr", {},
-          el("td", {}, el("a", {
-            href: nvdUrl(c.cve), target: "_blank", rel: "noopener",
-          }, c.cve)),
-          el("td", {}, sevBadge(c.severity)),
-          el("td", { class: "num" }, c.assets.toLocaleString()),
-          el("td", { class: "num" }, c.findings.toLocaleString()),
-          el("td", {}, risky.join(" · ") || ""),
-        ));
-      }
-      table.append(tbody);
-      insightsHost.append(el("div", { class: "card", style: "margin-top:14px" },
-        el("h3", {}, "Most widespread open CVEs"),
-        el("p", { class: "small muted", style: "margin:2px 0 10px" },
-          "Ranked by the number of distinct assets affected."),
-        el("div", { class: "table-wrap" }, table),
-      ));
-    }
   }
 
   // --------------------------------------------------------------------- breakdown
 
-  function renderBreakdown(insights) {
+  /** Consolidated breakdown: an ordered grouping path (Domain → Asset → …) rendered as
+   *  an expandable tree table. Domain and CVE are just dimensions here — grouping by CVE
+   *  reproduces the old Top-CVEs table. Data comes from api_getGrouping (the insights
+   *  payload doesn't carry arbitrary N-level groupings). */
+  function renderBreakdown() {
     insightsHost.append(sectionLabel("Breakdown"));
-    const sel = el("select", { "aria-label": "Break down by" },
-      ...BREAKDOWN_OPTIONS
-        .filter(([v]) => validBy.includes(v))
-        .map(([v, label]) => el("option", { value: v, selected: v === state.by || null }, label)),
-    );
-    const listHost = el("div", {});
-    sel.addEventListener("change", () => {
-      state.by = sel.value;
-      setParams({ by: state.by === DEFAULT_BY ? "" : state.by });
-      renderList();
-    });
-    insightsHost.append(
-      el("div", { class: "filter-bar" },
-        el("div", { class: "field" },
-          el("label", { class: "field-label" }, "Break down by"), sel)),
-      listHost,
-    );
-    renderList();
+    const controls = el("div", { class: "filter-bar" });
+    const tableHost = el("div", {});
+    insightsHost.append(controls, tableHost);
+    renderControls();
+    loadGrouping();
 
-    function renderList() {
-      clear(listHost);
-      const groups = insights.breakdowns[state.by] || [];
-      if (!groups.length) {
-        listHost.append(emptyState("Nothing to break down for this grouping."));
-        return;
+    function labelFor(dim) {
+      const found = GROUP_DIMENSIONS.find(([v]) => v === dim);
+      return found ? found[1] : dim;
+    }
+
+    function renderControls() {
+      clear(controls);
+      groupKeys.forEach((key, i) => {
+        const used = new Set(groupKeys.filter((_, j) => j !== i));
+        const sel = el("select", { "aria-label": i === 0 ? "Group by" : `then group by (level ${i + 1})` },
+          ...GROUP_DIMENSIONS
+            .filter(([v]) => v === key || !used.has(v))
+            .map(([v, label]) => el("option", { value: v, selected: v === key || null }, label)),
+        );
+        sel.addEventListener("change", () => { groupKeys[i] = sel.value; syncAndReload(); });
+        const remove = groupKeys.length > 1
+          ? el("button", { class: "linklike danger", title: "Remove this level", "aria-label": "Remove grouping level",
+              onclick: () => { groupKeys.splice(i, 1); syncAndReload(); } }, "×")
+          : null;
+        controls.append(el("div", { class: "field" },
+          el("label", { class: "field-label" }, i === 0 ? "Group by" : "then by"),
+          el("div", { style: "display:flex; gap:6px; align-items:center" }, sel, remove)));
+      });
+      if (groupKeys.length < GROUP_DIMENSIONS.length) {
+        const next = groupDims.find((v) => !groupKeys.includes(v));
+        controls.append(el("div", { class: "field" },
+          el("label", { class: "field-label", "aria-hidden": "true" }, " "),
+          el("button", { onclick: () => { groupKeys.push(next); syncAndReload(); } }, "+ Add level")));
       }
-      const list = el("div", { class: "rank-list" });
-      for (const g of groups) {
-        list.append(el("div", { class: "rank-row" },
-          el("div", {},
-            el("div", {}, el("strong", {}, g.key),
-              el("span", { class: "small muted", style: "margin-left:8px" },
-                `${Math.round(g.share * 100)}% of findings`)),
-            el("div", { style: "margin-top:4px" }, mixStrip(g.sevCounts)),
-            el("div", { class: "small muted", style: "margin-top:2px" }, mixText(g.sevCounts)),
-          ),
-          el("div", { class: "num" },
-            el("div", {}, `${g.total.toLocaleString()} total`),
-            el("div", { class: "small muted" }, `${g.open.toLocaleString()} open`),
-          ),
-        ));
+    }
+
+    function syncAndReload() {
+      setParams({ by: groupKeys.join(",") });
+      renderControls();
+      loadGrouping();
+    }
+
+    async function loadGrouping() {
+      clear(tableHost).append(el("p", { class: "muted" }, "Grouping…"));
+      const keys = groupKeys.slice();
+      const paint = (data) => {
+        if (keys.join(",") !== groupKeys.join(",")) return; // a newer path superseded this
+        renderTree(tableHost, (data && data.groups) || []);
+      };
+      paint(await swrCall("api_getGrouping", { domain: ctx.domain || "", keys }, paint));
+    }
+  }
+
+  /** Render a nested GroupNode[] into the Top-CVEs-style table.data, with expandable
+   *  rows: the top level is open, deeper levels collapsed until their parent expands. */
+  function renderTree(host, groups) {
+    clear(host);
+    if (!groups.length) {
+      host.append(emptyState("Nothing to break down for this grouping."));
+      return;
+    }
+    const table = el("table", { class: "data" },
+      el("thead", {}, el("tr", {},
+        ...["Group", "Severity", "Assets", "Findings", "Open", "Risk"]
+          .map((h) => el("th", { scope: "col" }, h)))),
+    );
+    const tbody = el("tbody", {});
+    table.append(tbody);
+
+    const rows = [];
+    const expanded = new Set();
+    let idc = 0;
+    (function walk(nodes, depth, parentId) {
+      for (const node of nodes) {
+        const id = idc++;
+        const hasChildren = node.children && node.children.length > 0;
+        if (depth === 0) expanded.add(id); // top level starts open
+        rows.push({ node, id, parentId, depth, hasChildren });
+        if (hasChildren) walk(node.children, depth + 1, id);
       }
-      list.append(el("p", { class: "small muted" },
-        "Busiest groups first" + (groups.length >= 15 ? " (showing the 15 largest)" : "") + "."));
-      listHost.append(list);
+    })(groups, 0, -1);
+
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    for (const row of rows) {
+      row.tr = buildRow(row);
+      tbody.append(row.tr);
+    }
+    host.append(el("div", { class: "table-wrap" }, table));
+    host.append(el("p", { class: "small muted", style: "margin-top:8px" },
+      "Busiest groups first; up to 20 per level. Click a group to drill in."));
+    applyVisibility();
+
+    function visible(row) {
+      if (row.parentId < 0) return true;
+      const parent = byId.get(row.parentId);
+      return visible(parent) && expanded.has(parent.id);
+    }
+    function applyVisibility() {
+      for (const row of rows) {
+        row.tr.style.display = visible(row) ? "" : "none";
+        const caret = row.tr.querySelector(".tree-caret");
+        if (caret) caret.textContent = expanded.has(row.id) ? "▾" : "▸";
+      }
+    }
+    function toggle(id) {
+      if (expanded.has(id)) expanded.delete(id);
+      else expanded.add(id);
+      applyVisibility();
+    }
+
+    function buildRow(row) {
+      const { node, depth, hasChildren, id } = row;
+      const label = node.dim === "cve" && node.key !== "(none)"
+        ? el("a", { href: nvdUrl(node.key), target: "_blank", rel: "noopener" }, node.key)
+        : el("strong", {}, node.key);
+      let caret;
+      if (hasChildren) {
+        caret = el("span", { class: "tree-caret", role: "button", tabindex: "0",
+          "aria-label": "Expand or collapse group", onclick: () => toggle(id) }, "▸");
+        caret.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(id); }
+        });
+      } else {
+        caret = el("span", { class: "tree-caret-spacer", "aria-hidden": "true" });
+      }
+      const risky = [];
+      if (node.kev) risky.push("KEV");
+      if (node.exploit) risky.push("Exploit");
+      return el("tr", {},
+        el("td", { style: `padding-left:${depth * 20 + 8}px` },
+          el("span", { style: "display:inline-flex; align-items:center; gap:6px" }, caret, label)),
+        el("td", {}, mixStrip(node.sevCounts)),
+        el("td", { class: "num" }, node.assets.toLocaleString()),
+        el("td", { class: "num" }, node.total.toLocaleString()),
+        el("td", { class: "num" }, node.open.toLocaleString()),
+        el("td", {}, risky.join(" · ") || ""),
+      );
     }
   }
 

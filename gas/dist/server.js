@@ -994,6 +994,7 @@ var Server = (() => {
     getExportRawUrl: () => getExportRawUrl,
     getFindingDetail: () => getFindingDetail,
     getFindings: () => getFindings,
+    getGrouping: () => getGrouping,
     getHistoryPage: () => getHistoryPage,
     getInsights: () => getInsights,
     getJobStatus: () => getJobStatus,
@@ -2646,10 +2647,6 @@ var Server = (() => {
     const s = r["_sev"];
     return typeof s === "string" && s ? s : normalizeSeverity(r["severity"]);
   }
-  function sevIndex(s) {
-    const i = SEVERITY_ORDER.indexOf(s);
-    return i === -1 ? SEVERITY_ORDER.length : i;
-  }
   function epssOf(r) {
     const v = r["epssProbability"];
     const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
@@ -2739,65 +2736,63 @@ var Server = (() => {
       hasPrevious: scanCount > 1
     };
   }
-  function topCves(records, n = 10) {
-    var _a, _b;
-    const byCve = /* @__PURE__ */ new Map();
-    for (const r of records) {
-      if (!isOpen(r["status"])) continue;
-      const cve = String((_a = r["name"]) != null ? _a : "") || "(unknown)";
-      let g = byCve.get(cve);
-      if (!g) {
-        g = { assets: /* @__PURE__ */ new Set(), findings: 0, sevIdx: SEVERITY_ORDER.length, kev: false, exploit: false };
-        byCve.set(cve, g);
-      }
-      g.findings += 1;
-      const asset = String((_b = r["vulnerableAsset.name"]) != null ? _b : "");
-      if (asset) g.assets.add(asset);
-      g.sevIdx = Math.min(g.sevIdx, sevIndex(sev(r)));
-      if (r["hasCisaKevExploit"] === true) g.kev = true;
-      if (r["hasExploit"] === true) g.exploit = true;
-    }
-    return [...byCve.entries()].map(([cve, g]) => {
-      var _a2;
-      return {
-        cve,
-        severity: (_a2 = SEVERITY_ORDER[g.sevIdx]) != null ? _a2 : "UNKNOWN",
-        assets: g.assets.size,
-        findings: g.findings,
-        kev: g.kev,
-        exploit: g.exploit
-      };
-    }).sort((a, b) => b.assets - a.assets || b.findings - a.findings || a.cve.localeCompare(b.cve)).slice(0, n);
-  }
-  var BREAKDOWN_KEYS = {
+  var GROUP_COLUMNS = {
     domain: "_domain",
-    subscription: "vulnerableAsset.subscriptionName",
     asset: "vulnerableAsset.name",
     atype: "vulnerableAsset.type",
     cloud: "vulnerableAsset.cloudPlatform",
-    os: "vulnerableAsset.operatingSystem"
+    os: "vulnerableAsset.operatingSystem",
+    subscription: "vulnerableAsset.subscriptionName",
+    cve: "name"
   };
-  function breakdown(records, byKey, max = 15) {
-    var _a;
-    const column = BREAKDOWN_KEYS[byKey];
-    if (!column || !records.length) return [];
-    const groups = /* @__PURE__ */ new Map();
+  function groupTree(records, keys, perLevelCap = 20) {
+    if (!keys.length || !records.length) return [];
+    const [key, ...rest] = keys;
+    const column = GROUP_COLUMNS[key];
+    if (!column) return [];
+    const buckets = /* @__PURE__ */ new Map();
     for (const r of records) {
       const raw = r[column];
-      const key = raw === null || raw === void 0 || String(raw).trim() === "" ? "(none)" : String(raw);
-      let g = groups.get(key);
-      if (!g) {
-        g = { key, total: 0, open: 0, share: 0, sevCounts: {} };
-        groups.set(key, g);
-      }
-      g.total += 1;
-      if (isOpen(r["status"])) g.open += 1;
-      const s = sev(r);
-      g.sevCounts[s] = ((_a = g.sevCounts[s]) != null ? _a : 0) + 1;
+      const k = raw === null || raw === void 0 || String(raw).trim() === "" ? "(none)" : String(raw);
+      let arr = buckets.get(k);
+      if (!arr) buckets.set(k, arr = []);
+      arr.push(r);
     }
-    const out = [...groups.values()].sort((a, b) => b.total - a.total || a.key.localeCompare(b.key));
-    for (const g of out) g.share = g.total / records.length;
-    return out.slice(0, max);
+    const rows = [...buckets.entries()].map(([k, recs]) => {
+      var _a, _b;
+      const assets = /* @__PURE__ */ new Set();
+      const sevCounts = {};
+      let open = 0;
+      let kev = false;
+      let exploit = false;
+      for (const r of recs) {
+        if (isOpen(r["status"])) open += 1;
+        const s = sev(r);
+        sevCounts[s] = ((_a = sevCounts[s]) != null ? _a : 0) + 1;
+        const a = String((_b = r["vulnerableAsset.name"]) != null ? _b : "");
+        if (a) assets.add(a);
+        if (r["hasCisaKevExploit"] === true) kev = true;
+        if (r["hasExploit"] === true) exploit = true;
+      }
+      const node = {
+        key: k,
+        dim: key,
+        total: recs.length,
+        open,
+        assets: assets.size,
+        sevCounts,
+        kev,
+        exploit,
+        children: []
+      };
+      return { recs, node };
+    });
+    rows.sort((a, b) => b.node.total - a.node.total || a.node.key.localeCompare(b.node.key));
+    const kept = rows.slice(0, perLevelCap);
+    if (rest.length) {
+      for (const row of kept) row.node.children = groupTree(row.recs, rest, perLevelCap);
+    }
+    return kept.map((row) => row.node);
   }
 
   // src/domain/importShard.ts
@@ -4506,10 +4501,6 @@ var Server = (() => {
       base = base.filter((r) => assignDomain(r, compiled) === domain);
     }
     const latestFlat = latestFlatScanRow();
-    const breakdowns = {};
-    for (const key of Object.keys(BREAKDOWN_KEYS)) {
-      breakdowns[key] = breakdown(recs, key);
-    }
     return {
       flatScan: true,
       domain,
@@ -4524,9 +4515,7 @@ var Server = (() => {
       exploit: exploitSummary(recs),
       topAssets: topAssets(recs, 10),
       aging: ageBuckets(base),
-      movement: movement(base, latestFlat, loadScanRows().length),
-      topCves: topCves(recs, 10),
-      breakdowns
+      movement: movement(base, latestFlat, loadScanRows().length)
     };
   }
   function getInsights(p) {
@@ -4536,6 +4525,31 @@ var Server = (() => {
         return cached("insights", { domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "") }, () => insightsData(p), 3600);
       }
     );
+  }
+  function scopedFrameRecords(domain) {
+    const scan = currentScan();
+    if (!scan) return [];
+    if (!domain) return scan.records;
+    return scan.records.filter((r) => {
+      var _a;
+      return String((_a = r["_domain"]) != null ? _a : UNASSIGNED) === domain;
+    });
+  }
+  function groupingData(p) {
+    var _a;
+    const scan = currentScan();
+    if (!scan) return { flatScan: false, keys: [], groups: [] };
+    const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
+    const raw = p == null ? void 0 : p["keys"];
+    const keys = (Array.isArray(raw) ? raw.map(String) : []).filter((k) => k in GROUP_COLUMNS);
+    return { flatScan: true, keys, groups: groupTree(scopedFrameRecords(domain), keys) };
+  }
+  function getGrouping(p) {
+    var _a;
+    const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
+    const raw = p == null ? void 0 : p["keys"];
+    const keys = Array.isArray(raw) ? raw.map(String) : [];
+    return run(() => cached("grouping", { domain, keys }, () => groupingData(p), 3600));
   }
   function mttrData(p) {
     var _a;

@@ -7,7 +7,7 @@
 // normalized by findings.currentScan) or ledger base rows (durable lifecycle with
 // age_days). Each function documents which source it expects and why.
 
-import { RESOLVED_STATUSES, SEVERITY_ORDER } from "./config";
+import { RESOLVED_STATUSES } from "./config";
 import type { BaseRow, ScanRow } from "./ledgerCore";
 import { normalizeSeverity } from "./severity";
 import type { Rec } from "./util";
@@ -37,11 +37,6 @@ function sev(r: Rec): string {
   return typeof s === "string" && s ? s : normalizeSeverity(r["severity"]);
 }
 
-/** Lower = more severe (SEVERITY_ORDER index; unknown values sink to the end). */
-function sevIndex(s: string): number {
-  const i = (SEVERITY_ORDER as readonly string[]).indexOf(s);
-  return i === -1 ? SEVERITY_ORDER.length : i;
-}
 
 function epssOf(r: Rec): number | null {
   const v = r["epssProbability"];
@@ -198,87 +193,75 @@ export function movement(
   };
 }
 
-export interface CveSpread {
-  cve: string;
-  severity: string;
-  assets: number;
-  findings: number;
-  kev: boolean;
-  exploit: boolean;
-}
-
-/** Top CVEs by distinct affected assets, over OPEN frame records. */
-export function topCves(records: Rec[], n = 10): CveSpread[] {
-  const byCve = new Map<string, { assets: Set<string>; findings: number; sevIdx: number; kev: boolean; exploit: boolean }>();
-  for (const r of records) {
-    if (!isOpen(r["status"])) continue;
-    const cve = String(r["name"] ?? "") || "(unknown)";
-    let g = byCve.get(cve);
-    if (!g) {
-      g = { assets: new Set(), findings: 0, sevIdx: SEVERITY_ORDER.length, kev: false, exploit: false };
-      byCve.set(cve, g);
-    }
-    g.findings += 1;
-    const asset = String(r["vulnerableAsset.name"] ?? "");
-    if (asset) g.assets.add(asset);
-    g.sevIdx = Math.min(g.sevIdx, sevIndex(sev(r)));
-    if (r["hasCisaKevExploit"] === true) g.kev = true;
-    if (r["hasExploit"] === true) g.exploit = true;
-  }
-  return [...byCve.entries()]
-    .map(([cve, g]) => ({
-      cve,
-      severity: (SEVERITY_ORDER as readonly string[])[g.sevIdx] ?? "UNKNOWN",
-      assets: g.assets.size,
-      findings: g.findings,
-      kev: g.kev,
-      exploit: g.exploit,
-    }))
-    .sort((a, b) => b.assets - a.assets || b.findings - a.findings || a.cve.localeCompare(b.cve))
-    .slice(0, n);
-}
-
-// Grouping keys for the configurable breakdown (mirrors the old table's group-by map).
-export const BREAKDOWN_KEYS: Record<string, string> = {
+// Groupable dimensions for the multi-level breakdown — the dotted frame-record columns
+// each dimension maps to (the old group-by vocabulary, plus CVE = the finding name).
+export const GROUP_COLUMNS: Record<string, string> = {
   domain: "_domain",
-  subscription: "vulnerableAsset.subscriptionName",
   asset: "vulnerableAsset.name",
   atype: "vulnerableAsset.type",
   cloud: "vulnerableAsset.cloudPlatform",
   os: "vulnerableAsset.operatingSystem",
+  subscription: "vulnerableAsset.subscriptionName",
+  cve: "name",
 };
 
-export interface BreakdownGroup {
-  key: string;
+export interface GroupNode {
+  key: string; // the group value ("(none)" for blank/missing)
+  dim: string; // the dimension this level groups by
   total: number;
   open: number;
-  share: number;
+  assets: number; // distinct affected assets in the group
   sevCounts: Record<string, number>;
+  kev: boolean; // any finding in the group is a CISA KEV
+  exploit: boolean; // any finding in the group has a public exploit
+  children: GroupNode[]; // next level; [] at the deepest level
 }
 
 /**
- * The ranked breakdown that replaces the findings table: all frame records (open
- * and resolved — the severity mix should match the breakdown chart) grouped by one
- * of BREAKDOWN_KEYS, busiest first, capped.
+ * Multi-level breakdown: group frame records by an ordered list of dimensions into a
+ * nested tree (e.g. ["domain","asset"] → domains, each with its assets). Each level is
+ * ranked busiest-first and capped; children are computed only for the kept nodes so the
+ * tree stays bounded. Aggregates cover all records (open + resolved) like the old flat
+ * breakdown; kev/exploit flag whether any finding in the group carries them.
  */
-export function breakdown(records: Rec[], byKey: string, max = 15): BreakdownGroup[] {
-  const column = BREAKDOWN_KEYS[byKey];
-  if (!column || !records.length) return [];
-  const groups = new Map<string, BreakdownGroup>();
+export function groupTree(records: Rec[], keys: string[], perLevelCap = 20): GroupNode[] {
+  if (!keys.length || !records.length) return [];
+  const [key, ...rest] = keys;
+  const column = GROUP_COLUMNS[key];
+  if (!column) return [];
+  const buckets = new Map<string, Rec[]>();
   for (const r of records) {
     const raw = r[column];
-    const key = raw === null || raw === undefined || String(raw).trim() === "" ? "(none)" : String(raw);
-    let g = groups.get(key);
-    if (!g) {
-      g = { key, total: 0, open: 0, share: 0, sevCounts: {} };
-      groups.set(key, g);
-    }
-    g.total += 1;
-    if (isOpen(r["status"])) g.open += 1;
-    const s = sev(r);
-    g.sevCounts[s] = (g.sevCounts[s] ?? 0) + 1;
+    const k = raw === null || raw === undefined || String(raw).trim() === "" ? "(none)" : String(raw);
+    let arr = buckets.get(k);
+    if (!arr) buckets.set(k, (arr = []));
+    arr.push(r);
   }
-  const out = [...groups.values()].sort((a, b) => b.total - a.total || a.key.localeCompare(b.key));
-  for (const g of out) g.share = g.total / records.length;
-  return out.slice(0, max);
+  const rows = [...buckets.entries()].map(([k, recs]) => {
+    const assets = new Set<string>();
+    const sevCounts: Record<string, number> = {};
+    let open = 0;
+    let kev = false;
+    let exploit = false;
+    for (const r of recs) {
+      if (isOpen(r["status"])) open += 1;
+      const s = sev(r);
+      sevCounts[s] = (sevCounts[s] ?? 0) + 1;
+      const a = String(r["vulnerableAsset.name"] ?? "");
+      if (a) assets.add(a);
+      if (r["hasCisaKevExploit"] === true) kev = true;
+      if (r["hasExploit"] === true) exploit = true;
+    }
+    const node: GroupNode = {
+      key: k, dim: key, total: recs.length, open, assets: assets.size,
+      sevCounts, kev, exploit, children: [],
+    };
+    return { recs, node };
+  });
+  rows.sort((a, b) => b.node.total - a.node.total || a.node.key.localeCompare(b.node.key));
+  const kept = rows.slice(0, perLevelCap);
+  if (rest.length) {
+    for (const row of kept) row.node.children = groupTree(row.recs, rest, perLevelCap);
+  }
+  return kept.map((row) => row.node);
 }
