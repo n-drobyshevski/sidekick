@@ -53,10 +53,12 @@ async function composeIndex() {
   let html = readFileSync(join(gasRoot, "dist/index.html"), "utf8");
   const styles = readFileSync(join(gasRoot, "dist/styles.html"), "utf8");
   const jsApp = readFileSync(join(gasRoot, "dist/js_app.html"), "utf8");
-  html = html.replace(/<\?!=\s*include\('styles'\);?\s*\?>/, styles);
+  // Function replacements: the minified client bundle contains `$` sequences that a
+  // string replacement would mis-interpret as `$&`/`$1` patterns and corrupt.
+  html = html.replace(/<\?!=\s*include\('styles'\);?\s*\?>/, () => styles);
   html = html.replace(
     /<\?!=\s*include\('js_app'\);?\s*\?>/,
-    [
+    () => [
       '<script src="/gas-shims.js"></script>',
       '<script src="/server.js"></script>',
       '<script src="/boot.js"></script>',
