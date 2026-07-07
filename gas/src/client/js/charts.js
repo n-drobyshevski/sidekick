@@ -154,34 +154,6 @@ export function stackedAgeBar(canvas, labels, perSev, palette) {
   });
 }
 
-/**
- * Horizontal single-series bar (top assets by weighted risk). Uses the Signal Blue
- * data accent — severity detail lives in the mix strips beside the chart, keeping
- * the chart itself out of red-wall territory.
- */
-export function hBar(canvas, items, { color = "#2563eb" } = {}) {
-  destroyExisting(canvas);
-  const opts = baseOptions();
-  opts.indexAxis = "y";
-  opts.scales.x.beginAtZero = true;
-  opts.scales.y.grid = { display: false };
-  return new Chart(canvas, {
-    type: "bar",
-    data: {
-      labels: items.map((i) => i.label),
-      datasets: [
-        {
-          data: items.map((i) => i.value),
-          backgroundColor: color,
-          borderRadius: 4,
-          barThickness: 16,
-        },
-      ],
-    },
-    options: opts,
-  });
-}
-
 /** Single line over ISO dates (MTTR median trend). */
 export function trendLine(canvas, points, { yLabel } = {}) {
   destroyExisting(canvas);

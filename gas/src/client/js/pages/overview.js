@@ -3,7 +3,7 @@
 // KPI band, severity breakdown, exploitability summary, risk concentration, aging
 // of open findings, scan-over-scan movement, and a multi-level grouping breakdown.
 
-import { hBar, severityBar, stackedAgeBar } from "../charts.js";
+import { severityBar, stackedAgeBar } from "../charts.js";
 import { bootstrap, setParams, swrCall } from "../store.js";
 import {
   clear, el, emptyState, kpiCard, nvdUrl, sectionLabel,
@@ -124,20 +124,26 @@ export async function renderOverview(main, params, ctx) {
         "closed in this scan"),
     );
     requestAnimationFrame(() => {
-      severityBar(sevChartCanvas, counts, boot.palette);
+      // The breakdown only shows severities enabled in the display setting — a
+      // severity the user hasn't turned on (e.g. Low/Medium) is omitted, not zeroed.
+      const displaySet = new Set(boot.settings.displaySeverities);
+      const shown = {};
+      for (const s of boot.palette.order) if (displaySet.has(s) && counts[s]) shown[s] = counts[s];
+      severityBar(sevChartCanvas, shown, boot.palette);
     });
     renderSevCard(insights, filtered, counts);
   }
 
   /** Severity breakdown card (mirrors the Streamlit stat list): one row per severity
-   *  CRITICAL–LOW (INFO/UNKNOWN omitted), each a color dot + label, the count with an
-   *  "N open · N resolved" split, and a delta chip vs the previous scan. The split
-   *  needs the insights payload; the delta is dropped under a Value Chain filter (no
-   *  per-chain baseline), matching the headline. */
+   *  CRITICAL–LOW (INFO/UNKNOWN omitted) that is enabled in the display setting, each a
+   *  color dot + label, the count with an "N open · N resolved" split, and a delta chip
+   *  vs the previous scan. The split needs the insights payload; the delta is dropped
+   *  under a Value Chain filter (no per-chain baseline), matching the headline. */
   function renderSevCard(insights, filtered, counts) {
     const sevStats = insights && insights.flatScan ? insights.sevStats : null;
+    const displaySet = new Set(boot.settings.displaySeverities);
     const card = el("div", { class: "stat-card" });
-    for (const sev of ["CRITICAL", "HIGH", "MEDIUM", "LOW"]) {
+    for (const sev of ["CRITICAL", "HIGH", "MEDIUM", "LOW"].filter((s) => displaySet.has(s))) {
       const count = counts[sev] || 0;
       const stat = sevStats && sevStats[sev];
       card.append(
@@ -178,7 +184,6 @@ export async function renderOverview(main, params, ctx) {
     }
 
     renderExploitability(insights);
-    renderConcentration(insights);
     renderAging(insights);
     renderMovement(insights);
     renderBreakdown();
@@ -202,44 +207,6 @@ export async function renderOverview(main, params, ctx) {
         `Open findings only (${s.open.toLocaleString()} open in this scan); one finding can carry several signals.`),
       tiles,
     );
-  }
-
-  // ------------------------------------------------------------- risk concentration
-
-  function renderConcentration(insights) {
-    insightsHost.append(sectionLabel("Risk concentration"));
-    if (!insights.topAssets.length) {
-      insightsHost.append(emptyState("No open findings — no asset concentration to show."));
-      return;
-    }
-    const canvas = el("canvas", { id: "top-assets-chart" });
-    const list = el("div", { class: "rank-list" });
-    for (const a of insights.topAssets) {
-      list.append(el("div", { class: "rank-row" },
-        el("div", {},
-          el("div", {}, el("strong", {}, a.asset)),
-          el("div", { style: "margin-top:4px" }, mixStrip(a.sevCounts)),
-          el("div", { class: "small muted", style: "margin-top:2px" }, mixText(a.sevCounts)),
-        ),
-        el("div", { class: "num", title: "Open findings on this asset" },
-          `${a.total.toLocaleString()} open`),
-      ));
-    }
-    insightsHost.append(el("div", { class: "chart-grid" },
-      el("div", { class: "chart-card" },
-        el("h3", {}, "Top assets by weighted risk"),
-        el("div", { class: "small muted", style: "margin-bottom:8px" },
-          "Open findings weighted by severity (CRITICAL 4 … LOW 1)."),
-        el("div", { class: "chart-box" }, canvas),
-      ),
-      el("div", { class: "card" },
-        el("h3", {}, "Severity mix per asset"),
-        list,
-      ),
-    ));
-    requestAnimationFrame(() => {
-      hBar(canvas, insights.topAssets.map((a) => ({ label: a.asset, value: a.weighted })));
-    });
   }
 
   // ------------------------------------------------------------------------- aging

@@ -17,11 +17,6 @@ import type { Rec } from "./util";
 // exploitation likelihood); 0.5 would qualify almost nothing in typical fleets.
 export const EPSS_PRIORITY_THRESHOLD = 0.1;
 
-// Severity weight used to rank risk concentration by asset (topAssets).
-export const SEVERITY_WEIGHT: Record<string, number> = {
-  CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1, INFO: 0, UNKNOWN: 0,
-};
-
 export const AGE_BUCKET_EDGES = [7, 30, 90] as const;
 export const AGE_BUCKET_LABELS = ["0-7d", "8-30d", "31-90d", "90+d"] as const;
 
@@ -95,38 +90,6 @@ export function exploitSummary(records: Rec[]): ExploitSummary {
     if (r[WIDE_KEY] === true || r[LIMITED_KEY] === true) out.internetExposed += 1;
   }
   return out;
-}
-
-export interface AssetConcentration {
-  asset: string;
-  total: number;
-  weighted: number;
-  sevCounts: Record<string, number>;
-}
-
-/**
- * Risk concentration: OPEN frame records grouped by asset, ranked by
- * severity-weighted count. Frame (not baseRows) so the picture is the current
- * scan's — baseRows include "(compacted)" placeholder assets.
- */
-export function topAssets(records: Rec[], n = 10): AssetConcentration[] {
-  const byAsset = new Map<string, AssetConcentration>();
-  for (const r of records) {
-    if (!isOpen(r["status"])) continue;
-    const name = String(r["vulnerableAsset.name"] ?? "") || "(unknown)";
-    let g = byAsset.get(name);
-    if (!g) {
-      g = { asset: name, total: 0, weighted: 0, sevCounts: {} };
-      byAsset.set(name, g);
-    }
-    const s = sev(r);
-    g.total += 1;
-    g.weighted += SEVERITY_WEIGHT[s] ?? 0;
-    g.sevCounts[s] = (g.sevCounts[s] ?? 0) + 1;
-  }
-  return [...byAsset.values()]
-    .sort((a, b) => b.weighted - a.weighted || b.total - a.total || a.asset.localeCompare(b.asset))
-    .slice(0, n);
 }
 
 export interface AgeBuckets {

@@ -303,7 +303,6 @@ function insightsData(p?: unknown): Rec {
     // Per-severity total/open/resolved for the severity breakdown card.
     sevStats: insights.severityStats(recs),
     exploit: insights.exploitSummary(recs),
-    topAssets: insights.topAssets(recs, 10),
     aging: insights.ageBuckets(base),
     movement: insights.movement(base, latestFlat, ledgerStore.loadScanRows().length),
   };
