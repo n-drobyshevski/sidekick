@@ -3560,11 +3560,8 @@ var Server = (() => {
     if (!lock.tryLock(1e3)) return false;
     try {
       const job = getJob(jobId);
-      if (!job || job.kind !== "scan" || job.phase !== "FETCHING") return false;
-      const pending = ScriptApp.getProjectTriggers().some(
-        (t) => t.getHandlerFunction() === CONTINUE_HANDLER
-      );
-      if (pending) return false;
+      if (!job || job.kind !== "scan") return false;
+      if (job.phase !== "FETCHING" && job.phase !== "RECONCILING") return false;
       clearContinuationTriggers();
       finalizeCancel(job);
       return true;
@@ -3685,14 +3682,11 @@ var Server = (() => {
   function reclaimStaleJob(job) {
     const updated = parseTs(job.updated_at);
     if (updated !== null && Date.now() - updated < STALE_JOB_MS) return false;
-    const hasTrigger = ScriptApp.getProjectTriggers().some(
-      (t) => t.getHandlerFunction() === CONTINUE_HANDLER
-    );
-    if (hasTrigger) return false;
+    clearContinuationTriggers();
     clearCancel(job.job_id);
     updateJob(job.job_id, {
       phase: "FAILED",
-      error: "Reclaimed: the job stalled with no pending continuation."
+      error: "Reclaimed: the job stalled with no progress."
     });
     return true;
   }
