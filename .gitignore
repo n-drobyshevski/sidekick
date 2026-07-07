@@ -27,3 +27,6 @@ mttr_history.json
 
 # Local GAS dev harness build output (gas/dev/serve.mjs writes it per page load)
 gas/dev/server.dev.js
+
+# Local GAS AI dev harness build output (gas_ai/dev/serve.mjs writes it per page load)
+gas_ai/dev/server.dev.js

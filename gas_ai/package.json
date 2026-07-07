@@ -1,0 +1,27 @@
+{
+  "name": "wiz-sidekick-ai-gas",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Wiz SIDEKICK AI — AI-asset security graph dashboard as a Google Apps Script web app",
+  "type": "module",
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "dev": "node dev/serve.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm run test && npm run build",
+    "push": "npm run check && clasp push",
+    "deploy": "npm run push && clasp deploy"
+  },
+  "devDependencies": {
+    "@google/clasp": "^3.3.0",
+    "@types/google-apps-script": "^1.0.83",
+    "esbuild": "^0.21.5",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0"
+  },
+  "dependencies": {
+    "chart.js": "4.4.3"
+  }
+}
