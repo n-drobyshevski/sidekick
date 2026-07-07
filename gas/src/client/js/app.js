@@ -94,7 +94,7 @@ async function boot() {
 function renderSidebar(sidebar, data) {
   clear(sidebar);
   sidebar.append(
-    el("div", { class: "wordmark" }, el("span", { class: "wordmark-dot", "aria-hidden": "true" }), "Wiz Sidekick"),
+    el("div", { class: "wordmark" }, el("span", { class: "wordmark-dot", "aria-hidden": "true" }), "Wiz Sidekick OS"),
   );
   const { route: active } = parseHash();
   let lastGroup = null;
