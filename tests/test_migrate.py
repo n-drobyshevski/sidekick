@@ -206,3 +206,59 @@ def test_live_and_archive_download_bytes(tmp_path):
     raw = gzip.decompress(migrate.archive_bundle_gz_bytes(db, hist, _CUTOFF))
     arch = json.loads(raw.decode("utf-8"))
     assert arch["kind"] == migrate.ARCHIVE_KIND
+
+
+# --------------------------------------------------------------- slim-open live bundle
+
+
+def test_slim_open_reduces_open_rows_only(tmp_path):
+    db = _db(tmp_path)
+    _seed(db)  # C, E are OPEN; A resolved 2026-05-28 (live-recent); B resolved 2025-12-30
+    hist = _db(tmp_path).with_name("none.json")
+    full_live, _ = migrate.build_split_bundles(db, hist, _CUTOFF, slim_open=False)
+    slim_live, slim_arch = migrate.build_split_bundles(db, hist, _CUTOFF, slim_open=True)
+
+    # Same rows either way (slim drops fields, never rows) — partition stays lossless.
+    assert _keys(slim_live["ledger"]) == _keys(full_live["ledger"])
+
+    by_status = {r.get("status"): r for r in full_live["ledger"]}
+    for r in slim_live["ledger"]:
+        if r.get("first_seen") is not None and set(r) == {"vuln_key", "first_seen"}:
+            continue  # a slimmed open row
+        # Anything not slimmed must be a resolved row carried in full.
+        assert r.get("status") == "RESOLVED"
+
+    # Every open row is reduced to exactly {vuln_key, first_seen}; resolved rows stay full.
+    open_keys = {r["vuln_key"] for r in full_live["ledger"] if r.get("status") != "RESOLVED"}
+    assert open_keys  # sanity: there ARE open rows to slim (C, E)
+    for r in slim_live["ledger"]:
+        if r["vuln_key"] in open_keys:
+            assert set(r) == {"vuln_key", "first_seen"}
+        else:
+            assert "tags_json" in r  # resolved row kept full fidelity
+
+    # No tags_json leaks from any slimmed open row; the archive keeps full rows.
+    assert not any("tags_json" in r for r in slim_live["ledger"]
+                   if r["vuln_key"] in open_keys)
+    if slim_arch["ledger"]:
+        assert all("tags_json" in r for r in slim_arch["ledger"])
+    # Episodes / scans / history are untouched by slimming.
+    assert slim_live["episodes"] == full_live["episodes"]
+    assert slim_live["scans"] == full_live["scans"]
+    assert slim_live["mttr_history"] == full_live["mttr_history"]
+
+
+def test_slim_open_shrinks_bytes_dramatically(tmp_path):
+    # A ledger of open rows each carrying a fat tags_json — the real-world bloat.
+    db = _db(tmp_path)
+    fat_tags = [_node(f"F{i}", f"CVE-{i}", "HIGH", "OPEN", f"vm-{i}") for i in range(200)]
+    for n in fat_tags:
+        n["vulnerableAsset"]["tags"] = {f"tag_{k}": "x" * 200 for k in range(20)}
+    ledger.persist_flat_scan(
+        fat_tags, mode="live", db_path=db, scan_id="2026-06-20T06:00:00Z",
+        raw={"data": {"vulnerabilityFindings": {"nodes": fat_tags}}},
+    )
+    hist = _db(tmp_path).with_name("none.json")
+    full = len(migrate.live_bundle_json_bytes(db, hist, _CUTOFF, slim_open=False))
+    slim = len(migrate.live_bundle_json_bytes(db, hist, _CUTOFF, slim_open=True))
+    assert slim * 4 < full, f"slim={slim} not << full={full}"

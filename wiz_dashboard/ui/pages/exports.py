@@ -60,19 +60,27 @@ def _migration_section():
         cutoff_iso = (
             datetime.now(timezone.utc) - timedelta(days=int(days))
         ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        slim_open = st.checkbox(
+            "Slim open vulnerabilities (recommended when GAS scans Wiz)", value=True,
+            key="migration_slim_open", disabled=empty,
+            help="Open vulns import as just an ID + first-seen date; your next GAS scan refills "
+            "their detail and keeps the age. This can shrink the live bundle by an order of "
+            "magnitude. Leave off only if GAS won't scan Wiz.",
+        )
         sc = migrate.split_counts(cutoff_iso=cutoff_iso)
         stamp = _stamp()[:10]
-        sig = (f"{int(days)}:{sc['live_vulns']}:{sc['archive_vulns']}:"
+        sig = (f"{int(days)}:{int(slim_open)}:{sc['live_vulns']}:{sc['archive_vulns']}:"
                f"{sc['live_episodes']}:{sc['archive_episodes']}:{sc['history']}")
         st.caption(
             f"**Live bundle** — {sc['scans']:,} scans · {sc['live_vulns']:,} vulnerabilities · "
-            f"{sc['live_episodes']:,} recent episodes · {sc['history']:,} MTTR points. "
-            f"**Archive** — {sc['archive_vulns']:,} settled vulnerabilities · "
+            f"{sc['live_episodes']:,} recent episodes · {sc['history']:,} MTTR points"
+            + (" (open vulns slimmed to ID + first-seen)." if slim_open else ".")
+            + f" **Archive** — {sc['archive_vulns']:,} settled vulnerabilities · "
             f"{sc['archive_episodes']:,} old episodes."
         )
         ui.deferred_download(
             "Download live bundle (import this on GAS)",
-            lambda: migrate.live_bundle_json_bytes(cutoff_iso=cutoff_iso),
+            lambda: migrate.live_bundle_json_bytes(cutoff_iso=cutoff_iso, slim_open=slim_open),
             file_name=f"wiz_migration_live_{stamp}.json",
             mime="application/json",
             key="migration_live",

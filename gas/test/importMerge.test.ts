@@ -176,6 +176,30 @@ describe("importBundleCore (Python fixture parity)", () => {
     const liveKeys = Object.keys(res.state.ledger).sort();
     expect(liveKeys).toEqual(["id:A", "id:C"]);
   });
+
+  it("accepts a slimmed open ledger row (identity + first_seen only)", () => {
+    // The slim-open export (migrate.build_split_bundles slim_open=True) ships open vulns as
+    // just {vuln_key, first_seen}; a later GAS scan refills the rest. Lock that the importer
+    // coerces such a lean row to a valid OPEN row with the age preserved and no stray fields.
+    const bundle = validateBundle({
+      kind: "wiz-sidekick-migration",
+      version: 1,
+      exported_at: "2026-06-01T00:00:00Z",
+      scans: [{ scan_id: "2020-01-01T00:00:00Z", ts: "2020-01-01T00:00:00Z" }],
+      ledger: [{ vuln_key: "id:lean", first_seen: "2020-01-01T00:00:00Z" }],
+      episodes: [],
+      mttr_history: [],
+    });
+    const res = importBundleCore(emptyState(), bundle, () => null, {
+      compactionId: IMPORT_CMP_ID,
+    });
+    const row = res.state.ledger["id:lean"];
+    expect(row).toBeDefined();
+    expect(row.status).toBe("OPEN");
+    expect(row.first_seen).toBe("2020-01-01T00:00:00Z");
+    expect(row.tags_json).toBeNull();
+    expect(res.counts.vulns_imported).toBe(1);
+  });
 });
 
 describe("importBundleCore guards", () => {
