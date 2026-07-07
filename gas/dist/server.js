@@ -4542,6 +4542,15 @@ var Server = (() => {
     const keys = Array.isArray(raw) ? raw.map(String) : [];
     return run(() => cached("grouping", { domain, keys }, () => groupingData(p), 3600));
   }
+  function readSeverities(p) {
+    const raw = p == null ? void 0 : p["severities"];
+    return Array.isArray(raw) ? raw.map(String) : null;
+  }
+  function filterSeverities(rows, severities) {
+    if (severities === null || !rows.length) return rows;
+    const keep = /* @__PURE__ */ new Set([...severities, "UNKNOWN"]);
+    return rows.filter((r) => keep.has(normalizeSeverity(r["severity"])));
+  }
   function mttrData(p) {
     var _a;
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
@@ -4550,21 +4559,24 @@ var Server = (() => {
       const compiled = compileDomains(getDomains2().items);
       rows = rows.filter((r) => assignDomain(r, compiled) === domain);
     }
+    rows = filterSeverities(rows, readSeverities(p));
     const { perSev, overall } = mttrFromLedger(rows);
     const { slaPct, oldestDays } = overallSlaOldest(perSev);
     return { perSev, overall, slaPct, oldestDays, rowCount: rows.length };
   }
   function mttrTrendData(p) {
-    var _a;
-    const severities = (_a = p == null ? void 0 : p["severities"]) != null ? _a : null;
+    const severities = readSeverities(p);
     return {
       history: loadHistory(),
       trend: loadTrend(severities)
     };
   }
-  function mttrByDomainData() {
+  function mttrByDomainData(p) {
     var _a, _b, _c;
-    const rows = loadBaseRows();
+    const rows = filterSeverities(
+      loadBaseRows(),
+      readSeverities(p)
+    );
     const items = getDomains2().items;
     const compiled = compileDomains(items);
     const assigned = assignDomains(rows, compiled);
@@ -4596,17 +4608,15 @@ var Server = (() => {
   }
   var cachedMttrData = (p) => {
     var _a;
-    return cached("mttr", { domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "") }, () => mttrData(p), 3600);
-  };
-  var cachedMttrTrendData = (p) => {
-    var _a;
     return cached(
-      "mttrTrend",
-      { severities: (_a = p == null ? void 0 : p["severities"]) != null ? _a : null },
-      () => mttrTrendData(p)
+      "mttr",
+      { domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""), severities: readSeverities(p) },
+      () => mttrData(p),
+      3600
     );
   };
-  var cachedMttrByDomainData = () => cached("mttrByDomain", null, mttrByDomainData, 3600);
+  var cachedMttrTrendData = (p) => cached("mttrTrend", { severities: readSeverities(p) }, () => mttrTrendData(p));
+  var cachedMttrByDomainData = (p) => cached("mttrByDomain", { severities: readSeverities(p) }, () => mttrByDomainData(p), 3600);
   function getMttr(p) {
     return run(() => cachedMttrData(p));
   }
@@ -4619,7 +4629,7 @@ var Server = (() => {
     return run(() => ({
       mttr: cachedMttrData(p),
       trends: cachedMttrTrendData(p),
-      byDomain: domain ? null : cachedMttrByDomainData()
+      byDomain: domain ? null : cachedMttrByDomainData(p)
     }));
   }
   function scanHistoryData() {

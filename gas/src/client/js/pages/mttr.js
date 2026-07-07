@@ -7,8 +7,16 @@ import { changeChip, clear, el, emptyState, fmtDays, sectionLabel, sevBadge } fr
 
 export async function renderMttr(main, _params, ctx) {
   const boot = await bootstrap();
+
+  // Which severities feed every metric on this page. Defaults to all selectable — that
+  // sends no filter (scopeParam() === null), reproducing the whole-base numbers exactly.
+  // Page-local and non-persisted: resets to "all" on each visit.
+  const sevScope = [...boot.palette.selectable];
+
   main.append(
-    el("h1", {}, "MTTR & SLA"),
+    el("div", { class: "page-head" },
+      el("h1", {}, "MTTR & SLA"),
+      buildSevFilter()),
     el("p", { class: "page-sub" },
       "How fast risk gets closed, measured over observed lifecycles in the durable base."),
   );
@@ -24,6 +32,79 @@ export async function renderMttr(main, _params, ctx) {
 
   await load();
 
+  // Null when every selectable severity is chosen (no filter → shares the default cache
+  // entry); otherwise the chosen subset, which the server keeps alongside UNKNOWN.
+  function scopeParam() {
+    return sevScope.length === boot.palette.selectable.length ? null : [...sevScope];
+  }
+
+  function sevSummary() {
+    const all = boot.palette.selectable;
+    if (sevScope.length === all.length) return "All severities";
+    const chosen = all.filter((s) => sevScope.includes(s));
+    const nice = (s) => s[0] + s.slice(1).toLowerCase();
+    return chosen.length <= 2 ? chosen.map(nice).join(", ") : `${chosen.length} severities`;
+  }
+
+  // Compact inline dropdown (top-right of the title row): a button that opens a popover of
+  // severity pills. Changes apply on close — one refetch, only if the selection changed.
+  function buildSevFilter() {
+    const wrap = el("div", { class: "sev-filter" });
+    const label = el("span", { class: "sev-filter-label" }, sevSummary());
+    const btn = el("button", {
+      type: "button", class: "sev-filter-btn",
+      "aria-haspopup": "true", "aria-expanded": "false",
+      "aria-label": "Severities included in MTTR",
+      onclick: (e) => { e.stopPropagation(); open ? close() : openMenu(); },
+    }, label, el("span", { class: "sev-filter-caret", "aria-hidden": "true" }, "▾"));
+
+    const pills = el("div", { class: "pill-row" });
+    for (const sev of boot.palette.selectable) {
+      const pill = el("button", {
+        type: "button", class: `sev-pill sev-${sev}`,
+        "aria-pressed": sevScope.includes(sev) ? "true" : "false",
+        onclick: () => {
+          const i = sevScope.indexOf(sev);
+          if (i >= 0) {
+            if (sevScope.length === 1) return; // keep at least one severity selected
+            sevScope.splice(i, 1);
+          } else {
+            sevScope.push(sev);
+          }
+          pill.setAttribute("aria-pressed", sevScope.includes(sev) ? "true" : "false");
+          label.textContent = sevSummary();
+        },
+      }, sev);
+      pills.append(pill);
+    }
+    const menu = el("div", { class: "sev-filter-menu", role: "group",
+      "aria-label": "Severities included in MTTR" }, pills);
+    menu.hidden = true;
+    wrap.append(btn, menu);
+
+    let open = false;
+    let snapshot = "";
+    function openMenu() {
+      open = true;
+      snapshot = sevScope.join(",");
+      menu.hidden = false;
+      btn.setAttribute("aria-expanded", "true");
+      document.addEventListener("click", onDocClick, true);
+      document.addEventListener("keydown", onKey, true);
+    }
+    function close() {
+      open = false;
+      menu.hidden = true;
+      btn.setAttribute("aria-expanded", "false");
+      document.removeEventListener("click", onDocClick, true);
+      document.removeEventListener("keydown", onKey, true);
+      if (sevScope.join(",") !== snapshot) load(); // apply on close, only if changed
+    }
+    function onDocClick(e) { if (!wrap.contains(e.target)) close(); }
+    function onKey(e) { if (e.key === "Escape") { close(); btn.focus(); } }
+    return wrap;
+  }
+
   async function load() {
     clear(heroHost).append(el("p", { class: "muted" }, "Computing…"));
     // One batched RPC — summary and trends share a single ledger-state load
@@ -35,7 +116,7 @@ export async function renderMttr(main, _params, ctx) {
       renderSla(data.mttr);
       renderByDomain(data.byDomain);
     };
-    paint(await swrCall("api_getMttrPage", { domain }, paint));
+    paint(await swrCall("api_getMttrPage", { domain, severities: scopeParam() }, paint));
   }
 
   /** Per-domain remediation, shown only at the whole-chain view (the server omits it
@@ -152,10 +233,9 @@ export async function renderMttr(main, _params, ctx) {
 
   function renderSla(mttr) {
     clear(slaHost);
-    // Only severities enabled in the display setting appear in the per-severity
-    // breakdown (table + posture bars) — matches the OS-vulns severity breakdown.
-    const displaySet = new Set(boot.settings.displaySeverities);
-    const sevs = boot.palette.order.filter((s) => mttr.perSev[s] && displaySet.has(s));
+    // The per-severity breakdown (table + posture bars) follows the severity dropdown,
+    // so it always matches the severities feeding the hero and trend above.
+    const sevs = boot.palette.order.filter((s) => mttr.perSev[s] && sevScope.includes(s));
     if (!sevs.length) return;
 
     slaHost.append(sectionLabel("Remediation by severity"));
