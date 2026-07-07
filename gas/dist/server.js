@@ -989,12 +989,12 @@ var Server = (() => {
     cancelScan: () => cancelScan2,
     compact: () => compact,
     deleteScans: () => deleteScans2,
-    getBaseRows: () => getBaseRows,
     getDomains: () => getDomains3,
     getExportCsv: () => getExportCsv,
     getExportRawUrl: () => getExportRawUrl,
     getFindingDetail: () => getFindingDetail,
     getFindings: () => getFindings,
+    getGrouping: () => getGrouping,
     getHistoryPage: () => getHistoryPage,
     getInsights: () => getInsights,
     getJobStatus: () => getJobStatus,
@@ -2647,14 +2647,22 @@ var Server = (() => {
     const s = r["_sev"];
     return typeof s === "string" && s ? s : normalizeSeverity(r["severity"]);
   }
-  function sevIndex(s) {
-    const i = SEVERITY_ORDER.indexOf(s);
-    return i === -1 ? SEVERITY_ORDER.length : i;
-  }
   function epssOf(r) {
     const v = r["epssProbability"];
     const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
     return Number.isFinite(n) ? n : null;
+  }
+  function severityStats(records) {
+    var _a;
+    const out = {};
+    for (const r of records) {
+      const s = sev(r);
+      const stat = (_a = out[s]) != null ? _a : out[s] = { total: 0, open: 0, resolved: 0 };
+      stat.total += 1;
+      if (isOpen(r["status"])) stat.open += 1;
+      else stat.resolved += 1;
+    }
+    return out;
   }
   function exploitSummary(records) {
     const out = {
@@ -2728,65 +2736,63 @@ var Server = (() => {
       hasPrevious: scanCount > 1
     };
   }
-  function topCves(records, n = 10) {
-    var _a, _b;
-    const byCve = /* @__PURE__ */ new Map();
-    for (const r of records) {
-      if (!isOpen(r["status"])) continue;
-      const cve = String((_a = r["name"]) != null ? _a : "") || "(unknown)";
-      let g = byCve.get(cve);
-      if (!g) {
-        g = { assets: /* @__PURE__ */ new Set(), findings: 0, sevIdx: SEVERITY_ORDER.length, kev: false, exploit: false };
-        byCve.set(cve, g);
-      }
-      g.findings += 1;
-      const asset = String((_b = r["vulnerableAsset.name"]) != null ? _b : "");
-      if (asset) g.assets.add(asset);
-      g.sevIdx = Math.min(g.sevIdx, sevIndex(sev(r)));
-      if (r["hasCisaKevExploit"] === true) g.kev = true;
-      if (r["hasExploit"] === true) g.exploit = true;
-    }
-    return [...byCve.entries()].map(([cve, g]) => {
-      var _a2;
-      return {
-        cve,
-        severity: (_a2 = SEVERITY_ORDER[g.sevIdx]) != null ? _a2 : "UNKNOWN",
-        assets: g.assets.size,
-        findings: g.findings,
-        kev: g.kev,
-        exploit: g.exploit
-      };
-    }).sort((a, b) => b.assets - a.assets || b.findings - a.findings || a.cve.localeCompare(b.cve)).slice(0, n);
-  }
-  var BREAKDOWN_KEYS = {
+  var GROUP_COLUMNS = {
     domain: "_domain",
-    subscription: "vulnerableAsset.subscriptionName",
     asset: "vulnerableAsset.name",
     atype: "vulnerableAsset.type",
     cloud: "vulnerableAsset.cloudPlatform",
-    os: "vulnerableAsset.operatingSystem"
+    os: "vulnerableAsset.operatingSystem",
+    subscription: "vulnerableAsset.subscriptionName",
+    cve: "name"
   };
-  function breakdown(records, byKey, max = 15) {
-    var _a;
-    const column = BREAKDOWN_KEYS[byKey];
-    if (!column || !records.length) return [];
-    const groups = /* @__PURE__ */ new Map();
+  function groupTree(records, keys, perLevelCap = 20) {
+    if (!keys.length || !records.length) return [];
+    const [key, ...rest] = keys;
+    const column = GROUP_COLUMNS[key];
+    if (!column) return [];
+    const buckets = /* @__PURE__ */ new Map();
     for (const r of records) {
       const raw = r[column];
-      const key = raw === null || raw === void 0 || String(raw).trim() === "" ? "(none)" : String(raw);
-      let g = groups.get(key);
-      if (!g) {
-        g = { key, total: 0, open: 0, share: 0, sevCounts: {} };
-        groups.set(key, g);
-      }
-      g.total += 1;
-      if (isOpen(r["status"])) g.open += 1;
-      const s = sev(r);
-      g.sevCounts[s] = ((_a = g.sevCounts[s]) != null ? _a : 0) + 1;
+      const k = raw === null || raw === void 0 || String(raw).trim() === "" ? "(none)" : String(raw);
+      let arr = buckets.get(k);
+      if (!arr) buckets.set(k, arr = []);
+      arr.push(r);
     }
-    const out = [...groups.values()].sort((a, b) => b.total - a.total || a.key.localeCompare(b.key));
-    for (const g of out) g.share = g.total / records.length;
-    return out.slice(0, max);
+    const rows = [...buckets.entries()].map(([k, recs]) => {
+      var _a, _b;
+      const assets = /* @__PURE__ */ new Set();
+      const sevCounts = {};
+      let open = 0;
+      let kev = false;
+      let exploit = false;
+      for (const r of recs) {
+        if (isOpen(r["status"])) open += 1;
+        const s = sev(r);
+        sevCounts[s] = ((_a = sevCounts[s]) != null ? _a : 0) + 1;
+        const a = String((_b = r["vulnerableAsset.name"]) != null ? _b : "");
+        if (a) assets.add(a);
+        if (r["hasCisaKevExploit"] === true) kev = true;
+        if (r["hasExploit"] === true) exploit = true;
+      }
+      const node = {
+        key: k,
+        dim: key,
+        total: recs.length,
+        open,
+        assets: assets.size,
+        sevCounts,
+        kev,
+        exploit,
+        children: []
+      };
+      return { recs, node };
+    });
+    rows.sort((a, b) => b.node.total - a.node.total || a.node.key.localeCompare(b.node.key));
+    const kept = rows.slice(0, perLevelCap);
+    if (rest.length) {
+      for (const row of kept) row.node.children = groupTree(row.recs, rest, perLevelCap);
+    }
+    return kept.map((row) => row.node);
   }
 
   // src/domain/importShard.ts
@@ -4495,10 +4501,6 @@ var Server = (() => {
       base = base.filter((r) => assignDomain(r, compiled) === domain);
     }
     const latestFlat = latestFlatScanRow();
-    const breakdowns = {};
-    for (const key of Object.keys(BREAKDOWN_KEYS)) {
-      breakdowns[key] = breakdown(recs, key);
-    }
     return {
       flatScan: true,
       domain,
@@ -4508,12 +4510,12 @@ var Server = (() => {
       // counts). Movement's new/resolved/reopened remain chain-wide — see below.
       counts: sevCountsOf(recs),
       total: recs.length,
+      // Per-severity total/open/resolved for the severity breakdown card.
+      sevStats: severityStats(recs),
       exploit: exploitSummary(recs),
       topAssets: topAssets(recs, 10),
       aging: ageBuckets(base),
-      movement: movement(base, latestFlat, loadScanRows().length),
-      topCves: topCves(recs, 10),
-      breakdowns
+      movement: movement(base, latestFlat, loadScanRows().length)
     };
   }
   function getInsights(p) {
@@ -4523,6 +4525,31 @@ var Server = (() => {
         return cached("insights", { domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "") }, () => insightsData(p), 3600);
       }
     );
+  }
+  function scopedFrameRecords(domain) {
+    const scan = currentScan();
+    if (!scan) return [];
+    if (!domain) return scan.records;
+    return scan.records.filter((r) => {
+      var _a;
+      return String((_a = r["_domain"]) != null ? _a : UNASSIGNED) === domain;
+    });
+  }
+  function groupingData(p) {
+    var _a;
+    const scan = currentScan();
+    if (!scan) return { flatScan: false, keys: [], groups: [] };
+    const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
+    const raw = p == null ? void 0 : p["keys"];
+    const keys = (Array.isArray(raw) ? raw.map(String) : []).filter((k) => k in GROUP_COLUMNS);
+    return { flatScan: true, keys, groups: groupTree(scopedFrameRecords(domain), keys) };
+  }
+  function getGrouping(p) {
+    var _a;
+    const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
+    const raw = p == null ? void 0 : p["keys"];
+    const keys = Array.isArray(raw) ? raw.map(String) : [];
+    return run(() => cached("grouping", { domain, keys }, () => groupingData(p), 3600));
   }
   function mttrData(p) {
     var _a;
@@ -4628,62 +4655,8 @@ var Server = (() => {
   function getHistoryPage(p) {
     return run(() => ({
       history: cachedScanHistoryData(),
-      trends: cachedMttrTrendData(p),
-      // Base rows stay uncached: their filter params are combinatorial and the state
-      // load is shared with the parts above via the per-execution memo anyway.
-      base: baseRowsData(p)
+      trends: cachedMttrTrendData(p)
     }));
-  }
-  function baseRowsData(p) {
-    var _a, _b, _c, _d, _e, _f;
-    const params = p != null ? p : {};
-    let rows = loadBaseRows();
-    const compiled = compileDomains(getDomains2().items);
-    if (compiled.length) {
-      rows = rows.map((r) => ({ ...r, _domain: assignDomain(r, compiled) }));
-    }
-    const statuses = (_a = params["statuses"]) != null ? _a : [];
-    const severities = (_b = params["severities"]) != null ? _b : [];
-    const domains = (_c = params["domains"]) != null ? _c : [];
-    const q = String((_d = params["q"]) != null ? _d : "").trim().toLowerCase();
-    if (statuses.length) {
-      const keep = new Set(statuses.map((s) => s.toUpperCase()));
-      rows = rows.filter((r) => {
-        var _a2;
-        return keep.has(String((_a2 = r["status"]) != null ? _a2 : "").toUpperCase());
-      });
-    }
-    if (severities.length) {
-      const keep = new Set(severities.map(normalizeSeverity));
-      rows = rows.filter((r) => keep.has(normalizeSeverity(r["severity"])));
-    }
-    if (domains.length) {
-      const keep = new Set(domains);
-      rows = rows.filter((r) => {
-        var _a2;
-        return keep.has(String((_a2 = r["_domain"]) != null ? _a2 : UNASSIGNED));
-      });
-    }
-    if (q) {
-      rows = rows.filter(
-        (r) => {
-          var _a2, _b2;
-          return String((_a2 = r["cve"]) != null ? _a2 : "").toLowerCase().includes(q) || String((_b2 = r["asset_name"]) != null ? _b2 : "").toLowerCase().includes(q);
-        }
-      );
-    }
-    const pageSize = Math.min(Number((_e = params["pageSize"]) != null ? _e : 100), 500);
-    const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
-    const page = Math.min(Math.max(Number((_f = params["page"]) != null ? _f : 0), 0), pageCount - 1);
-    return {
-      rows: rows.slice(page * pageSize, (page + 1) * pageSize),
-      total: rows.length,
-      page,
-      pageCount
-    };
-  }
-  function getBaseRows(p) {
-    return run(() => baseRowsData(p));
   }
   function runScan(p) {
     const params = p != null ? p : {};
@@ -4854,41 +4827,17 @@ var Server = (() => {
   }
   function getExportCsv(p) {
     return run(() => {
-      var _a, _b, _c, _d, _e, _f, _g;
+      var _a, _b, _c, _d, _e, _f;
       const params = p != null ? p : {};
-      const which = String((_a = params["source"]) != null ? _a : "findings");
-      if (which === "base") {
-        const rows = loadBaseRows();
-        const cols2 = [
-          "vuln_key",
-          "cve",
-          "severity",
-          "status",
-          "asset_name",
-          "asset_type",
-          "cloud",
-          "first_seen",
-          "last_seen",
-          "resolved_at",
-          "resolution_src",
-          "reopened_count",
-          "mttr_days",
-          "age_days",
-          "subscription_name"
-        ];
-        const lines2 = [cols2.join(",")];
-        for (const r of rows) lines2.push(cols2.map((c) => csvCell(r[c])).join(","));
-        return { content: lines2.join("\r\n"), filename: "wiz-vulnerability-base.csv" };
-      }
       const scan = currentScan();
       if (!scan) return { content: "", filename: "" };
       const filtered = applyFilters(scan.records, {
-        severities: (_b = params["severities"]) != null ? _b : getDisplaySeverities2(),
-        statuses: (_c = params["statuses"]) != null ? _c : [],
-        assetTypes: (_d = params["assetTypes"]) != null ? _d : [],
-        clouds: (_e = params["clouds"]) != null ? _e : [],
-        domains: (_f = params["domains"]) != null ? _f : [],
-        q: (_g = params["q"]) != null ? _g : ""
+        severities: (_a = params["severities"]) != null ? _a : getDisplaySeverities2(),
+        statuses: (_b = params["statuses"]) != null ? _b : [],
+        assetTypes: (_c = params["assetTypes"]) != null ? _c : [],
+        clouds: (_d = params["clouds"]) != null ? _d : [],
+        domains: (_e = params["domains"]) != null ? _e : [],
+        q: (_f = params["q"]) != null ? _f : ""
       });
       const cols = TABLE_COLUMNS.filter((c) => !c.startsWith("_"));
       const lines = [cols.join(",")];

@@ -3,11 +3,11 @@ import {
   AGE_BUCKET_LABELS,
   EPSS_PRIORITY_THRESHOLD,
   ageBuckets,
-  breakdown,
   exploitSummary,
+  groupTree,
   movement,
+  severityStats,
   topAssets,
-  topCves,
 } from "../src/domain/insights";
 import type { Rec } from "../src/domain/util";
 
@@ -18,6 +18,22 @@ const ASSET = "vulnerableAsset.name";
 function rec(over: Rec = {}): Rec {
   return { name: "CVE-2024-0001", severity: "HIGH", _sev: "HIGH", status: "OPEN", ...over };
 }
+
+describe("severityStats", () => {
+  it("splits each severity into total / open / resolved", () => {
+    const records = [
+      rec({ _sev: "CRITICAL", status: "OPEN" }),
+      rec({ _sev: "CRITICAL", status: "RESOLVED" }),
+      rec({ _sev: "CRITICAL", status: "OPEN" }),
+      rec({ _sev: "HIGH", status: "RESOLVED" }),
+    ];
+    const stats = severityStats(records);
+    expect(stats.CRITICAL).toEqual({ total: 3, open: 2, resolved: 1 });
+    expect(stats.HIGH).toEqual({ total: 1, open: 0, resolved: 1 });
+    // open + resolved === total for every bucket
+    for (const s of Object.values(stats)) expect(s.open + s.resolved).toBe(s.total);
+  });
+});
 
 describe("exploitSummary", () => {
   it("counts open findings only", () => {
@@ -123,46 +139,50 @@ describe("movement", () => {
   });
 });
 
-describe("topCves", () => {
-  it("counts distinct assets, not findings", () => {
-    const records = [
-      rec({ name: "CVE-X", [ASSET]: "a" }),
-      rec({ name: "CVE-X", [ASSET]: "a" }),
-      rec({ name: "CVE-X", [ASSET]: "b", _sev: "CRITICAL", hasCisaKevExploit: true }),
-      rec({ name: "CVE-Y", [ASSET]: "a", hasExploit: true }),
-      rec({ name: "CVE-Y", [ASSET]: "b", status: "RESOLVED" }),
-    ];
-    const out = topCves(records, 10);
-    expect(out[0]).toEqual({ cve: "CVE-X", severity: "CRITICAL", assets: 2, findings: 3, kev: true, exploit: false });
-    expect(out[1]).toEqual({ cve: "CVE-Y", severity: "HIGH", assets: 1, findings: 1, kev: false, exploit: true });
-  });
-});
-
-describe("breakdown", () => {
-  it("computes totals, opens, shares, and the (none) bucket", () => {
+describe("groupTree", () => {
+  it("aggregates one level: total/open/assets/sevCounts, (none) bucket, busiest-first", () => {
     const records = [
       rec({ [ASSET]: "a", "vulnerableAsset.type": "VM" }),
       rec({ [ASSET]: "b", "vulnerableAsset.type": "VM", status: "RESOLVED" }),
       rec({ [ASSET]: "c", "vulnerableAsset.type": "Container", _sev: "CRITICAL" }),
       rec({ [ASSET]: "d" }),
     ];
-    const out = breakdown(records, "atype");
+    const out = groupTree(records, ["atype"]);
     expect(out.map((g) => g.key)).toEqual(["VM", "(none)", "Container"]);
-    const vm = out[0];
-    expect(vm).toMatchObject({ total: 2, open: 1, share: 0.5, sevCounts: { HIGH: 2 } });
-    expect(out.reduce((acc, g) => acc + g.share, 0)).toBeCloseTo(1);
+    expect(out[0]).toMatchObject({
+      key: "VM", dim: "atype", total: 2, open: 1, assets: 2, sevCounts: { HIGH: 2 }, children: [],
+    });
   });
 
-  it("caps groups and maps the os key", () => {
-    const records = Array.from({ length: 5 }, (_, i) =>
-      rec({ "vulnerableAsset.operatingSystem": "os-" + i }),
-    );
-    expect(breakdown(records, "os", 3)).toHaveLength(3);
-    expect(breakdown(records, "os", 10)[0].key).toBe("os-0");
+  it("nests by the ordered key list (domain -> asset)", () => {
+    const records = [
+      rec({ _domain: "Payments", [ASSET]: "a" }),
+      rec({ _domain: "Payments", [ASSET]: "a" }),
+      rec({ _domain: "Payments", [ASSET]: "b" }),
+      rec({ _domain: "Core", [ASSET]: "c" }),
+    ];
+    const out = groupTree(records, ["domain", "asset"]);
+    expect(out.map((g) => g.key)).toEqual(["Payments", "Core"]);
+    const payments = out[0];
+    expect(payments.total).toBe(3);
+    expect(payments.children.map((c) => c.key)).toEqual(["a", "b"]);
+    expect(payments.children[0]).toMatchObject({ key: "a", dim: "asset", total: 2, assets: 1 });
   });
 
-  it("returns [] for an unknown key or empty input", () => {
-    expect(breakdown([rec()], "nope")).toEqual([]);
-    expect(breakdown([], "atype")).toEqual([]);
+  it("flags kev/exploit if any finding in the group carries them; caps per level", () => {
+    const records = [
+      rec({ name: "CVE-X", [ASSET]: "a", hasCisaKevExploit: true }),
+      rec({ name: "CVE-X", [ASSET]: "b" }),
+      rec({ name: "CVE-Y", [ASSET]: "a", hasExploit: true }),
+    ];
+    const out = groupTree(records, ["cve"]);
+    expect(out[0]).toMatchObject({ key: "CVE-X", assets: 2, total: 2, kev: true, exploit: false });
+    expect(out[1]).toMatchObject({ key: "CVE-Y", assets: 1, total: 1, kev: false, exploit: true });
+
+    const many = Array.from({ length: 5 }, (_, i) => rec({ "vulnerableAsset.type": "t-" + i }));
+    expect(groupTree(many, ["atype"], 3)).toHaveLength(3);
+    expect(groupTree([rec()], ["nope"])).toEqual([]);
+    expect(groupTree([], ["atype"])).toEqual([]);
   });
 });
+

@@ -291,10 +291,6 @@ function insightsData(p?: unknown): Rec {
     base = base.filter((r) => assignDomain(r as unknown as Rec, compiled) === domain);
   }
   const latestFlat = ledgerStore.latestFlatScanRow();
-  const breakdowns: Rec = {};
-  for (const key of Object.keys(insights.BREAKDOWN_KEYS)) {
-    breakdowns[key] = insights.breakdown(recs, key);
-  }
   return {
     flatScan: true,
     domain,
@@ -304,12 +300,12 @@ function insightsData(p?: unknown): Rec {
     // counts). Movement's new/resolved/reopened remain chain-wide — see below.
     counts: sevCountsOf(recs),
     total: recs.length,
+    // Per-severity total/open/resolved for the severity breakdown card.
+    sevStats: insights.severityStats(recs),
     exploit: insights.exploitSummary(recs),
     topAssets: insights.topAssets(recs, 10),
     aging: insights.ageBuckets(base),
     movement: insights.movement(base, latestFlat, ledgerStore.loadScanRows().length),
-    topCves: insights.topCves(recs, 10),
-    breakdowns,
   };
 }
 
@@ -319,6 +315,34 @@ export function getInsights(p?: unknown): ApiResult {
   return run(() =>
     cached("insights", { domain: String((p as Rec)?.["domain"] ?? "") }, () => insightsData(p), 3600),
   );
+}
+
+// ------------------------------------------------------------------------- grouping
+
+/** Frame records for the current scan, scoped to a Value Chain ("" = whole chain). */
+function scopedFrameRecords(domain: string): Rec[] {
+  const scan = findings.currentScan();
+  if (!scan) return [];
+  if (!domain) return scan.records;
+  return scan.records.filter((r) => String(r["_domain"] ?? UNASSIGNED) === domain);
+}
+
+/** The multi-level breakdown tree for an ordered list of grouping dimensions. */
+function groupingData(p?: unknown): Rec {
+  const scan = findings.currentScan();
+  if (!scan) return { flatScan: false, keys: [], groups: [] };
+  const domain = String((p as Rec)?.["domain"] ?? "");
+  const raw = (p as Rec)?.["keys"];
+  const keys = (Array.isArray(raw) ? (raw as unknown[]).map(String) : [])
+    .filter((k) => k in insights.GROUP_COLUMNS);
+  return { flatScan: true, keys, groups: insights.groupTree(scopedFrameRecords(domain), keys) };
+}
+
+export function getGrouping(p?: unknown): ApiResult {
+  const domain = String((p as Rec)?.["domain"] ?? "");
+  const raw = (p as Rec)?.["keys"];
+  const keys = Array.isArray(raw) ? (raw as unknown[]).map(String) : [];
+  return run(() => cached("grouping", { domain, keys }, () => groupingData(p), 3600));
 }
 
 // ----------------------------------------------------------------------------- MTTR
@@ -439,60 +463,12 @@ export function getScanHistory(_p?: unknown): ApiResult {
   return run(() => cachedScanHistoryData());
 }
 
-/** History page in one round trip: scans + KPIs + trends + the first base page. */
+/** History page in one round trip: scans + KPIs + trends. */
 export function getHistoryPage(p?: unknown): ApiResult {
   return run(() => ({
     history: cachedScanHistoryData(),
     trends: cachedMttrTrendData(p),
-    // Base rows stay uncached: their filter params are combinatorial and the state
-    // load is shared with the parts above via the per-execution memo anyway.
-    base: baseRowsData(p),
   }));
-}
-
-function baseRowsData(p?: unknown): Rec {
-  const params = (p ?? {}) as Rec;
-  let rows = ledgerStore.loadBaseRows() as unknown as Rec[];
-  const compiled = compileDomains(settingsStore.getDomains().items);
-  if (compiled.length) {
-    rows = rows.map((r) => ({ ...r, _domain: assignDomain(r, compiled) }));
-  }
-  const statuses = (params["statuses"] as string[]) ?? [];
-  const severities = (params["severities"] as string[]) ?? [];
-  const domains = (params["domains"] as string[]) ?? [];
-  const q = String(params["q"] ?? "").trim().toLowerCase();
-  if (statuses.length) {
-    const keep = new Set(statuses.map((s) => s.toUpperCase()));
-    rows = rows.filter((r) => keep.has(String(r["status"] ?? "").toUpperCase()));
-  }
-  if (severities.length) {
-    const keep = new Set(severities.map(normalizeSeverity));
-    rows = rows.filter((r) => keep.has(normalizeSeverity(r["severity"])));
-  }
-  if (domains.length) {
-    const keep = new Set(domains);
-    rows = rows.filter((r) => keep.has(String(r["_domain"] ?? UNASSIGNED)));
-  }
-  if (q) {
-    rows = rows.filter(
-      (r) =>
-        String(r["cve"] ?? "").toLowerCase().includes(q) ||
-        String(r["asset_name"] ?? "").toLowerCase().includes(q),
-    );
-  }
-  const pageSize = Math.min(Number(params["pageSize"] ?? 100), 500);
-  const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
-  const page = Math.min(Math.max(Number(params["page"] ?? 0), 0), pageCount - 1);
-  return {
-    rows: rows.slice(page * pageSize, (page + 1) * pageSize),
-    total: rows.length,
-    page,
-    pageCount,
-  };
-}
-
-export function getBaseRows(p?: unknown): ApiResult {
-  return run(() => baseRowsData(p));
 }
 
 // ------------------------------------------------------------------ jobs & mutations
@@ -675,18 +651,6 @@ function csvCell(v: unknown): string {
 export function getExportCsv(p?: unknown): ApiResult {
   return run(() => {
     const params = (p ?? {}) as Rec;
-    const which = String(params["source"] ?? "findings");
-    if (which === "base") {
-      const rows = ledgerStore.loadBaseRows() as unknown as Rec[];
-      const cols = [
-        "vuln_key", "cve", "severity", "status", "asset_name", "asset_type", "cloud",
-        "first_seen", "last_seen", "resolved_at", "resolution_src", "reopened_count",
-        "mttr_days", "age_days", "subscription_name",
-      ];
-      const lines = [cols.join(",")];
-      for (const r of rows) lines.push(cols.map((c) => csvCell(r[c])).join(","));
-      return { content: lines.join("\r\n"), filename: "wiz-vulnerability-base.csv" };
-    }
     const scan = findings.currentScan();
     if (!scan) return { content: "", filename: "" };
     const filtered = findings.applyFilters(scan.records, {

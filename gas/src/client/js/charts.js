@@ -70,6 +70,26 @@ function destroyExisting(canvas) {
   if (existing) existing.destroy();
 }
 
+/** Draws each bar's value just past its end (like the Streamlit severity chart). */
+const barEndLabels = {
+  id: "barEndLabels",
+  afterDatasetsDraw(chart) {
+    const { ctx } = chart;
+    const meta = chart.getDatasetMeta(0);
+    ctx.save();
+    ctx.font = `600 11px ${FONT.family}`;
+    ctx.fillStyle = INK2;
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "left";
+    meta.data.forEach((bar, i) => {
+      const v = chart.data.datasets[0].data[i];
+      if (v == null) return;
+      ctx.fillText(Number(v).toLocaleString(), bar.x + 6, bar.y);
+    });
+    ctx.restore();
+  },
+};
+
 /** Horizontal severity bar; clicking a bar toggles that severity filter. */
 export function severityBar(canvas, counts, palette, onClickSeverity) {
   destroyExisting(canvas);
@@ -77,6 +97,9 @@ export function severityBar(canvas, counts, palette, onClickSeverity) {
   const opts = baseOptions();
   opts.indexAxis = "y";
   opts.scales.x.beginAtZero = true;
+  opts.scales.x.ticks.precision = 0;
+  // Headroom so the end-of-bar value labels aren't clipped at the axis edge.
+  opts.scales.x.grace = "8%";
   opts.scales.y.grid = { display: false };
   opts.onClick = (_evt, elements) => {
     if (elements.length && onClickSeverity) onClickSeverity(sevs[elements[0].index]);
@@ -98,6 +121,7 @@ export function severityBar(canvas, counts, palette, onClickSeverity) {
       ],
     },
     options: opts,
+    plugins: [barEndLabels],
   });
 }
 
