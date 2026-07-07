@@ -53,11 +53,15 @@ html, body {
 }
 
 /* ------------------------------------------------------------------ shell / nav */
-#app { display: flex; min-height: 100vh; }
+/* Fixed viewport-height shell: the rail always fills the viewport (pinning the scan
+   zone to the bottom) and the content pane scrolls on its own. */
+#app { display: flex; height: 100vh; overflow: hidden; }
 
 .sidebar {
   width: 232px;
   flex: 0 0 232px;
+  height: 100vh;
+  overflow-y: auto;
   background: var(--surface);
   border-right: 1px solid var(--hairline);
   padding: 16px 12px;
@@ -200,15 +204,21 @@ html, body {
 main {
   flex: 1;
   min-width: 0;
+  height: 100vh;
+  overflow-y: auto;
   padding: 28px 32px 48px;
   max-width: 1200px;
 }
 
 @media (max-width: 800px) {
-  #app { flex-direction: column; }
+  /* Top-bar layout: the rail stacks above the content and the page scrolls
+     normally, so opt back out of the fixed viewport-height shell. */
+  #app { flex-direction: column; height: auto; min-height: 100vh; overflow: visible; }
   .sidebar {
     width: auto;
     flex: none;
+    height: auto;
+    overflow: visible;
     flex-direction: row;
     flex-wrap: wrap;
     align-items: center;
@@ -216,7 +226,7 @@ main {
     border-bottom: 1px solid var(--hairline);
   }
   .sidebar .scan-zone { margin-top: 0; border-top: none; padding-top: 0; }
-  main { padding: 20px 16px 40px; }
+  main { height: auto; overflow: visible; padding: 20px 16px 40px; }
 }
 
 /* ------------------------------------------------------------------- typography */
