@@ -275,11 +275,21 @@ export function getFindingDetail(p?: unknown): ApiResult {
  * read the frame (only it has exploit/exposure fields); aging and movement read
  * the durable ledger.
  */
-function insightsData(): Rec {
+function insightsData(p?: unknown): Rec {
   const scan = findings.currentScan();
   if (!scan) return { flatScan: false };
-  const recs = scan.records;
-  const base = ledgerStore.loadBaseRows();
+  // Global "Value Chain" filter: "" means the whole chain (no filter). The frame
+  // records already carry _domain (findings.currentScan); base rows get it assigned
+  // here, mirroring mttrData/baseRowsData. Filter up front and feed the existing
+  // aggregations unchanged — no insights.ts signature changes.
+  const domain = String((p as Rec)?.["domain"] ?? "");
+  let recs = scan.records;
+  let base = ledgerStore.loadBaseRows();
+  if (domain) {
+    recs = recs.filter((r) => String(r["_domain"] ?? UNASSIGNED) === domain);
+    const compiled = compileDomains(settingsStore.getDomains().items);
+    base = base.filter((r) => assignDomain(r as unknown as Rec, compiled) === domain);
+  }
   const latestFlat = ledgerStore.latestFlatScanRow();
   const breakdowns: Rec = {};
   for (const key of Object.keys(insights.BREAKDOWN_KEYS)) {
@@ -287,7 +297,13 @@ function insightsData(): Rec {
   }
   return {
     flatScan: true,
+    domain,
     scan: { scanId: scan.scanId, ts: scan.ts, total: scan.total },
+    // Domain-scoped severity counts + total so the Overview headline can stay
+    // coherent under a filter (the KPI band otherwise reads whole-scan bootstrap
+    // counts). Movement's new/resolved/reopened remain chain-wide — see below.
+    counts: sevCountsOf(recs),
+    total: recs.length,
     exploit: insights.exploitSummary(recs),
     topAssets: insights.topAssets(recs, 10),
     aging: insights.ageBuckets(base),
@@ -297,9 +313,12 @@ function insightsData(): Rec {
   };
 }
 
-export function getInsights(_p?: unknown): ApiResult {
+export function getInsights(p?: unknown): ApiResult {
   // 1h TTL like the MTTR summary: aging carries wall-clock-relative day counts.
-  return run(() => cached("insights", null, insightsData, 3600));
+  // Keyed on domain so per-chain payloads don't clobber each other.
+  return run(() =>
+    cached("insights", { domain: String((p as Rec)?.["domain"] ?? "") }, () => insightsData(p), 3600),
+  );
 }
 
 // ----------------------------------------------------------------------------- MTTR
@@ -506,11 +525,19 @@ export function getReport(p?: unknown): ApiResult {
     const format = String(params["format"] ?? "markdown");
     const scan = findings.currentScan();
     if (!scan) return { content: "", filename: "", matrix: [] };
+    // Honor the global "Value Chain" filter when present (empty = whole chain).
+    const domains = (params["domains"] as string[]) ?? [];
     const displayed = findings.applyFilters(scan.records, {
       severities: settingsStore.getDisplaySeverities(),
+      domains,
     });
     const counts = sevCountsOf(displayed);
-    const { perSev, overall } = mttrFromLedger(ledgerStore.loadBaseRows() as unknown as Rec[]);
+    let baseRows = ledgerStore.loadBaseRows() as unknown as Rec[];
+    if (domains.length) {
+      const compiled = compileDomains(settingsStore.getDomains().items);
+      baseRows = baseRows.filter((r) => domains.includes(assignDomain(r, compiled)));
+    }
+    const { perSev, overall } = mttrFromLedger(baseRows);
     void perSev;
     const generated = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
     const matrix = [
