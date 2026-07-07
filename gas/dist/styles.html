@@ -5,6 +5,7 @@
    --sev-*-text for any colored label. */
 
 :root {
+  --rail-w: 232px;
   --accent: #2563eb;
   --ink: #171717;
   --graphite: #0a0a0a;
@@ -56,11 +57,11 @@ html, body {
 /* ------------------------------------------------------------------ shell / nav */
 /* Fixed viewport-height shell: the rail always fills the viewport (pinning the scan
    zone to the bottom) and the content pane scrolls on its own. */
-#app { display: flex; height: 100vh; overflow: hidden; }
+#app { display: flex; height: 100vh; overflow: hidden; position: relative; }
 
 .sidebar {
-  width: 232px;
-  flex: 0 0 232px;
+  width: var(--rail-w);
+  flex: 0 0 var(--rail-w);
   height: 100vh;
   overflow-y: auto;
   background: var(--surface);
@@ -215,6 +216,71 @@ main {
   max-width: 1200px;
 }
 
+/* Route-reload overlay: a translucent veil + indeterminate top bar over the content
+   pane (the sidebar stays clear and interactive) while the active page refetches. */
+.route-overlay {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: var(--rail-w);
+  z-index: 20;
+  display: flex;
+  justify-content: center;
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 140ms ease-out, visibility 0s linear 140ms;
+}
+.route-overlay.visible {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto; /* absorb clicks on stale content while it reloads */
+  transition: opacity 140ms ease-out;
+}
+.route-overlay-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.06);
+}
+.route-overlay-fill {
+  width: 40%;
+  height: 100%;
+  background: var(--accent);
+  animation: progress-indeterminate 1.2s ease-in-out infinite;
+}
+.route-overlay-label {
+  margin-top: 84px;
+  align-self: flex-start;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  background: var(--page);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  padding: 5px 12px;
+  box-shadow: var(--shadow-card);
+}
+.route-overlay-label:empty { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  /* No travelling band under reduced motion — a calm static striped fill still
+     reads as "working" (mirrors the scan progress bar's fallback). */
+  .route-overlay-fill {
+    width: 100%;
+    animation: none;
+    background: repeating-linear-gradient(
+      45deg, var(--accent), var(--accent) 8px,
+      color-mix(in srgb, var(--accent) 55%, white) 8px,
+      color-mix(in srgb, var(--accent) 55%, white) 16px);
+  }
+  .route-overlay { transition: none; }
+}
+
 @media (max-width: 800px) {
   /* Top-bar layout: the rail stacks above the content and the page scrolls
      normally, so opt back out of the fixed viewport-height shell. */
@@ -232,6 +298,9 @@ main {
   }
   .sidebar .scan-zone { margin-top: 0; border-top: none; padding-top: 0; }
   main { height: auto; overflow: visible; padding: 20px 16px 40px; }
+  /* Sidebar is a top bar here, so the veil spans the full width. Pin it to the
+     viewport since #app is no longer a fixed-height positioning frame. */
+  .route-overlay { position: fixed; left: 0; }
 }
 
 /* ------------------------------------------------------------------- typography */

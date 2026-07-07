@@ -24,6 +24,34 @@ let mainEl = null;
 // filter). Module-level so it survives route() (which only re-renders mainEl, never
 // the sidebar) and page navigation — nav links carry no state.
 let activeDomain = "";
+
+// Route-reload overlay: veils the content pane (not the sidebar) with a progress bar
+// while the active page refetches — most visibly after a Value Chain change, which
+// otherwise reloads silently. Shown only if the load outlasts a short delay, so cached
+// switches never flash; a sequence guard keeps it up across rapid successive changes.
+let routeOverlay = null;
+let routeSeq = 0;
+let routeLoadingTimer = null;
+const ROUTE_LOADING_DELAY_MS = 120;
+
+function beginRouteLoading() {
+  clearTimeout(routeLoadingTimer);
+  routeLoadingTimer = setTimeout(() => {
+    if (!routeOverlay) return;
+    // Set the live-region text only after the overlay is visible so it announces.
+    routeOverlay.classList.add("visible");
+    const label = routeOverlay.querySelector(".route-overlay-label");
+    if (label) label.textContent = "Updating…";
+  }, ROUTE_LOADING_DELAY_MS);
+}
+
+function endRouteLoading() {
+  clearTimeout(routeLoadingTimer);
+  if (!routeOverlay) return;
+  routeOverlay.classList.remove("visible");
+  const label = routeOverlay.querySelector(".route-overlay-label");
+  if (label) label.textContent = "";
+}
 let jobPoller = null;
 let scanCardHost = null; // the progress-card slot in the current scan zone
 let scanButtonsRow = null; // the Run/Quick buttons, hidden while a job runs
@@ -34,7 +62,16 @@ async function boot() {
   clear(app);
   const sidebar = el("nav", { class: "sidebar", "aria-label": "Main navigation" });
   mainEl = el("main", { id: "main" });
-  app.append(sidebar, mainEl);
+  // Kept out of <main> so clear(mainEl) never removes it and it always covers the
+  // pane regardless of scroll. role=status makes "Updating…" a polite announcement.
+  routeOverlay = el(
+    "div",
+    { class: "route-overlay", role: "status", "aria-live": "polite" },
+    el("div", { class: "route-overlay-bar", "aria-hidden": "true" },
+      el("div", { class: "route-overlay-fill" })),
+    el("span", { class: "route-overlay-label" }),
+  );
+  app.append(sidebar, mainEl, routeOverlay);
   mainEl.append(el("p", { class: "muted" }, "Loading…"));
 
   let data;
@@ -244,6 +281,7 @@ export async function refresh() {
 }
 
 async function route() {
+  const seq = ++routeSeq;
   const { route: key, params } = parseHash();
   const page = PAGES[key] || PAGES.overview;
   document.title = `${page.title} — Wiz Sidekick`;
@@ -255,6 +293,7 @@ async function route() {
     else a.removeAttribute("aria-current");
   });
   clear(mainEl);
+  beginRouteLoading();
   try {
     await page.render(mainEl, params, { refresh, domain: activeDomain });
   } catch (e) {
@@ -264,6 +303,9 @@ async function route() {
         el("div", { class: "small", style: "margin-top:6px" }, String(e.message || e)),
       ),
     );
+  } finally {
+    // Only the latest route settles the overlay; a newer change keeps it up.
+    if (seq === routeSeq) endRouteLoading();
   }
 }
 

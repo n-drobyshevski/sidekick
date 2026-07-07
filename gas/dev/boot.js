@@ -88,6 +88,11 @@
     console.log(`[dev] seeded ${kind} scan job`);
   })();
 
+  // Optional artificial RPC latency (?slow=<ms>) so loading states — the route-reload
+  // overlay, scan progress card, etc. — are exercisable locally; RPCs are otherwise
+  // near-instant in dev. Default 0 keeps normal behavior.
+  const SLOW_MS = Math.max(0, Number(new URLSearchParams(location.search).get("slow")) || 0);
+
   // google.script.run shim: same contract as the GAS client bridge — chainable
   // handler setters, then any method name invokes the RPC. api_<name> maps to
   // Server.api[<name>] (mirroring dist/entry.js); results are delivered async.
@@ -117,7 +122,7 @@
               if (onFailure) onFailure(e);
               else console.error(`[dev] RPC ${prop} failed:`, e);
             }
-          }, 0);
+          }, SLOW_MS);
         };
       },
     });
