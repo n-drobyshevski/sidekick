@@ -35,6 +35,12 @@ export interface JobRow {
   updated_at: string;
 }
 
+/** Normalize a persisted error cell: real messages survive; "", "null", "undefined" → null. */
+function normError(v: unknown): string | null {
+  const s = v == null ? "" : String(v).trim();
+  return s === "" || s === "null" || s === "undefined" ? null : s;
+}
+
 export function newJobId(kind: JobKind, now?: number): string {
   // Deterministic-enough id without uuid: kind + timestamp + a counter suffix from
   // the tab length is unnecessary — timestamps are second-precision and jobs are
@@ -68,7 +74,7 @@ export function listJobs(): JobRow[] {
     total_count: Number(r["total_count"] ?? 0),
     params_json: (r["params_json"] as string | null) ?? null,
     journal_ref: (r["journal_ref"] as string | null) ?? null,
-    error: (r["error"] as string | null) ?? null,
+    error: normError(r["error"]),
     started_at: String(r["started_at"] ?? ""),
     updated_at: String(r["updated_at"] ?? ""),
   }));

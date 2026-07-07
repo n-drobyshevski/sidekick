@@ -20,6 +20,13 @@ const PHASE_LABEL = {
 };
 const RUNNING_PHASES = ["FETCHING", "RECONCILING", "PERSISTING", "REPLAYING"];
 const STALL_MS = 15000; // between trigger hops (30s delay) this flags "waiting…"
+const STUCK_MS = 5 * 60 * 1000; // no progress this long → likely dead, surface a recovery path
+
+/** Empty, or the literal strings "null"/"undefined" that a bad round-trip can leave. */
+function cleanError(err) {
+  const raw = err == null ? "" : String(err).trim();
+  return raw === "" || raw === "null" || raw === "undefined" ? "" : raw;
+}
 
 function parseMs(iso) {
   const t = Date.parse(iso || "");
@@ -72,6 +79,10 @@ export function scanProgressView(job, nowMs) {
     phase === "FETCHING" &&
     updatedMs !== null &&
     nowMs - updatedMs > STALL_MS;
+  // A far longer gap means the job almost certainly died mid-flight (killed execution,
+  // no pending continuation) — worth an actionable "may have stopped" prompt.
+  const stuck =
+    state === "running" && updatedMs !== null && nowMs - updatedMs > STUCK_MS;
 
   let phaseLabel = PHASE_LABEL[phase] || phase || "Working";
   if (stalled) phaseLabel = "Waiting for next step…";
@@ -93,8 +104,9 @@ export function scanProgressView(job, nowMs) {
     countsText,
     elapsedText: fmtElapsed(startedMs === null ? null : nowMs - startedMs),
     stalled,
+    stuck,
     canStop: state === "running" && phase === "FETCHING",
-    error: job.error || "",
+    error: cleanError(job.error),
   };
 }
 
@@ -138,34 +150,53 @@ export function renderScanCard(host, job, { onStop, onDetails, nowMs, stopping }
 }
 
 /** Detailed drawer: phase stepper + counts + elapsed + mode (+ error). */
-export function openScanDetails(job, nowMs) {
+export function openScanDetails(job, opts = {}) {
+  const { nowMs, onStop } = opts;
   const v = scanProgressView(job, nowMs || Date.now());
-  return openSheet((sheet, close) => {
-    const stepper = el("div", { class: "scan-steps" });
-    for (const s of v.steps) {
-      const glyph = s.status === "done" ? "✓" : s.status === "active" ? "●" : "○";
-      stepper.append(
-        el("div", { class: `scan-step ${s.status}` },
-          el("span", { class: "scan-step-dot", "aria-hidden": "true" }, glyph),
-          el("span", {}, s.label)),
-      );
-    }
-    sheet.append(
-      el("h2", {}, "Scan progress"),
-      el("div", { class: "muted small", style: "margin-bottom:12px" }, scanMode(job)),
-      stepper,
-      progressBar(v.pct, v.state === "running" ? "" : v.state),
-      el("dl", { class: "scan-detail-grid" },
-        el("dt", {}, "Status"), el("dd", {}, v.phaseLabel),
-        el("dt", {}, "Findings"),
-        el("dd", {}, `${Number(job.findings_so_far || 0).toLocaleString()}` +
-          (Number(job.total_count || 0) > 0 ? ` of ${Number(job.total_count).toLocaleString()}` : "")),
-        el("dt", {}, "Pages"), el("dd", {}, String(job.page || 0)),
-        el("dt", {}, "Elapsed"), el("dd", {}, v.elapsedText || "—"),
-      ),
-      v.error ? el("div", { class: "scan-detail-error" }, v.error) : null,
-      el("div", { class: "sheet-actions", style: "margin-top:16px" },
-        el("button", { class: "primary", onclick: close }, "Close")),
-    );
-  });
+  return openSheet(
+    (body, close) => {
+      const stepper = el("div", { class: "scan-steps" });
+      for (const s of v.steps) {
+        const glyph = s.status === "done" ? "✓" : s.status === "active" ? "●" : "○";
+        stepper.append(
+          el("div", { class: `scan-step ${s.status}` },
+            el("span", { class: "scan-step-dot", "aria-hidden": "true" }, glyph),
+            el("span", {}, s.label)),
+        );
+      }
+
+      const actions = el("div", { class: "sheet-actions", style: "margin-top:16px" });
+      if (v.canStop && onStop) {
+        actions.append(el("button", { class: "danger", onclick: () => { onStop(); close(); } },
+          "Stop scan"));
+      }
+      actions.append(el("button", { class: "primary", onclick: close }, "Close"));
+
+      // Note: native Node.append() stringifies null into a literal "null" text node
+      // (unlike el(), which drops it) — so conditional children are filtered out here.
+      const children = [
+        stepper,
+        progressBar(v.pct, v.state === "running" ? "" : v.state),
+        // A long silence almost always means the run died — say so and offer a way out.
+        v.stuck
+          ? el("div", { class: "scan-stall-note", role: "status" },
+              el("span", { "aria-hidden": "true" }, "⚠ "),
+              "No progress for a while — the scan may have stopped. " +
+                (v.canStop && onStop ? "Stop it and run again." : "Try running it again."))
+          : null,
+        el("dl", { class: "scan-detail-grid" },
+          el("dt", {}, "Status"), el("dd", {}, v.phaseLabel),
+          el("dt", {}, "Findings"),
+          el("dd", {}, `${Number(job.findings_so_far || 0).toLocaleString()}` +
+            (Number(job.total_count || 0) > 0 ? ` of ${Number(job.total_count).toLocaleString()}` : "")),
+          el("dt", {}, "Pages"), el("dd", {}, String(job.page || 0)),
+          el("dt", {}, "Elapsed"), el("dd", {}, v.elapsedText || "—"),
+        ),
+        v.error ? el("div", { class: "scan-detail-error" }, v.error) : null,
+        actions,
+      ];
+      body.append(...children.filter(Boolean));
+    },
+    { title: "Scan progress", subtitle: scanMode(job), ariaLabel: "Scan progress" },
+  );
 }

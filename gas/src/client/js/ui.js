@@ -182,13 +182,14 @@ export function confirmDialog({ title, body, confirmLabel = "Confirm", danger = 
 }
 
 /** Right-anchored sheet (the signature drill-down overlay). Returns {close}. */
-export function openSheet(renderBody) {
+export function openSheet(renderBody, opts = {}) {
+  const { title = "", subtitle = "", ariaLabel = title || "Detail" } = opts;
   const scrim = el("div", { class: "sheet-scrim" });
   const sheet = el("aside", {
     class: "sheet",
     role: "dialog",
     "aria-modal": "true",
-    "aria-label": "Finding detail",
+    "aria-label": ariaLabel,
     tabindex: "-1",
   });
   const prevFocus = document.activeElement;
@@ -222,7 +223,19 @@ export function openSheet(renderBody) {
   scrim.addEventListener("click", close);
   document.addEventListener("keydown", onKey);
   document.body.append(scrim, sheet);
-  renderBody(sheet, close);
+  if (title) {
+    sheet.append(
+      el("div", { class: "sheet-header" },
+        el("div", { class: "sheet-heading" },
+          el("h2", { class: "sheet-title" }, title),
+          subtitle ? el("div", { class: "sheet-subtitle muted small" }, subtitle) : null),
+        el("button", { class: "sheet-close", "aria-label": "Close", onclick: close }, "✕")),
+    );
+  }
+  // Content always lands in a padded, scrollable body — never the bare sheet frame.
+  const body = el("div", { class: "sheet-body" });
+  sheet.append(body);
+  renderBody(body, close);
   requestAnimationFrame(() => {
     scrim.classList.add("open");
     sheet.classList.add("open");
