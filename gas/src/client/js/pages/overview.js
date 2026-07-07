@@ -6,12 +6,35 @@
 import { hBar, severityBar, stackedAgeBar } from "../charts.js";
 import { bootstrap, setParams, swrCall } from "../store.js";
 import {
-  changeChip, clear, el, emptyState, kpiCard, nvdUrl, sectionLabel, sevBadge,
+  clear, el, emptyState, kpiCard, nvdUrl, sectionLabel, sevBadge,
 } from "../ui.js";
 
 // Keep in sync with AGE_BUCKET_LABELS in src/domain/insights.ts (the client bundle
 // can't import the TS domain module).
 const AGE_LABELS = ["0-7d", "8-30d", "31-90d", "90+d"];
+
+// UPPERCASE severity key -> Title Case display label ("CRITICAL" -> "Critical").
+function sevTitle(sev) {
+  return sev.charAt(0) + sev.slice(1).toLowerCase();
+}
+
+/** Streamlit-style signed delta chip vs a previous value: arrow + absolute change +
+ *  "· ±N%". A rising count is worse (red), falling is better (green), unchanged shows a
+ *  neutral ±0. Returns null when there's no previous value to compare against. */
+function deltaChip(current, previous) {
+  if (previous === null || previous === undefined || Number.isNaN(previous)) return null;
+  const delta = current - previous;
+  if (!delta) return el("span", { class: "sev-delta flat" }, "±0");
+  const rising = delta > 0;
+  const arrow = rising ? "▲" : "▼";
+  const sign = rising ? "+" : "−";
+  const mag = Math.abs(delta).toLocaleString();
+  const pct = previous ? Math.round(Math.abs((delta / previous) * 100)) : null;
+  return el("span", { class: `sev-delta ${rising ? "bad" : "good"}` },
+    el("span", { "aria-hidden": "true" }, arrow), ` ${sign}${mag}`,
+    pct !== null ? el("span", { class: "sev-delta-pct" }, ` · ${sign}${pct}%`) : null,
+  );
+}
 
 // Grouping options for the configurable breakdown section. Domain has its own
 // dedicated "By domain" section (renderByDomain), so it's not offered here.
@@ -47,12 +70,16 @@ export async function renderOverview(main, params, ctx) {
 
   const kpiRow = el("div", { class: "kpi-row" });
   const sevChartCanvas = el("canvas", { id: "sev-chart" });
+  const sevCardHost = el("div", {});
+  // Severity breakdown: a section label over two columns — the per-severity stat card
+  // (left) beside the severity bar (right), mirroring the Streamlit OS-vulns page.
   const sevSection = el("div", {},
-    el("div", { class: "chart-card" },
-      el("h3", {}, "Severity breakdown"),
-      el("div", { class: "chart-box" }, sevChartCanvas),
+    sectionLabel("Severity breakdown"),
+    el("div", { class: "chart-grid", style: "align-items:start" },
+      sevCardHost,
+      el("div", { class: "chart-card" },
+        el("div", { class: "chart-box" }, sevChartCanvas)),
     ),
-    el("div", { class: "kpi-row", style: "margin-top:14px" }),
   );
   const insightsHost = el("div", {}, el("p", { class: "muted" }, "Computing insights…"));
   main.append(kpiRow, sevSection, insightsHost);
@@ -67,11 +94,11 @@ export async function renderOverview(main, params, ctx) {
   };
   paint(await swrCall("api_getInsights", { domain: ctx.domain || "" }, paint));
 
-  /** KPI band + severity breakdown. At the whole-chain view ("Value Chain") counts
-   *  come from bootstrap so they match the sidebar and survive grouped scans. Under a
-   *  Value Chain filter they come from the (domain-scoped) insights payload instead —
-   *  otherwise the band would read whole-scan while Open below it is filtered. No
-   *  per-chain baseline exists, so the scan-over-scan change chips are dropped there. */
+  /** Scan-summary band (Total / Open / Resolved) + severity breakdown. At the
+   *  whole-chain view counts come from bootstrap so they match the sidebar and survive
+   *  grouped scans; under a Value Chain filter they come from the (domain-scoped)
+   *  insights payload instead. Open/Resolved need insights, so they show "…" until it
+   *  loads. */
   function renderHeadline(insights) {
     clear(kpiRow);
     const filtered = !!(ctx.domain && insights && insights.flatScan);
@@ -79,34 +106,49 @@ export async function renderOverview(main, params, ctx) {
     const total = filtered
       ? insights.total
       : Object.values(boot.counts).reduce((a, b) => a + b, 0);
-    const chip = (s) => (filtered ? null : changeChip(boot.counts[s], boot.prevCounts[s]));
+    const open = insights && insights.flatScan ? insights.exploit.open : null;
     kpiRow.append(
       kpiCard("Total findings", total.toLocaleString(),
         `scan ${boot.latestScan.ts.slice(0, 10)} — ${boot.latestScan.mode}`),
-      kpiCard("Open", insights && insights.flatScan
-        ? insights.exploit.open.toLocaleString() : "…",
-        "awaiting remediation"),
-      ...boot.palette.order
-        .filter((s) => counts[s])
-        .slice(0, 2)
-        .map((s) => kpiCard(s, counts[s].toLocaleString(), null, chip(s))),
+      kpiCard("Open", open !== null ? open.toLocaleString() : "…", "awaiting remediation"),
+      kpiCard("Resolved", open !== null ? (total - open).toLocaleString() : "…",
+        "closed in this scan"),
     );
     requestAnimationFrame(() => {
       severityBar(sevChartCanvas, counts, boot.palette);
     });
-    const cards = clear(sevSection.lastChild);
-    for (const sev of boot.palette.order) {
-      if (!counts[sev]) continue;
-      cards.append(
-        el("div", { class: "kpi-card" },
-          sevBadge(sev),
-          el("div", { class: "kpi-value num" },
-            counts[sev].toLocaleString(),
-            chip(sev),
-          ),
+    renderSevCard(insights, filtered, counts);
+  }
+
+  /** Severity breakdown card (mirrors the Streamlit stat list): one row per severity
+   *  CRITICAL–LOW (INFO/UNKNOWN omitted), each a color dot + label, the count with an
+   *  "N open · N resolved" split, and a delta chip vs the previous scan. The split
+   *  needs the insights payload; the delta is dropped under a Value Chain filter (no
+   *  per-chain baseline), matching the headline. */
+  function renderSevCard(insights, filtered, counts) {
+    const sevStats = insights && insights.flatScan ? insights.sevStats : null;
+    const card = el("div", { class: "stat-card" });
+    for (const sev of ["CRITICAL", "HIGH", "MEDIUM", "LOW"]) {
+      const count = counts[sev] || 0;
+      const stat = sevStats && sevStats[sev];
+      card.append(
+        el("div", { class: "stat-card__row" },
+          el("span", { class: "stat-card__name" },
+            el("span", { class: "sev-dot", "aria-hidden": "true",
+              style: `background:${boot.palette.colors[sev]}` }),
+            sevTitle(sev)),
+          el("span", { class: "stat-card__value-group" },
+            el("span", { class: "stat-card__value num" }, count.toLocaleString()),
+            stat
+              ? el("span", { class: "stat-card__sub-value" },
+                `${(stat.open || 0).toLocaleString()} open · ` +
+                `${(stat.resolved || 0).toLocaleString()} resolved`)
+              : null),
+          filtered ? null : deltaChip(count, boot.prevCounts[sev]),
         ),
       );
     }
+    clear(sevCardHost).append(card);
   }
 
   function renderInsights(insights) {

@@ -60,6 +60,30 @@ export interface ExploitSummary {
   exposureKnown: boolean;
 }
 
+export interface SeverityStat {
+  total: number;
+  open: number;
+  resolved: number;
+}
+
+/**
+ * Per-severity total / open / resolved over the current-scan frame — the severity
+ * breakdown card's data (count with an "N open · N resolved" split). Open vs resolved
+ * is the same status test the rest of this module uses; every record lands in exactly
+ * one bucket, so open + resolved === total per severity.
+ */
+export function severityStats(records: Rec[]): Record<string, SeverityStat> {
+  const out: Record<string, SeverityStat> = {};
+  for (const r of records) {
+    const s = sev(r);
+    const stat = out[s] ?? (out[s] = { total: 0, open: 0, resolved: 0 });
+    stat.total += 1;
+    if (isOpen(r["status"])) stat.open += 1;
+    else stat.resolved += 1;
+  }
+  return out;
+}
+
 /** Aggregate exploit signals over OPEN current-scan records (only the frame has them). */
 export function exploitSummary(records: Rec[]): ExploitSummary {
   const out: ExploitSummary = {

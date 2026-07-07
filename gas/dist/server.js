@@ -2655,6 +2655,18 @@ var Server = (() => {
     const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
     return Number.isFinite(n) ? n : null;
   }
+  function severityStats(records) {
+    var _a;
+    const out = {};
+    for (const r of records) {
+      const s = sev(r);
+      const stat = (_a = out[s]) != null ? _a : out[s] = { total: 0, open: 0, resolved: 0 };
+      stat.total += 1;
+      if (isOpen(r["status"])) stat.open += 1;
+      else stat.resolved += 1;
+    }
+    return out;
+  }
   function exploitSummary(records) {
     const out = {
       open: 0,
@@ -4507,6 +4519,8 @@ var Server = (() => {
       // counts). Movement's new/resolved/reopened remain chain-wide — see below.
       counts: sevCountsOf(recs),
       total: recs.length,
+      // Per-severity total/open/resolved for the severity breakdown card.
+      sevStats: severityStats(recs),
       exploit: exploitSummary(recs),
       topAssets: topAssets(recs, 10),
       aging: ageBuckets(base),

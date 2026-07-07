@@ -304,6 +304,8 @@ function insightsData(p?: unknown): Rec {
     // counts). Movement's new/resolved/reopened remain chain-wide — see below.
     counts: sevCountsOf(recs),
     total: recs.length,
+    // Per-severity total/open/resolved for the severity breakdown card.
+    sevStats: insights.severityStats(recs),
     exploit: insights.exploitSummary(recs),
     topAssets: insights.topAssets(recs, 10),
     aging: insights.ageBuckets(base),

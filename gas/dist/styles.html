@@ -414,6 +414,46 @@ label.field-label { display: block; font-size: 12px; color: var(--text-2); margi
 .sev-UNKNOWN { background: rgba(71, 85, 105, 0.14); color: var(--sev-unknown-text); }
 .sev-UNKNOWN .sev-dot { background: var(--sev-unknown); }
 
+/* ------------------------------------------- severity breakdown stat list (+ delta) */
+/* A bordered card of one row per severity: dot + label (left), count over an
+   open/resolved sub-line (right), and a signed delta chip. Mirrors the Streamlit
+   .stat-card so the two visual systems stay in sync. */
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-xl);
+  padding: 0 16px;
+  box-shadow: var(--shadow-card);
+}
+.stat-card__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--hairline);
+}
+.stat-card__row:first-child { border-top: none; }
+.stat-card__name {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+}
+.stat-card__value-group { display: flex; flex-direction: column; align-items: flex-end; }
+.stat-card__value { font-size: 18px; font-weight: 600; line-height: 1.2; }
+.stat-card__sub-value { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+.sev-delta {
+  min-width: 58px; text-align: right;
+  font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.sev-delta.bad { color: var(--bad); }
+.sev-delta.good { color: var(--ok); }
+.sev-delta.flat { color: var(--text-3); }
+.sev-delta-pct { color: var(--text-3); font-weight: 500; }
+
 /* status pills */
 .pill { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 2px 9px; font-size: 12px; font-weight: 600; }
 .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }

@@ -6,6 +6,7 @@ import {
   breakdown,
   exploitSummary,
   movement,
+  severityStats,
   topAssets,
   topCves,
 } from "../src/domain/insights";
@@ -18,6 +19,22 @@ const ASSET = "vulnerableAsset.name";
 function rec(over: Rec = {}): Rec {
   return { name: "CVE-2024-0001", severity: "HIGH", _sev: "HIGH", status: "OPEN", ...over };
 }
+
+describe("severityStats", () => {
+  it("splits each severity into total / open / resolved", () => {
+    const records = [
+      rec({ _sev: "CRITICAL", status: "OPEN" }),
+      rec({ _sev: "CRITICAL", status: "RESOLVED" }),
+      rec({ _sev: "CRITICAL", status: "OPEN" }),
+      rec({ _sev: "HIGH", status: "RESOLVED" }),
+    ];
+    const stats = severityStats(records);
+    expect(stats.CRITICAL).toEqual({ total: 3, open: 2, resolved: 1 });
+    expect(stats.HIGH).toEqual({ total: 1, open: 0, resolved: 1 });
+    // open + resolved === total for every bucket
+    for (const s of Object.values(stats)) expect(s.open + s.resolved).toBe(s.total);
+  });
+});
 
 describe("exploitSummary", () => {
   it("counts open findings only", () => {
