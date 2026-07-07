@@ -26,14 +26,19 @@
 
   // Seed: 7 daily dry-run scans. Each dry-run scan deterministically resolves one
   // more open sample finding, so scan-over-scan deltas and MTTR are non-trivial.
+  // ?noseed leaves a fresh, empty ledger — for exercising the migration import paths.
   const DAY = 86_400_000;
   const SEED_SCANS = 7;
-  const base = RealDate.now() - (SEED_SCANS - 1) * DAY;
-  for (let i = 0; i < SEED_SCANS; i++) {
-    const res = withNow(base + i * DAY, () => Server.api.runScan({}));
-    if (!res.ok) console.error("[dev] seed scan failed:", res.error);
+  if (new URLSearchParams(location.search).has("noseed")) {
+    console.log("[dev] ?noseed — fresh empty ledger");
+  } else {
+    const base = RealDate.now() - (SEED_SCANS - 1) * DAY;
+    for (let i = 0; i < SEED_SCANS; i++) {
+      const res = withNow(base + i * DAY, () => Server.api.runScan({}));
+      if (!res.ok) console.error("[dev] seed scan failed:", res.error);
+    }
+    console.log(`[dev] seeded ${SEED_SCANS} dry-run scans`);
   }
-  console.log(`[dev] seeded ${SEED_SCANS} dry-run scans`);
 
   // Seed a few value chains so the sidebar's global Value Chain filter (and the
   // Overview "by domain" breakdown) are exercisable in dev. Sample asset names encode

@@ -37,12 +37,19 @@ import {
   type DeleteResult,
 } from "../domain/maintenance";
 import type { Deltas, LedgerRow } from "../domain/reconcile";
+import {
+  applyShardCore,
+  beginImportSession,
+  checkpointManifest,
+  type BeganSession,
+} from "../domain/importShard";
 import { trendFromFrames, type TrendPoint } from "../domain/trend";
 import { nowIso, type Rec } from "../domain/util";
 import * as archive from "./archiveStore";
-import { createJob, newJobId, updateJob } from "./jobsStore";
+import * as history from "./historyStore";
+import { activeJob, createJob, getJob, newJobId, updateJob } from "./jobsStore";
 import { bumpDataVersion } from "./serverCache";
-import { appendRows, overwrite, readAll, TABS } from "./sheetsDb";
+import { appendRows, dataRowCount, overwrite, readAll, truncateAfter, TABS } from "./sheetsDb";
 
 // ------------------------------------------------------------------ state load/save
 
@@ -450,6 +457,243 @@ export function importBundle(bundle: MigrationBundle): ImportCounts {
   updateJob(jobId, { phase: "DONE" }, nowMs);
   archive.trashFile(journalRef);
   return counts;
+}
+
+// ------------------------------------------------------------- sharded (multi-part) import
+//
+// For a FRESH ledger the merge is per-row (see domain/importShard.ts), so a bundle too big
+// for the one-shot path is uploaded as capped shards and rebuilt across several bounded
+// executions: begin (guard + stage manifest) → applyShard × N (chunked appends, resumable
+// by committed row counts) → finalize (append scans + the single compaction record = the
+// commit + best-effort snapshot). No execution ever holds the whole dataset or does a
+// wholesale rewrite. The one-shot importBundle path above is untouched.
+
+const APPEND_CHUNK = 5000; // rows per setValues, well under Sheets per-call limits
+
+interface ImportSessionState {
+  sessionId: string;
+  compactionId: string;
+  shardCount: number;
+  appliedShards: number;
+  ledgerCommitted: number;
+  episodesCommitted: number;
+  partIds: string[];
+  floorScanId: string | null;
+  floorTs: string | null;
+  sealedIds: string[];
+  scansTotal: number;
+  counts: { vulns_imported: number; episodes_imported: number; episodes_converted: number };
+}
+
+function importJobState(job: { params_json: string | null }): ImportSessionState {
+  return JSON.parse(job.params_json ?? "{}") as ImportSessionState;
+}
+
+function activeImportJob(sessionId?: string) {
+  const job = activeJob();
+  if (!job || job.kind !== "import") return null;
+  const st = importJobState(job);
+  if (sessionId !== undefined && st.sessionId !== sessionId) return null;
+  return { job, st };
+}
+
+function chunkedAppend(tab: string, rows: Rec[]): void {
+  for (let i = 0; i < rows.length; i += APPEND_CHUNK) {
+    appendRows(tab, rows.slice(i, i + APPEND_CHUNK));
+  }
+}
+
+export interface ImportProgress {
+  sessionId: string;
+  jobId: string;
+  shardCount: number;
+  appliedShards: number;
+}
+
+/** Start (or resume) a sharded import. Guards a fresh ledger, stages the manifest, opens the job. */
+export function importBeginSharded(rawManifest: unknown): ImportProgress {
+  // Already staging this or another import → resume (idempotent begin).
+  const existing = activeImportJob();
+  if (existing) {
+    return {
+      sessionId: existing.st.sessionId, jobId: existing.job.job_id,
+      shardCount: existing.st.shardCount, appliedShards: existing.st.appliedShards,
+    };
+  }
+  if (loadScanRows().length || readAll(TABS.compactions).length) {
+    throw new ImportValidationError(
+      "This ledger already has scans or a compaction record — the migration import needs a " +
+        "fresh, never-compacted ledger.",
+    );
+  }
+
+  const session: BeganSession = beginImportSession(rawManifest);
+  const nowMs = Date.now();
+  const compactionId = `imp-${nowIso(nowMs).replace(/[:]/g, "")}`;
+  const sessionId = session.manifest.session_id || newJobId("import", nowMs);
+
+  // Clear any leftover rows from a crashed prior session and stale snapshot.
+  overwrite(TABS.vulnLedger, []);
+  overwrite(TABS.episodes, []);
+  archive.trashLedgerSnapshot();
+
+  archive.writeImportManifest(sessionId, {
+    scans: session.manifest.scans,
+    mttr_history: session.manifest.mttr_history,
+    compactionId, floorScanId: session.floorScanId, floorTs: session.floorTs,
+    shardCount: session.manifest.shard_count,
+  });
+
+  const jobId = newJobId("import", nowMs);
+  const st: ImportSessionState = {
+    sessionId, compactionId, shardCount: session.manifest.shard_count,
+    appliedShards: 0, ledgerCommitted: 0, episodesCommitted: 0, partIds: [],
+    floorScanId: session.floorScanId, floorTs: session.floorTs,
+    sealedIds: [...session.sealedIds], scansTotal: session.sealedScans.length,
+    counts: { vulns_imported: 0, episodes_imported: 0, episodes_converted: 0 },
+  };
+  createJob(
+    {
+      job_id: jobId, kind: "import", phase: "STAGING", scan_id: null, cursor: null,
+      page: 0, findings_so_far: 0, page_size: 0, total_count: session.manifest.shard_count,
+      params_json: JSON.stringify(st), journal_ref: null, error: null,
+    },
+    nowMs,
+  );
+  invalidateLedgerMemos();
+  return { sessionId, jobId, shardCount: st.shardCount, appliedShards: 0 };
+}
+
+/** Apply one shard's rows (chunked appends). Idempotent + resumable by committed counts. */
+export function importApplyShard(
+  sessionId: string, index: number, shard: { ledger?: Rec[]; episodes?: Rec[] },
+): ImportProgress {
+  const active = activeImportJob(sessionId);
+  if (!active) throw new ImportValidationError("No active import session — begin the import first.");
+  const { job } = active;
+  const st = active.st;
+
+  if (index < st.appliedShards) {
+    // Already applied (client retry) — no-op.
+    return { sessionId, jobId: job.job_id, shardCount: st.shardCount, appliedShards: st.appliedShards };
+  }
+  if (index !== st.appliedShards) {
+    throw new ImportValidationError(
+      `Shards must arrive in order — expected shard ${st.appliedShards}, got ${index}.`,
+    );
+  }
+
+  // Roll back a half-applied append from a crash before re-applying (exactly-once).
+  if (dataRowCount(TABS.vulnLedger) > st.ledgerCommitted) truncateAfter(TABS.vulnLedger, st.ledgerCommitted);
+  if (dataRowCount(TABS.episodes) > st.episodesCommitted) truncateAfter(TABS.episodes, st.episodesCommitted);
+
+  archive.stageShard(sessionId, index, shard); // durable before applying
+
+  const out = applyShardCore(shard, {
+    sealedIds: new Set(st.sealedIds), compactionId: st.compactionId,
+  });
+  chunkedAppend(TABS.vulnLedger, out.ledgerRows as unknown as Rec[]);
+  chunkedAppend(TABS.episodes, out.episodeRows as unknown as Rec[]);
+  const partId = archive.writeCheckpointPart(st.compactionId, index, out.checkpointRows);
+
+  const next: ImportSessionState = {
+    ...st,
+    appliedShards: index + 1,
+    ledgerCommitted: st.ledgerCommitted + out.ledgerRows.length,
+    episodesCommitted: st.episodesCommitted + out.episodeRows.length,
+    partIds: [...st.partIds, partId],
+    counts: {
+      vulns_imported: st.counts.vulns_imported + out.vulnsImported,
+      episodes_imported: st.counts.episodes_imported + out.episodesImported,
+      episodes_converted: st.counts.episodes_converted + out.episodesConverted,
+    },
+  };
+  updateJob(job.job_id, { phase: "APPLYING", params_json: JSON.stringify(next) });
+  invalidateLedgerMemos();
+  return { sessionId, jobId: job.job_id, shardCount: st.shardCount, appliedShards: next.appliedShards };
+}
+
+/** Commit the import: append sealed scans + the single compaction record, merge history. */
+export function importFinalizeSharded(sessionId: string): ImportCounts & {
+  history_added: number;
+  history_skipped: number;
+} {
+  const active = activeImportJob(sessionId);
+  if (!active) throw new ImportValidationError("No active import session to finalize.");
+  const { job } = active;
+  const st = active.st;
+  if (st.appliedShards !== st.shardCount) {
+    throw new ImportValidationError(
+      `Import incomplete — ${st.appliedShards} of ${st.shardCount} shards applied.`,
+    );
+  }
+  updateJob(job.job_id, { phase: "FINALIZING" });
+
+  // Re-derive the sealed scans + full history from the staged manifest (small).
+  const rawManifest = archive.readImportManifest(sessionId) as Rec | null;
+  const session = beginImportSession({
+    kind: "wiz-sidekick-migration-manifest", version: 1, shard_count: st.shardCount,
+    session_id: sessionId, scans: (rawManifest?.["scans"] as Rec[]) ?? [],
+    mttr_history: (rawManifest?.["mttr_history"] as Rec[]) ?? [],
+    totals: { ledger: 0, episodes: 0 },
+  });
+
+  // Append sealed scans (dedup for finalize-resume).
+  const present = new Set(loadScanRows().map((s) => s.scan_id));
+  const toAppend = session.sealedScans.filter((s) => !present.has(s.scan_id));
+  chunkedAppend(TABS.scans, toAppend as unknown as Rec[]);
+  invalidateLedgerMemos();
+
+  // Checkpoint manifest stitching the parts, then THE COMMIT (idempotent).
+  const cpRef = archive.writeCheckpointManifest(
+    st.compactionId, checkpointManifest(st.floorScanId, st.floorTs, st.partIds),
+  );
+  if (readAll(TABS.compactions).length === 0) {
+    appendRows(TABS.compactions, [
+      {
+        compaction_id: st.compactionId, ts: nowIso(),
+        floor_scan_id: st.floorScanId, floor_ts: st.floorTs,
+        scans_sealed: st.scansTotal,
+        episodes_created: st.counts.episodes_imported + st.counts.episodes_converted,
+        observations_pruned: 0, archive_bytes_freed: 0, db_bytes_freed: 0,
+        checkpoint_ref: cpRef,
+      },
+    ]);
+  }
+
+  const hist = history.importHistory((rawManifest?.["mttr_history"] as Rec[]) ?? []);
+
+  // Best-effort snapshot from the tabs (the one whole-ledger serialize; safe if it OOMs —
+  // loadState falls back to the tabs and the first post-import scan heals it).
+  try {
+    archive.writeLedgerSnapshot(loadState(false));
+  } catch (e) {
+    console.warn(`Post-import snapshot skipped: ${e}`);
+  }
+  invalidateLedgerMemos();
+  updateJob(job.job_id, { phase: "DONE" });
+  archive.trashImportSession(sessionId);
+
+  return {
+    scans_imported: st.scansTotal, scans_skipped: 0,
+    vulns_imported: st.counts.vulns_imported,
+    episodes_imported: st.counts.episodes_imported,
+    episodes_converted: st.counts.episodes_converted,
+    scans_replayed: 0,
+    history_added: hist.added, history_skipped: hist.skipped,
+  };
+}
+
+/** Abandon a sharded import: clear the partial rows and the session. */
+export function importAbortSharded(sessionId: string): { aborted: boolean } {
+  const active = activeImportJob(sessionId);
+  overwrite(TABS.vulnLedger, []);
+  overwrite(TABS.episodes, []);
+  archive.trashLedgerSnapshot();
+  archive.trashImportSession(sessionId);
+  invalidateLedgerMemos();
+  if (active) updateJob(active.job.job_id, { phase: "CANCELLED", error: null });
+  return { aborted: true };
 }
 
 // -------------------------------------------------------------------------- compact

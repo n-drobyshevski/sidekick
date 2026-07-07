@@ -248,6 +248,75 @@ def test_slim_open_reduces_open_rows_only(tmp_path):
     assert slim_live["mttr_history"] == full_live["mttr_history"]
 
 
+def _big_open_db(tmp_path, n=120):
+    db = _db(tmp_path)
+    nodes = [_node(f"F{i}", f"CVE-{i}", "HIGH", "OPEN", f"vm-{i}") for i in range(n)]
+    for x in nodes:
+        x["vulnerableAsset"]["tags"] = {f"t{k}": "x" * 80 for k in range(10)}
+    ledger.persist_flat_scan(
+        nodes, mode="live", db_path=db, scan_id="2026-06-20T06:00:00Z",
+        raw={"data": {"vulnerabilityFindings": {"nodes": nodes}}},
+    )
+    return db
+
+
+def test_sharded_is_a_lossless_partition(tmp_path):
+    db = _big_open_db(tmp_path)
+    hist = _db(tmp_path).with_name("none.json")
+    live, _ = migrate.build_split_bundles(db, hist, None)
+    manifest, shards = migrate.build_sharded_export(db, hist, None, shard_bytes=4096)
+    assert len(shards) > 1  # the cap actually split it
+    assert manifest["shard_count"] == len(shards)
+    # Every live row lands in exactly one shard.
+    led = [r for s in shards for r in s["ledger"]]
+    eps = [r for s in shards for r in s["episodes"]]
+    assert _keys(led) == _keys(live["ledger"])
+    assert sorted(json.dumps(e, sort_keys=True) for e in eps) == \
+        sorted(json.dumps(e, sort_keys=True) for e in live["episodes"])
+    # scans + full MTTR history ride in the manifest, not the shards.
+    assert manifest["scans"] == live["scans"]
+    assert manifest["mttr_history"] == live["mttr_history"]
+    assert all(s["kind"] == migrate.SHARD_KIND for s in shards)
+    assert manifest["kind"] == migrate.MANIFEST_KIND
+
+
+def test_sharded_respects_byte_cap(tmp_path):
+    db = _big_open_db(tmp_path)
+    hist = _db(tmp_path).with_name("none.json")
+    cap = 4096
+    _, shards = migrate.build_sharded_export(db, hist, None, shard_bytes=cap)
+    for s in shards:
+        rows = len(s["ledger"]) + len(s["episodes"])
+        size = len(json.dumps(s, default=str, ensure_ascii=False).encode("utf-8"))
+        # A shard is under the cap unless it is a single over-cap row.
+        assert size <= cap or rows == 1
+
+
+def test_sharded_slim_open_across_shards(tmp_path):
+    db = _big_open_db(tmp_path)
+    hist = _db(tmp_path).with_name("none.json")
+    _, shards = migrate.build_sharded_export(db, hist, None, slim_open=True, shard_bytes=2048)
+    for s in shards:
+        for r in s["ledger"]:
+            if r.get("status") != "RESOLVED":
+                assert set(r) == {"vuln_key", "first_seen"}
+
+
+def test_sharded_zip_round_trips(tmp_path):
+    import io
+    import zipfile
+    db = _big_open_db(tmp_path)
+    hist = _db(tmp_path).with_name("none.json")
+    manifest, shards = migrate.build_sharded_export(db, hist, None, shard_bytes=4096)
+    zbytes = migrate.sharded_export_zip_bytes(db, hist, None, shard_bytes=4096)
+    with zipfile.ZipFile(io.BytesIO(zbytes)) as z:
+        names = z.namelist()
+        assert "manifest.json" in names
+        assert len([n for n in names if n.startswith("shard-")]) == manifest["shard_count"]
+        m = json.loads(z.read("manifest.json"))
+        assert m["kind"] == migrate.MANIFEST_KIND and m["shard_count"] == len(shards)
+
+
 def test_slim_open_shrinks_bytes_dramatically(tmp_path):
     # A ledger of open rows each carrying a fat tags_json — the real-world bloat.
     db = _db(tmp_path)

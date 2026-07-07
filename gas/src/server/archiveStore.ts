@@ -14,7 +14,7 @@ import type { LedgerState } from "../domain/ledgerCore";
 import type { Observation } from "../domain/reconcile";
 import { PROP_KEYS, requireProp } from "./props";
 
-const SUBFOLDERS = ["scans", "obs", "checkpoints", "snapshots", "backups"] as const;
+const SUBFOLDERS = ["scans", "obs", "checkpoints", "snapshots", "backups", "imports"] as const;
 export type Subfolder = (typeof SUBFOLDERS)[number];
 
 function rootFolder(): GoogleAppsScript.Drive.Folder {
@@ -238,6 +238,22 @@ export function readCheckpoint(ref: string | null): Checkpoint | null {
   if (!ref) return null;
   const parsed = readGzJsonFile(ref);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const obj = parsed as Record<string, unknown>;
+  // Multi-part checkpoint (sharded import): the file is a manifest listing part-file ids;
+  // concat them into `ledger`. Single-file checkpoints (compactLedger) read verbatim.
+  if (Array.isArray(obj["parts"])) {
+    const ledger: unknown[] = [];
+    for (const partId of obj["parts"] as string[]) {
+      const part = readGzJsonFile(partId);
+      if (Array.isArray(part)) for (const row of part) ledger.push(row);
+    }
+    return {
+      version: Number(obj["version"] ?? 1),
+      floor_scan_id: (obj["floor_scan_id"] as string | null) ?? null,
+      floor_ts: (obj["floor_ts"] as string | null) ?? null,
+      ledger: ledger as Checkpoint["ledger"],
+    };
+  }
   return parsed as Checkpoint;
 }
 
@@ -277,4 +293,53 @@ export function readJournal(ref: string | null): LedgerState | null {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
   const st = parsed as LedgerState;
   return st.scans && st.ledger && st.episodes ? st : null;
+}
+
+export function trashLedgerSnapshot(): void {
+  const files = subfolder("snapshots").getFilesByName(SNAPSHOT_NAME);
+  while (files.hasNext()) files.next().setTrashed(true);
+}
+
+// -------------------------------------------------------- sharded import staging area
+// imports/<session_id>/manifest.json.gz + shard-NNNN.json.gz hold the uploaded shards; the
+// growing baseline lands as checkpoints/checkpoint-<cmp>-part-NNNN.json.gz so aborting a
+// session never touches committed data. Finalize writes the checkpoint manifest that
+// readCheckpoint stitches back together.
+
+export function importFolder(sessionId: string): GoogleAppsScript.Drive.Folder {
+  return childFolder(subfolder("imports"), safeName(sessionId));
+}
+
+export function writeImportManifest(sessionId: string, manifest: unknown): string {
+  return writeGzJson(importFolder(sessionId), "manifest.json.gz", manifest).getId();
+}
+
+export function readImportManifest(sessionId: string): unknown | null {
+  const files = importFolder(sessionId).getFilesByName("manifest.json.gz");
+  return files.hasNext() ? parseGzBlob(files.next().getBlob()) : null;
+}
+
+export function stageShard(sessionId: string, index: number, payload: unknown): string {
+  const name = `shard-${String(index + 1).padStart(4, "0")}.json.gz`;
+  return writeGzJson(importFolder(sessionId), name, payload).getId();
+}
+
+export function writeCheckpointPart(compactionId: string, index: number, rows: unknown): string {
+  const name = `checkpoint-${safeName(compactionId)}-part-${String(index + 1).padStart(4, "0")}.json.gz`;
+  return writeGzJson(subfolder("checkpoints"), name, rows).getId();
+}
+
+/** The manifest that stitches the parts together (a { …, parts:[fileId] } object). */
+export function writeCheckpointManifest(compactionId: string, manifest: unknown): string {
+  return writeGzJson(
+    subfolder("checkpoints"), `checkpoint-${safeName(compactionId)}.json.gz`, manifest,
+  ).getId();
+}
+
+export function trashImportSession(sessionId: string): void {
+  try {
+    importFolder(sessionId).setTrashed(true);
+  } catch (e) {
+    console.warn(`trashImportSession(${sessionId}): ${e}`);
+  }
 }

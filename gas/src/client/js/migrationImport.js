@@ -4,6 +4,8 @@
 // preconditions, row caps) stays server-side in api_importMigration.
 
 export const MIGRATION_KIND = "wiz-sidekick-migration";
+export const MANIFEST_KIND = "wiz-sidekick-migration-manifest";
+export const SHARD_KIND = "wiz-sidekick-migration-shard";
 export const MIGRATION_VERSION = 1;
 
 // Single-RPC guard. The bundle is gzipped before it crosses google.script.run (see
@@ -98,6 +100,71 @@ export function parseMigrationBundle(text) {
       vulns: tables.ledger.length,
       episodes: tables.episodes.length,
       history: tables.mttr_history.length,
+    },
+  };
+}
+
+/**
+ * Classify a multi-file selection into a `single` full bundle or a `sharded` set (one
+ * manifest + its N shard files, contiguous 0..N-1). Each file is parsed once.
+ * Returns { mode:"single", text } | { mode:"sharded", manifest, manifestText, shards, counts }
+ * | { error }. `shards` = [{ index, text }] in index order (text kept for gzip upload).
+ */
+export function classifyImportFiles(files) {
+  const parsed = [];
+  for (const f of files) {
+    let data;
+    try {
+      data = JSON.parse(f.text);
+    } catch (e) {
+      return { error: `${f.name}: not valid JSON (${e.message}).` };
+    }
+    parsed.push({ name: f.name, text: f.text, kind: data && data.kind, data });
+  }
+
+  if (parsed.length === 1 && parsed[0].kind === MIGRATION_KIND) {
+    return { mode: "single", text: parsed[0].text };
+  }
+
+  const others = parsed.filter((p) => p.kind !== MANIFEST_KIND && p.kind !== SHARD_KIND);
+  if (others.length) {
+    return {
+      error: parsed.some((p) => p.kind === MIGRATION_KIND)
+        ? "Select either one full bundle or a manifest + its shards, not both."
+        : `${others[0].name}: unrecognized file (kind ${JSON.stringify(others[0].kind)}).`,
+    };
+  }
+  const manifests = parsed.filter((p) => p.kind === MANIFEST_KIND);
+  if (manifests.length !== 1) {
+    return { error: "Select exactly one manifest.json together with its shard files." };
+  }
+  const m = manifests[0].data;
+  if (Number(m.version) !== MIGRATION_VERSION) {
+    return { error: `Unsupported manifest version ${m.version} — expected ${MIGRATION_VERSION}.` };
+  }
+  if (!Array.isArray(m.scans)) return { error: "Manifest scans must be a list." };
+  const shardCount = Number(m.shard_count);
+
+  const shards = parsed
+    .filter((p) => p.kind === SHARD_KIND)
+    .map((p) => ({ index: Number(p.data.index), text: p.text }))
+    .sort((a, b) => a.index - b.index);
+  if (shards.length !== shardCount) {
+    return { error: `Expected ${shardCount} shard(s) for this manifest, got ${shards.length}.` };
+  }
+  for (let i = 0; i < shards.length; i++) {
+    if (shards[i].index !== i) return { error: `Shard ${i} is missing or duplicated.` };
+  }
+  return {
+    mode: "sharded",
+    manifest: m,
+    manifestText: manifests[0].text,
+    shards,
+    counts: {
+      scans: m.scans.length,
+      vulns: (m.totals && m.totals.ledger) || 0,
+      episodes: (m.totals && m.totals.episodes) || 0,
+      history: (m.mttr_history || []).length,
     },
   };
 }
