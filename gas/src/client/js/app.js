@@ -148,7 +148,7 @@ function paintCard(job) {
   lastJob = job;
   const stopping = stoppingJobId === job.job_id && job.phase !== "CANCELLED";
   renderScanCard(scanCardHost, job, {
-    onDetails: () => openScanDetails(job),
+    onDetails: () => openScanDetails(job, { onStop: () => requestStop(job.job_id) }),
     onStop: stopping ? null : () => requestStop(job.job_id),
     stopping,
   });

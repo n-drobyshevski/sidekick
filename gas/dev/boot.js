@@ -35,6 +35,42 @@
   }
   console.log(`[dev] seeded ${SEED_SCANS} dry-run scans`);
 
+  // Dev-only, URL-gated in-flight scan seed for exercising the progress card / details
+  // sheet (?seedJob=running or ?seedJob=stuck). Writes a non-terminal jobs row directly
+  // so api_bootstrap surfaces it as activeJob. Never shipped — dev/ is not bundled.
+  (function seedJobFromUrl() {
+    const kind = new URLSearchParams(location.search).get("seedJob");
+    if (kind !== "running" && kind !== "stuck") return;
+    const id = PropertiesService.getScriptProperties().getProperty("LEDGER_SPREADSHEET_ID");
+    const sh = SpreadsheetApp.openById(id).getSheetByName("jobs");
+    const headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
+    const now = RealDate.now();
+    // "stuck": last update ~17h ago (past STUCK_MS) → the "may have stopped" note + big
+    // elapsed. "running": just now. error:"null" reproduces the bad round-trip the server
+    // normalizer must scrub away.
+    const ageMs = kind === "stuck" ? 17 * 3600_000 : 4000;
+    const iso = (ms) => new RealDate(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
+    const row = {
+      job_id: "scan-DEV" + kind.toUpperCase(),
+      kind: "scan",
+      phase: "FETCHING",
+      scan_id: iso(now - ageMs),
+      cursor: "",
+      page: 9,
+      findings_so_far: 4500,
+      page_size: 500,
+      total_count: 0,
+      params_json: JSON.stringify({ incremental: false }),
+      journal_ref: "",
+      error: "null",
+      started_at: iso(now - ageMs),
+      updated_at: iso(now - ageMs),
+    };
+    const values = headers.map((h) => (h in row ? row[h] : ""));
+    sh.getRange(sh.getLastRow() + 1, 1, 1, headers.length).setValues([values]);
+    console.log(`[dev] seeded ${kind} scan job`);
+  })();
+
   // google.script.run shim: same contract as the GAS client bridge — chainable
   // handler setters, then any method name invokes the RPC. api_<name> maps to
   // Server.api[<name>] (mirroring dist/entry.js); results are delivered async.

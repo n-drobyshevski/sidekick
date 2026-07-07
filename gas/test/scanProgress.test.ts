@@ -65,6 +65,22 @@ describe("scanProgressView", () => {
     expect(v.canStop).toBe(false);
   });
 
+  it("scrubs the string 'null'/'undefined' error a bad round-trip leaves behind", () => {
+    expect(scanProgressView({ ...base, error: "null" }, T0).error).toBe("");
+    expect(scanProgressView({ ...base, error: "undefined" }, T0).error).toBe("");
+    expect(scanProgressView({ ...base, error: "  " }, T0).error).toBe("");
+    // A real message that merely mentions null still survives.
+    expect(scanProgressView({ ...base, error: "got null cursor" }, T0).error).toBe("got null cursor");
+  });
+
+  it("flags a stuck job only after a long silence, and leaves fresh/short stalls alone", () => {
+    const fresh = scanProgressView({ ...base, updated_at: "2026-07-06T12:00:00Z" }, T0 + 60_000);
+    expect(fresh.stalled).toBe(true); // short stall
+    expect(fresh.stuck).toBe(false);
+    const dead = scanProgressView({ ...base, updated_at: "2026-07-06T12:00:00Z" }, T0 + 6 * 60_000);
+    expect(dead.stuck).toBe(true);
+  });
+
   it("maps CANCELLED to a neutral, unstoppable state", () => {
     const v = scanProgressView({ ...base, phase: "CANCELLED" }, T0);
     expect(v.state).toBe("cancelled");

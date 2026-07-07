@@ -2719,6 +2719,10 @@ var Server = (() => {
   }
 
   // src/server/jobsStore.ts
+  function normError(v) {
+    const s = v == null ? "" : String(v).trim();
+    return s === "" || s === "null" || s === "undefined" ? null : s;
+  }
   function newJobId(kind, now) {
     return `${kind}-${nowIso(now).replace(/[:]/g, "")}`;
   }
@@ -2735,7 +2739,7 @@ var Server = (() => {
   }
   function listJobs() {
     return readAll(TABS.jobs).map((r) => {
-      var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
+      var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
       return {
         job_id: String((_a = r["job_id"]) != null ? _a : ""),
         kind: (_b = r["kind"]) != null ? _b : "scan",
@@ -2748,9 +2752,9 @@ var Server = (() => {
         total_count: Number((_i = r["total_count"]) != null ? _i : 0),
         params_json: (_j = r["params_json"]) != null ? _j : null,
         journal_ref: (_k = r["journal_ref"]) != null ? _k : null,
-        error: (_l = r["error"]) != null ? _l : null,
-        started_at: String((_m = r["started_at"]) != null ? _m : ""),
-        updated_at: String((_n = r["updated_at"]) != null ? _n : "")
+        error: normError(r["error"]),
+        started_at: String((_l = r["started_at"]) != null ? _l : ""),
+        updated_at: String((_m = r["updated_at"]) != null ? _m : "")
       };
     });
   }
@@ -3797,7 +3801,10 @@ var Server = (() => {
         return;
       }
       clearCancel(job.job_id);
-      updateJob(job.job_id, { phase: "FAILED", error: String(e).slice(0, 1e3) });
+      updateJob(job.job_id, {
+        phase: "FAILED",
+        error: e == null ? "Scan failed." : String(e).slice(0, 1e3)
+      });
       throw e;
     }
   }
@@ -3979,8 +3986,9 @@ var Server = (() => {
       filterOptions: scan ? {
         statuses: distinct(scan.records, "status"),
         assetTypes: distinct(scan.records, "vulnerableAsset.type"),
-        clouds: distinct(scan.records, "vulnerableAsset.cloudPlatform")
-      } : { statuses: [], assetTypes: [], clouds: [] }
+        clouds: distinct(scan.records, "vulnerableAsset.cloudPlatform"),
+        subscriptions: distinct(scan.records, "vulnerableAsset.subscriptionName")
+      } : { statuses: [], assetTypes: [], clouds: [], subscriptions: [] }
     };
   }
   function activeJobSummary() {

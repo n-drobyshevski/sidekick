@@ -333,7 +333,10 @@ function step(job: JobRow, budgetMs = BUDGET_MS): void {
       return;
     }
     clearCancel(job.job_id);
-    updateJob(job.job_id, { phase: "FAILED", error: String(e).slice(0, 1000) });
+    updateJob(job.job_id, {
+      phase: "FAILED",
+      error: e == null ? "Scan failed." : String(e).slice(0, 1000),
+    });
     throw e;
   }
 }
