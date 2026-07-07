@@ -3,7 +3,7 @@
 // KPI band, severity breakdown, exploitability summary, risk concentration, aging
 // of open findings, scan-over-scan movement, and a multi-level grouping breakdown.
 
-import { hBar, severityBar, stackedAgeBar } from "../charts.js";
+import { severityBar, stackedAgeBar } from "../charts.js";
 import { bootstrap, setParams, swrCall } from "../store.js";
 import {
   clear, el, emptyState, kpiCard, nvdUrl, sectionLabel,
@@ -178,7 +178,6 @@ export async function renderOverview(main, params, ctx) {
     }
 
     renderExploitability(insights);
-    renderConcentration(insights);
     renderAging(insights);
     renderMovement(insights);
     renderBreakdown();
@@ -202,44 +201,6 @@ export async function renderOverview(main, params, ctx) {
         `Open findings only (${s.open.toLocaleString()} open in this scan); one finding can carry several signals.`),
       tiles,
     );
-  }
-
-  // ------------------------------------------------------------- risk concentration
-
-  function renderConcentration(insights) {
-    insightsHost.append(sectionLabel("Risk concentration"));
-    if (!insights.topAssets.length) {
-      insightsHost.append(emptyState("No open findings — no asset concentration to show."));
-      return;
-    }
-    const canvas = el("canvas", { id: "top-assets-chart" });
-    const list = el("div", { class: "rank-list" });
-    for (const a of insights.topAssets) {
-      list.append(el("div", { class: "rank-row" },
-        el("div", {},
-          el("div", {}, el("strong", {}, a.asset)),
-          el("div", { style: "margin-top:4px" }, mixStrip(a.sevCounts)),
-          el("div", { class: "small muted", style: "margin-top:2px" }, mixText(a.sevCounts)),
-        ),
-        el("div", { class: "num", title: "Open findings on this asset" },
-          `${a.total.toLocaleString()} open`),
-      ));
-    }
-    insightsHost.append(el("div", { class: "chart-grid" },
-      el("div", { class: "chart-card" },
-        el("h3", {}, "Top assets by weighted risk"),
-        el("div", { class: "small muted", style: "margin-bottom:8px" },
-          "Open findings weighted by severity (CRITICAL 4 … LOW 1)."),
-        el("div", { class: "chart-box" }, canvas),
-      ),
-      el("div", { class: "card" },
-        el("h3", {}, "Severity mix per asset"),
-        list,
-      ),
-    ));
-    requestAnimationFrame(() => {
-      hBar(canvas, insights.topAssets.map((a) => ({ label: a.asset, value: a.weighted })));
-    });
   }
 
   // ------------------------------------------------------------------------- aging

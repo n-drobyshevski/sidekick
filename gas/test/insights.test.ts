@@ -7,7 +7,6 @@ import {
   groupTree,
   movement,
   severityStats,
-  topAssets,
 } from "../src/domain/insights";
 import type { Rec } from "../src/domain/util";
 
@@ -57,31 +56,6 @@ describe("exploitSummary", () => {
     const at = exploitSummary([rec({ epssProbability: EPSS_PRIORITY_THRESHOLD })]);
     expect(below.highEpss).toBe(0);
     expect(at.highEpss).toBe(1);
-  });
-});
-
-describe("topAssets", () => {
-  it("one CRITICAL outweighs three LOW", () => {
-    const records = [
-      rec({ _sev: "CRITICAL", [ASSET]: "big" }),
-      rec({ _sev: "LOW", [ASSET]: "many" }),
-      rec({ _sev: "LOW", [ASSET]: "many" }),
-      rec({ _sev: "LOW", [ASSET]: "many" }),
-    ];
-    const out = topAssets(records, 10);
-    expect(out[0]).toMatchObject({ asset: "big", total: 1, weighted: 4, sevCounts: { CRITICAL: 1 } });
-    expect(out[1]).toMatchObject({ asset: "many", total: 3, weighted: 3, sevCounts: { LOW: 3 } });
-  });
-
-  it("skips resolved rows and caps at n", () => {
-    const records = [
-      rec({ [ASSET]: "a", status: "RESOLVED" }),
-      rec({ [ASSET]: "b" }),
-      rec({ [ASSET]: "c" }),
-    ];
-    const out = topAssets(records, 1);
-    expect(out).toHaveLength(1);
-    expect(out[0].asset).toBe("b"); // equal weight, name asc
   });
 });
 

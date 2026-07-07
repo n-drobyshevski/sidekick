@@ -2630,14 +2630,6 @@ var Server = (() => {
 
   // src/domain/insights.ts
   var EPSS_PRIORITY_THRESHOLD = 0.1;
-  var SEVERITY_WEIGHT = {
-    CRITICAL: 4,
-    HIGH: 3,
-    MEDIUM: 2,
-    LOW: 1,
-    INFO: 0,
-    UNKNOWN: 0
-  };
   var AGE_BUCKET_EDGES = [7, 30, 90];
   var WIDE_KEY = "vulnerableAsset.hasWideInternetExposure";
   var LIMITED_KEY = "vulnerableAsset.hasLimitedInternetExposure";
@@ -2684,24 +2676,6 @@ var Server = (() => {
       if (r[WIDE_KEY] === true || r[LIMITED_KEY] === true) out.internetExposed += 1;
     }
     return out;
-  }
-  function topAssets(records, n = 10) {
-    var _a, _b, _c;
-    const byAsset = /* @__PURE__ */ new Map();
-    for (const r of records) {
-      if (!isOpen(r["status"])) continue;
-      const name = String((_a = r["vulnerableAsset.name"]) != null ? _a : "") || "(unknown)";
-      let g = byAsset.get(name);
-      if (!g) {
-        g = { asset: name, total: 0, weighted: 0, sevCounts: {} };
-        byAsset.set(name, g);
-      }
-      const s = sev(r);
-      g.total += 1;
-      g.weighted += (_b = SEVERITY_WEIGHT[s]) != null ? _b : 0;
-      g.sevCounts[s] = ((_c = g.sevCounts[s]) != null ? _c : 0) + 1;
-    }
-    return [...byAsset.values()].sort((a, b) => b.weighted - a.weighted || b.total - a.total || a.asset.localeCompare(b.asset)).slice(0, n);
   }
   function ageBuckets(rows) {
     const perSev = {};
@@ -4531,7 +4505,6 @@ var Server = (() => {
       // Per-severity total/open/resolved for the severity breakdown card.
       sevStats: severityStats(recs),
       exploit: exploitSummary(recs),
-      topAssets: topAssets(recs, 10),
       aging: ageBuckets(base),
       movement: movement(base, latestFlat, loadScanRows().length)
     };
