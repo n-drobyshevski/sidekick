@@ -50,70 +50,79 @@ def _migration_section():
     # Windowed split for large ledgers: carry the live working set + full MTTR trend into
     # GAS, keep the deep settled-and-old history as a downloadable archive.
     with st.expander("Windowed split (for large ledgers)", expanded=False):
-        days = st.number_input(
-            "Keep resolved history from the last N days", min_value=1, value=365, step=30,
-            key="migration_split_days", disabled=empty,
-            help="Open vulnerabilities and anything resolved within this window stay in the "
-            "live bundle; older resolved vulns/episodes go to the archive. MTTR trend is "
-            "always carried in full.",
-        )
-        cutoff_iso = (
-            datetime.now(timezone.utc) - timedelta(days=int(days))
-        ).strftime("%Y-%m-%dT%H:%M:%SZ")
-        slim_open = st.checkbox(
-            "Slim open vulnerabilities (recommended when GAS scans Wiz)", value=True,
-            key="migration_slim_open", disabled=empty,
-            help="Open vulns import as just an ID + first-seen date; your next GAS scan refills "
-            "their detail and keeps the age. This can shrink the live bundle by an order of "
-            "magnitude. Leave off only if GAS won't scan Wiz.",
-        )
-        sc = migrate.split_counts(cutoff_iso=cutoff_iso)
-        stamp = _stamp()[:10]
-        sig = (f"{int(days)}:{int(slim_open)}:{sc['live_vulns']}:{sc['archive_vulns']}:"
-               f"{sc['live_episodes']}:{sc['archive_episodes']}:{sc['history']}")
-        st.caption(
-            f"**Live bundle** — {sc['scans']:,} scans · {sc['live_vulns']:,} vulnerabilities · "
-            f"{sc['live_episodes']:,} recent episodes · {sc['history']:,} MTTR points"
-            + (" (open vulns slimmed to ID + first-seen)." if slim_open else ".")
-            + f" **Archive** — {sc['archive_vulns']:,} settled vulnerabilities · "
-            f"{sc['archive_episodes']:,} old episodes."
-        )
-        ui.deferred_download(
-            "Download live bundle (import this on GAS)",
-            lambda: migrate.live_bundle_json_bytes(cutoff_iso=cutoff_iso, slim_open=slim_open),
-            file_name=f"wiz_migration_live_{stamp}.json",
-            mime="application/json",
-            key="migration_live",
-            row_count=sc["live_vulns"],
-            sig=sig,
-            disabled=empty,
-        )
-        ui.deferred_download(
-            "Download full-history archive (.json.gz — keep for records)",
-            lambda: migrate.archive_bundle_gz_bytes(cutoff_iso=cutoff_iso),
-            file_name=f"wiz_migration_archive_{stamp}.json.gz",
-            mime="application/gzip",
-            key="migration_archive",
-            row_count=sc["archive_vulns"],
-            sig=sig,
-            disabled=empty or sc["archive_vulns"] + sc["archive_episodes"] == 0,
-        )
-        st.caption(
-            "If the live bundle is over the GAS import cap (64MB), use the **sharded** ZIP: "
-            "it splits the live bundle into capped ~25MB shard files. Unzip it and select all "
-            "the `.json` files at once on the GAS Data page — GAS imports them across several "
-            "resumable steps to rebuild the full history."
-        )
-        ui.deferred_download(
-            "Download sharded live bundle (.zip — for very large ledgers)",
-            lambda: migrate.sharded_export_zip_bytes(cutoff_iso=cutoff_iso, slim_open=slim_open),
-            file_name=f"wiz_migration_live_shards_{stamp}.zip",
-            mime="application/zip",
-            key="migration_shards",
-            row_count=sc["live_vulns"],
-            sig=sig,
-            disabled=empty,
-        )
+        # The body is a fragment so deferred_download's Prepare→Download rerun is
+        # fragment-scoped (st.rerun(scope="fragment")). A full app rerun would re-execute the
+        # st.expander(..., expanded=False) line above and collapse the panel, hiding the
+        # Download step — the expander must stay created outside the fragment.
+        _windowed_split(empty)
+
+
+@st.fragment
+def _windowed_split(empty):
+    days = st.number_input(
+        "Keep resolved history from the last N days", min_value=1, value=365, step=30,
+        key="migration_split_days", disabled=empty,
+        help="Open vulnerabilities and anything resolved within this window stay in the "
+        "live bundle; older resolved vulns/episodes go to the archive. MTTR trend is "
+        "always carried in full.",
+    )
+    cutoff_iso = (
+        datetime.now(timezone.utc) - timedelta(days=int(days))
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    slim_open = st.checkbox(
+        "Slim open vulnerabilities (recommended when GAS scans Wiz)", value=True,
+        key="migration_slim_open", disabled=empty,
+        help="Open vulns import as just an ID + first-seen date; your next GAS scan refills "
+        "their detail and keeps the age. This can shrink the live bundle by an order of "
+        "magnitude. Leave off only if GAS won't scan Wiz.",
+    )
+    sc = migrate.split_counts(cutoff_iso=cutoff_iso)
+    stamp = _stamp()[:10]
+    sig = (f"{int(days)}:{int(slim_open)}:{sc['live_vulns']}:{sc['archive_vulns']}:"
+           f"{sc['live_episodes']}:{sc['archive_episodes']}:{sc['history']}")
+    st.caption(
+        f"**Live bundle** — {sc['scans']:,} scans · {sc['live_vulns']:,} vulnerabilities · "
+        f"{sc['live_episodes']:,} recent episodes · {sc['history']:,} MTTR points"
+        + (" (open vulns slimmed to ID + first-seen)." if slim_open else ".")
+        + f" **Archive** — {sc['archive_vulns']:,} settled vulnerabilities · "
+        f"{sc['archive_episodes']:,} old episodes."
+    )
+    ui.deferred_download(
+        "Download live bundle (import this on GAS)",
+        lambda: migrate.live_bundle_json_bytes(cutoff_iso=cutoff_iso, slim_open=slim_open),
+        file_name=f"wiz_migration_live_{stamp}.json",
+        mime="application/json",
+        key="migration_live",
+        row_count=sc["live_vulns"],
+        sig=sig,
+        disabled=empty,
+    )
+    ui.deferred_download(
+        "Download full-history archive (.json.gz — keep for records)",
+        lambda: migrate.archive_bundle_gz_bytes(cutoff_iso=cutoff_iso),
+        file_name=f"wiz_migration_archive_{stamp}.json.gz",
+        mime="application/gzip",
+        key="migration_archive",
+        row_count=sc["archive_vulns"],
+        sig=sig,
+        disabled=empty or sc["archive_vulns"] + sc["archive_episodes"] == 0,
+    )
+    st.caption(
+        "If the live bundle is over the GAS import cap (64MB), use the **sharded** ZIP: "
+        "it splits the live bundle into capped ~25MB shard files. Unzip it and select all "
+        "the `.json` files at once on the GAS Data page — GAS imports them across several "
+        "resumable steps to rebuild the full history."
+    )
+    ui.deferred_download(
+        "Download sharded live bundle (.zip — for very large ledgers)",
+        lambda: migrate.sharded_export_zip_bytes(cutoff_iso=cutoff_iso, slim_open=slim_open),
+        file_name=f"wiz_migration_live_shards_{stamp}.zip",
+        mime="application/zip",
+        key="migration_shards",
+        row_count=sc["live_vulns"],
+        sig=sig,
+        disabled=empty,
+    )
 
 
 def page():
