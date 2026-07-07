@@ -98,6 +98,22 @@ def _migration_section():
             sig=sig,
             disabled=empty or sc["archive_vulns"] + sc["archive_episodes"] == 0,
         )
+        st.caption(
+            "If the live bundle is over the GAS import cap (64MB), use the **sharded** ZIP: "
+            "it splits the live bundle into capped ~25MB shard files. Unzip it and select all "
+            "the `.json` files at once on the GAS Data page — GAS imports them across several "
+            "resumable steps to rebuild the full history."
+        )
+        ui.deferred_download(
+            "Download sharded live bundle (.zip — for very large ledgers)",
+            lambda: migrate.sharded_export_zip_bytes(cutoff_iso=cutoff_iso, slim_open=slim_open),
+            file_name=f"wiz_migration_live_shards_{stamp}.zip",
+            mime="application/zip",
+            key="migration_shards",
+            row_count=sc["live_vulns"],
+            sig=sig,
+            disabled=empty,
+        )
 
 
 def page():

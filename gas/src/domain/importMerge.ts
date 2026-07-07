@@ -127,7 +127,7 @@ const str = (v: unknown): string | null =>
   v === null || v === undefined || v === "" ? null : String(v);
 
 /** An imported scan row: always sealed, never carrying storage refs. */
-function coerceScan(r: Rec): ScanRow {
+export function coerceScan(r: Rec): ScanRow {
   return {
     scan_id: String(r["scan_id"]),
     ts: String(r["ts"]),
@@ -144,7 +144,7 @@ function coerceScan(r: Rec): ScanRow {
   };
 }
 
-function coerceLedger(r: Rec): LedgerRow {
+export function coerceLedger(r: Rec): LedgerRow {
   return {
     vuln_key: String(r["vuln_key"]),
     cve: str(r["cve"]),
@@ -167,7 +167,7 @@ function coerceLedger(r: Rec): LedgerRow {
   };
 }
 
-function coerceEpisode(r: Rec): EpisodeRow {
+export function coerceEpisode(r: Rec): EpisodeRow {
   return {
     vuln_key: String(r["vuln_key"]),
     cve: str(r["cve"]),

@@ -9,7 +9,10 @@ on the GAS side, and sealed scans never carry observations there.
 """
 
 import gzip
+import io
 import json
+import uuid
+import zipfile
 from datetime import datetime, timezone
 
 from wiz_dashboard.data import history, ledger
@@ -18,6 +21,12 @@ BUNDLE_KIND = "wiz-sidekick-migration"
 # Deep, settled-and-old history split off a windowed export. A distinct kind so the GAS
 # importer refuses it as a live import (it only ingests BUNDLE_KIND) — it's a keepsake.
 ARCHIVE_KIND = "wiz-sidekick-migration-archive"
+# A capped multi-shard export: a manifest (scans + MTTR history + shard count) plus N shard
+# files each holding a slice of the live ledger/episodes. GAS ingests them across several
+# resumable imports, so a live bundle far larger than the single-request cap can be rebuilt.
+MANIFEST_KIND = "wiz-sidekick-migration-manifest"
+SHARD_KIND = "wiz-sidekick-migration-shard"
+DEFAULT_SHARD_BYTES = 25 * 1024 * 1024
 BUNDLE_VERSION = 1
 
 # ``scans`` minus raw_path (matches SCAN_COLS in gas/test/export_ledger_fixtures.py).
@@ -228,3 +237,81 @@ def archive_bundle_gz_bytes(db_path=None, history_filename=history.HISTORY_FILEN
     """The archived (settled-and-old) half, gzipped — it is the large part."""
     _, archive = build_split_bundles(db_path, history_filename, cutoff_iso)
     return gzip.compress(json.dumps(archive, default=str, ensure_ascii=False).encode("utf-8"))
+
+
+# ------------------------------------------------------------------ capped multi-shard
+
+
+def _compact_json(obj) -> str:
+    return json.dumps(obj, default=str, ensure_ascii=False)
+
+
+def build_sharded_export(
+    db_path=None, history_filename=history.HISTORY_FILENAME, cutoff_iso: str | None = None,
+    slim_open: bool = False, shard_bytes: int = DEFAULT_SHARD_BYTES,
+) -> tuple[dict, list[dict]]:
+    """Split the live half into a ``(manifest, shards)`` pair, each shard's JSON <= shard_bytes.
+
+    scans + MTTR history (small) ride in the manifest; the ledger and episode rows are greedily
+    packed into shards. A single row larger than the cap gets its own (over-cap) shard. Every
+    row lands in exactly one shard — the union is the live bundle.
+    """
+    live, _ = build_split_bundles(db_path, history_filename, cutoff_iso, slim_open)
+    packed: list[dict] = []
+    cur = {"ledger": [], "episodes": []}
+    cur_bytes = 2  # the enclosing "{}"
+    for table in ("ledger", "episodes"):
+        for row in live[table]:
+            rb = len(_compact_json(row).encode("utf-8")) + 1  # + comma
+            if cur_bytes + rb > shard_bytes and (cur["ledger"] or cur["episodes"]):
+                packed.append(cur)
+                cur = {"ledger": [], "episodes": []}
+                cur_bytes = 2
+            cur[table].append(row)
+            cur_bytes += rb
+    if cur["ledger"] or cur["episodes"]:
+        packed.append(cur)
+
+    manifest = {
+        "kind": MANIFEST_KIND,
+        "version": BUNDLE_VERSION,
+        "exported_at": live["exported_at"],
+        "schema_version": live["schema_version"],
+        "session_id": uuid.uuid4().hex,
+        "shard_count": len(packed),
+        "scans": live["scans"],
+        "mttr_history": live["mttr_history"],
+        "totals": {"ledger": len(live["ledger"]), "episodes": len(live["episodes"])},
+    }
+    shards = [
+        {"kind": SHARD_KIND, "version": BUNDLE_VERSION, "index": i,
+         "ledger": s["ledger"], "episodes": s["episodes"]}
+        for i, s in enumerate(packed)
+    ]
+    return manifest, shards
+
+
+def sharded_export_files(
+    db_path=None, history_filename=history.HISTORY_FILENAME, cutoff_iso: str | None = None,
+    slim_open: bool = False, shard_bytes: int = DEFAULT_SHARD_BYTES,
+) -> list[tuple[str, bytes]]:
+    """(manifest.json, shard-0001.json, …) as (name, bytes) pairs."""
+    manifest, shards = build_sharded_export(
+        db_path, history_filename, cutoff_iso, slim_open, shard_bytes)
+    files = [("manifest.json", _compact_json(manifest).encode("utf-8"))]
+    for s in shards:
+        files.append((f"shard-{s['index'] + 1:04d}.json", _compact_json(s).encode("utf-8")))
+    return files
+
+
+def sharded_export_zip_bytes(
+    db_path=None, history_filename=history.HISTORY_FILENAME, cutoff_iso: str | None = None,
+    slim_open: bool = False, shard_bytes: int = DEFAULT_SHARD_BYTES,
+) -> bytes:
+    """The manifest + shard files as one ZIP (the single download; unzip and import each)."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, data in sharded_export_files(
+            db_path, history_filename, cutoff_iso, slim_open, shard_bytes):
+            z.writestr(name, data)
+    return buf.getvalue()

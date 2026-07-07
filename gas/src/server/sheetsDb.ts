@@ -164,6 +164,23 @@ export function appendRows(tab: string, rows: Rec[]): void {
   range.setValues(grid);
 }
 
+/** Data-row count of a tab (rows below the frozen header). */
+export function dataRowCount(tab: string): number {
+  return Math.max(0, sheet(tab).getLastRow() - 1);
+}
+
+/** Clear every data row past the first `keepDataRows` (header is row 1). Used to roll an
+ * append-based writer back to its last committed count for exactly-once resume. */
+export function truncateAfter(tab: string, keepDataRows: number): void {
+  const sh = sheet(tab);
+  const lastRow = sh.getLastRow();
+  const firstToClear = keepDataRows + 2; // +1 header, +1 to start past the kept rows
+  if (lastRow >= firstToClear) {
+    const lastCol = Math.max(sh.getLastColumn(), 1);
+    sh.getRange(firstToClear, 1, lastRow - firstToClear + 1, lastCol).clearContent();
+  }
+}
+
 /** Update the first row where keyColumn === keyValue (returns false when absent). */
 export function updateWhere(tab: string, keyColumn: string, keyValue: unknown, patch: Rec): boolean {
   const sh = sheet(tab);

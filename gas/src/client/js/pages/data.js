@@ -2,7 +2,12 @@
 // import, merged from the former Reports and Exports pages.
 
 import { call } from "../api.js";
-import { MAX_BUNDLE_BYTES, gzipToBase64, parseMigrationBundle } from "../migrationImport.js";
+import {
+  MAX_BUNDLE_BYTES,
+  classifyImportFiles,
+  gzipToBase64,
+  parseMigrationBundle,
+} from "../migrationImport.js";
 import { bootstrap } from "../store.js";
 import {
   clear,
@@ -181,28 +186,45 @@ function renderImportSection(main, ctx) {
       "machine — and the merge is one-time: it can't be undone from here."),
   );
   const fileInput = el("input", {
-    type: "file", accept: "application/json", style: "display:none",
+    type: "file", accept: "application/json", multiple: "", style: "display:none",
     "aria-hidden": "true", tabindex: "-1",
   });
-  fileInput.addEventListener("change", importBundle);
+  fileInput.addEventListener("change", importFiles);
   const importBtn = el("button", { class: "primary", onclick: () => fileInput.click() },
     "Import migration bundle…");
   const statusHost = el("div", { style: "margin-top:10px" });
   card.append(el("div", { style: "display:flex; gap:8px" }, importBtn, fileInput), statusHost);
   main.append(card);
 
-  async function importBundle() {
-    const file = fileInput.files && fileInput.files[0];
-    fileInput.value = ""; // re-selecting the same file must re-fire change
-    if (!file) return;
-    if (file.size > MAX_BUNDLE_BYTES) {
-      const mb = (n) => (n / (1024 * 1024)).toFixed(1);
-      toast(`The bundle is ${mb(file.size)} MB — over the ${mb(MAX_BUNDLE_BYTES)} MB ` +
-        "single-request limit. Compact the old ledger to shrink it, then re-export.",
-        "error");
+  const setStatus = (msg) =>
+    clear(statusHost).append(el("p", { class: "muted small" }, msg));
+
+  async function importFiles() {
+    const files = [...(fileInput.files || [])];
+    fileInput.value = ""; // re-selecting the same files must re-fire change
+    if (!files.length) return;
+    // Read each file. The single-bundle guard still applies per file; a shard is ≤25MB.
+    const withText = [];
+    for (const f of files) {
+      if (f.size > MAX_BUNDLE_BYTES) {
+        const mb = (n) => (n / (1024 * 1024)).toFixed(1);
+        toast(`${f.name} is ${mb(f.size)} MB — over the ${mb(MAX_BUNDLE_BYTES)} MB per-file ` +
+          "limit. Use the sharded export (.zip) for a very large ledger.", "error");
+        return;
+      }
+      withText.push({ name: f.name, text: await f.text() });
+    }
+    const cls = classifyImportFiles(withText);
+    if (cls.error) {
+      toast(cls.error, "warn");
       return;
     }
-    const res = parseMigrationBundle(await file.text());
+    if (cls.mode === "single") return importSingle(cls.text);
+    return importSharded(cls);
+  }
+
+  async function importSingle(text) {
+    const res = parseMigrationBundle(text);
     if (res.error) {
       toast(res.error, "warn");
       return;
@@ -218,8 +240,7 @@ function renderImportSection(main, ctx) {
     });
     if (!ok) return;
     importBtn.disabled = true;
-    clear(statusHost).append(el("p", { class: "muted small" },
-      "Importing… replaying existing scans over the bundle."));
+    setStatus("Importing… replaying existing scans over the bundle.");
     try {
       // Compress the payload before it crosses google.script.run — a raw multi-MB object
       // argument fails opaquely. Fall back to the plain object when gzip isn't available.
@@ -228,10 +249,53 @@ function renderImportSection(main, ctx) {
         gzipB64 ? { gzipB64 } : { bundle: res.bundle });
       toast(`Imported ${out.scans_imported} scan(s), ${out.vulns_imported} tracked ` +
         `vulnerabilities, ${out.history_added} history point(s).`);
+      clear(statusHost);
       ctx.refresh();
     } catch (e) {
       clear(statusHost);
       importBtn.disabled = false;
+      toast(`Import failed: ${e.message}`, "error");
+    }
+  }
+
+  async function importSharded(cls) {
+    const c = cls.counts;
+    const n = cls.shards.length;
+    const ok = await confirmDialog({
+      title: "Import sharded migration bundle?",
+      body: `${c.scans} scan(s), ${c.vulns} tracked vulnerabilities, ${c.episodes} resolved ` +
+        `episode(s), ${c.history} MTTR history point(s) across ${n} shard(s). GAS rebuilds ` +
+        "the history in several steps into a fresh, never-imported ledger — this can't be " +
+        "undone from the UI. Re-select the same files to resume if it's interrupted.",
+      confirmLabel: "Import",
+      danger: true,
+    });
+    if (!ok) return;
+    importBtn.disabled = true;
+    try {
+      setStatus("Starting import…");
+      const begGz = await gzipToBase64(cls.manifestText);
+      const beg = await call("api_importBegin",
+        begGz ? { gzipB64: begGz } : { manifest: cls.manifest });
+      let applied = beg.appliedShards || 0;
+      for (const s of cls.shards) {
+        if (s.index < applied) continue; // already applied (resume)
+        setStatus(`Applying shard ${s.index + 1} of ${n}…`);
+        const gz = await gzipToBase64(s.text);
+        const prog = await call("api_importShard",
+          gz ? { sessionId: beg.sessionId, index: s.index, gzipB64: gz }
+             : { sessionId: beg.sessionId, index: s.index, shard: JSON.parse(s.text) });
+        applied = prog.appliedShards;
+      }
+      setStatus("Finalizing…");
+      const out = await call("api_importFinalize", { sessionId: beg.sessionId });
+      toast(`Imported ${out.scans_imported} scan(s), ${out.vulns_imported} tracked ` +
+        `vulnerabilities, ${out.history_added} history point(s).`);
+      clear(statusHost);
+      ctx.refresh();
+    } catch (e) {
+      importBtn.disabled = false;
+      setStatus("Import interrupted — re-select the same files to resume where it stopped.");
       toast(`Import failed: ${e.message}`, "error");
     }
   }

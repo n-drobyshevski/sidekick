@@ -11,6 +11,12 @@ export type JobPhase =
   | "RECONCILING"
   | "PERSISTING"
   | "REPLAYING"
+  // Sharded-import phases. Deliberately distinct from PERSISTING/REPLAYING so
+  // recoverIfNeeded (locks.ts) never touches an in-flight import — it owns its own resume
+  // via committed row counts, not a journal rollback.
+  | "STAGING"
+  | "APPLYING"
+  | "FINALIZING"
   | "DONE"
   | "FAILED"
   | "CANCELLED";

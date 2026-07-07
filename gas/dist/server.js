@@ -80,7 +80,7 @@ var Server = (() => {
   }
 
   // src/server/archiveStore.ts
-  var SUBFOLDERS = ["scans", "obs", "checkpoints", "snapshots", "backups"];
+  var SUBFOLDERS = ["scans", "obs", "checkpoints", "snapshots", "backups", "imports"];
   function rootFolder() {
     return DriveApp.getFolderById(requireProp(PROP_KEYS.archiveFolderId));
   }
@@ -238,9 +238,24 @@ var Server = (() => {
     ).getId();
   }
   function readCheckpoint(ref) {
+    var _a, _b, _c;
     if (!ref) return null;
     const parsed = readGzJsonFile(ref);
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const obj = parsed;
+    if (Array.isArray(obj["parts"])) {
+      const ledger = [];
+      for (const partId of obj["parts"]) {
+        const part = readGzJsonFile(partId);
+        if (Array.isArray(part)) for (const row of part) ledger.push(row);
+      }
+      return {
+        version: Number((_a = obj["version"]) != null ? _a : 1),
+        floor_scan_id: (_b = obj["floor_scan_id"]) != null ? _b : null,
+        floor_ts: (_c = obj["floor_ts"]) != null ? _c : null,
+        ledger
+      };
+    }
     return parsed;
   }
   var SNAPSHOT_NAME = "ledger-snapshot.json.gz";
@@ -265,6 +280,42 @@ var Server = (() => {
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
     const st = parsed;
     return st.scans && st.ledger && st.episodes ? st : null;
+  }
+  function trashLedgerSnapshot() {
+    const files = subfolder("snapshots").getFilesByName(SNAPSHOT_NAME);
+    while (files.hasNext()) files.next().setTrashed(true);
+  }
+  function importFolder(sessionId) {
+    return childFolder(subfolder("imports"), safeName(sessionId));
+  }
+  function writeImportManifest(sessionId, manifest) {
+    return writeGzJson(importFolder(sessionId), "manifest.json.gz", manifest).getId();
+  }
+  function readImportManifest(sessionId) {
+    const files = importFolder(sessionId).getFilesByName("manifest.json.gz");
+    return files.hasNext() ? parseGzBlob(files.next().getBlob()) : null;
+  }
+  function stageShard(sessionId, index, payload) {
+    const name = `shard-${String(index + 1).padStart(4, "0")}.json.gz`;
+    return writeGzJson(importFolder(sessionId), name, payload).getId();
+  }
+  function writeCheckpointPart(compactionId, index, rows) {
+    const name = `checkpoint-${safeName(compactionId)}-part-${String(index + 1).padStart(4, "0")}.json.gz`;
+    return writeGzJson(subfolder("checkpoints"), name, rows).getId();
+  }
+  function writeCheckpointManifest(compactionId, manifest) {
+    return writeGzJson(
+      subfolder("checkpoints"),
+      `checkpoint-${safeName(compactionId)}.json.gz`,
+      manifest
+    ).getId();
+  }
+  function trashImportSession(sessionId) {
+    try {
+      importFolder(sessionId).setTrashed(true);
+    } catch (e) {
+      console.warn(`trashImportSession(${sessionId}): ${e}`);
+    }
   }
 
   // src/server/sheetsDb.ts
@@ -450,6 +501,18 @@ var Server = (() => {
     const range = sh.getRange(sh.getLastRow() + 1, 1, grid.length, headers.length);
     range.setNumberFormat("@");
     range.setValues(grid);
+  }
+  function dataRowCount(tab) {
+    return Math.max(0, sheet(tab).getLastRow() - 1);
+  }
+  function truncateAfter(tab, keepDataRows) {
+    const sh = sheet(tab);
+    const lastRow = sh.getLastRow();
+    const firstToClear = keepDataRows + 2;
+    if (lastRow >= firstToClear) {
+      const lastCol = Math.max(sh.getLastColumn(), 1);
+      sh.getRange(firstToClear, 1, lastRow - firstToClear + 1, lastCol).clearContent();
+    }
   }
   function updateWhere(tab, keyColumn, keyValue, patch) {
     const sh = sheet(tab);
@@ -942,7 +1005,12 @@ var Server = (() => {
     getScanHistory: () => getScanHistory,
     getSettings: () => getSettings,
     getStorageStats: () => getStorageStats,
+    importAbort: () => importAbort,
+    importBegin: () => importBegin,
+    importFinalize: () => importFinalize,
     importMigration: () => importMigration,
+    importShard: () => importShard,
+    importStatus: () => importStatus,
     previewDomains: () => previewDomains,
     runScan: () => runScan,
     saveDomains: () => saveDomains,
@@ -2721,54 +2789,89 @@ var Server = (() => {
     return out.slice(0, max);
   }
 
-  // src/server/jobsStore.ts
-  function normError(v) {
-    const s = v == null ? "" : String(v).trim();
-    return s === "" || s === "null" || s === "undefined" ? null : s;
+  // src/domain/importShard.ts
+  var MANIFEST_KIND = "wiz-sidekick-migration-manifest";
+  function beginImportSession(rawManifest) {
+    var _a, _b, _c, _d, _e;
+    if (rawManifest === null || typeof rawManifest !== "object" || Array.isArray(rawManifest)) {
+      throw new ImportValidationError("The uploaded file is not a migration manifest.");
+    }
+    const rec = rawManifest;
+    if (rec["kind"] !== MANIFEST_KIND) {
+      throw new ImportValidationError(
+        `Not a migration manifest (kind ${JSON.stringify((_a = rec["kind"]) != null ? _a : null)}).`
+      );
+    }
+    const shardCount = Number(rec["shard_count"]);
+    if (!Number.isInteger(shardCount) || shardCount < 0) {
+      throw new ImportValidationError(`Manifest shard_count ${rec["shard_count"]} is invalid.`);
+    }
+    const rawScans = Array.isArray(rec["scans"]) ? rec["scans"] : [];
+    const rawHistory = Array.isArray(rec["mttr_history"]) ? rec["mttr_history"] : [];
+    const seen = /* @__PURE__ */ new Set();
+    const sealed = [];
+    for (const raw of rawScans) {
+      if (typeof raw["scan_id"] !== "string" || !raw["scan_id"] || typeof raw["ts"] !== "string" || !raw["ts"]) {
+        throw new ImportValidationError("Every manifest scan needs string scan_id and ts.");
+      }
+      if (seen.has(raw["scan_id"])) continue;
+      seen.add(raw["scan_id"]);
+      sealed.push(coerceScan(raw));
+    }
+    const sealedAsc = scansAsc(sealed);
+    const badTs = sealedAsc.filter((r) => parseTs(r.ts) === null).map((r) => r.scan_id);
+    if (badTs.length) {
+      throw new ImportValidationError(`Manifest scan(s) ${badTs.join(", ")} have unparseable timestamps.`);
+    }
+    const flats = sealedAsc.filter((r) => r.shape === "flat");
+    const floorRow = flats.length ? flats[flats.length - 1] : null;
+    return {
+      manifest: {
+        scans: rawScans,
+        mttr_history: rawHistory,
+        shard_count: shardCount,
+        session_id: typeof rec["session_id"] === "string" ? rec["session_id"] : null,
+        totals: {
+          ledger: Number((_c = (_b = rec["totals"]) == null ? void 0 : _b["ledger"]) != null ? _c : 0),
+          episodes: Number((_e = (_d = rec["totals"]) == null ? void 0 : _d["episodes"]) != null ? _e : 0)
+        }
+      },
+      sealedScans: sealedAsc,
+      sealedIds: new Set(sealedAsc.map((r) => r.scan_id)),
+      floorScanId: floorRow ? floorRow.scan_id : null,
+      floorTs: floorRow ? floorRow.ts : null
+    };
   }
-  function newJobId(kind, now) {
-    return `${kind}-${nowIso(now).replace(/[:]/g, "")}`;
+  function applyShardCore(shard, ctx) {
+    var _a, _b, _c, _d;
+    const ledgerRows = [];
+    const episodeRows = [];
+    const checkpointRows = [];
+    let converted = 0;
+    for (const raw of (_a = shard.ledger) != null ? _a : []) {
+      const row = coerceLedger(raw);
+      checkpointRows.push(row);
+      if (row.status === "RESOLVED" && ctx.sealedIds.has((_b = row.last_scan_id) != null ? _b : "")) {
+        episodeRows.push(toEpisodeRow(row, ctx.compactionId));
+        converted += 1;
+      } else {
+        ledgerRows.push(row);
+      }
+    }
+    for (const raw of (_c = shard.episodes) != null ? _c : []) {
+      episodeRows.push(coerceEpisode(raw));
+    }
+    return {
+      ledgerRows,
+      episodeRows,
+      checkpointRows,
+      vulnsImported: checkpointRows.length,
+      episodesImported: ((_d = shard.episodes) != null ? _d : []).length,
+      episodesConverted: converted
+    };
   }
-  function createJob(row, now) {
-    const full = { ...row, started_at: nowIso(now), updated_at: nowIso(now) };
-    appendRows(TABS.jobs, [full]);
-    return full;
-  }
-  function updateJob(jobId, patch, now) {
-    updateWhere(TABS.jobs, "job_id", jobId, {
-      ...patch,
-      updated_at: nowIso(now)
-    });
-  }
-  function listJobs() {
-    return readAll(TABS.jobs).map((r) => {
-      var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
-      return {
-        job_id: String((_a = r["job_id"]) != null ? _a : ""),
-        kind: (_b = r["kind"]) != null ? _b : "scan",
-        phase: (_c = r["phase"]) != null ? _c : "FAILED",
-        scan_id: (_d = r["scan_id"]) != null ? _d : null,
-        cursor: (_e = r["cursor"]) != null ? _e : null,
-        page: Number((_f = r["page"]) != null ? _f : 0),
-        findings_so_far: Number((_g = r["findings_so_far"]) != null ? _g : 0),
-        page_size: Number((_h = r["page_size"]) != null ? _h : 0),
-        total_count: Number((_i = r["total_count"]) != null ? _i : 0),
-        params_json: (_j = r["params_json"]) != null ? _j : null,
-        journal_ref: (_k = r["journal_ref"]) != null ? _k : null,
-        error: normError(r["error"]),
-        started_at: String((_l = r["started_at"]) != null ? _l : ""),
-        updated_at: String((_m = r["updated_at"]) != null ? _m : "")
-      };
-    });
-  }
-  function getJob(jobId) {
-    var _a;
-    return (_a = listJobs().find((j) => j.job_id === jobId)) != null ? _a : null;
-  }
-  var TERMINAL = ["DONE", "FAILED", "CANCELLED"];
-  function activeJob() {
-    var _a;
-    return (_a = listJobs().find((j) => !TERMINAL.includes(j.phase))) != null ? _a : null;
+  function checkpointManifest(floorScanId, floorTs, parts) {
+    return { version: CHECKPOINT_VERSION, floor_scan_id: floorScanId, floor_ts: floorTs, parts };
   }
 
   // src/server/serverCache.ts
@@ -2843,6 +2946,113 @@ var Server = (() => {
       }
     }
     return value;
+  }
+
+  // src/server/historyStore.ts
+  function todayIso(now) {
+    return new Date(now != null ? now : Date.now()).toISOString().slice(0, 10);
+  }
+  function recordSnapshot(medianDays, resolved = 0, open = 0, counts = null, when = null, slaPct = null, oldestOpenDays = null) {
+    try {
+      const date = when != null ? when : todayIso();
+      const records = loadHistory().filter((r) => r.date !== date);
+      records.push({
+        date,
+        median_days: Math.round(medianDays * 1e3) / 1e3,
+        resolved: Math.trunc(resolved),
+        open: Math.trunc(open),
+        total: counts ? Object.values(counts).reduce((a, b) => a + b, 0) : 0,
+        sla_pct: slaPct !== null ? Math.round(slaPct * 10) / 10 : null,
+        oldest_open_days: oldestOpenDays !== null ? Math.round(oldestOpenDays * 1e3) / 1e3 : null
+      });
+      records.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+      overwrite(TABS.mttrHistory, records);
+      bumpDataVersion();
+      return true;
+    } catch (e) {
+      console.warn(`Failed to write MTTR history: ${e}`);
+      return false;
+    }
+  }
+  function importHistory(imported) {
+    const { rows, added, skipped } = mergeMttrHistory(
+      loadHistory(),
+      imported
+    );
+    if (added) {
+      overwrite(TABS.mttrHistory, rows);
+      bumpDataVersion();
+    }
+    return { added, skipped };
+  }
+  function loadHistory() {
+    var _a, _b, _c, _d;
+    const rows = readAll(TABS.mttrHistory);
+    const out = [];
+    for (const r of rows) {
+      const date = r["date"];
+      if (typeof date !== "string" || Number.isNaN(Date.parse(date))) continue;
+      out.push({
+        date: date.slice(0, 10),
+        median_days: Number((_a = r["median_days"]) != null ? _a : 0),
+        resolved: Number((_b = r["resolved"]) != null ? _b : 0),
+        open: Number((_c = r["open"]) != null ? _c : 0),
+        total: Number((_d = r["total"]) != null ? _d : 0),
+        sla_pct: r["sla_pct"] === null ? null : Number(r["sla_pct"]),
+        oldest_open_days: r["oldest_open_days"] === null ? null : Number(r["oldest_open_days"])
+      });
+    }
+    return out.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+  }
+
+  // src/server/jobsStore.ts
+  function normError(v) {
+    const s = v == null ? "" : String(v).trim();
+    return s === "" || s === "null" || s === "undefined" ? null : s;
+  }
+  function newJobId(kind, now) {
+    return `${kind}-${nowIso(now).replace(/[:]/g, "")}`;
+  }
+  function createJob(row, now) {
+    const full = { ...row, started_at: nowIso(now), updated_at: nowIso(now) };
+    appendRows(TABS.jobs, [full]);
+    return full;
+  }
+  function updateJob(jobId, patch, now) {
+    updateWhere(TABS.jobs, "job_id", jobId, {
+      ...patch,
+      updated_at: nowIso(now)
+    });
+  }
+  function listJobs() {
+    return readAll(TABS.jobs).map((r) => {
+      var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
+      return {
+        job_id: String((_a = r["job_id"]) != null ? _a : ""),
+        kind: (_b = r["kind"]) != null ? _b : "scan",
+        phase: (_c = r["phase"]) != null ? _c : "FAILED",
+        scan_id: (_d = r["scan_id"]) != null ? _d : null,
+        cursor: (_e = r["cursor"]) != null ? _e : null,
+        page: Number((_f = r["page"]) != null ? _f : 0),
+        findings_so_far: Number((_g = r["findings_so_far"]) != null ? _g : 0),
+        page_size: Number((_h = r["page_size"]) != null ? _h : 0),
+        total_count: Number((_i = r["total_count"]) != null ? _i : 0),
+        params_json: (_j = r["params_json"]) != null ? _j : null,
+        journal_ref: (_k = r["journal_ref"]) != null ? _k : null,
+        error: normError(r["error"]),
+        started_at: String((_l = r["started_at"]) != null ? _l : ""),
+        updated_at: String((_m = r["updated_at"]) != null ? _m : "")
+      };
+    });
+  }
+  function getJob(jobId) {
+    var _a;
+    return (_a = listJobs().find((j) => j.job_id === jobId)) != null ? _a : null;
+  }
+  var TERMINAL = ["DONE", "FAILED", "CANCELLED"];
+  function activeJob() {
+    var _a;
+    return (_a = listJobs().find((j) => !TERMINAL.includes(j.phase))) != null ? _a : null;
   }
 
   // src/server/ledgerStore.ts
@@ -3156,6 +3366,203 @@ var Server = (() => {
     trashFile(journalRef);
     return counts;
   }
+  var APPEND_CHUNK = 5e3;
+  function importJobState(job) {
+    var _a;
+    return JSON.parse((_a = job.params_json) != null ? _a : "{}");
+  }
+  function activeImportJob(sessionId) {
+    const job = activeJob();
+    if (!job || job.kind !== "import") return null;
+    const st = importJobState(job);
+    if (sessionId !== void 0 && st.sessionId !== sessionId) return null;
+    return { job, st };
+  }
+  function chunkedAppend(tab, rows) {
+    for (let i = 0; i < rows.length; i += APPEND_CHUNK) {
+      appendRows(tab, rows.slice(i, i + APPEND_CHUNK));
+    }
+  }
+  function importBeginSharded(rawManifest) {
+    const existing = activeImportJob();
+    if (existing) {
+      return {
+        sessionId: existing.st.sessionId,
+        jobId: existing.job.job_id,
+        shardCount: existing.st.shardCount,
+        appliedShards: existing.st.appliedShards
+      };
+    }
+    if (loadScanRows().length || readAll(TABS.compactions).length) {
+      throw new ImportValidationError(
+        "This ledger already has scans or a compaction record \u2014 the migration import needs a fresh, never-compacted ledger."
+      );
+    }
+    const session = beginImportSession(rawManifest);
+    const nowMs = Date.now();
+    const compactionId = `imp-${nowIso(nowMs).replace(/[:]/g, "")}`;
+    const sessionId = session.manifest.session_id || newJobId("import", nowMs);
+    overwrite(TABS.vulnLedger, []);
+    overwrite(TABS.episodes, []);
+    trashLedgerSnapshot();
+    writeImportManifest(sessionId, {
+      scans: session.manifest.scans,
+      mttr_history: session.manifest.mttr_history,
+      compactionId,
+      floorScanId: session.floorScanId,
+      floorTs: session.floorTs,
+      shardCount: session.manifest.shard_count
+    });
+    const jobId = newJobId("import", nowMs);
+    const st = {
+      sessionId,
+      compactionId,
+      shardCount: session.manifest.shard_count,
+      appliedShards: 0,
+      ledgerCommitted: 0,
+      episodesCommitted: 0,
+      partIds: [],
+      floorScanId: session.floorScanId,
+      floorTs: session.floorTs,
+      sealedIds: [...session.sealedIds],
+      scansTotal: session.sealedScans.length,
+      counts: { vulns_imported: 0, episodes_imported: 0, episodes_converted: 0 }
+    };
+    createJob(
+      {
+        job_id: jobId,
+        kind: "import",
+        phase: "STAGING",
+        scan_id: null,
+        cursor: null,
+        page: 0,
+        findings_so_far: 0,
+        page_size: 0,
+        total_count: session.manifest.shard_count,
+        params_json: JSON.stringify(st),
+        journal_ref: null,
+        error: null
+      },
+      nowMs
+    );
+    invalidateLedgerMemos();
+    return { sessionId, jobId, shardCount: st.shardCount, appliedShards: 0 };
+  }
+  function importApplyShard(sessionId, index, shard) {
+    const active = activeImportJob(sessionId);
+    if (!active) throw new ImportValidationError("No active import session \u2014 begin the import first.");
+    const { job } = active;
+    const st = active.st;
+    if (index < st.appliedShards) {
+      return { sessionId, jobId: job.job_id, shardCount: st.shardCount, appliedShards: st.appliedShards };
+    }
+    if (index !== st.appliedShards) {
+      throw new ImportValidationError(
+        `Shards must arrive in order \u2014 expected shard ${st.appliedShards}, got ${index}.`
+      );
+    }
+    if (dataRowCount(TABS.vulnLedger) > st.ledgerCommitted) truncateAfter(TABS.vulnLedger, st.ledgerCommitted);
+    if (dataRowCount(TABS.episodes) > st.episodesCommitted) truncateAfter(TABS.episodes, st.episodesCommitted);
+    stageShard(sessionId, index, shard);
+    const out = applyShardCore(shard, {
+      sealedIds: new Set(st.sealedIds),
+      compactionId: st.compactionId
+    });
+    chunkedAppend(TABS.vulnLedger, out.ledgerRows);
+    chunkedAppend(TABS.episodes, out.episodeRows);
+    const partId = writeCheckpointPart(st.compactionId, index, out.checkpointRows);
+    const next = {
+      ...st,
+      appliedShards: index + 1,
+      ledgerCommitted: st.ledgerCommitted + out.ledgerRows.length,
+      episodesCommitted: st.episodesCommitted + out.episodeRows.length,
+      partIds: [...st.partIds, partId],
+      counts: {
+        vulns_imported: st.counts.vulns_imported + out.vulnsImported,
+        episodes_imported: st.counts.episodes_imported + out.episodesImported,
+        episodes_converted: st.counts.episodes_converted + out.episodesConverted
+      }
+    };
+    updateJob(job.job_id, { phase: "APPLYING", params_json: JSON.stringify(next) });
+    invalidateLedgerMemos();
+    return { sessionId, jobId: job.job_id, shardCount: st.shardCount, appliedShards: next.appliedShards };
+  }
+  function importFinalizeSharded(sessionId) {
+    var _a, _b, _c;
+    const active = activeImportJob(sessionId);
+    if (!active) throw new ImportValidationError("No active import session to finalize.");
+    const { job } = active;
+    const st = active.st;
+    if (st.appliedShards !== st.shardCount) {
+      throw new ImportValidationError(
+        `Import incomplete \u2014 ${st.appliedShards} of ${st.shardCount} shards applied.`
+      );
+    }
+    updateJob(job.job_id, { phase: "FINALIZING" });
+    const rawManifest = readImportManifest(sessionId);
+    const session = beginImportSession({
+      kind: "wiz-sidekick-migration-manifest",
+      version: 1,
+      shard_count: st.shardCount,
+      session_id: sessionId,
+      scans: (_a = rawManifest == null ? void 0 : rawManifest["scans"]) != null ? _a : [],
+      mttr_history: (_b = rawManifest == null ? void 0 : rawManifest["mttr_history"]) != null ? _b : [],
+      totals: { ledger: 0, episodes: 0 }
+    });
+    const present2 = new Set(loadScanRows().map((s) => s.scan_id));
+    const toAppend = session.sealedScans.filter((s) => !present2.has(s.scan_id));
+    chunkedAppend(TABS.scans, toAppend);
+    invalidateLedgerMemos();
+    const cpRef = writeCheckpointManifest(
+      st.compactionId,
+      checkpointManifest(st.floorScanId, st.floorTs, st.partIds)
+    );
+    if (readAll(TABS.compactions).length === 0) {
+      appendRows(TABS.compactions, [
+        {
+          compaction_id: st.compactionId,
+          ts: nowIso(),
+          floor_scan_id: st.floorScanId,
+          floor_ts: st.floorTs,
+          scans_sealed: st.scansTotal,
+          episodes_created: st.counts.episodes_imported + st.counts.episodes_converted,
+          observations_pruned: 0,
+          archive_bytes_freed: 0,
+          db_bytes_freed: 0,
+          checkpoint_ref: cpRef
+        }
+      ]);
+    }
+    const hist = importHistory((_c = rawManifest == null ? void 0 : rawManifest["mttr_history"]) != null ? _c : []);
+    try {
+      writeLedgerSnapshot(loadState(false));
+    } catch (e) {
+      console.warn(`Post-import snapshot skipped: ${e}`);
+    }
+    invalidateLedgerMemos();
+    updateJob(job.job_id, { phase: "DONE" });
+    trashImportSession(sessionId);
+    return {
+      scans_imported: st.scansTotal,
+      scans_skipped: 0,
+      vulns_imported: st.counts.vulns_imported,
+      episodes_imported: st.counts.episodes_imported,
+      episodes_converted: st.counts.episodes_converted,
+      scans_replayed: 0,
+      history_added: hist.added,
+      history_skipped: hist.skipped
+    };
+  }
+  function importAbortSharded(sessionId) {
+    const active = activeImportJob(sessionId);
+    overwrite(TABS.vulnLedger, []);
+    overwrite(TABS.episodes, []);
+    trashLedgerSnapshot();
+    trashImportSession(sessionId);
+    invalidateLedgerMemos();
+    if (active) updateJob(active.job.job_id, { phase: "CANCELLED", error: null });
+    return { aborted: true };
+  }
   function compactLedger(retentionDays, dryRun = false, now) {
     const state = loadState();
     const prevCheckpoint = latestCheckpoint();
@@ -3399,63 +3806,6 @@ var Server = (() => {
     const out = {};
     for (const c of TABLE_COLUMNS) out[c] = (_a = r[c]) != null ? _a : null;
     return out;
-  }
-
-  // src/server/historyStore.ts
-  function todayIso(now) {
-    return new Date(now != null ? now : Date.now()).toISOString().slice(0, 10);
-  }
-  function recordSnapshot(medianDays, resolved = 0, open = 0, counts = null, when = null, slaPct = null, oldestOpenDays = null) {
-    try {
-      const date = when != null ? when : todayIso();
-      const records = loadHistory().filter((r) => r.date !== date);
-      records.push({
-        date,
-        median_days: Math.round(medianDays * 1e3) / 1e3,
-        resolved: Math.trunc(resolved),
-        open: Math.trunc(open),
-        total: counts ? Object.values(counts).reduce((a, b) => a + b, 0) : 0,
-        sla_pct: slaPct !== null ? Math.round(slaPct * 10) / 10 : null,
-        oldest_open_days: oldestOpenDays !== null ? Math.round(oldestOpenDays * 1e3) / 1e3 : null
-      });
-      records.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
-      overwrite(TABS.mttrHistory, records);
-      bumpDataVersion();
-      return true;
-    } catch (e) {
-      console.warn(`Failed to write MTTR history: ${e}`);
-      return false;
-    }
-  }
-  function importHistory(imported) {
-    const { rows, added, skipped } = mergeMttrHistory(
-      loadHistory(),
-      imported
-    );
-    if (added) {
-      overwrite(TABS.mttrHistory, rows);
-      bumpDataVersion();
-    }
-    return { added, skipped };
-  }
-  function loadHistory() {
-    var _a, _b, _c, _d;
-    const rows = readAll(TABS.mttrHistory);
-    const out = [];
-    for (const r of rows) {
-      const date = r["date"];
-      if (typeof date !== "string" || Number.isNaN(Date.parse(date))) continue;
-      out.push({
-        date: date.slice(0, 10),
-        median_days: Number((_a = r["median_days"]) != null ? _a : 0),
-        resolved: Number((_b = r["resolved"]) != null ? _b : 0),
-        open: Number((_c = r["open"]) != null ? _c : 0),
-        total: Number((_d = r["total"]) != null ? _d : 0),
-        sla_pct: r["sla_pct"] === null ? null : Number(r["sla_pct"]),
-        oldest_open_days: r["oldest_open_days"] === null ? null : Number(r["oldest_open_days"])
-      });
-    }
-    return out.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
   }
 
   // src/server/locks.ts
@@ -4372,21 +4722,61 @@ var Server = (() => {
     if (dryRun) return run(() => compactLedger(days, true));
     return mutate(() => compactLedger(days, false));
   }
+  function payloadOf(params, fallbackKey) {
+    if (typeof params["gzipB64"] === "string") {
+      return JSON.parse(
+        Utilities.ungzip(
+          Utilities.newBlob(Utilities.base64Decode(params["gzipB64"]), "application/x-gzip")
+        ).getDataAsString("UTF-8")
+      );
+    }
+    return params[fallbackKey];
+  }
   function importMigration(p) {
     return mutate(() => {
       const params = p != null ? p : {};
-      const raw = typeof params["gzipB64"] === "string" ? JSON.parse(
-        Utilities.ungzip(
-          Utilities.newBlob(
-            Utilities.base64Decode(params["gzipB64"]),
-            "application/x-gzip"
-          )
-        ).getDataAsString("UTF-8")
-      ) : params["bundle"];
-      const bundle = validateBundle(raw);
+      const bundle = validateBundle(payloadOf(params, "bundle"));
       const counts = importBundle(bundle);
       const hist = importHistory(bundle.mttr_history);
       return { ...counts, history_added: hist.added, history_skipped: hist.skipped };
+    });
+  }
+  function importBegin(p) {
+    return mutate(() => importBeginSharded(payloadOf(p != null ? p : {}, "manifest")));
+  }
+  function importShard(p) {
+    return mutate(() => {
+      var _a, _b, _c, _d, _e;
+      const params = p != null ? p : {};
+      const shard = payloadOf(params, "shard");
+      const index = Number((_b = (_a = params["index"]) != null ? _a : shard == null ? void 0 : shard["index"]) != null ? _b : 0);
+      return importApplyShard(String((_c = params["sessionId"]) != null ? _c : ""), index, {
+        ledger: (_d = shard == null ? void 0 : shard["ledger"]) != null ? _d : [],
+        episodes: (_e = shard == null ? void 0 : shard["episodes"]) != null ? _e : []
+      });
+    });
+  }
+  function importFinalize(p) {
+    return mutate(
+      () => {
+        var _a;
+        return importFinalizeSharded(String((_a = (p != null ? p : {})["sessionId"]) != null ? _a : ""));
+      }
+    );
+  }
+  function importAbort(p) {
+    return mutate(
+      () => {
+        var _a;
+        return importAbortSharded(String((_a = (p != null ? p : {})["sessionId"]) != null ? _a : ""));
+      }
+    );
+  }
+  function importStatus(p) {
+    return run(() => {
+      var _a;
+      const jobId = String((_a = (p != null ? p : {})["jobId"]) != null ? _a : "");
+      return jobId ? getJob(jobId) : activeJobSummary();
     });
   }
   var REPORT_SOURCE = "OS vulnerabilities";

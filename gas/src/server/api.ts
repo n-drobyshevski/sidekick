@@ -537,26 +537,62 @@ export function compact(p?: unknown): ApiResult {
 // --------------------------------------------------------------------------- import
 
 /** One-shot migration import: a Streamlit bundle merged into the ledger + history. */
+// The client gzips large payloads to fit google.script.run; ungzip here. `fallbackKey`
+// lets older/no-gzip callers still send the parsed object (e.g. `bundle`, `manifest`).
+function payloadOf(params: Rec, fallbackKey: string): unknown {
+  if (typeof params["gzipB64"] === "string") {
+    return JSON.parse(
+      Utilities.ungzip(
+        Utilities.newBlob(Utilities.base64Decode(params["gzipB64"] as string), "application/x-gzip"),
+      ).getDataAsString("UTF-8"),
+    );
+  }
+  return params[fallbackKey];
+}
+
 export function importMigration(p?: unknown): ApiResult {
   return mutate(() => {
     const params = (p ?? {}) as Rec;
-    // The client gzips the bundle to fit google.script.run; ungzip here. Older/no-gzip
-    // callers still send the parsed object as `bundle`.
-    const raw =
-      typeof params["gzipB64"] === "string"
-        ? JSON.parse(
-            Utilities.ungzip(
-              Utilities.newBlob(
-                Utilities.base64Decode(params["gzipB64"] as string),
-                "application/x-gzip",
-              ),
-            ).getDataAsString("UTF-8"),
-          )
-        : params["bundle"];
-    const bundle = validateBundle(raw);
+    const bundle = validateBundle(payloadOf(params, "bundle"));
     const counts = ledgerStore.importBundle(bundle);
     const hist = history.importHistory(bundle.mttr_history);
     return { ...counts, history_added: hist.added, history_skipped: hist.skipped };
+  });
+}
+
+// ------------------------------------------------------- sharded (multi-part) import
+export function importBegin(p?: unknown): ApiResult {
+  return mutate(() => ledgerStore.importBeginSharded(payloadOf((p ?? {}) as Rec, "manifest")));
+}
+
+export function importShard(p?: unknown): ApiResult {
+  return mutate(() => {
+    const params = (p ?? {}) as Rec;
+    const shard = payloadOf(params, "shard") as Rec;
+    const index = Number(params["index"] ?? shard?.["index"] ?? 0);
+    return ledgerStore.importApplyShard(String(params["sessionId"] ?? ""), index, {
+      ledger: (shard?.["ledger"] as Rec[]) ?? [],
+      episodes: (shard?.["episodes"] as Rec[]) ?? [],
+    });
+  });
+}
+
+export function importFinalize(p?: unknown): ApiResult {
+  return mutate(() =>
+    ledgerStore.importFinalizeSharded(String(((p ?? {}) as Rec)["sessionId"] ?? "")),
+  );
+}
+
+export function importAbort(p?: unknown): ApiResult {
+  return mutate(() =>
+    ledgerStore.importAbortSharded(String(((p ?? {}) as Rec)["sessionId"] ?? "")),
+  );
+}
+
+export function importStatus(p?: unknown): ApiResult {
+  return run(() => {
+    const jobId = String(((p ?? {}) as Rec)["jobId"] ?? "");
+    return jobId ? getJob(jobId) : activeJobSummary();
   });
 }
 

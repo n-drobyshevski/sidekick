@@ -52,4 +52,9 @@ function api_saveDomains(p) { return timedApi_("saveDomains", p); }
 function api_previewDomains(p) { return timedApi_("previewDomains", p); }
 function api_compact(p) { return timedApi_("compact", p); }
 function api_importMigration(p) { return timedApi_("importMigration", p); }
+function api_importBegin(p) { return timedApi_("importBegin", p); }
+function api_importShard(p) { return timedApi_("importShard", p); }
+function api_importFinalize(p) { return timedApi_("importFinalize", p); }
+function api_importAbort(p) { return timedApi_("importAbort", p); }
+function api_importStatus(p) { return timedApi_("importStatus", p); }
 function api_getStorageStats(p) { return timedApi_("getStorageStats", p); }
