@@ -1,5 +1,5 @@
 <style>
-/* Wiz Sidekick — the DESIGN.md visual system ("The Audit Ledger") ported to the GAS
+/* Wiz Sidekick OS — the DESIGN.md visual system ("The Audit Ledger") ported to the GAS
    web app. Light theme only; neutral field; saturated color rationed to severity,
    state, and SLA verdicts. Two-token severity rule: --sev-* fills for marks/dots,
    --sev-*-text for any colored label. */
@@ -489,6 +489,27 @@ label.field-label { display: block; font-size: 12px; color: var(--text-2); margi
 .sev-pill[aria-pressed="true"].sev-MEDIUM { background: rgba(217,119,6,.14); color: var(--sev-medium-text); border-color: rgba(217,119,6,.3); }
 .sev-pill[aria-pressed="true"].sev-LOW { background: rgba(37,99,235,.14); color: var(--sev-low-text); border-color: rgba(37,99,235,.3); }
 .sev-pill[aria-pressed="true"].sev-INFO { background: rgba(100,116,139,.14); color: var(--sev-info-text); border-color: rgba(100,116,139,.3); }
+
+/* ------------------------------------------------- page header row + inline severity filter */
+.page-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.page-head h1 { margin: 0; }
+
+.sev-filter { position: relative; }
+.sev-filter-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-height: 30px; padding: 4px 10px;
+  font-size: 0.8125rem; font-weight: 500;
+  background: var(--surface); color: var(--ink);
+  border: 1px solid var(--hairline); border-radius: var(--radius-md); box-shadow: none;
+}
+.sev-filter-btn:hover { background: var(--page); }
+.sev-filter-caret { font-size: 0.7rem; color: var(--text-3); }
+.sev-filter-menu {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 20;
+  min-width: 208px; padding: 10px;
+  background: var(--page); border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow-card);
+}
 
 /* ------------------------------------------------------------------ filter bar */
 .filter-bar {

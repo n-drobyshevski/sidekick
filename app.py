@@ -30,7 +30,7 @@ from wiz_dashboard.ui.pages import (
 LOGO_PATH = Path(__file__).resolve().parent / "wiz_dashboard" / "assets" / "logo.svg"
 
 st.set_page_config(
-    page_title="Wiz Sidekick",
+    page_title="Wiz Sidekick OS",
     page_icon=None,
     layout="wide",
     initial_sidebar_state="expanded",

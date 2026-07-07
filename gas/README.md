@@ -1,4 +1,4 @@
-# Wiz Sidekick — Google Apps Script rebuild
+# Wiz Sidekick OS — Google Apps Script rebuild
 
 A full rebuild of the Streamlit Wiz vulnerability dashboard as a Google Apps Script
 web app: OS-level CVEs on host workloads, severity breakdowns, and MTTR / SLA
@@ -58,7 +58,7 @@ by hand-written vitest specs instead of fixture parity.
 2. Create an Apps Script project (`clasp create --type webapp` or use an existing
    script id) and put its id in `.clasp.json`.
 3. `npx clasp login`, then `npm run push` (builds and pushes `dist/`).
-4. In the GAS editor, run **`setup()`** once. It creates the "Wiz Sidekick Ledger"
+4. In the GAS editor, run **`setup()`** once. It creates the "Wiz Sidekick OS Ledger"
    spreadsheet, the `wiz-sidekick` Drive folder skeleton, the daily scan trigger
    (05:00 UTC), and records their ids in Script Properties.
 5. Set the remaining Script Properties by hand (never committed anywhere):

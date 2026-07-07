@@ -346,6 +346,22 @@ export function getGrouping(p?: unknown): ApiResult {
 
 // ----------------------------------------------------------------------------- MTTR
 
+// The severity subset the MTTR page (or any caller) restricts to; null/absent means
+// every severity. Read once, keyed on identically, and applied identically everywhere.
+function readSeverities(p?: unknown): string[] | null {
+  const raw = (p as Rec)?.["severities"];
+  return Array.isArray(raw) ? (raw as unknown[]).map(String) : null;
+}
+
+// Restrict ledger rows to the chosen severities (+ UNKNOWN, never hidden) — mirrors the
+// trend path (trendFromFrames) so the summary, by-domain split, and trend all filter the
+// same way. A null list means "all severities" and skips the filter entirely.
+function filterSeverities(rows: Rec[], severities: string[] | null): Rec[] {
+  if (severities === null || !rows.length) return rows;
+  const keep = new Set([...severities, "UNKNOWN"]);
+  return rows.filter((r) => keep.has(normalizeSeverity(r["severity"])));
+}
+
 function mttrData(p?: unknown): Rec {
   const domain = String((p as Rec)?.["domain"] ?? "");
   let rows: Rec[] = ledgerStore.loadBaseRows() as unknown as Rec[];
@@ -353,13 +369,14 @@ function mttrData(p?: unknown): Rec {
     const compiled = compileDomains(settingsStore.getDomains().items);
     rows = rows.filter((r) => assignDomain(r, compiled) === domain);
   }
+  rows = filterSeverities(rows, readSeverities(p));
   const { perSev, overall } = mttrFromLedger(rows);
   const { slaPct, oldestDays } = overallSlaOldest(perSev);
   return { perSev, overall, slaPct, oldestDays, rowCount: rows.length };
 }
 
 function mttrTrendData(p?: unknown): Rec {
-  const severities = ((p as Rec)?.["severities"] as string[]) ?? null;
+  const severities = readSeverities(p);
   return {
     history: history.loadHistory(),
     trend: ledgerStore.loadTrend(severities),
@@ -371,8 +388,11 @@ function mttrTrendData(p?: unknown): Rec {
 // ledger base rows the MTTR hero uses by their assigned domain. Priority order (with
 // Unassigned last), empty domains omitted. Reuses mttrFromLedger/overallSlaOldest, so
 // no domain-layer change.
-function mttrByDomainData(): Rec {
-  const rows = ledgerStore.loadBaseRows() as unknown as Rec[];
+function mttrByDomainData(p?: unknown): Rec {
+  const rows = filterSeverities(
+    ledgerStore.loadBaseRows() as unknown as Rec[],
+    readSeverities(p),
+  );
   const items = settingsStore.getDomains().items;
   const compiled = compileDomains(items);
   const assigned = assignDomains(rows, compiled);
@@ -407,15 +427,18 @@ function mttrByDomainData(): Rec {
 // The MTTR summary carries wall-clock-relative open ages (p50/p90/oldest), so its
 // TTL is 1h — a ≤0.04-day drift — instead of the 6h the version-keyed data allows.
 const cachedMttrData = (p?: unknown) =>
-  cached("mttr", { domain: String((p as Rec)?.["domain"] ?? "") }, () => mttrData(p), 3600);
-const cachedMttrTrendData = (p?: unknown) =>
   cached(
-    "mttrTrend",
-    { severities: ((p as Rec)?.["severities"] as string[]) ?? null },
-    () => mttrTrendData(p),
+    "mttr",
+    { domain: String((p as Rec)?.["domain"] ?? ""), severities: readSeverities(p) },
+    () => mttrData(p),
+    3600,
   );
-// Domain-independent (always all domains); 1h TTL like the summary (carries open ages).
-const cachedMttrByDomainData = () => cached("mttrByDomain", null, mttrByDomainData, 3600);
+const cachedMttrTrendData = (p?: unknown) =>
+  cached("mttrTrend", { severities: readSeverities(p) }, () => mttrTrendData(p));
+// Domain-independent (always all domains); severity-scoped; 1h TTL like the summary
+// (carries open ages).
+const cachedMttrByDomainData = (p?: unknown) =>
+  cached("mttrByDomain", { severities: readSeverities(p) }, () => mttrByDomainData(p), 3600);
 
 export function getMttr(p?: unknown): ApiResult {
   return run(() => cachedMttrData(p));
@@ -433,7 +456,7 @@ export function getMttrPage(p?: unknown): ApiResult {
   return run(() => ({
     mttr: cachedMttrData(p),
     trends: cachedMttrTrendData(p),
-    byDomain: domain ? null : cachedMttrByDomainData(),
+    byDomain: domain ? null : cachedMttrByDomainData(p),
   }));
 }
 
