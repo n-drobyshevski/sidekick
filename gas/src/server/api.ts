@@ -9,7 +9,7 @@ import {
   SLA_TARGETS,
   SELECTABLE_SEVERITIES,
 } from "../domain/config";
-import { domainNames, validateDomains, compileDomains, assignDomain, UNASSIGNED } from "../domain/domainRules";
+import { domainNames, validateDomains, compileDomains, assignDomain, assignDomains, UNASSIGNED } from "../domain/domainRules";
 import { mttrFromLedger, vulnKey } from "../domain/lifecycle";
 import { extractNodes } from "../domain/transform";
 import { overallSlaOldest } from "../domain/metrics";
@@ -343,6 +343,42 @@ function mttrTrendData(p?: unknown): Rec {
   };
 }
 
+// Per-domain remediation summary for the "By domain" section shown at the whole-chain
+// (aggregate) view — a value chain is composed of domains, so this splits the same
+// ledger base rows the MTTR hero uses by their assigned domain. Priority order (with
+// Unassigned last), empty domains omitted. Reuses mttrFromLedger/overallSlaOldest, so
+// no domain-layer change.
+function mttrByDomainData(): Rec {
+  const rows = ledgerStore.loadBaseRows() as unknown as Rec[];
+  const items = settingsStore.getDomains().items;
+  const compiled = compileDomains(items);
+  const assigned = assignDomains(rows, compiled);
+  const buckets = new Map<string, Rec[]>();
+  rows.forEach((r, i) => {
+    const name = assigned[i] ?? UNASSIGNED;
+    let arr = buckets.get(name);
+    if (!arr) buckets.set(name, (arr = []));
+    arr.push(r);
+  });
+  const out: Rec[] = [];
+  for (const name of domainNames(items)) {
+    const drows = buckets.get(name);
+    if (!drows || !drows.length) continue;
+    const { perSev, overall } = mttrFromLedger(drows);
+    const { slaPct, oldestDays } = overallSlaOldest(perSev);
+    out.push({
+      domain: name,
+      median: overall.mttr_median ?? null,
+      slaPct,
+      oldestDays,
+      open: overall.open ?? 0,
+      resolved: overall.resolved ?? 0,
+      tracked: drows.length,
+    });
+  }
+  return { rows: out };
+}
+
 // Cached per DATA_VERSION, keyed on exactly the params each computation reads — so
 // the single and batched endpoints share entries regardless of extra params.
 // The MTTR summary carries wall-clock-relative open ages (p50/p90/oldest), so its
@@ -355,6 +391,8 @@ const cachedMttrTrendData = (p?: unknown) =>
     { severities: ((p as Rec)?.["severities"] as string[]) ?? null },
     () => mttrTrendData(p),
   );
+// Domain-independent (always all domains); 1h TTL like the summary (carries open ages).
+const cachedMttrByDomainData = () => cached("mttrByDomain", null, mttrByDomainData, 3600);
 
 export function getMttr(p?: unknown): ApiResult {
   return run(() => cachedMttrData(p));
@@ -364,9 +402,16 @@ export function getMttrTrend(p?: unknown): ApiResult {
   return run(() => cachedMttrTrendData(p));
 }
 
-/** MTTR page in one round trip (summary + trends share one state load). */
+/** MTTR page in one round trip (summary + trends share one state load). byDomain is
+ *  the per-domain split for the whole-chain view only — omitted when a specific value
+ *  chain is selected (the page is already that one domain). */
 export function getMttrPage(p?: unknown): ApiResult {
-  return run(() => ({ mttr: cachedMttrData(p), trends: cachedMttrTrendData(p) }));
+  const domain = String((p as Rec)?.["domain"] ?? "");
+  return run(() => ({
+    mttr: cachedMttrData(p),
+    trends: cachedMttrTrendData(p),
+    byDomain: domain ? null : cachedMttrByDomainData(),
+  }));
 }
 
 // --------------------------------------------------------------------- scan history

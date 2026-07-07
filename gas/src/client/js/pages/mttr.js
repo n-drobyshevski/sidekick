@@ -16,7 +16,8 @@ export async function renderMttr(main, _params, ctx) {
   const heroHost = el("div", {});
   const chartsHost = el("div", { class: "chart-grid" });
   const slaHost = el("div", {});
-  main.append(heroHost, chartsHost, slaHost);
+  const byDomainHost = el("div", {});
+  main.append(heroHost, chartsHost, slaHost, byDomainHost);
 
   // Scope comes from the global Value Chain filter in the sidebar; "" = whole chain.
   const domain = ctx.domain || "";
@@ -32,8 +33,39 @@ export async function renderMttr(main, _params, ctx) {
       renderHero(data.mttr, data.trends);
       renderCharts(data.trends);
       renderSla(data.mttr);
+      renderByDomain(data.byDomain);
     };
     paint(await swrCall("api_getMttrPage", { domain }, paint));
+  }
+
+  /** Per-domain remediation, shown only at the whole-chain view (the server omits it
+   *  when a single value chain is selected). A value chain is composed of domains, so
+   *  this is how each component is doing. */
+  function renderByDomain(byDomain) {
+    clear(byDomainHost);
+    if (!byDomain || !byDomain.rows.length || boot.domainNames.length < 2) return;
+    byDomainHost.append(sectionLabel("By domain"));
+    byDomainHost.append(el("p", { class: "small muted", style: "margin:-6px 0 12px" },
+      "Remediation for each domain that makes up the value chain."));
+    const table = el("table", { class: "data" },
+      el("thead", {}, el("tr", {},
+        ...["Domain", "Median MTTR", "In SLA", "Open", "Resolved", "Tracked"]
+          .map((h) => el("th", { scope: "col" }, h)))),
+    );
+    const tbody = el("tbody", {});
+    for (const r of byDomain.rows) {
+      tbody.append(el("tr", {},
+        el("td", {}, r.domain),
+        el("td", { class: "num" }, fmtDays(r.median)),
+        el("td", { class: "num" }, r.slaPct !== null && r.slaPct !== undefined
+          ? `${r.slaPct.toFixed(0)}%` : "—"),
+        el("td", { class: "num" }, (r.open ?? 0).toLocaleString()),
+        el("td", { class: "num" }, (r.resolved ?? 0).toLocaleString()),
+        el("td", { class: "num" }, (r.tracked ?? 0).toLocaleString()),
+      ));
+    }
+    table.append(tbody);
+    byDomainHost.append(el("div", { class: "table-wrap" }, table));
   }
 
   function renderHero(mttr, trends) {

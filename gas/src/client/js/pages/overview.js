@@ -13,10 +13,9 @@ import {
 // can't import the TS domain module).
 const AGE_LABELS = ["0-7d", "8-30d", "31-90d", "90+d"];
 
-// Grouping options for the breakdown section; "domain" is offered only when
-// domains are configured (mirrors the old table's group-by vocabulary).
+// Grouping options for the configurable breakdown section. Domain has its own
+// dedicated "By domain" section (renderByDomain), so it's not offered here.
 const BREAKDOWN_OPTIONS = [
-  ["domain", "Domain"],
   ["subscription", "Subscription"],
   ["asset", "Asset"],
   ["atype", "Asset type"],
@@ -43,9 +42,7 @@ export async function renderOverview(main, params, ctx) {
     return;
   }
 
-  const validBy = BREAKDOWN_OPTIONS
-    .filter(([v]) => v !== "domain" || boot.domainNames.length > 1)
-    .map(([v]) => v);
+  const validBy = BREAKDOWN_OPTIONS.map(([v]) => v);
   const state = { by: validBy.includes(params.by) ? params.by : DEFAULT_BY };
 
   const kpiRow = el("div", { class: "kpi-row" });
@@ -130,10 +127,42 @@ export async function renderOverview(main, params, ctx) {
     }
 
     renderExploitability(insights);
+    renderByDomain(insights);
     renderConcentration(insights);
     renderAging(insights);
     renderMovement(insights);
     renderBreakdown(insights);
+  }
+
+  // -------------------------------------------------------------------- by domain
+
+  /** How the value chain splits across its domains — shown only at the whole-chain
+   *  view (a single-domain filter makes this one row). Uses the domain grouping the
+   *  server already computes in insights.breakdowns. */
+  function renderByDomain(insights) {
+    if (ctx.domain || boot.domainNames.length < 2) return;
+    const groups = insights.breakdowns.domain || [];
+    if (!groups.length) return;
+    insightsHost.append(sectionLabel("By domain"));
+    insightsHost.append(el("p", { class: "small muted", style: "margin:-6px 0 10px" },
+      "How the value chain's findings split across the domains that compose it."));
+    const list = el("div", { class: "rank-list" });
+    for (const g of groups) {
+      list.append(el("div", { class: "rank-row" },
+        el("div", {},
+          el("div", {}, el("strong", {}, g.key),
+            el("span", { class: "small muted", style: "margin-left:8px" },
+              `${Math.round(g.share * 100)}% of findings`)),
+          el("div", { style: "margin-top:4px" }, mixStrip(g.sevCounts)),
+          el("div", { class: "small muted", style: "margin-top:2px" }, mixText(g.sevCounts)),
+        ),
+        el("div", { class: "num" },
+          el("div", {}, `${g.total.toLocaleString()} total`),
+          el("div", { class: "small muted" }, `${g.open.toLocaleString()} open`),
+        ),
+      ));
+    }
+    insightsHost.append(list);
   }
 
   // ------------------------------------------------------- exploitability & priority
