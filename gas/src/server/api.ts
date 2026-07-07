@@ -118,8 +118,9 @@ function bootstrapCore(): Rec {
           statuses: findings.distinct(scan.records, "status"),
           assetTypes: findings.distinct(scan.records, "vulnerableAsset.type"),
           clouds: findings.distinct(scan.records, "vulnerableAsset.cloudPlatform"),
+          subscriptions: findings.distinct(scan.records, "vulnerableAsset.subscriptionName"),
         }
-      : { statuses: [], assetTypes: [], clouds: [] },
+      : { statuses: [], assetTypes: [], clouds: [], subscriptions: [] },
   };
 }
 

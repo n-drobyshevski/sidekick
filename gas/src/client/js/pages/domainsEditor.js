@@ -9,6 +9,11 @@ import { clear, confirmDialog, downloadText, el, toast } from "../ui.js";
 
 export function renderDomainsEditor(host, boot, ctx) {
   let items = JSON.parse(JSON.stringify(boot.settings.domains.items || []));
+  // Subscriptions seen in the current scan, offered by the condition picker.
+  const knownSubs = (boot.filterOptions && boot.filterOptions.subscriptions) || [];
+  // Case-fold to mirror the rule engine's matching (domainRules.ts `fold`), so the
+  // "already claimed" hint agrees with how findings actually get assigned.
+  const fold = (s) => String(s).trim().toLowerCase();
 
   const listHost = el("div", {});
   const addBtn = el("button", { onclick: () => openEditor(null) }, "Add domain");
@@ -155,6 +160,26 @@ export function renderDomainsEditor(host, boot, ctx) {
       return { type: "tag", key: "", value: "" };
     }
 
+    // Map folded subscription value -> name of the domain that already claims it,
+    // scanning every OTHER domain (the one being edited never blocks itself). The
+    // first (highest-priority) claimant wins, matching first-match-wins assignment.
+    function claimedSubs() {
+      const map = new Map();
+      items.forEach((dom, di) => {
+        if (di === index) return;
+        (dom.rules || []).forEach((rule) => {
+          (rule.conditions || []).forEach((c) => {
+            if (c.type !== "subscription") return;
+            (c.values || []).forEach((v) => {
+              const key = fold(v);
+              if (key && !map.has(key)) map.set(key, dom.name);
+            });
+          });
+        });
+      });
+      return map;
+    }
+
     function renderRules() {
       clear(rulesHost);
       editing.rules.forEach((rule, ri) => {
@@ -213,10 +238,85 @@ export function renderDomainsEditor(host, boot, ctx) {
           fields.append(input("pattern", cond.pattern ?? "", (v) => (cond.pattern = v),
             "regex, case-insensitive"));
         } else {
-          fields.append(input("values", (cond.values || []).join(", "),
-            (v) => (cond.values = v.split(",").map((s) => s.trim()).filter(Boolean)),
-            "subscriptions, comma-separated"));
+          fields.append(subscriptionPicker(cond));
         }
+      }
+
+      // A checkbox picker over the scan's subscriptions plus any already-stored values.
+      // Subscriptions claimed by another domain are grayed out and labelled; selectable
+      // ones sort first. A free-text "add" row keeps subscriptions outside the scan usable.
+      function subscriptionPicker(cond) {
+        if (!Array.isArray(cond.values)) cond.values = [];
+        const claimed = claimedSubs();
+        const wrap = el("div", { style: "flex:1; min-width:220px" });
+        const listHost = el("div", { class: "sub-picker", role: "group",
+          "aria-label": "Subscriptions" });
+
+        const isSelected = (name) => cond.values.some((v) => fold(v) === fold(name));
+
+        function draw() {
+          clear(listHost);
+          // Options = scan subscriptions ∪ any stored value not in that list (preserved).
+          const opts = knownSubs.slice();
+          const knownFolded = new Set(knownSubs.map(fold));
+          cond.values.forEach((v) => {
+            if (!knownFolded.has(fold(v))) {
+              opts.push(v);
+              knownFolded.add(fold(v));
+            }
+          });
+          const rows = opts.map((name) => {
+            const owner = claimed.get(fold(name));
+            const selected = isSelected(name);
+            return { name, owner, selected, grayed: !!owner && !selected };
+          });
+          // Selectable (unattributed or already selected here) first, then grayed; each
+          // group alphabetical.
+          rows.sort((a, b) =>
+            (a.grayed ? 1 : 0) - (b.grayed ? 1 : 0) || a.name.localeCompare(b.name));
+          if (!rows.length) {
+            listHost.append(el("p", { class: "muted small", style: "margin:2px 0" },
+              "No subscriptions in the current scan — add one below."));
+          }
+          rows.forEach((row) => {
+            const cb = el("input", { type: "checkbox",
+              checked: row.selected ? true : null,
+              disabled: row.grayed ? true : null,
+              "aria-disabled": row.grayed ? "true" : null });
+            cb.addEventListener("change", () => {
+              if (cb.checked) {
+                if (!isSelected(row.name)) cond.values.push(row.name);
+              } else {
+                cond.values = cond.values.filter((v) => fold(v) !== fold(row.name));
+              }
+              schedulePreview();
+            });
+            listHost.append(el("label", { class: row.grayed ? "claimed" : null,
+              title: row.owner ? `Already used by domain “${row.owner}”` : row.name },
+              cb,
+              el("span", { class: "sub-name" }, row.name),
+              row.owner ? el("span", { class: "sub-owner" }, `in ${row.owner}`) : null));
+          });
+        }
+
+        const addInput = el("input", { type: "text", placeholder: "add subscription…",
+          "aria-label": "Add a subscription not in the scan", style: "flex:1; min-height:30px" });
+        const addSub = () => {
+          const v = addInput.value.trim();
+          if (!v) return;
+          if (!isSelected(v)) cond.values.push(v);
+          addInput.value = "";
+          draw();
+          schedulePreview();
+        };
+        addInput.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") { e.preventDefault(); addSub(); }
+        });
+        const addBtn = el("button", { class: "link", type: "button", onclick: addSub }, "Add");
+
+        draw();
+        wrap.append(listHost, el("div", { class: "sub-add" }, addInput, addBtn));
+        return wrap;
       }
 
       function input(label, value, set, placeholder) {
