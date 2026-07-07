@@ -14,6 +14,7 @@ import {
   confirmDialog,
   downloadText,
   el,
+  fmtDateTime,
   fmtDays,
   sectionLabel,
   toast,
@@ -122,7 +123,7 @@ function renderExportSection(main, boot) {
   card.append(
     el("h3", {}, "OS vulnerabilities"),
     el("p", { class: "muted small" },
-      `Scan ${boot.latestScan.ts.slice(0, 16).replace("T", " ")} UTC — ` +
+      `Scan ${fmtDateTime(boot.latestScan.ts)} — ` +
       `${boot.latestScan.total.toLocaleString()} finding(s), ${boot.latestScan.mode}.`),
   );
   const row = el("div", { style: "display:flex; gap:8px; flex-wrap:wrap" });

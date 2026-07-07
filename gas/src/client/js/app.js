@@ -3,7 +3,7 @@
 import { call } from "./api.js";
 import { renderScanCard, openScanDetails } from "./scanProgress.js";
 import { bootstrap, invalidateBootstrap, invalidateRpcCache, parseHash } from "./store.js";
-import { clear, el, statusPill, toast } from "./ui.js";
+import { clear, el, fmtDateTime, statusPill, toast } from "./ui.js";
 import { renderOverview } from "./pages/overview.js";
 import { renderMttr } from "./pages/mttr.js";
 import { renderHistory } from "./pages/history.js";
@@ -148,7 +148,7 @@ function renderSidebar(sidebar, data) {
       const age = Math.floor((Date.now() - Date.parse(data.latestScan.ts)) / 86400000);
       zone.append(
         el("div", { class: "scan-caption" },
-          `Last scan ${data.latestScan.ts.slice(0, 16).replace("T", " ")} UTC` +
+          `Last scan ${fmtDateTime(data.latestScan.ts)}` +
             (age >= 2 ? ` — ${age} days ago` : ""),
         ),
       );

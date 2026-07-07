@@ -6,7 +6,7 @@
 import { severityBar, stackedAgeBar } from "../charts.js";
 import { bootstrap, setParams, swrCall } from "../store.js";
 import {
-  clear, el, emptyState, kpiCard, nvdUrl, sectionLabel,
+  clear, el, emptyState, fmtDate, kpiCard, nvdUrl, sectionLabel,
 } from "../ui.js";
 
 // Keep in sync with AGE_BUCKET_LABELS in src/domain/insights.ts (the client bundle
@@ -118,7 +118,7 @@ export async function renderOverview(main, params, ctx) {
     const open = insights && insights.flatScan ? insights.exploit.open : null;
     kpiRow.append(
       kpiCard("Total findings", total.toLocaleString(),
-        `scan ${boot.latestScan.ts.slice(0, 10)} — ${boot.latestScan.mode}`),
+        `scan ${fmtDate(boot.latestScan.ts)} — ${boot.latestScan.mode}`),
       kpiCard("Open", open !== null ? open.toLocaleString() : "…", "awaiting remediation"),
       kpiCard("Resolved", open !== null ? (total - open).toLocaleString() : "…",
         "closed in this scan"),
@@ -180,7 +180,7 @@ export async function renderOverview(main, params, ctx) {
     if (insights.scan.scanId !== boot.latestScan.scanId) {
       insightsHost.append(el("p", { class: "small muted" },
         `The latest scan is grouped (counts only) — insight sections below read the ` +
-        `last per-finding scan from ${insights.scan.ts.slice(0, 10)}.`));
+        `last per-finding scan from ${fmtDate(insights.scan.ts)}.`));
     }
 
     renderExploitability(insights);
