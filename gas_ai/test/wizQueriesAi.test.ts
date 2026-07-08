@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   AI_RESOURCE_TYPE_CANDIDATES,
   chooseAiResourceTypes,
+  isInvalidEnumValueError,
   qAiInventory,
 } from "../src/server/wizQueriesAi";
 
@@ -52,6 +53,24 @@ describe("chooseAiResourceTypes", () => {
     const r = chooseAiResourceTypes(["AI_AGENT", "MCP_SERVER", "LLM_ENDPOINT"], null);
     expect(r.types).toEqual(["AI_AGENT", "MCP_SERVER"]);
     expect(r.aiLooking).toEqual(["AI_AGENT", "MCP_SERVER", "LLM_ENDPOINT"]);
+  });
+});
+
+describe("isInvalidEnumValueError", () => {
+  it("recognizes the tenant's enum-value rejection", () => {
+    expect(isInvalidEnumValueError(
+      'Wiz query failed (HTTP 400): {"errors":[{"message":"CloudResourceTypeFilter ' +
+      'cannot represent value: [\\"AI_AGENT\\"]"}]}',
+    )).toBe(true);
+  });
+
+  it("does NOT treat auth, transport, or field errors as value verdicts", () => {
+    expect(isInvalidEnumValueError("Wiz query failed (HTTP 401): unauthorized")).toBe(false);
+    expect(isInvalidEnumValueError("Wiz query failed after retries (HTTP 500).")).toBe(false);
+    expect(isInvalidEnumValueError(
+      'Wiz query failed (HTTP 400): {"errors":[{"message":"Cannot query field ' +
+      '\\"businessImpact\\" on type \\"Project\\""}]}',
+    )).toBe(false);
   });
 });
 

@@ -9,8 +9,13 @@ import {
   PROP_KEYS,
   resolveWizAuthMode,
 } from "./props";
-import { fetchCloudResourcesPage, fetchEnumValues, getToken } from "./wizClientAi";
-import { chooseAiResourceTypes, qAiInventory } from "./wizQueriesAi";
+import {
+  fetchCloudResourcesPage,
+  fetchEnumValues,
+  getToken,
+  resolveAiResourceTypes,
+} from "./wizClientAi";
+import { qAiInventory } from "./wizQueriesAi";
 
 /** Enum members that read as AI vocabulary (token match, so EMAIL ≠ AI). */
 function aiFlavored(values: string[]): string[] {
@@ -90,34 +95,18 @@ export function wizDiagnostic(): string {
     return lines.join("\n");
   }
 
-  // Step 2 — schema probe: THIS tenant's enum vocabulary decides which AI
-  // resource types the sync queries (guessing produces GRAPHQL_VALIDATION_FAILED).
-  const overrideRaw = getProp(PROP_KEYS.wizAiResourceTypes);
-  const override = overrideRaw
-    ? overrideRaw.split(",").map((s) => s.trim()).filter(Boolean)
-    : null;
-  if (override) log(`WIZ_AI_RESOURCE_TYPES override: ${override.join(", ")}`);
-
-  const resourceEnum = fetchEnumValues("CloudResourceTypeFilter");
-  if (resourceEnum) {
-    const flavored = aiFlavored(resourceEnum);
-    log(
-      `Step 2 OK: schema probe — CloudResourceTypeFilter has ${resourceEnum.length} members; ` +
-        `AI-flavored: ${flavored.join(", ") || "(none)"}.`,
-    );
-  } else {
-    log("Step 2: introspection unavailable — falling back to the candidate type list.");
-  }
-  const chosen = chooseAiResourceTypes(resourceEnum, override);
-  if (!chosen.types.length) {
-    log(
-      "Step 2 FAIL: this tenant has no recognizable AI resource types. Set the " +
-        "WIZ_AI_RESOURCE_TYPES Script Property to the correct enum values " +
-        "(comma-separated) from the list above.",
-    );
+  // Step 2 — schema probe: THIS tenant's vocabulary decides which AI resource
+  // types the sync queries (guessing produces GRAPHQL_VALIDATION_FAILED). The
+  // SAME resolver the sync uses runs here, verbosely: introspection when the
+  // gateway allows it, per-candidate 1-row probing when it doesn't.
+  let chosen;
+  try {
+    chosen = resolveAiResourceTypes(log);
+    log("Step 2 OK: AI resource types resolved.");
+  } catch (e) {
+    log(`Step 2 FAIL: ${(e as Error).message}`);
     return lines.join("\n");
   }
-  log(`→ Inventory will query types (${chosen.source}): ${chosen.types.join(", ")}.`);
 
   // Informational: the graph-relationship steps use the graph entity vocabulary.
   const graphEnum = fetchEnumValues("GraphEntityTypeValue");
@@ -125,6 +114,11 @@ export function wizDiagnostic(): string {
     log(
       `Graph entity types: ${graphEnum.length} members; AI-flavored: ` +
         `${aiFlavored(graphEnum).join(", ") || "(none — graph relationship steps will be skipped)"}.`,
+    );
+  } else {
+    log(
+      "Graph entity introspection unavailable — graph relationship steps will be " +
+        "skipped automatically if this tenant rejects their queries.",
     );
   }
 
@@ -149,6 +143,12 @@ export function wizDiagnostic(): string {
       log(
         "→ 404: WIZ_API_URL host/path is wrong — it must be " +
           "https://api.<region>.app.wiz.io/graphql for your tenant's region.",
+      );
+    } else if (/cannot represent value/i.test(msg)) {
+      log(
+        "→ The tenant rejected one of the resolved type values. Set the " +
+          "WIZ_AI_RESOURCE_TYPES Script Property to the exact enum values your tenant " +
+          "accepts (comma-separated) and rerun this diagnostic.",
       );
     } else {
       log(

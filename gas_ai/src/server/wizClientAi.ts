@@ -6,7 +6,14 @@
 
 import type { Rec } from "../domain/util";
 import { DEFAULT_WIZ_AUTH_URL, getProp, PROP_KEYS, requireProp } from "./props";
-import { chooseAiResourceTypes, PAGE_SIZE, PAGE_SIZE_FALLBACK } from "./wizQueriesAi";
+import {
+  AI_RESOURCE_TYPE_CANDIDATES,
+  chooseAiResourceTypes,
+  isInvalidEnumValueError,
+  PAGE_SIZE,
+  PAGE_SIZE_FALLBACK,
+  qAiInventory,
+} from "./wizQueriesAi";
 
 export class WizQueryError extends Error {}
 
@@ -99,16 +106,19 @@ function gqlPost(query: string, variables: Rec): Rec {
 
 /**
  * The names of an enum's members in THIS tenant's schema, or null when the
- * enum doesn't exist / introspection is disabled. Never throws on shape
- * surprises — schema probing must stay best-effort.
+ * enum doesn't exist / introspection is disabled. The enum name is inlined as
+ * a literal — Wiz's gateway rejects variables on introspection queries
+ * ("missing value for non-null variable"). Never throws on shape surprises —
+ * schema probing must stay best-effort.
  */
 export function fetchEnumValues(enumName: string): string[] | null {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(enumName)) return null;
   const q =
-    "query SidekickEnumProbe($name: String!) {\n" +
-    "  __type(name: $name) { enumValues { name } }\n" +
+    "query SidekickEnumProbe {\n" +
+    "  __type(name: \"" + enumName + "\") { enumValues { name } }\n" +
     "}\n";
   try {
-    const data = gqlPost(q, { name: enumName });
+    const data = gqlPost(q, {});
     const t = data["__type"] as Rec | null;
     const values = t && (t["enumValues"] as Rec[] | null);
     if (!Array.isArray(values)) return null;
@@ -125,40 +135,104 @@ export interface AiTypeResolution {
   aiLooking: string[];
 }
 
-const AI_TYPES_CACHE_KEY = "wiz_ai_resource_types";
+// v2: the v1 key could hold a blind "candidates" resolution cached by the
+// previous build; the new name orphans any such entry.
+const AI_TYPES_CACHE_KEY = "wiz_ai_resource_types_v2";
 
 /**
- * The AI resource types to query in THIS tenant, resolved once and cached:
- * WIZ_AI_RESOURCE_TYPES override → introspected CloudResourceTypeFilter members
- * (see chooseAiResourceTypes). Throws with the discovered vocabulary when the
- * tenant has no recognizable AI types, so the operator knows what to set.
+ * Empirical fallback when introspection is blocked: ask the tenant about each
+ * candidate type with a 1-row query — its own "cannot represent value"
+ * rejection is the oracle. Anything else (auth, transport, other validation)
+ * is a real failure and rethrows.
  */
-export function resolveAiResourceTypes(): AiTypeResolution {
+function probeCandidateTypes(
+  candidates: readonly string[],
+  say: (m: string) => void,
+): string[] {
+  const accepted: string[] = [];
+  for (const t of candidates) {
+    try {
+      fetchCloudResourcesPage({ query: qAiInventory([t]), first: 1 });
+      accepted.push(t);
+      say(`  ${t}: accepted`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (isInvalidEnumValueError(msg)) {
+        say(`  ${t}: not in this tenant's schema`);
+        continue;
+      }
+      throw e;
+    }
+  }
+  return accepted;
+}
+
+/**
+ * The AI resource types to query in THIS tenant, resolved once and cached.
+ * Precedence: WIZ_AI_RESOURCE_TYPES override → introspected
+ * CloudResourceTypeFilter members (see chooseAiResourceTypes) → per-candidate
+ * empirical probing when introspection is unavailable. Throws with the
+ * discovered vocabulary when nothing works, so the operator knows what to set.
+ * Pass `log` (the diagnostic does) for a verbose trace; that also bypasses the
+ * cache read so the report reflects the tenant's current schema.
+ */
+export function resolveAiResourceTypes(log?: (m: string) => void): AiTypeResolution {
+  const say = log ?? (() => undefined);
   const overrideRaw = getProp(PROP_KEYS.wizAiResourceTypes);
   const override = overrideRaw
     ? overrideRaw.split(",").map((s) => s.trim()).filter(Boolean)
     : null;
   if (override && override.length) {
+    say(`AI resource types: WIZ_AI_RESOURCE_TYPES override — ${override.join(", ")}.`);
     return { types: override, source: "override", aiLooking: [] };
   }
+
   const cache = CacheService.getScriptCache();
-  const hit = cache.get(AI_TYPES_CACHE_KEY);
-  if (hit) {
-    try {
-      return JSON.parse(hit) as AiTypeResolution;
-    } catch {
-      /* recompute */
+  if (!log) {
+    const hit = cache.get(AI_TYPES_CACHE_KEY);
+    if (hit) {
+      try {
+        return JSON.parse(hit) as AiTypeResolution;
+      } catch {
+        /* recompute */
+      }
     }
   }
+
+  let chosen: AiTypeResolution;
   const enumValues = fetchEnumValues("CloudResourceTypeFilter");
-  const chosen = chooseAiResourceTypes(enumValues, null);
-  if (!chosen.types.length) {
-    throw new WizQueryError(
-      "This tenant's CloudResourceTypeFilter enum has no recognizable AI resource types. " +
-        "Set the WIZ_AI_RESOURCE_TYPES Script Property (comma-separated enum values). " +
-        `AI-flavored members seen: ${chosen.aiLooking.join(", ") || "(none)"}.`,
+  if (enumValues) {
+    const picked = chooseAiResourceTypes(enumValues, null);
+    say(
+      `CloudResourceTypeFilter has ${enumValues.length} members; AI-flavored: ` +
+        `${picked.aiLooking.join(", ") || "(none)"}.`,
     );
+    if (!picked.types.length) {
+      throw new WizQueryError(
+        "This tenant's CloudResourceTypeFilter enum has no recognizable AI resource types. " +
+          "Set the WIZ_AI_RESOURCE_TYPES Script Property (comma-separated enum values). " +
+          `AI-flavored members seen: ${picked.aiLooking.join(", ") || "(none)"}.`,
+      );
+    }
+    chosen = picked;
+  } else {
+    // Introspection blocked (Wiz gateways commonly refuse it) — probe each
+    // candidate empirically instead.
+    say("Introspection unavailable — probing candidate types one by one:");
+    const accepted = probeCandidateTypes(AI_RESOURCE_TYPE_CANDIDATES, say);
+    if (!accepted.length) {
+      throw new WizQueryError(
+        "None of the candidate AI resource types (" +
+          AI_RESOURCE_TYPE_CANDIDATES.join(", ") +
+          ") exist in this tenant's CloudResourceTypeFilter enum, and introspection is " +
+          "unavailable. Find the tenant's AI type names (Wiz docs → GraphQL schema, or the " +
+          "Wiz UI's inventory filter) and set the WIZ_AI_RESOURCE_TYPES Script Property.",
+      );
+    }
+    chosen = { types: accepted, source: "probe", aiLooking: [] };
   }
+
+  say(`Inventory will query types (${chosen.source}): ${chosen.types.join(", ")}.`);
   try {
     cache.put(AI_TYPES_CACHE_KEY, JSON.stringify(chosen), 21_600);
   } catch {

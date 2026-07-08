@@ -453,6 +453,9 @@ var Server = (() => {
     if (aiLooking.length) return { types: aiLooking, source: "ai-tokens", aiLooking };
     return { types: [], source: "none", aiLooking };
   }
+  function isInvalidEnumValueError(message) {
+    return /HTTP 400/.test(message) && /cannot represent value/i.test(message);
+  }
   function qAiInventory(types) {
     const list = types.map((t) => JSON.stringify(t)).join(", ");
     return cloudResourcesQuery("SidekickAiInventory", "    type: [" + list + "]\n");
@@ -555,9 +558,10 @@ var Server = (() => {
     throw new WizQueryError(`Wiz query failed after retries (${lastError}).`);
   }
   function fetchEnumValues(enumName) {
-    const q = "query SidekickEnumProbe($name: String!) {\n  __type(name: $name) { enumValues { name } }\n}\n";
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(enumName)) return null;
+    const q = 'query SidekickEnumProbe {\n  __type(name: "' + enumName + '") { enumValues { name } }\n}\n';
     try {
-      const data = gqlPost(q, { name: enumName });
+      const data = gqlPost(q, {});
       const t = data["__type"];
       const values = t && t["enumValues"];
       if (!Array.isArray(values)) return null;
@@ -567,28 +571,67 @@ var Server = (() => {
       return null;
     }
   }
-  var AI_TYPES_CACHE_KEY = "wiz_ai_resource_types";
-  function resolveAiResourceTypes() {
+  var AI_TYPES_CACHE_KEY = "wiz_ai_resource_types_v2";
+  function probeCandidateTypes(candidates, say) {
+    const accepted = [];
+    for (const t of candidates) {
+      try {
+        fetchCloudResourcesPage({ query: qAiInventory([t]), first: 1 });
+        accepted.push(t);
+        say(`  ${t}: accepted`);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (isInvalidEnumValueError(msg)) {
+          say(`  ${t}: not in this tenant's schema`);
+          continue;
+        }
+        throw e;
+      }
+    }
+    return accepted;
+  }
+  function resolveAiResourceTypes(log) {
+    const say = log != null ? log : () => void 0;
     const overrideRaw = getProp(PROP_KEYS.wizAiResourceTypes);
     const override = overrideRaw ? overrideRaw.split(",").map((s) => s.trim()).filter(Boolean) : null;
     if (override && override.length) {
+      say(`AI resource types: WIZ_AI_RESOURCE_TYPES override \u2014 ${override.join(", ")}.`);
       return { types: override, source: "override", aiLooking: [] };
     }
     const cache = CacheService.getScriptCache();
-    const hit = cache.get(AI_TYPES_CACHE_KEY);
-    if (hit) {
-      try {
-        return JSON.parse(hit);
-      } catch {
+    if (!log) {
+      const hit = cache.get(AI_TYPES_CACHE_KEY);
+      if (hit) {
+        try {
+          return JSON.parse(hit);
+        } catch {
+        }
       }
     }
+    let chosen;
     const enumValues = fetchEnumValues("CloudResourceTypeFilter");
-    const chosen = chooseAiResourceTypes(enumValues, null);
-    if (!chosen.types.length) {
-      throw new WizQueryError(
-        `This tenant's CloudResourceTypeFilter enum has no recognizable AI resource types. Set the WIZ_AI_RESOURCE_TYPES Script Property (comma-separated enum values). AI-flavored members seen: ${chosen.aiLooking.join(", ") || "(none)"}.`
+    if (enumValues) {
+      const picked = chooseAiResourceTypes(enumValues, null);
+      say(
+        `CloudResourceTypeFilter has ${enumValues.length} members; AI-flavored: ${picked.aiLooking.join(", ") || "(none)"}.`
       );
+      if (!picked.types.length) {
+        throw new WizQueryError(
+          `This tenant's CloudResourceTypeFilter enum has no recognizable AI resource types. Set the WIZ_AI_RESOURCE_TYPES Script Property (comma-separated enum values). AI-flavored members seen: ${picked.aiLooking.join(", ") || "(none)"}.`
+        );
+      }
+      chosen = picked;
+    } else {
+      say("Introspection unavailable \u2014 probing candidate types one by one:");
+      const accepted = probeCandidateTypes(AI_RESOURCE_TYPE_CANDIDATES, say);
+      if (!accepted.length) {
+        throw new WizQueryError(
+          "None of the candidate AI resource types (" + AI_RESOURCE_TYPE_CANDIDATES.join(", ") + ") exist in this tenant's CloudResourceTypeFilter enum, and introspection is unavailable. Find the tenant's AI type names (Wiz docs \u2192 GraphQL schema, or the Wiz UI's inventory filter) and set the WIZ_AI_RESOURCE_TYPES Script Property."
+        );
+      }
+      chosen = { types: accepted, source: "probe", aiLooking: [] };
     }
+    say(`Inventory will query types (${chosen.source}): ${chosen.types.join(", ")}.`);
     try {
       cache.put(AI_TYPES_CACHE_KEY, JSON.stringify(chosen), 21600);
     } catch {
@@ -711,30 +754,22 @@ var Server = (() => {
       );
       return lines.join("\n");
     }
-    const overrideRaw = getProp(PROP_KEYS.wizAiResourceTypes);
-    const override = overrideRaw ? overrideRaw.split(",").map((s) => s.trim()).filter(Boolean) : null;
-    if (override) log(`WIZ_AI_RESOURCE_TYPES override: ${override.join(", ")}`);
-    const resourceEnum = fetchEnumValues("CloudResourceTypeFilter");
-    if (resourceEnum) {
-      const flavored = aiFlavored(resourceEnum);
-      log(
-        `Step 2 OK: schema probe \u2014 CloudResourceTypeFilter has ${resourceEnum.length} members; AI-flavored: ${flavored.join(", ") || "(none)"}.`
-      );
-    } else {
-      log("Step 2: introspection unavailable \u2014 falling back to the candidate type list.");
-    }
-    const chosen = chooseAiResourceTypes(resourceEnum, override);
-    if (!chosen.types.length) {
-      log(
-        "Step 2 FAIL: this tenant has no recognizable AI resource types. Set the WIZ_AI_RESOURCE_TYPES Script Property to the correct enum values (comma-separated) from the list above."
-      );
+    let chosen;
+    try {
+      chosen = resolveAiResourceTypes(log);
+      log("Step 2 OK: AI resource types resolved.");
+    } catch (e) {
+      log(`Step 2 FAIL: ${e.message}`);
       return lines.join("\n");
     }
-    log(`\u2192 Inventory will query types (${chosen.source}): ${chosen.types.join(", ")}.`);
     const graphEnum = fetchEnumValues("GraphEntityTypeValue");
     if (graphEnum) {
       log(
         `Graph entity types: ${graphEnum.length} members; AI-flavored: ${aiFlavored(graphEnum).join(", ") || "(none \u2014 graph relationship steps will be skipped)"}.`
+      );
+    } else {
+      log(
+        "Graph entity introspection unavailable \u2014 graph relationship steps will be skipped automatically if this tenant rejects their queries."
       );
     }
     try {
@@ -753,6 +788,10 @@ var Server = (() => {
       } else if (/HTTP 404/i.test(msg)) {
         log(
           "\u2192 404: WIZ_API_URL host/path is wrong \u2014 it must be https://api.<region>.app.wiz.io/graphql for your tenant's region."
+        );
+      } else if (/cannot represent value/i.test(msg)) {
+        log(
+          "\u2192 The tenant rejected one of the resolved type values. Set the WIZ_AI_RESOURCE_TYPES Script Property to the exact enum values your tenant accepts (comma-separated) and rerun this diagnostic."
         );
       } else {
         log(

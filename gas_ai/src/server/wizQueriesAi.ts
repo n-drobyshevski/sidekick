@@ -132,6 +132,15 @@ export function chooseAiResourceTypes(
   return { types: [], source: "none", aiLooking };
 }
 
+/**
+ * Whether a Wiz error message is the tenant saying "that enum value doesn't
+ * exist here" — the oracle for per-candidate type probing. Anything else
+ * (auth, transport, field errors) is NOT a value verdict.
+ */
+export function isInvalidEnumValueError(message: string): boolean {
+  return /HTTP 400/.test(message) && /cannot represent value/i.test(message);
+}
+
 /** Full AI-SPM inventory: the resolved AI asset kinds in one cursor walk. */
 export function qAiInventory(types: readonly string[]): string {
   const list = types.map((t) => JSON.stringify(t)).join(", ");
