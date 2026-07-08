@@ -7,6 +7,10 @@ import type { AarsBand, Severity } from "./config";
 export const NODE_KINDS = [
   // AI assets (Wiz AI-SPM resource types)
   "AI_AGENT", "AI_MODEL", "AI_GUARDRAIL", "AI_PIPELINE", "AI_DATASET", "MCP_SERVER",
+  // AI assets seen in real tenants (Wiz inventory display names, normalized) —
+  // appended so the original kinds keep their declaration order.
+  "AI_AGENT_REGISTRY", "AI_DEPLOYMENT", "AI_EXTENSION", "AI_GATEWAY",
+  "AI_SERVICE", "AI_SKILL", "AI_SKILL_TEMPLATE", "AI_TOOL",
   // identities
   "SERVICE_ACCOUNT", "USER_ACCOUNT", "ACCESS_ROLE", "ACCESS_ROLE_BINDING",
   // data
@@ -24,7 +28,21 @@ export type NodeKind = (typeof NODE_KINDS)[number];
 /** AI-SPM asset kinds — the graph's focal nodes and default seeds. */
 export const AI_ASSET_KINDS: readonly NodeKind[] = [
   "AI_AGENT", "AI_MODEL", "AI_GUARDRAIL", "AI_PIPELINE", "AI_DATASET", "MCP_SERVER",
+  "AI_AGENT_REGISTRY", "AI_DEPLOYMENT", "AI_EXTENSION", "AI_GATEWAY",
+  "AI_SERVICE", "AI_SKILL", "AI_SKILL_TEMPLATE", "AI_TOOL",
 ];
+
+/**
+ * A Wiz `type` value → NodeKind, tolerant of both spellings real tenants use:
+ * enum-style ("AI_AGENT") and inventory display names ("AI Agent Registry").
+ * Normalization is mechanical (uppercase, non-alphanumerics → "_"), then a
+ * membership check; unknown types map to null and the row is skipped.
+ */
+export function kindFromWizType(t: unknown): NodeKind | null {
+  if (typeof t !== "string" || !t.trim()) return null;
+  const norm = t.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_");
+  return (NODE_KINDS as readonly string[]).includes(norm) ? (norm as NodeKind) : null;
+}
 
 export const EDGE_TYPES = [
   "HAS_ISSUE",            // asset → ISSUE

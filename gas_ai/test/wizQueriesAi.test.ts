@@ -4,6 +4,7 @@
 // its vocabulary against the tenant's actual enum members.
 
 import { describe, expect, it } from "vitest";
+import { kindFromWizType } from "../src/domain/graphTypes";
 import {
   AI_RESOURCE_TYPE_CANDIDATES,
   chooseAiResourceTypes,
@@ -13,17 +14,17 @@ import {
 
 describe("chooseAiResourceTypes", () => {
   it("an explicit override always wins", () => {
-    const r = chooseAiResourceTypes(["AI_AGENT", "BUCKET"], ["CUSTOM_AI_THING"]);
+    const r = chooseAiResourceTypes(["AI Agent", "BUCKET"], ["CUSTOM_AI_THING"]);
     expect(r.types).toEqual(["CUSTOM_AI_THING"]);
     expect(r.source).toBe("override");
   });
 
-  it("intersects candidates with the tenant's enum members", () => {
+  it("intersects candidates with the tenant's members", () => {
     const r = chooseAiResourceTypes(
-      ["AI_AGENT", "AI_MODEL", "BUCKET", "VIRTUAL_MACHINE"],
+      ["AI Agent", "AI Model", "BUCKET", "VIRTUAL_MACHINE"],
       null,
     );
-    expect(r.types).toEqual(["AI_AGENT", "AI_MODEL"]);
+    expect(r.types).toEqual(["AI Agent", "AI Model"]);
     expect(r.source).toBe("intersection");
   });
 
@@ -36,11 +37,13 @@ describe("chooseAiResourceTypes", () => {
     expect(r.source).toBe("ai-tokens");
   });
 
-  it("token match: EMAIL/MAILBOX never count as AI", () => {
-    const r = chooseAiResourceTypes(["EMAIL_SERVICE", "MAILBOX", "DOMAIN"], null);
+  it("token match works across spaces and underscores; EMAIL never counts as AI", () => {
+    const r = chooseAiResourceTypes(["Email Service", "MAILBOX", "DOMAIN"], null);
     expect(r.types).toEqual([]);
     expect(r.source).toBe("none");
     expect(r.aiLooking).toEqual([]);
+    const r2 = chooseAiResourceTypes(["Custom AI Widget", "BUCKET"], null);
+    expect(r2.types).toEqual(["Custom AI Widget"]);
   });
 
   it("uses the candidates verbatim when introspection is unavailable", () => {
@@ -49,10 +52,36 @@ describe("chooseAiResourceTypes", () => {
     expect(r.source).toBe("candidates");
   });
 
-  it("reports the AI-flavored vocabulary alongside the choice", () => {
-    const r = chooseAiResourceTypes(["AI_AGENT", "MCP_SERVER", "LLM_ENDPOINT"], null);
-    expect(r.types).toEqual(["AI_AGENT", "MCP_SERVER"]);
-    expect(r.aiLooking).toEqual(["AI_AGENT", "MCP_SERVER", "LLM_ENDPOINT"]);
+  it("candidates are the tenant display names", () => {
+    expect(AI_RESOURCE_TYPE_CANDIDATES).toContain("AI Agent");
+    expect(AI_RESOURCE_TYPE_CANDIDATES).toContain("MCP Server");
+    expect(AI_RESOURCE_TYPE_CANDIDATES).toContain("AI Skill Template");
+  });
+});
+
+describe("kindFromWizType", () => {
+  it("maps tenant display names onto NodeKinds", () => {
+    expect(kindFromWizType("AI Agent")).toBe("AI_AGENT");
+    expect(kindFromWizType("AI Agent Registry")).toBe("AI_AGENT_REGISTRY");
+    expect(kindFromWizType("AI Skill Template")).toBe("AI_SKILL_TEMPLATE");
+    expect(kindFromWizType("MCP Server")).toBe("MCP_SERVER");
+  });
+
+  it("still accepts enum-style spellings (design docs, sample data)", () => {
+    expect(kindFromWizType("AI_AGENT")).toBe("AI_AGENT");
+    expect(kindFromWizType("SERVICE_ACCOUNT")).toBe("SERVICE_ACCOUNT");
+  });
+
+  it("every candidate display name maps to a NodeKind", () => {
+    for (const t of AI_RESOURCE_TYPE_CANDIDATES) {
+      expect(kindFromWizType(t)).not.toBeNull();
+    }
+  });
+
+  it("unknown or empty types map to null", () => {
+    expect(kindFromWizType("Quantum Teapot")).toBeNull();
+    expect(kindFromWizType("")).toBeNull();
+    expect(kindFromWizType(undefined)).toBeNull();
   });
 });
 
@@ -75,15 +104,15 @@ describe("isInvalidEnumValueError", () => {
 });
 
 describe("qAiInventory", () => {
-  it("embeds the resolved types as a quoted enum-value list", () => {
-    const q = qAiInventory(["AI_AGENT", "AI_MODEL"]);
-    expect(q).toContain('type: ["AI_AGENT", "AI_MODEL"]');
+  it("uses the operator input-object shape the tenant accepts", () => {
+    const q = qAiInventory(["AI Agent", "AI Model"]);
+    expect(q).toContain('type: { equals: ["AI Agent", "AI Model"] }');
     expect(q).toContain("cloudResourcesV2");
     expect(q).toContain("query SidekickAiInventory");
   });
 
   it("no longer selects businessImpact (rejected by real tenants)", () => {
-    expect(qAiInventory(["AI_AGENT"])).not.toContain("businessImpact");
-    expect(qAiInventory(["AI_AGENT"])).toContain("projects { id name }");
+    expect(qAiInventory(["AI Agent"])).not.toContain("businessImpact");
+    expect(qAiInventory(["AI Agent"])).toContain("projects { id name }");
   });
 });

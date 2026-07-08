@@ -431,12 +431,20 @@ var Server = (() => {
     return "query " + name + "($quick: Boolean, $first: Int, $after: String) {\n  graphSearch(quick: $quick, first: $first, after: $after, query: {\n" + queryBody + "  }) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      entities {\n" + ENTITY_FIELDS + "      }\n    }\n  }\n}\n";
   }
   var AI_RESOURCE_TYPE_CANDIDATES = [
-    "AI_AGENT",
-    "AI_MODEL",
-    "AI_GUARDRAIL",
-    "AI_PIPELINE",
-    "AI_DATASET",
-    "MCP_SERVER"
+    "AI Agent",
+    "AI Agent Registry",
+    "AI Dataset",
+    "AI Deployment",
+    "AI Extension",
+    "AI Gateway",
+    "AI Guardrail",
+    "AI Model",
+    "AI Pipeline",
+    "AI Service",
+    "AI Skill",
+    "AI Skill Template",
+    "AI Tool",
+    "MCP Server"
   ];
   function chooseAiResourceTypes(enumValues, override) {
     if (override && override.length) return { types: override, source: "override", aiLooking: [] };
@@ -445,7 +453,7 @@ var Server = (() => {
     }
     const present2 = new Set(enumValues);
     const aiLooking = enumValues.filter((v) => {
-      const tokens = v.split("_");
+      const tokens = v.toUpperCase().split(/[\s_]+/);
       return tokens.includes("AI") || tokens.includes("MCP") || tokens.includes("GENAI") || tokens.includes("LLM");
     });
     const intersection = AI_RESOURCE_TYPE_CANDIDATES.filter((t) => present2.has(t));
@@ -458,7 +466,7 @@ var Server = (() => {
   }
   function qAiInventory(types) {
     const list = types.map((t) => JSON.stringify(t)).join(", ");
-    return cloudResourcesQuery("SidekickAiInventory", "    type: [" + list + "]\n");
+    return cloudResourcesQuery("SidekickAiInventory", "    type: { equals: [" + list + "] }\n");
   }
   var Q_RULE_ASSETS = 'query SidekickAiRuleAssets($first: Int, $after: String, $ruleIds: [String!]) {\n  cloudResourcesV2(first: $first, after: $after, filterBy: {\n    relatedIssue: { sourceRuleId: { equals: $ruleIds }, status: { equals: ["OPEN"] } }\n  }) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n' + RESOURCE_FIELDS + "    }\n  }\n}\n";
   var Q_AGENTS_NO_GUARDRAIL = graphSearchQuery(
@@ -697,7 +705,7 @@ var Server = (() => {
   // src/server/diagnostics.ts
   function aiFlavored(values) {
     return values.filter((v) => {
-      const tokens = v.split("_");
+      const tokens = v.toUpperCase().split(/[\s_]+/);
       return tokens.includes("AI") || tokens.includes("MCP") || tokens.includes("GENAI") || tokens.includes("LLM");
     });
   }
@@ -890,6 +898,16 @@ var Server = (() => {
     "AI_PIPELINE",
     "AI_DATASET",
     "MCP_SERVER",
+    // AI assets seen in real tenants (Wiz inventory display names, normalized) —
+    // appended so the original kinds keep their declaration order.
+    "AI_AGENT_REGISTRY",
+    "AI_DEPLOYMENT",
+    "AI_EXTENSION",
+    "AI_GATEWAY",
+    "AI_SERVICE",
+    "AI_SKILL",
+    "AI_SKILL_TEMPLATE",
+    "AI_TOOL",
     // identities
     "SERVICE_ACCOUNT",
     "USER_ACCOUNT",
@@ -918,8 +936,21 @@ var Server = (() => {
     "AI_GUARDRAIL",
     "AI_PIPELINE",
     "AI_DATASET",
-    "MCP_SERVER"
+    "MCP_SERVER",
+    "AI_AGENT_REGISTRY",
+    "AI_DEPLOYMENT",
+    "AI_EXTENSION",
+    "AI_GATEWAY",
+    "AI_SERVICE",
+    "AI_SKILL",
+    "AI_SKILL_TEMPLATE",
+    "AI_TOOL"
   ];
+  function kindFromWizType(t) {
+    if (typeof t !== "string" || !t.trim()) return null;
+    const norm = t.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_");
+    return NODE_KINDS.includes(norm) ? norm : null;
+  }
   function edgeId(src, type, dst, negated) {
     return `${src}|${type}|${dst}${negated ? "|neg" : ""}`;
   }
@@ -1194,6 +1225,14 @@ var Server = (() => {
     AI_PIPELINE: 1,
     AI_DATASET: 1,
     MCP_SERVER: 1,
+    AI_AGENT_REGISTRY: 1,
+    AI_DEPLOYMENT: 1,
+    AI_EXTENSION: 1,
+    AI_GATEWAY: 1,
+    AI_SERVICE: 1,
+    AI_SKILL: 1,
+    AI_SKILL_TEMPLATE: 1,
+    AI_TOOL: 1,
     SERVICE_ACCOUNT: 2,
     USER_ACCOUNT: 2,
     ACCESS_ROLE: 2,
@@ -1966,11 +2005,11 @@ var Server = (() => {
   function normalizeCloudResource(raw) {
     var _a4, _b;
     const id = str(raw["id"]);
-    const type = str(raw["type"]);
-    if (!id || !type || !NODE_KINDS.includes(type)) return null;
+    const kind = kindFromWizType(raw["type"]);
+    if (!id || !kind) return null;
     const node2 = {
       id,
-      kind: type,
+      kind,
       name: (_a4 = str(raw["name"])) != null ? _a4 : id,
       nativeType: str(raw["nativeType"]),
       cloudPlatform: str(raw["cloudPlatform"]),

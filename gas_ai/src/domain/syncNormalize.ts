@@ -11,12 +11,11 @@
 import type { Severity } from "./config";
 import {
   edgeId,
-  NODE_KINDS,
+  kindFromWizType,
   type GEdge,
   type GNode,
   type GraphDoc,
   type IssueRow,
-  type NodeKind,
 } from "./graphTypes";
 import { classifyIssue, type ComboGroup } from "./toxicCombos";
 import { clean, type Rec } from "./util";
@@ -37,11 +36,13 @@ function triBool(v: unknown): boolean | null {
 /** One CloudResource (cloudResourcesV2 node or graphSearch entity) → GNode, or null. */
 export function normalizeCloudResource(raw: Rec): GNode | null {
   const id = str(raw["id"]);
-  const type = str(raw["type"]);
-  if (!id || !type || !(NODE_KINDS as readonly string[]).includes(type)) return null;
+  // Real tenants return display-style types ("AI Agent"), the design docs used
+  // enum style ("AI_AGENT") — kindFromWizType accepts both.
+  const kind = kindFromWizType(raw["type"]);
+  if (!id || !kind) return null;
   const node: GNode = {
     id,
-    kind: type as NodeKind,
+    kind,
     name: str(raw["name"]) ?? id,
     nativeType: str(raw["nativeType"]),
     cloudPlatform: str(raw["cloudPlatform"]),

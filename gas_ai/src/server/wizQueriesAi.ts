@@ -95,13 +95,17 @@ function graphSearchQuery(name: string, queryBody: string): string {
 }
 
 /**
- * The AI resource-type vocabulary we WANT. Tenants differ: their
- * CloudResourceTypeFilter enum may carry only a subset of these (or different
- * spellings entirely), so the sync resolves the actual list at runtime —
- * introspection ∩ candidates, overridable via WIZ_AI_RESOURCE_TYPES.
+ * The AI resource-type vocabulary we WANT, in the spelling real tenants use:
+ * inventory display names ("AI Agent"), verified against a live tenant on
+ * 2026-07-08 (the enum-style names AI_AGENT etc. were rejected). Tenants still
+ * differ, so the sync resolves the actual list at runtime — introspection ∩
+ * candidates or per-value probing, overridable via WIZ_AI_RESOURCE_TYPES.
+ * kindFromWizType maps these display names onto the graph's NodeKind enum.
  */
 export const AI_RESOURCE_TYPE_CANDIDATES = [
-  "AI_AGENT", "AI_MODEL", "AI_GUARDRAIL", "AI_PIPELINE", "AI_DATASET", "MCP_SERVER",
+  "AI Agent", "AI Agent Registry", "AI Dataset", "AI Deployment", "AI Extension",
+  "AI Gateway", "AI Guardrail", "AI Model", "AI Pipeline", "AI Service",
+  "AI Skill", "AI Skill Template", "AI Tool", "MCP Server",
 ] as const;
 
 /**
@@ -122,7 +126,7 @@ export function chooseAiResourceTypes(
   }
   const present = new Set(enumValues);
   const aiLooking = enumValues.filter((v) => {
-    const tokens = v.split("_");
+    const tokens = v.toUpperCase().split(/[\s_]+/);
     return tokens.includes("AI") || tokens.includes("MCP") ||
       tokens.includes("GENAI") || tokens.includes("LLM");
   });
@@ -141,10 +145,15 @@ export function isInvalidEnumValueError(message: string): boolean {
   return /HTTP 400/.test(message) && /cannot represent value/i.test(message);
 }
 
-/** Full AI-SPM inventory: the resolved AI asset kinds in one cursor walk. */
+/**
+ * Full AI-SPM inventory: the resolved AI asset kinds in one cursor walk.
+ * CloudResourceTypeFilter is an operator INPUT OBJECT, not a bare list — the
+ * original `type: [...]` literal is exactly what tenants rejected with
+ * "cannot represent value"; the working shape is `type: { equals: [...] }`.
+ */
 export function qAiInventory(types: readonly string[]): string {
   const list = types.map((t) => JSON.stringify(t)).join(", ");
-  return cloudResourcesQuery("SidekickAiInventory", "    type: [" + list + "]\n");
+  return cloudResourcesQuery("SidekickAiInventory", "    type: { equals: [" + list + "] }\n");
 }
 
 /** Assets carrying an OPEN issue for one toxic-combination source rule ($ruleIds). */

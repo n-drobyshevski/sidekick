@@ -29,6 +29,17 @@ const PATHS = {
   SUMMARY: ["M4 8 h0.01", "M8 8 h0.01", "M12 8 h0.01"],
 };
 
+// Tenant-vocabulary AI kinds reuse the closest existing glyph (icons are a
+// redundant cue beside the text label, never the only signal).
+PATHS.AI_AGENT_REGISTRY = PATHS.REPOSITORY;
+PATHS.AI_DEPLOYMENT = PATHS.VIRTUAL_MACHINE;
+PATHS.AI_EXTENSION = PATHS.AI_PIPELINE;
+PATHS.AI_GATEWAY = PATHS.MCP_SERVER;
+PATHS.AI_SERVICE = PATHS.AI_MODEL;
+PATHS.AI_SKILL = PATHS.SERVERLESS;
+PATHS.AI_SKILL_TEMPLATE = PATHS.CONTAINER_IMAGE;
+PATHS.AI_TOOL = PATHS.SERVERLESS;
+
 export const KIND_LABELS = {
   AI_AGENT: "AI Agent",
   AI_MODEL: "AI Model",
@@ -36,6 +47,14 @@ export const KIND_LABELS = {
   AI_PIPELINE: "AI Pipeline",
   AI_DATASET: "AI Dataset",
   MCP_SERVER: "MCP Server",
+  AI_AGENT_REGISTRY: "Agent Registry",
+  AI_DEPLOYMENT: "AI Deployment",
+  AI_EXTENSION: "AI Extension",
+  AI_GATEWAY: "AI Gateway",
+  AI_SERVICE: "AI Service",
+  AI_SKILL: "AI Skill",
+  AI_SKILL_TEMPLATE: "Skill Template",
+  AI_TOOL: "AI Tool",
   SERVICE_ACCOUNT: "Service Account",
   USER_ACCOUNT: "User",
   ACCESS_ROLE: "IAM Role",

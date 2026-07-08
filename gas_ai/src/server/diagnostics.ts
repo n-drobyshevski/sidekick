@@ -20,7 +20,7 @@ import { qAiInventory } from "./wizQueriesAi";
 /** Enum members that read as AI vocabulary (token match, so EMAIL ≠ AI). */
 function aiFlavored(values: string[]): string[] {
   return values.filter((v) => {
-    const tokens = v.split("_");
+    const tokens = v.toUpperCase().split(/[\s_]+/);
     return tokens.includes("AI") || tokens.includes("MCP") ||
       tokens.includes("GENAI") || tokens.includes("LLM");
   });
