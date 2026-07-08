@@ -88,12 +88,40 @@ export function resolveGraphParams(p: Rec, ctx: GraphParamContext): ProjectOptio
     filters.severities.length || filters.kinds.length ||
     filters.projects.length || filters.clouds.length;
 
+  // "" depth means "use the configured default" (the client sends the raw hash
+  // value); clampDepth alone would coerce "" to the minimum.
+  const rawDepth = p["depth"];
+
   return {
     seedIds,
-    depth: clampDepth(p["depth"] ?? ctx.defaultDepth),
+    depth: clampDepth(rawDepth == null || rawDepth === "" ? ctx.defaultDepth : rawDepth),
     expandIds: toList(p["expand"]),
     filters: hasFilters ? filters : undefined,
     maxNodes: clampMaxNodes(p["maxNodes"] ?? ctx.maxNodes),
     maxEdges: MAX_EDGES_DEFAULT,
+  };
+}
+
+/**
+ * Normalized RAW request — the getGraph cache key material. Everything the
+ * resolved options depend on beyond these params (open issues for seed
+ * resolution, settings for defaults) only changes when the data version bumps,
+ * and the version is part of every cache key. Keying on the raw request lets a
+ * cache hit skip ALL Sheets/Drive reads. List params are sorted: projection
+ * treats them as sets, so either order shares one entry.
+ */
+export function graphCacheParams(p: Rec): Rec {
+  const sorted = (v: unknown) => toList(v).sort();
+  return {
+    seed: typeof p["seed"] === "string" ? p["seed"] : "",
+    seedKind: typeof p["seedKind"] === "string" ? p["seedKind"] : "",
+    depth: p["depth"] == null || p["depth"] === "" ? "" : String(p["depth"]),
+    maxNodes: p["maxNodes"] == null ? "" : String(p["maxNodes"]),
+    expand: sorted(p["expand"]),
+    severities: sorted(p["severities"]),
+    kinds: sorted(p["kinds"]),
+    projects: sorted(p["projects"]),
+    clouds: sorted(p["clouds"]),
+    view: resolveLayoutParams(p),
   };
 }

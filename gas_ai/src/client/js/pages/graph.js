@@ -39,6 +39,7 @@ function graphParams(params, defaults) {
     seed: params.seed || "",
     seedKind: params.seedKind || "",
     depth: Number(params.depth) || defaults.defaultDepth || 2,
+    depthRaw: params.depth == null ? "" : String(params.depth),
     expand: params.expand || "",
     severities: params.severities || "",
     kinds: params.kinds || "",
@@ -89,7 +90,10 @@ function rpcParams(p) {
   return {
     seed: p.seed,
     seedKind: p.seedKind,
-    depth: p.depth,
+    // Raw hash value; "" = use the server-configured default. Keeping the RPC
+    // params free of bootstrap-derived values lets the initial graph fetch run
+    // in parallel with bootstrap (same cache key either way).
+    depth: p.depthRaw,
     expand: listSplit(p.expand),
     severities: listSplit(p.severities),
     kinds: listSplit(p.kinds),
@@ -102,6 +106,10 @@ function rpcParams(p) {
 }
 
 export async function renderGraphPage(main, params, _ctx) {
+  // Prefetch the graph in parallel with bootstrap: two serial round trips
+  // become one. swrCall shares the in-flight promise with load() below.
+  swrCall("api_getGraph", rpcParams(graphParams(params, {}))).catch(() => {});
+
   const boot = await bootstrap();
   const defaults = boot.settings || {};
   let state = graphParams(params, defaults);

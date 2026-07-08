@@ -4,7 +4,15 @@
 // part_refs_json accumulates the Drive file ids of the per-step raw pages.
 
 import { nowIso, type Rec } from "../domain/util";
+import { deleteProp, getProp, setProp } from "./props";
 import { appendRows, readAll, updateWhere, TABS } from "./sheetsDb";
+
+// Fast-path flag: set while a job is in flight, cleared on any terminal
+// transition. Lets activeJob() answer "no active job" (the overwhelmingly
+// common case — every bootstrap asks) with one Properties read instead of a
+// full jobs-tab read. The tab stays the source of truth: a present flag still
+// verifies against the tab, and a stale flag self-heals there.
+const ACTIVE_JOB_PROP = "ACTIVE_JOB_ID";
 
 export type JobKind = "sync";
 export type JobPhase =
@@ -49,6 +57,7 @@ export function newJobId(kind: JobKind, now?: number): string {
 export function createJob(row: Omit<JobRow, "started_at" | "updated_at">, now?: number): JobRow {
   const full: JobRow = { ...row, started_at: nowIso(now), updated_at: nowIso(now) };
   appendRows(TABS.jobs, [full as unknown as Rec]);
+  setProp(ACTIVE_JOB_PROP, full.job_id);
   return full;
 }
 
@@ -57,6 +66,7 @@ export function updateJob(jobId: string, patch: Partial<JobRow>, now?: number): 
     ...patch,
     updated_at: nowIso(now),
   } as Rec);
+  if (patch.phase && TERMINAL.includes(patch.phase)) deleteProp(ACTIVE_JOB_PROP);
 }
 
 export function listJobs(): JobRow[] {
@@ -86,5 +96,8 @@ const TERMINAL: JobPhase[] = ["DONE", "FAILED", "CANCELLED"];
 
 /** The single in-flight job, or null (jobs are single-flight). */
 export function activeJob(): JobRow | null {
-  return listJobs().find((j) => !TERMINAL.includes(j.phase)) ?? null;
+  if (!getProp(ACTIVE_JOB_PROP)) return null; // fast path: no Sheets read
+  const job = listJobs().find((j) => !TERMINAL.includes(j.phase)) ?? null;
+  if (!job) deleteProp(ACTIVE_JOB_PROP); // stale flag (crash mid-transition) — self-heal
+  return job;
 }

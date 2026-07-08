@@ -1450,7 +1450,7 @@ var Server = (() => {
     };
   }
   function resolveGraphParams(p, ctx) {
-    var _a4, _b;
+    var _a4;
     const seed = typeof p["seed"] === "string" ? p["seed"] : "";
     const seedKind = typeof p["seedKind"] === "string" ? p["seedKind"] : "";
     let seedIds;
@@ -1468,13 +1468,29 @@ var Server = (() => {
       clouds: toList(p["clouds"])
     };
     const hasFilters = filters.severities.length || filters.kinds.length || filters.projects.length || filters.clouds.length;
+    const rawDepth = p["depth"];
     return {
       seedIds,
-      depth: clampDepth((_a4 = p["depth"]) != null ? _a4 : ctx.defaultDepth),
+      depth: clampDepth(rawDepth == null || rawDepth === "" ? ctx.defaultDepth : rawDepth),
       expandIds: toList(p["expand"]),
       filters: hasFilters ? filters : void 0,
-      maxNodes: clampMaxNodes((_b = p["maxNodes"]) != null ? _b : ctx.maxNodes),
+      maxNodes: clampMaxNodes((_a4 = p["maxNodes"]) != null ? _a4 : ctx.maxNodes),
       maxEdges: MAX_EDGES_DEFAULT
+    };
+  }
+  function graphCacheParams(p) {
+    const sorted = (v) => toList(v).sort();
+    return {
+      seed: typeof p["seed"] === "string" ? p["seed"] : "",
+      seedKind: typeof p["seedKind"] === "string" ? p["seedKind"] : "",
+      depth: p["depth"] == null || p["depth"] === "" ? "" : String(p["depth"]),
+      maxNodes: p["maxNodes"] == null ? "" : String(p["maxNodes"]),
+      expand: sorted(p["expand"]),
+      severities: sorted(p["severities"]),
+      kinds: sorted(p["kinds"]),
+      projects: sorted(p["projects"]),
+      clouds: sorted(p["clouds"]),
+      view: resolveLayoutParams(p)
     };
   }
 
@@ -1509,6 +1525,7 @@ var Server = (() => {
   }
 
   // src/server/jobsStore.ts
+  var ACTIVE_JOB_PROP = "ACTIVE_JOB_ID";
   function normError(v) {
     const s = v == null ? "" : String(v).trim();
     return s === "" || s === "null" || s === "undefined" ? null : s;
@@ -1519,6 +1536,7 @@ var Server = (() => {
   function createJob(row, now) {
     const full = { ...row, started_at: nowIso(now), updated_at: nowIso(now) };
     appendRows(TABS.jobs, [full]);
+    setProp(ACTIVE_JOB_PROP, full.job_id);
     return full;
   }
   function updateJob(jobId, patch, now) {
@@ -1526,6 +1544,7 @@ var Server = (() => {
       ...patch,
       updated_at: nowIso(now)
     });
+    if (patch.phase && TERMINAL.includes(patch.phase)) deleteProp(ACTIVE_JOB_PROP);
   }
   function listJobs() {
     return readAll(TABS.jobs).map((r) => {
@@ -1555,7 +1574,10 @@ var Server = (() => {
   var TERMINAL = ["DONE", "FAILED", "CANCELLED"];
   function activeJob() {
     var _a4;
-    return (_a4 = listJobs().find((j) => !TERMINAL.includes(j.phase))) != null ? _a4 : null;
+    if (!getProp(ACTIVE_JOB_PROP)) return null;
+    const job = (_a4 = listJobs().find((j) => !TERMINAL.includes(j.phase))) != null ? _a4 : null;
+    if (!job) deleteProp(ACTIVE_JOB_PROP);
+    return job;
   }
 
   // src/server/locks.ts
@@ -2763,9 +2785,23 @@ var Server = (() => {
       error: null
     }]);
     bumpDataVersion();
+    invalidateReadMemos();
     return enriched;
   }
+  var graphDocMemo;
+  var assetsMemo;
+  var issuesMemo;
+  function invalidateReadMemos() {
+    graphDocMemo = void 0;
+    assetsMemo = void 0;
+    issuesMemo = void 0;
+  }
   function loadGraphDoc() {
+    if (graphDocMemo !== void 0) return graphDocMemo;
+    graphDocMemo = loadGraphDocUncached();
+    return graphDocMemo;
+  }
+  function loadGraphDocUncached() {
     var _a4;
     const snap = readGraphSnapshot();
     if (snap) return snap;
@@ -2794,10 +2830,12 @@ var Server = (() => {
     return { nodes, edges: edges2, syncedAt: latest ? String((_a4 = latest["finished_at"]) != null ? _a4 : "") : "" };
   }
   function loadAssets() {
-    return readAll(TABS.assets).map(rowToAsset);
+    if (assetsMemo === void 0) assetsMemo = readAll(TABS.assets).map(rowToAsset);
+    return assetsMemo;
   }
   function loadIssues() {
-    return readAll(TABS.issues).map(rowToIssue);
+    if (issuesMemo === void 0) issuesMemo = readAll(TABS.issues).map(rowToIssue);
+    return issuesMemo;
   }
   function syncHistory() {
     return readAll(TABS.syncHistory);
@@ -2813,6 +2851,7 @@ var Server = (() => {
     overwrite(TABS.syncHistory, []);
     trashGraphSnapshot();
     bumpDataVersion();
+    invalidateReadMemos();
   }
 
   // src/server/syncJobs.ts
@@ -3170,16 +3209,16 @@ var Server = (() => {
   function getGraph(p) {
     return run(() => {
       const params = p != null ? p : {};
-      const doc = loadGraphDoc();
-      if (!doc) return { empty: true };
-      const options = resolveGraphParams(params, {
-        defaultDepth: getDefaultDepth2(),
-        maxNodes: getMaxNodes2(),
-        issues: openIssues()
-      });
-      const view = resolveLayoutParams(params);
-      return cached("getGraph", { ...options, view }, () => {
+      return cached("getGraph", graphCacheParams(params), () => {
         var _a4;
+        const doc = loadGraphDoc();
+        if (!doc) return { empty: true };
+        const options = resolveGraphParams(params, {
+          defaultDepth: getDefaultDepth2(),
+          maxNodes: getMaxNodes2(),
+          issues: openIssues()
+        });
+        const view = resolveLayoutParams(params);
         const projection = projectGraph(doc, options);
         const layout = layoutGraph(projection, view);
         return {
@@ -3252,26 +3291,30 @@ var Server = (() => {
   }
   function getAssetDetail(p) {
     return run(() => {
-      var _a4, _b;
+      var _a4;
       const id = String((_a4 = (p != null ? p : {})["id"]) != null ? _a4 : "");
-      const doc = loadGraphDoc();
-      if (!doc) return null;
-      const node2 = doc.nodes.find((n) => n.id === id);
-      if (!node2) return null;
-      const issues2 = openIssues().filter((i) => i.assetId === id);
-      const neighbors = [];
-      for (const edge2 of doc.edges) {
-        if (edge2.src !== id && edge2.dst !== id) continue;
-        const otherId = edge2.src === id ? edge2.dst : edge2.src;
-        const other = doc.nodes.find((n) => n.id === otherId);
-        if (!other || other.kind === "ISSUE") continue;
-        neighbors.push({
-          edge: edge2,
-          node: assetRow(other),
-          direction: edge2.src === id ? "out" : "in"
-        });
-      }
-      return { node: { ...assetRow(node2), aarsPillars: (_b = node2.aarsPillars) != null ? _b : null }, issues: issues2, neighbors };
+      return cached("getAssetDetail", { id }, () => {
+        var _a5;
+        const doc = loadGraphDoc();
+        if (!doc) return null;
+        const nodeById = new Map(doc.nodes.map((n) => [n.id, n]));
+        const node2 = nodeById.get(id);
+        if (!node2) return null;
+        const issues2 = openIssues().filter((i) => i.assetId === id);
+        const neighbors = [];
+        for (const edge2 of doc.edges) {
+          if (edge2.src !== id && edge2.dst !== id) continue;
+          const otherId = edge2.src === id ? edge2.dst : edge2.src;
+          const other = nodeById.get(otherId);
+          if (!other || other.kind === "ISSUE") continue;
+          neighbors.push({
+            edge: edge2,
+            node: assetRow(other),
+            direction: edge2.src === id ? "out" : "in"
+          });
+        }
+        return { node: { ...assetRow(node2), aarsPillars: (_a5 = node2.aarsPillars) != null ? _a5 : null }, issues: issues2, neighbors };
+      });
     });
   }
   function getIssues(p) {
@@ -3279,9 +3322,11 @@ var Server = (() => {
       var _a4;
       const params = p != null ? p : {};
       const group = String((_a4 = params["group"]) != null ? _a4 : "");
-      let rows = loadIssues();
-      if (group) rows = rows.filter((i) => i.comboGroup === group);
-      return { rows, total: rows.length };
+      return cached("getIssues", { group }, () => {
+        let rows = loadIssues();
+        if (group) rows = rows.filter((i) => i.comboGroup === group);
+        return { rows, total: rows.length };
+      });
     });
   }
   function getIssueDetail(p) {
@@ -3347,7 +3392,9 @@ var Server = (() => {
     });
   }
   function getSyncHistory(_p) {
-    return run(() => ({ rows: syncHistory().reverse() }));
+    return run(() => cached("getSyncHistory", null, () => ({
+      rows: syncHistory().reverse()
+    })));
   }
   function getSettings(_p) {
     return run(() => ({

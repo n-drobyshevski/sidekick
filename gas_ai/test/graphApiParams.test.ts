@@ -2,7 +2,12 @@
 // resolution (asset / combo group / default all-combo-assets).
 
 import { describe, expect, it } from "vitest";
-import { resolveGraphParams, resolveLayoutParams, toList } from "../src/domain/graphApiParams";
+import {
+  graphCacheParams,
+  resolveGraphParams,
+  resolveLayoutParams,
+  toList,
+} from "../src/domain/graphApiParams";
 import { SEED_ISSUES } from "../src/server/sampleData";
 
 const CTX = { defaultDepth: 2, maxNodes: 120, issues: SEED_ISSUES };
@@ -23,6 +28,8 @@ describe("resolveGraphParams", () => {
     expect(resolveGraphParams({ depth: 99 }, CTX).depth).toBe(3);
     expect(resolveGraphParams({ depth: "3" }, CTX).depth).toBe(3);
     expect(resolveGraphParams({ depth: "junk" }, CTX).depth).toBe(2);
+    // "" means "use the configured default" (raw hash value), not depth 0.
+    expect(resolveGraphParams({ depth: "" }, CTX).depth).toBe(2);
   });
 
   it("default seed = every asset participating in any toxic combination", () => {
@@ -57,6 +64,33 @@ describe("resolveGraphParams", () => {
     const opts = resolveGraphParams({ expand: "a,b", maxNodes: 9999 }, CTX);
     expect(opts.expandIds).toEqual(["a", "b"]);
     expect(opts.maxNodes).toBe(400); // clamped ceiling
+  });
+});
+
+describe("graphCacheParams", () => {
+  it("is a pure function of the raw request (no issues/settings inputs)", () => {
+    const key = graphCacheParams({ seed: "agent-a", depth: "3", severities: "HIGH,CRITICAL" });
+    expect(key["seed"]).toBe("agent-a");
+    expect(key["depth"]).toBe("3");
+    expect(key["view"]).toEqual({ mode: "lanes", groupBy: "combo", sort: "smart" });
+  });
+
+  it("sorts list params so either order shares one cache entry", () => {
+    const a = graphCacheParams({ severities: "HIGH,CRITICAL", expand: ["b", "a"] });
+    const b = graphCacheParams({ severities: "CRITICAL,HIGH", expand: ["a", "b"] });
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+
+  it("treats empty and absent depth identically, distinct from explicit", () => {
+    expect(graphCacheParams({ depth: "" })["depth"]).toBe(graphCacheParams({})["depth"]);
+    expect(graphCacheParams({ depth: "2" })["depth"]).toBe("2");
+  });
+
+  it("differs when any request knob differs", () => {
+    const base = JSON.stringify(graphCacheParams({}));
+    expect(JSON.stringify(graphCacheParams({ layout: "grouped" }))).not.toBe(base);
+    expect(JSON.stringify(graphCacheParams({ seed: "x" }))).not.toBe(base);
+    expect(JSON.stringify(graphCacheParams({ kinds: "BUCKET" }))).not.toBe(base);
   });
 });
 

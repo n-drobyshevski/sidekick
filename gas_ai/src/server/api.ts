@@ -9,7 +9,7 @@ import {
   SEVERITY_GLYPHS,
   SEVERITY_ORDER,
 } from "../domain/config";
-import { resolveGraphParams, resolveLayoutParams } from "../domain/graphApiParams";
+import { graphCacheParams, resolveGraphParams, resolveLayoutParams } from "../domain/graphApiParams";
 import { layoutGraph } from "../domain/graphLayout";
 import { projectGraph } from "../domain/graphProject";
 import { AI_ASSET_KINDS, type GEdge, type GNode, type IssueRow } from "../domain/graphTypes";
@@ -131,18 +131,19 @@ function filterOptions(assets: GNode[]): Rec {
 export function getGraph(p?: unknown): ApiResult {
   return run(() => {
     const params = (p ?? {}) as Rec;
-    const doc = syncStore.loadGraphDoc();
-    if (!doc) return { empty: true };
-    const options = resolveGraphParams(params, {
-      defaultDepth: settingsStore.getDefaultDepth(),
-      maxNodes: settingsStore.getMaxNodes(),
-      issues: openIssues(),
-    });
-    const view = resolveLayoutParams(params);
-    // Cache on the RESOLVED options (+ layout knobs): normalized params share
-    // entries, and the depth slider re-projects from CacheService without
-    // touching Sheets/Drive.
-    return cached("getGraph", { ...options, view }, () => {
+    // Cache on the NORMALIZED RAW request: a hit costs one Properties read plus
+    // the CacheService fetch — no Sheets or Drive I/O at all. Seed resolution
+    // and settings defaults live INSIDE the compute; they only change when the
+    // data version bumps, and the version is part of the key.
+    return cached("getGraph", graphCacheParams(params), () => {
+      const doc = syncStore.loadGraphDoc();
+      if (!doc) return { empty: true };
+      const options = resolveGraphParams(params, {
+        defaultDepth: settingsStore.getDefaultDepth(),
+        maxNodes: settingsStore.getMaxNodes(),
+        issues: openIssues(),
+      });
+      const view = resolveLayoutParams(params);
       const projection = projectGraph(doc, options);
       const layout = layoutGraph(projection, view);
       return {
@@ -221,24 +222,28 @@ export function getAssets(_p?: unknown): ApiResult {
 export function getAssetDetail(p?: unknown): ApiResult {
   return run(() => {
     const id = String(((p ?? {}) as Rec)["id"] ?? "");
-    const doc = syncStore.loadGraphDoc();
-    if (!doc) return null;
-    const node = doc.nodes.find((n) => n.id === id);
-    if (!node) return null;
-    const issues = openIssues().filter((i) => i.assetId === id);
-    const neighbors: Array<{ edge: GEdge; node: Rec; direction: "out" | "in" }> = [];
-    for (const edge of doc.edges) {
-      if (edge.src !== id && edge.dst !== id) continue;
-      const otherId = edge.src === id ? edge.dst : edge.src;
-      const other = doc.nodes.find((n) => n.id === otherId);
-      if (!other || other.kind === "ISSUE") continue;
-      neighbors.push({
-        edge,
-        node: assetRow(other),
-        direction: edge.src === id ? "out" : "in",
-      });
-    }
-    return { node: { ...assetRow(node), aarsPillars: node.aarsPillars ?? null }, issues, neighbors };
+    // Cached: opening the same detail sheet twice must not re-read Drive+Sheets.
+    return cached("getAssetDetail", { id }, () => {
+      const doc = syncStore.loadGraphDoc();
+      if (!doc) return null;
+      const nodeById = new Map(doc.nodes.map((n) => [n.id, n]));
+      const node = nodeById.get(id);
+      if (!node) return null;
+      const issues = openIssues().filter((i) => i.assetId === id);
+      const neighbors: Array<{ edge: GEdge; node: Rec; direction: "out" | "in" }> = [];
+      for (const edge of doc.edges) {
+        if (edge.src !== id && edge.dst !== id) continue;
+        const otherId = edge.src === id ? edge.dst : edge.src;
+        const other = nodeById.get(otherId);
+        if (!other || other.kind === "ISSUE") continue;
+        neighbors.push({
+          edge,
+          node: assetRow(other),
+          direction: edge.src === id ? "out" : "in",
+        });
+      }
+      return { node: { ...assetRow(node), aarsPillars: node.aarsPillars ?? null }, issues, neighbors };
+    });
   });
 }
 
@@ -248,9 +253,11 @@ export function getIssues(p?: unknown): ApiResult {
   return run(() => {
     const params = (p ?? {}) as Rec;
     const group = String(params["group"] ?? "");
-    let rows = syncStore.loadIssues();
-    if (group) rows = rows.filter((i) => i.comboGroup === group);
-    return { rows, total: rows.length };
+    return cached("getIssues", { group }, () => {
+      let rows = syncStore.loadIssues();
+      if (group) rows = rows.filter((i) => i.comboGroup === group);
+      return { rows, total: rows.length };
+    });
   });
 }
 
@@ -321,7 +328,9 @@ export function cancelSync(p?: unknown): ApiResult {
 }
 
 export function getSyncHistory(_p?: unknown): ApiResult {
-  return run(() => ({ rows: syncStore.syncHistory().reverse() }));
+  return run(() => cached("getSyncHistory", null, () => ({
+    rows: syncStore.syncHistory().reverse(),
+  })));
 }
 
 // ------------------------------------------------------------------------- settings

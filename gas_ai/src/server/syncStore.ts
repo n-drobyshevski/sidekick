@@ -220,13 +220,34 @@ export function persistSync(
     error: null,
   }]);
   bumpDataVersion();
+  invalidateReadMemos();
   return enriched;
 }
 
 // -------------------------------------------------------------------- read model
 
+// Per-execution memos: one API call can need the same read model several times
+// (getGraph resolves seeds from issues AND loads the doc, whose tab-rebuild
+// fallback re-reads issues). Module state dies with the GAS execution, so these
+// can never serve cross-request data; writers below invalidate them anyway.
+let graphDocMemo: GraphDoc | null | undefined;
+let assetsMemo: GNode[] | undefined;
+let issuesMemo: IssueRow[] | undefined;
+
+function invalidateReadMemos(): void {
+  graphDocMemo = undefined;
+  assetsMemo = undefined;
+  issuesMemo = undefined;
+}
+
 /** The enriched graph: Drive snapshot fast path, tab rebuild fallback. */
 export function loadGraphDoc(): GraphDoc | null {
+  if (graphDocMemo !== undefined) return graphDocMemo;
+  graphDocMemo = loadGraphDocUncached();
+  return graphDocMemo;
+}
+
+function loadGraphDocUncached(): GraphDoc | null {
   const snap = readGraphSnapshot();
   if (snap) return snap;
 
@@ -256,11 +277,13 @@ export function loadGraphDoc(): GraphDoc | null {
 }
 
 export function loadAssets(): GNode[] {
-  return readAll(TABS.assets).map(rowToAsset);
+  if (assetsMemo === undefined) assetsMemo = readAll(TABS.assets).map(rowToAsset);
+  return assetsMemo;
 }
 
 export function loadIssues(): IssueRow[] {
-  return readAll(TABS.issues).map(rowToIssue);
+  if (issuesMemo === undefined) issuesMemo = readAll(TABS.issues).map(rowToIssue);
+  return issuesMemo;
 }
 
 export function syncHistory(): Rec[] {
@@ -281,4 +304,5 @@ export function resetData(): void {
   overwrite(TABS.syncHistory, []);
   trashGraphSnapshot();
   bumpDataVersion();
+  invalidateReadMemos();
 }

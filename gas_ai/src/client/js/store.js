@@ -35,13 +35,15 @@ export function invalidateRpcCache() {
  * Stale-while-revalidate call: a revisit resolves instantly from the session cache
  * while the RPC refetches in the background — onFresh fires only when the
  * revalidated payload actually differs, so pages repaint on real changes and stay
- * put otherwise. First visit is just a plain call.
+ * put otherwise. First visit is just a plain call. A hit whose first fetch is
+ * still in flight IS fresh: it's shared instead of firing a duplicate RPC (this
+ * is what lets a page prefetch a call and then await the same one later).
  */
 export function swrCall(name, params, onFresh) {
   const key = rpcKey(name, params);
   const fetchFresh = () =>
     call(name, params).then((data) => {
-      rpcCache.set(key, Promise.resolve(data));
+      rpcCache.set(key, { p: Promise.resolve(data), pending: false });
       return data;
     });
   const hit = rpcCache.get(key);
@@ -50,15 +52,16 @@ export function swrCall(name, params, onFresh) {
       rpcCache.delete(key);
       throw e;
     });
-    rpcCache.set(key, p);
+    rpcCache.set(key, { p, pending: true });
     return p;
   }
-  Promise.all([hit, fetchFresh()])
+  if (hit.pending) return hit.p;
+  Promise.all([hit.p, fetchFresh()])
     .then(([stale, fresh]) => {
       if (onFresh && JSON.stringify(stale) !== JSON.stringify(fresh)) onFresh(fresh);
     })
     .catch(() => {}); // a failed background revalidation keeps the stale view
-  return hit;
+  return hit.p;
 }
 
 // ------------------------------------------------------------------- hash routing
