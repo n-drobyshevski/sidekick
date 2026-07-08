@@ -2765,7 +2765,7 @@ var Server = (() => {
         node2.comboGroups = groups;
       }
       const hint = hints == null ? void 0 : hints[node2.id];
-      const scorable = node2.kind !== "ISSUE" && node2.kind !== "SUMMARY" && node2.kind !== "SENSITIVE_DATA" && (AI_ASSET_KINDS.includes(node2.kind) || nodeIssues.length > 0 || hint !== void 0);
+      const scorable = node2.kind !== "ISSUE" && node2.kind !== "SUMMARY" && (AI_ASSET_KINDS.includes(node2.kind) || nodeIssues.length > 0 || hint !== void 0);
       if (scorable) {
         const input = hint ? { issueSeverities: nodeIssues.map((i) => i.nativeSeverity), ...hint } : deriveAarsInput(node2, nodeIssues);
         const result = computeAars(input);
@@ -2789,18 +2789,31 @@ var Server = (() => {
       dst: issue2.id,
       type: "HAS_ISSUE"
     }));
+    return {
+      nodes: [...nodes, ...issueNodes],
+      edges: [...doc.edges, ...issueEdges],
+      syncedAt: doc.syncedAt
+    };
+  }
+  function withSensitiveDataNodes(doc) {
+    const existing = new Set(
+      doc.nodes.filter((n) => n.kind === "SENSITIVE_DATA").map((n) => n.id)
+    );
     const sensitiveNodes = [];
     const sensitiveEdges = [];
-    for (const node2 of nodes) {
+    for (const node2 of doc.nodes) {
+      if (node2.kind === "SENSITIVE_DATA") continue;
       if (!node2.hasSensitiveData && !node2.hasAccessToSensitiveData) continue;
       const sensId = `sensitive|${node2.id}`;
+      if (existing.has(sensId)) continue;
       const type = node2.hasSensitiveData ? "HAS_SENSITIVE_DATA" : "HAS_ACCESS_TO_SENSITIVE_DATA";
       sensitiveNodes.push({ id: sensId, kind: "SENSITIVE_DATA", name: "Sensitive data" });
       sensitiveEdges.push({ id: edgeId(node2.id, type, sensId), src: node2.id, dst: sensId, type });
     }
+    if (!sensitiveNodes.length) return doc;
     return {
-      nodes: [...nodes, ...issueNodes, ...sensitiveNodes],
-      edges: [...doc.edges, ...issueEdges, ...sensitiveEdges],
+      nodes: [...doc.nodes, ...sensitiveNodes],
+      edges: [...doc.edges, ...sensitiveEdges],
       syncedAt: doc.syncedAt
     };
   }
@@ -3001,7 +3014,7 @@ var Server = (() => {
   function loadGraphDocUncached() {
     var _a4;
     const snap = readGraphSnapshot();
-    if (snap) return snap;
+    if (snap) return withSensitiveDataNodes(snap);
     const assetRows = readAll(TABS.assets);
     if (!assetRows.length) return null;
     const nodes = assetRows.map(rowToAsset);
@@ -3024,7 +3037,11 @@ var Server = (() => {
       });
     }
     const latest = latestSync();
-    return { nodes, edges: edges2, syncedAt: latest ? String((_a4 = latest["finished_at"]) != null ? _a4 : "") : "" };
+    return withSensitiveDataNodes({
+      nodes,
+      edges: edges2,
+      syncedAt: latest ? String((_a4 = latest["finished_at"]) != null ? _a4 : "") : ""
+    });
   }
   function loadAssets() {
     if (assetsMemo === void 0) assetsMemo = readAll(TABS.assets).map(rowToAsset);

@@ -3,7 +3,8 @@
 // end-to-end through the hint path.
 
 import { describe, expect, it } from "vitest";
-import { enrichGraphDoc } from "../src/domain/graphEnrich";
+import { enrichGraphDoc, withSensitiveDataNodes } from "../src/domain/graphEnrich";
+import type { GraphDoc } from "../src/domain/graphTypes";
 import { SEED_AARS_HINTS, SEED_ISSUES, seedGraphDoc } from "../src/server/sampleData";
 
 const T = "2026-06-28T05:00:00Z";
@@ -25,9 +26,20 @@ describe("enrichGraphDoc", () => {
     }
   });
 
-  it("materializes one SENSITIVE_DATA node + edge per data-exposed asset (pillar C)", () => {
+  it("does NOT persist SENSITIVE_DATA topology (it is derived on read, not at sync)", () => {
     const doc = enriched();
-    const flagged = seedGraphDoc(T).nodes.filter(
+    expect(doc.nodes.some((n) => n.kind === "SENSITIVE_DATA")).toBe(false);
+    expect(
+      doc.edges.some(
+        (e) => e.type === "HAS_SENSITIVE_DATA" || e.type === "HAS_ACCESS_TO_SENSITIVE_DATA",
+      ),
+    ).toBe(false);
+  });
+
+  it("withSensitiveDataNodes adds one node + edge per data-exposed asset (pillar C)", () => {
+    const base = enriched();
+    const doc = withSensitiveDataNodes(base);
+    const flagged = base.nodes.filter(
       (n) => n.hasSensitiveData || n.hasAccessToSensitiveData,
     );
     const sensNodes = doc.nodes.filter((n) => n.kind === "SENSITIVE_DATA");
@@ -38,9 +50,9 @@ describe("enrichGraphDoc", () => {
     expect(sensNodes).toHaveLength(flagged.length);
     expect(sensEdges).toHaveLength(flagged.length);
 
-    const realIds = new Set(seedGraphDoc(T).nodes.map((n) => n.id));
+    const baseIds = new Set(base.nodes.map((n) => n.id));
     for (const e of sensEdges) {
-      expect(realIds.has(e.src)).toBe(true);
+      expect(baseIds.has(e.src)).toBe(true);
       expect(e.dst).toBe(`sensitive|${e.src}`);
       expect(sensNodes.some((n) => n.id === e.dst)).toBe(true);
     }
@@ -52,6 +64,25 @@ describe("enrichGraphDoc", () => {
 
     // Synthetic nodes never carry an AARS score.
     for (const n of sensNodes) expect(n.aars).toBeUndefined();
+  });
+
+  it("withSensitiveDataNodes is idempotent and covers isolated (edge-less) assets", () => {
+    // The reported bug: an inventory-sourced AI_DATASET that holds sensitive data with
+    // zero relationship edges (like "Bedrock Logs Dataset") — a topological island.
+    const island: GraphDoc = {
+      nodes: [{ id: "bedrock-logs", kind: "AI_DATASET", name: "Bedrock Logs Dataset", hasSensitiveData: true }],
+      edges: [],
+      syncedAt: T,
+    };
+    const once = withSensitiveDataNodes(island);
+    expect(once.nodes).toHaveLength(2);
+    expect(once.edges).toHaveLength(1);
+    expect(once.edges[0].type).toBe("HAS_SENSITIVE_DATA");
+    expect(once.edges[0].dst).toBe("sensitive|bedrock-logs");
+    // Re-applying must not duplicate the stub.
+    const twice = withSensitiveDataNodes(once);
+    expect(twice.nodes).toHaveLength(2);
+    expect(twice.edges).toHaveLength(1);
   });
 
   it("reproduces the applied-table AARS end-to-end (hint path)", () => {

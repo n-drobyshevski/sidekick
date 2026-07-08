@@ -98,7 +98,6 @@ export function enrichGraphDoc(
     const scorable =
       node.kind !== "ISSUE" &&
       node.kind !== "SUMMARY" &&
-      node.kind !== "SENSITIVE_DATA" &&
       (AI_ASSET_KINDS.includes(node.kind) || nodeIssues.length > 0 || hint !== undefined);
     if (scorable) {
       const input = hint
@@ -128,27 +127,48 @@ export function enrichGraphDoc(
     type: "HAS_ISSUE",
   }));
 
-  // Data-exposure topology (AARS pillar C): one SENSITIVE_DATA node + edge per
-  // data-exposed asset, so the pillar is visible in the graph the way ISSUE nodes
-  // make the toxic pillar visible. The predicate mirrors the "SENSITIVE"
-  // classification in deriveAarsInput exactly, so topology and score always agree.
-  // HOLDS (hasSensitiveData) wins over ACCESS when both flags are set — consistent
-  // with the score collapsing both to "SENSITIVE".
+  return {
+    nodes: [...nodes, ...issueNodes],
+    edges: [...doc.edges, ...issueEdges],
+    syncedAt: doc.syncedAt,
+  };
+}
+
+/**
+ * Read-time data-exposure topology (AARS pillar C): append one synthetic
+ * SENSITIVE_DATA node + edge per node that holds or can reach sensitive data, so the
+ * pillar is visible in the graph and relationship views the way ISSUE nodes make the
+ * toxic pillar visible. The predicate mirrors the "SENSITIVE" classification in
+ * `deriveAarsInput` exactly, so topology and score always agree; HOLDS
+ * (`hasSensitiveData`) wins over ACCESS when both flags are set — consistent with the
+ * score collapsing both to "SENSITIVE".
+ *
+ * Derived on READ (applied by loadGraphDoc), never persisted: it therefore covers
+ * already-synced graphs without a re-sync and never leaks into the asset/inventory
+ * tables. Idempotent — skips any node that already has its `sensitive|<id>` stub — and
+ * pure (returns a new document, or the same one when nothing is flagged).
+ */
+export function withSensitiveDataNodes(doc: GraphDoc): GraphDoc {
+  const existing = new Set(
+    doc.nodes.filter((n) => n.kind === "SENSITIVE_DATA").map((n) => n.id),
+  );
   const sensitiveNodes: GNode[] = [];
   const sensitiveEdges: GEdge[] = [];
-  for (const node of nodes) {
+  for (const node of doc.nodes) {
+    if (node.kind === "SENSITIVE_DATA") continue;
     if (!node.hasSensitiveData && !node.hasAccessToSensitiveData) continue;
     const sensId = `sensitive|${node.id}`;
+    if (existing.has(sensId)) continue;
     const type: GEdge["type"] = node.hasSensitiveData
       ? "HAS_SENSITIVE_DATA"
       : "HAS_ACCESS_TO_SENSITIVE_DATA";
     sensitiveNodes.push({ id: sensId, kind: "SENSITIVE_DATA", name: "Sensitive data" });
     sensitiveEdges.push({ id: edgeId(node.id, type, sensId), src: node.id, dst: sensId, type });
   }
-
+  if (!sensitiveNodes.length) return doc;
   return {
-    nodes: [...nodes, ...issueNodes, ...sensitiveNodes],
-    edges: [...doc.edges, ...issueEdges, ...sensitiveEdges],
+    nodes: [...doc.nodes, ...sensitiveNodes],
+    edges: [...doc.edges, ...sensitiveEdges],
     syncedAt: doc.syncedAt,
   };
 }
