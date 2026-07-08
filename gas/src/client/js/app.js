@@ -57,6 +57,7 @@ let scanCardHost = null; // the progress-card slot in the current scan zone
 let scanButtonsRow = null; // the Run/Quick buttons, hidden while a job runs
 let stoppingJobId = null; // optimistic "Stopping…" until the server confirms CANCELLED
 let lastJob = null; // most recent JobRow, for an immediate repaint on Stop
+let scanDetails = null; // open scan-details drawer handle, kept live by the poller
 
 async function boot() {
   clear(app);
@@ -212,14 +213,19 @@ function paintCard(job) {
   lastJob = job;
   const stopping = stoppingJobId === job.job_id && job.phase !== "CANCELLED";
   renderScanCard(scanCardHost, job, {
-    onDetails: () => openScanDetails(job, { onStop: () => requestStop(job.job_id) }),
+    onDetails: () => {
+      scanDetails = openScanDetails(job, { onStop: () => requestStop(job.job_id) });
+    },
     onStop: stopping ? null : () => requestStop(job.job_id),
     stopping,
   });
+  // Keep an open details drawer in step with the poll — otherwise its values freeze at open time.
+  if (scanDetails) scanDetails.update(job);
   if (scanButtonsRow) scanButtonsRow.style.display = "none";
 }
 
 function clearCard() {
+  scanDetails = null; // drop the stale drawer handle once the card is gone
   if (scanCardHost) clear(scanCardHost);
   if (scanButtonsRow) scanButtonsRow.style.display = "";
 }
@@ -248,11 +254,13 @@ function watchJob(jobId) {
       }
       if (job.phase === "DONE") {
         stopWatch();
+        if (scanDetails) scanDetails.update(job); // let an open drawer settle on "Complete"
         toast("Scan complete.");
         refresh();
       } else if (job.phase === "CANCELLED") {
         stopWatch();
         stoppingJobId = null;
+        if (scanDetails) scanDetails.update(job); // an open drawer settles on "Cancelled"
         toast("Scan stopped.");
         refresh();
       } else if (job.phase === "FAILED") {
