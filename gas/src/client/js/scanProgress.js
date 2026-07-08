@@ -149,54 +149,88 @@ export function renderScanCard(host, job, { onStop, onDetails, nowMs, stopping }
   return v;
 }
 
-/** Detailed drawer: phase stepper + counts + elapsed + mode (+ error). */
+/**
+ * Detailed drawer: phase stepper + counts + elapsed + mode (+ error).
+ *
+ * Returns `{ close, update }`. The poller feeds fresh JobRows through `update(job)` so the
+ * open panel tracks the scan live — findings, pages, elapsed, phase and progress all advance
+ * without the user having to close and reopen it. Without this the body is a one-shot snapshot.
+ */
 export function openScanDetails(job, opts = {}) {
-  const { nowMs, onStop } = opts;
-  const v = scanProgressView(job, nowMs || Date.now());
-  return openSheet(
+  const { onStop } = opts;
+  let currentJob = job;
+  let bodyEl = null;
+  let closeFn = null;
+
+  function paint() {
+    // A poll can arrive after the user dismissed the sheet (scrim / Esc / ✕ / Close — none of
+    // which call back here); repainting a detached body would throw, so bail harmlessly.
+    if (!bodyEl || !bodyEl.isConnected) return;
+    // Recompute the whole view (elapsed included) against the current job and wall clock, so a
+    // running scan's timer keeps ticking on every poll tick — not just when the panel is opened.
+    const v = scanProgressView(currentJob, Date.now());
+    clear(bodyEl);
+
+    const stepper = el("div", { class: "scan-steps" });
+    for (const s of v.steps) {
+      const glyph = s.status === "done" ? "✓" : s.status === "active" ? "●" : "○";
+      stepper.append(
+        el("div", { class: `scan-step ${s.status}` },
+          el("span", { class: "scan-step-dot", "aria-hidden": "true" }, glyph),
+          el("span", {}, s.label)),
+      );
+    }
+
+    const actions = el("div", { class: "sheet-actions", style: "margin-top:16px" });
+    // v.canStop is recomputed each paint, so the Stop button retires once the job leaves FETCHING.
+    if (v.canStop && onStop) {
+      actions.append(el("button", { class: "danger", onclick: () => { onStop(); closeFn(); } },
+        "Stop scan"));
+    }
+    actions.append(el("button", { class: "primary", onclick: closeFn }, "Close"));
+
+    // Note: native Node.append() stringifies null into a literal "null" text node
+    // (unlike el(), which drops it) — so conditional children are filtered out here.
+    const children = [
+      stepper,
+      progressBar(v.pct, v.state === "running" ? "" : v.state),
+      // A long silence almost always means the run died — say so and offer a way out.
+      v.stuck
+        ? el("div", { class: "scan-stall-note", role: "status" },
+            el("span", { "aria-hidden": "true" }, "⚠ "),
+            "No progress for a while — the scan may have stopped. " +
+              (v.canStop && onStop ? "Stop it and run again." : "Try running it again."))
+        : null,
+      el("dl", { class: "scan-detail-grid" },
+        el("dt", {}, "Status"), el("dd", {}, v.phaseLabel),
+        el("dt", {}, "Findings"),
+        el("dd", {}, `${Number(currentJob.findings_so_far || 0).toLocaleString()}` +
+          (Number(currentJob.total_count || 0) > 0
+            ? ` of ${Number(currentJob.total_count).toLocaleString()}`
+            : "")),
+        el("dt", {}, "Pages"), el("dd", {}, String(currentJob.page || 0)),
+        el("dt", {}, "Elapsed"), el("dd", {}, v.elapsedText || "—"),
+      ),
+      v.error ? el("div", { class: "scan-detail-error" }, v.error) : null,
+      actions,
+    ];
+    bodyEl.append(...children.filter(Boolean));
+  }
+
+  const handle = openSheet(
     (body, close) => {
-      const stepper = el("div", { class: "scan-steps" });
-      for (const s of v.steps) {
-        const glyph = s.status === "done" ? "✓" : s.status === "active" ? "●" : "○";
-        stepper.append(
-          el("div", { class: `scan-step ${s.status}` },
-            el("span", { class: "scan-step-dot", "aria-hidden": "true" }, glyph),
-            el("span", {}, s.label)),
-        );
-      }
-
-      const actions = el("div", { class: "sheet-actions", style: "margin-top:16px" });
-      if (v.canStop && onStop) {
-        actions.append(el("button", { class: "danger", onclick: () => { onStop(); close(); } },
-          "Stop scan"));
-      }
-      actions.append(el("button", { class: "primary", onclick: close }, "Close"));
-
-      // Note: native Node.append() stringifies null into a literal "null" text node
-      // (unlike el(), which drops it) — so conditional children are filtered out here.
-      const children = [
-        stepper,
-        progressBar(v.pct, v.state === "running" ? "" : v.state),
-        // A long silence almost always means the run died — say so and offer a way out.
-        v.stuck
-          ? el("div", { class: "scan-stall-note", role: "status" },
-              el("span", { "aria-hidden": "true" }, "⚠ "),
-              "No progress for a while — the scan may have stopped. " +
-                (v.canStop && onStop ? "Stop it and run again." : "Try running it again."))
-          : null,
-        el("dl", { class: "scan-detail-grid" },
-          el("dt", {}, "Status"), el("dd", {}, v.phaseLabel),
-          el("dt", {}, "Findings"),
-          el("dd", {}, `${Number(job.findings_so_far || 0).toLocaleString()}` +
-            (Number(job.total_count || 0) > 0 ? ` of ${Number(job.total_count).toLocaleString()}` : "")),
-          el("dt", {}, "Pages"), el("dd", {}, String(job.page || 0)),
-          el("dt", {}, "Elapsed"), el("dd", {}, v.elapsedText || "—"),
-        ),
-        v.error ? el("div", { class: "scan-detail-error" }, v.error) : null,
-        actions,
-      ];
-      body.append(...children.filter(Boolean));
+      bodyEl = body;
+      closeFn = close;
+      paint();
     },
     { title: "Scan progress", subtitle: scanMode(job), ariaLabel: "Scan progress" },
   );
+
+  return {
+    close: handle.close,
+    update(nextJob) {
+      currentJob = nextJob;
+      paint();
+    },
+  };
 }
