@@ -29,6 +29,8 @@ const PATHS = {
   SUMMARY: ["M4 8 h0.01", "M8 8 h0.01", "M12 8 h0.01"],
   // Padlock — reads as "sensitive", distinct from the shield (guardrail) and cylinder (dataset).
   SENSITIVE_DATA: ["M4 7 h8 v6 h-8 z", "M6 7 V5 a2 2 0 0 1 4 0 V7", "M8 9.5 v2"],
+  // Globe — reads as "internet / public exposure".
+  INTERNET_EXPOSURE: ["M8 2 a6 6 0 1 0 0 12 a6 6 0 0 0 0 -12", "M2 8 h12", "M8 2 a9 6 0 0 0 0 12", "M8 2 a9 6 0 0 1 0 12"],
 };
 
 // Tenant-vocabulary AI kinds reuse the closest existing glyph (icons are a
@@ -72,6 +74,7 @@ export const KIND_LABELS = {
   ISSUE: "Issue",
   SUMMARY: "More",
   SENSITIVE_DATA: "Sensitive Data",
+  INTERNET_EXPOSURE: "Internet Exposure",
 };
 
 // Built without a literal `//` byte sequence: SSL-inspecting middleboxes have been
@@ -98,3 +101,41 @@ export function kindIcon(kind, size = 16) {
 export function kindLabel(kind) {
   return KIND_LABELS[kind] || kind;
 }
+
+// Semantic category of a node kind — drives the graph's color coding (a redundant cue
+// beside the kind icon + label, never the only signal). Five categories plus a neutral
+// fallback for collapse stubs. Categories deliberately sit OFF the severity color channel
+// so the per-node severity dot keeps reading true.
+export const KIND_CATEGORY = {
+  // assets (blue): AI-SPM assets + the compute/supply-chain they run on
+  AI_AGENT: "asset", AI_MODEL: "asset", AI_GUARDRAIL: "asset", AI_PIPELINE: "asset",
+  MCP_SERVER: "asset", AI_AGENT_REGISTRY: "asset", AI_DEPLOYMENT: "asset",
+  AI_EXTENSION: "asset", AI_GATEWAY: "asset", AI_SERVICE: "asset", AI_SKILL: "asset",
+  AI_SKILL_TEMPLATE: "asset", AI_TOOL: "asset",
+  VIRTUAL_MACHINE: "asset", SERVERLESS: "asset", CONTAINER_IMAGE: "asset", REPOSITORY: "asset",
+  // data (green): datastores, datasets, and the sensitive-data marker
+  AI_DATASET: "data", BUCKET: "data", DATABASE: "data", SENSITIVE_DATA: "data",
+  // IAM / access (purple)
+  SERVICE_ACCOUNT: "iam", USER_ACCOUNT: "iam", ACCESS_ROLE: "iam", ACCESS_ROLE_BINDING: "iam",
+  // vulnerabilities & misconfigurations (red)
+  ISSUE: "vuln", EXCESSIVE_ACCESS_FINDING: "vuln", LATERAL_MOVEMENT_FINDING: "vuln",
+  // internet exposure (yellow)
+  INTERNET_EXPOSURE: "exposure",
+  // neutral
+  SUMMARY: "neutral",
+};
+
+/** Semantic category for a node kind; unknown kinds fall back to "asset". */
+export function categoryOf(kind) {
+  return KIND_CATEGORY[kind] || "asset";
+}
+
+// Legend order + labels for the category color key.
+export const CATEGORY_ORDER = ["asset", "data", "iam", "vuln", "exposure"];
+export const CATEGORY_LABELS = {
+  asset: "AI assets & compute",
+  data: "Data",
+  iam: "IAM & access",
+  vuln: "Vulnerabilities",
+  exposure: "Internet exposure",
+};

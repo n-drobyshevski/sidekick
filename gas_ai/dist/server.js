@@ -935,8 +935,10 @@ var Server = (() => {
     // one node per open risk issue (toxic-combination instance)
     "SUMMARY",
     // collapse node: "+N more <kind>" emitted by the projection
-    "SENSITIVE_DATA"
+    "SENSITIVE_DATA",
     // one node per data-exposed asset (AARS pillar C topology)
+    "INTERNET_EXPOSURE"
+    // one node per internet-exposed asset (exposure topology)
   ];
   var AI_ASSET_KINDS = [
     "AI_AGENT",
@@ -2817,6 +2819,32 @@ var Server = (() => {
       syncedAt: doc.syncedAt
     };
   }
+  function withInternetExposureNodes(doc) {
+    const existing = new Set(
+      doc.nodes.filter((n) => n.kind === "INTERNET_EXPOSURE").map((n) => n.id)
+    );
+    const exposureNodes = [];
+    const exposureEdges = [];
+    for (const node2 of doc.nodes) {
+      if (node2.kind === "INTERNET_EXPOSURE") continue;
+      if (node2.isAccessibleFromInternet !== true && node2.isOpenToAllInternet !== true) continue;
+      const expId = `internet|${node2.id}`;
+      if (existing.has(expId)) continue;
+      exposureNodes.push({ id: expId, kind: "INTERNET_EXPOSURE", name: "Internet exposure" });
+      exposureEdges.push({
+        id: edgeId(node2.id, "EXPOSED_TO_INTERNET", expId),
+        src: node2.id,
+        dst: expId,
+        type: "EXPOSED_TO_INTERNET"
+      });
+    }
+    if (!exposureNodes.length) return doc;
+    return {
+      nodes: [...doc.nodes, ...exposureNodes],
+      edges: [...doc.edges, ...exposureEdges],
+      syncedAt: doc.syncedAt
+    };
+  }
 
   // src/server/syncStore.ts
   function boolCell(v) {
@@ -3014,7 +3042,7 @@ var Server = (() => {
   function loadGraphDocUncached() {
     var _a4;
     const snap = readGraphSnapshot();
-    if (snap) return withSensitiveDataNodes(snap);
+    if (snap) return withInternetExposureNodes(withSensitiveDataNodes(snap));
     const assetRows = readAll(TABS.assets);
     if (!assetRows.length) return null;
     const nodes = assetRows.map(rowToAsset);
@@ -3037,11 +3065,13 @@ var Server = (() => {
       });
     }
     const latest = latestSync();
-    return withSensitiveDataNodes({
-      nodes,
-      edges: edges2,
-      syncedAt: latest ? String((_a4 = latest["finished_at"]) != null ? _a4 : "") : ""
-    });
+    return withInternetExposureNodes(
+      withSensitiveDataNodes({
+        nodes,
+        edges: edges2,
+        syncedAt: latest ? String((_a4 = latest["finished_at"]) != null ? _a4 : "") : ""
+      })
+    );
   }
   function loadAssets() {
     if (assetsMemo === void 0) assetsMemo = readAll(TABS.assets).map(rowToAsset);
