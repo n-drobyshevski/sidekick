@@ -6,7 +6,7 @@
 // inspectable/exportable source of truth and the fallback when the snapshot is
 // missing or unreadable.
 
-import { enrichGraphDoc, type AarsHints } from "../domain/graphEnrich";
+import { enrichGraphDoc, withSensitiveDataNodes, type AarsHints } from "../domain/graphEnrich";
 import type { GEdge, GNode, GraphDoc, IssueRow, NodeKind } from "../domain/graphTypes";
 import { edgeId } from "../domain/graphTypes";
 import type { Severity } from "../domain/config";
@@ -248,8 +248,11 @@ export function loadGraphDoc(): GraphDoc | null {
 }
 
 function loadGraphDocUncached(): GraphDoc | null {
+  // Data-exposure topology (AARS pillar C) is derived on read, not persisted — so it
+  // applies to already-synced graphs and never reaches the asset/inventory tables
+  // (which read TABS.assets directly, bypassing this doc). See withSensitiveDataNodes.
   const snap = readGraphSnapshot();
-  if (snap) return snap;
+  if (snap) return withSensitiveDataNodes(snap);
 
   const assetRows = readAll(TABS.assets);
   if (!assetRows.length) return null;
@@ -273,7 +276,11 @@ function loadGraphDocUncached(): GraphDoc | null {
     });
   }
   const latest = latestSync();
-  return { nodes, edges, syncedAt: latest ? String(latest["finished_at"] ?? "") : "" };
+  return withSensitiveDataNodes({
+    nodes,
+    edges,
+    syncedAt: latest ? String(latest["finished_at"] ?? "") : "",
+  });
 }
 
 export function loadAssets(): GNode[] {
