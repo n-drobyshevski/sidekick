@@ -6,7 +6,7 @@
 
 import type { Rec } from "../domain/util";
 import { DEFAULT_WIZ_AUTH_URL, getProp, PROP_KEYS, requireProp } from "./props";
-import { PAGE_SIZE, PAGE_SIZE_FALLBACK } from "./wizQueriesAi";
+import { chooseAiResourceTypes, PAGE_SIZE, PAGE_SIZE_FALLBACK } from "./wizQueriesAi";
 
 export class WizQueryError extends Error {}
 
@@ -95,6 +95,76 @@ function gqlPost(query: string, variables: Rec): Rec {
     return data;
   }
   throw new WizQueryError(`Wiz query failed after retries (${lastError}).`);
+}
+
+/**
+ * The names of an enum's members in THIS tenant's schema, or null when the
+ * enum doesn't exist / introspection is disabled. Never throws on shape
+ * surprises — schema probing must stay best-effort.
+ */
+export function fetchEnumValues(enumName: string): string[] | null {
+  const q =
+    "query SidekickEnumProbe($name: String!) {\n" +
+    "  __type(name: $name) { enumValues { name } }\n" +
+    "}\n";
+  try {
+    const data = gqlPost(q, { name: enumName });
+    const t = data["__type"] as Rec | null;
+    const values = t && (t["enumValues"] as Rec[] | null);
+    if (!Array.isArray(values)) return null;
+    return values.map((v) => String(v["name"])).filter(Boolean);
+  } catch (e) {
+    console.warn(`Enum probe for ${enumName} failed: ${e}`);
+    return null;
+  }
+}
+
+export interface AiTypeResolution {
+  types: string[];
+  source: string;
+  aiLooking: string[];
+}
+
+const AI_TYPES_CACHE_KEY = "wiz_ai_resource_types";
+
+/**
+ * The AI resource types to query in THIS tenant, resolved once and cached:
+ * WIZ_AI_RESOURCE_TYPES override → introspected CloudResourceTypeFilter members
+ * (see chooseAiResourceTypes). Throws with the discovered vocabulary when the
+ * tenant has no recognizable AI types, so the operator knows what to set.
+ */
+export function resolveAiResourceTypes(): AiTypeResolution {
+  const overrideRaw = getProp(PROP_KEYS.wizAiResourceTypes);
+  const override = overrideRaw
+    ? overrideRaw.split(",").map((s) => s.trim()).filter(Boolean)
+    : null;
+  if (override && override.length) {
+    return { types: override, source: "override", aiLooking: [] };
+  }
+  const cache = CacheService.getScriptCache();
+  const hit = cache.get(AI_TYPES_CACHE_KEY);
+  if (hit) {
+    try {
+      return JSON.parse(hit) as AiTypeResolution;
+    } catch {
+      /* recompute */
+    }
+  }
+  const enumValues = fetchEnumValues("CloudResourceTypeFilter");
+  const chosen = chooseAiResourceTypes(enumValues, null);
+  if (!chosen.types.length) {
+    throw new WizQueryError(
+      "This tenant's CloudResourceTypeFilter enum has no recognizable AI resource types. " +
+        "Set the WIZ_AI_RESOURCE_TYPES Script Property (comma-separated enum values). " +
+        `AI-flavored members seen: ${chosen.aiLooking.join(", ") || "(none)"}.`,
+    );
+  }
+  try {
+    cache.put(AI_TYPES_CACHE_KEY, JSON.stringify(chosen), 21_600);
+  } catch {
+    /* cache is an optimization */
+  }
+  return chosen;
 }
 
 export interface PageResult {

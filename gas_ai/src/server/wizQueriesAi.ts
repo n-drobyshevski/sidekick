@@ -14,6 +14,9 @@ export const PAGE_SIZE_FALLBACK = 50;
 export const MAX_PAGES = 200;
 
 // Shared CloudResource field selection (flat inventory shape).
+// NOTE: `projects { businessImpact }` was removed — real tenants reject it
+// ("Cannot query field businessImpact on type Project"); the normalizer treats
+// it as optional either way.
 const RESOURCE_FIELDS =
   "      id\n" +
   "      name\n" +
@@ -31,7 +34,7 @@ const RESOURCE_FIELDS =
   "      hasAdminPrivileges\n" +
   "      hasHighPrivileges\n" +
   "      cloudAccount { id name externalId cloudProvider }\n" +
-  "      projects { id name businessImpact }\n" +
+  "      projects { id name }\n" +
   "      tags { key value }\n";
 
 // Same fields inside a graphSearch entity (CloudResource is an inline fragment there).
@@ -53,7 +56,7 @@ const ENTITY_FIELDS =
   "          hasAdminPrivileges\n" +
   "          hasHighPrivileges\n" +
   "          cloudAccount { id name externalId cloudProvider }\n" +
-  "          projects { id name businessImpact }\n" +
+  "          projects { id name }\n" +
   "          tags { key value }\n" +
   "        }\n";
 
@@ -91,11 +94,49 @@ function graphSearchQuery(name: string, queryBody: string): string {
   );
 }
 
-/** Full AI-SPM inventory: every AI asset kind in one cursor walk. */
-export const Q_AI_INVENTORY = cloudResourcesQuery(
-  "SidekickAiInventory",
-  "    type: [\"AI_AGENT\", \"AI_MODEL\", \"AI_GUARDRAIL\", \"AI_PIPELINE\", \"AI_DATASET\", \"MCP_SERVER\"]\n",
-);
+/**
+ * The AI resource-type vocabulary we WANT. Tenants differ: their
+ * CloudResourceTypeFilter enum may carry only a subset of these (or different
+ * spellings entirely), so the sync resolves the actual list at runtime —
+ * introspection ∩ candidates, overridable via WIZ_AI_RESOURCE_TYPES.
+ */
+export const AI_RESOURCE_TYPE_CANDIDATES = [
+  "AI_AGENT", "AI_MODEL", "AI_GUARDRAIL", "AI_PIPELINE", "AI_DATASET", "MCP_SERVER",
+] as const;
+
+/**
+ * Pick the AI resource types to query, from the tenant's actual enum members.
+ * Precedence: explicit override → candidates present in the enum → any
+ * AI-flavored enum members (tokens AI/MCP/GENAI/LLM — token match, so EMAIL
+ * doesn't count as AI) → candidates verbatim when introspection is unavailable.
+ * An empty `types` means the tenant has no discoverable AI vocabulary; the
+ * caller should surface `aiLooking` (what WAS found) and ask for an override.
+ */
+export function chooseAiResourceTypes(
+  enumValues: string[] | null,
+  override: string[] | null,
+): { types: string[]; source: "override" | "intersection" | "ai-tokens" | "candidates" | "none"; aiLooking: string[] } {
+  if (override && override.length) return { types: override, source: "override", aiLooking: [] };
+  if (!enumValues) {
+    return { types: [...AI_RESOURCE_TYPE_CANDIDATES], source: "candidates", aiLooking: [] };
+  }
+  const present = new Set(enumValues);
+  const aiLooking = enumValues.filter((v) => {
+    const tokens = v.split("_");
+    return tokens.includes("AI") || tokens.includes("MCP") ||
+      tokens.includes("GENAI") || tokens.includes("LLM");
+  });
+  const intersection = AI_RESOURCE_TYPE_CANDIDATES.filter((t) => present.has(t));
+  if (intersection.length) return { types: intersection, source: "intersection", aiLooking };
+  if (aiLooking.length) return { types: aiLooking, source: "ai-tokens", aiLooking };
+  return { types: [], source: "none", aiLooking };
+}
+
+/** Full AI-SPM inventory: the resolved AI asset kinds in one cursor walk. */
+export function qAiInventory(types: readonly string[]): string {
+  const list = types.map((t) => JSON.stringify(t)).join(", ");
+  return cloudResourcesQuery("SidekickAiInventory", "    type: [" + list + "]\n");
+}
 
 /** Assets carrying an OPEN issue for one toxic-combination source rule ($ruleIds). */
 export const Q_RULE_ASSETS =

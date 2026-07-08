@@ -12,6 +12,9 @@ export const PROP_KEYS = {
   wizProjectIdV2: "WIZ_PROJECT_ID_V2",
   ledgerSpreadsheetId: "LEDGER_SPREADSHEET_ID",
   archiveFolderId: "ARCHIVE_FOLDER_ID",
+  // Optional comma-separated override of the AI resource-type enum values to
+  // query (e.g. "AI_AGENT,AI_MODEL") for tenants whose schema names differ.
+  wizAiResourceTypes: "WIZ_AI_RESOURCE_TYPES",
 } as const;
 
 export const DEFAULT_WIZ_AUTH_URL = "https://auth.app.wiz.io/oauth/token";

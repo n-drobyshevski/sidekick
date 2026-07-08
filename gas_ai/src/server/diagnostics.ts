@@ -9,8 +9,17 @@ import {
   PROP_KEYS,
   resolveWizAuthMode,
 } from "./props";
-import { fetchCloudResourcesPage, getToken } from "./wizClientAi";
-import { Q_AI_INVENTORY } from "./wizQueriesAi";
+import { fetchCloudResourcesPage, fetchEnumValues, getToken } from "./wizClientAi";
+import { chooseAiResourceTypes, qAiInventory } from "./wizQueriesAi";
+
+/** Enum members that read as AI vocabulary (token match, so EMAIL ≠ AI). */
+function aiFlavored(values: string[]): string[] {
+  return values.filter((v) => {
+    const tokens = v.split("_");
+    return tokens.includes("AI") || tokens.includes("MCP") ||
+      tokens.includes("GENAI") || tokens.includes("LLM");
+  });
+}
 
 /** Length + first4…last4 preview of a non-secret id/token — never the whole value. */
 function preview(value: string | null): string {
@@ -81,17 +90,56 @@ export function wizDiagnostic(): string {
     return lines.join("\n");
   }
 
-  // Step 2 — a minimal 1-row inventory query, exercising the real request path.
-  try {
-    const page = fetchCloudResourcesPage({ query: Q_AI_INVENTORY, first: 1 });
+  // Step 2 — schema probe: THIS tenant's enum vocabulary decides which AI
+  // resource types the sync queries (guessing produces GRAPHQL_VALIDATION_FAILED).
+  const overrideRaw = getProp(PROP_KEYS.wizAiResourceTypes);
+  const override = overrideRaw
+    ? overrideRaw.split(",").map((s) => s.trim()).filter(Boolean)
+    : null;
+  if (override) log(`WIZ_AI_RESOURCE_TYPES override: ${override.join(", ")}`);
+
+  const resourceEnum = fetchEnumValues("CloudResourceTypeFilter");
+  if (resourceEnum) {
+    const flavored = aiFlavored(resourceEnum);
     log(
-      `Step 2 OK: query succeeded — ${page.rows.length} AI asset(s) on page 1` +
+      `Step 2 OK: schema probe — CloudResourceTypeFilter has ${resourceEnum.length} members; ` +
+        `AI-flavored: ${flavored.join(", ") || "(none)"}.`,
+    );
+  } else {
+    log("Step 2: introspection unavailable — falling back to the candidate type list.");
+  }
+  const chosen = chooseAiResourceTypes(resourceEnum, override);
+  if (!chosen.types.length) {
+    log(
+      "Step 2 FAIL: this tenant has no recognizable AI resource types. Set the " +
+        "WIZ_AI_RESOURCE_TYPES Script Property to the correct enum values " +
+        "(comma-separated) from the list above.",
+    );
+    return lines.join("\n");
+  }
+  log(`→ Inventory will query types (${chosen.source}): ${chosen.types.join(", ")}.`);
+
+  // Informational: the graph-relationship steps use the graph entity vocabulary.
+  const graphEnum = fetchEnumValues("GraphEntityTypeValue");
+  if (graphEnum) {
+    log(
+      `Graph entity types: ${graphEnum.length} members; AI-flavored: ` +
+        `${aiFlavored(graphEnum).join(", ") || "(none — graph relationship steps will be skipped)"}.`,
+    );
+  }
+
+  // Step 3 — a minimal 1-row inventory query, exercising the real request path
+  // with the types resolved above.
+  try {
+    const page = fetchCloudResourcesPage({ query: qAiInventory(chosen.types), first: 1 });
+    log(
+      `Step 3 OK: query succeeded — ${page.rows.length} AI asset(s) on page 1` +
         (page.totalCount !== null ? ` of ${page.totalCount} total` : "") + ".",
     );
     log("=== All checks passed. Live syncs should work. ===");
   } catch (e) {
     const msg = (e as Error).message;
-    log(`Step 2 FAIL: the query was rejected — ${msg}`);
+    log(`Step 3 FAIL: the query was rejected — ${msg}`);
     if (/HTTP 401|HTTP 403|Unauthorized/i.test(msg)) {
       log(
         "→ 401/403/Unauthorized: the token was not accepted (expired, invalid, or minted " +

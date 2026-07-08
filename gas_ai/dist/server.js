@@ -47,7 +47,10 @@ var Server = (() => {
     wizApiUrl: "WIZ_API_URL",
     wizProjectIdV2: "WIZ_PROJECT_ID_V2",
     ledgerSpreadsheetId: "LEDGER_SPREADSHEET_ID",
-    archiveFolderId: "ARCHIVE_FOLDER_ID"
+    archiveFolderId: "ARCHIVE_FOLDER_ID",
+    // Optional comma-separated override of the AI resource-type enum values to
+    // query (e.g. "AI_AGENT,AI_MODEL") for tenants whose schema names differ.
+    wizAiResourceTypes: "WIZ_AI_RESOURCE_TYPES"
   };
   var DEFAULT_WIZ_AUTH_URL = "https://auth.app.wiz.io/oauth/token";
   function getProp(key) {
@@ -419,18 +422,41 @@ var Server = (() => {
   var PAGE_SIZE = 100;
   var PAGE_SIZE_FALLBACK = 50;
   var MAX_PAGES = 200;
-  var RESOURCE_FIELDS = "      id\n      name\n      type\n      nativeType\n      cloudPlatform\n      region\n      status\n      firstSeen\n      lastSeen\n      externalId\n      isAccessibleFromInternet\n      hasSensitiveData\n      hasAccessToSensitiveData\n      hasAdminPrivileges\n      hasHighPrivileges\n      cloudAccount { id name externalId cloudProvider }\n      projects { id name businessImpact }\n      tags { key value }\n";
-  var ENTITY_FIELDS = "        id\n        name\n        type\n        nativeType\n        cloudPlatform\n        region\n        ... on CloudResource {\n          status\n          firstSeen\n          lastSeen\n          externalId\n          isAccessibleFromInternet\n          hasSensitiveData\n          hasAccessToSensitiveData\n          hasAdminPrivileges\n          hasHighPrivileges\n          cloudAccount { id name externalId cloudProvider }\n          projects { id name businessImpact }\n          tags { key value }\n        }\n";
+  var RESOURCE_FIELDS = "      id\n      name\n      type\n      nativeType\n      cloudPlatform\n      region\n      status\n      firstSeen\n      lastSeen\n      externalId\n      isAccessibleFromInternet\n      hasSensitiveData\n      hasAccessToSensitiveData\n      hasAdminPrivileges\n      hasHighPrivileges\n      cloudAccount { id name externalId cloudProvider }\n      projects { id name }\n      tags { key value }\n";
+  var ENTITY_FIELDS = "        id\n        name\n        type\n        nativeType\n        cloudPlatform\n        region\n        ... on CloudResource {\n          status\n          firstSeen\n          lastSeen\n          externalId\n          isAccessibleFromInternet\n          hasSensitiveData\n          hasAccessToSensitiveData\n          hasAdminPrivileges\n          hasHighPrivileges\n          cloudAccount { id name externalId cloudProvider }\n          projects { id name }\n          tags { key value }\n        }\n";
   function cloudResourcesQuery(name, filterBy) {
     return "query " + name + "($first: Int, $after: String) {\n  cloudResourcesV2(first: $first, after: $after, filterBy: {\n" + filterBy + "  }) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n" + RESOURCE_FIELDS + "    }\n  }\n}\n";
   }
   function graphSearchQuery(name, queryBody) {
     return "query " + name + "($quick: Boolean, $first: Int, $after: String) {\n  graphSearch(quick: $quick, first: $first, after: $after, query: {\n" + queryBody + "  }) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      entities {\n" + ENTITY_FIELDS + "      }\n    }\n  }\n}\n";
   }
-  var Q_AI_INVENTORY = cloudResourcesQuery(
-    "SidekickAiInventory",
-    '    type: ["AI_AGENT", "AI_MODEL", "AI_GUARDRAIL", "AI_PIPELINE", "AI_DATASET", "MCP_SERVER"]\n'
-  );
+  var AI_RESOURCE_TYPE_CANDIDATES = [
+    "AI_AGENT",
+    "AI_MODEL",
+    "AI_GUARDRAIL",
+    "AI_PIPELINE",
+    "AI_DATASET",
+    "MCP_SERVER"
+  ];
+  function chooseAiResourceTypes(enumValues, override) {
+    if (override && override.length) return { types: override, source: "override", aiLooking: [] };
+    if (!enumValues) {
+      return { types: [...AI_RESOURCE_TYPE_CANDIDATES], source: "candidates", aiLooking: [] };
+    }
+    const present2 = new Set(enumValues);
+    const aiLooking = enumValues.filter((v) => {
+      const tokens = v.split("_");
+      return tokens.includes("AI") || tokens.includes("MCP") || tokens.includes("GENAI") || tokens.includes("LLM");
+    });
+    const intersection = AI_RESOURCE_TYPE_CANDIDATES.filter((t) => present2.has(t));
+    if (intersection.length) return { types: intersection, source: "intersection", aiLooking };
+    if (aiLooking.length) return { types: aiLooking, source: "ai-tokens", aiLooking };
+    return { types: [], source: "none", aiLooking };
+  }
+  function qAiInventory(types) {
+    const list = types.map((t) => JSON.stringify(t)).join(", ");
+    return cloudResourcesQuery("SidekickAiInventory", "    type: [" + list + "]\n");
+  }
   var Q_RULE_ASSETS = 'query SidekickAiRuleAssets($first: Int, $after: String, $ruleIds: [String!]) {\n  cloudResourcesV2(first: $first, after: $after, filterBy: {\n    relatedIssue: { sourceRuleId: { equals: $ruleIds }, status: { equals: ["OPEN"] } }\n  }) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n' + RESOURCE_FIELDS + "    }\n  }\n}\n";
   var Q_AGENTS_NO_GUARDRAIL = graphSearchQuery(
     "SidekickAiAgentsWithoutGuardrail",
@@ -528,6 +554,47 @@ var Server = (() => {
     }
     throw new WizQueryError(`Wiz query failed after retries (${lastError}).`);
   }
+  function fetchEnumValues(enumName) {
+    const q = "query SidekickEnumProbe($name: String!) {\n  __type(name: $name) { enumValues { name } }\n}\n";
+    try {
+      const data = gqlPost(q, { name: enumName });
+      const t = data["__type"];
+      const values = t && t["enumValues"];
+      if (!Array.isArray(values)) return null;
+      return values.map((v) => String(v["name"])).filter(Boolean);
+    } catch (e) {
+      console.warn(`Enum probe for ${enumName} failed: ${e}`);
+      return null;
+    }
+  }
+  var AI_TYPES_CACHE_KEY = "wiz_ai_resource_types";
+  function resolveAiResourceTypes() {
+    const overrideRaw = getProp(PROP_KEYS.wizAiResourceTypes);
+    const override = overrideRaw ? overrideRaw.split(",").map((s) => s.trim()).filter(Boolean) : null;
+    if (override && override.length) {
+      return { types: override, source: "override", aiLooking: [] };
+    }
+    const cache = CacheService.getScriptCache();
+    const hit = cache.get(AI_TYPES_CACHE_KEY);
+    if (hit) {
+      try {
+        return JSON.parse(hit);
+      } catch {
+      }
+    }
+    const enumValues = fetchEnumValues("CloudResourceTypeFilter");
+    const chosen = chooseAiResourceTypes(enumValues, null);
+    if (!chosen.types.length) {
+      throw new WizQueryError(
+        `This tenant's CloudResourceTypeFilter enum has no recognizable AI resource types. Set the WIZ_AI_RESOURCE_TYPES Script Property (comma-separated enum values). AI-flavored members seen: ${chosen.aiLooking.join(", ") || "(none)"}.`
+      );
+    }
+    try {
+      cache.put(AI_TYPES_CACHE_KEY, JSON.stringify(chosen), 21600);
+    } catch {
+    }
+    return chosen;
+  }
   function readConnection(connection, field) {
     var _a4, _b, _c;
     if (!connection || typeof connection !== "object") {
@@ -585,6 +652,12 @@ var Server = (() => {
   }
 
   // src/server/diagnostics.ts
+  function aiFlavored(values) {
+    return values.filter((v) => {
+      const tokens = v.split("_");
+      return tokens.includes("AI") || tokens.includes("MCP") || tokens.includes("GENAI") || tokens.includes("LLM");
+    });
+  }
   function preview(value) {
     if (!value || !value.trim()) return "(unset)";
     const v = value.trim();
@@ -638,15 +711,41 @@ var Server = (() => {
       );
       return lines.join("\n");
     }
-    try {
-      const page = fetchCloudResourcesPage({ query: Q_AI_INVENTORY, first: 1 });
+    const overrideRaw = getProp(PROP_KEYS.wizAiResourceTypes);
+    const override = overrideRaw ? overrideRaw.split(",").map((s) => s.trim()).filter(Boolean) : null;
+    if (override) log(`WIZ_AI_RESOURCE_TYPES override: ${override.join(", ")}`);
+    const resourceEnum = fetchEnumValues("CloudResourceTypeFilter");
+    if (resourceEnum) {
+      const flavored = aiFlavored(resourceEnum);
       log(
-        `Step 2 OK: query succeeded \u2014 ${page.rows.length} AI asset(s) on page 1` + (page.totalCount !== null ? ` of ${page.totalCount} total` : "") + "."
+        `Step 2 OK: schema probe \u2014 CloudResourceTypeFilter has ${resourceEnum.length} members; AI-flavored: ${flavored.join(", ") || "(none)"}.`
+      );
+    } else {
+      log("Step 2: introspection unavailable \u2014 falling back to the candidate type list.");
+    }
+    const chosen = chooseAiResourceTypes(resourceEnum, override);
+    if (!chosen.types.length) {
+      log(
+        "Step 2 FAIL: this tenant has no recognizable AI resource types. Set the WIZ_AI_RESOURCE_TYPES Script Property to the correct enum values (comma-separated) from the list above."
+      );
+      return lines.join("\n");
+    }
+    log(`\u2192 Inventory will query types (${chosen.source}): ${chosen.types.join(", ")}.`);
+    const graphEnum = fetchEnumValues("GraphEntityTypeValue");
+    if (graphEnum) {
+      log(
+        `Graph entity types: ${graphEnum.length} members; AI-flavored: ${aiFlavored(graphEnum).join(", ") || "(none \u2014 graph relationship steps will be skipped)"}.`
+      );
+    }
+    try {
+      const page = fetchCloudResourcesPage({ query: qAiInventory(chosen.types), first: 1 });
+      log(
+        `Step 3 OK: query succeeded \u2014 ${page.rows.length} AI asset(s) on page 1` + (page.totalCount !== null ? ` of ${page.totalCount} total` : "") + "."
       );
       log("=== All checks passed. Live syncs should work. ===");
     } catch (e) {
       const msg = e.message;
-      log(`Step 2 FAIL: the query was rejected \u2014 ${msg}`);
+      log(`Step 3 FAIL: the query was rejected \u2014 ${msg}`);
       if (/HTTP 401|HTTP 403|Unauthorized/i.test(msg)) {
         log(
           "\u2192 401/403/Unauthorized: the token was not accepted (expired, invalid, or minted for a different tenant). Confirm the service account targets this tenant."
@@ -2860,47 +2959,54 @@ var Server = (() => {
   var CONTINUE_DELAY_MS = 3e4;
   var FIRST_STEP_BUDGET_MS = 45e3;
   var BUDGET_MS = 27e4;
-  var SYNC_STEPS = [
-    {
-      id: "INVENTORY_AI",
-      run: "cloudResources",
-      query: Q_AI_INVENTORY,
-      normalize: normalizeInventoryPage
-    },
-    // One cursor walk per toxic-combination source rule: the assets carrying an OPEN
-    // issue for that rule (issue rows are reconstructed one-per-asset).
-    ...COMBO_GROUPS.map((group) => ({
-      id: `ISSUES_${group.ruleId}`,
-      run: "cloudResources",
-      query: Q_RULE_ASSETS,
-      extraVariables: { ruleIds: [group.ruleId] },
-      normalize: (rows) => normalizeRuleAssetsPage(rows, group)
-    })),
-    {
-      id: "GUARDRAIL_GAPS",
-      run: "graphSearch",
-      query: Q_AGENTS_NO_GUARDRAIL,
-      normalize: normalizeNoGuardrailPage
-    },
-    {
-      id: "RUNS_AS",
-      run: "graphSearch",
-      query: Q_AGENT_RUNS_AS,
-      normalize: normalizeRunsAsPage
-    },
-    {
-      id: "SA_FINDINGS",
-      run: "graphSearch",
-      query: Q_SA_EXCESSIVE_ACCESS,
-      normalize: normalizeRunsAsPage
-    },
-    {
-      id: "IDENTITY_ACCESS",
-      run: "graphSearch",
-      query: Q_IDENTITY_ACCESS,
-      normalize: normalizeIdentityAccessPage
-    }
-  ];
+  function syncSteps() {
+    return [
+      {
+        id: "INVENTORY_AI",
+        run: "cloudResources",
+        query: qAiInventory(resolveAiResourceTypes().types),
+        normalize: normalizeInventoryPage
+      },
+      // One cursor walk per toxic-combination source rule: the assets carrying an OPEN
+      // issue for that rule (issue rows are reconstructed one-per-asset).
+      ...COMBO_GROUPS.map((group) => ({
+        id: `ISSUES_${group.ruleId}`,
+        run: "cloudResources",
+        query: Q_RULE_ASSETS,
+        extraVariables: { ruleIds: [group.ruleId] },
+        normalize: (rows) => normalizeRuleAssetsPage(rows, group),
+        optional: true
+      })),
+      {
+        id: "GUARDRAIL_GAPS",
+        run: "graphSearch",
+        query: Q_AGENTS_NO_GUARDRAIL,
+        normalize: normalizeNoGuardrailPage,
+        optional: true
+      },
+      {
+        id: "RUNS_AS",
+        run: "graphSearch",
+        query: Q_AGENT_RUNS_AS,
+        normalize: normalizeRunsAsPage,
+        optional: true
+      },
+      {
+        id: "SA_FINDINGS",
+        run: "graphSearch",
+        query: Q_SA_EXCESSIVE_ACCESS,
+        normalize: normalizeRunsAsPage,
+        optional: true
+      },
+      {
+        id: "IDENTITY_ACCESS",
+        run: "graphSearch",
+        query: Q_IDENTITY_ACCESS,
+        normalize: normalizeIdentityAccessPage,
+        optional: true
+      }
+    ];
+  }
   function startSync() {
     const existing = activeJob();
     if (existing) {
@@ -2927,9 +3033,13 @@ var Server = (() => {
     var _a4, _b;
     try {
       const parsed = JSON.parse((_a4 = job.params_json) != null ? _a4 : "{}");
-      return { apiCalls: Number((_b = parsed["apiCalls"]) != null ? _b : 0) };
+      const skipped = parsed["skippedSteps"];
+      return {
+        apiCalls: Number((_b = parsed["apiCalls"]) != null ? _b : 0),
+        skippedSteps: Array.isArray(skipped) ? skipped.map(String) : []
+      };
     } catch {
-      return { apiCalls: 0 };
+      return { apiCalls: 0, skippedSteps: [] };
     }
   }
   function partRefs(job) {
@@ -2996,8 +3106,9 @@ var Server = (() => {
       hopPart = emptyPart();
     };
     try {
-      while (stepIndex < SYNC_STEPS.length) {
-        const step = SYNC_STEPS[stepIndex];
+      const steps = syncSteps();
+      while (stepIndex < steps.length) {
+        const step = steps[stepIndex];
         for (; ; ) {
           if (cancelRequested(job.job_id)) {
             clearCancelFlag();
@@ -3018,11 +3129,23 @@ var Server = (() => {
             return;
           }
           const fetcher = step.run === "cloudResources" ? fetchCloudResourcesPage : fetchGraphSearchPage;
-          const result = fetcher({
-            query: step.query,
-            cursor,
-            extraVariables: step.extraVariables
-          });
+          let result;
+          try {
+            result = fetcher({
+              query: step.query,
+              cursor,
+              extraVariables: step.extraVariables
+            });
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            if (step.optional && /HTTP 400/.test(msg)) {
+              params.apiCalls += 1;
+              params.skippedSteps.push(step.id);
+              console.warn(`Sync step ${step.id} skipped \u2014 tenant rejected its query: ${msg}`);
+              break;
+            }
+            throw e;
+          }
           params.apiCalls += 1;
           page += 1;
           nodesSoFar += result.rows.length;

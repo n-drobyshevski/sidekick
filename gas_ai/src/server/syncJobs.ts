@@ -27,15 +27,19 @@ import { withScriptLock } from "./locks";
 import { getProp, hasWizCredentials, setProp, deleteProp } from "./props";
 import { seedGraphDoc, SEED_AARS_HINTS, SEED_ISSUES } from "./sampleData";
 import { persistSync } from "./syncStore";
-import { fetchCloudResourcesPage, fetchGraphSearchPage } from "./wizClientAi";
+import {
+  fetchCloudResourcesPage,
+  fetchGraphSearchPage,
+  resolveAiResourceTypes,
+} from "./wizClientAi";
 import {
   MAX_PAGES,
   Q_AGENT_RUNS_AS,
   Q_AGENTS_NO_GUARDRAIL,
-  Q_AI_INVENTORY,
   Q_IDENTITY_ACCESS,
   Q_RULE_ASSETS,
   Q_SA_EXCESSIVE_ACCESS,
+  qAiInventory,
 } from "./wizQueriesAi";
 
 export interface StartResult {
@@ -57,49 +61,66 @@ interface SyncStepDef {
   query: string;
   extraVariables?: Rec;
   normalize: (rows: Rec[]) => NormalizedPart;
+  // Optional steps are enhancements (relationships, findings): when THIS
+  // tenant's schema rejects their query (HTTP 400 validation), the step is
+  // skipped and recorded instead of failing the whole sync. The inventory
+  // step is the core dataset and stays fatal.
+  optional?: boolean;
 }
 
-const SYNC_STEPS: SyncStepDef[] = [
-  {
-    id: "INVENTORY_AI",
-    run: "cloudResources",
-    query: Q_AI_INVENTORY,
-    normalize: normalizeInventoryPage,
-  },
-  // One cursor walk per toxic-combination source rule: the assets carrying an OPEN
-  // issue for that rule (issue rows are reconstructed one-per-asset).
-  ...COMBO_GROUPS.map((group): SyncStepDef => ({
-    id: `ISSUES_${group.ruleId}`,
-    run: "cloudResources",
-    query: Q_RULE_ASSETS,
-    extraVariables: { ruleIds: [group.ruleId] },
-    normalize: (rows) => normalizeRuleAssetsPage(rows, group),
-  })),
-  {
-    id: "GUARDRAIL_GAPS",
-    run: "graphSearch",
-    query: Q_AGENTS_NO_GUARDRAIL,
-    normalize: normalizeNoGuardrailPage,
-  },
-  {
-    id: "RUNS_AS",
-    run: "graphSearch",
-    query: Q_AGENT_RUNS_AS,
-    normalize: normalizeRunsAsPage,
-  },
-  {
-    id: "SA_FINDINGS",
-    run: "graphSearch",
-    query: Q_SA_EXCESSIVE_ACCESS,
-    normalize: normalizeRunsAsPage,
-  },
-  {
-    id: "IDENTITY_ACCESS",
-    run: "graphSearch",
-    query: Q_IDENTITY_ACCESS,
-    normalize: normalizeIdentityAccessPage,
-  },
-];
+/**
+ * The battery, built per run: the inventory query embeds the AI resource
+ * types resolved against this tenant's schema (introspection ∩ candidates,
+ * or the WIZ_AI_RESOURCE_TYPES override) — see resolveAiResourceTypes.
+ */
+function syncSteps(): SyncStepDef[] {
+  return [
+    {
+      id: "INVENTORY_AI",
+      run: "cloudResources",
+      query: qAiInventory(resolveAiResourceTypes().types),
+      normalize: normalizeInventoryPage,
+    },
+    // One cursor walk per toxic-combination source rule: the assets carrying an OPEN
+    // issue for that rule (issue rows are reconstructed one-per-asset).
+    ...COMBO_GROUPS.map((group): SyncStepDef => ({
+      id: `ISSUES_${group.ruleId}`,
+      run: "cloudResources",
+      query: Q_RULE_ASSETS,
+      extraVariables: { ruleIds: [group.ruleId] },
+      normalize: (rows) => normalizeRuleAssetsPage(rows, group),
+      optional: true,
+    })),
+    {
+      id: "GUARDRAIL_GAPS",
+      run: "graphSearch",
+      query: Q_AGENTS_NO_GUARDRAIL,
+      normalize: normalizeNoGuardrailPage,
+      optional: true,
+    },
+    {
+      id: "RUNS_AS",
+      run: "graphSearch",
+      query: Q_AGENT_RUNS_AS,
+      normalize: normalizeRunsAsPage,
+      optional: true,
+    },
+    {
+      id: "SA_FINDINGS",
+      run: "graphSearch",
+      query: Q_SA_EXCESSIVE_ACCESS,
+      normalize: normalizeRunsAsPage,
+      optional: true,
+    },
+    {
+      id: "IDENTITY_ACCESS",
+      run: "graphSearch",
+      query: Q_IDENTITY_ACCESS,
+      normalize: normalizeIdentityAccessPage,
+      optional: true,
+    },
+  ];
+}
 
 /** Entry point for the Sync button and the daily trigger (caller holds the lock). */
 export function startSync(): StartResult {
@@ -132,14 +153,19 @@ function dryRunSync(): StartResult {
 
 interface JobParams {
   apiCalls: number;
+  skippedSteps: string[];
 }
 
 function jobParams(job: JobRow): JobParams {
   try {
     const parsed = JSON.parse(job.params_json ?? "{}") as Rec;
-    return { apiCalls: Number(parsed["apiCalls"] ?? 0) };
+    const skipped = parsed["skippedSteps"];
+    return {
+      apiCalls: Number(parsed["apiCalls"] ?? 0),
+      skippedSteps: Array.isArray(skipped) ? skipped.map(String) : [],
+    };
   } catch {
-    return { apiCalls: 0 };
+    return { apiCalls: 0, skippedSteps: [] };
   }
 }
 
@@ -223,8 +249,9 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
   };
 
   try {
-    while (stepIndex < SYNC_STEPS.length) {
-      const step = SYNC_STEPS[stepIndex];
+    const steps = syncSteps();
+    while (stepIndex < steps.length) {
+      const step = steps[stepIndex];
 
       for (;;) {
         if (cancelRequested(job.job_id)) {
@@ -249,11 +276,26 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
         const fetcher = step.run === "cloudResources"
           ? fetchCloudResourcesPage
           : fetchGraphSearchPage;
-        const result = fetcher({
-          query: step.query,
-          cursor,
-          extraVariables: step.extraVariables,
-        });
+        let result;
+        try {
+          result = fetcher({
+            query: step.query,
+            cursor,
+            extraVariables: step.extraVariables,
+          });
+        } catch (e) {
+          // A 400 on an OPTIONAL step means this tenant's schema rejects that
+          // query (missing enum members / fields). Skip the step, keep what it
+          // already yielded, and let the sync deliver the rest of the picture.
+          const msg = e instanceof Error ? e.message : String(e);
+          if (step.optional && /HTTP 400/.test(msg)) {
+            params.apiCalls += 1;
+            params.skippedSteps.push(step.id);
+            console.warn(`Sync step ${step.id} skipped — tenant rejected its query: ${msg}`);
+            break;
+          }
+          throw e;
+        }
         params.apiCalls += 1;
         page += 1;
         nodesSoFar += result.rows.length;
