@@ -67,4 +67,56 @@ describe("layoutGraph", () => {
     const b = layoutGraph(PROJECTION);
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
   });
+
+  it("declares its mode", () => {
+    expect(layoutGraph(PROJECTION).mode).toBe("lanes");
+    expect(layoutGraph(PROJECTION).groups).toBeUndefined();
+  });
+
+  // Back-compat lock: explicit defaults must be byte-identical to a bare call, so
+  // shared URLs and cached payloads never shift when the knobs are spelled out.
+  it("mode=lanes sort=smart is byte-identical to the default call", () => {
+    const bare = layoutGraph(PROJECTION);
+    const explicit = layoutGraph(PROJECTION, { mode: "lanes", sort: "smart" });
+    expect(JSON.stringify(explicit)).toBe(JSON.stringify(bare));
+  });
+});
+
+describe("layoutGraph lanes-mode sort variants", () => {
+  const byId = new Map(PROJECTION.nodes.map((n) => [n.id, n]));
+
+  function laneOrders(sort: "severity" | "aars" | "name") {
+    const layout = layoutGraph(PROJECTION, { sort });
+    const lanes = new Map<number, string[]>();
+    // layout.nodes is emitted lane-by-lane in row order.
+    for (const n of layout.nodes) {
+      if (!lanes.has(n.lane)) lanes.set(n.lane, []);
+      lanes.get(n.lane)!.push(n.id);
+    }
+    return lanes;
+  }
+
+  it("sort=name orders every lane alphabetically", () => {
+    for (const ids of laneOrders("name").values()) {
+      for (let i = 1; i < ids.length; i++) {
+        expect(byId.get(ids[i - 1])!.name <= byId.get(ids[i])!.name).toBe(true);
+      }
+    }
+  });
+
+  it("sort=aars orders every lane by descending score", () => {
+    for (const ids of laneOrders("aars").values()) {
+      for (let i = 1; i < ids.length; i++) {
+        const prev = byId.get(ids[i - 1])!.aars ?? -1;
+        const cur = byId.get(ids[i])!.aars ?? -1;
+        expect(prev).toBeGreaterThanOrEqual(cur);
+      }
+    }
+  });
+
+  it("explicit sorts are deterministic", () => {
+    const a = layoutGraph(PROJECTION, { sort: "severity" });
+    const b = layoutGraph(PROJECTION, { sort: "severity" });
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
 });

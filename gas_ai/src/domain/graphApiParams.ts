@@ -4,6 +4,14 @@
 
 import { clampDepth, clampMaxNodes } from "./settingsLogic";
 import { MAX_EDGES_DEFAULT } from "./config";
+import {
+  GROUP_KEYS,
+  LAYOUT_MODES,
+  SORT_KEYS,
+  type GroupKey,
+  type LayoutMode,
+  type SortKey,
+} from "./graphLayout";
 import type { IssueRow } from "./graphTypes";
 import type { ProjectOptions } from "./graphProject";
 import { comboGroupById } from "./toxicCombos";
@@ -34,6 +42,27 @@ function comboAssetIds(issues: IssueRow[], groupId?: string): string[] {
     }
   }
   return out;
+}
+
+export interface GraphLayoutParams {
+  mode: LayoutMode;
+  groupBy: GroupKey;
+  sort: SortKey;
+}
+
+function pick<T extends string>(v: unknown, allowed: readonly T[], fallback: T): T {
+  const s = typeof v === "string" ? v.toLowerCase() : "";
+  return (allowed as readonly string[]).includes(s) ? (s as T) : fallback;
+}
+
+/** Layout knobs (hash params `layout`, `groupBy`, `sort`): whitelisted,
+ *  case-insensitive, garbage falls back to defaults. */
+export function resolveLayoutParams(p: Rec): GraphLayoutParams {
+  return {
+    mode: pick(p["layout"], LAYOUT_MODES, "lanes"),
+    groupBy: pick(p["groupBy"], GROUP_KEYS, "combo"),
+    sort: pick(p["sort"], SORT_KEYS, "smart"),
+  };
 }
 
 export function resolveGraphParams(p: Rec, ctx: GraphParamContext): ProjectOptions {

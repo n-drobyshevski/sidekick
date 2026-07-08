@@ -13,7 +13,8 @@ import { renderData } from "./pages/data.js";
 import { renderSettings } from "./pages/settings.js";
 
 const PAGES = {
-  graph: { title: "Security Graph", group: "Security", render: renderGraphPage },
+  // fullBleed: the page owns the whole content pane (no main padding/max-width).
+  graph: { title: "Security Graph", group: "Security", render: renderGraphPage, fullBleed: true },
   inventory: { title: "AI Inventory", group: "Security", render: renderInventory },
   combos: { title: "Toxic Combinations", group: "Security", render: renderCombos },
   scans: { title: "Wiz Scans", group: "Coverage", render: renderScans },
@@ -253,10 +254,12 @@ async function route() {
     else a.removeAttribute("aria-current");
   });
   clear(mainEl);
+  mainEl.classList.toggle("full-bleed", !!page.fullBleed);
   beginRouteLoading();
   try {
     await page.render(mainEl, params, { refresh });
   } catch (e) {
+    mainEl.classList.remove("full-bleed"); // error states get normal padding back
     clear(mainEl).append(
       el("div", { class: "empty" },
         el("div", {}, "This page failed to load."),

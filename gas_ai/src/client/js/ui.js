@@ -192,9 +192,17 @@ export function confirmDialog({ title, body, confirmLabel = "Confirm", danger = 
   });
 }
 
-/** Right-anchored sheet (the signature drill-down overlay). Returns {close}. */
+/**
+ * Right-anchored sheet (the signature drill-down overlay). Returns {close}.
+ * opts: title, subtitle, ariaLabel, width (CSS width override), autoFocus
+ * (false = don't steal focus, e.g. when reopened from a deep link), onClose
+ * (fires once however the sheet closes — ✕, Esc, or scrim).
+ */
 export function openSheet(renderBody, opts = {}) {
-  const { title = "", subtitle = "", ariaLabel = title || "Detail" } = opts;
+  const {
+    title = "", subtitle = "", ariaLabel = title || "Detail",
+    width = "", autoFocus = true, onClose = null,
+  } = opts;
   const scrim = el("div", { class: "sheet-scrim" });
   const sheet = el("aside", {
     class: "sheet",
@@ -203,8 +211,12 @@ export function openSheet(renderBody, opts = {}) {
     "aria-label": ariaLabel,
     tabindex: "-1",
   });
+  if (width) sheet.style.width = width;
   const prevFocus = document.activeElement;
+  let closed = false;
   function close() {
+    if (closed) return;
+    closed = true;
     scrim.classList.remove("open");
     sheet.classList.remove("open");
     document.removeEventListener("keydown", onKey);
@@ -213,6 +225,7 @@ export function openSheet(renderBody, opts = {}) {
       sheet.remove();
       if (prevFocus && prevFocus.focus) prevFocus.focus();
     }, 240);
+    if (onClose) onClose();
   }
   function onKey(e) {
     if (e.key === "Escape") close();
@@ -250,7 +263,7 @@ export function openSheet(renderBody, opts = {}) {
   requestAnimationFrame(() => {
     scrim.classList.add("open");
     sheet.classList.add("open");
-    sheet.focus();
+    if (autoFocus) sheet.focus();
   });
   return { close };
 }

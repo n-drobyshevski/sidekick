@@ -9,7 +9,7 @@ import {
   SEVERITY_GLYPHS,
   SEVERITY_ORDER,
 } from "../domain/config";
-import { resolveGraphParams } from "../domain/graphApiParams";
+import { resolveGraphParams, resolveLayoutParams } from "../domain/graphApiParams";
 import { layoutGraph } from "../domain/graphLayout";
 import { projectGraph } from "../domain/graphProject";
 import { AI_ASSET_KINDS, type GEdge, type GNode, type IssueRow } from "../domain/graphTypes";
@@ -138,11 +138,13 @@ export function getGraph(p?: unknown): ApiResult {
       maxNodes: settingsStore.getMaxNodes(),
       issues: openIssues(),
     });
-    // Cache on the RESOLVED options: normalized params share entries, and the
-    // depth slider re-projects from CacheService without touching Sheets/Drive.
-    return cached("getGraph", options, () => {
+    const view = resolveLayoutParams(params);
+    // Cache on the RESOLVED options (+ layout knobs): normalized params share
+    // entries, and the depth slider re-projects from CacheService without
+    // touching Sheets/Drive.
+    return cached("getGraph", { ...options, view }, () => {
       const projection = projectGraph(doc, options);
-      const layout = layoutGraph(projection);
+      const layout = layoutGraph(projection, view);
       return {
         nodes: projection.nodes,
         edges: projection.edges,
@@ -153,6 +155,9 @@ export function getGraph(p?: unknown): ApiResult {
           depth: options.depth,
           seedIds: options.seedIds,
           expandIds: options.expandIds ?? [],
+          layout: view.mode,
+          groupBy: view.groupBy,
+          sort: view.sort,
         },
         syncedAt: doc.syncedAt,
       };

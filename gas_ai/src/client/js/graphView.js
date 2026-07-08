@@ -52,8 +52,23 @@ function nodeAriaLabel(node) {
 export function renderGraph(container, data, handlers = {}) {
   container.textContent = "";
   const { nodes, edges, layout } = data;
-  const pos = new Map(layout.nodes.map((n) => [n.id, n]));
+  // Displayed positions = computed layout + manual per-node offsets (drag /
+  // Shift+arrows). Entries are copies: the layout objects may be shared with
+  // the SWR cache and must never be mutated.
+  const offsets = data.offsets || new Map();
+  const layoutById = new Map(layout.nodes.map((n) => [n.id, n]));
+  const pos = new Map(layout.nodes.map((n) => {
+    const off = offsets.get(n.id);
+    return [n.id, {
+      id: n.id,
+      lane: n.lane,
+      x: n.x + (off ? off.dx : 0),
+      y: n.y + (off ? off.dy : 0),
+    }];
+  }));
   const byId = new Map(nodes.map((n) => [n.id, n]));
+  const grouped = layout.mode === "grouped";
+  const groupBy = (data.options && data.options.groupBy) || "";
 
   const width = Math.max(layout.width, 640);
   const height = Math.max(layout.height, 360);
@@ -61,7 +76,11 @@ export function renderGraph(container, data, handlers = {}) {
   const svg = svgEl("svg", {
     role: "application",
     "aria-label":
-      "Security graph. Tab to enter, arrow keys move between connected nodes, " +
+      (grouped
+        ? "Security graph, nodes clustered into labelled groups. "
+        : "Security graph. ") +
+      "Tab to enter, arrow keys move between connected nodes, " +
+      "Shift plus arrow keys nudge the focused node, " +
       "Enter opens details, Escape leaves the graph.",
     viewBox: `0 0 ${width} ${height}`,
     preserveAspectRatio: "xMidYMid meet",
@@ -73,27 +92,70 @@ export function renderGraph(container, data, handlers = {}) {
     id: "gv-arrow", viewBox: "0 0 8 8", refX: "7", refY: "4",
     markerWidth: "7", markerHeight: "7", orient: "auto-start-reverse",
   });
-  marker.append(svgEl("path", { d: "M0 0 L8 4 L0 8 z", fill: "rgba(0,0,0,0.3)" }));
+  marker.append(svgEl("path", { class: "gv-arrow-head", d: "M0 0 L8 4 L0 8 z" }));
   defs.append(marker);
   svg.append(defs);
 
   const world = svgEl("g");
   svg.append(world);
 
+  // ------------------------------------------------------------- group hulls
+  // Grouped mode: a hairline box + muted uppercase label behind each cluster.
+  // Quiet by design (Audit Ledger): structure, not color.
+  if (grouped && Array.isArray(layout.groups)) {
+    const hullLayer = svgEl("g");
+    world.append(hullLayer);
+    for (const grp of layout.groups) {
+      hullLayer.append(svgEl("rect", {
+        class: "ggroup-box",
+        x: grp.x, y: grp.y, width: grp.width, height: grp.height, rx: 14,
+      }));
+      const label = svgEl("text", { class: "ggroup-label", x: grp.x + 16, y: grp.y + 20 });
+      const name = groupBy === "kind" && grp.key !== "__none__" ? kindLabel(grp.key) : grp.label;
+      label.textContent = `${truncate(name, 26)} · ${grp.count}`;
+      hullLayer.append(label);
+    }
+  }
+
   // ------------------------------------------------------------------- edges
-  const edgeLayer = svgEl("g");
-  world.append(edgeLayer);
-  for (const edge of edges) {
-    const a = pos.get(edge.src);
-    const b = pos.get(edge.dst);
-    if (!a || !b) continue;
+  // Lanes flow left-to-right, so edges anchor on the sides. In grouped mode a
+  // mostly-vertical edge anchors top/bottom instead, so it leaves the card
+  // through the nearest face rather than looping around it.
+  function edgeGeometry(a, b) {
+    if (grouped && Math.abs(b.y - a.y) > Math.abs(b.x - a.x)) {
+      const topToBottom = a.y <= b.y;
+      const y1 = a.y + (topToBottom ? NODE_H / 2 : -NODE_H / 2);
+      const y2 = b.y + (topToBottom ? -NODE_H / 2 : NODE_H / 2);
+      const midY = (y1 + y2) / 2;
+      return {
+        d: `M ${a.x} ${y1} C ${a.x} ${midY}, ${b.x} ${midY}, ${b.x} ${y2}`,
+        labelX: (a.x + b.x) / 2,
+        labelY: midY - 4,
+      };
+    }
     const leftToRight = a.x <= b.x;
     const x1 = a.x + (leftToRight ? NODE_W / 2 : -NODE_W / 2);
     const x2 = b.x + (leftToRight ? -NODE_W / 2 : NODE_W / 2);
     const midX = (x1 + x2) / 2;
+    return {
+      d: `M ${x1} ${a.y} C ${midX} ${a.y}, ${midX} ${b.y}, ${x2} ${b.y}`,
+      labelX: midX,
+      labelY: (a.y + b.y) / 2 - 4,
+    };
+  }
+
+  const edgeLayer = svgEl("g");
+  world.append(edgeLayer);
+  const edgeEls = [];
+  const edgesByNode = new Map();
+  for (const edge of edges) {
+    const a = pos.get(edge.src);
+    const b = pos.get(edge.dst);
+    if (!a || !b) continue;
+    const geo = edgeGeometry(a, b);
     const path = svgEl("path", {
       class: `gedge${edge.negated ? " negated" : ""}`,
-      d: `M ${x1} ${a.y} C ${midX} ${a.y}, ${midX} ${b.y}, ${x2} ${b.y}`,
+      d: geo.d,
       "marker-end": "url(#gv-arrow)",
     });
     const title = svgEl("title");
@@ -104,15 +166,38 @@ export function renderGraph(container, data, handlers = {}) {
     path.append(title);
     edgeLayer.append(path);
 
+    let labelEl = null;
     if (edge.accessType === "ADMIN" || edge.accessType === "HIGH_PRIVILEGE") {
-      const label = svgEl("text", {
+      labelEl = svgEl("text", {
         class: "gedge-label",
-        x: midX,
-        y: (a.y + b.y) / 2 - 4,
+        x: geo.labelX,
+        y: geo.labelY,
         "text-anchor": "middle",
       });
-      label.textContent = edge.accessType;
-      edgeLayer.append(label);
+      labelEl.textContent = edge.accessType;
+      edgeLayer.append(labelEl);
+    }
+
+    const rec = { el: path, labelEl, src: edge.src, dst: edge.dst };
+    edgeEls.push(rec);
+    for (const endpoint of [edge.src, edge.dst]) {
+      if (!edgesByNode.has(endpoint)) edgesByNode.set(endpoint, []);
+      edgesByNode.get(endpoint).push(rec);
+    }
+  }
+
+  /** Re-route the edges touching one node after its position changed. */
+  function refreshEdges(id) {
+    for (const rec of edgesByNode.get(id) ?? []) {
+      const a = pos.get(rec.src);
+      const b = pos.get(rec.dst);
+      if (!a || !b) continue;
+      const geo = edgeGeometry(a, b);
+      rec.el.setAttribute("d", geo.d);
+      if (rec.labelEl) {
+        rec.labelEl.setAttribute("x", String(geo.labelX));
+        rec.labelEl.setAttribute("y", String(geo.labelY));
+      }
     }
   }
 
@@ -205,6 +290,7 @@ export function renderGraph(container, data, handlers = {}) {
     };
     g.addEventListener("click", (e) => {
       e.stopPropagation();
+      if (suppressClick) return; // the pointerup ended a drag, not a click
       focusNode(node.id);
       open();
     });
@@ -218,6 +304,65 @@ export function renderGraph(container, data, handlers = {}) {
     nodeLayer.append(g);
     nodeEls.set(node.id, g);
   }
+
+  function positionNode(id) {
+    const p = pos.get(id);
+    nodeEls.get(id).setAttribute("transform", `translate(${p.x - NODE_W / 2}, ${p.y - NODE_H / 2})`);
+  }
+
+  /** Report a node's displacement from its computed layout position. */
+  function commitMove(id) {
+    if (!handlers.onNodeMove) return;
+    const p = pos.get(id);
+    const base = layoutById.get(id);
+    handlers.onNodeMove(id, Math.round(p.x - base.x), Math.round(p.y - base.y));
+  }
+
+  // --------------------------------------------------------------- node drag
+  // Pointer drag repositions a node (a small threshold keeps plain clicks
+  // opening the detail sheet); Shift+arrows is the keyboard equivalent below.
+  let drag = null;
+  let suppressClick = false;
+
+  nodeLayer.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    const g = e.target.closest(".gnode");
+    if (!g) return;
+    const id = g.getAttribute("data-id");
+    const p = pos.get(id);
+    if (!p) return;
+    drag = { id, g, sx: e.clientX, sy: e.clientY, baseX: p.x, baseY: p.y, moved: false };
+  });
+  nodeLayer.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    const dxc = e.clientX - drag.sx;
+    const dyc = e.clientY - drag.sy;
+    if (!drag.moved) {
+      if (Math.hypot(dxc, dyc) < 4) return;
+      drag.moved = true;
+      try { drag.g.setPointerCapture(e.pointerId); } catch { /* synthetic events */ }
+      drag.g.classList.add("dragging");
+      nodeLayer.append(drag.g); // paint the dragged node above its siblings
+    }
+    const rect = svg.getBoundingClientRect();
+    const p = pos.get(drag.id);
+    p.x = drag.baseX + dxc * (view.w / rect.width);
+    p.y = drag.baseY + dyc * (view.h / rect.height);
+    positionNode(drag.id);
+    refreshEdges(drag.id);
+  });
+  const endDrag = () => {
+    if (!drag) return;
+    const { id, g, moved } = drag;
+    drag = null;
+    g.classList.remove("dragging");
+    if (!moved) return;
+    suppressClick = true; // the click event fires right after this pointerup
+    setTimeout(() => { suppressClick = false; }, 0);
+    commitMove(id);
+  };
+  nodeLayer.addEventListener("pointerup", endDrag);
+  nodeLayer.addEventListener("pointercancel", endDrag);
 
   // ------------------------------------------------------------- zoom & pan
   const view = { x: 0, y: 0, w: width, h: height };
@@ -236,7 +381,20 @@ export function renderGraph(container, data, handlers = {}) {
     applyView();
   }
   function fit() {
-    view.x = 0; view.y = 0; view.w = width; view.h = height;
+    // Layout bounds, stretched to include manually displaced nodes. With no
+    // offsets this is exactly (0, 0, width, height): the layout margin (120)
+    // already clears every card's half-extents.
+    let x0 = 0;
+    let y0 = 0;
+    let x1 = width;
+    let y1 = height;
+    for (const p of pos.values()) {
+      x0 = Math.min(x0, p.x - NODE_W / 2 - 20);
+      y0 = Math.min(y0, p.y - NODE_H / 2 - 20);
+      x1 = Math.max(x1, p.x + NODE_W / 2 + 20);
+      y1 = Math.max(y1, p.y + NODE_H / 2 + 20);
+    }
+    view.x = x0; view.y = y0; view.w = x1 - x0; view.h = y1 - y0;
     applyView();
   }
 
@@ -331,6 +489,23 @@ export function renderGraph(container, data, handlers = {}) {
 
   svg.addEventListener("keydown", (e) => {
     if (!focusedId) return;
+    // Shift+arrows nudge the focused node — the keyboard path for drag.
+    const isArrow = e.key === "ArrowRight" || e.key === "ArrowLeft" ||
+      e.key === "ArrowUp" || e.key === "ArrowDown";
+    if (e.shiftKey && isArrow) {
+      e.preventDefault();
+      const p = pos.get(focusedId);
+      const step = 20;
+      if (e.key === "ArrowRight") p.x += step;
+      else if (e.key === "ArrowLeft") p.x -= step;
+      else if (e.key === "ArrowDown") p.y += step;
+      else p.y -= step;
+      positionNode(focusedId);
+      refreshEdges(focusedId);
+      ensureVisible(focusedId);
+      commitMove(focusedId);
+      return;
+    }
     const adj = adjacency.get(focusedId) || { out: [], in: [] };
     let next = null;
     if (e.key === "ArrowRight") {
@@ -366,19 +541,39 @@ export function renderGraph(container, data, handlers = {}) {
   container.append(zoomBar, svg);
   fit();
 
+  // Search highlight: dim non-matching nodes (and edges touching them). The
+  // dimming of everything else is the signal; matches keep full treatment.
+  function setHighlight(matchIds) {
+    for (const [id, g] of nodeEls) {
+      g.classList.toggle("dimmed", !!matchIds && !matchIds.has(id));
+    }
+    for (const e2 of edgeEls) {
+      const dim = !!matchIds && (!matchIds.has(e2.src) || !matchIds.has(e2.dst));
+      e2.el.classList.toggle("dimmed", dim);
+    }
+  }
+
   return {
     focusFirst() {
       if (focusedId) focusNode(focusedId);
     },
+    focusNode,
+    setHighlight,
   };
 }
 
 /**
  * Accessible fallback: the same projection as a sortable table (name, kind,
- * severity, AARS, toxic-combo membership, connection count).
+ * severity, AARS, toxic-combo membership, connection count). Column headers
+ * toggle ascending/descending; severity sorts by rank, ties break on name.
  */
 export function graphTable(data, handlers = {}) {
   const { nodes, edges } = data;
+  const sevOrder = (data.palette && data.palette.order) || [];
+  const sevRank = (s) => {
+    const i = sevOrder.indexOf(s || "");
+    return i === -1 ? sevOrder.length : i;
+  };
   const degree = new Map();
   for (const e of edges) {
     degree.set(e.src, (degree.get(e.src) || 0) + 1);
@@ -391,9 +586,26 @@ export function graphTable(data, handlers = {}) {
       degree: degree.get(n.id) || 0,
     }));
 
+  // dir: 1 = the column's natural first-click order (worst severity / highest
+  // score first, names A-first); -1 flips it. `desc: true` marks columns whose
+  // natural order reads as descending (for aria-sort and the glyph).
+  const COLS = [
+    { key: "name", label: "Name", value: (r) => r.node.name },
+    { key: "kind", label: "Kind", value: (r) => kindLabel(r.node.kind) },
+    { key: "severity", label: "Severity", value: (r) => sevRank(r.node.severity), desc: true },
+    { key: "aars", label: "AARS", value: (r) => -(r.node.aars ?? -1), desc: true },
+    { key: "combo", label: "Toxic combo", value: (r) => ((r.node.comboGroups || []).length ? 0 : 1) },
+    { key: "guardrail", label: "Guardrail", value: (r) => (r.node.guardrailMissing ? 0 : 1) },
+    { key: "degree", label: "Connections", value: (r) => -r.degree, desc: true },
+  ];
+  let sortKey = null;
+  let sortDir = 1;
+
   const tbody = el("tbody", {});
-  for (const { node, degree: deg } of rows) {
-    const tr = el("tr", {
+  const headCells = new Map();
+
+  function rowEl({ node, degree: deg }) {
+    return el("tr", {
       class: "clickable",
       tabindex: "0",
       role: "button",
@@ -412,21 +624,58 @@ export function graphTable(data, handlers = {}) {
       el("td", {}, node.guardrailMissing ? "missing" : "—"),
       el("td", { class: "num" }, String(deg)),
     );
-    tbody.append(tr);
   }
+
+  function paintRows() {
+    let list = rows;
+    if (sortKey) {
+      const col = COLS.find((c) => c.key === sortKey);
+      list = [...rows].sort((a, b) => {
+        const va = col.value(a);
+        const vb = col.value(b);
+        const d = (va < vb ? -1 : va > vb ? 1 : 0) * sortDir;
+        if (d !== 0) return d;
+        return a.node.name < b.node.name ? -1 : a.node.name > b.node.name ? 1 : 0;
+      });
+    }
+    tbody.textContent = "";
+    for (const r of list) tbody.append(rowEl(r));
+    for (const [key, th] of headCells) {
+      const col = COLS.find((c) => c.key === key);
+      const descending = col.desc ? sortDir === 1 : sortDir === -1;
+      if (key === sortKey) th.setAttribute("aria-sort", descending ? "descending" : "ascending");
+      else th.removeAttribute("aria-sort");
+      const glyph = th.querySelector(".th-sort-glyph");
+      if (glyph) glyph.textContent = key === sortKey ? (descending ? "▼" : "▲") : "";
+    }
+  }
+
+  const headRow = el("tr", {});
+  for (const col of COLS) {
+    const th = el("th", { scope: "col" },
+      el("button", {
+        class: "th-sort",
+        onclick: () => {
+          if (sortKey === col.key) sortDir = -sortDir;
+          else {
+            sortKey = col.key;
+            sortDir = 1;
+          }
+          paintRows();
+        },
+      },
+        col.label,
+        el("span", { class: "th-sort-glyph", "aria-hidden": "true" }),
+      ),
+    );
+    headCells.set(col.key, th);
+    headRow.append(th);
+  }
+  paintRows();
 
   return el("div", { class: "table-wrap" },
     el("table", { class: "data" },
-      el("thead", {},
-        el("tr", {},
-          el("th", {}, "Name"),
-          el("th", {}, "Kind"),
-          el("th", {}, "Severity"),
-          el("th", {}, "AARS"),
-          el("th", {}, "Toxic combo"),
-          el("th", {}, "Guardrail"),
-          el("th", {}, "Connections"),
-        )),
+      el("thead", {}, headRow),
       tbody,
     ));
 }

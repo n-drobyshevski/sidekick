@@ -1,19 +1,38 @@
-// Security Graph — the centerpiece. Server computes a depth-limited projection +
-// layered layout; this page owns the toolbar (seed, depth, filters), the count/cap
-// indicator, the legend, and the SVG canvas with its accessible table fallback.
-// All state is hash params, so any view is shareable.
+// Security Graph — the centerpiece, as a full-page workbench. The server computes
+// a depth-limited projection + deterministic layout (lanes or grouped clusters);
+// this page owns the slim top bar (search, arrange, order, filters, view toggle),
+// the applied-filter chips, the Filters drawer, and the SVG canvas with its
+// accessible table fallback. All state is hash params, so any view is shareable.
+// Filter changes update in place — the top bar and drawer are never rebuilt, so
+// focus stays put while the graph repaints live.
 
 import { bootstrap, listJoin, listSplit, parseHash, setParams, swrCall } from "../store.js";
 import { openAssetSheet } from "../detailSheets.js";
 import { graphTable, renderGraph } from "../graphView.js";
 import { kindLabel } from "../icons.js";
-import { clear, el, emptyState, sectionLabel, sevBadge } from "../ui.js";
+import { clear, el, emptyState, openSheet, sevBadge } from "../ui.js";
 
 const DEPTH_TEXT = {
   1: "Depth 1: seeds and their direct relationships",
   2: "Depth 2: assets, identities and findings",
   3: "Depth 3: full reach — data, compute and supply chain",
 };
+
+const GROUP_LABELS = {
+  asset: "asset",
+  combo: "toxic combo",
+  project: "project",
+  cloud: "cloud",
+  kind: "node type",
+  severity: "severity",
+};
+
+// Params that change the server payload (vs. client-only view/q/panel).
+const DATA_KEYS = [
+  "seed", "seedKind", "depth", "expand",
+  "severities", "kinds", "projects", "clouds",
+  "layout", "groupBy", "sort",
+];
 
 function graphParams(params, defaults) {
   return {
@@ -25,8 +44,45 @@ function graphParams(params, defaults) {
     kinds: params.kinds || "",
     projects: params.projects || "",
     clouds: params.clouds || "",
+    layout: params.layout === "grouped" ? "grouped" : "",
+    groupBy: params.groupBy || "",
+    sort: params.sort || "",
     view: params.view || "graph",
+    q: params.q || "",
+    pos: params.pos || "",
   };
+}
+
+// Manual node offsets (drag / Shift+arrows), hash-encoded as
+// "encodedId:dx:dy,…" — deltas from the computed layout, so untouched nodes
+// keep following the layout and moved nodes keep their nudge. Ids are
+// URI-encoded per entry, which makes ":" and "," safe delimiters.
+function parseOffsets(s) {
+  const map = new Map();
+  for (const entry of String(s || "").split(",")) {
+    if (!entry) continue;
+    const parts = entry.split(":");
+    if (parts.length !== 3) continue;
+    const dx = Number(parts[1]);
+    const dy = Number(parts[2]);
+    if (!Number.isFinite(dx) || !Number.isFinite(dy)) continue;
+    try {
+      map.set(decodeURIComponent(parts[0]), { dx, dy });
+    } catch {
+      /* malformed entry — skip */
+    }
+  }
+  return map;
+}
+
+function encodeOffsets(map) {
+  const parts = [];
+  for (const [id, o] of map) {
+    if (o.dx || o.dy) {
+      parts.push(encodeURIComponent(id) + ":" + Math.round(o.dx) + ":" + Math.round(o.dy));
+    }
+  }
+  return parts.join(",");
 }
 
 function rpcParams(p) {
@@ -39,140 +95,199 @@ function rpcParams(p) {
     kinds: listSplit(p.kinds),
     projects: listSplit(p.projects),
     clouds: listSplit(p.clouds),
+    layout: p.layout,
+    groupBy: p.groupBy,
+    sort: p.sort,
   };
 }
 
-export async function renderGraphPage(main, params, ctx) {
+export async function renderGraphPage(main, params, _ctx) {
   const boot = await bootstrap();
-  const state = graphParams(params, boot.settings || {});
+  const defaults = boot.settings || {};
+  let state = graphParams(params, defaults);
 
-  main.append(
-    el("h1", {}, "Security Graph"),
-    el("p", { class: "page-sub" },
-      "AI assets, their identities, data and compute — with toxic combinations highlighted. " +
-      "Depth is limited server-side so every view stays light."),
-  );
+  // ------------------------------------------------------------------- frame
+  const title = el("h1", { class: "workbench-title" }, "Security Graph");
+  const meta = el("div", { class: "workbench-meta", role: "status" });
+  const controls = el("div", { class: "workbench-controls" });
+  const bar = el("div", { class: "workbench-bar" }, title, meta, controls);
+  const chipsRow = el("div", { class: "filter-chips", role: "group", "aria-label": "Applied filters" });
+  const body = el("div", { class: "workbench-body" });
+  main.append(el("div", { class: "workbench" }, bar, chipsRow, body));
 
   if (!boot.latestSync) {
-    main.append(emptyState(
+    body.append(el("div", { class: "workbench-empty" }, emptyState(
       "No sync yet.",
       "Run “Sync now” in the sidebar — without credentials it loads the sample dataset.",
-    ));
+    )));
     return;
   }
 
-  // ------------------------------------------------------------------- toolbar
-  const toolbar = el("div", { class: "graph-toolbar", role: "group", "aria-label": "Graph controls" });
+  // ---------------------------------------------------------------- controls
+  let lastData = null;
+  let graphApi = null;
+  let matchIds = null;
+  let filtersSheet = null;
+  let sheetSync = null;
+  let seq = 0;
 
-  // Seed selector: all combos / one combo group / one asset (from inventory).
-  const seedSel = el("select", { "aria-label": "Graph starting point" });
-  seedSel.append(el("option", { value: "" }, "All toxic combinations"));
-  for (const g of boot.comboLegend || []) {
-    seedSel.append(el("option", {
-      value: `combo:${g.id}`,
-      selected: state.seedKind === "combo" && state.seed === g.id || null,
-    }, `Combo: ${g.shortLabel}`));
-  }
-  const assetGroup = el("optgroup", { label: "Assets" });
-  seedSel.append(assetGroup);
-  if (state.seed && state.seedKind !== "combo") {
-    assetGroup.append(el("option", { value: `asset:${state.seed}`, selected: true }, state.seed));
-  }
-  // Lazily fill the asset list so the page renders without waiting on inventory.
-  swrCall("api_getAssets", {}).then((inv) => {
-    const current = state.seedKind !== "combo" ? state.seed : "";
-    assetGroup.textContent = "";
-    for (const row of inv.rows) {
-      assetGroup.append(el("option", {
-        value: `asset:${row.id}`,
-        selected: row.id === current || null,
-      }, `${row.name} (${kindLabel(row.kind)})`));
-    }
-  }).catch(() => {});
+  // Search (client-side highlight; graph view only).
+  const searchInput = el("input", {
+    type: "search",
+    class: "graph-search",
+    placeholder: "Search nodes",
+    "aria-label": "Search nodes by name",
+    value: state.q,
+  });
+  let searchTimer = null;
+  searchInput.addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => update({ q: searchInput.value }), 150);
+  });
+  searchInput.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" || !graphApi || !matchIds || !matchIds.size || !lastData) return;
+    e.preventDefault();
+    const first = (lastData.layout.nodes || []).find((n) => matchIds.has(n.id));
+    if (first) graphApi.focusNode(first.id);
+  });
+  const searchField = el("div", { class: "workbench-search" }, searchInput);
 
-  seedSel.addEventListener("change", () => {
-    const v = seedSel.value;
-    if (!v) update({ seed: "", seedKind: "", expand: "" });
-    else if (v.startsWith("combo:")) update({ seed: v.slice(6), seedKind: "combo", expand: "" });
-    else update({ seed: v.slice(6), seedKind: "asset", expand: "" });
+  // Arrange (layout mode) + Order (row sort).
+  const arrangeSel = el("select", { "aria-label": "Arrange nodes" },
+    el("option", { value: "" }, "Lanes"),
+    el("option", { value: "grouped:asset" }, "Group: asset (hub view)"),
+    el("option", { value: "grouped:combo" }, "Group: toxic combo"),
+    el("option", { value: "grouped:project" }, "Group: project"),
+    el("option", { value: "grouped:cloud" }, "Group: cloud"),
+    el("option", { value: "grouped:kind" }, "Group: node type"),
+    el("option", { value: "grouped:severity" }, "Group: severity"),
+  );
+  arrangeSel.addEventListener("change", () => {
+    // A new arrangement recomputes the whole picture — manual nudges reset.
+    const v = arrangeSel.value;
+    if (!v) update({ layout: "", groupBy: "", pos: "" });
+    else update({ layout: "grouped", groupBy: v.slice(8), pos: "" });
   });
 
-  // Depth slider.
-  const depthValue = el("span", { class: "depth-value" }, String(state.depth));
-  const depthInput = el("input", {
-    type: "range", min: "1", max: "3", step: "1", value: String(state.depth),
-    "aria-label": "Visualization depth",
-    "aria-valuetext": DEPTH_TEXT[state.depth],
-  });
-  depthInput.addEventListener("input", () => {
-    depthValue.textContent = depthInput.value;
-    depthInput.setAttribute("aria-valuetext", DEPTH_TEXT[Number(depthInput.value)]);
-  });
-  depthInput.addEventListener("change", () => update({ depth: depthInput.value, expand: "" }));
+  const orderSel = el("select", { "aria-label": "Order nodes" },
+    el("option", { value: "" }, "Smart order"),
+    el("option", { value: "severity" }, "Severity first"),
+    el("option", { value: "aars" }, "Highest AARS"),
+    el("option", { value: "name" }, "Name (A–Z)"),
+  );
+  orderSel.addEventListener("change", () => update({ sort: orderSel.value, pos: "" }));
 
-  // Severity chips.
-  const activeSevs = new Set(listSplit(state.severities));
-  const sevRow = el("div", { class: "pill-row", role: "group", "aria-label": "Severity filter" });
-  for (const s of (boot.palette?.order || []).filter((x) => x !== "UNKNOWN")) {
-    const btn = el("button", {
-      class: `sev-pill sev-${s}`,
-      "aria-pressed": activeSevs.has(s) ? "true" : "false",
-      onclick: () => {
-        if (activeSevs.has(s)) activeSevs.delete(s);
-        else activeSevs.add(s);
-        update({ severities: listJoin([...activeSevs]) });
-      },
-    }, s);
-    sevRow.append(btn);
-  }
-
-  // Kind / project / cloud selects (single-value quick filters; "" = all).
-  const opts = boot.filterOptions || { kinds: [], clouds: [], projects: [] };
-  const kindSel = filterSelect("Node type", opts.kinds, state.kinds, (v) => update({ kinds: v }), kindLabel);
-  const projSel = filterSelect("Project", opts.projects, state.projects, (v) => update({ projects: v }));
-  const cloudSel = filterSelect("Cloud", opts.clouds, state.clouds, (v) => update({ clouds: v }));
+  // Filters drawer trigger, with an applied-count badge (the number is the signal).
+  const filterCount = el("span", { class: "filter-count", "aria-hidden": "true" });
+  const filterBtn = el("button", {
+    "aria-haspopup": "dialog",
+    onclick: () => openFilters(true),
+  }, "Filters", filterCount);
 
   const viewToggle = el("button", {
     "aria-pressed": state.view === "table" ? "true" : "false",
     onclick: () => update({ view: state.view === "table" ? "graph" : "table" }),
   }, state.view === "table" ? "View as graph" : "View as table");
 
-  toolbar.append(
-    field("Start from", seedSel),
-    field("Depth", el("div", { style: "display:flex; align-items:center; gap:8px" }, depthInput, depthValue)),
-    field("Severity", sevRow),
-    kindSel, projSel, cloudSel,
-    el("div", { class: "field", style: "margin-left:auto" }, viewToggle),
-  );
-  main.append(toolbar);
+  controls.append(searchField, arrangeSel, orderSel, filterBtn, viewToggle);
 
-  // -------------------------------------------------------------- meta + frame
-  const meta = el("div", { class: "graph-meta", role: "status" });
-  const frame = el("div", { class: state.view === "table" ? "" : "graph-frame" });
-  main.append(meta, frame);
-
-  // Legend.
-  main.append(buildLegend(boot));
-
-  // ---------------------------------------------------------------- data load
-  let data;
-  try {
-    data = await swrCall("api_getGraph", rpcParams(state), (fresh) => paint(fresh));
-  } catch (e) {
-    clear(frame).append(emptyState("Couldn't load the graph.", String(e.message || e)));
-    return;
+  // ------------------------------------------------------------ update cycle
+  function update(patch) {
+    const { params: current } = parseHash();
+    const merged = { ...current, ...patch };
+    setParams(merged);
+    const prev = state;
+    state = graphParams(merged, defaults);
+    syncControls();
+    if (DATA_KEYS.some((k) => String(prev[k]) !== String(state[k]))) {
+      load();
+    } else if (prev.view !== state.view) {
+      paint(lastData);
+    } else if (prev.q !== state.q) {
+      applyHighlight();
+      updateMeta(lastData);
+    } else if (prev.pos !== state.pos) {
+      // Drag commits already moved the DOM; a cleared pos snaps nodes back.
+      if (state.pos) updateMeta(lastData);
+      else paint(lastData);
+    }
   }
-  paint(data);
+
+  async function load() {
+    const mySeq = ++seq;
+    body.classList.add("updating");
+    try {
+      const data = await swrCall("api_getGraph", rpcParams(state), (fresh) => {
+        if (mySeq === seq) paint(fresh);
+      });
+      if (mySeq === seq) paint(data);
+    } catch (e) {
+      if (mySeq !== seq) return;
+      body.classList.remove("updating");
+      clear(body).append(el("div", { class: "workbench-empty" },
+        emptyState("Couldn't load the graph.", String(e.message || e))));
+    }
+  }
+
+  const handlers = {
+    onNodeOpen: (node) => {
+      if (node.kind === "ISSUE") return; // issues open from the combos page
+      openAssetSheet(node.id, {
+        title: node.name,
+        onFocusGraph: (id) => update({ seed: id, seedKind: "asset", expand: "" }),
+        onExpand: (id) => {
+          const expanded = new Set(listSplit(state.expand));
+          expanded.add(id);
+          update({ expand: listJoin([...expanded]) });
+        },
+      });
+    },
+    onSummaryExpand: (node) => {
+      // Expanding a summary lifts its parent's caps.
+      const parentId = node.id.split("|")[1];
+      const expanded = new Set(listSplit(state.expand));
+      expanded.add(parentId);
+      update({ expand: listJoin([...expanded]) });
+    },
+    onNodeMove: (id, dx, dy) => {
+      const map = parseOffsets(state.pos);
+      if (dx || dy) map.set(id, { dx, dy });
+      else map.delete(id); // dragged back to its computed spot
+      update({ pos: encodeOffsets(map) });
+    },
+    onEscape: () => filterBtn.focus(),
+  };
 
   function paint(payload) {
+    if (!payload) return;
+    lastData = payload;
+    body.classList.remove("updating");
     if (payload.empty) {
-      clear(frame).append(emptyState("No graph data — run a sync first."));
+      updateMeta(null);
+      clear(body).append(el("div", { class: "workbench-empty" },
+        emptyState("No graph data — run a sync first.")));
       return;
     }
     payload.palette = boot.palette;
+    payload.offsets = parseOffsets(state.pos);
+    clear(body);
+    if (state.view === "table") {
+      graphApi = null;
+      body.append(el("div", { class: "workbench-table" }, graphTable(payload, handlers)));
+    } else {
+      graphApi = renderGraph(body, payload, handlers);
+      body.append(buildLegend(boot, payload));
+      applyHighlight();
+    }
+    updateMeta(payload);
+  }
+
+  // -------------------------------------------------------------------- meta
+  function updateMeta(payload) {
+    clear(meta);
+    if (!payload || payload.empty) return;
     const c = payload.counts;
-    // Native append() stringifies null children (unlike el()), so filter them.
-    clear(meta).append(...[
+    meta.append(...[
       el("span", { class: "num" },
         `${c.shownNodes} of ${c.totalNodes} nodes · ${c.shownEdges} of ${c.totalEdges} edges`),
       c.capped
@@ -182,53 +297,267 @@ export async function renderGraphPage(main, params, ctx) {
         : null,
       payload.summaries && payload.summaries.length
         ? el("span", { class: "muted" },
-            `${payload.summaries.length} collapsed group${payload.summaries.length > 1 ? "s" : ""} — open a “+N more” node to expand`)
+            `${payload.summaries.length} collapsed group${payload.summaries.length > 1 ? "s" : ""}`)
+        : null,
+      state.q.trim() && state.view !== "table"
+        ? el("span", { class: "muted num" },
+            `${matchIds ? matchIds.size : 0} match${matchIds && matchIds.size === 1 ? "" : "es"}`)
+        : null,
+      movedCount()
+        ? el("button", { class: "link", onclick: () => update({ pos: "" }) },
+            `Reset positions (${movedCount()})`)
         : null,
     ].filter(Boolean));
+  }
 
-    const handlers = {
-      onNodeOpen: (node) => {
-        if (node.kind === "ISSUE") return; // issues open from the combos page
-        openAssetSheet(node.id, {
-          title: node.name,
-          onFocusGraph: (id) => update({ seed: id, seedKind: "asset", expand: "" }),
-          onExpand: (id) => {
-            const expanded = new Set(listSplit(state.expand));
-            expanded.add(id);
-            update({ expand: listJoin([...expanded]) });
-          },
-        });
-      },
-      onSummaryExpand: (node) => {
-        // Expanding a summary lifts its parent's caps.
-        const parentId = node.id.split("|")[1];
-        const expanded = new Set(listSplit(state.expand));
-        expanded.add(parentId);
-        update({ expand: listJoin([...expanded]) });
-      },
-      onEscape: () => depthInput.focus(),
-    };
+  function movedCount() {
+    return parseOffsets(state.pos).size;
+  }
 
-    clear(frame);
-    if (state.view === "table") {
-      frame.className = "";
-      frame.append(graphTable(payload, handlers));
-    } else {
-      frame.className = "graph-frame";
-      renderGraph(frame, payload, handlers);
+  // ------------------------------------------------------------------ search
+  function applyHighlight() {
+    const q = state.q.trim().toLowerCase();
+    if (!graphApi || !lastData || lastData.empty) {
+      matchIds = null;
+      return;
     }
+    if (!q) {
+      matchIds = null;
+      graphApi.setHighlight(null);
+      return;
+    }
+    matchIds = new Set(
+      lastData.nodes
+        .filter((n) => String(n.name).toLowerCase().includes(q))
+        .map((n) => n.id),
+    );
+    graphApi.setHighlight(matchIds);
   }
 
-  function update(patch) {
-    const { params: current } = parseHash();
-    setParams({ ...current, ...patch });
-    ctx.refreshRoute ? ctx.refreshRoute() : rerender();
+  // ------------------------------------------------------------------- chips
+  function filterEntries() {
+    const entries = [];
+    const defaultDepth = defaults.defaultDepth || 2;
+    if (state.seed) {
+      let label = "Start: " + state.seed;
+      if (state.seedKind === "combo") {
+        const g = (boot.comboLegend || []).find((x) => x.id === state.seed);
+        label = "Start: " + (g ? g.shortLabel : state.seed);
+      }
+      entries.push({ key: "seed", label, patch: { seed: "", seedKind: "", expand: "" } });
+    }
+    if (state.depth !== defaultDepth) {
+      entries.push({
+        key: "depth",
+        label: `Depth: ${state.depth}`,
+        patch: { depth: String(defaultDepth), expand: "" },
+      });
+    }
+    for (const s of listSplit(state.severities)) {
+      entries.push({
+        key: "sev-" + s,
+        label: s,
+        sev: s,
+        patch: { severities: listJoin(listSplit(state.severities).filter((x) => x !== s)) },
+      });
+    }
+    if (state.kinds) entries.push({ key: "kinds", label: "Type: " + kindLabel(state.kinds), patch: { kinds: "" } });
+    if (state.projects) entries.push({ key: "projects", label: "Project: " + state.projects, patch: { projects: "" } });
+    if (state.clouds) entries.push({ key: "clouds", label: "Cloud: " + state.clouds, patch: { clouds: "" } });
+    return entries;
   }
 
-  async function rerender() {
-    clear(main);
-    await renderGraphPage(main, parseHash().params, ctx);
+  function syncControls() {
+    // Top bar.
+    arrangeSel.value = state.layout === "grouped" ? "grouped:" + (state.groupBy || "combo") : "";
+    orderSel.value = state.sort;
+    if (document.activeElement !== searchInput && searchInput.value !== state.q) {
+      searchInput.value = state.q;
+    }
+    searchField.style.display = state.view === "table" ? "none" : "";
+    viewToggle.textContent = state.view === "table" ? "View as graph" : "View as table";
+    viewToggle.setAttribute("aria-pressed", state.view === "table" ? "true" : "false");
+
+    // Chips + count badge.
+    const entries = filterEntries();
+    filterCount.textContent = entries.length ? String(entries.length) : "";
+    filterBtn.setAttribute("aria-label",
+      entries.length ? `Filters, ${entries.length} applied` : "Filters");
+    clear(chipsRow);
+    chipsRow.hidden = !entries.length;
+    for (const e of entries) {
+      chipsRow.append(el("button", {
+        class: "filter-chip" + (e.sev ? " sev-" + e.sev : ""),
+        "aria-label": "Clear filter: " + e.label,
+        onclick: () => {
+          update(e.patch);
+          const next = chipsRow.querySelector(".filter-chip");
+          (next || filterBtn).focus();
+        },
+      },
+        e.sev ? el("span", { class: "sev-dot", "aria-hidden": "true" }) : null,
+        e.label,
+        el("span", { class: "filter-chip-x", "aria-hidden": "true" }, "✕"),
+      ));
+    }
+    if (entries.length) {
+      chipsRow.append(el("button", {
+        class: "link filter-clear-all",
+        onclick: () => clearAllFilters(),
+      }, "Clear all"));
+    }
+
+    if (sheetSync) sheetSync();
   }
+
+  function clearAllFilters() {
+    update({
+      seed: "", seedKind: "", expand: "",
+      severities: "", kinds: "", projects: "", clouds: "",
+      depth: String(defaults.defaultDepth || 2),
+    });
+    filterBtn.focus();
+  }
+
+  // --------------------------------------------------------- filters drawer
+  function openFilters(takeFocus) {
+    if (filtersSheet) return;
+    update({ panel: "filters" });
+    filtersSheet = openSheet((sheetBody) => {
+      const fc = buildFilterControls();
+      sheetBody.append(fc.root);
+      sheetSync = fc.sync;
+    }, {
+      title: "Filters",
+      subtitle: "Changes apply immediately",
+      width: "min(400px, 92vw)",
+      autoFocus: !!takeFocus,
+      onClose: () => {
+        filtersSheet = null;
+        sheetSync = null;
+        update({ panel: "" });
+      },
+    });
+  }
+
+  function buildFilterControls() {
+    const root = el("div", { class: "sheet-filters" });
+
+    // Seed selector: all combos / one combo group / one asset (from inventory).
+    const seedSel = el("select", { "aria-label": "Graph starting point" });
+    seedSel.append(el("option", { value: "" }, "All toxic combinations"));
+    for (const g of boot.comboLegend || []) {
+      seedSel.append(el("option", { value: `combo:${g.id}` }, `Combo: ${g.shortLabel}`));
+    }
+    const assetGroup = el("optgroup", { label: "Assets" });
+    seedSel.append(assetGroup);
+    if (state.seed && state.seedKind !== "combo") {
+      assetGroup.append(el("option", { value: `asset:${state.seed}` }, state.seed));
+    }
+    // Lazily fill the asset list so the drawer opens without waiting on inventory.
+    swrCall("api_getAssets", {}).then((inv) => {
+      const current = state.seedKind !== "combo" ? state.seed : "";
+      assetGroup.textContent = "";
+      for (const row of inv.rows) {
+        assetGroup.append(el("option", { value: `asset:${row.id}` },
+          `${row.name} (${kindLabel(row.kind)})`));
+      }
+      if (current) seedSel.value = `asset:${current}`;
+    }).catch(() => {});
+    seedSel.addEventListener("change", () => {
+      const v = seedSel.value;
+      if (!v) update({ seed: "", seedKind: "", expand: "" });
+      else if (v.startsWith("combo:")) update({ seed: v.slice(6), seedKind: "combo", expand: "" });
+      else update({ seed: v.slice(6), seedKind: "asset", expand: "" });
+    });
+
+    // Depth slider.
+    const depthValue = el("span", { class: "depth-value" }, String(state.depth));
+    const depthInput = el("input", {
+      type: "range", min: "1", max: "3", step: "1", value: String(state.depth),
+      "aria-label": "Visualization depth",
+      "aria-valuetext": DEPTH_TEXT[state.depth],
+    });
+    depthInput.addEventListener("input", () => {
+      depthValue.textContent = depthInput.value;
+      depthInput.setAttribute("aria-valuetext", DEPTH_TEXT[Number(depthInput.value)]);
+    });
+    depthInput.addEventListener("change", () => update({ depth: depthInput.value, expand: "" }));
+
+    // Severity chips.
+    const sevRow = el("div", { class: "pill-row", role: "group", "aria-label": "Severity filter" });
+    const sevBtns = new Map();
+    for (const s of (boot.palette?.order || []).filter((x) => x !== "UNKNOWN")) {
+      const btn = el("button", {
+        class: `sev-pill sev-${s}`,
+        "aria-pressed": listSplit(state.severities).includes(s) ? "true" : "false",
+        onclick: () => {
+          const active = new Set(listSplit(state.severities));
+          if (active.has(s)) active.delete(s);
+          else active.add(s);
+          update({ severities: listJoin([...active]) });
+        },
+      }, s);
+      sevBtns.set(s, btn);
+      sevRow.append(btn);
+    }
+
+    // Kind / project / cloud selects (single-value quick filters; "" = all).
+    const opts = boot.filterOptions || { kinds: [], clouds: [], projects: [] };
+    const kindSel = plainSelect("Node type", opts.kinds, kindLabel);
+    kindSel.addEventListener("change", () => update({ kinds: kindSel.value }));
+    const projSel = plainSelect("Project", opts.projects);
+    projSel.addEventListener("change", () => update({ projects: projSel.value }));
+    const cloudSel = plainSelect("Cloud", opts.clouds);
+    cloudSel.addEventListener("change", () => update({ clouds: cloudSel.value }));
+
+    root.append(
+      field("Start from", seedSel),
+      field("Depth", el("div", { class: "depth-field" }, depthInput, depthValue)),
+      field("Severity", sevRow),
+      field("Node type", kindSel),
+      field("Project", projSel),
+      field("Cloud", cloudSel),
+      el("div", { class: "sheet-filters-footer" },
+        el("button", { class: "link", onclick: () => clearAllFilters() }, "Clear all filters")),
+    );
+
+    // Reflect chip-clears and Clear-all while the drawer stays open.
+    function sync() {
+      if (!state.seed) seedSel.value = "";
+      else if (state.seedKind === "combo") seedSel.value = `combo:${state.seed}`;
+      else seedSel.value = `asset:${state.seed}`;
+      depthInput.value = String(state.depth);
+      depthValue.textContent = String(state.depth);
+      depthInput.setAttribute("aria-valuetext", DEPTH_TEXT[state.depth]);
+      const active = new Set(listSplit(state.severities));
+      for (const [s, btn] of sevBtns) {
+        btn.setAttribute("aria-pressed", active.has(s) ? "true" : "false");
+      }
+      kindSel.value = state.kinds;
+      projSel.value = state.projects;
+      cloudSel.value = state.clouds;
+    }
+
+    return { root, sync };
+  }
+
+  function plainSelect(labelText, options, format) {
+    const sel = el("select", { "aria-label": labelText },
+      el("option", { value: "" }, `All ${labelText.toLowerCase()}s`),
+      ...options.map((o) => el("option", { value: o }, format ? format(o) : o)),
+    );
+    const current = { "Node type": state.kinds, "Project": state.projects, "Cloud": state.clouds }[labelText];
+    if (current) sel.value = current;
+    return sel;
+  }
+
+  // ---------------------------------------------------------------- boot-up
+  // The first load is awaited so the route overlay covers it; later loads are
+  // in-place and keep the previous view visible while updating.
+  syncControls();
+  await load();
+  if (params.panel === "filters") openFilters(false);
 }
 
 function field(labelText, control) {
@@ -238,18 +567,10 @@ function field(labelText, control) {
   );
 }
 
-function filterSelect(labelText, options, current, onChange, format) {
-  const sel = el("select", { "aria-label": labelText },
-    el("option", { value: "" }, `All ${labelText.toLowerCase()}s`),
-    ...options.map((o) => el("option", { value: o, selected: o === current || null },
-      format ? format(o) : o)),
-  );
-  sel.addEventListener("change", () => onChange(sel.value));
-  return field(labelText, sel);
-}
-
-function buildLegend(boot) {
-  const legend = el("div", { class: "graph-legend", "aria-label": "Legend" });
+function buildLegend(boot, payload) {
+  const grouped = payload.layout && payload.layout.mode === "grouped";
+  const groupBy = (payload.options && payload.options.groupBy) || "combo";
+  const legend = el("div", { class: "graph-legend overlay", "aria-label": "Legend" });
   legend.append(el("span", { class: "label" }, "Legend"));
   legend.append(
     el("span", { class: "legend-item" },
@@ -259,12 +580,19 @@ function buildLegend(boot) {
       el("span", { class: "legend-swatch-negated", "aria-hidden": "true" }),
       "dashed = missing guardrail"),
   );
+  if (grouped) {
+    legend.append(el("span", { class: "legend-item" },
+      el("span", { class: "legend-swatch-group", "aria-hidden": "true" }),
+      `box = ${GROUP_LABELS[groupBy] || groupBy} group`));
+  }
   for (const s of (boot.palette?.order || []).filter((x) => x !== "UNKNOWN" && x !== "INFO")) {
     legend.append(el("span", { class: "legend-item" }, sevBadge(s)));
   }
   legend.append(
     el("span", { class: "legend-item muted" },
       "“+N more” pills expand collapsed neighbors"),
+    el("span", { class: "legend-item muted" },
+      "drag (or Shift+arrows) repositions a node"),
   );
   return legend;
 }

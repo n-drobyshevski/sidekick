@@ -743,259 +743,47 @@ var Server = (() => {
     return { ...settings, max_nodes: clampMaxNodes(maxNodes) };
   }
 
-  // src/domain/toxicCombos.ts
-  var COMBO_GROUPS = [
-    {
-      id: "bedrock-no-guardrail",
-      ruleId: "wc-id-2742",
-      title: "AWS Bedrock: model invocation without guardrails",
-      shortLabel: "No guardrail on invoke",
-      nativeSeverity: "MEDIUM",
-      adjustedSeverity: "HIGH",
-      amplifierNote: "Wiz MEDIUM, treated as HIGH: no content filtering or data protection on model calls, and the 5Rs data-security score (53%) confirms restriction controls are failing.",
-      namePattern: /without\s+guardrail/i,
-      frameworks: {
-        owaspLlm: ["LLM06", "LLM02"],
-        owaspAgentic: ["ASI02", "ASI03"],
-        owaspMl: [],
-        fiveRs: ["Restrict"]
-      }
-    },
-    {
-      id: "gcp-managed-privileged",
-      ruleId: "wc-id-3217",
-      title: "GCP managed AI agents: high privileges + sensitive data",
-      shortLabel: "Privileged managed agent",
-      nativeSeverity: "MEDIUM",
-      adjustedSeverity: "HIGH",
-      amplifierNote: "Wiz MEDIUM, treated as HIGH: prompt injection on an over-privileged managed agent reaches sensitive data, and the 5Rs score (53%) confirms that data is not restricted.",
-      namePattern: /managed\s+ai\s+agent\s+with\s+high\s+privileges/i,
-      frameworks: {
-        owaspLlm: ["LLM06", "LLM01"],
-        owaspAgentic: ["ASI03", "ASI01"],
-        owaspMl: ["Data Poisoning"],
-        fiveRs: ["Restrict", "Reconfigure"]
-      }
-    },
-    {
-      id: "gcp-hosted-privileged",
-      ruleId: "wc-id-3230",
-      title: "GCP hosted AI agents on VM/serverless: high privileges + sensitive data",
-      shortLabel: "Privileged hosted agent",
-      nativeSeverity: "MEDIUM",
-      adjustedSeverity: "HIGH",
-      amplifierNote: "Wiz MEDIUM, treated as HIGH: the agent inherits its host's attack surface (VM / serverless), holds excessive IAM, and the 5Rs score (53%) confirms weak data restriction.",
-      namePattern: /hosted\s+on\s+vm\/?serverless/i,
-      frameworks: {
-        owaspLlm: ["LLM06", "LLM01", "LLM02", "LLM05"],
-        owaspAgentic: ["ASI02", "ASI03", "ASI05"],
-        owaspMl: [],
-        fiveRs: ["Restrict", "Reduce"]
-      }
-    },
-    {
-      id: "permissive-exec-identity",
-      ruleId: "wc-id-3123",
-      title: "GCP AI agents: overly permissive execution identity",
-      shortLabel: "Permissive identity",
-      nativeSeverity: "LOW",
-      adjustedSeverity: "MEDIUM",
-      amplifierNote: "Wiz LOW, treated as MEDIUM: latent privileges \u2014 a compromised agent (prompt injection \u2192 RCE/SSRF) inherits every permission of its execution identity.",
-      namePattern: /overly\s+permissive\s+execution\s+identity/i,
-      frameworks: {
-        owaspLlm: [],
-        owaspAgentic: ["ASI03"],
-        owaspMl: [],
-        fiveRs: ["Reconfigure"]
-      }
-    }
+  // src/domain/graphTypes.ts
+  var NODE_KINDS = [
+    // AI assets (Wiz AI-SPM resource types)
+    "AI_AGENT",
+    "AI_MODEL",
+    "AI_GUARDRAIL",
+    "AI_PIPELINE",
+    "AI_DATASET",
+    "MCP_SERVER",
+    // identities
+    "SERVICE_ACCOUNT",
+    "USER_ACCOUNT",
+    "ACCESS_ROLE",
+    "ACCESS_ROLE_BINDING",
+    // data
+    "BUCKET",
+    "DATABASE",
+    // compute / supply chain
+    "VIRTUAL_MACHINE",
+    "SERVERLESS",
+    "CONTAINER_IMAGE",
+    "REPOSITORY",
+    // CIEM finding entities
+    "EXCESSIVE_ACCESS_FINDING",
+    "LATERAL_MOVEMENT_FINDING",
+    // synthetic
+    "ISSUE",
+    // one node per open risk issue (toxic-combination instance)
+    "SUMMARY"
+    // collapse node: "+N more <kind>" emitted by the projection
   ];
-  var BY_RULE_ID = new Map(COMBO_GROUPS.map((g) => [g.ruleId, g]));
-  var BY_GROUP_ID = new Map(COMBO_GROUPS.map((g) => [g.id, g]));
-  function comboGroupById(id) {
-    var _a4;
-    return (_a4 = BY_GROUP_ID.get(id)) != null ? _a4 : null;
-  }
-  function classifyIssue(issue2) {
-    var _a4;
-    if (issue2.sourceRuleId) {
-      const byId = BY_RULE_ID.get(issue2.sourceRuleId);
-      if (byId) return byId;
-    }
-    const name = (_a4 = issue2.ruleName) != null ? _a4 : "";
-    if (name) {
-      for (const g of COMBO_GROUPS) {
-        if (g.namePattern.test(name)) return g;
-      }
-    }
-    return null;
-  }
-  function comboSummary(issues2) {
-    const acc = /* @__PURE__ */ new Map();
-    for (const g of COMBO_GROUPS) acc.set(g.id, { count: 0, assetIds: [], seen: /* @__PURE__ */ new Set() });
-    for (const issue2 of issues2) {
-      if (issue2.status !== "OPEN") continue;
-      const bucket = acc.get(issue2.comboGroup);
-      if (!bucket) continue;
-      bucket.count += 1;
-      if (issue2.assetId && !bucket.seen.has(issue2.assetId)) {
-        bucket.seen.add(issue2.assetId);
-        bucket.assetIds.push(issue2.assetId);
-      }
-    }
-    return COMBO_GROUPS.map((group) => ({
-      group,
-      count: acc.get(group.id).count,
-      assetIds: acc.get(group.id).assetIds
-    }));
-  }
-
-  // src/domain/graphApiParams.ts
-  function toList(v) {
-    if (Array.isArray(v)) return v.map(String).filter(Boolean);
-    if (typeof v === "string") return v.split(",").filter(Boolean);
-    return [];
-  }
-  function comboAssetIds(issues2, groupId) {
-    const out = [];
-    const seen = /* @__PURE__ */ new Set();
-    for (const issue2 of issues2) {
-      if (issue2.status !== "OPEN" || !issue2.comboGroup) continue;
-      if (groupId && issue2.comboGroup !== groupId) continue;
-      if (issue2.assetId && !seen.has(issue2.assetId)) {
-        seen.add(issue2.assetId);
-        out.push(issue2.assetId);
-      }
-    }
-    return out;
-  }
-  function resolveGraphParams(p, ctx) {
-    var _a4, _b;
-    const seed = typeof p["seed"] === "string" ? p["seed"] : "";
-    const seedKind = typeof p["seedKind"] === "string" ? p["seedKind"] : "";
-    let seedIds;
-    if (seed && (seedKind === "combo" || comboGroupById(seed))) {
-      seedIds = comboAssetIds(ctx.issues, seed);
-    } else if (seed) {
-      seedIds = [seed];
-    } else {
-      seedIds = comboAssetIds(ctx.issues);
-    }
-    const filters = {
-      severities: toList(p["severities"]),
-      kinds: toList(p["kinds"]),
-      projects: toList(p["projects"]),
-      clouds: toList(p["clouds"])
-    };
-    const hasFilters = filters.severities.length || filters.kinds.length || filters.projects.length || filters.clouds.length;
-    return {
-      seedIds,
-      depth: clampDepth((_a4 = p["depth"]) != null ? _a4 : ctx.defaultDepth),
-      expandIds: toList(p["expand"]),
-      filters: hasFilters ? filters : void 0,
-      maxNodes: clampMaxNodes((_b = p["maxNodes"]) != null ? _b : ctx.maxNodes),
-      maxEdges: MAX_EDGES_DEFAULT
-    };
-  }
-
-  // src/domain/graphLayout.ts
-  var LANE_OF = {
-    ISSUE: 0,
-    EXCESSIVE_ACCESS_FINDING: 0,
-    LATERAL_MOVEMENT_FINDING: 0,
-    AI_AGENT: 1,
-    AI_MODEL: 1,
-    AI_GUARDRAIL: 1,
-    AI_PIPELINE: 1,
-    AI_DATASET: 1,
-    MCP_SERVER: 1,
-    SERVICE_ACCOUNT: 2,
-    USER_ACCOUNT: 2,
-    ACCESS_ROLE: 2,
-    ACCESS_ROLE_BINDING: 2,
-    BUCKET: 3,
-    DATABASE: 3,
-    VIRTUAL_MACHINE: 4,
-    SERVERLESS: 4,
-    CONTAINER_IMAGE: 4,
-    REPOSITORY: 4
-  };
-  var LANE_COUNT = 5;
-  function laneOf(kind, summaryOf) {
-    var _a4, _b;
-    if (kind === "SUMMARY" && summaryOf) return (_a4 = LANE_OF[summaryOf]) != null ? _a4 : 2;
-    return (_b = LANE_OF[kind]) != null ? _b : 2;
-  }
-  var BARYCENTER_SWEEPS = 3;
-  function layoutGraph(p, opts = {}) {
-    var _a4, _b, _c, _d, _e;
-    const laneGap = (_a4 = opts.laneGap) != null ? _a4 : 280;
-    const rowGap = (_b = opts.rowGap) != null ? _b : 84;
-    const margin = (_c = opts.margin) != null ? _c : 120;
-    const lanes = Array.from({ length: LANE_COUNT }, () => []);
-    const laneIndex = /* @__PURE__ */ new Map();
-    for (const node2 of p.nodes) {
-      const lane = laneOf(node2.kind, node2.summaryOf);
-      laneIndex.set(node2.id, lane);
-      lanes[lane].push(node2.id);
-    }
-    const neighbors = /* @__PURE__ */ new Map();
-    for (const edge2 of p.edges) {
-      if (!neighbors.has(edge2.src)) neighbors.set(edge2.src, []);
-      if (!neighbors.has(edge2.dst)) neighbors.set(edge2.dst, []);
-      neighbors.get(edge2.src).push(edge2.dst);
-      neighbors.get(edge2.dst).push(edge2.src);
-    }
-    const rowOf = /* @__PURE__ */ new Map();
-    const refreshRows = () => {
-      for (const lane of lanes) lane.forEach((id, i) => rowOf.set(id, i));
-    };
-    refreshRows();
-    for (let sweep = 0; sweep < BARYCENTER_SWEEPS; sweep++) {
-      for (const lane of lanes) {
-        if (lane.length < 2) continue;
-        const score = /* @__PURE__ */ new Map();
-        for (const id of lane) {
-          const others = ((_d = neighbors.get(id)) != null ? _d : []).filter(
-            (n) => laneIndex.get(n) !== laneIndex.get(id) && rowOf.has(n)
-          );
-          score.set(
-            id,
-            others.length ? others.reduce((acc, n) => {
-              var _a5;
-              return acc + ((_a5 = rowOf.get(n)) != null ? _a5 : 0);
-            }, 0) / others.length : (_e = rowOf.get(id)) != null ? _e : 0
-          );
-        }
-        lane.sort((a, b) => {
-          var _a5, _b2, _c2, _d2;
-          const d = ((_a5 = score.get(a)) != null ? _a5 : 0) - ((_b2 = score.get(b)) != null ? _b2 : 0);
-          if (d !== 0) return d;
-          return ((_c2 = rowOf.get(a)) != null ? _c2 : 0) - ((_d2 = rowOf.get(b)) != null ? _d2 : 0);
-        });
-        refreshRows();
-      }
-    }
-    const tallest = Math.max(1, ...lanes.map((l) => l.length));
-    const nodes = [];
-    lanes.forEach((lane, laneIdx) => {
-      const offset = (tallest - lane.length) * rowGap / 2;
-      lane.forEach((id, row) => {
-        nodes.push({
-          id,
-          lane: laneIdx,
-          x: margin + laneIdx * laneGap,
-          y: margin + offset + row * rowGap
-        });
-      });
-    });
-    return {
-      nodes,
-      width: margin * 2 + (LANE_COUNT - 1) * laneGap,
-      height: margin * 2 + (tallest - 1) * rowGap,
-      laneGap,
-      rowGap
-    };
+  var AI_ASSET_KINDS = [
+    "AI_AGENT",
+    "AI_MODEL",
+    "AI_GUARDRAIL",
+    "AI_PIPELINE",
+    "AI_DATASET",
+    "MCP_SERVER"
+  ];
+  function edgeId(src, type, dst, negated) {
+    return `${src}|${type}|${dst}${negated ? "|neg" : ""}`;
   }
 
   // src/domain/graphProject.ts
@@ -1146,47 +934,548 @@ var Server = (() => {
     };
   }
 
-  // src/domain/graphTypes.ts
-  var NODE_KINDS = [
-    // AI assets (Wiz AI-SPM resource types)
-    "AI_AGENT",
-    "AI_MODEL",
-    "AI_GUARDRAIL",
-    "AI_PIPELINE",
-    "AI_DATASET",
-    "MCP_SERVER",
-    // identities
-    "SERVICE_ACCOUNT",
-    "USER_ACCOUNT",
-    "ACCESS_ROLE",
-    "ACCESS_ROLE_BINDING",
-    // data
-    "BUCKET",
-    "DATABASE",
-    // compute / supply chain
-    "VIRTUAL_MACHINE",
-    "SERVERLESS",
-    "CONTAINER_IMAGE",
-    "REPOSITORY",
-    // CIEM finding entities
-    "EXCESSIVE_ACCESS_FINDING",
-    "LATERAL_MOVEMENT_FINDING",
-    // synthetic
-    "ISSUE",
-    // one node per open risk issue (toxic-combination instance)
-    "SUMMARY"
-    // collapse node: "+N more <kind>" emitted by the projection
+  // src/domain/toxicCombos.ts
+  var COMBO_GROUPS = [
+    {
+      id: "bedrock-no-guardrail",
+      ruleId: "wc-id-2742",
+      title: "AWS Bedrock: model invocation without guardrails",
+      shortLabel: "No guardrail on invoke",
+      nativeSeverity: "MEDIUM",
+      adjustedSeverity: "HIGH",
+      amplifierNote: "Wiz MEDIUM, treated as HIGH: no content filtering or data protection on model calls, and the 5Rs data-security score (53%) confirms restriction controls are failing.",
+      namePattern: /without\s+guardrail/i,
+      frameworks: {
+        owaspLlm: ["LLM06", "LLM02"],
+        owaspAgentic: ["ASI02", "ASI03"],
+        owaspMl: [],
+        fiveRs: ["Restrict"]
+      }
+    },
+    {
+      id: "gcp-managed-privileged",
+      ruleId: "wc-id-3217",
+      title: "GCP managed AI agents: high privileges + sensitive data",
+      shortLabel: "Privileged managed agent",
+      nativeSeverity: "MEDIUM",
+      adjustedSeverity: "HIGH",
+      amplifierNote: "Wiz MEDIUM, treated as HIGH: prompt injection on an over-privileged managed agent reaches sensitive data, and the 5Rs score (53%) confirms that data is not restricted.",
+      namePattern: /managed\s+ai\s+agent\s+with\s+high\s+privileges/i,
+      frameworks: {
+        owaspLlm: ["LLM06", "LLM01"],
+        owaspAgentic: ["ASI03", "ASI01"],
+        owaspMl: ["Data Poisoning"],
+        fiveRs: ["Restrict", "Reconfigure"]
+      }
+    },
+    {
+      id: "gcp-hosted-privileged",
+      ruleId: "wc-id-3230",
+      title: "GCP hosted AI agents on VM/serverless: high privileges + sensitive data",
+      shortLabel: "Privileged hosted agent",
+      nativeSeverity: "MEDIUM",
+      adjustedSeverity: "HIGH",
+      amplifierNote: "Wiz MEDIUM, treated as HIGH: the agent inherits its host's attack surface (VM / serverless), holds excessive IAM, and the 5Rs score (53%) confirms weak data restriction.",
+      namePattern: /hosted\s+on\s+vm\/?serverless/i,
+      frameworks: {
+        owaspLlm: ["LLM06", "LLM01", "LLM02", "LLM05"],
+        owaspAgentic: ["ASI02", "ASI03", "ASI05"],
+        owaspMl: [],
+        fiveRs: ["Restrict", "Reduce"]
+      }
+    },
+    {
+      id: "permissive-exec-identity",
+      ruleId: "wc-id-3123",
+      title: "GCP AI agents: overly permissive execution identity",
+      shortLabel: "Permissive identity",
+      nativeSeverity: "LOW",
+      adjustedSeverity: "MEDIUM",
+      amplifierNote: "Wiz LOW, treated as MEDIUM: latent privileges \u2014 a compromised agent (prompt injection \u2192 RCE/SSRF) inherits every permission of its execution identity.",
+      namePattern: /overly\s+permissive\s+execution\s+identity/i,
+      frameworks: {
+        owaspLlm: [],
+        owaspAgentic: ["ASI03"],
+        owaspMl: [],
+        fiveRs: ["Reconfigure"]
+      }
+    }
   ];
-  var AI_ASSET_KINDS = [
-    "AI_AGENT",
-    "AI_MODEL",
-    "AI_GUARDRAIL",
-    "AI_PIPELINE",
-    "AI_DATASET",
-    "MCP_SERVER"
-  ];
-  function edgeId(src, type, dst, negated) {
-    return `${src}|${type}|${dst}${negated ? "|neg" : ""}`;
+  var BY_RULE_ID = new Map(COMBO_GROUPS.map((g) => [g.ruleId, g]));
+  var BY_GROUP_ID = new Map(COMBO_GROUPS.map((g) => [g.id, g]));
+  function comboGroupById(id) {
+    var _a4;
+    return (_a4 = BY_GROUP_ID.get(id)) != null ? _a4 : null;
+  }
+  function classifyIssue(issue2) {
+    var _a4;
+    if (issue2.sourceRuleId) {
+      const byId = BY_RULE_ID.get(issue2.sourceRuleId);
+      if (byId) return byId;
+    }
+    const name = (_a4 = issue2.ruleName) != null ? _a4 : "";
+    if (name) {
+      for (const g of COMBO_GROUPS) {
+        if (g.namePattern.test(name)) return g;
+      }
+    }
+    return null;
+  }
+  function comboSummary(issues2) {
+    const acc = /* @__PURE__ */ new Map();
+    for (const g of COMBO_GROUPS) acc.set(g.id, { count: 0, assetIds: [], seen: /* @__PURE__ */ new Set() });
+    for (const issue2 of issues2) {
+      if (issue2.status !== "OPEN") continue;
+      const bucket = acc.get(issue2.comboGroup);
+      if (!bucket) continue;
+      bucket.count += 1;
+      if (issue2.assetId && !bucket.seen.has(issue2.assetId)) {
+        bucket.seen.add(issue2.assetId);
+        bucket.assetIds.push(issue2.assetId);
+      }
+    }
+    return COMBO_GROUPS.map((group) => ({
+      group,
+      count: acc.get(group.id).count,
+      assetIds: acc.get(group.id).assetIds
+    }));
+  }
+
+  // src/domain/graphLayout.ts
+  var LAYOUT_MODES = ["lanes", "grouped"];
+  var GROUP_KEYS = ["asset", "combo", "project", "cloud", "kind", "severity"];
+  var SORT_KEYS = ["smart", "severity", "aars", "name"];
+  var GROUP_NONE = "__none__";
+  var LANE_OF = {
+    ISSUE: 0,
+    EXCESSIVE_ACCESS_FINDING: 0,
+    LATERAL_MOVEMENT_FINDING: 0,
+    AI_AGENT: 1,
+    AI_MODEL: 1,
+    AI_GUARDRAIL: 1,
+    AI_PIPELINE: 1,
+    AI_DATASET: 1,
+    MCP_SERVER: 1,
+    SERVICE_ACCOUNT: 2,
+    USER_ACCOUNT: 2,
+    ACCESS_ROLE: 2,
+    ACCESS_ROLE_BINDING: 2,
+    BUCKET: 3,
+    DATABASE: 3,
+    VIRTUAL_MACHINE: 4,
+    SERVERLESS: 4,
+    CONTAINER_IMAGE: 4,
+    REPOSITORY: 4
+  };
+  var LANE_COUNT = 5;
+  function laneOf(kind, summaryOf) {
+    var _a4, _b;
+    if (kind === "SUMMARY" && summaryOf) return (_a4 = LANE_OF[summaryOf]) != null ? _a4 : 2;
+    return (_b = LANE_OF[kind]) != null ? _b : 2;
+  }
+  var BARYCENTER_SWEEPS = 3;
+  var CELL_W = 240;
+  var CELL_H = 84;
+  var GROUP_PAD = 24;
+  var HEADER_H = 30;
+  var BLOCK_GAP_X = 48;
+  var BLOCK_GAP_Y = 64;
+  var MAX_SHELF_W = 1600;
+  function severityRank2(s) {
+    const i = SEVERITY_ORDER.indexOf(s != null ? s : "");
+    return i === -1 ? SEVERITY_ORDER.length : i;
+  }
+  function cmpName(a, b) {
+    return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+  }
+  function cmpId(a, b) {
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  }
+  function comparator(sort) {
+    if (sort === "severity") {
+      return (a, b) => severityRank2(a.severity) - severityRank2(b.severity) || cmpName(a, b) || cmpId(a, b);
+    }
+    if (sort === "aars") {
+      return (a, b) => {
+        var _a4, _b;
+        return ((_a4 = b.aars) != null ? _a4 : -1) - ((_b = a.aars) != null ? _b : -1) || cmpName(a, b) || cmpId(a, b);
+      };
+    }
+    if (sort === "name") {
+      return (a, b) => cmpName(a, b) || cmpId(a, b);
+    }
+    return (a, b) => nodeOrder(a, b) || cmpId(a, b);
+  }
+  function layoutGraph(p, opts = {}) {
+    var _a4;
+    if (((_a4 = opts.mode) != null ? _a4 : "lanes") === "grouped") return layoutGrouped(p, opts);
+    return layoutLanes(p, opts);
+  }
+  function layoutLanes(p, opts) {
+    var _a4, _b, _c, _d, _e, _f;
+    const laneGap = (_a4 = opts.laneGap) != null ? _a4 : 280;
+    const rowGap = (_b = opts.rowGap) != null ? _b : 84;
+    const margin = (_c = opts.margin) != null ? _c : 120;
+    const sort = (_d = opts.sort) != null ? _d : "smart";
+    const lanes = Array.from({ length: LANE_COUNT }, () => []);
+    const laneIndex = /* @__PURE__ */ new Map();
+    for (const node2 of p.nodes) {
+      const lane = laneOf(node2.kind, node2.summaryOf);
+      laneIndex.set(node2.id, lane);
+      lanes[lane].push(node2.id);
+    }
+    if (sort === "smart") {
+      const neighbors = /* @__PURE__ */ new Map();
+      for (const edge2 of p.edges) {
+        if (!neighbors.has(edge2.src)) neighbors.set(edge2.src, []);
+        if (!neighbors.has(edge2.dst)) neighbors.set(edge2.dst, []);
+        neighbors.get(edge2.src).push(edge2.dst);
+        neighbors.get(edge2.dst).push(edge2.src);
+      }
+      const rowOf = /* @__PURE__ */ new Map();
+      const refreshRows = () => {
+        for (const lane of lanes) lane.forEach((id, i) => rowOf.set(id, i));
+      };
+      refreshRows();
+      for (let sweep = 0; sweep < BARYCENTER_SWEEPS; sweep++) {
+        for (const lane of lanes) {
+          if (lane.length < 2) continue;
+          const score = /* @__PURE__ */ new Map();
+          for (const id of lane) {
+            const others = ((_e = neighbors.get(id)) != null ? _e : []).filter(
+              (n) => laneIndex.get(n) !== laneIndex.get(id) && rowOf.has(n)
+            );
+            score.set(
+              id,
+              others.length ? others.reduce((acc, n) => {
+                var _a5;
+                return acc + ((_a5 = rowOf.get(n)) != null ? _a5 : 0);
+              }, 0) / others.length : (_f = rowOf.get(id)) != null ? _f : 0
+            );
+          }
+          lane.sort((a, b) => {
+            var _a5, _b2, _c2, _d2;
+            const d = ((_a5 = score.get(a)) != null ? _a5 : 0) - ((_b2 = score.get(b)) != null ? _b2 : 0);
+            if (d !== 0) return d;
+            return ((_c2 = rowOf.get(a)) != null ? _c2 : 0) - ((_d2 = rowOf.get(b)) != null ? _d2 : 0);
+          });
+          refreshRows();
+        }
+      }
+    } else {
+      const byId = new Map(p.nodes.map((n) => [n.id, n]));
+      const cmp = comparator(sort);
+      for (const lane of lanes) {
+        lane.sort((a, b) => cmp(byId.get(a), byId.get(b)));
+      }
+    }
+    const tallest = Math.max(1, ...lanes.map((l) => l.length));
+    const nodes = [];
+    lanes.forEach((lane, laneIdx) => {
+      const offset = (tallest - lane.length) * rowGap / 2;
+      lane.forEach((id, row) => {
+        nodes.push({
+          id,
+          lane: laneIdx,
+          x: margin + laneIdx * laneGap,
+          y: margin + offset + row * rowGap
+        });
+      });
+    });
+    return {
+      nodes,
+      width: margin * 2 + (LANE_COUNT - 1) * laneGap,
+      height: margin * 2 + (tallest - 1) * rowGap,
+      laneGap,
+      rowGap,
+      mode: "lanes"
+    };
+  }
+  function groupKeyOf(node2, groupBy, parentOfSummary) {
+    var _a4, _b, _c, _d, _e, _f, _g;
+    if (node2.kind === "SUMMARY" && groupBy !== "kind") {
+      const parent = parentOfSummary.get(node2.id);
+      return parent ? groupKeyOf(parent, groupBy, parentOfSummary) : GROUP_NONE;
+    }
+    switch (groupBy) {
+      case "combo": {
+        const groups = [...(_a4 = node2.comboGroups) != null ? _a4 : []].sort();
+        return (_b = groups[0]) != null ? _b : GROUP_NONE;
+      }
+      case "project": {
+        const names = ((_c = node2.projects) != null ? _c : []).map((p) => p.name).sort();
+        return (_d = names[0]) != null ? _d : GROUP_NONE;
+      }
+      case "cloud":
+        return (_e = node2.cloudPlatform) != null ? _e : GROUP_NONE;
+      case "kind":
+        return node2.kind === "SUMMARY" ? (_f = node2.summaryOf) != null ? _f : "SUMMARY" : node2.kind;
+      case "severity":
+        return (_g = node2.severity) != null ? _g : GROUP_NONE;
+      case "asset":
+        return GROUP_NONE;
+    }
+  }
+  function groupLabel(key, groupBy) {
+    var _a4, _b;
+    if (key === GROUP_NONE) return "Ungrouped";
+    if (groupBy === "combo") return (_b = (_a4 = comboGroupById(key)) == null ? void 0 : _a4.shortLabel) != null ? _b : key;
+    return key;
+  }
+  function orderGroups(keys, groupBy, members) {
+    const canonical = (key) => {
+      if (groupBy === "severity") return SEVERITY_ORDER.indexOf(key);
+      if (groupBy === "kind") return NODE_KINDS.indexOf(key);
+      if (groupBy === "combo") return COMBO_GROUPS.findIndex((g) => g.id === key);
+      return -1;
+    };
+    const worstSeverity2 = (key) => {
+      var _a4;
+      let worst = SEVERITY_ORDER.length;
+      for (const n of (_a4 = members.get(key)) != null ? _a4 : []) worst = Math.min(worst, severityRank2(n.severity));
+      return worst;
+    };
+    return [...keys].sort((a, b) => {
+      if (a === GROUP_NONE) return b === GROUP_NONE ? 0 : 1;
+      if (b === GROUP_NONE) return -1;
+      const ca = canonical(a);
+      const cb = canonical(b);
+      if (ca !== -1 || cb !== -1) {
+        if (ca === -1) return 1;
+        if (cb === -1) return -1;
+        return ca - cb;
+      }
+      return worstSeverity2(a) - worstSeverity2(b) || (a < b ? -1 : a > b ? 1 : 0);
+    });
+  }
+  var RING_CAP = 8;
+  var RING_RX = 300;
+  var RING_RY = 150;
+  function round2(v) {
+    return Math.round(v * 100) / 100;
+  }
+  function gridBlock(key, label, list) {
+    const cols = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(list.length))));
+    const rows = Math.ceil(list.length / cols);
+    return {
+      key,
+      label,
+      width: GROUP_PAD * 2 + cols * CELL_W,
+      height: HEADER_H + GROUP_PAD * 2 + rows * CELL_H,
+      cells: list.map((node2, i) => ({
+        id: node2.id,
+        x: GROUP_PAD + i % cols * CELL_W + CELL_W / 2,
+        y: HEADER_H + GROUP_PAD + Math.floor(i / cols) * CELL_H + CELL_H / 2
+      }))
+    };
+  }
+  function radialBlock(key, label, hub, satellites) {
+    const rings = [];
+    for (let i = 0, ring = 1; i < satellites.length; ring++) {
+      rings.push(satellites.slice(i, i + RING_CAP * ring));
+      i += RING_CAP * ring;
+    }
+    const n = rings.length;
+    const halfW = RING_RX * n + CELL_W / 2;
+    const halfH = RING_RY * n + CELL_H / 2;
+    const width = GROUP_PAD * 2 + halfW * 2;
+    const height = HEADER_H + GROUP_PAD * 2 + halfH * 2;
+    const cx = width / 2;
+    const cy = HEADER_H + GROUP_PAD + halfH;
+    const cells = [{ id: hub.id, x: cx, y: cy }];
+    rings.forEach((ringNodes, ri) => {
+      const rx = RING_RX * (ri + 1);
+      const ry = RING_RY * (ri + 1);
+      const step = Math.PI * 2 / ringNodes.length;
+      ringNodes.forEach((node2, k) => {
+        const a = -Math.PI / 2 + k * step;
+        cells.push({
+          id: node2.id,
+          x: round2(cx + rx * Math.cos(a)),
+          y: round2(cy + ry * Math.sin(a))
+        });
+      });
+    });
+    return { key, label, width, height, cells };
+  }
+  function assignToHubs(p, parentOfSummary) {
+    var _a4;
+    const cmp = (a, b) => nodeOrder(a, b) || cmpId(a, b);
+    let hubs = p.nodes.filter((n) => n.kind === "AI_AGENT");
+    if (!hubs.length) {
+      hubs = p.nodes.filter((n) => AI_ASSET_KINDS.includes(n.kind));
+    }
+    hubs = [...hubs].sort(cmp);
+    const adj = /* @__PURE__ */ new Map();
+    const sortedEdges = [...p.edges].sort((a, b) => a.id < b.id ? -1 : 1);
+    for (const e of sortedEdges) {
+      if (!adj.has(e.src)) adj.set(e.src, []);
+      if (!adj.has(e.dst)) adj.set(e.dst, []);
+      adj.get(e.src).push(e.dst);
+      adj.get(e.dst).push(e.src);
+    }
+    const hubOf = /* @__PURE__ */ new Map();
+    const queue = [];
+    for (const h of hubs) {
+      hubOf.set(h.id, h.id);
+      queue.push(h.id);
+    }
+    while (queue.length) {
+      const id = queue.shift();
+      for (const next of (_a4 = adj.get(id)) != null ? _a4 : []) {
+        if (hubOf.has(next)) continue;
+        hubOf.set(next, hubOf.get(id));
+        queue.push(next);
+      }
+    }
+    for (const [sumId, parent] of parentOfSummary) {
+      const h = hubOf.get(parent.id);
+      if (h) hubOf.set(sumId, h);
+    }
+    return { hubOf, hubs };
+  }
+  function layoutGrouped(p, opts) {
+    var _a4, _b, _c;
+    const margin = (_a4 = opts.margin) != null ? _a4 : 120;
+    const groupBy = (_b = opts.groupBy) != null ? _b : "combo";
+    const sort = (_c = opts.sort) != null ? _c : "smart";
+    const byId = new Map(p.nodes.map((n) => [n.id, n]));
+    const parentOfSummary = /* @__PURE__ */ new Map();
+    for (const s of p.summaries) {
+      const parent = byId.get(s.parentId);
+      if (parent) parentOfSummary.set(s.id, parent);
+    }
+    const cmp = comparator(sort);
+    const specs = [];
+    if (groupBy === "asset") {
+      const { hubOf, hubs } = assignToHubs(p, parentOfSummary);
+      const members = new Map(hubs.map((h) => [h.id, []]));
+      const strays = [];
+      for (const node2 of p.nodes) {
+        const key = hubOf.get(node2.id);
+        if (key) members.get(key).push(node2);
+        else strays.push(node2);
+      }
+      for (const hub of hubs) {
+        const sats = members.get(hub.id).filter((n) => n.id !== hub.id).sort(cmp);
+        specs.push(radialBlock(hub.id, hub.name, hub, sats));
+      }
+      if (strays.length) specs.push(gridBlock(GROUP_NONE, "Ungrouped", [...strays].sort(cmp)));
+    } else {
+      const members = /* @__PURE__ */ new Map();
+      for (const node2 of p.nodes) {
+        const key = groupKeyOf(node2, groupBy, parentOfSummary);
+        if (!members.has(key)) members.set(key, []);
+        members.get(key).push(node2);
+      }
+      for (const key of orderGroups([...members.keys()], groupBy, members)) {
+        specs.push(gridBlock(key, groupLabel(key, groupBy), [...members.get(key)].sort(cmp)));
+      }
+    }
+    const totalArea = specs.reduce(
+      (acc, s) => acc + (s.width + BLOCK_GAP_X) * (s.height + BLOCK_GAP_Y),
+      0
+    );
+    const shelfW = Math.max(MAX_SHELF_W, Math.ceil(Math.sqrt(totalArea * 1.8)));
+    const nodes = [];
+    const groups = [];
+    let shelfX = margin;
+    let shelfY = margin;
+    let shelfH = 0;
+    let maxX = 0;
+    specs.forEach((spec, groupIdx) => {
+      if (shelfX > margin && shelfX + spec.width > margin + shelfW) {
+        shelfY += shelfH + BLOCK_GAP_Y;
+        shelfX = margin;
+        shelfH = 0;
+      }
+      const gx = shelfX;
+      const gy = shelfY;
+      shelfX += spec.width + BLOCK_GAP_X;
+      shelfH = Math.max(shelfH, spec.height);
+      maxX = Math.max(maxX, gx + spec.width);
+      groups.push({
+        id: `${groupBy}:${spec.key}`,
+        key: spec.key,
+        label: spec.label,
+        x: gx,
+        y: gy,
+        width: spec.width,
+        height: spec.height,
+        count: spec.cells.length
+      });
+      for (const c of spec.cells) {
+        nodes.push({ id: c.id, lane: groupIdx, x: gx + c.x, y: gy + c.y });
+      }
+    });
+    return {
+      nodes,
+      width: maxX + margin,
+      height: shelfY + shelfH + margin,
+      laneGap: CELL_W,
+      rowGap: CELL_H,
+      mode: "grouped",
+      groups
+    };
+  }
+
+  // src/domain/graphApiParams.ts
+  function toList(v) {
+    if (Array.isArray(v)) return v.map(String).filter(Boolean);
+    if (typeof v === "string") return v.split(",").filter(Boolean);
+    return [];
+  }
+  function comboAssetIds(issues2, groupId) {
+    const out = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const issue2 of issues2) {
+      if (issue2.status !== "OPEN" || !issue2.comboGroup) continue;
+      if (groupId && issue2.comboGroup !== groupId) continue;
+      if (issue2.assetId && !seen.has(issue2.assetId)) {
+        seen.add(issue2.assetId);
+        out.push(issue2.assetId);
+      }
+    }
+    return out;
+  }
+  function pick(v, allowed, fallback) {
+    const s = typeof v === "string" ? v.toLowerCase() : "";
+    return allowed.includes(s) ? s : fallback;
+  }
+  function resolveLayoutParams(p) {
+    return {
+      mode: pick(p["layout"], LAYOUT_MODES, "lanes"),
+      groupBy: pick(p["groupBy"], GROUP_KEYS, "combo"),
+      sort: pick(p["sort"], SORT_KEYS, "smart")
+    };
+  }
+  function resolveGraphParams(p, ctx) {
+    var _a4, _b;
+    const seed = typeof p["seed"] === "string" ? p["seed"] : "";
+    const seedKind = typeof p["seedKind"] === "string" ? p["seedKind"] : "";
+    let seedIds;
+    if (seed && (seedKind === "combo" || comboGroupById(seed))) {
+      seedIds = comboAssetIds(ctx.issues, seed);
+    } else if (seed) {
+      seedIds = [seed];
+    } else {
+      seedIds = comboAssetIds(ctx.issues);
+    }
+    const filters = {
+      severities: toList(p["severities"]),
+      kinds: toList(p["kinds"]),
+      projects: toList(p["projects"]),
+      clouds: toList(p["clouds"])
+    };
+    const hasFilters = filters.severities.length || filters.kinds.length || filters.projects.length || filters.clouds.length;
+    return {
+      seedIds,
+      depth: clampDepth((_a4 = p["depth"]) != null ? _a4 : ctx.defaultDepth),
+      expandIds: toList(p["expand"]),
+      filters: hasFilters ? filters : void 0,
+      maxNodes: clampMaxNodes((_b = p["maxNodes"]) != null ? _b : ctx.maxNodes),
+      maxEdges: MAX_EDGES_DEFAULT
+    };
   }
 
   // src/domain/util.ts
@@ -2214,14 +2503,14 @@ var Server = (() => {
   }
 
   // src/domain/graphEnrich.ts
-  function severityRank2(s) {
+  function severityRank3(s) {
     const i = SEVERITY_ORDER.indexOf(s != null ? s : "");
     return i === -1 ? SEVERITY_ORDER.length : i;
   }
   function worstSeverity(severities) {
     let worst;
     for (const s of severities) {
-      if (worst === void 0 || severityRank2(s) < severityRank2(worst)) worst = s;
+      if (worst === void 0 || severityRank3(s) < severityRank3(worst)) worst = s;
     }
     return worst;
   }
@@ -2888,10 +3177,11 @@ var Server = (() => {
         maxNodes: getMaxNodes2(),
         issues: openIssues()
       });
-      return cached("getGraph", options, () => {
+      const view = resolveLayoutParams(params);
+      return cached("getGraph", { ...options, view }, () => {
         var _a4;
         const projection = projectGraph(doc, options);
-        const layout = layoutGraph(projection);
+        const layout = layoutGraph(projection, view);
         return {
           nodes: projection.nodes,
           edges: projection.edges,
@@ -2901,7 +3191,10 @@ var Server = (() => {
           options: {
             depth: options.depth,
             seedIds: options.seedIds,
-            expandIds: (_a4 = options.expandIds) != null ? _a4 : []
+            expandIds: (_a4 = options.expandIds) != null ? _a4 : [],
+            layout: view.mode,
+            groupBy: view.groupBy,
+            sort: view.sort
           },
           syncedAt: doc.syncedAt
         };

@@ -2,7 +2,7 @@
 // resolution (asset / combo group / default all-combo-assets).
 
 import { describe, expect, it } from "vitest";
-import { resolveGraphParams, toList } from "../src/domain/graphApiParams";
+import { resolveGraphParams, resolveLayoutParams, toList } from "../src/domain/graphApiParams";
 import { SEED_ISSUES } from "../src/server/sampleData";
 
 const CTX = { defaultDepth: 2, maxNodes: 120, issues: SEED_ISSUES };
@@ -57,5 +57,23 @@ describe("resolveGraphParams", () => {
     const opts = resolveGraphParams({ expand: "a,b", maxNodes: 9999 }, CTX);
     expect(opts.expandIds).toEqual(["a", "b"]);
     expect(opts.maxNodes).toBe(400); // clamped ceiling
+  });
+});
+
+describe("resolveLayoutParams", () => {
+  it("defaults to lanes / combo / smart", () => {
+    expect(resolveLayoutParams({})).toEqual({ mode: "lanes", groupBy: "combo", sort: "smart" });
+  });
+
+  it("whitelists known values and normalizes case", () => {
+    expect(resolveLayoutParams({ layout: "grouped", groupBy: "project", sort: "aars" }))
+      .toEqual({ mode: "grouped", groupBy: "project", sort: "aars" });
+    expect(resolveLayoutParams({ layout: "GROUPED", groupBy: "Severity", sort: "NAME" }))
+      .toEqual({ mode: "grouped", groupBy: "severity", sort: "name" });
+  });
+
+  it("garbage falls back to defaults", () => {
+    expect(resolveLayoutParams({ layout: "spiral", groupBy: 42, sort: null }))
+      .toEqual({ mode: "lanes", groupBy: "combo", sort: "smart" });
   });
 });
