@@ -292,6 +292,31 @@ export function fetchCloudResourcesPage(o: FetchOptions): PageResult {
   }
 }
 
+/**
+ * Read one page from an arbitrary top-level connection (issuesV2,
+ * configurationFindings, …). Same paging contract and PAGE_SIZE fallback as
+ * fetchCloudResourcesPage, but the connection field is a parameter so a single
+ * reader serves every non-graphSearch root. graphSearch keeps its own reader
+ * because it must always send quick:true.
+ */
+export function fetchConnectionPage(field: string, o: FetchOptions): PageResult {
+  const run = (first: number) =>
+    readConnection(
+      gqlPost(o.query, {
+        first,
+        after: o.cursor ?? null,
+        ...(o.extraVariables ?? {}),
+      })[field] as Rec,
+      field,
+    );
+  try {
+    return run(o.first ?? PAGE_SIZE);
+  } catch (e) {
+    if (e instanceof WizQueryError && /HTTP 4\d\d/.test(e.message)) throw e;
+    return run(PAGE_SIZE_FALLBACK);
+  }
+}
+
 export function fetchGraphSearchPage(o: FetchOptions): PageResult {
   const run = (first: number) =>
     readConnection(

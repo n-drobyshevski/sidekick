@@ -12,33 +12,46 @@
 import {
   emptyPart,
   mergeParts,
+  normalizeConfigFindingsPage,
   normalizeIdentityAccessPage,
   normalizeInventoryPage,
+  normalizeIssuesPage,
   normalizeNoGuardrailPage,
+  normalizePrincipalsPage,
   normalizeRuleAssetsPage,
   normalizeRunsAsPage,
+  reconcileIssues,
   type NormalizedPart,
 } from "../domain/syncNormalize";
+import { buildAarsHintsFromFindings } from "../domain/graphEnrich";
 import { COMBO_GROUPS } from "../domain/toxicCombos";
 import { nowIso, type Rec } from "../domain/util";
 import { readGzJsonFile, syncFolder, writeGzJson, writeSyncPage } from "./archiveStore";
 import { activeJob, createJob, getJob, newJobId, updateJob, type JobRow } from "./jobsStore";
 import { withScriptLock } from "./locks";
-import { getProp, hasWizCredentials, setProp, deleteProp } from "./props";
-import { seedGraphDoc, SEED_AARS_HINTS, SEED_ISSUES } from "./sampleData";
+import { getProp, hasWizCredentials, projectScope, setProp, deleteProp } from "./props";
+import { seedGraphDoc, SEED_AARS_HINTS, SEED_FINDINGS, SEED_ISSUES } from "./sampleData";
 import { persistSync } from "./syncStore";
 import {
   fetchCloudResourcesPage,
+  fetchConnectionPage,
   fetchGraphSearchPage,
   resolveAiResourceTypes,
+  type FetchOptions,
 } from "./wizClientAi";
 import {
+  aiConfigFindingsVariables,
   aiInventoryVariables,
+  aiIssuesVariables,
+  aiPrincipalsVariables,
   MAX_PAGES,
   Q_AGENT_RUNS_AS,
   Q_AGENTS_NO_GUARDRAIL,
   Q_AI_INVENTORY,
+  Q_CONFIG_FINDINGS,
   Q_IDENTITY_ACCESS,
+  Q_ISSUES,
+  Q_PRINCIPALS,
   Q_RULE_ASSETS,
   Q_SA_EXCESSIVE_ACCESS,
 } from "./wizQueriesAi";
@@ -58,7 +71,10 @@ const BUDGET_MS = 270_000;
 
 interface SyncStepDef {
   id: string;
-  run: "cloudResources" | "graphSearch";
+  run: "cloudResources" | "graphSearch" | "connection";
+  // For run:"connection" — the top-level connection field to read (issuesV2,
+  // configurationFindings). Ignored for the other run modes.
+  connectionField?: string;
   query: string;
   extraVariables?: Rec;
   normalize: (rows: Rec[]) => NormalizedPart;
@@ -93,6 +109,27 @@ function syncSteps(): SyncStepDef[] {
       normalize: (rows) => normalizeRuleAssetsPage(rows, group),
       optional: true,
     })),
+    // Real toxic-combination issues (issuesV2). Runs alongside the per-rule steps
+    // above; reconcileIssues drops the synthetic per-rule rows these supersede.
+    {
+      id: "ISSUES_TOXIC",
+      run: "connection",
+      connectionField: "issuesV2",
+      query: Q_ISSUES,
+      extraVariables: aiIssuesVariables(projectScope()) as Rec,
+      normalize: normalizeIssuesPage,
+      optional: true,
+    },
+    // Real compliance findings (configurationFindings) — feeds AARS pillar B.
+    {
+      id: "CONFIG_FINDINGS",
+      run: "connection",
+      connectionField: "configurationFindings",
+      query: Q_CONFIG_FINDINGS,
+      extraVariables: aiConfigFindingsVariables(projectScope()) as Rec,
+      normalize: normalizeConfigFindingsPage,
+      optional: true,
+    },
     {
       id: "GUARDRAIL_GAPS",
       run: "graphSearch",
@@ -121,6 +158,15 @@ function syncSteps(): SyncStepDef[] {
       normalize: normalizeIdentityAccessPage,
       optional: true,
     },
+    // Agentic execution identities (cloudResourcesV2 + identityPurpose:AGENTIC).
+    {
+      id: "AGENTIC_IDENTITIES",
+      run: "cloudResources",
+      query: Q_PRINCIPALS,
+      extraVariables: aiPrincipalsVariables(projectScope()) as Rec,
+      normalize: normalizePrincipalsPage,
+      optional: true,
+    },
   ];
 }
 
@@ -143,6 +189,8 @@ function dryRunSync(): StartResult {
     SEED_ISSUES,
     SEED_AARS_HINTS,
     { syncId, mode: "dry-run", startedAt, apiCalls: 0 },
+    undefined,
+    SEED_FINDINGS,
   );
   return {
     jobId: null,
@@ -275,9 +323,11 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
           return;
         }
 
-        const fetcher = step.run === "cloudResources"
-          ? fetchCloudResourcesPage
-          : fetchGraphSearchPage;
+        const fetcher = step.run === "graphSearch"
+          ? fetchGraphSearchPage
+          : step.run === "connection"
+            ? (a: FetchOptions) => fetchConnectionPage(step.connectionField!, a)
+            : fetchCloudResourcesPage;
         let result;
         try {
           result = fetcher({
@@ -346,7 +396,12 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
       if (parsed && Array.isArray(parsed.nodes)) parts.push(parsed);
     }
     const startedAt = job.started_at;
-    const { doc, issues } = mergeParts(parts, nowIso());
+    const merged = mergeParts(parts, nowIso());
+    const doc = merged.doc;
+    // Augment de-dup: real issuesV2 rows supersede the synthetic per-rule rows for the
+    // same (asset, combo-group), so the two batteries never double-count.
+    const issues = reconcileIssues(merged.issues);
+    const findings = merged.findings;
     if (!doc.nodes.length) {
       updateJob(job.job_id, {
         phase: "FAILED",
@@ -356,15 +411,18 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
     }
 
     // ---------------------------------------------------------------- persist
-    // (persistSync enriches: AARS derived heuristically for live data — no hints.)
+    // Live AARS is no longer purely heuristic: config-findings supply real pillar-B
+    // hints (union with the issue-framework heuristic), so persistSync enriches with
+    // them instead of undefined.
     updateJob(job.job_id, { phase: "PERSISTING" });
+    const hints = buildAarsHintsFromFindings(findings, doc, issues);
     const persist = () =>
-      persistSync(doc, issues, undefined, {
+      persistSync(doc, issues, hints, {
         syncId,
         mode: "live",
         startedAt,
         apiCalls: params.apiCalls,
-      });
+      }, undefined, findings);
     if (opts.lockHeld) persist();
     else withScriptLock(persist);
     updateJob(job.job_id, { phase: "DONE" });

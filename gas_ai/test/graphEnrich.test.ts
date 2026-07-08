@@ -4,11 +4,13 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  buildAarsHintsFromFindings,
+  dataExposureOf,
   enrichGraphDoc,
   withInternetExposureNodes,
   withSensitiveDataNodes,
 } from "../src/domain/graphEnrich";
-import type { GraphDoc } from "../src/domain/graphTypes";
+import type { FindingRow, GraphDoc, IssueRow } from "../src/domain/graphTypes";
 import { SEED_AARS_HINTS, SEED_ISSUES, seedGraphDoc } from "../src/server/sampleData";
 
 const T = "2026-06-28T05:00:00Z";
@@ -172,5 +174,57 @@ describe("enrichGraphDoc", () => {
     const before = JSON.stringify(raw);
     enrichGraphDoc(raw, SEED_ISSUES, SEED_AARS_HINTS);
     expect(JSON.stringify(raw)).toBe(before);
+  });
+});
+
+describe("dataExposureOf", () => {
+  it("classifies sensitive access, then privilege, then none", () => {
+    expect(dataExposureOf({ id: "a", kind: "AI_AGENT", name: "a", hasAccessToSensitiveData: true }))
+      .toBe("SENSITIVE");
+    expect(dataExposureOf({ id: "a", kind: "AI_AGENT", name: "a", hasSensitiveData: true }))
+      .toBe("SENSITIVE");
+    expect(dataExposureOf({ id: "a", kind: "AI_AGENT", name: "a", hasHighPrivileges: true }))
+      .toBe("DATA_ACCESS");
+    expect(dataExposureOf({ id: "a", kind: "AI_AGENT", name: "a", hasAdminPrivileges: true }))
+      .toBe("DATA_ACCESS");
+    expect(dataExposureOf({ id: "a", kind: "AI_AGENT", name: "a" })).toBe("NONE");
+  });
+});
+
+describe("buildAarsHintsFromFindings", () => {
+  const doc: GraphDoc = {
+    nodes: [
+      { id: "asset-1", kind: "AI_AGENT", name: "A", hasAccessToSensitiveData: true, guardrailMissing: true },
+      { id: "asset-2", kind: "AI_AGENT", name: "B" },
+    ],
+    edges: [],
+    syncedAt: T,
+  };
+  const issues: IssueRow[] = [{
+    id: "iss-1", ruleId: "wc-id-3217", ruleName: "r", comboGroup: "gcp-managed-privileged",
+    nativeSeverity: "MEDIUM", adjustedSeverity: "HIGH", status: "OPEN",
+    assetId: "asset-1", assetName: "A",
+    frameworks: { owaspLlm: ["LLM06"] },
+  }];
+  const findings: FindingRow[] = [
+    { id: "f1", resourceId: "asset-1", ruleShortId: "SUB-082", severity: "MEDIUM", frameworkCodes: ["SUB-082", "LLM06"] },
+    { id: "f2", resourceId: "missing", ruleShortId: "SUB-099", severity: "LOW", frameworkCodes: ["SUB-099"] },
+  ];
+
+  it("unions finding gaps with the issue-framework heuristic + guardrail, deduped", () => {
+    const hints = buildAarsHintsFromFindings(findings, doc, issues);
+    const h = hints["asset-1"];
+    expect(h).toBeDefined();
+    const codes = h.gaps.map((g) => g.code).sort();
+    // LLM06 from the issue AND the finding (deduped once), NO_GUARDRAIL from the flag,
+    // SUB-082 from the finding.
+    expect(codes).toEqual(["LLM06", "NO_GUARDRAIL", "SUB-082"]);
+    expect(h.dataExposure).toBe("SENSITIVE");
+  });
+
+  it("omits resources with no node match, and assets with no findings", () => {
+    const hints = buildAarsHintsFromFindings(findings, doc, issues);
+    expect(hints["missing"]).toBeUndefined(); // finding f2's resource isn't in the doc
+    expect(hints["asset-2"]).toBeUndefined(); // no finding
   });
 });

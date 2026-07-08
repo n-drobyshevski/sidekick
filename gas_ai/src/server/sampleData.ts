@@ -9,7 +9,7 @@
 
 import { gap } from "../domain/aars";
 import type { AarsHints } from "../domain/graphEnrich";
-import type { GEdge, GNode, GraphDoc, IssueRow, NodeKind } from "../domain/graphTypes";
+import type { FindingRow, GEdge, GNode, GraphDoc, IssueRow, NodeKind } from "../domain/graphTypes";
 import { edgeId } from "../domain/graphTypes";
 import { classifyIssue } from "../domain/toxicCombos";
 
@@ -27,11 +27,15 @@ interface NodeSeed {
   account?: { id: string; name: string };
   projects?: string[];
   internet?: boolean | null;
+  openInternet?: boolean | null;
   sensitiveData?: boolean;
   sensitiveAccess?: boolean;
   highPriv?: boolean;
   adminPriv?: boolean;
   guardrailMissing?: boolean;
+  techCats?: string[];
+  identityPurpose?: string;
+  issueAnalytics?: GNode["issueAnalytics"];
 }
 
 function node(seed: NodeSeed): GNode {
@@ -46,6 +50,7 @@ function node(seed: NodeSeed): GNode {
     firstSeen: T0,
     lastSeen: T1,
     isAccessibleFromInternet: seed.internet === undefined ? false : seed.internet,
+    isOpenToAllInternet: seed.openInternet === undefined ? false : seed.openInternet,
     hasSensitiveData: seed.sensitiveData ?? false,
     hasAccessToSensitiveData: seed.sensitiveAccess ?? false,
     hasHighPrivileges: seed.highPriv ?? false,
@@ -53,6 +58,9 @@ function node(seed: NodeSeed): GNode {
     guardrailMissing: seed.guardrailMissing ?? false,
     cloudAccount: seed.account ? { id: seed.account.id, name: seed.account.name } : undefined,
     projects: (seed.projects ?? []).map((name) => ({ id: `proj-${name.toLowerCase()}`, name })),
+    technologyCategories: seed.techCats,
+    identityPurpose: seed.identityPurpose,
+    issueAnalytics: seed.issueAnalytics,
   };
 }
 
@@ -75,6 +83,7 @@ function gcpAgent(seed: AgentSeed): NodeSeed {
     kind: "AI_AGENT",
     cloud: seed.cloud ?? "GCP",
     nativeType: seed.nativeType ?? GCP_MANAGED,
+    techCats: seed.techCats ?? ["AI Service"],
   };
 }
 
@@ -113,6 +122,7 @@ const AGENTS: NodeSeed[] = [
     id: "agent-e", name: "Agent-E", region: "us-west1",
     account: { id: "gcp-account-03", name: "gcp-account-03" },
     projects: ["PROJECT-ALPHA", "PROJECT-GAMMA"],
+    internet: true, openInternet: true, // demonstrates the internet-exposure topology node
     sensitiveAccess: true, highPriv: true, guardrailMissing: true,
   }),
   gcpAgent({
@@ -135,7 +145,7 @@ const AGENTS: NodeSeed[] = [
     nativeType: GCP_HOSTED,
     account: { id: "gcp-account-05", name: "gcp-account-05" },
     projects: ["PROJECT-ALPHA", "PROJECT-DELTA", "PROJECT-EPSILON"],
-    internet: null, // hosted: exposure inherited from the Cloud Run service
+    internet: null, openInternet: null, // hosted: exposure inherited from the Cloud Run service
     sensitiveAccess: true, highPriv: true, guardrailMissing: true,
   }),
   gcpAgent({
@@ -143,7 +153,7 @@ const AGENTS: NodeSeed[] = [
     nativeType: GCP_HOSTED, status: "Inactive",
     account: { id: "gcp-account-04", name: "gcp-account-04" },
     projects: ["PROJECT-ALPHA", "PROJECT-ZETA"],
-    internet: null, // hosted: exposure inherited from the VM
+    internet: null, openInternet: null, // hosted: exposure inherited from the VM
     sensitiveAccess: true, highPriv: true, guardrailMissing: true,
   }),
   gcpAgent({
@@ -231,16 +241,36 @@ const GCP_AGENT_IDS = [
 ];
 for (const agentId of GCP_AGENT_IDS) {
   const saId = `sa-${agentId}`;
+  const highPriv = agentId !== "agent-l-support";
   extraNodes.push({
     id: saId,
     kind: "SERVICE_ACCOUNT",
     name: `${saId}@iam.gserviceaccount.com`,
     cloud: "GCP",
-    highPriv: agentId !== "agent-l-support",
+    highPriv,
     sensitiveAccess: !["agent-j", "agent-k", "agent-l-support"].includes(agentId),
+    // These execution identities are agentic (identityPurpose:AGENTIC in Wiz); a small
+    // related-issue rollup drives the inventory "Agentic identities" KPI + the badge.
+    identityPurpose: "AGENTIC",
+    techCats: ["Identity"],
+    issueAnalytics: highPriv
+      ? { total: 1, info: 0, low: 0, medium: 1, high: 0, critical: 0 }
+      : { total: 0, info: 0, low: 0, medium: 0, high: 0, critical: 0 },
   });
   edges.push(edge(agentId, "RUNS_AS", saId));
 }
+
+// An agentic ACCESS_KEY (long-lived credential) — exercises the ACCESS_KEY node kind.
+extraNodes.push({
+  id: "key-agent-autogen",
+  kind: "ACCESS_KEY",
+  name: "AKIA-AUTOGEN-AGENT-KEY",
+  cloud: "AWS",
+  identityPurpose: "AGENTIC",
+  sensitiveAccess: true,
+  issueAnalytics: { total: 2, info: 0, low: 1, medium: 1, high: 0, critical: 0 },
+});
+edges.push(edge("agent-autogen", "RUNS_AS", "key-agent-autogen"));
 
 // IAM access from service accounts to data resources (the sensitive-data legs).
 const SA_ACCESS: Array<[string, string, GEdge["accessType"]]> = [
@@ -329,6 +359,8 @@ interface IssueSeed {
   justification: string;
   frameworks: IssueRow["frameworks"];
   createdAt: string;
+  dueAt?: string;
+  resolutionRecommendation?: string;
 }
 
 function issue(seed: IssueSeed): IssueRow {
@@ -349,6 +381,8 @@ function issue(seed: IssueSeed): IssueRow {
     frameworks: seed.frameworks,
     justification: seed.justification,
     createdAt: seed.createdAt,
+    dueAt: seed.dueAt,
+    resolutionRecommendation: seed.resolutionRecommendation,
   };
 }
 
@@ -410,6 +444,11 @@ for (const g of G2) {
       justification: g.why,
       frameworks: { owaspLlm: g.llm, owaspAgentic: g.asi, owaspMl: g.ml, fiveRs: g.fiveRs },
       createdAt: "2026-05-20T11:40:00Z",
+      dueAt: "2026-08-18T11:40:00Z",
+      resolutionRecommendation:
+        "Apply least-privilege to the agent's execution service account; remove IAM " +
+        "bindings that grant access to sensitive data, and attach a guardrail that limits " +
+        "the agent's data-access scope at runtime.",
     }));
   }
 }
@@ -487,11 +526,48 @@ for (const role of awsRoles) {
   };
 }
 
+// ----------------------------------------------------------- config-findings (dry-run)
+// Failing compliance findings keyed to the resources they fail on. Display-only in
+// dry-run (the applied AARS table is pinned by SEED_AARS_HINTS); on live syncs the
+// equivalent findings drive AARS pillar B via buildAarsHintsFromFindings.
+
+const SEED_FINDINGS_DATA: FindingRow[] = [
+  {
+    id: "cfg-001",
+    resourceId: "agent-a",
+    ruleShortId: "SUB-082",
+    severity: "MEDIUM",
+    remediation:
+      "Encrypt the Vertex AI metadata store with a customer-managed key and restrict the " +
+      "agent service account's access to it.",
+    frameworkCodes: ["SUB-082", "LLM06"],
+  },
+  {
+    id: "cfg-002",
+    resourceId: "agent-h-chatbot",
+    ruleShortId: "SUB-114",
+    severity: "HIGH",
+    remediation:
+      "Disable public ingress on the Cloud Run service hosting the agent, or place it " +
+      "behind an authenticated load balancer.",
+    frameworkCodes: ["SUB-114"],
+  },
+  {
+    id: "cfg-003",
+    resourceId: "agent-e",
+    ruleShortId: "SUB-047",
+    severity: "MEDIUM",
+    remediation: "Enable audit logging for all data access performed by the agent identity.",
+    frameworkCodes: ["SUB-047"],
+  },
+];
+
 // ------------------------------------------------------------------------- exports
 
 export const SEED_NODES: GNode[] = [...AGENTS, ...awsRoles, ...SUPPORT, ...extraNodes].map(node);
 export const SEED_EDGES: GEdge[] = edges;
 export const SEED_ISSUES: IssueRow[] = issues;
+export const SEED_FINDINGS: FindingRow[] = SEED_FINDINGS_DATA;
 export const SEED_AARS_HINTS: AarsHints = HINTS;
 
 /** The raw (un-enriched) seed graph; persistSync enriches it like a live sync. */

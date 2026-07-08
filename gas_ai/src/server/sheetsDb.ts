@@ -13,6 +13,7 @@ export const TABS = {
   assets: "ai_assets",
   edges: "ai_edges",
   issues: "ai_issues",
+  findings: "ai_findings",
   syncHistory: "sync_history",
   settings: "settings",
   jobs: "jobs",
@@ -23,15 +24,20 @@ export const TAB_HEADERS: Record<string, string[]> = {
   [TABS.assets]: [
     "id", "kind", "name", "native_type", "cloud", "region", "status",
     "account_id", "account_name", "projects_json", "first_seen", "last_seen",
-    "internet", "sensitive_data", "sensitive_access", "high_priv", "admin_priv",
-    "guardrail_missing", "severity", "aars", "aars_band", "aars_pillars_json",
-    "combo_groups", "tags_json",
+    "internet", "open_internet", "sensitive_data", "sensitive_access", "high_priv",
+    "admin_priv", "guardrail_missing", "severity", "aars", "aars_band",
+    "aars_pillars_json", "combo_groups", "tags_json", "technology_categories",
+    "identity_purpose", "issue_analytics_json",
   ],
   [TABS.edges]: ["id", "src", "dst", "type", "negated", "access_type"],
   [TABS.issues]: [
     "id", "rule_id", "rule_name", "combo_group", "native_severity", "adjusted_severity",
     "status", "asset_id", "asset_name", "region", "account", "projects_json",
     "frameworks_json", "justification", "created_at",
+    "due_at", "resolution_recommendation", "remediation",
+  ],
+  [TABS.findings]: [
+    "id", "resource_id", "rule_short_id", "severity", "remediation", "framework_codes",
   ],
   [TABS.syncHistory]: [
     "sync_id", "started_at", "finished_at", "status", "mode",

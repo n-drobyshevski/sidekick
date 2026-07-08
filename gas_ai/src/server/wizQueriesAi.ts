@@ -1,13 +1,17 @@
-// The live sync's GraphQL battery, transcribed from ai/queries/4_guardrail_coverage.md,
-// 4_human_identity.md and 6_IAM.MD. Documents are plain concatenated strings (no
+// The live sync's GraphQL battery. Documents are plain concatenated strings (no
 // backticks) for consistency with the client-bundle constraint and easy diffing.
 //
-// Two API entry points:
-//   cloudResourcesV2(first, after, filterBy)  — flat inventory
-//   graphSearch(quick, first, after, query)   — relationship traversal
-// Response shapes are inferred from these selection sets; the empty
-// ai/queries/reponse_schemas/ stubs should be filled from real captures during
-// live validation, and the normalizers reconciled against them.
+// Four API entry points:
+//   cloudResourcesV2(first, after, filterBy)       — flat inventory / identities
+//   graphSearch(quick, first, after, query)        — relationship traversal
+//   issuesV2(first, after, filterBy, orderBy)      — real toxic-combination issues
+//   configurationFindings(first, after, filterBy)  — compliance findings
+// The cloudResourcesV2/graphSearch selection sets are inferred from ai/queries/*.md;
+// the issuesV2 / configurationFindings selections are transcribed from the real tenant
+// captures in gas_ai/exemples/ (toxic_combos_*, ai_cloud_config_findings_*,
+// agentic_idenities_*, get_ai_agents_*). Reconcile the normalizers against those.
+
+import { RISK_CATEGORY_ID } from "../domain/toxicCombos";
 
 export const PAGE_SIZE = 100;
 export const PAGE_SIZE_FALLBACK = 50;
@@ -30,10 +34,12 @@ const RESOURCE_FIELDS =
   "      lastSeen\n" +
   "      externalId\n" +
   "      isAccessibleFromInternet\n" +
+  "      isOpenToAllInternet\n" +
   "      hasSensitiveData\n" +
   "      hasAccessToSensitiveData\n" +
   "      hasAdminPrivileges\n" +
   "      hasHighPrivileges\n" +
+  "      technology { id name categories { id name } }\n" +
   "      cloudAccount { id name externalId cloudProvider }\n" +
   "      projects { id name riskProfile { businessImpact } }\n" +
   "      tags { key value }\n";
@@ -52,10 +58,12 @@ const ENTITY_FIELDS =
   "          lastSeen\n" +
   "          externalId\n" +
   "          isAccessibleFromInternet\n" +
+  "          isOpenToAllInternet\n" +
   "          hasSensitiveData\n" +
   "          hasAccessToSensitiveData\n" +
   "          hasAdminPrivileges\n" +
   "          hasHighPrivileges\n" +
+  "          technology { id name categories { id name } }\n" +
   "          cloudAccount { id name externalId cloudProvider }\n" +
   "          projects { id name riskProfile { businessImpact } }\n" +
   "          tags { key value }\n" +
@@ -244,3 +252,178 @@ export const Q_IDENTITY_ACCESS = graphSearchQuery(
   "      }\n" +
   "    }]\n",
 );
+
+// ------------------------------------------------------------ issuesV2 (real issues)
+
+// Trimmed from exemples/toxic_combos_request.js: only the fields the normalizer reads.
+// sourceRules carries both inline fragments — the tenant capture returned `Control`
+// with id "wc-id-3217" and a resolutionRecommendation, but CloudConfigurationRule is
+// the other shape source rules take, so both are selected.
+export const Q_ISSUES =
+  "query SidekickAiIssues($first: Int, $after: String, $filterBy: IssueFilters, $orderBy: IssueOrder) {\n" +
+  "  issuesV2(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {\n" +
+  "    totalCount\n" +
+  "    pageInfo { hasNextPage endCursor }\n" +
+  "    nodes {\n" +
+  "      id\n" +
+  "      type\n" +
+  "      severity\n" +
+  "      status\n" +
+  "      createdAt\n" +
+  "      updatedAt\n" +
+  "      dueAt\n" +
+  "      projects { id name riskProfile { businessImpact } }\n" +
+  "      entitySnapshot {\n" +
+  "        id\n" +
+  "        type\n" +
+  "        name\n" +
+  "        cloudPlatform\n" +
+  "        region\n" +
+  "        subscriptionName\n" +
+  "        nativeType\n" +
+  "        externalId\n" +
+  "      }\n" +
+  "      sourceRules {\n" +
+  "        ... on Control {\n" +
+  "          id\n" +
+  "          name\n" +
+  "          description\n" +
+  "          severity\n" +
+  "          risks\n" +
+  "          threats\n" +
+  "          resolutionRecommendation\n" +
+  "        }\n" +
+  "        ... on CloudConfigurationRule {\n" +
+  "          id\n" +
+  "          name\n" +
+  "          description\n" +
+  "          risks\n" +
+  "          threats\n" +
+  "          control { resolutionRecommendation severity }\n" +
+  "        }\n" +
+  "      }\n" +
+  "    }\n" +
+  "  }\n" +
+  "}\n";
+
+/**
+ * The $filterBy / $orderBy variables for Q_ISSUES. Filters to OPEN/IN_PROGRESS
+ * toxic-combination issues under the AI risk category (wct-id-1998), optionally
+ * scoped to a project (WIZ_PROJECT_ID_V2 via projectScope()). Pure — scope is a
+ * parameter so the document stays static and the builder is unit-testable.
+ */
+export function aiIssuesVariables(scope: string[] | null): { filterBy: unknown; orderBy: unknown } {
+  const filterBy: Record<string, unknown> = {
+    status: ["OPEN", "IN_PROGRESS"],
+    riskEqualsAny: [RISK_CATEGORY_ID],
+    type: ["TOXIC_COMBINATION"],
+  };
+  if (scope && scope.length) filterBy["project"] = scope;
+  return { filterBy, orderBy: { field: "SEVERITY_EXPLOITABLE", direction: "DESC" } };
+}
+
+// --------------------------------------------------- configurationFindings (compliance)
+
+// Trimmed from exemples/ai_cloud_config_findings_request.js (the @include directives are
+// dropped; totalCount is selected plainly). Feeds AARS pillar B and carries remediation.
+export const Q_CONFIG_FINDINGS =
+  "query SidekickAiConfigFindings($first: Int, $after: String, $filterBy: ConfigurationFindingFilters, $orderBy: ConfigurationFindingOrder) {\n" +
+  "  configurationFindings(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {\n" +
+  "    totalCount\n" +
+  "    pageInfo { hasNextPage endCursor }\n" +
+  "    nodes {\n" +
+  "      id\n" +
+  "      name\n" +
+  "      severity\n" +
+  "      result\n" +
+  "      status\n" +
+  "      remediation\n" +
+  "      source\n" +
+  "      targetExternalId\n" +
+  "      subscription { id name externalId cloudProvider }\n" +
+  "      resource {\n" +
+  "        id\n" +
+  "        name\n" +
+  "        type\n" +
+  "        projects { id name riskProfile { businessImpact } }\n" +
+  "      }\n" +
+  "      rule {\n" +
+  "        id\n" +
+  "        shortId\n" +
+  "        name\n" +
+  "        description\n" +
+  "        remediationInstructions\n" +
+  "        risks\n" +
+  "        threats\n" +
+  "        tags { key value }\n" +
+  "        opaPolicy\n" +
+  "      }\n" +
+  "    }\n" +
+  "  }\n" +
+  "}\n";
+
+/**
+ * The $filterBy / $orderBy variables for Q_CONFIG_FINDINGS. OPEN findings under the AI
+ * risk framework category (wct-id-1998), optionally project-scoped (the resource filter
+ * nests projectId, matching the capture). Pure — scope is a parameter.
+ */
+export function aiConfigFindingsVariables(
+  scope: string[] | null,
+): { filterBy: unknown; orderBy: unknown } {
+  const filterBy: Record<string, unknown> = {
+    status: ["OPEN"],
+    frameworkCategory: [RISK_CATEGORY_ID],
+  };
+  if (scope && scope.length) filterBy["resource"] = { projectId: scope };
+  return { filterBy, orderBy: { field: "SEVERITY", direction: "DESC" } };
+}
+
+// ------------------------------------------------- agentic identities (principals)
+
+// Trimmed from exemples/agentic_idenities_request.js. Reuses the cloudResourcesV2 root
+// (fetchCloudResourcesPage / run:"cloudResources"); the extra field over RESOURCE_FIELDS
+// is issueAnalytics (per-identity related-issue severity counts, shown as a badge).
+export const Q_PRINCIPALS =
+  "query SidekickAiPrincipals($first: Int, $after: String, $filterBy: CloudResourceV2Filters, $orderBy: CloudResourceOrder) {\n" +
+  "  cloudResourcesV2(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {\n" +
+  "    totalCount\n" +
+  "    pageInfo { hasNextPage endCursor }\n" +
+  "    nodes {\n" +
+  "      id\n" +
+  "      name\n" +
+  "      type\n" +
+  "      nativeType\n" +
+  "      hasSensitiveData\n" +
+  "      hasAccessToSensitiveData\n" +
+  "      hasAdminPrivileges\n" +
+  "      hasHighPrivileges\n" +
+  "      technology { id name categories { id name } }\n" +
+  "      cloudAccount { id name externalId cloudProvider }\n" +
+  "      projects { id name riskProfile { businessImpact } }\n" +
+  "      issueAnalytics {\n" +
+  "        issueCount\n" +
+  "        informationalSeverityCount\n" +
+  "        lowSeverityCount\n" +
+  "        mediumSeverityCount\n" +
+  "        highSeverityCount\n" +
+  "        criticalSeverityCount\n" +
+  "      }\n" +
+  "    }\n" +
+  "  }\n" +
+  "}\n";
+
+/**
+ * The $filterBy / $orderBy for Q_PRINCIPALS: SERVICE_ACCOUNT / ACCESS_KEY identities
+ * whose identityPurpose is AGENTIC (agent execution identities), optionally
+ * project-scoped. Pure — scope is a parameter.
+ */
+export function aiPrincipalsVariables(
+  scope: string[] | null,
+): { filterBy: unknown; orderBy: unknown } {
+  const filterBy: Record<string, unknown> = {
+    type: { equals: ["SERVICE_ACCOUNT", "ACCESS_KEY"] },
+    identityPurpose: { equals: ["AGENTIC"] },
+  };
+  if (scope && scope.length) filterBy["projectId"] = scope;
+  return { filterBy, orderBy: { field: "RELATED_ISSUE_SEVERITY", direction: "DESC" } };
+}

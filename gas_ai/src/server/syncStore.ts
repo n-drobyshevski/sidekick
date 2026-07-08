@@ -12,7 +12,7 @@ import {
   withSensitiveDataNodes,
   type AarsHints,
 } from "../domain/graphEnrich";
-import type { GEdge, GNode, GraphDoc, IssueRow, NodeKind } from "../domain/graphTypes";
+import type { FindingRow, GEdge, GNode, GraphDoc, IssueRow, NodeKind } from "../domain/graphTypes";
 import { edgeId } from "../domain/graphTypes";
 import type { Severity } from "../domain/config";
 import { nowIso, type Rec } from "../domain/util";
@@ -61,17 +61,21 @@ export function assetToRow(n: GNode): Rec {
     first_seen: n.firstSeen ?? null,
     last_seen: n.lastSeen ?? null,
     internet: triCell(n.isAccessibleFromInternet),
+    open_internet: triCell(n.isOpenToAllInternet),
     sensitive_data: boolCell(n.hasSensitiveData),
     sensitive_access: boolCell(n.hasAccessToSensitiveData),
     high_priv: boolCell(n.hasHighPrivileges),
     admin_priv: boolCell(n.hasAdminPrivileges),
     guardrail_missing: boolCell(n.guardrailMissing),
+    technology_categories: (n.technologyCategories ?? []).join(","),
     severity: n.severity ?? null,
     aars: n.aars ?? null,
     aars_band: n.aarsBand ?? null,
     aars_pillars_json: n.aarsPillars ? JSON.stringify(n.aarsPillars) : null,
     combo_groups: (n.comboGroups ?? []).join(","),
     tags_json: n.tags ? JSON.stringify(n.tags) : null,
+    identity_purpose: n.identityPurpose ?? null,
+    issue_analytics_json: n.issueAnalytics ? JSON.stringify(n.issueAnalytics) : null,
   };
 }
 
@@ -87,6 +91,7 @@ export function rowToAsset(r: Rec): GNode {
     firstSeen: (r["first_seen"] as string | null) ?? undefined,
     lastSeen: (r["last_seen"] as string | null) ?? undefined,
     isAccessibleFromInternet: parseTri(r["internet"]),
+    isOpenToAllInternet: parseTri(r["open_internet"]),
     hasSensitiveData: parseBool(r["sensitive_data"]),
     hasAccessToSensitiveData: parseBool(r["sensitive_access"]),
     hasHighPrivileges: parseBool(r["high_priv"]),
@@ -112,6 +117,12 @@ export function rowToAsset(r: Rec): GNode {
   if (combos) node.comboGroups = combos.split(",").filter(Boolean);
   const tags = parseJson<GNode["tags"] | null>(r["tags_json"], null);
   if (tags) node.tags = tags;
+  const techCats = String(r["technology_categories"] ?? "").split(",").filter(Boolean);
+  if (techCats.length) node.technologyCategories = techCats;
+  const purpose = (r["identity_purpose"] as string | null) ?? null;
+  if (purpose) node.identityPurpose = purpose;
+  const analytics = parseJson<GNode["issueAnalytics"] | null>(r["issue_analytics_json"], null);
+  if (analytics) node.issueAnalytics = analytics;
   return node;
 }
 
@@ -156,6 +167,9 @@ export function issueToRow(i: IssueRow): Rec {
     frameworks_json: JSON.stringify(i.frameworks ?? {}),
     justification: i.justification ?? null,
     created_at: i.createdAt ?? null,
+    due_at: i.dueAt ?? null,
+    resolution_recommendation: i.resolutionRecommendation ?? null,
+    remediation: i.remediation ?? null,
   };
 }
 
@@ -176,6 +190,31 @@ export function rowToIssue(r: Rec): IssueRow {
     frameworks: parseJson<IssueRow["frameworks"]>(r["frameworks_json"], {}),
     justification: (r["justification"] as string | null) ?? undefined,
     createdAt: (r["created_at"] as string | null) ?? undefined,
+    dueAt: (r["due_at"] as string | null) ?? undefined,
+    resolutionRecommendation: (r["resolution_recommendation"] as string | null) ?? undefined,
+    remediation: (r["remediation"] as string | null) ?? undefined,
+  };
+}
+
+export function findingToRow(f: FindingRow): Rec {
+  return {
+    id: f.id,
+    resource_id: f.resourceId,
+    rule_short_id: f.ruleShortId,
+    severity: f.severity,
+    remediation: f.remediation ?? null,
+    framework_codes: (f.frameworkCodes ?? []).join(","),
+  };
+}
+
+export function rowToFinding(r: Rec): FindingRow {
+  return {
+    id: String(r["id"] ?? ""),
+    resourceId: String(r["resource_id"] ?? ""),
+    ruleShortId: String(r["rule_short_id"] ?? ""),
+    severity: String(r["severity"] ?? "UNKNOWN") as Severity,
+    remediation: (r["remediation"] as string | null) ?? undefined,
+    frameworkCodes: String(r["framework_codes"] ?? "").split(",").filter(Boolean),
   };
 }
 
@@ -198,6 +237,7 @@ export function persistSync(
   hints: AarsHints | undefined,
   meta: SyncMeta,
   now?: number,
+  findings: FindingRow[] = [],
 ): GraphDoc {
   const enriched = enrichGraphDoc(rawDoc, issues, hints);
 
@@ -207,6 +247,7 @@ export function persistSync(
   overwrite(TABS.assets, assetNodes.map(assetToRow));
   overwrite(TABS.edges, assetEdges.map(edgeToRow));
   overwrite(TABS.issues, issues.map(issueToRow));
+  overwrite(TABS.findings, findings.map(findingToRow));
 
   const snapshotRef = writeGraphSnapshot(enriched);
 
@@ -238,11 +279,13 @@ export function persistSync(
 let graphDocMemo: GraphDoc | null | undefined;
 let assetsMemo: GNode[] | undefined;
 let issuesMemo: IssueRow[] | undefined;
+let findingsMemo: FindingRow[] | undefined;
 
 function invalidateReadMemos(): void {
   graphDocMemo = undefined;
   assetsMemo = undefined;
   issuesMemo = undefined;
+  findingsMemo = undefined;
 }
 
 /** The enriched graph: Drive snapshot fast path, tab rebuild fallback. */
@@ -300,6 +343,11 @@ export function loadIssues(): IssueRow[] {
   return issuesMemo;
 }
 
+export function loadFindings(): FindingRow[] {
+  if (findingsMemo === undefined) findingsMemo = readAll(TABS.findings).map(rowToFinding);
+  return findingsMemo;
+}
+
 export function syncHistory(): Rec[] {
   return readAll(TABS.syncHistory);
 }
@@ -315,6 +363,7 @@ export function resetData(): void {
   overwrite(TABS.assets, []);
   overwrite(TABS.edges, []);
   overwrite(TABS.issues, []);
+  overwrite(TABS.findings, []);
   overwrite(TABS.syncHistory, []);
   trashGraphSnapshot();
   bumpDataVersion();

@@ -41,6 +41,19 @@ export function deleteProp(key: string): void {
 }
 
 /**
+ * Project scope for the Wiz queries that accept a project filter, from the
+ * WIZ_PROJECT_ID_V2 Script Property. Returns `[id]` when set, else `null` (query
+ * every project). The four captured queries hardcode a tenant project id; routing
+ * scope through this prop keeps that id out of the shipped code and lets operators
+ * narrow a large tenant. Matches the diagnostics message ("unset — querying all
+ * projects") and the sibling gas tool's projectIdV2 behavior.
+ */
+export function projectScope(): string[] | null {
+  const id = getProp(PROP_KEYS.wizProjectIdV2);
+  return id && id.trim() ? [id.trim()] : null;
+}
+
+/**
  * Which auth mode the configured secrets select, or null if none is usable.
  * A raw `WIZ_API_TOKEN` (used directly as a bearer token) takes precedence over the
  * `WIZ_CLIENT_ID`/`WIZ_CLIENT_SECRET` OAuth client-credentials exchange. Pure so the

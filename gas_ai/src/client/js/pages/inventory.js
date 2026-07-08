@@ -58,6 +58,8 @@ export async function renderInventory(main, params) {
           "agents protected by a guardrail"),
         kpiCard("Sensitive data access", String(kpis.sensitiveAccess), "AI assets"),
         kpiCard("Open issues", String(kpis.openIssues), "toxic-combination instances"),
+        kpiCard("Compliance gaps", String(kpis.complianceGaps ?? 0), "failing config findings"),
+        kpiCard("Agentic identities", String(kpis.agenticIdentities ?? 0), "AGENTIC service accounts / keys"),
       ),
     );
 
@@ -96,7 +98,10 @@ export async function renderInventory(main, params) {
           if (e.key === "Enter") openAssetSheet(row.id, { title: row.name });
         },
       },
-        el("td", {}, row.name),
+        el("td", {}, row.name,
+          row.identityPurpose === "AGENTIC"
+            ? el("span", { class: "pill", style: "margin-left:6px" }, "Agentic")
+            : null),
         el("td", {}, kindLabel(row.kind)),
         el("td", {}, row.cloud || "—"),
         el("td", {}, row.region || "—"),
