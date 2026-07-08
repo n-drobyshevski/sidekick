@@ -31,6 +31,17 @@
   --warn: #a16207;
   --bad: #b91c1c;
 
+  /* Graph node categories — reinforce the kind icon + label, never the only cue. Chosen
+     OFF the severity channel (indigo not #2563eb, gold not #d97706) so the severity dot
+     reads true; vuln reuses the brand crimson (already the risk/toxic color). Each has a
+     saturated `ink` (icon + accent stripe, ≥3:1 graphical), a darker `text`, and a pale
+     `tint` fill that keeps --ink node text ≥4.5:1. */
+  --cat-asset-ink: #4f46e5;    --cat-asset-text: #4338ca;    --cat-asset-tint: #eef2ff;
+  --cat-data-ink: #059669;     --cat-data-text: #047857;     --cat-data-tint: #ecfdf5;
+  --cat-iam-ink: #7c3aed;      --cat-iam-text: #6d28d9;      --cat-iam-tint: #f5f3ff;
+  --cat-vuln-ink: #be123c;     --cat-vuln-text: #9f1239;     --cat-vuln-tint: #fff1f2;
+  --cat-exposure-ink: #ca8a04; --cat-exposure-text: #854d0e; --cat-exposure-tint: #fefce8;
+
   --radius-sm: 6px;
   --radius-md: 8px;
   --radius-lg: 10px;
@@ -597,6 +608,28 @@ a { color: var(--accent); }
 .gnode-kind { font-size: 10px; fill: rgba(0, 0, 0, 0.5); letter-spacing: 0.04em; }
 .gnode-icon { fill: none; stroke: rgba(0, 0, 0, 0.6); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .gnode-chip-text { font-size: 10px; font-weight: 700; }
+/* Node category color: a pale tinted box + saturated icon + a left accent stripe. Color
+   only reinforces the icon + label (never the sole cue). Applied to fill/icon/stripe, NOT
+   the box stroke — so hover and the crimson focus-visible ring keep working over the tint. */
+.gnode-accent { display: none; }
+.gnode[data-category] .gnode-accent { display: block; }
+.gnode[data-category="asset"] .gnode-box { fill: var(--cat-asset-tint); }
+.gnode[data-category="asset"] .gnode-icon { stroke: var(--cat-asset-ink); }
+.gnode[data-category="asset"] .gnode-accent { fill: var(--cat-asset-ink); }
+.gnode[data-category="data"] .gnode-box { fill: var(--cat-data-tint); }
+.gnode[data-category="data"] .gnode-icon { stroke: var(--cat-data-ink); }
+.gnode[data-category="data"] .gnode-accent { fill: var(--cat-data-ink); }
+.gnode[data-category="iam"] .gnode-box { fill: var(--cat-iam-tint); }
+.gnode[data-category="iam"] .gnode-icon { stroke: var(--cat-iam-ink); }
+.gnode[data-category="iam"] .gnode-accent { fill: var(--cat-iam-ink); }
+.gnode[data-category="vuln"] .gnode-box { fill: var(--cat-vuln-tint); }
+.gnode[data-category="vuln"] .gnode-icon { stroke: var(--cat-vuln-ink); }
+.gnode[data-category="vuln"] .gnode-accent { fill: var(--cat-vuln-ink); }
+.gnode[data-category="exposure"] .gnode-box { fill: var(--cat-exposure-tint); }
+.gnode[data-category="exposure"] .gnode-icon { stroke: var(--cat-exposure-ink); }
+.gnode[data-category="exposure"] .gnode-accent { fill: var(--cat-exposure-ink); }
+/* neutral (SUMMARY): no tint, no stripe — keep the existing collapse-pill look. */
+.gnode[data-category="neutral"] .gnode-accent { display: none; }
 /* Toxic-combination member: crimson halo ring + "TC" glyph badge — the halo is brand
    crimson (membership marker), while severity stays on the dot+label chip. */
 .gnode-halo { fill: none; stroke: var(--accent); stroke-width: 2; stroke-dasharray: 2 3; }
@@ -633,6 +666,10 @@ a { color: var(--accent); }
 }
 .legend-swatch-negated {
   width: 22px; height: 0; border-top: 2px dashed var(--sev-high); display: inline-block;
+}
+.legend-swatch-cat {
+  width: 12px; height: 12px; border-radius: 3px; display: inline-block;
+  background: var(--swatch, var(--hairline));
 }
 
 /* AARS pillar bars (asset sheet) */

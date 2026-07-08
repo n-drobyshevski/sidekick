@@ -6,7 +6,7 @@
 // aria-label suffix; missing guardrail = dashed amber stub + text label; severity =
 // dot + label chip. Kind = icon + text label.
 
-import { kindIcon, kindLabel } from "./icons.js";
+import { categoryOf, kindIcon, kindLabel } from "./icons.js";
 import { el } from "./ui.js";
 
 // No literal `//` (middlebox guard) — see icons.js for the full note.
@@ -217,6 +217,7 @@ export function renderGraph(container, data, handlers = {}) {
       role: "button",
       "aria-label": nodeAriaLabel(node),
       "data-id": node.id,
+      "data-category": categoryOf(node.kind),
     });
 
     // Toxic-combo halo (behind the card).
@@ -230,6 +231,14 @@ export function renderGraph(container, data, handlers = {}) {
     g.append(svgEl("rect", {
       class: "gnode-box", x: 0, y: 0, width: NODE_W, height: NODE_H, rx: 10,
     }));
+
+    // Category accent stripe (left edge). Reinforces the kind icon + label; CSS colors it
+    // per data-category and hides it for summary/neutral nodes.
+    if (!isSummary) {
+      g.append(svgEl("rect", {
+        class: "gnode-accent", x: 3, y: 8, width: 3, height: NODE_H - 16, rx: 1.5,
+      }));
+    }
 
     // Kind icon + labels.
     const icon = kindIcon(node.kind === "SUMMARY" ? "SUMMARY" : node.kind);

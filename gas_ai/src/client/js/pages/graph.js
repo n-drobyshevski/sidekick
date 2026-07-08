@@ -9,7 +9,7 @@
 import { bootstrap, listJoin, listSplit, parseHash, setParams, swrCall } from "../store.js";
 import { openAssetSheet } from "../detailSheets.js";
 import { graphTable, renderGraph } from "../graphView.js";
-import { kindLabel } from "../icons.js";
+import { CATEGORY_LABELS, CATEGORY_ORDER, kindLabel } from "../icons.js";
 import { clear, el, emptyState, openSheet, sevBadge } from "../ui.js";
 
 const DEPTH_TEXT = {
@@ -592,6 +592,15 @@ function buildLegend(boot, payload) {
     legend.append(el("span", { class: "legend-item" },
       el("span", { class: "legend-swatch-group", "aria-hidden": "true" }),
       `box = ${GROUP_LABELS[groupBy] || groupBy} group`));
+  }
+  // Node-category color key (color reinforces the kind icon + label).
+  for (const cat of CATEGORY_ORDER) {
+    legend.append(el("span", { class: "legend-item" },
+      el("span", {
+        class: "legend-swatch-cat", "aria-hidden": "true",
+        style: `--swatch: var(--cat-${cat}-ink)`,
+      }),
+      CATEGORY_LABELS[cat]));
   }
   for (const s of (boot.palette?.order || []).filter((x) => x !== "UNKNOWN" && x !== "INFO")) {
     legend.append(el("span", { class: "legend-item" }, sevBadge(s)));

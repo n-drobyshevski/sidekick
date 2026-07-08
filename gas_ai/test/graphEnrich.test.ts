@@ -3,7 +3,11 @@
 // end-to-end through the hint path.
 
 import { describe, expect, it } from "vitest";
-import { enrichGraphDoc, withSensitiveDataNodes } from "../src/domain/graphEnrich";
+import {
+  enrichGraphDoc,
+  withInternetExposureNodes,
+  withSensitiveDataNodes,
+} from "../src/domain/graphEnrich";
 import type { GraphDoc } from "../src/domain/graphTypes";
 import { SEED_AARS_HINTS, SEED_ISSUES, seedGraphDoc } from "../src/server/sampleData";
 
@@ -82,6 +86,52 @@ describe("enrichGraphDoc", () => {
     // Re-applying must not duplicate the stub.
     const twice = withSensitiveDataNodes(once);
     expect(twice.nodes).toHaveLength(2);
+    expect(twice.edges).toHaveLength(1);
+  });
+
+  it("does NOT persist INTERNET_EXPOSURE topology (derived on read, not at sync)", () => {
+    const doc = enriched();
+    expect(doc.nodes.some((n) => n.kind === "INTERNET_EXPOSURE")).toBe(false);
+    expect(doc.edges.some((e) => e.type === "EXPOSED_TO_INTERNET")).toBe(false);
+  });
+
+  it("withInternetExposureNodes adds one node + edge per internet-exposed asset", () => {
+    const base = enriched();
+    const doc = withInternetExposureNodes(base);
+    const exposed = base.nodes.filter(
+      (n) => n.isAccessibleFromInternet === true || n.isOpenToAllInternet === true,
+    );
+    const expNodes = doc.nodes.filter((n) => n.kind === "INTERNET_EXPOSURE");
+    const expEdges = doc.edges.filter((e) => e.type === "EXPOSED_TO_INTERNET");
+    expect(exposed.length).toBeGreaterThan(0); // seed has run-agent-h
+    expect(expNodes).toHaveLength(exposed.length);
+    expect(expEdges).toHaveLength(exposed.length);
+    for (const e of expEdges) {
+      expect(e.dst).toBe(`internet|${e.src}`);
+      expect(expNodes.some((n) => n.id === e.dst)).toBe(true);
+    }
+    expect(expEdges.some((e) => e.src === "run-agent-h")).toBe(true);
+  });
+
+  it("withInternetExposureNodes ignores false/null exposure and is idempotent", () => {
+    const doc: GraphDoc = {
+      nodes: [
+        { id: "public-vm", kind: "VIRTUAL_MACHINE", name: "public", isAccessibleFromInternet: true },
+        { id: "private-vm", kind: "VIRTUAL_MACHINE", name: "private", isAccessibleFromInternet: false },
+        // null = inherited/undetermined — must NOT materialize an exposure node.
+        { id: "hosted-agent", kind: "AI_AGENT", name: "hosted", isAccessibleFromInternet: null },
+      ],
+      edges: [],
+      syncedAt: T,
+    };
+    const once = withInternetExposureNodes(doc);
+    const expNodes = once.nodes.filter((n) => n.kind === "INTERNET_EXPOSURE");
+    expect(expNodes).toHaveLength(1);
+    expect(once.edges).toHaveLength(1);
+    expect(once.edges[0].dst).toBe("internet|public-vm");
+    // Idempotent.
+    const twice = withInternetExposureNodes(once);
+    expect(twice.nodes.filter((n) => n.kind === "INTERNET_EXPOSURE")).toHaveLength(1);
     expect(twice.edges).toHaveLength(1);
   });
 

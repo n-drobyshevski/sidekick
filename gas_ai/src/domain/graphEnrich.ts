@@ -172,3 +172,41 @@ export function withSensitiveDataNodes(doc: GraphDoc): GraphDoc {
     syncedAt: doc.syncedAt,
   };
 }
+
+/**
+ * Read-time internet-exposure topology: append one synthetic INTERNET_EXPOSURE node +
+ * edge per node that is reachable from the internet, so exposure reads as a first-class
+ * neighbor the way SENSITIVE_DATA does for the data pillar. Derived on READ (applied by
+ * loadGraphDoc), never persisted — covers already-synced graphs and never leaks into the
+ * asset/inventory tables. Idempotent and pure.
+ *
+ * The predicate is strict `=== true`: `isAccessibleFromInternet` / `isOpenToAllInternet`
+ * are tri-state (true / false / null), and null means exposure is inherited from the
+ * underlying compute and undetermined — which must NOT be drawn as a definite exposure.
+ */
+export function withInternetExposureNodes(doc: GraphDoc): GraphDoc {
+  const existing = new Set(
+    doc.nodes.filter((n) => n.kind === "INTERNET_EXPOSURE").map((n) => n.id),
+  );
+  const exposureNodes: GNode[] = [];
+  const exposureEdges: GEdge[] = [];
+  for (const node of doc.nodes) {
+    if (node.kind === "INTERNET_EXPOSURE") continue;
+    if (node.isAccessibleFromInternet !== true && node.isOpenToAllInternet !== true) continue;
+    const expId = `internet|${node.id}`;
+    if (existing.has(expId)) continue;
+    exposureNodes.push({ id: expId, kind: "INTERNET_EXPOSURE", name: "Internet exposure" });
+    exposureEdges.push({
+      id: edgeId(node.id, "EXPOSED_TO_INTERNET", expId),
+      src: node.id,
+      dst: expId,
+      type: "EXPOSED_TO_INTERNET",
+    });
+  }
+  if (!exposureNodes.length) return doc;
+  return {
+    nodes: [...doc.nodes, ...exposureNodes],
+    edges: [...doc.edges, ...exposureEdges],
+    syncedAt: doc.syncedAt,
+  };
+}
