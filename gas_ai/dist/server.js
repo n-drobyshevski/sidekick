@@ -933,8 +933,10 @@ var Server = (() => {
     // synthetic
     "ISSUE",
     // one node per open risk issue (toxic-combination instance)
-    "SUMMARY"
+    "SUMMARY",
     // collapse node: "+N more <kind>" emitted by the projection
+    "SENSITIVE_DATA"
+    // one node per data-exposed asset (AARS pillar C topology)
   ];
   var AI_ASSET_KINDS = [
     "AI_AGENT",
@@ -1245,6 +1247,7 @@ var Server = (() => {
     ACCESS_ROLE_BINDING: 2,
     BUCKET: 3,
     DATABASE: 3,
+    SENSITIVE_DATA: 3,
     VIRTUAL_MACHINE: 4,
     SERVERLESS: 4,
     CONTAINER_IMAGE: 4,
@@ -2762,7 +2765,7 @@ var Server = (() => {
         node2.comboGroups = groups;
       }
       const hint = hints == null ? void 0 : hints[node2.id];
-      const scorable = node2.kind !== "ISSUE" && node2.kind !== "SUMMARY" && (AI_ASSET_KINDS.includes(node2.kind) || nodeIssues.length > 0 || hint !== void 0);
+      const scorable = node2.kind !== "ISSUE" && node2.kind !== "SUMMARY" && node2.kind !== "SENSITIVE_DATA" && (AI_ASSET_KINDS.includes(node2.kind) || nodeIssues.length > 0 || hint !== void 0);
       if (scorable) {
         const input = hint ? { issueSeverities: nodeIssues.map((i) => i.nativeSeverity), ...hint } : deriveAarsInput(node2, nodeIssues);
         const result = computeAars(input);
@@ -2786,9 +2789,18 @@ var Server = (() => {
       dst: issue2.id,
       type: "HAS_ISSUE"
     }));
+    const sensitiveNodes = [];
+    const sensitiveEdges = [];
+    for (const node2 of nodes) {
+      if (!node2.hasSensitiveData && !node2.hasAccessToSensitiveData) continue;
+      const sensId = `sensitive|${node2.id}`;
+      const type = node2.hasSensitiveData ? "HAS_SENSITIVE_DATA" : "HAS_ACCESS_TO_SENSITIVE_DATA";
+      sensitiveNodes.push({ id: sensId, kind: "SENSITIVE_DATA", name: "Sensitive data" });
+      sensitiveEdges.push({ id: edgeId(node2.id, type, sensId), src: node2.id, dst: sensId, type });
+    }
     return {
-      nodes: [...nodes, ...issueNodes],
-      edges: [...doc.edges, ...issueEdges],
+      nodes: [...nodes, ...issueNodes, ...sensitiveNodes],
+      edges: [...doc.edges, ...issueEdges, ...sensitiveEdges],
       syncedAt: doc.syncedAt
     };
   }
