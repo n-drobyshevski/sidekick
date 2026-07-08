@@ -8,11 +8,12 @@ import type { Rec } from "../domain/util";
 import { DEFAULT_WIZ_AUTH_URL, getProp, PROP_KEYS, requireProp } from "./props";
 import {
   AI_RESOURCE_TYPE_CANDIDATES,
+  aiInventoryVariables,
   chooseAiResourceTypes,
   isInvalidEnumValueError,
   PAGE_SIZE,
   PAGE_SIZE_FALLBACK,
-  qAiInventory,
+  Q_AI_INVENTORY,
 } from "./wizQueriesAi";
 
 export class WizQueryError extends Error {}
@@ -152,7 +153,11 @@ function probeCandidateTypes(
   const accepted: string[] = [];
   for (const t of candidates) {
     try {
-      fetchCloudResourcesPage({ query: qAiInventory([t]), first: 1 });
+      fetchCloudResourcesPage({
+        query: Q_AI_INVENTORY,
+        first: 1,
+        extraVariables: aiInventoryVariables([t]),
+      });
       accepted.push(t);
       say(`  ${t}: accepted`);
     } catch (e) {

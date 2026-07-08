@@ -424,27 +424,24 @@ var Server = (() => {
   var MAX_PAGES = 200;
   var RESOURCE_FIELDS = "      id\n      name\n      type\n      nativeType\n      cloudPlatform\n      region\n      status\n      firstSeen\n      lastSeen\n      externalId\n      isAccessibleFromInternet\n      hasSensitiveData\n      hasAccessToSensitiveData\n      hasAdminPrivileges\n      hasHighPrivileges\n      cloudAccount { id name externalId cloudProvider }\n      projects { id name }\n      tags { key value }\n";
   var ENTITY_FIELDS = "        id\n        name\n        type\n        nativeType\n        cloudPlatform\n        region\n        ... on CloudResource {\n          status\n          firstSeen\n          lastSeen\n          externalId\n          isAccessibleFromInternet\n          hasSensitiveData\n          hasAccessToSensitiveData\n          hasAdminPrivileges\n          hasHighPrivileges\n          cloudAccount { id name externalId cloudProvider }\n          projects { id name }\n          tags { key value }\n        }\n";
-  function cloudResourcesQuery(name, filterBy) {
-    return "query " + name + "($first: Int, $after: String) {\n  cloudResourcesV2(first: $first, after: $after, filterBy: {\n" + filterBy + "  }) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n" + RESOURCE_FIELDS + "    }\n  }\n}\n";
-  }
   function graphSearchQuery(name, queryBody) {
     return "query " + name + "($quick: Boolean, $first: Int, $after: String) {\n  graphSearch(quick: $quick, first: $first, after: $after, query: {\n" + queryBody + "  }) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      entities {\n" + ENTITY_FIELDS + "      }\n    }\n  }\n}\n";
   }
   var AI_RESOURCE_TYPE_CANDIDATES = [
-    "AI Agent",
-    "AI Agent Registry",
-    "AI Dataset",
-    "AI Deployment",
-    "AI Extension",
-    "AI Gateway",
-    "AI Guardrail",
-    "AI Model",
-    "AI Pipeline",
-    "AI Service",
-    "AI Skill",
-    "AI Skill Template",
-    "AI Tool",
-    "MCP Server"
+    "AI_AGENT",
+    "AI_AGENT_REGISTRY",
+    "AI_DATASET",
+    "AI_DEPLOYMENT",
+    "AI_EXTENSION",
+    "AI_GATEWAY",
+    "AI_GUARDRAIL",
+    "AI_MODEL",
+    "AI_PIPELINE",
+    "AI_SERVICE",
+    "AI_SKILL",
+    "AI_SKILL_TEMPLATE",
+    "AI_TOOL",
+    "MCP_SERVER"
   ];
   function chooseAiResourceTypes(enumValues, override) {
     if (override && override.length) return { types: override, source: "override", aiLooking: [] };
@@ -462,11 +459,12 @@ var Server = (() => {
     return { types: [], source: "none", aiLooking };
   }
   function isInvalidEnumValueError(message) {
+    if (/failed to parse object type/i.test(message)) return true;
     return /HTTP 400/.test(message) && /cannot represent value/i.test(message);
   }
-  function qAiInventory(types) {
-    const list = types.map((t) => JSON.stringify(t)).join(", ");
-    return cloudResourcesQuery("SidekickAiInventory", "    type: { equals: [" + list + "] }\n");
+  var Q_AI_INVENTORY = "query SidekickAiInventory($first: Int, $after: String, $filterBy: CloudResourceV2Filters) {\n  cloudResourcesV2(first: $first, after: $after, filterBy: $filterBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n" + RESOURCE_FIELDS + "    }\n  }\n}\n";
+  function aiInventoryVariables(types) {
+    return { filterBy: { type: { equals: [...types] } } };
   }
   var Q_RULE_ASSETS = 'query SidekickAiRuleAssets($first: Int, $after: String, $ruleIds: [String!]) {\n  cloudResourcesV2(first: $first, after: $after, filterBy: {\n    relatedIssue: { sourceRuleId: { equals: $ruleIds }, status: { equals: ["OPEN"] } }\n  }) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n' + RESOURCE_FIELDS + "    }\n  }\n}\n";
   var Q_AGENTS_NO_GUARDRAIL = graphSearchQuery(
@@ -584,7 +582,11 @@ var Server = (() => {
     const accepted = [];
     for (const t of candidates) {
       try {
-        fetchCloudResourcesPage({ query: qAiInventory([t]), first: 1 });
+        fetchCloudResourcesPage({
+          query: Q_AI_INVENTORY,
+          first: 1,
+          extraVariables: aiInventoryVariables([t])
+        });
         accepted.push(t);
         say(`  ${t}: accepted`);
       } catch (e) {
@@ -781,7 +783,11 @@ var Server = (() => {
       );
     }
     try {
-      const page = fetchCloudResourcesPage({ query: qAiInventory(chosen.types), first: 1 });
+      const page = fetchCloudResourcesPage({
+        query: Q_AI_INVENTORY,
+        first: 1,
+        extraVariables: aiInventoryVariables(chosen.types)
+      });
       log(
         `Step 3 OK: query succeeded \u2014 ${page.rows.length} AI asset(s) on page 1` + (page.totalCount !== null ? ` of ${page.totalCount} total` : "") + "."
       );
@@ -3042,7 +3048,8 @@ var Server = (() => {
       {
         id: "INVENTORY_AI",
         run: "cloudResources",
-        query: qAiInventory(resolveAiResourceTypes().types),
+        query: Q_AI_INVENTORY,
+        extraVariables: aiInventoryVariables(resolveAiResourceTypes().types),
         normalize: normalizeInventoryPage
       },
       // One cursor walk per toxic-combination source rule: the assets carrying an OPEN

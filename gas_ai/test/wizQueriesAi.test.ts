@@ -1,30 +1,31 @@
 // Tenant-schema tolerance: AI resource-type resolution and query building.
-// Real tenants rejected the hardcoded type list (GRAPHQL_VALIDATION_FAILED:
-// "CloudResourceTypeFilter cannot represent value") — the sync now resolves
-// its vocabulary against the tenant's actual enum members.
+// Ground truth is the captured working request (exemples/get_ai_agents_request.js):
+// enum-style values ("AI_AGENT") inside a $filterBy variable with the
+// { type: { equals: [...] } } operator shape.
 
 import { describe, expect, it } from "vitest";
 import { kindFromWizType } from "../src/domain/graphTypes";
 import {
   AI_RESOURCE_TYPE_CANDIDATES,
+  aiInventoryVariables,
   chooseAiResourceTypes,
   isInvalidEnumValueError,
-  qAiInventory,
+  Q_AI_INVENTORY,
 } from "../src/server/wizQueriesAi";
 
 describe("chooseAiResourceTypes", () => {
   it("an explicit override always wins", () => {
-    const r = chooseAiResourceTypes(["AI Agent", "BUCKET"], ["CUSTOM_AI_THING"]);
+    const r = chooseAiResourceTypes(["AI_AGENT", "BUCKET"], ["CUSTOM_AI_THING"]);
     expect(r.types).toEqual(["CUSTOM_AI_THING"]);
     expect(r.source).toBe("override");
   });
 
   it("intersects candidates with the tenant's members", () => {
     const r = chooseAiResourceTypes(
-      ["AI Agent", "AI Model", "BUCKET", "VIRTUAL_MACHINE"],
+      ["AI_AGENT", "AI_MODEL", "BUCKET", "VIRTUAL_MACHINE"],
       null,
     );
-    expect(r.types).toEqual(["AI Agent", "AI Model"]);
+    expect(r.types).toEqual(["AI_AGENT", "AI_MODEL"]);
     expect(r.source).toBe("intersection");
   });
 
@@ -52,10 +53,10 @@ describe("chooseAiResourceTypes", () => {
     expect(r.source).toBe("candidates");
   });
 
-  it("candidates are the tenant display names", () => {
-    expect(AI_RESOURCE_TYPE_CANDIDATES).toContain("AI Agent");
-    expect(AI_RESOURCE_TYPE_CANDIDATES).toContain("MCP Server");
-    expect(AI_RESOURCE_TYPE_CANDIDATES).toContain("AI Skill Template");
+  it("candidates use the API's enum-style spelling (per the working capture)", () => {
+    expect(AI_RESOURCE_TYPE_CANDIDATES).toContain("AI_AGENT");
+    expect(AI_RESOURCE_TYPE_CANDIDATES).toContain("MCP_SERVER");
+    expect(AI_RESOURCE_TYPE_CANDIDATES).toContain("AI_SKILL_TEMPLATE");
   });
 });
 
@@ -86,10 +87,17 @@ describe("kindFromWizType", () => {
 });
 
 describe("isInvalidEnumValueError", () => {
-  it("recognizes the tenant's enum-value rejection", () => {
+  it("recognizes the 400 coercion rejection", () => {
     expect(isInvalidEnumValueError(
       'Wiz query failed (HTTP 400): {"errors":[{"message":"CloudResourceTypeFilter ' +
       'cannot represent value: [\\"AI_AGENT\\"]"}]}',
+    )).toBe(true);
+  });
+
+  it("recognizes the errors-only parse rejection (HTTP 200, code INTERNAL)", () => {
+    expect(isInvalidEnumValueError(
+      'Wiz response carried no data: [{"message":"failed to parse object type ' +
+      '[AI Agent]","path":["cloudResourcesV2"],"extensions":{"code":"INTERNAL"}}]',
     )).toBe(true);
   });
 
@@ -103,16 +111,22 @@ describe("isInvalidEnumValueError", () => {
   });
 });
 
-describe("qAiInventory", () => {
-  it("uses the operator input-object shape the tenant accepts", () => {
-    const q = qAiInventory(["AI Agent", "AI Model"]);
-    expect(q).toContain('type: { equals: ["AI Agent", "AI Model"] }');
-    expect(q).toContain("cloudResourcesV2");
-    expect(q).toContain("query SidekickAiInventory");
+describe("Q_AI_INVENTORY + aiInventoryVariables", () => {
+  it("the document is static and takes the filter as a variable", () => {
+    expect(Q_AI_INVENTORY).toContain("$filterBy: CloudResourceV2Filters");
+    expect(Q_AI_INVENTORY).toContain("filterBy: $filterBy");
+    expect(Q_AI_INVENTORY).toContain("cloudResourcesV2");
+    expect(Q_AI_INVENTORY).not.toContain("equals"); // no inline filter literal
+  });
+
+  it("the variable carries the operator shape from the working capture", () => {
+    expect(aiInventoryVariables(["AI_AGENT", "AI_MODEL"])).toEqual({
+      filterBy: { type: { equals: ["AI_AGENT", "AI_MODEL"] } },
+    });
   });
 
   it("no longer selects businessImpact (rejected by real tenants)", () => {
-    expect(qAiInventory(["AI Agent"])).not.toContain("businessImpact");
-    expect(qAiInventory(["AI Agent"])).toContain("projects { id name }");
+    expect(Q_AI_INVENTORY).not.toContain("businessImpact");
+    expect(Q_AI_INVENTORY).toContain("projects { id name }");
   });
 });

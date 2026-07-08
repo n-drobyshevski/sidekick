@@ -60,21 +60,9 @@ const ENTITY_FIELDS =
   "          tags { key value }\n" +
   "        }\n";
 
-function cloudResourcesQuery(name: string, filterBy: string): string {
-  return (
-    "query " + name + "($first: Int, $after: String) {\n" +
-    "  cloudResourcesV2(first: $first, after: $after, filterBy: {\n" +
-    filterBy +
-    "  }) {\n" +
-    "    totalCount\n" +
-    "    pageInfo { hasNextPage endCursor }\n" +
-    "    nodes {\n" +
-    RESOURCE_FIELDS +
-    "    }\n" +
-    "  }\n" +
-    "}\n"
-  );
-}
+// (Inline filter literals proved fragile against the tenant's gateway — the
+// working capture passes the whole filter as a $filterBy variable, so the
+// inventory query does the same and its document stays static.)
 
 function graphSearchQuery(name: string, queryBody: string): string {
   return (
@@ -95,17 +83,18 @@ function graphSearchQuery(name: string, queryBody: string): string {
 }
 
 /**
- * The AI resource-type vocabulary we WANT, in the spelling real tenants use:
- * inventory display names ("AI Agent"), verified against a live tenant on
- * 2026-07-08 (the enum-style names AI_AGENT etc. were rejected). Tenants still
- * differ, so the sync resolves the actual list at runtime — introspection ∩
- * candidates or per-value probing, overridable via WIZ_AI_RESOURCE_TYPES.
- * kindFromWizType maps these display names onto the graph's NodeKind enum.
+ * The AI resource-type vocabulary, in the API's enum-style spelling. Verified
+ * against a live capture (exemples/get_ai_agents_request.js, 2026-07-08): the
+ * Wiz UI displays "AI Agent" but its own API call sends "AI_AGENT" inside a
+ * `$filterBy` variable. The other names are derived from the UI's type list by
+ * the same convention. Tenants can still differ, so the sync resolves the
+ * actual list at runtime (introspection ∩ candidates, or per-value probing),
+ * overridable via WIZ_AI_RESOURCE_TYPES.
  */
 export const AI_RESOURCE_TYPE_CANDIDATES = [
-  "AI Agent", "AI Agent Registry", "AI Dataset", "AI Deployment", "AI Extension",
-  "AI Gateway", "AI Guardrail", "AI Model", "AI Pipeline", "AI Service",
-  "AI Skill", "AI Skill Template", "AI Tool", "MCP Server",
+  "AI_AGENT", "AI_AGENT_REGISTRY", "AI_DATASET", "AI_DEPLOYMENT", "AI_EXTENSION",
+  "AI_GATEWAY", "AI_GUARDRAIL", "AI_MODEL", "AI_PIPELINE", "AI_SERVICE",
+  "AI_SKILL", "AI_SKILL_TEMPLATE", "AI_TOOL", "MCP_SERVER",
 ] as const;
 
 /**
@@ -137,23 +126,38 @@ export function chooseAiResourceTypes(
 }
 
 /**
- * Whether a Wiz error message is the tenant saying "that enum value doesn't
- * exist here" — the oracle for per-candidate type probing. Anything else
+ * Whether a Wiz error message is the tenant saying "that type value doesn't
+ * exist here" — the oracle for per-candidate type probing. Two observed forms:
+ * a 400 validation error ("cannot represent value") and an HTTP-200 errors-only
+ * response ("failed to parse object type [X]", code INTERNAL). Anything else
  * (auth, transport, field errors) is NOT a value verdict.
  */
 export function isInvalidEnumValueError(message: string): boolean {
+  if (/failed to parse object type/i.test(message)) return true;
   return /HTTP 400/.test(message) && /cannot represent value/i.test(message);
 }
 
 /**
  * Full AI-SPM inventory: the resolved AI asset kinds in one cursor walk.
- * CloudResourceTypeFilter is an operator INPUT OBJECT, not a bare list — the
- * original `type: [...]` literal is exactly what tenants rejected with
- * "cannot represent value"; the working shape is `type: { equals: [...] }`.
+ * Mirrors the captured working request (exemples/get_ai_agents_request.js):
+ * a STATIC document with the filter passed as the $filterBy variable —
+ * CloudResourceTypeFilter is an operator input object, and inline literals
+ * are what the tenant rejected ("cannot represent value").
  */
-export function qAiInventory(types: readonly string[]): string {
-  const list = types.map((t) => JSON.stringify(t)).join(", ");
-  return cloudResourcesQuery("SidekickAiInventory", "    type: { equals: [" + list + "] }\n");
+export const Q_AI_INVENTORY =
+  "query SidekickAiInventory($first: Int, $after: String, $filterBy: CloudResourceV2Filters) {\n" +
+  "  cloudResourcesV2(first: $first, after: $after, filterBy: $filterBy) {\n" +
+  "    totalCount\n" +
+  "    pageInfo { hasNextPage endCursor }\n" +
+  "    nodes {\n" +
+  RESOURCE_FIELDS +
+  "    }\n" +
+  "  }\n" +
+  "}\n";
+
+/** The $filterBy variable for Q_AI_INVENTORY, exactly as the capture sends it. */
+export function aiInventoryVariables(types: readonly string[]): { filterBy: unknown } {
+  return { filterBy: { type: { equals: [...types] } } };
 }
 
 /** Assets carrying an OPEN issue for one toxic-combination source rule ($ruleIds). */

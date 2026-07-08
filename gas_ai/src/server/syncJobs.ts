@@ -33,13 +33,14 @@ import {
   resolveAiResourceTypes,
 } from "./wizClientAi";
 import {
+  aiInventoryVariables,
   MAX_PAGES,
   Q_AGENT_RUNS_AS,
   Q_AGENTS_NO_GUARDRAIL,
+  Q_AI_INVENTORY,
   Q_IDENTITY_ACCESS,
   Q_RULE_ASSETS,
   Q_SA_EXCESSIVE_ACCESS,
-  qAiInventory,
 } from "./wizQueriesAi";
 
 export interface StartResult {
@@ -78,7 +79,8 @@ function syncSteps(): SyncStepDef[] {
     {
       id: "INVENTORY_AI",
       run: "cloudResources",
-      query: qAiInventory(resolveAiResourceTypes().types),
+      query: Q_AI_INVENTORY,
+      extraVariables: aiInventoryVariables(resolveAiResourceTypes().types),
       normalize: normalizeInventoryPage,
     },
     // One cursor walk per toxic-combination source rule: the assets carrying an OPEN

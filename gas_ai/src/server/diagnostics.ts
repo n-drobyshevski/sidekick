@@ -15,7 +15,7 @@ import {
   getToken,
   resolveAiResourceTypes,
 } from "./wizClientAi";
-import { qAiInventory } from "./wizQueriesAi";
+import { aiInventoryVariables, Q_AI_INVENTORY } from "./wizQueriesAi";
 
 /** Enum members that read as AI vocabulary (token match, so EMAIL ≠ AI). */
 function aiFlavored(values: string[]): string[] {
@@ -123,9 +123,14 @@ export function wizDiagnostic(): string {
   }
 
   // Step 3 — a minimal 1-row inventory query, exercising the real request path
-  // with the types resolved above.
+  // with the types resolved above (filter passed as the $filterBy variable,
+  // mirroring the captured working request).
   try {
-    const page = fetchCloudResourcesPage({ query: qAiInventory(chosen.types), first: 1 });
+    const page = fetchCloudResourcesPage({
+      query: Q_AI_INVENTORY,
+      first: 1,
+      extraVariables: aiInventoryVariables(chosen.types),
+    });
     log(
       `Step 3 OK: query succeeded — ${page.rows.length} AI asset(s) on page 1` +
         (page.totalCount !== null ? ` of ${page.totalCount} total` : "") + ".",
