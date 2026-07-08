@@ -25,6 +25,35 @@ describe("enrichGraphDoc", () => {
     }
   });
 
+  it("materializes one SENSITIVE_DATA node + edge per data-exposed asset (pillar C)", () => {
+    const doc = enriched();
+    const flagged = seedGraphDoc(T).nodes.filter(
+      (n) => n.hasSensitiveData || n.hasAccessToSensitiveData,
+    );
+    const sensNodes = doc.nodes.filter((n) => n.kind === "SENSITIVE_DATA");
+    const sensEdges = doc.edges.filter(
+      (e) => e.type === "HAS_SENSITIVE_DATA" || e.type === "HAS_ACCESS_TO_SENSITIVE_DATA",
+    );
+    expect(flagged.length).toBeGreaterThan(0);
+    expect(sensNodes).toHaveLength(flagged.length);
+    expect(sensEdges).toHaveLength(flagged.length);
+
+    const realIds = new Set(seedGraphDoc(T).nodes.map((n) => n.id));
+    for (const e of sensEdges) {
+      expect(realIds.has(e.src)).toBe(true);
+      expect(e.dst).toBe(`sensitive|${e.src}`);
+      expect(sensNodes.some((n) => n.id === e.dst)).toBe(true);
+    }
+
+    // HOLDS assets use HAS_SENSITIVE_DATA; access-only assets use HAS_ACCESS_TO_SENSITIVE_DATA.
+    const sensBySrc = new Map(sensEdges.map((e) => [e.src, e]));
+    expect(sensBySrc.get("bucket-customer-pii")?.type).toBe("HAS_SENSITIVE_DATA");
+    expect(sensBySrc.get("agent-a")?.type).toBe("HAS_ACCESS_TO_SENSITIVE_DATA");
+
+    // Synthetic nodes never carry an AARS score.
+    for (const n of sensNodes) expect(n.aars).toBeUndefined();
+  });
+
   it("reproduces the applied-table AARS end-to-end (hint path)", () => {
     const doc = enriched();
     const byId = new Map(doc.nodes.map((n) => [n.id, n]));

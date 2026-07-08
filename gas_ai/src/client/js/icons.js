@@ -27,6 +27,8 @@ const PATHS = {
   LATERAL_MOVEMENT_FINDING: ["M2 5 h9", "M9 2.5 L11.5 5 L9 7.5", "M14 11 h-9", "M7 8.5 L4.5 11 L7 13.5"],
   ISSUE: ["M8 2 L15 14 H1 Z", "M8 6.5 V10", "M8 12 h0.01"],
   SUMMARY: ["M4 8 h0.01", "M8 8 h0.01", "M12 8 h0.01"],
+  // Padlock — reads as "sensitive", distinct from the shield (guardrail) and cylinder (dataset).
+  SENSITIVE_DATA: ["M4 7 h8 v6 h-8 z", "M6 7 V5 a2 2 0 0 1 4 0 V7", "M8 9.5 v2"],
 };
 
 // Tenant-vocabulary AI kinds reuse the closest existing glyph (icons are a
@@ -69,6 +71,7 @@ export const KIND_LABELS = {
   LATERAL_MOVEMENT_FINDING: "Lateral Movement",
   ISSUE: "Issue",
   SUMMARY: "More",
+  SENSITIVE_DATA: "Sensitive Data",
 };
 
 // Built without a literal `//` byte sequence: SSL-inspecting middleboxes have been

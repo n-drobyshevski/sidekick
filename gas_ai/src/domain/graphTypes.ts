@@ -22,6 +22,7 @@ export const NODE_KINDS = [
   // synthetic
   "ISSUE",    // one node per open risk issue (toxic-combination instance)
   "SUMMARY",  // collapse node: "+N more <kind>" emitted by the projection
+  "SENSITIVE_DATA",  // one node per data-exposed asset (AARS pillar C topology)
 ] as const;
 export type NodeKind = (typeof NODE_KINDS)[number];
 
@@ -62,6 +63,8 @@ export const EDGE_TYPES = [
   "ENFORCES",             // AI_MODEL → AI_GUARDRAIL
   "BOUND_TO",             // ACCESS_ROLE_BINDING → identity
   "PERMITS_ACCESS_ROLE",  // ACCESS_ROLE_BINDING → ACCESS_ROLE
+  "HAS_SENSITIVE_DATA",           // asset → SENSITIVE_DATA (holds sensitive data)
+  "HAS_ACCESS_TO_SENSITIVE_DATA", // identity/agent → SENSITIVE_DATA (can reach it)
 ] as const;
 export type EdgeType = (typeof EDGE_TYPES)[number];
 
