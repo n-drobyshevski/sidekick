@@ -76,11 +76,47 @@ export async function renderSettings(main, _params, ctx) {
     }
   }
 
+  // -------------------------------------------------------------- support groups
+  main.append(sectionLabel("Support groups"));
+  main.append(el("p", { class: "muted small" },
+    "A support group is the value of a subscription's Wiz/provisioning tag " +
+    "(e.g. CS-SUPPLY-MONITORING). Refreshing pulls every tagged subscription from Wiz " +
+    "and joins it onto findings, powering the Support group filter, breakdown, and " +
+    "domain condition. Also refreshes automatically after each scan."));
+  const sgStatus = el("span", { class: "muted small", style: "margin-left:10px" });
+  const refreshSgBtn = el("button", {
+    onclick: refreshSupportGroups,
+    disabled: boot.hasCredentials ? null : true,
+    title: boot.hasCredentials ? null : "Live Wiz credentials are required.",
+  }, "Refresh support groups");
+  main.append(el("div", { style: "display:flex; align-items:center; gap:4px" },
+    refreshSgBtn, sgStatus));
+  if (!boot.hasCredentials) {
+    sgStatus.textContent = "Dry-run mode — connect Wiz credentials to refresh.";
+  }
+
+  async function refreshSupportGroups() {
+    refreshSgBtn.disabled = true;
+    sgStatus.textContent = "Refreshing from Wiz…";
+    try {
+      const res = await call("api_refreshSupportGroups", {});
+      sgStatus.textContent =
+        `Mapped ${res.subscriptions} subscription(s) → ${res.groups} support group(s) ` +
+        `(tag ${res.tagKey}).`;
+      toast("Support groups refreshed.");
+      ctx.refresh();
+    } catch (e) {
+      sgStatus.textContent = "";
+      toast(`Refresh failed: ${e.message}`, "error");
+      refreshSgBtn.disabled = false;
+    }
+  }
+
   // -------------------------------------------------------------------- domains
   main.append(sectionLabel("Domains"));
   main.append(el("p", { class: "muted small" },
     "Rule-based triage: route findings to named domains by tag, asset-name pattern, " +
-    "or subscription. Order is priority — the first matching domain wins."));
+    "subscription, or support group. Order is priority — the first matching domain wins."));
   const domainsHost = el("div", {});
   main.append(domainsHost);
   renderDomainsEditor(domainsHost, boot, ctx);

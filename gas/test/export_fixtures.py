@@ -289,6 +289,9 @@ domain_items = [
     {"name": "AnyTag", "rules": [
         {"conditions": [{"type": "tag", "key": "owner", "value": None}]},
     ]},
+    {"name": "Supply Monitoring", "rules": [
+        {"conditions": [{"type": "support_group", "values": ["CS-SUPPLY-MONITORING"]}]},
+    ]},
     {"name": "BadRegex", "rules": [
         {"conditions": [{"type": "name_regex", "pattern": "("}]},
     ]},
@@ -308,6 +311,12 @@ domain_records = [
     {"asset_name": "etl-3", "subscription_ext_id": "555",
      "tags_json": "{\"env\": \"prod\"}"},
     {"vulnerableAsset.name": "nothing-matches"},
+    # support_group condition: live-attached _supportGroup (case-folded match),
+    # a raw nested shape, a ledger support_group column, and a non-match.
+    {"vulnerableAsset.name": "sg-frame", "_supportGroup": "cs-supply-monitoring"},
+    {"vulnerableAsset": {"name": "sg-nested", "supportGroup": "CS-SUPPLY-MONITORING"}},
+    {"asset_name": "sg-ledger", "support_group": "CS-SUPPLY-MONITORING"},
+    {"vulnerableAsset.name": "sg-other", "_supportGroup": "OTHER-GROUP"},
 ]
 compiled = compile_domains(domain_items)
 dump("domain_rules", {
@@ -330,6 +339,7 @@ invalid_items = [
         {"conditions": [{"type": "name_regex", "pattern": "x" * 201}]},
         {"conditions": [{"type": "name_regex", "pattern": "("}]},
         {"conditions": [{"type": "subscription", "values": []}]},
+        {"conditions": [{"type": "support_group", "values": []}]},
     ]},
 ]
 dump("domain_rules_validate", {

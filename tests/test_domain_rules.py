@@ -31,6 +31,10 @@ def sub(*values):
     return {"type": "subscription", "values": list(values)}
 
 
+def sg(*values):
+    return {"type": "support_group", "values": list(values)}
+
+
 def _node(name="web-prod-01", tags=None, subscription=None, sub_ext=None, fid=None):
     va = {"name": name, "type": "VIRTUAL_MACHINE", "cloudPlatform": "AWS"}
     if tags is not None:
@@ -82,6 +86,21 @@ def test_subscription_any_of_matches_name_and_external_id():
     assert assign(items, _node(subscription="staging")) == dr.UNASSIGNED
 
 
+def test_support_group_matches_live_attached_field_case_insensitively():
+    # The support group is attached live as _supportGroup before assignment; the
+    # value compares trimmed + case-insensitive, like the subscription condition.
+    items = [_domain("Supply", [sg("CS-SUPPLY-MONITORING", "CS-OTHER")])]
+    node = _node(name="vm-1")
+    assert assign(items, {**node, "_supportGroup": "cs-supply-monitoring"}) == "Supply"
+    assert assign(items, {**node, "_supportGroup": " CS-OTHER "}) == "Supply"
+    # a raw nested shape and the ledger column form both resolve
+    assert assign(items, {"vulnerableAsset": {"supportGroup": "CS-SUPPLY-MONITORING"}}) == "Supply"
+    assert assign(items, {"asset_name": "led", "support_group": "CS-OTHER"}) == "Supply"
+    # non-match and absent field stay Unassigned
+    assert assign(items, {**node, "_supportGroup": "UNKNOWN-GROUP"}) == dr.UNASSIGNED
+    assert assign(items, node) == dr.UNASSIGNED
+
+
 # ------------------------------------------------------------ rule combination
 def test_and_within_rule_or_across_rules():
     items = [_domain("A",
@@ -119,6 +138,7 @@ def test_validate_domains_error_catalogue():
         {"name": "Dup", "rules": [{"conditions": [rx("(bad")]}]},
         {"name": "dup", "rules": [{"conditions": [sub()]}]},
         {"name": "Long", "rules": [{"conditions": [rx("x" * 201)]}]},
+        {"name": "SG", "rules": [{"conditions": [sg()]}]},
     ])
     text = "\n".join(errors)
     assert "name is required" in text
@@ -127,6 +147,7 @@ def test_validate_domains_error_catalogue():
     assert "does not compile" in text
     assert "duplicate name" in text
     assert "at least one subscription" in text
+    assert "at least one support group" in text
     assert "longer than" in text
 
 
@@ -208,6 +229,21 @@ def test_assign_domains_ledger_all_condition_types():
     got = dr.assign_domains_ledger(df, dr.compile_domains(ITEMS))
     assert list(got) == ["Web", "Payments", "Everything-Staging",
                          dr.UNASSIGNED, dr.UNASSIGNED]
+
+
+def test_assign_domains_ledger_support_group_vectorized_parity():
+    items = [_domain("Supply", [sg("CS-SUPPLY-MONITORING")])]
+    df = _ledger_df([
+        {"asset_name": "a", "support_group": "cs-supply-monitoring"},
+        {"asset_name": "b", "support_group": "OTHER"},
+        {"asset_name": "c"},
+    ])
+    compiled = dr.compile_domains(items)
+    got = dr.assign_domains_ledger(df, compiled)
+    assert list(got) == ["Supply", dr.UNASSIGNED, dr.UNASSIGNED]
+    # vectorized == per-record
+    for rec, want in zip(df.to_dict("records"), got):
+        assert dr.assign_domain(rec, compiled) == want
 
 
 def test_compacted_episode_rows_are_pinned_unassigned():

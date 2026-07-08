@@ -46,10 +46,12 @@ var Server = (() => {
     wizAuthUrl: "WIZ_AUTH_URL",
     wizApiUrl: "WIZ_API_URL",
     wizProjectIdV2: "WIZ_PROJECT_ID_V2",
+    wizSupportGroupTagKey: "WIZ_SUPPORT_GROUP_TAG_KEY",
     ledgerSpreadsheetId: "LEDGER_SPREADSHEET_ID",
     archiveFolderId: "ARCHIVE_FOLDER_ID"
   };
   var DEFAULT_WIZ_AUTH_URL = "https://auth.app.wiz.io/oauth/token";
+  var DEFAULT_SUPPORT_GROUP_TAG_KEY = "Wiz/provisioning";
   function getProp(key) {
     return PropertiesService.getScriptProperties().getProperty(key);
   }
@@ -726,6 +728,33 @@ var Server = (() => {
       domains: { version: current.version + 1, items: cleanDomainItems(items) }
     };
   }
+  function cleanStringMap(map) {
+    const out = {};
+    if (!map || typeof map !== "object" || Array.isArray(map)) return out;
+    for (const [k, v] of Object.entries(map)) {
+      if (typeof k === "string" && k !== "" && typeof v === "string" && v !== "") {
+        out[k] = v;
+      }
+    }
+    return out;
+  }
+  function getSupportGroupMap(settings) {
+    var _a;
+    const raw = settings["support_group_map"];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { version: 0, map: {} };
+    const r = raw;
+    let version = 0;
+    const v = Number((_a = r["version"]) != null ? _a : 0);
+    if (Number.isFinite(v)) version = Math.max(Math.trunc(v), 0);
+    return { version, map: cleanStringMap(r["map"]) };
+  }
+  function withSupportGroupMap(settings, map) {
+    const current = getSupportGroupMap(settings);
+    return {
+      ...settings,
+      support_group_map: { version: current.version + 1, map: cleanStringMap(map) }
+    };
+  }
   function apiSeverityFilter(severities) {
     const sevs = canonicalSeverities(severities, DEFAULT_FETCH_SEVERITIES);
     if (new Set(sevs).size === SELECTABLE_SEVERITIES.length) return null;
@@ -885,6 +914,58 @@ var Server = (() => {
     }
     throw new WizQueryError(`Wiz query failed after retries (${lastError}).`);
   }
+  function gqlPost(query, variables) {
+    var _a;
+    const apiUrl = requireProp(PROP_KEYS.wizApiUrl);
+    let token = getToken();
+    let lastError = "";
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const response = UrlFetchApp.fetch(apiUrl, {
+        method: "post",
+        contentType: "application/json",
+        headers: { Authorization: `Bearer ${token}` },
+        payload: JSON.stringify({ query, variables }),
+        muteHttpExceptions: true
+      });
+      const code = response.getResponseCode();
+      if (code === 401 && attempt === 0 && !getProp(PROP_KEYS.wizApiToken)) {
+        token = getToken(true);
+        continue;
+      }
+      if (code === 429 || code >= 500) {
+        lastError = `HTTP ${code}`;
+        Utilities.sleep(1e3 * Math.pow(2, attempt));
+        continue;
+      }
+      if (code !== 200) {
+        throw new WizQueryError(
+          `Wiz query failed (HTTP ${code}): ${response.getContentText().slice(0, 500)}`
+        );
+      }
+      const body = JSON.parse(response.getContentText());
+      const data = body["data"];
+      if (!data) {
+        const errors = JSON.stringify((_a = body["errors"]) != null ? _a : body).slice(0, 500);
+        throw new WizQueryError(`Wiz response carried no data: ${errors}`);
+      }
+      return data;
+    }
+    throw new WizQueryError(`Wiz query failed after retries (${lastError}).`);
+  }
+  function graphSearchPage(query, variables) {
+    var _a, _b, _c;
+    const data = gqlPost(query, variables);
+    const connection = data["graphSearch"];
+    if (!connection) {
+      throw new WizQueryError("Wiz response carried no graphSearch connection.");
+    }
+    const pageInfo = (_a = connection["pageInfo"]) != null ? _a : {};
+    return {
+      nodes: (_b = connection["nodes"]) != null ? _b : [],
+      hasNextPage: Boolean(pageInfo["hasNextPage"]),
+      endCursor: (_c = pageInfo["endCursor"]) != null ? _c : null
+    };
+  }
   function fetchPage(options) {
     var _a;
     const common = {
@@ -1012,6 +1093,7 @@ var Server = (() => {
     importShard: () => importShard,
     importStatus: () => importStatus,
     previewDomains: () => previewDomains,
+    refreshSupportGroups: () => refreshSupportGroups2,
     resetLedger: () => resetLedger2,
     runScan: () => runScan,
     saveDomains: () => saveDomains,
@@ -1095,6 +1177,8 @@ var Server = (() => {
   var FRAME_TAGS_PREFIX = "vulnerableAsset.tags.";
   var LEDGER_NAME_COLS = ["asset_name"];
   var LEDGER_SUB_COLS = ["subscription_name", "subscription_ext_id"];
+  var FRAME_SG_COLS = ["_supportGroup", "vulnerableAsset.supportGroup"];
+  var LEDGER_SG_COLS = ["support_group"];
   function fold(v) {
     return String(v).trim().toLowerCase();
   }
@@ -1143,6 +1227,17 @@ var Server = (() => {
         }
       }
       return folded.size ? { kind: "sub", values: folded } : null;
+    }
+    if (ctype === "support_group") {
+      const values = c["values"];
+      if (!Array.isArray(values) || !values.length) return null;
+      const folded = /* @__PURE__ */ new Set();
+      for (const v of values) {
+        if ((typeof v === "string" || typeof v === "number") && String(v).trim()) {
+          folded.add(fold(v));
+        }
+      }
+      return folded.size ? { kind: "sg", values: folded } : null;
     }
     return null;
   }
@@ -1236,6 +1331,11 @@ var Server = (() => {
             if (!Array.isArray(values) || !values.some((v) => typeof v === "string" && v.trim())) {
               errors.push(`${where}: pick at least one subscription.`);
             }
+          } else if (ctype === "support_group") {
+            const values = c["values"];
+            if (!Array.isArray(values) || !values.some((v) => typeof v === "string" && v.trim())) {
+              errors.push(`${where}: pick at least one support group.`);
+            }
           } else {
             errors.push(`${where}: unknown condition type ${pyRepr(ctype)}.`);
           }
@@ -1302,6 +1402,13 @@ var Server = (() => {
       const names = recordValues(record, ...FRAME_NAME_COLS);
       const pool = names.length ? names : recordValues(record, ...LEDGER_NAME_COLS);
       return pool.some((n) => spec.re.test(n));
+    }
+    if (spec.kind === "sg") {
+      const sgs = [
+        ...recordValues(record, ...FRAME_SG_COLS),
+        ...recordValues(record, ...LEDGER_SG_COLS)
+      ];
+      return sgs.some((s) => spec.values.has(fold(s)));
     }
     const subs = [
       ...recordValues(record, ...FRAME_SUB_COLS),
@@ -2713,6 +2820,7 @@ var Server = (() => {
   }
   var GROUP_COLUMNS = {
     domain: "_domain",
+    supportGroup: "_supportGroup",
     asset: "vulnerableAsset.name",
     atype: "vulnerableAsset.type",
     cloud: "vulnerableAsset.cloudPlatform",
@@ -3662,6 +3770,7 @@ var Server = (() => {
   var getRetentionDays2 = () => getRetentionDays(loadSettings());
   var getAutoCompact2 = () => getAutoCompact(loadSettings());
   var getDomains2 = () => getDomains(loadSettings());
+  var getSupportGroupMap2 = () => getSupportGroupMap(loadSettings());
   function setFetchSeverities(sevs) {
     saveSettings(withFetchSeverities(loadSettings(), sevs));
   }
@@ -3676,6 +3785,166 @@ var Server = (() => {
   }
   function setDomains(items) {
     saveSettings(withDomains(loadSettings(), items));
+  }
+  function setSupportGroupMap(map) {
+    saveSettings(withSupportGroupMap(loadSettings(), map));
+  }
+
+  // src/server/wizSubscriptionsQuery.ts
+  var PAGE_SIZE2 = 100;
+  var MAX_PAGES2 = 50;
+  function isSafeTagKey(key) {
+    return /^[\w/.:-]{1,120}$/.test(key);
+  }
+  function subscriptionsByTagQuery(tagKey) {
+    if (!isSafeTagKey(tagKey)) {
+      throw new Error(
+        `Unsafe WIZ_SUPPORT_GROUP_TAG_KEY ${JSON.stringify(tagKey)} \u2014 allowed: letters, digits, _ . : / - (max 120 chars).`
+      );
+    }
+    return 'query GetSubscriptionsByWizProvisioningTag($first: Int, $after: String) {\n  graphSearch(\n    query: {\n      type: [SUBSCRIPTION]\n      select: true\n      where: { tags: { CONTAINS: [{ key: "' + tagKey + '" }] } }\n    }\n    first: $first\n    after: $after\n  ) {\n    pageInfo { hasNextPage endCursor }\n    nodes { entities { id name properties } }\n  }\n}\n';
+  }
+
+  // src/server/supportGroups.ts
+  function foldToken(v) {
+    return String(v).trim().toLowerCase();
+  }
+  var FRAME_ID_COLS = [
+    "vulnerableAsset.subscriptionId",
+    "vulnerableAsset.subscriptionExternalId",
+    "vulnerableAsset.subscriptionName"
+  ];
+  var LEDGER_ID_COLS = ["subscription_ext_id", "subscription_name"];
+  function recordIdentityTokens(record) {
+    const out = [];
+    const va = record["vulnerableAsset"];
+    for (const col of FRAME_ID_COLS) {
+      const v = record[col];
+      if (present(v)) out.push(String(v));
+      else if (va && typeof va === "object" && !Array.isArray(va)) {
+        const leaf = va[col.split(".").pop()];
+        if (present(leaf)) out.push(String(leaf));
+      }
+    }
+    for (const col of LEDGER_ID_COLS) {
+      const v = record[col];
+      if (present(v)) out.push(String(v));
+    }
+    return out;
+  }
+  function resolveSupportGroup(record, map) {
+    for (const token of recordIdentityTokens(record)) {
+      const group = map[foldToken(token)];
+      if (group) return group;
+    }
+    return null;
+  }
+  function attachSupportGroups(records) {
+    const { map } = getSupportGroupMap2();
+    if (!Object.keys(map).length) return;
+    for (const r of records) {
+      const group = resolveSupportGroup(r, map);
+      if (group) r["_supportGroup"] = group;
+    }
+  }
+  function entityProperties(entity) {
+    const p = entity["properties"];
+    if (p && typeof p === "object" && !Array.isArray(p)) return p;
+    if (typeof p === "string" && p) {
+      try {
+        const parsed = JSON.parse(p);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+      } catch {
+      }
+    }
+    return {};
+  }
+  var PROP_ID_KEYS = [
+    "subscriptionId",
+    "subscriptionExternalId",
+    "externalId",
+    "cloudProviderID",
+    "providerId",
+    "subscriptionName",
+    "name"
+  ];
+  function supportGroupValue(props, tagKey) {
+    const tags = props["tags"];
+    if (tags && typeof tags === "object" && !Array.isArray(tags)) {
+      const v = tags[tagKey];
+      if (present(v) && String(v).trim()) return String(v).trim();
+    }
+    if (Array.isArray(tags)) {
+      for (const t of tags) {
+        if (t && typeof t === "object" && String(t["key"]) === tagKey) {
+          const v = t["value"];
+          if (present(v) && String(v).trim()) return String(v).trim();
+        }
+      }
+    }
+    const flat = props[`tag:${tagKey}`];
+    if (present(flat) && String(flat).trim()) return String(flat).trim();
+    return null;
+  }
+  function parseSubscriptionEntity(entity, tagKey) {
+    const props = entityProperties(entity);
+    const group = supportGroupValue(props, tagKey);
+    const tokens = [];
+    if (group) {
+      for (const k of PROP_ID_KEYS) {
+        const v = props[k];
+        if (present(v) && String(v).trim()) tokens.push(foldToken(v));
+      }
+      for (const k of ["id", "name"]) {
+        const v = entity[k];
+        if (present(v) && String(v).trim()) tokens.push(foldToken(v));
+      }
+    }
+    return { group, tokens };
+  }
+  function recordSubscription(map, entity, tagKey) {
+    const { group, tokens } = parseSubscriptionEntity(entity, tagKey);
+    if (!group) return null;
+    for (const token of tokens) map[token] = group;
+    return group;
+  }
+  function fetchSupportGroups() {
+    var _a, _b;
+    const tagKey = ((_a = getProp(PROP_KEYS.wizSupportGroupTagKey)) == null ? void 0 : _a.trim()) || DEFAULT_SUPPORT_GROUP_TAG_KEY;
+    const query = subscriptionsByTagQuery(tagKey);
+    const map = {};
+    const groups = /* @__PURE__ */ new Set();
+    let cursor = null;
+    let subscriptions = 0;
+    let logged = false;
+    for (let page = 0; page < MAX_PAGES2; page++) {
+      const result = graphSearchPage(query, { first: PAGE_SIZE2, after: cursor });
+      for (const node of result.nodes) {
+        const entities = (_b = node["entities"]) != null ? _b : [];
+        for (const entity of entities) {
+          if (!logged) {
+            console.log(`Support-group sample entity: ${JSON.stringify(entity).slice(0, 800)}`);
+            logged = true;
+          }
+          const group = recordSubscription(map, entity, tagKey);
+          if (group) {
+            subscriptions += 1;
+            groups.add(group);
+          }
+        }
+      }
+      if (!result.hasNextPage || !result.endCursor) break;
+      cursor = result.endCursor;
+    }
+    return {
+      map,
+      stats: { subscriptions, keys: Object.keys(map).length, groups: groups.size, tagKey }
+    };
+  }
+  function refreshSupportGroups() {
+    const { map, stats } = fetchSupportGroups();
+    setSupportGroupMap(map);
+    return stats;
   }
 
   // src/server/findings.ts
@@ -3694,7 +3963,6 @@ var Server = (() => {
     if (frame) {
       records = frame.map((flat) => {
         flat["_sev"] = normalizeSeverity(flat["severity"]);
-        flat["_domain"] = compiled.length ? assignDomain(flat, compiled) : UNASSIGNED;
         return flat;
       });
     } else {
@@ -3707,9 +3975,14 @@ var Server = (() => {
         const flat = flattenNode(n);
         flat["_vuln_key"] = vulnKey(n);
         flat["_sev"] = normalizeSeverity(flat["severity"]);
-        flat["_domain"] = compiled.length ? assignDomain(flat, compiled) : UNASSIGNED;
         return flat;
       });
+    }
+    attachSupportGroups(records);
+    if (compiled.length) {
+      for (const flat of records) flat["_domain"] = assignDomain(flat, compiled);
+    } else {
+      for (const flat of records) flat["_domain"] = UNASSIGNED;
     }
     memo = {
       scanId: row.scan_id,
@@ -3723,7 +3996,7 @@ var Server = (() => {
     return memo;
   }
   function applyFilters(records, f) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _e, _f;
     let out = records;
     if ((_a = f.severities) == null ? void 0 : _a.length) {
       const keep = new Set(f.severities.map(normalizeSeverity));
@@ -3757,6 +4030,13 @@ var Server = (() => {
         return keep.has(String((_a2 = r["_domain"]) != null ? _a2 : UNASSIGNED));
       });
     }
+    if ((_f = f.supportGroups) == null ? void 0 : _f.length) {
+      const keep = new Set(f.supportGroups);
+      out = out.filter((r) => {
+        var _a2;
+        return keep.has(String((_a2 = r["_supportGroup"]) != null ? _a2 : ""));
+      });
+    }
     if (f.q && f.q.trim()) {
       const q = f.q.trim().toLowerCase();
       out = out.filter(
@@ -3780,6 +4060,7 @@ var Server = (() => {
     "_vuln_key",
     "_sev",
     "_domain",
+    "_supportGroup",
     "name",
     "severity",
     "status",
@@ -4219,6 +4500,7 @@ var Server = (() => {
   }
   function afterPersist(records) {
     var _a, _b;
+    refreshSupportGroupsAfterScan();
     try {
       const { perSev, overall } = calculateMttr(records);
       const median2 = overall.mttr_median;
@@ -4244,6 +4526,14 @@ var Server = (() => {
       compactLedger(days);
     } catch (e) {
       console.warn(`Auto-compaction failed: ${e}`);
+    }
+  }
+  function refreshSupportGroupsAfterScan() {
+    if (!hasWizCredentials()) return;
+    try {
+      refreshSupportGroups();
+    } catch (e) {
+      console.warn(`Support-group refresh after scan failed: ${e}`);
     }
   }
   function scheduleContinuation() {
@@ -4349,8 +4639,9 @@ var Server = (() => {
         statuses: distinct(scan.records, "status"),
         assetTypes: distinct(scan.records, "vulnerableAsset.type"),
         clouds: distinct(scan.records, "vulnerableAsset.cloudPlatform"),
-        subscriptions: distinct(scan.records, "vulnerableAsset.subscriptionName")
-      } : { statuses: [], assetTypes: [], clouds: [], subscriptions: [] }
+        subscriptions: distinct(scan.records, "vulnerableAsset.subscriptionName"),
+        supportGroups: distinct(scan.records, "_supportGroup")
+      } : { statuses: [], assetTypes: [], clouds: [], subscriptions: [], supportGroups: [] }
     };
   }
   function activeJobSummary() {
@@ -4359,7 +4650,7 @@ var Server = (() => {
   }
   function getFindings(p) {
     return run(() => {
-      var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
+      var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
       const params = p != null ? p : {};
       const scan = currentScan();
       if (!scan) return { rows: [], total: 0, counts: {}, page: 0, pageCount: 0, groups: null };
@@ -4369,15 +4660,16 @@ var Server = (() => {
         assetTypes: (_c = params["assetTypes"]) != null ? _c : [],
         clouds: (_d = params["clouds"]) != null ? _d : [],
         domains: (_e = params["domains"]) != null ? _e : [],
-        q: (_f = params["q"]) != null ? _f : ""
+        supportGroups: (_f = params["supportGroups"]) != null ? _f : [],
+        q: (_g = params["q"]) != null ? _g : ""
       };
       const filtered = applyFilters(scan.records, filters);
       const counts = {};
       for (const r of filtered) {
         const sev2 = String(r["_sev"]);
-        counts[sev2] = ((_g = counts[sev2]) != null ? _g : 0) + 1;
+        counts[sev2] = ((_h = counts[sev2]) != null ? _h : 0) + 1;
       }
-      const groupBy = (_h = params["groupBy"]) != null ? _h : "";
+      const groupBy = (_i = params["groupBy"]) != null ? _i : "";
       if (groupBy) {
         const keyFor = groupKeyFn(groupBy);
         const groups = /* @__PURE__ */ new Map();
@@ -4413,9 +4705,9 @@ var Server = (() => {
           all: true
         };
       }
-      const pageSize = Math.min(Number((_i = params["pageSize"]) != null ? _i : 100), 500);
+      const pageSize = Math.min(Number((_j = params["pageSize"]) != null ? _j : 100), 500);
       const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
-      const page = Math.min(Math.max(Number((_j = params["page"]) != null ? _j : 0), 0), pageCount - 1);
+      const page = Math.min(Math.max(Number((_k = params["page"]) != null ? _k : 0), 0), pageCount - 1);
       return {
         rows: filtered.slice(page * pageSize, (page + 1) * pageSize).map(tableRow),
         total: filtered.length,
@@ -4436,10 +4728,19 @@ var Server = (() => {
       cloud: "vulnerableAsset.cloudPlatform",
       asset: "vulnerableAsset.name",
       subscription: "vulnerableAsset.subscriptionName",
-      domain: "_domain"
+      domain: "_domain",
+      supportGroup: "_supportGroup"
     };
     const c = (_a = col[groupBy]) != null ? _a : "_sev";
     return (r) => present(r[c]) ? String(r[c]) : "(none)";
+  }
+  function readStringArray(p, key) {
+    const raw = p == null ? void 0 : p[key];
+    return Array.isArray(raw) ? raw.map(String) : [];
+  }
+  function supportGroupPredicate(single, set) {
+    const keep = set.length ? new Set(set) : null;
+    return (v) => (!single || v === single) && (!keep || keep.has(v));
   }
   function sevCountsOf(rows) {
     var _a;
@@ -4478,24 +4779,42 @@ var Server = (() => {
     });
   }
   function insightsData(p) {
-    var _a;
+    var _a, _b;
     const scan = currentScan();
     if (!scan) return { flatScan: false };
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
+    const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
+    const supportGroupSet = readStringArray(p, "supportGroups");
+    const sgActive = Boolean(supportGroup) || supportGroupSet.length > 0;
+    const sgMatch = supportGroupPredicate(supportGroup, supportGroupSet);
     let recs = scan.records;
     let base = loadBaseRows();
-    if (domain) {
-      recs = recs.filter((r) => {
-        var _a2;
-        return String((_a2 = r["_domain"]) != null ? _a2 : UNASSIGNED) === domain;
-      });
-      const compiled = compileDomains(getDomains2().items);
-      base = base.filter((r) => assignDomain(r, compiled) === domain);
+    if (domain || sgActive) {
+      attachSupportGroups(base);
+      if (sgActive) {
+        recs = recs.filter((r) => {
+          var _a2;
+          return sgMatch(String((_a2 = r["_supportGroup"]) != null ? _a2 : ""));
+        });
+        base = base.filter((r) => {
+          var _a2;
+          return sgMatch(String((_a2 = r["_supportGroup"]) != null ? _a2 : ""));
+        });
+      }
+      if (domain) {
+        recs = recs.filter((r) => {
+          var _a2;
+          return String((_a2 = r["_domain"]) != null ? _a2 : UNASSIGNED) === domain;
+        });
+        const compiled = compileDomains(getDomains2().items);
+        base = base.filter((r) => assignDomain(r, compiled) === domain);
+      }
     }
     const latestFlat = latestFlatScanRow();
     return {
       flatScan: true,
       domain,
+      supportGroup,
       scan: { scanId: scan.scanId, ts: scan.ts, total: scan.total },
       // Domain-scoped severity counts + total so the Overview headline can stay
       // coherent under a filter (the KPI band otherwise reads whole-scan bootstrap
@@ -4512,35 +4831,67 @@ var Server = (() => {
   function getInsights(p) {
     return run(
       () => {
-        var _a;
-        return cached("insights", { domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "") }, () => insightsData(p), 3600);
+        var _a, _b;
+        return cached(
+          "insights",
+          {
+            domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
+            supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
+            supportGroups: readStringArray(p, "supportGroups")
+          },
+          () => insightsData(p),
+          3600
+        );
       }
     );
   }
-  function scopedFrameRecords(domain) {
+  function scopedFrameRecords(domain, supportGroup, supportGroupSet) {
     const scan = currentScan();
     if (!scan) return [];
-    if (!domain) return scan.records;
-    return scan.records.filter((r) => {
+    let recs = scan.records;
+    if (supportGroup || supportGroupSet.length) {
+      const sgMatch = supportGroupPredicate(supportGroup, supportGroupSet);
+      recs = recs.filter((r) => {
+        var _a;
+        return sgMatch(String((_a = r["_supportGroup"]) != null ? _a : ""));
+      });
+    }
+    if (domain) recs = recs.filter((r) => {
       var _a;
       return String((_a = r["_domain"]) != null ? _a : UNASSIGNED) === domain;
     });
+    return recs;
   }
   function groupingData(p) {
-    var _a;
+    var _a, _b;
     const scan = currentScan();
     if (!scan) return { flatScan: false, keys: [], groups: [] };
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
+    const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
+    const supportGroupSet = readStringArray(p, "supportGroups");
     const raw = p == null ? void 0 : p["keys"];
     const keys = (Array.isArray(raw) ? raw.map(String) : []).filter((k) => k in GROUP_COLUMNS);
-    return { flatScan: true, keys, groups: groupTree(scopedFrameRecords(domain), keys) };
+    return {
+      flatScan: true,
+      keys,
+      groups: groupTree(scopedFrameRecords(domain, supportGroup, supportGroupSet), keys)
+    };
   }
   function getGrouping(p) {
-    var _a;
+    var _a, _b;
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
+    const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
+    const supportGroupSet = readStringArray(p, "supportGroups");
     const raw = p == null ? void 0 : p["keys"];
     const keys = Array.isArray(raw) ? raw.map(String) : [];
-    return run(() => cached("grouping", { domain, keys }, () => groupingData(p), 3600));
+    return run(
+      () => cached(
+        "grouping",
+        { domain, supportGroup, supportGroups: supportGroupSet, keys },
+        () => groupingData(p),
+        3600
+      )
+    );
   }
   function readSeverities(p) {
     const raw = p == null ? void 0 : p["severities"];
@@ -4552,12 +4903,20 @@ var Server = (() => {
     return rows.filter((r) => keep.has(normalizeSeverity(r["severity"])));
   }
   function mttrData(p) {
-    var _a;
+    var _a, _b;
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
+    const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
     let rows = loadBaseRows();
-    if (domain) {
-      const compiled = compileDomains(getDomains2().items);
-      rows = rows.filter((r) => assignDomain(r, compiled) === domain);
+    if (domain || supportGroup) {
+      attachSupportGroups(rows);
+      if (supportGroup) rows = rows.filter((r) => {
+        var _a2;
+        return String((_a2 = r["_supportGroup"]) != null ? _a2 : "") === supportGroup;
+      });
+      if (domain) {
+        const compiled = compileDomains(getDomains2().items);
+        rows = rows.filter((r) => assignDomain(r, compiled) === domain);
+      }
     }
     rows = filterSeverities(rows, readSeverities(p));
     const { perSev, overall } = mttrFromLedger(rows);
@@ -4572,11 +4931,17 @@ var Server = (() => {
     };
   }
   function mttrByDomainData(p) {
-    var _a, _b, _c;
-    const rows = filterSeverities(
+    var _a, _b, _c, _d;
+    const supportGroup = String((_a = p == null ? void 0 : p["supportGroup"]) != null ? _a : "");
+    let rows = filterSeverities(
       loadBaseRows(),
       readSeverities(p)
     );
+    attachSupportGroups(rows);
+    if (supportGroup) rows = rows.filter((r) => {
+      var _a2;
+      return String((_a2 = r["_supportGroup"]) != null ? _a2 : "") === supportGroup;
+    });
     const items = getDomains2().items;
     const compiled = compileDomains(items);
     const assigned = assignDomains(rows, compiled);
@@ -4596,27 +4961,42 @@ var Server = (() => {
       const { slaPct, oldestDays } = overallSlaOldest(perSev);
       out.push({
         domain: name,
-        median: (_a = overall.mttr_median) != null ? _a : null,
+        median: (_b = overall.mttr_median) != null ? _b : null,
         slaPct,
         oldestDays,
-        open: (_b = overall.open) != null ? _b : 0,
-        resolved: (_c = overall.resolved) != null ? _c : 0,
+        open: (_c = overall.open) != null ? _c : 0,
+        resolved: (_d = overall.resolved) != null ? _d : 0,
         tracked: drows.length
       });
     }
     return { rows: out };
   }
   var cachedMttrData = (p) => {
-    var _a;
+    var _a, _b;
     return cached(
       "mttr",
-      { domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""), severities: readSeverities(p) },
+      {
+        domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
+        supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
+        severities: readSeverities(p)
+      },
       () => mttrData(p),
       3600
     );
   };
   var cachedMttrTrendData = (p) => cached("mttrTrend", { severities: readSeverities(p) }, () => mttrTrendData(p));
-  var cachedMttrByDomainData = (p) => cached("mttrByDomain", { severities: readSeverities(p) }, () => mttrByDomainData(p), 3600);
+  var cachedMttrByDomainData = (p) => {
+    var _a;
+    return cached(
+      "mttrByDomain",
+      {
+        supportGroup: String((_a = p == null ? void 0 : p["supportGroup"]) != null ? _a : ""),
+        severities: readSeverities(p)
+      },
+      () => mttrByDomainData(p),
+      3600
+    );
+  };
   function getMttr(p) {
     return run(() => cachedMttrData(p));
   }
@@ -4766,21 +5146,33 @@ var Server = (() => {
   var REPORT_SOURCE = "OS vulnerabilities";
   function getReport(p) {
     return run(() => {
-      var _a, _b, _c, _d, _e;
+      var _a, _b, _c, _d, _e, _f;
       const params = p != null ? p : {};
       const format = String((_a = params["format"]) != null ? _a : "markdown");
       const scan = currentScan();
       if (!scan) return { content: "", filename: "", matrix: [] };
       const domains = (_b = params["domains"]) != null ? _b : [];
+      const sgFilter = (_c = params["supportGroups"]) != null ? _c : [];
       const displayed = applyFilters(scan.records, {
         severities: getDisplaySeverities2(),
-        domains
+        domains,
+        supportGroups: sgFilter
       });
       const counts = sevCountsOf(displayed);
       let baseRows2 = loadBaseRows();
-      if (domains.length) {
-        const compiled = compileDomains(getDomains2().items);
-        baseRows2 = baseRows2.filter((r) => domains.includes(assignDomain(r, compiled)));
+      if (domains.length || sgFilter.length) {
+        attachSupportGroups(baseRows2);
+        if (sgFilter.length) {
+          const keep = new Set(sgFilter);
+          baseRows2 = baseRows2.filter((r) => {
+            var _a2;
+            return keep.has(String((_a2 = r["_supportGroup"]) != null ? _a2 : ""));
+          });
+        }
+        if (domains.length) {
+          const compiled = compileDomains(getDomains2().items);
+          baseRows2 = baseRows2.filter((r) => domains.includes(assignDomain(r, compiled)));
+        }
       }
       const { perSev, overall } = mttrFromLedger(baseRows2);
       const generated = (/* @__PURE__ */ new Date()).toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -4792,8 +5184,8 @@ var Server = (() => {
             return [s, (_a2 = counts[s]) != null ? _a2 : 0];
           })),
           total: displayed.length,
-          medianMttr: (_c = overall.mttr_median) != null ? _c : null,
-          open: (_d = overall.open) != null ? _d : 0
+          medianMttr: (_d = overall.mttr_median) != null ? _d : null,
+          open: (_e = overall.open) != null ? _e : 0
         }
       ];
       if (format === "json") {
@@ -4826,7 +5218,7 @@ var Server = (() => {
         `| **Total** | **${displayed.length}** |`,
         "",
         `Median MTTR: ${overall.mttr_median != null ? overall.mttr_median.toFixed(1) + " days" : "\u2014"}`,
-        `Open findings: ${(_e = overall.open) != null ? _e : 0}`
+        `Open findings: ${(_f = overall.open) != null ? _f : 0}`
       ].join("\n");
       return { content: md, filename: `wiz-report-${generated.slice(0, 10)}.md`, matrix };
     });
@@ -4838,7 +5230,7 @@ var Server = (() => {
   }
   function getExportCsv(p) {
     return run(() => {
-      var _a, _b, _c, _d, _e, _f;
+      var _a, _b, _c, _d, _e, _f, _g;
       const params = p != null ? p : {};
       const scan = currentScan();
       if (!scan) return { content: "", filename: "" };
@@ -4848,7 +5240,8 @@ var Server = (() => {
         assetTypes: (_c = params["assetTypes"]) != null ? _c : [],
         clouds: (_d = params["clouds"]) != null ? _d : [],
         domains: (_e = params["domains"]) != null ? _e : [],
-        q: (_f = params["q"]) != null ? _f : ""
+        supportGroups: (_f = params["supportGroups"]) != null ? _f : [],
+        q: (_g = params["q"]) != null ? _g : ""
       });
       const cols = TABLE_COLUMNS.filter((c) => !c.startsWith("_"));
       const lines = [cols.join(",")];
@@ -4945,6 +5338,12 @@ var Server = (() => {
       }
       return { total: records.length, perDomain };
     });
+  }
+  function refreshSupportGroups2(_p) {
+    if (!hasWizCredentials()) {
+      return { ok: false, error: "Live Wiz credentials are required to refresh support groups." };
+    }
+    return mutate(() => refreshSupportGroups());
   }
   function getStorageStats(_p) {
     return run(

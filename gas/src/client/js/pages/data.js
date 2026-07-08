@@ -29,7 +29,7 @@ export async function renderData(main, params, ctx) {
 
   main.append(sectionLabel("Report"));
   if (boot.latestScan) {
-    await renderReportSection(main, boot, ctx.domain || "");
+    await renderReportSection(main, boot, ctx.domain || "", ctx.supportGroup || "");
   } else {
     main.append(el("p", { class: "muted small" },
       "No scan saved yet — run a scan to generate a report."));
@@ -49,9 +49,10 @@ export async function renderData(main, params, ctx) {
 
 // ------------------------------------------------------------------------- report
 
-async function renderReportSection(main, boot, domain) {
-  // Scope the report to the global Value Chain filter ("" = whole chain).
+async function renderReportSection(main, boot, domain, supportGroup) {
+  // Scope the report to the global Value Chain + Support group filters ("" = no filter).
   const domains = domain ? [domain] : [];
+  const supportGroups = supportGroup ? [supportGroup] : [];
   let format = "markdown";
   const controls = el("div", { class: "filter-bar", role: "radiogroup", "aria-label": "Report format" });
   for (const [value, label] of [["markdown", "Markdown"], ["csv", "CSV"], ["json", "JSON"]]) {
@@ -72,7 +73,7 @@ async function renderReportSection(main, boot, domain) {
   main.append(controls, previewHost);
 
   // Severity matrix preview
-  const preview = await call("api_getReport", { format: "json", domains });
+  const preview = await call("api_getReport", { format: "json", domains, supportGroups });
   renderMatrix(preview.matrix);
 
   function renderMatrix(matrix) {
@@ -104,7 +105,7 @@ async function renderReportSection(main, boot, domain) {
   async function generate() {
     generateBtn.disabled = true;
     try {
-      const res = await call("api_getReport", { format, domains });
+      const res = await call("api_getReport", { format, domains, supportGroups });
       const mime = format === "json" ? "application/json"
         : format === "csv" ? "text/csv;charset=utf-8" : "text/markdown;charset=utf-8";
       downloadText(res.filename, res.content, mime);

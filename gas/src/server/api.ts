@@ -29,6 +29,7 @@ import * as scanJobs from "./scanJobs";
 import { cached, dataVersion } from "./serverCache";
 import * as settingsStore from "./settingsStore";
 import { cellCount } from "./sheetsDb";
+import * as supportGroups from "./supportGroups";
 
 export interface ApiResult<T = unknown> {
   ok: boolean;
@@ -119,8 +120,9 @@ function bootstrapCore(): Rec {
           assetTypes: findings.distinct(scan.records, "vulnerableAsset.type"),
           clouds: findings.distinct(scan.records, "vulnerableAsset.cloudPlatform"),
           subscriptions: findings.distinct(scan.records, "vulnerableAsset.subscriptionName"),
+          supportGroups: findings.distinct(scan.records, "_supportGroup"),
         }
-      : { statuses: [], assetTypes: [], clouds: [], subscriptions: [] },
+      : { statuses: [], assetTypes: [], clouds: [], subscriptions: [], supportGroups: [] },
   };
 }
 
@@ -143,6 +145,7 @@ export function getFindings(p?: unknown): ApiResult {
       assetTypes: (params["assetTypes"] as string[]) ?? [],
       clouds: (params["clouds"] as string[]) ?? [],
       domains: (params["domains"] as string[]) ?? [],
+      supportGroups: (params["supportGroups"] as string[]) ?? [],
       q: (params["q"] as string) ?? "",
     };
     const filtered = findings.applyFilters(scan.records, filters);
@@ -222,9 +225,26 @@ function groupKeyFn(groupBy: string): (r: Rec) => string {
     asset: "vulnerableAsset.name",
     subscription: "vulnerableAsset.subscriptionName",
     domain: "_domain",
+    supportGroup: "_supportGroup",
   };
   const c = col[groupBy] ?? "_sev";
   return (r) => (present(r[c]) ? String(r[c]) : "(none)");
+}
+
+/** A params array field (e.g. the Overview support-group multi-select) as string[]. */
+function readStringArray(p: unknown, key: string): string[] {
+  const raw = (p as Rec)?.[key];
+  return Array.isArray(raw) ? (raw as unknown[]).map(String) : [];
+}
+
+/**
+ * Support-group predicate combining the global sidebar single-select (`single`) and the
+ * page multi-select (`set`) by INTERSECTION: a value must satisfy both filters that are
+ * active. Either empty means that filter is inactive (no narrowing).
+ */
+function supportGroupPredicate(single: string, set: string[]): (v: string) => boolean {
+  const keep = set.length ? new Set(set) : null;
+  return (v) => (!single || v === single) && (!keep || keep.has(v));
 }
 
 function sevCountsOf(rows: Rec[]): Record<string, number> {
@@ -283,17 +303,32 @@ function insightsData(p?: unknown): Rec {
   // here, mirroring mttrData/baseRowsData. Filter up front and feed the existing
   // aggregations unchanged — no insights.ts signature changes.
   const domain = String((p as Rec)?.["domain"] ?? "");
+  const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
+  const supportGroupSet = readStringArray(p, "supportGroups");
+  const sgActive = Boolean(supportGroup) || supportGroupSet.length > 0;
+  const sgMatch = supportGroupPredicate(supportGroup, supportGroupSet);
   let recs = scan.records;
   let base = ledgerStore.loadBaseRows();
-  if (domain) {
-    recs = recs.filter((r) => String(r["_domain"] ?? UNASSIGNED) === domain);
-    const compiled = compileDomains(settingsStore.getDomains().items);
-    base = base.filter((r) => assignDomain(r as unknown as Rec, compiled) === domain);
+  if (domain || sgActive) {
+    // Base rows carry no _supportGroup until resolved from the current map, so a
+    // support_group domain or the support-group filter can scope the ledger the same
+    // way the frame does.
+    supportGroups.attachSupportGroups(base as unknown as Rec[]);
+    if (sgActive) {
+      recs = recs.filter((r) => sgMatch(String(r["_supportGroup"] ?? "")));
+      base = base.filter((r) => sgMatch(String((r as unknown as Rec)["_supportGroup"] ?? "")));
+    }
+    if (domain) {
+      recs = recs.filter((r) => String(r["_domain"] ?? UNASSIGNED) === domain);
+      const compiled = compileDomains(settingsStore.getDomains().items);
+      base = base.filter((r) => assignDomain(r as unknown as Rec, compiled) === domain);
+    }
   }
   const latestFlat = ledgerStore.latestFlatScanRow();
   return {
     flatScan: true,
     domain,
+    supportGroup,
     scan: { scanId: scan.scanId, ts: scan.ts, total: scan.total },
     // Domain-scoped severity counts + total so the Overview headline can stay
     // coherent under a filter (the KPI band otherwise reads whole-scan bootstrap
@@ -312,18 +347,32 @@ export function getInsights(p?: unknown): ApiResult {
   // 1h TTL like the MTTR summary: aging carries wall-clock-relative day counts.
   // Keyed on domain so per-chain payloads don't clobber each other.
   return run(() =>
-    cached("insights", { domain: String((p as Rec)?.["domain"] ?? "") }, () => insightsData(p), 3600),
+    cached(
+      "insights",
+      {
+        domain: String((p as Rec)?.["domain"] ?? ""),
+        supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
+        supportGroups: readStringArray(p, "supportGroups"),
+      },
+      () => insightsData(p),
+      3600,
+    ),
   );
 }
 
 // ------------------------------------------------------------------------- grouping
 
-/** Frame records for the current scan, scoped to a Value Chain ("" = whole chain). */
-function scopedFrameRecords(domain: string): Rec[] {
+/** Frame records for the current scan, scoped to a Value Chain and/or Support Group(s). */
+function scopedFrameRecords(domain: string, supportGroup: string, supportGroupSet: string[]): Rec[] {
   const scan = findings.currentScan();
   if (!scan) return [];
-  if (!domain) return scan.records;
-  return scan.records.filter((r) => String(r["_domain"] ?? UNASSIGNED) === domain);
+  let recs = scan.records;
+  if (supportGroup || supportGroupSet.length) {
+    const sgMatch = supportGroupPredicate(supportGroup, supportGroupSet);
+    recs = recs.filter((r) => sgMatch(String(r["_supportGroup"] ?? "")));
+  }
+  if (domain) recs = recs.filter((r) => String(r["_domain"] ?? UNASSIGNED) === domain);
+  return recs;
 }
 
 /** The multi-level breakdown tree for an ordered list of grouping dimensions. */
@@ -331,17 +380,28 @@ function groupingData(p?: unknown): Rec {
   const scan = findings.currentScan();
   if (!scan) return { flatScan: false, keys: [], groups: [] };
   const domain = String((p as Rec)?.["domain"] ?? "");
+  const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
+  const supportGroupSet = readStringArray(p, "supportGroups");
   const raw = (p as Rec)?.["keys"];
   const keys = (Array.isArray(raw) ? (raw as unknown[]).map(String) : [])
     .filter((k) => k in insights.GROUP_COLUMNS);
-  return { flatScan: true, keys, groups: insights.groupTree(scopedFrameRecords(domain), keys) };
+  return {
+    flatScan: true,
+    keys,
+    groups: insights.groupTree(scopedFrameRecords(domain, supportGroup, supportGroupSet), keys),
+  };
 }
 
 export function getGrouping(p?: unknown): ApiResult {
   const domain = String((p as Rec)?.["domain"] ?? "");
+  const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
+  const supportGroupSet = readStringArray(p, "supportGroups");
   const raw = (p as Rec)?.["keys"];
   const keys = Array.isArray(raw) ? (raw as unknown[]).map(String) : [];
-  return run(() => cached("grouping", { domain, keys }, () => groupingData(p), 3600));
+  return run(() =>
+    cached("grouping", { domain, supportGroup, supportGroups: supportGroupSet, keys },
+      () => groupingData(p), 3600),
+  );
 }
 
 // ----------------------------------------------------------------------------- MTTR
@@ -364,10 +424,15 @@ function filterSeverities(rows: Rec[], severities: string[] | null): Rec[] {
 
 function mttrData(p?: unknown): Rec {
   const domain = String((p as Rec)?.["domain"] ?? "");
+  const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
   let rows: Rec[] = ledgerStore.loadBaseRows() as unknown as Rec[];
-  if (domain) {
-    const compiled = compileDomains(settingsStore.getDomains().items);
-    rows = rows.filter((r) => assignDomain(r, compiled) === domain);
+  if (domain || supportGroup) {
+    supportGroups.attachSupportGroups(rows);
+    if (supportGroup) rows = rows.filter((r) => String(r["_supportGroup"] ?? "") === supportGroup);
+    if (domain) {
+      const compiled = compileDomains(settingsStore.getDomains().items);
+      rows = rows.filter((r) => assignDomain(r, compiled) === domain);
+    }
   }
   rows = filterSeverities(rows, readSeverities(p));
   const { perSev, overall } = mttrFromLedger(rows);
@@ -389,10 +454,13 @@ function mttrTrendData(p?: unknown): Rec {
 // Unassigned last), empty domains omitted. Reuses mttrFromLedger/overallSlaOldest, so
 // no domain-layer change.
 function mttrByDomainData(p?: unknown): Rec {
-  const rows = filterSeverities(
+  const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
+  let rows = filterSeverities(
     ledgerStore.loadBaseRows() as unknown as Rec[],
     readSeverities(p),
   );
+  supportGroups.attachSupportGroups(rows);
+  if (supportGroup) rows = rows.filter((r) => String(r["_supportGroup"] ?? "") === supportGroup);
   const items = settingsStore.getDomains().items;
   const compiled = compileDomains(items);
   const assigned = assignDomains(rows, compiled);
@@ -429,7 +497,11 @@ function mttrByDomainData(p?: unknown): Rec {
 const cachedMttrData = (p?: unknown) =>
   cached(
     "mttr",
-    { domain: String((p as Rec)?.["domain"] ?? ""), severities: readSeverities(p) },
+    {
+      domain: String((p as Rec)?.["domain"] ?? ""),
+      supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
+      severities: readSeverities(p),
+    },
     () => mttrData(p),
     3600,
   );
@@ -438,7 +510,15 @@ const cachedMttrTrendData = (p?: unknown) =>
 // Domain-independent (always all domains); severity-scoped; 1h TTL like the summary
 // (carries open ages).
 const cachedMttrByDomainData = (p?: unknown) =>
-  cached("mttrByDomain", { severities: readSeverities(p) }, () => mttrByDomainData(p), 3600);
+  cached(
+    "mttrByDomain",
+    {
+      supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
+      severities: readSeverities(p),
+    },
+    () => mttrByDomainData(p),
+    3600,
+  );
 
 export function getMttr(p?: unknown): ApiResult {
   return run(() => cachedMttrData(p));
@@ -618,17 +698,26 @@ export function getReport(p?: unknown): ApiResult {
     const format = String(params["format"] ?? "markdown");
     const scan = findings.currentScan();
     if (!scan) return { content: "", filename: "", matrix: [] };
-    // Honor the global "Value Chain" filter when present (empty = whole chain).
+    // Honor the global "Value Chain" and "Support group" filters (empty = no filter).
     const domains = (params["domains"] as string[]) ?? [];
+    const sgFilter = (params["supportGroups"] as string[]) ?? [];
     const displayed = findings.applyFilters(scan.records, {
       severities: settingsStore.getDisplaySeverities(),
       domains,
+      supportGroups: sgFilter,
     });
     const counts = sevCountsOf(displayed);
     let baseRows = ledgerStore.loadBaseRows() as unknown as Rec[];
-    if (domains.length) {
-      const compiled = compileDomains(settingsStore.getDomains().items);
-      baseRows = baseRows.filter((r) => domains.includes(assignDomain(r, compiled)));
+    if (domains.length || sgFilter.length) {
+      supportGroups.attachSupportGroups(baseRows);
+      if (sgFilter.length) {
+        const keep = new Set(sgFilter);
+        baseRows = baseRows.filter((r) => keep.has(String(r["_supportGroup"] ?? "")));
+      }
+      if (domains.length) {
+        const compiled = compileDomains(settingsStore.getDomains().items);
+        baseRows = baseRows.filter((r) => domains.includes(assignDomain(r, compiled)));
+      }
     }
     const { perSev, overall } = mttrFromLedger(baseRows);
     void perSev;
@@ -695,6 +784,7 @@ export function getExportCsv(p?: unknown): ApiResult {
       assetTypes: (params["assetTypes"] as string[]) ?? [],
       clouds: (params["clouds"] as string[]) ?? [],
       domains: (params["domains"] as string[]) ?? [],
+      supportGroups: (params["supportGroups"] as string[]) ?? [],
       q: (params["q"] as string) ?? "",
     });
     const cols = findings.TABLE_COLUMNS.filter((c) => !c.startsWith("_"));
@@ -801,6 +891,18 @@ export function previewDomains(p?: unknown): ApiResult {
     }
     return { total: records.length, perDomain };
   });
+}
+
+/**
+ * Refresh the subscription → Support Group map from Wiz (graphSearch over subscriptions
+ * tagged with WIZ_SUPPORT_GROUP_TAG_KEY). A mutation: it bumps DATA_VERSION so every
+ * cached view repaints with the new mapping. Also runs best-effort at each scan finalize.
+ */
+export function refreshSupportGroups(_p?: unknown): ApiResult {
+  if (!hasWizCredentials()) {
+    return { ok: false, error: "Live Wiz credentials are required to refresh support groups." };
+  }
+  return mutate(() => supportGroups.refreshSupportGroups());
 }
 
 // ---------------------------------------------------------------------------- misc

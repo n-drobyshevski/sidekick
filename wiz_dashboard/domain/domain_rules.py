@@ -16,6 +16,12 @@ Condition types (the persisted dicts under ``settings.json → domains.items[].r
   (``validate_domains`` reports it; the engine must not guess).
 * ``{"type": "subscription", "values": [...]}`` — the asset's cloud subscription
   (name or external id) equals any of the values, trimmed + case-insensitive.
+* ``{"type": "support_group", "values": [...]}`` — the asset's support group equals
+  any of the values, trimmed + case-insensitive. The support group is resolved live
+  from the subscription's ``Wiz/provisioning`` tag and attached to each record as
+  ``_supportGroup`` by the server before assignment (the engine only reads the field,
+  never the subscription→group map). All-false in the Streamlit frame, which does not
+  attach it — the GAS port populates it.
 
 A rule with zero (or any malformed) conditions never matches: a hand-edited settings
 file must fail closed, never become an accidental catch-all.
@@ -57,6 +63,10 @@ _FRAME_TAGS_DICT_COL = "vulnerableAsset.tags"
 _FRAME_TAGS_PREFIX = "vulnerableAsset.tags."
 _LEDGER_NAME_COLS = ("asset_name",)
 _LEDGER_SUB_COLS = ("subscription_name", "subscription_ext_id")
+# Support group is attached live as ``_supportGroup`` by the GAS server before
+# assignment; ``vulnerableAsset.supportGroup`` / ``support_group`` cover raw shapes.
+_FRAME_SG_COLS = ("_supportGroup", "vulnerableAsset.supportGroup")
+_LEDGER_SG_COLS = ("support_group",)
 
 
 class CompiledDomain(NamedTuple):
@@ -96,6 +106,12 @@ def _compile_condition(cond):
             return None
         folded = {_fold(v) for v in values if isinstance(v, (str, int, float)) and str(v).strip()}
         return ("sub", folded) if folded else None
+    if ctype == "support_group":
+        values = cond.get("values")
+        if not isinstance(values, (list, tuple)) or not values:
+            return None
+        folded = {_fold(v) for v in values if isinstance(v, (str, int, float)) and str(v).strip()}
+        return ("sg", folded) if folded else None
     return None
 
 
@@ -187,6 +203,13 @@ def validate_domains(items) -> list:
                         or not any(isinstance(v, str) and v.strip() for v in values)
                     ):
                         errors.append(f"{where}: pick at least one subscription.")
+                elif ctype == "support_group":
+                    values = cond.get("values")
+                    if (
+                        not isinstance(values, (list, tuple))
+                        or not any(isinstance(v, str) and v.strip() for v in values)
+                    ):
+                        errors.append(f"{where}: pick at least one support group.")
                 else:
                     errors.append(f"{where}: unknown condition type {ctype!r}.")
     return errors
@@ -265,6 +288,11 @@ def _condition_matches(spec, record, tags) -> bool:
             record, *_LEDGER_SUB_COLS
         )
         return any(_fold(s) in spec[1] for s in subs)
+    if kind == "sg":
+        sgs = _record_values(record, *_FRAME_SG_COLS) + _record_values(
+            record, *_LEDGER_SG_COLS
+        )
+        return any(_fold(s) in spec[1] for s in sgs)
     return False
 
 
@@ -292,10 +320,11 @@ def _folded(series) -> pd.Series:
 class _FrameContext:
     """Per-frame column access with tag-series memoization for one assign pass."""
 
-    def __init__(self, df, name_cols, sub_cols, tags_dicts):
+    def __init__(self, df, name_cols, sub_cols, tags_dicts, sg_cols=()):
         self.df = df
         self.name_cols = [c for c in name_cols if c in df.columns]
         self.sub_cols = [c for c in sub_cols if c in df.columns]
+        self.sg_cols = [c for c in sg_cols if c in df.columns]
         self._tags_dicts = tags_dicts  # Series of dict|None, or None
         self._tag_cache = {}
         self._false = pd.Series(False, index=df.index)
@@ -342,6 +371,12 @@ class _FrameContext:
                 s = self.df[col]
                 mask |= s.notna() & _folded(s).isin(spec[1])
             return mask
+        if kind == "sg":
+            mask = self._false.copy()
+            for col in self.sg_cols:
+                s = self.df[col]
+                mask |= s.notna() & _folded(s).isin(spec[1])
+            return mask
         return self._false
 
 
@@ -374,7 +409,7 @@ def assign_domains_frame(df, compiled) -> pd.Series:
     if df is None or df.empty:
         return pd.Series([], dtype=object)
     tags_dicts = df[_FRAME_TAGS_DICT_COL] if _FRAME_TAGS_DICT_COL in df.columns else None
-    ctx = _FrameContext(df, _FRAME_NAME_COLS, _FRAME_SUB_COLS, tags_dicts)
+    ctx = _FrameContext(df, _FRAME_NAME_COLS, _FRAME_SUB_COLS, tags_dicts, _FRAME_SG_COLS)
     return _assign_over(ctx, compiled, pd.Series(True, index=df.index))
 
 
@@ -397,7 +432,7 @@ def assign_domains_ledger(df, compiled) -> pd.Series:
     if df is None or df.empty:
         return pd.Series([], dtype=object)
     tags_dicts = df["tags_json"].map(_parse_tags_json) if "tags_json" in df.columns else None
-    ctx = _FrameContext(df, _LEDGER_NAME_COLS, _LEDGER_SUB_COLS, tags_dicts)
+    ctx = _FrameContext(df, _LEDGER_NAME_COLS, _LEDGER_SUB_COLS, tags_dicts, _LEDGER_SG_COLS)
     eligible = pd.Series(True, index=df.index)
     if "asset_name" in df.columns:
         eligible &= df["asset_name"].astype(str) != _COMPACTED_ASSET

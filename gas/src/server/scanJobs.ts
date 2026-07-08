@@ -20,6 +20,7 @@ import { recoverIfNeeded, withScriptLock } from "./locks";
 import { deleteProp, getProp, hasWizCredentials, setProp } from "./props";
 import { SAMPLE_FLAT, SAMPLE_GROUPED } from "./sampleData";
 import * as settingsStore from "./settingsStore";
+import * as supportGroups from "./supportGroups";
 import { fetchPage, MAX_PAGES, WizDeltaFilterError } from "./wizClient";
 
 const BUDGET_MS = 270_000; // 4.5 min of a 6-min execution (continuation hops)
@@ -433,8 +434,9 @@ function loadBaselineSlim(baselineScanId: string): Rec[] | null {
   return nodes.length ? nodes.map(slimRecord) : null;
 }
 
-/** MTTR snapshot + auto-compaction after a successful persist (never breaks a scan). */
+/** MTTR snapshot + support-group refresh + auto-compaction after a persist (never breaks a scan). */
 function afterPersist(records: Rec[]): void {
+  refreshSupportGroupsAfterScan();
   try {
     const { perSev, overall } = calculateMttr(records);
     const median = overall.mttr_median;
@@ -460,6 +462,20 @@ function afterPersist(records: Rec[]): void {
     ledgerStore.compactLedger(days);
   } catch (e) {
     console.warn(`Auto-compaction failed: ${e}`);
+  }
+}
+
+/**
+ * Refresh the subscription → Support Group map after a live scan (best-effort). Gated on
+ * credentials, so dry-run scans (which have none) skip it. Never breaks a scan — a failed
+ * graphSearch just leaves the previous map in place. Runs inside the scan's lock already.
+ */
+function refreshSupportGroupsAfterScan(): void {
+  if (!hasWizCredentials()) return;
+  try {
+    supportGroups.refreshSupportGroups();
+  } catch (e) {
+    console.warn(`Support-group refresh after scan failed: ${e}`);
   }
 }
 

@@ -30,8 +30,10 @@ export async function renderMttr(main, _params, ctx) {
   const byDomainHost = el("div", {});
   main.append(heroHost, chartsHost, slaHost, byDomainHost);
 
-  // Scope comes from the global Value Chain filter in the sidebar; "" = whole chain.
+  // Scope comes from the global Value Chain + Support group filters in the sidebar;
+  // "" = no filter on that dimension.
   const domain = ctx.domain || "";
+  const supportGroup = ctx.supportGroup || "";
 
   await load();
 
@@ -119,7 +121,8 @@ export async function renderMttr(main, _params, ctx) {
       renderSla(data.mttr);
       renderByDomain(data.byDomain);
     };
-    paint(await swrCall("api_getMttrPage", { domain, severities: scopeParam() }, paint));
+    paint(await swrCall("api_getMttrPage",
+      { domain, supportGroup, severities: scopeParam() }, paint));
   }
 
   /** Per-domain remediation, shown only at the whole-chain view (the server omits it

@@ -67,6 +67,14 @@
        "values": []
       }
      ]
+    },
+    {
+     "conditions": [
+      {
+       "type": "support_group",
+       "values": []
+      }
+     ]
     }
    ]
   }
@@ -83,6 +91,7 @@
   "Domain \u201cdup\u201d, rule 1, condition 1: tag key is required.",
   "Domain \u201cdup\u201d, rule 2, condition 1: pattern is longer than 200 characters.",
   "Domain \u201cdup\u201d, rule 3, condition 1: pattern does not compile (missing ), unterminated subpattern at position 0).",
-  "Domain \u201cdup\u201d, rule 4, condition 1: pick at least one subscription."
+  "Domain \u201cdup\u201d, rule 4, condition 1: pick at least one subscription.",
+  "Domain \u201cdup\u201d, rule 5, condition 1: pick at least one support group."
  ]
 }

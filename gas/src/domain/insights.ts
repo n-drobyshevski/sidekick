@@ -160,6 +160,7 @@ export function movement(
 // each dimension maps to (the old group-by vocabulary, plus CVE = the finding name).
 export const GROUP_COLUMNS: Record<string, string> = {
   domain: "_domain",
+  supportGroup: "_supportGroup",
   asset: "vulnerableAsset.name",
   atype: "vulnerableAsset.type",
   cloud: "vulnerableAsset.cloudPlatform",
