@@ -183,9 +183,17 @@ function assetRow(n: GNode): Rec {
     aarsBand: n.aarsBand ?? null,
     comboGroups: n.comboGroups ?? [],
     internet: n.isAccessibleFromInternet ?? null,
+    openInternet: n.isOpenToAllInternet ?? null,
     sensitiveAccess: n.hasAccessToSensitiveData ?? false,
+    sensitiveData: n.hasSensitiveData ?? false,
     highPriv: n.hasHighPrivileges ?? false,
+    adminPriv: n.hasAdminPrivileges ?? false,
     guardrailMissing: n.guardrailMissing ?? false,
+    technologyCategories: n.technologyCategories ?? [],
+    cloudAccount: n.cloudAccount?.name ?? null,
+    tags: n.tags ?? [],
+    identityPurpose: n.identityPurpose ?? null,
+    issueAnalytics: n.issueAnalytics ?? null,
   };
 }
 
@@ -213,6 +221,8 @@ export function getAssets(_p?: unknown): ApiResult {
             (a) => AI_ASSET_KINDS.includes(a.kind) && a.hasAccessToSensitiveData,
           ).length,
           openIssues: issues.length,
+          complianceGaps: syncStore.loadFindings().length,
+          agenticIdentities: assets.filter((a) => a.identityPurpose === "AGENTIC").length,
         },
       };
     }),
@@ -242,7 +252,13 @@ export function getAssetDetail(p?: unknown): ApiResult {
           direction: edge.src === id ? "out" : "in",
         });
       }
-      return { node: { ...assetRow(node), aarsPillars: node.aarsPillars ?? null }, issues, neighbors };
+      const findings = syncStore.loadFindings().filter((f) => f.resourceId === id);
+      return {
+        node: { ...assetRow(node), aarsPillars: node.aarsPillars ?? null },
+        issues,
+        neighbors,
+        findings,
+      };
     });
   });
 }

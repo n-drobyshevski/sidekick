@@ -69,6 +69,10 @@ var Server = (() => {
   function deleteProp(key) {
     PropertiesService.getScriptProperties().deleteProperty(key);
   }
+  function projectScope() {
+    const id = getProp(PROP_KEYS.wizProjectIdV2);
+    return id && id.trim() ? [id.trim()] : null;
+  }
   function resolveWizAuthMode(token, clientId, clientSecret) {
     if (token && token.trim()) return "token";
     if (clientId && clientSecret) return "oauth";
@@ -171,6 +175,7 @@ var Server = (() => {
     assets: "ai_assets",
     edges: "ai_edges",
     issues: "ai_issues",
+    findings: "ai_findings",
     syncHistory: "sync_history",
     settings: "settings",
     jobs: "jobs",
@@ -191,6 +196,7 @@ var Server = (() => {
       "first_seen",
       "last_seen",
       "internet",
+      "open_internet",
       "sensitive_data",
       "sensitive_access",
       "high_priv",
@@ -201,7 +207,10 @@ var Server = (() => {
       "aars_band",
       "aars_pillars_json",
       "combo_groups",
-      "tags_json"
+      "tags_json",
+      "technology_categories",
+      "identity_purpose",
+      "issue_analytics_json"
     ],
     [TABS.edges]: ["id", "src", "dst", "type", "negated", "access_type"],
     [TABS.issues]: [
@@ -219,7 +228,18 @@ var Server = (() => {
       "projects_json",
       "frameworks_json",
       "justification",
-      "created_at"
+      "created_at",
+      "due_at",
+      "resolution_recommendation",
+      "remediation"
+    ],
+    [TABS.findings]: [
+      "id",
+      "resource_id",
+      "rule_short_id",
+      "severity",
+      "remediation",
+      "framework_codes"
     ],
     [TABS.syncHistory]: [
       "sync_id",
@@ -418,12 +438,120 @@ var Server = (() => {
     return notes.join("\n");
   }
 
+  // src/domain/toxicCombos.ts
+  var RISK_CATEGORY_ID = "wct-id-1998";
+  var COMBO_GROUPS = [
+    {
+      id: "bedrock-no-guardrail",
+      ruleId: "wc-id-2742",
+      title: "AWS Bedrock: model invocation without guardrails",
+      shortLabel: "No guardrail on invoke",
+      nativeSeverity: "MEDIUM",
+      adjustedSeverity: "HIGH",
+      amplifierNote: "Wiz MEDIUM, treated as HIGH: no content filtering or data protection on model calls, and the 5Rs data-security score (53%) confirms restriction controls are failing.",
+      namePattern: /without\s+guardrail/i,
+      frameworks: {
+        owaspLlm: ["LLM06", "LLM02"],
+        owaspAgentic: ["ASI02", "ASI03"],
+        owaspMl: [],
+        fiveRs: ["Restrict"]
+      }
+    },
+    {
+      id: "gcp-managed-privileged",
+      ruleId: "wc-id-3217",
+      title: "GCP managed AI agents: high privileges + sensitive data",
+      shortLabel: "Privileged managed agent",
+      nativeSeverity: "MEDIUM",
+      adjustedSeverity: "HIGH",
+      amplifierNote: "Wiz MEDIUM, treated as HIGH: prompt injection on an over-privileged managed agent reaches sensitive data, and the 5Rs score (53%) confirms that data is not restricted.",
+      namePattern: /managed\s+ai\s+agent\s+with\s+high\s+privileges/i,
+      frameworks: {
+        owaspLlm: ["LLM06", "LLM01"],
+        owaspAgentic: ["ASI03", "ASI01"],
+        owaspMl: ["Data Poisoning"],
+        fiveRs: ["Restrict", "Reconfigure"]
+      }
+    },
+    {
+      id: "gcp-hosted-privileged",
+      ruleId: "wc-id-3230",
+      title: "GCP hosted AI agents on VM/serverless: high privileges + sensitive data",
+      shortLabel: "Privileged hosted agent",
+      nativeSeverity: "MEDIUM",
+      adjustedSeverity: "HIGH",
+      amplifierNote: "Wiz MEDIUM, treated as HIGH: the agent inherits its host's attack surface (VM / serverless), holds excessive IAM, and the 5Rs score (53%) confirms weak data restriction.",
+      namePattern: /hosted\s+on\s+vm\/?serverless/i,
+      frameworks: {
+        owaspLlm: ["LLM06", "LLM01", "LLM02", "LLM05"],
+        owaspAgentic: ["ASI02", "ASI03", "ASI05"],
+        owaspMl: [],
+        fiveRs: ["Restrict", "Reduce"]
+      }
+    },
+    {
+      id: "permissive-exec-identity",
+      ruleId: "wc-id-3123",
+      title: "GCP AI agents: overly permissive execution identity",
+      shortLabel: "Permissive identity",
+      nativeSeverity: "LOW",
+      adjustedSeverity: "MEDIUM",
+      amplifierNote: "Wiz LOW, treated as MEDIUM: latent privileges \u2014 a compromised agent (prompt injection \u2192 RCE/SSRF) inherits every permission of its execution identity.",
+      namePattern: /overly\s+permissive\s+execution\s+identity/i,
+      frameworks: {
+        owaspLlm: [],
+        owaspAgentic: ["ASI03"],
+        owaspMl: [],
+        fiveRs: ["Reconfigure"]
+      }
+    }
+  ];
+  var BY_RULE_ID = new Map(COMBO_GROUPS.map((g) => [g.ruleId, g]));
+  var BY_GROUP_ID = new Map(COMBO_GROUPS.map((g) => [g.id, g]));
+  function comboGroupById(id) {
+    var _a4;
+    return (_a4 = BY_GROUP_ID.get(id)) != null ? _a4 : null;
+  }
+  function classifyIssue(issue2) {
+    var _a4;
+    if (issue2.sourceRuleId) {
+      const byId = BY_RULE_ID.get(issue2.sourceRuleId);
+      if (byId) return byId;
+    }
+    const name = (_a4 = issue2.ruleName) != null ? _a4 : "";
+    if (name) {
+      for (const g of COMBO_GROUPS) {
+        if (g.namePattern.test(name)) return g;
+      }
+    }
+    return null;
+  }
+  function comboSummary(issues2) {
+    const acc = /* @__PURE__ */ new Map();
+    for (const g of COMBO_GROUPS) acc.set(g.id, { count: 0, assetIds: [], seen: /* @__PURE__ */ new Set() });
+    for (const issue2 of issues2) {
+      if (issue2.status !== "OPEN") continue;
+      const bucket = acc.get(issue2.comboGroup);
+      if (!bucket) continue;
+      bucket.count += 1;
+      if (issue2.assetId && !bucket.seen.has(issue2.assetId)) {
+        bucket.seen.add(issue2.assetId);
+        bucket.assetIds.push(issue2.assetId);
+      }
+    }
+    return COMBO_GROUPS.map((group) => ({
+      group,
+      count: acc.get(group.id).count,
+      assetIds: acc.get(group.id).assetIds
+    }));
+  }
+
   // src/server/wizQueriesAi.ts
   var PAGE_SIZE = 100;
   var PAGE_SIZE_FALLBACK = 50;
   var MAX_PAGES = 200;
-  var RESOURCE_FIELDS = "      id\n      name\n      type\n      nativeType\n      cloudPlatform\n      region\n      status\n      firstSeen\n      lastSeen\n      externalId\n      isAccessibleFromInternet\n      hasSensitiveData\n      hasAccessToSensitiveData\n      hasAdminPrivileges\n      hasHighPrivileges\n      cloudAccount { id name externalId cloudProvider }\n      projects { id name riskProfile { businessImpact } }\n      tags { key value }\n";
-  var ENTITY_FIELDS = "        id\n        name\n        type\n        nativeType\n        cloudPlatform\n        region\n        ... on CloudResource {\n          status\n          firstSeen\n          lastSeen\n          externalId\n          isAccessibleFromInternet\n          hasSensitiveData\n          hasAccessToSensitiveData\n          hasAdminPrivileges\n          hasHighPrivileges\n          cloudAccount { id name externalId cloudProvider }\n          projects { id name riskProfile { businessImpact } }\n          tags { key value }\n        }\n";
+  var RESOURCE_FIELDS = "      id\n      name\n      type\n      nativeType\n      cloudPlatform\n      region\n      status\n      firstSeen\n      lastSeen\n      externalId\n      isAccessibleFromInternet\n      isOpenToAllInternet\n      hasSensitiveData\n      hasAccessToSensitiveData\n      hasAdminPrivileges\n      hasHighPrivileges\n      technology { id name categories { id name } }\n      cloudAccount { id name externalId cloudProvider }\n      projects { id name riskProfile { businessImpact } }\n      tags { key value }\n";
+  var ENTITY_FIELDS = "        id\n        name\n        type\n        nativeType\n        cloudPlatform\n        region\n        ... on CloudResource {\n          status\n          firstSeen\n          lastSeen\n          externalId\n          isAccessibleFromInternet\n          isOpenToAllInternet\n          hasSensitiveData\n          hasAccessToSensitiveData\n          hasAdminPrivileges\n          hasHighPrivileges\n          technology { id name categories { id name } }\n          cloudAccount { id name externalId cloudProvider }\n          projects { id name riskProfile { businessImpact } }\n          tags { key value }\n        }\n";
   function graphSearchQuery(name, queryBody) {
     return "query " + name + "($quick: Boolean, $first: Int, $after: String) {\n  graphSearch(quick: $quick, first: $first, after: $after, query: {\n" + queryBody + "  }) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      entities {\n" + ENTITY_FIELDS + "      }\n    }\n  }\n}\n";
   }
@@ -483,6 +611,34 @@ var Server = (() => {
     "SidekickAiIdentitiesWithAgentAccess",
     '    type: "AI_AGENT"\n    select: true\n    relationships: [{\n      type: "ALLOWS_ACCESS_TO"\n      direction: INBOUND\n      with: {\n        type: "ACCESS_ROLE_BINDING"\n        select: false\n        relationships: [\n          {\n            type: "BOUND_TO"\n            with: { type: ["USER_ACCOUNT", "SERVICE_ACCOUNT"], select: true }\n          }\n          {\n            type: "PERMITS_ACCESS_ROLE"\n            with: {\n              type: "ACCESS_ROLE"\n              select: true\n              where: { accessType: { EQUALS: ["HIGH_PRIVILEGE", "ADMIN"] } }\n            }\n          }\n        ]\n      }\n    }]\n'
   );
+  var Q_ISSUES = "query SidekickAiIssues($first: Int, $after: String, $filterBy: IssueFilters, $orderBy: IssueOrder) {\n  issuesV2(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      type\n      severity\n      status\n      createdAt\n      updatedAt\n      dueAt\n      projects { id name riskProfile { businessImpact } }\n      entitySnapshot {\n        id\n        type\n        name\n        cloudPlatform\n        region\n        subscriptionName\n        nativeType\n        externalId\n      }\n      sourceRules {\n        ... on Control {\n          id\n          name\n          description\n          severity\n          risks\n          threats\n          resolutionRecommendation\n        }\n        ... on CloudConfigurationRule {\n          id\n          name\n          description\n          risks\n          threats\n          control { resolutionRecommendation severity }\n        }\n      }\n    }\n  }\n}\n";
+  function aiIssuesVariables(scope) {
+    const filterBy = {
+      status: ["OPEN", "IN_PROGRESS"],
+      riskEqualsAny: [RISK_CATEGORY_ID],
+      type: ["TOXIC_COMBINATION"]
+    };
+    if (scope && scope.length) filterBy["project"] = scope;
+    return { filterBy, orderBy: { field: "SEVERITY_EXPLOITABLE", direction: "DESC" } };
+  }
+  var Q_CONFIG_FINDINGS = "query SidekickAiConfigFindings($first: Int, $after: String, $filterBy: ConfigurationFindingFilters, $orderBy: ConfigurationFindingOrder) {\n  configurationFindings(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      name\n      severity\n      result\n      status\n      remediation\n      source\n      targetExternalId\n      subscription { id name externalId cloudProvider }\n      resource {\n        id\n        name\n        type\n        projects { id name riskProfile { businessImpact } }\n      }\n      rule {\n        id\n        shortId\n        name\n        description\n        remediationInstructions\n        risks\n        threats\n        tags { key value }\n        opaPolicy\n      }\n    }\n  }\n}\n";
+  function aiConfigFindingsVariables(scope) {
+    const filterBy = {
+      status: ["OPEN"],
+      frameworkCategory: [RISK_CATEGORY_ID]
+    };
+    if (scope && scope.length) filterBy["resource"] = { projectId: scope };
+    return { filterBy, orderBy: { field: "SEVERITY", direction: "DESC" } };
+  }
+  var Q_PRINCIPALS = "query SidekickAiPrincipals($first: Int, $after: String, $filterBy: CloudResourceV2Filters, $orderBy: CloudResourceOrder) {\n  cloudResourcesV2(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      name\n      type\n      nativeType\n      hasSensitiveData\n      hasAccessToSensitiveData\n      hasAdminPrivileges\n      hasHighPrivileges\n      technology { id name categories { id name } }\n      cloudAccount { id name externalId cloudProvider }\n      projects { id name riskProfile { businessImpact } }\n      issueAnalytics {\n        issueCount\n        informationalSeverityCount\n        lowSeverityCount\n        mediumSeverityCount\n        highSeverityCount\n        criticalSeverityCount\n      }\n    }\n  }\n}\n";
+  function aiPrincipalsVariables(scope) {
+    const filterBy = {
+      type: { equals: ["SERVICE_ACCOUNT", "ACCESS_KEY"] },
+      identityPurpose: { equals: ["AGENTIC"] }
+    };
+    if (scope && scope.length) filterBy["projectId"] = scope;
+    return { filterBy, orderBy: { field: "RELATED_ISSUE_SEVERITY", direction: "DESC" } };
+  }
 
   // src/server/wizClientAi.ts
   var WizQueryError = class extends Error {
@@ -673,6 +829,26 @@ var Server = (() => {
           ...(_b = o.extraVariables) != null ? _b : {}
         })["cloudResourcesV2"],
         "cloudResourcesV2"
+      );
+    };
+    try {
+      return run2((_a4 = o.first) != null ? _a4 : PAGE_SIZE);
+    } catch (e) {
+      if (e instanceof WizQueryError && /HTTP 4\d\d/.test(e.message)) throw e;
+      return run2(PAGE_SIZE_FALLBACK);
+    }
+  }
+  function fetchConnectionPage(field, o) {
+    var _a4;
+    const run2 = (first) => {
+      var _a5, _b;
+      return readConnection(
+        gqlPost(o.query, {
+          first,
+          after: (_a5 = o.cursor) != null ? _a5 : null,
+          ...(_b = o.extraVariables) != null ? _b : {}
+        })[field],
+        field
       );
     };
     try {
@@ -919,6 +1095,7 @@ var Server = (() => {
     "USER_ACCOUNT",
     "ACCESS_ROLE",
     "ACCESS_ROLE_BINDING",
+    "ACCESS_KEY",
     // data
     "BUCKET",
     "DATABASE",
@@ -1111,113 +1288,6 @@ var Server = (() => {
         capped
       }
     };
-  }
-
-  // src/domain/toxicCombos.ts
-  var COMBO_GROUPS = [
-    {
-      id: "bedrock-no-guardrail",
-      ruleId: "wc-id-2742",
-      title: "AWS Bedrock: model invocation without guardrails",
-      shortLabel: "No guardrail on invoke",
-      nativeSeverity: "MEDIUM",
-      adjustedSeverity: "HIGH",
-      amplifierNote: "Wiz MEDIUM, treated as HIGH: no content filtering or data protection on model calls, and the 5Rs data-security score (53%) confirms restriction controls are failing.",
-      namePattern: /without\s+guardrail/i,
-      frameworks: {
-        owaspLlm: ["LLM06", "LLM02"],
-        owaspAgentic: ["ASI02", "ASI03"],
-        owaspMl: [],
-        fiveRs: ["Restrict"]
-      }
-    },
-    {
-      id: "gcp-managed-privileged",
-      ruleId: "wc-id-3217",
-      title: "GCP managed AI agents: high privileges + sensitive data",
-      shortLabel: "Privileged managed agent",
-      nativeSeverity: "MEDIUM",
-      adjustedSeverity: "HIGH",
-      amplifierNote: "Wiz MEDIUM, treated as HIGH: prompt injection on an over-privileged managed agent reaches sensitive data, and the 5Rs score (53%) confirms that data is not restricted.",
-      namePattern: /managed\s+ai\s+agent\s+with\s+high\s+privileges/i,
-      frameworks: {
-        owaspLlm: ["LLM06", "LLM01"],
-        owaspAgentic: ["ASI03", "ASI01"],
-        owaspMl: ["Data Poisoning"],
-        fiveRs: ["Restrict", "Reconfigure"]
-      }
-    },
-    {
-      id: "gcp-hosted-privileged",
-      ruleId: "wc-id-3230",
-      title: "GCP hosted AI agents on VM/serverless: high privileges + sensitive data",
-      shortLabel: "Privileged hosted agent",
-      nativeSeverity: "MEDIUM",
-      adjustedSeverity: "HIGH",
-      amplifierNote: "Wiz MEDIUM, treated as HIGH: the agent inherits its host's attack surface (VM / serverless), holds excessive IAM, and the 5Rs score (53%) confirms weak data restriction.",
-      namePattern: /hosted\s+on\s+vm\/?serverless/i,
-      frameworks: {
-        owaspLlm: ["LLM06", "LLM01", "LLM02", "LLM05"],
-        owaspAgentic: ["ASI02", "ASI03", "ASI05"],
-        owaspMl: [],
-        fiveRs: ["Restrict", "Reduce"]
-      }
-    },
-    {
-      id: "permissive-exec-identity",
-      ruleId: "wc-id-3123",
-      title: "GCP AI agents: overly permissive execution identity",
-      shortLabel: "Permissive identity",
-      nativeSeverity: "LOW",
-      adjustedSeverity: "MEDIUM",
-      amplifierNote: "Wiz LOW, treated as MEDIUM: latent privileges \u2014 a compromised agent (prompt injection \u2192 RCE/SSRF) inherits every permission of its execution identity.",
-      namePattern: /overly\s+permissive\s+execution\s+identity/i,
-      frameworks: {
-        owaspLlm: [],
-        owaspAgentic: ["ASI03"],
-        owaspMl: [],
-        fiveRs: ["Reconfigure"]
-      }
-    }
-  ];
-  var BY_RULE_ID = new Map(COMBO_GROUPS.map((g) => [g.ruleId, g]));
-  var BY_GROUP_ID = new Map(COMBO_GROUPS.map((g) => [g.id, g]));
-  function comboGroupById(id) {
-    var _a4;
-    return (_a4 = BY_GROUP_ID.get(id)) != null ? _a4 : null;
-  }
-  function classifyIssue(issue2) {
-    var _a4;
-    if (issue2.sourceRuleId) {
-      const byId = BY_RULE_ID.get(issue2.sourceRuleId);
-      if (byId) return byId;
-    }
-    const name = (_a4 = issue2.ruleName) != null ? _a4 : "";
-    if (name) {
-      for (const g of COMBO_GROUPS) {
-        if (g.namePattern.test(name)) return g;
-      }
-    }
-    return null;
-  }
-  function comboSummary(issues2) {
-    const acc = /* @__PURE__ */ new Map();
-    for (const g of COMBO_GROUPS) acc.set(g.id, { count: 0, assetIds: [], seen: /* @__PURE__ */ new Set() });
-    for (const issue2 of issues2) {
-      if (issue2.status !== "OPEN") continue;
-      const bucket = acc.get(issue2.comboGroup);
-      if (!bucket) continue;
-      bucket.count += 1;
-      if (issue2.assetId && !bucket.seen.has(issue2.assetId)) {
-        bucket.seen.add(issue2.assetId);
-        bucket.assetIds.push(issue2.assetId);
-      }
-    }
-    return COMBO_GROUPS.map((group) => ({
-      group,
-      count: acc.get(group.id).count,
-      assetIds: acc.get(group.id).assetIds
-    }));
   }
 
   // src/domain/graphLayout.ts
@@ -2030,11 +2100,32 @@ var Server = (() => {
       lastSeen: str(raw["lastSeen"]),
       externalId: str(raw["externalId"]),
       isAccessibleFromInternet: triBool(raw["isAccessibleFromInternet"]),
+      isOpenToAllInternet: triBool(raw["isOpenToAllInternet"]),
       hasSensitiveData: bool(raw["hasSensitiveData"]),
       hasAccessToSensitiveData: bool(raw["hasAccessToSensitiveData"]),
       hasHighPrivileges: bool(raw["hasHighPrivileges"]),
       hasAdminPrivileges: bool(raw["hasAdminPrivileges"])
     };
+    const technology = raw["technology"];
+    if (technology && typeof technology === "object") {
+      const cats = technology["categories"];
+      if (Array.isArray(cats)) {
+        const names = cats.map((c) => str(c["name"])).filter((n) => Boolean(n));
+        if (names.length) node2.technologyCategories = names;
+      }
+    }
+    const ia = raw["issueAnalytics"];
+    if (ia && typeof ia === "object") {
+      const num = (v) => typeof v === "number" ? v : Number(v) || 0;
+      node2.issueAnalytics = {
+        total: num(ia["issueCount"]),
+        info: num(ia["informationalSeverityCount"]),
+        low: num(ia["lowSeverityCount"]),
+        medium: num(ia["mediumSeverityCount"]),
+        high: num(ia["highSeverityCount"]),
+        critical: num(ia["criticalSeverityCount"])
+      };
+    }
     const account = raw["cloudAccount"];
     if (account && typeof account === "object") {
       const accId = str(account["id"]);
@@ -2070,13 +2161,23 @@ var Server = (() => {
     return node2;
   }
   function emptyPart() {
-    return { nodes: [], edges: [], issues: [] };
+    return { nodes: [], edges: [], issues: [], findings: [] };
   }
   function normalizeInventoryPage(rows) {
     const part = emptyPart();
     for (const raw of rows) {
       const node2 = normalizeCloudResource(raw);
       if (node2) part.nodes.push(node2);
+    }
+    return part;
+  }
+  function normalizePrincipalsPage(rows) {
+    const part = emptyPart();
+    for (const raw of rows) {
+      const node2 = normalizeCloudResource(raw);
+      if (!node2) continue;
+      node2.identityPurpose = "AGENTIC";
+      part.nodes.push(node2);
     }
     return part;
   }
@@ -2101,6 +2202,113 @@ var Server = (() => {
         account: (_a4 = node2.cloudAccount) == null ? void 0 : _a4.name,
         projects: ((_b = node2.projects) != null ? _b : []).map((p) => p.name),
         frameworks: group.frameworks
+      });
+    }
+    return part;
+  }
+  function normalizeIssuesPage(rows) {
+    var _a4, _b, _c, _d, _e, _f, _g, _h;
+    const part = emptyPart();
+    for (const raw of rows) {
+      const issueId = str(raw["id"]);
+      const snap = raw["entitySnapshot"];
+      const assetId = snap && typeof snap === "object" ? str(snap["id"]) : void 0;
+      if (!issueId || !assetId) continue;
+      const sourceRules = Array.isArray(raw["sourceRules"]) ? raw["sourceRules"] : [];
+      const first = (_a4 = sourceRules[0]) != null ? _a4 : {};
+      const ruleId = str(first["id"]);
+      const ruleName = str(first["name"]);
+      const group = classifyIssue({ sourceRuleId: ruleId != null ? ruleId : null, ruleName: ruleName != null ? ruleName : null });
+      const nativeSeverity = (_b = str(raw["severity"])) != null ? _b : "UNKNOWN";
+      const adjustedSeverity = group ? group.adjustedSeverity : nativeSeverity;
+      const control = first["control"];
+      const resolutionRecommendation = (_c = str(first["resolutionRecommendation"])) != null ? _c : control && typeof control === "object" ? str(control["resolutionRecommendation"]) : void 0;
+      const assetName = (_d = str(snap["name"])) != null ? _d : assetId;
+      const projects = Array.isArray(raw["projects"]) ? raw["projects"].map((p) => str(p["name"])).filter((n) => Boolean(n)) : [];
+      part.issues.push({
+        id: issueId,
+        ruleId: (_e = ruleId != null ? ruleId : group == null ? void 0 : group.ruleId) != null ? _e : "",
+        ruleName: (_f = ruleName != null ? ruleName : group == null ? void 0 : group.title) != null ? _f : "",
+        comboGroup: (_g = group == null ? void 0 : group.id) != null ? _g : "",
+        nativeSeverity,
+        adjustedSeverity,
+        status: (_h = str(raw["status"])) != null ? _h : "OPEN",
+        assetId,
+        assetName,
+        region: str(snap["region"]),
+        account: str(snap["subscriptionName"]),
+        projects,
+        frameworks: group == null ? void 0 : group.frameworks,
+        createdAt: str(raw["createdAt"]),
+        dueAt: str(raw["dueAt"]),
+        resolutionRecommendation
+      });
+      const kind = kindFromWizType(snap["type"]);
+      if (kind) {
+        const node2 = { id: assetId, kind, name: assetName };
+        const nativeType = str(snap["nativeType"]);
+        if (nativeType) node2.nativeType = nativeType;
+        const cloud = str(snap["cloudPlatform"]);
+        if (cloud) node2.cloudPlatform = cloud;
+        const region = str(snap["region"]);
+        if (region) node2.region = region;
+        const externalId = str(snap["externalId"]);
+        if (externalId) node2.externalId = externalId;
+        part.nodes.push(node2);
+      }
+    }
+    return part;
+  }
+  function reconcileIssues(issues2) {
+    const realKeys = /* @__PURE__ */ new Set();
+    for (const i of issues2) {
+      if (!i.id.startsWith("live-")) realKeys.add(`${i.assetId}|${i.comboGroup}`);
+    }
+    return issues2.filter(
+      (i) => !i.id.startsWith("live-") || !realKeys.has(`${i.assetId}|${i.comboGroup}`)
+    );
+  }
+  function frameworkCodesFromRule(rule, shortId) {
+    const codes = [];
+    const add = (c) => {
+      if (c && !codes.includes(c)) codes.push(c);
+    };
+    add(shortId || void 0);
+    const owasp = /\b(LLM\d{2}|ASI\d{2}|ML[_A-Z]+)\b/;
+    const scan = (v) => {
+      const s = typeof v === "string" ? v.toUpperCase() : "";
+      const m = s.match(owasp);
+      if (m) add(m[0]);
+    };
+    if (rule && typeof rule === "object") {
+      const tags = rule["tags"];
+      if (Array.isArray(tags)) for (const t of tags) scan(t == null ? void 0 : t["value"]);
+      const risks = rule["risks"];
+      if (Array.isArray(risks)) for (const r of risks) scan(r);
+    }
+    return codes;
+  }
+  function normalizeConfigFindingsPage(rows) {
+    var _a4, _b;
+    const part = emptyPart();
+    for (const raw of rows) {
+      const id = str(raw["id"]);
+      if (!id) continue;
+      if (str(raw["result"]) !== "FAIL") continue;
+      const status = str(raw["status"]);
+      if (status && status !== "OPEN") continue;
+      const resource = raw["resource"];
+      const resourceId = resource && typeof resource === "object" ? str(resource["id"]) : void 0;
+      if (!resourceId) continue;
+      const rule = raw["rule"];
+      const ruleShortId = rule && typeof rule === "object" ? (_a4 = str(rule["shortId"])) != null ? _a4 : "" : "";
+      part.findings.push({
+        id,
+        resourceId,
+        ruleShortId,
+        severity: (_b = str(raw["severity"])) != null ? _b : "UNKNOWN",
+        remediation: str(raw["remediation"]),
+        frameworkCodes: frameworkCodesFromRule(rule, ruleShortId)
       });
     }
     return part;
@@ -2164,9 +2372,11 @@ var Server = (() => {
     return part;
   }
   function mergeParts(parts, syncedAt) {
+    var _a4;
     const nodes = /* @__PURE__ */ new Map();
     const edges2 = /* @__PURE__ */ new Map();
     const issues2 = /* @__PURE__ */ new Map();
+    const findings = /* @__PURE__ */ new Map();
     for (const part of parts) {
       for (const node2 of part.nodes) {
         const prev = nodes.get(node2.id);
@@ -2184,10 +2394,12 @@ var Server = (() => {
       }
       for (const edge2 of part.edges) edges2.set(edge2.id, edge2);
       for (const issue2 of part.issues) issues2.set(issue2.id, issue2);
+      for (const finding of (_a4 = part.findings) != null ? _a4 : []) findings.set(finding.id, finding);
     }
     return {
       doc: { nodes: [...nodes.values()], edges: [...edges2.values()], syncedAt },
-      issues: [...issues2.values()]
+      issues: [...issues2.values()],
+      findings: [...findings.values()]
     };
   }
 
@@ -2250,470 +2462,6 @@ var Server = (() => {
     return { score, band: aarsBand(score), pillars: { toxic, compliance, data } };
   }
 
-  // src/server/sampleData.ts
-  var T0 = "2026-04-02T08:00:00Z";
-  var T1 = "2026-06-28T05:00:00Z";
-  function node(seed) {
-    var _a4, _b, _c, _d, _e, _f, _g;
-    return {
-      id: seed.id,
-      kind: seed.kind,
-      name: seed.name,
-      nativeType: seed.nativeType,
-      cloudPlatform: seed.cloud,
-      region: seed.region,
-      status: (_a4 = seed.status) != null ? _a4 : "Active",
-      firstSeen: T0,
-      lastSeen: T1,
-      isAccessibleFromInternet: seed.internet === void 0 ? false : seed.internet,
-      hasSensitiveData: (_b = seed.sensitiveData) != null ? _b : false,
-      hasAccessToSensitiveData: (_c = seed.sensitiveAccess) != null ? _c : false,
-      hasHighPrivileges: (_d = seed.highPriv) != null ? _d : false,
-      hasAdminPrivileges: (_e = seed.adminPriv) != null ? _e : false,
-      guardrailMissing: (_f = seed.guardrailMissing) != null ? _f : false,
-      cloudAccount: seed.account ? { id: seed.account.id, name: seed.account.name } : void 0,
-      projects: ((_g = seed.projects) != null ? _g : []).map((name) => ({ id: `proj-${name.toLowerCase()}`, name }))
-    };
-  }
-  function edge(src, type, dst, accessType) {
-    return { id: edgeId(src, type, dst), src, dst, type, accessType };
-  }
-  var GCP_MANAGED = "aiplatform#ReasoningEngine";
-  var GCP_HOSTED = "hostedAiAgent";
-  function gcpAgent(seed) {
-    var _a4, _b;
-    return {
-      ...seed,
-      kind: "AI_AGENT",
-      cloud: (_a4 = seed.cloud) != null ? _a4 : "GCP",
-      nativeType: (_b = seed.nativeType) != null ? _b : GCP_MANAGED
-    };
-  }
-  var AGENTS = [
-    gcpAgent({
-      id: "agent-a",
-      name: "Agent-A",
-      region: "europe-west1",
-      account: { id: "gcp-account-01", name: "gcp-account-01" },
-      projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
-      sensitiveAccess: true,
-      highPriv: true,
-      guardrailMissing: true
-    }),
-    gcpAgent({
-      id: "agent-b",
-      name: "Agent-B",
-      region: "us-west1",
-      account: { id: "gcp-account-01", name: "gcp-account-01" },
-      projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
-      sensitiveAccess: true,
-      highPriv: true,
-      guardrailMissing: true
-    }),
-    gcpAgent({
-      id: "agent-autogen",
-      name: "AGENT_AUTOGEN_DO_NOT_DELETE",
-      region: "us-west1",
-      account: { id: "gcp-account-01", name: "gcp-account-01" },
-      projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
-      sensitiveAccess: true,
-      highPriv: true,
-      adminPriv: true,
-      guardrailMissing: true
-    }),
-    gcpAgent({
-      id: "agent-d-test",
-      name: "dev-agent-D-test",
-      region: "europe-west3",
-      account: { id: "gcp-account-02", name: "gcp-account-02" },
-      projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
-      sensitiveAccess: true,
-      highPriv: true,
-      guardrailMissing: true
-    }),
-    gcpAgent({
-      id: "agent-d",
-      name: "dev-agent-D",
-      region: "europe-west3",
-      account: { id: "gcp-account-02", name: "gcp-account-02" },
-      projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
-      sensitiveAccess: true,
-      highPriv: true,
-      guardrailMissing: true
-    }),
-    gcpAgent({
-      id: "agent-e",
-      name: "Agent-E",
-      region: "us-west1",
-      account: { id: "gcp-account-03", name: "gcp-account-03" },
-      projects: ["PROJECT-ALPHA", "PROJECT-GAMMA"],
-      sensitiveAccess: true,
-      highPriv: true,
-      guardrailMissing: true
-    }),
-    gcpAgent({
-      id: "agent-f",
-      name: "agent-F",
-      region: "europe-west4",
-      projects: ["PROJECT-ALPHA"],
-      sensitiveAccess: true,
-      highPriv: true,
-      guardrailMissing: true
-    }),
-    gcpAgent({
-      id: "agent-f-preprod",
-      name: "agent-F-preprod",
-      region: "europe-west4",
-      projects: ["PROJECT-ALPHA"],
-      sensitiveAccess: true,
-      highPriv: true,
-      guardrailMissing: true
-    }),
-    gcpAgent({
-      id: "agent-g",
-      name: "Agent-G",
-      region: "europe-west4",
-      projects: ["PROJECT-ALPHA", "PROJECT-ETA"],
-      sensitiveAccess: true,
-      highPriv: true,
-      guardrailMissing: true
-    }),
-    gcpAgent({
-      id: "agent-h-chatbot",
-      name: "agent-H-chatbot",
-      region: "europe-west1",
-      nativeType: GCP_HOSTED,
-      account: { id: "gcp-account-05", name: "gcp-account-05" },
-      projects: ["PROJECT-ALPHA", "PROJECT-DELTA", "PROJECT-EPSILON"],
-      internet: null,
-      // hosted: exposure inherited from the Cloud Run service
-      sensitiveAccess: true,
-      highPriv: true,
-      guardrailMissing: true
-    }),
-    gcpAgent({
-      id: "agent-i",
-      name: "agent-I",
-      region: "europe-west4",
-      nativeType: GCP_HOSTED,
-      status: "Inactive",
-      account: { id: "gcp-account-04", name: "gcp-account-04" },
-      projects: ["PROJECT-ALPHA", "PROJECT-ZETA"],
-      internet: null,
-      // hosted: exposure inherited from the VM
-      sensitiveAccess: true,
-      highPriv: true,
-      guardrailMissing: true
-    }),
-    gcpAgent({
-      id: "agent-j",
-      name: "agent-J",
-      region: "europe-west1",
-      account: { id: "gcp-account-07", name: "gcp-account-07" },
-      projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
-      sensitiveAccess: false,
-      highPriv: true,
-      guardrailMissing: false
-    }),
-    gcpAgent({
-      id: "agent-k",
-      name: "agent-K",
-      region: "europe-west1",
-      account: { id: "gcp-account-07", name: "gcp-account-07" },
-      projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
-      sensitiveAccess: false,
-      highPriv: true,
-      guardrailMissing: false
-    }),
-    // A guardrail-protected agent with no issues — the healthy contrast case.
-    gcpAgent({
-      id: "agent-l-support",
-      name: "Agent-L-support",
-      region: "europe-west1",
-      account: { id: "gcp-account-03", name: "gcp-account-03" },
-      projects: ["PROJECT-ALPHA"]
-    })
-  ];
-  var AWS_ROLE_COUNT = 8;
-  var awsRoles = [];
-  for (let i = 1; i <= AWS_ROLE_COUNT; i++) {
-    const n = String(i).padStart(2, "0");
-    awsRoles.push({
-      id: `role-finance-admin-${n}`,
-      kind: "ACCESS_ROLE",
-      name: `AWSReservedSSO_FinanceAdmin_${n}`,
-      nativeType: "role",
-      cloud: "AWS",
-      account: { id: "aws-account-prod-01", name: "aws-account-prod-01" },
-      projects: ["PROJECT-ALPHA"],
-      highPriv: true,
-      sensitiveAccess: true
-    });
-  }
-  var SUPPORT = [
-    // Guardrails (3 in the tenant; only Agent-L is actually protected)
-    { id: "guardrail-alpha", kind: "AI_GUARDRAIL", name: "guardrail-alpha", cloud: "GCP", region: "europe-west1", projects: ["PROJECT-ALPHA"] },
-    { id: "guardrail-beta", kind: "AI_GUARDRAIL", name: "guardrail-beta", cloud: "GCP", region: "europe-west4", projects: ["PROJECT-ALPHA"] },
-    { id: "guardrail-bedrock", kind: "AI_GUARDRAIL", name: "bedrock-guardrail-default", cloud: "AWS", projects: ["PROJECT-ALPHA"] },
-    // Models
-    { id: "model-bedrock-claude", kind: "AI_MODEL", name: "anthropic.claude-3-5-sonnet", nativeType: "bedrock#foundationModel", cloud: "AWS", account: { id: "aws-account-prod-01", name: "aws-account-prod-01" }, projects: ["PROJECT-ALPHA"] },
-    { id: "model-text-embedding-005", kind: "AI_MODEL", name: "text-embedding-005", nativeType: "aiplatform#model", cloud: "GCP", region: "us-west1", status: "Deprecated", projects: ["PROJECT-ALPHA"] },
-    // MCP server + pipeline + dataset
-    { id: "mcp-internal-tools", kind: "MCP_SERVER", name: "mcp-internal-tools", cloud: "GCP", region: "europe-west1", projects: ["PROJECT-ALPHA"] },
-    { id: "pipeline-training-01", kind: "AI_PIPELINE", name: "pipeline-training-01", cloud: "GCP", region: "us-west1", projects: ["PROJECT-ALPHA"] },
-    { id: "dataset-support-transcripts", kind: "AI_DATASET", name: "dataset-support-transcripts", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-ALPHA"] },
-    // Data resources
-    { id: "bucket-customer-pii", kind: "BUCKET", name: "bucket-customer-pii", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-ALPHA"] },
-    { id: "bucket-finance-reports", kind: "BUCKET", name: "bucket-finance-reports", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-BETA"] },
-    { id: "bucket-partner-data", kind: "BUCKET", name: "bucket-partner-data", cloud: "GCP", region: "europe-west4", sensitiveData: true, projects: ["PROJECT-ETA"] },
-    { id: "bucket-pricing-models", kind: "BUCKET", name: "bucket-pricing-models", cloud: "GCP", region: "europe-west4", sensitiveData: true, projects: ["PROJECT-ALPHA"] },
-    { id: "bucket-training-data", kind: "BUCKET", name: "bucket-training-data", cloud: "GCP", region: "us-west1", projects: ["PROJECT-ALPHA"] },
-    { id: "db-customer-core", kind: "DATABASE", name: "db-customer-core", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-ALPHA"] },
-    { id: "db-analytics", kind: "DATABASE", name: "db-analytics", cloud: "GCP", region: "europe-west1", projects: ["PROJECT-DELTA"] },
-    // Compute / supply chain for the hosted agents
-    { id: "vm-agent-i-host", kind: "VIRTUAL_MACHINE", name: "vm-agent-i-host", cloud: "GCP", region: "europe-west4", internet: false, projects: ["PROJECT-ZETA"] },
-    { id: "run-agent-h", kind: "SERVERLESS", name: "cloudrun-agent-h", cloud: "GCP", region: "europe-west1", internet: true, projects: ["PROJECT-DELTA"] },
-    { id: "img-agent-h", kind: "CONTAINER_IMAGE", name: "img-agent-h:latest", cloud: "GCP", projects: ["PROJECT-DELTA"] },
-    { id: "repo-agent-h", kind: "REPOSITORY", name: "repo-agent-h", projects: ["PROJECT-DELTA"] },
-    // CIEM findings
-    { id: "finding-ea-autogen", kind: "EXCESSIVE_ACCESS_FINDING", name: "Excessive access: sa-agent-autogen", cloud: "GCP" },
-    { id: "finding-ea-agent-h", kind: "EXCESSIVE_ACCESS_FINDING", name: "Excessive access: sa-agent-h", cloud: "GCP" },
-    { id: "finding-lm-agent-i", kind: "LATERAL_MOVEMENT_FINDING", name: "Lateral movement: sa-agent-i", cloud: "GCP" }
-  ];
-  var edges = [];
-  var extraNodes = [];
-  var GCP_AGENT_IDS = [
-    "agent-a",
-    "agent-b",
-    "agent-autogen",
-    "agent-d-test",
-    "agent-d",
-    "agent-e",
-    "agent-f",
-    "agent-f-preprod",
-    "agent-g",
-    "agent-h-chatbot",
-    "agent-i",
-    "agent-j",
-    "agent-k",
-    "agent-l-support"
-  ];
-  for (const agentId of GCP_AGENT_IDS) {
-    const saId = `sa-${agentId}`;
-    extraNodes.push({
-      id: saId,
-      kind: "SERVICE_ACCOUNT",
-      name: `${saId}@iam.gserviceaccount.com`,
-      cloud: "GCP",
-      highPriv: agentId !== "agent-l-support",
-      sensitiveAccess: !["agent-j", "agent-k", "agent-l-support"].includes(agentId)
-    });
-    edges.push(edge(agentId, "RUNS_AS", saId));
-  }
-  var SA_ACCESS = [
-    ["sa-agent-a", "bucket-customer-pii", "HIGH_PRIVILEGE"],
-    ["sa-agent-a", "db-customer-core", "READ"],
-    ["sa-agent-b", "bucket-customer-pii", "HIGH_PRIVILEGE"],
-    ["sa-agent-autogen", "bucket-finance-reports", "ADMIN"],
-    ["sa-agent-autogen", "db-customer-core", "HIGH_PRIVILEGE"],
-    ["sa-agent-d-test", "bucket-training-data", "WRITE"],
-    ["sa-agent-d-test", "db-customer-core", "READ"],
-    ["sa-agent-d", "bucket-training-data", "WRITE"],
-    ["sa-agent-d", "db-customer-core", "READ"],
-    ["sa-agent-e", "bucket-customer-pii", "HIGH_PRIVILEGE"],
-    ["sa-agent-f", "bucket-pricing-models", "HIGH_PRIVILEGE"],
-    ["sa-agent-f-preprod", "bucket-pricing-models", "HIGH_PRIVILEGE"],
-    ["sa-agent-g", "bucket-partner-data", "HIGH_PRIVILEGE"],
-    ["sa-agent-h-chatbot", "db-customer-core", "HIGH_PRIVILEGE"],
-    ["sa-agent-h-chatbot", "db-analytics", "READ"],
-    ["sa-agent-i", "bucket-customer-pii", "HIGH_PRIVILEGE"],
-    ["sa-agent-j", "db-analytics", "READ"],
-    ["sa-agent-k", "db-analytics", "READ"]
-  ];
-  for (const [sa, target, accessType] of SA_ACCESS) {
-    edges.push(edge(sa, "ALLOWS_ACCESS_TO", target, accessType));
-  }
-  edges.push(edge("sa-agent-autogen", "HAS_FINDING", "finding-ea-autogen"));
-  edges.push(edge("sa-agent-h-chatbot", "HAS_FINDING", "finding-ea-agent-h"));
-  edges.push(edge("sa-agent-i", "HAS_FINDING", "finding-lm-agent-i"));
-  for (const role of awsRoles) {
-    role.guardrailMissing = true;
-    edges.push(edge(role.id, "CAN_INVOKE", "model-bedrock-claude"));
-  }
-  edges.push(edge("agent-l-support", "PROTECTED_BY", "guardrail-alpha"));
-  edges.push(edge("model-bedrock-claude", "ENFORCES", "guardrail-bedrock"));
-  edges.push(edge("agent-i", "HOSTED_ON", "vm-agent-i-host"));
-  edges.push(edge("agent-h-chatbot", "HOSTED_ON", "run-agent-h"));
-  edges.push(edge("agent-h-chatbot", "BUILT_FROM", "img-agent-h"));
-  edges.push(edge("img-agent-h", "BUILT_FROM", "repo-agent-h"));
-  edges.push(edge("agent-a", "USES_MODEL", "model-text-embedding-005"));
-  edges.push(edge("agent-b", "USES_MODEL", "model-text-embedding-005"));
-  edges.push(edge("agent-h-chatbot", "INVOKES_TOOL", "mcp-internal-tools"));
-  edges.push(edge("agent-l-support", "INVOKES_TOOL", "mcp-internal-tools"));
-  edges.push(edge("pipeline-training-01", "USES_DATASET", "dataset-support-transcripts"));
-  edges.push(edge("dataset-support-transcripts", "STORED_IN", "bucket-customer-pii"));
-  edges.push(edge("agent-e", "USES_DATASET", "dataset-support-transcripts"));
-  for (let i = 1; i <= 14; i++) {
-    const n = String(i).padStart(2, "0");
-    const id = `bucket-autogen-scratch-${n}`;
-    extraNodes.push({ id, kind: "BUCKET", name: `bucket-autogen-scratch-${n}`, cloud: "GCP", region: "us-west1", projects: ["PROJECT-BETA"] });
-    edges.push(edge("sa-agent-autogen", "ALLOWS_ACCESS_TO", id, "WRITE"));
-  }
-  for (let i = 1; i <= 12; i++) {
-    const n = String(i).padStart(2, "0");
-    const id = `user-ops-${n}`;
-    extraNodes.push({ id, kind: "USER_ACCOUNT", name: `ops.user${n}@example.com`, cloud: "GCP" });
-    edges.push(edge(id, "ALLOWS_ACCESS_TO", "agent-h-chatbot", i <= 2 ? "ADMIN" : "READ"));
-  }
-  function issue(seed) {
-    const group = classifyIssue({ sourceRuleId: seed.ruleId, ruleName: seed.ruleName });
-    return {
-      id: seed.id,
-      ruleId: seed.ruleId,
-      ruleName: seed.ruleName,
-      comboGroup: group ? group.id : "",
-      nativeSeverity: seed.nativeSeverity,
-      adjustedSeverity: group ? group.adjustedSeverity : seed.nativeSeverity,
-      status: "OPEN",
-      assetId: seed.assetId,
-      assetName: seed.assetName,
-      region: seed.region,
-      account: seed.account,
-      projects: seed.projects,
-      frameworks: seed.frameworks,
-      justification: seed.justification,
-      createdAt: seed.createdAt
-    };
-  }
-  var RULE_G1 = "Allow model invoke without Guardrail for user or role";
-  var RULE_G2 = "Managed AI Agent with high privileges or sensitive data access";
-  var RULE_G3 = "AI Agent hosted on VM/serverless with high privileges or sensitive data access";
-  var RULE_G4 = "AI resource using overly permissive execution identity";
-  var issues = [];
-  var issueSeq = 0;
-  function nextIssueId() {
-    issueSeq += 1;
-    return `iss-${String(issueSeq).padStart(3, "0")}`;
-  }
-  for (const role of awsRoles) {
-    issues.push(issue({
-      id: nextIssueId(),
-      ruleId: "wc-id-2742",
-      ruleName: RULE_G1,
-      assetId: role.id,
-      assetName: role.name,
-      nativeSeverity: "MEDIUM",
-      account: "aws-account-prod-01",
-      projects: ["PROJECT-ALPHA"],
-      justification: "No content filtering, data protection, or compliance enforcement on AI model calls.",
-      frameworks: { owaspLlm: ["LLM06", "LLM02"], owaspAgentic: ["ASI02", "ASI03"], fiveRs: ["Restrict"] },
-      createdAt: "2026-05-14T09:12:00Z"
-    }));
-  }
-  var G2 = [
-    { assetId: "agent-a", count: 1, llm: ["LLM06", "LLM01"], asi: ["ASI03", "ASI01"], ml: ["Data Poisoning"], fiveRs: ["Restrict"], why: "Prompt injection reaches PII and credentials; 5Rs gap confirms data is not restricted." },
-    { assetId: "agent-b", count: 1, llm: ["LLM06", "LLM01"], asi: ["ASI03", "ASI01"], ml: ["Data Poisoning"], fiveRs: ["Restrict"], why: "Over-privileged IAM on a customer-facing managed agent." },
-    { assetId: "agent-autogen", count: 4, llm: ["LLM06", "LLM07"], asi: ["ASI10"], ml: ["Supply Chain"], fiveRs: ["Reduce", "Restrict"], why: "Auto-generated agent \u2014 likely forgotten, still over-privileged." },
-    { assetId: "agent-d-test", count: 1, llm: ["LLM06", "LLM04"], asi: ["ASI03", "ASI06"], ml: ["Data Poisoning"], fiveRs: ["Reconfigure"], why: "Dev/test agent with prod-level IAM \u2014 violates least privilege." },
-    { assetId: "agent-d", count: 1, llm: ["LLM06", "LLM04"], asi: ["ASI03", "ASI06"], ml: ["Data Poisoning"], fiveRs: ["Reconfigure"], why: "Dev agent with excessive IAM \u2014 training-data exposure risk." },
-    { assetId: "agent-e", count: 1, llm: ["LLM06", "LLM02"], asi: ["ASI03", "ASI01"], ml: ["Input Manipulation"], fiveRs: ["Restrict"], why: "Innovation agent with sensitive data access and no guardrail." },
-    { assetId: "agent-f", count: 1, llm: ["LLM06", "LLM02"], asi: ["ASI03", "ASI02"], ml: ["Model Theft"], fiveRs: ["Restrict"], why: "Pricing agent with financial data access \u2014 high business impact." },
-    { assetId: "agent-f-preprod", count: 1, llm: ["LLM06", "LLM02"], asi: ["ASI03", "ASI02"], ml: ["Model Theft"], fiveRs: ["Reconfigure"], why: "Pre-prod pricing agent \u2014 same risk as prod." },
-    { assetId: "agent-g", count: 2, llm: ["LLM06", "LLM02"], asi: ["ASI03", "ASI01"], ml: ["Data Poisoning"], fiveRs: ["Restrict"], why: "Business-partner data agent \u2014 PII and partner-data exposure risk." }
-  ];
-  var _a;
-  for (const g of G2) {
-    const asset = AGENTS.find((a) => a.id === g.assetId);
-    for (let i = 0; i < g.count; i++) {
-      issues.push(issue({
-        id: nextIssueId(),
-        ruleId: "wc-id-3217",
-        ruleName: RULE_G2,
-        assetId: asset.id,
-        assetName: asset.name,
-        nativeSeverity: "MEDIUM",
-        region: asset.region,
-        account: (_a = asset.account) == null ? void 0 : _a.name,
-        projects: asset.projects,
-        justification: g.why,
-        frameworks: { owaspLlm: g.llm, owaspAgentic: g.asi, owaspMl: g.ml, fiveRs: g.fiveRs },
-        createdAt: "2026-05-20T11:40:00Z"
-      }));
-    }
-  }
-  var G3 = [
-    { assetId: "agent-i", count: 4, llm: ["LLM06", "LLM01"], asi: ["ASI03", "ASI05"], fiveRs: ["Restrict", "Reduce"], why: "Inactive agents still holding sensitive data access \u2014 lateral-movement risk via compromised compute." },
-    { assetId: "agent-h-chatbot", count: 2, llm: ["LLM06", "LLM02", "LLM05"], asi: ["ASI02", "ASI03"], fiveRs: ["Restrict"], why: "Chatbot agent on serverless with excessive IAM \u2014 user-facing attack surface." }
-  ];
-  var _a2;
-  for (const g of G3) {
-    const asset = AGENTS.find((a) => a.id === g.assetId);
-    for (let i = 0; i < g.count; i++) {
-      issues.push(issue({
-        id: nextIssueId(),
-        ruleId: "wc-id-3230",
-        ruleName: RULE_G3,
-        assetId: asset.id,
-        assetName: asset.name,
-        nativeSeverity: "MEDIUM",
-        region: asset.region,
-        account: (_a2 = asset.account) == null ? void 0 : _a2.name,
-        projects: asset.projects,
-        justification: g.why,
-        frameworks: { owaspLlm: g.llm, owaspAgentic: g.asi, fiveRs: g.fiveRs },
-        createdAt: "2026-06-03T07:25:00Z"
-      }));
-    }
-  }
-  var _a3;
-  for (const assetId of ["agent-j", "agent-k"]) {
-    const asset = AGENTS.find((a) => a.id === assetId);
-    issues.push(issue({
-      id: nextIssueId(),
-      ruleId: "wc-id-3123",
-      ruleName: RULE_G4,
-      assetId: asset.id,
-      assetName: asset.name,
-      nativeSeverity: "LOW",
-      region: asset.region,
-      account: (_a3 = asset.account) == null ? void 0 : _a3.name,
-      projects: asset.projects,
-      justification: "Latent privileges \u2014 a compromised agent inherits every permission of its execution identity.",
-      frameworks: { owaspAgentic: ["ASI03"], fiveRs: ["Reconfigure"] },
-      createdAt: "2026-06-10T15:02:00Z"
-    }));
-  }
-  var HINTS = {
-    "agent-a": { gaps: [gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
-    "agent-b": { gaps: [gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
-    "agent-autogen": { gaps: [gap("LLM06"), gap("ASI10"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
-    "agent-d-test": { gaps: [gap("LLM04"), gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
-    "agent-d": { gaps: [gap("LLM04"), gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
-    "agent-e": { gaps: [gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
-    "agent-f": { gaps: [gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
-    "agent-f-preprod": { gaps: [gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
-    "agent-g": { gaps: [gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
-    "agent-h-chatbot": { gaps: [gap("LLM06"), gap("LLM05"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
-    "agent-i": { gaps: [gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
-    "agent-j": { gaps: [gap("ASI03")], dataExposure: "DATA_ACCESS" },
-    "agent-k": { gaps: [gap("ASI03")], dataExposure: "DATA_ACCESS" },
-    // Deprecated-model usage shows up on the model itself, not the agents.
-    "model-text-embedding-005": { gaps: [gap("DEPRECATED_MODEL")], dataExposure: "NONE" }
-  };
-  for (const role of awsRoles) {
-    HINTS[role.id] = {
-      gaps: [gap("LLM01"), gap("LLM02"), gap("ASI02")],
-      dataExposure: "DATA_ACCESS"
-    };
-  }
-  var SEED_NODES = [...AGENTS, ...awsRoles, ...SUPPORT, ...extraNodes].map(node);
-  var SEED_EDGES = edges;
-  var SEED_ISSUES = issues;
-  var SEED_AARS_HINTS = HINTS;
-  function seedGraphDoc(syncedAt) {
-    return { nodes: SEED_NODES, edges: SEED_EDGES, syncedAt };
-  }
-
   // src/domain/graphEnrich.ts
   function severityRank3(s) {
     const i = SEVERITY_ORDER.indexOf(s != null ? s : "");
@@ -2726,6 +2474,11 @@ var Server = (() => {
     }
     return worst;
   }
+  function dataExposureOf(node2) {
+    if (node2.hasAccessToSensitiveData || node2.hasSensitiveData) return "SENSITIVE";
+    if (node2.hasHighPrivileges || node2.hasAdminPrivileges) return "DATA_ACCESS";
+    return "NONE";
+  }
   function deriveAarsInput(node2, nodeIssues) {
     var _a4, _b, _c, _d;
     const codes = /* @__PURE__ */ new Set();
@@ -2737,7 +2490,7 @@ var Server = (() => {
     }
     const gaps = [...codes].sort().map((c) => gap(c));
     if (node2.guardrailMissing) gaps.push(gap("NO_GUARDRAIL"));
-    const dataExposure = node2.hasAccessToSensitiveData || node2.hasSensitiveData ? "SENSITIVE" : node2.hasHighPrivileges || node2.hasAdminPrivileges ? "DATA_ACCESS" : "NONE";
+    const dataExposure = dataExposureOf(node2);
     return {
       // AARS Pillar A scores Wiz-NATIVE severities (the applied table in
       // ai/custom_score.md: MEDIUM ×1.2 = 24); the adjusted severity is a display
@@ -2746,6 +2499,37 @@ var Server = (() => {
       gaps,
       dataExposure
     };
+  }
+  function buildAarsHintsFromFindings(findings, doc, issues2) {
+    var _a4;
+    const open = issues2.filter((i) => i.status === "OPEN");
+    const issuesByAsset = /* @__PURE__ */ new Map();
+    for (const issue2 of open) {
+      if (!issuesByAsset.has(issue2.assetId)) issuesByAsset.set(issue2.assetId, []);
+      issuesByAsset.get(issue2.assetId).push(issue2);
+    }
+    const codesByResource = /* @__PURE__ */ new Map();
+    for (const f of findings) {
+      if (!codesByResource.has(f.resourceId)) codesByResource.set(f.resourceId, []);
+      codesByResource.get(f.resourceId).push(...f.frameworkCodes);
+    }
+    const nodeById = new Map(doc.nodes.map((n) => [n.id, n]));
+    const hints = {};
+    for (const [resourceId, codes] of codesByResource) {
+      const node2 = nodeById.get(resourceId);
+      if (!node2) continue;
+      const base = deriveAarsInput(node2, (_a4 = issuesByAsset.get(resourceId)) != null ? _a4 : []);
+      const seen = new Set(base.gaps.map((g) => g.code));
+      const gaps = [...base.gaps];
+      for (const c of codes) {
+        if (c && !seen.has(c)) {
+          seen.add(c);
+          gaps.push(gap(c));
+        }
+      }
+      hints[resourceId] = { gaps, dataExposure: base.dataExposure };
+    }
+    return hints;
   }
   function enrichGraphDoc(doc, issues2, hints) {
     const open = issues2.filter((i) => i.status === "OPEN");
@@ -2846,6 +2630,527 @@ var Server = (() => {
     };
   }
 
+  // src/server/sampleData.ts
+  var T0 = "2026-04-02T08:00:00Z";
+  var T1 = "2026-06-28T05:00:00Z";
+  function node(seed) {
+    var _a4, _b, _c, _d, _e, _f, _g;
+    return {
+      id: seed.id,
+      kind: seed.kind,
+      name: seed.name,
+      nativeType: seed.nativeType,
+      cloudPlatform: seed.cloud,
+      region: seed.region,
+      status: (_a4 = seed.status) != null ? _a4 : "Active",
+      firstSeen: T0,
+      lastSeen: T1,
+      isAccessibleFromInternet: seed.internet === void 0 ? false : seed.internet,
+      isOpenToAllInternet: seed.openInternet === void 0 ? false : seed.openInternet,
+      hasSensitiveData: (_b = seed.sensitiveData) != null ? _b : false,
+      hasAccessToSensitiveData: (_c = seed.sensitiveAccess) != null ? _c : false,
+      hasHighPrivileges: (_d = seed.highPriv) != null ? _d : false,
+      hasAdminPrivileges: (_e = seed.adminPriv) != null ? _e : false,
+      guardrailMissing: (_f = seed.guardrailMissing) != null ? _f : false,
+      cloudAccount: seed.account ? { id: seed.account.id, name: seed.account.name } : void 0,
+      projects: ((_g = seed.projects) != null ? _g : []).map((name) => ({ id: `proj-${name.toLowerCase()}`, name })),
+      technologyCategories: seed.techCats,
+      identityPurpose: seed.identityPurpose,
+      issueAnalytics: seed.issueAnalytics
+    };
+  }
+  function edge(src, type, dst, accessType) {
+    return { id: edgeId(src, type, dst), src, dst, type, accessType };
+  }
+  var GCP_MANAGED = "aiplatform#ReasoningEngine";
+  var GCP_HOSTED = "hostedAiAgent";
+  function gcpAgent(seed) {
+    var _a4, _b, _c;
+    return {
+      ...seed,
+      kind: "AI_AGENT",
+      cloud: (_a4 = seed.cloud) != null ? _a4 : "GCP",
+      nativeType: (_b = seed.nativeType) != null ? _b : GCP_MANAGED,
+      techCats: (_c = seed.techCats) != null ? _c : ["AI Service"]
+    };
+  }
+  var AGENTS = [
+    gcpAgent({
+      id: "agent-a",
+      name: "Agent-A",
+      region: "europe-west1",
+      account: { id: "gcp-account-01", name: "gcp-account-01" },
+      projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
+      sensitiveAccess: true,
+      highPriv: true,
+      guardrailMissing: true
+    }),
+    gcpAgent({
+      id: "agent-b",
+      name: "Agent-B",
+      region: "us-west1",
+      account: { id: "gcp-account-01", name: "gcp-account-01" },
+      projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
+      sensitiveAccess: true,
+      highPriv: true,
+      guardrailMissing: true
+    }),
+    gcpAgent({
+      id: "agent-autogen",
+      name: "AGENT_AUTOGEN_DO_NOT_DELETE",
+      region: "us-west1",
+      account: { id: "gcp-account-01", name: "gcp-account-01" },
+      projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
+      sensitiveAccess: true,
+      highPriv: true,
+      adminPriv: true,
+      guardrailMissing: true
+    }),
+    gcpAgent({
+      id: "agent-d-test",
+      name: "dev-agent-D-test",
+      region: "europe-west3",
+      account: { id: "gcp-account-02", name: "gcp-account-02" },
+      projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
+      sensitiveAccess: true,
+      highPriv: true,
+      guardrailMissing: true
+    }),
+    gcpAgent({
+      id: "agent-d",
+      name: "dev-agent-D",
+      region: "europe-west3",
+      account: { id: "gcp-account-02", name: "gcp-account-02" },
+      projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
+      sensitiveAccess: true,
+      highPriv: true,
+      guardrailMissing: true
+    }),
+    gcpAgent({
+      id: "agent-e",
+      name: "Agent-E",
+      region: "us-west1",
+      account: { id: "gcp-account-03", name: "gcp-account-03" },
+      projects: ["PROJECT-ALPHA", "PROJECT-GAMMA"],
+      internet: true,
+      openInternet: true,
+      // demonstrates the internet-exposure topology node
+      sensitiveAccess: true,
+      highPriv: true,
+      guardrailMissing: true
+    }),
+    gcpAgent({
+      id: "agent-f",
+      name: "agent-F",
+      region: "europe-west4",
+      projects: ["PROJECT-ALPHA"],
+      sensitiveAccess: true,
+      highPriv: true,
+      guardrailMissing: true
+    }),
+    gcpAgent({
+      id: "agent-f-preprod",
+      name: "agent-F-preprod",
+      region: "europe-west4",
+      projects: ["PROJECT-ALPHA"],
+      sensitiveAccess: true,
+      highPriv: true,
+      guardrailMissing: true
+    }),
+    gcpAgent({
+      id: "agent-g",
+      name: "Agent-G",
+      region: "europe-west4",
+      projects: ["PROJECT-ALPHA", "PROJECT-ETA"],
+      sensitiveAccess: true,
+      highPriv: true,
+      guardrailMissing: true
+    }),
+    gcpAgent({
+      id: "agent-h-chatbot",
+      name: "agent-H-chatbot",
+      region: "europe-west1",
+      nativeType: GCP_HOSTED,
+      account: { id: "gcp-account-05", name: "gcp-account-05" },
+      projects: ["PROJECT-ALPHA", "PROJECT-DELTA", "PROJECT-EPSILON"],
+      internet: null,
+      openInternet: null,
+      // hosted: exposure inherited from the Cloud Run service
+      sensitiveAccess: true,
+      highPriv: true,
+      guardrailMissing: true
+    }),
+    gcpAgent({
+      id: "agent-i",
+      name: "agent-I",
+      region: "europe-west4",
+      nativeType: GCP_HOSTED,
+      status: "Inactive",
+      account: { id: "gcp-account-04", name: "gcp-account-04" },
+      projects: ["PROJECT-ALPHA", "PROJECT-ZETA"],
+      internet: null,
+      openInternet: null,
+      // hosted: exposure inherited from the VM
+      sensitiveAccess: true,
+      highPriv: true,
+      guardrailMissing: true
+    }),
+    gcpAgent({
+      id: "agent-j",
+      name: "agent-J",
+      region: "europe-west1",
+      account: { id: "gcp-account-07", name: "gcp-account-07" },
+      projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
+      sensitiveAccess: false,
+      highPriv: true,
+      guardrailMissing: false
+    }),
+    gcpAgent({
+      id: "agent-k",
+      name: "agent-K",
+      region: "europe-west1",
+      account: { id: "gcp-account-07", name: "gcp-account-07" },
+      projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
+      sensitiveAccess: false,
+      highPriv: true,
+      guardrailMissing: false
+    }),
+    // A guardrail-protected agent with no issues — the healthy contrast case.
+    gcpAgent({
+      id: "agent-l-support",
+      name: "Agent-L-support",
+      region: "europe-west1",
+      account: { id: "gcp-account-03", name: "gcp-account-03" },
+      projects: ["PROJECT-ALPHA"]
+    })
+  ];
+  var AWS_ROLE_COUNT = 8;
+  var awsRoles = [];
+  for (let i = 1; i <= AWS_ROLE_COUNT; i++) {
+    const n = String(i).padStart(2, "0");
+    awsRoles.push({
+      id: `role-finance-admin-${n}`,
+      kind: "ACCESS_ROLE",
+      name: `AWSReservedSSO_FinanceAdmin_${n}`,
+      nativeType: "role",
+      cloud: "AWS",
+      account: { id: "aws-account-prod-01", name: "aws-account-prod-01" },
+      projects: ["PROJECT-ALPHA"],
+      highPriv: true,
+      sensitiveAccess: true
+    });
+  }
+  var SUPPORT = [
+    // Guardrails (3 in the tenant; only Agent-L is actually protected)
+    { id: "guardrail-alpha", kind: "AI_GUARDRAIL", name: "guardrail-alpha", cloud: "GCP", region: "europe-west1", projects: ["PROJECT-ALPHA"] },
+    { id: "guardrail-beta", kind: "AI_GUARDRAIL", name: "guardrail-beta", cloud: "GCP", region: "europe-west4", projects: ["PROJECT-ALPHA"] },
+    { id: "guardrail-bedrock", kind: "AI_GUARDRAIL", name: "bedrock-guardrail-default", cloud: "AWS", projects: ["PROJECT-ALPHA"] },
+    // Models
+    { id: "model-bedrock-claude", kind: "AI_MODEL", name: "anthropic.claude-3-5-sonnet", nativeType: "bedrock#foundationModel", cloud: "AWS", account: { id: "aws-account-prod-01", name: "aws-account-prod-01" }, projects: ["PROJECT-ALPHA"] },
+    { id: "model-text-embedding-005", kind: "AI_MODEL", name: "text-embedding-005", nativeType: "aiplatform#model", cloud: "GCP", region: "us-west1", status: "Deprecated", projects: ["PROJECT-ALPHA"] },
+    // MCP server + pipeline + dataset
+    { id: "mcp-internal-tools", kind: "MCP_SERVER", name: "mcp-internal-tools", cloud: "GCP", region: "europe-west1", projects: ["PROJECT-ALPHA"] },
+    { id: "pipeline-training-01", kind: "AI_PIPELINE", name: "pipeline-training-01", cloud: "GCP", region: "us-west1", projects: ["PROJECT-ALPHA"] },
+    { id: "dataset-support-transcripts", kind: "AI_DATASET", name: "dataset-support-transcripts", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-ALPHA"] },
+    // Data resources
+    { id: "bucket-customer-pii", kind: "BUCKET", name: "bucket-customer-pii", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-ALPHA"] },
+    { id: "bucket-finance-reports", kind: "BUCKET", name: "bucket-finance-reports", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-BETA"] },
+    { id: "bucket-partner-data", kind: "BUCKET", name: "bucket-partner-data", cloud: "GCP", region: "europe-west4", sensitiveData: true, projects: ["PROJECT-ETA"] },
+    { id: "bucket-pricing-models", kind: "BUCKET", name: "bucket-pricing-models", cloud: "GCP", region: "europe-west4", sensitiveData: true, projects: ["PROJECT-ALPHA"] },
+    { id: "bucket-training-data", kind: "BUCKET", name: "bucket-training-data", cloud: "GCP", region: "us-west1", projects: ["PROJECT-ALPHA"] },
+    { id: "db-customer-core", kind: "DATABASE", name: "db-customer-core", cloud: "GCP", region: "europe-west1", sensitiveData: true, projects: ["PROJECT-ALPHA"] },
+    { id: "db-analytics", kind: "DATABASE", name: "db-analytics", cloud: "GCP", region: "europe-west1", projects: ["PROJECT-DELTA"] },
+    // Compute / supply chain for the hosted agents
+    { id: "vm-agent-i-host", kind: "VIRTUAL_MACHINE", name: "vm-agent-i-host", cloud: "GCP", region: "europe-west4", internet: false, projects: ["PROJECT-ZETA"] },
+    { id: "run-agent-h", kind: "SERVERLESS", name: "cloudrun-agent-h", cloud: "GCP", region: "europe-west1", internet: true, projects: ["PROJECT-DELTA"] },
+    { id: "img-agent-h", kind: "CONTAINER_IMAGE", name: "img-agent-h:latest", cloud: "GCP", projects: ["PROJECT-DELTA"] },
+    { id: "repo-agent-h", kind: "REPOSITORY", name: "repo-agent-h", projects: ["PROJECT-DELTA"] },
+    // CIEM findings
+    { id: "finding-ea-autogen", kind: "EXCESSIVE_ACCESS_FINDING", name: "Excessive access: sa-agent-autogen", cloud: "GCP" },
+    { id: "finding-ea-agent-h", kind: "EXCESSIVE_ACCESS_FINDING", name: "Excessive access: sa-agent-h", cloud: "GCP" },
+    { id: "finding-lm-agent-i", kind: "LATERAL_MOVEMENT_FINDING", name: "Lateral movement: sa-agent-i", cloud: "GCP" }
+  ];
+  var edges = [];
+  var extraNodes = [];
+  var GCP_AGENT_IDS = [
+    "agent-a",
+    "agent-b",
+    "agent-autogen",
+    "agent-d-test",
+    "agent-d",
+    "agent-e",
+    "agent-f",
+    "agent-f-preprod",
+    "agent-g",
+    "agent-h-chatbot",
+    "agent-i",
+    "agent-j",
+    "agent-k",
+    "agent-l-support"
+  ];
+  for (const agentId of GCP_AGENT_IDS) {
+    const saId = `sa-${agentId}`;
+    const highPriv = agentId !== "agent-l-support";
+    extraNodes.push({
+      id: saId,
+      kind: "SERVICE_ACCOUNT",
+      name: `${saId}@iam.gserviceaccount.com`,
+      cloud: "GCP",
+      highPriv,
+      sensitiveAccess: !["agent-j", "agent-k", "agent-l-support"].includes(agentId),
+      // These execution identities are agentic (identityPurpose:AGENTIC in Wiz); a small
+      // related-issue rollup drives the inventory "Agentic identities" KPI + the badge.
+      identityPurpose: "AGENTIC",
+      techCats: ["Identity"],
+      issueAnalytics: highPriv ? { total: 1, info: 0, low: 0, medium: 1, high: 0, critical: 0 } : { total: 0, info: 0, low: 0, medium: 0, high: 0, critical: 0 }
+    });
+    edges.push(edge(agentId, "RUNS_AS", saId));
+  }
+  extraNodes.push({
+    id: "key-agent-autogen",
+    kind: "ACCESS_KEY",
+    name: "AKIA-AUTOGEN-AGENT-KEY",
+    cloud: "AWS",
+    identityPurpose: "AGENTIC",
+    sensitiveAccess: true,
+    issueAnalytics: { total: 2, info: 0, low: 1, medium: 1, high: 0, critical: 0 }
+  });
+  edges.push(edge("agent-autogen", "RUNS_AS", "key-agent-autogen"));
+  var SA_ACCESS = [
+    ["sa-agent-a", "bucket-customer-pii", "HIGH_PRIVILEGE"],
+    ["sa-agent-a", "db-customer-core", "READ"],
+    ["sa-agent-b", "bucket-customer-pii", "HIGH_PRIVILEGE"],
+    ["sa-agent-autogen", "bucket-finance-reports", "ADMIN"],
+    ["sa-agent-autogen", "db-customer-core", "HIGH_PRIVILEGE"],
+    ["sa-agent-d-test", "bucket-training-data", "WRITE"],
+    ["sa-agent-d-test", "db-customer-core", "READ"],
+    ["sa-agent-d", "bucket-training-data", "WRITE"],
+    ["sa-agent-d", "db-customer-core", "READ"],
+    ["sa-agent-e", "bucket-customer-pii", "HIGH_PRIVILEGE"],
+    ["sa-agent-f", "bucket-pricing-models", "HIGH_PRIVILEGE"],
+    ["sa-agent-f-preprod", "bucket-pricing-models", "HIGH_PRIVILEGE"],
+    ["sa-agent-g", "bucket-partner-data", "HIGH_PRIVILEGE"],
+    ["sa-agent-h-chatbot", "db-customer-core", "HIGH_PRIVILEGE"],
+    ["sa-agent-h-chatbot", "db-analytics", "READ"],
+    ["sa-agent-i", "bucket-customer-pii", "HIGH_PRIVILEGE"],
+    ["sa-agent-j", "db-analytics", "READ"],
+    ["sa-agent-k", "db-analytics", "READ"]
+  ];
+  for (const [sa, target, accessType] of SA_ACCESS) {
+    edges.push(edge(sa, "ALLOWS_ACCESS_TO", target, accessType));
+  }
+  edges.push(edge("sa-agent-autogen", "HAS_FINDING", "finding-ea-autogen"));
+  edges.push(edge("sa-agent-h-chatbot", "HAS_FINDING", "finding-ea-agent-h"));
+  edges.push(edge("sa-agent-i", "HAS_FINDING", "finding-lm-agent-i"));
+  for (const role of awsRoles) {
+    role.guardrailMissing = true;
+    edges.push(edge(role.id, "CAN_INVOKE", "model-bedrock-claude"));
+  }
+  edges.push(edge("agent-l-support", "PROTECTED_BY", "guardrail-alpha"));
+  edges.push(edge("model-bedrock-claude", "ENFORCES", "guardrail-bedrock"));
+  edges.push(edge("agent-i", "HOSTED_ON", "vm-agent-i-host"));
+  edges.push(edge("agent-h-chatbot", "HOSTED_ON", "run-agent-h"));
+  edges.push(edge("agent-h-chatbot", "BUILT_FROM", "img-agent-h"));
+  edges.push(edge("img-agent-h", "BUILT_FROM", "repo-agent-h"));
+  edges.push(edge("agent-a", "USES_MODEL", "model-text-embedding-005"));
+  edges.push(edge("agent-b", "USES_MODEL", "model-text-embedding-005"));
+  edges.push(edge("agent-h-chatbot", "INVOKES_TOOL", "mcp-internal-tools"));
+  edges.push(edge("agent-l-support", "INVOKES_TOOL", "mcp-internal-tools"));
+  edges.push(edge("pipeline-training-01", "USES_DATASET", "dataset-support-transcripts"));
+  edges.push(edge("dataset-support-transcripts", "STORED_IN", "bucket-customer-pii"));
+  edges.push(edge("agent-e", "USES_DATASET", "dataset-support-transcripts"));
+  for (let i = 1; i <= 14; i++) {
+    const n = String(i).padStart(2, "0");
+    const id = `bucket-autogen-scratch-${n}`;
+    extraNodes.push({ id, kind: "BUCKET", name: `bucket-autogen-scratch-${n}`, cloud: "GCP", region: "us-west1", projects: ["PROJECT-BETA"] });
+    edges.push(edge("sa-agent-autogen", "ALLOWS_ACCESS_TO", id, "WRITE"));
+  }
+  for (let i = 1; i <= 12; i++) {
+    const n = String(i).padStart(2, "0");
+    const id = `user-ops-${n}`;
+    extraNodes.push({ id, kind: "USER_ACCOUNT", name: `ops.user${n}@example.com`, cloud: "GCP" });
+    edges.push(edge(id, "ALLOWS_ACCESS_TO", "agent-h-chatbot", i <= 2 ? "ADMIN" : "READ"));
+  }
+  function issue(seed) {
+    const group = classifyIssue({ sourceRuleId: seed.ruleId, ruleName: seed.ruleName });
+    return {
+      id: seed.id,
+      ruleId: seed.ruleId,
+      ruleName: seed.ruleName,
+      comboGroup: group ? group.id : "",
+      nativeSeverity: seed.nativeSeverity,
+      adjustedSeverity: group ? group.adjustedSeverity : seed.nativeSeverity,
+      status: "OPEN",
+      assetId: seed.assetId,
+      assetName: seed.assetName,
+      region: seed.region,
+      account: seed.account,
+      projects: seed.projects,
+      frameworks: seed.frameworks,
+      justification: seed.justification,
+      createdAt: seed.createdAt,
+      dueAt: seed.dueAt,
+      resolutionRecommendation: seed.resolutionRecommendation
+    };
+  }
+  var RULE_G1 = "Allow model invoke without Guardrail for user or role";
+  var RULE_G2 = "Managed AI Agent with high privileges or sensitive data access";
+  var RULE_G3 = "AI Agent hosted on VM/serverless with high privileges or sensitive data access";
+  var RULE_G4 = "AI resource using overly permissive execution identity";
+  var issues = [];
+  var issueSeq = 0;
+  function nextIssueId() {
+    issueSeq += 1;
+    return `iss-${String(issueSeq).padStart(3, "0")}`;
+  }
+  for (const role of awsRoles) {
+    issues.push(issue({
+      id: nextIssueId(),
+      ruleId: "wc-id-2742",
+      ruleName: RULE_G1,
+      assetId: role.id,
+      assetName: role.name,
+      nativeSeverity: "MEDIUM",
+      account: "aws-account-prod-01",
+      projects: ["PROJECT-ALPHA"],
+      justification: "No content filtering, data protection, or compliance enforcement on AI model calls.",
+      frameworks: { owaspLlm: ["LLM06", "LLM02"], owaspAgentic: ["ASI02", "ASI03"], fiveRs: ["Restrict"] },
+      createdAt: "2026-05-14T09:12:00Z"
+    }));
+  }
+  var G2 = [
+    { assetId: "agent-a", count: 1, llm: ["LLM06", "LLM01"], asi: ["ASI03", "ASI01"], ml: ["Data Poisoning"], fiveRs: ["Restrict"], why: "Prompt injection reaches PII and credentials; 5Rs gap confirms data is not restricted." },
+    { assetId: "agent-b", count: 1, llm: ["LLM06", "LLM01"], asi: ["ASI03", "ASI01"], ml: ["Data Poisoning"], fiveRs: ["Restrict"], why: "Over-privileged IAM on a customer-facing managed agent." },
+    { assetId: "agent-autogen", count: 4, llm: ["LLM06", "LLM07"], asi: ["ASI10"], ml: ["Supply Chain"], fiveRs: ["Reduce", "Restrict"], why: "Auto-generated agent \u2014 likely forgotten, still over-privileged." },
+    { assetId: "agent-d-test", count: 1, llm: ["LLM06", "LLM04"], asi: ["ASI03", "ASI06"], ml: ["Data Poisoning"], fiveRs: ["Reconfigure"], why: "Dev/test agent with prod-level IAM \u2014 violates least privilege." },
+    { assetId: "agent-d", count: 1, llm: ["LLM06", "LLM04"], asi: ["ASI03", "ASI06"], ml: ["Data Poisoning"], fiveRs: ["Reconfigure"], why: "Dev agent with excessive IAM \u2014 training-data exposure risk." },
+    { assetId: "agent-e", count: 1, llm: ["LLM06", "LLM02"], asi: ["ASI03", "ASI01"], ml: ["Input Manipulation"], fiveRs: ["Restrict"], why: "Innovation agent with sensitive data access and no guardrail." },
+    { assetId: "agent-f", count: 1, llm: ["LLM06", "LLM02"], asi: ["ASI03", "ASI02"], ml: ["Model Theft"], fiveRs: ["Restrict"], why: "Pricing agent with financial data access \u2014 high business impact." },
+    { assetId: "agent-f-preprod", count: 1, llm: ["LLM06", "LLM02"], asi: ["ASI03", "ASI02"], ml: ["Model Theft"], fiveRs: ["Reconfigure"], why: "Pre-prod pricing agent \u2014 same risk as prod." },
+    { assetId: "agent-g", count: 2, llm: ["LLM06", "LLM02"], asi: ["ASI03", "ASI01"], ml: ["Data Poisoning"], fiveRs: ["Restrict"], why: "Business-partner data agent \u2014 PII and partner-data exposure risk." }
+  ];
+  var _a;
+  for (const g of G2) {
+    const asset = AGENTS.find((a) => a.id === g.assetId);
+    for (let i = 0; i < g.count; i++) {
+      issues.push(issue({
+        id: nextIssueId(),
+        ruleId: "wc-id-3217",
+        ruleName: RULE_G2,
+        assetId: asset.id,
+        assetName: asset.name,
+        nativeSeverity: "MEDIUM",
+        region: asset.region,
+        account: (_a = asset.account) == null ? void 0 : _a.name,
+        projects: asset.projects,
+        justification: g.why,
+        frameworks: { owaspLlm: g.llm, owaspAgentic: g.asi, owaspMl: g.ml, fiveRs: g.fiveRs },
+        createdAt: "2026-05-20T11:40:00Z",
+        dueAt: "2026-08-18T11:40:00Z",
+        resolutionRecommendation: "Apply least-privilege to the agent's execution service account; remove IAM bindings that grant access to sensitive data, and attach a guardrail that limits the agent's data-access scope at runtime."
+      }));
+    }
+  }
+  var G3 = [
+    { assetId: "agent-i", count: 4, llm: ["LLM06", "LLM01"], asi: ["ASI03", "ASI05"], fiveRs: ["Restrict", "Reduce"], why: "Inactive agents still holding sensitive data access \u2014 lateral-movement risk via compromised compute." },
+    { assetId: "agent-h-chatbot", count: 2, llm: ["LLM06", "LLM02", "LLM05"], asi: ["ASI02", "ASI03"], fiveRs: ["Restrict"], why: "Chatbot agent on serverless with excessive IAM \u2014 user-facing attack surface." }
+  ];
+  var _a2;
+  for (const g of G3) {
+    const asset = AGENTS.find((a) => a.id === g.assetId);
+    for (let i = 0; i < g.count; i++) {
+      issues.push(issue({
+        id: nextIssueId(),
+        ruleId: "wc-id-3230",
+        ruleName: RULE_G3,
+        assetId: asset.id,
+        assetName: asset.name,
+        nativeSeverity: "MEDIUM",
+        region: asset.region,
+        account: (_a2 = asset.account) == null ? void 0 : _a2.name,
+        projects: asset.projects,
+        justification: g.why,
+        frameworks: { owaspLlm: g.llm, owaspAgentic: g.asi, fiveRs: g.fiveRs },
+        createdAt: "2026-06-03T07:25:00Z"
+      }));
+    }
+  }
+  var _a3;
+  for (const assetId of ["agent-j", "agent-k"]) {
+    const asset = AGENTS.find((a) => a.id === assetId);
+    issues.push(issue({
+      id: nextIssueId(),
+      ruleId: "wc-id-3123",
+      ruleName: RULE_G4,
+      assetId: asset.id,
+      assetName: asset.name,
+      nativeSeverity: "LOW",
+      region: asset.region,
+      account: (_a3 = asset.account) == null ? void 0 : _a3.name,
+      projects: asset.projects,
+      justification: "Latent privileges \u2014 a compromised agent inherits every permission of its execution identity.",
+      frameworks: { owaspAgentic: ["ASI03"], fiveRs: ["Reconfigure"] },
+      createdAt: "2026-06-10T15:02:00Z"
+    }));
+  }
+  var HINTS = {
+    "agent-a": { gaps: [gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
+    "agent-b": { gaps: [gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
+    "agent-autogen": { gaps: [gap("LLM06"), gap("ASI10"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
+    "agent-d-test": { gaps: [gap("LLM04"), gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
+    "agent-d": { gaps: [gap("LLM04"), gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
+    "agent-e": { gaps: [gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
+    "agent-f": { gaps: [gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
+    "agent-f-preprod": { gaps: [gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
+    "agent-g": { gaps: [gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
+    "agent-h-chatbot": { gaps: [gap("LLM06"), gap("LLM05"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
+    "agent-i": { gaps: [gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
+    "agent-j": { gaps: [gap("ASI03")], dataExposure: "DATA_ACCESS" },
+    "agent-k": { gaps: [gap("ASI03")], dataExposure: "DATA_ACCESS" },
+    // Deprecated-model usage shows up on the model itself, not the agents.
+    "model-text-embedding-005": { gaps: [gap("DEPRECATED_MODEL")], dataExposure: "NONE" }
+  };
+  for (const role of awsRoles) {
+    HINTS[role.id] = {
+      gaps: [gap("LLM01"), gap("LLM02"), gap("ASI02")],
+      dataExposure: "DATA_ACCESS"
+    };
+  }
+  var SEED_FINDINGS_DATA = [
+    {
+      id: "cfg-001",
+      resourceId: "agent-a",
+      ruleShortId: "SUB-082",
+      severity: "MEDIUM",
+      remediation: "Encrypt the Vertex AI metadata store with a customer-managed key and restrict the agent service account's access to it.",
+      frameworkCodes: ["SUB-082", "LLM06"]
+    },
+    {
+      id: "cfg-002",
+      resourceId: "agent-h-chatbot",
+      ruleShortId: "SUB-114",
+      severity: "HIGH",
+      remediation: "Disable public ingress on the Cloud Run service hosting the agent, or place it behind an authenticated load balancer.",
+      frameworkCodes: ["SUB-114"]
+    },
+    {
+      id: "cfg-003",
+      resourceId: "agent-e",
+      ruleShortId: "SUB-047",
+      severity: "MEDIUM",
+      remediation: "Enable audit logging for all data access performed by the agent identity.",
+      frameworkCodes: ["SUB-047"]
+    }
+  ];
+  var SEED_NODES = [...AGENTS, ...awsRoles, ...SUPPORT, ...extraNodes].map(node);
+  var SEED_EDGES = edges;
+  var SEED_ISSUES = issues;
+  var SEED_FINDINGS = SEED_FINDINGS_DATA;
+  var SEED_AARS_HINTS = HINTS;
+  function seedGraphDoc(syncedAt) {
+    return { nodes: SEED_NODES, edges: SEED_EDGES, syncedAt };
+  }
+
   // src/server/syncStore.ts
   function boolCell(v) {
     return v ? "true" : "false";
@@ -2869,7 +3174,7 @@ var Server = (() => {
     }
   }
   function assetToRow(n) {
-    var _a4, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o;
+    var _a4, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q;
     return {
       id: n.id,
       kind: n.kind,
@@ -2884,21 +3189,25 @@ var Server = (() => {
       first_seen: (_j = n.firstSeen) != null ? _j : null,
       last_seen: (_k = n.lastSeen) != null ? _k : null,
       internet: triCell(n.isAccessibleFromInternet),
+      open_internet: triCell(n.isOpenToAllInternet),
       sensitive_data: boolCell(n.hasSensitiveData),
       sensitive_access: boolCell(n.hasAccessToSensitiveData),
       high_priv: boolCell(n.hasHighPrivileges),
       admin_priv: boolCell(n.hasAdminPrivileges),
       guardrail_missing: boolCell(n.guardrailMissing),
-      severity: (_l = n.severity) != null ? _l : null,
-      aars: (_m = n.aars) != null ? _m : null,
-      aars_band: (_n = n.aarsBand) != null ? _n : null,
+      technology_categories: ((_l = n.technologyCategories) != null ? _l : []).join(","),
+      severity: (_m = n.severity) != null ? _m : null,
+      aars: (_n = n.aars) != null ? _n : null,
+      aars_band: (_o = n.aarsBand) != null ? _o : null,
       aars_pillars_json: n.aarsPillars ? JSON.stringify(n.aarsPillars) : null,
-      combo_groups: ((_o = n.comboGroups) != null ? _o : []).join(","),
-      tags_json: n.tags ? JSON.stringify(n.tags) : null
+      combo_groups: ((_p = n.comboGroups) != null ? _p : []).join(","),
+      tags_json: n.tags ? JSON.stringify(n.tags) : null,
+      identity_purpose: (_q = n.identityPurpose) != null ? _q : null,
+      issue_analytics_json: n.issueAnalytics ? JSON.stringify(n.issueAnalytics) : null
     };
   }
   function rowToAsset(r) {
-    var _a4, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
+    var _a4, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
     const node2 = {
       id: String((_a4 = r["id"]) != null ? _a4 : ""),
       kind: String((_b = r["kind"]) != null ? _b : "AI_AGENT"),
@@ -2910,6 +3219,7 @@ var Server = (() => {
       firstSeen: (_h = r["first_seen"]) != null ? _h : void 0,
       lastSeen: (_i = r["last_seen"]) != null ? _i : void 0,
       isAccessibleFromInternet: parseTri(r["internet"]),
+      isOpenToAllInternet: parseTri(r["open_internet"]),
       hasSensitiveData: parseBool(r["sensitive_data"]),
       hasAccessToSensitiveData: parseBool(r["sensitive_access"]),
       hasHighPrivileges: parseBool(r["high_priv"]),
@@ -2935,6 +3245,12 @@ var Server = (() => {
     if (combos) node2.comboGroups = combos.split(",").filter(Boolean);
     const tags = parseJson(r["tags_json"], null);
     if (tags) node2.tags = tags;
+    const techCats = String((_o = r["technology_categories"]) != null ? _o : "").split(",").filter(Boolean);
+    if (techCats.length) node2.technologyCategories = techCats;
+    const purpose = (_p = r["identity_purpose"]) != null ? _p : null;
+    if (purpose) node2.identityPurpose = purpose;
+    const analytics = parseJson(r["issue_analytics_json"], null);
+    if (analytics) node2.issueAnalytics = analytics;
     return node2;
   }
   function edgeToRow(e) {
@@ -2962,7 +3278,7 @@ var Server = (() => {
     return e;
   }
   function issueToRow(i) {
-    var _a4, _b, _c, _d, _e, _f;
+    var _a4, _b, _c, _d, _e, _f, _g, _h, _i;
     return {
       id: i.id,
       rule_id: i.ruleId,
@@ -2978,11 +3294,14 @@ var Server = (() => {
       projects_json: JSON.stringify((_c = i.projects) != null ? _c : []),
       frameworks_json: JSON.stringify((_d = i.frameworks) != null ? _d : {}),
       justification: (_e = i.justification) != null ? _e : null,
-      created_at: (_f = i.createdAt) != null ? _f : null
+      created_at: (_f = i.createdAt) != null ? _f : null,
+      due_at: (_g = i.dueAt) != null ? _g : null,
+      resolution_recommendation: (_h = i.resolutionRecommendation) != null ? _h : null,
+      remediation: (_i = i.remediation) != null ? _i : null
     };
   }
   function rowToIssue(r) {
-    var _a4, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
+    var _a4, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
     return {
       id: String((_a4 = r["id"]) != null ? _a4 : ""),
       ruleId: String((_b = r["rule_id"]) != null ? _b : ""),
@@ -2998,16 +3317,42 @@ var Server = (() => {
       projects: parseJson(r["projects_json"], []),
       frameworks: parseJson(r["frameworks_json"], {}),
       justification: (_l = r["justification"]) != null ? _l : void 0,
-      createdAt: (_m = r["created_at"]) != null ? _m : void 0
+      createdAt: (_m = r["created_at"]) != null ? _m : void 0,
+      dueAt: (_n = r["due_at"]) != null ? _n : void 0,
+      resolutionRecommendation: (_o = r["resolution_recommendation"]) != null ? _o : void 0,
+      remediation: (_p = r["remediation"]) != null ? _p : void 0
     };
   }
-  function persistSync(rawDoc, issues2, hints, meta, now) {
+  function findingToRow(f) {
+    var _a4, _b;
+    return {
+      id: f.id,
+      resource_id: f.resourceId,
+      rule_short_id: f.ruleShortId,
+      severity: f.severity,
+      remediation: (_a4 = f.remediation) != null ? _a4 : null,
+      framework_codes: ((_b = f.frameworkCodes) != null ? _b : []).join(",")
+    };
+  }
+  function rowToFinding(r) {
+    var _a4, _b, _c, _d, _e, _f;
+    return {
+      id: String((_a4 = r["id"]) != null ? _a4 : ""),
+      resourceId: String((_b = r["resource_id"]) != null ? _b : ""),
+      ruleShortId: String((_c = r["rule_short_id"]) != null ? _c : ""),
+      severity: String((_d = r["severity"]) != null ? _d : "UNKNOWN"),
+      remediation: (_e = r["remediation"]) != null ? _e : void 0,
+      frameworkCodes: String((_f = r["framework_codes"]) != null ? _f : "").split(",").filter(Boolean)
+    };
+  }
+  function persistSync(rawDoc, issues2, hints, meta, now, findings = []) {
     const enriched = enrichGraphDoc(rawDoc, issues2, hints);
     const assetNodes = enriched.nodes.filter((n) => n.kind !== "ISSUE" && n.kind !== "SUMMARY");
     const assetEdges = enriched.edges.filter((e) => e.type !== "HAS_ISSUE");
     overwrite(TABS.assets, assetNodes.map(assetToRow));
     overwrite(TABS.edges, assetEdges.map(edgeToRow));
     overwrite(TABS.issues, issues2.map(issueToRow));
+    overwrite(TABS.findings, findings.map(findingToRow));
     const snapshotRef = writeGraphSnapshot(enriched);
     appendRows(TABS.syncHistory, [{
       sync_id: meta.syncId,
@@ -3029,10 +3374,12 @@ var Server = (() => {
   var graphDocMemo;
   var assetsMemo;
   var issuesMemo;
+  var findingsMemo;
   function invalidateReadMemos() {
     graphDocMemo = void 0;
     assetsMemo = void 0;
     issuesMemo = void 0;
+    findingsMemo = void 0;
   }
   function loadGraphDoc() {
     if (graphDocMemo !== void 0) return graphDocMemo;
@@ -3081,6 +3428,10 @@ var Server = (() => {
     if (issuesMemo === void 0) issuesMemo = readAll(TABS.issues).map(rowToIssue);
     return issuesMemo;
   }
+  function loadFindings() {
+    if (findingsMemo === void 0) findingsMemo = readAll(TABS.findings).map(rowToFinding);
+    return findingsMemo;
+  }
   function syncHistory() {
     return readAll(TABS.syncHistory);
   }
@@ -3092,6 +3443,7 @@ var Server = (() => {
     overwrite(TABS.assets, []);
     overwrite(TABS.edges, []);
     overwrite(TABS.issues, []);
+    overwrite(TABS.findings, []);
     overwrite(TABS.syncHistory, []);
     trashGraphSnapshot();
     bumpDataVersion();
@@ -3123,6 +3475,27 @@ var Server = (() => {
         normalize: (rows) => normalizeRuleAssetsPage(rows, group),
         optional: true
       })),
+      // Real toxic-combination issues (issuesV2). Runs alongside the per-rule steps
+      // above; reconcileIssues drops the synthetic per-rule rows these supersede.
+      {
+        id: "ISSUES_TOXIC",
+        run: "connection",
+        connectionField: "issuesV2",
+        query: Q_ISSUES,
+        extraVariables: aiIssuesVariables(projectScope()),
+        normalize: normalizeIssuesPage,
+        optional: true
+      },
+      // Real compliance findings (configurationFindings) — feeds AARS pillar B.
+      {
+        id: "CONFIG_FINDINGS",
+        run: "connection",
+        connectionField: "configurationFindings",
+        query: Q_CONFIG_FINDINGS,
+        extraVariables: aiConfigFindingsVariables(projectScope()),
+        normalize: normalizeConfigFindingsPage,
+        optional: true
+      },
       {
         id: "GUARDRAIL_GAPS",
         run: "graphSearch",
@@ -3150,6 +3523,15 @@ var Server = (() => {
         query: Q_IDENTITY_ACCESS,
         normalize: normalizeIdentityAccessPage,
         optional: true
+      },
+      // Agentic execution identities (cloudResourcesV2 + identityPurpose:AGENTIC).
+      {
+        id: "AGENTIC_IDENTITIES",
+        run: "cloudResources",
+        query: Q_PRINCIPALS,
+        extraVariables: aiPrincipalsVariables(projectScope()),
+        normalize: normalizePrincipalsPage,
+        optional: true
       }
     ];
   }
@@ -3168,7 +3550,9 @@ var Server = (() => {
       seedGraphDoc(startedAt),
       SEED_ISSUES,
       SEED_AARS_HINTS,
-      { syncId, mode: "dry-run", startedAt, apiCalls: 0 }
+      { syncId, mode: "dry-run", startedAt, apiCalls: 0 },
+      void 0,
+      SEED_FINDINGS
     );
     return {
       jobId: null,
@@ -3274,7 +3658,7 @@ var Server = (() => {
             scheduleContinuation();
             return;
           }
-          const fetcher = step.run === "cloudResources" ? fetchCloudResourcesPage : fetchGraphSearchPage;
+          const fetcher = step.run === "graphSearch" ? fetchGraphSearchPage : step.run === "connection" ? (a) => fetchConnectionPage(step.connectionField, a) : fetchCloudResourcesPage;
           let result;
           try {
             result = fetcher({
@@ -3330,7 +3714,10 @@ var Server = (() => {
         if (parsed && Array.isArray(parsed.nodes)) parts.push(parsed);
       }
       const startedAt = job.started_at;
-      const { doc, issues: issues2 } = mergeParts(parts, nowIso());
+      const merged = mergeParts(parts, nowIso());
+      const doc = merged.doc;
+      const issues2 = reconcileIssues(merged.issues);
+      const findings = merged.findings;
       if (!doc.nodes.length) {
         updateJob(job.job_id, {
           phase: "FAILED",
@@ -3339,12 +3726,13 @@ var Server = (() => {
         return;
       }
       updateJob(job.job_id, { phase: "PERSISTING" });
-      const persist = () => persistSync(doc, issues2, void 0, {
+      const hints = buildAarsHintsFromFindings(findings, doc, issues2);
+      const persist = () => persistSync(doc, issues2, hints, {
         syncId,
         mode: "live",
         startedAt,
         apiCalls: params.apiCalls
-      });
+      }, void 0, findings);
       if (opts.lockHeld) persist();
       else withScriptLock(persist);
       updateJob(job.job_id, { phase: "DONE" });
@@ -3510,7 +3898,7 @@ var Server = (() => {
     });
   }
   function assetRow(n) {
-    var _a4, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
+    var _a4, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v;
     return {
       id: n.id,
       name: n.name,
@@ -3525,9 +3913,17 @@ var Server = (() => {
       aarsBand: (_h = n.aarsBand) != null ? _h : null,
       comboGroups: (_i = n.comboGroups) != null ? _i : [],
       internet: (_j = n.isAccessibleFromInternet) != null ? _j : null,
-      sensitiveAccess: (_k = n.hasAccessToSensitiveData) != null ? _k : false,
-      highPriv: (_l = n.hasHighPrivileges) != null ? _l : false,
-      guardrailMissing: (_m = n.guardrailMissing) != null ? _m : false
+      openInternet: (_k = n.isOpenToAllInternet) != null ? _k : null,
+      sensitiveAccess: (_l = n.hasAccessToSensitiveData) != null ? _l : false,
+      sensitiveData: (_m = n.hasSensitiveData) != null ? _m : false,
+      highPriv: (_n = n.hasHighPrivileges) != null ? _n : false,
+      adminPriv: (_o = n.hasAdminPrivileges) != null ? _o : false,
+      guardrailMissing: (_p = n.guardrailMissing) != null ? _p : false,
+      technologyCategories: (_q = n.technologyCategories) != null ? _q : [],
+      cloudAccount: (_s = (_r = n.cloudAccount) == null ? void 0 : _r.name) != null ? _s : null,
+      tags: (_t = n.tags) != null ? _t : [],
+      identityPurpose: (_u = n.identityPurpose) != null ? _u : null,
+      issueAnalytics: (_v = n.issueAnalytics) != null ? _v : null
     };
   }
   function getAssets(_p) {
@@ -3552,7 +3948,9 @@ var Server = (() => {
             sensitiveAccess: assets.filter(
               (a) => AI_ASSET_KINDS.includes(a.kind) && a.hasAccessToSensitiveData
             ).length,
-            openIssues: issues2.length
+            openIssues: issues2.length,
+            complianceGaps: loadFindings().length,
+            agenticIdentities: assets.filter((a) => a.identityPurpose === "AGENTIC").length
           }
         };
       })
@@ -3582,7 +3980,13 @@ var Server = (() => {
             direction: edge2.src === id ? "out" : "in"
           });
         }
-        return { node: { ...assetRow(node2), aarsPillars: (_a5 = node2.aarsPillars) != null ? _a5 : null }, issues: issues2, neighbors };
+        const findings = loadFindings().filter((f) => f.resourceId === id);
+        return {
+          node: { ...assetRow(node2), aarsPillars: (_a5 = node2.aarsPillars) != null ? _a5 : null },
+          issues: issues2,
+          neighbors,
+          findings
+        };
       });
     });
   }

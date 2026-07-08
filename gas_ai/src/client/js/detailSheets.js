@@ -71,7 +71,7 @@ export function openAssetSheet(assetId, opts = {}) {
     }
     const boot = bootstrapCached();
     const bandSeverity = boot?.palette?.aarsBandSeverity || {};
-    const { node, issues, neighbors } = detail;
+    const { node, issues, neighbors, findings } = detail;
     clear(body);
 
     const head = el("div", { class: "sheet-section" },
@@ -82,6 +82,10 @@ export function openAssetSheet(assetId, opts = {}) {
           ? el("span", { class: "pill bad" }, "Toxic combination")
           : null,
         node.guardrailMissing ? el("span", { class: "pill warn" }, "No guardrail") : null,
+        node.identityPurpose === "AGENTIC" ? el("span", { class: "pill" }, "Agentic") : null,
+        node.issueAnalytics && node.issueAnalytics.total
+          ? el("span", { class: "pill" }, `${node.issueAnalytics.total} related issue${node.issueAnalytics.total === 1 ? "" : "s"}`)
+          : null,
       ),
     );
 
@@ -95,8 +99,15 @@ export function openAssetSheet(assetId, opts = {}) {
       ...kvRow("Internet exposed",
         node.internet === true ? "Yes" : node.internet === false ? "No"
           : "Unknown (inherited from host)"),
+      ...kvRow("Open to all internet",
+        node.openInternet === true ? "Yes" : node.openInternet === false ? "No"
+          : "Unknown (inherited from host)"),
       ...kvRow("Sensitive data access", node.sensitiveAccess ? "Yes" : "No"),
       ...kvRow("High privileges", node.highPriv ? "Yes" : "No"),
+      ...kvRow("Admin privileges", node.adminPriv ? "Yes" : "No"),
+      ...(node.technologyCategories && node.technologyCategories.length
+        ? kvRow("Technology", node.technologyCategories.join(", "))
+        : []),
     );
 
     body.append(
@@ -133,6 +144,30 @@ export function openAssetSheet(assetId, opts = {}) {
       body.append(
         el("div", { class: "sheet-section" },
           el("span", { class: "label" }, `Open issues (${issues.length})`),
+          list,
+        ),
+      );
+    }
+
+    if (findings && findings.length) {
+      const list = el("div", {});
+      for (const f of findings) {
+        list.append(
+          el("div", { style: "padding:8px 0; border-bottom:1px solid var(--hairline)" },
+            el("div", { style: "display:flex; gap:8px; align-items:center; flex-wrap:wrap" },
+              sevBadge(f.severity),
+              el("span", { class: "small muted" }, f.ruleShortId || "—"),
+            ),
+            f.remediation
+              ? el("div", { class: "small muted", style: "margin-top:2px; white-space:pre-wrap" },
+                  f.remediation)
+              : null,
+          ),
+        );
+      }
+      body.append(
+        el("div", { class: "sheet-section" },
+          el("span", { class: "label" }, `Compliance findings (${findings.length})`),
           list,
         ),
       );
@@ -215,6 +250,7 @@ export function openIssueSheet(issueId) {
           ...kvRow("Account", issue.account || "—"),
           ...kvRow("Projects", (issue.projects || []).join(", ") || "—"),
           ...kvRow("Created", issue.createdAt || "—"),
+          ...kvRow("Due", issue.dueAt || "—"),
         ),
       ),
     );
@@ -223,6 +259,15 @@ export function openIssueSheet(issueId) {
         el("div", { class: "sheet-section" },
           el("span", { class: "label" }, "Why it matters"),
           el("p", { class: "small", style: "margin:0" }, issue.justification),
+        ),
+      );
+    }
+    const fix = issue.remediation || issue.resolutionRecommendation;
+    if (fix) {
+      body.append(
+        el("div", { class: "sheet-section" },
+          el("span", { class: "label" }, "Recommended fix"),
+          el("p", { class: "small", style: "margin:0; white-space:pre-wrap" }, fix),
         ),
       );
     }

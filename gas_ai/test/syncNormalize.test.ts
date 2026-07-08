@@ -6,13 +6,18 @@ import { describe, expect, it } from "vitest";
 import {
   mergeParts,
   normalizeCloudResource,
+  normalizeConfigFindingsPage,
   normalizeIdentityAccessPage,
   normalizeInventoryPage,
+  normalizeIssuesPage,
   normalizeNoGuardrailPage,
+  normalizePrincipalsPage,
   normalizeRuleAssetsPage,
   normalizeRunsAsPage,
+  reconcileIssues,
 } from "../src/domain/syncNormalize";
 import { COMBO_GROUPS } from "../src/domain/toxicCombos";
+import type { IssueRow } from "../src/domain/graphTypes";
 
 const AGENT_RAW = {
   id: "wiz-node-agent-1",
@@ -144,5 +149,164 @@ describe("mergeParts", () => {
     const b = normalizeRuleAssetsPage([AGENT_RAW], group);
     const { issues } = mergeParts([a, b], "2026-06-28T06:00:00Z");
     expect(issues).toHaveLength(1);
+  });
+
+  it("collects findings and dedupes them by id", () => {
+    const a = normalizeConfigFindingsPage([CONFIG_FINDING_RAW]);
+    const b = normalizeConfigFindingsPage([CONFIG_FINDING_RAW]);
+    const { findings } = mergeParts([a, b], "2026-06-28T06:00:00Z");
+    expect(findings).toHaveLength(1);
+  });
+});
+
+// Trimmed from exemples/toxic_combos_response.js — two issues on the SAME asset
+// (real multiplicity), each with a sourceRule Control carrying resolutionRecommendation.
+function issueRaw(id: string): Record<string, unknown> {
+  return {
+    id,
+    type: "TOXIC_COMBINATION",
+    severity: "MEDIUM",
+    status: "OPEN",
+    createdAt: "2026-06-24T04:04:04Z",
+    dueAt: "2026-09-22T04:04:04Z",
+    projects: [{ id: "p1", name: "VALUE-CHAIN", riskProfile: { businessImpact: "LBI" } }],
+    entitySnapshot: {
+      id: "wiz-asset-42",
+      type: "AI_AGENT",
+      name: "StockBuddy",
+      cloudPlatform: "GCP",
+      region: "europe-west1",
+      subscriptionName: "shipperbox",
+      nativeType: "aiplatform#ReasoningEngine",
+      externalId: "projects/x/reasoningEngines/1",
+    },
+    sourceRules: [{
+      id: "wc-id-3217",
+      name: "Managed AI Agent with high privileges or sensitive data access",
+      resolutionRecommendation: "Apply least-privilege to the agent service account.",
+    }],
+  };
+}
+
+describe("normalizeIssuesPage (issuesV2)", () => {
+  it("preserves real per-asset multiplicity and maps real severity + recommendation", () => {
+    const part = normalizeIssuesPage([issueRaw("iss-1"), issueRaw("iss-2")]);
+    expect(part.issues).toHaveLength(2); // two real issues on one asset
+    const issue = part.issues[0];
+    expect(issue.id).toBe("iss-1");
+    expect(issue.assetId).toBe("wiz-asset-42");
+    expect(issue.comboGroup).toBe("gcp-managed-privileged");
+    expect(issue.nativeSeverity).toBe("MEDIUM");
+    expect(issue.adjustedSeverity).toBe("HIGH");
+    expect(issue.account).toBe("shipperbox");
+    expect(issue.dueAt).toBe("2026-09-22T04:04:04Z");
+    expect(issue.resolutionRecommendation).toContain("least-privilege");
+  });
+
+  it("emits a thin GNode from entitySnapshot, minimal so it can't clobber inventory", () => {
+    const part = normalizeIssuesPage([issueRaw("iss-1")]);
+    expect(part.nodes).toHaveLength(1);
+    const node = part.nodes[0];
+    expect(node).toMatchObject({ id: "wiz-asset-42", kind: "AI_AGENT", name: "StockBuddy" });
+    expect(node.cloudAccount).toBeUndefined(); // never overwrites inventory's richer account
+  });
+
+  it("skips issues with no id or no attachable entity", () => {
+    const noEntity = { id: "iss-x", severity: "HIGH" };
+    const part = normalizeIssuesPage([noEntity, {}]);
+    expect(part.issues).toHaveLength(0);
+    expect(part.nodes).toHaveLength(0);
+  });
+});
+
+describe("reconcileIssues (augment de-dup)", () => {
+  const real: IssueRow = {
+    id: "uuid-real", ruleId: "wc-id-3217", ruleName: "r", comboGroup: "gcp-managed-privileged",
+    nativeSeverity: "MEDIUM", adjustedSeverity: "HIGH", status: "OPEN",
+    assetId: "asset-1", assetName: "A",
+  };
+  const syntheticSameKey: IssueRow = {
+    ...real, id: "live-wc-id-3217-asset-1",
+  };
+  const syntheticOtherAsset: IssueRow = {
+    ...real, id: "live-wc-id-3217-asset-2", assetId: "asset-2",
+  };
+
+  it("drops the synthetic per-rule row that a real issue supersedes", () => {
+    const out = reconcileIssues([real, syntheticSameKey]);
+    expect(out.map((i) => i.id)).toEqual(["uuid-real"]);
+  });
+
+  it("keeps a synthetic row for an (asset, group) issuesV2 didn't cover", () => {
+    const out = reconcileIssues([real, syntheticOtherAsset]);
+    expect(out.map((i) => i.id).sort()).toEqual(["live-wc-id-3217-asset-2", "uuid-real"]);
+  });
+});
+
+// Trimmed from exemples/ai_cloud_config_findings_response.js.
+const CONFIG_FINDING_RAW: Record<string, unknown> = {
+  id: "find-1",
+  name: "Vertex AI Metadata Store is not encrypted with a customer-managed key",
+  severity: "MEDIUM",
+  result: "FAIL",
+  status: "OPEN",
+  remediation: "Delete and recreate the metadata store with a customer-managed key.",
+  resource: { id: "wiz-asset-42", name: "europe-west1", type: "REGION" },
+  rule: {
+    shortId: "SUB-082",
+    name: "Vertex AI Metadata Store should be encrypted with a customer-managed key",
+    remediationInstructions: "Follow the GCP console steps.",
+    risks: ["AI_SECURITY", "UNPROTECTED_DATA"],
+    tags: [{ key: "owasp", value: "LLM06" }],
+  },
+};
+
+describe("normalizeConfigFindingsPage", () => {
+  it("keeps FAILING OPEN findings and extracts framework codes (shortId + OWASP token)", () => {
+    const part = normalizeConfigFindingsPage([CONFIG_FINDING_RAW]);
+    expect(part.findings).toHaveLength(1);
+    const f = part.findings[0];
+    expect(f.resourceId).toBe("wiz-asset-42");
+    expect(f.ruleShortId).toBe("SUB-082");
+    expect(f.remediation).toContain("customer-managed key");
+    expect(f.frameworkCodes).toEqual(["SUB-082", "LLM06"]);
+  });
+
+  it("drops PASS results and findings with no resource", () => {
+    const pass = { ...CONFIG_FINDING_RAW, id: "find-2", result: "PASS" };
+    const noResource = { id: "find-3", result: "FAIL", status: "OPEN" };
+    const part = normalizeConfigFindingsPage([pass, noResource]);
+    expect(part.findings).toHaveLength(0);
+  });
+});
+
+describe("normalizePrincipalsPage (agentic identities)", () => {
+  const PRINCIPAL_RAW = {
+    id: "sa-1",
+    name: "vertex-agent-sa@iam.gserviceaccount.com",
+    type: "SERVICE_ACCOUNT",
+    hasHighPrivileges: true,
+    technology: { id: "8023", name: "GCP Service Account", categories: [{ id: "138", name: "Identity" }] },
+    issueAnalytics: {
+      issueCount: 2, informationalSeverityCount: 0, lowSeverityCount: 1,
+      mediumSeverityCount: 1, highSeverityCount: 0, criticalSeverityCount: 0,
+    },
+  };
+
+  it("flags identityPurpose AGENTIC by construction and maps issueAnalytics + tech", () => {
+    const part = normalizePrincipalsPage([PRINCIPAL_RAW]);
+    expect(part.nodes).toHaveLength(1);
+    const node = part.nodes[0];
+    expect(node.kind).toBe("SERVICE_ACCOUNT");
+    expect(node.identityPurpose).toBe("AGENTIC");
+    expect(node.technologyCategories).toEqual(["Identity"]);
+    expect(node.issueAnalytics).toEqual({ total: 2, info: 0, low: 1, medium: 1, high: 0, critical: 0 });
+  });
+
+  it("resolves the new ACCESS_KEY node kind", () => {
+    const part = normalizePrincipalsPage([{ id: "k1", type: "ACCESS_KEY", name: "AKIA..." }]);
+    expect(part.nodes).toHaveLength(1);
+    expect(part.nodes[0].kind).toBe("ACCESS_KEY");
+    expect(part.nodes[0].identityPurpose).toBe("AGENTIC");
   });
 });

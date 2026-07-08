@@ -12,7 +12,7 @@ export const NODE_KINDS = [
   "AI_AGENT_REGISTRY", "AI_DEPLOYMENT", "AI_EXTENSION", "AI_GATEWAY",
   "AI_SERVICE", "AI_SKILL", "AI_SKILL_TEMPLATE", "AI_TOOL",
   // identities
-  "SERVICE_ACCOUNT", "USER_ACCOUNT", "ACCESS_ROLE", "ACCESS_ROLE_BINDING",
+  "SERVICE_ACCOUNT", "USER_ACCOUNT", "ACCESS_ROLE", "ACCESS_ROLE_BINDING", "ACCESS_KEY",
   // data
   "BUCKET", "DATABASE",
   // compute / supply chain
@@ -98,6 +98,17 @@ export interface GNode {
   cloudAccount?: { id: string; name: string; externalId?: string; cloudProvider?: string };
   projects?: Array<{ id: string; name: string; businessImpact?: string }>;
   tags?: Array<{ key: string; value: string }>;
+  technologyCategories?: string[]; // Wiz technology.categories[].name (e.g. "AI Service")
+  // Agentic-identity enrichment (cloudResourcesV2 + identityPurpose:AGENTIC):
+  identityPurpose?: string; // "AGENTIC" for agent execution identities
+  issueAnalytics?: {        // per-identity related-issue severity rollup (display-only)
+    total: number;
+    info: number;
+    low: number;
+    medium: number;
+    high: number;
+    critical: number;
+  };
   // Enrichment, computed once at sync time and persisted:
   severity?: Severity;      // worst attached open-issue severity (ISSUE nodes: own severity)
   aars?: number;            // AI Asset Risk Score 0–100 (AI assets only)
@@ -152,4 +163,22 @@ export interface IssueRow {
   };
   justification?: string;
   createdAt?: string;
+  dueAt?: string;                    // issuesV2 dueAt (SLA deadline)
+  resolutionRecommendation?: string; // sourceRule control recommendation (issuesV2)
+  remediation?: string;              // config-finding remediation text (Phase 2)
+}
+
+/**
+ * A failing compliance-configuration finding (configurationFindings), keyed to the
+ * resource it fails on. Feeds AARS pillar B (one gap per distinct failing control)
+ * and carries the human remediation text. `frameworkCodes` are the AARS gap codes the
+ * finding contributes (rule shortId + any recognizable OWASP token on the rule).
+ */
+export interface FindingRow {
+  id: string;
+  resourceId: string;
+  ruleShortId: string;
+  severity: Severity;
+  remediation?: string;
+  frameworkCodes: string[];
 }

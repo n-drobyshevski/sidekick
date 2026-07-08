@@ -7,6 +7,7 @@ import { SEVERITY_ORDER, type Severity } from "./config";
 import {
   AI_ASSET_KINDS,
   edgeId,
+  type FindingRow,
   type GEdge,
   type GNode,
   type GraphDoc,
@@ -33,6 +34,18 @@ function worstSeverity(severities: Severity[]): Severity | undefined {
 }
 
 /**
+ * Data-exposure classification (AARS pillar C bucket) from a node's CIEM/DSPM flags.
+ * Extracted so the hint path (buildAarsHintsFromFindings) and the non-hint path
+ * (deriveAarsInput) always agree — the topology in withSensitiveDataNodes mirrors the
+ * SENSITIVE branch exactly.
+ */
+export function dataExposureOf(node: GNode): DataExposure {
+  if (node.hasAccessToSensitiveData || node.hasSensitiveData) return "SENSITIVE";
+  if (node.hasHighPrivileges || node.hasAdminPrivileges) return "DATA_ACCESS";
+  return "NONE";
+}
+
+/**
  * Heuristic AARS input for live data (dry-run seeds carry exact hints transcribed
  * from ai/custom_score.md instead): compliance gaps = the distinct framework codes on
  * the asset's open issues plus NO_GUARDRAIL when guardrail coverage flagged the node;
@@ -48,12 +61,7 @@ export function deriveAarsInput(node: GNode, nodeIssues: IssueRow[]): AarsInput 
   }
   const gaps: AarsGap[] = [...codes].sort().map((c) => gap(c));
   if (node.guardrailMissing) gaps.push(gap("NO_GUARDRAIL"));
-  const dataExposure: DataExposure =
-    node.hasAccessToSensitiveData || node.hasSensitiveData
-      ? "SENSITIVE"
-      : node.hasHighPrivileges || node.hasAdminPrivileges
-        ? "DATA_ACCESS"
-        : "NONE";
+  const dataExposure = dataExposureOf(node);
   return {
     // AARS Pillar A scores Wiz-NATIVE severities (the applied table in
     // ai/custom_score.md: MEDIUM ×1.2 = 24); the adjusted severity is a display
@@ -62,6 +70,51 @@ export function deriveAarsInput(node: GNode, nodeIssues: IssueRow[]): AarsInput 
     gaps,
     dataExposure,
   };
+}
+
+/**
+ * Turn config-findings into per-asset AARS hints so live Pillar B stops being purely
+ * heuristic: for each resource carrying ≥1 failing finding, the hint's gaps are the
+ * union of (a) what deriveAarsInput would compute from the asset's open issues +
+ * guardrail flag and (b) one gap per distinct framework code the findings contribute —
+ * so no existing signal is lost and real failing controls add real points (computeAars
+ * still caps pillar B at 30). dataExposure comes from deriveAarsInput, so hinted and
+ * un-hinted assets classify identically. Assets with no findings are omitted and fall
+ * through to deriveAarsInput unchanged.
+ */
+export function buildAarsHintsFromFindings(
+  findings: FindingRow[],
+  doc: GraphDoc,
+  issues: IssueRow[],
+): AarsHints {
+  const open = issues.filter((i) => i.status === "OPEN");
+  const issuesByAsset = new Map<string, IssueRow[]>();
+  for (const issue of open) {
+    if (!issuesByAsset.has(issue.assetId)) issuesByAsset.set(issue.assetId, []);
+    issuesByAsset.get(issue.assetId)!.push(issue);
+  }
+  const codesByResource = new Map<string, string[]>();
+  for (const f of findings) {
+    if (!codesByResource.has(f.resourceId)) codesByResource.set(f.resourceId, []);
+    codesByResource.get(f.resourceId)!.push(...f.frameworkCodes);
+  }
+  const nodeById = new Map(doc.nodes.map((n) => [n.id, n]));
+  const hints: AarsHints = {};
+  for (const [resourceId, codes] of codesByResource) {
+    const node = nodeById.get(resourceId);
+    if (!node) continue;
+    const base = deriveAarsInput(node, issuesByAsset.get(resourceId) ?? []);
+    const seen = new Set(base.gaps.map((g) => g.code));
+    const gaps = [...base.gaps];
+    for (const c of codes) {
+      if (c && !seen.has(c)) {
+        seen.add(c);
+        gaps.push(gap(c));
+      }
+    }
+    hints[resourceId] = { gaps, dataExposure: base.dataExposure };
+  }
+  return hints;
 }
 
 /**

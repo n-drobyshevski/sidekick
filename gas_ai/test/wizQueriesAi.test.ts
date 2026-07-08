@@ -7,11 +7,18 @@ import { describe, expect, it } from "vitest";
 import { kindFromWizType } from "../src/domain/graphTypes";
 import {
   AI_RESOURCE_TYPE_CANDIDATES,
+  aiConfigFindingsVariables,
   aiInventoryVariables,
+  aiIssuesVariables,
+  aiPrincipalsVariables,
   chooseAiResourceTypes,
   isInvalidEnumValueError,
   Q_AI_INVENTORY,
+  Q_CONFIG_FINDINGS,
+  Q_ISSUES,
+  Q_PRINCIPALS,
 } from "../src/server/wizQueriesAi";
+import { RISK_CATEGORY_ID } from "../src/domain/toxicCombos";
 
 describe("chooseAiResourceTypes", () => {
   it("an explicit override always wins", () => {
@@ -128,5 +135,75 @@ describe("Q_AI_INVENTORY + aiInventoryVariables", () => {
   it("selects businessImpact nested under riskProfile, not flat on Project", () => {
     expect(Q_AI_INVENTORY).toContain("projects { id name riskProfile { businessImpact } }");
     expect(Q_AI_INVENTORY).not.toContain("projects { id name businessImpact }");
+  });
+
+  it("now selects isOpenToAllInternet + technology categories (phase 3 enrichment)", () => {
+    expect(Q_AI_INVENTORY).toContain("isOpenToAllInternet");
+    expect(Q_AI_INVENTORY).toContain("technology { id name categories { id name } }");
+  });
+});
+
+describe("Q_ISSUES + aiIssuesVariables", () => {
+  it("hits issuesV2 as a static document with a filter variable", () => {
+    expect(Q_ISSUES).toContain("issuesV2");
+    expect(Q_ISSUES).toContain("$filterBy: IssueFilters");
+    expect(Q_ISSUES).toContain("filterBy: $filterBy");
+    expect(Q_ISSUES).not.toContain("equals"); // no inline filter literal
+    expect(Q_ISSUES).not.toContain("//"); // middlebox-safe
+    expect(Q_ISSUES).toContain("entitySnapshot");
+    expect(Q_ISSUES).toContain("sourceRules");
+  });
+
+  it("filters toxic combinations under the AI risk category, no project scope by default", () => {
+    const v = aiIssuesVariables(null) as { filterBy: Record<string, unknown>; orderBy: unknown };
+    expect(v.filterBy["status"]).toEqual(["OPEN", "IN_PROGRESS"]);
+    expect(v.filterBy["riskEqualsAny"]).toEqual([RISK_CATEGORY_ID]);
+    expect(v.filterBy["type"]).toEqual(["TOXIC_COMBINATION"]);
+    expect(v.filterBy["project"]).toBeUndefined();
+    expect(v.orderBy).toEqual({ field: "SEVERITY_EXPLOITABLE", direction: "DESC" });
+  });
+
+  it("adds a project filter only when scope is set", () => {
+    const v = aiIssuesVariables(["proj-1"]) as { filterBy: Record<string, unknown> };
+    expect(v.filterBy["project"]).toEqual(["proj-1"]);
+  });
+});
+
+describe("Q_CONFIG_FINDINGS + aiConfigFindingsVariables", () => {
+  it("hits configurationFindings as a static document with a filter variable", () => {
+    expect(Q_CONFIG_FINDINGS).toContain("configurationFindings");
+    expect(Q_CONFIG_FINDINGS).toContain("$filterBy: ConfigurationFindingFilters");
+    expect(Q_CONFIG_FINDINGS).toContain("filterBy: $filterBy");
+    expect(Q_CONFIG_FINDINGS).not.toContain("@include"); // directives dropped
+    expect(Q_CONFIG_FINDINGS).not.toContain("//");
+    expect(Q_CONFIG_FINDINGS).toContain("remediation");
+    expect(Q_CONFIG_FINDINGS).toContain("remediationInstructions");
+  });
+
+  it("filters OPEN findings under the AI framework category; project scope nests under resource", () => {
+    const v = aiConfigFindingsVariables(null) as { filterBy: Record<string, unknown> };
+    expect(v.filterBy["status"]).toEqual(["OPEN"]);
+    expect(v.filterBy["frameworkCategory"]).toEqual([RISK_CATEGORY_ID]);
+    expect(v.filterBy["resource"]).toBeUndefined();
+    const scoped = aiConfigFindingsVariables(["proj-1"]) as { filterBy: Record<string, unknown> };
+    expect(scoped.filterBy["resource"]).toEqual({ projectId: ["proj-1"] });
+  });
+});
+
+describe("Q_PRINCIPALS + aiPrincipalsVariables", () => {
+  it("hits cloudResourcesV2 and selects issueAnalytics", () => {
+    expect(Q_PRINCIPALS).toContain("cloudResourcesV2");
+    expect(Q_PRINCIPALS).toContain("$filterBy: CloudResourceV2Filters");
+    expect(Q_PRINCIPALS).toContain("issueAnalytics");
+    expect(Q_PRINCIPALS).not.toContain("//");
+  });
+
+  it("filters agentic SERVICE_ACCOUNT / ACCESS_KEY identities; project scope is projectId", () => {
+    const v = aiPrincipalsVariables(null) as { filterBy: Record<string, unknown> };
+    expect(v.filterBy["type"]).toEqual({ equals: ["SERVICE_ACCOUNT", "ACCESS_KEY"] });
+    expect(v.filterBy["identityPurpose"]).toEqual({ equals: ["AGENTIC"] });
+    expect(v.filterBy["projectId"]).toBeUndefined();
+    const scoped = aiPrincipalsVariables(["proj-1"]) as { filterBy: Record<string, unknown> };
+    expect(scoped.filterBy["projectId"]).toEqual(["proj-1"]);
   });
 });
