@@ -8,10 +8,13 @@ import { changeChip, clear, el, emptyState, fmtDays, sectionLabel, sevBadge } fr
 export async function renderMttr(main, _params, ctx) {
   const boot = await bootstrap();
 
-  // Which severities feed every metric on this page. Defaults to all selectable — that
-  // sends no filter (scopeParam() === null), reproducing the whole-base numbers exactly.
-  // Page-local and non-persisted: resets to "all" on each visit.
-  const sevScope = [...boot.palette.selectable];
+  // Which severities feed every metric on this page. Defaults to the app-wide display
+  // setting ("which severities every page shows") so MTTR opens scoped like Overview,
+  // falling back to all selectable if that setting is somehow empty. Page-local and
+  // non-persisted: resets to the display setting on each visit.
+  const sevScope = boot.settings.displaySeverities?.length
+    ? [...boot.settings.displaySeverities]
+    : [...boot.palette.selectable];
 
   main.append(
     el("div", { class: "page-head" },
