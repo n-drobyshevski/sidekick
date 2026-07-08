@@ -51,6 +51,8 @@ export const getRetentionDays = (): number | null => logic.getRetentionDays(load
 export const getAutoCompact = (): boolean => logic.getAutoCompact(loadSettings());
 export const getDomains = (): { version: number; items: Rec[] } =>
   logic.getDomains(loadSettings());
+export const getSupportGroupMap = (): { version: number; map: Record<string, string> } =>
+  logic.getSupportGroupMap(loadSettings());
 
 export function setFetchSeverities(sevs: unknown): void {
   saveSettings(logic.withFetchSeverities(loadSettings(), sevs));
@@ -66,4 +68,7 @@ export function setAutoCompact(enabled: boolean): void {
 }
 export function setDomains(items: unknown): void {
   saveSettings(logic.withDomains(loadSettings(), items));
+}
+export function setSupportGroupMap(map: unknown): void {
+  saveSettings(logic.withSupportGroupMap(loadSettings(), map));
 }

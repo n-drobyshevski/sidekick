@@ -58,6 +58,21 @@
    ]
   },
   {
+   "name": "Supply Monitoring",
+   "rules": [
+    {
+     "conditions": [
+      {
+       "type": "support_group",
+       "values": [
+        "CS-SUPPLY-MONITORING"
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
    "name": "BadRegex",
    "rules": [
     {
@@ -121,6 +136,24 @@
   },
   {
    "vulnerableAsset.name": "nothing-matches"
+  },
+  {
+   "vulnerableAsset.name": "sg-frame",
+   "_supportGroup": "cs-supply-monitoring"
+  },
+  {
+   "vulnerableAsset": {
+    "name": "sg-nested",
+    "supportGroup": "CS-SUPPLY-MONITORING"
+   }
+  },
+  {
+   "asset_name": "sg-ledger",
+   "support_group": "CS-SUPPLY-MONITORING"
+  },
+  {
+   "vulnerableAsset.name": "sg-other",
+   "_supportGroup": "OTHER-GROUP"
   }
  ],
  "expected": {
@@ -133,12 +166,17 @@
    "Payments",
    "Unassigned",
    "Data Platform",
+   "Unassigned",
+   "Supply Monitoring",
+   "Supply Monitoring",
+   "Supply Monitoring",
    "Unassigned"
   ],
   "names": [
    "Payments",
    "Data Platform",
    "AnyTag",
+   "Supply Monitoring",
    "BadRegex",
    "EmptyRule",
    "Unassigned"

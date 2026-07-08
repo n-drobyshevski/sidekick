@@ -150,6 +150,71 @@ export function queryPage(variables: Rec, isDeltaFetch = false): PageResult {
   throw new WizQueryError(`Wiz query failed after retries (${lastError}).`);
 }
 
+// --------------------------------------------------------------- graphSearch
+// A generalized POST for auxiliary queries (subscriptions → Support Group) that read
+// a different connection than `vulnerabilityFindings`. queryPage above is deliberately
+// left untouched so the fixture-critical findings path keeps its exact behavior.
+
+/** One GraphQL POST with retry on 429/5xx and one token refresh on 401; returns raw `data`. */
+export function gqlPost(query: string, variables: Rec): Rec {
+  const apiUrl = requireProp(PROP_KEYS.wizApiUrl);
+  let token = getToken();
+  let lastError = "";
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const response = UrlFetchApp.fetch(apiUrl, {
+      method: "post",
+      contentType: "application/json",
+      headers: { Authorization: `Bearer ${token}` },
+      payload: JSON.stringify({ query, variables }),
+      muteHttpExceptions: true,
+    });
+    const code = response.getResponseCode();
+    if (code === 401 && attempt === 0 && !getProp(PROP_KEYS.wizApiToken)) {
+      token = getToken(true);
+      continue;
+    }
+    if (code === 429 || code >= 500) {
+      lastError = `HTTP ${code}`;
+      Utilities.sleep(1000 * Math.pow(2, attempt));
+      continue;
+    }
+    if (code !== 200) {
+      throw new WizQueryError(
+        `Wiz query failed (HTTP ${code}): ${response.getContentText().slice(0, 500)}`,
+      );
+    }
+    const body = JSON.parse(response.getContentText()) as Rec;
+    const data = body["data"] as Rec | undefined;
+    if (!data) {
+      const errors = JSON.stringify(body["errors"] ?? body).slice(0, 500);
+      throw new WizQueryError(`Wiz response carried no data: ${errors}`);
+    }
+    return data;
+  }
+  throw new WizQueryError(`Wiz query failed after retries (${lastError}).`);
+}
+
+export interface GraphSearchPage {
+  nodes: Rec[]; // each node carries an `entities` array
+  hasNextPage: boolean;
+  endCursor: string | null;
+}
+
+/** One page of a graphSearch connection (nodes[].entities + pageInfo). */
+export function graphSearchPage(query: string, variables: Rec): GraphSearchPage {
+  const data = gqlPost(query, variables);
+  const connection = data["graphSearch"] as Rec | undefined;
+  if (!connection) {
+    throw new WizQueryError("Wiz response carried no graphSearch connection.");
+  }
+  const pageInfo = (connection["pageInfo"] as Rec) ?? {};
+  return {
+    nodes: (connection["nodes"] as Rec[]) ?? [],
+    hasNextPage: Boolean(pageInfo["hasNextPage"]),
+    endCursor: (pageInfo["endCursor"] as string | null) ?? null,
+  };
+}
+
 export interface FetchPageOptions {
   severities?: string[] | null;
   extraFilterBy?: Rec | null;

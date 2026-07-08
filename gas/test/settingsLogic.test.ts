@@ -5,8 +5,10 @@ import {
   getDisplaySeverities,
   getDomains,
   getRetentionDays,
+  getSupportGroupMap,
   withDomains,
   withFetchSeverities,
+  withSupportGroupMap,
 } from "../src/domain/settingsLogic";
 
 describe("settings logic", () => {
@@ -47,6 +49,24 @@ describe("settings logic", () => {
     expect(getDomains(s)).toEqual({ version: 1, items: [{ name: "A", rules: [] }] });
     const s2 = withDomains(s, []);
     expect(getDomains(s2).version).toBe(2);
+  });
+
+  it("support-group map version bumps on save and keeps only string→string entries", () => {
+    expect(getSupportGroupMap({})).toEqual({ version: 0, map: {} });
+    const s = withSupportGroupMap({}, {
+      "sub-1": "CS-SUPPLY-MONITORING",
+      "sub-2": "",        // empty value dropped
+      "": "orphan",       // empty key dropped
+      "sub-3": 42,        // non-string value dropped
+    });
+    expect(getSupportGroupMap(s)).toEqual({
+      version: 1,
+      map: { "sub-1": "CS-SUPPLY-MONITORING" },
+    });
+    const s2 = withSupportGroupMap(s, { "sub-9": "CS-OTHER" });
+    expect(getSupportGroupMap(s2).version).toBe(2);
+    // a corrupt blob reads as empty, never throws
+    expect(getSupportGroupMap({ support_group_map: "junk" })).toEqual({ version: 0, map: {} });
   });
 
   it("apiSeverityFilter maps INFO and elides the full scope", () => {

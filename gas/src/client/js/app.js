@@ -24,6 +24,8 @@ let mainEl = null;
 // filter). Module-level so it survives route() (which only re-renders mainEl, never
 // the sidebar) and page navigation — nav links carry no state.
 let activeDomain = "";
+// The global "Support group" filter, shared by every page the same way. "" = all groups.
+let activeSupportGroup = "";
 
 // Route-reload overlay: veils the content pane (not the sidebar) with a progress bar
 // while the active page refetches — most visibly after a Value Chain change, which
@@ -186,6 +188,29 @@ function renderSidebar(sidebar, data) {
         el("label", { class: "field-label" }, "Value chain"), sel),
     );
   }
+
+  // Global "Support group" filter — a second sidebar selector alongside Value Chain,
+  // driven by the subscriptions' Wiz/provisioning tag. Shown only when the scan surfaced
+  // at least one support group (i.e. the map has been refreshed and joined).
+  const groups = (data && data.filterOptions && data.filterOptions.supportGroups) || [];
+  if (groups.length) {
+    if (activeSupportGroup && !groups.includes(activeSupportGroup)) activeSupportGroup = "";
+    const sgSel = el(
+      "select",
+      { "aria-label": "Filter by support group" },
+      el("option", { value: "" }, "Support group"),
+      ...groups.map((g) =>
+        el("option", { value: g, selected: g === activeSupportGroup || null }, g)),
+    );
+    sgSel.addEventListener("change", () => {
+      activeSupportGroup = sgSel.value;
+      route();
+    });
+    zone.prepend(
+      el("div", { class: "sidebar-filter" },
+        el("label", { class: "field-label" }, "Support group"), sgSel),
+    );
+  }
   sidebar.append(zone);
 }
 
@@ -303,7 +328,7 @@ async function route() {
   clear(mainEl);
   beginRouteLoading();
   try {
-    await page.render(mainEl, params, { refresh, domain: activeDomain });
+    await page.render(mainEl, params, { refresh, domain: activeDomain, supportGroup: activeSupportGroup });
   } catch (e) {
     clear(mainEl).append(
       el("div", { class: "empty" },

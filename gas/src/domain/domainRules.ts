@@ -26,11 +26,17 @@ const FRAME_SUB_COLS = [
 const FRAME_TAGS_PREFIX = "vulnerableAsset.tags.";
 const LEDGER_NAME_COLS = ["asset_name"];
 const LEDGER_SUB_COLS = ["subscription_name", "subscription_ext_id"];
+// Support group is resolved live (like _domain) and attached to each record as
+// _supportGroup by the server before assignment; the pure engine only reads it.
+// vulnerableAsset.supportGroup / support_group cover a raw nested or ledger shape.
+const FRAME_SG_COLS = ["_supportGroup", "vulnerableAsset.supportGroup"];
+const LEDGER_SG_COLS = ["support_group"];
 
 type CondSpec =
   | { kind: "tag"; key: string; value: string | null }
   | { kind: "regex"; re: RegExp }
-  | { kind: "sub"; values: Set<string> };
+  | { kind: "sub"; values: Set<string> }
+  | { kind: "sg"; values: Set<string> };
 
 export interface CompiledDomain {
   name: string;
@@ -94,6 +100,17 @@ function compileCondition(cond: unknown): CondSpec | null {
       }
     }
     return folded.size ? { kind: "sub", values: folded } : null;
+  }
+  if (ctype === "support_group") {
+    const values = c["values"];
+    if (!Array.isArray(values) || !values.length) return null;
+    const folded = new Set<string>();
+    for (const v of values) {
+      if ((typeof v === "string" || typeof v === "number") && String(v).trim()) {
+        folded.add(fold(v));
+      }
+    }
+    return folded.size ? { kind: "sg", values: folded } : null;
   }
   return null;
 }
@@ -203,6 +220,14 @@ export function validateDomains(items: unknown): string[] {
           ) {
             errors.push(`${where}: pick at least one subscription.`);
           }
+        } else if (ctype === "support_group") {
+          const values = c["values"];
+          if (
+            !Array.isArray(values) ||
+            !values.some((v) => typeof v === "string" && v.trim())
+          ) {
+            errors.push(`${where}: pick at least one support group.`);
+          }
         } else {
           errors.push(`${where}: unknown condition type ${pyRepr(ctype)}.`);
         }
@@ -276,6 +301,13 @@ function conditionMatches(spec: CondSpec, record: Rec, tags: Rec): boolean {
     const names = recordValues(record, ...FRAME_NAME_COLS);
     const pool = names.length ? names : recordValues(record, ...LEDGER_NAME_COLS);
     return pool.some((n) => spec.re.test(n));
+  }
+  if (spec.kind === "sg") {
+    const sgs = [
+      ...recordValues(record, ...FRAME_SG_COLS),
+      ...recordValues(record, ...LEDGER_SG_COLS),
+    ];
+    return sgs.some((s) => spec.values.has(fold(s)));
   }
   const subs = [
     ...recordValues(record, ...FRAME_SUB_COLS),

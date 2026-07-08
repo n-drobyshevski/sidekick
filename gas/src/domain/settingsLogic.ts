@@ -112,6 +112,44 @@ export function withDomains(settings: Rec, items: unknown): Rec {
   };
 }
 
+/** Keep only string→non-empty-string entries (a hand-edited blob can't inject junk). */
+export function cleanStringMap(map: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!map || typeof map !== "object" || Array.isArray(map)) return out;
+  for (const [k, v] of Object.entries(map as Rec)) {
+    if (typeof k === "string" && k !== "" && typeof v === "string" && v !== "") {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+/**
+ * The subscription→Support Group map: `{version, map}` where map is folded identity
+ * token → group value. Mirrors getDomains so caches key on the version token; a refresh
+ * bumps it and every cached derivation repaints.
+ */
+export function getSupportGroupMap(settings: Rec): {
+  version: number;
+  map: Record<string, string>;
+} {
+  const raw = settings["support_group_map"];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { version: 0, map: {} };
+  const r = raw as Rec;
+  let version = 0;
+  const v = Number(r["version"] ?? 0);
+  if (Number.isFinite(v)) version = Math.max(Math.trunc(v), 0);
+  return { version, map: cleanStringMap(r["map"]) };
+}
+
+export function withSupportGroupMap(settings: Rec, map: unknown): Rec {
+  const current = getSupportGroupMap(settings);
+  return {
+    ...settings,
+    support_group_map: { version: current.version + 1, map: cleanStringMap(map) },
+  };
+}
+
 /** GraphQL filterBy.severity values for a scope, or null when unscoped. */
 export function apiSeverityFilter(severities: unknown): string[] | null {
   const sevs = canonicalSeverities(severities, DEFAULT_FETCH_SEVERITIES);

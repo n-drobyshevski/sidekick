@@ -21,6 +21,7 @@ by hand-written vitest specs instead of fixture parity.
 | Pure domain logic | `src/domain/` | severity, vuln_key identity (sha1), MTTR/SLA metrics (pandas-interpolation quantiles), reconcile, domain rules, trend, compaction, **ledgerCore/maintenance** (in-memory persist/delete/checkpoint machinery) |
 | Storage | `src/server/` | `sheetsDb` (header-mapped tabs), `archiveStore` (Drive gzip JSON), `ledgerStore` (commit-record writes + journals), `settingsStore`, `historyStore`, `jobsStore` |
 | Wiz client | `src/server/wizClient.ts` | OAuth client-credentials + GraphQL on UrlFetchApp; `wizQuery.ts` is generated verbatim from `os_vulns.py` |
+| Support groups | `src/server/supportGroups.ts` + `wizSubscriptionsQuery.ts` | graphSearch over subscriptions tagged `Wiz/provisioning`; builds a subscription→group map (versioned settings blob) joined onto findings as `_supportGroup`. Refreshed after each scan and via `api_refreshSupportGroups`. `wizSubscriptionsQuery.ts` is **hand-written** (unlike the generated `wizQuery.ts`) |
 | Scan jobs | `src/server/scanJobs.ts` | resumable page walk (6-min limit) via one-shot trigger continuation |
 | Web app | `src/client/` | hash-routed SPA served by `doGet`; Chart.js 4 bundled into `js_app.html` (no CDN); DESIGN.md system in `styles.css` |
 
@@ -73,6 +74,9 @@ by hand-written vitest specs instead of fixture parity.
        daily scan. (`WIZ_AUTH_URL` defaults to `https://auth.app.wiz.io/oauth/token`.)
      - If both are set, `WIZ_API_TOKEN` wins.
    - `WIZ_PROJECT_ID_V2` — the Wiz project id the scan is scoped to
+   - `WIZ_SUPPORT_GROUP_TAG_KEY` *(optional)* — the subscription tag whose value is the
+     Support Group. Defaults to `Wiz/provisioning`; set it only if your tenant uses a
+     different tag key.
    Without credentials the app runs in dry-run mode over sample data.
 6. Deploy: **Deploy → New deployment → Web app** (execute as you, access: domain),
    or `npm run deploy`.
@@ -130,6 +134,10 @@ requires a deployed web app — see the manual verification checklist below.
   (needs `pip install pandas`).
 - `src/server/wizQuery.ts` / `sampleData.ts` are **generated** — edit
   `gas/test/extract_query.py` / `extract_samples.py` instead.
+- `src/server/wizSubscriptionsQuery.ts` (the support-group graphSearch) is **hand-written**
+  — transcribed from the operator's console query, not generated. The subscription→group
+  map persists as a versioned `support_group_map` blob in the `settings` tab (like `domains`);
+  a refresh bumps the settings version, invalidating all cached views.
 - `dist/entry.js` is hand-written (GAS needs top-level `doGet`/`api_*`/`trigger_*`
   globals) and git-tracked; the rest of `dist/` is build output.
 
@@ -149,6 +157,12 @@ Things node tests cannot cover — verify after the first deployment:
       (`#/overview?sev=CRITICAL&q=log4j`) restore filters.
 - [ ] Quick refresh on a tenant that rejects `updatedAt` filters surfaces the
       "run a full scan" message (WizDeltaFilterError path).
+- [ ] Support groups: **Settings → Refresh support groups** maps subscriptions from the
+      `Wiz/provisioning` tag (check the first-refresh log line for the raw entity shape if
+      the count is 0 — the `properties` layout is tenant-specific). Then the sidebar
+      **Support group** selector + Overview multi-select filter findings, the **Support
+      group** breakdown dimension groups them, and a `support_group` domain rule assigns
+      them. A scan also refreshes the map automatically.
 - [ ] Delete of a sealed scan refuses; delete of an unsealed scan rebuilds and the
       MTTR page numbers match the pre-delete values for surviving data.
 - [ ] Compact-now dry run numbers equal the applied run's result.

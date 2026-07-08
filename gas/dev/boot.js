@@ -24,6 +24,28 @@
 
   console.log("[dev] " + Server.setup().split("\n").join("\n[dev] "));
 
+  // Seed a subscription → Support Group map so the sidebar Support-group selector, the
+  // Overview multi-select, the breakdown dimension, and the support_group domain
+  // condition are all exercisable in dev (dry-run has no live Wiz to refresh from). Keys
+  // are folded subscription names from dev/sampleData.dev.ts's CLOUDS pool. Written to
+  // the settings sheet BEFORE the first settings read, so the cold-memo load picks it up
+  // and every later saveSettings preserves it. Dev-only — dev/ is never bundled.
+  (function seedSupportGroups() {
+    const id = PropertiesService.getScriptProperties().getProperty("LEDGER_SPREADSHEET_ID");
+    const sh = SpreadsheetApp.openById(id).getSheetByName("settings");
+    const map = {
+      "prod-account": "CS-CORE-PLATFORM",
+      "dev-account": "CS-SANDBOX",
+      "core-prod": "CS-SUPPLY-MONITORING",
+      "core-staging": "CS-SUPPLY-MONITORING",
+      "inix-tt4k": "CS-INIX",
+      "enms-pr": "CS-ENMS",
+    };
+    const value = JSON.stringify({ version: 1, map });
+    sh.getRange(sh.getLastRow() + 1, 1, 1, 2).setValues([["support_group_map", value]]);
+    console.log("[dev] seeded support-group map (6 subscriptions)");
+  })();
+
   // Seed: 7 daily dry-run scans. Each dry-run scan deterministically resolves one
   // more open sample finding, so scan-over-scan deltas and MTTR are non-trivial.
   // ?noseed leaves a fresh, empty ledger — for exercising the migration import paths.

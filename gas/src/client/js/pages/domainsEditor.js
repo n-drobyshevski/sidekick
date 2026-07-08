@@ -9,8 +9,9 @@ import { clear, confirmDialog, downloadText, el, toast } from "../ui.js";
 
 export function renderDomainsEditor(host, boot, ctx) {
   let items = JSON.parse(JSON.stringify(boot.settings.domains.items || []));
-  // Subscriptions seen in the current scan, offered by the condition picker.
+  // Subscriptions / support groups seen in the current scan, offered by the pickers.
   const knownSubs = (boot.filterOptions && boot.filterOptions.subscriptions) || [];
+  const knownGroups = (boot.filterOptions && boot.filterOptions.supportGroups) || [];
   // Case-fold to mirror the rule engine's matching (domainRules.ts `fold`), so the
   // "already claimed" hint agrees with how findings actually get assigned.
   const fold = (s) => String(s).trim().toLowerCase();
@@ -153,6 +154,9 @@ export function renderDomainsEditor(host, boot, ctx) {
     document.body.append(dlg);
     dlg.addEventListener("close", () => dlg.remove());
     dlg.showModal();
+    // Declared before the first schedulePreview() call below — schedulePreview is a
+    // hoisted function but previewTimer is a let, so an early call would hit its TDZ.
+    let previewTimer;
     renderRules();
     schedulePreview();
 
@@ -160,16 +164,17 @@ export function renderDomainsEditor(host, boot, ctx) {
       return { type: "tag", key: "", value: "" };
     }
 
-    // Map folded subscription value -> name of the domain that already claims it,
-    // scanning every OTHER domain (the one being edited never blocks itself). The
-    // first (highest-priority) claimant wins, matching first-match-wins assignment.
-    function claimedSubs() {
+    // Map folded value -> name of the domain that already claims it (for one condition
+    // type: "subscription" or "support_group"), scanning every OTHER domain (the one
+    // being edited never blocks itself). The first (highest-priority) claimant wins,
+    // matching first-match-wins assignment.
+    function claimedValues(condType) {
       const map = new Map();
       items.forEach((dom, di) => {
         if (di === index) return;
         (dom.rules || []).forEach((rule) => {
           (rule.conditions || []).forEach((c) => {
-            if (c.type !== "subscription") return;
+            if (c.type !== condType) return;
             (c.values || []).forEach((v) => {
               const key = fold(v);
               if (key && !map.has(key)) map.set(key, dom.name);
@@ -210,6 +215,7 @@ export function renderDomainsEditor(host, boot, ctx) {
         el("option", { value: "tag", selected: cond.type === "tag" || null }, "Tag equals"),
         el("option", { value: "name_regex", selected: cond.type === "name_regex" || null }, "Asset name regex"),
         el("option", { value: "subscription", selected: cond.type === "subscription" || null }, "Subscription in"),
+        el("option", { value: "support_group", selected: cond.type === "support_group" || null }, "Support group in"),
       );
       const fields = el("span", {});
       typeSel.addEventListener("change", () => {
@@ -217,6 +223,9 @@ export function renderDomainsEditor(host, boot, ctx) {
         else if (typeSel.value === "name_regex") {
           delete cond.key; delete cond.value; delete cond.values;
           Object.assign(cond, { type: "name_regex", pattern: "" });
+        } else if (typeSel.value === "support_group") {
+          delete cond.key; delete cond.value; delete cond.pattern;
+          Object.assign(cond, { type: "support_group", values: [] });
         } else {
           delete cond.key; delete cond.value; delete cond.pattern;
           Object.assign(cond, { type: "subscription", values: [] });
@@ -237,35 +246,48 @@ export function renderDomainsEditor(host, boot, ctx) {
         } else if (cond.type === "name_regex") {
           fields.append(input("pattern", cond.pattern ?? "", (v) => (cond.pattern = v),
             "regex, case-insensitive"));
+        } else if (cond.type === "support_group") {
+          fields.append(valuePicker(cond, knownGroups, {
+            condType: "support_group", label: "Support groups",
+            addPlaceholder: "add support group…",
+            addAria: "Add a support group not in the scan",
+            emptyText: "No support groups in the current scan — add one below.",
+          }));
         } else {
-          fields.append(subscriptionPicker(cond));
+          fields.append(valuePicker(cond, knownSubs, {
+            condType: "subscription", label: "Subscriptions",
+            addPlaceholder: "add subscription…",
+            addAria: "Add a subscription not in the scan",
+            emptyText: "No subscriptions in the current scan — add one below.",
+          }));
         }
       }
 
-      // A checkbox picker over the scan's subscriptions plus any already-stored values.
-      // Subscriptions claimed by another domain are grayed out and labelled; selectable
-      // ones sort first. A free-text "add" row keeps subscriptions outside the scan usable.
-      function subscriptionPicker(cond) {
+      // A checkbox picker over the scan's known values (subscriptions or support groups)
+      // plus any already-stored value. Values claimed by another domain are grayed out and
+      // labelled; selectable ones sort first. A free-text "add" row keeps values outside
+      // the scan usable. `opts.condType` scopes the cross-domain "already claimed" hint.
+      function valuePicker(cond, knownValues, opts) {
         if (!Array.isArray(cond.values)) cond.values = [];
-        const claimed = claimedSubs();
+        const claimed = claimedValues(opts.condType);
         const wrap = el("div", { style: "flex:1; min-width:220px" });
         const listHost = el("div", { class: "sub-picker", role: "group",
-          "aria-label": "Subscriptions" });
+          "aria-label": opts.label });
 
         const isSelected = (name) => cond.values.some((v) => fold(v) === fold(name));
 
         function draw() {
           clear(listHost);
-          // Options = scan subscriptions ∪ any stored value not in that list (preserved).
-          const opts = knownSubs.slice();
-          const knownFolded = new Set(knownSubs.map(fold));
+          // Options = scan values ∪ any stored value not in that list (preserved).
+          const choices = knownValues.slice();
+          const knownFolded = new Set(knownValues.map(fold));
           cond.values.forEach((v) => {
             if (!knownFolded.has(fold(v))) {
-              opts.push(v);
+              choices.push(v);
               knownFolded.add(fold(v));
             }
           });
-          const rows = opts.map((name) => {
+          const rows = choices.map((name) => {
             const owner = claimed.get(fold(name));
             const selected = isSelected(name);
             return { name, owner, selected, grayed: !!owner && !selected };
@@ -276,7 +298,7 @@ export function renderDomainsEditor(host, boot, ctx) {
             (a.grayed ? 1 : 0) - (b.grayed ? 1 : 0) || a.name.localeCompare(b.name));
           if (!rows.length) {
             listHost.append(el("p", { class: "muted small", style: "margin:2px 0" },
-              "No subscriptions in the current scan — add one below."));
+              opts.emptyText));
           }
           rows.forEach((row) => {
             const cb = el("input", { type: "checkbox",
@@ -299,9 +321,9 @@ export function renderDomainsEditor(host, boot, ctx) {
           });
         }
 
-        const addInput = el("input", { type: "text", placeholder: "add subscription…",
-          "aria-label": "Add a subscription not in the scan", style: "flex:1; min-height:30px" });
-        const addSub = () => {
+        const addInput = el("input", { type: "text", placeholder: opts.addPlaceholder,
+          "aria-label": opts.addAria, style: "flex:1; min-height:30px" });
+        const addValue = () => {
           const v = addInput.value.trim();
           if (!v) return;
           if (!isSelected(v)) cond.values.push(v);
@@ -310,9 +332,9 @@ export function renderDomainsEditor(host, boot, ctx) {
           schedulePreview();
         };
         addInput.addEventListener("keydown", (e) => {
-          if (e.key === "Enter") { e.preventDefault(); addSub(); }
+          if (e.key === "Enter") { e.preventDefault(); addValue(); }
         });
-        const addBtn = el("button", { class: "link", type: "button", onclick: addSub }, "Add");
+        const addBtn = el("button", { class: "link", type: "button", onclick: addValue }, "Add");
 
         draw();
         wrap.append(listHost, el("div", { class: "sub-add" }, addInput, addBtn));
@@ -341,7 +363,6 @@ export function renderDomainsEditor(host, boot, ctx) {
       );
     }
 
-    let previewTimer;
     function schedulePreview() {
       clearTimeout(previewTimer);
       previewTimer = setTimeout(runPreview, 500);

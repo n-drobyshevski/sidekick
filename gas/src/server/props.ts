@@ -8,11 +8,16 @@ export const PROP_KEYS = {
   wizAuthUrl: "WIZ_AUTH_URL",
   wizApiUrl: "WIZ_API_URL",
   wizProjectIdV2: "WIZ_PROJECT_ID_V2",
+  wizSupportGroupTagKey: "WIZ_SUPPORT_GROUP_TAG_KEY",
   ledgerSpreadsheetId: "LEDGER_SPREADSHEET_ID",
   archiveFolderId: "ARCHIVE_FOLDER_ID",
 } as const;
 
 export const DEFAULT_WIZ_AUTH_URL = "https://auth.app.wiz.io/oauth/token";
+
+// The subscription tag whose value is the Support Group (e.g. "CS-SUPPLY-MONITORING").
+// Overridable via the WIZ_SUPPORT_GROUP_TAG_KEY Script Property.
+export const DEFAULT_SUPPORT_GROUP_TAG_KEY = "Wiz/provisioning";
 
 export function getProp(key: string): string | null {
   return PropertiesService.getScriptProperties().getProperty(key);

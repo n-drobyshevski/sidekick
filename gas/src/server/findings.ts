@@ -10,6 +10,7 @@ import { present, type Rec } from "../domain/util";
 import * as archive from "./archiveStore";
 import * as ledgerStore from "./ledgerStore";
 import * as settingsStore from "./settingsStore";
+import { attachSupportGroups } from "./supportGroups";
 
 export interface CurrentScan {
   scanId: string;
@@ -34,14 +35,15 @@ export function currentScan(): CurrentScan | null {
   const compiled = compileDomains(domains.items);
 
   // Fast path: the scan job precomputed the flattened + sha1-keyed frame. Only the
-  // cheap request-dependent fields are attached here — _sev, and _domain, which is
-  // deliberately not baked into the frame so domain-settings edits never stale it.
+  // cheap request-dependent fields are attached here — _sev, _supportGroup, and
+  // _domain, none baked into the frame so domain-settings/support-group edits never
+  // stale it. Support group is attached BEFORE domain assignment so a support_group
+  // domain condition can see it.
   const frame = archive.readFrame(row.scan_id) as Rec[] | null;
   let records: Rec[];
   if (frame) {
     records = frame.map((flat) => {
       flat["_sev"] = normalizeSeverity(flat["severity"]);
-      flat["_domain"] = compiled.length ? assignDomain(flat, compiled) : UNASSIGNED;
       return flat;
     });
   } else {
@@ -55,9 +57,14 @@ export function currentScan(): CurrentScan | null {
       const flat = flattenNode(n);
       flat["_vuln_key"] = vulnKey(n);
       flat["_sev"] = normalizeSeverity(flat["severity"]);
-      flat["_domain"] = compiled.length ? assignDomain(flat, compiled) : UNASSIGNED;
       return flat;
     });
+  }
+  attachSupportGroups(records);
+  if (compiled.length) {
+    for (const flat of records) flat["_domain"] = assignDomain(flat, compiled);
+  } else {
+    for (const flat of records) flat["_domain"] = UNASSIGNED;
   }
   memo = {
     scanId: row.scan_id,
@@ -77,6 +84,7 @@ export interface FindingsFilters {
   assetTypes?: string[];
   clouds?: string[];
   domains?: string[];
+  supportGroups?: string[];
   q?: string;
 }
 
@@ -102,6 +110,10 @@ export function applyFilters(records: Rec[], f: FindingsFilters): Rec[] {
     const keep = new Set(f.domains);
     out = out.filter((r) => keep.has(String(r["_domain"] ?? UNASSIGNED)));
   }
+  if (f.supportGroups?.length) {
+    const keep = new Set(f.supportGroups);
+    out = out.filter((r) => keep.has(String(r["_supportGroup"] ?? "")));
+  }
   if (f.q && f.q.trim()) {
     const q = f.q.trim().toLowerCase();
     out = out.filter(
@@ -125,9 +137,9 @@ export function distinct(records: Rec[], column: string): string[] {
 
 // The columns the findings table ships to the client (order = display order).
 export const TABLE_COLUMNS = [
-  "_vuln_key", "_sev", "_domain", "name", "severity", "status", "detailedName",
-  "fixedVersion", "firstDetectedAt", "resolvedAt", "lastDetectedAt", "score",
-  "epssSeverity", "hasExploit", "hasCisaKevExploit",
+  "_vuln_key", "_sev", "_domain", "_supportGroup", "name", "severity", "status",
+  "detailedName", "fixedVersion", "firstDetectedAt", "resolvedAt", "lastDetectedAt",
+  "score", "epssSeverity", "hasExploit", "hasCisaKevExploit",
   "vulnerableAsset.name", "vulnerableAsset.type", "vulnerableAsset.cloudPlatform",
   "vulnerableAsset.subscriptionName", "vulnerableAsset.operatingSystem",
 ] as const;

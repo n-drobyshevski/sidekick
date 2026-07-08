@@ -4,7 +4,7 @@
 // of open findings, scan-over-scan movement, and a multi-level grouping breakdown.
 
 import { severityBar, stackedAgeBar } from "../charts.js";
-import { bootstrap, setParams, swrCall } from "../store.js";
+import { bootstrap, listJoin, listSplit, setParams, swrCall } from "../store.js";
 import {
   clear, el, emptyState, fmtDate, kpiCard, nvdUrl, sectionLabel,
 } from "../ui.js";
@@ -40,6 +40,7 @@ function deltaChip(current, previous) {
 // GROUP_COLUMNS in src/domain/insights.ts (the client bundle can't import the TS module).
 const GROUP_DIMENSIONS = [
   ["domain", "Domain"],
+  ["supportGroup", "Support group"],
   ["asset", "Asset"],
   ["atype", "Asset type"],
   ["cloud", "Cloud"],
@@ -77,6 +78,18 @@ export async function renderOverview(main, params, ctx) {
     ? paramKeys
     : (!ctx.domain && boot.domainNames.length > 1 ? ["domain"] : ["atype"]);
 
+  // Support-group multi-select (the second filter surface): narrows the whole page to
+  // several support groups at once, intersecting with the sidebar's single-select global
+  // scope. Persisted in the URL (?sg=A,B). Options come from the scan's joined groups.
+  const knownGroups = (boot.filterOptions && boot.filterOptions.supportGroups) || [];
+  const sgFilter = listSplit(params.sg).filter((g) => knownGroups.includes(g));
+
+  // Persist both breakdown grouping and the support-group filter together (setParams
+  // replaces the query string, so each writer must include the other's param).
+  function persistParams() {
+    setParams({ by: groupKeys.join(","), sg: listJoin(sgFilter) });
+  }
+
   const kpiRow = el("div", { class: "kpi-row" });
   const sevChartCanvas = el("canvas", { id: "sev-chart" });
   const sevCardHost = el("div", {});
@@ -91,7 +104,9 @@ export async function renderOverview(main, params, ctx) {
     ),
   );
   const insightsHost = el("div", {}, el("p", { class: "muted" }, "Computing insights…"));
-  main.append(kpiRow, sevSection, insightsHost);
+  const sgFilterHost = el("div", {});
+  main.append(sgFilterHost, kpiRow, sevSection, insightsHost);
+  renderSgFilter();
 
   renderHeadline(null);
 
@@ -101,7 +116,43 @@ export async function renderOverview(main, params, ctx) {
     renderHeadline(data);
     renderInsights(data);
   };
-  paint(await swrCall("api_getInsights", { domain: ctx.domain || "" }, paint));
+  async function loadInsights() {
+    paint(await swrCall("api_getInsights",
+      { domain: ctx.domain || "", supportGroup: ctx.supportGroup || "", supportGroups: sgFilter },
+      paint));
+  }
+  await loadInsights();
+
+  /** The support-group multi-select bar (toggle chips). Shown only with 2+ groups —
+   *  the sidebar single-select already covers the one-group case. */
+  function renderSgFilter() {
+    clear(sgFilterHost);
+    if (knownGroups.length < 2) return;
+    const bar = el("div", { class: "filter-bar", role: "group",
+      "aria-label": "Filter by support group" });
+    bar.append(el("label", { class: "field-label" }, "Support groups"));
+    knownGroups.forEach((g) => {
+      const on = sgFilter.includes(g);
+      bar.append(el("button", { "aria-pressed": on ? "true" : "false", onclick: () => {
+        const i = sgFilter.indexOf(g);
+        if (i >= 0) sgFilter.splice(i, 1);
+        else sgFilter.push(g);
+        persistParams();
+        renderSgFilter();
+        loadInsights();
+      } }, g));
+    });
+    if (sgFilter.length) {
+      bar.append(el("button", { class: "linklike", "aria-label": "Clear support-group filter",
+        onclick: () => {
+          sgFilter.length = 0;
+          persistParams();
+          renderSgFilter();
+          loadInsights();
+        } }, "Clear"));
+    }
+    sgFilterHost.append(bar);
+  }
 
   /** Scan-summary band (Total / Open / Resolved) + severity breakdown. At the
    *  whole-chain view counts come from bootstrap so they match the sidebar and survive
@@ -110,7 +161,11 @@ export async function renderOverview(main, params, ctx) {
    *  loads. */
   function renderHeadline(insights) {
     clear(kpiRow);
-    const filtered = !!(ctx.domain && insights && insights.flatScan);
+    // Any active scope (value chain, sidebar support group, or the multi-select) makes
+    // the headline read the server's scoped counts instead of whole-scan bootstrap counts,
+    // so Total/Open/Resolved and the severity split stay coherent with the sections below.
+    const scoped = ctx.domain || ctx.supportGroup || sgFilter.length;
+    const filtered = !!(scoped && insights && insights.flatScan);
     const counts = filtered ? insights.counts : boot.counts;
     const total = filtered
       ? insights.total
@@ -245,10 +300,10 @@ export async function renderOverview(main, params, ctx) {
         kpiCard("Reopened", m.reopenedCount.toLocaleString(), "back after being resolved"),
         kpiCard("Persisting", m.persisting.toLocaleString(), "open since an earlier scan"),
       ));
-      if (ctx.domain) {
+      if (ctx.domain || ctx.supportGroup || sgFilter.length) {
         insightsHost.append(el("p", { class: "small muted", style: "margin:8px 0 0" },
-          "New / Resolved / Reopened are chain-wide — scan-over-scan deltas can't be " +
-          "split by value chain. Persisting reflects this value chain."));
+          "New / Resolved / Reopened are scan-wide — scan-over-scan deltas can't be " +
+          "split by the active filter. Persisting reflects the filtered scope."));
       }
     }
   }
@@ -299,7 +354,7 @@ export async function renderOverview(main, params, ctx) {
     }
 
     function syncAndReload() {
-      setParams({ by: groupKeys.join(",") });
+      persistParams();
       renderControls();
       loadGrouping();
     }
@@ -311,7 +366,9 @@ export async function renderOverview(main, params, ctx) {
         if (keys.join(",") !== groupKeys.join(",")) return; // a newer path superseded this
         renderTree(tableHost, (data && data.groups) || []);
       };
-      paint(await swrCall("api_getGrouping", { domain: ctx.domain || "", keys }, paint));
+      paint(await swrCall("api_getGrouping",
+        { domain: ctx.domain || "", supportGroup: ctx.supportGroup || "",
+          supportGroups: sgFilter, keys }, paint));
     }
   }
 
