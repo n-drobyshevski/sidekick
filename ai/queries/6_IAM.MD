@@ -17,7 +17,7 @@ query AIAgentsWithHighPrivileges(
     first: $first
     after: $after
     filterBy: {
-      type: ["AI_AGENT"]
+      type: { equals: ["AI_AGENT"] }
       hasHighPrivileges: { equals: true }
     }
   ) {
@@ -40,7 +40,7 @@ query AIAgentsWithHighPrivileges(
       hasSensitiveData
       externalId
       cloudAccount { id name externalId cloudProvider }
-      projects { id name businessImpact }
+      projects { id name riskProfile { businessImpact } }
       tags { key value }
     }
   }
@@ -123,7 +123,7 @@ query AIAgentServiceAccountExcessiveAccess(
           hasAdminPrivileges
           hasHighPrivileges
           cloudAccount { id name cloudProvider externalId }
-          projects { id name businessImpact }
+          projects { id name riskProfile { businessImpact } }
           tags { key value }
         }
       }
@@ -215,7 +215,7 @@ query AIAgentFullPrivilegeChainToSensitiveData(
           hasAccessToSensitiveData
           hasSensitiveData
           cloudAccount { id name cloudProvider externalId }
-          projects { id name businessImpact }
+          projects { id name riskProfile { businessImpact } }
           tags { key value }
         }
       }
@@ -302,7 +302,7 @@ query AIAgentsOverlyPermissiveIdentity(
     first: $first
     after: $after
     filterBy: {
-      type: ["AI_AGENT"]
+      type: { equals: ["AI_AGENT"] }
       relatedIssue: {
         sourceRuleId: {
           equals: ["wc-id-3123"]
@@ -328,7 +328,7 @@ query AIAgentsOverlyPermissiveIdentity(
       hasAccessToSensitiveData
       externalId
       cloudAccount { id name externalId cloudProvider }
-      projects { id name businessImpact }
+      projects { id name riskProfile { businessImpact } }
       tags { key value }
     }
   }
@@ -462,7 +462,7 @@ query AIAgentLateralMovementToAdmin(
           hasHighPrivileges
           hasAccessToSensitiveData
           cloudAccount { id name cloudProvider externalId }
-          projects { id name businessImpact }
+          projects { id name riskProfile { businessImpact } }
           tags { key value }
         }
       }
@@ -591,7 +591,7 @@ query AIAgentTripleRisk(
           hasHighPrivileges
           hasAccessToSensitiveData
           cloudAccount { id name cloudProvider externalId }
-          projects { id name businessImpact }
+          projects { id name riskProfile { businessImpact } }
           tags { key value }
         }
       }

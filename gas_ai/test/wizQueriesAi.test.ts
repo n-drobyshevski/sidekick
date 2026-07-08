@@ -125,8 +125,8 @@ describe("Q_AI_INVENTORY + aiInventoryVariables", () => {
     });
   });
 
-  it("no longer selects businessImpact (rejected by real tenants)", () => {
-    expect(Q_AI_INVENTORY).not.toContain("businessImpact");
-    expect(Q_AI_INVENTORY).toContain("projects { id name }");
+  it("selects businessImpact nested under riskProfile, not flat on Project", () => {
+    expect(Q_AI_INVENTORY).toContain("projects { id name riskProfile { businessImpact } }");
+    expect(Q_AI_INVENTORY).not.toContain("projects { id name businessImpact }");
   });
 });

@@ -422,8 +422,8 @@ var Server = (() => {
   var PAGE_SIZE = 100;
   var PAGE_SIZE_FALLBACK = 50;
   var MAX_PAGES = 200;
-  var RESOURCE_FIELDS = "      id\n      name\n      type\n      nativeType\n      cloudPlatform\n      region\n      status\n      firstSeen\n      lastSeen\n      externalId\n      isAccessibleFromInternet\n      hasSensitiveData\n      hasAccessToSensitiveData\n      hasAdminPrivileges\n      hasHighPrivileges\n      cloudAccount { id name externalId cloudProvider }\n      projects { id name }\n      tags { key value }\n";
-  var ENTITY_FIELDS = "        id\n        name\n        type\n        nativeType\n        cloudPlatform\n        region\n        ... on CloudResource {\n          status\n          firstSeen\n          lastSeen\n          externalId\n          isAccessibleFromInternet\n          hasSensitiveData\n          hasAccessToSensitiveData\n          hasAdminPrivileges\n          hasHighPrivileges\n          cloudAccount { id name externalId cloudProvider }\n          projects { id name }\n          tags { key value }\n        }\n";
+  var RESOURCE_FIELDS = "      id\n      name\n      type\n      nativeType\n      cloudPlatform\n      region\n      status\n      firstSeen\n      lastSeen\n      externalId\n      isAccessibleFromInternet\n      hasSensitiveData\n      hasAccessToSensitiveData\n      hasAdminPrivileges\n      hasHighPrivileges\n      cloudAccount { id name externalId cloudProvider }\n      projects { id name riskProfile { businessImpact } }\n      tags { key value }\n";
+  var ENTITY_FIELDS = "        id\n        name\n        type\n        nativeType\n        cloudPlatform\n        region\n        ... on CloudResource {\n          status\n          firstSeen\n          lastSeen\n          externalId\n          isAccessibleFromInternet\n          hasSensitiveData\n          hasAccessToSensitiveData\n          hasAdminPrivileges\n          hasHighPrivileges\n          cloudAccount { id name externalId cloudProvider }\n          projects { id name riskProfile { businessImpact } }\n          tags { key value }\n        }\n";
   function graphSearchQuery(name, queryBody) {
     return "query " + name + "($quick: Boolean, $first: Int, $after: String) {\n  graphSearch(quick: $quick, first: $first, after: $after, query: {\n" + queryBody + "  }) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      entities {\n" + ENTITY_FIELDS + "      }\n    }\n  }\n}\n";
   }
@@ -2048,7 +2048,9 @@ var Server = (() => {
         const rec = p;
         const pid = str(rec["id"]);
         const name = str(rec["name"]);
-        return pid && name ? { id: pid, name, businessImpact: str(rec["businessImpact"]) } : null;
+        const riskProfile = rec["riskProfile"];
+        const businessImpact = riskProfile && typeof riskProfile === "object" ? str(riskProfile["businessImpact"]) : void 0;
+        return pid && name ? { id: pid, name, businessImpact } : null;
       }).filter((p) => p !== null);
     }
     const tags = raw["tags"];

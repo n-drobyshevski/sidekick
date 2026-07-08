@@ -14,9 +14,10 @@ export const PAGE_SIZE_FALLBACK = 50;
 export const MAX_PAGES = 200;
 
 // Shared CloudResource field selection (flat inventory shape).
-// NOTE: `projects { businessImpact }` was removed — real tenants reject it
-// ("Cannot query field businessImpact on type Project"); the normalizer treats
-// it as optional either way.
+// NOTE: `businessImpact` lives under `Project.riskProfile`, not directly on
+// Project — a flat `projects { businessImpact }` selection is rejected
+// ("Cannot query field businessImpact on type Project"). Select it nested and
+// the normalizer flattens it back onto the project record.
 const RESOURCE_FIELDS =
   "      id\n" +
   "      name\n" +
@@ -34,7 +35,7 @@ const RESOURCE_FIELDS =
   "      hasAdminPrivileges\n" +
   "      hasHighPrivileges\n" +
   "      cloudAccount { id name externalId cloudProvider }\n" +
-  "      projects { id name }\n" +
+  "      projects { id name riskProfile { businessImpact } }\n" +
   "      tags { key value }\n";
 
 // Same fields inside a graphSearch entity (CloudResource is an inline fragment there).
@@ -56,7 +57,7 @@ const ENTITY_FIELDS =
   "          hasAdminPrivileges\n" +
   "          hasHighPrivileges\n" +
   "          cloudAccount { id name externalId cloudProvider }\n" +
-  "          projects { id name }\n" +
+  "          projects { id name riskProfile { businessImpact } }\n" +
   "          tags { key value }\n" +
   "        }\n";
 

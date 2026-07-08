@@ -17,7 +17,7 @@ query AIAgentsSensitiveDataNoGuardrailFlag(
     first: $first
     after: $after
     filterBy: {
-      type: ["AI_AGENT"]
+      type: { equals: ["AI_AGENT"] }
       hasAccessToSensitiveData: { equals: true }
       relatedIssue: {
         sourceRuleId: {
@@ -47,7 +47,7 @@ query AIAgentsSensitiveDataNoGuardrailFlag(
       hasHighPrivileges
       externalId
       cloudAccount { id name externalId cloudProvider }
-      projects { id name businessImpact }
+      projects { id name riskProfile { businessImpact } }
       tags { key value }
     }
   }
@@ -110,7 +110,7 @@ query AIAgentsWithoutGuardrail(
           hasAdminPrivileges
           hasHighPrivileges
           cloudAccount { id name cloudProvider externalId }
-          projects { id name businessImpact }
+          projects { id name riskProfile { businessImpact } }
           tags { key value }
         }
       }
@@ -185,7 +185,7 @@ query PrivilegedAIAgentsWithoutGuardrail(
           hasHighPrivileges
           hasAccessToSensitiveData
           cloudAccount { id name cloudProvider externalId }
-          projects { id name businessImpact }
+          projects { id name riskProfile { businessImpact } }
           tags { key value }
         }
       }
@@ -333,7 +333,7 @@ query IAMRolesInvokingModelsWithoutGuardrail(
     first: $first
     after: $after
     filterBy: {
-      type: ["SERVICE_ACCOUNT"]
+      type: { equals: ["SERVICE_ACCOUNT"] }
       cloudPlatform: { equals: ["AWS"] }
       relatedIssue: {
         sourceRuleId: {
@@ -379,7 +379,7 @@ query AIAgentsMisconfiguredGuardrail(
     first: $first
     after: $after
     filterBy: {
-      type: ["AI_AGENT"]
+      type: { equals: ["AI_AGENT"] }
       relatedIssue: {
         sourceRuleId: {
           equals: [
@@ -405,7 +405,7 @@ query AIAgentsMisconfiguredGuardrail(
       hasAccessToSensitiveData
       externalId
       cloudAccount { id name externalId cloudProvider }
-      projects { id name businessImpact }
+      projects { id name riskProfile { businessImpact } }
       tags { key value }
     }
   }
@@ -483,7 +483,7 @@ query TotalAIAgentsPerProject(
     first: $first
     after: $after
     filterBy: {
-      type: ["AI_AGENT"]
+      type: { equals: ["AI_AGENT"] }
       status: { equals: ["Active"] }
     }
   ) {

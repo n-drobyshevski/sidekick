@@ -30,7 +30,7 @@ const AGENT_RAW = {
   hasAdminPrivileges: false,
   hasHighPrivileges: true,
   cloudAccount: { id: "acc-1", name: "gcp-account-01", cloudProvider: "GCP" },
-  projects: [{ id: "p1", name: "PROJECT-ALPHA", businessImpact: "HBI" }],
+  projects: [{ id: "p1", name: "PROJECT-ALPHA", riskProfile: { businessImpact: "HBI" } }],
   tags: [{ key: "env", value: "prod" }],
 };
 

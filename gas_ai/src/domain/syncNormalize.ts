@@ -76,9 +76,12 @@ export function normalizeCloudResource(raw: Rec): GNode | null {
         const rec = p as Rec;
         const pid = str(rec["id"]);
         const name = str(rec["name"]);
-        return pid && name
-          ? { id: pid, name, businessImpact: str(rec["businessImpact"]) }
-          : null;
+        // businessImpact is nested under riskProfile in the API, not flat on Project.
+        const riskProfile = rec["riskProfile"] as Rec | null | undefined;
+        const businessImpact = riskProfile && typeof riskProfile === "object"
+          ? str(riskProfile["businessImpact"])
+          : undefined;
+        return pid && name ? { id: pid, name, businessImpact } : null;
       })
       .filter((p): p is NonNullable<typeof p> => p !== null);
   }
