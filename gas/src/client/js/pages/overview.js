@@ -312,10 +312,13 @@ export async function renderOverview(main, params, ctx) {
     // table of the actual stale items (right), toggling between individual findings and
     // the 90+ backlog per asset / support group / domain. align-items:stretch keeps the
     // two cards the same height as each other whichever view (3–7 rows) is showing.
-    insightsHost.append(el("div", { class: "chart-grid", style: "align-items:stretch" },
-      chartCard,
-      renderOldestPanel(insights.oldest),
-    ));
+    // `oldest` is missing when a newer client meets an older/cached server payload — fall
+    // back to the chart alone rather than crashing the whole page.
+    insightsHost.append(insights.oldest
+      ? el("div", { class: "chart-grid", style: "align-items:stretch" },
+          chartCard,
+          renderOldestPanel(insights.oldest))
+      : chartCard);
     requestAnimationFrame(() => {
       stackedAgeBar(canvas, AGE_LABELS, insights.aging.perSev, boot.palette);
     });
@@ -349,7 +352,7 @@ export async function renderOverview(main, params, ctx) {
         ? "Top 7 longest-open findings."
         : "Top 7 by open findings older than 90 days.";
       clear(tableHost).append(individual
-        ? oldestFindingsTable(oldest.findings)
+        ? oldestFindingsTable(oldest.findings || [])
         : oldestGroupTable(oldest[view] || [], OLDEST_VIEWS.find(([v]) => v === view)[1]));
     }
 
