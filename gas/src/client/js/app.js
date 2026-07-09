@@ -204,7 +204,7 @@ function renderSidebar(sidebar, data) {
     const sel = el(
       "select",
       { id: "filter-domain", class: activeDomain ? "active" : null, "aria-label": "Filter by value chain" },
-      el("option", { value: "" }, "All value chains"),
+      el("option", { value: "" }, "Value Chain"),
       ...data.domainNames.map((d) =>
         el("option", { value: d, selected: d === activeDomain || null }, d)),
     );
@@ -215,8 +215,9 @@ function renderSidebar(sidebar, data) {
       route();
     });
     zone.prepend(
-      el("div", { class: "sidebar-filter" },
-        el("label", { class: "field-label" }, "Value chain"), sel),
+      // No visible label — the default option reads "Value Chain" and the select keeps
+      // its aria-label for assistive tech.
+      el("div", { class: "sidebar-filter" }, sel),
     );
   }
 
