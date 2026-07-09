@@ -126,6 +126,7 @@ export const AGED_OPEN_EDGE = AGE_BUCKET_EDGES[2];
 export interface OldestFinding {
   cve: string | null;
   asset: string | null;
+  subscription: string | null;
   severity: string; // normalized
   ageDays: number;
 }
@@ -135,6 +136,9 @@ export interface OldestGroup {
   agedCount: number; // open findings older than AGED_OPEN_EDGE days
   openCount: number; // all open findings in the group
   oldestDays: number; // age of the group's single oldest open finding
+  // Representative attribution captured for the asset view only (see rankGroups meta).
+  subscription?: string;
+  domain?: string;
 }
 
 export interface OldestOpen {
@@ -144,7 +148,10 @@ export interface OldestOpen {
   byDomain: OldestGroup[];
 }
 
-type OldestRow = Pick<BaseRow, "cve" | "severity" | "status" | "asset_name" | "age_days"> & {
+type OldestRow = Pick<
+  BaseRow,
+  "cve" | "severity" | "status" | "asset_name" | "subscription_name" | "age_days"
+> & {
   _domain?: unknown;
   _supportGroup?: unknown;
 };
@@ -160,9 +167,16 @@ function openAge(row: OldestRow): number | null {
  * Rank the busiest-aging groups: bucket open rows (with a finite age) by keyFn,
  * count the 90+ tail and the total open, track the single oldest, then order by
  * aged tail desc, oldest age desc, key asc. Empty groups never form (only open
- * rows are added); the result is capped to topN.
+ * rows are added); the result is capped to topN. `meta` (asset view only) records
+ * representative attribution once, from the first row that creates each group — all
+ * findings on an asset share a subscription and (asset-level rules) a domain.
  */
-function rankGroups(rows: OldestRow[], keyFn: (r: OldestRow) => string, topN: number): OldestGroup[] {
+function rankGroups(
+  rows: OldestRow[],
+  keyFn: (r: OldestRow) => string,
+  topN: number,
+  meta?: (r: OldestRow) => Partial<Pick<OldestGroup, "subscription" | "domain">>,
+): OldestGroup[] {
   const groups = new Map<string, OldestGroup>();
   for (const row of rows) {
     const age = openAge(row);
@@ -170,7 +184,7 @@ function rankGroups(rows: OldestRow[], keyFn: (r: OldestRow) => string, topN: nu
     const raw = keyFn(row);
     const key = raw && raw.trim() !== "" ? raw : "(none)";
     let g = groups.get(key);
-    if (!g) groups.set(key, (g = { key, agedCount: 0, openCount: 0, oldestDays: 0 }));
+    if (!g) groups.set(key, (g = { key, agedCount: 0, openCount: 0, oldestDays: 0, ...(meta ? meta(row) : {}) }));
     g.openCount += 1;
     if (age > AGED_OPEN_EDGE) g.agedCount += 1;
     if (age > g.oldestDays) g.oldestDays = age;
@@ -196,12 +210,16 @@ export function oldestOpen(rows: OldestRow[], topN = 7): OldestOpen {
     .map(({ r, age }) => ({
       cve: r.cve,
       asset: r.asset_name,
+      subscription: r.subscription_name,
       severity: normalizeSeverity(r.severity),
       ageDays: age,
     }));
   return {
     findings,
-    byAsset: rankGroups(rows, (r) => String(r.asset_name ?? ""), topN),
+    byAsset: rankGroups(rows, (r) => String(r.asset_name ?? ""), topN, (r) => ({
+      subscription: String(r.subscription_name ?? ""),
+      domain: String(r._domain ?? ""),
+    })),
     bySupportGroup: rankGroups(rows, (r) => String(r._supportGroup ?? ""), topN),
     byDomain: rankGroups(rows, (r) => String(r._domain ?? ""), topN),
   };

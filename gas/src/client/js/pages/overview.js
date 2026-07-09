@@ -351,9 +351,14 @@ export async function renderOverview(main, params, ctx) {
       caption.textContent = individual
         ? "Top 7 longest-open findings."
         : "Top 7 by open findings older than 90 days.";
+      // The Assets view carries per-asset Subscription / Domain; other group views don't.
+      const extraCols = view === "byAsset"
+        ? [{ header: "Subscription", get: (g) => g.subscription || "—" },
+           { header: "Domain", get: (g) => g.domain || "—" }]
+        : [];
       clear(tableHost).append(individual
         ? oldestFindingsTable(oldest.findings || [])
-        : oldestGroupTable(oldest[view] || [], OLDEST_VIEWS.find(([v]) => v === view)[1]));
+        : oldestGroupTable(oldest[view] || [], OLDEST_VIEWS.find(([v]) => v === view)[1], extraCols));
     }
 
     paint();
@@ -362,7 +367,7 @@ export async function renderOverview(main, params, ctx) {
       toggle, tableHost, caption);
   }
 
-  /** Ranked table of individual oldest open findings (CVE · Asset · Severity · Age). */
+  /** Ranked table of individual oldest open findings (CVE · Asset · Subscription · Severity · Age). */
   function oldestFindingsTable(rows) {
     if (!rows || !rows.length) return emptyState("No open findings to rank.");
     const body = el("tbody", {});
@@ -373,6 +378,7 @@ export async function renderOverview(main, params, ctx) {
       body.append(el("tr", {},
         el("td", {}, cve),
         el("td", {}, r.asset || "—"),
+        el("td", {}, r.subscription || "—"),
         el("td", {}, el("span", { class: "sev-dot", "aria-hidden": "true",
           style: `background:${boot.palette.colors[r.severity] || "var(--text-3)"}` }),
           sevTitle(r.severity)),
@@ -382,17 +388,20 @@ export async function renderOverview(main, params, ctx) {
     return el("div", { class: "table-wrap" },
       el("table", { class: "data" },
         el("thead", {}, el("tr", {},
-          ...["CVE", "Asset", "Severity", "Age"].map((h) => el("th", { scope: "col" }, h)))),
+          ...["CVE", "Asset", "Subscription", "Severity", "Age"].map((h) => el("th", { scope: "col" }, h)))),
         body));
   }
 
-  /** Ranked table of the 90+ day open backlog per group (Group · 90+ days · Open · Oldest). */
-  function oldestGroupTable(rows, dimLabel) {
+  /** Ranked table of the 90+ day open backlog per group (Group [· extras] · 90+ days · Open ·
+   *  Oldest). extraCols ([{ header, get }]) render right after the group-name column — the
+   *  Assets view uses them for Subscription / Domain; other group views pass none. */
+  function oldestGroupTable(rows, dimLabel, extraCols = []) {
     if (!rows || !rows.length) return emptyState("No open findings to rank.");
     const body = el("tbody", {});
     for (const g of rows) {
       body.append(el("tr", {},
         el("td", {}, el("strong", {}, g.key)),
+        ...extraCols.map((c) => el("td", {}, c.get(g))),
         el("td", { class: "num" }, g.agedCount.toLocaleString()),
         el("td", { class: "num" }, g.openCount.toLocaleString()),
         el("td", { class: "num" }, fmtDays(g.oldestDays)),
@@ -402,6 +411,7 @@ export async function renderOverview(main, params, ctx) {
       el("table", { class: "data" },
         el("thead", {}, el("tr", {},
           el("th", { scope: "col" }, dimLabel),
+          ...extraCols.map((c) => el("th", { scope: "col" }, c.header)),
           el("th", { scope: "col" }, "90+ days"),
           el("th", { scope: "col" }, "Open"),
           el("th", { scope: "col" }, "Oldest"))),

@@ -115,11 +115,11 @@ describe("movement", () => {
 });
 
 describe("oldestOpen", () => {
-  // Base-row shape the aggregation reads: age_days + status + cve/severity/asset_name and
-  // the server-attached _domain / _supportGroup.
+  // Base-row shape the aggregation reads: age_days + status + cve/severity/asset_name/
+  // subscription_name and the server-attached _domain / _supportGroup.
   const brow = (over: Record<string, unknown> = {}) => ({
     cve: "CVE-2024-0001", severity: "HIGH", status: "OPEN", asset_name: "web-1",
-    age_days: 10, _domain: "Payments", _supportGroup: "SG-A", ...over,
+    subscription_name: "sub-1", age_days: 10, _domain: "Payments", _supportGroup: "SG-A", ...over,
   });
 
   it("findings: sorted by age desc, capped at topN, resolved & null-age excluded", () => {
@@ -131,7 +131,9 @@ describe("oldestOpen", () => {
       brow({ cve: "noage", age_days: null }),
     ], 2);
     expect(findings.map((f) => f.cve)).toEqual(["old", "mid"]);
-    expect(findings[0]).toEqual({ cve: "old", asset: "web-1", severity: "HIGH", ageDays: 400 });
+    expect(findings[0]).toEqual({
+      cve: "old", asset: "web-1", subscription: "sub-1", severity: "HIGH", ageDays: 400,
+    });
   });
 
   it("groups: agedCount is the >90d tail, oldestDays the max, open counts all open", () => {
@@ -164,8 +166,25 @@ describe("oldestOpen", () => {
       brow({ asset_name: "host-b", age_days: 200 }),
     ]);
     expect(byAsset.map((g) => g.key)).toEqual(["host-b", "host-a"]);
-    expect(byAsset[0]).toEqual({ key: "host-b", agedCount: 1, openCount: 1, oldestDays: 200 });
+    expect(byAsset[0]).toEqual({
+      key: "host-b", agedCount: 1, openCount: 1, oldestDays: 200, subscription: "sub-1", domain: "Payments",
+    });
     expect(byAsset[1]).toMatchObject({ key: "host-a", openCount: 2 });
+  });
+
+  it("asset view carries representative subscription + domain; other group views omit them", () => {
+    const rows = [
+      brow({ asset_name: "host-a", subscription_name: "sub-x", _domain: "Core", _supportGroup: "SG-1", age_days: 100 }),
+      brow({ asset_name: "host-a", subscription_name: "sub-x", _domain: "Core", _supportGroup: "SG-1", age_days: 50 }),
+    ];
+    const { findings, byAsset, bySupportGroup, byDomain } = oldestOpen(rows);
+    expect(findings[0].subscription).toBe("sub-x");
+    expect(byAsset[0]).toMatchObject({ key: "host-a", subscription: "sub-x", domain: "Core" });
+    // Subscription / domain are asset-view attribution only.
+    expect(bySupportGroup[0].subscription).toBeUndefined();
+    expect(bySupportGroup[0].domain).toBeUndefined();
+    expect(byDomain[0].subscription).toBeUndefined();
+    expect(byDomain[0].domain).toBeUndefined();
   });
 
   it("empty base yields empty lists", () => {
