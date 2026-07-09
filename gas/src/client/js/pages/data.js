@@ -14,22 +14,39 @@ import {
   confirmDialog,
   downloadText,
   el,
+  emptyState,
   fmtDateTime,
   fmtDays,
+  scopeBar,
   sectionLabel,
   toast,
 } from "../ui.js";
 
+// A one-line description of the global scope a report/export is generated under, so a
+// downloaded audit artifact says what population it covers instead of leaving it to guess.
+function scopeLine(domain, supportGroup) {
+  const parts = [];
+  if (domain) parts.push(`Value chain: ${domain}`);
+  if (supportGroup) parts.push(`Support group: ${supportGroup}`);
+  return parts.length ? `Scoped to ${parts.join(" · ")}.` : "All value chains and support groups.";
+}
+
 export async function renderData(main, params, ctx) {
   const boot = await bootstrap();
+  const domain = ctx.domain || "";
+  const supportGroup = ctx.supportGroup || "";
   main.append(
     el("h1", {}, "Data"),
     el("p", { class: "page-sub" }, "Reports out, raw data out, legacy history in."),
   );
+  const scopeChips = scopeBar({ domain, supportGroup, onClear: ctx.clearScope });
+  if (scopeChips) main.append(scopeChips);
 
   main.append(sectionLabel("Report"));
   if (boot.latestScan) {
-    await renderReportSection(main, boot, ctx.domain || "", ctx.supportGroup || "");
+    // Synchronous mount + lazy preview: the report preview must never block (or, on error,
+    // blank) the Export and Import sections below, which don't even need a scan.
+    renderReportSection(main, boot, domain, supportGroup);
   } else {
     main.append(el("p", { class: "muted small" },
       "No scan saved yet — run a scan to generate a report."));
@@ -37,7 +54,7 @@ export async function renderData(main, params, ctx) {
 
   main.append(sectionLabel("Export"));
   if (boot.latestScan) {
-    renderExportSection(main, boot);
+    renderExportSection(main, boot, domain, supportGroup);
   } else {
     main.append(el("p", { class: "muted small" },
       "No scan saved yet — run a scan to export findings."));
@@ -49,18 +66,21 @@ export async function renderData(main, params, ctx) {
 
 // ------------------------------------------------------------------------- report
 
-async function renderReportSection(main, boot, domain, supportGroup) {
+function renderReportSection(main, boot, domain, supportGroup) {
   // Scope the report to the global Value Chain + Support group filters ("" = no filter).
   const domains = domain ? [domain] : [];
   const supportGroups = supportGroup ? [supportGroup] : [];
   let format = "markdown";
-  const controls = el("div", { class: "filter-bar", role: "radiogroup", "aria-label": "Report format" });
+  // A segmented toggle group (aria-pressed), not a radiogroup — the buttons are toggle
+  // buttons, so radiogroup semantics (role=radio + arrow keys) would misannounce them.
+  const controls = el("div", { class: "filter-bar", role: "group", "aria-label": "Report format" });
   for (const [value, label] of [["markdown", "Markdown"], ["csv", "CSV"], ["json", "JSON"]]) {
     const btn = el("button", {
+      class: "seg-btn", type: "button",
       "aria-pressed": format === value ? "true" : "false",
       onclick: () => {
         format = value;
-        controls.querySelectorAll("button[aria-pressed]").forEach((b) =>
+        controls.querySelectorAll("button.seg-btn").forEach((b) =>
           b.setAttribute("aria-pressed", b === btn ? "true" : "false"));
       },
     }, label);
@@ -69,16 +89,36 @@ async function renderReportSection(main, boot, domain, supportGroup) {
   const generateBtn = el("button", { class: "primary", onclick: generate }, "Generate & download");
   controls.append(generateBtn);
 
+  main.append(
+    el("p", { class: "muted small", style: "margin:-2px 0 8px" }, scopeLine(domain, supportGroup)),
+    controls,
+  );
   const previewHost = el("div", {});
-  main.append(controls, previewHost);
+  main.append(previewHost);
 
-  // Severity matrix preview
-  const preview = await call("api_getReport", { format: "json", domains, supportGroups });
-  renderMatrix(preview.matrix);
+  // Severity matrix preview — loaded lazily and guarded, so a failed/slow report RPC leaves
+  // Export and Import mounted rather than blanking the whole page.
+  loadPreview();
+  async function loadPreview() {
+    clear(previewHost).append(el("p", { class: "muted small" }, "Loading report preview…"));
+    try {
+      const preview = await call("api_getReport", { format: "json", domains, supportGroups });
+      renderMatrix(preview.matrix);
+    } catch (e) {
+      clear(previewHost).append(el("p", { class: "small" },
+        `Report preview unavailable: ${e.message} `,
+        el("button", { class: "link", type: "button", onclick: loadPreview }, "Retry")));
+    }
+  }
 
   function renderMatrix(matrix) {
     clear(previewHost);
-    if (!matrix.length) return;
+    previewHost.append(el("div", { class: "label", style: "margin:2px 0 6px" },
+      "Report preview — severity by source"));
+    if (!matrix.length) {
+      previewHost.append(emptyState("No findings in the current scope."));
+      return;
+    }
     const sevCols = boot.palette.order;
     const table = el("table", { class: "data" },
       el("thead", {}, el("tr", {},
@@ -119,13 +159,18 @@ async function renderReportSection(main, boot, domain, supportGroup) {
 
 // ------------------------------------------------------------------------- export
 
-function renderExportSection(main, boot) {
+function renderExportSection(main, boot, domain, supportGroup) {
+  // Honor the same global filters as the Report block so the two never export different
+  // populations of the same ledger, and say which scope was applied.
+  const domains = domain ? [domain] : [];
+  const supportGroups = supportGroup ? [supportGroup] : [];
   const card = el("div", { class: "card" });
   card.append(
     el("h3", {}, "OS vulnerabilities"),
     el("p", { class: "muted small" },
       `Scan ${fmtDateTime(boot.latestScan.ts)} — ` +
       `${boot.latestScan.total.toLocaleString()} finding(s), ${boot.latestScan.mode}.`),
+    el("p", { class: "muted small", style: "margin-top:-4px" }, scopeLine(domain, supportGroup)),
   );
   const row = el("div", { style: "display:flex; gap:8px; flex-wrap:wrap" });
   const csvBtn = el("button", { onclick: csv }, "Download CSV");
@@ -138,7 +183,7 @@ function renderExportSection(main, boot) {
   async function csv() {
     csvBtn.disabled = true;
     try {
-      const res = await call("api_getExportCsv", { source: "findings" });
+      const res = await call("api_getExportCsv", { source: "findings", domains, supportGroups });
       downloadText(res.filename, res.content, "text/csv;charset=utf-8");
     } catch (e) {
       toast(`Export failed: ${e.message}`, "error");
@@ -187,7 +232,8 @@ function renderImportSection(main, ctx) {
       "this ledger. Imported scans arrive sealed — their raw archives stay on the old " +
       "machine — and the merge is one-time: it can't be undone from here."),
     el("p", { class: "muted small" },
-      "A large (sharded .zip) bundle needs a fresh, never-scanned ledger. If this ledger " +
+      "A large export arrives as several .json files (a manifest plus shards) — select all " +
+      "of them together. A sharded import needs a fresh, never-scanned ledger: if this ledger " +
       "already has scans, use Reset ledger first, then import and run a Wiz scan to refill " +
       "open-vulnerability detail."),
   );
@@ -271,7 +317,8 @@ function renderImportSection(main, ctx) {
       if (f.size > MAX_BUNDLE_BYTES) {
         const mb = (n) => (n / (1024 * 1024)).toFixed(1);
         toast(`${f.name} is ${mb(f.size)} MB — over the ${mb(MAX_BUNDLE_BYTES)} MB per-file ` +
-          "limit. Use the sharded export (.zip) for a very large ledger.", "error");
+          "limit. Use the sharded export — a manifest plus smaller .json shards — for a very " +
+          "large ledger.", "error");
         return;
       }
       withText.push({ name: f.name, text: await f.text() });

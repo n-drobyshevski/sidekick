@@ -2178,6 +2178,30 @@ var Server = (() => {
     }
     return out;
   }
+  function openBySeverityTrend(scans, base, severities = null) {
+    let rows = base;
+    if (severities !== null && base.length) {
+      const keep = /* @__PURE__ */ new Set([...severities, "UNKNOWN"]);
+      rows = base.filter((r) => keep.has(normalizeSeverity(r["severity"])));
+    }
+    if (!scans.length || !rows.length) return [];
+    const flatTs = scans.filter((s) => s["shape"] === "flat").map((s) => ({ iso: String(s["ts"]), ms: parseTs(s["ts"]) })).filter((t) => t.ms !== null).sort((a, b) => a.ms - b.ms);
+    if (!flatTs.length) return [];
+    const parsed = rows.map((r) => ({
+      first: parseTs(r["first_seen"]),
+      resolvedAt: parseTs(r["resolved_at"]),
+      sev: normalizeSeverity(r["severity"])
+    }));
+    return flatTs.map((ts) => {
+      var _a;
+      const bySev = {};
+      for (const r of parsed) {
+        const isOpen2 = r.first !== null && r.first <= ts.ms && (r.resolvedAt === null || r.resolvedAt > ts.ms);
+        if (isOpen2) bySev[r.sev] = ((_a = bySev[r.sev]) != null ? _a : 0) + 1;
+      }
+      return { date: ts.iso, bySev };
+    });
+  }
 
   // src/domain/maintenance.ts
   var LedgerRebuildError = class extends Error {
@@ -4810,6 +4834,9 @@ var Server = (() => {
         base = base.filter((r) => assignDomain(r, compiled) === domain);
       }
     }
+    const severities = readSeverities(p);
+    recs = filterSeverities(recs, severities);
+    base = filterSeverities(base, severities);
     const latestFlat = latestFlatScanRow();
     return {
       flatScan: true,
@@ -4823,6 +4850,13 @@ var Server = (() => {
       total: recs.length,
       // Per-severity total/open/resolved for the severity breakdown card.
       sevStats: severityStats(recs),
+      // Open findings per severity over time — powers the breakdown line chart. Uses the
+      // already-scoped base + severities so the series matches the counts shown beside it.
+      openTrend: openBySeverityTrend(
+        loadScanRows(),
+        base,
+        severities
+      ),
       exploit: exploitSummary(recs),
       aging: ageBuckets(base),
       movement: movement(base, latestFlat, loadScanRows().length)
@@ -4837,7 +4871,8 @@ var Server = (() => {
           {
             domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
             supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
-            supportGroups: readStringArray(p, "supportGroups")
+            supportGroups: readStringArray(p, "supportGroups"),
+            severities: readSeverities(p)
           },
           () => insightsData(p),
           3600
@@ -4874,7 +4909,13 @@ var Server = (() => {
     return {
       flatScan: true,
       keys,
-      groups: groupTree(scopedFrameRecords(domain, supportGroup, supportGroupSet), keys)
+      groups: groupTree(
+        filterSeverities(
+          scopedFrameRecords(domain, supportGroup, supportGroupSet),
+          readSeverities(p)
+        ),
+        keys
+      )
     };
   }
   function getGrouping(p) {
@@ -4887,7 +4928,7 @@ var Server = (() => {
     return run(
       () => cached(
         "grouping",
-        { domain, supportGroup, supportGroups: supportGroupSet, keys },
+        { domain, supportGroup, supportGroups: supportGroupSet, keys, severities: readSeverities(p) },
         () => groupingData(p),
         3600
       )

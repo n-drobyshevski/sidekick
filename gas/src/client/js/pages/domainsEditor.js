@@ -5,10 +5,14 @@
 
 import { call } from "../api.js";
 import { EXPORT_KIND, parseDomainsImport } from "../domainsImport.js";
-import { clear, confirmDialog, downloadText, el, toast } from "../ui.js";
+import { clear, confirmDialog, downloadText, el, statusPill, toast } from "../ui.js";
 
 export function renderDomainsEditor(host, boot, ctx) {
   let items = JSON.parse(JSON.stringify(boot.settings.domains.items || []));
+  // Snapshot the persisted list so we can show an "unsaved changes" cue and let the parent
+  // Settings page warn before a sibling save reboots the page and discards this draft.
+  const initialJson = JSON.stringify(boot.settings.domains.items || []);
+  const isDirty = () => JSON.stringify(items) !== initialJson;
   // Subscriptions / support groups seen in the current scan, offered by the pickers.
   const knownSubs = (boot.filterOptions && boot.filterOptions.subscriptions) || [];
   const knownGroups = (boot.filterOptions && boot.filterOptions.supportGroups) || [];
@@ -26,9 +30,16 @@ export function renderDomainsEditor(host, boot, ctx) {
   fileInput.addEventListener("change", importJson);
   const importBtn = el("button", { onclick: () => fileInput.click() }, "Import JSON");
   const saveBtn = el("button", { class: "primary", onclick: save }, "Save domains");
-  host.append(listHost, el("div", { style: "display:flex; gap:8px; margin-top:10px" },
-    addBtn, exportBtn, importBtn, saveBtn, fileInput));
+  const dirtyHost = el("span", { style: "display:inline-flex; align-items:center; margin-left:2px" });
+  host.append(listHost, el("div",
+    { style: "display:flex; gap:8px; margin-top:10px; align-items:center" },
+    addBtn, exportBtn, importBtn, saveBtn, dirtyHost, fileInput));
   renderList();
+
+  function refreshDirty() {
+    clear(dirtyHost);
+    if (isDirty()) dirtyHost.append(statusPill("warn", "Unsaved changes"));
+  }
 
   function exportJson() {
     // Snapshots the list as currently edited (not necessarily saved) — same
@@ -64,6 +75,7 @@ export function renderDomainsEditor(host, boot, ctx) {
 
   function renderList() {
     clear(listHost);
+    refreshDirty();
     if (!items.length) {
       listHost.append(el("p", { class: "muted small" },
         "No domains defined — every finding shows as Unassigned."));
@@ -98,7 +110,8 @@ export function renderDomainsEditor(host, boot, ctx) {
   async function remove(i) {
     const ok = await confirmDialog({
       title: `Delete domain “${items[i].name}”?`,
-      body: "Findings it claimed fall through to lower-priority domains or Unassigned.",
+      body: "Findings it claimed fall through to lower-priority domains or Unassigned. " +
+        "Not saved until you press Save domains.",
       confirmLabel: "Delete",
       danger: true,
     });
@@ -134,18 +147,22 @@ export function renderDomainsEditor(host, boot, ctx) {
     const rulesHost = el("div", {});
     const previewHost = el("div", { class: "small muted", style: "margin-top:8px", "aria-live": "polite" });
 
-    const dlg = el("dialog", {},
+    // Header + actions stay pinned while the rules/preview region scrolls, so a domain with
+    // several rules never pushes Apply/Cancel off-screen.
+    const dlg = el("dialog", { class: "domains-dialog" },
       el("h3", {}, index !== null ? `Edit “${editing.name}”` : "Add domain"),
-      el("label", { class: "field-label" }, "Name"),
-      nameInput,
-      el("p", { class: "small muted", style: "margin:10px 0 4px" },
-        "A finding matches the domain when ANY rule matches; a rule matches when ALL its conditions do."),
-      rulesHost,
-      el("button", { class: "link", onclick: () => {
-        editing.rules.push({ conditions: [emptyCondition()] });
-        renderRules();
-      } }, "+ Add rule"),
-      previewHost,
+      el("div", { class: "dialog-scroll" },
+        el("label", { class: "field-label" }, "Name"),
+        nameInput,
+        el("p", { class: "small muted", style: "margin:10px 0 4px" },
+          "A finding matches the domain when ANY rule matches; a rule matches when ALL its conditions do."),
+        rulesHost,
+        el("button", { class: "link", onclick: () => {
+          editing.rules.push({ conditions: [emptyCondition()] });
+          renderRules();
+        } }, "+ Add rule"),
+        previewHost,
+      ),
       el("div", { class: "dialog-actions" },
         el("button", { onclick: () => dlg.close() }, "Cancel"),
         el("button", { class: "primary", onclick: commit }, index !== null ? "Apply" : "Add"),
@@ -192,7 +209,8 @@ export function renderDomainsEditor(host, boot, ctx) {
         ruleCard.append(el("div", { class: "label", style: "margin-bottom:6px" },
           `Rule ${ri + 1}`,
           editing.rules.length > 1
-            ? el("button", { class: "link", style: "float:right", onclick: () => {
+            ? el("button", { class: "link", style: "float:right",
+                "aria-label": `Remove rule ${ri + 1}`, onclick: () => {
                 editing.rules.splice(ri, 1);
                 renderRules();
                 schedulePreview();
@@ -354,7 +372,7 @@ export function renderDomainsEditor(host, boot, ctx) {
       return el("div", { style: "display:flex; align-items:center; gap:4px; flex-wrap:wrap; margin-bottom:6px" },
         typeSel, fields,
         (rule.conditions.length > 1)
-          ? el("button", { class: "link", onclick: () => {
+          ? el("button", { class: "link", "aria-label": `Remove condition ${ci + 1}`, onclick: () => {
               rule.conditions.splice(ci, 1);
               renderRules();
               schedulePreview();
@@ -400,4 +418,6 @@ export function renderDomainsEditor(host, boot, ctx) {
       renderList();
     }
   }
+
+  return { isDirty };
 }

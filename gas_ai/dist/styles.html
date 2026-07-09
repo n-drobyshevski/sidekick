@@ -353,7 +353,7 @@ button, .btn {
 }
 button:hover, .btn:hover { background: #f1f1f4; border-color: #d9d9de; }
 button:focus-visible, .btn:focus-visible, a:focus-visible, input:focus-visible,
-select:focus-visible, [tabindex]:focus-visible {
+select:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -451,7 +451,7 @@ input[type="range"] { accent-color: var(--accent); }
 
 /* severity filter pills */
 .pill-row { display: flex; flex-wrap: wrap; gap: 6px; }
-.sev-pill {
+.sev-pill, .kind-pill {
   border-radius: 999px; padding: 3px 12px; min-height: 0;
   font-size: 12px; font-weight: 600;
   background: var(--page); border: 1px solid var(--hairline); box-shadow: none;
@@ -463,6 +463,16 @@ input[type="range"] { accent-color: var(--accent); }
 .sev-pill[aria-pressed="true"].sev-LOW { background: rgba(37,99,235,.14); color: var(--sev-low-text); border-color: rgba(37,99,235,.3); }
 .sev-pill[aria-pressed="true"].sev-INFO { background: rgba(100,116,139,.14); color: var(--sev-info-text); border-color: rgba(100,116,139,.3); }
 
+/* node-type toggle pills: neutral base (shared with .sev-pill), accent when selected */
+.kind-pill[aria-pressed="true"] {
+  background: rgba(37, 99, 235, .12); color: var(--sev-low-text); border-color: rgba(37, 99, 235, .3);
+}
+.kind-filter { display: flex; flex-direction: column; gap: 12px; }
+.pill-group-label {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
+  color: var(--text-3); margin-bottom: 5px;
+}
+
 /* ------------------------------------------------------------------ filter bar */
 .filter-bar {
   display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end;
@@ -470,6 +480,11 @@ input[type="range"] { accent-color: var(--accent); }
   background: var(--surface); margin-bottom: 14px;
 }
 .filter-bar .field { display: flex; flex-direction: column; }
+.filter-bar .filter-meta {
+  margin-left: auto; display: flex; align-items: center; gap: 12px;
+  font-size: 12px; color: var(--text-2);
+}
+.filter-bar .filter-meta .count { font-variant-numeric: tabular-nums; }
 
 /* ----------------------------------------------------------------------- tables */
 .table-wrap { overflow-x: auto; border: 1px solid var(--hairline); border-radius: var(--radius-lg); }
@@ -643,19 +658,44 @@ a { color: var(--accent); }
 /* Search: everything that doesn't match dims; matches keep full treatment. */
 .gnode.dimmed { opacity: 0.3; }
 
+/* Legend: a collapsible <details> disclosure, hidden by default. */
 .graph-legend {
-  display: flex; flex-wrap: wrap; gap: 14px; align-items: center;
   font-size: 12px; color: var(--text-2);
-  padding: 10px 12px; border: 1px solid var(--hairline);
+  border: 1px solid var(--hairline);
   border-radius: var(--radius-lg); background: var(--surface); margin-top: 10px;
 }
 .graph-legend.overlay {
   position: absolute; left: 10px; bottom: 10px; z-index: 5;
-  margin: 0; padding: 7px 10px; gap: 10px; font-size: 11px;
+  margin: 0; font-size: 11px;
   max-width: min(640px, calc(100% - 140px));
   box-shadow: var(--shadow-card);
 }
+/* Toggle pill: the whole box collapses to this. Native marker replaced by a
+   chevron that rotates on open. */
+.legend-toggle {
+  list-style: none; cursor: pointer; user-select: none;
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 10px; font-weight: 600; color: var(--ink);
+  border-radius: inherit;
+}
+.legend-toggle::-webkit-details-marker { display: none; }
+.legend-toggle::after {
+  content: ""; margin-left: auto; width: 6px; height: 6px;
+  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg); transform-origin: 55% 55%;
+  transition: transform 150ms ease-out;
+}
+.graph-legend[open] > .legend-toggle::after { transform: rotate(45deg); }
+.graph-legend[open] > .legend-toggle { border-bottom: 1px solid var(--hairline); }
+.legend-body {
+  display: flex; flex-wrap: wrap; gap: 14px; align-items: center;
+  padding: 9px 10px 10px;
+}
+.graph-legend.overlay .legend-body { gap: 10px; }
 .graph-legend .legend-item { display: inline-flex; align-items: center; gap: 6px; }
+@media (prefers-reduced-motion: reduce) {
+  .legend-toggle::after { transition: none; }
+}
 .legend-swatch-group {
   width: 16px; height: 12px; border-radius: 4px;
   border: 1px solid #d9d9de; background: rgba(0, 0, 0, 0.015); display: inline-block;

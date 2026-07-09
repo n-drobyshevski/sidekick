@@ -1,8 +1,15 @@
-// Deterministic graph layouts. Two modes, no forces, no randomness:
+// Deterministic graph layouts. Three modes, no forces, no randomness:
 //
-// - "lanes" (default): layered left-to-right (the Wiz security-graph visual
-//   language): findings/issues → AI assets → identities → data → compute/supply.
-//   A few barycenter sweeps reduce crossings; rows are evenly spaced.
+// - "rows" (default): the Wiz security-graph visual language, transposed to run
+//   top-to-bottom instead of left-to-right — 5 category swimlanes become
+//   horizontal bands stacked findings/issues → AI assets → identities → data →
+//   compute/supply, with nodes spread left-to-right within each band. Wider
+//   than it is tall, which fits typical widescreen viewports better than the
+//   vertical "lanes" layout it's derived from.
+// - "lanes": the same 5 category swimlanes as vertical columns placed
+//   left-to-right, with nodes stacked top-to-bottom within each. "rows" is
+//   its horizontal transpose — both share the same lane assignment and
+//   barycenter/sort ordering; only the final x/y positioning differs.
 // - "grouped": nodes clustered into labelled blocks by a key (asset, toxic
 //   combo, project, cloud, kind, or severity); blocks are shelf-packed
 //   left-to-right. Most keys arrange members in a compact grid; the "asset"
@@ -10,7 +17,7 @@
 //   its BFS-nearest neighbors (issues, identities, data, compute) on rings
 //   around it.
 //
-// Both are reduced-motion friendly by construction (nothing animates), and both
+// All are reduced-motion friendly by construction (nothing animates), and all
 // support explicit row-ordering ("sort") so the same URL always draws the same
 // picture.
 
@@ -21,7 +28,7 @@ import type { Projection } from "./graphProject";
 import { nodeOrder } from "./graphProject";
 import { COMBO_GROUPS, comboGroupById } from "./toxicCombos";
 
-export const LAYOUT_MODES = ["lanes", "grouped"] as const;
+export const LAYOUT_MODES = ["lanes", "grouped", "rows"] as const;
 export type LayoutMode = (typeof LAYOUT_MODES)[number];
 
 export const GROUP_KEYS = ["asset", "combo", "project", "cloud", "kind", "severity"] as const;
@@ -112,6 +119,10 @@ export interface LayoutOptions {
 
 const BARYCENTER_SWEEPS = 3;
 
+// Rows-mode geometry: the horizontal transpose of the lanes-mode gaps above.
+const ROW_COL_STEP = 260; // horizontal distance between node centers within a band (clears the 196px card + right-edge markers)
+const ROW_BAND_GAP = 150; // vertical distance between band centers (clears the 56px card + labels)
+
 // Grouped-mode geometry: cells fit the 196×56 node card plus gutters.
 const CELL_W = 240;
 const CELL_H = 84;
@@ -150,13 +161,14 @@ function comparator(sort: SortKey): (a: GNode, b: GNode) => number {
 }
 
 export function layoutGraph(p: Projection, opts: LayoutOptions = {}): Layout {
-  if ((opts.mode ?? "lanes") === "grouped") return layoutGrouped(p, opts);
-  return layoutLanes(p, opts);
+  const mode = opts.mode ?? "rows";
+  if (mode === "grouped") return layoutGrouped(p, opts);
+  return layoutLanes(p, opts, mode !== "lanes"); // horizontal unless explicitly "lanes"
 }
 
 // ------------------------------------------------------------------ lanes mode
 
-function layoutLanes(p: Projection, opts: LayoutOptions): Layout {
+function layoutLanes(p: Projection, opts: LayoutOptions, horizontal: boolean): Layout {
   const laneGap = opts.laneGap ?? 280;
   const rowGap = opts.rowGap ?? 84;
   const margin = opts.margin ?? 120;
@@ -220,9 +232,32 @@ function layoutLanes(p: Projection, opts: LayoutOptions): Layout {
     }
   }
 
-  // Center shorter lanes vertically against the tallest lane.
-  const tallest = Math.max(1, ...lanes.map((l) => l.length));
   const nodes: LayoutNode[] = [];
+  if (horizontal) {
+    // Bands stacked top-to-bottom; nodes spread left-to-right; shorter bands centered horizontally.
+    const widest = Math.max(1, ...lanes.map((l) => l.length));
+    lanes.forEach((lane, laneIdx) => {
+      const offset = ((widest - lane.length) * ROW_COL_STEP) / 2;
+      lane.forEach((id, col) => {
+        nodes.push({
+          id,
+          lane: laneIdx,
+          x: margin + offset + col * ROW_COL_STEP,
+          y: margin + laneIdx * ROW_BAND_GAP,
+        });
+      });
+    });
+    return {
+      nodes,
+      width: margin * 2 + (widest - 1) * ROW_COL_STEP,
+      height: margin * 2 + (LANE_COUNT - 1) * ROW_BAND_GAP,
+      laneGap: ROW_BAND_GAP,
+      rowGap: ROW_COL_STEP,
+      mode: "rows",
+    };
+  }
+  // Lanes (vertical): columns left-to-right, nodes stacked vertically, shorter lanes centered vertically.
+  const tallest = Math.max(1, ...lanes.map((l) => l.length));
   lanes.forEach((lane, laneIdx) => {
     const offset = ((tallest - lane.length) * rowGap) / 2;
     lane.forEach((id, row) => {
@@ -234,7 +269,6 @@ function layoutLanes(p: Projection, opts: LayoutOptions): Layout {
       });
     });
   });
-
   return {
     nodes,
     width: margin * 2 + (LANE_COUNT - 1) * laneGap,

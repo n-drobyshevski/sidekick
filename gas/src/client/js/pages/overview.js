@@ -3,10 +3,11 @@
 // KPI band, severity breakdown, exploitability summary, risk concentration, aging
 // of open findings, scan-over-scan movement, and a multi-level grouping breakdown.
 
-import { severityBar, stackedAgeBar } from "../charts.js";
-import { bootstrap, listJoin, listSplit, setParams, swrCall } from "../store.js";
+import { destroyChart, severityTrendLines, stackedAgeBar } from "../charts.js";
+import { bootstrap, setParams, swrCall } from "../store.js";
 import {
-  clear, el, emptyState, fmtDate, kpiCard, nvdUrl, sectionLabel,
+  clear, el, emptyState, fmtDate, kpiCard, nvdUrl, scopeBar, sectionLabel,
+  severityScopeFilter,
 } from "../ui.js";
 
 // Keep in sync with AGE_BUCKET_LABELS in src/domain/insights.ts (the client bundle
@@ -51,13 +52,31 @@ const GROUP_DIMENSIONS = [
 
 export async function renderOverview(main, params, ctx) {
   const boot = await bootstrap();
+
+  // Which severities scope every section on this page. Defaults to the app-wide display
+  // setting so Overview opens scoped like MTTR; falls back to all selectable if empty.
+  // Page-local and non-persisted: resets to the display setting on each visit.
+  const sevScope = boot.settings.displaySeverities?.length
+    ? [...boot.settings.displaySeverities]
+    : [...boot.palette.selectable];
+
   main.append(
-    el("h1", {}, "OS vulnerabilities"),
+    el("div", { class: "page-head" },
+      el("h1", {}, "OS vulnerabilities"),
+      severityScopeFilter({
+        selectable: boot.palette.selectable, scope: sevScope,
+        onApply: () => loadInsights(), ariaContext: "OS vulnerabilities",
+      })),
     el("p", { class: "page-sub" },
       "What the latest scan means: what is exploitable, where risk concentrates, and what to fix next. ",
       el("a", { href: "#/mttr", target: "_self" }, "Remediation performance →"),
     ),
   );
+
+  const scopeChips = scopeBar({
+    domain: ctx.domain, supportGroup: ctx.supportGroup, onClear: ctx.clearScope,
+  });
+  if (scopeChips) main.append(scopeChips);
 
   if (!boot.latestScan) {
     main.append(emptyState(
@@ -78,35 +97,29 @@ export async function renderOverview(main, params, ctx) {
     ? paramKeys
     : (!ctx.domain && boot.domainNames.length > 1 ? ["domain"] : ["atype"]);
 
-  // Support-group multi-select (the second filter surface): narrows the whole page to
-  // several support groups at once, intersecting with the sidebar's single-select global
-  // scope. Persisted in the URL (?sg=A,B). Options come from the scan's joined groups.
-  const knownGroups = (boot.filterOptions && boot.filterOptions.supportGroups) || [];
-  const sgFilter = listSplit(params.sg).filter((g) => knownGroups.includes(g));
-
-  // Persist both breakdown grouping and the support-group filter together (setParams
-  // replaces the query string, so each writer must include the other's param).
+  // Persist the breakdown grouping path (setParams replaces the query string).
   function persistParams() {
-    setParams({ by: groupKeys.join(","), sg: listJoin(sgFilter) });
+    setParams({ by: groupKeys.join(",") });
   }
 
   const kpiRow = el("div", { class: "kpi-row" });
   const sevChartCanvas = el("canvas", { id: "sev-chart" });
+  // Shown in place of the line when there isn't enough scan history to plot a trend.
+  const sevChartMsg = el("p", { class: "chart-empty muted", style: "display:none" });
   const sevCardHost = el("div", {});
   // Severity breakdown: a section label over two columns — the per-severity stat card
-  // (left) beside the severity bar (right), mirroring the Streamlit OS-vulns page.
+  // (left, open count leading) beside the open-per-severity trend line (right).
   const sevSection = el("div", {},
     sectionLabel("Severity breakdown"),
     el("div", { class: "chart-grid", style: "align-items:start" },
       sevCardHost,
       el("div", { class: "chart-card" },
-        el("div", { class: "chart-box" }, sevChartCanvas)),
+        el("div", { class: "chart-box" }, sevChartCanvas, sevChartMsg),
+        el("p", { class: "chart-caption muted" }, "Open findings by severity, per scan.")),
     ),
   );
   const insightsHost = el("div", {}, el("p", { class: "muted" }, "Computing insights…"));
-  const sgFilterHost = el("div", {});
-  main.append(sgFilterHost, kpiRow, sevSection, insightsHost);
-  renderSgFilter();
+  main.append(kpiRow, sevSection, insightsHost);
 
   renderHeadline(null);
 
@@ -118,40 +131,16 @@ export async function renderOverview(main, params, ctx) {
   };
   async function loadInsights() {
     paint(await swrCall("api_getInsights",
-      { domain: ctx.domain || "", supportGroup: ctx.supportGroup || "", supportGroups: sgFilter },
+      { domain: ctx.domain || "", supportGroup: ctx.supportGroup || "",
+        severities: scopeParam() },
       paint));
   }
   await loadInsights();
 
-  /** The support-group multi-select bar (toggle chips). Shown only with 2+ groups —
-   *  the sidebar single-select already covers the one-group case. */
-  function renderSgFilter() {
-    clear(sgFilterHost);
-    if (knownGroups.length < 2) return;
-    const bar = el("div", { class: "filter-bar", role: "group",
-      "aria-label": "Filter by support group" });
-    bar.append(el("label", { class: "field-label" }, "Support groups"));
-    knownGroups.forEach((g) => {
-      const on = sgFilter.includes(g);
-      bar.append(el("button", { "aria-pressed": on ? "true" : "false", onclick: () => {
-        const i = sgFilter.indexOf(g);
-        if (i >= 0) sgFilter.splice(i, 1);
-        else sgFilter.push(g);
-        persistParams();
-        renderSgFilter();
-        loadInsights();
-      } }, g));
-    });
-    if (sgFilter.length) {
-      bar.append(el("button", { class: "linklike", "aria-label": "Clear support-group filter",
-        onclick: () => {
-          sgFilter.length = 0;
-          persistParams();
-          renderSgFilter();
-          loadInsights();
-        } }, "Clear"));
-    }
-    sgFilterHost.append(bar);
+  // Null when every selectable severity is chosen (no filter → shares the default cache
+  // entry); otherwise the chosen subset, which the server keeps alongside UNKNOWN.
+  function scopeParam() {
+    return sevScope.length === boot.palette.selectable.length ? null : [...sevScope];
   }
 
   /** Scan-summary band (Total / Open / Resolved) + severity breakdown. At the
@@ -161,10 +150,10 @@ export async function renderOverview(main, params, ctx) {
    *  loads. */
   function renderHeadline(insights) {
     clear(kpiRow);
-    // Any active scope (value chain, sidebar support group, or the multi-select) makes
-    // the headline read the server's scoped counts instead of whole-scan bootstrap counts,
-    // so Total/Open/Resolved and the severity split stay coherent with the sections below.
-    const scoped = ctx.domain || ctx.supportGroup || sgFilter.length;
+    // Any active scope (value chain, sidebar support group, or severity filter) makes the
+    // headline read the server's scoped counts instead of whole-scan bootstrap counts, so
+    // Total/Open/Resolved and the severity split stay coherent with the sections below.
+    const scoped = ctx.domain || ctx.supportGroup || scopeParam();
     const filtered = !!(scoped && insights && insights.flatScan);
     const counts = filtered ? insights.counts : boot.counts;
     const total = filtered
@@ -179,28 +168,48 @@ export async function renderOverview(main, params, ctx) {
         "closed in this scan"),
     );
     requestAnimationFrame(() => {
-      // The breakdown only shows severities enabled in the display setting — a
-      // severity the user hasn't turned on (e.g. Low/Medium) is omitted, not zeroed.
-      const displaySet = new Set(boot.settings.displaySeverities);
-      const shown = {};
-      for (const s of boot.palette.order) if (displaySet.has(s) && counts[s]) shown[s] = counts[s];
-      severityBar(sevChartCanvas, shown, boot.palette);
+      // The line plots open findings per severity across the saved scans. It needs the
+      // insights payload and at least two scans; until then show an honest note rather
+      // than a degenerate one-point line. Severities not enabled in the display setting
+      // are dropped inside severityTrendLines via sevScope.
+      const trend = insights && insights.flatScan ? insights.openTrend : null;
+      if (trend && trend.length >= 2) {
+        sevChartMsg.style.display = "none";
+        sevChartCanvas.style.display = "";
+        severityTrendLines(sevChartCanvas, trend, boot.palette, sevScope);
+      } else {
+        destroyChart(sevChartCanvas);
+        sevChartCanvas.style.display = "none";
+        sevChartMsg.textContent = insights
+          ? "Trend appears after the second scan."
+          : "Computing trend…";
+        sevChartMsg.style.display = "";
+      }
     });
-    renderSevCard(insights, filtered, counts);
+    renderSevCard(insights);
   }
 
-  /** Severity breakdown card (mirrors the Streamlit stat list): one row per severity
-   *  CRITICAL–LOW (INFO/UNKNOWN omitted) that is enabled in the display setting, each a
-   *  color dot + label, the count with an "N open · N resolved" split, and a delta chip
-   *  vs the previous scan. The split needs the insights payload; the delta is dropped
-   *  under a Value Chain filter (no per-chain baseline), matching the headline. */
-  function renderSevCard(insights, filtered, counts) {
-    const sevStats = insights && insights.flatScan ? insights.sevStats : null;
-    const displaySet = new Set(boot.settings.displaySeverities);
+  /** Severity breakdown card: one row per severity CRITICAL–LOW (INFO/UNKNOWN omitted)
+   *  enabled in the display setting, each a color dot + label. The headline number is the
+   *  count of OPEN findings — what the analyst acts on — with resolved + total demoted to
+   *  the sub-line, and a delta chip comparing open against the previous scan's open. All
+   *  three need the insights payload, so the value shows "…" until it loads; the delta
+   *  needs a second scan for a baseline. The open-per-severity series is scoped like the
+   *  rest of the page, so the baseline stays valid under a Value Chain / support filter. */
+  function renderSevCard(insights) {
+    const loaded = insights && insights.flatScan;
+    const sevStats = loaded ? insights.sevStats : null;
+    // Previous scan's open-per-severity, from the same scoped series that feeds the line.
+    // A severity absent from that scan means zero open then, so default to 0 when a
+    // baseline scan exists — otherwise leave it null so no chip renders.
+    const trend = loaded ? insights.openTrend : null;
+    const prevBySev = trend && trend.length >= 2 ? trend[trend.length - 2].bySev : null;
+    const displaySet = new Set(sevScope);
     const card = el("div", { class: "stat-card" });
     for (const sev of ["CRITICAL", "HIGH", "MEDIUM", "LOW"].filter((s) => displaySet.has(s))) {
-      const count = counts[sev] || 0;
       const stat = sevStats && sevStats[sev];
+      const open = stat ? stat.open || 0 : null;
+      const prevOpen = prevBySev ? prevBySev[sev] || 0 : null;
       card.append(
         el("div", { class: "stat-card__row" },
           el("span", { class: "stat-card__name" },
@@ -208,13 +217,14 @@ export async function renderOverview(main, params, ctx) {
               style: `background:${boot.palette.colors[sev]}` }),
             sevTitle(sev)),
           el("span", { class: "stat-card__value-group" },
-            el("span", { class: "stat-card__value num" }, count.toLocaleString()),
+            el("span", { class: "stat-card__value num" },
+              open !== null ? open.toLocaleString() : "…"),
             stat
               ? el("span", { class: "stat-card__sub-value" },
-                `${(stat.open || 0).toLocaleString()} open · ` +
-                `${(stat.resolved || 0).toLocaleString()} resolved`)
+                `${(stat.resolved || 0).toLocaleString()} resolved · ` +
+                `${(stat.total || 0).toLocaleString()} total`)
               : null),
-          filtered ? null : deltaChip(count, boot.prevCounts[sev]),
+          open !== null ? deltaChip(open, prevOpen) : null,
         ),
       );
     }
@@ -258,7 +268,7 @@ export async function renderOverview(main, params, ctx) {
         : kpiCard("Internet-exposed", "n/a", "rescan to capture exposure"),
     );
     insightsHost.append(
-      el("p", { class: "small muted", style: "margin:-14px 0 10px" },
+      el("p", { class: "section-note" },
         `Open findings only (${s.open.toLocaleString()} open in this scan); one finding can carry several signals.`),
       tiles,
     );
@@ -296,11 +306,11 @@ export async function renderOverview(main, params, ctx) {
     } else {
       insightsHost.append(el("div", { class: "kpi-row" },
         kpiCard("New", m.newCount.toLocaleString(), "first seen in the latest scan"),
-        kpiCard("Resolved", m.resolvedCount.toLocaleString(), "closed by the latest scan"),
+        kpiCard("Newly resolved", m.resolvedCount.toLocaleString(), "closed since the previous scan"),
         kpiCard("Reopened", m.reopenedCount.toLocaleString(), "back after being resolved"),
         kpiCard("Persisting", m.persisting.toLocaleString(), "open since an earlier scan"),
       ));
-      if (ctx.domain || ctx.supportGroup || sgFilter.length) {
+      if (ctx.domain || ctx.supportGroup) {
         insightsHost.append(el("p", { class: "small muted", style: "margin:8px 0 0" },
           "New / Resolved / Reopened are scan-wide — scan-over-scan deltas can't be " +
           "split by the active filter. Persisting reflects the filtered scope."));
@@ -368,7 +378,7 @@ export async function renderOverview(main, params, ctx) {
       };
       paint(await swrCall("api_getGrouping",
         { domain: ctx.domain || "", supportGroup: ctx.supportGroup || "",
-          supportGroups: sgFilter, keys }, paint));
+          keys, severities: scopeParam() }, paint));
     }
   }
 
@@ -420,7 +430,11 @@ export async function renderOverview(main, params, ctx) {
       for (const row of rows) {
         row.tr.style.display = visible(row) ? "" : "none";
         const caret = row.tr.querySelector(".tree-caret");
-        if (caret) caret.textContent = expanded.has(row.id) ? "▾" : "▸";
+        if (caret) {
+          const open = expanded.has(row.id);
+          caret.textContent = open ? "▾" : "▸";
+          caret.setAttribute("aria-expanded", open ? "true" : "false");
+        }
       }
     }
     function toggle(id) {
@@ -436,8 +450,10 @@ export async function renderOverview(main, params, ctx) {
         : el("strong", {}, node.key);
       let caret;
       if (hasChildren) {
+        // Keyboard toggle lives on the caret; pointer users get the whole label cell (below).
         caret = el("span", { class: "tree-caret", role: "button", tabindex: "0",
-          "aria-label": "Expand or collapse group", onclick: () => toggle(id) }, "▸");
+          "aria-label": "Expand or collapse group",
+          "aria-expanded": expanded.has(id) ? "true" : "false" }, "▸");
         caret.addEventListener("keydown", (e) => {
           if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(id); }
         });
@@ -447,10 +463,24 @@ export async function renderOverview(main, params, ctx) {
       const risky = [];
       if (node.kev) risky.push("KEV");
       if (node.exploit) risky.push("Exploit");
+      const groupCell = el("td",
+        { class: hasChildren ? "clickable" : null, style: `padding-left:${depth * 20 + 8}px` },
+        el("span", { style: "display:inline-flex; align-items:center; gap:6px" }, caret, label));
+      if (hasChildren) {
+        // The whole group cell toggles (the footer promises "click a group to drill in"),
+        // except clicks on a CVE link, which should still open NVD.
+        groupCell.addEventListener("click", (e) => {
+          if (e.target.closest("a")) return;
+          toggle(id);
+        });
+      }
       return el("tr", {},
-        el("td", { style: `padding-left:${depth * 20 + 8}px` },
-          el("span", { style: "display:inline-flex; align-items:center; gap:6px" }, caret, label)),
-        el("td", {}, mixStrip(node.sevCounts)),
+        groupCell,
+        // Severity is the color strip plus the exact per-severity counts — never color alone.
+        el("td", {},
+          el("div", { class: "mix-cell" },
+            mixStrip(node.sevCounts),
+            el("span", { class: "mix-text small muted num" }, mixText(node.sevCounts) || "—"))),
         el("td", { class: "num" }, node.assets.toLocaleString()),
         el("td", { class: "num" }, node.total.toLocaleString()),
         el("td", { class: "num" }, node.open.toLocaleString()),

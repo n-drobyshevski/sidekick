@@ -142,6 +142,7 @@ export function getGraph(p?: unknown): ApiResult {
         defaultDepth: settingsStore.getDefaultDepth(),
         maxNodes: settingsStore.getMaxNodes(),
         issues: openIssues(),
+        scoredAssetIds: doc.nodes.filter((n) => (n.aars ?? 0) > 0).map((n) => n.id),
       });
       const view = resolveLayoutParams(params);
       const projection = projectGraph(doc, options);

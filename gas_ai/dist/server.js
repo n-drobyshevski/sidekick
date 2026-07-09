@@ -1196,7 +1196,9 @@ var Server = (() => {
     const summaryEdges = [];
     const queue = [];
     for (const seedId of opts.seedIds) {
-      if (!byId.has(seedId) || shown.has(seedId)) continue;
+      const seedNode = byId.get(seedId);
+      if (!seedNode || shown.has(seedId)) continue;
+      if (opts.filterSeeds && !passesFilters(seedNode, opts.filters)) continue;
       if (shown.size >= maxNodes) {
         capped = true;
         break;
@@ -1291,7 +1293,7 @@ var Server = (() => {
   }
 
   // src/domain/graphLayout.ts
-  var LAYOUT_MODES = ["lanes", "grouped"];
+  var LAYOUT_MODES = ["lanes", "grouped", "rows"];
   var GROUP_KEYS = ["asset", "combo", "project", "cloud", "kind", "severity"];
   var SORT_KEYS = ["smart", "severity", "aars", "name"];
   var GROUP_NONE = "__none__";
@@ -1332,6 +1334,8 @@ var Server = (() => {
     return (_b = LANE_OF[kind]) != null ? _b : 2;
   }
   var BARYCENTER_SWEEPS = 3;
+  var ROW_COL_STEP = 260;
+  var ROW_BAND_GAP = 150;
   var CELL_W = 240;
   var CELL_H = 84;
   var GROUP_PAD = 24;
@@ -1366,10 +1370,11 @@ var Server = (() => {
   }
   function layoutGraph(p, opts = {}) {
     var _a4;
-    if (((_a4 = opts.mode) != null ? _a4 : "lanes") === "grouped") return layoutGrouped(p, opts);
-    return layoutLanes(p, opts);
+    const mode = (_a4 = opts.mode) != null ? _a4 : "rows";
+    if (mode === "grouped") return layoutGrouped(p, opts);
+    return layoutLanes(p, opts, mode !== "lanes");
   }
-  function layoutLanes(p, opts) {
+  function layoutLanes(p, opts, horizontal) {
     var _a4, _b, _c, _d, _e, _f;
     const laneGap = (_a4 = opts.laneGap) != null ? _a4 : 280;
     const rowGap = (_b = opts.rowGap) != null ? _b : 84;
@@ -1427,8 +1432,30 @@ var Server = (() => {
         lane.sort((a, b) => cmp(byId.get(a), byId.get(b)));
       }
     }
-    const tallest = Math.max(1, ...lanes.map((l) => l.length));
     const nodes = [];
+    if (horizontal) {
+      const widest = Math.max(1, ...lanes.map((l) => l.length));
+      lanes.forEach((lane, laneIdx) => {
+        const offset = (widest - lane.length) * ROW_COL_STEP / 2;
+        lane.forEach((id, col) => {
+          nodes.push({
+            id,
+            lane: laneIdx,
+            x: margin + offset + col * ROW_COL_STEP,
+            y: margin + laneIdx * ROW_BAND_GAP
+          });
+        });
+      });
+      return {
+        nodes,
+        width: margin * 2 + (widest - 1) * ROW_COL_STEP,
+        height: margin * 2 + (LANE_COUNT - 1) * ROW_BAND_GAP,
+        laneGap: ROW_BAND_GAP,
+        rowGap: ROW_COL_STEP,
+        mode: "rows"
+      };
+    }
+    const tallest = Math.max(1, ...lanes.map((l) => l.length));
     lanes.forEach((lane, laneIdx) => {
       const offset = (tallest - lane.length) * rowGap / 2;
       lane.forEach((id, row) => {
@@ -1702,17 +1729,19 @@ var Server = (() => {
   }
   function resolveLayoutParams(p) {
     return {
-      mode: pick(p["layout"], LAYOUT_MODES, "lanes"),
+      mode: pick(p["layout"], LAYOUT_MODES, "rows"),
       groupBy: pick(p["groupBy"], GROUP_KEYS, "combo"),
       sort: pick(p["sort"], SORT_KEYS, "smart")
     };
   }
   function resolveGraphParams(p, ctx) {
-    var _a4;
+    var _a4, _b;
     const seed = typeof p["seed"] === "string" ? p["seed"] : "";
     const seedKind = typeof p["seedKind"] === "string" ? p["seedKind"] : "";
     let seedIds;
-    if (seed && (seedKind === "combo" || comboGroupById(seed))) {
+    if (seedKind === "scored") {
+      seedIds = (_a4 = ctx.scoredAssetIds) != null ? _a4 : [];
+    } else if (seed && (seedKind === "combo" || comboGroupById(seed))) {
       seedIds = comboAssetIds(ctx.issues, seed);
     } else if (seed) {
       seedIds = [seed];
@@ -1732,8 +1761,9 @@ var Server = (() => {
       depth: clampDepth(rawDepth == null || rawDepth === "" ? ctx.defaultDepth : rawDepth),
       expandIds: toList(p["expand"]),
       filters: hasFilters ? filters : void 0,
-      maxNodes: clampMaxNodes((_a4 = p["maxNodes"]) != null ? _a4 : ctx.maxNodes),
-      maxEdges: MAX_EDGES_DEFAULT
+      maxNodes: clampMaxNodes((_b = p["maxNodes"]) != null ? _b : ctx.maxNodes),
+      maxEdges: MAX_EDGES_DEFAULT,
+      ...seedKind === "scored" ? { filterSeeds: true } : {}
     };
   }
   function graphCacheParams(p) {
@@ -3873,7 +3903,11 @@ var Server = (() => {
         const options = resolveGraphParams(params, {
           defaultDepth: getDefaultDepth2(),
           maxNodes: getMaxNodes2(),
-          issues: openIssues()
+          issues: openIssues(),
+          scoredAssetIds: doc.nodes.filter((n) => {
+            var _a5;
+            return ((_a5 = n.aars) != null ? _a5 : 0) > 0;
+          }).map((n) => n.id)
         });
         const view = resolveLayoutParams(params);
         const projection = projectGraph(doc, options);

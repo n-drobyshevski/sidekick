@@ -3,7 +3,10 @@
 
 import { openResolvedLines, trendLine } from "../charts.js";
 import { bootstrap, swrCall } from "../store.js";
-import { changeChip, clear, el, emptyState, fmtDays, sectionLabel, sevBadge } from "../ui.js";
+import {
+  changeChip, clear, el, emptyState, fmtDays, scopeBar, sectionLabel, sevBadge,
+  severityScopeFilter,
+} from "../ui.js";
 
 export async function renderMttr(main, _params, ctx) {
   const boot = await bootstrap();
@@ -19,10 +22,18 @@ export async function renderMttr(main, _params, ctx) {
   main.append(
     el("div", { class: "page-head" },
       el("h1", {}, "MTTR & SLA"),
-      buildSevFilter()),
+      severityScopeFilter({
+        selectable: boot.palette.selectable, scope: sevScope,
+        onApply: () => load(), ariaContext: "MTTR",
+      })),
     el("p", { class: "page-sub" },
       "How fast risk gets closed, measured over observed lifecycles in the durable base."),
   );
+
+  const scopeChips = scopeBar({
+    domain: ctx.domain, supportGroup: ctx.supportGroup, onClear: ctx.clearScope,
+  });
+  if (scopeChips) main.append(scopeChips);
 
   const heroHost = el("div", {});
   const chartsHost = el("div", { class: "chart-grid" });
@@ -43,81 +54,19 @@ export async function renderMttr(main, _params, ctx) {
     return sevScope.length === boot.palette.selectable.length ? null : [...sevScope];
   }
 
-  function sevSummary() {
-    const all = boot.palette.selectable;
-    if (sevScope.length === all.length) return "All severities";
-    const chosen = all.filter((s) => sevScope.includes(s));
-    const nice = (s) => s[0] + s.slice(1).toLowerCase();
-    return chosen.length <= 2 ? chosen.map(nice).join(", ") : `${chosen.length} severities`;
-  }
-
-  // Compact inline dropdown (top-right of the title row): a button that opens a popover of
-  // severity pills. Changes apply on close — one refetch, only if the selection changed.
-  function buildSevFilter() {
-    const wrap = el("div", { class: "sev-filter" });
-    const label = el("span", { class: "sev-filter-label" }, sevSummary());
-    const btn = el("button", {
-      type: "button", class: "sev-filter-btn",
-      "aria-haspopup": "true", "aria-expanded": "false",
-      "aria-label": "Severities included in MTTR",
-      onclick: (e) => { e.stopPropagation(); open ? close() : openMenu(); },
-    }, label, el("span", { class: "sev-filter-caret", "aria-hidden": "true" }, "▾"));
-
-    const pills = el("div", { class: "pill-row" });
-    for (const sev of boot.palette.selectable) {
-      const pill = el("button", {
-        type: "button", class: `sev-pill sev-${sev}`,
-        "aria-pressed": sevScope.includes(sev) ? "true" : "false",
-        onclick: () => {
-          const i = sevScope.indexOf(sev);
-          if (i >= 0) {
-            if (sevScope.length === 1) return; // keep at least one severity selected
-            sevScope.splice(i, 1);
-          } else {
-            sevScope.push(sev);
-          }
-          pill.setAttribute("aria-pressed", sevScope.includes(sev) ? "true" : "false");
-          label.textContent = sevSummary();
-        },
-      }, sev);
-      pills.append(pill);
-    }
-    const menu = el("div", { class: "sev-filter-menu", role: "group",
-      "aria-label": "Severities included in MTTR" }, pills);
-    menu.hidden = true;
-    wrap.append(btn, menu);
-
-    let open = false;
-    let snapshot = "";
-    function openMenu() {
-      open = true;
-      snapshot = sevScope.join(",");
-      menu.hidden = false;
-      btn.setAttribute("aria-expanded", "true");
-      document.addEventListener("click", onDocClick, true);
-      document.addEventListener("keydown", onKey, true);
-    }
-    function close() {
-      open = false;
-      menu.hidden = true;
-      btn.setAttribute("aria-expanded", "false");
-      document.removeEventListener("click", onDocClick, true);
-      document.removeEventListener("keydown", onKey, true);
-      if (sevScope.join(",") !== snapshot) load(); // apply on close, only if changed
-    }
-    function onDocClick(e) { if (!wrap.contains(e.target)) close(); }
-    function onKey(e) { if (e.key === "Escape") { close(); btn.focus(); } }
-    return wrap;
-  }
-
   async function load() {
+    // Put every section into a pending state before the await, so a severity change never
+    // leaves the charts / SLA table showing the old scope's numbers beside a "Computing…" hero.
     clear(heroHost).append(el("p", { class: "muted" }, "Computing…"));
+    clear(chartsHost);
+    clear(slaHost);
+    clear(byDomainHost);
     // One batched RPC — summary and trends share a single ledger-state load
     // server-side. Revisits paint instantly from the session cache and repaint in
     // the background only if the revalidated data differs.
     const paint = (data) => {
       renderHero(data.mttr, data.trends);
-      renderCharts(data.trends);
+      renderCharts(data.trends, data.mttr);
       renderSla(data.mttr);
       renderByDomain(data.byDomain);
     };
@@ -172,10 +121,11 @@ export async function renderMttr(main, _params, ctx) {
     const miniDefs = [
       ["In SLA", mttr.slaPct !== null ? `${mttr.slaPct.toFixed(1)}%` : "—",
         prev && prev.sla_pct !== null && mttr.slaPct !== null
-          ? changeChip(mttr.slaPct, prev.sla_pct, { invert: true }) : null],
-      ["Oldest open (p90)", fmtDays(mttr.oldestDays),
+          ? changeChip(mttr.slaPct, prev.sla_pct, { invert: true, suffix: "%" }) : null],
+      // p90 of open-finding age, not the single oldest — labelled to match the table below.
+      ["Open age p90", fmtDays(mttr.oldestDays),
         prev && prev.oldest_open_days !== null && mttr.oldestDays !== null
-          ? changeChip(mttr.oldestDays, prev.oldest_open_days) : null],
+          ? changeChip(mttr.oldestDays, prev.oldest_open_days, { fmt: fmtDays }) : null],
       ["Resolved", (mttr.overall.resolved ?? 0).toLocaleString(), null],
       ["Open", (mttr.overall.open ?? 0).toLocaleString(), null],
     ];
@@ -190,7 +140,7 @@ export async function renderMttr(main, _params, ctx) {
         el("div", { class: "label" }, "Median MTTR" + (domain ? ` — ${domain}` : "")),
         el("div", { class: "hero-value num" },
           median !== null && median !== undefined ? fmtDays(median) : "—",
-          prev && median !== null ? changeChip(median, prev.median_days) : null,
+          prev && median !== null ? changeChip(median, prev.median_days, { fmt: fmtDays }) : null,
         ),
         el("div", { class: "hero-src" },
           `${mttr.rowCount.toLocaleString()} tracked lifecycle(s) in the durable base`),
@@ -199,8 +149,11 @@ export async function renderMttr(main, _params, ctx) {
     );
   }
 
-  function renderCharts(trends) {
+  function renderCharts(trends, mttr) {
     clear(chartsHost);
+    // With no lifecycle data the hero already shows the single, unified empty state — don't
+    // stack a second "Trends appear…" panel beneath it.
+    if (!mttr.rowCount) return;
     const mttrCanvas = el("canvas", { id: "mttr-trend" });
     const openResolvedCanvas = el("canvas", { id: "open-resolved" });
 
@@ -208,12 +161,15 @@ export async function renderMttr(main, _params, ctx) {
       ? trends.trend.map((t) => ({ x: t.date, y: t.median_days }))
       : trends.history.map((h) => ({ x: h.date, y: h.median_days }));
 
-    if (points.length) {
+    // A "trend" needs at least two points — one lone dot is not a trajectory. This matches the
+    // Open-vs-resolved gate and the "after two saved scans" copy below.
+    const hasTrend = points.length > 1;
+    if (hasTrend) {
       chartsHost.append(el("div", { class: "chart-card" },
         el("h3", {}, "MTTR trend"),
         el("div", { class: "chart-box" }, mttrCanvas)));
     }
-    if (trends.trend.length) {
+    if (trends.trend.length > 1) {
       chartsHost.append(el("div", { class: "chart-card" },
         el("h3", {}, "Open vs resolved"),
         el("div", { class: "chart-box" }, openResolvedCanvas)));
@@ -228,10 +184,10 @@ export async function renderMttr(main, _params, ctx) {
     }
 
     requestAnimationFrame(() => {
-      if (points.length) {
+      if (hasTrend) {
         trendLine(mttrCanvas, points.filter((p) => p.y !== null), { yLabel: "days" });
       }
-      if (trends.trend.length) {
+      if (trends.trend.length > 1) {
         openResolvedLines(openResolvedCanvas, trends.trend);
       }
     });

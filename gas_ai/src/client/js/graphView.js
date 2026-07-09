@@ -68,6 +68,7 @@ export function renderGraph(container, data, handlers = {}) {
   }));
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const grouped = layout.mode === "grouped";
+  const horizontal = layout.mode === "rows";
   const groupBy = (data.options && data.options.groupBy) || "";
 
   const width = Math.max(layout.width, 640);
@@ -496,6 +497,19 @@ export function renderGraph(container, data, handlers = {}) {
     return best;
   }
 
+  function nearestByX(id, candidates) {
+    const me = pos.get(id);
+    let best = null;
+    let bestDist = Infinity;
+    for (const c of candidates) {
+      const p = pos.get(c);
+      if (!p) continue;
+      const d = Math.abs(p.x - me.x);
+      if (d < bestDist) { bestDist = d; best = c; }
+    }
+    return best;
+  }
+
   svg.addEventListener("keydown", (e) => {
     if (!focusedId) return;
     // Shift+arrows nudge the focused node — the keyboard path for drag.
@@ -517,21 +531,40 @@ export function renderGraph(container, data, handlers = {}) {
     }
     const adj = adjacency.get(focusedId) || { out: [], in: [] };
     let next = null;
-    if (e.key === "ArrowRight") {
-      next = nearestByY(focusedId, adj.out.filter((id) => pos.get(id) && pos.get(id).x >= pos.get(focusedId).x))
-        || nearestByY(focusedId, adj.out);
-    } else if (e.key === "ArrowLeft") {
-      next = nearestByY(focusedId, adj.in.filter((id) => pos.get(id) && pos.get(id).x <= pos.get(focusedId).x))
-        || nearestByY(focusedId, adj.in);
-    } else if (e.key === "ArrowDown") {
-      next = laneSibling(focusedId, 1);
-    } else if (e.key === "ArrowUp") {
-      next = laneSibling(focusedId, -1);
-    } else if (e.key === "Escape") {
-      handlers.onEscape && handlers.onEscape();
-      return;
+    if (horizontal) {
+      if (e.key === "ArrowDown") {
+        next = nearestByX(focusedId, adj.out.filter((id) => pos.get(id) && pos.get(id).y >= pos.get(focusedId).y))
+          || nearestByX(focusedId, adj.out);
+      } else if (e.key === "ArrowUp") {
+        next = nearestByX(focusedId, adj.in.filter((id) => pos.get(id) && pos.get(id).y <= pos.get(focusedId).y))
+          || nearestByX(focusedId, adj.in);
+      } else if (e.key === "ArrowRight") {
+        next = laneSibling(focusedId, 1);
+      } else if (e.key === "ArrowLeft") {
+        next = laneSibling(focusedId, -1);
+      } else if (e.key === "Escape") {
+        handlers.onEscape && handlers.onEscape();
+        return;
+      } else {
+        return;
+      }
     } else {
-      return;
+      if (e.key === "ArrowRight") {
+        next = nearestByY(focusedId, adj.out.filter((id) => pos.get(id) && pos.get(id).x >= pos.get(focusedId).x))
+          || nearestByY(focusedId, adj.out);
+      } else if (e.key === "ArrowLeft") {
+        next = nearestByY(focusedId, adj.in.filter((id) => pos.get(id) && pos.get(id).x <= pos.get(focusedId).x))
+          || nearestByY(focusedId, adj.in);
+      } else if (e.key === "ArrowDown") {
+        next = laneSibling(focusedId, 1);
+      } else if (e.key === "ArrowUp") {
+        next = laneSibling(focusedId, -1);
+      } else if (e.key === "Escape") {
+        handlers.onEscape && handlers.onEscape();
+        return;
+      } else {
+        return;
+      }
     }
     e.preventDefault();
     if (next) focusNode(next);

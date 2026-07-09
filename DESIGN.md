@@ -120,7 +120,7 @@ A near-monochrome neutral field with one calm blue accent and a six-step severit
 - **Graphite** (`#0a0a0a`, hover `#27272a`, text on it `#fafafa`): The solid near-black that fills the primary action button. A confident, decisive commit color borrowed from shadcn's neutral primary. Chosen over Signal Blue for primary buttons so blue stays a data/accent color and actions read as neutral-but-certain.
 
 ### Neutral
-- **Ink** (`#171717`): Primary text. Secondary and tertiary text are black at 65% and 50% alpha over the page (defined as `--text-2` / `--text-3` in `styles.css`), kept above 4.5:1 for body.
+- **Ink** (`#171717`): Primary text. Secondary and tertiary text are black at 65% and 60% alpha over the page (defined as `--text-2` / `--text-3` in `styles.css`), kept above 4.5:1 for body.
 - **Page** (`#ffffff`): The page background. Streamlit owns it natively.
 - **Surface** (`#f8f8fa`): Cards, `st.metric`, and the sidebar. The cooler second layer that separates chrome from content. Card and button surfaces are also expressed as low-alpha black tints (`--surface-1` etc.) so they composite cleanly.
 - **Hairline** (`#e6e6e9`): Every border, divider, and dataframe rule. The primary structuring device in a flat system.

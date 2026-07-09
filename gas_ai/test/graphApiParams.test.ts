@@ -54,6 +54,26 @@ describe("resolveGraphParams", () => {
     expect(resolveGraphParams({ seed: "agent-a" }, CTX).seedIds).toEqual(["agent-a"]);
   });
 
+  it("scored seed uses ctx.scoredAssetIds, ignoring the issue/combo default", () => {
+    const ctx = { ...CTX, scoredAssetIds: ["asset-1", "asset-2"] };
+    const opts = resolveGraphParams({ seedKind: "scored" }, ctx);
+    expect(opts.seedIds).toEqual(["asset-1", "asset-2"]);
+  });
+
+  it("scored seed mode sets filterSeeds so active filters narrow the seed set too", () => {
+    const ctx = { ...CTX, scoredAssetIds: ["asset-1", "asset-2"] };
+    const opts = resolveGraphParams({ seedKind: "scored", kinds: "AI_AGENT" }, ctx);
+    expect(opts.filterSeeds).toBe(true);
+  });
+
+  it("non-scored seed modes leave filterSeeds absent entirely (no filterSeeds: false key)", () => {
+    expect(resolveGraphParams({}, CTX)).not.toHaveProperty("filterSeeds");
+    expect(resolveGraphParams({ seed: "agent-a" }, CTX)).not.toHaveProperty("filterSeeds");
+    expect(
+      resolveGraphParams({ seed: "gcp-hosted-privileged", seedKind: "combo" }, CTX),
+    ).not.toHaveProperty("filterSeeds");
+  });
+
   it("filters only materialize when at least one is set", () => {
     expect(resolveGraphParams({}, CTX).filters).toBeUndefined();
     const opts = resolveGraphParams({ severities: "HIGH,CRITICAL", kinds: [] }, CTX);
@@ -72,7 +92,7 @@ describe("graphCacheParams", () => {
     const key = graphCacheParams({ seed: "agent-a", depth: "3", severities: "HIGH,CRITICAL" });
     expect(key["seed"]).toBe("agent-a");
     expect(key["depth"]).toBe("3");
-    expect(key["view"]).toEqual({ mode: "lanes", groupBy: "combo", sort: "smart" });
+    expect(key["view"]).toEqual({ mode: "rows", groupBy: "combo", sort: "smart" });
   });
 
   it("sorts list params so either order shares one cache entry", () => {
@@ -95,8 +115,8 @@ describe("graphCacheParams", () => {
 });
 
 describe("resolveLayoutParams", () => {
-  it("defaults to lanes / combo / smart", () => {
-    expect(resolveLayoutParams({})).toEqual({ mode: "lanes", groupBy: "combo", sort: "smart" });
+  it("defaults to rows / combo / smart", () => {
+    expect(resolveLayoutParams({})).toEqual({ mode: "rows", groupBy: "combo", sort: "smart" });
   });
 
   it("whitelists known values and normalizes case", () => {
@@ -104,10 +124,12 @@ describe("resolveLayoutParams", () => {
       .toEqual({ mode: "grouped", groupBy: "project", sort: "aars" });
     expect(resolveLayoutParams({ layout: "GROUPED", groupBy: "Severity", sort: "NAME" }))
       .toEqual({ mode: "grouped", groupBy: "severity", sort: "name" });
+    expect(resolveLayoutParams({ layout: "lanes", groupBy: "cloud", sort: "severity" }))
+      .toEqual({ mode: "lanes", groupBy: "cloud", sort: "severity" });
   });
 
   it("garbage falls back to defaults", () => {
     expect(resolveLayoutParams({ layout: "spiral", groupBy: 42, sort: null }))
-      .toEqual({ mode: "lanes", groupBy: "combo", sort: "smart" });
+      .toEqual({ mode: "rows", groupBy: "combo", sort: "smart" });
   });
 });

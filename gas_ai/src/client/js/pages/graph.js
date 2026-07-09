@@ -9,7 +9,7 @@
 import { bootstrap, listJoin, listSplit, parseHash, setParams, swrCall } from "../store.js";
 import { openAssetSheet } from "../detailSheets.js";
 import { graphTable, renderGraph } from "../graphView.js";
-import { CATEGORY_LABELS, CATEGORY_ORDER, kindLabel } from "../icons.js";
+import { CATEGORY_LABELS, CATEGORY_ORDER, categoryOf, kindLabel } from "../icons.js";
 import { clear, el, emptyState, openSheet, sevBadge } from "../ui.js";
 
 const DEPTH_TEXT = {
@@ -26,6 +26,11 @@ const GROUP_LABELS = {
   kind: "node type",
   severity: "severity",
 };
+
+// Legend starts collapsed on each visit; once the user opens it we keep it open
+// across in-place repaints (filter changes rebuild the legend, and a key that
+// snapped shut on every tweak would be worse than useless).
+let legendOpen = false;
 
 // Params that change the server payload (vs. client-only view/q/panel).
 const DATA_KEYS = [
@@ -45,7 +50,7 @@ function graphParams(params, defaults) {
     kinds: params.kinds || "",
     projects: params.projects || "",
     clouds: params.clouds || "",
-    layout: params.layout === "grouped" ? "grouped" : "",
+    layout: (params.layout === "grouped" || params.layout === "lanes") ? params.layout : "",
     groupBy: params.groupBy || "",
     sort: params.sort || "",
     view: params.view || "graph",
@@ -106,6 +111,24 @@ function rpcParams(p) {
 }
 
 export async function renderGraphPage(main, params, _ctx) {
+  // A fresh visit opens on a default view: the Start-from set to all scored
+  // assets (AARS > 0) plus the node-type filter set to AI agents — the product's
+  // primary lens. Each default is independent and only fills in when its own
+  // control is unset; a deep-link (which carries a seed) suppresses both so the
+  // linked asset's own neighborhood shows unfiltered. Written into the hash so
+  // the defaults are explicit, shareable, and clearable (clearing shows all
+  // until the next fresh visit). Applied before the prefetch so the first load
+  // still takes a single round trip.
+  if (params.seed == null) {
+    const next = { ...params };
+    if (params.seedKind == null) next.seedKind = "scored";
+    if (params.kinds == null) next.kinds = "AI_AGENT";
+    if (next.seedKind !== params.seedKind || next.kinds !== params.kinds) {
+      params = next;
+      setParams(params);
+    }
+  }
+
   // Prefetch the graph in parallel with bootstrap: two serial round trips
   // become one. swrCall shares the in-flight promise with load() below.
   swrCall("api_getGraph", rpcParams(graphParams(params, {}))).catch(() => {});
@@ -113,6 +136,7 @@ export async function renderGraphPage(main, params, _ctx) {
   const boot = await bootstrap();
   const defaults = boot.settings || {};
   let state = graphParams(params, defaults);
+  legendOpen = false; // hidden by default on each visit to the page
 
   // ------------------------------------------------------------------- frame
   const title = el("h1", { class: "workbench-title" }, "Security Graph");
@@ -162,7 +186,8 @@ export async function renderGraphPage(main, params, _ctx) {
 
   // Arrange (layout mode) + Order (row sort).
   const arrangeSel = el("select", { "aria-label": "Arrange nodes" },
-    el("option", { value: "" }, "Lanes"),
+    el("option", { value: "" }, "Rows"),
+    el("option", { value: "lanes" }, "Columns"),
     el("option", { value: "grouped:asset" }, "Group: asset (hub view)"),
     el("option", { value: "grouped:combo" }, "Group: toxic combo"),
     el("option", { value: "grouped:project" }, "Group: project"),
@@ -173,7 +198,8 @@ export async function renderGraphPage(main, params, _ctx) {
   arrangeSel.addEventListener("change", () => {
     // A new arrangement recomputes the whole picture — manual nudges reset.
     const v = arrangeSel.value;
-    if (!v) update({ layout: "", groupBy: "", pos: "" });
+    if (v === "") update({ layout: "", groupBy: "", pos: "" });           // Rows (default, horizontal)
+    else if (v === "lanes") update({ layout: "lanes", groupBy: "", pos: "" }); // Columns (vertical)
     else update({ layout: "grouped", groupBy: v.slice(8), pos: "" });
   });
 
@@ -346,7 +372,9 @@ export async function renderGraphPage(main, params, _ctx) {
   function filterEntries() {
     const entries = [];
     const defaultDepth = defaults.defaultDepth || 2;
-    if (state.seed) {
+    if (state.seedKind === "scored") {
+      entries.push({ key: "seed", label: "Start: All scored assets", patch: { seed: "", seedKind: "", expand: "" } });
+    } else if (state.seed) {
       let label = "Start: " + state.seed;
       if (state.seedKind === "combo") {
         const g = (boot.comboLegend || []).find((x) => x.id === state.seed);
@@ -369,7 +397,13 @@ export async function renderGraphPage(main, params, _ctx) {
         patch: { severities: listJoin(listSplit(state.severities).filter((x) => x !== s)) },
       });
     }
-    if (state.kinds) entries.push({ key: "kinds", label: "Type: " + kindLabel(state.kinds), patch: { kinds: "" } });
+    for (const k of listSplit(state.kinds)) {
+      entries.push({
+        key: "kind-" + k,
+        label: "Type: " + kindLabel(k),
+        patch: { kinds: listJoin(listSplit(state.kinds).filter((x) => x !== k)) },
+      });
+    }
     if (state.projects) entries.push({ key: "projects", label: "Project: " + state.projects, patch: { projects: "" } });
     if (state.clouds) entries.push({ key: "clouds", label: "Cloud: " + state.clouds, patch: { clouds: "" } });
     return entries;
@@ -377,7 +411,9 @@ export async function renderGraphPage(main, params, _ctx) {
 
   function syncControls() {
     // Top bar.
-    arrangeSel.value = state.layout === "grouped" ? "grouped:" + (state.groupBy || "combo") : "";
+    arrangeSel.value = state.layout === "grouped" ? "grouped:" + (state.groupBy || "combo")
+      : state.layout === "lanes" ? "lanes"
+      : "";
     orderSel.value = state.sort;
     if (document.activeElement !== searchInput && searchInput.value !== state.q) {
       searchInput.value = state.q;
@@ -451,9 +487,11 @@ export async function renderGraphPage(main, params, _ctx) {
   function buildFilterControls() {
     const root = el("div", { class: "sheet-filters" });
 
-    // Seed selector: all combos / one combo group / one asset (from inventory).
+    // Seed selector: all combos / all scored assets / one combo group / one asset
+    // (from inventory).
     const seedSel = el("select", { "aria-label": "Graph starting point" });
     seedSel.append(el("option", { value: "" }, "All toxic combinations"));
+    seedSel.append(el("option", { value: "scored" }, "All scored assets (AARS > 0)"));
     for (const g of boot.comboLegend || []) {
       seedSel.append(el("option", { value: `combo:${g.id}` }, `Combo: ${g.shortLabel}`));
     }
@@ -474,7 +512,8 @@ export async function renderGraphPage(main, params, _ctx) {
     }).catch(() => {});
     seedSel.addEventListener("change", () => {
       const v = seedSel.value;
-      if (!v) update({ seed: "", seedKind: "", expand: "" });
+      if (v === "scored") update({ seed: "", seedKind: "scored", expand: "" });
+      else if (!v) update({ seed: "", seedKind: "", expand: "" });
       else if (v.startsWith("combo:")) update({ seed: v.slice(6), seedKind: "combo", expand: "" });
       else update({ seed: v.slice(6), seedKind: "asset", expand: "" });
     });
@@ -510,10 +549,45 @@ export async function renderGraphPage(main, params, _ctx) {
       sevRow.append(btn);
     }
 
-    // Kind / project / cloud selects (single-value quick filters; "" = all).
+    // Node type: multi-select toggle pills grouped by semantic category, mirroring
+    // the severity pill pattern above (as opposed to project/cloud, which stay
+    // single-value quick filters below).
     const opts = boot.filterOptions || { kinds: [], clouds: [], projects: [] };
-    const kindSel = plainSelect("Node type", opts.kinds, kindLabel);
-    kindSel.addEventListener("change", () => update({ kinds: kindSel.value }));
+    const kindBtns = new Map();
+    const kindFilterRoot = el("div", { class: "kind-filter" });
+    const byCategory = new Map();
+    for (const k of opts.kinds) {
+      const cat = categoryOf(k);
+      if (!byCategory.has(cat)) byCategory.set(cat, []);
+      byCategory.get(cat).push(k);
+    }
+    const cats = [...CATEGORY_ORDER, ...[...byCategory.keys()].filter((c) => !CATEGORY_ORDER.includes(c))];
+    for (const cat of cats) {
+      const kinds = byCategory.get(cat);
+      if (!kinds || !kinds.length) continue;
+      kinds.sort((a, b) => kindLabel(a).localeCompare(kindLabel(b)));
+      const pillRow = el("div", {
+        class: "pill-row", role: "group", "aria-label": (CATEGORY_LABELS[cat] || cat) + " node types",
+      });
+      for (const k of kinds) {
+        const btn = el("button", {
+          class: "kind-pill",
+          "aria-pressed": listSplit(state.kinds).includes(k) ? "true" : "false",
+          onclick: () => {
+            const active = new Set(listSplit(state.kinds));
+            if (active.has(k)) active.delete(k); else active.add(k);
+            update({ kinds: listJoin([...active]) });
+          },
+        }, kindLabel(k));
+        kindBtns.set(k, btn);
+        pillRow.append(btn);
+      }
+      kindFilterRoot.append(el("div", { class: "pill-group" },
+        el("div", { class: "pill-group-label" }, CATEGORY_LABELS[cat] || cat),
+        pillRow));
+    }
+
+    // Project / cloud selects (single-value quick filters; "" = all).
     const projSel = plainSelect("Project", opts.projects);
     projSel.addEventListener("change", () => update({ projects: projSel.value }));
     const cloudSel = plainSelect("Cloud", opts.clouds);
@@ -523,7 +597,7 @@ export async function renderGraphPage(main, params, _ctx) {
       field("Start from", seedSel),
       field("Depth", el("div", { class: "depth-field" }, depthInput, depthValue)),
       field("Severity", sevRow),
-      field("Node type", kindSel),
+      field("Node type", kindFilterRoot),
       field("Project", projSel),
       field("Cloud", cloudSel),
       el("div", { class: "sheet-filters-footer" },
@@ -532,7 +606,8 @@ export async function renderGraphPage(main, params, _ctx) {
 
     // Reflect chip-clears and Clear-all while the drawer stays open.
     function sync() {
-      if (!state.seed) seedSel.value = "";
+      if (state.seedKind === "scored") seedSel.value = "scored";
+      else if (!state.seed) seedSel.value = "";
       else if (state.seedKind === "combo") seedSel.value = `combo:${state.seed}`;
       else seedSel.value = `asset:${state.seed}`;
       depthInput.value = String(state.depth);
@@ -542,7 +617,10 @@ export async function renderGraphPage(main, params, _ctx) {
       for (const [s, btn] of sevBtns) {
         btn.setAttribute("aria-pressed", active.has(s) ? "true" : "false");
       }
-      kindSel.value = state.kinds;
+      const activeKinds = new Set(listSplit(state.kinds));
+      for (const [k, btn] of kindBtns) {
+        btn.setAttribute("aria-pressed", activeKinds.has(k) ? "true" : "false");
+      }
       projSel.value = state.projects;
       cloudSel.value = state.clouds;
     }
@@ -555,7 +633,7 @@ export async function renderGraphPage(main, params, _ctx) {
       el("option", { value: "" }, `All ${labelText.toLowerCase()}s`),
       ...options.map((o) => el("option", { value: o }, format ? format(o) : o)),
     );
-    const current = { "Node type": state.kinds, "Project": state.projects, "Cloud": state.clouds }[labelText];
+    const current = { "Project": state.projects, "Cloud": state.clouds }[labelText];
     if (current) sel.value = current;
     return sel;
   }
@@ -578,9 +656,15 @@ function field(labelText, control) {
 function buildLegend(boot, payload) {
   const grouped = payload.layout && payload.layout.mode === "grouped";
   const groupBy = (payload.options && payload.options.groupBy) || "combo";
-  const legend = el("div", { class: "graph-legend overlay", "aria-label": "Legend" });
-  legend.append(el("span", { class: "label" }, "Legend"));
-  legend.append(
+
+  // Native <details> disclosure: standard, keyboard-accessible, and works with
+  // no script. Collapsed shows only the toggle; the overlay is bottom-anchored
+  // (see .graph-legend.overlay) so the key grows upward over the canvas.
+  const legend = el("details", { class: "graph-legend overlay", open: legendOpen });
+  legend.addEventListener("toggle", () => { legendOpen = legend.open; });
+
+  const body = el("div", { class: "legend-body" });
+  body.append(
     el("span", { class: "legend-item" },
       el("span", { class: "legend-swatch-halo", "aria-hidden": "true" }),
       "TC = toxic combination member"),
@@ -589,13 +673,13 @@ function buildLegend(boot, payload) {
       "dashed = missing guardrail"),
   );
   if (grouped) {
-    legend.append(el("span", { class: "legend-item" },
+    body.append(el("span", { class: "legend-item" },
       el("span", { class: "legend-swatch-group", "aria-hidden": "true" }),
       `box = ${GROUP_LABELS[groupBy] || groupBy} group`));
   }
   // Node-category color key (color reinforces the kind icon + label).
   for (const cat of CATEGORY_ORDER) {
-    legend.append(el("span", { class: "legend-item" },
+    body.append(el("span", { class: "legend-item" },
       el("span", {
         class: "legend-swatch-cat", "aria-hidden": "true",
         style: `--swatch: var(--cat-${cat}-ink)`,
@@ -603,13 +687,15 @@ function buildLegend(boot, payload) {
       CATEGORY_LABELS[cat]));
   }
   for (const s of (boot.palette?.order || []).filter((x) => x !== "UNKNOWN" && x !== "INFO")) {
-    legend.append(el("span", { class: "legend-item" }, sevBadge(s)));
+    body.append(el("span", { class: "legend-item" }, sevBadge(s)));
   }
-  legend.append(
+  body.append(
     el("span", { class: "legend-item muted" },
       "“+N more” pills expand collapsed neighbors"),
     el("span", { class: "legend-item muted" },
       "drag (or Shift+arrows) repositions a node"),
   );
+
+  legend.append(el("summary", { class: "legend-toggle" }, "Legend"), body);
   return legend;
 }

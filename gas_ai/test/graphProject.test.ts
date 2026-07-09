@@ -113,4 +113,27 @@ describe("projectGraph", () => {
     expect(ids(p).has("agent-a")).toBe(true);
     expect(p.counts.shownNodes).toBeGreaterThan(0);
   });
+
+  it("filterSeeds narrows the scored bulk-seed set by the active filters", () => {
+    // agent-a is AI_AGENT, role-finance-admin-01 is ACCESS_ROLE; both are seeds.
+    const withFilterSeeds = projectGraph(DOC, {
+      seedIds: ["agent-a", "role-finance-admin-01"],
+      depth: 1,
+      filters: { kinds: ["AI_AGENT"] },
+      filterSeeds: true,
+    });
+    const shownFiltered = ids(withFilterSeeds);
+    expect(shownFiltered.has("agent-a")).toBe(true);
+    expect(shownFiltered.has("role-finance-admin-01")).toBe(false);
+
+    // Same filter, but filterSeeds unset: current always-admitted behavior preserved.
+    const withoutFilterSeeds = projectGraph(DOC, {
+      seedIds: ["agent-a", "role-finance-admin-01"],
+      depth: 1,
+      filters: { kinds: ["AI_AGENT"] },
+    });
+    const shownUnfiltered = ids(withoutFilterSeeds);
+    expect(shownUnfiltered.has("agent-a")).toBe(true);
+    expect(shownUnfiltered.has("role-finance-admin-01")).toBe(true);
+  });
 });

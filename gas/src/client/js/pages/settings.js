@@ -17,40 +17,86 @@ export async function renderSettings(main, _params, ctx) {
   main.append(el("p", { class: "muted small" },
     "Which severities each scan pulls from Wiz. Narrower scope = faster scans; " +
     "severities outside the scope pause their lifecycle tracking."));
-  const fetchPills = pillGroup(boot.palette.selectable, [...boot.settings.fetchSeverities]);
+  const fetchPills = pillGroup(boot.palette.selectable, [...boot.settings.fetchSeverities],
+    { onChange: syncDisplayCoupling });
   main.append(fetchPills.node);
 
   // ------------------------------------------------------------- display filter
   main.append(sectionLabel("Display filter"));
   main.append(el("p", { class: "muted small" },
-    "Which severities every page shows — always a subset of the scan scope."));
+    "Which severities every page shows — always a subset of the scan scope. A severity " +
+    "outside the scan scope is locked here until you add it above."));
   const displayPills = pillGroup(boot.palette.selectable, [...boot.settings.displaySeverities]);
   main.append(displayPills.node);
+  syncDisplayCoupling(); // enforce display ⊆ fetch on first paint
 
   const saveScopeBtn = el("button", { class: "primary", onclick: saveScope }, "Save severity scope");
   main.append(el("div", { style: "margin-top:12px" }, saveScopeBtn));
 
-  function pillGroup(options, selected) {
+  function pillGroup(options, selected, { onChange } = {}) {
+    const pills = {};
     const node = el("div", { class: "pill-row", role: "group" });
     for (const sev of options) {
       const btn = el("button", {
-        class: `sev-pill sev-${sev}`,
+        class: `sev-pill sev-${sev}`, type: "button",
         "aria-pressed": selected.includes(sev) ? "true" : "false",
         onclick: () => {
+          if (btn.getAttribute("aria-disabled") === "true") return; // locked (out of scan scope)
           const i = selected.indexOf(sev);
           if (i >= 0) selected.splice(i, 1);
           else selected.push(sev);
           btn.setAttribute("aria-pressed", selected.includes(sev) ? "true" : "false");
+          if (onChange) onChange();
         },
       }, sev);
+      pills[sev] = btn;
       node.append(btn);
     }
-    return { node, selected };
+    return { node, selected, pills };
+  }
+
+  // Display must be a subset of the scan scope: a severity the scan no longer fetches can't
+  // be shown, so lock (and drop) any display pill outside the current fetch selection —
+  // keeping the "always a subset" promise the copy makes instead of relying on the server.
+  function syncDisplayCoupling() {
+    const fetchSet = new Set(fetchPills.selected);
+    for (const sev of boot.palette.selectable) {
+      const btn = displayPills.pills[sev];
+      if (fetchSet.has(sev)) {
+        btn.removeAttribute("aria-disabled");
+        btn.removeAttribute("title");
+      } else {
+        const i = displayPills.selected.indexOf(sev);
+        if (i >= 0) displayPills.selected.splice(i, 1);
+        btn.setAttribute("aria-pressed", "false");
+        btn.setAttribute("aria-disabled", "true");
+        btn.title = "Not in the scan scope — add it above to show it.";
+      }
+    }
+  }
+
+  // Sibling saves (scope / retention / support groups / compaction) all call ctx.refresh(),
+  // which rebuilds the page and throws away the domains editor's in-memory draft. Warn first
+  // so unsaved value-chain edits aren't lost silently.
+  async function guardDomainsDraft() {
+    if (!domainsEditor || !domainsEditor.isDirty()) return true;
+    return confirmDialog({
+      title: "Discard unsaved domain changes?",
+      body: "The Domains editor has unsaved edits. Saving here reloads the page and discards " +
+        "them — save your domains first to keep them.",
+      confirmLabel: "Discard & continue",
+      danger: true,
+    });
   }
 
   async function saveScope() {
+    if (!(await guardDomainsDraft())) return;
     if (!fetchPills.selected.length) {
       toast("At least one severity must stay in the scan scope.", "warn");
+      return;
+    }
+    if (!displayPills.selected.length) {
+      toast("At least one severity must stay visible in the display filter.", "warn");
       return;
     }
     if (!fetchPills.selected.includes("CRITICAL")) {
@@ -96,6 +142,7 @@ export async function renderSettings(main, _params, ctx) {
   }
 
   async function refreshSupportGroups() {
+    if (!(await guardDomainsDraft())) return;
     refreshSgBtn.disabled = true;
     sgStatus.textContent = "Refreshing from Wiz…";
     try {
@@ -119,7 +166,7 @@ export async function renderSettings(main, _params, ctx) {
     "subscription, or support group. Order is priority — the first matching domain wins."));
   const domainsHost = el("div", {});
   main.append(domainsHost);
-  renderDomainsEditor(domainsHost, boot, ctx);
+  const domainsEditor = renderDomainsEditor(domainsHost, boot, ctx);
 
   // ------------------------------------------------------------- data retention
   main.append(sectionLabel("Data retention"));
@@ -137,6 +184,7 @@ export async function renderSettings(main, _params, ctx) {
   });
   const autoCompact = el("input", { type: "checkbox", id: "auto-compact",
     checked: r.autoCompact ? true : null });
+  const saveRetentionBtn = el("button", { class: "primary", onclick: saveRetention }, "Save retention");
 
   main.append(
     el("div", { class: "card", style: "display:flex; flex-direction:column; gap:10px" },
@@ -148,13 +196,22 @@ export async function renderSettings(main, _params, ctx) {
       el("label", { for: "auto-compact", style: "display:flex; align-items:center; gap:8px" },
         autoCompact, "Compact automatically after each scan"),
       el("div", { style: "display:flex; gap:8px" },
-        el("button", { class: "primary", onclick: saveRetention }, "Save retention"),
+        saveRetentionBtn,
         el("button", { onclick: compactNow }, "Compact now…"),
       ),
     ),
   );
 
   async function saveRetention() {
+    if (!(await guardDomainsDraft())) return;
+    if (retentionToggle.checked) {
+      const days = Number(retentionDays.value);
+      if (!Number.isFinite(days) || days < 30) {
+        toast("Retention window must be at least 30 days.", "warn");
+        return;
+      }
+    }
+    saveRetentionBtn.disabled = true; // block a double-submit across the two sequential calls
     try {
       await call("api_setRetention", {
         days: retentionToggle.checked ? Number(retentionDays.value) : null,
@@ -164,10 +221,12 @@ export async function renderSettings(main, _params, ctx) {
       ctx.refresh();
     } catch (e) {
       toast(`Save failed: ${e.message}`, "error");
+      saveRetentionBtn.disabled = false;
     }
   }
 
   async function compactNow() {
+    if (!(await guardDomainsDraft())) return;
     let preview;
     try {
       preview = await call("api_compact", { dryRun: true });

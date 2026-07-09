@@ -27,6 +27,25 @@ let activeDomain = "";
 // The global "Support group" filter, shared by every page the same way. "" = all groups.
 let activeSupportGroup = "";
 
+// Toggle the scan-zone's "filtering" accent to match the active global filters.
+function syncScanZoneFiltering() {
+  const zone = document.querySelector(".scan-zone");
+  if (zone) zone.classList.toggle("filtering", !!(activeDomain || activeSupportGroup));
+}
+
+// Clear one global filter from a page-header scope chip: reset the state, sync the
+// matching sidebar <select> (value + active accent), and re-render the active page.
+function clearScope(kind) {
+  if (kind === "domain") activeDomain = "";
+  else if (kind === "supportGroup") activeSupportGroup = "";
+  const dSel = document.getElementById("filter-domain");
+  if (dSel) { dSel.value = activeDomain; dSel.classList.toggle("active", !!activeDomain); }
+  const sSel = document.getElementById("filter-supportgroup");
+  if (sSel) { sSel.value = activeSupportGroup; sSel.classList.toggle("active", !!activeSupportGroup); }
+  syncScanZoneFiltering();
+  route();
+}
+
 // Route-reload overlay: veils the content pane (not the sidebar) with a progress bar
 // while the active page refetches — most visibly after a Value Chain change, which
 // otherwise reloads silently. Shown only if the load outlasts a short delay, so cached
@@ -84,7 +103,8 @@ async function boot() {
     clear(mainEl).append(
       el("div", { class: "empty" },
         el("div", {}, "Couldn't reach the server."),
-        el("div", { class: "small", style: "margin-top:6px" }, String(e.message || e)),
+        el("div", { class: "small", style: "margin:6px 0 14px" }, String(e.message || e)),
+        el("button", { class: "primary", onclick: () => refresh() }, "Retry"),
       ),
     );
     renderSidebar(sidebar, null);
@@ -124,8 +144,11 @@ function renderSidebar(sidebar, data) {
     );
   }
 
-  // Scan zone
-  const zone = el("div", { class: "scan-zone" });
+  // Scan zone — carries a subtle "filtering" accent when a global filter is active, so
+  // the source of a scoped view is visible where the selects live (the scopeBar in the
+  // content pane is the primary cue).
+  const zone = el("div",
+    { class: `scan-zone${activeDomain || activeSupportGroup ? " filtering" : ""}` });
   const runBtn = el("button", { class: "primary", onclick: () => startScan(false, runBtn) }, "Run scan");
   const quickBtn = el(
     "button",
@@ -136,7 +159,13 @@ function renderSidebar(sidebar, data) {
     },
     "Quick refresh",
   );
-  scanButtonsRow = el("div", { class: "scan-buttons" }, runBtn, quickBtn);
+  // The controls wrapper (buttons + a persistent caveat) is hidden as a unit while a job
+  // runs. The caveat states the Quick refresh trap in visible copy, not just a hover title.
+  scanButtonsRow = el("div", { class: "scan-controls" },
+    el("div", { class: "scan-buttons" }, runBtn, quickBtn),
+    el("div", { class: "scan-caption" },
+      "Quick refresh merges changes only — run a full scan to clear resolved findings."),
+  );
   scanCardHost = el("div", {}); // filled by the poller while a job runs
   zone.append(scanCardHost, scanButtonsRow);
   if (data) {
@@ -174,13 +203,15 @@ function renderSidebar(sidebar, data) {
     if (activeDomain && !data.domainNames.includes(activeDomain)) activeDomain = "";
     const sel = el(
       "select",
-      { "aria-label": "Filter by value chain" },
-      el("option", { value: "" }, "Value Chain"),
+      { id: "filter-domain", class: activeDomain ? "active" : null, "aria-label": "Filter by value chain" },
+      el("option", { value: "" }, "All value chains"),
       ...data.domainNames.map((d) =>
         el("option", { value: d, selected: d === activeDomain || null }, d)),
     );
     sel.addEventListener("change", () => {
       activeDomain = sel.value;
+      sel.classList.toggle("active", !!sel.value);
+      syncScanZoneFiltering();
       route();
     });
     zone.prepend(
@@ -197,13 +228,16 @@ function renderSidebar(sidebar, data) {
     if (activeSupportGroup && !groups.includes(activeSupportGroup)) activeSupportGroup = "";
     const sgSel = el(
       "select",
-      { "aria-label": "Filter by support group" },
-      el("option", { value: "" }, "Support group"),
+      { id: "filter-supportgroup", class: activeSupportGroup ? "active" : null,
+        "aria-label": "Filter by support group" },
+      el("option", { value: "" }, "All support groups"),
       ...groups.map((g) =>
         el("option", { value: g, selected: g === activeSupportGroup || null }, g)),
     );
     sgSel.addEventListener("change", () => {
       activeSupportGroup = sgSel.value;
+      sgSel.classList.toggle("active", !!sgSel.value);
+      syncScanZoneFiltering();
       route();
     });
     zone.prepend(
@@ -328,7 +362,9 @@ async function route() {
   clear(mainEl);
   beginRouteLoading();
   try {
-    await page.render(mainEl, params, { refresh, domain: activeDomain, supportGroup: activeSupportGroup });
+    await page.render(mainEl, params, {
+      refresh, clearScope, domain: activeDomain, supportGroup: activeSupportGroup,
+    });
   } catch (e) {
     clear(mainEl).append(
       el("div", { class: "empty" },

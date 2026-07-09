@@ -23,6 +23,7 @@ export interface ProjectOptions {
   perKindCap?: Partial<Record<string, number>>;
   maxNodes?: number;
   maxEdges?: number;
+  filterSeeds?: boolean; // scored bulk-seed mode: apply `filters` to seeds too
 }
 
 export interface SummaryInfo {
@@ -108,9 +109,13 @@ export function projectGraph(doc: GraphDoc, opts: ProjectOptions): Projection {
   const summaryEdges: GEdge[] = [];
   const queue: Array<{ id: string; depth: number }> = [];
 
-  // Seeds are always admitted (filters do not apply to them).
+  // Seeds are admitted regardless of depth. For the bulk "scored" start
+  // (filterSeeds), the active filters DO apply, so a node-type/severity filter
+  // narrows the seed set; explicit asset/combo seeds are always admitted.
   for (const seedId of opts.seedIds) {
-    if (!byId.has(seedId) || shown.has(seedId)) continue;
+    const seedNode = byId.get(seedId);
+    if (!seedNode || shown.has(seedId)) continue;
+    if (opts.filterSeeds && !passesFilters(seedNode, opts.filters)) continue;
     if (shown.size >= maxNodes) {
       capped = true;
       break;

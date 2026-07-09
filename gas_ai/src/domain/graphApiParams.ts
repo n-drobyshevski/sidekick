@@ -1,6 +1,7 @@
 // getGraph parameter resolution — pure, so seed handling and clamping are testable
 // without GAS globals. Seeds resolve to: one asset, all assets of a toxic-combination
-// group, or (default) every asset participating in any toxic combination.
+// group, every scored asset (AARS > 0), or (default) every asset participating in
+// any toxic combination.
 
 import { clampDepth, clampMaxNodes } from "./settingsLogic";
 import { MAX_EDGES_DEFAULT } from "./config";
@@ -21,6 +22,7 @@ export interface GraphParamContext {
   defaultDepth: number;
   maxNodes: number;
   issues: IssueRow[]; // OPEN issues (seed resolution source)
+  scoredAssetIds?: string[]; // node ids with AARS > 0 — seed source for the "scored" start
 }
 
 /** Accepts arrays or comma-joined strings (hash params arrive as strings). */
@@ -59,7 +61,7 @@ function pick<T extends string>(v: unknown, allowed: readonly T[], fallback: T):
  *  case-insensitive, garbage falls back to defaults. */
 export function resolveLayoutParams(p: Rec): GraphLayoutParams {
   return {
-    mode: pick(p["layout"], LAYOUT_MODES, "lanes"),
+    mode: pick(p["layout"], LAYOUT_MODES, "rows"),
     groupBy: pick(p["groupBy"], GROUP_KEYS, "combo"),
     sort: pick(p["sort"], SORT_KEYS, "smart"),
   };
@@ -70,7 +72,9 @@ export function resolveGraphParams(p: Rec, ctx: GraphParamContext): ProjectOptio
   const seedKind = typeof p["seedKind"] === "string" ? (p["seedKind"] as string) : "";
 
   let seedIds: string[];
-  if (seed && (seedKind === "combo" || comboGroupById(seed))) {
+  if (seedKind === "scored") {
+    seedIds = ctx.scoredAssetIds ?? [];
+  } else if (seed && (seedKind === "combo" || comboGroupById(seed))) {
     seedIds = comboAssetIds(ctx.issues, seed);
   } else if (seed) {
     seedIds = [seed];
@@ -99,6 +103,7 @@ export function resolveGraphParams(p: Rec, ctx: GraphParamContext): ProjectOptio
     filters: hasFilters ? filters : undefined,
     maxNodes: clampMaxNodes(p["maxNodes"] ?? ctx.maxNodes),
     maxEdges: MAX_EDGES_DEFAULT,
+    ...(seedKind === "scored" ? { filterSeeds: true } : {}),
   };
 }
 

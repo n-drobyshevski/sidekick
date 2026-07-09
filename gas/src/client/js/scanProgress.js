@@ -119,33 +119,73 @@ function scanMode(job) {
   }
 }
 
-/** Compact card for the scan zone. `onStop`/`onDetails` are click handlers. */
+/**
+ * Compact card for the scan zone. `onStop`/`onDetails` are click handlers.
+ *
+ * The card is a polite live region so assistive tech hears phase transitions, completion,
+ * and failure — but only the phase line is announced: the volatile elapsed / counts / bar
+ * are aria-hidden and the structure is updated in place (phase text mutated only on a real
+ * change) so a 3s poll doesn't chatter. A stuck run (no progress for minutes) is surfaced on
+ * the always-visible card, not only inside the details drawer.
+ */
 export function renderScanCard(host, job, { onStop, onDetails, nowMs, stopping } = {}) {
   const v = scanProgressView(job, nowMs || Date.now());
-  clear(host);
-  host.className = `scan-progress ${v.state}`;
+  host.className = `scan-progress ${v.state}${v.stuck ? " stuck" : ""}`;
+  host.setAttribute("role", "status");
+  host.setAttribute("aria-live", "polite");
 
-  const head = el("div", { class: "scan-progress-head" },
-    el("span", { class: "scan-progress-phase" }, stopping ? "Stopping…" : v.phaseLabel),
-    v.elapsedText ? el("span", { class: "scan-progress-elapsed" }, v.elapsedText) : null,
-  );
+  // Build the stable structure once; later polls update fields in place.
+  if (!host.querySelector(".scan-progress-phase")) {
+    clear(host).append(
+      el("div", { class: "scan-progress-head" },
+        el("span", { class: "scan-progress-phase" }),
+        el("span", { class: "scan-progress-elapsed", "aria-hidden": "true" })),
+      el("div", { class: "scan-progress-bar-slot", "aria-hidden": "true" }),
+      el("div", { class: "scan-progress-counts", "aria-hidden": "true" }),
+      el("div", { class: "scan-progress-actions" }),
+    );
+  }
+  const phaseEl = host.querySelector(".scan-progress-phase");
+  const elapsedEl = host.querySelector(".scan-progress-elapsed");
+  const barSlot = host.querySelector(".scan-progress-bar-slot");
+  const countsEl = host.querySelector(".scan-progress-counts");
+  const actionsEl = host.querySelector(".scan-progress-actions");
 
-  const bar = progressBar(v.pct, v.state === "running" ? "" : v.state);
+  const phaseText = stopping ? "Stopping…" : v.stuck ? "Scan may have stopped" : v.phaseLabel;
+  if (phaseEl.textContent !== phaseText) phaseEl.textContent = phaseText; // announce real transitions only
 
-  const counts = el("div", { class: "scan-progress-counts" },
+  elapsedEl.textContent = v.elapsedText || "";
+  elapsedEl.style.display = v.elapsedText ? "" : "none";
+
+  clear(barSlot).append(progressBar(v.pct, v.state === "running" ? "" : v.state));
+
+  countsEl.textContent =
     v.state === "failed" ? (v.error || "Scan failed.")
     : v.state === "cancelled" ? "Scan stopped."
-    : v.countsText || "Starting…");
+    : v.stuck ? "No progress for a while — it may have stopped. Stop it, then run a new scan."
+    : v.countsText || "Starting…";
 
-  const actions = el("div", { class: "scan-progress-actions" });
-  if (onDetails) {
-    actions.append(el("button", { class: "linklike", onclick: onDetails }, "Details"));
-  }
-  if (v.canStop && onStop) {
-    actions.append(el("button", { class: "linklike danger", onclick: onStop }, "Stop"));
+  // Rebuild the actions only when their composition changes, so stable buttons don't
+  // re-announce under the live region and their handlers survive between polls.
+  const canStopNow = v.canStop && !!onStop;
+  const running = v.state === "running";
+  const sig = `${onDetails ? "d" : ""}|${canStopNow ? "s" : running && onStop ? "x" : ""}`;
+  if (actionsEl.dataset.sig !== sig) {
+    actionsEl.dataset.sig = sig;
+    clear(actionsEl);
+    if (onDetails) actionsEl.append(el("button", { class: "linklike", onclick: onDetails }, "Details"));
+    if (canStopNow) {
+      actionsEl.append(el("button", { class: "linklike danger", onclick: onStop }, "Stop"));
+    } else if (running && onStop) {
+      // Past FETCHING the run can't be cancelled — explain rather than silently drop Stop.
+      actionsEl.append(el("button", {
+        class: "linklike", disabled: true,
+        title: "Saving can't be interrupted — let it finish.",
+        "aria-label": "Stop unavailable while saving",
+      }, "Stop"));
+    }
   }
 
-  host.append(head, bar, counts, actions);
   return v;
 }
 
@@ -171,13 +211,17 @@ export function openScanDetails(job, opts = {}) {
     const v = scanProgressView(currentJob, Date.now());
     clear(bodyEl);
 
-    const stepper = el("div", { class: "scan-steps" });
+    const stepper = el("div", { class: "scan-steps", role: "list" });
     for (const s of v.steps) {
       const glyph = s.status === "done" ? "✓" : s.status === "active" ? "●" : "○";
+      const word = s.status === "done" ? "done" : s.status === "active" ? "in progress" : "pending";
+      // The glyph/color/weight are visual only; the accessible name carries the state.
       stepper.append(
-        el("div", { class: `scan-step ${s.status}` },
+        el("div", { class: `scan-step ${s.status}`, role: "listitem",
+          "aria-label": `${s.label} — ${word}`,
+          "aria-current": s.status === "active" ? "step" : null },
           el("span", { class: "scan-step-dot", "aria-hidden": "true" }, glyph),
-          el("span", {}, s.label)),
+          el("span", { "aria-hidden": "true" }, s.label)),
       );
     }
 
@@ -186,6 +230,11 @@ export function openScanDetails(job, opts = {}) {
     if (v.canStop && onStop) {
       actions.append(el("button", { class: "danger", onclick: () => { onStop(); closeFn(); } },
         "Stop scan"));
+    } else if (v.state === "running" && onStop) {
+      // Explain the vanished Stop instead of leaving it a mystery once saving starts.
+      actions.append(el("button", { class: "danger", disabled: true,
+        title: "Saving can't be interrupted — let it finish.",
+        "aria-label": "Stop unavailable while saving" }, "Stop scan"));
     }
     actions.append(el("button", { class: "primary", onclick: closeFn }, "Close"));
 
@@ -199,7 +248,9 @@ export function openScanDetails(job, opts = {}) {
         ? el("div", { class: "scan-stall-note", role: "status" },
             el("span", { "aria-hidden": "true" }, "⚠ "),
             "No progress for a while — the scan may have stopped. " +
-              (v.canStop && onStop ? "Stop it and run again." : "Try running it again."))
+              (v.canStop && onStop
+                ? "Stop it, then run a new scan from the sidebar."
+                : "Run a new scan from the sidebar."))
         : null,
       el("dl", { class: "scan-detail-grid" },
         el("dt", {}, "Status"), el("dd", {}, v.phaseLabel),

@@ -17,6 +17,7 @@ import { normalizeSeverity } from "../domain/severity";
 import { validateBundle } from "../domain/importMerge";
 import { SealedScanError, LedgerRebuildError } from "../domain/maintenance";
 import { parseTs, present, type Rec } from "../domain/util";
+import { openBySeverityTrend } from "../domain/trend";
 import * as insights from "../domain/insights";
 import * as archive from "./archiveStore";
 import * as findings from "./findings";
@@ -324,6 +325,9 @@ function insightsData(p?: unknown): Rec {
       base = base.filter((r) => assignDomain(r as unknown as Rec, compiled) === domain);
     }
   }
+  const severities = readSeverities(p);
+  recs = filterSeverities(recs, severities);
+  base = filterSeverities(base as unknown as Rec[], severities) as unknown as typeof base;
   const latestFlat = ledgerStore.latestFlatScanRow();
   return {
     flatScan: true,
@@ -337,6 +341,13 @@ function insightsData(p?: unknown): Rec {
     total: recs.length,
     // Per-severity total/open/resolved for the severity breakdown card.
     sevStats: insights.severityStats(recs),
+    // Open findings per severity over time — powers the breakdown line chart. Uses the
+    // already-scoped base + severities so the series matches the counts shown beside it.
+    openTrend: openBySeverityTrend(
+      ledgerStore.loadScanRows() as unknown as Rec[],
+      base as unknown as Rec[],
+      severities,
+    ),
     exploit: insights.exploitSummary(recs),
     aging: insights.ageBuckets(base),
     movement: insights.movement(base, latestFlat, ledgerStore.loadScanRows().length),
@@ -353,6 +364,7 @@ export function getInsights(p?: unknown): ApiResult {
         domain: String((p as Rec)?.["domain"] ?? ""),
         supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
         supportGroups: readStringArray(p, "supportGroups"),
+        severities: readSeverities(p),
       },
       () => insightsData(p),
       3600,
@@ -388,7 +400,10 @@ function groupingData(p?: unknown): Rec {
   return {
     flatScan: true,
     keys,
-    groups: insights.groupTree(scopedFrameRecords(domain, supportGroup, supportGroupSet), keys),
+    groups: insights.groupTree(
+      filterSeverities(
+        scopedFrameRecords(domain, supportGroup, supportGroupSet), readSeverities(p)),
+      keys),
   };
 }
 
@@ -399,7 +414,8 @@ export function getGrouping(p?: unknown): ApiResult {
   const raw = (p as Rec)?.["keys"];
   const keys = Array.isArray(raw) ? (raw as unknown[]).map(String) : [];
   return run(() =>
-    cached("grouping", { domain, supportGroup, supportGroups: supportGroupSet, keys },
+    cached("grouping",
+      { domain, supportGroup, supportGroups: supportGroupSet, keys, severities: readSeverities(p) },
       () => groupingData(p), 3600),
   );
 }

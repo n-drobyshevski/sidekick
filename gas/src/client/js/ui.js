@@ -59,15 +59,23 @@ export function progressBar(pct, state = "") {
   return el("div", attrs, fill);
 }
 
-/** Signed change chip vs a previous value. up = worse (red) for counts of risk. */
-export function changeChip(current, previous, { invert = false } = {}) {
+/**
+ * Signed change chip vs a previous value. up = worse (red) for counts of risk.
+ * `fmt` formats the (unsigned) magnitude in the value's own unit — e.g.
+ * `changeChip(median, prev, { fmt: fmtDays })` -> "+2.3mo" — so the delta never
+ * contradicts the scale of the figure it annotates. `suffix` appends a unit to a plain
+ * number ("%"). An `aria-label` restates the direction in words for screen readers.
+ */
+export function changeChip(current, previous, { invert = false, fmt = null, suffix = "" } = {}) {
   if (previous === null || previous === undefined || Number.isNaN(previous)) return null;
   const delta = current - previous;
   if (!delta) return el("span", { class: "chg flat", "aria-label": "unchanged" }, "±0");
   const worse = invert ? delta < 0 : delta > 0;
   const cls = worse ? "up" : "down";
-  const sign = delta > 0 ? "+" : "";
-  return el("span", { class: `chg ${cls}` }, `${sign}${round1(delta)}`);
+  const sign = delta > 0 ? "+" : "−";
+  const mag = fmt ? fmt(Math.abs(delta)) : `${round1(Math.abs(delta))}${suffix}`;
+  return el("span", { class: `chg ${cls}`, "aria-label": `${worse ? "up" : "down"} ${mag}` },
+    `${sign}${mag}`);
 }
 
 // NVD link for a CVE id. Built so no literal `//` byte sequence appears in the bundle:
@@ -277,4 +285,141 @@ export function emptyState(message, hint) {
 
 export function sectionLabel(text) {
   return el("h2", { class: "section-label" }, text);
+}
+
+/**
+ * Inline severity-scope filter: a trigger showing the current summary that opens a
+ * popover of severity toggle pills. Shared by Overview and MTTR. `scope` is a live array
+ * mutated in place so the caller's scopeParam() stays in sync; `onApply` fires (debounced)
+ * whenever the selection changes, and is flushed on close so the label and the data never
+ * disagree for more than a beat. `selectable` is palette.selectable.
+ */
+export function severityScopeFilter({ selectable, scope, onApply, ariaContext = "this page" }) {
+  const nice = (s) => s[0] + s.slice(1).toLowerCase();
+  function summary() {
+    if (scope.length === selectable.length) return "All severities";
+    const chosen = selectable.filter((s) => scope.includes(s));
+    return chosen.length <= 2 ? chosen.map(nice).join(", ") : `${chosen.length} severities`;
+  }
+
+  const wrap = el("div", { class: "sev-filter" });
+  const label = el("span", { class: "sev-filter-label" }, summary());
+  const btn = el("button", {
+    type: "button", class: "sev-filter-btn",
+    "aria-expanded": "false",
+    "aria-label": `Severities included in ${ariaContext}`,
+    onclick: (e) => { e.stopPropagation(); open ? close() : openMenu(); },
+  }, label, el("span", { class: "sev-filter-caret", "aria-hidden": "true" }, "▾"));
+
+  const pills = el("div", { class: "pill-row" });
+  const pillFor = {};
+  for (const sev of selectable) {
+    const pill = el("button", {
+      type: "button", class: `sev-pill sev-${sev}`,
+      "aria-pressed": scope.includes(sev) ? "true" : "false",
+      onclick: () => toggle(sev),
+    }, sev);
+    pillFor[sev] = pill;
+    pills.append(pill);
+  }
+  const menu = el(
+    "div",
+    { class: "sev-filter-menu", role: "group", "aria-label": `Severities included in ${ariaContext}` },
+    el("span", { class: "sev-filter-caption label" }, "Include severities"),
+    pills,
+  );
+  menu.hidden = true;
+  wrap.append(btn, menu);
+
+  function syncPills() {
+    const lastOne = scope.length === 1;
+    for (const sev of selectable) {
+      const on = scope.includes(sev);
+      const p = pillFor[sev];
+      p.setAttribute("aria-pressed", on ? "true" : "false");
+      // Visibly lock the sole remaining severity so the "keep at least one" floor reads
+      // rather than a click that silently does nothing.
+      if (on && lastOne) {
+        p.setAttribute("aria-disabled", "true");
+        p.title = "At least one severity must stay selected";
+      } else {
+        p.removeAttribute("aria-disabled");
+        p.removeAttribute("title");
+      }
+    }
+    label.textContent = summary();
+  }
+  syncPills();
+
+  let applied = scope.join(",");
+  let applyTimer = null;
+  function doApply() {
+    applied = scope.join(",");
+    if (onApply) onApply();
+  }
+  function scheduleApply() {
+    clearTimeout(applyTimer);
+    applyTimer = setTimeout(doApply, 300);
+  }
+
+  function toggle(sev) {
+    const i = scope.indexOf(sev);
+    if (i >= 0) {
+      if (scope.length === 1) return; // floor: keep at least one severity selected
+      scope.splice(i, 1);
+    } else {
+      scope.push(sev);
+    }
+    syncPills();
+    scheduleApply();
+  }
+
+  let open = false;
+  function openMenu() {
+    open = true;
+    menu.hidden = false;
+    btn.setAttribute("aria-expanded", "true");
+    document.addEventListener("click", onDocClick, true);
+    document.addEventListener("keydown", onKey, true);
+    // Land keyboard focus inside the popover instead of leaving it on the trigger.
+    const firstOn = selectable.find((s) => scope.includes(s)) || selectable[0];
+    const target = pillFor[firstOn] || pills.firstChild;
+    if (target) target.focus();
+  }
+  function close() {
+    open = false;
+    menu.hidden = true;
+    btn.setAttribute("aria-expanded", "false");
+    document.removeEventListener("click", onDocClick, true);
+    document.removeEventListener("keydown", onKey, true);
+    clearTimeout(applyTimer);
+    if (scope.join(",") !== applied) doApply(); // flush any pending change on close
+  }
+  function onDocClick(e) { if (!wrap.contains(e.target)) close(); }
+  function onKey(e) { if (e.key === "Escape") { close(); btn.focus(); } }
+  return wrap;
+}
+
+/**
+ * Header scope bar: dismissible chips for the global Value Chain / Support group filters,
+ * rendered where the numbers are so a scoped dashboard never silently reads as the whole
+ * register. Returns null when no global filter is active. `onClear(kind)` clears one.
+ */
+export function scopeBar({ domain, supportGroup, onClear }) {
+  if (!domain && !supportGroup) return null;
+  const bar = el("div", { class: "scope-bar", role: "status", "aria-label": "Active filters" });
+  const chip = (kind, name, value) =>
+    el("span", { class: "scope-chip" },
+      el("span", { class: "scope-chip-key" }, `${name} · `),
+      el("b", {}, value),
+      onClear
+        ? el("button", {
+            class: "scope-chip-x", type: "button",
+            "aria-label": `Clear ${name} filter`, title: `Clear ${name} filter`,
+            onclick: () => onClear(kind),
+          }, "✕")
+        : null);
+  if (domain) bar.append(chip("domain", "Value chain", domain));
+  if (supportGroup) bar.append(chip("supportGroup", "Support group", supportGroup));
+  return bar;
 }

@@ -45,7 +45,7 @@ describe("layoutGraph", () => {
   });
 
   it("lane x-positions are consistent and bounds are positive", () => {
-    const layout = layoutGraph(PROJECTION);
+    const layout = layoutGraph(PROJECTION, { mode: "lanes" });
     const xByLane = new Map<number, number>();
     for (const n of layout.nodes) {
       const existing = xByLane.get(n.lane);
@@ -69,16 +69,70 @@ describe("layoutGraph", () => {
   });
 
   it("declares its mode", () => {
-    expect(layoutGraph(PROJECTION).mode).toBe("lanes");
-    expect(layoutGraph(PROJECTION).groups).toBeUndefined();
+    expect(layoutGraph(PROJECTION, { mode: "lanes" }).mode).toBe("lanes");
+    expect(layoutGraph(PROJECTION, { mode: "lanes" }).groups).toBeUndefined();
   });
 
-  // Back-compat lock: explicit defaults must be byte-identical to a bare call, so
-  // shared URLs and cached payloads never shift when the knobs are spelled out.
-  it("mode=lanes sort=smart is byte-identical to the default call", () => {
-    const bare = layoutGraph(PROJECTION);
+  // Back-compat lock: explicit defaults must be byte-identical to a bare
+  // mode="lanes" call, so shared URLs and cached payloads never shift when the
+  // knobs are spelled out.
+  it("mode=lanes sort=smart is byte-identical to a bare mode=lanes call", () => {
+    const bare = layoutGraph(PROJECTION, { mode: "lanes" });
     const explicit = layoutGraph(PROJECTION, { mode: "lanes", sort: "smart" });
     expect(JSON.stringify(explicit)).toBe(JSON.stringify(bare));
+  });
+});
+
+describe("layoutGraph rows mode (horizontal transpose of lanes, the default)", () => {
+  it("is the default mode for a bare call", () => {
+    expect(layoutGraph(PROJECTION).mode).toBe("rows");
+  });
+
+  it("declares its mode and has no groups", () => {
+    const layout = layoutGraph(PROJECTION, { mode: "rows" });
+    expect(layout.mode).toBe("rows");
+    expect(layout.groups).toBeUndefined();
+  });
+
+  it("bands stack top-to-bottom: one y per lane index, increasing with lane", () => {
+    const layout = layoutGraph(PROJECTION, { mode: "rows" });
+    const yByLane = new Map<number, number>();
+    for (const n of layout.nodes) {
+      const existing = yByLane.get(n.lane);
+      if (existing === undefined) yByLane.set(n.lane, n.y);
+      else expect(n.y).toBe(existing);
+    }
+    const lanes = [...yByLane.keys()].sort((a, b) => a - b);
+    for (let i = 1; i < lanes.length; i++) {
+      expect(yByLane.get(lanes[i])!).toBeGreaterThan(yByLane.get(lanes[i - 1])!);
+    }
+  });
+
+  it("nodes within a band share y and differ in x by 260 (ROW_COL_STEP)", () => {
+    const layout = layoutGraph(PROJECTION, { mode: "rows" });
+    const byLane = new Map<number, number[]>();
+    for (const n of layout.nodes) {
+      if (!byLane.has(n.lane)) byLane.set(n.lane, []);
+      byLane.get(n.lane)!.push(n.x);
+    }
+    for (const xs of byLane.values()) {
+      xs.sort((a, b) => a - b);
+      for (let i = 1; i < xs.length; i++) {
+        expect(xs[i] - xs[i - 1]).toBe(260);
+      }
+    }
+  });
+
+  it("no two node cards (196×56) overlap anywhere on the canvas", () => {
+    const layout = layoutGraph(PROJECTION, { mode: "rows" });
+    const pts = layout.nodes;
+    for (let i = 0; i < pts.length; i++) {
+      for (let j = i + 1; j < pts.length; j++) {
+        const dx = Math.abs(pts[i].x - pts[j].x);
+        const dy = Math.abs(pts[i].y - pts[j].y);
+        expect(dx >= 196 || dy >= 56).toBe(true);
+      }
+    }
   });
 });
 

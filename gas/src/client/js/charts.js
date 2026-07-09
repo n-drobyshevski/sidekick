@@ -34,7 +34,13 @@ const HAIRLINE = "#e6e6e9";
 const reducedMotion =
   window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-function baseOptions() {
+// Group digits and append a unit, so figures inside charts follow the same "tabular,
+// thousands-separated, the-number-is-the-product" rule as the rest of the app (canvas
+// ignores font-variant-numeric, so a formatter callback is the only way to get grouping).
+const localeNum = (v) => (typeof v === "number" ? Number(v).toLocaleString() : v);
+
+function baseOptions(unit = "") {
+  const suffix = unit ? " " + unit : "";
   return {
     responsive: true,
     maintainAspectRatio: false,
@@ -47,6 +53,14 @@ function baseOptions() {
         bodyFont: FONT,
         cornerRadius: 6,
         padding: 10,
+        callbacks: {
+          label: (ctx) => {
+            const horiz = ctx.chart && ctx.chart.options && ctx.chart.options.indexAxis === "y";
+            const raw = horiz ? ctx.parsed.x : ctx.parsed.y;
+            const name = ctx.dataset && ctx.dataset.label ? `${ctx.dataset.label}: ` : "";
+            return `${name}${localeNum(raw)}${suffix}`;
+          },
+        },
       },
     },
     scales: {
@@ -56,7 +70,7 @@ function baseOptions() {
         border: { color: HAIRLINE },
       },
       y: {
-        ticks: { font: FONT, color: INK2, precision: 0 },
+        ticks: { font: FONT, color: INK2, precision: 0, callback: localeNum },
         grid: { color: HAIRLINE, drawTicks: false },
         border: { display: false },
         beginAtZero: true,
@@ -65,9 +79,20 @@ function baseOptions() {
   };
 }
 
+/** Tag a chart canvas as an image with a concise text alternative for assistive tech. */
+function describe(canvas, text) {
+  canvas.setAttribute("role", "img");
+  canvas.setAttribute("aria-label", text);
+}
+
 function destroyExisting(canvas) {
   const existing = Chart.getChart(canvas);
   if (existing) existing.destroy();
+}
+
+/** Tear down any chart bound to a canvas (e.g. before showing an empty state). */
+export function destroyChart(canvas) {
+  destroyExisting(canvas);
 }
 
 /** Draws each bar's value just past its end (like the Streamlit severity chart). */
@@ -94,10 +119,13 @@ const barEndLabels = {
 export function severityBar(canvas, counts, palette, onClickSeverity) {
   destroyExisting(canvas);
   const sevs = palette.order.filter((s) => counts[s]);
-  const opts = baseOptions();
+  describe(canvas, `Open findings by severity: ${
+    sevs.map((s) => `${s} ${counts[s]}`).join(", ") || "none"}`);
+  const opts = baseOptions("findings");
   opts.indexAxis = "y";
   opts.scales.x.beginAtZero = true;
   opts.scales.x.ticks.precision = 0;
+  opts.scales.x.ticks.callback = localeNum;
   // Headroom so the end-of-bar value labels aren't clipped at the axis edge.
   opts.scales.x.grace = "8%";
   opts.scales.y.grid = { display: false };
@@ -131,7 +159,8 @@ export function severityBar(canvas, counts, palette, onClickSeverity) {
  */
 export function stackedAgeBar(canvas, labels, perSev, palette) {
   destroyExisting(canvas);
-  const opts = baseOptions();
+  describe(canvas, "Open findings by age bucket and severity.");
+  const opts = baseOptions("findings");
   opts.scales.x.stacked = true;
   opts.scales.y.stacked = true;
   opts.scales.x.grid = { display: false };
@@ -157,7 +186,8 @@ export function stackedAgeBar(canvas, labels, perSev, palette) {
 /** Single line over ISO dates (MTTR median trend). */
 export function trendLine(canvas, points, { yLabel } = {}) {
   destroyExisting(canvas);
-  const opts = baseOptions();
+  describe(canvas, `${yLabel ? yLabel + " " : ""}trend across ${points.length} scan(s).`);
+  const opts = baseOptions(yLabel || "");
   opts.scales.y.beginAtZero = true;
   if (yLabel) {
     opts.scales.y.title = { display: true, text: yLabel, font: FONT, color: INK2 };
@@ -182,11 +212,75 @@ export function trendLine(canvas, points, { yLabel } = {}) {
   });
 }
 
-/** Open vs resolved dual line (color + dash encoded — not color alone). */
+// Distinct point marker per severity so each vertex carries a shape cue, not color
+// alone — the red/orange/amber severity cluster is a known colorblind risk.
+const SEV_POINT_STYLE = {
+  CRITICAL: "circle",
+  HIGH: "triangle",
+  MEDIUM: "rect",
+  LOW: "rectRot",
+  INFO: "star",
+  UNKNOWN: "crossRot",
+};
+
+function sevLabel(s) {
+  return s.charAt(0) + s.slice(1).toLowerCase();
+}
+
+/**
+ * Open findings per severity over time: one line per severity, encoded by color +
+ * legend/tooltip label + a distinct point marker (never color alone). `points` are
+ * `{ date, bySev }` rows; `sevScope` limits which severities are drawn (matching the
+ * card and the page's display-severity scope).
+ */
+export function severityTrendLines(canvas, points, palette, sevScope) {
+  destroyExisting(canvas);
+  const scope = new Set(sevScope || palette.order);
+  // Draw a severity only if it's in scope and had at least one open finding at some
+  // point in the window — a severity that's all-zero across the series adds a flat
+  // baseline that's noise, not signal.
+  const sevs = palette.order.filter(
+    (s) => scope.has(s) && points.some((p) => (p.bySev[s] || 0) > 0),
+  );
+  describe(canvas, "Open findings per severity over time.");
+  const opts = baseOptions("findings");
+  opts.plugins.legend = {
+    display: true,
+    labels: { font: FONT, color: INK2, boxWidth: 12, usePointStyle: true },
+  };
+  return new Chart(canvas, {
+    type: "line",
+    data: {
+      labels: points.map((p) => p.date.slice(0, 10)),
+      datasets: sevs.map((s) => ({
+        label: sevLabel(s),
+        data: points.map((p) => p.bySev[s] || 0),
+        borderColor: palette.colors[s],
+        backgroundColor: palette.colors[s],
+        pointStyle: SEV_POINT_STYLE[s] || "circle",
+        pointRadius: points.length > 40 ? 0 : 3,
+        pointHoverRadius: 4,
+        borderWidth: 2,
+        tension: 0.25,
+      })),
+    },
+    options: opts,
+  });
+}
+
+/**
+ * Open vs resolved dual line. Red/green is the worst colorblind pair, so it's encoded three
+ * ways: color, a dash on Resolved, and a distinct legend point-style (circle vs rect) shown
+ * via usePointStyle — the swatches differ by shape, not color alone.
+ */
 export function openResolvedLines(canvas, points) {
   destroyExisting(canvas);
-  const opts = baseOptions();
-  opts.plugins.legend = { display: true, labels: { font: FONT, color: INK2, boxHeight: 2 } };
+  describe(canvas, "Open vs resolved findings over time.");
+  const opts = baseOptions("findings");
+  opts.plugins.legend = {
+    display: true,
+    labels: { font: FONT, color: INK2, usePointStyle: true, boxWidth: 8 },
+  };
   return new Chart(canvas, {
     type: "line",
     data: {
@@ -197,6 +291,7 @@ export function openResolvedLines(canvas, points) {
           data: points.map((p) => p.open),
           borderColor: "#b91c1c",
           borderWidth: 2,
+          pointStyle: "circle",
           pointRadius: 0,
           tension: 0.25,
         },
@@ -206,6 +301,7 @@ export function openResolvedLines(canvas, points) {
           borderColor: "#15803d",
           borderDash: [6, 4],
           borderWidth: 2,
+          pointStyle: "rect",
           pointRadius: 0,
           tension: 0.25,
         },

@@ -103,3 +103,58 @@ export function trendFromFrames(
   }
   return out;
 }
+
+export interface OpenBySevPoint {
+  date: string; // the scan ts (ISO)
+  bySev: Record<string, number>; // open count per normalized severity as of `date`
+}
+
+/**
+ * Open findings per severity over time — the data behind the Overview "Severity
+ * breakdown" line chart. For each saved flat-scan timestamp it replays the durable
+ * ledger and counts, per normalized severity, the vulns open as of that instant (the
+ * same open predicate `trendFromFrames` uses: first_seen <= ts and not resolved by ts).
+ *
+ * GAS-first (no Python fixture parity): a UI-only aggregation of the same durable rows,
+ * kept separate from `trendFromFrames` so its parity-tested shape stays untouched.
+ *
+ * scans: rows with {ts, shape}; base: ledger+episode rows with {severity, first_seen,
+ * resolved_at}. severities (optional) restricts to those + UNKNOWN, as elsewhere.
+ */
+export function openBySeverityTrend(
+  scans: Rec[],
+  base: Rec[],
+  severities: string[] | null = null,
+): OpenBySevPoint[] {
+  let rows = base;
+  if (severities !== null && base.length) {
+    const keep = new Set([...severities, "UNKNOWN"]);
+    rows = base.filter((r) => keep.has(normalizeSeverity(r["severity"])));
+  }
+  if (!scans.length || !rows.length) return [];
+
+  const flatTs = scans
+    .filter((s) => s["shape"] === "flat")
+    .map((s) => ({ iso: String(s["ts"]), ms: parseTs(s["ts"]) }))
+    .filter((t): t is { iso: string; ms: number } => t.ms !== null)
+    .sort((a, b) => a.ms - b.ms);
+  if (!flatTs.length) return [];
+
+  const parsed = rows.map((r) => ({
+    first: parseTs(r["first_seen"]),
+    resolvedAt: parseTs(r["resolved_at"]),
+    sev: normalizeSeverity(r["severity"]),
+  }));
+
+  return flatTs.map((ts) => {
+    const bySev: Record<string, number> = {};
+    for (const r of parsed) {
+      const isOpen =
+        r.first !== null &&
+        r.first <= ts.ms &&
+        (r.resolvedAt === null || r.resolvedAt > ts.ms);
+      if (isOpen) bySev[r.sev] = (bySev[r.sev] ?? 0) + 1;
+    }
+    return { date: ts.iso, bySev };
+  });
+}
