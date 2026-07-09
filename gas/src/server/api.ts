@@ -310,19 +310,21 @@ function insightsData(p?: unknown): Rec {
   const sgMatch = supportGroupPredicate(supportGroup, supportGroupSet);
   let recs = scan.records;
   let base = ledgerStore.loadBaseRows();
+  // Base rows carry no _supportGroup / _domain natively (only asset_name), so attach
+  // both up front — unconditionally, because the oldest-open grouped views rank by them
+  // even at the whole-chain view. attachSupportGroups resolves _supportGroup from the
+  // current map; _domain is assigned per row like the frame's (findings.currentScan).
+  supportGroups.attachSupportGroups(base as unknown as Rec[]);
+  const compiled = compileDomains(settingsStore.getDomains().items);
+  for (const r of base as unknown as Rec[]) r["_domain"] = assignDomain(r, compiled);
   if (domain || sgActive) {
-    // Base rows carry no _supportGroup until resolved from the current map, so a
-    // support_group domain or the support-group filter can scope the ledger the same
-    // way the frame does.
-    supportGroups.attachSupportGroups(base as unknown as Rec[]);
     if (sgActive) {
       recs = recs.filter((r) => sgMatch(String(r["_supportGroup"] ?? "")));
       base = base.filter((r) => sgMatch(String((r as unknown as Rec)["_supportGroup"] ?? "")));
     }
     if (domain) {
       recs = recs.filter((r) => String(r["_domain"] ?? UNASSIGNED) === domain);
-      const compiled = compileDomains(settingsStore.getDomains().items);
-      base = base.filter((r) => assignDomain(r as unknown as Rec, compiled) === domain);
+      base = base.filter((r) => String((r as unknown as Rec)["_domain"] ?? UNASSIGNED) === domain);
     }
   }
   const severities = readSeverities(p);
@@ -350,6 +352,9 @@ function insightsData(p?: unknown): Rec {
     ),
     exploit: insights.exploitSummary(recs),
     aging: insights.ageBuckets(base),
+    // Top oldest open findings + 90+ backlog per asset / support group / domain,
+    // for the aging panel's toggle (repaints client-side, no extra RPC).
+    oldest: insights.oldestOpen(base as unknown as Parameters<typeof insights.oldestOpen>[0]),
     movement: insights.movement(base, latestFlat, ledgerStore.loadScanRows().length),
   };
 }

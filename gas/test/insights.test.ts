@@ -6,6 +6,7 @@ import {
   exploitSummary,
   groupTree,
   movement,
+  oldestOpen,
   severityStats,
 } from "../src/domain/insights";
 import type { Rec } from "../src/domain/util";
@@ -110,6 +111,65 @@ describe("movement", () => {
     expect(movement([base("OPEN", "s1", "s1")], null, 1)).toEqual({
       newCount: 0, resolvedCount: 0, reopenedCount: 0, persisting: 0, hasPrevious: false,
     });
+  });
+});
+
+describe("oldestOpen", () => {
+  // Base-row shape the aggregation reads: age_days + status + cve/severity/asset_name and
+  // the server-attached _domain / _supportGroup.
+  const brow = (over: Record<string, unknown> = {}) => ({
+    cve: "CVE-2024-0001", severity: "HIGH", status: "OPEN", asset_name: "web-1",
+    age_days: 10, _domain: "Payments", _supportGroup: "SG-A", ...over,
+  });
+
+  it("findings: sorted by age desc, capped at topN, resolved & null-age excluded", () => {
+    const { findings } = oldestOpen([
+      brow({ cve: "old", age_days: 400 }),
+      brow({ cve: "mid", age_days: 100 }),
+      brow({ cve: "young", age_days: 5 }),
+      brow({ cve: "resolved", age_days: 999, status: "RESOLVED" }),
+      brow({ cve: "noage", age_days: null }),
+    ], 2);
+    expect(findings.map((f) => f.cve)).toEqual(["old", "mid"]);
+    expect(findings[0]).toEqual({ cve: "old", asset: "web-1", severity: "HIGH", ageDays: 400 });
+  });
+
+  it("groups: agedCount is the >90d tail, oldestDays the max, open counts all open", () => {
+    const { byDomain } = oldestOpen([
+      brow({ _domain: "Payments", age_days: 120 }),  // aged
+      brow({ _domain: "Payments", age_days: 91 }),   // aged (strictly > 90)
+      brow({ _domain: "Payments", age_days: 90 }),   // not aged (boundary)
+      brow({ _domain: "Payments", age_days: 5 }),
+      brow({ _domain: "Payments", age_days: 999, status: "RESOLVED" }), // excluded
+    ]);
+    expect(byDomain).toHaveLength(1);
+    expect(byDomain[0]).toEqual({ key: "Payments", agedCount: 2, openCount: 4, oldestDays: 120 });
+  });
+
+  it("groups: ranked agedCount desc, then oldestDays desc, then key asc; blank -> (none)", () => {
+    const { bySupportGroup } = oldestOpen([
+      brow({ _supportGroup: "A", age_days: 200 }),   // A: aged 1, oldest 200
+      brow({ _supportGroup: "B", age_days: 300 }),   // B: aged 1, oldest 300
+      brow({ _supportGroup: "", age_days: 95 }),     // (none): aged 1, oldest 95
+      brow({ _supportGroup: "C", age_days: 10 }),    // C: aged 0, oldest 10
+    ]);
+    // aged-count ties (all 1) broken by oldestDays desc: B(300) > A(200) > (none)(95); C last (aged 0).
+    expect(bySupportGroup.map((g) => g.key)).toEqual(["B", "A", "(none)", "C"]);
+  });
+
+  it("keys each grouped view off its own dimension; asset uses asset_name", () => {
+    const { byAsset } = oldestOpen([
+      brow({ asset_name: "host-a", age_days: 100 }),
+      brow({ asset_name: "host-a", age_days: 50 }),
+      brow({ asset_name: "host-b", age_days: 200 }),
+    ]);
+    expect(byAsset.map((g) => g.key)).toEqual(["host-b", "host-a"]);
+    expect(byAsset[0]).toEqual({ key: "host-b", agedCount: 1, openCount: 1, oldestDays: 200 });
+    expect(byAsset[1]).toMatchObject({ key: "host-a", openCount: 2 });
+  });
+
+  it("empty base yields empty lists", () => {
+    expect(oldestOpen([])).toEqual({ findings: [], byAsset: [], bySupportGroup: [], byDomain: [] });
   });
 });
 
