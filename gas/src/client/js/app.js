@@ -10,9 +10,11 @@ import { renderHistory } from "./pages/history.js";
 import { renderData } from "./pages/data.js";
 import { renderSettings } from "./pages/settings.js";
 
+// Order matters: the sidebar nav renders pages in this insertion order (grouped by
+// `group`), and the first key is the app's default landing page (see store.parseHash).
 const PAGES = {
-  overview: { title: "OS vulnerabilities", group: "Security", render: renderOverview },
   mttr: { title: "MTTR & SLA", group: "Security", render: renderMttr },
+  overview: { title: "OS vulnerabilities", group: "Security", render: renderOverview },
   scan_history: { title: "Scan History", group: "Security", render: renderHistory },
   data: { title: "Data", group: "Data", render: renderData },
   settings: { title: "Settings", group: "Preferences", render: renderSettings },
@@ -354,7 +356,7 @@ export async function refresh() {
 async function route() {
   const seq = ++routeSeq;
   const { route: key, params } = parseHash();
-  const page = PAGES[key] || PAGES.overview;
+  const page = PAGES[key] || PAGES.mttr;
   document.title = `${page.title} — Wiz Sidekick OS`;
   // active nav state
   document.querySelectorAll(".nav-link").forEach((a) => {
