@@ -43,7 +43,7 @@ import {
   checkpointManifest,
   type BeganSession,
 } from "../domain/importShard";
-import { trendFromFrames, type TrendPoint } from "../domain/trend";
+import { type BackfilledTrendPoint, trendFromBase } from "../domain/trend";
 import { nowIso, type Rec } from "../domain/util";
 import * as archive from "./archiveStore";
 import * as history from "./historyStore";
@@ -279,9 +279,13 @@ export function loadBaseRows(now?: number): BaseRow[] {
   return baseRows(loadState(), now);
 }
 
-export function loadTrend(severities: string[] | null = null): TrendPoint[] {
+export function loadTrend(severities: string[] | null = null): BackfilledTrendPoint[] {
   const state = loadState();
-  return trendFromFrames(
+  // Backfill on: reconstruct pre-first-scan trend points from findings' first-seen dates so
+  // the trend reaches back to the earliest detection, not just the first saved scan. The
+  // compaction gate (maintenance.trendOf) deliberately keeps calling trendFromFrames instead,
+  // so its before/after identity check stays anchored to real scans only.
+  return trendFromBase(
     state.scans.map((s) => ({ ts: s.ts, shape: s.shape })),
     baseRows(state).map((r) => ({
       severity: r.severity,
@@ -290,6 +294,7 @@ export function loadTrend(severities: string[] | null = null): TrendPoint[] {
       mttr_days: r.mttr_days,
     })),
     severities,
+    { backfill: true },
   );
 }
 

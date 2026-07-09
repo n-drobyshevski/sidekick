@@ -406,6 +406,35 @@ export function severityScopeFilter({ selectable, scope, onApply, ariaContext = 
   return wrap;
 }
 
+let _helpTipSeq = 0;
+
+/**
+ * A small hover/focus explainer: an "i" glyph that reveals a quiet card of `lines`. Used on
+ * headline metrics to explain how a number is calculated. Reveal is pure CSS (:hover /
+ * :focus-within on `.helptip`), so keyboard users get it by tabbing to the focusable trigger
+ * and it inherits the app's focus ring; the trigger is `aria-describedby` the bubble (which
+ * stays in the DOM, opacity-hidden) so screen readers announce the text. Escape blurs the
+ * trigger to dismiss. Meaning is text, never colour — the surface is the neutral popover
+ * recipe (white / hairline / --shadow-card), matching `.sev-filter-menu`.
+ */
+export function helpTip(lines, { label = "More info" } = {}) {
+  const items = Array.isArray(lines) ? lines : [lines];
+  const id = `helptip-${++_helpTipSeq}`;
+  const bubble = el(
+    "span",
+    { class: "helptip-bubble", role: "tooltip", id },
+    ...items.map((t) => el("span", { class: "helptip-line" }, t)),
+  );
+  const trigger = el("button", {
+    type: "button",
+    class: "helptip-trigger",
+    "aria-label": label,
+    "aria-describedby": id,
+    onkeydown: (e) => { if (e.key === "Escape") e.currentTarget.blur(); },
+  }, "i");
+  return el("span", { class: "helptip" }, trigger, bubble);
+}
+
 /**
  * Header scope bar: dismissible chips for the global Value Chain / Support group filters,
  * rendered where the numbers are so a scoped dashboard never silently reads as the whole

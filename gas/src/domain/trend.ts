@@ -6,7 +6,7 @@
 
 import { SEVERITY_ORDER, SLA_TARGETS } from "./config";
 import { normalizeSeverity } from "./severity";
-import { median, parseTs, quantile, type Rec } from "./util";
+import { median, parseTs, quantile, toIso, type Rec } from "./util";
 
 export interface TrendPoint {
   date: string; // the scan ts (ISO)
@@ -157,4 +157,71 @@ export function openBySeverityTrend(
     }
     return { date: ts.iso, bySev };
   });
+}
+
+export type BackfilledTrendPoint = TrendPoint & { reconstructed: boolean };
+
+/**
+ * `trendFromFrames` with optional pre-first-scan backfill — the UI trend entry point.
+ *
+ * The trend otherwise samples only at saved-scan timestamps, so it can't start before the
+ * first scan even when findings' `first_seen` dates predate it. With `backfill`, this seeds
+ * a daily backbone of synthetic flat-scan timestamps (UTC midnights) from the earliest
+ * `first_seen` up to — but excluding — the first real flat scan, so the trend reconstructs
+ * the pre-scan history. Each point is tagged `reconstructed`: `true` for the synthetic days,
+ * `false` for real saved scans. Reconstructed *open* counts are exact; reconstructed
+ * *resolved* / MTTR are lower bounds — a resolution only predates the first scan when the
+ * source dated it (disappearance-based resolutions are pinned to the scan that observed
+ * them), so the UI marks that region rather than hiding the understatement.
+ *
+ * GAS-first (no Python fixture parity — mirrors `openBySeverityTrend`): implemented as a
+ * thin wrapper that synthesizes extra flat-scan rows and delegates to the parity-tested
+ * `trendFromFrames`, which stays byte-for-byte untouched. `backfill: false` is exactly
+ * `trendFromFrames` (with every point tagged `reconstructed: false`).
+ */
+export function trendFromBase(
+  scans: Rec[],
+  base: Rec[],
+  severities: string[] | null = null,
+  opts: { backfill?: boolean } = {},
+): BackfilledTrendPoint[] {
+  const tag = (points: TrendPoint[], synthetic: Set<string>): BackfilledTrendPoint[] =>
+    points.map((p) => ({ ...p, reconstructed: synthetic.has(p.date) }));
+
+  if (!opts.backfill) return tag(trendFromFrames(scans, base, severities), new Set());
+
+  // Scope the base the same way `trendFromFrames` will, so the earliest `first_seen` we
+  // anchor the backbone to reflects only the rows that will actually be counted.
+  let rows = base;
+  if (severities !== null && base.length) {
+    const keep = new Set([...severities, "UNKNOWN"]);
+    rows = base.filter((r) => keep.has(normalizeSeverity(r["severity"])));
+  }
+
+  const realFlatMs = scans
+    .filter((s) => s["shape"] === "flat")
+    .map((s) => parseTs(s["ts"]))
+    .filter((t): t is number => t !== null);
+  const firstSeenMs = rows
+    .map((r) => parseTs(r["first_seen"]))
+    .filter((t): t is number => t !== null);
+
+  const synthetic: Rec[] = [];
+  const syntheticIso = new Set<string>();
+  if (realFlatMs.length && firstSeenMs.length) {
+    // Stop at the first scan's UTC *day*, not its instant: that day is already represented by
+    // the real scan point, so a synthetic midnight on it would just add an empty leading dot.
+    const firstScanDay = Math.floor(Math.min(...realFlatMs) / DAY_MS) * DAY_MS;
+    const startDay = Math.floor(Math.min(...firstSeenMs) / DAY_MS) * DAY_MS;
+    for (let day = startDay; day < firstScanDay; day += DAY_MS) {
+      const iso = toIso(day);
+      if (iso === null) continue;
+      synthetic.push({ ts: iso, shape: "flat" });
+      syntheticIso.add(iso);
+    }
+  }
+
+  // Synthetic days can only be < firstScan, and real flat scans are all >= firstScan, so a
+  // point's `date` is in `syntheticIso` iff it's a reconstructed day — unambiguous.
+  return tag(trendFromFrames(synthetic.concat(scans), base, severities), syntheticIso);
 }
