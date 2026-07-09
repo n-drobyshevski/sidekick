@@ -310,8 +310,9 @@ export async function renderOverview(main, params, ctx) {
     );
     // Two columns like the Severity breakdown: the age histogram (left) beside a ranked
     // table of the actual stale items (right), toggling between individual findings and
-    // the 90+ backlog per asset / support group / domain.
-    insightsHost.append(el("div", { class: "chart-grid", style: "align-items:start" },
+    // the 90+ backlog per asset / support group / domain. align-items:stretch keeps the
+    // two cards the same height as each other whichever view (3–7 rows) is showing.
+    insightsHost.append(el("div", { class: "chart-grid", style: "align-items:stretch" },
       chartCard,
       renderOldestPanel(insights.oldest),
     ));
