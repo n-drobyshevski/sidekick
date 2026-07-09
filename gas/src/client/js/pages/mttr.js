@@ -141,20 +141,27 @@ export async function renderMttr(main, _params, ctx) {
       ));
     }
     const resolved = mttr.overall.resolved ?? 0;
-    heroHost.append(
-      el("div", { class: "hero" },
-        el("div", { class: "label" }, "Median MTTR" + (domain ? ` — ${domain}` : ""),
-          helpTip([
-            "Median days from first detection to remediation.",
-            `Over ${resolved.toLocaleString()} resolved finding${resolved === 1 ? "" : "s"} — `
-              + "open ones aren't counted (they show as Open age p90).",
-            "A vuln that disappears between scans counts as resolved.",
-          ], { label: "How Median MTTR is calculated" })),
+    // The metric itself (label + value) is the hover/focus target — no separate "i" glyph.
+    const metric = helpTip(
+      [
+        el("div", { class: "label" }, "Median MTTR" + (domain ? ` — ${domain}` : "")),
         el("div", { class: "hero-value num" },
           median !== null && median !== undefined ? fmtDays(median) : "—",
           !scoped && prev && median !== null
             ? changeChip(median, prev.median_days, { fmt: fmtDays }) : null,
         ),
+      ],
+      [
+        "Median days from first detection to remediation.",
+        `Over ${resolved.toLocaleString()} resolved finding${resolved === 1 ? "" : "s"} — `
+          + "open ones aren't counted (they show as Open age p90).",
+        "A vuln that disappears between scans counts as resolved.",
+      ],
+      { className: "hero-metric" },
+    );
+    heroHost.append(
+      el("div", { class: "hero" },
+        metric,
         el("div", { class: "hero-src" },
           `${mttr.rowCount.toLocaleString()} tracked lifecycle(s) in the durable base`),
         minis,
