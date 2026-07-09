@@ -115,6 +115,34 @@ const barEndLabels = {
   },
 };
 
+// A subtle shaded rect over the reconstructed (pre-first-scan) prefix of a trend, drawn
+// behind the datasets. Reconstructed points are always the contiguous leading run, so the
+// band spans from the y-axis to the midpoint between the last reconstructed and first real
+// point. Meaning is carried by the shading + the caption beneath the chart (and hollow
+// points on the MTTR line), never by colour alone. Returns null when nothing is reconstructed.
+function reconstructedBand(flags) {
+  if (!flags.some(Boolean)) return null;
+  const firstReal = flags.findIndex((r) => !r); // -1 → every point reconstructed
+  return {
+    id: "reconstructedBand",
+    beforeDatasetsDraw(chart) {
+      const xs = chart.scales.x;
+      const area = chart.chartArea;
+      if (!xs || !area) return;
+      let right = area.right;
+      if (firstReal > 0) {
+        right = (xs.getPixelForValue(firstReal - 1) + xs.getPixelForValue(firstReal)) / 2;
+      }
+      right = Math.min(Math.max(right, area.left), area.right);
+      const { ctx } = chart;
+      ctx.save();
+      ctx.fillStyle = "rgba(100, 116, 139, 0.10)";
+      ctx.fillRect(area.left, area.top, right - area.left, area.height);
+      ctx.restore();
+    },
+  };
+}
+
 /** Horizontal severity bar; clicking a bar toggles that severity filter. */
 export function severityBar(canvas, counts, palette, onClickSeverity) {
   destroyExisting(canvas);
@@ -183,15 +211,23 @@ export function stackedAgeBar(canvas, labels, perSev, palette) {
   });
 }
 
-/** Single line over ISO dates (MTTR median trend). */
+/** Single line over ISO dates (MTTR median trend). Points before the first saved scan
+ * (`p.reconstructed`) are drawn hollow under a shaded band; see `reconstructedBand`. */
 export function trendLine(canvas, points, { yLabel } = {}) {
   destroyExisting(canvas);
-  describe(canvas, `${yLabel ? yLabel + " " : ""}trend across ${points.length} scan(s).`);
+  const reconCount = points.filter((p) => p.reconstructed).length;
+  describe(
+    canvas,
+    `${yLabel ? yLabel + " " : ""}trend across ${points.length} point(s)` +
+      (reconCount ? `, ${reconCount} reconstructed from first-detection dates before the first saved scan` : "") +
+      ".",
+  );
   const opts = baseOptions(yLabel || "");
   opts.scales.y.beginAtZero = true;
   if (yLabel) {
     opts.scales.y.title = { display: true, text: yLabel, font: FONT, color: INK2 };
   }
+  const band = reconstructedBand(points.map((p) => p.reconstructed));
   return new Chart(canvas, {
     type: "line",
     data: {
@@ -204,11 +240,18 @@ export function trendLine(canvas, points, { yLabel } = {}) {
           fill: true,
           tension: 0.25,
           pointRadius: points.length > 40 ? 0 : 3,
+          // Reconstructed vertices are hollow (white fill), measured ones solid — a shape cue
+          // that reads without colour, matching the shaded band and caption.
+          pointBackgroundColor: (c) =>
+            points[c.dataIndex] && points[c.dataIndex].reconstructed ? "#ffffff" : "#2563eb",
+          pointBorderColor: "#2563eb",
+          pointBorderWidth: 1.5,
           borderWidth: 2,
         },
       ],
     },
     options: opts,
+    plugins: band ? [band] : [],
   });
 }
 
@@ -275,12 +318,18 @@ export function severityTrendLines(canvas, points, palette, sevScope) {
  */
 export function openResolvedLines(canvas, points) {
   destroyExisting(canvas);
-  describe(canvas, "Open vs resolved findings over time.");
+  const reconCount = points.filter((p) => p.reconstructed).length;
+  describe(
+    canvas,
+    "Open vs resolved findings over time." +
+      (reconCount ? ` The first ${reconCount} point(s) are reconstructed from first-detection dates before the first saved scan.` : ""),
+  );
   const opts = baseOptions("findings");
   opts.plugins.legend = {
     display: true,
     labels: { font: FONT, color: INK2, usePointStyle: true, boxWidth: 8 },
   };
+  const band = reconstructedBand(points.map((p) => p.reconstructed));
   return new Chart(canvas, {
     type: "line",
     data: {
@@ -308,5 +357,6 @@ export function openResolvedLines(canvas, points) {
       ],
     },
     options: opts,
+    plugins: band ? [band] : [],
   });
 }

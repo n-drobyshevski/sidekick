@@ -406,6 +406,38 @@ export function severityScopeFilter({ selectable, scope, onApply, ariaContext = 
   return wrap;
 }
 
+let _helpTipSeq = 0;
+
+/**
+ * Wrap `content` so hovering (or focusing) it reveals a quiet card explaining `lines` — used
+ * on headline metrics to explain how a number is calculated, with no separate glyph: the
+ * metric itself is the hover target. Reveal is pure CSS (:hover / :focus-within on
+ * `.helptip`); the wrapper is focusable so keyboard users get it too (inheriting the app's
+ * focus ring) and is `aria-describedby` the bubble, which stays in the DOM (opacity-hidden)
+ * so screen readers announce the text. Escape blurs to dismiss. Meaning is text, never colour
+ * — the surface is the neutral popover recipe (white / hairline / --shadow-card), matching
+ * `.sev-filter-menu`. `className` adds a layout variant (e.g. `hero-metric`) next to the base
+ * `.helptip`; `label` optionally sets an aria-label (omit to let the wrapped content read).
+ */
+export function helpTip(content, lines, { label, className } = {}) {
+  const items = Array.isArray(lines) ? lines : [lines];
+  const id = `helptip-${++_helpTipSeq}`;
+  const bubble = el(
+    "span",
+    { class: "helptip-bubble", role: "tooltip", id },
+    ...items.map((t) => el("span", { class: "helptip-line" }, t)),
+  );
+  const attrs = {
+    class: `helptip${className ? " " + className : ""}`,
+    tabindex: "0",
+    "aria-describedby": id,
+    onkeydown: (e) => { if (e.key === "Escape") e.currentTarget.blur(); },
+  };
+  if (label) attrs["aria-label"] = label;
+  const kids = Array.isArray(content) ? content : [content];
+  return el("span", attrs, ...kids, bubble);
+}
+
 /**
  * Header scope bar: dismissible chips for the global Value Chain / Support group filters,
  * rendered where the numbers are so a scoped dashboard never silently reads as the whole

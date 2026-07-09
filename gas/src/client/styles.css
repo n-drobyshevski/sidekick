@@ -425,6 +425,34 @@ input[aria-invalid="true"]:focus-visible, select[aria-invalid="true"]:focus-visi
 .mini-label { font-size: 12px; color: var(--text-3); }
 .mini-value { font-size: 18px; font-weight: 600; }
 
+/* Help explainer (how a headline metric is calculated). The wrapped metric itself is the
+   hover/focus target — no separate glyph; the bubble is the neutral popover recipe (white /
+   hairline / --shadow-card, like .sev-filter-menu). Revealed on hover/focus-within; the
+   bubble stays in the DOM (opacity only) so aria-describedby text is announced. See ui.js
+   helpTip(). */
+.helptip { position: relative; }
+/* Metric variant: shrink-to-content so only the metric area is the hover zone, not the row. */
+.hero-metric { display: inline-block; cursor: help; }
+.helptip-bubble {
+  position: absolute; left: 0; top: calc(100% + 8px); z-index: var(--z-popover);
+  width: max-content; max-width: 268px; padding: 10px;
+  display: flex; flex-direction: column; gap: 5px;
+  background: var(--page); color: var(--ink);
+  border: 1px solid var(--hairline); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  font-size: 12px; font-weight: 400; line-height: 1.45;
+  letter-spacing: 0; text-transform: none; text-align: left;
+  opacity: 0; pointer-events: none; transform: translateY(-2px);
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+.helptip-line { display: block; }
+.helptip:hover > .helptip-bubble,
+.helptip:focus-within > .helptip-bubble { opacity: 1; pointer-events: auto; transform: translateY(0); }
+@media (prefers-reduced-motion: reduce) {
+  .helptip-bubble { transition: none; transform: none; }
+  .helptip:hover .helptip-bubble, .helptip:focus-within .helptip-bubble { transform: none; }
+}
+
 /* change chips */
 .chg { font-size: 12px; font-weight: 600; border-radius: var(--radius-sm); padding: 1px 6px; margin-left: 6px; }
 .chg.up { color: var(--bad); background: rgba(185, 28, 28, 0.12); }

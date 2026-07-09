@@ -4,7 +4,7 @@
 import { openResolvedLines, trendLine } from "../charts.js";
 import { bootstrap, swrCall } from "../store.js";
 import {
-  changeChip, clear, el, emptyState, fmtDays, scopeBar, sectionLabel, sevBadge,
+  changeChip, clear, el, emptyState, fmtDays, helpTip, scopeBar, sectionLabel, sevBadge,
   severityScopeFilter,
 } from "../ui.js";
 
@@ -140,14 +140,28 @@ export async function renderMttr(main, _params, ctx) {
         el("div", { class: "mini-value num" }, value, chip || null),
       ));
     }
-    heroHost.append(
-      el("div", { class: "hero" },
+    const resolved = mttr.overall.resolved ?? 0;
+    // The metric itself (label + value) is the hover/focus target — no separate "i" glyph.
+    const metric = helpTip(
+      [
         el("div", { class: "label" }, "Median MTTR" + (domain ? ` — ${domain}` : "")),
         el("div", { class: "hero-value num" },
           median !== null && median !== undefined ? fmtDays(median) : "—",
           !scoped && prev && median !== null
             ? changeChip(median, prev.median_days, { fmt: fmtDays }) : null,
         ),
+      ],
+      [
+        "Median days from first detection to remediation.",
+        `Over ${resolved.toLocaleString()} resolved finding${resolved === 1 ? "" : "s"} — `
+          + "open ones aren't counted (they show as Open age p90).",
+        "A vuln that disappears between scans counts as resolved.",
+      ],
+      { className: "hero-metric" },
+    );
+    heroHost.append(
+      el("div", { class: "hero" },
+        metric,
         el("div", { class: "hero-src" },
           `${mttr.rowCount.toLocaleString()} tracked lifecycle(s) in the durable base`),
         minis,
@@ -164,8 +178,8 @@ export async function renderMttr(main, _params, ctx) {
     const openResolvedCanvas = el("canvas", { id: "open-resolved" });
 
     const points = trends.trend.length
-      ? trends.trend.map((t) => ({ x: t.date, y: t.median_days }))
-      : trends.history.map((h) => ({ x: h.date, y: h.median_days }));
+      ? trends.trend.map((t) => ({ x: t.date, y: t.median_days, reconstructed: t.reconstructed }))
+      : trends.history.map((h) => ({ x: h.date, y: h.median_days, reconstructed: false }));
 
     // A "trend" needs at least two points — one lone dot is not a trajectory. This matches the
     // Open-vs-resolved gate and the "after two saved scans" copy below.
@@ -187,6 +201,11 @@ export async function renderMttr(main, _params, ctx) {
     }
     // A labelled section so the page has no h1 → h3 heading skip (the cards are h3).
     chartsHost.append(sectionLabel("Trends"), grid);
+    if (trends.trend.some((t) => t.reconstructed)) {
+      chartsHost.append(el("p", { class: "small muted", style: "margin:4px 0 0" },
+        "Shaded days precede the first saved scan — reconstructed from first-detection dates. "
+          + "Open counts there are exact; resolved and MTTR are lower bounds."));
+    }
     if (domain) {
       chartsHost.append(el("p", { class: "small muted", style: "margin:0" },
         "Trends span every value chain — per-chain history isn't stored."));

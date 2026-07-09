@@ -2203,6 +2203,30 @@ var Server = (() => {
       return { date: ts.iso, bySev };
     });
   }
+  function trendFromBase(scans, base, severities = null, opts = {}) {
+    const tag = (points, synthetic2) => points.map((p) => ({ ...p, reconstructed: synthetic2.has(p.date) }));
+    if (!opts.backfill) return tag(trendFromFrames(scans, base, severities), /* @__PURE__ */ new Set());
+    let rows = base;
+    if (severities !== null && base.length) {
+      const keep = /* @__PURE__ */ new Set([...severities, "UNKNOWN"]);
+      rows = base.filter((r) => keep.has(normalizeSeverity(r["severity"])));
+    }
+    const realFlatMs = scans.filter((s) => s["shape"] === "flat").map((s) => parseTs(s["ts"])).filter((t) => t !== null);
+    const firstSeenMs = rows.map((r) => parseTs(r["first_seen"])).filter((t) => t !== null);
+    const synthetic = [];
+    const syntheticIso = /* @__PURE__ */ new Set();
+    if (realFlatMs.length && firstSeenMs.length) {
+      const firstScanDay = Math.floor(Math.min(...realFlatMs) / DAY_MS3) * DAY_MS3;
+      const startDay = Math.floor(Math.min(...firstSeenMs) / DAY_MS3) * DAY_MS3;
+      for (let day = startDay; day < firstScanDay; day += DAY_MS3) {
+        const iso = toIso(day);
+        if (iso === null) continue;
+        synthetic.push({ ts: iso, shape: "flat" });
+        syntheticIso.add(iso);
+      }
+    }
+    return tag(trendFromFrames(synthetic.concat(scans), base, severities), syntheticIso);
+  }
 
   // src/domain/maintenance.ts
   var LedgerRebuildError = class extends Error {
@@ -3391,7 +3415,7 @@ var Server = (() => {
   }
   function loadTrend(severities = null) {
     const state = loadState();
-    return trendFromFrames(
+    return trendFromBase(
       state.scans.map((s) => ({ ts: s.ts, shape: s.shape })),
       baseRows(state).map((r) => ({
         severity: r.severity,
@@ -3399,7 +3423,8 @@ var Server = (() => {
         resolved_at: r.resolved_at,
         mttr_days: r.mttr_days
       })),
-      severities
+      severities,
+      { backfill: true }
     );
   }
   function previousSeverityCounts() {
