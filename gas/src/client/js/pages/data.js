@@ -247,7 +247,7 @@ function renderImportSection(main, ctx) {
   const resetBtn = el("button", { class: "danger", onclick: resetLedger }, "Reset ledger…");
   const statusHost = el("div", { style: "margin-top:10px" });
   card.append(
-    el("div", { style: "display:flex; gap:8px" }, importBtn, resetBtn, fileInput),
+    el("div", { style: "display:flex; gap:8px; flex-wrap:wrap" }, importBtn, resetBtn, fileInput),
     statusHost,
   );
   main.append(card);

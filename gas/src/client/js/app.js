@@ -272,8 +272,11 @@ function paintCard(job) {
   lastJob = job;
   const stopping = stoppingJobId === job.job_id && job.phase !== "CANCELLED";
   renderScanCard(scanCardHost, job, {
+    // Read lastJob at click time, not the job captured when this Details button was built —
+    // renderScanCard reuses the button across polls, so a captured job would be stale and the
+    // drawer would flash 0 findings/0 pages for one tick before the poller updates it.
     onDetails: () => {
-      scanDetails = openScanDetails(job, { onStop: () => requestStop(job.job_id) });
+      scanDetails = openScanDetails(lastJob, { onStop: () => requestStop(lastJob.job_id) });
     },
     onStop: stopping ? null : () => requestStop(job.job_id),
     stopping,

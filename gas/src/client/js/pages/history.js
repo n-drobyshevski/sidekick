@@ -141,8 +141,11 @@ export async function renderHistory(main, _params, ctx) {
         type: "checkbox",
         "aria-label": "Select all deletable scans on this page",
         disabled: selectable.length ? null : true,
-        checked: selectable.length && selectable.every((s) => selected.has(s.scan_id)) ? true : null,
       });
+      // indeterminate is a property, not an attribute — set it (and checked) from one source.
+      const allSelected = selectable.length && selectable.every((s) => selected.has(s.scan_id));
+      selectAll.checked = !!allSelected;
+      selectAll.indeterminate = !allSelected && selectable.some((s) => selected.has(s.scan_id));
       selectAll.addEventListener("change", () => {
         for (const s of selectable) {
           if (selectAll.checked) selected.add(s.scan_id);
@@ -177,9 +180,11 @@ export async function renderHistory(main, _params, ctx) {
           if (cb.checked) selected.add(s.scan_id);
           else selected.delete(s.scan_id);
           syncDeleteBtn();
-          // Keep the header select-all box in step without a full redraw churn.
+          // Keep the header select-all box (checked + indeterminate) in step without a redraw.
           const rest = slice.filter((x) => !x.sealed);
-          selectAll.checked = rest.length && rest.every((x) => selected.has(x.scan_id));
+          const all = rest.length && rest.every((x) => selected.has(x.scan_id));
+          selectAll.checked = !!all;
+          selectAll.indeterminate = !all && rest.some((x) => selected.has(x.scan_id));
         });
         const whenCell = el("td", { class: "num" }, fmtDateTime(s.ts));
         if (s.scan_id === newestId) {
@@ -204,7 +209,7 @@ export async function renderHistory(main, _params, ctx) {
         ));
       }
       table.append(tbody);
-      clear(tableHost).append(el("div", { class: "table-wrap" }, table));
+      clear(tableHost).append(el("div", { class: "table-wrap history-table-wrap" }, table));
       clear(pagerHost).append(pager(page, pageCount, sorted.length, (p) => { page = p; draw(); }));
     }
 

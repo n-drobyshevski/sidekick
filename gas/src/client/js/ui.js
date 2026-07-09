@@ -381,6 +381,7 @@ export function severityScopeFilter({ selectable, scope, onApply, ariaContext = 
     btn.setAttribute("aria-expanded", "true");
     document.addEventListener("click", onDocClick, true);
     document.addEventListener("keydown", onKey, true);
+    wrap.addEventListener("focusout", onFocusOut);
     // Land keyboard focus inside the popover instead of leaving it on the trigger.
     const firstOn = selectable.find((s) => scope.includes(s)) || selectable[0];
     const target = pillFor[firstOn] || pills.firstChild;
@@ -392,11 +393,16 @@ export function severityScopeFilter({ selectable, scope, onApply, ariaContext = 
     btn.setAttribute("aria-expanded", "false");
     document.removeEventListener("click", onDocClick, true);
     document.removeEventListener("keydown", onKey, true);
+    wrap.removeEventListener("focusout", onFocusOut);
     clearTimeout(applyTimer);
     if (scope.join(",") !== applied) doApply(); // flush any pending change on close
   }
   function onDocClick(e) { if (!wrap.contains(e.target)) close(); }
   function onKey(e) { if (e.key === "Escape") { close(); btn.focus(); } }
+  // Tabbing past the last pill (or focus leaving the widget) closes it — a non-modal inline
+  // popover should release focus, not trap it. relatedTarget null (focus lost to a non-
+  // focusable target) is also "outside" and closes, matching outside-click.
+  function onFocusOut(e) { if (!wrap.contains(e.relatedTarget)) close(); }
   return wrap;
 }
 

@@ -25,13 +25,16 @@ function sevTitle(sev) {
 function deltaChip(current, previous) {
   if (previous === null || previous === undefined || Number.isNaN(previous)) return null;
   const delta = current - previous;
-  if (!delta) return el("span", { class: "sev-delta flat" }, "±0");
+  if (!delta) return el("span", { class: "sev-delta flat", "aria-label": "unchanged" }, "±0");
   const rising = delta > 0;
   const arrow = rising ? "▲" : "▼";
   const sign = rising ? "+" : "−";
   const mag = Math.abs(delta).toLocaleString();
   const pct = previous ? Math.round(Math.abs((delta / previous) * 100)) : null;
-  return el("span", { class: `sev-delta ${rising ? "bad" : "good"}` },
+  // The ▲/▼ glyph is decorative; restate direction in words so this reads in the same
+  // vocabulary as changeChip for assistive tech.
+  const aria = `${rising ? "up" : "down"} ${mag}${pct !== null ? `, ${pct} percent` : ""}`;
+  return el("span", { class: `sev-delta ${rising ? "bad" : "good"}`, "aria-label": aria },
     el("span", { "aria-hidden": "true" }, arrow), ` ${sign}${mag}`,
     pct !== null ? el("span", { class: "sev-delta-pct" }, ` · ${sign}${pct}%`) : null,
   );
@@ -491,13 +494,12 @@ export async function renderOverview(main, params, ctx) {
 
   // ----------------------------------------------------------------------- helpers
 
-  /** Proportional severity-mix bar. Color is paired with the textual counts the
-   *  caller renders beside it (mixText) and an aria-label — never color alone. */
+  /** Proportional severity-mix bar. Decorative: the exact counts are carried by the visible
+   *  .mix-text span the caller renders beside it, so the strip is aria-hidden to avoid a
+   *  double announcement. Color is never the sole cue. */
   function mixStrip(sevCounts) {
     const total = boot.palette.order.reduce((a, s) => a + (sevCounts[s] || 0), 0);
-    const strip = el("div", {
-      class: "mix-strip", role: "img", "aria-label": mixText(sevCounts) || "no findings",
-    });
+    const strip = el("div", { class: "mix-strip", "aria-hidden": "true" });
     if (!total) return strip;
     for (const s of boot.palette.order) {
       if (!sevCounts[s]) continue;

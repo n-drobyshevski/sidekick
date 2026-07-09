@@ -2,7 +2,7 @@
 
 import { call } from "../api.js";
 import { bootstrap } from "../store.js";
-import { confirmDialog, el, sectionLabel, toast } from "../ui.js";
+import { clear, confirmDialog, el, sectionLabel, statusPill, toast } from "../ui.js";
 import { renderDomainsEditor } from "./domainsEditor.js";
 
 export async function renderSettings(main, _params, ctx) {
@@ -18,7 +18,8 @@ export async function renderSettings(main, _params, ctx) {
     "Which severities each scan pulls from Wiz. Narrower scope = faster scans; " +
     "severities outside the scope pause their lifecycle tracking."));
   const fetchPills = pillGroup(boot.palette.selectable, [...boot.settings.fetchSeverities],
-    { onChange: syncDisplayCoupling });
+    { ariaLabel: "Severities each scan pulls",
+      onChange: () => { syncDisplayCoupling(); refreshScopeDirty(); } });
   main.append(fetchPills.node);
 
   // ------------------------------------------------------------- display filter
@@ -26,16 +27,31 @@ export async function renderSettings(main, _params, ctx) {
   main.append(el("p", { class: "muted small" },
     "Which severities every page shows — always a subset of the scan scope. A severity " +
     "outside the scan scope is locked here until you add it above."));
-  const displayPills = pillGroup(boot.palette.selectable, [...boot.settings.displaySeverities]);
+  const displayPills = pillGroup(boot.palette.selectable, [...boot.settings.displaySeverities],
+    { ariaLabel: "Severities every page shows", onChange: () => refreshScopeDirty() });
   main.append(displayPills.node);
   syncDisplayCoupling(); // enforce display ⊆ fetch on first paint
 
-  const saveScopeBtn = el("button", { class: "primary", onclick: saveScope }, "Save severity scope");
-  main.append(el("div", { style: "margin-top:12px" }, saveScopeBtn));
+  // Snapshot the normalized scope so pill edits show an "Unsaved changes" cue and a sibling
+  // save can warn before ctx.refresh() discards them — symmetric with the domains editor.
+  const scopeSnap = () =>
+    JSON.stringify([[...fetchPills.selected].sort(), [...displayPills.selected].sort()]);
+  const scopeSaved = scopeSnap();
+  const scopeDirty = () => scopeSnap() !== scopeSaved;
+  const scopeDirtyHost = el("span", {});
+  function refreshScopeDirty() {
+    clear(scopeDirtyHost);
+    if (scopeDirty()) scopeDirtyHost.append(statusPill("warn", "Unsaved changes"));
+  }
 
-  function pillGroup(options, selected, { onChange } = {}) {
+  const saveScopeBtn = el("button", { class: "primary", onclick: saveScope }, "Save severity scope");
+  main.append(el("div",
+    { style: "display:flex; align-items:center; gap:10px; margin-top:12px" },
+    saveScopeBtn, scopeDirtyHost));
+
+  function pillGroup(options, selected, { onChange, ariaLabel } = {}) {
     const pills = {};
-    const node = el("div", { class: "pill-row", role: "group" });
+    const node = el("div", { class: "pill-row", role: "group", "aria-label": ariaLabel });
     for (const sev of options) {
       const btn = el("button", {
         class: `sev-pill sev-${sev}`, type: "button",
@@ -75,22 +91,26 @@ export async function renderSettings(main, _params, ctx) {
     }
   }
 
-  // Sibling saves (scope / retention / support groups / compaction) all call ctx.refresh(),
-  // which rebuilds the page and throws away the domains editor's in-memory draft. Warn first
-  // so unsaved value-chain edits aren't lost silently.
-  async function guardDomainsDraft() {
-    if (!domainsEditor || !domainsEditor.isDirty()) return true;
+  // Every save on this page calls ctx.refresh(), which rebuilds the page and throws away the
+  // in-memory severity-scope and domains drafts. Warn first. `ignore*` skips the draft the
+  // current save owns (saving scope shouldn't warn about scope; saving domains, about domains).
+  async function guardUnsavedDrafts({ ignoreDomains = false, ignoreScope = false } = {}) {
+    const domainsBad = !ignoreDomains && domainsEditor && domainsEditor.isDirty();
+    const scopeBad = !ignoreScope && scopeDirty();
+    if (!domainsBad && !scopeBad) return true;
+    const what = domainsBad && scopeBad ? "domains and severity scope"
+      : domainsBad ? "domains" : "the severity scope";
     return confirmDialog({
-      title: "Discard unsaved domain changes?",
-      body: "The Domains editor has unsaved edits. Saving here reloads the page and discards " +
-        "them — save your domains first to keep them.",
+      title: "Discard unsaved changes?",
+      body: `This page has unsaved changes to ${what}. Saving here reloads the page and ` +
+        "discards them — save those first to keep them.",
       confirmLabel: "Discard & continue",
       danger: true,
     });
   }
 
   async function saveScope() {
-    if (!(await guardDomainsDraft())) return;
+    if (!(await guardUnsavedDrafts({ ignoreScope: true }))) return;
     if (!fetchPills.selected.length) {
       toast("At least one severity must stay in the scan scope.", "warn");
       return;
@@ -142,7 +162,7 @@ export async function renderSettings(main, _params, ctx) {
   }
 
   async function refreshSupportGroups() {
-    if (!(await guardDomainsDraft())) return;
+    if (!(await guardUnsavedDrafts())) return;
     refreshSgBtn.disabled = true;
     sgStatus.textContent = "Refreshing from Wiz…";
     try {
@@ -166,7 +186,9 @@ export async function renderSettings(main, _params, ctx) {
     "subscription, or support group. Order is priority — the first matching domain wins."));
   const domainsHost = el("div", {});
   main.append(domainsHost);
-  const domainsEditor = renderDomainsEditor(domainsHost, boot, ctx);
+  // Saving domains also reloads the page, so it must warn about unsaved severity-scope edits.
+  const domainsEditor = renderDomainsEditor(domainsHost, boot, ctx,
+    { guardOtherDrafts: () => guardUnsavedDrafts({ ignoreDomains: true }) });
 
   // ------------------------------------------------------------- data retention
   main.append(sectionLabel("Data retention"));
@@ -185,6 +207,7 @@ export async function renderSettings(main, _params, ctx) {
   const autoCompact = el("input", { type: "checkbox", id: "auto-compact",
     checked: r.autoCompact ? true : null });
   const saveRetentionBtn = el("button", { class: "primary", onclick: saveRetention }, "Save retention");
+  const compactBtn = el("button", { onclick: compactNow }, "Compact now…");
 
   main.append(
     el("div", { class: "card", style: "display:flex; flex-direction:column; gap:10px" },
@@ -197,13 +220,13 @@ export async function renderSettings(main, _params, ctx) {
         autoCompact, "Compact automatically after each scan"),
       el("div", { style: "display:flex; gap:8px" },
         saveRetentionBtn,
-        el("button", { onclick: compactNow }, "Compact now…"),
+        compactBtn,
       ),
     ),
   );
 
   async function saveRetention() {
-    if (!(await guardDomainsDraft())) return;
+    if (!(await guardUnsavedDrafts())) return;
     if (retentionToggle.checked) {
       const days = Number(retentionDays.value);
       if (!Number.isFinite(days) || days < 30) {
@@ -211,12 +234,14 @@ export async function renderSettings(main, _params, ctx) {
         return;
       }
     }
-    saveRetentionBtn.disabled = true; // block a double-submit across the two sequential calls
+    saveRetentionBtn.disabled = true;
     try {
-      await call("api_setRetention", {
+      // One atomic write — no partial-commit window where retention persists but auto-compact
+      // fails while the toast says "Save failed".
+      await call("api_setRetentionSettings", {
         days: retentionToggle.checked ? Number(retentionDays.value) : null,
+        autoCompact: autoCompact.checked,
       });
-      await call("api_setAutoCompact", { on: autoCompact.checked });
       toast("Retention settings saved.");
       ctx.refresh();
     } catch (e) {
@@ -226,36 +251,41 @@ export async function renderSettings(main, _params, ctx) {
   }
 
   async function compactNow() {
-    if (!(await guardDomainsDraft())) return;
-    let preview;
+    if (!(await guardUnsavedDrafts())) return;
+    compactBtn.disabled = true; // guard against a double-click stacking two preview dialogs
     try {
-      preview = await call("api_compact", { dryRun: true });
-    } catch (e) {
-      toast(`Preview failed: ${e.message}`, "error");
-      return;
-    }
-    if (preview.no_op) {
-      toast("Nothing is old enough to compact.");
-      return;
-    }
-    const ok = await confirmDialog({
-      title: "Compact old scans?",
-      body: el("div", {},
-        el("p", {}, `${preview.scans_sealed} scan(s) will be sealed and ` +
-          `${preview.episodes_created} closed finding(s) rolled into episode rows. ` +
-          `${preview.observations_pruned} observation(s) and their raw archives are pruned.`),
-        el("p", { class: "small muted" },
-          `Floor: ${preview.floor_ts ?? "—"}. MTTR, SLA, and trends are verified ` +
-          `unchanged before the compaction commits.`)),
-      confirmLabel: "Compact",
-    });
-    if (!ok) return;
-    try {
-      const res = await call("api_compact", { dryRun: false });
-      toast(`Compacted ${res.scans_sealed} scan(s) — ${res.episodes_created} episode(s) created.`);
-      ctx.refresh();
-    } catch (e) {
-      toast(`Compaction failed: ${e.message}`, "error");
+      let preview;
+      try {
+        preview = await call("api_compact", { dryRun: true });
+      } catch (e) {
+        toast(`Preview failed: ${e.message}`, "error");
+        return;
+      }
+      if (preview.no_op) {
+        toast("Nothing is old enough to compact.");
+        return;
+      }
+      const ok = await confirmDialog({
+        title: "Compact old scans?",
+        body: el("div", {},
+          el("p", {}, `${preview.scans_sealed} scan(s) will be sealed and ` +
+            `${preview.episodes_created} closed finding(s) rolled into episode rows. ` +
+            `${preview.observations_pruned} observation(s) and their raw archives are pruned.`),
+          el("p", { class: "small muted" },
+            `Floor: ${preview.floor_ts ?? "—"}. MTTR, SLA, and trends are verified ` +
+            `unchanged before the compaction commits.`)),
+        confirmLabel: "Compact",
+      });
+      if (!ok) return;
+      try {
+        const res = await call("api_compact", { dryRun: false });
+        toast(`Compacted ${res.scans_sealed} scan(s) — ${res.episodes_created} episode(s) created.`);
+        ctx.refresh();
+      } catch (e) {
+        toast(`Compaction failed: ${e.message}`, "error");
+      }
+    } finally {
+      compactBtn.disabled = false;
     }
   }
 

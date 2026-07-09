@@ -873,6 +873,23 @@ export function setAutoCompact(p?: unknown): ApiResult {
   });
 }
 
+/** Atomic combined write of retention window + auto-compact — the client sets both at once,
+ *  so this avoids the partial-commit window two separate calls left. */
+export function setRetentionSettings(p?: unknown): ApiResult {
+  const params = (p ?? {}) as Rec;
+  const days = params["days"];
+  return mutate(() => {
+    settingsStore.setRetentionAndCompact(
+      days === null || days === undefined ? null : Number(days),
+      Boolean(params["autoCompact"]),
+    );
+    return {
+      retentionDays: settingsStore.getRetentionDays(),
+      autoCompact: settingsStore.getAutoCompact(),
+    };
+  });
+}
+
 export function getDomains(_p?: unknown): ApiResult {
   return run(() => settingsStore.getDomains());
 }

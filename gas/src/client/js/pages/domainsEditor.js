@@ -7,7 +7,7 @@ import { call } from "../api.js";
 import { EXPORT_KIND, parseDomainsImport } from "../domainsImport.js";
 import { clear, confirmDialog, downloadText, el, statusPill, toast } from "../ui.js";
 
-export function renderDomainsEditor(host, boot, ctx) {
+export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
   let items = JSON.parse(JSON.stringify(boot.settings.domains.items || []));
   // Snapshot the persisted list so we can show an "unsaved changes" cue and let the parent
   // Settings page warn before a sibling save reboots the page and discards this draft.
@@ -121,6 +121,8 @@ export function renderDomainsEditor(host, boot, ctx) {
   }
 
   async function save() {
+    // Saving domains reloads the page too, so warn about any sibling unsaved edits first.
+    if (hooks.guardOtherDrafts && !(await hooks.guardOtherDrafts())) return;
     saveBtn.disabled = true;
     try {
       const res = await call("api_saveDomains", { items });

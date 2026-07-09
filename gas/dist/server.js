@@ -1099,6 +1099,7 @@ var Server = (() => {
     saveDomains: () => saveDomains,
     setAutoCompact: () => setAutoCompact2,
     setRetention: () => setRetention,
+    setRetentionSettings: () => setRetentionSettings,
     setSeverities: () => setSeverities
   });
 
@@ -3807,6 +3808,9 @@ var Server = (() => {
   function setAutoCompact(enabled) {
     saveSettings(withAutoCompact(loadSettings(), enabled));
   }
+  function setRetentionAndCompact(days, enabled) {
+    saveSettings(withAutoCompact(withRetentionDays(loadSettings(), days), enabled));
+  }
   function setDomains(items) {
     saveSettings(withDomains(loadSettings(), items));
   }
@@ -5343,6 +5347,20 @@ var Server = (() => {
     return mutate(() => {
       setAutoCompact(Boolean(p == null ? void 0 : p["on"]));
       return { autoCompact: getAutoCompact2() };
+    });
+  }
+  function setRetentionSettings(p) {
+    const params = p != null ? p : {};
+    const days = params["days"];
+    return mutate(() => {
+      setRetentionAndCompact(
+        days === null || days === void 0 ? null : Number(days),
+        Boolean(params["autoCompact"])
+      );
+      return {
+        retentionDays: getRetentionDays2(),
+        autoCompact: getAutoCompact2()
+      };
     });
   }
   function getDomains3(_p) {

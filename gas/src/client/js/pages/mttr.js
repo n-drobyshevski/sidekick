@@ -36,7 +36,7 @@ export async function renderMttr(main, _params, ctx) {
   if (scopeChips) main.append(scopeChips);
 
   const heroHost = el("div", {});
-  const chartsHost = el("div", { class: "chart-grid" });
+  const chartsHost = el("div", {});
   const slaHost = el("div", {});
   const byDomainHost = el("div", {});
   main.append(heroHost, chartsHost, slaHost, byDomainHost);
@@ -116,15 +116,20 @@ export async function renderMttr(main, _params, ctx) {
     const median = mttr.overall.mttr_median;
     const hist = trends.history;
     const prev = hist.length > 1 ? hist[hist.length - 2] : null;
+    // The prev snapshot (mttr_history) is global across chain/support/severity, while the
+    // current values are scoped by the active filters. Diffing them would show a fake delta
+    // (a small domain's 5d vs the global 45d prev reads as "−40d"), so only show the change
+    // chips at the unscoped whole-chain / all-severities view where the populations match.
+    const scoped = scopeParam() !== null || domain || supportGroup;
 
     const minis = el("div", { class: "hero-minis" });
     const miniDefs = [
       ["In SLA", mttr.slaPct !== null ? `${mttr.slaPct.toFixed(1)}%` : "—",
-        prev && prev.sla_pct !== null && mttr.slaPct !== null
+        !scoped && prev && prev.sla_pct !== null && mttr.slaPct !== null
           ? changeChip(mttr.slaPct, prev.sla_pct, { invert: true, suffix: "%" }) : null],
       // p90 of open-finding age, not the single oldest — labelled to match the table below.
       ["Open age p90", fmtDays(mttr.oldestDays),
-        prev && prev.oldest_open_days !== null && mttr.oldestDays !== null
+        !scoped && prev && prev.oldest_open_days !== null && mttr.oldestDays !== null
           ? changeChip(mttr.oldestDays, prev.oldest_open_days, { fmt: fmtDays }) : null],
       ["Resolved", (mttr.overall.resolved ?? 0).toLocaleString(), null],
       ["Open", (mttr.overall.open ?? 0).toLocaleString(), null],
@@ -140,7 +145,8 @@ export async function renderMttr(main, _params, ctx) {
         el("div", { class: "label" }, "Median MTTR" + (domain ? ` — ${domain}` : "")),
         el("div", { class: "hero-value num" },
           median !== null && median !== undefined ? fmtDays(median) : "—",
-          prev && median !== null ? changeChip(median, prev.median_days, { fmt: fmtDays }) : null,
+          !scoped && prev && median !== null
+            ? changeChip(median, prev.median_days, { fmt: fmtDays }) : null,
         ),
         el("div", { class: "hero-src" },
           `${mttr.rowCount.toLocaleString()} tracked lifecycle(s) in the durable base`),
@@ -164,22 +170,25 @@ export async function renderMttr(main, _params, ctx) {
     // A "trend" needs at least two points — one lone dot is not a trajectory. This matches the
     // Open-vs-resolved gate and the "after two saved scans" copy below.
     const hasTrend = points.length > 1;
+    const grid = el("div", { class: "chart-grid", style: "align-items:start" });
     if (hasTrend) {
-      chartsHost.append(el("div", { class: "chart-card" },
+      grid.append(el("div", { class: "chart-card" },
         el("h3", {}, "MTTR trend"),
         el("div", { class: "chart-box" }, mttrCanvas)));
     }
     if (trends.trend.length > 1) {
-      chartsHost.append(el("div", { class: "chart-card" },
+      grid.append(el("div", { class: "chart-card" },
         el("h3", {}, "Open vs resolved"),
         el("div", { class: "chart-box" }, openResolvedCanvas)));
     }
-    if (!chartsHost.hasChildNodes()) {
+    if (!grid.hasChildNodes()) {
       chartsHost.append(emptyState("Trends appear after two saved scans."));
       return;
     }
+    // A labelled section so the page has no h1 → h3 heading skip (the cards are h3).
+    chartsHost.append(sectionLabel("Trends"), grid);
     if (domain) {
-      chartsHost.append(el("p", { class: "small muted", style: "grid-column:1/-1; margin:0" },
+      chartsHost.append(el("p", { class: "small muted", style: "margin:0" },
         "Trends span every value chain — per-chain history isn't stored."));
     }
 
@@ -238,8 +247,8 @@ export async function renderMttr(main, _params, ctx) {
             el("span", {}, sevBadge(sev), ` target ${d.sla_target}d`),
             el("span", { class: "num" }, `${d.sla_pct.toFixed(1)}% — ${stateWord}`),
           ),
-          el("div", { class: "sla-track", role: "img",
-            "aria-label": `${sev}: ${d.sla_pct.toFixed(1)} percent within SLA (${stateWord})` },
+          // Decorative — the .sla-line above already states the percent + verdict in text.
+          el("div", { class: "sla-track", "aria-hidden": "true" },
             el("div", { class: `sla-fill ${state}`, style: `width:${Math.min(d.sla_pct, 100)}%` }),
           ),
         ),

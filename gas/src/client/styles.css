@@ -38,6 +38,7 @@
      veil reliably absorbs clicks even over an open menu; sheets and toasts sit above it. */
   --z-popover: 30;
   --z-overlay: 40;
+  --z-topbar: 45; /* mobile top-bar: above the route overlay, below sheets/toasts */
   --z-scrim: 50;
   --z-sheet: 51;
   --z-toast: 60;
@@ -318,6 +319,9 @@ main {
     border-bottom: 1px solid var(--hairline);
   }
   .sidebar .scan-zone { margin-top: 0; border-top: none; padding-top: 0; }
+  /* The top bar must stay above the full-width route overlay so nav + scan controls remain
+     visible and clickable during a reload (desktop clears the rail via left:var(--rail-w)). */
+  .sidebar { position: relative; z-index: var(--z-topbar); }
   main { height: auto; overflow: visible; padding: 20px 16px 40px; }
   /* Sidebar is a top bar here, so the veil spans the full width. Pin it to the
      viewport since #app is no longer a fixed-height positioning frame. */
@@ -629,6 +633,11 @@ a { color: var(--accent); }
   background: var(--page); border-bottom: 1px solid var(--hairline);
 }
 .history-table th { top: 53px; }
+/* Above the mobile breakpoint, take the history table out of its own scroll context so the
+   sticky <th> reference becomes `main` (which scrolls). A wide table still scrolls inside the
+   content pane via main's own overflow. At <=800px the inherited .table-wrap contained scroll
+   stays (the fixed-viewport shell is off there and sticky headers aren't expected). */
+@media (min-width: 801px) { .history-table-wrap { overflow: visible; } }
 .th-sort {
   background: none; border: none; box-shadow: none; padding: 0; min-height: 0;
   font: inherit; font-size: 11px; font-weight: 600; letter-spacing: 0.05em;

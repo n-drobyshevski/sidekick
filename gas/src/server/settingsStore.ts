@@ -66,6 +66,11 @@ export function setRetentionDays(days: number | null): void {
 export function setAutoCompact(enabled: boolean): void {
   saveSettings(logic.withAutoCompact(loadSettings(), enabled));
 }
+/** Set both retention-window and auto-compact in a single load+save so the write is atomic
+ *  (no partial-commit window if the client changes both at once). */
+export function setRetentionAndCompact(days: number | null, enabled: boolean): void {
+  saveSettings(logic.withAutoCompact(logic.withRetentionDays(loadSettings(), days), enabled));
+}
 export function setDomains(items: unknown): void {
   saveSettings(logic.withDomains(loadSettings(), items));
 }
