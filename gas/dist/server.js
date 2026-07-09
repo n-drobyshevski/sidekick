@@ -2830,7 +2830,7 @@ var Server = (() => {
     const age = row.age_days;
     return typeof age === "number" && Number.isFinite(age) ? age : null;
   }
-  function rankGroups(rows, keyFn, topN) {
+  function rankGroups(rows, keyFn, topN, meta) {
     const groups = /* @__PURE__ */ new Map();
     for (const row of rows) {
       const age = openAge(row);
@@ -2838,7 +2838,7 @@ var Server = (() => {
       const raw = keyFn(row);
       const key = raw && raw.trim() !== "" ? raw : "(none)";
       let g = groups.get(key);
-      if (!g) groups.set(key, g = { key, agedCount: 0, openCount: 0, oldestDays: 0 });
+      if (!g) groups.set(key, g = { key, agedCount: 0, openCount: 0, oldestDays: 0, ...meta ? meta(row) : {} });
       g.openCount += 1;
       if (age > AGED_OPEN_EDGE) g.agedCount += 1;
       if (age > g.oldestDays) g.oldestDays = age;
@@ -2849,6 +2849,7 @@ var Server = (() => {
     const findings = rows.map((r) => ({ r, age: openAge(r) })).filter((x) => x.age !== null).sort((a, b) => b.age - a.age).slice(0, topN).map(({ r, age }) => ({
       cve: r.cve,
       asset: r.asset_name,
+      subscription: r.subscription_name,
       severity: normalizeSeverity(r.severity),
       ageDays: age
     }));
@@ -2857,7 +2858,13 @@ var Server = (() => {
       byAsset: rankGroups(rows, (r) => {
         var _a;
         return String((_a = r.asset_name) != null ? _a : "");
-      }, topN),
+      }, topN, (r) => {
+        var _a, _b;
+        return {
+          subscription: String((_a = r.subscription_name) != null ? _a : ""),
+          domain: String((_b = r._domain) != null ? _b : "")
+        };
+      }),
       bySupportGroup: rankGroups(rows, (r) => {
         var _a;
         return String((_a = r._supportGroup) != null ? _a : "");
