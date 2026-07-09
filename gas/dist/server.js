@@ -2824,6 +2824,50 @@ var Server = (() => {
     }
     return { perSev, totalOpen };
   }
+  var AGED_OPEN_EDGE = AGE_BUCKET_EDGES[2];
+  function openAge(row) {
+    if (!isOpen(row.status)) return null;
+    const age = row.age_days;
+    return typeof age === "number" && Number.isFinite(age) ? age : null;
+  }
+  function rankGroups(rows, keyFn, topN) {
+    const groups = /* @__PURE__ */ new Map();
+    for (const row of rows) {
+      const age = openAge(row);
+      if (age === null) continue;
+      const raw = keyFn(row);
+      const key = raw && raw.trim() !== "" ? raw : "(none)";
+      let g = groups.get(key);
+      if (!g) groups.set(key, g = { key, agedCount: 0, openCount: 0, oldestDays: 0 });
+      g.openCount += 1;
+      if (age > AGED_OPEN_EDGE) g.agedCount += 1;
+      if (age > g.oldestDays) g.oldestDays = age;
+    }
+    return [...groups.values()].sort((a, b) => b.agedCount - a.agedCount || b.oldestDays - a.oldestDays || a.key.localeCompare(b.key)).slice(0, topN);
+  }
+  function oldestOpen(rows, topN = 7) {
+    const findings = rows.map((r) => ({ r, age: openAge(r) })).filter((x) => x.age !== null).sort((a, b) => b.age - a.age).slice(0, topN).map(({ r, age }) => ({
+      cve: r.cve,
+      asset: r.asset_name,
+      severity: normalizeSeverity(r.severity),
+      ageDays: age
+    }));
+    return {
+      findings,
+      byAsset: rankGroups(rows, (r) => {
+        var _a;
+        return String((_a = r.asset_name) != null ? _a : "");
+      }, topN),
+      bySupportGroup: rankGroups(rows, (r) => {
+        var _a;
+        return String((_a = r._supportGroup) != null ? _a : "");
+      }, topN),
+      byDomain: rankGroups(rows, (r) => {
+        var _a;
+        return String((_a = r._domain) != null ? _a : "");
+      }, topN)
+    };
+  }
   function movement(baseRows2, latestFlatScan, scanCount) {
     if (!latestFlatScan) {
       return { newCount: 0, resolvedCount: 0, reopenedCount: 0, persisting: 0, hasPrevious: scanCount > 1 };
@@ -4817,8 +4861,10 @@ var Server = (() => {
     const sgMatch = supportGroupPredicate(supportGroup, supportGroupSet);
     let recs = scan.records;
     let base = loadBaseRows();
+    attachSupportGroups(base);
+    const compiled = compileDomains(getDomains2().items);
+    for (const r of base) r["_domain"] = assignDomain(r, compiled);
     if (domain || sgActive) {
-      attachSupportGroups(base);
       if (sgActive) {
         recs = recs.filter((r) => {
           var _a2;
@@ -4834,8 +4880,10 @@ var Server = (() => {
           var _a2;
           return String((_a2 = r["_domain"]) != null ? _a2 : UNASSIGNED) === domain;
         });
-        const compiled = compileDomains(getDomains2().items);
-        base = base.filter((r) => assignDomain(r, compiled) === domain);
+        base = base.filter((r) => {
+          var _a2;
+          return String((_a2 = r["_domain"]) != null ? _a2 : UNASSIGNED) === domain;
+        });
       }
     }
     const severities = readSeverities(p);
@@ -4863,6 +4911,9 @@ var Server = (() => {
       ),
       exploit: exploitSummary(recs),
       aging: ageBuckets(base),
+      // Top oldest open findings + 90+ backlog per asset / support group / domain,
+      // for the aging panel's toggle (repaints client-side, no extra RPC).
+      oldest: oldestOpen(base),
       movement: movement(base, latestFlat, loadScanRows().length)
     };
   }

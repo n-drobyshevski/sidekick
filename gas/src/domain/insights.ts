@@ -119,6 +119,94 @@ export function ageBuckets(rows: Pick<BaseRow, "severity" | "status" | "age_days
   return { perSev, totalOpen };
 }
 
+// Open findings older than this many days are the "aged" backlog the grouped
+// oldest-views rank by — the 90+ tail of the age buckets above.
+export const AGED_OPEN_EDGE = AGE_BUCKET_EDGES[2];
+
+export interface OldestFinding {
+  cve: string | null;
+  asset: string | null;
+  severity: string; // normalized
+  ageDays: number;
+}
+
+export interface OldestGroup {
+  key: string; // the group value ("(none)" for blank/missing)
+  agedCount: number; // open findings older than AGED_OPEN_EDGE days
+  openCount: number; // all open findings in the group
+  oldestDays: number; // age of the group's single oldest open finding
+}
+
+export interface OldestOpen {
+  findings: OldestFinding[];
+  byAsset: OldestGroup[];
+  bySupportGroup: OldestGroup[];
+  byDomain: OldestGroup[];
+}
+
+type OldestRow = Pick<BaseRow, "cve" | "severity" | "status" | "asset_name" | "age_days"> & {
+  _domain?: unknown;
+  _supportGroup?: unknown;
+};
+
+/** Finite age of an open row, or null when resolved / missing (skipped by callers). */
+function openAge(row: OldestRow): number | null {
+  if (!isOpen(row.status)) return null;
+  const age = row.age_days;
+  return typeof age === "number" && Number.isFinite(age) ? age : null;
+}
+
+/**
+ * Rank the busiest-aging groups: bucket open rows (with a finite age) by keyFn,
+ * count the 90+ tail and the total open, track the single oldest, then order by
+ * aged tail desc, oldest age desc, key asc. Empty groups never form (only open
+ * rows are added); the result is capped to topN.
+ */
+function rankGroups(rows: OldestRow[], keyFn: (r: OldestRow) => string, topN: number): OldestGroup[] {
+  const groups = new Map<string, OldestGroup>();
+  for (const row of rows) {
+    const age = openAge(row);
+    if (age === null) continue;
+    const raw = keyFn(row);
+    const key = raw && raw.trim() !== "" ? raw : "(none)";
+    let g = groups.get(key);
+    if (!g) groups.set(key, (g = { key, agedCount: 0, openCount: 0, oldestDays: 0 }));
+    g.openCount += 1;
+    if (age > AGED_OPEN_EDGE) g.agedCount += 1;
+    if (age > g.oldestDays) g.oldestDays = age;
+  }
+  return [...groups.values()]
+    .sort((a, b) => b.agedCount - a.agedCount || b.oldestDays - a.oldestDays || a.key.localeCompare(b.key))
+    .slice(0, topN);
+}
+
+/**
+ * The oldest open findings for the aging panel's four toggle views. `findings` is the
+ * top-N individual open findings by age; `byAsset` / `bySupportGroup` / `byDomain` rank
+ * those entities by their 90+ day open backlog (see rankGroups). Consumes ledger base
+ * rows (age_days is durable); grouped views expect _domain / _supportGroup pre-attached
+ * by the server (asset_name is native to the row).
+ */
+export function oldestOpen(rows: OldestRow[], topN = 7): OldestOpen {
+  const findings: OldestFinding[] = rows
+    .map((r) => ({ r, age: openAge(r) }))
+    .filter((x): x is { r: OldestRow; age: number } => x.age !== null)
+    .sort((a, b) => b.age - a.age)
+    .slice(0, topN)
+    .map(({ r, age }) => ({
+      cve: r.cve,
+      asset: r.asset_name,
+      severity: normalizeSeverity(r.severity),
+      ageDays: age,
+    }));
+  return {
+    findings,
+    byAsset: rankGroups(rows, (r) => String(r.asset_name ?? ""), topN),
+    bySupportGroup: rankGroups(rows, (r) => String(r._supportGroup ?? ""), topN),
+    byDomain: rankGroups(rows, (r) => String(r._domain ?? ""), topN),
+  };
+}
+
 export interface Movement {
   newCount: number;
   resolvedCount: number;

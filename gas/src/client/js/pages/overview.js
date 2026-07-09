@@ -19,6 +19,11 @@ function sevTitle(sev) {
   return sev.charAt(0) + sev.slice(1).toLowerCase();
 }
 
+// Whole-day label for an age in days ("412d"). The server ships fractional day counts.
+function fmtDays(n) {
+  return `${Math.round(n).toLocaleString()}d`;
+}
+
 /** Streamlit-style signed delta chip vs a previous value: arrow + absolute change +
  *  "· ±N%". A rising count is worse (red), falling is better (green), unchanged shows a
  *  neutral ±0. Returns null when there's no previous value to compare against. */
@@ -51,6 +56,16 @@ const GROUP_DIMENSIONS = [
   ["os", "Operating system"],
   ["subscription", "Subscription"],
   ["cve", "CVE"],
+];
+
+// Oldest-open panel toggle views: [payload key, label]. "findings" lists individual
+// findings; the rest key insights.oldest.{byAsset,bySupportGroup,byDomain} and rank each
+// entity by its 90+ day open backlog.
+const OLDEST_VIEWS = [
+  ["findings", "Findings"],
+  ["byAsset", "Assets"],
+  ["bySupportGroup", "Support groups"],
+  ["byDomain", "Domains"],
 ];
 
 export async function renderOverview(main, params, ctx) {
@@ -286,16 +301,108 @@ export async function renderOverview(main, params, ctx) {
       return;
     }
     const canvas = el("canvas", { id: "aging-chart" });
-    insightsHost.append(el("div", { class: "chart-card" },
+    const chartCard = el("div", { class: "chart-card" },
       el("h3", {}, "How long open findings have been open"),
       el("div", { class: "small muted", style: "margin-bottom:8px" },
         `${insights.aging.totalOpen.toLocaleString()} still-open findings from the durable ` +
         "ledger, bucketed by age since first seen."),
       el("div", { class: "chart-box" }, canvas),
+    );
+    // Two columns like the Severity breakdown: the age histogram (left) beside a ranked
+    // table of the actual stale items (right), toggling between individual findings and
+    // the 90+ backlog per asset / support group / domain. align-items:stretch keeps the
+    // two cards the same height as each other whichever view (3–7 rows) is showing.
+    insightsHost.append(el("div", { class: "chart-grid", style: "align-items:stretch" },
+      chartCard,
+      renderOldestPanel(insights.oldest),
     ));
     requestAnimationFrame(() => {
       stackedAgeBar(canvas, AGE_LABELS, insights.aging.perSev, boot.palette);
     });
+  }
+
+  /** Right-column panel for the aging section: a segmented toggle over the oldest-open
+   *  views with a ranked table beneath. Repaints from the already-loaded payload, no RPC. */
+  function renderOldestPanel(oldest) {
+    let view = "findings";
+    const toggle = el("div", { class: "filter-bar", role: "group", "aria-label": "Oldest open findings view" });
+    const tableHost = el("div", {});
+    const caption = el("p", { class: "chart-caption muted" });
+    for (const [value, label] of OLDEST_VIEWS) {
+      const btn = el("button", {
+        class: "seg-btn", type: "button",
+        "aria-pressed": view === value ? "true" : "false",
+        onclick: () => {
+          if (view === value) return;
+          view = value;
+          toggle.querySelectorAll("button.seg-btn").forEach((b) =>
+            b.setAttribute("aria-pressed", b === btn ? "true" : "false"));
+          paint();
+        },
+      }, label);
+      toggle.append(btn);
+    }
+
+    function paint() {
+      const individual = view === "findings";
+      caption.textContent = individual
+        ? "Top 7 longest-open findings."
+        : "Top 7 by open findings older than 90 days.";
+      clear(tableHost).append(individual
+        ? oldestFindingsTable(oldest.findings)
+        : oldestGroupTable(oldest[view] || [], OLDEST_VIEWS.find(([v]) => v === view)[1]));
+    }
+
+    paint();
+    return el("div", { class: "chart-card" },
+      el("h3", {}, "Oldest open findings"),
+      toggle, tableHost, caption);
+  }
+
+  /** Ranked table of individual oldest open findings (CVE · Asset · Severity · Age). */
+  function oldestFindingsTable(rows) {
+    if (!rows || !rows.length) return emptyState("No open findings to rank.");
+    const body = el("tbody", {});
+    for (const r of rows) {
+      const cve = r.cve && r.cve !== "(none)"
+        ? el("a", { href: nvdUrl(r.cve), target: "_blank", rel: "noopener" }, r.cve)
+        : (r.cve || "—");
+      body.append(el("tr", {},
+        el("td", {}, cve),
+        el("td", {}, r.asset || "—"),
+        el("td", {}, el("span", { class: "sev-dot", "aria-hidden": "true",
+          style: `background:${boot.palette.colors[r.severity] || "var(--text-3)"}` }),
+          sevTitle(r.severity)),
+        el("td", { class: "num" }, fmtDays(r.ageDays)),
+      ));
+    }
+    return el("div", { class: "table-wrap" },
+      el("table", { class: "data" },
+        el("thead", {}, el("tr", {},
+          ...["CVE", "Asset", "Severity", "Age"].map((h) => el("th", { scope: "col" }, h)))),
+        body));
+  }
+
+  /** Ranked table of the 90+ day open backlog per group (Group · 90+ days · Open · Oldest). */
+  function oldestGroupTable(rows, dimLabel) {
+    if (!rows || !rows.length) return emptyState("No open findings to rank.");
+    const body = el("tbody", {});
+    for (const g of rows) {
+      body.append(el("tr", {},
+        el("td", {}, el("strong", {}, g.key)),
+        el("td", { class: "num" }, g.agedCount.toLocaleString()),
+        el("td", { class: "num" }, g.openCount.toLocaleString()),
+        el("td", { class: "num" }, fmtDays(g.oldestDays)),
+      ));
+    }
+    return el("div", { class: "table-wrap" },
+      el("table", { class: "data" },
+        el("thead", {}, el("tr", {},
+          el("th", { scope: "col" }, dimLabel),
+          el("th", { scope: "col" }, "90+ days"),
+          el("th", { scope: "col" }, "Open"),
+          el("th", { scope: "col" }, "Oldest"))),
+        body));
   }
 
   // ---------------------------------------------------------------------- movement
