@@ -301,7 +301,7 @@ export async function renderOverview(main, params, ctx) {
       return;
     }
     const canvas = el("canvas", { id: "aging-chart" });
-    const chartCard = el("div", { class: "chart-card" },
+    const chartCard = el("div", { class: "chart-card fill-height" },
       el("h3", {}, "How long open findings have been open"),
       el("div", { class: "small muted", style: "margin-bottom:8px" },
         `${insights.aging.totalOpen.toLocaleString()} still-open findings from the durable ` +
