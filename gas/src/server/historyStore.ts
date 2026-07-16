@@ -18,6 +18,7 @@ export interface HistoryPoint {
   total: number;
   sla_pct: number | null;
   oldest_open_days: number | null;
+  open_past_sla: number | null;
 }
 
 /** Upsert today's MTTR snapshot. Never throws — a history problem must not fail a scan. */
@@ -29,6 +30,7 @@ export function recordSnapshot(
   when: string | null = null,
   slaPct: number | null = null,
   oldestOpenDays: number | null = null,
+  openPastSla: number | null = null,
 ): boolean {
   try {
     const date = when ?? todayIso();
@@ -41,6 +43,7 @@ export function recordSnapshot(
       total: counts ? Object.values(counts).reduce((a, b) => a + b, 0) : 0,
       sla_pct: slaPct !== null ? Math.round(slaPct * 10) / 10 : null,
       oldest_open_days: oldestOpenDays !== null ? Math.round(oldestOpenDays * 1000) / 1000 : null,
+      open_past_sla: openPastSla === null ? null : Math.trunc(openPastSla),
     });
     records.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
     overwrite(TABS.mttrHistory, records as unknown as Rec[]);
@@ -84,6 +87,9 @@ export function loadHistory(): HistoryPoint[] {
       total: Number(r["total"] ?? 0),
       sla_pct: r["sla_pct"] === null ? null : Number(r["sla_pct"]),
       oldest_open_days: r["oldest_open_days"] === null ? null : Number(r["oldest_open_days"]),
+      // Pre-column rows have no cell here (empty → null, or header absent → undefined);
+      // both map to null so the chart draws a gap, never a fabricated zero.
+      open_past_sla: r["open_past_sla"] == null ? null : Number(r["open_past_sla"]),
     });
   }
   return out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));

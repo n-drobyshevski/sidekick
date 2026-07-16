@@ -1,12 +1,41 @@
 // MTTR & SLA — remediation performance from the durable ledger. Hero stat, trend
 // charts, per-severity SLA table, posture bars. Never fetches from Wiz.
 
-import { openResolvedLines, trendLine } from "../charts.js";
+import { openResolvedLines, stackedAgeBar, trendLine } from "../charts.js";
 import { bootstrap, swrCall } from "../store.js";
 import {
   changeChip, clear, el, emptyState, fmtDays, helpTip, scopeBar, sectionLabel, sevBadge,
   severityScopeFilter,
 } from "../ui.js";
+
+// Keep in sync with RESOLUTION_BUCKET_LABELS in src/domain/remediation.ts (the client
+// bundle can't import the TS domain module) — used only if an older cached payload
+// somehow carries buckets without labels.
+const RESOLUTION_LABELS = ["≤1d", "2–7d", "8–30d", "31–90d", "90+d"];
+
+// Open-past-SLA cell, shared by the hero mini and the per-severity table: "breached
+// (pct%)"; "0" when nothing is open (pct is null then, not a fake 0%); "—" when the
+// payload doesn't carry this metric at all (e.g. a stale pre-remediation cache).
+function fmtOpenPastSla(o) {
+  if (!o || o.open === null || o.open === undefined) return "—";
+  if (!o.open) return "0";
+  const pct = o.pct !== null && o.pct !== undefined ? `${o.pct.toFixed(0)}%` : "—";
+  return `${(o.breached ?? 0).toLocaleString()} (${pct})`;
+}
+
+// A helpTip'd label/value row for the Resolution profile stat card — reuses the
+// per-severity stat-card row classes (hairline divider + name/value) so the visual stays
+// identical to "Remediation by severity" below, just without the sev-dot.
+function statRow(label, value, lines) {
+  return helpTip(
+    [
+      el("span", { class: "stat-card__name" }, label),
+      el("span", { class: "stat-card__value num" }, value),
+    ],
+    lines,
+    { className: "stat-card__row help-label" },
+  );
+}
 
 export async function renderMttr(main, _params, ctx) {
   const boot = await bootstrap();
@@ -37,9 +66,10 @@ export async function renderMttr(main, _params, ctx) {
 
   const heroHost = el("div", {});
   const chartsHost = el("div", {});
+  const resolutionHost = el("div", {});
   const slaHost = el("div", {});
   const byDomainHost = el("div", {});
-  main.append(heroHost, chartsHost, slaHost, byDomainHost);
+  main.append(heroHost, chartsHost, resolutionHost, slaHost, byDomainHost);
 
   // Scope comes from the global Value Chain + Support group filters in the sidebar;
   // "" = no filter on that dimension.
@@ -59,6 +89,7 @@ export async function renderMttr(main, _params, ctx) {
     // leaves the charts / SLA table showing the old scope's numbers beside a "Computing…" hero.
     clear(heroHost).append(el("p", { class: "muted" }, "Computing…"));
     clear(chartsHost);
+    clear(resolutionHost);
     clear(slaHost);
     clear(byDomainHost);
     // One batched RPC — summary and trends share a single ledger-state load
@@ -67,6 +98,7 @@ export async function renderMttr(main, _params, ctx) {
     const paint = (data) => {
       renderHero(data.mttr, data.trends);
       renderCharts(data.trends, data.mttr);
+      renderResolutionProfile(data.mttr);
       renderSla(data.mttr);
       renderByDomain(data.byDomain);
     };
@@ -122,17 +154,31 @@ export async function renderMttr(main, _params, ctx) {
     // chips at the unscoped whole-chain / all-severities view where the populations match.
     const scoped = scopeParam() !== null || domain || supportGroup;
 
+    // `remediation` is additive on the server (see the plan) — a stale cached response
+    // from before the rollout won't carry it, so every read below is optional-chained and
+    // every affected mini/cell degrades to "—" rather than throwing.
+    const rem = mttr.remediation;
+    const openPastSla = rem?.openPastSla?.overall; // {open, breached, pct}
+    const overallPctiles = rem?.pctiles?.overall; // {p50, p90, count}
+
     const minis = el("div", { class: "hero-minis" });
     const miniDefs = [
       ["In SLA", mttr.slaPct !== null ? `${mttr.slaPct.toFixed(1)}%` : "—",
         !scoped && prev && prev.sla_pct !== null && mttr.slaPct !== null
           ? changeChip(mttr.slaPct, prev.sla_pct, { invert: true, suffix: "%" }) : null],
+      // Open findings already past their SLA target — unlike In SLA %, this scores open
+      // findings too (definition lives on the "Open past SLA" table column below; minis
+      // stay plain, matching the existing convention). Up is worse, same as every other
+      // count-of-risk chip here, so no invert.
+      ["Open past SLA", fmtOpenPastSla(openPastSla),
+        !scoped && prev && prev.open_past_sla !== null && prev.open_past_sla !== undefined &&
+          openPastSla && openPastSla.breached !== null && openPastSla.breached !== undefined
+          ? changeChip(openPastSla.breached, prev.open_past_sla) : null],
+      ["MTTR p90", fmtDays(overallPctiles?.p90), null],
       // p90 of open-finding age, not the single oldest — labelled to match the table below.
       ["Open age p90", fmtDays(mttr.oldestDays),
         !scoped && prev && prev.oldest_open_days !== null && mttr.oldestDays !== null
           ? changeChip(mttr.oldestDays, prev.oldest_open_days, { fmt: fmtDays }) : null],
-      ["Resolved", (mttr.overall.resolved ?? 0).toLocaleString(), null],
-      ["Open", (mttr.overall.open ?? 0).toLocaleString(), null],
     ];
     for (const [label, value, chip] of miniDefs) {
       minis.append(el("div", {},
@@ -141,6 +187,7 @@ export async function renderMttr(main, _params, ctx) {
       ));
     }
     const resolved = mttr.overall.resolved ?? 0;
+    const open = mttr.overall.open ?? 0;
     // The metric itself (label + value) is the hover/focus target — no separate "i" glyph.
     const metric = helpTip(
       [
@@ -163,7 +210,8 @@ export async function renderMttr(main, _params, ctx) {
       el("div", { class: "hero" },
         metric,
         el("div", { class: "hero-src" },
-          `${mttr.rowCount.toLocaleString()} tracked lifecycle(s) in the durable base`),
+          `${mttr.rowCount.toLocaleString()} tracked lifecycle(s) in the durable base · ` +
+          `${resolved.toLocaleString()} resolved · ${open.toLocaleString()} open`),
         minis,
       ),
     );
@@ -176,14 +224,25 @@ export async function renderMttr(main, _params, ctx) {
     if (!mttr.rowCount) return;
     const mttrCanvas = el("canvas", { id: "mttr-trend" });
     const openResolvedCanvas = el("canvas", { id: "open-resolved" });
+    const openSlaCanvas = el("canvas", { id: "open-sla-trend" });
 
     const points = trends.trend.length
       ? trends.trend.map((t) => ({ x: t.date, y: t.median_days, reconstructed: t.reconstructed }))
       : trends.history.map((h) => ({ x: h.date, y: h.median_days, reconstructed: false }));
 
+    // Same fallback shape as `points` above, but for open_past_sla — a column that doesn't
+    // exist on history rows saved before this feature shipped. Those rows carry `null`
+    // (never a false 0, see historyStore.loadHistory), so they're filtered out here rather
+    // than drawn as a dip to zero.
+    const openSlaPoints = (trends.trend.length
+      ? trends.trend.map((t) => ({ x: t.date, y: t.open_past_sla, reconstructed: t.reconstructed }))
+      : trends.history.map((h) => ({ x: h.date, y: h.open_past_sla, reconstructed: false })))
+      .filter((p) => p.y !== null && p.y !== undefined);
+
     // A "trend" needs at least two points — one lone dot is not a trajectory. This matches the
     // Open-vs-resolved gate and the "after two saved scans" copy below.
     const hasTrend = points.length > 1;
+    const hasOpenSlaTrend = openSlaPoints.length > 1;
     const grid = el("div", { class: "chart-grid", style: "align-items:start" });
     if (hasTrend) {
       grid.append(el("div", { class: "chart-card" },
@@ -194,6 +253,13 @@ export async function renderMttr(main, _params, ctx) {
       grid.append(el("div", { class: "chart-card" },
         el("h3", {}, "Open vs resolved"),
         el("div", { class: "chart-box" }, openResolvedCanvas)));
+    }
+    if (hasOpenSlaTrend) {
+      // A separate card, not a third overlay line on Open vs resolved — that pair already
+      // deliberately encodes red/green + dash + point-shape; a third line would crowd it.
+      grid.append(el("div", { class: "chart-card" },
+        el("h3", {}, "Open past SLA"),
+        el("div", { class: "chart-box" }, openSlaCanvas)));
     }
     if (!grid.hasChildNodes()) {
       chartsHost.append(emptyState("Trends appear after two saved scans."));
@@ -218,6 +284,54 @@ export async function renderMttr(main, _params, ctx) {
       if (trends.trend.length > 1) {
         openResolvedLines(openResolvedCanvas, trends.trend);
       }
+      if (hasOpenSlaTrend) {
+        trendLine(openSlaCanvas, openSlaPoints, { yLabel: "findings" });
+      }
+    });
+  }
+
+  /** Resolution profile: the histogram of time-to-resolve (stacked by severity) beside a
+   *  compact stat card of fast-lane / tail-median / Kaplan–Meier numbers. All of it comes
+   *  from `mttr.remediation`, which is additive on the server — skip the whole section
+   *  when it's missing (stale cache) or empty (no resolved lifecycles to bucket yet). */
+  function renderResolutionProfile(mttr) {
+    clear(resolutionHost);
+    const rem = mttr.remediation;
+    if (!rem || !rem.buckets || !rem.buckets.total) return;
+
+    resolutionHost.append(sectionLabel("Resolution profile"));
+
+    const bucketCanvas = el("canvas", { id: "resolution-buckets" });
+    const chartCard = el("div", { class: "chart-card" },
+      el("h3", {},
+        helpTip("Time to resolve",
+          ["How long resolved findings actually took, bucketed by severity. The " +
+            "right-hand bars are the tail the median hides."],
+          { className: "help-label" })),
+      el("div", { class: "chart-box" }, bucketCanvas));
+
+    const fastLane = rem.fastLane || {};
+    const statCard = el("div", { class: "card" },
+      statRow("Fast lane",
+        fastLane.fastLanePct !== null && fastLane.fastLanePct !== undefined
+          ? `${fastLane.fastLanePct.toFixed(0)}% ≤ ${fastLane.thresholdDays}d` : "—",
+        [`Share of resolved findings closed within ${fastLane.thresholdDays} days — ` +
+          "mostly auto-patched vulns found just before a patch window."]),
+      statRow("Median (excl. fast lane)", fmtDays(fastLane.tailMedian),
+        ["Median remediation time after removing the fast lane, so auto-patched vulns " +
+          "don't drag the median toward zero."]),
+      statRow("KM median", fmtDays(rem.kmMedian),
+        ["Kaplan–Meier median time-to-remediation. Counts still-open findings as censored " +
+          "(not-yet-resolved) instead of ignoring them, so it isn't biased low by fresh " +
+          "fast-patched vulns. “—” means over half of findings are still open."]),
+    );
+
+    resolutionHost.append(
+      el("div", { class: "chart-grid", style: "align-items:start" }, chartCard, statCard));
+
+    requestAnimationFrame(() => {
+      stackedAgeBar(bucketCanvas, rem.buckets.labels || RESOLUTION_LABELS, rem.buckets.perSev,
+        boot.palette, "Resolved findings by time-to-resolve bucket and severity.");
     });
   }
 
@@ -229,10 +343,28 @@ export async function renderMttr(main, _params, ctx) {
     if (!sevs.length) return;
 
     slaHost.append(sectionLabel("Remediation by severity"));
+    // Column headers carry the two new metrics' definitions via helpTip — the hero minis
+    // stay plain (the page's existing convention), so this table is where "MTTR p90" and
+    // "Open past SLA" get explained.
+    const columns = [
+      ["Severity", null],
+      ["Median MTTR", null],
+      ["MTTR p90",
+        ["90th-percentile time from first detection to remediation — the slow tail. Nine " +
+          "in ten findings beat it; one in ten is slower."]],
+      ["Resolved", null],
+      ["Open", null],
+      ["Open past SLA",
+        ["Open findings already older than their severity's SLA target. Unlike In-SLA % " +
+          "(which only scores resolved findings), an aged-out open CRITICAL counts here."]],
+      ["Open age p90", null],
+      ["SLA target", null],
+      ["In SLA", null],
+    ];
     const table = el("table", { class: "data" },
       el("thead", {}, el("tr", {},
-        ...["Severity", "Median MTTR", "Mean", "Resolved", "Open", "Open age p50",
-          "Open age p90", "SLA target", "In SLA"].map((h) => el("th", { scope: "col" }, h)))),
+        ...columns.map(([h, lines]) => el("th", { scope: "col" },
+          lines ? helpTip(h, lines, { className: "help-label" }) : h)))),
     );
     const tbody = el("tbody", {});
     for (const sev of sevs) {
@@ -240,10 +372,10 @@ export async function renderMttr(main, _params, ctx) {
       tbody.append(el("tr", {},
         el("td", {}, sevBadge(sev)),
         el("td", { class: "num" }, fmtDays(d.mttr_median)),
-        el("td", { class: "num" }, fmtDays(d.mttr_mean)),
+        el("td", { class: "num" }, fmtDays(mttr.remediation?.pctiles?.perSev?.[sev]?.p90)),
         el("td", { class: "num" }, d.resolved),
         el("td", { class: "num" }, d.open),
-        el("td", { class: "num" }, fmtDays(d.open_age_p50)),
+        el("td", { class: "num" }, fmtOpenPastSla(mttr.remediation?.openPastSla?.perSev?.[sev])),
         el("td", { class: "num" }, fmtDays(d.open_age_p90)),
         el("td", { class: "num" }, d.sla_target ? `${d.sla_target}d` : "—"),
         el("td", { class: "num" }, d.sla_pct !== null ? `${d.sla_pct.toFixed(0)}%` : "—"),

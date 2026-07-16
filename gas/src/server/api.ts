@@ -3,6 +3,7 @@
 // lock; mutations run inside withScriptLock + recoverIfNeeded.
 
 import {
+  FAST_LANE_DAYS,
   SEVERITY_COLORS,
   SEVERITY_GLYPHS,
   SEVERITY_ORDER,
@@ -12,9 +13,17 @@ import {
 import { domainNames, validateDomains, compileDomains, assignDomain, assignDomains, UNASSIGNED } from "../domain/domainRules";
 import { coverage, ruleHealth, unassignedResources, untaggedSubscriptions } from "../domain/attribution";
 import { mttrFromLedger, vulnKey } from "../domain/lifecycle";
+import type { BaseRow } from "../domain/ledgerCore";
 import { extractNodes } from "../domain/transform";
 import { overallSlaOldest } from "../domain/metrics";
 import { normalizeSeverity } from "../domain/severity";
+import {
+  fastLaneSplit,
+  kmMedian,
+  mttrPercentiles,
+  openPastSla,
+  resolutionBuckets,
+} from "../domain/remediation";
 import { validateBundle } from "../domain/importMerge";
 import { SealedScanError, LedgerRebuildError } from "../domain/maintenance";
 import { parseTs, present, type Rec } from "../domain/util";
@@ -514,7 +523,18 @@ function mttrData(p?: unknown): Rec {
   rows = filterSeverities(rows, readSeverities(p));
   const { perSev, overall } = mttrFromLedger(rows);
   const { slaPct, oldestDays } = overallSlaOldest(perSev);
-  return { perSev, overall, slaPct, oldestDays, rowCount: rows.length };
+  // Remediation-tail block over the same scoped rows (BaseRows cast to Rec by loadBaseRows;
+  // cast back for the typed remediation projection). thresholdDays rides in the payload
+  // because the client bundle can't import the TS domain constant FAST_LANE_DAYS.
+  const remRows = rows as unknown as BaseRow[];
+  const remediation = {
+    pctiles: mttrPercentiles(remRows),
+    fastLane: { ...fastLaneSplit(remRows), thresholdDays: FAST_LANE_DAYS },
+    buckets: resolutionBuckets(remRows),
+    kmMedian: kmMedian(remRows),
+    openPastSla: openPastSla(remRows),
+  };
+  return { perSev, overall, slaPct, oldestDays, rowCount: rows.length, remediation };
 }
 
 function mttrTrendData(p?: unknown): Rec {
@@ -573,7 +593,9 @@ function mttrByDomainData(p?: unknown): Rec {
 // TTL is 1h — a ≤0.04-day drift — instead of the 6h the version-keyed data allows.
 const cachedMttrData = (p?: unknown) =>
   cached(
-    "mttr",
+    // "mttr" → "mttr2": payload gained the `remediation` block; dataVersion persists across
+    // deploys, so bumping the namespace prevents serving a stale old-shape entry (up to 1h).
+    "mttr2",
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
@@ -583,7 +605,9 @@ const cachedMttrData = (p?: unknown) =>
     3600,
   );
 const cachedMttrTrendData = (p?: unknown) =>
-  cached("mttrTrend", { severities: readSeverities(p) }, () => mttrTrendData(p));
+  // "mttrTrend" → "mttrTrend2": trend points gained `open_past_sla`; namespace bump avoids a
+  // stale old-shape entry surviving the deploy under the persistent dataVersion.
+  cached("mttrTrend2", { severities: readSeverities(p) }, () => mttrTrendData(p));
 // Domain-independent (always all domains); severity-scoped; 1h TTL like the summary
 // (carries open ages).
 const cachedMttrByDomainData = (p?: unknown) =>

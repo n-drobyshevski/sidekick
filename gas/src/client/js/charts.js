@@ -182,12 +182,13 @@ export function severityBar(canvas, counts, palette, onClickSeverity) {
 }
 
 /**
- * Stacked bar of open-finding age buckets, one dataset per severity. Severity is
- * color + legend label + tooltip title — never color alone.
+ * Stacked bar of per-severity bucket counts (open ages by default; pass `desc` when the
+ * buckets mean something else, e.g. time-to-resolve). Severity is color + legend label +
+ * tooltip title — never color alone.
  */
-export function stackedAgeBar(canvas, labels, perSev, palette) {
+export function stackedAgeBar(canvas, labels, perSev, palette, desc) {
   destroyExisting(canvas);
-  describe(canvas, "Open findings by age bucket and severity.");
+  describe(canvas, desc || "Open findings by age bucket and severity.");
   const opts = baseOptions("findings");
   opts.scales.x.stacked = true;
   opts.scales.y.stacked = true;

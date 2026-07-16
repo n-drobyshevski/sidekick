@@ -42,6 +42,7 @@ export const TAB_HEADERS: Record<string, string[]> = {
   [TABS.settings]: ["key", "value_json"],
   [TABS.mttrHistory]: [
     "date", "median_days", "resolved", "open", "total", "sla_pct", "oldest_open_days",
+    "open_past_sla",
   ],
   [TABS.schemaMeta]: ["version"],
   [TABS.jobs]: [

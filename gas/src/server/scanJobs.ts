@@ -9,6 +9,7 @@
 import { parseSeverities } from "../domain/compaction";
 import { countBySeverity } from "../domain/severity";
 import { calculateMttr, overallSlaOldest } from "../domain/metrics";
+import * as remediation from "../domain/remediation";
 import { extractNodes, mergeNodes } from "../domain/transform";
 import { nowIso, parseTs, toIso, type Rec } from "../domain/util";
 import * as archive from "./archiveStore";
@@ -450,6 +451,7 @@ function afterPersist(records: Rec[]): void {
         null,
         slaPct,
         oldestDays,
+        remediation.openPastSlaFromRecords(records),
       );
     }
   } catch (e) {

@@ -24,6 +24,11 @@ export const SEVERITY_GLYPHS: Record<string, string> = {
   UNKNOWN: "⚫",
 };
 
+// Resolved within this many days is the auto-patch "fast lane" — vulns detected
+// just before a patch window and closed immediately, the mass that pins the median
+// near zero. Fixed constant (not an SLA); see remediation.fastLaneSplit.
+export const FAST_LANE_DAYS = 3;
+
 // Standard VM SLAs (days).
 export const SLA_TARGETS: Record<string, number> = {
   CRITICAL: 7,
