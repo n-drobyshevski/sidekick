@@ -397,7 +397,8 @@ var Server = (() => {
       "open",
       "total",
       "sla_pct",
-      "oldest_open_days"
+      "oldest_open_days",
+      "open_past_sla"
     ],
     [TABS.schemaMeta]: ["version"],
     [TABS.jobs]: [
@@ -610,6 +611,7 @@ var Server = (() => {
     INFO: "\u26AA",
     UNKNOWN: "\u26AB"
   };
+  var FAST_LANE_DAYS = 3;
   var SLA_TARGETS = {
     CRITICAL: 7,
     HIGH: 14,
@@ -1967,6 +1969,146 @@ var Server = (() => {
     return out;
   }
 
+  // src/domain/remediation.ts
+  var DAY_MS2 = 864e5;
+  var RESOLUTION_BUCKET_EDGES = [1, 7, 30, 90];
+  var RESOLUTION_BUCKET_LABELS = ["\u22641d", "2\u20137d", "8\u201330d", "31\u201390d", "90+d"];
+  function isOpen(status) {
+    return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
+  }
+  function resolvedMttr(row) {
+    const m = row.mttr_days;
+    return typeof m === "number" && Number.isFinite(m) ? m : null;
+  }
+  function openAge(row) {
+    if (!isOpen(row.status)) return null;
+    const a = row.age_days;
+    return typeof a === "number" && Number.isFinite(a) ? a : null;
+  }
+  function mttrPercentiles(rows) {
+    var _a;
+    const bySev = {};
+    const all = [];
+    for (const row of rows) {
+      const m = resolvedMttr(row);
+      if (m === null) continue;
+      const s = normalizeSeverity(row.severity);
+      ((_a = bySev[s]) != null ? _a : bySev[s] = []).push(m);
+      all.push(m);
+    }
+    const perSev = {};
+    for (const s of SEVERITY_ORDER) {
+      const vals = bySev[s];
+      if (!vals) continue;
+      perSev[s] = { p50: quantile(vals, 0.5), p90: quantile(vals, 0.9), count: vals.length };
+    }
+    return {
+      perSev,
+      overall: { p50: quantile(all, 0.5), p90: quantile(all, 0.9), count: all.length }
+    };
+  }
+  function fastLaneSplit(rows, threshold = FAST_LANE_DAYS) {
+    const resolved = [];
+    for (const row of rows) {
+      const m = resolvedMttr(row);
+      if (m !== null) resolved.push(m);
+    }
+    const total = resolved.length;
+    const fastLane = resolved.filter((m) => m <= threshold).length;
+    const tail = resolved.filter((m) => m > threshold);
+    return {
+      total,
+      fastLane,
+      fastLanePct: total ? fastLane / total * 100 : null,
+      tailCount: tail.length,
+      tailMedian: median(tail)
+    };
+  }
+  function resolutionBuckets(rows) {
+    const perSev = {};
+    let total = 0;
+    for (const row of rows) {
+      const m = resolvedMttr(row);
+      if (m === null) continue;
+      const bucket = m <= RESOLUTION_BUCKET_EDGES[0] ? 0 : m <= RESOLUTION_BUCKET_EDGES[1] ? 1 : m <= RESOLUTION_BUCKET_EDGES[2] ? 2 : m <= RESOLUTION_BUCKET_EDGES[3] ? 3 : 4;
+      const s = normalizeSeverity(row.severity);
+      if (!perSev[s]) perSev[s] = [0, 0, 0, 0, 0];
+      perSev[s][bucket] += 1;
+      total += 1;
+    }
+    return { perSev, labels: RESOLUTION_BUCKET_LABELS, total };
+  }
+  function kmMedian(rows) {
+    const events = [];
+    const times = [];
+    for (const row of rows) {
+      const m = resolvedMttr(row);
+      if (m !== null) {
+        events.push(m);
+        times.push(m);
+        continue;
+      }
+      const c = openAge(row);
+      if (c !== null) times.push(c);
+    }
+    if (!events.length) return null;
+    let s = 1;
+    for (const t of [...new Set(events)].sort((a, b) => a - b)) {
+      const n = times.filter((x) => x >= t).length;
+      if (n === 0) continue;
+      const d = events.filter((x) => x === t).length;
+      s *= 1 - d / n;
+      if (s <= 0.5) return t;
+    }
+    return null;
+  }
+  function openPastSla(rows) {
+    var _a, _b;
+    const perSev = {};
+    let totalOpen = 0;
+    let totalBreached = 0;
+    for (const row of rows) {
+      const age = openAge(row);
+      if (age === null) continue;
+      const s = normalizeSeverity(row.severity);
+      const target = (_a = SLA_TARGETS[s]) != null ? _a : null;
+      const stat = (_b = perSev[s]) != null ? _b : perSev[s] = { open: 0, breached: 0, pct: null, target };
+      stat.open += 1;
+      totalOpen += 1;
+      if (target !== null && age > target) {
+        stat.breached += 1;
+        totalBreached += 1;
+      }
+    }
+    for (const stat of Object.values(perSev)) {
+      stat.pct = stat.open ? stat.breached / stat.open * 100 : null;
+    }
+    return {
+      perSev,
+      overall: {
+        open: totalOpen,
+        breached: totalBreached,
+        pct: totalOpen ? totalBreached / totalOpen * 100 : null
+      }
+    };
+  }
+  function openPastSlaFromRecords(records, now) {
+    if (!records.length) return 0;
+    const nowMs = now != null ? now : Date.now();
+    const firstSeenCol = findCol(recordColumns(records), "firstSeenAt", "firstDetectedAt", "createdAt");
+    if (!firstSeenCol) return 0;
+    let breached = 0;
+    for (const rec of records) {
+      if (!isOpen(rec["status"])) continue;
+      const first = parseTs(rec[firstSeenCol]);
+      if (first === null) continue;
+      const s = "severity" in rec ? normalizeSeverity(rec["severity"]) : "UNKNOWN";
+      const target = SLA_TARGETS[s];
+      if (target !== void 0 && (nowMs - first) / DAY_MS2 > target) breached += 1;
+    }
+    return breached;
+  }
+
   // src/domain/compaction.ts
   var CHECKPOINT_VERSION = 1;
   function serializeSeverities(sevs) {
@@ -2324,7 +2466,7 @@ var Server = (() => {
   function reinsertScanRow(state, row) {
     state.scans.push({ ...row });
   }
-  var DAY_MS2 = 864e5;
+  var DAY_MS3 = 864e5;
   var COMPACTED_ASSET3 = "(compacted)";
   function baseRows(state, now) {
     const nowMs = now != null ? now : Date.now();
@@ -2334,8 +2476,8 @@ var Server = (() => {
       const resolved = parseTs(row.resolved_at);
       return {
         ...row,
-        mttr_days: first !== null && resolved !== null ? (resolved - first) / DAY_MS2 : null,
-        age_days: resolved === null && first !== null ? (nowMs - first) / DAY_MS2 : null
+        mttr_days: first !== null && resolved !== null ? (resolved - first) / DAY_MS3 : null,
+        age_days: resolved === null && first !== null ? (nowMs - first) / DAY_MS3 : null
       };
     };
     for (const row of Object.values(state.ledger)) out.push(withDerived(row));
@@ -2379,7 +2521,7 @@ var Server = (() => {
   }
 
   // src/domain/trend.ts
-  var DAY_MS3 = 864e5;
+  var DAY_MS4 = 864e5;
   function trendFromFrames(scans, base, severities = null) {
     let rows = base;
     if (severities !== null && base.length) {
@@ -2401,16 +2543,16 @@ var Server = (() => {
       const openMask = parsed.map(
         (r) => r.first !== null && r.first <= ts.ms && (r.resolvedAt === null || r.resolvedAt > ts.ms)
       );
-      const resolvedMttr = parsed.filter((_, i) => resolvedMask[i]).map((r) => r.mttr).filter((m) => m !== null);
-      const med = median(resolvedMttr);
-      const denom = resolvedMttr.length;
+      const resolvedMttr2 = parsed.filter((_, i) => resolvedMask[i]).map((r) => r.mttr).filter((m) => m !== null);
+      const med = median(resolvedMttr2);
+      const denom = resolvedMttr2.length;
       const within = parsed.filter(
         (r, i) => resolvedMask[i] && r.mttr !== null && SLA_TARGETS[r.sev] !== void 0 && r.mttr <= SLA_TARGETS[r.sev]
       ).length;
       const slaPct = denom ? within / denom * 100 : null;
       const p90s = [];
       for (const sev2 of SEVERITY_ORDER) {
-        const ages = parsed.filter((r, i) => openMask[i] && r.sev === sev2).map((r) => (ts.ms - r.first) / DAY_MS3);
+        const ages = parsed.filter((r, i) => openMask[i] && r.sev === sev2).map((r) => (ts.ms - r.first) / DAY_MS4);
         if (ages.length) {
           const p = quantile(ages, 0.9);
           if (p !== null) p90s.push(p);
@@ -2446,8 +2588,8 @@ var Server = (() => {
       var _a;
       const bySev = {};
       for (const r of parsed) {
-        const isOpen2 = r.first !== null && r.first <= ts.ms && (r.resolvedAt === null || r.resolvedAt > ts.ms);
-        if (isOpen2) bySev[r.sev] = ((_a = bySev[r.sev]) != null ? _a : 0) + 1;
+        const isOpen3 = r.first !== null && r.first <= ts.ms && (r.resolvedAt === null || r.resolvedAt > ts.ms);
+        if (isOpen3) bySev[r.sev] = ((_a = bySev[r.sev]) != null ? _a : 0) + 1;
       }
       return { date: ts.iso, bySev };
     });
@@ -2465,9 +2607,9 @@ var Server = (() => {
     const synthetic = [];
     const syntheticIso = /* @__PURE__ */ new Set();
     if (realFlatMs.length && firstSeenMs.length) {
-      const firstScanDay = Math.floor(Math.min(...realFlatMs) / DAY_MS3) * DAY_MS3;
-      const startDay = Math.floor(Math.min(...firstSeenMs) / DAY_MS3) * DAY_MS3;
-      for (let day = startDay; day < firstScanDay; day += DAY_MS3) {
+      const firstScanDay = Math.floor(Math.min(...realFlatMs) / DAY_MS4) * DAY_MS4;
+      const startDay = Math.floor(Math.min(...firstSeenMs) / DAY_MS4) * DAY_MS4;
+      for (let day = startDay; day < firstScanDay; day += DAY_MS4) {
         const iso = toIso(day);
         if (iso === null) continue;
         synthetic.push({ ts: iso, shape: "flat" });
@@ -2475,6 +2617,31 @@ var Server = (() => {
       }
     }
     return tag(trendFromFrames(synthetic.concat(scans), base, severities), syntheticIso);
+  }
+  function withOpenPastSla(points, base, severities = null) {
+    let rows = base;
+    if (severities !== null && base.length) {
+      const keep = /* @__PURE__ */ new Set([...severities, "UNKNOWN"]);
+      rows = base.filter((r) => keep.has(normalizeSeverity(r["severity"])));
+    }
+    const parsed = rows.map((r) => ({
+      first: parseTs(r["first_seen"]),
+      resolvedAt: parseTs(r["resolved_at"]),
+      sev: normalizeSeverity(r["severity"])
+    }));
+    return points.map((p) => {
+      const d = parseTs(p.date);
+      let breached = 0;
+      if (d !== null) {
+        for (const r of parsed) {
+          const open = r.first !== null && r.first <= d && (r.resolvedAt === null || r.resolvedAt > d);
+          if (!open) continue;
+          const target = SLA_TARGETS[r.sev];
+          if (target !== void 0 && (d - r.first) / DAY_MS4 > target) breached += 1;
+        }
+      }
+      return { ...p, open_past_sla: breached };
+    });
   }
 
   // src/domain/maintenance.ts
@@ -3039,7 +3206,7 @@ var Server = (() => {
   var AGE_BUCKET_EDGES = [7, 30, 90];
   var WIDE_KEY = "vulnerableAsset.hasWideInternetExposure";
   var LIMITED_KEY = "vulnerableAsset.hasLimitedInternetExposure";
-  function isOpen(status) {
+  function isOpen2(status) {
     return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
   }
   function sev(r) {
@@ -3058,7 +3225,7 @@ var Server = (() => {
       const s = sev(r);
       const stat = (_a = out[s]) != null ? _a : out[s] = { total: 0, open: 0, resolved: 0 };
       stat.total += 1;
-      if (isOpen(r["status"])) stat.open += 1;
+      if (isOpen2(r["status"])) stat.open += 1;
       else stat.resolved += 1;
     }
     return out;
@@ -3073,7 +3240,7 @@ var Server = (() => {
       exposureKnown: records.some((r) => WIDE_KEY in r && r[WIDE_KEY] !== void 0)
     };
     for (const r of records) {
-      if (!isOpen(r["status"])) continue;
+      if (!isOpen2(r["status"])) continue;
       out.open += 1;
       if (r["hasCisaKevExploit"] === true) out.kev += 1;
       if (r["hasExploit"] === true) out.exploit += 1;
@@ -3087,7 +3254,7 @@ var Server = (() => {
     const perSev = {};
     let totalOpen = 0;
     for (const row of rows) {
-      if (!isOpen(row.status)) continue;
+      if (!isOpen2(row.status)) continue;
       const age = row.age_days;
       if (typeof age !== "number" || !Number.isFinite(age)) continue;
       const bucket = age <= AGE_BUCKET_EDGES[0] ? 0 : age <= AGE_BUCKET_EDGES[1] ? 1 : age <= AGE_BUCKET_EDGES[2] ? 2 : 3;
@@ -3099,15 +3266,15 @@ var Server = (() => {
     return { perSev, totalOpen };
   }
   var AGED_OPEN_EDGE = AGE_BUCKET_EDGES[2];
-  function openAge(row) {
-    if (!isOpen(row.status)) return null;
+  function openAge2(row) {
+    if (!isOpen2(row.status)) return null;
     const age = row.age_days;
     return typeof age === "number" && Number.isFinite(age) ? age : null;
   }
   function rankGroups(rows, keyFn, topN, meta) {
     const groups = /* @__PURE__ */ new Map();
     for (const row of rows) {
-      const age = openAge(row);
+      const age = openAge2(row);
       if (age === null) continue;
       const raw = keyFn(row);
       const key = raw && raw.trim() !== "" ? raw : "(none)";
@@ -3120,7 +3287,7 @@ var Server = (() => {
     return [...groups.values()].sort((a, b) => b.agedCount - a.agedCount || b.oldestDays - a.oldestDays || a.key.localeCompare(b.key)).slice(0, topN);
   }
   function oldestOpen(rows, topN = 7) {
-    const findings = rows.map((r) => ({ r, age: openAge(r) })).filter((x) => x.age !== null).sort((a, b) => b.age - a.age).slice(0, topN).map(({ r, age }) => ({
+    const findings = rows.map((r) => ({ r, age: openAge2(r) })).filter((x) => x.age !== null).sort((a, b) => b.age - a.age).slice(0, topN).map(({ r, age }) => ({
       cve: r.cve,
       asset: r.asset_name,
       subscription: r.subscription_name,
@@ -3155,7 +3322,7 @@ var Server = (() => {
     }
     let persisting = 0;
     for (const row of baseRows2) {
-      if (!isOpen(row.status)) continue;
+      if (!isOpen2(row.status)) continue;
       if (row.last_scan_id === latestFlatScan.scan_id && row.first_scan_id !== latestFlatScan.scan_id) {
         persisting += 1;
       }
@@ -3199,7 +3366,7 @@ var Server = (() => {
       let kev = false;
       let exploit = false;
       for (const r of recs) {
-        if (isOpen(r["status"])) open += 1;
+        if (isOpen2(r["status"])) open += 1;
         const s = sev(r);
         sevCounts[s] = ((_a = sevCounts[s]) != null ? _a : 0) + 1;
         const a = String((_b = r["vulnerableAsset.name"]) != null ? _b : "");
@@ -3391,7 +3558,7 @@ var Server = (() => {
   function todayIso(now) {
     return new Date(now != null ? now : Date.now()).toISOString().slice(0, 10);
   }
-  function recordSnapshot(medianDays, resolved = 0, open = 0, counts = null, when = null, slaPct = null, oldestOpenDays = null) {
+  function recordSnapshot(medianDays, resolved = 0, open = 0, counts = null, when = null, slaPct = null, oldestOpenDays = null, openPastSla2 = null) {
     try {
       const date = when != null ? when : todayIso();
       const records = loadHistory().filter((r) => r.date !== date);
@@ -3402,7 +3569,8 @@ var Server = (() => {
         open: Math.trunc(open),
         total: counts ? Object.values(counts).reduce((a, b) => a + b, 0) : 0,
         sla_pct: slaPct !== null ? Math.round(slaPct * 10) / 10 : null,
-        oldest_open_days: oldestOpenDays !== null ? Math.round(oldestOpenDays * 1e3) / 1e3 : null
+        oldest_open_days: oldestOpenDays !== null ? Math.round(oldestOpenDays * 1e3) / 1e3 : null,
+        open_past_sla: openPastSla2 === null ? null : Math.trunc(openPastSla2)
       });
       records.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
       overwrite(TABS.mttrHistory, records);
@@ -3438,7 +3606,10 @@ var Server = (() => {
         open: Number((_c = r["open"]) != null ? _c : 0),
         total: Number((_d = r["total"]) != null ? _d : 0),
         sla_pct: r["sla_pct"] === null ? null : Number(r["sla_pct"]),
-        oldest_open_days: r["oldest_open_days"] === null ? null : Number(r["oldest_open_days"])
+        oldest_open_days: r["oldest_open_days"] === null ? null : Number(r["oldest_open_days"]),
+        // Pre-column rows have no cell here (empty → null, or header absent → undefined);
+        // both map to null so the chart draws a gap, never a fabricated zero.
+        open_past_sla: r["open_past_sla"] == null ? null : Number(r["open_past_sla"])
       });
     }
     return out.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
@@ -3665,17 +3836,19 @@ var Server = (() => {
   }
   function loadTrend(severities = null) {
     const state = loadState();
-    return trendFromBase(
+    const base = baseRows(state).map((r) => ({
+      severity: r.severity,
+      first_seen: r.first_seen,
+      resolved_at: r.resolved_at,
+      mttr_days: r.mttr_days
+    }));
+    const points = trendFromBase(
       state.scans.map((s) => ({ ts: s.ts, shape: s.shape })),
-      baseRows(state).map((r) => ({
-        severity: r.severity,
-        first_seen: r.first_seen,
-        resolved_at: r.resolved_at,
-        mttr_days: r.mttr_days
-      })),
+      base,
       severities,
       { backfill: true }
     );
+    return withOpenPastSla(points, base, severities);
   }
   function previousSeverityCounts() {
     const flats = loadScanRows().filter((s) => s.shape === "flat");
@@ -4870,7 +5043,8 @@ var Server = (() => {
           countBySeverity(records),
           null,
           slaPct,
-          oldestDays
+          oldestDays,
+          openPastSlaFromRecords(records)
         );
       }
     } catch (e) {
@@ -5344,7 +5518,15 @@ var Server = (() => {
     rows = filterSeverities(rows, readSeverities(p));
     const { perSev, overall } = mttrFromLedger(rows);
     const { slaPct, oldestDays } = overallSlaOldest(perSev);
-    return { perSev, overall, slaPct, oldestDays, rowCount: rows.length };
+    const remRows = rows;
+    const remediation = {
+      pctiles: mttrPercentiles(remRows),
+      fastLane: { ...fastLaneSplit(remRows), thresholdDays: FAST_LANE_DAYS },
+      buckets: resolutionBuckets(remRows),
+      kmMedian: kmMedian(remRows),
+      openPastSla: openPastSla(remRows)
+    };
+    return { perSev, overall, slaPct, oldestDays, rowCount: rows.length, remediation };
   }
   function mttrTrendData(p) {
     const severities = readSeverities(p);
@@ -5397,7 +5579,9 @@ var Server = (() => {
   var cachedMttrData = (p) => {
     var _a, _b;
     return cached(
-      "mttr",
+      // "mttr" → "mttr2": payload gained the `remediation` block; dataVersion persists across
+      // deploys, so bumping the namespace prevents serving a stale old-shape entry (up to 1h).
+      "mttr2",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
@@ -5407,7 +5591,11 @@ var Server = (() => {
       3600
     );
   };
-  var cachedMttrTrendData = (p) => cached("mttrTrend", { severities: readSeverities(p) }, () => mttrTrendData(p));
+  var cachedMttrTrendData = (p) => (
+    // "mttrTrend" → "mttrTrend2": trend points gained `open_past_sla`; namespace bump avoids a
+    // stale old-shape entry surviving the deploy under the persistent dataVersion.
+    cached("mttrTrend2", { severities: readSeverities(p) }, () => mttrTrendData(p))
+  );
   var cachedMttrByDomainData = (p) => {
     var _a;
     return cached(

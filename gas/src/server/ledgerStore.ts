@@ -43,7 +43,7 @@ import {
   checkpointManifest,
   type BeganSession,
 } from "../domain/importShard";
-import { type BackfilledTrendPoint, trendFromBase } from "../domain/trend";
+import { type BackfilledTrendPoint, trendFromBase, withOpenPastSla } from "../domain/trend";
 import { nowIso, type Rec } from "../domain/util";
 import * as archive from "./archiveStore";
 import * as history from "./historyStore";
@@ -285,17 +285,21 @@ export function loadTrend(severities: string[] | null = null): BackfilledTrendPo
   // the trend reaches back to the earliest detection, not just the first saved scan. The
   // compaction gate (maintenance.trendOf) deliberately keeps calling trendFromFrames instead,
   // so its before/after identity check stays anchored to real scans only.
-  return trendFromBase(
+  const base = baseRows(state).map((r) => ({
+    severity: r.severity,
+    first_seen: r.first_seen,
+    resolved_at: r.resolved_at,
+    mttr_days: r.mttr_days,
+  }));
+  const points = trendFromBase(
     state.scans.map((s) => ({ ts: s.ts, shape: s.shape })),
-    baseRows(state).map((r) => ({
-      severity: r.severity,
-      first_seen: r.first_seen,
-      resolved_at: r.resolved_at,
-      mttr_days: r.mttr_days,
-    })),
+    base,
     severities,
     { backfill: true },
   );
+  // Augment every point (real + reconstructed) with its as-of open-past-SLA count from
+  // the same scoped base rows, so the trend carries the aged-backlog series the headline hides.
+  return withOpenPastSla(points, base, severities);
 }
 
 /** Per-severity counts of the second-newest flat scan (change-badge baseline). */
