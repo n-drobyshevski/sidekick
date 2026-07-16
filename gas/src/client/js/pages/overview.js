@@ -586,9 +586,18 @@ export async function renderOverview(main, params, ctx) {
       const risky = [];
       if (node.kev) risky.push("KEV");
       if (node.exploit) risky.push("Exploit");
+      // Unassigned/untagged buckets get a quick escape hatch to the Attribution page's
+      // troubleshooting view. `e.target.closest("a")` below already exempts anchor clicks
+      // from the row's own expand/collapse toggle (shared with the CVE link).
+      const needsInvestigate = (node.dim === "domain" && node.key === "Unassigned") ||
+        (node.dim === "supportGroup" && node.key === "(none)");
+      const investigateLink = needsInvestigate
+        ? el("a", { class: "small muted", style: "margin-left:6px", href: "#/attribution", target: "_self" },
+            "investigate →")
+        : null;
       const groupCell = el("td",
         { class: hasChildren ? "clickable" : null, style: `padding-left:${depth * 20 + 8}px` },
-        el("span", { style: "display:inline-flex; align-items:center; gap:6px" }, caret, label));
+        el("span", { style: "display:inline-flex; align-items:center; gap:6px" }, caret, label, investigateLink));
       if (hasChildren) {
         // The whole group cell toggles (the footer promises "click a group to drill in"),
         // except clicks on a CVE link, which should still open NVD.

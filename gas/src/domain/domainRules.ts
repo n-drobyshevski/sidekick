@@ -32,7 +32,7 @@ const LEDGER_SUB_COLS = ["subscription_name", "subscription_ext_id"];
 const FRAME_SG_COLS = ["_supportGroup", "vulnerableAsset.supportGroup"];
 const LEDGER_SG_COLS = ["support_group"];
 
-type CondSpec =
+export type CondSpec =
   | { kind: "tag"; key: string; value: string | null }
   | { kind: "regex"; re: RegExp }
   | { kind: "sub"; values: Set<string> }
@@ -249,7 +249,7 @@ export function domainNames(items: unknown): string[] {
   return [...names, UNASSIGNED];
 }
 
-function recordTags(record: Rec): Rec {
+export function recordTags(record: Rec): Rec {
   const va = record["vulnerableAsset"];
   if (va && typeof va === "object" && !Array.isArray(va)) {
     const t = (va as Rec)["tags"];
@@ -290,7 +290,7 @@ function recordValues(record: Rec, ...keys: string[]): string[] {
   return out;
 }
 
-function conditionMatches(spec: CondSpec, record: Rec, tags: Rec): boolean {
+export function conditionMatches(spec: CondSpec, record: Rec, tags: Rec): boolean {
   if (spec.kind === "tag") {
     if (!(spec.key in tags) || tags[spec.key] === null || tags[spec.key] === undefined) {
       return false;

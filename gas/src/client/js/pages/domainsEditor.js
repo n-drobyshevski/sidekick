@@ -4,6 +4,7 @@
 // parity) and inline for fast feedback.
 
 import { call } from "../api.js";
+import { buildPrefillRule } from "../attributionPrefill.js";
 import { EXPORT_KIND, parseDomainsImport } from "../domainsImport.js";
 import { clear, confirmDialog, downloadText, el, statusPill, toast } from "../ui.js";
 
@@ -140,9 +141,19 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
   }
 
   // ------------------------------------------------------------ add/edit dialog
-  function openEditor(index) {
+  // `prefill` ({ resource }), when given, seeds a rule built from an Attribution-page
+  // resource (attributionPrefill.js buildPrefillRule): for a new domain it replaces the
+  // usual blank starter rule; for an existing domain it's appended alongside whatever
+  // rules the domain already has. Nothing is saved until the normal Save/Apply flow.
+  function openEditor(index, prefill) {
     const editing = index !== null ? JSON.parse(JSON.stringify(items[index])) : { name: "", rules: [] };
-    if (!editing.rules.length) editing.rules.push({ conditions: [emptyCondition()] });
+    const prefillRule = prefill ? buildPrefillRule(prefill.resource) : null;
+    if (index === null && prefillRule) {
+      editing.rules = [prefillRule];
+    } else {
+      if (!editing.rules.length) editing.rules.push({ conditions: [emptyCondition()] });
+      if (index !== null && prefillRule) editing.rules.push(prefillRule);
+    }
 
     const nameInput = el("input", { type: "text", value: editing.name,
       placeholder: "e.g. Payments", "aria-label": "Domain name", style: "width:100%" });
@@ -156,6 +167,7 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
       el("div", { class: "dialog-scroll" },
         el("label", { class: "field-label" }, "Name"),
         nameInput,
+        prefill ? prefillContextLine(prefill.resource) : null,
         el("p", { class: "small muted", style: "margin:10px 0 4px" },
           "A finding matches the domain when ANY rule matches; a rule matches when ALL its conditions do."),
         rulesHost,
@@ -181,6 +193,19 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
 
     function emptyCondition() {
       return { type: "tag", key: "", value: "" };
+    }
+
+    // Muted context line inside the dialog when opened from Attribution's "Attribute…"
+    // handoff, naming the resource the seeded rule came from. Built from el() text-node
+    // children only (no HTML), so nothing needs manual escaping.
+    function prefillContextLine(resource) {
+      const r = resource || {};
+      const bits = [];
+      if (r.subscription) bits.push(`subscription ${r.subscription}`);
+      if (r.supportGroup) bits.push(`support group ${r.supportGroup}`);
+      return el("p", { class: "small muted", style: "margin:6px 0 4px" },
+        `Attributing: ${r.asset || "(unnamed asset)"}`,
+        bits.length ? ` — ${bits.join(", ")}` : "");
     }
 
     // Map folded value -> name of the domain that already claims it (for one condition
@@ -421,5 +446,42 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
     }
   }
 
-  return { isDirty };
+  // Entry point for the Attribution page's "Attribute…" handoff (settings.js calls this
+  // after recovering the prefill resource). With no existing domains there's nothing to
+  // choose between, so skip straight to a new domain; otherwise offer a small chooser
+  // between the existing domains (in priority order) and starting a new one. Either way
+  // nothing persists until the analyst presses the normal "Save domains".
+  function openWithPrefill(resource) {
+    if (!items.length) {
+      openEditor(null, { resource });
+      return;
+    }
+    const NEW_DOMAIN = "__new__";
+    const select = el("select", { "aria-label": "Domain to add a rule to" },
+      ...items.map((item, i) => el("option", { value: String(i) }, item.name)),
+      el("option", { value: NEW_DOMAIN }, "New domain…"),
+    );
+    const dlg = el("dialog", { class: "domains-dialog" },
+      el("h3", {}, `Attribute ${(resource && resource.asset) || "resource"}`),
+      el("div", { class: "dialog-scroll" },
+        el("p", { class: "small muted" },
+          "Add a rule for this resource to an existing domain, or start a new one."),
+        el("label", { class: "field-label" }, "Domain"),
+        select,
+      ),
+      el("div", { class: "dialog-actions" },
+        el("button", { onclick: () => dlg.close() }, "Cancel"),
+        el("button", { class: "primary", onclick: () => {
+          const chosen = select.value === NEW_DOMAIN ? null : Number(select.value);
+          dlg.close();
+          openEditor(chosen, { resource });
+        } }, "Continue"),
+      ),
+    );
+    document.body.append(dlg);
+    dlg.addEventListener("close", () => dlg.remove());
+    dlg.showModal();
+  }
+
+  return { isDirty, openWithPrefill };
 }
