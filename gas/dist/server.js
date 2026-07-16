@@ -1070,6 +1070,7 @@ var Server = (() => {
     cancelScan: () => cancelScan2,
     compact: () => compact,
     deleteScans: () => deleteScans2,
+    getAttribution: () => getAttribution,
     getDomains: () => getDomains3,
     getExportCsv: () => getExportCsv,
     getExportRawUrl: () => getExportRawUrl,
@@ -1432,6 +1433,254 @@ var Server = (() => {
   }
   function assignDomains(records, compiled) {
     return records.map((r) => assignDomain(r, compiled));
+  }
+
+  // src/domain/attribution.ts
+  var COMPACTED_ASSET2 = "(compacted)";
+  var NAME_COL = "vulnerableAsset.name";
+  var TYPE_COL = "vulnerableAsset.type";
+  var SUB_COL = "vulnerableAsset.subscriptionName";
+  var EXT_COL = "vulnerableAsset.subscriptionExternalId";
+  var SG_COL = "_supportGroup";
+  var DOMAIN_COL = "_domain";
+  var NONE = "(none)";
+  var MAX_TAG_KEYS = 12;
+  var MAX_TAG_VALUE_LEN = 80;
+  var MAX_NEAR_MISSES = 3;
+  var KIND_LABEL = {
+    tag: "tag",
+    regex: "name",
+    sub: "subscription",
+    sg: "support group"
+  };
+  function domainOf(r) {
+    const v = r[DOMAIN_COL];
+    return present(v) ? String(v) : UNASSIGNED;
+  }
+  function sevOf(r) {
+    const s = r["_sev"];
+    return typeof s === "string" && s ? s : normalizeSeverity(r["severity"]);
+  }
+  function addSev(counts, r) {
+    var _a;
+    const s = sevOf(r);
+    counts[s] = ((_a = counts[s]) != null ? _a : 0) + 1;
+  }
+  function flatVal(r, key) {
+    const v = r[key];
+    return present(v) ? String(v) : null;
+  }
+  function assetKey(r) {
+    var _a;
+    return String((_a = r[NAME_COL]) != null ? _a : "");
+  }
+  function isCompacted(record) {
+    const v = record["asset_name"];
+    if (present(v)) return String(v) === COMPACTED_ASSET2;
+    const va = record["vulnerableAsset"];
+    if (va && typeof va === "object" && !Array.isArray(va)) {
+      const leaf = va["asset_name"];
+      if (present(leaf)) return String(leaf) === COMPACTED_ASSET2;
+    }
+    return false;
+  }
+  function traceRecord(record, compiled) {
+    const tags = recordTags(record);
+    const compacted = isCompacted(record);
+    const rules = [];
+    let assigned = UNASSIGNED;
+    compiled.forEach((dom, domainIndex) => {
+      dom.rules.forEach((rule, ruleIndex) => {
+        if (rule === null) {
+          rules.push({ domainIndex, domain: dom.name, ruleIndex, malformed: true, matched: false, conditions: [] });
+          return;
+        }
+        const conditions = rule.map((spec, index) => ({ index, matched: conditionMatches(spec, record, tags) }));
+        const matched = conditions.every((c) => c.matched);
+        rules.push({ domainIndex, domain: dom.name, ruleIndex, malformed: false, matched, conditions });
+        if (matched && !compacted && assigned === UNASSIGNED) assigned = dom.name;
+      });
+    });
+    return { assigned, rules };
+  }
+  function ruleHealth(records, compiled) {
+    const stats = compiled.map((dom) => dom.rules.map(() => ({ fired: 0, matched: 0 })));
+    for (const record of records) {
+      const trace = traceRecord(record, compiled);
+      for (const rt of trace.rules) {
+        if (rt.matched) stats[rt.domainIndex][rt.ruleIndex].matched += 1;
+      }
+      if (trace.assigned !== UNASSIGNED) {
+        const winner = trace.rules.find((rt) => rt.matched && rt.domain === trace.assigned);
+        if (winner) stats[winner.domainIndex][winner.ruleIndex].fired += 1;
+      }
+    }
+    const out = [];
+    compiled.forEach((dom, domainIndex) => {
+      dom.rules.forEach((rule, ruleIndex) => {
+        const { fired, matched } = stats[domainIndex][ruleIndex];
+        const status = rule === null ? "malformed" : matched === 0 ? "dead" : fired === 0 ? "shadowed" : "ok";
+        out.push({ domainIndex, domain: dom.name, ruleIndex, fired, matched, status });
+      });
+    });
+    return out;
+  }
+  function orderedWithUnassignedLast(names) {
+    const seen = /* @__PURE__ */ new Set();
+    const out = [];
+    for (const n of names) {
+      if (n === UNASSIGNED || seen.has(n)) continue;
+      seen.add(n);
+      out.push(n);
+    }
+    out.push(UNASSIGNED);
+    return out;
+  }
+  function coverage(records, orderedDomainNames) {
+    var _a;
+    const findingsByDomain = /* @__PURE__ */ new Map();
+    const assetsByDomain = /* @__PURE__ */ new Map();
+    const allAssets = /* @__PURE__ */ new Set();
+    const attributedAssets = /* @__PURE__ */ new Set();
+    const unassignedAssets = /* @__PURE__ */ new Set();
+    let attributedFindings = 0;
+    let unassignedFindings = 0;
+    let sgResolved = 0;
+    let sgUnresolved = 0;
+    for (const r of records) {
+      const domain = domainOf(r);
+      const asset = assetKey(r);
+      findingsByDomain.set(domain, ((_a = findingsByDomain.get(domain)) != null ? _a : 0) + 1);
+      let set = assetsByDomain.get(domain);
+      if (!set) assetsByDomain.set(domain, set = /* @__PURE__ */ new Set());
+      if (asset) {
+        set.add(asset);
+        allAssets.add(asset);
+      }
+      if (domain === UNASSIGNED) {
+        unassignedFindings += 1;
+        if (asset) unassignedAssets.add(asset);
+      } else {
+        attributedFindings += 1;
+        if (asset) attributedAssets.add(asset);
+      }
+      if (present(r[SG_COL])) sgResolved += 1;
+      else sgUnresolved += 1;
+    }
+    const byDomain = orderedWithUnassignedLast(orderedDomainNames).map((domain) => {
+      var _a2, _b, _c;
+      return {
+        domain,
+        findings: (_a2 = findingsByDomain.get(domain)) != null ? _a2 : 0,
+        assets: (_c = (_b = assetsByDomain.get(domain)) == null ? void 0 : _b.size) != null ? _c : 0
+      };
+    });
+    return {
+      totalFindings: records.length,
+      totalAssets: allAssets.size,
+      attributedFindings,
+      attributedAssets: attributedAssets.size,
+      unassignedFindings,
+      unassignedAssets: unassignedAssets.size,
+      supportGroupResolved: sgResolved,
+      supportGroupUnresolved: sgUnresolved,
+      byDomain
+    };
+  }
+  function cappedTags(record) {
+    const out = {};
+    let n = 0;
+    for (const [k, v] of Object.entries(recordTags(record))) {
+      if (!present(v)) continue;
+      if (n >= MAX_TAG_KEYS) break;
+      const s = String(v);
+      out[k] = s.length > MAX_TAG_VALUE_LEN ? s.slice(0, MAX_TAG_VALUE_LEN) : s;
+      n += 1;
+    }
+    return out;
+  }
+  function failedTypes(compiled, rt) {
+    const rule = compiled[rt.domainIndex].rules[rt.ruleIndex];
+    if (!rule) return [];
+    const out = [];
+    for (const c of rt.conditions) {
+      if (c.matched) continue;
+      const label = KIND_LABEL[rule[c.index].kind];
+      if (!out.includes(label)) out.push(label);
+    }
+    return out;
+  }
+  function nearMisses(record, compiled) {
+    const trace = traceRecord(record, compiled);
+    const cand = trace.rules.filter((rt) => !rt.malformed && rt.conditions.some((c) => c.matched)).map((rt) => {
+      const matchedConditions = rt.conditions.filter((c) => c.matched).length;
+      return {
+        domainIndex: rt.domainIndex,
+        nm: {
+          domain: rt.domain,
+          ruleIndex: rt.ruleIndex,
+          matchedConditions,
+          totalConditions: rt.conditions.length,
+          failedTypes: failedTypes(compiled, rt)
+        }
+      };
+    });
+    cand.sort(
+      (a, b) => b.nm.matchedConditions - a.nm.matchedConditions || a.nm.totalConditions - a.nm.matchedConditions - (b.nm.totalConditions - b.nm.matchedConditions) || a.domainIndex - b.domainIndex || a.nm.ruleIndex - b.nm.ruleIndex
+    );
+    return cand.slice(0, MAX_NEAR_MISSES).map((c) => c.nm);
+  }
+  function unassignedResources(records, compiled) {
+    const groups = /* @__PURE__ */ new Map();
+    for (const r of records) {
+      if (domainOf(r) !== UNASSIGNED) continue;
+      const asset = assetKey(r);
+      let g = groups.get(asset);
+      if (!g) groups.set(asset, g = { rep: r, findings: 0, sevCounts: {} });
+      g.findings += 1;
+      addSev(g.sevCounts, r);
+    }
+    const rows = [];
+    for (const [asset, g] of groups) {
+      rows.push({
+        asset,
+        assetType: flatVal(g.rep, TYPE_COL),
+        subscription: flatVal(g.rep, SUB_COL),
+        subscriptionExtId: flatVal(g.rep, EXT_COL),
+        supportGroup: flatVal(g.rep, SG_COL),
+        tags: cappedTags(g.rep),
+        findings: g.findings,
+        sevCounts: g.sevCounts,
+        nearMisses: nearMisses(g.rep, compiled)
+      });
+    }
+    rows.sort((a, b) => b.findings - a.findings || a.asset.localeCompare(b.asset));
+    return rows;
+  }
+  function untaggedSubscriptions(records) {
+    var _a, _b;
+    const groups = /* @__PURE__ */ new Map();
+    for (const r of records) {
+      if (present(r[SG_COL])) continue;
+      const subscription = (_a = flatVal(r, SUB_COL)) != null ? _a : NONE;
+      const extId = (_b = flatVal(r, EXT_COL)) != null ? _b : NONE;
+      const key = `${subscription}\0${extId}`;
+      let g = groups.get(key);
+      if (!g) groups.set(key, g = { subscription, extId, assets: /* @__PURE__ */ new Set(), findings: 0, sevCounts: {} });
+      g.findings += 1;
+      const asset = assetKey(r);
+      if (asset) g.assets.add(asset);
+      addSev(g.sevCounts, r);
+    }
+    return [...groups.values()].map((g) => ({
+      subscription: g.subscription,
+      extId: g.extId,
+      assets: g.assets.size,
+      findings: g.findings,
+      sevCounts: g.sevCounts
+    })).sort(
+      (a, b) => b.findings - a.findings || a.subscription.localeCompare(b.subscription) || a.extId.localeCompare(b.extId)
+    );
   }
 
   // src/domain/sha1.ts
@@ -2076,7 +2325,7 @@ var Server = (() => {
     state.scans.push({ ...row });
   }
   var DAY_MS2 = 864e5;
-  var COMPACTED_ASSET2 = "(compacted)";
+  var COMPACTED_ASSET3 = "(compacted)";
   function baseRows(state, now) {
     const nowMs = now != null ? now : Date.now();
     const out = [];
@@ -2099,7 +2348,7 @@ var Server = (() => {
           cve: e.cve,
           severity: e.severity,
           asset_id: null,
-          asset_name: COMPACTED_ASSET2,
+          asset_name: COMPACTED_ASSET3,
           asset_type: null,
           cloud: null,
           first_seen: e.first_seen,
@@ -4707,10 +4956,12 @@ var Server = (() => {
     const scan = currentScan();
     const latest = latestScanRow();
     const counts = {};
+    let unassignedCount = 0;
     if (scan) {
       for (const r of scan.records) {
         const sev2 = String(r["_sev"]);
         counts[sev2] = ((_a = counts[sev2]) != null ? _a : 0) + 1;
+        if (r["_domain"] === UNASSIGNED) unassignedCount += 1;
       }
     }
     return {
@@ -4737,6 +4988,7 @@ var Server = (() => {
         severities: latest.severities
       } : null,
       counts,
+      unassignedCount,
       prevCounts: previousSeverityCounts(),
       domainNames: domainNames(getDomains2().items),
       filterOptions: scan ? {
@@ -5020,6 +5272,45 @@ var Server = (() => {
         3600
       )
     );
+  }
+  function attributionData(p) {
+    const scan = currentScan();
+    if (!scan) return { flatScan: false };
+    const recs = filterSeverities(scan.records, readSeverities(p));
+    const dom = getDomains2();
+    const compiled = compileDomains(dom.items);
+    const sgMap = getSupportGroupMap2();
+    const sgKeys = Object.keys(sgMap.map);
+    return {
+      flatScan: true,
+      scan: { scanId: scan.scanId, ts: scan.ts },
+      coverage: coverage(recs, domainNames(dom.items)),
+      ruleHealth: ruleHealth(recs, compiled),
+      unassignedAll: unassignedResources(recs, compiled),
+      untagged: untaggedSubscriptions(recs).slice(0, 200),
+      supportGroupMap: { configured: sgKeys.length > 0, keys: sgKeys.length }
+    };
+  }
+  function getAttribution(p) {
+    return run(() => {
+      var _a, _b;
+      const data = cached("attribution", { severities: readSeverities(p) }, () => attributionData(p));
+      if (!data["flatScan"]) return data;
+      const { unassignedAll, ...rest } = data;
+      const params = p != null ? p : {};
+      const pageSize = Math.min(Math.max(Number((_a = params["pageSize"]) != null ? _a : 50), 1), 200);
+      const pageCount = Math.max(1, Math.ceil(unassignedAll.length / pageSize));
+      const page = Math.min(Math.max(Number((_b = params["page"]) != null ? _b : 0), 0), pageCount - 1);
+      return {
+        ...rest,
+        unassigned: {
+          rows: unassignedAll.slice(page * pageSize, (page + 1) * pageSize),
+          total: unassignedAll.length,
+          page,
+          pageCount
+        }
+      };
+    });
   }
   function readSeverities(p) {
     const raw = p == null ? void 0 : p["severities"];

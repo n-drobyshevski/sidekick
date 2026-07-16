@@ -10,6 +10,7 @@ import {
   SELECTABLE_SEVERITIES,
 } from "../domain/config";
 import { domainNames, validateDomains, compileDomains, assignDomain, assignDomains, UNASSIGNED } from "../domain/domainRules";
+import { coverage, ruleHealth, unassignedResources, untaggedSubscriptions } from "../domain/attribution";
 import { mttrFromLedger, vulnKey } from "../domain/lifecycle";
 import { extractNodes } from "../domain/transform";
 import { overallSlaOldest } from "../domain/metrics";
@@ -81,10 +82,12 @@ function bootstrapCore(): Rec {
   const scan = findings.currentScan();
   const latest = ledgerStore.latestScanRow();
   const counts: Record<string, number> = {};
+  let unassignedCount = 0;
   if (scan) {
     for (const r of scan.records) {
       const sev = String(r["_sev"]);
       counts[sev] = (counts[sev] ?? 0) + 1;
+      if (r["_domain"] === UNASSIGNED) unassignedCount += 1;
     }
   }
   return {
@@ -113,6 +116,7 @@ function bootstrapCore(): Rec {
         }
       : null,
     counts,
+    unassignedCount,
     prevCounts: ledgerStore.previousSeverityCounts(),
     domainNames: domainNames(settingsStore.getDomains().items),
     filterOptions: scan
@@ -423,6 +427,58 @@ export function getGrouping(p?: unknown): ApiResult {
       { domain, supportGroup, supportGroups: supportGroupSet, keys, severities: readSeverities(p) },
       () => groupingData(p), 3600),
   );
+}
+
+// --------------------------------------------------------------------- attribution
+
+/**
+ * Everything the "Attribution" page needs in one round trip: coverage KPIs, per-rule
+ * fired/matched health, the full (unpaginated) unassigned-resource explorer rows,
+ * untagged-subscription rollups, and whether the support-group map is configured.
+ * Deliberately ignores the global Value-Chain / Support-group filters — the page
+ * audits the mapping itself, not a filtered view of it.
+ */
+function attributionData(p?: unknown): Rec {
+  const scan = findings.currentScan();
+  if (!scan) return { flatScan: false };
+  const recs = filterSeverities(scan.records, readSeverities(p));
+  const dom = settingsStore.getDomains();
+  const compiled = compileDomains(dom.items);
+  const sgMap = settingsStore.getSupportGroupMap();
+  const sgKeys = Object.keys(sgMap.map);
+  return {
+    flatScan: true,
+    scan: { scanId: scan.scanId, ts: scan.ts },
+    coverage: coverage(recs, domainNames(dom.items)),
+    ruleHealth: ruleHealth(recs, compiled),
+    unassignedAll: unassignedResources(recs, compiled),
+    untagged: untaggedSubscriptions(recs).slice(0, 200),
+    supportGroupMap: { configured: sgKeys.length > 0, keys: sgKeys.length },
+  };
+}
+
+/** Attribution page in one round trip; the whole payload is cached per DATA_VERSION +
+ *  severities, and `unassignedAll` is paginated OUTSIDE the cache so every page shares
+ *  one cached compute. */
+export function getAttribution(p?: unknown): ApiResult {
+  return run(() => {
+    const data = cached("attribution", { severities: readSeverities(p) }, () => attributionData(p));
+    if (!(data as Rec)["flatScan"]) return data;
+    const { unassignedAll, ...rest } = data as Rec & { unassignedAll: unknown[] };
+    const params = (p ?? {}) as Rec;
+    const pageSize = Math.min(Math.max(Number(params["pageSize"] ?? 50), 1), 200);
+    const pageCount = Math.max(1, Math.ceil(unassignedAll.length / pageSize));
+    const page = Math.min(Math.max(Number(params["page"] ?? 0), 0), pageCount - 1);
+    return {
+      ...rest,
+      unassigned: {
+        rows: unassignedAll.slice(page * pageSize, (page + 1) * pageSize),
+        total: unassignedAll.length,
+        page,
+        pageCount,
+      },
+    };
+  });
 }
 
 // ----------------------------------------------------------------------------- MTTR
