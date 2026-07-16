@@ -327,4 +327,21 @@ describe("mergeMttrHistory", () => {
     expect(added).toBe(1);
     expect(rows[0]["date"]).toBe("2026-01-01");
   });
+
+  it("round-trips open_past_sla: existing wins, imported carries through, absent -> null", () => {
+    const existing = [
+      { date: "2026-06-15", median_days: 9, resolved: 1, open: 2, total: 3, sla_pct: null, oldest_open_days: null, open_past_sla: 1 },
+    ];
+    const imported = [
+      { date: "2026-01-20", median_days: 5, resolved: 3, open: 10, total: 13, sla_pct: 90, oldest_open_days: 45, open_past_sla: 4 },
+      { date: "2026-05-01", median_days: 2, resolved: 1, open: 1, total: 2, sla_pct: 100, oldest_open_days: 5 }, // no open_past_sla
+    ];
+    const { rows } = mergeMttrHistory(existing, imported);
+    const byDate = Object.fromEntries(rows.map((r) => [String(r["date"]), r]));
+    // Imported row keeps its value; imported row without the field -> null.
+    expect(byDate["2026-01-20"]["open_past_sla"]).toBe(4);
+    expect(byDate["2026-05-01"]["open_past_sla"]).toBeNull();
+    // The existing (GAS) row is stored verbatim, so its own open_past_sla survives.
+    expect(byDate["2026-06-15"]["open_past_sla"]).toBe(1);
+  });
 });

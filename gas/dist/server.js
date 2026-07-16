@@ -2995,7 +2995,7 @@ var Server = (() => {
     };
   }
   function mergeMttrHistory(existing, imported) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e;
     const byDate = /* @__PURE__ */ new Map();
     for (const r of existing) {
       const date = r["date"];
@@ -3023,7 +3023,8 @@ var Server = (() => {
         open: Number((_c = r["open"]) != null ? _c : 0),
         total: Number((_d = r["total"]) != null ? _d : 0),
         sla_pct: r["sla_pct"] === null || r["sla_pct"] === void 0 ? null : Number(r["sla_pct"]),
-        oldest_open_days: r["oldest_open_days"] === null || r["oldest_open_days"] === void 0 ? null : Number(r["oldest_open_days"])
+        oldest_open_days: r["oldest_open_days"] === null || r["oldest_open_days"] === void 0 ? null : Number(r["oldest_open_days"]),
+        open_past_sla: (_e = r["open_past_sla"]) != null ? _e : null
       });
       added += 1;
     }

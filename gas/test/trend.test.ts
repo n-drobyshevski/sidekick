@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { openBySeverityTrend, trendFromBase, trendFromFrames } from "../src/domain/trend";
+import { openBySeverityTrend, trendFromBase, trendFromFrames, withOpenPastSla } from "../src/domain/trend";
 import { expectParity, fixture } from "./helpers";
 
 describe("trendFromFrames (fixture parity)", () => {
@@ -103,5 +103,63 @@ describe("trendFromBase (backfill)", () => {
   it("returns [] for empty inputs even with backfill on", () => {
     expect(trendFromBase([], base, null, { backfill: true })).toEqual([]);
     expect(trendFromBase(scans, [], null, { backfill: true })).toEqual([]);
+  });
+});
+
+describe("withOpenPastSla", () => {
+  // A CRITICAL (target 7) open all along, a HIGH resolved Jan 10, and an UNKNOWN (no
+  // target) open all along, all first seen Jan 1. As of a given point date, "open past
+  // SLA" counts findings open as-of that date whose age already exceeds their target.
+  const base = [
+    { severity: "CRITICAL", first_seen: "2026-01-01T00:00:00Z", resolved_at: null },
+    { severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-10T00:00:00Z" },
+    { severity: "UNKNOWN", first_seen: "2026-01-01T00:00:00Z", resolved_at: null },
+  ];
+
+  it("counts open-past-SLA as of each point date and preserves existing fields", () => {
+    // Jan 5: CRITICAL age 4d <= 7 -> none breached. Jan 15: CRITICAL age 14d > 7 -> 1
+    // (HIGH is resolved by then; UNKNOWN has no target).
+    const points = [
+      { date: "2026-01-05T00:00:00Z", open: 99, foo: "a" },
+      { date: "2026-01-15T00:00:00Z", open: 88, foo: "b" },
+    ];
+    expect(withOpenPastSla(points, base)).toEqual([
+      { date: "2026-01-05T00:00:00Z", open: 99, foo: "a", open_past_sla: 0 },
+      { date: "2026-01-15T00:00:00Z", open: 88, foo: "b", open_past_sla: 1 },
+    ]);
+  });
+
+  it("scopes to the chosen severities plus UNKNOWN", () => {
+    const b = [
+      { severity: "CRITICAL", first_seen: "2026-01-01T00:00:00Z", resolved_at: null }, // 14d > 7 -> breached
+      { severity: "MEDIUM", first_seen: "2025-11-01T00:00:00Z", resolved_at: null }, // ~75d > 30 -> breached
+      { severity: "UNKNOWN", first_seen: "2026-01-01T00:00:00Z", resolved_at: null }, // no target
+    ];
+    const points = [{ date: "2026-01-15T00:00:00Z" }];
+    // Unscoped: CRITICAL + MEDIUM breach = 2.
+    expect(withOpenPastSla(points, b)[0].open_past_sla).toBe(2);
+    // Scoped to CRITICAL: MEDIUM filtered out, UNKNOWN kept (but never breaches) -> 1.
+    expect(withOpenPastSla(points, b, ["CRITICAL"])[0].open_past_sla).toBe(1);
+  });
+
+  it("a finding resolved before the point date drops out", () => {
+    const b = [{ severity: "CRITICAL", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-10T00:00:00Z" }];
+    // Jan 9: still open (resolved_at > d), age 8d > 7 -> breached.
+    expect(withOpenPastSla([{ date: "2026-01-09T00:00:00Z" }], b)[0].open_past_sla).toBe(1);
+    // Jan 20: resolved by then -> not open -> 0.
+    expect(withOpenPastSla([{ date: "2026-01-20T00:00:00Z" }], b)[0].open_past_sla).toBe(0);
+  });
+
+  it("counts synthetic/reconstructed points the same as real ones (by date only)", () => {
+    const b = [{ severity: "CRITICAL", first_seen: "2026-01-01T00:00:00Z", resolved_at: null }];
+    const points = [
+      { date: "2026-01-15T00:00:00Z", reconstructed: true }, // synthetic backfill day
+      { date: "2026-01-15T00:00:00Z", reconstructed: false }, // real saved scan, same date
+    ];
+    const out = withOpenPastSla(points, b);
+    expect(out[0].open_past_sla).toBe(1);
+    expect(out[1].open_past_sla).toBe(out[0].open_past_sla);
+    // Passthrough keeps the reconstructed flag untouched.
+    expect(out.map((p) => p.reconstructed)).toEqual([true, false]);
   });
 });

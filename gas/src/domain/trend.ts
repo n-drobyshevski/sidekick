@@ -225,3 +225,51 @@ export function trendFromBase(
   // point's `date` is in `syntheticIso` iff it's a reconstructed day — unambiguous.
   return tag(trendFromFrames(synthetic.concat(scans), base, severities), syntheticIso);
 }
+
+/**
+ * Augment already-emitted trend points with an `open_past_sla` count — open findings
+ * whose age at the point's date already exceeds their severity's SLA target (the tail
+ * the resolved-only In-SLA % never scores). Replays the durable base at each point's
+ * `date` with the same as-of predicate `trendFromFrames` uses (open iff first_seen <= d
+ * and not resolved by d; breached iff `(d − first_seen)/day > SLA_TARGETS[sev]`), so real
+ * saved scans and synthetic backfill days are counted identically. The generic passthrough
+ * preserves every existing point field — points already carry `open`, so only the new
+ * `open_past_sla` is added, never clobbering it.
+ *
+ * GAS-first (no Python fixture parity — mirrors `openBySeverityTrend`): a UI-only
+ * augmentation of the same durable rows, kept out of the parity-tested `trendFromFrames`.
+ *
+ * points: trend points with a `date` (ISO); base: ledger+episode rows with {severity,
+ * first_seen, resolved_at}. severities (optional) restricts to those + UNKNOWN, as elsewhere.
+ */
+export function withOpenPastSla<T extends { date: string }>(
+  points: T[],
+  base: Rec[],
+  severities: string[] | null = null,
+): (T & { open_past_sla: number })[] {
+  let rows = base;
+  if (severities !== null && base.length) {
+    const keep = new Set([...severities, "UNKNOWN"]);
+    rows = base.filter((r) => keep.has(normalizeSeverity(r["severity"])));
+  }
+  const parsed = rows.map((r) => ({
+    first: parseTs(r["first_seen"]),
+    resolvedAt: parseTs(r["resolved_at"]),
+    sev: normalizeSeverity(r["severity"]),
+  }));
+
+  return points.map((p) => {
+    const d = parseTs(p.date);
+    let breached = 0;
+    if (d !== null) {
+      for (const r of parsed) {
+        const open =
+          r.first !== null && r.first <= d && (r.resolvedAt === null || r.resolvedAt > d);
+        if (!open) continue;
+        const target = SLA_TARGETS[r.sev];
+        if (target !== undefined && (d - r.first!) / DAY_MS > target) breached += 1;
+      }
+    }
+    return { ...p, open_past_sla: breached };
+  });
+}

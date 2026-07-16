@@ -360,6 +360,7 @@ export function mergeMttrHistory(
         r["oldest_open_days"] === null || r["oldest_open_days"] === undefined
           ? null
           : Number(r["oldest_open_days"]),
+      open_past_sla: r["open_past_sla"] ?? null,
     });
     added += 1;
   }
