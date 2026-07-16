@@ -1,11 +1,12 @@
 // Settings — scan scope, display filter, domain rules editor, data retention.
 
 import { call } from "../api.js";
-import { bootstrap } from "../store.js";
+import { decodePrefill, PREFILL_KEY } from "../attributionPrefill.js";
+import { bootstrap, setParams } from "../store.js";
 import { clear, confirmDialog, el, sectionLabel, statusPill, toast } from "../ui.js";
 import { renderDomainsEditor } from "./domainsEditor.js";
 
-export async function renderSettings(main, _params, ctx) {
+export async function renderSettings(main, params, ctx) {
   const boot = await bootstrap();
   main.append(
     el("h1", {}, "Settings"),
@@ -184,11 +185,35 @@ export async function renderSettings(main, _params, ctx) {
   main.append(el("p", { class: "muted small" },
     "Rule-based triage: route findings to named domains by tag, asset-name pattern, " +
     "subscription, or support group. Order is priority — the first matching domain wins."));
+  if (typeof boot.unassignedCount === "number" && boot.unassignedCount > 0) {
+    main.append(el("p", { class: "small", style: "display:flex; align-items:center; gap:8px" },
+      statusPill("warn", `${boot.unassignedCount.toLocaleString()} findings unassigned`),
+      el("a", { href: "#/attribution", target: "_self" }, "Review in Attribution →")));
+  }
   const domainsHost = el("div", {});
   main.append(domainsHost);
   // Saving domains also reloads the page, so it must warn about unsaved severity-scope edits.
   const domainsEditor = renderDomainsEditor(domainsHost, boot, ctx,
     { guardOtherDrafts: () => guardUnsavedDrafts({ ignoreDomains: true }) });
+
+  // Closed-loop handoff from Attribution's "Attribute…" action: the resource travels via
+  // sessionStorage (attributionPrefill.js), with the hash flag only signalling "go look".
+  // Read-then-strip so a reload of Settings never re-triggers the chooser. Falls back to
+  // minimal hash params when sessionStorage is unavailable (e.g. the GAS iframe sandbox).
+  if (params.attribute) {
+    let resource = null;
+    try {
+      const raw = sessionStorage.getItem(PREFILL_KEY);
+      sessionStorage.removeItem(PREFILL_KEY);
+      resource = decodePrefill(raw);
+    } catch {
+      resource = null;
+    }
+    if (!resource && params.sub) resource = { subscription: params.sub, asset: params.asset };
+    else if (!resource && params.asset) resource = { asset: params.asset };
+    setParams({});
+    if (resource) domainsEditor.openWithPrefill(resource);
+  }
 
   // ------------------------------------------------------------- data retention
   main.append(sectionLabel("Data retention"));
