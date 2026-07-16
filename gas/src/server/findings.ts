@@ -24,6 +24,15 @@ export interface CurrentScan {
 
 let memo: CurrentScan | null | undefined;
 
+// Settings writes that change how _domain/_supportGroup get attached (domain rules,
+// the support-group map) must stale this memo — free in real GAS, where module state
+// dies with the execution, but load-bearing for same-execution reads-after-write
+// (mutation endpoints) and the long-lived dev harness. Mirrors ledgerStore's
+// invalidateLedgerMemos() convention.
+export function invalidateFrameMemo(): void {
+  memo = undefined;
+}
+
 export function currentScan(): CurrentScan | null {
   if (memo !== undefined) return memo;
   const row = ledgerStore.latestFlatScanRow();

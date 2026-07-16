@@ -961,6 +961,8 @@ export function saveDomains(p?: unknown): ApiResult {
     const errors = validateDomains(items);
     if (errors.length) return { saved: false, errors };
     settingsStore.setDomains(items);
+    // Domain rules changed → the frame's memoized _domain attachment is stale.
+    findings.invalidateFrameMemo();
     return { saved: true, errors: [], domains: settingsStore.getDomains() };
   });
 }
@@ -996,7 +998,12 @@ export function refreshSupportGroups(_p?: unknown): ApiResult {
   if (!hasWizCredentials()) {
     return { ok: false, error: "Live Wiz credentials are required to refresh support groups." };
   }
-  return mutate(() => supportGroups.refreshSupportGroups());
+  return mutate(() => {
+    const stats = supportGroups.refreshSupportGroups();
+    // Support-group map changed → the frame's memoized _supportGroup attachment is stale.
+    findings.invalidateFrameMemo();
+    return stats;
+  });
 }
 
 // ---------------------------------------------------------------------------- misc

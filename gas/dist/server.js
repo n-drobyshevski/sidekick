@@ -4302,6 +4302,9 @@ var Server = (() => {
 
   // src/server/findings.ts
   var memo;
+  function invalidateFrameMemo() {
+    memo = void 0;
+  }
   function currentScan() {
     if (memo !== void 0) return memo;
     const row = latestFlatScanRow();
@@ -5747,6 +5750,7 @@ var Server = (() => {
       const errors = validateDomains(items);
       if (errors.length) return { saved: false, errors };
       setDomains(items);
+      invalidateFrameMemo();
       return { saved: true, errors: [], domains: getDomains2() };
     });
   }
@@ -5776,7 +5780,11 @@ var Server = (() => {
     if (!hasWizCredentials()) {
       return { ok: false, error: "Live Wiz credentials are required to refresh support groups." };
     }
-    return mutate(() => refreshSupportGroups());
+    return mutate(() => {
+      const stats = refreshSupportGroups();
+      invalidateFrameMemo();
+      return stats;
+    });
   }
   function getStorageStats(_p) {
     return run(
