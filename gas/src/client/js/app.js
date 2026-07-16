@@ -9,6 +9,7 @@ import { renderMttr } from "./pages/mttr.js";
 import { renderHistory } from "./pages/history.js";
 import { renderData } from "./pages/data.js";
 import { renderSettings } from "./pages/settings.js";
+import { renderAttribution } from "./pages/attribution.js";
 
 // Order matters: the sidebar nav renders pages in this insertion order (grouped by
 // `group`), and the first key is the app's default landing page (see store.parseHash).
@@ -16,6 +17,7 @@ const PAGES = {
   mttr: { title: "MTTR & SLA", group: "Security", render: renderMttr },
   overview: { title: "OS vulnerabilities", group: "Security", render: renderOverview },
   scan_history: { title: "Scan History", group: "Security", render: renderHistory },
+  attribution: { title: "Attribution", group: "Security", render: renderAttribution },
   data: { title: "Data", group: "Data", render: renderData },
   settings: { title: "Settings", group: "Preferences", render: renderSettings },
 };

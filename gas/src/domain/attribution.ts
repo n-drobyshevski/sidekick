@@ -407,7 +407,7 @@ export function untaggedSubscriptions(records: Rec[]): UntaggedSubscription[] {
     if (present(r[SG_COL])) continue;
     const subscription = flatVal(r, SUB_COL) ?? NONE;
     const extId = flatVal(r, EXT_COL) ?? NONE;
-    const key = `${subscription} ${extId}`;
+    const key = `${subscription}\u0000${extId}`;
     let g = groups.get(key);
     if (!g) groups.set(key, (g = { subscription, extId, assets: new Set(), findings: 0, sevCounts: {} }));
     g.findings += 1;
