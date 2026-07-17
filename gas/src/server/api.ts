@@ -542,7 +542,7 @@ function mttrTrendData(p?: unknown): Rec {
   const severities = readSeverities(p);
   return {
     history: history.loadHistory(),
-    trend: ledgerStore.loadTrend(severities),
+    trend: ledgerStore.loadTrend(severities, settingsStore.getFastLaneDays()),
   };
 }
 
@@ -614,8 +614,13 @@ const cachedMttrData = (p?: unknown) =>
   );
 const cachedMttrTrendData = (p?: unknown) =>
   // "mttrTrend" → "mttrTrend2": trend points gained `open_past_sla`; namespace bump avoids a
-  // stale old-shape entry surviving the deploy under the persistent dataVersion.
-  cached("mttrTrend2", { severities: readSeverities(p) }, () => mttrTrendData(p));
+  // stale old-shape entry surviving the deploy under the persistent dataVersion. The
+  // fast-lane window feeds the tail-median series, so it rides in the key like cachedMttrData.
+  cached(
+    "mttrTrend2",
+    { severities: readSeverities(p), fastLane: settingsStore.getFastLaneDays() },
+    () => mttrTrendData(p),
+  );
 // Domain-independent (always all domains); severity-scoped; 1h TTL like the summary
 // (carries open ages).
 const cachedMttrByDomainData = (p?: unknown) =>

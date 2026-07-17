@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { openBySeverityTrend, trendFromBase, trendFromFrames, withOpenPastSla } from "../src/domain/trend";
+import {
+  openBySeverityTrend, trendFromBase, trendFromFrames, withOpenPastSla, withTailMedian,
+} from "../src/domain/trend";
 import { expectParity, fixture } from "./helpers";
 
 describe("trendFromFrames (fixture parity)", () => {
@@ -161,5 +163,59 @@ describe("withOpenPastSla", () => {
     expect(out[1].open_past_sla).toBe(out[0].open_past_sla);
     // Passthrough keeps the reconstructed flag untouched.
     expect(out.map((p) => p.reconstructed)).toEqual([true, false]);
+  });
+});
+
+describe("withTailMedian", () => {
+  // Three resolutions with a 3-day threshold: 2d and 3.0d are fast lane (excluded — the
+  // strict > dual of the fast lane's <=), 5d and 9d are tail. Resolution dates stagger so
+  // the as-of pool grows point by point.
+  const base = [
+    { severity: "CRITICAL", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-03T00:00:00Z", mttr_days: 2 },
+    { severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-04T00:00:00Z", mttr_days: 3 },
+    { severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-06T00:00:00Z", mttr_days: 5 },
+    { severity: "CRITICAL", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-10T00:00:00Z", mttr_days: 9 },
+    { severity: "LOW", first_seen: "2026-01-01T00:00:00Z", resolved_at: null, mttr_days: null }, // open — never pooled
+  ];
+
+  it("pools only tail resolutions resolved by each point date; null before any", () => {
+    const points = [
+      { date: "2026-01-05T00:00:00Z", foo: "a" }, // only fast-lane resolutions so far
+      { date: "2026-01-07T00:00:00Z", foo: "b" }, // tail pool [5]
+      { date: "2026-01-15T00:00:00Z", foo: "c" }, // tail pool [5, 9]
+    ];
+    expect(withTailMedian(points, base, 3)).toEqual([
+      { date: "2026-01-05T00:00:00Z", foo: "a", tail_median_days: null },
+      { date: "2026-01-07T00:00:00Z", foo: "b", tail_median_days: 5 },
+      { date: "2026-01-15T00:00:00Z", foo: "c", tail_median_days: 7 }, // median [5, 9]
+    ]);
+  });
+
+  it("threshold boundary: mttr exactly == threshold stays fast lane (excluded)", () => {
+    const b = [{ severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-04T00:00:00Z", mttr_days: 3 }];
+    expect(withTailMedian([{ date: "2026-01-15T00:00:00Z" }], b, 3)[0].tail_median_days).toBeNull();
+    // Just over the threshold joins the tail.
+    expect(withTailMedian([{ date: "2026-01-15T00:00:00Z" }],
+      [{ ...b[0], mttr_days: 3.001 }], 3)[0].tail_median_days).toBe(3.001);
+  });
+
+  it("scopes to the chosen severities plus UNKNOWN", () => {
+    const b = [
+      { severity: "CRITICAL", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-10T00:00:00Z", mttr_days: 9 },
+      { severity: "MEDIUM", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-06T00:00:00Z", mttr_days: 5 },
+      { severity: "UNKNOWN", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-14T00:00:00Z", mttr_days: 13 },
+    ];
+    const points = [{ date: "2026-01-15T00:00:00Z" }];
+    // Unscoped: pool [9, 5, 13] -> median 9. Scoped to CRITICAL: UNKNOWN kept -> [9, 13] -> 11.
+    expect(withTailMedian(points, b, 3)[0].tail_median_days).toBe(9);
+    expect(withTailMedian(points, b, 3, ["CRITICAL"])[0].tail_median_days).toBe(11);
+  });
+
+  it("rounds like trendFromFrames (3 decimals)", () => {
+    const b = [
+      { severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-06T00:00:00Z", mttr_days: 5.0004 },
+      { severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-06T00:00:00Z", mttr_days: 5.0006 },
+    ];
+    expect(withTailMedian([{ date: "2026-01-15T00:00:00Z" }], b, 3)[0].tail_median_days).toBe(5.001);
   });
 });

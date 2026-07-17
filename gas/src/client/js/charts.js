@@ -45,13 +45,21 @@ const localeNum = (v) => (typeof v === "number" ? Number(v).toLocaleString() : v
 // silently compressing away (a category axis spaces points by index, not by date).
 const DAY_MS = 86400000;
 const dayOf = (iso) => Math.floor(Date.parse(iso) / DAY_MS);
-const fmtDay = (day) => new Date(day * DAY_MS).toISOString().slice(0, 10);
+// Axis/tooltip date format: "01-jul-2026" — unambiguous day-month order without locale
+// dependence (toLocaleDateString varies by viewer), month spelled so it can't be misread
+// as US-style month-first.
+const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+function fmtDay(day) {
+  const d = new Date(day * DAY_MS);
+  return `${String(d.getUTCDate()).padStart(2, "0")}-${MONTHS[d.getUTCMonth()]}-${d.getUTCFullYear()}`;
+}
 
 /** Switch a baseOptions() x scale to the proportional day axis. `xRange` ({min,max} in
  *  epoch days) pins the visible span — e.g. a "30d" window stays 30 days wide even when
  *  the data only reaches back a fortnight, showing honest empty space instead. */
 function dayAxis(opts, xRange) {
   opts.scales.x.type = "linear";
+  opts.scales.x.bounds = "data"; // don't stretch the axis past the data to a "nice" tick
   opts.scales.x.ticks.precision = 0; // whole days — a tick between two dates is nonsense
   opts.scales.x.ticks.maxTicksLimit = 8;
   opts.scales.x.ticks.callback = (v) => fmtDay(v);

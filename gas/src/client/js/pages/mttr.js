@@ -299,12 +299,20 @@ export async function renderMttr(main, _params, ctx) {
     const sectionHead = el("div", { class: "section-head" }, sectionLabel("Trends"), segRow);
 
     const mttrCanvas = el("canvas", { id: "mttr-trend" });
+    const tailMedianCanvas = el("canvas", { id: "tail-median-trend" });
     const openResolvedCanvas = el("canvas", { id: "open-resolved" });
     const openSlaCanvas = el("canvas", { id: "open-sla-trend" });
 
     const points = trend.length
       ? trend.map((t) => ({ x: t.date, y: t.median_days, reconstructed: t.reconstructed }))
       : history.map((h) => ({ x: h.date, y: h.median_days, reconstructed: false }));
+
+    // MTTR excl. fast lane — reconstructed-trend only (mttr_history snapshots don't carry
+    // it: the series depends on the configurable fast-lane window, so it's recomputed live
+    // from lifecycles rather than persisted under whatever window was set at snapshot time).
+    const tailMedianPoints = trend
+      .map((t) => ({ x: t.date, y: t.tail_median_days, reconstructed: t.reconstructed }))
+      .filter((p) => p.y !== null && p.y !== undefined);
 
     // Same fallback shape as `points` above, but for open_past_sla — a column that doesn't
     // exist on history rows saved before this feature shipped. Those rows carry `null`
@@ -318,12 +326,18 @@ export async function renderMttr(main, _params, ctx) {
     // A "trend" needs at least two points — one lone dot is not a trajectory. This matches the
     // Open-vs-resolved gate and the "after two saved scans" copy below.
     const hasTrend = points.length > 1;
+    const hasTailTrend = tailMedianPoints.length > 1;
     const hasOpenSlaTrend = openSlaPoints.length > 1;
     const grid = el("div", { class: "chart-grid", style: "align-items:start" });
     if (hasTrend) {
       grid.append(el("div", { class: "chart-card" },
         el("h3", {}, "MTTR trend"),
         el("div", { class: "chart-box" }, mttrCanvas)));
+    }
+    if (hasTailTrend) {
+      grid.append(el("div", { class: "chart-card" },
+        el("h3", {}, "MTTR excl. fast lane"),
+        el("div", { class: "chart-box" }, tailMedianCanvas)));
     }
     if (trend.length > 1) {
       grid.append(el("div", { class: "chart-card" },
@@ -363,6 +377,9 @@ export async function renderMttr(main, _params, ctx) {
     requestAnimationFrame(() => {
       if (hasTrend) {
         trendLine(mttrCanvas, points.filter((p) => p.y !== null), { yLabel: "days", xRange });
+      }
+      if (hasTailTrend) {
+        trendLine(tailMedianCanvas, tailMedianPoints, { yLabel: "days", xRange });
       }
       if (trend.length > 1) {
         openResolvedLines(openResolvedCanvas, trend, { xRange });

@@ -43,7 +43,7 @@ import {
   checkpointManifest,
   type BeganSession,
 } from "../domain/importShard";
-import { type BackfilledTrendPoint, trendFromBase, withOpenPastSla } from "../domain/trend";
+import { type BackfilledTrendPoint, trendFromBase, withOpenPastSla, withTailMedian } from "../domain/trend";
 import { nowIso, type Rec } from "../domain/util";
 import * as archive from "./archiveStore";
 import * as history from "./historyStore";
@@ -279,7 +279,12 @@ export function loadBaseRows(now?: number): BaseRow[] {
   return baseRows(loadState(), now);
 }
 
-export function loadTrend(severities: string[] | null = null): BackfilledTrendPoint[] {
+export function loadTrend(
+  severities: string[] | null = null,
+  // Fast-lane window for the tail-median series; the caller (api layer) supplies the
+  // configured setting so this store stays settings-agnostic.
+  tailThresholdDays: number | null = null,
+): BackfilledTrendPoint[] {
   const state = loadState();
   // Backfill on: reconstruct pre-first-scan trend points from findings' first-seen dates so
   // the trend reaches back to the earliest detection, not just the first saved scan. The
@@ -297,9 +302,13 @@ export function loadTrend(severities: string[] | null = null): BackfilledTrendPo
     severities,
     { backfill: true },
   );
-  // Augment every point (real + reconstructed) with its as-of open-past-SLA count from
-  // the same scoped base rows, so the trend carries the aged-backlog series the headline hides.
-  return withOpenPastSla(points, base, severities);
+  // Augment every point (real + reconstructed) with its as-of open-past-SLA count — and,
+  // when a fast-lane window is supplied, the as-of tail median ("MTTR excl. fast lane") —
+  // from the same scoped base rows, so the trend carries the series the headline hides.
+  const withSla = withOpenPastSla(points, base, severities);
+  return tailThresholdDays === null
+    ? withSla
+    : withTailMedian(withSla, base, tailThresholdDays, severities);
 }
 
 /** Per-severity counts of the second-newest flat scan (change-badge baseline). */

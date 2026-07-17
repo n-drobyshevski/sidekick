@@ -227,6 +227,47 @@ export function trendFromBase(
 }
 
 /**
+ * Augment already-emitted trend points with `tail_median_days` — the as-of-date median
+ * MTTR over resolutions SLOWER than the fast-lane window, i.e. the "MTTR excl. fast
+ * lane" series. For each point date d it pools `mttr_days` of rows resolved by d with
+ * `mttr_days > thresholdDays` (the strict dual of the fast lane's `<=`), and takes the
+ * same linear-interpolation median / 3-decimal rounding `trendFromFrames` uses; null
+ * when nothing tail-resolved yet. Severity scoping matches every sibling here.
+ *
+ * GAS-first (no Python fixture parity — mirrors `withOpenPastSla`): a UI-only
+ * augmentation of the same durable rows, kept out of the parity-tested `trendFromFrames`.
+ */
+export function withTailMedian<T extends { date: string }>(
+  points: T[],
+  base: Rec[],
+  thresholdDays: number,
+  severities: string[] | null = null,
+): (T & { tail_median_days: number | null })[] {
+  let rows = base;
+  if (severities !== null && base.length) {
+    const keep = new Set([...severities, "UNKNOWN"]);
+    rows = base.filter((r) => keep.has(normalizeSeverity(r["severity"])));
+  }
+  const parsed = rows
+    .map((r) => ({
+      resolvedAt: parseTs(r["resolved_at"]),
+      mttr: typeof r["mttr_days"] === "number" && !Number.isNaN(r["mttr_days"])
+        ? (r["mttr_days"] as number)
+        : null,
+    }))
+    .filter((r) => r.resolvedAt !== null && r.mttr !== null && r.mttr! > thresholdDays);
+
+  return points.map((p) => {
+    const d = parseTs(p.date);
+    const tail = d === null
+      ? []
+      : parsed.filter((r) => r.resolvedAt! <= d).map((r) => r.mttr!);
+    const med = median(tail);
+    return { ...p, tail_median_days: med !== null ? Math.round(med * 1000) / 1000 : null };
+  });
+}
+
+/**
  * Augment already-emitted trend points with an `open_past_sla` count — open findings
  * whose age at the point's date already exceeds their severity's SLA target (the tail
  * the resolved-only In-SLA % never scores). Replays the durable base at each point's
