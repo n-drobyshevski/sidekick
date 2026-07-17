@@ -782,6 +782,12 @@ a { color: var(--accent); }
   gap: 14px;
 }
 .chart-box { position: relative; height: 240px; }
+/* Distribution row: the survival curve spans 2 of the 3 chart blocks, the time-to-resolve
+   histogram takes the third. align-items:start keeps each card at its natural height (the
+   survival caption doesn't stretch the histogram); the span clamps to 1 when the grid drops
+   to a single column, so the two cards stack on a narrow pane. */
+.dist-grid { align-items: start; }
+.chart-grid .dist-main { grid-column: span 2; }
 /* Survival curve gets a little more vertical room than the 240px trend boxes so the
    staircase reads clearly, especially zoomed into a 5w window. */
 .chart-box.chart-box--tall { height: 300px; }
