@@ -1,6 +1,7 @@
-// Remediation-tail analytics for the MTTR page: percentiles, the auto-patch
-// fast-lane split, a time-to-resolve histogram, a censoring-aware Kaplan–Meier
-// median, and the "open past SLA" backlog the resolved-only headline hides.
+// Remediation-tail analytics for the MTTR page: percentiles, a time-to-resolve
+// histogram, a censoring-aware Kaplan–Meier survival estimator (median, RMST mean,
+// and the survival curve), and the "open past SLA" backlog the resolved-only headline
+// hides.
 //
 // GAS-first module (no Python fixture parity — the Streamlit side is discontinued).
 // Pure functions over ledger base rows (durable lifecycle: mttr_days for resolved
@@ -8,11 +9,11 @@
 // ledgerCore.baseRows). openPastSlaFromRecords is the lone frame-based variant, for
 // the snapshot writer that runs before any ledger exists (see its note).
 
-import { DEFAULT_FAST_LANE_DAYS, RESOLVED_STATUSES, SEVERITY_ORDER, SLA_TARGETS } from "./config";
+import { RESOLVED_STATUSES, SEVERITY_ORDER, SLA_TARGETS } from "./config";
 import type { BaseRow } from "./ledgerCore";
 import { findCol, recordColumns } from "./metrics";
 import { normalizeSeverity } from "./severity";
-import { median, parseTs, quantile, type Rec } from "./util";
+import { mean, median, parseTs, quantile, type Rec } from "./util";
 
 const DAY_MS = 86_400_000;
 
@@ -83,41 +84,6 @@ export function mttrPercentiles(rows: RemediationRow[]): MttrPercentiles {
   };
 }
 
-export interface FastLaneSplit {
-  total: number;
-  fastLane: number;
-  fastLanePct: number | null;
-  tailCount: number;
-  tailMedian: number | null;
-}
-
-/**
- * Split resolved lifecycles into the auto-patch fast lane (`mttr_days <= threshold`,
- * the same `d <= target` boundary the SLA check uses) and the tail beyond it, and take
- * the median of that tail so the fast-patched mass stops dragging it toward zero.
- * fastLanePct / tailMedian are null when there is no resolved sample / no tail.
- */
-export function fastLaneSplit(
-  rows: RemediationRow[],
-  threshold: number = DEFAULT_FAST_LANE_DAYS,
-): FastLaneSplit {
-  const resolved: number[] = [];
-  for (const row of rows) {
-    const m = resolvedMttr(row);
-    if (m !== null) resolved.push(m);
-  }
-  const total = resolved.length;
-  const fastLane = resolved.filter((m) => m <= threshold).length;
-  const tail = resolved.filter((m) => m > threshold);
-  return {
-    total,
-    fastLane,
-    fastLanePct: total ? (fastLane / total) * 100 : null,
-    tailCount: tail.length,
-    tailMedian: median(tail),
-  };
-}
-
 export interface ResolutionBuckets {
   perSev: Record<string, [number, number, number, number, number]>;
   labels: typeof RESOLUTION_BUCKET_LABELS;
@@ -150,41 +116,157 @@ export function resolutionBuckets(rows: RemediationRow[]): ResolutionBuckets {
   return { perSev, labels: RESOLUTION_BUCKET_LABELS, total };
 }
 
+// One step of the Kaplan–Meier staircase: the survival S(t) after the drop at a distinct
+// event time t, the risk-set size just before it, and how many events landed at it.
+export interface KMPoint {
+  t: number;
+  s: number; // S(t) after the drop
+  atRisk: number;
+  events: number;
+}
+
+export interface KMResult {
+  curve: KMPoint[]; // distinct event times ascending; the implicit anchor S(0)=1 is not stored
+  median: number | null; // smallest event time with S(t) <= 0.5
+  medianLowerBound: number | null; // when median is null: the max observed time (else null)
+  mean: number | null; // restricted mean (RMST); null when there are no events
+  restrictionTime: number | null; // τ = max observed time (events ∪ censored); null when empty
+  meanTruncated: boolean; // S(τ) > 0 → survival hadn't reached 0, so RMST is a lower bound
+  naiveMean: number | null; // mean of closed-only mttr_days (util.mean); null with no events
+  naiveMedian: number | null; // linear-interp median of closed-only (util.median); null likewise
+  events: number;
+  censored: number;
+  total: number;
+}
+
 /**
- * Kaplan–Meier median time-to-remediation, treating still-open findings as
- * right-censored so the estimate isn't biased low by fresh fast-patched vulns.
- * Events are resolved rows at `t = mttr_days`; censored rows are open findings at
- * `c = age_days` (rows with a null time drop out). At each distinct event time t_k the
- * risk set is `n_k = #{time >= t_k}` over events *and* censored, `d_k = #{events at t_k}`,
- * and survival `S(t_k) = Π (1 − d_k/n_k)`. The median is the smallest t_k with
- * `S(t_k) <= 0.5` (the inclusive crossing makes an exact-0.5 tie return that time).
- * Returns null when there are no events, or S never falls to 0.5 (too much censoring) —
- * i.e. over half of findings are still open. The UI renders that null as "—".
+ * The Kaplan–Meier survival staircase over `events` (resolved times) against `times` (the
+ * full risk set — every observation, event OR censored). One point per distinct event time
+ * in ascending order: the risk set is `atRisk = #{time >= t}` over `times`, `events = #{event
+ * times == t}`, and survival `S(t) = Π (1 − events/atRisk)`. A distinct event time whose risk
+ * set has already emptied (atRisk 0, possible only if a censored obs equals it exactly) is
+ * skipped, matching the original scalar estimator. Shared by kaplanMeier and trend.withKmMedian
+ * so the estimator loop is written once and the two can't drift.
  */
-export function kmMedian(rows: RemediationRow[]): number | null {
+export function kmCurve(events: number[], times: number[]): KMPoint[] {
+  const curve: KMPoint[] = [];
+  let s = 1;
+  for (const t of [...new Set(events)].sort((a, b) => a - b)) {
+    const atRisk = times.filter((x) => x >= t).length;
+    if (atRisk === 0) continue;
+    const d = events.filter((x) => x === t).length;
+    s *= 1 - d / atRisk;
+    curve.push({ t, s, atRisk, events: d });
+  }
+  return curve;
+}
+
+/**
+ * The Kaplan–Meier median off a curve: the smallest event time whose survival has fallen to
+ * `S(t) <= 0.5` (the inclusive crossing makes an exact-0.5 tie return that time). Null when S
+ * never reaches 0.5 (too much censoring — over half of findings still open) or the curve is
+ * empty; the UI renders that null as "—" (or "> X d" against medianLowerBound).
+ */
+export function kmMedianFromCurve(curve: KMPoint[]): number | null {
+  for (const p of curve) if (p.s <= 0.5) return p.t;
+  return null;
+}
+
+/**
+ * Kaplan–Meier time-to-remediation, treating still-open findings as right-censored so the
+ * estimate isn't biased low by fresh fast-patched vulns. Events are resolved rows at
+ * `t = mttr_days`; censored rows are open findings at `c = age_days` (rows with a null time
+ * drop out of both). Returns the survival curve plus the two headline stats and the naive
+ * closed-only comparison:
+ *
+ *  - `median`: smallest event time with S(t) <= 0.5 (see kmMedianFromCurve); null under heavy
+ *    censoring, in which case `medianLowerBound` carries the max observed time so the UI can
+ *    say "> X d" instead of "—". When the median is known, medianLowerBound is null.
+ *  - `mean`: the restricted mean survival time (RMST) — the area under the KM curve out to the
+ *    restriction time τ = `restrictionTime` (the max observed time, event OR censored). With
+ *    curve points (t_1,S_1)…(t_m,S_m) and the anchor t_0=0, S_0=1:
+ *      RMST = Σ_{k=1..m} S_{k-1}·(t_k − t_{k-1}) + S_m·(τ − t_m).
+ *    `meanTruncated` is `S_m > 0` — survival hadn't reached 0 by τ, so the RMST is a lower
+ *    bound (UI shows "≥"). Null (with median/restrictionTime handled below) when no events.
+ *  - `naiveMean` / `naiveMedian`: the plain mean / linear-interpolation median over the
+ *    closed-only mttr_days (util.mean / util.median), the biased comparison stats; both null
+ *    when nothing resolved.
+ *  - counts: `events` (resolved with a finite time), `censored` (open with a finite age), and
+ *    `total` = their sum (null-time rows contribute to none).
+ *
+ * No events → `curve: []`, median/mean null, `medianLowerBound = restrictionTime = max(times)`
+ * (null when there are no observations at all), meanTruncated false, counts still filled.
+ */
+export function kaplanMeier(rows: RemediationRow[]): KMResult {
   const events: number[] = []; // resolved times
-  const times: number[] = []; // every observation time (event or censored) — the risk set
+  const censored: number[] = []; // open ages
   for (const row of rows) {
     const m = resolvedMttr(row);
     if (m !== null) {
       events.push(m);
-      times.push(m);
       continue;
     }
     const c = openAge(row);
-    if (c !== null) times.push(c);
+    if (c !== null) censored.push(c);
   }
-  if (!events.length) return null; // empty or all-censored → no median
+  const times = events.concat(censored); // the risk set: every observation time
+  const total = events.length + censored.length;
+  const restrictionTime = times.length ? Math.max(...times) : null;
+  const naiveMean = mean(events);
+  const naiveMedian = median(events);
 
-  let s = 1;
-  for (const t of [...new Set(events)].sort((a, b) => a - b)) {
-    const n = times.filter((x) => x >= t).length;
-    if (n === 0) continue;
-    const d = events.filter((x) => x === t).length;
-    s *= 1 - d / n;
-    if (s <= 0.5) return t;
+  if (!events.length) {
+    // Empty or all-censored: no curve, no median/mean. The max observed time is the lower
+    // bound the UI shows for the (unreached) median.
+    return {
+      curve: [],
+      median: null,
+      medianLowerBound: restrictionTime,
+      mean: null,
+      restrictionTime,
+      meanTruncated: false,
+      naiveMean,
+      naiveMedian,
+      events: 0,
+      censored: censored.length,
+      total,
+    };
   }
-  return null;
+
+  const curve = kmCurve(events, times);
+  const median_ = kmMedianFromCurve(curve);
+
+  // RMST = area under the staircase to τ: rectangles S_{k-1}·(t_k − t_{k-1}) plus the final
+  // S_m·(τ − t_m). After the loop prevS is S_m and prevT is t_m.
+  const tau = restrictionTime!; // events non-empty → times non-empty → τ is finite
+  let rmst = 0;
+  let prevT = 0;
+  let prevS = 1;
+  for (const p of curve) {
+    rmst += prevS * (p.t - prevT);
+    prevT = p.t;
+    prevS = p.s;
+  }
+  rmst += prevS * (tau - prevT);
+
+  return {
+    curve,
+    median: median_,
+    medianLowerBound: median_ === null ? restrictionTime : null,
+    mean: rmst,
+    restrictionTime,
+    meanTruncated: prevS > 0, // S(τ) = S_m > 0
+    naiveMean,
+    naiveMedian,
+    events: events.length,
+    censored: censored.length,
+    total,
+  };
+}
+
+/** Scalar KM median — the thin wrapper preserving the original call/test semantics. */
+export function kmMedian(rows: RemediationRow[]): number | null {
+  return kaplanMeier(rows).median;
 }
 
 export interface OpenSlaSev {
@@ -271,8 +353,8 @@ export function openPastSlaFromRecords(records: Rec[], now?: number): number {
 /**
  * Re-project base rows onto the RemediationRow shape using the *actionable* clock —
  * mttr_actionable_days / actionable_age_days (baked by ledgerCore.baseRows) in place of
- * the from-detection mttr_days / age_days. Feed the result to openPastSla, kmMedian,
- * mttrPercentiles, or fastLaneSplit and they measure from vendor-fix availability instead
+ * the from-detection mttr_days / age_days. Feed the result to openPastSla, kaplanMeier,
+ * or mttrPercentiles and they measure from vendor-fix availability instead
  * of first detection, with no change to their bodies. Awaiting-vendor-fix rows carry null
  * actionable fields, so they drop out of every clock here automatically (a resolved row
  * with no fix ever observed likewise has a null mttr_actionable_days) while still counting

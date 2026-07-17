@@ -3,7 +3,7 @@ import {
   cohortSlaAttainment,
   medianMttrByGroupTrend,
   openByGroupTrend, openBySeverityTrend, trendFromBase, trendFromFrames,
-  withOpenPastSla, withSlaBurn, withTailMedian,
+  withKmMedian, withOpenPastSla, withSlaBurn,
 } from "../src/domain/trend";
 import type { Rec } from "../src/domain/util";
 import { expectParity, fixture } from "./helpers";
@@ -520,56 +520,46 @@ describe("cohortSlaAttainment", () => {
   });
 });
 
-describe("withTailMedian", () => {
-  // Three resolutions with a 3-day threshold: 2d and 3.0d are fast lane (excluded — the
-  // strict > dual of the fast lane's <=), 5d and 9d are tail. Resolution dates stagger so
-  // the as-of pool grows point by point.
+describe("withKmMedian", () => {
+  // Four HIGH findings all first seen 2026-01-01, resolved 2/4/6/8 days later. As of an early
+  // date only some have resolved (the rest are right-censored at their current age); as of a
+  // late date all four are events and the KM staircase crosses 0.5.
   const base = [
-    { severity: "CRITICAL", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-03T00:00:00Z", mttr_days: 2 },
-    { severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-04T00:00:00Z", mttr_days: 3 },
-    { severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-06T00:00:00Z", mttr_days: 5 },
-    { severity: "CRITICAL", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-10T00:00:00Z", mttr_days: 9 },
-    { severity: "LOW", first_seen: "2026-01-01T00:00:00Z", resolved_at: null, mttr_days: null }, // open — never pooled
+    { severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-03T00:00:00Z", mttr_days: 2 },
+    { severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-05T00:00:00Z", mttr_days: 4 },
+    { severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-07T00:00:00Z", mttr_days: 6 },
+    { severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-09T00:00:00Z", mttr_days: 8 },
   ];
 
-  it("pools only tail resolutions resolved by each point date; null before any", () => {
+  it("null before any event / before the 0.5 crossing; KM median as of each date", () => {
     const points = [
-      { date: "2026-01-05T00:00:00Z", foo: "a" }, // only fast-lane resolutions so far
-      { date: "2026-01-07T00:00:00Z", foo: "b" }, // tail pool [5]
-      { date: "2026-01-15T00:00:00Z", foo: "c" }, // tail pool [5, 9]
+      { date: "2026-01-02T00:00:00Z", foo: "a" }, // nothing resolved yet -> null
+      { date: "2026-01-04T00:00:00Z", foo: "b" }, // event [2], three censored at age 3: t2 n=4 S=.75 -> null
+      { date: "2026-01-10T00:00:00Z", foo: "c" }, // events [2,4,6,8]: t2 S=.75, t4 S=.5 -> median 4
     ];
-    expect(withTailMedian(points, base, 3)).toEqual([
-      { date: "2026-01-05T00:00:00Z", foo: "a", tail_median_days: null },
-      { date: "2026-01-07T00:00:00Z", foo: "b", tail_median_days: 5 },
-      { date: "2026-01-15T00:00:00Z", foo: "c", tail_median_days: 7 }, // median [5, 9]
+    expect(withKmMedian(points, base)).toEqual([
+      { date: "2026-01-02T00:00:00Z", foo: "a", km_median_days: null },
+      { date: "2026-01-04T00:00:00Z", foo: "b", km_median_days: null },
+      { date: "2026-01-10T00:00:00Z", foo: "c", km_median_days: 4 },
     ]);
-  });
-
-  it("threshold boundary: mttr exactly == threshold stays fast lane (excluded)", () => {
-    const b = [{ severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-04T00:00:00Z", mttr_days: 3 }];
-    expect(withTailMedian([{ date: "2026-01-15T00:00:00Z" }], b, 3)[0].tail_median_days).toBeNull();
-    // Just over the threshold joins the tail.
-    expect(withTailMedian([{ date: "2026-01-15T00:00:00Z" }],
-      [{ ...b[0], mttr_days: 3.001 }], 3)[0].tail_median_days).toBe(3.001);
   });
 
   it("scopes to the chosen severities plus UNKNOWN", () => {
     const b = [
-      { severity: "CRITICAL", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-10T00:00:00Z", mttr_days: 9 },
-      { severity: "MEDIUM", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-06T00:00:00Z", mttr_days: 5 },
-      { severity: "UNKNOWN", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-14T00:00:00Z", mttr_days: 13 },
+      { severity: "CRITICAL", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-03T00:00:00Z", mttr_days: 2 },
+      { severity: "MEDIUM", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-05T00:00:00Z", mttr_days: 4 },
+      { severity: "UNKNOWN", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-07T00:00:00Z", mttr_days: 6 },
     ];
-    const points = [{ date: "2026-01-15T00:00:00Z" }];
-    // Unscoped: pool [9, 5, 13] -> median 9. Scoped to CRITICAL: UNKNOWN kept -> [9, 13] -> 11.
-    expect(withTailMedian(points, b, 3)[0].tail_median_days).toBe(9);
-    expect(withTailMedian(points, b, 3, ["CRITICAL"])[0].tail_median_days).toBe(11);
+    const points = [{ date: "2026-01-10T00:00:00Z" }];
+    // Unscoped events [2,4,6]: t2 n=3 S=.667, t4 n=2 S=.333 <= .5 -> median 4.
+    // Scoped to CRITICAL (UNKNOWN kept) events [2,6]: t2 n=2 S=.5 <= .5 -> median 2.
+    expect(withKmMedian(points, b)[0].km_median_days).toBe(4);
+    expect(withKmMedian(points, b, ["CRITICAL"])[0].km_median_days).toBe(2);
   });
 
-  it("rounds like trendFromFrames (3 decimals)", () => {
-    const b = [
-      { severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-06T00:00:00Z", mttr_days: 5.0004 },
-      { severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-06T00:00:00Z", mttr_days: 5.0006 },
-    ];
-    expect(withTailMedian([{ date: "2026-01-15T00:00:00Z" }], b, 3)[0].tail_median_days).toBe(5.001);
+  it("rounds the KM median to 3 decimals like trendFromFrames", () => {
+    // A single event at 5.0006: S drops straight to 0, so the median is that event time.
+    const b = [{ severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-06T00:00:00Z", mttr_days: 5.0006 }];
+    expect(withKmMedian([{ date: "2026-01-15T00:00:00Z" }], b)[0].km_median_days).toBe(5.001);
   });
 });

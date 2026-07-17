@@ -4,10 +4,8 @@
 import {
   API_SEVERITY_VALUES,
   DEFAULT_DISPLAY_SEVERITIES,
-  DEFAULT_FAST_LANE_DAYS,
   DEFAULT_FETCH_SEVERITIES,
   DEFAULT_RETENTION_DAYS,
-  FAST_LANE_MAX_DAYS,
   RETENTION_MIN_DAYS,
   SELECTABLE_SEVERITIES,
   SEVERITY_ORDER,
@@ -72,22 +70,6 @@ export function withRetentionDays(settings: Rec, days: number | null): Rec {
   const d = { ...settings };
   d["retention_days"] = days === null ? null : Math.max(Math.trunc(days), RETENTION_MIN_DAYS);
   return d;
-}
-
-/**
- * The auto-patch fast-lane window in days. Stored value if finite and > 0, clamped to
- * FAST_LANE_MAX_DAYS; junk / non-positive → DEFAULT_FAST_LANE_DAYS. No Math.trunc —
- * fractional windows (0.5d) are intentional for sub-day patch cadences.
- */
-export function getFastLaneDays(settings: Rec): number {
-  const raw = "fast_lane_days" in settings ? settings["fast_lane_days"] : DEFAULT_FAST_LANE_DAYS;
-  const n = typeof raw === "number" ? raw : parseFloat(String(raw));
-  if (!Number.isFinite(n) || n <= 0) return DEFAULT_FAST_LANE_DAYS;
-  return Math.min(n, FAST_LANE_MAX_DAYS);
-}
-
-export function withFastLaneDays(settings: Rec, days: number): Rec {
-  return { ...settings, fast_lane_days: getFastLaneDays({ fast_lane_days: days }) };
 }
 
 export function getAutoCompact(settings: Rec): boolean {

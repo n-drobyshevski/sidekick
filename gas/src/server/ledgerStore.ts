@@ -47,9 +47,9 @@ import {
   type BackfilledTrendPoint,
   cohortSlaAttainment,
   trendFromBase,
+  withKmMedian,
   withOpenPastSla,
   withSlaBurn,
-  withTailMedian,
 } from "../domain/trend";
 import { nowIso, type Rec } from "../domain/util";
 import * as archive from "./archiveStore";
@@ -292,9 +292,6 @@ export function loadBaseRows(now?: number): BaseRow[] {
 
 export function loadTrend(
   severities: string[] | null = null,
-  // Fast-lane window for the tail-median series; the caller (api layer) supplies the
-  // configured setting so this store stays settings-agnostic.
-  tailThresholdDays: number | null = null,
 ): BackfilledTrendPoint[] {
   const state = loadState();
   // Backfill on: reconstruct pre-first-scan trend points from findings' first-seen dates so
@@ -321,13 +318,12 @@ export function loadTrend(
   //   - open-past-SLA measured from vendor-fix availability (actionable_from), so it matches
   //     the page's actionable metric and drops awaiting-vendor-fix rows (null actionable_from);
   //   - the SLA-burn net flow and the cohort SLA attainment (backlog-flow metrics);
-  //   - and, when a fast-lane window is supplied, the as-of tail median ("MTTR excl. fast lane").
+  //   - the as-of Kaplan–Meier median ("KM median trend"), the censoring-aware replacement for
+  //     the old "MTTR excl. fast lane" series.
   const withSla = withOpenPastSla(points, base, severities, "actionable_from");
   const withBurn = withSlaBurn(withSla, base, severities);
   const withAttainment = cohortSlaAttainment(withBurn, base, severities);
-  return tailThresholdDays === null
-    ? withAttainment
-    : withTailMedian(withAttainment, base, tailThresholdDays, severities);
+  return withKmMedian(withAttainment, base, severities);
 }
 
 /** Per-severity counts of the second-newest flat scan (change-badge baseline). */

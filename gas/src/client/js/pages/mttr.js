@@ -3,7 +3,7 @@
 
 import {
   destroyChart, groupPalette, groupPie, groupTrendLines, openResolvedLines, stackedAgeBar,
-  trendLine,
+  survivalCurve, trendLine,
 } from "../charts.js";
 import { bootstrap, swrCall } from "../store.js";
 import {
@@ -20,12 +20,6 @@ const RESOLUTION_LABELS = ["≤1d", "2–7d", "8–30d", "31–90d", "90+d"];
 const TREND_WINDOWS = [
   ["5d", 5], ["2w", 14], ["30d", 30], ["60d", 60], ["90d", 90], ["All", null],
 ];
-
-// Which basis the "By domain" chart pair draws: the plain median over all resolutions, or
-// the fast-lane-excluded tail (line switches series, pie switches population). Module-scoped
-// so the choice survives repaints (severity re-apply, SWR revalidation) within the session
-// without localStorage ceremony.
-let domainTrendMode = "median";
 
 // The chosen window persists across visits in localStorage, stored by preset label so a
 // stale or hand-edited value degrades to All. Some GAS iframe sandboxes block web storage
@@ -65,6 +59,27 @@ function fmtAwaiting(a) {
   const pct = a.pctOfOpen !== null && a.pctOfOpen !== undefined
     ? ` (${a.pctOfOpen.toFixed(0)}% of open)` : "";
   return `${a.overall.toLocaleString()}${pct}`;
+}
+
+// Kaplan-Meier median formatter: the exact day count, "> X d" when the curve never drops to
+// 50% within the observed window (heavy censoring — the true median is at least that far
+// out), or "—" when there's no KM result at all (a stale pre-KM cached payload). `km` is a
+// KMResult (or the null/undefined stand-in for one).
+function fmtKmMedian(km) {
+  if (!km) return "—";
+  if (km.median !== null && km.median !== undefined) return fmtDays(km.median);
+  if (km.medianLowerBound !== null && km.medianLowerBound !== undefined) {
+    return `> ${fmtDays(km.medianLowerBound)}`;
+  }
+  return "—";
+}
+
+// Kaplan-Meier mean (RMST) formatter: a "≥" prefix marks a lower bound (the curve hadn't
+// fully decayed to zero by the restriction time τ, so some findings would resolve later),
+// else the exact restricted mean.
+function fmtKmMean(km) {
+  if (!km || km.mean === null || km.mean === undefined) return "—";
+  return (km.meanTruncated ? "≥ " : "") + fmtDays(km.mean);
 }
 
 // A helpTip'd label/value row for the Resolution profile stat card — reuses the
@@ -112,10 +127,11 @@ export async function renderMttr(main, _params, ctx) {
 
   const heroHost = el("div", {});
   const chartsHost = el("div", {});
+  const survivalHost = el("div", {});
   const resolutionHost = el("div", {});
   const slaHost = el("div", {});
   const byDomainHost = el("div", {});
-  main.append(heroHost, chartsHost, resolutionHost, slaHost, byDomainHost);
+  main.append(heroHost, chartsHost, survivalHost, resolutionHost, slaHost, byDomainHost);
 
   // Scope comes from the global Value Chain + Support group filters in the sidebar;
   // "" = no filter on that dimension.
@@ -139,6 +155,7 @@ export async function renderMttr(main, _params, ctx) {
     // leaves the charts / SLA table showing the old scope's numbers beside a "Computing…" hero.
     clear(heroHost).append(el("p", { class: "muted" }, "Computing…"));
     clear(chartsHost);
+    clear(survivalHost);
     clear(resolutionHost);
     clear(slaHost);
     clear(byDomainHost);
@@ -148,6 +165,7 @@ export async function renderMttr(main, _params, ctx) {
     const paint = (data) => {
       renderHero(data.mttr, data.trends);
       renderCharts(data.trends, data.mttr);
+      renderSurvivalCurve(data.mttr);
       renderResolutionProfile(data.mttr);
       renderSla(data.mttr);
       renderByDomain(data.byDomain);
@@ -170,31 +188,7 @@ export async function renderMttr(main, _params, ctx) {
   function renderByDomain(byDomain) {
     clear(byDomainHost);
     if (!byDomain || !byDomain.rows.length || boot.domainNames.length < 2) return;
-    // Compact Median / Excl. fast lane switch inline with the section label — the same
-    // aria-pressed segmented pattern as the Trends timeframe toggle. It governs BOTH charts
-    // below (pie population + line series); clicking repaints from the closed-over payload.
-    const threshold = byDomain.thresholdDays ?? 1;
-    const mttrModes = [
-      ["median", "Median"],
-      ["tail", "Excl. fast lane"],
-    ];
-    const modeSeg = el("div", { class: "seg-row", role: "group", "aria-label": "MTTR basis" },
-      ...mttrModes.map(([mode, label]) =>
-        el("button", {
-          type: "button", class: "seg-btn seg-btn--sm",
-          "aria-pressed": String(mode === domainTrendMode),
-          title: mode === "tail"
-            ? `With the fast lane removed (resolutions ≤ ${threshold}d)` : null,
-          onclick: () => {
-            domainTrendMode = mode;
-            for (const b of modeSeg.children) b.setAttribute("aria-pressed", "false");
-            modeSeg.children[mttrModes.findIndex(([m]) => m === mode)]
-              .setAttribute("aria-pressed", "true");
-            paintPie();
-            paintLine();
-          },
-        }, label)));
-    byDomainHost.append(el("div", { class: "section-head" }, sectionLabel("By domain"), modeSeg));
+    byDomainHost.append(sectionLabel("By domain"));
     byDomainHost.append(el("p", { class: "small muted", style: "margin:-6px 0 12px" },
       "Remediation for each domain that makes up the value chain."));
 
@@ -242,14 +236,10 @@ export async function renderMttr(main, _params, ctx) {
     const series = groups.map((name) => ({ name, color: colors.get(name) }));
     if (resolvedOther > 0) series.push({ name: "Other", color: colors.get("Other") });
 
-    // Line: per-domain median MTTR (days) replayed over scan history — plain median or the
-    // fast-lane-excluded tail median, per the segmented switch.
+    // Line: per-domain median MTTR (days) replayed over scan history.
     function paintLine() {
-      const tail = domainTrendMode === "tail";
-      const points = (trend && (tail ? trend.tailPoints : trend.points)) || [];
-      lineCaption.textContent = tail
-        ? `Median MTTR (days) by domain excluding resolutions ≤ ${threshold}d, per scan.`
-        : "Median MTTR (days) by domain, per scan.";
+      const points = (trend && trend.points) || [];
+      lineCaption.textContent = "Median MTTR (days) by domain, per scan.";
       if (points.length < 2) {
         showMsg(lineCanvas, lineMsg, "Trend appears after the second saved scan.");
         return;
@@ -258,53 +248,37 @@ export async function renderMttr(main, _params, ctx) {
       groupTrendLines(lineCanvas, points, series, {
         unit: "days",
         nullAsGap: true,
-        describe: tail
-          ? "Median MTTR in days per domain over scan history, fast lane excluded."
-          : "Median MTTR in days per domain over scan history.",
+        describe: "Median MTTR in days per domain over scan history.",
       });
     }
 
-    // Pie: each domain's share of the population the switch selects — all resolved
-    // findings (the set the MTTR median runs over) or just the tail beyond the fast lane.
-    // Tooltip detail carries the matching per-domain median. Canonical groups/hues stay
-    // fixed across the toggle (slices resize, never recolor); a domain with no tail
-    // resolutions simply drops out in tail mode.
+    // Pie: each domain's share of resolved findings — the population the MTTR median runs
+    // over. Tooltip detail carries the matching per-domain median. Canonical groups/hues
+    // stay fixed (slices resize, never recolor).
     function paintPie() {
-      const tail = domainTrendMode === "tail";
       const byName = new Map(byDomain.rows.map((r) => [r.domain, r]));
-      const countOf = (r) => (tail ? (r?.tailResolved ?? 0) : (r?.resolved ?? 0));
-      pieCaption.textContent = tail
-        ? `Each domain's share of resolutions slower than the fast lane (> ${threshold}d).`
-        : "Each domain's share of resolved findings — the population feeding MTTR.";
+      pieCaption.textContent = "Each domain's share of resolved findings — the population feeding MTTR.";
       const slices = groups
         .map((name) => {
           const r = byName.get(name);
           return {
             label: name,
-            value: countOf(r),
+            value: r?.resolved ?? 0,
             color: colors.get(name),
-            detail: tail
-              ? "Median excl. fast lane " + fmtDays(r?.tailMedian)
-              : "Median MTTR " + fmtDays(r?.median),
+            detail: "Median MTTR " + fmtDays(r?.median),
           };
         })
         .filter((s) => s.value > 0);
       const other = byDomain.rows
         .filter((r) => !inGroups.has(r.domain))
-        .reduce((a, r) => a + countOf(r), 0);
+        .reduce((a, r) => a + (r.resolved ?? 0), 0);
       if (other > 0) slices.push({ label: "Other", value: other, color: colors.get("Other") });
       if (!slices.length) {
-        showMsg(pieCanvas, pieMsg, tail
-          ? "No resolutions beyond the fast lane."
-          : "No resolved findings to partition.");
+        showMsg(pieCanvas, pieMsg, "No resolved findings to partition.");
         return;
       }
       showChart(pieCanvas, pieMsg);
-      groupPie(pieCanvas, slices, {
-        subject: tail
-          ? "Resolutions beyond the fast lane by domain"
-          : "Resolved findings by domain",
-      });
+      groupPie(pieCanvas, slices, { subject: "Resolved findings by domain" });
     }
 
     requestAnimationFrame(() => {
@@ -320,10 +294,10 @@ export async function renderMttr(main, _params, ctx) {
       ["MTTR p90",
         ["90th-percentile time from first detection to remediation — the slow tail. Nine " +
           "in ten findings beat it; one in ten is slower."]],
-      ["Excl. fast lane",
-        ["Median remediation time after removing the fast lane (resolutions ≤ " +
-          `${byDomain.thresholdDays ?? 1}d), so auto-patched vulns don't drag the median ` +
-          "toward zero."]],
+      ["KM median",
+        ["Kaplan–Meier median time-to-remediation for this domain. Still-open findings " +
+          "count as censored instead of being ignored, so it isn't biased low by fresh " +
+          "fast-patched vulns."]],
       ["In SLA", null],
       ["Open past SLA",
         ["Open findings already older than their severity's SLA target. Unlike In-SLA % " +
@@ -342,7 +316,7 @@ export async function renderMttr(main, _params, ctx) {
         el("td", {}, r.domain),
         el("td", { class: "num" }, fmtDays(r.median)),
         el("td", { class: "num" }, fmtDays(r.p90)),
-        el("td", { class: "num" }, fmtDays(r.tailMedian)),
+        el("td", { class: "num" }, fmtDays(r.kmMedian)),
         el("td", { class: "num" }, r.slaPct != null ? `${r.slaPct.toFixed(0)}%` : "—"),
         el("td", { class: "num" }, fmtOpenPastSla(r.openPastSla)),
         el("td", { class: "num" }, (r.open ?? 0).toLocaleString()),
@@ -371,7 +345,6 @@ export async function renderMttr(main, _params, ctx) {
       ));
       return;
     }
-    const median = mttr.overall.mttr_median;
     const hist = trends.history;
     const prev = hist.length > 1 ? hist[hist.length - 2] : null;
     // The prev snapshot (mttr_history) is global across chain/support/severity, while the
@@ -384,6 +357,7 @@ export async function renderMttr(main, _params, ctx) {
     // from before the rollout won't carry it, so every read below is optional-chained and
     // every affected mini/cell degrades to "—" rather than throwing.
     const rem = mttr.remediation;
+    const km = rem?.km; // KMResult — the primary MTTR methodology now
     // Actionable-clock open-past-SLA, falling back to the from-detection value for a stale
     // pre-actionable cache (both share the {open, breached, pct} shape).
     const openPastSla = rem?.openPastSlaActionable?.overall ?? rem?.openPastSla?.overall;
@@ -392,6 +366,15 @@ export async function renderMttr(main, _params, ctx) {
 
     const minis = el("div", { class: "hero-minis" });
     const miniDefs = [
+      // The naive figures are demoted to minis now that Kaplan–Meier is the headline
+      // methodology — closed-findings-only, no censoring. The median keeps mttr_history's
+      // change chip (the KM series itself isn't persisted, see the plan); the mean has no
+      // history series to diff against.
+      ["Median (naive, closed)", fmtDays(km?.naiveMedian),
+        !scoped && prev && prev.median_days !== null && prev.median_days !== undefined &&
+          km?.naiveMedian !== null && km?.naiveMedian !== undefined
+          ? changeChip(km.naiveMedian, prev.median_days, { fmt: fmtDays }) : null],
+      ["Mean (naive, closed)", fmtDays(km?.naiveMean), null],
       // "of resolved" makes the survivorship explicit: In-SLA % scores only resolved
       // findings, so it can look healthy while the open backlog ages (Open past SLA below).
       ["In SLA (of resolved)", mttr.slaPct !== null ? `${mttr.slaPct.toFixed(1)}%` : "—",
@@ -423,32 +406,83 @@ export async function renderMttr(main, _params, ctx) {
     const resolved = mttr.overall.resolved ?? 0;
     const open = mttr.overall.open ?? 0;
     // The metric itself (label + value) is the hover/focus target — no separate "i" glyph.
+    // No change chip on either KM stat: mttr_history only ever persisted the naive median
+    // (now a mini above), never a KM series, so there's nothing to diff against.
     const metric = helpTip(
       [
-        el("div", { class: "label" }, "Median MTTR" + (domain ? ` — ${domain}` : "")),
-        el("div", { class: "hero-value num" },
-          median !== null && median !== undefined ? fmtDays(median) : "—",
-          !scoped && prev && median !== null
-            ? changeChip(median, prev.median_days, { fmt: fmtDays }) : null,
-        ),
+        el("div", { class: "label" }, "Median MTTR (Kaplan–Meier)" + (domain ? ` — ${domain}` : "")),
+        el("div", { class: "hero-value num" }, fmtKmMedian(km)),
       ],
       [
-        "Median days from first detection to remediation.",
-        `Over ${resolved.toLocaleString()} resolved finding${resolved === 1 ? "" : "s"} — `
-          + "open ones aren't counted (they show as Open age p90).",
+        "Kaplan–Meier median days from first detection to remediation. Still-open findings " +
+          "count as censored observations instead of being ignored, so a wave of fresh open " +
+          "findings can't bias this down.",
+        "\"> X d\" means the curve never dropped to 50% within the observed window — over " +
+          "half of tracked findings are still open, so the true median is at least that " +
+          "many days out.",
         "A vuln that disappears between scans counts as resolved.",
+      ],
+      { className: "hero-metric" },
+    );
+    // Second stat, not a second hero — deliberately a step below the 2rem hero value (see
+    // DESIGN.md: at most one hero value per page) while still living beside the headline.
+    const meanStat = helpTip(
+      [
+        el("div", { class: "label" }, "Mean MTTR (KM · RMST)"),
+        el("div", { class: "kpi-value num" }, fmtKmMean(km)),
+      ],
+      [
+        "Restricted mean survival time (RMST) — the average remediation time up to the " +
+          "longest observed lifecycle (τ), with still-open findings censored.",
+        "\"≥\" marks a lower bound: the curve hadn't fully decayed to zero by τ, so some " +
+          "findings would still resolve later and the true mean is at least this.",
       ],
       { className: "hero-metric" },
     );
     heroHost.append(
       el("div", { class: "hero" },
-        metric,
+        el("div", { style: "display:flex; align-items:baseline; gap:32px; flex-wrap:wrap" },
+          metric, meanStat),
         el("div", { class: "hero-src" },
           `${mttr.rowCount.toLocaleString()} tracked lifecycle(s) in the durable base · ` +
           `${resolved.toLocaleString()} resolved · ${open.toLocaleString()} open`),
         minis,
       ),
     );
+  }
+
+  /** Full-width Kaplan–Meier survival curve card, before Resolution profile. Gated on a
+   *  drawable curve: `rem` missing entirely means a stale pre-KM cache (nothing shown, same
+   *  convention as renderResolutionProfile); `rem.km` present but empty means genuinely no
+   *  resolved findings yet to estimate from (a muted note instead of an empty chart). */
+  function renderSurvivalCurve(mttr) {
+    clear(survivalHost);
+    const rem = mttr.remediation;
+    if (!rem) return;
+    survivalHost.append(sectionLabel("Remediation survival (Kaplan–Meier)"));
+    if (!rem.km?.curve?.length) {
+      survivalHost.append(el("p", { class: "muted small" },
+        "Not enough resolved findings yet to draw a survival curve — it appears once the " +
+        "first remediation is recorded."));
+      return;
+    }
+    const canvas = el("canvas", { id: "survival-curve" });
+    survivalHost.append(
+      el("div", { class: "chart-card" },
+        el("h3", {}, "S(t): share of findings still open"),
+        el("div", { class: "chart-box" }, canvas),
+        el("p", { class: "chart-caption muted" },
+          "Markers: Median (closed), Median (KM, all), Mean (closed), Mean (KM · RMST, all)."),
+      ),
+    );
+    requestAnimationFrame(() => {
+      survivalCurve(canvas, rem.km.curve, {
+        naiveMedian: rem.km.naiveMedian,
+        median: rem.km.median,
+        naiveMean: rem.km.naiveMean,
+        mean: rem.km.mean,
+      });
+    });
   }
 
   function renderCharts(trends, mttr) {
@@ -484,7 +518,7 @@ export async function renderMttr(main, _params, ctx) {
     const sectionHead = el("div", { class: "section-head" }, sectionLabel("Trends"), segRow);
 
     const mttrCanvas = el("canvas", { id: "mttr-trend" });
-    const tailMedianCanvas = el("canvas", { id: "tail-median-trend" });
+    const kmMedianCanvas = el("canvas", { id: "km-median-trend" });
     const openResolvedCanvas = el("canvas", { id: "open-resolved" });
     const openSlaCanvas = el("canvas", { id: "open-sla-trend" });
     const slaBurnCanvas = el("canvas", { id: "sla-burn-trend" });
@@ -494,11 +528,11 @@ export async function renderMttr(main, _params, ctx) {
       ? trend.map((t) => ({ x: t.date, y: t.median_days, reconstructed: t.reconstructed }))
       : history.map((h) => ({ x: h.date, y: h.median_days, reconstructed: false }));
 
-    // MTTR excl. fast lane — reconstructed-trend only (mttr_history snapshots don't carry
-    // it: the series depends on the configurable fast-lane window, so it's recomputed live
-    // from lifecycles rather than persisted under whatever window was set at snapshot time).
-    const tailMedianPoints = trend
-      .map((t) => ({ x: t.date, y: t.tail_median_days, reconstructed: t.reconstructed }))
+    // KM median trend — reconstructed-trend only (mttr_history snapshots don't carry it: KM
+    // needs the full base of events + censoring replayed as-of each date, not a scalar that
+    // was persisted at snapshot time).
+    const kmMedianPoints = trend
+      .map((t) => ({ x: t.date, y: t.km_median_days, reconstructed: t.reconstructed }))
       .filter((p) => p.y !== null && p.y !== undefined);
 
     // Same fallback shape as `points` above, but for open_past_sla — a column that doesn't
@@ -524,20 +558,22 @@ export async function renderMttr(main, _params, ctx) {
     // A "trend" needs at least two points — one lone dot is not a trajectory. This matches the
     // Open-vs-resolved gate and the "after two saved scans" copy below.
     const hasTrend = points.length > 1;
-    const hasTailTrend = tailMedianPoints.length > 1;
+    const hasKmTrend = kmMedianPoints.length > 1;
     const hasOpenSlaTrend = openSlaPoints.length > 1;
     const hasSlaBurn = slaBurnPoints.length > 1;
     const hasSlaAttainment = slaAttainmentPoints.length > 1;
     const grid = el("div", { class: "chart-grid", style: "align-items:start" });
+    if (hasKmTrend) {
+      // KM ordered first — it's the primary methodology now; naive MTTR trend follows as
+      // the comparison series.
+      grid.append(el("div", { class: "chart-card" },
+        el("h3", {}, "KM median trend"),
+        el("div", { class: "chart-box" }, kmMedianCanvas)));
+    }
     if (hasTrend) {
       grid.append(el("div", { class: "chart-card" },
         el("h3", {}, "MTTR trend"),
         el("div", { class: "chart-box" }, mttrCanvas)));
-    }
-    if (hasTailTrend) {
-      grid.append(el("div", { class: "chart-card" },
-        el("h3", {}, "MTTR excl. fast lane"),
-        el("div", { class: "chart-box" }, tailMedianCanvas)));
     }
     if (trend.length > 1) {
       grid.append(el("div", { class: "chart-card" },
@@ -601,8 +637,8 @@ export async function renderMttr(main, _params, ctx) {
       if (hasTrend) {
         trendLine(mttrCanvas, points.filter((p) => p.y !== null), { yLabel: "days", xRange });
       }
-      if (hasTailTrend) {
-        trendLine(tailMedianCanvas, tailMedianPoints, { yLabel: "days", xRange });
+      if (hasKmTrend) {
+        trendLine(kmMedianCanvas, kmMedianPoints, { yLabel: "days", xRange });
       }
       if (trend.length > 1) {
         openResolvedLines(openResolvedCanvas, trend, { xRange });
@@ -620,9 +656,9 @@ export async function renderMttr(main, _params, ctx) {
   }
 
   /** Resolution profile: the histogram of time-to-resolve (stacked by severity) beside a
-   *  compact stat card of fast-lane / tail-median / Kaplan–Meier numbers. All of it comes
-   *  from `mttr.remediation`, which is additive on the server — skip the whole section
-   *  when it's missing (stale cache) or empty (no resolved lifecycles to bucket yet). */
+   *  compact stat card of Kaplan–Meier + naive-comparison numbers. All of it comes from
+   *  `mttr.remediation`, which is additive on the server — skip the whole section when it's
+   *  missing (stale cache) or empty (no resolved lifecycles to bucket yet). */
   function renderResolutionProfile(mttr) {
     clear(resolutionHost);
     const rem = mttr.remediation;
@@ -639,24 +675,25 @@ export async function renderMttr(main, _params, ctx) {
           { className: "help-label" })),
       el("div", { class: "chart-box" }, bucketCanvas));
 
-    const fastLane = rem.fastLane || {};
+    const km = rem.km;
     const statCard = el("div", { class: "card" },
-      statRow("Fast lane",
-        fastLane.fastLanePct !== null && fastLane.fastLanePct !== undefined
-          ? `${fastLane.fastLanePct.toFixed(0)}% ≤ ${fastLane.thresholdDays}d` : "—",
-        [`Share of resolved findings closed within ${fastLane.thresholdDays} days — ` +
-          "mostly auto-patched vulns found just before a patch window."]),
-      statRow("Median (excl. fast lane)", fmtDays(fastLane.tailMedian),
-        ["Median remediation time after removing the fast lane, so auto-patched vulns " +
-          "don't drag the median toward zero."]),
-      statRow("KM median (from detection)", fmtDays(rem.kmMedian),
+      statRow("KM median (from detection)", fmtKmMedian(km),
         ["Kaplan–Meier median time-to-remediation. Counts still-open findings as censored " +
           "(not-yet-resolved) instead of ignoring them, so it isn't biased low by fresh " +
-          "fast-patched vulns. “—” means over half of findings are still open."]),
-      statRow("KM median (actionable)", fmtDays(rem.kmMedianActionable),
+          "fast-patched vulns. \"> X d\" means over half of findings are still open."]),
+      statRow("KM mean (RMST)", fmtKmMean(km),
+        ["Restricted mean survival time — expected remediation time up to the longest " +
+          "observed lifecycle, treating still-open findings as censored. \"≥\" marks a " +
+          "lower bound when the curve hadn't fully decayed to zero by then."]),
+      statRow("KM median (actionable)", fmtKmMedian(rem.kmActionable),
         ["The same Kaplan–Meier median, but the clock starts when a vendor fix became " +
           "available rather than at first detection — so a fix that arrives late doesn't " +
           "count against the team. Findings still awaiting a vendor fix don't count at all."]),
+      statRow("Median (naive, closed)", fmtDays(km?.naiveMedian),
+        ["Linear-interpolated median over closed findings only. Ignores still-open " +
+          "findings entirely, so a wave of fresh fast-patched vulns can drag it down."]),
+      statRow("Mean (naive, closed)", fmtDays(km?.naiveMean),
+        ["Simple average time-to-resolve over closed findings only."]),
     );
 
     resolutionHost.append(

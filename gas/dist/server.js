@@ -615,8 +615,6 @@ var Server = (() => {
     INFO: "\u26AA",
     UNKNOWN: "\u26AB"
   };
-  var DEFAULT_FAST_LANE_DAYS = 1;
-  var FAST_LANE_MAX_DAYS = 90;
   var SLA_TARGETS = {
     CRITICAL: 7,
     HIGH: 14,
@@ -705,15 +703,6 @@ var Server = (() => {
     const d = { ...settings };
     d["retention_days"] = days === null ? null : Math.max(Math.trunc(days), RETENTION_MIN_DAYS);
     return d;
-  }
-  function getFastLaneDays(settings) {
-    const raw = "fast_lane_days" in settings ? settings["fast_lane_days"] : DEFAULT_FAST_LANE_DAYS;
-    const n = typeof raw === "number" ? raw : parseFloat(String(raw));
-    if (!Number.isFinite(n) || n <= 0) return DEFAULT_FAST_LANE_DAYS;
-    return Math.min(n, FAST_LANE_MAX_DAYS);
-  }
-  function withFastLaneDays(settings, days) {
-    return { ...settings, fast_lane_days: getFastLaneDays({ fast_lane_days: days }) };
   }
   function getAutoCompact(settings) {
     const val = "auto_compact" in settings ? settings["auto_compact"] : true;
@@ -1116,7 +1105,6 @@ var Server = (() => {
     runScan: () => runScan,
     saveDomains: () => saveDomains,
     setAutoCompact: () => setAutoCompact2,
-    setFastLaneDays: () => setFastLaneDays2,
     setRetention: () => setRetention,
     setRetentionSettings: () => setRetentionSettings,
     setSeverities: () => setSeverities
@@ -2023,23 +2011,6 @@ var Server = (() => {
       overall: { p50: quantile(all, 0.5), p90: quantile(all, 0.9), count: all.length }
     };
   }
-  function fastLaneSplit(rows, threshold = DEFAULT_FAST_LANE_DAYS) {
-    const resolved = [];
-    for (const row of rows) {
-      const m = resolvedMttr(row);
-      if (m !== null) resolved.push(m);
-    }
-    const total = resolved.length;
-    const fastLane = resolved.filter((m) => m <= threshold).length;
-    const tail = resolved.filter((m) => m > threshold);
-    return {
-      total,
-      fastLane,
-      fastLanePct: total ? fastLane / total * 100 : null,
-      tailCount: tail.length,
-      tailMedian: median(tail)
-    };
-  }
   function resolutionBuckets(rows) {
     const perSev = {};
     let total = 0;
@@ -2054,29 +2025,80 @@ var Server = (() => {
     }
     return { perSev, labels: RESOLUTION_BUCKET_LABELS, total };
   }
-  function kmMedian(rows) {
+  function kmCurve(events, times) {
+    const curve = [];
+    let s = 1;
+    for (const t of [...new Set(events)].sort((a, b) => a - b)) {
+      const atRisk = times.filter((x) => x >= t).length;
+      if (atRisk === 0) continue;
+      const d = events.filter((x) => x === t).length;
+      s *= 1 - d / atRisk;
+      curve.push({ t, s, atRisk, events: d });
+    }
+    return curve;
+  }
+  function kmMedianFromCurve(curve) {
+    for (const p of curve) if (p.s <= 0.5) return p.t;
+    return null;
+  }
+  function kaplanMeier(rows) {
     const events = [];
-    const times = [];
+    const censored = [];
     for (const row of rows) {
       const m = resolvedMttr(row);
       if (m !== null) {
         events.push(m);
-        times.push(m);
         continue;
       }
       const c = openAge(row);
-      if (c !== null) times.push(c);
+      if (c !== null) censored.push(c);
     }
-    if (!events.length) return null;
-    let s = 1;
-    for (const t of [...new Set(events)].sort((a, b) => a - b)) {
-      const n = times.filter((x) => x >= t).length;
-      if (n === 0) continue;
-      const d = events.filter((x) => x === t).length;
-      s *= 1 - d / n;
-      if (s <= 0.5) return t;
+    const times = events.concat(censored);
+    const total = events.length + censored.length;
+    const restrictionTime = times.length ? Math.max(...times) : null;
+    const naiveMean = mean(events);
+    const naiveMedian = median(events);
+    if (!events.length) {
+      return {
+        curve: [],
+        median: null,
+        medianLowerBound: restrictionTime,
+        mean: null,
+        restrictionTime,
+        meanTruncated: false,
+        naiveMean,
+        naiveMedian,
+        events: 0,
+        censored: censored.length,
+        total
+      };
     }
-    return null;
+    const curve = kmCurve(events, times);
+    const median_ = kmMedianFromCurve(curve);
+    const tau = restrictionTime;
+    let rmst = 0;
+    let prevT = 0;
+    let prevS = 1;
+    for (const p of curve) {
+      rmst += prevS * (p.t - prevT);
+      prevT = p.t;
+      prevS = p.s;
+    }
+    rmst += prevS * (tau - prevT);
+    return {
+      curve,
+      median: median_,
+      medianLowerBound: median_ === null ? restrictionTime : null,
+      mean: rmst,
+      restrictionTime,
+      meanTruncated: prevS > 0,
+      // S(τ) = S_m > 0
+      naiveMean,
+      naiveMedian,
+      events: events.length,
+      censored: censored.length,
+      total
+    };
   }
   function openPastSla(rows) {
     var _a, _b;
@@ -2775,21 +2797,36 @@ var Server = (() => {
     }
     return tag(trendFromFrames(synthetic.concat(scans), base, severities), syntheticIso);
   }
-  function withTailMedian(points, base, thresholdDays, severities = null) {
+  function withKmMedian(points, base, severities = null) {
     let rows = base;
     if (severities !== null && base.length) {
       const keep = /* @__PURE__ */ new Set([...severities, "UNKNOWN"]);
       rows = base.filter((r) => keep.has(normalizeSeverity(r["severity"])));
     }
     const parsed = rows.map((r) => ({
+      first: parseTs(r["first_seen"]),
       resolvedAt: parseTs(r["resolved_at"]),
       mttr: typeof r["mttr_days"] === "number" && !Number.isNaN(r["mttr_days"]) ? r["mttr_days"] : null
-    })).filter((r) => r.resolvedAt !== null && r.mttr !== null && r.mttr > thresholdDays);
+    }));
     return points.map((p) => {
       const d = parseTs(p.date);
-      const tail = d === null ? [] : parsed.filter((r) => r.resolvedAt <= d).map((r) => r.mttr);
-      const med = median(tail);
-      return { ...p, tail_median_days: med !== null ? Math.round(med * 1e3) / 1e3 : null };
+      let med = null;
+      if (d !== null) {
+        const events = [];
+        const times = [];
+        for (const r of parsed) {
+          if (r.resolvedAt !== null && r.resolvedAt <= d) {
+            if (r.mttr !== null) {
+              events.push(r.mttr);
+              times.push(r.mttr);
+            }
+          } else if (r.first !== null && r.first <= d) {
+            times.push((d - r.first) / DAY_MS4);
+          }
+        }
+        med = kmMedianFromCurve(kmCurve(events, times));
+      }
+      return { ...p, km_median_days: med !== null ? Math.round(med * 1e3) / 1e3 : null };
     });
   }
   function withOpenPastSla(points, base, severities = null, fromField = "first_seen") {
@@ -4087,7 +4124,7 @@ var Server = (() => {
   function loadBaseRows(now) {
     return baseRows(loadState(), now);
   }
-  function loadTrend(severities = null, tailThresholdDays = null) {
+  function loadTrend(severities = null) {
     const state = loadState();
     const base = baseRows(state).map((r) => ({
       severity: r.severity,
@@ -4107,7 +4144,7 @@ var Server = (() => {
     const withSla = withOpenPastSla(points, base, severities, "actionable_from");
     const withBurn = withSlaBurn(withSla, base, severities);
     const withAttainment = cohortSlaAttainment(withBurn, base, severities);
-    return tailThresholdDays === null ? withAttainment : withTailMedian(withAttainment, base, tailThresholdDays, severities);
+    return withKmMedian(withAttainment, base, severities);
   }
   function previousSeverityCounts() {
     const flats = loadScanRows().filter((s) => s.shape === "flat");
@@ -4551,7 +4588,6 @@ var Server = (() => {
   var getFetchSeverities2 = () => getFetchSeverities(loadSettings());
   var getDisplaySeverities2 = () => getDisplaySeverities(loadSettings());
   var getRetentionDays2 = () => getRetentionDays(loadSettings());
-  var getFastLaneDays2 = () => getFastLaneDays(loadSettings());
   var getAutoCompact2 = () => getAutoCompact(loadSettings());
   var getDomains2 = () => getDomains(loadSettings());
   var getSupportGroupMap2 = () => getSupportGroupMap(loadSettings());
@@ -4563,9 +4599,6 @@ var Server = (() => {
   }
   function setRetentionDays(days) {
     saveSettings(withRetentionDays(loadSettings(), days));
-  }
-  function setFastLaneDays(days) {
-    saveSettings(withFastLaneDays(loadSettings(), days));
   }
   function setAutoCompact(enabled) {
     saveSettings(withAutoCompact(loadSettings(), enabled));
@@ -5422,7 +5455,6 @@ var Server = (() => {
         fetchSeverities: getFetchSeverities2(),
         displaySeverities: getDisplaySeverities2(),
         retentionDays: getRetentionDays2(),
-        fastLaneDays: getFastLaneDays2(),
         autoCompact: getAutoCompact2(),
         domains: getDomains2()
       },
@@ -5851,17 +5883,17 @@ var Server = (() => {
     const { perSev, overall } = mttrFromLedger(rows);
     const { slaPct, oldestDays } = overallSlaOldest(perSev);
     const remRows = rows;
-    const t = getFastLaneDays2();
     const remediation = {
       pctiles: mttrPercentiles(remRows),
-      fastLane: { ...fastLaneSplit(remRows, t), thresholdDays: t },
       buckets: resolutionBuckets(remRows),
-      kmMedian: kmMedian(remRows),
+      // Full Kaplan–Meier estimate (curve + KM median/RMST mean + naive comparison stats),
+      // open findings right-censored so the headline isn't biased low by fresh fast patches.
+      km: kaplanMeier(remRows),
       openPastSla: openPastSla(remRows),
       // Actionable-clock companions (clock starts at vendor-fix availability): the same
       // functions over the actionableView projection. Awaiting-vendor-fix rows carry null
       // actionable fields, so they drop out of these while staying in `awaiting`.
-      kmMedianActionable: kmMedian(actionableView(remRows)),
+      kmActionable: kaplanMeier(actionableView(remRows)),
       openPastSlaActionable: openPastSla(actionableView(remRows)),
       awaiting: awaitingVendorFix(remRows)
     };
@@ -5871,7 +5903,7 @@ var Server = (() => {
     const severities = readSeverities(p);
     return {
       history: loadHistory(),
-      trend: loadTrend(severities, getFastLaneDays2())
+      trend: loadTrend(severities)
     };
   }
   function mttrByDomainData(p) {
@@ -5897,7 +5929,6 @@ var Server = (() => {
       if (!arr) buckets.set(name, arr = []);
       arr.push(r);
     });
-    const t = getFastLaneDays2();
     const out = [];
     for (const name of domainNames(items)) {
       const drows = buckets.get(name);
@@ -5905,15 +5936,13 @@ var Server = (() => {
       const { perSev, overall } = mttrFromLedger(drows);
       const { slaPct } = overallSlaOldest(perSev);
       const rem = drows;
-      const split = fastLaneSplit(rem, t);
       out.push({
         domain: name,
         median: (_b = overall.mttr_median) != null ? _b : null,
         p90: mttrPercentiles(rem).overall.p90,
-        tailMedian: split.tailMedian,
-        // Tail-resolution count — the pie's population when the By-domain switch is on
-        // "Excl. fast lane" (resolved with mttr_days above the fast-lane threshold).
-        tailResolved: split.tailCount,
+        // Censoring-aware KM median (open findings right-censored) — the column that replaces
+        // the old "Excl. fast lane" tail median.
+        kmMedian: kaplanMeier(rem).median,
         slaPct,
         // Actionable-clock open-past-SLA (measured from vendor-fix availability, awaiting
         // rows excluded) — the same basis the hero and severity table now use.
@@ -5936,11 +5965,7 @@ var Server = (() => {
       return String((_a2 = r["_domain"]) != null ? _a2 : UNASSIGNED);
     };
     const points = medianMttrByGroupTrend(scanRows, rows, byDomainKey, groups, { severities: null });
-    const tailPoints = medianMttrByGroupTrend(scanRows, rows, byDomainKey, groups, {
-      severities: null,
-      minMttrDays: t
-    });
-    return { rows: out, thresholdDays: t, trend: { groups, points, tailPoints } };
+    return { rows: out, trend: { groups, points } };
   }
   var cachedMttrData = (p) => {
     var _a, _b;
@@ -5949,15 +5974,14 @@ var Server = (() => {
       // deploys, so bumping the namespace prevents serving a stale old-shape entry (up to 1h).
       // "mttr2" → "mttr3": remediation gained the actionable-clock keys (kmMedianActionable,
       // openPastSlaActionable, awaiting); same reasoning — bump so no stale entry lacks them.
-      "mttr3",
+      // "mttr3" → "mttr4": fast-lane machinery removed; remediation now carries the full KM
+      // estimate (km / kmActionable) and dropped fastLane / scalar kmMedian; bump so no stale
+      // old-shape entry survives the persistent dataVersion.
+      "mttr4",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
-        severities: readSeverities(p),
-        // The fast-lane window is an input of the payload (thresholdDays, split, tail
-        // median), so it belongs in the key: entries minted under another window — or under
-        // the pre-setting constant, which no dataVersion bump ever retired — can't be served.
-        fastLane: getFastLaneDays2()
+        severities: readSeverities(p)
       },
       () => mttrData(p),
       3600
@@ -5965,14 +5989,16 @@ var Server = (() => {
   };
   var cachedMttrTrendData = (p) => (
     // "mttrTrend" → "mttrTrend2": trend points gained `open_past_sla`; namespace bump avoids a
-    // stale old-shape entry surviving the deploy under the persistent dataVersion. The
-    // fast-lane window feeds the tail-median series, so it rides in the key like cachedMttrData.
+    // stale old-shape entry surviving the deploy under the persistent dataVersion.
     // "mttrTrend2" → "mttrTrend3": trend points gained the backlog-flow series (sla_net /
     // sla_entered / sla_cleared, sla_attainment_pct) and open_past_sla switched to the
     // actionable clock; bump so a stale old-shape entry can't survive the persistent dataVersion.
+    // "mttrTrend3" → "mttrTrend4": the tail-median series (tail_median_days) became the KM-median
+    // series (km_median_days) and the fast-lane window left the key; bump so no stale entry
+    // survives.
     cached(
-      "mttrTrend3",
-      { severities: readSeverities(p), fastLane: getFastLaneDays2() },
+      "mttrTrend4",
+      { severities: readSeverities(p) },
       () => mttrTrendData(p)
     )
   );
@@ -5990,12 +6016,14 @@ var Server = (() => {
       // drives the Remediation-share pie).
       // "mttrByDomain5" → "mttrByDomain6": rows gained `awaiting` and switched `openPastSla`
       // to the actionable-clock view; bump so a stale from-detection entry can't survive.
-      "mttrByDomain6",
+      // "mttrByDomain6" → "mttrByDomain7": fast-lane machinery removed — rows' `tailMedian` /
+      // `tailResolved` became a single `kmMedian`, `trend` lost `tailPoints`, the payload
+      // dropped `thresholdDays`, and the fast-lane window left the key; bump so no stale
+      // old-shape entry survives.
+      "mttrByDomain7",
       {
         supportGroup: String((_a = p == null ? void 0 : p["supportGroup"]) != null ? _a : ""),
-        severities: readSeverities(p),
-        // Same reasoning as cachedMttrData: tailMedian/thresholdDays depend on the window.
-        fastLane: getFastLaneDays2()
+        severities: readSeverities(p)
       },
       () => mttrByDomainData(p),
       3600
@@ -6280,7 +6308,6 @@ var Server = (() => {
       fetchSeverities: getFetchSeverities2(),
       displaySeverities: getDisplaySeverities2(),
       retentionDays: getRetentionDays2(),
-      fastLaneDays: getFastLaneDays2(),
       autoCompact: getAutoCompact2(),
       domains: getDomains2()
     }));
@@ -6301,13 +6328,6 @@ var Server = (() => {
     return mutate(() => {
       setRetentionDays(days === null || days === void 0 ? null : Number(days));
       return { retentionDays: getRetentionDays2() };
-    });
-  }
-  function setFastLaneDays2(p) {
-    const days = p == null ? void 0 : p["days"];
-    return mutate(() => {
-      setFastLaneDays(Number(days));
-      return { fastLaneDays: getFastLaneDays2() };
     });
   }
   function setAutoCompact2(p) {

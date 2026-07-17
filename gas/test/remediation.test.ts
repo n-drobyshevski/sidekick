@@ -3,7 +3,7 @@ import {
   RESOLUTION_BUCKET_LABELS,
   actionableView,
   awaitingVendorFix,
-  fastLaneSplit,
+  kaplanMeier,
   kmMedian,
   mttrPercentiles,
   openPastSla,
@@ -76,45 +76,6 @@ describe("mttrPercentiles", () => {
   });
 });
 
-describe("fastLaneSplit", () => {
-  it("boundary at exactly 3.0d is fast lane; tail median over the remainder", () => {
-    const out = fastLaneSplit([res(1), res(3), res(5), res(9)], 3);
-    expect(out.total).toBe(4);
-    expect(out.fastLane).toBe(2); // 1 and 3.0 (<= 3)
-    expect(out.fastLanePct).toBe(50);
-    expect(out.tailCount).toBe(2);
-    expect(out.tailMedian).toBe(7); // median [5, 9]
-  });
-
-  it("all fast lane -> tailCount 0 / tailMedian null; all tail -> pct 0", () => {
-    const allFast = fastLaneSplit([res(0.5), res(1), res(3)], 3);
-    expect(allFast.fastLane).toBe(3);
-    expect(allFast.tailCount).toBe(0);
-    expect(allFast.tailMedian).toBeNull();
-
-    const allTail = fastLaneSplit([res(10), res(20)]);
-    expect(allTail.fastLane).toBe(0);
-    expect(allTail.fastLanePct).toBe(0);
-    expect(allTail.tailMedian).toBe(15);
-  });
-
-  it("empty -> total 0 / pct null; honors a custom threshold", () => {
-    expect(fastLaneSplit([])).toEqual({
-      total: 0,
-      fastLane: 0,
-      fastLanePct: null,
-      tailCount: 0,
-      tailMedian: null,
-    });
-    expect(fastLaneSplit([res(4), res(6)], 5).fastLane).toBe(1); // 4 <= 5, 6 > 5
-    // default threshold is now 1 day (DEFAULT_FAST_LANE_DAYS)
-    const dflt = fastLaneSplit([res(0.5), res(1), res(2)]);
-    expect(dflt.fastLane).toBe(2); // 0.5 and 1 (<= 1)
-    expect(dflt.tailCount).toBe(1);
-    expect(dflt.tailMedian).toBe(2); // median [2]
-  });
-});
-
 describe("resolutionBuckets", () => {
   it("buckets at <= edges 1/7/30/90 (inclusive-low); 90.0001 -> 90+d", () => {
     const { perSev, total, labels } = resolutionBuckets([
@@ -175,6 +136,102 @@ describe("kmMedian", () => {
     expect(kmMedian([res(1), res(1), res(1), res(2)])).toBe(1);
     // add a censored obs at 10 (after the median): t1 n=5 d=3 S = 1-3/5 = .4 <= .5 -> still 1.
     expect(kmMedian([res(1), res(1), res(1), res(2), open(10)])).toBe(1);
+  });
+});
+
+describe("kaplanMeier", () => {
+  it("all resolved: full curve, median, and RMST mean equal the naive mean", () => {
+    // events 1,2,3,4 (no censoring). S drops .75/.5/.25/0 over risk sets 4/3/2/1.
+    const km = kaplanMeier([res(1), res(2), res(3), res(4)]);
+    expect(km.curve).toEqual([
+      { t: 1, s: 0.75, atRisk: 4, events: 1 },
+      { t: 2, s: 0.5, atRisk: 3, events: 1 },
+      { t: 3, s: 0.25, atRisk: 2, events: 1 },
+      { t: 4, s: 0, atRisk: 1, events: 1 },
+    ]);
+    expect(km.median).toBe(2); // first S <= .5
+    expect(km.medianLowerBound).toBeNull(); // median known
+    expect(km.restrictionTime).toBe(4); // τ = max observed
+    // RMST = 1·1 + .75·1 + .5·1 + .25·1 + 0·0 = 2.5.
+    expect(km.mean).toBe(2.5);
+    expect(km.meanTruncated).toBe(false); // S(τ) = 0
+    expect(km.naiveMean).toBe(2.5);
+    expect(km.naiveMedian).toBe(2.5);
+    expect(km.events).toBe(4);
+    expect(km.censored).toBe(0);
+    expect(km.total).toBe(4);
+  });
+
+  it("exact-0.5 crossing: median at the tie, mean is the curve area", () => {
+    // events 1,2: t1 n=2 d=1 S=.5 (<= .5 -> median 1); t2 n=1 d=1 S=0.
+    const km = kaplanMeier([res(1), res(2)]);
+    expect(km.median).toBe(1);
+    // RMST = 1·1 + .5·1 = 1.5.
+    expect(km.mean).toBe(1.5);
+    expect(km.meanTruncated).toBe(false);
+  });
+
+  it("heavy censoring: null median with a lower bound, truncated RMST", () => {
+    // one event at 5, four censored at 6,7,8,9. t5 n=5 d=1 S=.8 (> .5, no later event).
+    const km = kaplanMeier([res(5), open(6), open(7), open(8), open(9)]);
+    expect(km.curve).toEqual([{ t: 5, s: 0.8, atRisk: 5, events: 1 }]);
+    expect(km.median).toBeNull();
+    expect(km.medianLowerBound).toBe(9); // "> 9d" — the max observed time
+    expect(km.restrictionTime).toBe(9);
+    // RMST = 1·5 + .8·(9-5) = 5 + 3.2 = 8.2, a lower bound since S(τ) = .8 > 0.
+    expect(km.mean).toBe(8.2);
+    expect(km.meanTruncated).toBe(true);
+    expect(km.naiveMean).toBe(5); // only the one resolved sample
+    expect(km.naiveMedian).toBe(5);
+    expect(km.events).toBe(1);
+    expect(km.censored).toBe(4);
+    expect(km.total).toBe(5);
+  });
+
+  it("all censored: empty curve, null median/mean, lower bound at max age", () => {
+    const km = kaplanMeier([open(5), open(10)]);
+    expect(km.curve).toEqual([]);
+    expect(km.median).toBeNull();
+    expect(km.medianLowerBound).toBe(10);
+    expect(km.mean).toBeNull();
+    expect(km.restrictionTime).toBe(10);
+    expect(km.meanTruncated).toBe(false);
+    expect(km.naiveMean).toBeNull();
+    expect(km.naiveMedian).toBeNull();
+    expect(km.events).toBe(0);
+    expect(km.censored).toBe(2);
+    expect(km.total).toBe(2);
+  });
+
+  it("ties at a single event time: one point, median = mean = that time", () => {
+    // three events at 5: t5 n=3 d=3 S=0. Curve is a single drop straight to 0.
+    const km = kaplanMeier([res(5), res(5), res(5)]);
+    expect(km.curve).toEqual([{ t: 5, s: 0, atRisk: 3, events: 3 }]);
+    expect(km.median).toBe(5);
+    // RMST = 1·5 + 0·0 = 5.
+    expect(km.mean).toBe(5);
+    expect(km.meanTruncated).toBe(false);
+  });
+
+  it("empty: all nulls, counts 0", () => {
+    expect(kaplanMeier([])).toEqual({
+      curve: [],
+      median: null,
+      medianLowerBound: null,
+      mean: null,
+      restrictionTime: null,
+      meanTruncated: false,
+      naiveMean: null,
+      naiveMedian: null,
+      events: 0,
+      censored: 0,
+      total: 0,
+    });
+  });
+
+  it("kmMedian is the estimator's .median", () => {
+    const rows = [res(1), res(2), res(3), res(4)];
+    expect(kmMedian(rows)).toBe(kaplanMeier(rows).median);
   });
 });
 

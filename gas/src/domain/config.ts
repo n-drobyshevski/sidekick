@@ -24,14 +24,6 @@ export const SEVERITY_GLYPHS: Record<string, string> = {
   UNKNOWN: "⚫",
 };
 
-// Resolved within this many days is the auto-patch "fast lane" — vulns detected
-// just before a patch window and closed immediately, the mass that pins the median
-// near zero. User-configurable (fast_lane_days setting); this is the default and the
-// upper cap. Not an SLA; see remediation.fastLaneSplit and settingsLogic.getFastLaneDays.
-// The cap = the LOW SLA target; beyond it the fast lane swallows everything.
-export const DEFAULT_FAST_LANE_DAYS = 1;
-export const FAST_LANE_MAX_DAYS = 90;
-
 // Standard VM SLAs (days).
 export const SLA_TARGETS: Record<string, number> = {
   CRITICAL: 7,

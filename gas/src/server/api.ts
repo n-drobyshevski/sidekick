@@ -19,8 +19,7 @@ import { normalizeSeverity } from "../domain/severity";
 import {
   actionableView,
   awaitingVendorFix,
-  fastLaneSplit,
-  kmMedian,
+  kaplanMeier,
   mttrPercentiles,
   openPastSla,
   resolutionBuckets,
@@ -112,7 +111,6 @@ function bootstrapCore(): Rec {
       fetchSeverities: settingsStore.getFetchSeverities(),
       displaySeverities: settingsStore.getDisplaySeverities(),
       retentionDays: settingsStore.getRetentionDays(),
-      fastLaneDays: settingsStore.getFastLaneDays(),
       autoCompact: settingsStore.getAutoCompact(),
       domains: settingsStore.getDomains(),
     },
@@ -590,20 +588,19 @@ function mttrData(p?: unknown): Rec {
   const { perSev, overall } = mttrFromLedger(rows);
   const { slaPct, oldestDays } = overallSlaOldest(perSev);
   // Remediation-tail block over the same scoped rows (BaseRows cast to Rec by loadBaseRows;
-  // cast back for the typed remediation projection). thresholdDays rides in the payload
-  // because the client bundle can't import the TS domain fast-lane window.
+  // cast back for the typed remediation projection).
   const remRows = rows as unknown as BaseRow[];
-  const t = settingsStore.getFastLaneDays();
   const remediation = {
     pctiles: mttrPercentiles(remRows),
-    fastLane: { ...fastLaneSplit(remRows, t), thresholdDays: t },
     buckets: resolutionBuckets(remRows),
-    kmMedian: kmMedian(remRows),
+    // Full Kaplan–Meier estimate (curve + KM median/RMST mean + naive comparison stats),
+    // open findings right-censored so the headline isn't biased low by fresh fast patches.
+    km: kaplanMeier(remRows),
     openPastSla: openPastSla(remRows),
     // Actionable-clock companions (clock starts at vendor-fix availability): the same
     // functions over the actionableView projection. Awaiting-vendor-fix rows carry null
     // actionable fields, so they drop out of these while staying in `awaiting`.
-    kmMedianActionable: kmMedian(actionableView(remRows)),
+    kmActionable: kaplanMeier(actionableView(remRows)),
     openPastSlaActionable: openPastSla(actionableView(remRows)),
     awaiting: awaitingVendorFix(remRows),
   };
@@ -614,7 +611,7 @@ function mttrTrendData(p?: unknown): Rec {
   const severities = readSeverities(p);
   return {
     history: history.loadHistory(),
-    trend: ledgerStore.loadTrend(severities, settingsStore.getFastLaneDays()),
+    trend: ledgerStore.loadTrend(severities),
   };
 }
 
@@ -641,7 +638,6 @@ function mttrByDomainData(p?: unknown): Rec {
     if (!arr) buckets.set(name, (arr = []));
     arr.push(r);
   });
-  const t = settingsStore.getFastLaneDays();
   const out: Rec[] = [];
   for (const name of domainNames(items)) {
     const drows = buckets.get(name);
@@ -649,15 +645,13 @@ function mttrByDomainData(p?: unknown): Rec {
     const { perSev, overall } = mttrFromLedger(drows);
     const { slaPct } = overallSlaOldest(perSev);
     const rem = drows as unknown as BaseRow[];
-    const split = fastLaneSplit(rem, t);
     out.push({
       domain: name,
       median: overall.mttr_median ?? null,
       p90: mttrPercentiles(rem).overall.p90,
-      tailMedian: split.tailMedian,
-      // Tail-resolution count — the pie's population when the By-domain switch is on
-      // "Excl. fast lane" (resolved with mttr_days above the fast-lane threshold).
-      tailResolved: split.tailCount,
+      // Censoring-aware KM median (open findings right-censored) — the column that replaces
+      // the old "Excl. fast lane" tail median.
+      kmMedian: kaplanMeier(rem).median,
       slaPct,
       // Actionable-clock open-past-SLA (measured from vendor-fix availability, awaiting
       // rows excluded) — the same basis the hero and severity table now use.
@@ -684,13 +678,7 @@ function mttrByDomainData(p?: unknown): Rec {
   const scanRows = ledgerStore.loadScanRows() as unknown as Rec[];
   const byDomainKey = (r: Rec) => String(r["_domain"] ?? UNASSIGNED);
   const points = medianMttrByGroupTrend(scanRows, rows, byDomainKey, groups, { severities: null });
-  // Same replay with the fast lane removed (mttr_days > threshold) — the trend analogue
-  // of the table's "Excl. fast lane" column, toggled client-side on the same chart.
-  const tailPoints = medianMttrByGroupTrend(scanRows, rows, byDomainKey, groups, {
-    severities: null,
-    minMttrDays: t,
-  });
-  return { rows: out, thresholdDays: t, trend: { groups, points, tailPoints } };
+  return { rows: out, trend: { groups, points } };
 }
 
 // Cached per DATA_VERSION, keyed on exactly the params each computation reads — so
@@ -703,29 +691,30 @@ const cachedMttrData = (p?: unknown) =>
     // deploys, so bumping the namespace prevents serving a stale old-shape entry (up to 1h).
     // "mttr2" → "mttr3": remediation gained the actionable-clock keys (kmMedianActionable,
     // openPastSlaActionable, awaiting); same reasoning — bump so no stale entry lacks them.
-    "mttr3",
+    // "mttr3" → "mttr4": fast-lane machinery removed; remediation now carries the full KM
+    // estimate (km / kmActionable) and dropped fastLane / scalar kmMedian; bump so no stale
+    // old-shape entry survives the persistent dataVersion.
+    "mttr4",
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
       severities: readSeverities(p),
-      // The fast-lane window is an input of the payload (thresholdDays, split, tail
-      // median), so it belongs in the key: entries minted under another window — or under
-      // the pre-setting constant, which no dataVersion bump ever retired — can't be served.
-      fastLane: settingsStore.getFastLaneDays(),
     },
     () => mttrData(p),
     3600,
   );
 const cachedMttrTrendData = (p?: unknown) =>
   // "mttrTrend" → "mttrTrend2": trend points gained `open_past_sla`; namespace bump avoids a
-  // stale old-shape entry surviving the deploy under the persistent dataVersion. The
-  // fast-lane window feeds the tail-median series, so it rides in the key like cachedMttrData.
+  // stale old-shape entry surviving the deploy under the persistent dataVersion.
   // "mttrTrend2" → "mttrTrend3": trend points gained the backlog-flow series (sla_net /
   // sla_entered / sla_cleared, sla_attainment_pct) and open_past_sla switched to the
   // actionable clock; bump so a stale old-shape entry can't survive the persistent dataVersion.
+  // "mttrTrend3" → "mttrTrend4": the tail-median series (tail_median_days) became the KM-median
+  // series (km_median_days) and the fast-lane window left the key; bump so no stale entry
+  // survives.
   cached(
-    "mttrTrend3",
-    { severities: readSeverities(p), fastLane: settingsStore.getFastLaneDays() },
+    "mttrTrend4",
+    { severities: readSeverities(p) },
     () => mttrTrendData(p),
   );
 // Domain-independent (always all domains); severity-scoped; 1h TTL like the summary
@@ -743,12 +732,14 @@ const cachedMttrByDomainData = (p?: unknown) =>
     // drives the Remediation-share pie).
     // "mttrByDomain5" → "mttrByDomain6": rows gained `awaiting` and switched `openPastSla`
     // to the actionable-clock view; bump so a stale from-detection entry can't survive.
-    "mttrByDomain6",
+    // "mttrByDomain6" → "mttrByDomain7": fast-lane machinery removed — rows' `tailMedian` /
+    // `tailResolved` became a single `kmMedian`, `trend` lost `tailPoints`, the payload
+    // dropped `thresholdDays`, and the fast-lane window left the key; bump so no stale
+    // old-shape entry survives.
+    "mttrByDomain7",
     {
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
       severities: readSeverities(p),
-      // Same reasoning as cachedMttrData: tailMedian/thresholdDays depend on the window.
-      fastLane: settingsStore.getFastLaneDays(),
     },
     () => mttrByDomainData(p),
     3600,
@@ -1059,7 +1050,6 @@ export function getSettings(_p?: unknown): ApiResult {
     fetchSeverities: settingsStore.getFetchSeverities(),
     displaySeverities: settingsStore.getDisplaySeverities(),
     retentionDays: settingsStore.getRetentionDays(),
-    fastLaneDays: settingsStore.getFastLaneDays(),
     autoCompact: settingsStore.getAutoCompact(),
     domains: settingsStore.getDomains(),
   }));
@@ -1082,14 +1072,6 @@ export function setRetention(p?: unknown): ApiResult {
   return mutate(() => {
     settingsStore.setRetentionDays(days === null || days === undefined ? null : Number(days));
     return { retentionDays: settingsStore.getRetentionDays() };
-  });
-}
-
-export function setFastLaneDays(p?: unknown): ApiResult {
-  const days = (p as Rec)?.["days"];
-  return mutate(() => {
-    settingsStore.setFastLaneDays(Number(days));
-    return { fastLaneDays: settingsStore.getFastLaneDays() };
   });
 }
 
