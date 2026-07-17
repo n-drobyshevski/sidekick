@@ -290,6 +290,15 @@ function renderImportSection(main, ctx) {
     }
   }
 
+  // Import-result suffix naming rows whose severity didn't normalize to a real value at
+  // ingestion (coerceLedger/coerceEpisode now write an explicit "UNKNOWN" instead of the
+  // raw literal). Optional-chained: unclassified_severity is an additive field, so a
+  // stale pre-rollout server build simply omits the suffix rather than throwing.
+  function unclassifiedSuffix(out) {
+    const n = out?.unclassified_severity;
+    return n ? ` ${n.toLocaleString()} row(s) had an unrecognized severity.` : "";
+  }
+
   // On a fresh-ledger rejection, offer to reset and retry the same (already-parsed) import.
   // Returns true when the caller should retry; false to surface the original error.
   async function offerResetRetry(e) {
@@ -363,7 +372,7 @@ function renderImportSection(main, ctx) {
       const out = await call("api_importMigration",
         gzipB64 ? { gzipB64 } : { bundle });
       toast(`Imported ${out.scans_imported} scan(s), ${out.vulns_imported} tracked ` +
-        `vulnerabilities, ${out.history_added} history point(s).`);
+        `vulnerabilities, ${out.history_added} history point(s).` + unclassifiedSuffix(out));
       clear(statusHost);
       ctx.refresh();
     } catch (e) {
@@ -411,7 +420,7 @@ function renderImportSection(main, ctx) {
       setStatus("Finalizing…");
       const out = await call("api_importFinalize", { sessionId: beg.sessionId });
       toast(`Imported ${out.scans_imported} scan(s), ${out.vulns_imported} tracked ` +
-        `vulnerabilities, ${out.history_added} history point(s).`);
+        `vulnerabilities, ${out.history_added} history point(s).` + unclassifiedSuffix(out));
       clear(statusHost);
       ctx.refresh();
     } catch (e) {

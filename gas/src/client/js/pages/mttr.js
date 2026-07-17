@@ -41,14 +41,16 @@ function saveTrendWindow(label) {
   }
 }
 
-// Open-past-SLA cell, shared by the hero mini and the per-severity table: "breached
-// (pct%)"; "0" when nothing is open (pct is null then, not a fake 0%); "—" when the
-// payload doesn't carry this metric at all (e.g. a stale pre-remediation cache).
+// Open-past-SLA cell, shared by the hero mini, the per-severity table, and the
+// by-domain table: "632 of 816 open (77%)" — the denominator makes the population
+// explicit instead of leaving the breached count to be read against whatever total the
+// reader assumes. "0" when nothing is open (pct is null then, not a fake 0%); "—" when
+// the payload doesn't carry this metric at all (e.g. a stale pre-remediation cache).
 function fmtOpenPastSla(o) {
   if (!o || o.open === null || o.open === undefined) return "—";
   if (!o.open) return "0";
   const pct = o.pct !== null && o.pct !== undefined ? `${o.pct.toFixed(0)}%` : "—";
-  return `${(o.breached ?? 0).toLocaleString()} (${pct})`;
+  return `${(o.breached ?? 0).toLocaleString()} of ${o.open.toLocaleString()} open (${pct})`;
 }
 
 // Awaiting-vendor-fix summary for the hero mini: "N (x% of open)"; "—" when the payload
@@ -84,12 +86,22 @@ function fmtKmMean(km) {
 
 // A helpTip'd label/value row for the Resolution profile stat card — reuses the
 // per-severity stat-card row classes (hairline divider + name/value) so the visual stays
-// identical to "Remediation by severity" below, just without the sev-dot.
-function statRow(label, value, lines) {
+// identical to "Remediation by severity" below, just without the sev-dot. Optional `sub`
+// (e.g. "N events · M censored") names the population/clock a KM figure was computed
+// over, so two numbers that look contradictory (from-detection vs actionable KM median)
+// are each legible on their own — rendered via the same value-group/sub-value classes as
+// the Overview severity card. Bare value (no group wrapper) when `sub` is omitted, so
+// plain rows (naive median/mean without a caller-supplied sub) keep their original markup.
+function statRow(label, value, lines, sub) {
+  const valueNode = sub
+    ? el("span", { class: "stat-card__value-group" },
+        el("span", { class: "stat-card__value num" }, value),
+        el("span", { class: "stat-card__sub-value" }, sub))
+    : el("span", { class: "stat-card__value num" }, value);
   return helpTip(
     [
       el("span", { class: "stat-card__name" }, label),
-      el("span", { class: "stat-card__value num" }, value),
+      valueNode,
     ],
     lines,
     { className: "stat-card__row help-label" },
@@ -299,10 +311,11 @@ export async function renderMttr(main, _params, ctx) {
         ["Kaplan–Meier median time-to-remediation for this domain. Still-open findings " +
           "count as censored instead of being ignored, so it isn't biased low by fresh " +
           "fast-patched vulns."]],
-      ["In SLA", null],
+      ["In SLA (of resolved)", null],
       ["Open past SLA",
-        ["Open findings already older than their severity's SLA target. Unlike In-SLA % " +
-          "(which only scores resolved findings), an aged-out open CRITICAL counts here."]],
+        ["Open findings already older than their severity's SLA target, measured from when " +
+          "a vendor fix became available. Unlike In-SLA % (which only scores resolved " +
+          "findings), an aged-out open CRITICAL counts here."]],
       ["Open", null],
       ["Resolved", null],
     ];
@@ -414,6 +427,11 @@ export async function renderMttr(main, _params, ctx) {
     }
     const resolved = mttr.overall.resolved ?? 0;
     const open = mttr.overall.open ?? 0;
+    // Findings whose severity never normalized to a real value — counted in every total
+    // above (rowCount, resolved, open) but invisible in the per-severity table unless the
+    // UNKNOWN row below is present. Surfacing the count here makes that gap legible instead
+    // of silently letting hero and table totals disagree.
+    const unclassified = (mttr.perSev.UNKNOWN?.open ?? 0) + (mttr.perSev.UNKNOWN?.resolved ?? 0);
     // The metric itself (label + value) is the hover/focus target — no separate "i" glyph.
     // No change chip on either KM stat: mttr_history only ever persisted the naive median
     // (now a mini above), never a KM series, so there's nothing to diff against.
@@ -454,7 +472,10 @@ export async function renderMttr(main, _params, ctx) {
           metric, meanStat),
         el("div", { class: "hero-src" },
           `${mttr.rowCount.toLocaleString()} tracked lifecycle(s) in the durable base · ` +
-          `${resolved.toLocaleString()} resolved · ${open.toLocaleString()} open`),
+          `${resolved.toLocaleString()} resolved · ${open.toLocaleString()} open` +
+          (unclassified > 0
+            ? ` · ${unclassified.toLocaleString()} unclassified severity`
+            : "")),
         minis,
       ),
     );
@@ -481,7 +502,8 @@ export async function renderMttr(main, _params, ctx) {
         el("h3", {}, "S(t): share of findings still open"),
         el("div", { class: "chart-box" }, canvas),
         el("p", { class: "chart-caption muted" },
-          "Markers: Median (closed), Median (KM, all), Mean (closed), Mean (KM · RMST, all)."),
+          "Time from first detection to remediation. Markers: Median (closed), Median (KM, " +
+          "all), Mean (closed), Mean (KM · RMST, all)."),
       ),
     );
     requestAnimationFrame(() => {
@@ -582,12 +604,18 @@ export async function renderMttr(main, _params, ctx) {
       // the comparison series.
       grid.append(el("div", { class: "chart-card" },
         el("h3", {}, "KM median trend"),
-        el("div", { class: "chart-box" }, kmMedianCanvas)));
+        el("div", { class: "chart-box" }, kmMedianCanvas),
+        el("p", { class: "chart-caption muted" },
+          "Kaplan–Meier median days from first detection to remediation, replayed as of " +
+          "each scan; still-open findings censored.")));
     }
     if (hasTrend) {
       grid.append(el("div", { class: "chart-card" },
         el("h3", {}, "MTTR trend"),
-        el("div", { class: "chart-box" }, mttrCanvas)));
+        el("div", { class: "chart-box" }, mttrCanvas),
+        el("p", { class: "chart-caption muted" },
+          "Naive median days from first detection to remediation (closed findings only), " +
+          "per scan.")));
     }
     if (trend.length > 1) {
       grid.append(el("div", { class: "chart-card" },
@@ -614,7 +642,8 @@ export async function renderMttr(main, _params, ctx) {
         el("div", { class: "chart-box" }, slaBurnCanvas),
         el("p", { class: "chart-caption muted" },
           "Findings crossing their SLA deadline minus breached findings cleared, per scan. "
-          + "Above zero = the past-SLA backlog is growing.")));
+          + "Above zero = the past-SLA backlog is growing. SLA deadlines are measured from "
+          + "when a vendor fix became available.")));
     }
     if (hasSlaAttainment) {
       grid.append(el("div", { class: "chart-card" },
@@ -622,7 +651,8 @@ export async function renderMttr(main, _params, ctx) {
         el("div", { class: "chart-box" }, slaAttainmentCanvas),
         el("p", { class: "chart-caption muted" },
           "Of findings whose SLA deadline has passed, the share met on time — unlike In-SLA "
-          + "(of resolved), unaffected by how much is still open.")));
+          + "(of resolved), unaffected by how much is still open. Deadlines measured from "
+          + "vendor-fix availability.")));
     }
     if (!grid.hasChildNodes()) {
       if (trendWindowDays === null) {
@@ -690,24 +720,44 @@ export async function renderMttr(main, _params, ctx) {
       el("div", { class: "chart-box" }, bucketCanvas));
 
     const km = rem.km;
+    const kmA = rem.kmActionable;
+    // Population sub-values: two KM figures with different clocks (from-detection vs
+    // actionable) can look contradictory side by side — naming the events/censored count
+    // each was computed over (and, for actionable, how many lifecycles it excludes
+    // entirely) makes them each legible on their own instead of just "trust the label".
+    const kmSub = km
+      ? `${(km.events ?? 0).toLocaleString()} events · ${(km.censored ?? 0).toLocaleString()} censored`
+      : null;
+    const excludedFromActionable = km && kmA ? (km.total ?? 0) - (kmA.total ?? 0) : 0;
+    const kmActionableSub = kmA
+      ? `${(kmA.events ?? 0).toLocaleString()} events · ${(kmA.censored ?? 0).toLocaleString()} censored`
+        + (excludedFromActionable > 0
+          ? ` · excludes ${excludedFromActionable.toLocaleString()} with no observed vendor fix`
+          : "")
+      : null;
     const statCard = el("div", { class: "card" },
       statRow("KM median (from detection)", fmtKmMedian(km),
         ["Kaplan–Meier median time-to-remediation. Counts still-open findings as censored " +
           "(not-yet-resolved) instead of ignoring them, so it isn't biased low by fresh " +
-          "fast-patched vulns. \"> X d\" means over half of findings are still open."]),
+          "fast-patched vulns. \"> X d\" means over half of findings are still open."],
+        kmSub),
       statRow("KM mean (RMST)", fmtKmMean(km),
         ["Restricted mean survival time — expected remediation time up to the longest " +
           "observed lifecycle, treating still-open findings as censored. \"≥\" marks a " +
-          "lower bound when the curve hadn't fully decayed to zero by then."]),
-      statRow("KM median (actionable)", fmtKmMedian(rem.kmActionable),
+          "lower bound when the curve hadn't fully decayed to zero by then."],
+        kmSub),
+      statRow("KM median (actionable)", fmtKmMedian(kmA),
         ["The same Kaplan–Meier median, but the clock starts when a vendor fix became " +
           "available rather than at first detection — so a fix that arrives late doesn't " +
-          "count against the team. Findings still awaiting a vendor fix don't count at all."]),
+          "count against the team. Findings still awaiting a vendor fix don't count at all."],
+        kmActionableSub),
       statRow("Median (naive, closed)", fmtDays(km?.naiveMedian),
         ["Linear-interpolated median over closed findings only. Ignores still-open " +
-          "findings entirely, so a wave of fresh fast-patched vulns can drag it down."]),
+          "findings entirely, so a wave of fresh fast-patched vulns can drag it down."],
+        "closed only"),
       statRow("Mean (naive, closed)", fmtDays(km?.naiveMean),
-        ["Simple average time-to-resolve over closed findings only."]),
+        ["Simple average time-to-resolve over closed findings only."],
+        "closed only"),
     );
 
     resolutionHost.append(
@@ -752,7 +802,7 @@ export async function renderMttr(main, _params, ctx) {
           "until a fix appears, so they don't count as breached above."]]] : []),
       ["Open age p90", null],
       ["SLA target", null],
-      ["In SLA", null],
+      ["In SLA (of resolved)", null],
     ];
     const table = el("table", { class: "data" },
       el("thead", {}, el("tr", {},
@@ -777,6 +827,34 @@ export async function renderMttr(main, _params, ctx) {
         el("td", { class: "num" }, fmtDays(d.open_age_p90)),
         el("td", { class: "num" }, d.sla_target ? `${d.sla_target}d` : "—"),
         el("td", { class: "num" }, d.sla_pct !== null ? `${d.sla_pct.toFixed(0)}%` : "—"),
+      ));
+    }
+    // Data-quality row: findings whose severity never normalized to a real value —
+    // already folded into every hero/table total above (SEVERITY_ORDER includes UNKNOWN),
+    // but otherwise invisible since this table gates on sevScope, which never includes it.
+    // Shown independent of sevScope/showAwaiting selection (it's not a selectable
+    // severity) whenever the payload carries it at all. SLA-exempt by definition — there's
+    // no target to measure against, so those cells read "—" rather than a computed 0%.
+    const u = mttr.perSev.UNKNOWN;
+    if (u) {
+      tbody.append(el("tr", {},
+        el("td", {},
+          helpTip(sevBadge("UNKNOWN"),
+            ["Severity was missing or unrecognized when this finding was ingested. Counted " +
+              "in every total above, but SLA-exempt: with no target to measure against, the " +
+              "SLA cells here read \"—\"."],
+            { className: "help-label" })),
+        el("td", { class: "num" }, fmtDays(u.mttr_median)),
+        el("td", { class: "num" }, fmtDays(mttr.remediation?.pctiles?.perSev?.UNKNOWN?.p90)),
+        el("td", { class: "num" }, u.resolved),
+        el("td", { class: "num" }, u.open),
+        el("td", { class: "num" }, "—"),
+        showAwaiting
+          ? el("td", { class: "num" }, (mttr.remediation?.awaiting?.perSev?.UNKNOWN ?? 0).toLocaleString())
+          : null,
+        el("td", { class: "num" }, fmtDays(u.open_age_p90)),
+        el("td", { class: "num" }, "—"),
+        el("td", { class: "num" }, "—"),
       ));
     }
     table.append(tbody);

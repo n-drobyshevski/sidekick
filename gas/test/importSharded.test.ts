@@ -44,7 +44,7 @@ function runSharded(bundle: any, shards: { ledger: any[]; episodes: any[] }[]) {
   const ledger: Record<string, LedgerRow> = {};
   const episodes: EpisodeRow[] = [];
   const checkpoint: LedgerRow[] = [];
-  let vulns = 0, eps = 0, conv = 0;
+  let vulns = 0, eps = 0, conv = 0, uncl = 0;
   for (const shard of shards) {
     const out = applyShardCore(shard, { sealedIds: session.sealedIds, compactionId: CMP });
     for (const row of out.ledgerRows) ledger[row.vuln_key] = row;
@@ -53,8 +53,9 @@ function runSharded(bundle: any, shards: { ledger: any[]; episodes: any[] }[]) {
     vulns += out.vulnsImported;
     eps += out.episodesImported;
     conv += out.episodesConverted;
+    uncl += out.unclassifiedSeverity;
   }
-  return { ledger, episodes, checkpoint, session, counts: { vulns, eps, conv } };
+  return { ledger, episodes, checkpoint, session, counts: { vulns, eps, conv, uncl } };
 }
 
 const keyed = (rows: { vuln_key: string }[]) =>
@@ -80,6 +81,8 @@ describe("sharded import equals the one-shot importBundleCore (fresh ledger)", (
       expect(s.counts.vulns).toBe(oneShot.counts.vulns_imported);
       expect(s.counts.eps).toBe(oneShot.counts.episodes_imported);
       expect(s.counts.conv).toBe(oneShot.counts.episodes_converted);
+      // The data-quality tally accumulates over shards to the one-shot count.
+      expect(s.counts.uncl).toBe(oneShot.counts.unclassified_severity);
     });
   }
 

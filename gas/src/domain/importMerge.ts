@@ -19,6 +19,7 @@ import {
   type PayloadReader,
 } from "./maintenance";
 import type { LedgerRow, Observation } from "./reconcile";
+import { normalizeSeverity } from "./severity";
 import { parseTs, type Rec } from "./util";
 
 export const MIGRATION_KIND = "wiz-sidekick-migration";
@@ -148,7 +149,10 @@ export function coerceLedger(r: Rec): LedgerRow {
   return {
     vuln_key: String(r["vuln_key"]),
     cve: str(r["cve"]),
-    severity: str(r["severity"]),
+    // Normalize at ingest (blank/null/unrecognized → explicit "UNKNOWN"), not str() — the
+    // legacy migrate export stored raw values that could reach the ledger as literal null
+    // and never self-heal for out-of-fetch-scope severities. UNKNOWN is auditable.
+    severity: normalizeSeverity(r["severity"]),
     asset_id: str(r["asset_id"]),
     asset_name: str(r["asset_name"]),
     asset_type: str(r["asset_type"]),
@@ -173,7 +177,7 @@ export function coerceEpisode(r: Rec): EpisodeRow {
   return {
     vuln_key: String(r["vuln_key"]),
     cve: str(r["cve"]),
-    severity: str(r["severity"]),
+    severity: normalizeSeverity(r["severity"]),
     first_seen: str(r["first_seen"]),
     resolved_at: str(r["resolved_at"]),
     resolution_src: str(r["resolution_src"]),
@@ -194,6 +198,10 @@ export interface ImportCounts {
   episodes_imported: number;
   episodes_converted: number;
   scans_replayed: number;
+  // Imported ledger + episode rows whose severity normalized to UNKNOWN — a data-quality
+  // signal surfaced in the import toast so an operator sees how much of the seed is
+  // unclassified rather than discovering it silently in the register weeks later.
+  unclassified_severity: number;
 }
 
 /**
@@ -278,6 +286,13 @@ export function importBundleCore(
   }
   const vulnsImported = Object.keys(rebuilt.ledger).length;
 
+  // Data-quality tally over the raw seed (ledger + episodes) — rows whose severity can't be
+  // classified. Counted over the bundle rows so it lines up with Σ of the sharded path's
+  // per-shard counts (importSharded.ts partitions exactly these two tables).
+  const unclassifiedSeverity =
+    bundle.ledger.filter((r) => normalizeSeverity(r["severity"]) === "UNKNOWN").length +
+    bundle.episodes.filter((r) => normalizeSeverity(r["severity"]) === "UNKNOWN").length;
+
   // The checkpoint captures the baseline BEFORE replay mutates it.
   const flats = importedAsc.filter((r) => r.shape === "flat");
   const floorRow = flats.length ? flats[flats.length - 1] : null;
@@ -318,6 +333,7 @@ export function importBundleCore(
       episodes_imported: bundle.episodes.length,
       episodes_converted: converted.length,
       scans_replayed: replay.length,
+      unclassified_severity: unclassifiedSeverity,
     },
   };
 }

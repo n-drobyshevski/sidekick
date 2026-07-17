@@ -250,6 +250,16 @@ export async function renderOverview(main, params, ctx) {
       );
     }
     clear(sevCardHost).append(card);
+    // Data-quality note: findings whose severity never normalized to CRITICAL–LOW/INFO are
+    // still folded into every total on this card and above (SEVERITY_ORDER includes
+    // UNKNOWN) — they just have no row of their own, since the card is deliberately
+    // CRITICAL–LOW only. Optional-chained: sevStats is null until insights load, and a
+    // stale pre-fallback cache simply omits UNKNOWN entirely.
+    if (sevStats?.UNKNOWN?.total > 0) {
+      sevCardHost.append(el("p", { class: "section-note" },
+        `${sevStats.UNKNOWN.total.toLocaleString()} finding(s) have an unrecognized ` +
+        "severity — counted in totals, not shown above."));
+    }
   }
 
   function renderInsights(insights) {

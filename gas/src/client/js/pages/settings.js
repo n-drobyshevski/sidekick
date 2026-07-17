@@ -360,6 +360,16 @@ export async function renderSettings(main, params, ctx) {
       (stats.cellCount > 6_000_000
         ? " ⚠ Approaching the 10M-cell ceiling — lower the retention window."
         : "")));
+    // Data-quality line: tracked vulnerabilities whose severity never normalized to a real
+    // value. distinctSeverities/unknownSeverityCount are additive fields on this payload —
+    // guarded defensively so a stale pre-rollout cache (missing both) simply omits the line.
+    if (stats.unknownSeverityCount) {
+      const n = stats.unknownSeverityCount;
+      main.append(el("p", { class: "muted small" },
+        `${n.toLocaleString()} tracked vulnerabilit${n === 1 ? "y" : "ies"} have an ` +
+        "unrecognized severity. Severity values seen this scan: " +
+        `${(stats.distinctSeverities || []).join(", ")}.`));
+    }
   } catch {
     /* stats are decorative */
   }

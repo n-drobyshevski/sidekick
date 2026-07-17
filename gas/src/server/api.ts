@@ -1265,15 +1265,24 @@ export function refreshSupportGroups(_p?: unknown): ApiResult {
 export function getStorageStats(_p?: unknown): ApiResult {
   // cellCount() walks every sheet in the spreadsheet — cache it per DATA_VERSION.
   return run(() =>
-    cached("storageStats", null, () => {
+    // "storageStats" → "storageStats2": payload gained the severity data-quality diagnostic
+    // (distinctSeverities, unknownSeverityCount); dataVersion persists across deploys, so
+    // bumping the namespace prevents serving a stale old-shape entry (up to the TTL).
+    cached("storageStats2", null, () => {
       const scans = ledgerStore.loadScanRows();
+      const scan = findings.currentScan();
+      const baseRows = ledgerStore.loadBaseRows() as unknown as Rec[];
       return {
         cellCount: cellCount(),
         cellLimit: 10_000_000,
         scanCount: scans.length,
         sealedCount: scans.filter((s) => s.sealed).length,
         oldestScanTs: scans.length ? scans[0].ts : null,
-        trackedVulns: ledgerStore.loadBaseRows().length,
+        trackedVulns: baseRows.length,
+        distinctSeverities: scan ? findings.distinct(scan.records, "severity") : [],
+        unknownSeverityCount: baseRows.filter(
+          (r) => normalizeSeverity(r["severity"]) === "UNKNOWN",
+        ).length,
       };
     }),
   );
