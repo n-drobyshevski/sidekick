@@ -39,6 +39,37 @@ const reducedMotion =
 // ignores font-variant-numeric, so a formatter callback is the only way to get grouping).
 const localeNum = (v) => (typeof v === "number" ? Number(v).toLocaleString() : v);
 
+// Trend x-values are whole UTC days (epoch-day numbers) on a LINEAR scale, so horizontal
+// distance is proportional to elapsed time: a sparse fortnight of scans no longer fills a
+// 30-day window edge to edge, and gaps in the scan cadence read as gaps rather than
+// silently compressing away (a category axis spaces points by index, not by date).
+const DAY_MS = 86400000;
+const dayOf = (iso) => Math.floor(Date.parse(iso) / DAY_MS);
+// Axis/tooltip date format: "01-jul-2026" — unambiguous day-month order without locale
+// dependence (toLocaleDateString varies by viewer), month spelled so it can't be misread
+// as US-style month-first.
+const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+function fmtDay(day) {
+  const d = new Date(day * DAY_MS);
+  return `${String(d.getUTCDate()).padStart(2, "0")}-${MONTHS[d.getUTCMonth()]}-${d.getUTCFullYear()}`;
+}
+
+/** Switch a baseOptions() x scale to the proportional day axis. `xRange` ({min,max} in
+ *  epoch days) pins the visible span — e.g. a "30d" window stays 30 days wide even when
+ *  the data only reaches back a fortnight, showing honest empty space instead. */
+function dayAxis(opts, xRange) {
+  opts.scales.x.type = "linear";
+  opts.scales.x.bounds = "data"; // don't stretch the axis past the data to a "nice" tick
+  opts.scales.x.ticks.precision = 0; // whole days — a tick between two dates is nonsense
+  opts.scales.x.ticks.maxTicksLimit = 8;
+  opts.scales.x.ticks.callback = (v) => fmtDay(v);
+  if (xRange) {
+    opts.scales.x.min = xRange.min;
+    opts.scales.x.max = xRange.max;
+  }
+  opts.plugins.tooltip.callbacks.title = (items) => (items.length ? fmtDay(items[0].parsed.x) : "");
+}
+
 function baseOptions(unit = "") {
   const suffix = unit ? " " + unit : "";
   return {
@@ -117,10 +148,12 @@ const barEndLabels = {
 
 // A subtle shaded rect over the reconstructed (pre-first-scan) prefix of a trend, drawn
 // behind the datasets. Reconstructed points are always the contiguous leading run, so the
-// band spans from the y-axis to the midpoint between the last reconstructed and first real
-// point. Meaning is carried by the shading + the caption beneath the chart (and hollow
-// points on the MTTR line), never by colour alone. Returns null when nothing is reconstructed.
-function reconstructedBand(flags) {
+// band spans from the first plotted point to the midpoint between the last reconstructed
+// and first real point (in day-value space — the x scale is linear, so pixels come from
+// values, not indices). Meaning is carried by the shading + the caption beneath the chart
+// (and hollow points on the MTTR line), never by colour alone. Null when nothing is
+// reconstructed. `xDays` is the per-point epoch-day array parallel to `flags`.
+function reconstructedBand(flags, xDays) {
   if (!flags.some(Boolean)) return null;
   const firstReal = flags.findIndex((r) => !r); // -1 → every point reconstructed
   return {
@@ -131,13 +164,17 @@ function reconstructedBand(flags) {
       if (!xs || !area) return;
       let right = area.right;
       if (firstReal > 0) {
-        right = (xs.getPixelForValue(firstReal - 1) + xs.getPixelForValue(firstReal)) / 2;
+        right = (xs.getPixelForValue(xDays[firstReal - 1]) + xs.getPixelForValue(xDays[firstReal])) / 2;
       }
-      right = Math.min(Math.max(right, area.left), area.right);
+      // Start at the first plotted point, not the axis edge: with a pinned window the
+      // chart can have honest empty space on the left, and that space isn't "reconstructed
+      // data" — it's no data.
+      const left = Math.max(area.left, xs.getPixelForValue(xDays[0]));
+      right = Math.min(Math.max(right, left), area.right);
       const { ctx } = chart;
       ctx.save();
       ctx.fillStyle = "rgba(100, 116, 139, 0.10)";
-      ctx.fillRect(area.left, area.top, right - area.left, area.height);
+      ctx.fillRect(left, area.top, right - left, area.height);
       ctx.restore();
     },
   };
@@ -212,9 +249,10 @@ export function stackedAgeBar(canvas, labels, perSev, palette, desc) {
   });
 }
 
-/** Single line over ISO dates (MTTR median trend). Points before the first saved scan
- * (`p.reconstructed`) are drawn hollow under a shaded band; see `reconstructedBand`. */
-export function trendLine(canvas, points, { yLabel } = {}) {
+/** Single line over ISO dates (MTTR median trend) on the proportional day axis. Points
+ * before the first saved scan (`p.reconstructed`) are drawn hollow under a shaded band;
+ * see `reconstructedBand`. `xRange` (epoch days) pins the visible window when set. */
+export function trendLine(canvas, points, { yLabel, xRange } = {}) {
   destroyExisting(canvas);
   const reconCount = points.filter((p) => p.reconstructed).length;
   describe(
@@ -228,14 +266,15 @@ export function trendLine(canvas, points, { yLabel } = {}) {
   if (yLabel) {
     opts.scales.y.title = { display: true, text: yLabel, font: FONT, color: INK2 };
   }
-  const band = reconstructedBand(points.map((p) => p.reconstructed));
+  const days = points.map((p) => dayOf(p.x));
+  dayAxis(opts, xRange);
+  const band = reconstructedBand(points.map((p) => p.reconstructed), days);
   return new Chart(canvas, {
     type: "line",
     data: {
-      labels: points.map((p) => p.x.slice(0, 10)),
       datasets: [
         {
-          data: points.map((p) => p.y),
+          data: points.map((p, i) => ({ x: days[i], y: p.y })),
           borderColor: "#2563eb",
           backgroundColor: "rgba(37, 99, 235, 0.08)",
           fill: true,
@@ -313,11 +352,12 @@ export function severityTrendLines(canvas, points, palette, sevScope) {
 }
 
 /**
- * Open vs resolved dual line. Red/green is the worst colorblind pair, so it's encoded three
- * ways: color, a dash on Resolved, and a distinct legend point-style (circle vs rect) shown
- * via usePointStyle — the swatches differ by shape, not color alone.
+ * Open vs resolved dual line on the proportional day axis. Red/green is the worst
+ * colorblind pair, so it's encoded three ways: color, a dash on Resolved, and a distinct
+ * legend point-style (circle vs rect) shown via usePointStyle — the swatches differ by
+ * shape, not color alone. `xRange` (epoch days) pins the visible window when set.
  */
-export function openResolvedLines(canvas, points) {
+export function openResolvedLines(canvas, points, { xRange } = {}) {
   destroyExisting(canvas);
   const reconCount = points.filter((p) => p.reconstructed).length;
   describe(
@@ -330,15 +370,16 @@ export function openResolvedLines(canvas, points) {
     display: true,
     labels: { font: FONT, color: INK2, usePointStyle: true, boxWidth: 8 },
   };
-  const band = reconstructedBand(points.map((p) => p.reconstructed));
+  const days = points.map((p) => dayOf(p.date));
+  dayAxis(opts, xRange);
+  const band = reconstructedBand(points.map((p) => p.reconstructed), days);
   return new Chart(canvas, {
     type: "line",
     data: {
-      labels: points.map((p) => p.date.slice(0, 10)),
       datasets: [
         {
           label: "Open",
-          data: points.map((p) => p.open),
+          data: points.map((p, i) => ({ x: days[i], y: p.open })),
           borderColor: "#b91c1c",
           borderWidth: 2,
           pointStyle: "circle",
@@ -347,7 +388,7 @@ export function openResolvedLines(canvas, points) {
         },
         {
           label: "Resolved",
-          data: points.map((p) => p.resolved),
+          data: points.map((p, i) => ({ x: days[i], y: p.resolved })),
           borderColor: "#15803d",
           borderDash: [6, 4],
           borderWidth: 2,

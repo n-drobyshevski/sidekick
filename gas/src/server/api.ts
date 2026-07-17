@@ -542,7 +542,7 @@ function mttrTrendData(p?: unknown): Rec {
   const severities = readSeverities(p);
   return {
     history: history.loadHistory(),
-    trend: ledgerStore.loadTrend(severities),
+    trend: ledgerStore.loadTrend(severities, settingsStore.getFastLaneDays()),
   };
 }
 
@@ -604,14 +604,23 @@ const cachedMttrData = (p?: unknown) =>
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
       severities: readSeverities(p),
+      // The fast-lane window is an input of the payload (thresholdDays, split, tail
+      // median), so it belongs in the key: entries minted under another window — or under
+      // the pre-setting constant, which no dataVersion bump ever retired — can't be served.
+      fastLane: settingsStore.getFastLaneDays(),
     },
     () => mttrData(p),
     3600,
   );
 const cachedMttrTrendData = (p?: unknown) =>
   // "mttrTrend" → "mttrTrend2": trend points gained `open_past_sla`; namespace bump avoids a
-  // stale old-shape entry surviving the deploy under the persistent dataVersion.
-  cached("mttrTrend2", { severities: readSeverities(p) }, () => mttrTrendData(p));
+  // stale old-shape entry surviving the deploy under the persistent dataVersion. The
+  // fast-lane window feeds the tail-median series, so it rides in the key like cachedMttrData.
+  cached(
+    "mttrTrend2",
+    { severities: readSeverities(p), fastLane: settingsStore.getFastLaneDays() },
+    () => mttrTrendData(p),
+  );
 // Domain-independent (always all domains); severity-scoped; 1h TTL like the summary
 // (carries open ages).
 const cachedMttrByDomainData = (p?: unknown) =>
@@ -623,6 +632,8 @@ const cachedMttrByDomainData = (p?: unknown) =>
     {
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
       severities: readSeverities(p),
+      // Same reasoning as cachedMttrData: tailMedian/thresholdDays depend on the window.
+      fastLane: settingsStore.getFastLaneDays(),
     },
     () => mttrByDomainData(p),
     3600,

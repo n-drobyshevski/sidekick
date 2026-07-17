@@ -2629,6 +2629,23 @@ var Server = (() => {
     }
     return tag(trendFromFrames(synthetic.concat(scans), base, severities), syntheticIso);
   }
+  function withTailMedian(points, base, thresholdDays, severities = null) {
+    let rows = base;
+    if (severities !== null && base.length) {
+      const keep = /* @__PURE__ */ new Set([...severities, "UNKNOWN"]);
+      rows = base.filter((r) => keep.has(normalizeSeverity(r["severity"])));
+    }
+    const parsed = rows.map((r) => ({
+      resolvedAt: parseTs(r["resolved_at"]),
+      mttr: typeof r["mttr_days"] === "number" && !Number.isNaN(r["mttr_days"]) ? r["mttr_days"] : null
+    })).filter((r) => r.resolvedAt !== null && r.mttr !== null && r.mttr > thresholdDays);
+    return points.map((p) => {
+      const d = parseTs(p.date);
+      const tail = d === null ? [] : parsed.filter((r) => r.resolvedAt <= d).map((r) => r.mttr);
+      const med = median(tail);
+      return { ...p, tail_median_days: med !== null ? Math.round(med * 1e3) / 1e3 : null };
+    });
+  }
   function withOpenPastSla(points, base, severities = null) {
     let rows = base;
     if (severities !== null && base.length) {
@@ -3845,7 +3862,7 @@ var Server = (() => {
   function loadBaseRows(now) {
     return baseRows(loadState(), now);
   }
-  function loadTrend(severities = null) {
+  function loadTrend(severities = null, tailThresholdDays = null) {
     const state = loadState();
     const base = baseRows(state).map((r) => ({
       severity: r.severity,
@@ -3859,7 +3876,8 @@ var Server = (() => {
       severities,
       { backfill: true }
     );
-    return withOpenPastSla(points, base, severities);
+    const withSla = withOpenPastSla(points, base, severities);
+    return tailThresholdDays === null ? withSla : withTailMedian(withSla, base, tailThresholdDays, severities);
   }
   function previousSeverityCounts() {
     const flats = loadScanRows().filter((s) => s.shape === "flat");
@@ -5549,7 +5567,7 @@ var Server = (() => {
     const severities = readSeverities(p);
     return {
       history: loadHistory(),
-      trend: loadTrend(severities)
+      trend: loadTrend(severities, getFastLaneDays2())
     };
   }
   function mttrByDomainData(p) {
@@ -5605,7 +5623,11 @@ var Server = (() => {
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
-        severities: readSeverities(p)
+        severities: readSeverities(p),
+        // The fast-lane window is an input of the payload (thresholdDays, split, tail
+        // median), so it belongs in the key: entries minted under another window — or under
+        // the pre-setting constant, which no dataVersion bump ever retired — can't be served.
+        fastLane: getFastLaneDays2()
       },
       () => mttrData(p),
       3600
@@ -5613,8 +5635,13 @@ var Server = (() => {
   };
   var cachedMttrTrendData = (p) => (
     // "mttrTrend" → "mttrTrend2": trend points gained `open_past_sla`; namespace bump avoids a
-    // stale old-shape entry surviving the deploy under the persistent dataVersion.
-    cached("mttrTrend2", { severities: readSeverities(p) }, () => mttrTrendData(p))
+    // stale old-shape entry surviving the deploy under the persistent dataVersion. The
+    // fast-lane window feeds the tail-median series, so it rides in the key like cachedMttrData.
+    cached(
+      "mttrTrend2",
+      { severities: readSeverities(p), fastLane: getFastLaneDays2() },
+      () => mttrTrendData(p)
+    )
   );
   var cachedMttrByDomainData = (p) => {
     var _a;
@@ -5625,7 +5652,9 @@ var Server = (() => {
       "mttrByDomain2",
       {
         supportGroup: String((_a = p == null ? void 0 : p["supportGroup"]) != null ? _a : ""),
-        severities: readSeverities(p)
+        severities: readSeverities(p),
+        // Same reasoning as cachedMttrData: tailMedian/thresholdDays depend on the window.
+        fastLane: getFastLaneDays2()
       },
       () => mttrByDomainData(p),
       3600

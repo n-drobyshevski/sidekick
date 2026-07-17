@@ -14,7 +14,29 @@ import {
 const RESOLUTION_LABELS = ["≤1d", "2–7d", "8–30d", "31–90d", "90+d"];
 
 // Timeframe presets for the Trends charts. null = no window (full history).
-const TREND_WINDOWS = [["5d", 5], ["2w", 14], ["30d", 30], ["90d", 90], ["All", null]];
+const TREND_WINDOWS = [
+  ["5d", 5], ["2w", 14], ["30d", 30], ["60d", 60], ["90d", 90], ["All", null],
+];
+
+// The chosen window persists across visits in localStorage, stored by preset label so a
+// stale or hand-edited value degrades to All. Some GAS iframe sandboxes block web storage
+// (see attributionPrefill.js), hence the try/catch — blocked storage just means no recall.
+const TREND_WINDOW_KEY = "mttrTrendWindow";
+function loadTrendWindow() {
+  try {
+    const hit = TREND_WINDOWS.find(([label]) => label === localStorage.getItem(TREND_WINDOW_KEY));
+    return hit ? hit[1] : null;
+  } catch {
+    return null;
+  }
+}
+function saveTrendWindow(label) {
+  try {
+    localStorage.setItem(TREND_WINDOW_KEY, label);
+  } catch {
+    // Sandbox without storage — the choice simply won't survive the visit.
+  }
+}
 
 // Open-past-SLA cell, shared by the hero mini and the per-severity table: "breached
 // (pct%)"; "0" when nothing is open (pct is null then, not a fake 0%); "—" when the
@@ -79,9 +101,9 @@ export async function renderMttr(main, _params, ctx) {
   const domain = ctx.domain || "";
   const supportGroup = ctx.supportGroup || "";
 
-  // Trends timeframe (days back from now; null = full history). Page-local and
-  // non-persisted like the severity scope: survives in-page reloads, resets on visit.
-  let trendWindowDays = null;
+  // Trends timeframe (days back from now; null = full history). Recalled from
+  // localStorage across visits; falls back to All where storage is unavailable.
+  let trendWindowDays = loadTrendWindow();
 
   await load();
 
@@ -257,6 +279,12 @@ export async function renderMttr(main, _params, ctx) {
     const inWindow = (iso) => cutoff === null || Date.parse(iso) >= cutoff;
     const trend = trends.trend.filter((t) => inWindow(t.date));
     const history = trends.history.filter((h) => inWindow(h.date));
+    // Pin the x-axis to the chosen window (epoch days) — the charts' day axis is
+    // time-proportional, so a 30d window stays 30 days wide even when the data only
+    // reaches back a fortnight: short history reads as empty space, not a full chart.
+    const xRange = cutoff === null
+      ? null
+      : { min: Math.floor(cutoff / 86400000), max: Math.floor(Date.now() / 86400000) };
 
     // Compact timeframe toggle inline with the section label. aria-pressed toggle
     // buttons, not a radiogroup — the same segmented pattern as the report-format and
@@ -266,17 +294,25 @@ export async function renderMttr(main, _params, ctx) {
         el("button", {
           type: "button", class: "seg-btn seg-btn--sm",
           "aria-pressed": String(days === trendWindowDays),
-          onclick: () => { trendWindowDays = days; renderCharts(trends, mttr); },
+          onclick: () => { trendWindowDays = days; saveTrendWindow(label); renderCharts(trends, mttr); },
         }, label)));
     const sectionHead = el("div", { class: "section-head" }, sectionLabel("Trends"), segRow);
 
     const mttrCanvas = el("canvas", { id: "mttr-trend" });
+    const tailMedianCanvas = el("canvas", { id: "tail-median-trend" });
     const openResolvedCanvas = el("canvas", { id: "open-resolved" });
     const openSlaCanvas = el("canvas", { id: "open-sla-trend" });
 
     const points = trend.length
       ? trend.map((t) => ({ x: t.date, y: t.median_days, reconstructed: t.reconstructed }))
       : history.map((h) => ({ x: h.date, y: h.median_days, reconstructed: false }));
+
+    // MTTR excl. fast lane — reconstructed-trend only (mttr_history snapshots don't carry
+    // it: the series depends on the configurable fast-lane window, so it's recomputed live
+    // from lifecycles rather than persisted under whatever window was set at snapshot time).
+    const tailMedianPoints = trend
+      .map((t) => ({ x: t.date, y: t.tail_median_days, reconstructed: t.reconstructed }))
+      .filter((p) => p.y !== null && p.y !== undefined);
 
     // Same fallback shape as `points` above, but for open_past_sla — a column that doesn't
     // exist on history rows saved before this feature shipped. Those rows carry `null`
@@ -290,12 +326,18 @@ export async function renderMttr(main, _params, ctx) {
     // A "trend" needs at least two points — one lone dot is not a trajectory. This matches the
     // Open-vs-resolved gate and the "after two saved scans" copy below.
     const hasTrend = points.length > 1;
+    const hasTailTrend = tailMedianPoints.length > 1;
     const hasOpenSlaTrend = openSlaPoints.length > 1;
     const grid = el("div", { class: "chart-grid", style: "align-items:start" });
     if (hasTrend) {
       grid.append(el("div", { class: "chart-card" },
         el("h3", {}, "MTTR trend"),
         el("div", { class: "chart-box" }, mttrCanvas)));
+    }
+    if (hasTailTrend) {
+      grid.append(el("div", { class: "chart-card" },
+        el("h3", {}, "MTTR excl. fast lane"),
+        el("div", { class: "chart-box" }, tailMedianCanvas)));
     }
     if (trend.length > 1) {
       grid.append(el("div", { class: "chart-card" },
@@ -334,13 +376,16 @@ export async function renderMttr(main, _params, ctx) {
 
     requestAnimationFrame(() => {
       if (hasTrend) {
-        trendLine(mttrCanvas, points.filter((p) => p.y !== null), { yLabel: "days" });
+        trendLine(mttrCanvas, points.filter((p) => p.y !== null), { yLabel: "days", xRange });
+      }
+      if (hasTailTrend) {
+        trendLine(tailMedianCanvas, tailMedianPoints, { yLabel: "days", xRange });
       }
       if (trend.length > 1) {
-        openResolvedLines(openResolvedCanvas, trend);
+        openResolvedLines(openResolvedCanvas, trend, { xRange });
       }
       if (hasOpenSlaTrend) {
-        trendLine(openSlaCanvas, openSlaPoints, { yLabel: "findings" });
+        trendLine(openSlaCanvas, openSlaPoints, { yLabel: "findings", xRange });
       }
     });
   }
