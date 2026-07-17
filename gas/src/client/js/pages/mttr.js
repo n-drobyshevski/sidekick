@@ -105,30 +105,6 @@ function fmtKmMean(km) {
   return (km.meanTruncated ? "≥ " : "") + fmtDays(km.mean);
 }
 
-// A helpTip'd label/value row for the Resolution profile stat card — reuses the
-// per-severity stat-card row classes (hairline divider + name/value) so the visual stays
-// identical to "Remediation by severity" below, just without the sev-dot. Optional `sub`
-// (e.g. "N events · M censored") names the population/clock a KM figure was computed
-// over, so two numbers that look contradictory (from-detection vs actionable KM median)
-// are each legible on their own — rendered via the same value-group/sub-value classes as
-// the Overview severity card. Bare value (no group wrapper) when `sub` is omitted, so
-// plain rows (naive median/mean without a caller-supplied sub) keep their original markup.
-function statRow(label, value, lines, sub) {
-  const valueNode = sub
-    ? el("span", { class: "stat-card__value-group" },
-        el("span", { class: "stat-card__value num" }, value),
-        el("span", { class: "stat-card__sub-value" }, sub))
-    : el("span", { class: "stat-card__value num" }, value);
-  return helpTip(
-    [
-      el("span", { class: "stat-card__name" }, label),
-      valueNode,
-    ],
-    lines,
-    { className: "stat-card__row help-label" },
-  );
-}
-
 export async function renderMttr(main, _params, ctx) {
   const boot = await bootstrap();
 
@@ -418,6 +394,13 @@ export async function renderMttr(main, _params, ctx) {
           km?.naiveMedian !== null && km?.naiveMedian !== undefined
           ? changeChip(km.naiveMedian, prev.median_days, { fmt: fmtDays }) : null],
       ["Mean (naive, closed)", fmtDays(km?.naiveMean), null],
+      // KM median on the actionable clock (starts at vendor-fix availability) — the one
+      // stat the dropped Resolution-profile card carried that isn't already a hero value or
+      // survival marker. Only meaningful while no-fix findings are in scope; hidden when the
+      // vendor-fix filter is off, since then the population is already fix-bearing.
+      boot.settings.showNoFix === false
+        ? null
+        : ["Median (KM, actionable)", fmtKmMedian(rem?.kmActionable), null],
       // "of resolved" makes the survivorship explicit: In-SLA % scores only resolved
       // findings, so it can look healthy while the open backlog ages (Open past SLA below).
       ["In SLA (of resolved)", mttr.slaPct !== null ? `${mttr.slaPct.toFixed(1)}%` : "—",
@@ -744,60 +727,19 @@ export async function renderMttr(main, _params, ctx) {
     const rem = mttr.remediation;
     if (!rem || !rem.buckets || !rem.buckets.total) return;
 
-    resolutionHost.append(sectionLabel("Resolution profile"));
-
+    // Density companion to the survival curve above (that plots the cumulative S(t); this
+    // is the per-severity, SLA-bucketed distribution). The point estimates that used to sit
+    // in a stat card here were a third rendering of the hero values / survival markers —
+    // dropped as redundant; the actionable KM median lives on as a hero mini instead.
     const bucketCanvas = el("canvas", { id: "resolution-buckets" });
-    const chartCard = el("div", { class: "chart-card" },
-      el("h3", {},
-        helpTip("Time to resolve",
-          ["How long resolved findings actually took, bucketed by severity. The " +
-            "right-hand bars are the tail the median hides."],
-          { className: "help-label" })),
-      el("div", { class: "chart-box" }, bucketCanvas));
-
-    const km = rem.km;
-    const kmA = rem.kmActionable;
-    // Population sub-values: two KM figures with different clocks (from-detection vs
-    // actionable) can look contradictory side by side — naming the events/censored count
-    // each was computed over (and, for actionable, how many lifecycles it excludes
-    // entirely) makes them each legible on their own instead of just "trust the label".
-    const kmSub = km
-      ? `${(km.events ?? 0).toLocaleString()} events · ${(km.censored ?? 0).toLocaleString()} censored`
-      : null;
-    const excludedFromActionable = km && kmA ? (km.total ?? 0) - (kmA.total ?? 0) : 0;
-    const kmActionableSub = kmA
-      ? `${(kmA.events ?? 0).toLocaleString()} events · ${(kmA.censored ?? 0).toLocaleString()} censored`
-        + (excludedFromActionable > 0
-          ? ` · excludes ${excludedFromActionable.toLocaleString()} with no observed vendor fix`
-          : "")
-      : null;
-    const statCard = el("div", { class: "card" },
-      statRow("KM median (from detection)", fmtKmMedian(km),
-        ["Kaplan–Meier median time-to-remediation. Counts still-open findings as censored " +
-          "(not-yet-resolved) instead of ignoring them, so it isn't biased low by fresh " +
-          "fast-patched vulns. \"> X d\" means over half of findings are still open."],
-        kmSub),
-      statRow("KM mean (RMST)", fmtKmMean(km),
-        ["Restricted mean survival time — expected remediation time up to the longest " +
-          "observed lifecycle, treating still-open findings as censored. \"≥\" marks a " +
-          "lower bound when the curve hadn't fully decayed to zero by then."],
-        kmSub),
-      statRow("KM median (actionable)", fmtKmMedian(kmA),
-        ["The same Kaplan–Meier median, but the clock starts when a vendor fix became " +
-          "available rather than at first detection — so a fix that arrives late doesn't " +
-          "count against the team. Findings still awaiting a vendor fix don't count at all."],
-        kmActionableSub),
-      statRow("Median (naive, closed)", fmtDays(km?.naiveMedian),
-        ["Linear-interpolated median over closed findings only. Ignores still-open " +
-          "findings entirely, so a wave of fresh fast-patched vulns can drag it down."],
-        "closed only"),
-      statRow("Mean (naive, closed)", fmtDays(km?.naiveMean),
-        ["Simple average time-to-resolve over closed findings only."],
-        "closed only"),
-    );
-
     resolutionHost.append(
-      el("div", { class: "chart-grid", style: "align-items:start" }, chartCard, statCard));
+      el("div", { class: "chart-card" },
+        el("h3", {},
+          helpTip("Time to resolve",
+            ["How long resolved findings actually took, bucketed by severity. The " +
+              "right-hand bars are the tail the median hides."],
+            { className: "help-label" })),
+        el("div", { class: "chart-box" }, bucketCanvas)));
 
     requestAnimationFrame(() => {
       stackedAgeBar(bucketCanvas, rem.buckets.labels || RESOLUTION_LABELS, rem.buckets.perSev,

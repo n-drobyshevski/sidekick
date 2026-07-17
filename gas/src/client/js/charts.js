@@ -476,7 +476,7 @@ export function survivalCurve(canvas, curve, markers, viewOpts = {}) {
     canvas,
     "Kaplan-Meier survival curve of time to remediation." +
       (named.length
-        ? " Markers: " + named.map((m) => `${m.label} at ${m.day} day(s)`).join(", ") + "."
+        ? " Markers: " + named.map((m) => `${m.label} at ${Math.round(m.day)} day(s)`).join(", ") + "."
         : ""),
   );
 
@@ -505,7 +505,7 @@ export function survivalCurve(canvas, curve, markers, viewOpts = {}) {
           label: (ctx) =>
             ctx.datasetIndex === 0
               ? `Week ${ctx.parsed.x.toFixed(1)}: ${Math.round(ctx.parsed.y)}% still open`
-              : `${ctx.dataset.label}: ${ctx.raw.day}d (${Math.round(ctx.parsed.y)}% still open)`,
+              : `${ctx.dataset.label}: ${Math.round(ctx.raw.day)}d (${Math.round(ctx.parsed.y)}% still open)`,
         },
       },
     },

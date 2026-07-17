@@ -152,6 +152,58 @@ html, body {
    spans the rail so long chain names don't clip. */
 .sidebar-filter select { width: 100%; }
 
+/* Collapsible rail — icon-only mode (desktop only; the <=800px top-bar layout further
+   down ignores .collapsed). Width rides --rail-w so the flex main pane and the reload
+   overlay's left edge follow automatically; only the width transitions. */
+.sidebar { transition: flex-basis 0.18s ease, width 0.18s ease; }
+.nav-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; flex: 0 0 18px; color: var(--text-2);
+}
+.nav-icon svg { width: 18px; height: 18px; display: block; }
+.nav-link.active .nav-icon { color: var(--ink); }
+.wordmark-label { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; }
+.rail-toggle {
+  margin-left: auto; flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0;
+  border: 1px solid var(--hairline); border-radius: var(--radius-md);
+  background: var(--page); color: var(--text-2); cursor: pointer;
+}
+.rail-toggle:hover { background: rgba(0, 0, 0, 0.045); }
+.rail-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.rail-toggle svg { width: 16px; height: 16px; display: block; transition: transform 0.18s ease; }
+.sidebar .scan-buttons button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.sidebar .scan-buttons .primary .nav-icon { color: inherit; width: 16px; height: 16px; flex-basis: 16px; }
+.sidebar .scan-buttons .primary .nav-icon svg { width: 16px; height: 16px; }
+.rail-status-dot { display: none; width: 9px; height: 9px; border-radius: 50%; align-self: center; }
+.rail-status-dot.ok { background: var(--ok); }
+.rail-status-dot.neutral { background: var(--text-3); }
+
+@media (min-width: 801px) {
+  .sidebar.collapsed { padding-left: 8px; padding-right: 8px; }
+  .sidebar.collapsed .wordmark-label,
+  .sidebar.collapsed .wordmark-dot,
+  .sidebar.collapsed .nav-label,
+  .sidebar.collapsed .nav-group,
+  .sidebar.collapsed .sidebar-filter,
+  .sidebar.collapsed .scan-caption,
+  .sidebar.collapsed .btn-label,
+  .sidebar.collapsed .scan-buttons button:not(.primary) { display: none; }
+  .sidebar.collapsed .wordmark { justify-content: center; padding: 4px 0 14px; }
+  .sidebar.collapsed .rail-toggle { margin-left: 0; }
+  .sidebar.collapsed .rail-toggle svg { transform: rotate(180deg); }
+  .sidebar.collapsed .nav-link { justify-content: center; padding: 8px 0; }
+  .sidebar.collapsed .scan-buttons { justify-content: center; }
+  .sidebar.collapsed .scan-buttons .primary { padding: 8px; }
+  .sidebar.collapsed .rail-status-dot { display: block; }
+}
+/* The rail becomes a horizontal wrapping top-bar here, so icon-collapse doesn't apply. */
+@media (max-width: 800px) { .rail-toggle { display: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .sidebar, .rail-toggle svg { transition: none; }
+}
+
 /* Scan progress card (persistent, non-modal; lives in the scan zone while a job runs) */
 .scan-progress {
   display: flex;
@@ -243,7 +295,9 @@ main {
   height: 100vh;
   overflow-y: auto;
   padding: 28px 32px 48px;
-  max-width: 1200px;
+  /* No max-width: main fills whatever the rail leaves, so collapsing the rail actually
+     widens the content (charts add columns via their auto-fit grids) instead of just
+     growing the right margin. */
 }
 
 /* Route-reload overlay: a translucent veil + indeterminate top bar over the content
@@ -719,7 +773,14 @@ a { color: var(--accent); }
 /* ------------------------------------------------------------------ chart cards */
 .chart-card { background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius-xl); padding: 16px; box-shadow: var(--shadow-card); }
 .chart-card h3 { margin-bottom: 10px; }
-.chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+/* Cap at 3 columns: each track is at least a third of the row (minus the two 14px gaps),
+   so a 4th never fits and the extra width from a collapsed rail widens the charts instead
+   of adding columns. The 320px floor still lets it drop to 2 then 1 as the pane narrows. */
+.chart-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(max(320px, (100% - 28px) / 3), 1fr));
+  gap: 14px;
+}
 .chart-box { position: relative; height: 240px; }
 /* Survival curve gets a little more vertical room than the 240px trend boxes so the
    staircase reads clearly, especially zoomed into a 5w window. */
