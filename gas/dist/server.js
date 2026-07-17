@@ -2643,10 +2643,11 @@ var Server = (() => {
     });
   }
   function medianMttrByGroupTrend(scans, base, keyOf, groups, opts = {}) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d;
     const severities = (_a = opts.severities) != null ? _a : null;
     const includeOther = (_b = opts.includeOther) != null ? _b : true;
     const otherLabel = (_c = opts.otherLabel) != null ? _c : "Other";
+    const minMttrDays = (_d = opts.minMttrDays) != null ? _d : null;
     let rows = base;
     if (severities !== null && base.length) {
       const keep = /* @__PURE__ */ new Set([...severities, "UNKNOWN"]);
@@ -2675,6 +2676,7 @@ var Server = (() => {
       const samples = {};
       for (const r of parsed) {
         if (!r.kept || r.mttr === null) continue;
+        if (minMttrDays !== null && r.mttr <= minMttrDays) continue;
         if (r.resolvedAt === null || r.resolvedAt > ts.ms) continue;
         ((_b2 = samples[_a2 = r.group]) != null ? _b2 : samples[_a2] = []).push(r.mttr);
       }
@@ -5772,17 +5774,17 @@ var Server = (() => {
       r["_domain"] = (_a2 = assigned[i]) != null ? _a2 : UNASSIGNED;
     });
     const groups = out.filter((r) => r["resolved"] > 0).sort((a, b) => b["resolved"] - a["resolved"]).slice(0, 8).map((r) => String(r["domain"]));
-    const points = medianMttrByGroupTrend(
-      loadScanRows(),
-      rows,
-      (r) => {
-        var _a2;
-        return String((_a2 = r["_domain"]) != null ? _a2 : UNASSIGNED);
-      },
-      groups,
-      { severities: null }
-    );
-    return { rows: out, thresholdDays: t, trend: { groups, points } };
+    const scanRows = loadScanRows();
+    const byDomainKey = (r) => {
+      var _a2;
+      return String((_a2 = r["_domain"]) != null ? _a2 : UNASSIGNED);
+    };
+    const points = medianMttrByGroupTrend(scanRows, rows, byDomainKey, groups, { severities: null });
+    const tailPoints = medianMttrByGroupTrend(scanRows, rows, byDomainKey, groups, {
+      severities: null,
+      minMttrDays: t
+    });
+    return { rows: out, thresholdDays: t, trend: { groups, points, tailPoints } };
   }
   var cachedMttrData = (p) => {
     var _a, _b;
@@ -5821,7 +5823,9 @@ var Server = (() => {
       // bumping the namespace prevents serving a stale old-shape entry.
       // "mttrByDomain2" → "mttrByDomain3": payload gained `trend` (median-MTTR-by-domain
       // lines); same reasoning — bump the namespace so a stale trend-less entry can't survive.
-      "mttrByDomain3",
+      // "mttrByDomain3" → "mttrByDomain4": trend gained `tailPoints` (fast-lane-excluded
+      // medians for the chart's Median / Excl. fast lane toggle).
+      "mttrByDomain4",
       {
         supportGroup: String((_a = p == null ? void 0 : p["supportGroup"]) != null ? _a : ""),
         severities: readSeverities(p),

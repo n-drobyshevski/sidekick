@@ -21,6 +21,11 @@ const TREND_WINDOWS = [
   ["5d", 5], ["2w", 14], ["30d", 30], ["60d", 60], ["90d", 90], ["All", null],
 ];
 
+// Which series the "MTTR by domain" chart draws: the plain median or the fast-lane-excluded
+// tail median. Module-scoped so the choice survives repaints (severity re-apply, SWR
+// revalidation) within the session without localStorage ceremony.
+let domainTrendMode = "median";
+
 // The chosen window persists across visits in localStorage, stored by preset label so a
 // stale or hand-edited value degrades to All. Some GAS iframe sandboxes block web storage
 // (see attributionPrefill.js), hence the try/catch — blocked storage just means no recall.
@@ -165,13 +170,37 @@ export async function renderMttr(main, _params, ctx) {
     const lineCanvas = el("canvas", {});
     const lineMsg = el("p", { class: "chart-empty muted", style: "display:none" });
     const lineCaption = el("p", { class: "chart-caption muted" });
+    // Compact Median / Excl. fast lane switch inline with the line chart's title — the same
+    // aria-pressed segmented pattern as the Trends timeframe toggle. Clicking repaints from
+    // the closed-over payload (both series ship in it).
+    const threshold = byDomain.thresholdDays ?? 1;
+    const lineModes = [
+      ["median", "Median"],
+      ["tail", "Excl. fast lane"],
+    ];
+    const lineSeg = el("div", { class: "seg-row", role: "group", "aria-label": "MTTR series" },
+      ...lineModes.map(([mode, label]) =>
+        el("button", {
+          type: "button", class: "seg-btn seg-btn--sm",
+          "aria-pressed": String(mode === domainTrendMode),
+          title: mode === "tail"
+            ? `Median with the fast lane removed (resolutions ≤ ${threshold}d)` : null,
+          onclick: () => {
+            domainTrendMode = mode;
+            for (const b of lineSeg.children) b.setAttribute("aria-pressed", "false");
+            lineSeg.children[lineModes.findIndex(([m]) => m === mode)]
+              .setAttribute("aria-pressed", "true");
+            paintLine();
+          },
+        }, label)));
     byDomainHost.append(el("div", { class: "chart-grid", style: "align-items:start" },
       el("div", { class: "chart-card" },
         el("h3", {}, "Remediation share"),
         el("div", { class: "chart-box" }, pieCanvas, pieMsg),
         pieCaption),
       el("div", { class: "chart-card" },
-        el("h3", {}, "MTTR by domain"),
+        el("div", { style: "display:flex; align-items:center; justify-content:space-between; gap:8px" },
+          el("h3", {}, "MTTR by domain"), lineSeg),
         el("div", { class: "chart-box" }, lineCanvas, lineMsg),
         lineCaption),
     ));
@@ -188,17 +217,42 @@ export async function renderMttr(main, _params, ctx) {
       msg.style.display = "";
     }
 
+    const trend = byDomain.trend;
+    const groups = (trend && trend.groups) || [];
+    const colors = groupPalette(groups);
+    const inGroups = new Set(groups);
+    // Rows outside the canonical groups pool into "Other" — the pie sums their resolved
+    // share; the line's Other series is the same pooled remainder the server replays.
+    const resolvedOther = byDomain.rows
+      .filter((r) => !inGroups.has(r.domain))
+      .reduce((a, r) => a + (r.resolved ?? 0), 0);
+    const series = groups.map((name) => ({ name, color: colors.get(name) }));
+    if (resolvedOther > 0) series.push({ name: "Other", color: colors.get("Other") });
+
+    // Line: per-domain median MTTR (days) replayed over scan history — plain median or the
+    // fast-lane-excluded tail median, per the segmented switch.
+    function paintLine() {
+      const tail = domainTrendMode === "tail";
+      const points = (trend && (tail ? trend.tailPoints : trend.points)) || [];
+      lineCaption.textContent = tail
+        ? `Median MTTR (days) by domain excluding resolutions ≤ ${threshold}d, per scan.`
+        : "Median MTTR (days) by domain, per scan.";
+      if (points.length < 2) {
+        showMsg(lineCanvas, lineMsg, "Trend appears after the second saved scan.");
+        return;
+      }
+      showChart(lineCanvas, lineMsg);
+      groupTrendLines(lineCanvas, points, series, {
+        unit: "days",
+        nullAsGap: true,
+        describe: tail
+          ? "Median MTTR in days per domain over scan history, fast lane excluded."
+          : "Median MTTR in days per domain over scan history.",
+      });
+    }
+
     requestAnimationFrame(() => {
-      const trend = byDomain.trend;
-      const groups = (trend && trend.groups) || [];
-      const colors = groupPalette(groups);
       const byName = new Map(byDomain.rows.map((r) => [r.domain, r]));
-      const inGroups = new Set(groups);
-      // Rows outside the canonical groups pool into "Other" — the pie sums their resolved
-      // share; the line's Other series is the same pooled remainder the server replays.
-      const resolvedOther = byDomain.rows
-        .filter((r) => !inGroups.has(r.domain))
-        .reduce((a, r) => a + (r.resolved ?? 0), 0);
 
       // Pie: each domain's share of resolved findings — the population the MTTR median runs
       // over. Tooltip detail carries that domain's median MTTR.
@@ -220,20 +274,7 @@ export async function renderMttr(main, _params, ctx) {
         groupPie(pieCanvas, slices, { subject: "Resolved findings by domain" });
       }
 
-      // Line: per-domain median MTTR (days) replayed over scan history.
-      lineCaption.textContent = "Median MTTR (days) by domain, per scan.";
-      const series = groups.map((name) => ({ name, color: colors.get(name) }));
-      if (resolvedOther > 0) series.push({ name: "Other", color: colors.get("Other") });
-      if (!trend || (trend.points || []).length < 2) {
-        showMsg(lineCanvas, lineMsg, "Trend appears after the second saved scan.");
-      } else {
-        showChart(lineCanvas, lineMsg);
-        groupTrendLines(lineCanvas, trend.points, series, {
-          unit: "days",
-          nullAsGap: true,
-          describe: "Median MTTR in days per domain over scan history.",
-        });
-      }
+      paintLine();
     });
 
     // Column headers carry the two new metrics' definitions via helpTip, matching the

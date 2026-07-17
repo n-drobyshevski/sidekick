@@ -262,18 +262,26 @@ export interface MttrByGroupPoint {
  *
  * scans: rows with {ts, shape}; base: ledger+episode rows with {resolved_at, mttr_days,
  * severity} plus whatever column `keyOf` reads. opts.severities (optional) restricts to
- * those + UNKNOWN, as elsewhere.
+ * those + UNKNOWN, as elsewhere. opts.minMttrDays (optional) pools only samples with
+ * mttr_days strictly above it — the per-group analogue of `fastLaneSplit`'s tail median,
+ * so auto-patched fast-lane resolutions don't drag a domain's median toward zero.
  */
 export function medianMttrByGroupTrend(
   scans: Rec[],
   base: Rec[],
   keyOf: (r: Rec) => string,
   groups: string[],
-  opts: { severities?: string[] | null; includeOther?: boolean; otherLabel?: string } = {},
+  opts: {
+    severities?: string[] | null;
+    includeOther?: boolean;
+    otherLabel?: string;
+    minMttrDays?: number | null;
+  } = {},
 ): MttrByGroupPoint[] {
   const severities = opts.severities ?? null;
   const includeOther = opts.includeOther ?? true;
   const otherLabel = opts.otherLabel ?? "Other";
+  const minMttrDays = opts.minMttrDays ?? null;
 
   let rows = base;
   if (severities !== null && base.length) {
@@ -314,6 +322,7 @@ export function medianMttrByGroupTrend(
     const samples: Record<string, number[]> = {};
     for (const r of parsed) {
       if (!r.kept || r.mttr === null) continue;
+      if (minMttrDays !== null && r.mttr <= minMttrDays) continue;
       if (r.resolvedAt === null || r.resolvedAt > ts.ms) continue;
       (samples[r.group] ??= []).push(r.mttr);
     }

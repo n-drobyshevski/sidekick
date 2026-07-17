@@ -661,14 +661,16 @@ function mttrByDomainData(p?: unknown): Rec {
     .sort((a, b) => (b["resolved"] as number) - (a["resolved"] as number))
     .slice(0, 8)
     .map((r) => String(r["domain"]));
-  const points = medianMttrByGroupTrend(
-    ledgerStore.loadScanRows() as unknown as Rec[],
-    rows,
-    (r) => String(r["_domain"] ?? UNASSIGNED),
-    groups,
-    { severities: null },
-  );
-  return { rows: out, thresholdDays: t, trend: { groups, points } };
+  const scanRows = ledgerStore.loadScanRows() as unknown as Rec[];
+  const byDomainKey = (r: Rec) => String(r["_domain"] ?? UNASSIGNED);
+  const points = medianMttrByGroupTrend(scanRows, rows, byDomainKey, groups, { severities: null });
+  // Same replay with the fast lane removed (mttr_days > threshold) — the trend analogue
+  // of the table's "Excl. fast lane" column, toggled client-side on the same chart.
+  const tailPoints = medianMttrByGroupTrend(scanRows, rows, byDomainKey, groups, {
+    severities: null,
+    minMttrDays: t,
+  });
+  return { rows: out, thresholdDays: t, trend: { groups, points, tailPoints } };
 }
 
 // Cached per DATA_VERSION, keyed on exactly the params each computation reads — so
@@ -710,7 +712,9 @@ const cachedMttrByDomainData = (p?: unknown) =>
     // bumping the namespace prevents serving a stale old-shape entry.
     // "mttrByDomain2" → "mttrByDomain3": payload gained `trend` (median-MTTR-by-domain
     // lines); same reasoning — bump the namespace so a stale trend-less entry can't survive.
-    "mttrByDomain3",
+    // "mttrByDomain3" → "mttrByDomain4": trend gained `tailPoints` (fast-lane-excluded
+    // medians for the chart's Median / Excl. fast lane toggle).
+    "mttrByDomain4",
     {
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
       severities: readSeverities(p),

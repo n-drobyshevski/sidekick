@@ -262,6 +262,30 @@ describe("medianMttrByGroupTrend", () => {
     expect(medianMttrByGroupTrend([], [res("web", 3, "2026-01-01T00:00:00Z")], keyOf, groups)).toEqual([]);
     expect(medianMttrByGroupTrend(scans, [], keyOf, groups)).toEqual([]);
   });
+
+  it("minMttrDays drops fast-lane samples (mttr <= threshold), strictly", () => {
+    const base = [
+      res("web", 0.5, "2026-01-01T00:00:00Z"), // fast lane — dropped
+      res("web", 1, "2026-01-01T00:00:00Z"),   // exactly at threshold — dropped (strict >)
+      res("web", 6, "2026-01-01T00:00:00Z"),
+      res("web", 10, "2026-01-01T00:00:00Z"),  // tail median = (6+10)/2 = 8
+      res("db", 0.2, "2026-01-01T00:00:00Z"),  // db has only fast-lane resolutions -> null
+    ];
+    expect(medianMttrByGroupTrend([scans[1]], base, keyOf, groups, { minMttrDays: 1 })).toEqual([
+      { date: "2026-01-02T00:00:00Z", byGroup: { web: 8, db: null } },
+    ]);
+  });
+
+  it("minMttrDays applies to the pooled Other remainder too", () => {
+    const base = [
+      res("cache", 0.5, "2026-01-01T00:00:00Z"), // dropped from the pool
+      res("cache", 4, "2026-01-01T00:00:00Z"),
+      res("queue", 12, "2026-01-01T00:00:00Z"),  // Other tail median = (4+12)/2 = 8
+    ];
+    expect(medianMttrByGroupTrend([scans[1]], base, keyOf, groups, { minMttrDays: 1 })).toEqual([
+      { date: "2026-01-02T00:00:00Z", byGroup: { web: null, db: null, Other: 8 } },
+    ]);
+  });
 });
 
 describe("trendFromBase (backfill)", () => {
