@@ -6,11 +6,11 @@
 // and write that state wholesale at the edges. The algorithms — reconcile invocation,
 // prev-scan maps, episode collisions, replay ordering — are line-for-line ports.
 
-import { DISAPPEARANCE_RESOLUTION, SEVERITY_ORDER } from "./config";
+import { DISAPPEARANCE_RESOLUTION, REMEDIATION_ROLLOUT_ISO, SEVERITY_ORDER } from "./config";
 import { parseSeverities, serializeSeverities } from "./compaction";
 import { reconcile, type Deltas, type LedgerRow, type Observation } from "./reconcile";
 import { normalizeSeverity } from "./severity";
-import { nowIso, parseTs, type Rec } from "./util";
+import { nowIso, parseTs, toIso, type Rec } from "./util";
 
 export interface ScanRow {
   scan_id: string;
@@ -39,6 +39,9 @@ export interface EpisodeRow {
   reopened_count: number;
   compaction_id: string;
   superseded_by_scan: string | null;
+  // Carried through compaction so a sealed episode keeps its actionable-clock inputs.
+  fix_date: string | null;
+  fix_observed_at: string | null;
 }
 
 export interface LedgerState {
@@ -252,14 +255,32 @@ export function reinsertScanRow(state: LedgerState, row: ScanRow): void {
 //  Base rows (vuln_ledger UNION resolved_episodes) — the load_base_df equivalent
 // --------------------------------------------------------------------------- #
 
-export type BaseRow = LedgerRow & { mttr_days: number | null; age_days: number | null };
+export type BaseRow = LedgerRow & {
+  mttr_days: number | null;
+  age_days: number | null;
+  // Actionable clock — the SLA/MTTR clock starts when a vendor fix is available, not at
+  // detection. fix_available_at: when a fix first existed (legacy rows: first_seen, since
+  // the old filter only ingested fixed findings); actionable_from: the clamped start
+  // (never before detection); awaiting_vendor_fix: OPEN with no fix available yet, so it
+  // drops out of every actionable clock while staying in exposure/open counts.
+  fix_available_at: string | null;
+  actionable_from: string | null;
+  mttr_actionable_days: number | null;
+  actionable_age_days: number | null;
+  awaiting_vendor_fix: boolean;
+};
 
 const DAY_MS = 86_400_000;
 export const COMPACTED_ASSET = "(compacted)";
 
+// The legacy boundary as epoch ms, parsed once. Rows first seen before it had a fix by
+// construction (old hasFix-only filter); see REMEDIATION_ROLLOUT_ISO.
+const ROLLOUT_MS = parseTs(REMEDIATION_ROLLOUT_ISO);
+
 /**
  * Ledger rows plus non-superseded episodes (keys without a live row) with computed
- * mttr_days / open age_days. Episodes surface with '(compacted)' placeholder fields.
+ * mttr_days / open age_days and the actionable-clock derivations. Episodes surface
+ * with '(compacted)' placeholder fields.
  */
 export function baseRows(state: LedgerState, now?: number): BaseRow[] {
   const nowMs = now ?? Date.now();
@@ -267,10 +288,31 @@ export function baseRows(state: LedgerState, now?: number): BaseRow[] {
   const withDerived = (row: LedgerRow): BaseRow => {
     const first = parseTs(row.first_seen);
     const resolved = parseTs(row.resolved_at);
+    const open = row.status === "OPEN";
+
+    // Legacy rows (first seen before the broadened-ingestion rollout) are exact, not
+    // heuristic: the old filter only ever ingested findings that already had a fix.
+    const fixAvailableAt =
+      first !== null && ROLLOUT_MS !== null && first < ROLLOUT_MS
+        ? row.first_seen
+        : row.fix_date ?? row.fix_observed_at ?? null;
+    const fixAvailMs = parseTs(fixAvailableAt);
+    // Clamp: the clock never starts before detection.
+    const actionableMs =
+      fixAvailMs === null ? null : first === null ? fixAvailMs : Math.max(first, fixAvailMs);
+    const actionableFrom = actionableMs === null ? null : toIso(actionableMs);
+
     return {
       ...row,
       mttr_days: first !== null && resolved !== null ? (resolved - first) / DAY_MS : null,
       age_days: resolved === null && first !== null ? (nowMs - first) / DAY_MS : null,
+      fix_available_at: fixAvailableAt,
+      actionable_from: actionableFrom,
+      mttr_actionable_days:
+        resolved !== null && actionableMs !== null ? (resolved - actionableMs) / DAY_MS : null,
+      actionable_age_days:
+        open && actionableMs !== null ? (nowMs - actionableMs) / DAY_MS : null,
+      awaiting_vendor_fix: open && fixAvailableAt === null,
     };
   };
   for (const row of Object.values(state.ledger)) out.push(withDerived(row));
@@ -297,6 +339,8 @@ export function baseRows(state: LedgerState, now?: number): BaseRow[] {
         subscription_name: null,
         subscription_ext_id: null,
         tags_json: null,
+        fix_date: e.fix_date,
+        fix_observed_at: e.fix_observed_at,
       }),
     );
   }

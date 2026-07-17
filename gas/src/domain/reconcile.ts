@@ -33,6 +33,11 @@ export type LedgerRow = {
   subscription_name: string | null;
   subscription_ext_id: string | null;
   tags_json: string | null;
+  // Vendor-fix capture (actionable clock). fix_date: the upstream fix date the API
+  // reports; fix_observed_at: the scan ts at which a fix signal (fixedVersion or
+  // fixDate) was first seen for this episode. Both sticky first-wins; see reconcile().
+  fix_date: string | null;
+  fix_observed_at: string | null;
 };
 
 export const LEDGER_COLUMNS: (keyof LedgerRow)[] = [
@@ -40,6 +45,7 @@ export const LEDGER_COLUMNS: (keyof LedgerRow)[] = [
   "first_seen", "last_seen", "status", "resolved_at", "resolution_src",
   "reopened_count", "first_scan_id", "last_scan_id",
   "subscription_name", "subscription_ext_id", "tags_json",
+  "fix_date", "fix_observed_at",
 ];
 
 export interface Observation {
@@ -102,6 +108,8 @@ function makeRow(
   firstSeen: string | null,
   scanId: string,
   scanTs: string,
+  fixDate: string | null,
+  fixObservedAt: string | null,
 ): LedgerRow {
   return {
     vuln_key: key,
@@ -124,6 +132,8 @@ function makeRow(
     reopened_count: 0,
     first_scan_id: scanId,
     last_scan_id: scanId,
+    fix_date: fixDate,
+    fix_observed_at: fixObservedAt,
   };
 }
 
@@ -178,15 +188,27 @@ export function reconcile(
       clean(rec["resolvedAt"]) ?? clean(rec["remediatedAt"]) ?? clean(rec["fixedAt"]);
     const apiSaysResolved = present(apiResolved) || RESOLVED_STATUSES.has(apiStatus);
 
+    // Vendor-fix signal for this observation: a concrete fixedVersion or a fixDate.
+    // recFixDate is the normalized upstream fix date (null when unparseable/absent).
+    const fixSignal = present(rec["fixedVersion"]) || present(rec["fixDate"]);
+    const recFixDate = present(rec["fixDate"]) ? toIso(parseTs(rec["fixDate"])) : null;
+    // Sticky first-wins: only ever fill a currently-empty field; never clear or overwrite.
+    // `== null` also catches undefined from pre-migration snapshot rows lacking the columns.
+    const seedFix = (r: LedgerRow): void => {
+      if (r.fix_date == null && recFixDate !== null) r.fix_date = recFixDate;
+      if (r.fix_observed_at == null && fixSignal) r.fix_observed_at = scanTsIso;
+    };
+
     let row = updated[key];
     if (row === undefined) {
       const firstSeen = minIso(apiFirst, scanTsIso) ?? scanTsIso;
-      row = makeRow(rec, key, sev, firstSeen, scanId, scanTsIso);
+      row = makeRow(rec, key, sev, firstSeen, scanId, scanTsIso, recFixDate, fixSignal ? scanTsIso : null);
       updated[key] = row;
       newCount += 1;
     } else if (row.status === "RESOLVED" && !apiSaysResolved) {
       // Genuine reopen: start a new episode so the next resolution measures THIS
-      // episode, not the original.
+      // episode, not the original. The fix clock resets too — the prior episode's
+      // fix is irrelevant — then re-seeds from the reopening record.
       row.status = "OPEN";
       row.resolved_at = null;
       row.resolution_src = null;
@@ -194,6 +216,9 @@ export function reconcile(
       row.first_seen = minIso(apiFirst, scanTsIso) ?? scanTsIso;
       row.last_seen = scanTsIso;
       row.last_scan_id = scanId;
+      row.fix_date = null;
+      row.fix_observed_at = null;
+      seedFix(row);
       reopenedCount += 1;
     } else {
       // Persisting (OPEN) or a still-resolved finding being re-listed. Keep
@@ -203,6 +228,7 @@ export function reconcile(
       }
       row.last_seen = scanTsIso;
       row.last_scan_id = scanId;
+      seedFix(row);
     }
 
     // Latest observation wins for display attributes.

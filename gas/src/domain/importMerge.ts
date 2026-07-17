@@ -164,6 +164,8 @@ export function coerceLedger(r: Rec): LedgerRow {
     subscription_name: str(r["subscription_name"]),
     subscription_ext_id: str(r["subscription_ext_id"]),
     tags_json: str(r["tags_json"]),
+    fix_date: str(r["fix_date"]),
+    fix_observed_at: str(r["fix_observed_at"]),
   };
 }
 
@@ -178,6 +180,8 @@ export function coerceEpisode(r: Rec): EpisodeRow {
     reopened_count: Number(r["reopened_count"] ?? 0),
     compaction_id: String(r["compaction_id"] ?? "import"),
     superseded_by_scan: str(r["superseded_by_scan"]),
+    fix_date: str(r["fix_date"]),
+    fix_observed_at: str(r["fix_observed_at"]),
   };
 }
 

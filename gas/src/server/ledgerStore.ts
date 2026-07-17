@@ -90,6 +90,8 @@ function rowToLedger(r: Rec): LedgerRow {
     subscription_name: (r["subscription_name"] as string | null) ?? null,
     subscription_ext_id: (r["subscription_ext_id"] as string | null) ?? null,
     tags_json: (r["tags_json"] as string | null) ?? null,
+    fix_date: (r["fix_date"] as string | null) ?? null,
+    fix_observed_at: (r["fix_observed_at"] as string | null) ?? null,
   };
 }
 
@@ -153,6 +155,8 @@ export function loadState(useSnapshot = true): LedgerState {
     reopened_count: Number(r["reopened_count"] ?? 0),
     compaction_id: String(r["compaction_id"] ?? ""),
     superseded_by_scan: (r["superseded_by_scan"] as string | null) ?? null,
+    fix_date: (r["fix_date"] as string | null) ?? null,
+    fix_observed_at: (r["fix_observed_at"] as string | null) ?? null,
   }));
   if (useSnapshot) stateMemo = state;
   return state;
