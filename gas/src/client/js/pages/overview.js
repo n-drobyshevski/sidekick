@@ -3,7 +3,9 @@
 // KPI band, severity breakdown, exploitability summary, risk concentration, aging
 // of open findings, scan-over-scan movement, and a multi-level grouping breakdown.
 
-import { destroyChart, severityTrendLines, stackedAgeBar } from "../charts.js";
+import {
+  destroyChart, groupPalette, groupPie, groupTrendLines, severityTrendLines, stackedAgeBar,
+} from "../charts.js";
 import { bootstrap, setParams, swrCall } from "../store.js";
 import {
   clear, el, emptyState, fmtDate, kpiCard, nvdUrl, scopeBar, sectionLabel,
@@ -451,9 +453,112 @@ export async function renderOverview(main, params, ctx) {
     insightsHost.append(sectionLabel("Breakdown"));
     const controls = el("div", { class: "filter-bar" });
     const tableHost = el("div", {});
-    insightsHost.append(controls, tableHost);
+
+    // Two charts over the top-level grouping key: a pie partitioning open findings across
+    // the top groups (current scan, from the grouping payload the tree already fetched) and
+    // a line tracing those same groups over scan history (a separate ledger-replay endpoint).
+    // Both color a group via one groupPalette, so its hue is stable across the pair; each
+    // card swaps its canvas for a muted message when there's nothing to draw.
+    const pieCanvas = el("canvas", {});
+    const pieMsg = el("p", { class: "chart-empty muted", style: "display:none" });
+    const pieCaption = el("p", { class: "chart-caption muted" });
+    const lineCanvas = el("canvas", {});
+    const lineMsg = el("p", { class: "chart-empty muted", style: "display:none" });
+    const lineCaption = el("p", { class: "chart-caption muted" });
+    const chartGrid = el("div", { class: "chart-grid", style: "align-items:start" },
+      el("div", { class: "chart-card" },
+        el("h3", {}, "Group share"),
+        el("div", { class: "chart-box" }, pieCanvas, pieMsg),
+        pieCaption),
+      el("div", { class: "chart-card" },
+        el("h3", {}, "Group trend"),
+        el("div", { class: "chart-box" }, lineCanvas, lineMsg),
+        lineCaption),
+    );
+    insightsHost.append(controls, chartGrid, tableHost);
     renderControls();
     loadGrouping();
+
+    // Swap a card between its live canvas and a centered muted message.
+    function showChart(canvas, msg) {
+      msg.style.display = "none";
+      canvas.style.display = "";
+    }
+    function showMsg(canvas, msg, text) {
+      destroyChart(canvas);
+      canvas.style.display = "none";
+      msg.textContent = text;
+      msg.style.display = "";
+    }
+
+    /** Repaint both breakdown charts from a fresh grouping payload. Charts are open-centric
+     *  (the tree sorts by total), so rank the top-level groups by open, keep the top eight
+     *  with any open finding, and fold ranks past eight into one neutral "Other". The pie
+     *  renders from this scan's payload; the line replays the ledger over scan history. */
+    function renderCharts(data) {
+      const key0 = groupKeys[0];
+      const ranked = ((data && data.groups) || [])
+        .filter((n) => (n.open || 0) > 0)
+        .sort((a, b) => (b.open || 0) - (a.open || 0));
+      const head = ranked.slice(0, 8);
+      const tailOpen = ranked.slice(8).reduce((a, n) => a + (n.open || 0), 0);
+      const names = head.map((n) => n.key);
+      const colors = groupPalette(names);
+      const dimLabel = labelFor(key0);
+
+      // Pie: current-scan partition. Works for every dimension (including os).
+      pieCaption.textContent = "Open findings by " + dimLabel + ", this scan.";
+      if (!head.length) {
+        showMsg(pieCanvas, pieMsg, "No open findings to partition.");
+      } else {
+        const slices = head.map((n) => ({ label: n.key, value: n.open, color: colors.get(n.key) }));
+        if (tailOpen > 0) {
+          slices.push({ label: "Other", value: tailOpen, color: colors.get("Other") });
+        }
+        showChart(pieCanvas, pieMsg);
+        requestAnimationFrame(() => groupPie(pieCanvas, slices));
+      }
+
+      // Line: ledger-replay trend for the same top groups.
+      lineCaption.textContent = "Open findings by " + dimLabel + ", per scan.";
+      // The ledger has no operating-system column, so an OS trend can't be reconstructed
+      // (accepted limitation); skip the fetch and show an honest empty state — the pie above
+      // still renders from the current scan.
+      if (key0 === "os") {
+        showMsg(lineCanvas, lineMsg, "Historical trend isn't available for operating system.");
+        return;
+      }
+      if (!names.length) {
+        showMsg(lineCanvas, lineMsg, "No groups to trend.");
+        return;
+      }
+      const series = head.map((n) => ({ name: n.key, color: colors.get(n.key) }));
+      if (tailOpen > 0) series.push({ name: "Other", color: colors.get("Other") });
+      const params = {
+        domain: ctx.domain || "", supportGroup: ctx.supportGroup || "",
+        key: key0, groups: names, severities: scopeParam(),
+      };
+      const paintTrend = (td) => {
+        if (key0 !== groupKeys[0]) return; // a newer top-level selection superseded this
+        if (!td || td.supported === false) {
+          showMsg(lineCanvas, lineMsg, "Historical trend isn't available for this grouping.");
+        } else if (!td.points || td.points.length < 2) {
+          showMsg(lineCanvas, lineMsg, "Trend appears after the second scan.");
+        } else {
+          showChart(lineCanvas, lineMsg);
+          requestAnimationFrame(() => groupTrendLines(lineCanvas, td.points, series));
+        }
+      };
+      loadTrend();
+      async function loadTrend() {
+        showMsg(lineCanvas, lineMsg, "Loading trend…");
+        try {
+          paintTrend(await swrCall("api_getGroupTrend", params, paintTrend));
+        } catch (e) {
+          if (key0 === groupKeys[0]) showMsg(lineCanvas, lineMsg, "Trend is unavailable.");
+        }
+      }
+    }
 
     function labelFor(dim) {
       const found = GROUP_DIMENSIONS.find(([v]) => v === dim);
@@ -498,6 +603,7 @@ export async function renderOverview(main, params, ctx) {
       const paint = (data) => {
         if (keys.join(",") !== groupKeys.join(",")) return; // a newer path superseded this
         renderTree(tableHost, (data && data.groups) || []);
+        renderCharts(data);
       };
       paint(await swrCall("api_getGrouping",
         { domain: ctx.domain || "", supportGroup: ctx.supportGroup || "",

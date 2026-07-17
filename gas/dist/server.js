@@ -1088,6 +1088,7 @@ var Server = (() => {
     getExportRawUrl: () => getExportRawUrl,
     getFindingDetail: () => getFindingDetail,
     getFindings: () => getFindings,
+    getGroupTrend: () => getGroupTrend,
     getGrouping: () => getGrouping,
     getHistoryPage: () => getHistoryPage,
     getInsights: () => getInsights,
@@ -2605,6 +2606,42 @@ var Server = (() => {
       return { date: ts.iso, bySev };
     });
   }
+  function openByGroupTrend(scans, base, keyOf, groups, opts = {}) {
+    var _a, _b, _c;
+    const severities = (_a = opts.severities) != null ? _a : null;
+    const includeOther = (_b = opts.includeOther) != null ? _b : true;
+    const otherLabel = (_c = opts.otherLabel) != null ? _c : "Other";
+    let rows = base;
+    if (severities !== null && base.length) {
+      const keep = /* @__PURE__ */ new Set([...severities, "UNKNOWN"]);
+      rows = base.filter((r) => keep.has(normalizeSeverity(r["severity"])));
+    }
+    if (!scans.length || !rows.length) return [];
+    const flatTs = scans.filter((s) => s["shape"] === "flat").map((s) => ({ iso: String(s["ts"]), ms: parseTs(s["ts"]) })).filter((t) => t.ms !== null).sort((a, b) => a.ms - b.ms);
+    if (!flatTs.length) return [];
+    const inGroup = new Set(groups);
+    const parsed = rows.map((r) => {
+      const raw = keyOf(r);
+      const value = raw.trim() === "" ? "(none)" : raw;
+      const known = inGroup.has(value);
+      return {
+        first: parseTs(r["first_seen"]),
+        resolvedAt: parseTs(r["resolved_at"]),
+        group: known ? value : otherLabel,
+        kept: known || includeOther
+      };
+    });
+    return flatTs.map((ts) => {
+      var _a2;
+      const byGroup = {};
+      for (const r of parsed) {
+        if (!r.kept) continue;
+        const isOpen3 = r.first !== null && r.first <= ts.ms && (r.resolvedAt === null || r.resolvedAt > ts.ms);
+        if (isOpen3) byGroup[r.group] = ((_a2 = byGroup[r.group]) != null ? _a2 : 0) + 1;
+      }
+      return { date: ts.iso, byGroup };
+    });
+  }
   function trendFromBase(scans, base, severities = null, opts = {}) {
     const tag = (points, synthetic2) => points.map((p) => ({ ...p, reconstructed: synthetic2.has(p.date) }));
     if (!opts.backfill) return tag(trendFromFrames(scans, base, severities), /* @__PURE__ */ new Set());
@@ -3372,6 +3409,15 @@ var Server = (() => {
     os: "vulnerableAsset.operatingSystem",
     subscription: "vulnerableAsset.subscriptionName",
     cve: "name"
+  };
+  var GROUP_BASE_FIELDS = {
+    domain: "_domain",
+    supportGroup: "_supportGroup",
+    asset: "asset_name",
+    atype: "asset_type",
+    cloud: "cloud",
+    subscription: "subscription_name",
+    cve: "cve"
   };
   function groupTree(records, keys, perLevelCap = 20) {
     if (!keys.length || !records.length) return [];
@@ -5483,6 +5529,66 @@ var Server = (() => {
         () => groupingData(p),
         3600
       )
+    );
+  }
+  function groupTrendData(p) {
+    var _a, _b, _c;
+    const key = String((_a = p == null ? void 0 : p["key"]) != null ? _a : "");
+    const groups = readStringArray(p, "groups");
+    const field2 = GROUP_BASE_FIELDS[key];
+    const scan = currentScan();
+    if (!field2 || !scan) return { supported: false, key, groups: [], points: [] };
+    const domain = String((_b = p == null ? void 0 : p["domain"]) != null ? _b : "");
+    const supportGroup = String((_c = p == null ? void 0 : p["supportGroup"]) != null ? _c : "");
+    const supportGroupSet = readStringArray(p, "supportGroups");
+    const sgActive = Boolean(supportGroup) || supportGroupSet.length > 0;
+    const sgMatch = supportGroupPredicate(supportGroup, supportGroupSet);
+    let base = loadBaseRows();
+    attachSupportGroups(base);
+    const compiled = compileDomains(getDomains2().items);
+    for (const r of base) r["_domain"] = assignDomain(r, compiled);
+    if (sgActive) base = base.filter((r) => {
+      var _a2;
+      return sgMatch(String((_a2 = r["_supportGroup"]) != null ? _a2 : ""));
+    });
+    if (domain) base = base.filter((r) => {
+      var _a2;
+      return String((_a2 = r["_domain"]) != null ? _a2 : UNASSIGNED) === domain;
+    });
+    const points = openByGroupTrend(
+      loadScanRows(),
+      base,
+      (r) => {
+        var _a2;
+        return String((_a2 = r[field2]) != null ? _a2 : "");
+      },
+      groups,
+      { severities: readSeverities(p) }
+    );
+    return { supported: true, key, groups, points };
+  }
+  function getGroupTrend(p) {
+    var _a, _b;
+    const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
+    const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
+    const supportGroupSet = readStringArray(p, "supportGroups");
+    return run(
+      () => {
+        var _a2;
+        return cached(
+          "groupTrend",
+          {
+            domain,
+            supportGroup,
+            supportGroups: supportGroupSet,
+            key: String((_a2 = p == null ? void 0 : p["key"]) != null ? _a2 : ""),
+            groups: readStringArray(p, "groups"),
+            severities: readSeverities(p)
+          },
+          () => groupTrendData(p),
+          3600
+        );
+      }
     );
   }
   function attributionData(p) {
