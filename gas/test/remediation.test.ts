@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   RESOLUTION_BUCKET_LABELS,
+  actionableView,
+  awaitingVendorFix,
   fastLaneSplit,
   kmMedian,
   mttrPercentiles,
@@ -9,6 +11,34 @@ import {
   resolutionBuckets,
 } from "../src/domain/remediation";
 import { quantile } from "../src/domain/util";
+
+// Base-row projections carrying the actionable-clock fields the new fns read (a superset of
+// RemediationRow, so they also drop straight into openPastSla/kmMedian for the naive view).
+// A resolved row has an mttr on both clocks; an open row has an age on both. An awaiting row
+// is OPEN with null actionable fields — outside every clock, still in the open count.
+const bRes = (mttr_days: number | null, mttr_actionable_days: number | null, severity = "HIGH") => ({
+  severity,
+  status: "RESOLVED",
+  mttr_days,
+  age_days: null,
+  mttr_actionable_days,
+  actionable_age_days: null,
+  awaiting_vendor_fix: false,
+});
+const bOpen = (
+  age_days: number | null,
+  actionable_age_days: number | null,
+  awaiting_vendor_fix = false,
+  severity = "HIGH",
+) => ({
+  severity,
+  status: "OPEN",
+  mttr_days: null,
+  age_days,
+  mttr_actionable_days: null,
+  actionable_age_days,
+  awaiting_vendor_fix,
+});
 
 // Ledger-base projections: a resolved row carries a finite mttr_days; an open row
 // carries a finite age_days and an open status. (severity | status | mttr_days | age_days.)
@@ -198,5 +228,80 @@ describe("openPastSlaFromRecords", () => {
   it("returns 0 with no records or no first-seen column", () => {
     expect(openPastSlaFromRecords([], Date.now())).toBe(0);
     expect(openPastSlaFromRecords([{ severity: "CRITICAL", status: "OPEN" }], Date.now())).toBe(0);
+  });
+});
+
+describe("actionableView", () => {
+  it("projects the actionable clock onto mttr_days/age_days; severity+status pass through", () => {
+    const rows = [
+      bRes(20, 3, "CRITICAL"), // resolved: from-detection 20d, actionable 3d
+      bOpen(50, 8), // open: from-detection 50d, actionable 8d
+      bOpen(40, null, true, "MEDIUM"), // awaiting: actionable fields null
+    ];
+    expect(actionableView(rows)).toEqual([
+      { severity: "CRITICAL", status: "RESOLVED", mttr_days: 3, age_days: null },
+      { severity: "HIGH", status: "OPEN", mttr_days: null, age_days: 8 },
+      { severity: "MEDIUM", status: "OPEN", mttr_days: null, age_days: null },
+    ]);
+  });
+});
+
+describe("openPastSla over actionableView", () => {
+  it("measures from the actionable age and drops awaiting rows (null actionable age)", () => {
+    // CRITICAL target = 7. All three are past SLA on the from-detection age; only the
+    // second is past it on the actionable clock, and the awaiting row has no clock at all.
+    const rows = [
+      bOpen(40, 3, false, "CRITICAL"), // fix arrived late: actionable 3d -> in SLA
+      bOpen(60, 10, false, "CRITICAL"), // actionable 10d > 7 -> breached
+      bOpen(99, null, true, "CRITICAL"), // awaiting: excluded entirely
+    ];
+    // Naive view breaches all three (every from-detection age > 7).
+    expect(openPastSla(rows).overall).toEqual({ open: 3, breached: 3, pct: 100 });
+    // Actionable view: awaiting row drops out (null age), and the late-fixed row is in SLA.
+    const actionable = openPastSla(actionableView(rows));
+    expect(actionable.overall).toEqual({ open: 2, breached: 1, pct: 50 });
+    expect(actionable.perSev.CRITICAL).toEqual({ open: 2, breached: 1, pct: 50, target: 7 });
+  });
+});
+
+describe("kmMedian naive vs actionable strata", () => {
+  it("differ when the two clocks disagree on the same resolved set", () => {
+    // Same four findings; from-detection mttrs 1..4 (median 2), actionable mttrs 10..40
+    // (a late-available fix shifts every event right), so the KM medians land apart.
+    const rows = [bRes(1, 10), bRes(2, 20), bRes(3, 30), bRes(4, 40)];
+    expect(kmMedian(rows)).toBe(2); // from-detection: crosses .5 at t=2
+    expect(kmMedian(actionableView(rows))).toBe(20); // actionable: crosses .5 at t=20
+  });
+});
+
+describe("awaitingVendorFix", () => {
+  it("counts awaiting rows per sev + overall; pctOfOpen is their share of all open", () => {
+    const rows = [
+      bOpen(5, null, true, "CRITICAL"), // awaiting
+      bOpen(5, 5, false, "CRITICAL"), // open, fix available -> not awaiting
+      bOpen(5, null, true, "HIGH"), // awaiting
+      bRes(3, 3, "HIGH"), // resolved -> not open, ignored
+    ];
+    const out = awaitingVendorFix(rows);
+    expect(out.perSev).toEqual({ CRITICAL: 1, HIGH: 1 });
+    expect(out.overall).toBe(2);
+    expect(out.openTotal).toBe(3); // three OPEN rows
+    expect(out.pctOfOpen).toBeCloseTo((2 / 3) * 100);
+  });
+
+  it("openTotal 0 -> pctOfOpen null; severity is normalized", () => {
+    expect(awaitingVendorFix([])).toEqual({ perSev: {}, overall: 0, openTotal: 0, pctOfOpen: null });
+    // All resolved: no open rows -> null share, not a fake 0%.
+    expect(awaitingVendorFix([bRes(3, 3, "HIGH")])).toEqual({
+      perSev: {},
+      overall: 0,
+      openTotal: 0,
+      pctOfOpen: null,
+    });
+    // "weird" normalizes to UNKNOWN.
+    const out = awaitingVendorFix([bOpen(5, null, true, "weird")]);
+    expect(out.perSev).toEqual({ UNKNOWN: 1 });
+    expect(out.overall).toBe(1);
+    expect(out.pctOfOpen).toBe(100);
   });
 });

@@ -2124,6 +2124,34 @@ var Server = (() => {
     }
     return breached;
   }
+  function actionableView(rows) {
+    return rows.map((r) => ({
+      severity: r.severity,
+      status: r.status,
+      mttr_days: r.mttr_actionable_days,
+      age_days: r.actionable_age_days
+    }));
+  }
+  function awaitingVendorFix(rows) {
+    var _a;
+    const perSev = {};
+    let overall = 0;
+    let openTotal = 0;
+    for (const row of rows) {
+      if (!isOpen(row.status)) continue;
+      openTotal += 1;
+      if (!row.awaiting_vendor_fix) continue;
+      const s = normalizeSeverity(row.severity);
+      perSev[s] = ((_a = perSev[s]) != null ? _a : 0) + 1;
+      overall += 1;
+    }
+    return {
+      perSev,
+      overall,
+      openTotal,
+      pctOfOpen: openTotal ? overall / openTotal * 100 : null
+    };
+  }
 
   // src/domain/compaction.ts
   var CHECKPOINT_VERSION = 1;
@@ -5761,7 +5789,13 @@ var Server = (() => {
       fastLane: { ...fastLaneSplit(remRows, t), thresholdDays: t },
       buckets: resolutionBuckets(remRows),
       kmMedian: kmMedian(remRows),
-      openPastSla: openPastSla(remRows)
+      openPastSla: openPastSla(remRows),
+      // Actionable-clock companions (clock starts at vendor-fix availability): the same
+      // functions over the actionableView projection. Awaiting-vendor-fix rows carry null
+      // actionable fields, so they drop out of these while staying in `awaiting`.
+      kmMedianActionable: kmMedian(actionableView(remRows)),
+      openPastSlaActionable: openPastSla(actionableView(remRows)),
+      awaiting: awaitingVendorFix(remRows)
     };
     return { perSev, overall, slaPct, oldestDays, rowCount: rows.length, remediation };
   }
@@ -5813,7 +5847,12 @@ var Server = (() => {
         // "Excl. fast lane" (resolved with mttr_days above the fast-lane threshold).
         tailResolved: split.tailCount,
         slaPct,
-        openPastSla: openPastSla(rem).overall,
+        // Actionable-clock open-past-SLA (measured from vendor-fix availability, awaiting
+        // rows excluded) — the same basis the hero and severity table now use.
+        openPastSla: openPastSla(actionableView(rem)).overall,
+        // Open findings in this bucket still awaiting a vendor fix — surfaced as a footnote
+        // under the table, not a column.
+        awaiting: awaitingVendorFix(rem).overall,
         open: (_c = overall.open) != null ? _c : 0,
         resolved: (_d = overall.resolved) != null ? _d : 0
       });
@@ -5840,7 +5879,9 @@ var Server = (() => {
     return cached(
       // "mttr" → "mttr2": payload gained the `remediation` block; dataVersion persists across
       // deploys, so bumping the namespace prevents serving a stale old-shape entry (up to 1h).
-      "mttr2",
+      // "mttr2" → "mttr3": remediation gained the actionable-clock keys (kmMedianActionable,
+      // openPastSlaActionable, awaiting); same reasoning — bump so no stale entry lacks them.
+      "mttr3",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
@@ -5876,7 +5917,9 @@ var Server = (() => {
       // medians for the chart's Median / Excl. fast lane toggle).
       // "mttrByDomain4" → "mttrByDomain5": rows gained `tailResolved` (the toggle now also
       // drives the Remediation-share pie).
-      "mttrByDomain5",
+      // "mttrByDomain5" → "mttrByDomain6": rows gained `awaiting` and switched `openPastSla`
+      // to the actionable-clock view; bump so a stale from-detection entry can't survive.
+      "mttrByDomain6",
       {
         supportGroup: String((_a = p == null ? void 0 : p["supportGroup"]) != null ? _a : ""),
         severities: readSeverities(p),
