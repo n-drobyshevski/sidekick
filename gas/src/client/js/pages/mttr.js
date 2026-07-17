@@ -13,6 +13,10 @@ import {
 // somehow carries buckets without labels.
 const RESOLUTION_LABELS = ["≤1d", "2–7d", "8–30d", "31–90d", "90+d"];
 
+// Timeframe presets for the Trends charts. null = no window (full history). 6mo is
+// 183 days (half of 366) so two clicks of the calendar never shift a point in or out.
+const TREND_WINDOWS = [["30d", 30], ["90d", 90], ["6mo", 183], ["All", null]];
+
 // Open-past-SLA cell, shared by the hero mini and the per-severity table: "breached
 // (pct%)"; "0" when nothing is open (pct is null then, not a fake 0%); "—" when the
 // payload doesn't carry this metric at all (e.g. a stale pre-remediation cache).
@@ -75,6 +79,10 @@ export async function renderMttr(main, _params, ctx) {
   // "" = no filter on that dimension.
   const domain = ctx.domain || "";
   const supportGroup = ctx.supportGroup || "";
+
+  // Trends timeframe (days back from now; null = full history). Page-local and
+  // non-persisted like the severity scope: survives in-page reloads, resets on visit.
+  let trendWindowDays = null;
 
   await load();
 
@@ -242,21 +250,42 @@ export async function renderMttr(main, _params, ctx) {
     // With no lifecycle data the hero already shows the single, unified empty state — don't
     // stack a second "Trends appear…" panel beneath it.
     if (!mttr.rowCount) return;
+
+    // Window the already-loaded series client-side (no RPC): the charts use a category
+    // x-axis, so filtering the arrays before mapping is the whole job. The cutoff comes
+    // from the client clock; a ±1-day skew at the window edge is fine for a view filter.
+    const cutoff = trendWindowDays === null ? null : Date.now() - trendWindowDays * 86400000;
+    const inWindow = (iso) => cutoff === null || Date.parse(iso) >= cutoff;
+    const trend = trends.trend.filter((t) => inWindow(t.date));
+    const history = trends.history.filter((h) => inWindow(h.date));
+
+    // Compact timeframe toggle inline with the section label. aria-pressed toggle
+    // buttons, not a radiogroup — the same segmented pattern as the report-format and
+    // oldest-open controls. Clicking repaints from the closed-over payload.
+    const segRow = el("div", { class: "seg-row", role: "group", "aria-label": "Trends timeframe" },
+      ...TREND_WINDOWS.map(([label, days]) =>
+        el("button", {
+          type: "button", class: "seg-btn seg-btn--sm",
+          "aria-pressed": String(days === trendWindowDays),
+          onclick: () => { trendWindowDays = days; renderCharts(trends, mttr); },
+        }, label)));
+    const sectionHead = el("div", { class: "section-head" }, sectionLabel("Trends"), segRow);
+
     const mttrCanvas = el("canvas", { id: "mttr-trend" });
     const openResolvedCanvas = el("canvas", { id: "open-resolved" });
     const openSlaCanvas = el("canvas", { id: "open-sla-trend" });
 
-    const points = trends.trend.length
-      ? trends.trend.map((t) => ({ x: t.date, y: t.median_days, reconstructed: t.reconstructed }))
-      : trends.history.map((h) => ({ x: h.date, y: h.median_days, reconstructed: false }));
+    const points = trend.length
+      ? trend.map((t) => ({ x: t.date, y: t.median_days, reconstructed: t.reconstructed }))
+      : history.map((h) => ({ x: h.date, y: h.median_days, reconstructed: false }));
 
     // Same fallback shape as `points` above, but for open_past_sla — a column that doesn't
     // exist on history rows saved before this feature shipped. Those rows carry `null`
     // (never a false 0, see historyStore.loadHistory), so they're filtered out here rather
     // than drawn as a dip to zero.
-    const openSlaPoints = (trends.trend.length
-      ? trends.trend.map((t) => ({ x: t.date, y: t.open_past_sla, reconstructed: t.reconstructed }))
-      : trends.history.map((h) => ({ x: h.date, y: h.open_past_sla, reconstructed: false })))
+    const openSlaPoints = (trend.length
+      ? trend.map((t) => ({ x: t.date, y: t.open_past_sla, reconstructed: t.reconstructed }))
+      : history.map((h) => ({ x: h.date, y: h.open_past_sla, reconstructed: false })))
       .filter((p) => p.y !== null && p.y !== undefined);
 
     // A "trend" needs at least two points — one lone dot is not a trajectory. This matches the
@@ -269,7 +298,7 @@ export async function renderMttr(main, _params, ctx) {
         el("h3", {}, "MTTR trend"),
         el("div", { class: "chart-box" }, mttrCanvas)));
     }
-    if (trends.trend.length > 1) {
+    if (trend.length > 1) {
       grid.append(el("div", { class: "chart-card" },
         el("h3", {}, "Open vs resolved"),
         el("div", { class: "chart-box" }, openResolvedCanvas)));
@@ -282,12 +311,19 @@ export async function renderMttr(main, _params, ctx) {
         el("div", { class: "chart-box" }, openSlaCanvas)));
     }
     if (!grid.hasChildNodes()) {
-      chartsHost.append(emptyState("Trends appear after two saved scans."));
+      if (trendWindowDays === null) {
+        // Nothing to plot at all — same single empty state as before the filter existed.
+        chartsHost.append(emptyState("Trends appear after two saved scans."));
+      } else {
+        // The window is what emptied the section — keep the control so it can be widened.
+        chartsHost.append(sectionHead, emptyState("No trend points in this window."));
+      }
       return;
     }
     // A labelled section so the page has no h1 → h3 heading skip (the cards are h3).
-    chartsHost.append(sectionLabel("Trends"), grid);
-    if (trends.trend.some((t) => t.reconstructed)) {
+    chartsHost.append(sectionHead, grid);
+    // Caption keyed to the windowed set — no note about shading that isn't on screen.
+    if (trend.some((t) => t.reconstructed)) {
       chartsHost.append(el("p", { class: "small muted", style: "margin:4px 0 0" },
         "Shaded days precede the first saved scan — reconstructed from first-detection dates. "
           + "Open counts there are exact; resolved and MTTR are lower bounds."));
@@ -301,8 +337,8 @@ export async function renderMttr(main, _params, ctx) {
       if (hasTrend) {
         trendLine(mttrCanvas, points.filter((p) => p.y !== null), { yLabel: "days" });
       }
-      if (trends.trend.length > 1) {
-        openResolvedLines(openResolvedCanvas, trends.trend);
+      if (trend.length > 1) {
+        openResolvedLines(openResolvedCanvas, trend);
       }
       if (hasOpenSlaTrend) {
         trendLine(openSlaCanvas, openSlaPoints, { yLabel: "findings" });
