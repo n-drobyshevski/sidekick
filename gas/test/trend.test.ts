@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  openBySeverityTrend, trendFromBase, trendFromFrames, withOpenPastSla, withTailMedian,
+  openByGroupTrend, openBySeverityTrend, trendFromBase, trendFromFrames,
+  withOpenPastSla, withTailMedian,
 } from "../src/domain/trend";
+import type { Rec } from "../src/domain/util";
 import { expectParity, fixture } from "./helpers";
 
 describe("trendFromFrames (fixture parity)", () => {
@@ -56,6 +58,84 @@ describe("openBySeverityTrend", () => {
     expect(openBySeverityTrend([{ ts: "2026-01-01T00:00:00Z", shape: "grouped" }], base)).toEqual([]);
     expect(openBySeverityTrend([], base)).toEqual([]);
     expect(openBySeverityTrend(scans, [])).toEqual([]);
+  });
+});
+
+describe("openByGroupTrend", () => {
+  // Two flat scans a day apart. keyOf reads the `asset` field; groups ["web", "db"] each
+  // keep their own series, everything else folds into "Other".
+  const scans = [
+    { ts: "2026-01-01T00:00:00Z", shape: "flat" },
+    { ts: "2026-01-02T00:00:00Z", shape: "flat" },
+  ];
+  const keyOf = (r: Rec) => String(r["asset"] ?? "");
+  const groups = ["web", "db"];
+  const open = (asset: unknown, over: Rec = {}) => ({
+    asset, severity: "HIGH", first_seen: "2025-12-31T00:00:00Z", resolved_at: null, ...over,
+  });
+
+  it("returns [] with no scans or no base rows", () => {
+    expect(openByGroupTrend([], [open("web")], keyOf, groups)).toEqual([]);
+    expect(openByGroupTrend(scans, [], keyOf, groups)).toEqual([]);
+  });
+
+  it("counts open per group as of a single flat scan", () => {
+    const base = [open("web"), open("web"), open("db")];
+    expect(openByGroupTrend([scans[0]], base, keyOf, groups)).toEqual([
+      { date: "2026-01-01T00:00:00Z", byGroup: { web: 2, db: 1 } },
+    ]);
+  });
+
+  it("drops a row from its group at the scan after it resolves", () => {
+    const base = [
+      open("web", { resolved_at: "2026-01-01T12:00:00Z" }),
+      open("db"),
+    ];
+    expect(openByGroupTrend(scans, base, keyOf, groups)).toEqual([
+      { date: "2026-01-01T00:00:00Z", byGroup: { web: 1, db: 1 } },
+      { date: "2026-01-02T00:00:00Z", byGroup: { db: 1 } },
+    ]);
+  });
+
+  it("ignores non-flat scans (no flat scan -> [])", () => {
+    expect(
+      openByGroupTrend([{ ts: "2026-01-01T00:00:00Z", shape: "grouped" }], [open("web")], keyOf, groups),
+    ).toEqual([]);
+  });
+
+  it("normalizes null / blank group values to (none)", () => {
+    const base = [open(null), open(""), open("web")];
+    // "(none)" only keeps its own series when it's one of the requested groups.
+    expect(openByGroupTrend([scans[0]], base, keyOf, ["(none)", "web"])).toEqual([
+      { date: "2026-01-01T00:00:00Z", byGroup: { "(none)": 2, web: 1 } },
+    ]);
+  });
+
+  it("folds values outside groups into Other; includeOther:false drops them", () => {
+    const base = [open("web"), open("cache"), open("queue")];
+    expect(openByGroupTrend([scans[0]], base, keyOf, groups)).toEqual([
+      { date: "2026-01-01T00:00:00Z", byGroup: { web: 1, Other: 2 } },
+    ]);
+    expect(openByGroupTrend([scans[0]], base, keyOf, groups, { includeOther: false })).toEqual([
+      { date: "2026-01-01T00:00:00Z", byGroup: { web: 1 } },
+    ]);
+  });
+
+  it("honors a custom otherLabel", () => {
+    expect(
+      openByGroupTrend([scans[0]], [open("cache")], keyOf, groups, { otherLabel: "Rest" }),
+    ).toEqual([{ date: "2026-01-01T00:00:00Z", byGroup: { Rest: 1 } }]);
+  });
+
+  it("scopes to the chosen severities plus UNKNOWN", () => {
+    const base = [
+      open("web", { severity: "CRITICAL" }),
+      open("web", { severity: "HIGH" }),   // filtered out when scoped to CRITICAL
+      open("db", { severity: "UNKNOWN" }), // UNKNOWN is never hidden
+    ];
+    expect(openByGroupTrend([scans[0]], base, keyOf, groups, { severities: ["CRITICAL"] })).toEqual([
+      { date: "2026-01-01T00:00:00Z", byGroup: { web: 1, db: 1 } },
+    ]);
   });
 });
 

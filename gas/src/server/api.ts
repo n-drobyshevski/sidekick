@@ -26,7 +26,7 @@ import {
 import { validateBundle } from "../domain/importMerge";
 import { SealedScanError, LedgerRebuildError } from "../domain/maintenance";
 import { parseTs, present, type Rec } from "../domain/util";
-import { openBySeverityTrend } from "../domain/trend";
+import { openByGroupTrend, openBySeverityTrend } from "../domain/trend";
 import * as insights from "../domain/insights";
 import * as archive from "./archiveStore";
 import * as findings from "./findings";
@@ -435,6 +435,67 @@ export function getGrouping(p?: unknown): ApiResult {
     cached("grouping",
       { domain, supportGroup, supportGroups: supportGroupSet, keys, severities: readSeverities(p) },
       () => groupingData(p), 3600),
+  );
+}
+
+// ------------------------------------------------------------------- group trend
+
+/**
+ * Open findings over scan history for the top-level breakdown groups — the durable-ledger
+ * counterpart of the current-scan `groupingData` tree, powering the Breakdown
+ * group-evolution line chart. Scopes the base rows to the same Value Chain / Support
+ * Group filters (mirroring `insightsData`), then replays the ledger per flat scan.
+ *
+ * `key` is the top-level grouping dimension; `groups` are the canonical top-N group names
+ * the client already derived from the grouping payload, so pie and line bucket/color the
+ * same groups. A dimension with no ledger column — `os`, absent from `GROUP_BASE_FIELDS`
+ * — returns `supported: false`; the UI shows an honest empty state and still draws the
+ * pie from the grouping payload.
+ */
+function groupTrendData(p?: unknown): Rec {
+  const key = String((p as Rec)?.["key"] ?? "");
+  const groups = readStringArray(p, "groups");
+  const field = insights.GROUP_BASE_FIELDS[key];
+  const scan = findings.currentScan();
+  if (!field || !scan) return { supported: false, key, groups: [], points: [] };
+
+  // Same base-row scoping as insightsData: base rows carry no _supportGroup / _domain
+  // natively, so attach both up front, then apply the domain / support-group filters.
+  const domain = String((p as Rec)?.["domain"] ?? "");
+  const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
+  const supportGroupSet = readStringArray(p, "supportGroups");
+  const sgActive = Boolean(supportGroup) || supportGroupSet.length > 0;
+  const sgMatch = supportGroupPredicate(supportGroup, supportGroupSet);
+  let base = ledgerStore.loadBaseRows() as unknown as Rec[];
+  supportGroups.attachSupportGroups(base);
+  const compiled = compileDomains(settingsStore.getDomains().items);
+  for (const r of base) r["_domain"] = assignDomain(r, compiled);
+  if (sgActive) base = base.filter((r) => sgMatch(String(r["_supportGroup"] ?? "")));
+  if (domain) base = base.filter((r) => String(r["_domain"] ?? UNASSIGNED) === domain);
+
+  const points = openByGroupTrend(
+    ledgerStore.loadScanRows() as unknown as Rec[],
+    base,
+    (r) => String(r[field] ?? ""),
+    groups,
+    { severities: readSeverities(p) },
+  );
+  return { supported: true, key, groups, points };
+}
+
+export function getGroupTrend(p?: unknown): ApiResult {
+  const domain = String((p as Rec)?.["domain"] ?? "");
+  const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
+  const supportGroupSet = readStringArray(p, "supportGroups");
+  return run(() =>
+    cached("groupTrend",
+      {
+        domain, supportGroup, supportGroups: supportGroupSet,
+        key: String((p as Rec)?.["key"] ?? ""),
+        groups: readStringArray(p, "groups"),
+        severities: readSeverities(p),
+      },
+      () => groupTrendData(p), 3600),
   );
 }
 
