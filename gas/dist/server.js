@@ -2642,6 +2642,55 @@ var Server = (() => {
       return { date: ts.iso, byGroup };
     });
   }
+  function medianMttrByGroupTrend(scans, base, keyOf, groups, opts = {}) {
+    var _a, _b, _c;
+    const severities = (_a = opts.severities) != null ? _a : null;
+    const includeOther = (_b = opts.includeOther) != null ? _b : true;
+    const otherLabel = (_c = opts.otherLabel) != null ? _c : "Other";
+    let rows = base;
+    if (severities !== null && base.length) {
+      const keep = /* @__PURE__ */ new Set([...severities, "UNKNOWN"]);
+      rows = base.filter((r) => keep.has(normalizeSeverity(r["severity"])));
+    }
+    if (!scans.length || !rows.length) return [];
+    const flatTs = scans.filter((s) => s["shape"] === "flat").map((s) => ({ iso: String(s["ts"]), ms: parseTs(s["ts"]) })).filter((t) => t.ms !== null).sort((a, b) => a.ms - b.ms);
+    if (!flatTs.length) return [];
+    const inGroup = new Set(groups);
+    const parsed = rows.map((r) => {
+      const raw = keyOf(r);
+      const value = raw.trim() === "" ? "(none)" : raw;
+      const known = inGroup.has(value);
+      return {
+        resolvedAt: parseTs(r["resolved_at"]),
+        mttr: typeof r["mttr_days"] === "number" && !Number.isNaN(r["mttr_days"]) ? r["mttr_days"] : null,
+        group: known ? value : otherLabel,
+        folded: !known && includeOther,
+        kept: known || includeOther
+      };
+    });
+    const hasOther = parsed.some((r) => r.folded);
+    const names = hasOther ? [...groups, otherLabel] : groups;
+    return flatTs.map((ts) => {
+      var _a2, _b2;
+      const samples = {};
+      for (const r of parsed) {
+        if (!r.kept || r.mttr === null) continue;
+        if (r.resolvedAt === null || r.resolvedAt > ts.ms) continue;
+        ((_b2 = samples[_a2 = r.group]) != null ? _b2 : samples[_a2] = []).push(r.mttr);
+      }
+      const byGroup = {};
+      for (const name of names) {
+        const s = samples[name];
+        if (s && s.length) {
+          const med = median(s);
+          byGroup[name] = Math.round(med * 1e3) / 1e3;
+        } else {
+          byGroup[name] = null;
+        }
+      }
+      return { date: ts.iso, byGroup };
+    });
+  }
   function trendFromBase(scans, base, severities = null, opts = {}) {
     const tag = (points, synthetic2) => points.map((p) => ({ ...p, reconstructed: synthetic2.has(p.date) }));
     if (!opts.backfill) return tag(trendFromFrames(scans, base, severities), /* @__PURE__ */ new Set());
@@ -5718,7 +5767,22 @@ var Server = (() => {
         resolved: (_d = overall.resolved) != null ? _d : 0
       });
     }
-    return { rows: out, thresholdDays: t };
+    rows.forEach((r, i) => {
+      var _a2;
+      r["_domain"] = (_a2 = assigned[i]) != null ? _a2 : UNASSIGNED;
+    });
+    const groups = out.filter((r) => r["resolved"] > 0).sort((a, b) => b["resolved"] - a["resolved"]).slice(0, 8).map((r) => String(r["domain"]));
+    const points = medianMttrByGroupTrend(
+      loadScanRows(),
+      rows,
+      (r) => {
+        var _a2;
+        return String((_a2 = r["_domain"]) != null ? _a2 : UNASSIGNED);
+      },
+      groups,
+      { severities: null }
+    );
+    return { rows: out, thresholdDays: t, trend: { groups, points } };
   }
   var cachedMttrData = (p) => {
     var _a, _b;
@@ -5755,7 +5819,9 @@ var Server = (() => {
       // "mttrByDomain" → "mttrByDomain2": payload shape changed (added p90/tailMedian/
       // openPastSla, dropped tracked/oldestDays); dataVersion persists across deploys, so
       // bumping the namespace prevents serving a stale old-shape entry.
-      "mttrByDomain2",
+      // "mttrByDomain2" → "mttrByDomain3": payload gained `trend` (median-MTTR-by-domain
+      // lines); same reasoning — bump the namespace so a stale trend-less entry can't survive.
+      "mttrByDomain3",
       {
         supportGroup: String((_a = p == null ? void 0 : p["supportGroup"]) != null ? _a : ""),
         severities: readSeverities(p),

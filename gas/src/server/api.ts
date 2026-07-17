@@ -26,7 +26,7 @@ import {
 import { validateBundle } from "../domain/importMerge";
 import { SealedScanError, LedgerRebuildError } from "../domain/maintenance";
 import { parseTs, present, type Rec } from "../domain/util";
-import { openByGroupTrend, openBySeverityTrend } from "../domain/trend";
+import { medianMttrByGroupTrend, openByGroupTrend, openBySeverityTrend } from "../domain/trend";
 import * as insights from "../domain/insights";
 import * as archive from "./archiveStore";
 import * as findings from "./findings";
@@ -649,7 +649,26 @@ function mttrByDomainData(p?: unknown): Rec {
       resolved: overall.resolved ?? 0,
     });
   }
-  return { rows: out, thresholdDays: t };
+  // Median-MTTR-by-domain trend shares the exact scoped population and canonical group
+  // order the per-domain table just built. Tag each scoped row with its assigned domain
+  // (reusing `assigned`, positionally aligned with `rows`), then replay medians over the
+  // domains that actually carry resolved work — capped at 8, the rest folds to "Other".
+  rows.forEach((r, i) => {
+    r["_domain"] = assigned[i] ?? UNASSIGNED;
+  });
+  const groups = out
+    .filter((r) => (r["resolved"] as number) > 0)
+    .sort((a, b) => (b["resolved"] as number) - (a["resolved"] as number))
+    .slice(0, 8)
+    .map((r) => String(r["domain"]));
+  const points = medianMttrByGroupTrend(
+    ledgerStore.loadScanRows() as unknown as Rec[],
+    rows,
+    (r) => String(r["_domain"] ?? UNASSIGNED),
+    groups,
+    { severities: null },
+  );
+  return { rows: out, thresholdDays: t, trend: { groups, points } };
 }
 
 // Cached per DATA_VERSION, keyed on exactly the params each computation reads — so
@@ -689,7 +708,9 @@ const cachedMttrByDomainData = (p?: unknown) =>
     // "mttrByDomain" → "mttrByDomain2": payload shape changed (added p90/tailMedian/
     // openPastSla, dropped tracked/oldestDays); dataVersion persists across deploys, so
     // bumping the namespace prevents serving a stale old-shape entry.
-    "mttrByDomain2",
+    // "mttrByDomain2" → "mttrByDomain3": payload gained `trend` (median-MTTR-by-domain
+    // lines); same reasoning — bump the namespace so a stale trend-less entry can't survive.
+    "mttrByDomain3",
     {
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
       severities: readSeverities(p),
