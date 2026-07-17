@@ -5758,11 +5758,15 @@ var Server = (() => {
       const { perSev, overall } = mttrFromLedger(drows);
       const { slaPct } = overallSlaOldest(perSev);
       const rem = drows;
+      const split = fastLaneSplit(rem, t);
       out.push({
         domain: name,
         median: (_b = overall.mttr_median) != null ? _b : null,
         p90: mttrPercentiles(rem).overall.p90,
-        tailMedian: fastLaneSplit(rem, t).tailMedian,
+        tailMedian: split.tailMedian,
+        // Tail-resolution count — the pie's population when the By-domain switch is on
+        // "Excl. fast lane" (resolved with mttr_days above the fast-lane threshold).
+        tailResolved: split.tailCount,
         slaPct,
         openPastSla: openPastSla(rem).overall,
         open: (_c = overall.open) != null ? _c : 0,
@@ -5825,7 +5829,9 @@ var Server = (() => {
       // lines); same reasoning — bump the namespace so a stale trend-less entry can't survive.
       // "mttrByDomain3" → "mttrByDomain4": trend gained `tailPoints` (fast-lane-excluded
       // medians for the chart's Median / Excl. fast lane toggle).
-      "mttrByDomain4",
+      // "mttrByDomain4" → "mttrByDomain5": rows gained `tailResolved` (the toggle now also
+      // drives the Remediation-share pie).
+      "mttrByDomain5",
       {
         supportGroup: String((_a = p == null ? void 0 : p["supportGroup"]) != null ? _a : ""),
         severities: readSeverities(p),

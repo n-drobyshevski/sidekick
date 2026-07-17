@@ -21,9 +21,10 @@ const TREND_WINDOWS = [
   ["5d", 5], ["2w", 14], ["30d", 30], ["60d", 60], ["90d", 90], ["All", null],
 ];
 
-// Which series the "MTTR by domain" chart draws: the plain median or the fast-lane-excluded
-// tail median. Module-scoped so the choice survives repaints (severity re-apply, SWR
-// revalidation) within the session without localStorage ceremony.
+// Which basis the "By domain" chart pair draws: the plain median over all resolutions, or
+// the fast-lane-excluded tail (line switches series, pie switches population). Module-scoped
+// so the choice survives repaints (severity re-apply, SWR revalidation) within the session
+// without localStorage ceremony.
 let domainTrendMode = "median";
 
 // The chosen window persists across visits in localStorage, stored by preset label so a
@@ -157,7 +158,31 @@ export async function renderMttr(main, _params, ctx) {
   function renderByDomain(byDomain) {
     clear(byDomainHost);
     if (!byDomain || !byDomain.rows.length || boot.domainNames.length < 2) return;
-    byDomainHost.append(sectionLabel("By domain"));
+    // Compact Median / Excl. fast lane switch inline with the section label — the same
+    // aria-pressed segmented pattern as the Trends timeframe toggle. It governs BOTH charts
+    // below (pie population + line series); clicking repaints from the closed-over payload.
+    const threshold = byDomain.thresholdDays ?? 1;
+    const mttrModes = [
+      ["median", "Median"],
+      ["tail", "Excl. fast lane"],
+    ];
+    const modeSeg = el("div", { class: "seg-row", role: "group", "aria-label": "MTTR basis" },
+      ...mttrModes.map(([mode, label]) =>
+        el("button", {
+          type: "button", class: "seg-btn seg-btn--sm",
+          "aria-pressed": String(mode === domainTrendMode),
+          title: mode === "tail"
+            ? `With the fast lane removed (resolutions ≤ ${threshold}d)` : null,
+          onclick: () => {
+            domainTrendMode = mode;
+            for (const b of modeSeg.children) b.setAttribute("aria-pressed", "false");
+            modeSeg.children[mttrModes.findIndex(([m]) => m === mode)]
+              .setAttribute("aria-pressed", "true");
+            paintPie();
+            paintLine();
+          },
+        }, label)));
+    byDomainHost.append(el("div", { class: "section-head" }, sectionLabel("By domain"), modeSeg));
     byDomainHost.append(el("p", { class: "small muted", style: "margin:-6px 0 12px" },
       "Remediation for each domain that makes up the value chain."));
 
@@ -170,37 +195,13 @@ export async function renderMttr(main, _params, ctx) {
     const lineCanvas = el("canvas", {});
     const lineMsg = el("p", { class: "chart-empty muted", style: "display:none" });
     const lineCaption = el("p", { class: "chart-caption muted" });
-    // Compact Median / Excl. fast lane switch inline with the line chart's title — the same
-    // aria-pressed segmented pattern as the Trends timeframe toggle. Clicking repaints from
-    // the closed-over payload (both series ship in it).
-    const threshold = byDomain.thresholdDays ?? 1;
-    const lineModes = [
-      ["median", "Median"],
-      ["tail", "Excl. fast lane"],
-    ];
-    const lineSeg = el("div", { class: "seg-row", role: "group", "aria-label": "MTTR series" },
-      ...lineModes.map(([mode, label]) =>
-        el("button", {
-          type: "button", class: "seg-btn seg-btn--sm",
-          "aria-pressed": String(mode === domainTrendMode),
-          title: mode === "tail"
-            ? `Median with the fast lane removed (resolutions ≤ ${threshold}d)` : null,
-          onclick: () => {
-            domainTrendMode = mode;
-            for (const b of lineSeg.children) b.setAttribute("aria-pressed", "false");
-            lineSeg.children[lineModes.findIndex(([m]) => m === mode)]
-              .setAttribute("aria-pressed", "true");
-            paintLine();
-          },
-        }, label)));
     byDomainHost.append(el("div", { class: "chart-grid", style: "align-items:start" },
       el("div", { class: "chart-card" },
         el("h3", {}, "Remediation share"),
         el("div", { class: "chart-box" }, pieCanvas, pieMsg),
         pieCaption),
       el("div", { class: "chart-card" },
-        el("div", { style: "display:flex; align-items:center; justify-content:space-between; gap:8px" },
-          el("h3", {}, "MTTR by domain"), lineSeg),
+        el("h3", {}, "MTTR by domain"),
         el("div", { class: "chart-box" }, lineCanvas, lineMsg),
         lineCaption),
     ));
@@ -251,29 +252,51 @@ export async function renderMttr(main, _params, ctx) {
       });
     }
 
-    requestAnimationFrame(() => {
+    // Pie: each domain's share of the population the switch selects — all resolved
+    // findings (the set the MTTR median runs over) or just the tail beyond the fast lane.
+    // Tooltip detail carries the matching per-domain median. Canonical groups/hues stay
+    // fixed across the toggle (slices resize, never recolor); a domain with no tail
+    // resolutions simply drops out in tail mode.
+    function paintPie() {
+      const tail = domainTrendMode === "tail";
       const byName = new Map(byDomain.rows.map((r) => [r.domain, r]));
-
-      // Pie: each domain's share of resolved findings — the population the MTTR median runs
-      // over. Tooltip detail carries that domain's median MTTR.
-      pieCaption.textContent =
-        "Each domain's share of resolved findings — the population feeding MTTR.";
-      if (groups.length === 0) {
-        showMsg(pieCanvas, pieMsg, "No resolved findings to partition.");
-      } else {
-        const slices = groups.map((name) => ({
-          label: name,
-          value: byName.get(name)?.resolved ?? 0,
-          color: colors.get(name),
-          detail: "Median MTTR " + fmtDays(byName.get(name)?.median),
-        }));
-        if (resolvedOther > 0) {
-          slices.push({ label: "Other", value: resolvedOther, color: colors.get("Other") });
-        }
-        showChart(pieCanvas, pieMsg);
-        groupPie(pieCanvas, slices, { subject: "Resolved findings by domain" });
+      const countOf = (r) => (tail ? (r?.tailResolved ?? 0) : (r?.resolved ?? 0));
+      pieCaption.textContent = tail
+        ? `Each domain's share of resolutions slower than the fast lane (> ${threshold}d).`
+        : "Each domain's share of resolved findings — the population feeding MTTR.";
+      const slices = groups
+        .map((name) => {
+          const r = byName.get(name);
+          return {
+            label: name,
+            value: countOf(r),
+            color: colors.get(name),
+            detail: tail
+              ? "Median excl. fast lane " + fmtDays(r?.tailMedian)
+              : "Median MTTR " + fmtDays(r?.median),
+          };
+        })
+        .filter((s) => s.value > 0);
+      const other = byDomain.rows
+        .filter((r) => !inGroups.has(r.domain))
+        .reduce((a, r) => a + countOf(r), 0);
+      if (other > 0) slices.push({ label: "Other", value: other, color: colors.get("Other") });
+      if (!slices.length) {
+        showMsg(pieCanvas, pieMsg, tail
+          ? "No resolutions beyond the fast lane."
+          : "No resolved findings to partition.");
+        return;
       }
+      showChart(pieCanvas, pieMsg);
+      groupPie(pieCanvas, slices, {
+        subject: tail
+          ? "Resolutions beyond the fast lane by domain"
+          : "Resolved findings by domain",
+      });
+    }
 
+    requestAnimationFrame(() => {
+      paintPie();
       paintLine();
     });
 
