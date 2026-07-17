@@ -13,9 +13,8 @@ import {
 // somehow carries buckets without labels.
 const RESOLUTION_LABELS = ["≤1d", "2–7d", "8–30d", "31–90d", "90+d"];
 
-// Timeframe presets for the Trends charts. null = no window (full history). 6mo is
-// 183 days (half of 366) so two clicks of the calendar never shift a point in or out.
-const TREND_WINDOWS = [["30d", 30], ["90d", 90], ["6mo", 183], ["All", null]];
+// Timeframe presets for the Trends charts. null = no window (full history).
+const TREND_WINDOWS = [["5d", 5], ["2w", 14], ["30d", 30], ["90d", 90], ["All", null]];
 
 // Open-past-SLA cell, shared by the hero mini and the per-severity table: "breached
 // (pct%)"; "0" when nothing is open (pct is null then, not a fake 0%); "—" when the
