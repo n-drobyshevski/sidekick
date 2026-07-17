@@ -628,6 +628,17 @@ input[aria-invalid="true"]:focus-visible, select[aria-invalid="true"]:focus-visi
   color: var(--ink);
   font-weight: 600;
 }
+/* Compact variant for inline section-level controls (same scale as .sev-filter-btn). */
+.seg-btn--sm { min-height: 26px; padding: 2px 10px; font-size: 0.8125rem; }
+/* Section label + inline control on one row — the .page-head pattern at h2 scale.
+   The wrapper owns the section-label's vertical rhythm; the h2 margin resets to 0. */
+.section-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin: 28px 0 10px;
+}
+.section-head .section-label { margin: 0; }
+/* Unboxed row for segmented buttons (the .pill-row shape, no .filter-bar chrome). */
+.seg-row { display: flex; gap: 6px; }
 
 /* ----------------------------------------------------------------------- tables */
 .table-wrap { overflow-x: auto; border: 1px solid var(--hairline); border-radius: var(--radius-lg); }

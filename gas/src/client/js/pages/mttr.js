@@ -13,6 +13,9 @@ import {
 // somehow carries buckets without labels.
 const RESOLUTION_LABELS = ["≤1d", "2–7d", "8–30d", "31–90d", "90+d"];
 
+// Timeframe presets for the Trends charts. null = no window (full history).
+const TREND_WINDOWS = [["5d", 5], ["2w", 14], ["30d", 30], ["90d", 90], ["All", null]];
+
 // Open-past-SLA cell, shared by the hero mini and the per-severity table: "breached
 // (pct%)"; "0" when nothing is open (pct is null then, not a fake 0%); "—" when the
 // payload doesn't carry this metric at all (e.g. a stale pre-remediation cache).
@@ -76,6 +79,10 @@ export async function renderMttr(main, _params, ctx) {
   const domain = ctx.domain || "";
   const supportGroup = ctx.supportGroup || "";
 
+  // Trends timeframe (days back from now; null = full history). Page-local and
+  // non-persisted like the severity scope: survives in-page reloads, resets on visit.
+  let trendWindowDays = null;
+
   await load();
 
   // Null when every selectable severity is chosen (no filter → shares the default cache
@@ -115,21 +122,41 @@ export async function renderMttr(main, _params, ctx) {
     byDomainHost.append(sectionLabel("By domain"));
     byDomainHost.append(el("p", { class: "small muted", style: "margin:-6px 0 12px" },
       "Remediation for each domain that makes up the value chain."));
+    // Column headers carry the two new metrics' definitions via helpTip, matching the
+    // per-severity table's convention in renderSla above.
+    const columns = [
+      ["Domain", null],
+      ["Median MTTR", null],
+      ["MTTR p90",
+        ["90th-percentile time from first detection to remediation — the slow tail. Nine " +
+          "in ten findings beat it; one in ten is slower."]],
+      ["Excl. fast lane",
+        ["Median remediation time after removing the fast lane (resolutions ≤ " +
+          `${byDomain.thresholdDays ?? 1}d), so auto-patched vulns don't drag the median ` +
+          "toward zero."]],
+      ["In SLA", null],
+      ["Open past SLA",
+        ["Open findings already older than their severity's SLA target. Unlike In-SLA % " +
+          "(which only scores resolved findings), an aged-out open CRITICAL counts here."]],
+      ["Open", null],
+      ["Resolved", null],
+    ];
     const table = el("table", { class: "data" },
       el("thead", {}, el("tr", {},
-        ...["Domain", "Median MTTR", "In SLA", "Open", "Resolved", "Tracked"]
-          .map((h) => el("th", { scope: "col" }, h)))),
+        ...columns.map(([h, lines]) => el("th", { scope: "col" },
+          lines ? helpTip(h, lines, { className: "help-label" }) : h)))),
     );
     const tbody = el("tbody", {});
     for (const r of byDomain.rows) {
       tbody.append(el("tr", {},
         el("td", {}, r.domain),
         el("td", { class: "num" }, fmtDays(r.median)),
-        el("td", { class: "num" }, r.slaPct !== null && r.slaPct !== undefined
-          ? `${r.slaPct.toFixed(0)}%` : "—"),
+        el("td", { class: "num" }, fmtDays(r.p90)),
+        el("td", { class: "num" }, fmtDays(r.tailMedian)),
+        el("td", { class: "num" }, r.slaPct != null ? `${r.slaPct.toFixed(0)}%` : "—"),
+        el("td", { class: "num" }, fmtOpenPastSla(r.openPastSla)),
         el("td", { class: "num" }, (r.open ?? 0).toLocaleString()),
         el("td", { class: "num" }, (r.resolved ?? 0).toLocaleString()),
-        el("td", { class: "num" }, (r.tracked ?? 0).toLocaleString()),
       ));
     }
     table.append(tbody);
@@ -222,21 +249,42 @@ export async function renderMttr(main, _params, ctx) {
     // With no lifecycle data the hero already shows the single, unified empty state — don't
     // stack a second "Trends appear…" panel beneath it.
     if (!mttr.rowCount) return;
+
+    // Window the already-loaded series client-side (no RPC): the charts use a category
+    // x-axis, so filtering the arrays before mapping is the whole job. The cutoff comes
+    // from the client clock; a ±1-day skew at the window edge is fine for a view filter.
+    const cutoff = trendWindowDays === null ? null : Date.now() - trendWindowDays * 86400000;
+    const inWindow = (iso) => cutoff === null || Date.parse(iso) >= cutoff;
+    const trend = trends.trend.filter((t) => inWindow(t.date));
+    const history = trends.history.filter((h) => inWindow(h.date));
+
+    // Compact timeframe toggle inline with the section label. aria-pressed toggle
+    // buttons, not a radiogroup — the same segmented pattern as the report-format and
+    // oldest-open controls. Clicking repaints from the closed-over payload.
+    const segRow = el("div", { class: "seg-row", role: "group", "aria-label": "Trends timeframe" },
+      ...TREND_WINDOWS.map(([label, days]) =>
+        el("button", {
+          type: "button", class: "seg-btn seg-btn--sm",
+          "aria-pressed": String(days === trendWindowDays),
+          onclick: () => { trendWindowDays = days; renderCharts(trends, mttr); },
+        }, label)));
+    const sectionHead = el("div", { class: "section-head" }, sectionLabel("Trends"), segRow);
+
     const mttrCanvas = el("canvas", { id: "mttr-trend" });
     const openResolvedCanvas = el("canvas", { id: "open-resolved" });
     const openSlaCanvas = el("canvas", { id: "open-sla-trend" });
 
-    const points = trends.trend.length
-      ? trends.trend.map((t) => ({ x: t.date, y: t.median_days, reconstructed: t.reconstructed }))
-      : trends.history.map((h) => ({ x: h.date, y: h.median_days, reconstructed: false }));
+    const points = trend.length
+      ? trend.map((t) => ({ x: t.date, y: t.median_days, reconstructed: t.reconstructed }))
+      : history.map((h) => ({ x: h.date, y: h.median_days, reconstructed: false }));
 
     // Same fallback shape as `points` above, but for open_past_sla — a column that doesn't
     // exist on history rows saved before this feature shipped. Those rows carry `null`
     // (never a false 0, see historyStore.loadHistory), so they're filtered out here rather
     // than drawn as a dip to zero.
-    const openSlaPoints = (trends.trend.length
-      ? trends.trend.map((t) => ({ x: t.date, y: t.open_past_sla, reconstructed: t.reconstructed }))
-      : trends.history.map((h) => ({ x: h.date, y: h.open_past_sla, reconstructed: false })))
+    const openSlaPoints = (trend.length
+      ? trend.map((t) => ({ x: t.date, y: t.open_past_sla, reconstructed: t.reconstructed }))
+      : history.map((h) => ({ x: h.date, y: h.open_past_sla, reconstructed: false })))
       .filter((p) => p.y !== null && p.y !== undefined);
 
     // A "trend" needs at least two points — one lone dot is not a trajectory. This matches the
@@ -249,7 +297,7 @@ export async function renderMttr(main, _params, ctx) {
         el("h3", {}, "MTTR trend"),
         el("div", { class: "chart-box" }, mttrCanvas)));
     }
-    if (trends.trend.length > 1) {
+    if (trend.length > 1) {
       grid.append(el("div", { class: "chart-card" },
         el("h3", {}, "Open vs resolved"),
         el("div", { class: "chart-box" }, openResolvedCanvas)));
@@ -262,12 +310,19 @@ export async function renderMttr(main, _params, ctx) {
         el("div", { class: "chart-box" }, openSlaCanvas)));
     }
     if (!grid.hasChildNodes()) {
-      chartsHost.append(emptyState("Trends appear after two saved scans."));
+      if (trendWindowDays === null) {
+        // Nothing to plot at all — same single empty state as before the filter existed.
+        chartsHost.append(emptyState("Trends appear after two saved scans."));
+      } else {
+        // The window is what emptied the section — keep the control so it can be widened.
+        chartsHost.append(sectionHead, emptyState("No trend points in this window."));
+      }
       return;
     }
     // A labelled section so the page has no h1 → h3 heading skip (the cards are h3).
-    chartsHost.append(sectionLabel("Trends"), grid);
-    if (trends.trend.some((t) => t.reconstructed)) {
+    chartsHost.append(sectionHead, grid);
+    // Caption keyed to the windowed set — no note about shading that isn't on screen.
+    if (trend.some((t) => t.reconstructed)) {
       chartsHost.append(el("p", { class: "small muted", style: "margin:4px 0 0" },
         "Shaded days precede the first saved scan — reconstructed from first-detection dates. "
           + "Open counts there are exact; resolved and MTTR are lower bounds."));
@@ -281,8 +336,8 @@ export async function renderMttr(main, _params, ctx) {
       if (hasTrend) {
         trendLine(mttrCanvas, points.filter((p) => p.y !== null), { yLabel: "days" });
       }
-      if (trends.trend.length > 1) {
-        openResolvedLines(openResolvedCanvas, trends.trend);
+      if (trend.length > 1) {
+        openResolvedLines(openResolvedCanvas, trend);
       }
       if (hasOpenSlaTrend) {
         trendLine(openSlaCanvas, openSlaPoints, { yLabel: "findings" });

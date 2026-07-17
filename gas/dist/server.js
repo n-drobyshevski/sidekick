@@ -611,7 +611,8 @@ var Server = (() => {
     INFO: "\u26AA",
     UNKNOWN: "\u26AB"
   };
-  var FAST_LANE_DAYS = 3;
+  var DEFAULT_FAST_LANE_DAYS = 1;
+  var FAST_LANE_MAX_DAYS = 90;
   var SLA_TARGETS = {
     CRITICAL: 7,
     HIGH: 14,
@@ -699,6 +700,15 @@ var Server = (() => {
     const d = { ...settings };
     d["retention_days"] = days === null ? null : Math.max(Math.trunc(days), RETENTION_MIN_DAYS);
     return d;
+  }
+  function getFastLaneDays(settings) {
+    const raw = "fast_lane_days" in settings ? settings["fast_lane_days"] : DEFAULT_FAST_LANE_DAYS;
+    const n = typeof raw === "number" ? raw : parseFloat(String(raw));
+    if (!Number.isFinite(n) || n <= 0) return DEFAULT_FAST_LANE_DAYS;
+    return Math.min(n, FAST_LANE_MAX_DAYS);
+  }
+  function withFastLaneDays(settings, days) {
+    return { ...settings, fast_lane_days: getFastLaneDays({ fast_lane_days: days }) };
   }
   function getAutoCompact(settings) {
     const val = "auto_compact" in settings ? settings["auto_compact"] : true;
@@ -1101,6 +1111,7 @@ var Server = (() => {
     runScan: () => runScan,
     saveDomains: () => saveDomains,
     setAutoCompact: () => setAutoCompact2,
+    setFastLaneDays: () => setFastLaneDays2,
     setRetention: () => setRetention,
     setRetentionSettings: () => setRetentionSettings,
     setSeverities: () => setSeverities
@@ -2007,7 +2018,7 @@ var Server = (() => {
       overall: { p50: quantile(all, 0.5), p90: quantile(all, 0.9), count: all.length }
     };
   }
-  function fastLaneSplit(rows, threshold = FAST_LANE_DAYS) {
+  function fastLaneSplit(rows, threshold = DEFAULT_FAST_LANE_DAYS) {
     const resolved = [];
     for (const row of rows) {
       const m = resolvedMttr(row);
@@ -4292,6 +4303,7 @@ var Server = (() => {
   var getFetchSeverities2 = () => getFetchSeverities(loadSettings());
   var getDisplaySeverities2 = () => getDisplaySeverities(loadSettings());
   var getRetentionDays2 = () => getRetentionDays(loadSettings());
+  var getFastLaneDays2 = () => getFastLaneDays(loadSettings());
   var getAutoCompact2 = () => getAutoCompact(loadSettings());
   var getDomains2 = () => getDomains(loadSettings());
   var getSupportGroupMap2 = () => getSupportGroupMap(loadSettings());
@@ -4303,6 +4315,9 @@ var Server = (() => {
   }
   function setRetentionDays(days) {
     saveSettings(withRetentionDays(loadSettings(), days));
+  }
+  function setFastLaneDays(days) {
+    saveSettings(withFastLaneDays(loadSettings(), days));
   }
   function setAutoCompact(enabled) {
     saveSettings(withAutoCompact(loadSettings(), enabled));
@@ -5154,6 +5169,7 @@ var Server = (() => {
         fetchSeverities: getFetchSeverities2(),
         displaySeverities: getDisplaySeverities2(),
         retentionDays: getRetentionDays2(),
+        fastLaneDays: getFastLaneDays2(),
         autoCompact: getAutoCompact2(),
         domains: getDomains2()
       },
@@ -5519,9 +5535,10 @@ var Server = (() => {
     const { perSev, overall } = mttrFromLedger(rows);
     const { slaPct, oldestDays } = overallSlaOldest(perSev);
     const remRows = rows;
+    const t = getFastLaneDays2();
     const remediation = {
       pctiles: mttrPercentiles(remRows),
-      fastLane: { ...fastLaneSplit(remRows), thresholdDays: FAST_LANE_DAYS },
+      fastLane: { ...fastLaneSplit(remRows, t), thresholdDays: t },
       buckets: resolutionBuckets(remRows),
       kmMedian: kmMedian(remRows),
       openPastSla: openPastSla(remRows)
@@ -5558,23 +5575,26 @@ var Server = (() => {
       if (!arr) buckets.set(name, arr = []);
       arr.push(r);
     });
+    const t = getFastLaneDays2();
     const out = [];
     for (const name of domainNames(items)) {
       const drows = buckets.get(name);
       if (!drows || !drows.length) continue;
       const { perSev, overall } = mttrFromLedger(drows);
-      const { slaPct, oldestDays } = overallSlaOldest(perSev);
+      const { slaPct } = overallSlaOldest(perSev);
+      const rem = drows;
       out.push({
         domain: name,
         median: (_b = overall.mttr_median) != null ? _b : null,
+        p90: mttrPercentiles(rem).overall.p90,
+        tailMedian: fastLaneSplit(rem, t).tailMedian,
         slaPct,
-        oldestDays,
+        openPastSla: openPastSla(rem).overall,
         open: (_c = overall.open) != null ? _c : 0,
-        resolved: (_d = overall.resolved) != null ? _d : 0,
-        tracked: drows.length
+        resolved: (_d = overall.resolved) != null ? _d : 0
       });
     }
-    return { rows: out };
+    return { rows: out, thresholdDays: t };
   }
   var cachedMttrData = (p) => {
     var _a, _b;
@@ -5599,7 +5619,10 @@ var Server = (() => {
   var cachedMttrByDomainData = (p) => {
     var _a;
     return cached(
-      "mttrByDomain",
+      // "mttrByDomain" → "mttrByDomain2": payload shape changed (added p90/tailMedian/
+      // openPastSla, dropped tracked/oldestDays); dataVersion persists across deploys, so
+      // bumping the namespace prevents serving a stale old-shape entry.
+      "mttrByDomain2",
       {
         supportGroup: String((_a = p == null ? void 0 : p["supportGroup"]) != null ? _a : ""),
         severities: readSeverities(p)
@@ -5887,6 +5910,7 @@ var Server = (() => {
       fetchSeverities: getFetchSeverities2(),
       displaySeverities: getDisplaySeverities2(),
       retentionDays: getRetentionDays2(),
+      fastLaneDays: getFastLaneDays2(),
       autoCompact: getAutoCompact2(),
       domains: getDomains2()
     }));
@@ -5907,6 +5931,13 @@ var Server = (() => {
     return mutate(() => {
       setRetentionDays(days === null || days === void 0 ? null : Number(days));
       return { retentionDays: getRetentionDays2() };
+    });
+  }
+  function setFastLaneDays2(p) {
+    const days = p == null ? void 0 : p["days"];
+    return mutate(() => {
+      setFastLaneDays(Number(days));
+      return { fastLaneDays: getFastLaneDays2() };
     });
   }
   function setAutoCompact2(p) {

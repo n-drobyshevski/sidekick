@@ -42,6 +42,7 @@ describe("settingsStore memo", () => {
     store.getFetchSeverities();
     store.getDisplaySeverities();
     store.getRetentionDays();
+    store.getFastLaneDays();
     store.getAutoCompact();
     store.getDomains();
     expect(readAllCalls.filter((t) => t === "settings")).toHaveLength(1);

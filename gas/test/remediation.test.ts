@@ -48,7 +48,7 @@ describe("mttrPercentiles", () => {
 
 describe("fastLaneSplit", () => {
   it("boundary at exactly 3.0d is fast lane; tail median over the remainder", () => {
-    const out = fastLaneSplit([res(1), res(3), res(5), res(9)]);
+    const out = fastLaneSplit([res(1), res(3), res(5), res(9)], 3);
     expect(out.total).toBe(4);
     expect(out.fastLane).toBe(2); // 1 and 3.0 (<= 3)
     expect(out.fastLanePct).toBe(50);
@@ -57,7 +57,7 @@ describe("fastLaneSplit", () => {
   });
 
   it("all fast lane -> tailCount 0 / tailMedian null; all tail -> pct 0", () => {
-    const allFast = fastLaneSplit([res(0.5), res(1), res(3)]);
+    const allFast = fastLaneSplit([res(0.5), res(1), res(3)], 3);
     expect(allFast.fastLane).toBe(3);
     expect(allFast.tailCount).toBe(0);
     expect(allFast.tailMedian).toBeNull();
@@ -77,6 +77,11 @@ describe("fastLaneSplit", () => {
       tailMedian: null,
     });
     expect(fastLaneSplit([res(4), res(6)], 5).fastLane).toBe(1); // 4 <= 5, 6 > 5
+    // default threshold is now 1 day (DEFAULT_FAST_LANE_DAYS)
+    const dflt = fastLaneSplit([res(0.5), res(1), res(2)]);
+    expect(dflt.fastLane).toBe(2); // 0.5 and 1 (<= 1)
+    expect(dflt.tailCount).toBe(1);
+    expect(dflt.tailMedian).toBe(2); // median [2]
   });
 });
 
