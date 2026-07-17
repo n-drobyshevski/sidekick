@@ -7,7 +7,7 @@
 // record spill file, so the next hop resumes exactly where this one stopped.
 
 import { parseSeverities } from "../domain/compaction";
-import { countBySeverity } from "../domain/severity";
+import { countBySeverity, effectiveSeverity } from "../domain/severity";
 import { calculateMttr, overallSlaOldest } from "../domain/metrics";
 import * as remediation from "../domain/remediation";
 import { extractNodes, mergeNodes } from "../domain/transform";
@@ -128,6 +128,17 @@ export function slimRecord(node: Rec): Rec {
   const out: Rec = {};
   for (const k of SLIM_TOP) {
     if (k in node) out[k] = node[k];
+  }
+  // Severity fallback at the single ingestion choke: a blank/unrecognized top-level
+  // severity is healed from vendorSeverity/nvdSeverity (both already in SLIM_TOP, so the
+  // raw fields survive for audit) with provenance in `severity_source`. Baking it here —
+  // upstream of reconcile, which reads the persisted `severity` — heals both the current
+  // frame and the durable ledger without any downstream reader change, keeping reconcile.ts
+  // / metrics.ts at zero diff. No-op when the real severity already classifies.
+  const eff = effectiveSeverity(node);
+  if (eff.source !== null && eff.source !== "severity") {
+    out["severity"] = eff.severity;
+    out["severity_source"] = eff.source;
   }
   const va = node["vulnerableAsset"];
   if (va && typeof va === "object" && !Array.isArray(va)) {

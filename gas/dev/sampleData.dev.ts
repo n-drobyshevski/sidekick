@@ -149,6 +149,21 @@ function makeNode(spec: CveSpec, asset: AssetSpec, idx: number): Rec {
   node["vendorSeverity"] = spec.severity;
   node["weightedSeverity"] = spec.severity;
   node["nvdSeverity"] = spec.severity === "CRITICAL" ? "HIGH" : spec.severity;
+  // Severity data-quality seeding (deterministic via rnd(), so every reload reproduces the
+  // same UNKNOWN/fallback mix): exercises both ends of the coherence fix locally, without a
+  // real messy migration import. ~4% blank the top-level field only — vendorSeverity/
+  // nvdSeverity stay set, so effectiveSeverity's fallback rescues them (severity_source
+  // provenance). ~2% blank every candidate — a genuine UNKNOWN finding, which lights up the
+  // hero "unclassified severity" sub-line, the UNKNOWN SLA-table row, the Overview note, and
+  // the Settings unknown-severity line.
+  const sevQualityRoll = rnd();
+  if (sevQualityRoll < 0.02) {
+    node["severity"] = "";
+    node["vendorSeverity"] = null;
+    node["nvdSeverity"] = null;
+  } else if (sevQualityRoll < 0.06) {
+    node["severity"] = "";
+  }
   node["score"] = spec.score;
   node["cnaScore"] = spec.score;
   node["vendorScore"] = spec.score;

@@ -646,6 +646,14 @@ var Server = (() => {
     if (s === "INFORMATIONAL" || s === "INFO") return "INFO";
     return SEVERITY_ORDER.includes(s) ? s : "UNKNOWN";
   }
+  function effectiveSeverity(rec) {
+    const candidates = ["severity", "vendorSeverity", "nvdSeverity"];
+    for (const source of candidates) {
+      const sev2 = normalizeSeverity(rec[source]);
+      if (sev2 !== "UNKNOWN") return { severity: sev2, source };
+    }
+    return { severity: "UNKNOWN", source: null };
+  }
   function countBySeverity(records) {
     var _a;
     if (!records.length || !records.some((r) => "severity" in r)) return {};
@@ -3359,7 +3367,10 @@ var Server = (() => {
     return {
       vuln_key: String(r["vuln_key"]),
       cve: str(r["cve"]),
-      severity: str(r["severity"]),
+      // Normalize at ingest (blank/null/unrecognized → explicit "UNKNOWN"), not str() — the
+      // legacy migrate export stored raw values that could reach the ledger as literal null
+      // and never self-heal for out-of-fetch-scope severities. UNKNOWN is auditable.
+      severity: normalizeSeverity(r["severity"]),
       asset_id: str(r["asset_id"]),
       asset_name: str(r["asset_name"]),
       asset_type: str(r["asset_type"]),
@@ -3384,7 +3395,7 @@ var Server = (() => {
     return {
       vuln_key: String(r["vuln_key"]),
       cve: str(r["cve"]),
-      severity: str(r["severity"]),
+      severity: normalizeSeverity(r["severity"]),
       first_seen: str(r["first_seen"]),
       resolved_at: str(r["resolved_at"]),
       resolution_src: str(r["resolution_src"]),
@@ -3446,6 +3457,7 @@ var Server = (() => {
       rebuilt.ledger[row.vuln_key] = row;
     }
     const vulnsImported = Object.keys(rebuilt.ledger).length;
+    const unclassifiedSeverity = bundle.ledger.filter((r) => normalizeSeverity(r["severity"]) === "UNKNOWN").length + bundle.episodes.filter((r) => normalizeSeverity(r["severity"]) === "UNKNOWN").length;
     const flats = importedAsc.filter((r) => r.shape === "flat");
     const floorRow = flats.length ? flats[flats.length - 1] : null;
     const checkpoint = {
@@ -3475,7 +3487,8 @@ var Server = (() => {
         vulns_imported: vulnsImported,
         episodes_imported: bundle.episodes.length,
         episodes_converted: converted.length,
-        scans_replayed: replay.length
+        scans_replayed: replay.length,
+        unclassified_severity: unclassifiedSeverity
       }
     };
   }
@@ -3781,9 +3794,11 @@ var Server = (() => {
     const episodeRows = [];
     const checkpointRows = [];
     let converted = 0;
+    let unclassified = 0;
     for (const raw of (_a = shard.ledger) != null ? _a : []) {
       const row = coerceLedger(raw);
       checkpointRows.push(row);
+      if (normalizeSeverity(raw["severity"]) === "UNKNOWN") unclassified += 1;
       if (row.status === "RESOLVED" && ctx.sealedIds.has((_b = row.last_scan_id) != null ? _b : "")) {
         episodeRows.push(toEpisodeRow(row, ctx.compactionId));
         converted += 1;
@@ -3793,6 +3808,7 @@ var Server = (() => {
     }
     for (const raw of (_c = shard.episodes) != null ? _c : []) {
       episodeRows.push(coerceEpisode(raw));
+      if (normalizeSeverity(raw["severity"]) === "UNKNOWN") unclassified += 1;
     }
     return {
       ledgerRows,
@@ -3800,7 +3816,8 @@ var Server = (() => {
       checkpointRows,
       vulnsImported: checkpointRows.length,
       episodesImported: ((_d = shard.episodes) != null ? _d : []).length,
-      episodesConverted: converted
+      episodesConverted: converted,
+      unclassifiedSeverity: unclassified
     };
   }
   function checkpointManifest(floorScanId, floorTs, parts) {
@@ -4380,7 +4397,7 @@ var Server = (() => {
       floorTs: session.floorTs,
       sealedIds: [...session.sealedIds],
       scansTotal: session.sealedScans.length,
-      counts: { vulns_imported: 0, episodes_imported: 0, episodes_converted: 0 }
+      counts: { vulns_imported: 0, episodes_imported: 0, episodes_converted: 0, unclassified_severity: 0 }
     };
     createJob(
       {
@@ -4434,7 +4451,8 @@ var Server = (() => {
       counts: {
         vulns_imported: st.counts.vulns_imported + out.vulnsImported,
         episodes_imported: st.counts.episodes_imported + out.episodesImported,
-        episodes_converted: st.counts.episodes_converted + out.episodesConverted
+        episodes_converted: st.counts.episodes_converted + out.episodesConverted,
+        unclassified_severity: st.counts.unclassified_severity + out.unclassifiedSeverity
       }
     };
     updateJob(job.job_id, { phase: "APPLYING", params_json: JSON.stringify(next) });
@@ -4503,6 +4521,7 @@ var Server = (() => {
       episodes_imported: st.counts.episodes_imported,
       episodes_converted: st.counts.episodes_converted,
       scans_replayed: 0,
+      unclassified_severity: st.counts.unclassified_severity,
       history_added: hist.added,
       history_skipped: hist.skipped
     };
@@ -5136,6 +5155,11 @@ var Server = (() => {
     const out = {};
     for (const k of SLIM_TOP) {
       if (k in node) out[k] = node[k];
+    }
+    const eff = effectiveSeverity(node);
+    if (eff.source !== null && eff.source !== "severity") {
+      out["severity"] = eff.severity;
+      out["severity_source"] = eff.source;
     }
     const va = node["vulnerableAsset"];
     if (va && typeof va === "object" && !Array.isArray(va)) {
@@ -6533,17 +6557,28 @@ var Server = (() => {
   }
   function getStorageStats(_p) {
     return run(
-      () => cached("storageStats", null, () => {
-        const scans = loadScanRows();
-        return {
-          cellCount: cellCount(),
-          cellLimit: 1e7,
-          scanCount: scans.length,
-          sealedCount: scans.filter((s) => s.sealed).length,
-          oldestScanTs: scans.length ? scans[0].ts : null,
-          trackedVulns: loadBaseRows().length
-        };
-      })
+      () => (
+        // "storageStats" → "storageStats2": payload gained the severity data-quality diagnostic
+        // (distinctSeverities, unknownSeverityCount); dataVersion persists across deploys, so
+        // bumping the namespace prevents serving a stale old-shape entry (up to the TTL).
+        cached("storageStats2", null, () => {
+          const scans = loadScanRows();
+          const scan = currentScan();
+          const baseRows2 = loadBaseRows();
+          return {
+            cellCount: cellCount(),
+            cellLimit: 1e7,
+            scanCount: scans.length,
+            sealedCount: scans.filter((s) => s.sealed).length,
+            oldestScanTs: scans.length ? scans[0].ts : null,
+            trackedVulns: baseRows2.length,
+            distinctSeverities: scan ? distinct(scan.records, "severity") : [],
+            unknownSeverityCount: baseRows2.filter(
+              (r) => normalizeSeverity(r["severity"]) === "UNKNOWN"
+            ).length
+          };
+        })
+      )
     );
   }
   return __toCommonJS(server_exports);

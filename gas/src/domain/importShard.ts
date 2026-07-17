@@ -13,6 +13,7 @@ import { scansAsc, type EpisodeRow, type ScanRow } from "./ledgerCore";
 import { toEpisodeRow } from "./maintenance";
 import { coerceEpisode, coerceLedger, coerceScan, ImportValidationError } from "./importMerge";
 import type { LedgerRow } from "./reconcile";
+import { normalizeSeverity } from "./severity";
 import { parseTs, type Rec } from "./util";
 
 export const MANIFEST_KIND = "wiz-sidekick-migration-manifest";
@@ -104,6 +105,7 @@ export interface ShardOutcome {
   vulnsImported: number; // = checkpointRows.length (matches importBundleCore vulns_imported)
   episodesImported: number; // = bundle episodes in this shard
   episodesConverted: number; // = settled rows moved to episodes
+  unclassifiedSeverity: number; // = ledger + episode rows normalizing to UNKNOWN (data-quality)
 }
 
 /**
@@ -118,10 +120,12 @@ export function applyShardCore(
   const episodeRows: EpisodeRow[] = [];
   const checkpointRows: LedgerRow[] = [];
   let converted = 0;
+  let unclassified = 0;
 
   for (const raw of shard.ledger ?? []) {
     const row = coerceLedger(raw);
     checkpointRows.push(row);
+    if (normalizeSeverity(raw["severity"]) === "UNKNOWN") unclassified += 1;
     // settledEpisodeRows (maintenance.ts:111) on a fresh import: a RESOLVED baseline row
     // whose last_scan_id is one of the imported (sealed) scans converts to an episode.
     if (row.status === "RESOLVED" && ctx.sealedIds.has(row.last_scan_id ?? "")) {
@@ -133,6 +137,7 @@ export function applyShardCore(
   }
   for (const raw of shard.episodes ?? []) {
     episodeRows.push(coerceEpisode(raw));
+    if (normalizeSeverity(raw["severity"]) === "UNKNOWN") unclassified += 1;
   }
 
   return {
@@ -142,6 +147,7 @@ export function applyShardCore(
     vulnsImported: checkpointRows.length,
     episodesImported: (shard.episodes ?? []).length,
     episodesConverted: converted,
+    unclassifiedSeverity: unclassified,
   };
 }
 

@@ -99,6 +99,7 @@ describe("importBundleCore (Python fixture parity)", () => {
       episodes_imported: 0,
       episodes_converted: 1,
       scans_replayed: 2,
+      unclassified_severity: 0,
     });
     expectParity(scansTable(res.state), a.expected.scans);
     expectParity(res.state.ledger, a.expected.ledger);
@@ -153,6 +154,7 @@ describe("importBundleCore (Python fixture parity)", () => {
       episodes_imported: 1,
       episodes_converted: 1,
       scans_replayed: 2,
+      unclassified_severity: 0,
     });
     expectParity(scansTable(res.state), b.expected.scans);
     expectParity(res.state.ledger, b.expected.ledger);
@@ -345,6 +347,50 @@ describe("mergeMttrHistory", () => {
     expect(byDate["2026-05-01"]["open_past_sla"]).toBeNull();
     // The existing (GAS) row is stored verbatim, so its own open_past_sla survives.
     expect(byDate["2026-06-15"]["open_past_sla"]).toBe(1);
+  });
+});
+
+describe("coerce normalizes severity at ingest", () => {
+  it("coerceLedger: blank/null → UNKNOWN, informational → INFO, valid unchanged", () => {
+    expect(coerceLedger({ vuln_key: "id:A", severity: "" }).severity).toBe("UNKNOWN");
+    expect(coerceLedger({ vuln_key: "id:B", severity: null }).severity).toBe("UNKNOWN");
+    expect(coerceLedger({ vuln_key: "id:C" }).severity).toBe("UNKNOWN");
+    expect(coerceLedger({ vuln_key: "id:D", severity: "informational" }).severity).toBe("INFO");
+    expect(coerceLedger({ vuln_key: "id:E", severity: "critical" }).severity).toBe("CRITICAL");
+  });
+
+  it("coerceEpisode: blank/null → UNKNOWN, informational → INFO, valid unchanged", () => {
+    expect(coerceEpisode({ vuln_key: "id:A", severity: "" }).severity).toBe("UNKNOWN");
+    expect(coerceEpisode({ vuln_key: "id:B", severity: null }).severity).toBe("UNKNOWN");
+    expect(coerceEpisode({ vuln_key: "id:C", severity: "INFORMATIONAL" }).severity).toBe("INFO");
+    expect(coerceEpisode({ vuln_key: "id:D", severity: "HIGH" }).severity).toBe("HIGH");
+  });
+});
+
+describe("importBundleCore counts unclassified severities", () => {
+  it("tallies ledger + episode rows normalizing to UNKNOWN", () => {
+    const bundle = validateBundle({
+      kind: "wiz-sidekick-migration",
+      version: 1,
+      exported_at: "2026-06-01T00:00:00Z",
+      scans: [{ scan_id: "2020-01-01T00:00:00Z", ts: "2020-01-01T00:00:00Z" }],
+      ledger: [
+        { vuln_key: "id:ok", severity: "HIGH", first_seen: "2020-01-01T00:00:00Z" },
+        { vuln_key: "id:blank", severity: "", first_seen: "2020-01-01T00:00:00Z" },
+        { vuln_key: "id:missing", first_seen: "2020-01-01T00:00:00Z" },
+        { vuln_key: "id:bogus", severity: "wat", first_seen: "2020-01-01T00:00:00Z" },
+      ],
+      episodes: [
+        { vuln_key: "id:epOk", severity: "MEDIUM", resolved_at: "2020-02-01T00:00:00Z" },
+        { vuln_key: "id:epBlank", severity: null, resolved_at: "2020-02-01T00:00:00Z" },
+      ],
+      mttr_history: [],
+    });
+    const res = importBundleCore(emptyState(), bundle, () => null, {
+      compactionId: IMPORT_CMP_ID,
+    });
+    // 3 blank/missing/bogus ledger rows + 1 blank episode = 4.
+    expect(res.counts.unclassified_severity).toBe(4);
   });
 });
 

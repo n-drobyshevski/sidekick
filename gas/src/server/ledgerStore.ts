@@ -524,7 +524,12 @@ interface ImportSessionState {
   floorTs: string | null;
   sealedIds: string[];
   scansTotal: number;
-  counts: { vulns_imported: number; episodes_imported: number; episodes_converted: number };
+  counts: {
+    vulns_imported: number;
+    episodes_imported: number;
+    episodes_converted: number;
+    unclassified_severity: number;
+  };
 }
 
 function importJobState(job: { params_json: string | null }): ImportSessionState {
@@ -592,7 +597,7 @@ export function importBeginSharded(rawManifest: unknown): ImportProgress {
     appliedShards: 0, ledgerCommitted: 0, episodesCommitted: 0, partIds: [],
     floorScanId: session.floorScanId, floorTs: session.floorTs,
     sealedIds: [...session.sealedIds], scansTotal: session.sealedScans.length,
-    counts: { vulns_imported: 0, episodes_imported: 0, episodes_converted: 0 },
+    counts: { vulns_imported: 0, episodes_imported: 0, episodes_converted: 0, unclassified_severity: 0 },
   };
   createJob(
     {
@@ -648,6 +653,7 @@ export function importApplyShard(
       vulns_imported: st.counts.vulns_imported + out.vulnsImported,
       episodes_imported: st.counts.episodes_imported + out.episodesImported,
       episodes_converted: st.counts.episodes_converted + out.episodesConverted,
+      unclassified_severity: st.counts.unclassified_severity + out.unclassifiedSeverity,
     },
   };
   updateJob(job.job_id, { phase: "APPLYING", params_json: JSON.stringify(next) });
@@ -722,6 +728,7 @@ export function importFinalizeSharded(sessionId: string): ImportCounts & {
     episodes_imported: st.counts.episodes_imported,
     episodes_converted: st.counts.episodes_converted,
     scans_replayed: 0,
+    unclassified_severity: st.counts.unclassified_severity,
     history_added: hist.added, history_skipped: hist.skipped,
   };
 }
