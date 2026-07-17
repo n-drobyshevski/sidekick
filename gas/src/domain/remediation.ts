@@ -9,13 +9,18 @@
 // ledgerCore.baseRows). openPastSlaFromRecords is the lone frame-based variant, for
 // the snapshot writer that runs before any ledger exists (see its note).
 
-import { RESOLVED_STATUSES, SEVERITY_ORDER, SLA_TARGETS } from "./config";
+import { REMEDIATION_ROLLOUT_ISO, RESOLVED_STATUSES, SEVERITY_ORDER, SLA_TARGETS } from "./config";
 import type { BaseRow } from "./ledgerCore";
 import { findCol, recordColumns } from "./metrics";
 import { normalizeSeverity } from "./severity";
-import { mean, median, parseTs, quantile, type Rec } from "./util";
+import { mean, median, parseTs, present, quantile, type Rec } from "./util";
 
 const DAY_MS = 86_400_000;
+
+// The legacy boundary as epoch ms, parsed once (see REMEDIATION_ROLLOUT_ISO / ledgerCore's
+// ROLLOUT_MS): rows first seen before it had a fix by construction, so they never count as
+// no-fix. Shared by recordNoFix so the frame predicate agrees with the ledger derivation.
+const ROLLOUT_MS = parseTs(REMEDIATION_ROLLOUT_ISO);
 
 // Ledger rows carry all remediation signal in these four columns; every function here
 // reads only this projection.
@@ -406,4 +411,29 @@ export function awaitingVendorFix(
     openTotal,
     pctOfOpen: openTotal ? (overall / openTotal) * 100 : null,
   };
+}
+
+/**
+ * "No fix" predicate over a durable base row — an OPEN finding with no vendor fix available
+ * yet (exactly `awaiting_vendor_fix`, set in ledgerCore.baseRows). Resolved rows carry
+ * `awaiting_vendor_fix === false`, so they are never hidden. The choke-point filter behind
+ * the global "show findings without a vendor fix" toggle.
+ */
+export function baseRowNoFix(row: Pick<BaseRow, "awaiting_vendor_fix">): boolean {
+  return row.awaiting_vendor_fix === true;
+}
+
+/**
+ * The frame-record equivalent of baseRowNoFix, for the current-scan record surfaces that
+ * run before (or without) a ledger view. Mirrors ledgerCore.baseRows' awaiting_vendor_fix
+ * derivation: resolved records are never no-fix; a legacy record first seen before the
+ * broadened-ingestion rollout had a fix by construction (the old filter only ingested fixed
+ * findings); otherwise it's no-fix unless it carries a concrete fix signal — the same
+ * `fixedVersion || fixDate` presence test reconcile.ts uses.
+ */
+export function recordNoFix(rec: Rec): boolean {
+  if (!isOpen(rec["status"])) return false;
+  const first = parseTs(rec["firstDetectedAt"] ?? rec["firstSeenAt"] ?? rec["createdAt"]);
+  if (first !== null && ROLLOUT_MS !== null && first < ROLLOUT_MS) return false; // legacy = fixed
+  return !(present(rec["fixedVersion"]) || present(rec["fixDate"]));
 }

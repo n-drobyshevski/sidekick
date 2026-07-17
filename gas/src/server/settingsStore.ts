@@ -49,6 +49,7 @@ export const getFetchSeverities = (): string[] => logic.getFetchSeverities(loadS
 export const getDisplaySeverities = (): string[] => logic.getDisplaySeverities(loadSettings());
 export const getRetentionDays = (): number | null => logic.getRetentionDays(loadSettings());
 export const getAutoCompact = (): boolean => logic.getAutoCompact(loadSettings());
+export const getShowNoFix = (): boolean => logic.getShowNoFix(loadSettings());
 export const getDomains = (): { version: number; items: Rec[] } =>
   logic.getDomains(loadSettings());
 export const getSupportGroupMap = (): { version: number; map: Record<string, string> } =>
@@ -65,6 +66,9 @@ export function setRetentionDays(days: number | null): void {
 }
 export function setAutoCompact(enabled: boolean): void {
   saveSettings(logic.withAutoCompact(loadSettings(), enabled));
+}
+export function setShowNoFix(enabled: boolean): void {
+  saveSettings(logic.withShowNoFix(loadSettings(), enabled));
 }
 /** Set both retention-window and auto-compact in a single load+save so the write is atomic
  *  (no partial-commit window if the client changes both at once). */

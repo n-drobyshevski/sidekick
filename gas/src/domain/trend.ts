@@ -21,14 +21,40 @@ export interface TrendPoint {
 const DAY_MS = 86_400_000;
 
 /**
+ * Whether a finding was open AND still awaiting a vendor fix as of instant `d` — the
+ * as-of-date companion of ledgerCore's `awaiting_vendor_fix` (which is only ever "now").
+ * A finding counts as awaiting-as-of-d iff it was open as of d (first_seen <= d and not
+ * resolved by d) and no vendor fix was available by d (fixAvailMs null, or later than d).
+ * A fix that arrives after d re-admits the finding at any later point, so a hidden
+ * awaiting-then-fixed row steps back into the open trend on the point where its fix lands.
+ */
+export function awaitingFixAsOf(
+  firstMs: number | null,
+  resolvedMs: number | null,
+  fixAvailMs: number | null,
+  d: number,
+): boolean {
+  const openAsOfD = firstMs !== null && firstMs <= d && (resolvedMs === null || resolvedMs > d);
+  return openAsOfD && (fixAvailMs === null || fixAvailMs > d);
+}
+
+/**
  * scans: rows with {ts, shape}; base: ledger+episode rows with {severity, first_seen,
  * resolved_at, mttr_days}. severities (optional) restricts to those + UNKNOWN.
+ *
+ * opts.hideNoFix (default false) excludes, as of each point's date, findings still awaiting
+ * a vendor fix then (awaitingFixAsOf over the row's `fix_available_at`) from the OPEN count
+ * only — the resolved / median / SLA series read the untouched resolvedMask, so they stay
+ * byte-identical. With hideNoFix absent/false the whole function is byte-identical to today,
+ * so the golden-fixture parity tests are unaffected.
  */
 export function trendFromFrames(
   scans: Rec[],
   base: Rec[],
   severities: string[] | null = null,
+  opts: { hideNoFix?: boolean } = {},
 ): TrendPoint[] {
+  const hideNoFix = opts.hideNoFix ?? false;
   let rows = base;
   if (severities !== null && base.length) {
     const keep = new Set([...severities, "UNKNOWN"]);
@@ -50,6 +76,7 @@ export function trendFromFrames(
       ? (r["mttr_days"] as number)
       : null,
     sev: normalizeSeverity(r["severity"]),
+    fixAvail: parseTs(r["fix_available_at"]),
   }));
 
   const out: TrendPoint[] = [];
@@ -59,7 +86,8 @@ export function trendFromFrames(
       (r) =>
         r.first !== null &&
         r.first <= ts.ms &&
-        (r.resolvedAt === null || r.resolvedAt > ts.ms),
+        (r.resolvedAt === null || r.resolvedAt > ts.ms) &&
+        !(hideNoFix && awaitingFixAsOf(r.first, r.resolvedAt, r.fixAvail, ts.ms)),
     );
 
     const resolvedMttr = parsed
@@ -121,12 +149,16 @@ export interface OpenBySevPoint {
  *
  * scans: rows with {ts, shape}; base: ledger+episode rows with {severity, first_seen,
  * resolved_at}. severities (optional) restricts to those + UNKNOWN, as elsewhere.
+ * opts.hideNoFix (default false) excludes findings awaiting a vendor fix as of each date
+ * (awaitingFixAsOf over `fix_available_at`); absent/false is byte-identical to today.
  */
 export function openBySeverityTrend(
   scans: Rec[],
   base: Rec[],
   severities: string[] | null = null,
+  opts: { hideNoFix?: boolean } = {},
 ): OpenBySevPoint[] {
+  const hideNoFix = opts.hideNoFix ?? false;
   let rows = base;
   if (severities !== null && base.length) {
     const keep = new Set([...severities, "UNKNOWN"]);
@@ -145,6 +177,7 @@ export function openBySeverityTrend(
     first: parseTs(r["first_seen"]),
     resolvedAt: parseTs(r["resolved_at"]),
     sev: normalizeSeverity(r["severity"]),
+    fixAvail: parseTs(r["fix_available_at"]),
   }));
 
   return flatTs.map((ts) => {
@@ -154,7 +187,9 @@ export function openBySeverityTrend(
         r.first !== null &&
         r.first <= ts.ms &&
         (r.resolvedAt === null || r.resolvedAt > ts.ms);
-      if (isOpen) bySev[r.sev] = (bySev[r.sev] ?? 0) + 1;
+      if (!isOpen) continue;
+      if (hideNoFix && awaitingFixAsOf(r.first, r.resolvedAt, r.fixAvail, ts.ms)) continue;
+      bySev[r.sev] = (bySev[r.sev] ?? 0) + 1;
     }
     return { date: ts.iso, bySev };
   });
@@ -183,18 +218,26 @@ export interface OpenByGroupPoint {
  *
  * scans: rows with {ts, shape}; base: ledger+episode rows with {first_seen, resolved_at,
  * severity} plus whatever column `keyOf` reads. opts.severities (optional) restricts to
- * those + UNKNOWN, as elsewhere.
+ * those + UNKNOWN, as elsewhere. opts.hideNoFix (default false) excludes findings awaiting a
+ * vendor fix as of each date (awaitingFixAsOf over `fix_available_at`); absent/false is
+ * byte-identical to today.
  */
 export function openByGroupTrend(
   scans: Rec[],
   base: Rec[],
   keyOf: (r: Rec) => string,
   groups: string[],
-  opts: { severities?: string[] | null; includeOther?: boolean; otherLabel?: string } = {},
+  opts: {
+    severities?: string[] | null;
+    includeOther?: boolean;
+    otherLabel?: string;
+    hideNoFix?: boolean;
+  } = {},
 ): OpenByGroupPoint[] {
   const severities = opts.severities ?? null;
   const includeOther = opts.includeOther ?? true;
   const otherLabel = opts.otherLabel ?? "Other";
+  const hideNoFix = opts.hideNoFix ?? false;
 
   let rows = base;
   if (severities !== null && base.length) {
@@ -218,6 +261,7 @@ export function openByGroupTrend(
     return {
       first: parseTs(r["first_seen"]),
       resolvedAt: parseTs(r["resolved_at"]),
+      fixAvail: parseTs(r["fix_available_at"]),
       group: known ? value : otherLabel,
       kept: known || includeOther,
     };
@@ -231,7 +275,9 @@ export function openByGroupTrend(
         r.first !== null &&
         r.first <= ts.ms &&
         (r.resolvedAt === null || r.resolvedAt > ts.ms);
-      if (isOpen) byGroup[r.group] = (byGroup[r.group] ?? 0) + 1;
+      if (!isOpen) continue;
+      if (hideNoFix && awaitingFixAsOf(r.first, r.resolvedAt, r.fixAvail, ts.ms)) continue;
+      byGroup[r.group] = (byGroup[r.group] ?? 0) + 1;
     }
     return { date: ts.iso, byGroup };
   });
@@ -365,12 +411,13 @@ export function trendFromBase(
   scans: Rec[],
   base: Rec[],
   severities: string[] | null = null,
-  opts: { backfill?: boolean } = {},
+  opts: { backfill?: boolean; hideNoFix?: boolean } = {},
 ): BackfilledTrendPoint[] {
+  const hideNoFix = opts.hideNoFix ?? false;
   const tag = (points: TrendPoint[], synthetic: Set<string>): BackfilledTrendPoint[] =>
     points.map((p) => ({ ...p, reconstructed: synthetic.has(p.date) }));
 
-  if (!opts.backfill) return tag(trendFromFrames(scans, base, severities), new Set());
+  if (!opts.backfill) return tag(trendFromFrames(scans, base, severities, { hideNoFix }), new Set());
 
   // Scope the base the same way `trendFromFrames` will, so the earliest `first_seen` we
   // anchor the backbone to reflects only the rows that will actually be counted.
@@ -405,7 +452,7 @@ export function trendFromBase(
 
   // Synthetic days can only be < firstScan, and real flat scans are all >= firstScan, so a
   // point's `date` is in `syntheticIso` iff it's a reconstructed day — unambiguous.
-  return tag(trendFromFrames(synthetic.concat(scans), base, severities), syntheticIso);
+  return tag(trendFromFrames(synthetic.concat(scans), base, severities, { hideNoFix }), syntheticIso);
 }
 
 /**
@@ -427,7 +474,13 @@ export function withKmMedian<T extends { date: string }>(
   points: T[],
   base: Rec[],
   severities: string[] | null = null,
+  // opts.hideNoFix (default false) drops an open-as-of-d finding from the censored risk set
+  // when no vendor fix was available by d (awaitingFixAsOf) — such a row isn't yet on the
+  // from-detection remediation clock, so it shouldn't inflate the censoring. Resolved rows
+  // (events) are always kept, per the shared no-fix rule. Absent/false is unchanged.
+  opts: { hideNoFix?: boolean } = {},
 ): (T & { km_median_days: number | null })[] {
+  const hideNoFix = opts.hideNoFix ?? false;
   let rows = base;
   if (severities !== null && base.length) {
     const keep = new Set([...severities, "UNKNOWN"]);
@@ -439,6 +492,7 @@ export function withKmMedian<T extends { date: string }>(
     mttr: typeof r["mttr_days"] === "number" && !Number.isNaN(r["mttr_days"])
       ? (r["mttr_days"] as number)
       : null,
+    fixAvail: parseTs(r["fix_available_at"]),
   }));
 
   return points.map((p) => {
@@ -455,7 +509,9 @@ export function withKmMedian<T extends { date: string }>(
             times.push(r.mttr);
           }
         } else if (r.first !== null && r.first <= d) {
-          // Open as of d: right-censored at its current age.
+          // Open as of d: right-censored at its current age — unless hiding no-fix rows and
+          // this one was still awaiting a vendor fix as of d (not yet on the clock).
+          if (hideNoFix && awaitingFixAsOf(r.first, r.resolvedAt, r.fixAvail, d)) continue;
           times.push((d - r.first) / DAY_MS);
         }
       }

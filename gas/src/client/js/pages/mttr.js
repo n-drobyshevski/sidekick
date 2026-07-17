@@ -7,8 +7,8 @@ import {
 } from "../charts.js";
 import { bootstrap, swrCall } from "../store.js";
 import {
-  changeChip, clear, el, emptyState, fmtDays, helpTip, scopeBar, sectionLabel, sevBadge,
-  severityScopeFilter,
+  changeChip, clear, el, emptyState, fmtDays, helpTip, noFixHiddenNote, scopeBar, sectionLabel,
+  sevBadge, severityScopeFilter,
 } from "../ui.js";
 
 // Keep in sync with RESOLUTION_BUCKET_LABELS in src/domain/remediation.ts (the client
@@ -124,6 +124,7 @@ export async function renderMttr(main, _params, ctx) {
     domain: ctx.domain, supportGroup: ctx.supportGroup, onClear: ctx.clearScope,
   });
   if (scopeChips) main.append(scopeChips);
+  if (boot.settings.showNoFix === false) main.append(noFixHiddenNote());
 
   const heroHost = el("div", {});
   const chartsHost = el("div", {});
@@ -328,8 +329,10 @@ export async function renderMttr(main, _params, ctx) {
 
     // Awaiting-vendor-fix findings aren't a column (they don't breach any SLA) — a footnote
     // sums the per-domain `awaiting` counts so the excluded population is still visible.
+    // Hidden entirely when the vendor-fix filter is off (the counts arrive zeroed anyway, and
+    // the page-level honesty note already covers it).
     const awaitingTotal = byDomain.rows.reduce((a, r) => a + (r.awaiting ?? 0), 0);
-    if (awaitingTotal > 0) {
+    if (boot.settings.showNoFix !== false && awaitingTotal > 0) {
       byDomainHost.append(el("p", { class: "small muted", style: "margin:8px 0 0" },
         `${awaitingTotal.toLocaleString()} open finding${awaitingTotal === 1 ? "" : "s"} across `
         + "these domains are awaiting a vendor fix — excluded from Open past SLA until a fix appears."));
@@ -351,7 +354,11 @@ export async function renderMttr(main, _params, ctx) {
     // current values are scoped by the active filters. Diffing them would show a fake delta
     // (a small domain's 5d vs the global 45d prev reads as "−40d"), so only show the change
     // chips at the unscoped whole-chain / all-severities view where the populations match.
-    const scoped = scopeParam() !== null || domain || supportGroup;
+    // The vendor-fix filter folds in too: with it off, the current values exclude no-fix
+    // findings while mttr_history's snapshots never did, so a chip would diff filtered
+    // against unfiltered populations exactly like a domain/support/severity scope would.
+    const scoped = boot.settings.showNoFix === false
+      || scopeParam() !== null || domain || supportGroup;
 
     // `remediation` is additive on the server (see the plan) — a stale cached response
     // from before the rollout won't carry it, so every read below is optional-chained and
@@ -390,13 +397,15 @@ export async function renderMttr(main, _params, ctx) {
           ? changeChip(openPastSla.breached, prev.open_past_sla) : null],
       // Open findings with no vendor fix available yet — outside the SLA clock entirely, so
       // shown here rather than folded into Open past SLA. No history series to diff, no chip.
-      ["Awaiting vendor fix", fmtAwaiting(awaiting), null],
+      // Dropped entirely when the vendor-fix filter is off — the page-level honesty note
+      // already covers the exclusion, and the count would arrive zeroed anyway.
+      boot.settings.showNoFix === false ? null : ["Awaiting vendor fix", fmtAwaiting(awaiting), null],
       ["MTTR p90", fmtDays(overallPctiles?.p90), null],
       // p90 of open-finding age, not the single oldest — labelled to match the table below.
       ["Open age p90", fmtDays(mttr.oldestDays),
         !scoped && prev && prev.oldest_open_days !== null && mttr.oldestDays !== null
           ? changeChip(mttr.oldestDays, prev.oldest_open_days, { fmt: fmtDays }) : null],
-    ];
+    ].filter(Boolean);
     for (const [label, value, chip] of miniDefs) {
       minis.append(el("div", {},
         el("div", { class: "mini-label" }, label),
@@ -524,9 +533,14 @@ export async function renderMttr(main, _params, ctx) {
     const slaBurnCanvas = el("canvas", { id: "sla-burn-trend" });
     const slaAttainmentCanvas = el("canvas", { id: "sla-attainment-trend" });
 
+    // With the vendor-fix filter off, mttr_history's snapshots were captured before any
+    // no-fix exclusion existed — falling back to them would paint an unfiltered register on
+    // a young ledger with too few reconstructed-trend points. Use the recomputed `trend`
+    // array only in that case, even if it leaves the chart with fewer (or zero) points.
+    const hideNoFix = boot.settings.showNoFix === false;
     const points = trend.length
       ? trend.map((t) => ({ x: t.date, y: t.median_days, reconstructed: t.reconstructed }))
-      : history.map((h) => ({ x: h.date, y: h.median_days, reconstructed: false }));
+      : hideNoFix ? [] : history.map((h) => ({ x: h.date, y: h.median_days, reconstructed: false }));
 
     // KM median trend — reconstructed-trend only (mttr_history snapshots don't carry it: KM
     // needs the full base of events + censoring replayed as-of each date, not a scalar that
@@ -541,7 +555,7 @@ export async function renderMttr(main, _params, ctx) {
     // than drawn as a dip to zero.
     const openSlaPoints = (trend.length
       ? trend.map((t) => ({ x: t.date, y: t.open_past_sla, reconstructed: t.reconstructed }))
-      : history.map((h) => ({ x: h.date, y: h.open_past_sla, reconstructed: false })))
+      : hideNoFix ? [] : history.map((h) => ({ x: h.date, y: h.open_past_sla, reconstructed: false })))
       .filter((p) => p.y !== null && p.y !== undefined);
 
     // Backlog-flow series — reconstructed-trend only, like the tail median (mttr_history
@@ -712,6 +726,11 @@ export async function renderMttr(main, _params, ctx) {
     const sevs = boot.palette.order.filter((s) => mttr.perSev[s] && sevScope.includes(s));
     if (!sevs.length) return;
 
+    // Hidden entirely when the vendor-fix filter is off — the counts arrive zeroed anyway,
+    // and the page-level honesty note already covers the exclusion. Built conditionally
+    // (header and every row's cell) so the table stays column-aligned either way.
+    const showAwaiting = boot.settings.showNoFix !== false;
+
     slaHost.append(sectionLabel("Remediation by severity"));
     // Column headers carry the two new metrics' definitions via helpTip — the hero minis
     // stay plain (the page's existing convention), so this table is where "MTTR p90" and
@@ -728,9 +747,9 @@ export async function renderMttr(main, _params, ctx) {
         ["Open findings already older than their severity's SLA target, measured from when " +
           "a vendor fix became available. Unlike In-SLA % (which only scores resolved " +
           "findings), an aged-out open CRITICAL counts here."]],
-      ["Awaiting",
+      ...(showAwaiting ? [["Awaiting",
         ["Open findings with no vendor fix available yet — excluded from the SLA clock " +
-          "until a fix appears, so they don't count as breached above."]],
+          "until a fix appears, so they don't count as breached above."]]] : []),
       ["Open age p90", null],
       ["SLA target", null],
       ["In SLA", null],
@@ -752,7 +771,9 @@ export async function renderMttr(main, _params, ctx) {
         el("td", { class: "num" }, fmtOpenPastSla(
           mttr.remediation?.openPastSlaActionable?.perSev?.[sev]
           ?? mttr.remediation?.openPastSla?.perSev?.[sev])),
-        el("td", { class: "num" }, (mttr.remediation?.awaiting?.perSev?.[sev] ?? 0).toLocaleString()),
+        showAwaiting
+          ? el("td", { class: "num" }, (mttr.remediation?.awaiting?.perSev?.[sev] ?? 0).toLocaleString())
+          : null,
         el("td", { class: "num" }, fmtDays(d.open_age_p90)),
         el("td", { class: "num" }, d.sla_target ? `${d.sla_target}d` : "—"),
         el("td", { class: "num" }, d.sla_pct !== null ? `${d.sla_pct.toFixed(0)}%` : "—"),

@@ -3,14 +3,18 @@ import {
   RESOLUTION_BUCKET_LABELS,
   actionableView,
   awaitingVendorFix,
+  baseRowNoFix,
   kaplanMeier,
   kmMedian,
   mttrPercentiles,
   openPastSla,
   openPastSlaFromRecords,
+  recordNoFix,
   resolutionBuckets,
 } from "../src/domain/remediation";
-import { quantile } from "../src/domain/util";
+import { baseRows, emptyState, type LedgerState } from "../src/domain/ledgerCore";
+import type { LedgerRow } from "../src/domain/reconcile";
+import { quantile, type Rec } from "../src/domain/util";
 
 // Base-row projections carrying the actionable-clock fields the new fns read (a superset of
 // RemediationRow, so they also drop straight into openPastSla/kmMedian for the naive view).
@@ -360,5 +364,105 @@ describe("awaitingVendorFix", () => {
     expect(out.perSev).toEqual({ UNKNOWN: 1 });
     expect(out.overall).toBe(1);
     expect(out.pctOfOpen).toBe(100);
+  });
+});
+
+describe("baseRowNoFix", () => {
+  it("is true only for awaiting-vendor-fix rows; resolved / fixed rows are never hidden", () => {
+    // Awaiting (open, no fix) -> no-fix; open-with-fix and resolved carry awaiting=false.
+    expect(baseRowNoFix(bOpen(5, null, true))).toBe(true);
+    expect(baseRowNoFix(bOpen(5, 5, false))).toBe(false); // open, fix available
+    expect(baseRowNoFix(bRes(3, 3))).toBe(false); // resolved -> awaiting always false
+  });
+});
+
+describe("recordNoFix", () => {
+  // REMEDIATION_ROLLOUT_ISO = 2026-07-01; a record first seen before it had a fix by
+  // construction. Post-rollout, a record is no-fix unless it carries fixedVersion or fixDate.
+  const POST = "2026-07-05T00:00:00Z";
+  const PRE = "2026-06-01T00:00:00Z";
+
+  it("open + no fix, post-rollout -> true", () => {
+    expect(recordNoFix({ status: "OPEN", firstDetectedAt: POST })).toBe(true);
+  });
+  it("fixedVersion present -> false", () => {
+    expect(recordNoFix({ status: "OPEN", firstDetectedAt: POST, fixedVersion: "1.2.3" })).toBe(false);
+  });
+  it("fixDate present -> false", () => {
+    expect(recordNoFix({ status: "OPEN", firstDetectedAt: POST, fixDate: "2026-07-06T00:00:00Z" })).toBe(false);
+  });
+  it("pre-rollout legacy row -> false (fixed by construction)", () => {
+    expect(recordNoFix({ status: "OPEN", firstDetectedAt: PRE })).toBe(false);
+  });
+  it("resolved -> false (resolved rows are never hidden)", () => {
+    expect(recordNoFix({ status: "RESOLVED", firstDetectedAt: POST })).toBe(false);
+  });
+});
+
+describe("recordNoFix ↔ baseRow.awaiting_vendor_fix agreement", () => {
+  // The frame predicate (recordNoFix, over dotted scan records) and the durable predicate
+  // (baseRowNoFix, over ledgerCore.baseRows' awaiting_vendor_fix) must classify the SAME
+  // underlying finding identically — including across the pre/post rollout boundary. Each
+  // scenario pairs a frame record with the ledger row reconcile() would produce for it.
+  const mkLedgerRow = (over: Partial<LedgerRow>): LedgerRow => ({
+    vuln_key: "k", cve: null, severity: "HIGH",
+    asset_id: null, asset_name: null, asset_type: null, cloud: null,
+    first_seen: null, last_seen: null, status: "OPEN", resolved_at: null,
+    resolution_src: null, reopened_count: 0, first_scan_id: null, last_scan_id: null,
+    subscription_name: null, subscription_ext_id: null, tags_json: null,
+    fix_date: null, fix_observed_at: null,
+    ...over,
+  });
+
+  const scenarios: { name: string; rec: Rec; ledger: Partial<LedgerRow> }[] = [
+    {
+      name: "open, no fix, post-rollout (awaiting)",
+      rec: { status: "OPEN", firstDetectedAt: "2026-07-05T00:00:00Z" },
+      ledger: { first_seen: "2026-07-05T00:00:00Z", status: "OPEN" },
+    },
+    {
+      name: "open, no fix, PRE-rollout (legacy = fixed)",
+      rec: { status: "OPEN", firstDetectedAt: "2026-06-01T00:00:00Z" },
+      ledger: { first_seen: "2026-06-01T00:00:00Z", status: "OPEN" },
+    },
+    {
+      name: "open, fixedVersion -> fix_observed_at seeded (post-rollout)",
+      rec: { status: "OPEN", firstDetectedAt: "2026-07-05T00:00:00Z", fixedVersion: "1.2.3" },
+      ledger: { first_seen: "2026-07-05T00:00:00Z", status: "OPEN", fix_observed_at: "2026-07-06T00:00:00Z" },
+    },
+    {
+      name: "open, fixDate (post-rollout)",
+      rec: { status: "OPEN", firstDetectedAt: "2026-07-05T00:00:00Z", fixDate: "2026-07-06T00:00:00Z" },
+      ledger: {
+        first_seen: "2026-07-05T00:00:00Z", status: "OPEN",
+        fix_date: "2026-07-06T00:00:00Z", fix_observed_at: "2026-07-06T00:00:00Z",
+      },
+    },
+    {
+      name: "resolved, no fix, post-rollout",
+      rec: { status: "RESOLVED", firstDetectedAt: "2026-07-05T00:00:00Z" },
+      ledger: {
+        first_seen: "2026-07-05T00:00:00Z", status: "RESOLVED", resolved_at: "2026-07-08T00:00:00Z",
+      },
+    },
+  ];
+
+  it("both predicates classify every scenario identically across the rollout boundary", () => {
+    const state: LedgerState = emptyState();
+    scenarios.forEach((s, i) => {
+      state.ledger[`k${i}`] = mkLedgerRow({ ...s.ledger, vuln_key: `k${i}` });
+    });
+    const rows = baseRows(state, Date.parse("2026-07-17T00:00:00Z"));
+    const byKey = Object.fromEntries(rows.map((r) => [r.vuln_key, r]));
+    scenarios.forEach((s, i) => {
+      const br = byKey[`k${i}`];
+      // The durable derivation and the durable predicate agree by construction...
+      expect(baseRowNoFix(br), `${s.name}: baseRowNoFix vs awaiting`).toBe(br.awaiting_vendor_fix);
+      // ...and the frame predicate matches the durable one for the same finding.
+      expect(recordNoFix(s.rec), `${s.name}: recordNoFix vs baseRow`).toBe(br.awaiting_vendor_fix);
+    });
+    // Sanity: the boundary is actually exercised — the two open/no-fix rows split on it.
+    expect(recordNoFix(scenarios[0].rec)).toBe(true); // post-rollout awaiting
+    expect(recordNoFix(scenarios[1].rec)).toBe(false); // pre-rollout legacy
   });
 });

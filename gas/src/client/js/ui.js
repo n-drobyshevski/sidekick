@@ -481,3 +481,15 @@ export function scopeBar({ domain, supportGroup, onClear }) {
   if (supportGroup) bar.append(chip("supportGroup", "Support group", supportGroup));
   return bar;
 }
+
+/**
+ * Honesty note for the vendor-fix filter: shown (by the caller, guarded on
+ * `boot.settings.showNoFix === false`) on every finding-visualizing page so a filtered
+ * dashboard never silently reads as the whole register. Links back to the toggle in
+ * Settings.
+ */
+export function noFixHiddenNote() {
+  return el("p", { class: "muted small", role: "note" },
+    "Findings without an available vendor fix are hidden. ",
+    el("a", { href: "#/settings", target: "_self" }, "Settings"));
+}

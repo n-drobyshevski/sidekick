@@ -711,6 +711,13 @@ var Server = (() => {
   function withAutoCompact(settings, enabled) {
     return { ...settings, auto_compact: Boolean(enabled) };
   }
+  function getShowNoFix(settings) {
+    const val = "show_no_fix" in settings ? settings["show_no_fix"] : true;
+    return typeof val === "boolean" ? val : true;
+  }
+  function withShowNoFix(settings, enabled) {
+    return { ...settings, show_no_fix: Boolean(enabled) };
+  }
   function cleanDomainItems(items) {
     if (!Array.isArray(items)) return [];
     return items.filter(
@@ -1107,7 +1114,8 @@ var Server = (() => {
     setAutoCompact: () => setAutoCompact2,
     setRetention: () => setRetention,
     setRetentionSettings: () => setRetentionSettings,
-    setSeverities: () => setSeverities
+    setSeverities: () => setSeverities,
+    setShowNoFix: () => setShowNoFix2
   });
 
   // src/domain/util.ts
@@ -1975,6 +1983,7 @@ var Server = (() => {
 
   // src/domain/remediation.ts
   var DAY_MS2 = 864e5;
+  var ROLLOUT_MS = parseTs(REMEDIATION_ROLLOUT_ISO);
   var RESOLUTION_BUCKET_EDGES = [1, 7, 30, 90];
   var RESOLUTION_BUCKET_LABELS = ["\u22641d", "2\u20137d", "8\u201330d", "31\u201390d", "90+d"];
   function isOpen(status) {
@@ -2173,6 +2182,16 @@ var Server = (() => {
       openTotal,
       pctOfOpen: openTotal ? overall / openTotal * 100 : null
     };
+  }
+  function baseRowNoFix(row) {
+    return row.awaiting_vendor_fix === true;
+  }
+  function recordNoFix(rec) {
+    var _a, _b;
+    if (!isOpen(rec["status"])) return false;
+    const first = parseTs((_b = (_a = rec["firstDetectedAt"]) != null ? _a : rec["firstSeenAt"]) != null ? _b : rec["createdAt"]);
+    if (first !== null && ROLLOUT_MS !== null && first < ROLLOUT_MS) return false;
+    return !(present(rec["fixedVersion"]) || present(rec["fixDate"]));
   }
 
   // src/domain/compaction.ts
@@ -2546,7 +2565,7 @@ var Server = (() => {
   }
   var DAY_MS3 = 864e5;
   var COMPACTED_ASSET3 = "(compacted)";
-  var ROLLOUT_MS = parseTs(REMEDIATION_ROLLOUT_ISO);
+  var ROLLOUT_MS2 = parseTs(REMEDIATION_ROLLOUT_ISO);
   function baseRows(state, now) {
     const nowMs = now != null ? now : Date.now();
     const out = [];
@@ -2555,7 +2574,7 @@ var Server = (() => {
       const first = parseTs(row.first_seen);
       const resolved = parseTs(row.resolved_at);
       const open = row.status === "OPEN";
-      const fixAvailableAt = first !== null && ROLLOUT_MS !== null && first < ROLLOUT_MS ? row.first_seen : (_b = (_a = row.fix_date) != null ? _a : row.fix_observed_at) != null ? _b : null;
+      const fixAvailableAt = first !== null && ROLLOUT_MS2 !== null && first < ROLLOUT_MS2 ? row.first_seen : (_b = (_a = row.fix_date) != null ? _a : row.fix_observed_at) != null ? _b : null;
       const fixAvailMs = parseTs(fixAvailableAt);
       const actionableMs = fixAvailMs === null ? null : first === null ? fixAvailMs : Math.max(first, fixAvailMs);
       const actionableFrom = actionableMs === null ? null : toIso(actionableMs);
@@ -2614,7 +2633,13 @@ var Server = (() => {
 
   // src/domain/trend.ts
   var DAY_MS4 = 864e5;
-  function trendFromFrames(scans, base, severities = null) {
+  function awaitingFixAsOf(firstMs, resolvedMs, fixAvailMs, d) {
+    const openAsOfD = firstMs !== null && firstMs <= d && (resolvedMs === null || resolvedMs > d);
+    return openAsOfD && (fixAvailMs === null || fixAvailMs > d);
+  }
+  function trendFromFrames(scans, base, severities = null, opts = {}) {
+    var _a;
+    const hideNoFix = (_a = opts.hideNoFix) != null ? _a : false;
     let rows = base;
     if (severities !== null && base.length) {
       const keep = /* @__PURE__ */ new Set([...severities, "UNKNOWN"]);
@@ -2627,13 +2652,14 @@ var Server = (() => {
       first: parseTs(r["first_seen"]),
       resolvedAt: parseTs(r["resolved_at"]),
       mttr: typeof r["mttr_days"] === "number" && !Number.isNaN(r["mttr_days"]) ? r["mttr_days"] : null,
-      sev: normalizeSeverity(r["severity"])
+      sev: normalizeSeverity(r["severity"]),
+      fixAvail: parseTs(r["fix_available_at"])
     }));
     const out = [];
     for (const ts of flatTs) {
       const resolvedMask = parsed.map((r) => r.resolvedAt !== null && r.resolvedAt <= ts.ms);
       const openMask = parsed.map(
-        (r) => r.first !== null && r.first <= ts.ms && (r.resolvedAt === null || r.resolvedAt > ts.ms)
+        (r) => r.first !== null && r.first <= ts.ms && (r.resolvedAt === null || r.resolvedAt > ts.ms) && !(hideNoFix && awaitingFixAsOf(r.first, r.resolvedAt, r.fixAvail, ts.ms))
       );
       const resolvedMttr2 = parsed.filter((_, i) => resolvedMask[i]).map((r) => r.mttr).filter((m) => m !== null);
       const med = median(resolvedMttr2);
@@ -2662,7 +2688,9 @@ var Server = (() => {
     }
     return out;
   }
-  function openBySeverityTrend(scans, base, severities = null) {
+  function openBySeverityTrend(scans, base, severities = null, opts = {}) {
+    var _a;
+    const hideNoFix = (_a = opts.hideNoFix) != null ? _a : false;
     let rows = base;
     if (severities !== null && base.length) {
       const keep = /* @__PURE__ */ new Set([...severities, "UNKNOWN"]);
@@ -2674,23 +2702,27 @@ var Server = (() => {
     const parsed = rows.map((r) => ({
       first: parseTs(r["first_seen"]),
       resolvedAt: parseTs(r["resolved_at"]),
-      sev: normalizeSeverity(r["severity"])
+      sev: normalizeSeverity(r["severity"]),
+      fixAvail: parseTs(r["fix_available_at"])
     }));
     return flatTs.map((ts) => {
-      var _a;
+      var _a2;
       const bySev = {};
       for (const r of parsed) {
         const isOpen3 = r.first !== null && r.first <= ts.ms && (r.resolvedAt === null || r.resolvedAt > ts.ms);
-        if (isOpen3) bySev[r.sev] = ((_a = bySev[r.sev]) != null ? _a : 0) + 1;
+        if (!isOpen3) continue;
+        if (hideNoFix && awaitingFixAsOf(r.first, r.resolvedAt, r.fixAvail, ts.ms)) continue;
+        bySev[r.sev] = ((_a2 = bySev[r.sev]) != null ? _a2 : 0) + 1;
       }
       return { date: ts.iso, bySev };
     });
   }
   function openByGroupTrend(scans, base, keyOf, groups, opts = {}) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d;
     const severities = (_a = opts.severities) != null ? _a : null;
     const includeOther = (_b = opts.includeOther) != null ? _b : true;
     const otherLabel = (_c = opts.otherLabel) != null ? _c : "Other";
+    const hideNoFix = (_d = opts.hideNoFix) != null ? _d : false;
     let rows = base;
     if (severities !== null && base.length) {
       const keep = /* @__PURE__ */ new Set([...severities, "UNKNOWN"]);
@@ -2707,6 +2739,7 @@ var Server = (() => {
       return {
         first: parseTs(r["first_seen"]),
         resolvedAt: parseTs(r["resolved_at"]),
+        fixAvail: parseTs(r["fix_available_at"]),
         group: known ? value : otherLabel,
         kept: known || includeOther
       };
@@ -2717,7 +2750,9 @@ var Server = (() => {
       for (const r of parsed) {
         if (!r.kept) continue;
         const isOpen3 = r.first !== null && r.first <= ts.ms && (r.resolvedAt === null || r.resolvedAt > ts.ms);
-        if (isOpen3) byGroup[r.group] = ((_a2 = byGroup[r.group]) != null ? _a2 : 0) + 1;
+        if (!isOpen3) continue;
+        if (hideNoFix && awaitingFixAsOf(r.first, r.resolvedAt, r.fixAvail, ts.ms)) continue;
+        byGroup[r.group] = ((_a2 = byGroup[r.group]) != null ? _a2 : 0) + 1;
       }
       return { date: ts.iso, byGroup };
     });
@@ -2774,8 +2809,10 @@ var Server = (() => {
     });
   }
   function trendFromBase(scans, base, severities = null, opts = {}) {
+    var _a;
+    const hideNoFix = (_a = opts.hideNoFix) != null ? _a : false;
     const tag = (points, synthetic2) => points.map((p) => ({ ...p, reconstructed: synthetic2.has(p.date) }));
-    if (!opts.backfill) return tag(trendFromFrames(scans, base, severities), /* @__PURE__ */ new Set());
+    if (!opts.backfill) return tag(trendFromFrames(scans, base, severities, { hideNoFix }), /* @__PURE__ */ new Set());
     let rows = base;
     if (severities !== null && base.length) {
       const keep = /* @__PURE__ */ new Set([...severities, "UNKNOWN"]);
@@ -2795,9 +2832,11 @@ var Server = (() => {
         syntheticIso.add(iso);
       }
     }
-    return tag(trendFromFrames(synthetic.concat(scans), base, severities), syntheticIso);
+    return tag(trendFromFrames(synthetic.concat(scans), base, severities, { hideNoFix }), syntheticIso);
   }
-  function withKmMedian(points, base, severities = null) {
+  function withKmMedian(points, base, severities = null, opts = {}) {
+    var _a;
+    const hideNoFix = (_a = opts.hideNoFix) != null ? _a : false;
     let rows = base;
     if (severities !== null && base.length) {
       const keep = /* @__PURE__ */ new Set([...severities, "UNKNOWN"]);
@@ -2806,7 +2845,8 @@ var Server = (() => {
     const parsed = rows.map((r) => ({
       first: parseTs(r["first_seen"]),
       resolvedAt: parseTs(r["resolved_at"]),
-      mttr: typeof r["mttr_days"] === "number" && !Number.isNaN(r["mttr_days"]) ? r["mttr_days"] : null
+      mttr: typeof r["mttr_days"] === "number" && !Number.isNaN(r["mttr_days"]) ? r["mttr_days"] : null,
+      fixAvail: parseTs(r["fix_available_at"])
     }));
     return points.map((p) => {
       const d = parseTs(p.date);
@@ -2821,6 +2861,7 @@ var Server = (() => {
               times.push(r.mttr);
             }
           } else if (r.first !== null && r.first <= d) {
+            if (hideNoFix && awaitingFixAsOf(r.first, r.resolvedAt, r.fixAvail, d)) continue;
             times.push((d - r.first) / DAY_MS4);
           }
         }
@@ -4124,8 +4165,9 @@ var Server = (() => {
   function loadBaseRows(now) {
     return baseRows(loadState(), now);
   }
-  function loadTrend(severities = null) {
+  function loadTrend(severities = null, showNoFix = true) {
     const state = loadState();
+    const hideNoFix = !showNoFix;
     const base = baseRows(state).map((r) => ({
       severity: r.severity,
       first_seen: r.first_seen,
@@ -4133,18 +4175,21 @@ var Server = (() => {
       mttr_days: r.mttr_days,
       // actionable_from feeds the actionable-clock open-past-SLA plus the SLA-burn / cohort-
       // attainment decorators below (deadline = actionable_from + severity target).
-      actionable_from: r.actionable_from
+      actionable_from: r.actionable_from,
+      // fix_available_at feeds the as-of no-fix exclusion in the open / KM-median series when
+      // the show-no-fix toggle is off (hideNoFix); ignored on the default path.
+      fix_available_at: r.fix_available_at
     }));
     const points = trendFromBase(
       state.scans.map((s) => ({ ts: s.ts, shape: s.shape })),
       base,
       severities,
-      { backfill: true }
+      { backfill: true, hideNoFix }
     );
     const withSla = withOpenPastSla(points, base, severities, "actionable_from");
     const withBurn = withSlaBurn(withSla, base, severities);
     const withAttainment = cohortSlaAttainment(withBurn, base, severities);
-    return withKmMedian(withAttainment, base, severities);
+    return withKmMedian(withAttainment, base, severities, { hideNoFix });
   }
   function previousSeverityCounts() {
     const flats = loadScanRows().filter((s) => s.shape === "flat");
@@ -4589,6 +4634,7 @@ var Server = (() => {
   var getDisplaySeverities2 = () => getDisplaySeverities(loadSettings());
   var getRetentionDays2 = () => getRetentionDays(loadSettings());
   var getAutoCompact2 = () => getAutoCompact(loadSettings());
+  var getShowNoFix2 = () => getShowNoFix(loadSettings());
   var getDomains2 = () => getDomains(loadSettings());
   var getSupportGroupMap2 = () => getSupportGroupMap(loadSettings());
   function setFetchSeverities(sevs) {
@@ -4602,6 +4648,9 @@ var Server = (() => {
   }
   function setAutoCompact(enabled) {
     saveSettings(withAutoCompact(loadSettings(), enabled));
+  }
+  function setShowNoFix(enabled) {
+    saveSettings(withShowNoFix(loadSettings(), enabled));
   }
   function setRetentionAndCompact(days, enabled) {
     saveSettings(withAutoCompact(withRetentionDays(loadSettings(), days), enabled));
@@ -5423,7 +5472,10 @@ var Server = (() => {
   function bootstrap(_p) {
     return run(() => ({
       // The core is a pure function of ledger + settings state — cached per DATA_VERSION.
-      ...cached("bootstrapCore", null, bootstrapCore),
+      // "bootstrapCore" → "bootstrapCore2": counts / unassigned / filterOptions now honor the
+      // show-no-fix toggle and settings gained `showNoFix`; params null → {showNoFix} so the
+      // on/off states cache separately and no stale old-shape entry survives the deploy.
+      ...cached("bootstrapCore2", { showNoFix: getShowNoFix2() }, bootstrapCore),
       // Live per-request fields: never cached (activeJob changes every poll tick).
       dataVersion: dataVersion(),
       hasCredentials: hasWizCredentials(),
@@ -5434,14 +5486,14 @@ var Server = (() => {
     var _a;
     const scan = currentScan();
     const latest = latestScanRow();
+    const showNoFix = getShowNoFix2();
+    const records = scan ? filterNoFixFrame(scan.records, showNoFix) : [];
     const counts = {};
     let unassignedCount = 0;
-    if (scan) {
-      for (const r of scan.records) {
-        const sev2 = String(r["_sev"]);
-        counts[sev2] = ((_a = counts[sev2]) != null ? _a : 0) + 1;
-        if (r["_domain"] === UNASSIGNED) unassignedCount += 1;
-      }
+    for (const r of records) {
+      const sev2 = String(r["_sev"]);
+      counts[sev2] = ((_a = counts[sev2]) != null ? _a : 0) + 1;
+      if (r["_domain"] === UNASSIGNED) unassignedCount += 1;
     }
     return {
       palette: {
@@ -5456,6 +5508,7 @@ var Server = (() => {
         displaySeverities: getDisplaySeverities2(),
         retentionDays: getRetentionDays2(),
         autoCompact: getAutoCompact2(),
+        showNoFix,
         domains: getDomains2()
       },
       latestScan: latest ? {
@@ -5471,11 +5524,11 @@ var Server = (() => {
       prevCounts: previousSeverityCounts(),
       domainNames: domainNames(getDomains2().items),
       filterOptions: scan ? {
-        statuses: distinct(scan.records, "status"),
-        assetTypes: distinct(scan.records, "vulnerableAsset.type"),
-        clouds: distinct(scan.records, "vulnerableAsset.cloudPlatform"),
-        subscriptions: distinct(scan.records, "vulnerableAsset.subscriptionName"),
-        supportGroups: distinct(scan.records, "_supportGroup")
+        statuses: distinct(records, "status"),
+        assetTypes: distinct(records, "vulnerableAsset.type"),
+        clouds: distinct(records, "vulnerableAsset.cloudPlatform"),
+        subscriptions: distinct(records, "vulnerableAsset.subscriptionName"),
+        supportGroups: distinct(records, "_supportGroup")
       } : { statuses: [], assetTypes: [], clouds: [], subscriptions: [], supportGroups: [] }
     };
   }
@@ -5498,7 +5551,10 @@ var Server = (() => {
         supportGroups: (_f = params["supportGroups"]) != null ? _f : [],
         q: (_g = params["q"]) != null ? _g : ""
       };
-      const filtered = applyFilters(scan.records, filters);
+      const filtered = filterNoFixFrame(
+        applyFilters(scan.records, filters),
+        getShowNoFix2()
+      );
       const counts = {};
       for (const r of filtered) {
         const sev2 = String(r["_sev"]);
@@ -5592,7 +5648,9 @@ var Server = (() => {
       const key = String((_a = p == null ? void 0 : p["vulnKey"]) != null ? _a : "");
       const scan = currentScan();
       if (!scan || !key) return { record: null, raw: null };
-      const record = (_b = scan.records.find((r) => r["_vuln_key"] === key)) != null ? _b : null;
+      const record = (_b = filterNoFixFrame(scan.records, getShowNoFix2()).find(
+        (r) => r["_vuln_key"] === key
+      )) != null ? _b : null;
       let raw = null;
       const pageNo = record && typeof record["_page"] === "number" ? record["_page"] : null;
       if (pageNo !== null) {
@@ -5652,6 +5710,9 @@ var Server = (() => {
     const severities = readSeverities(p);
     recs = filterSeverities(recs, severities);
     base = filterSeverities(base, severities);
+    const showNoFix = getShowNoFix2();
+    const recsVisible = filterNoFixFrame(recs, showNoFix);
+    const baseVisible = filterNoFixBase(base, showNoFix);
     const latestFlat = latestFlatScanRow();
     return {
       flatScan: true,
@@ -5661,26 +5722,31 @@ var Server = (() => {
       // Domain-scoped severity counts + total so the Overview headline can stay
       // coherent under a filter (the KPI band otherwise reads whole-scan bootstrap
       // counts). Movement's new/resolved/reopened remain chain-wide — see below.
-      counts: sevCountsOf(recs),
-      total: recs.length,
+      counts: sevCountsOf(recsVisible),
+      total: recsVisible.length,
       // Per-severity total/open/resolved for the severity breakdown card.
-      sevStats: severityStats(recs),
+      sevStats: severityStats(recsVisible),
       // Open findings per severity over time — powers the breakdown line chart. Uses the
-      // already-scoped base + severities so the series matches the counts shown beside it.
+      // UNFILTERED base + severities and the as-of no-fix exclusion, so the series matches the
+      // counts shown beside it while letting a fixed-later finding re-enter at the right date.
       openTrend: openBySeverityTrend(
         loadScanRows(),
         base,
-        severities
+        severities,
+        { hideNoFix: !showNoFix }
       ),
-      exploit: exploitSummary(recs),
+      exploit: exploitSummary(recsVisible),
       // Open findings awaiting a vendor fix (no patch available yet) over the same scoped base
       // rows — sourced here so the Overview can explain the post-rollout open-count step-up.
-      awaiting: awaitingVendorFix(base),
-      aging: ageBuckets(base),
+      // (Naturally zero when the toggle hides them, so the client drops the surface entirely.)
+      awaiting: awaitingVendorFix(baseVisible),
+      aging: ageBuckets(baseVisible),
       // Top oldest open findings + 90+ backlog per asset / support group / domain,
       // for the aging panel's toggle (repaints client-side, no extra RPC).
-      oldest: oldestOpen(base),
-      movement: movement(base, latestFlat, loadScanRows().length)
+      oldest: oldestOpen(baseVisible),
+      // Movement's Persisting is filtered (it's derived from these base rows); New/Resolved/
+      // Reopened come from scan-wide reconcile deltas and stay scan-wide (see movement()).
+      movement: movement(baseVisible, latestFlat, loadScanRows().length)
     };
   }
   function getInsights(p) {
@@ -5688,12 +5754,16 @@ var Server = (() => {
       () => {
         var _a, _b;
         return cached(
-          "insights",
+          // "insights" → "insights2": the payload now honors the show-no-fix toggle (counts,
+          // total, sevStats, exploit, aging, oldest, awaiting, movement, and the as-of openTrend
+          // all reflect it); key gains showNoFix so on/off states don't share an entry.
+          "insights2",
           {
             domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
             supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
             supportGroups: readStringArray(p, "supportGroups"),
-            severities: readSeverities(p)
+            severities: readSeverities(p),
+            showNoFix: getShowNoFix2()
           },
           () => insightsData(p),
           3600
@@ -5716,7 +5786,7 @@ var Server = (() => {
       var _a;
       return String((_a = r["_domain"]) != null ? _a : UNASSIGNED) === domain;
     });
-    return recs;
+    return filterNoFixFrame(recs, getShowNoFix2());
   }
   function groupingData(p) {
     var _a, _b;
@@ -5747,11 +5817,22 @@ var Server = (() => {
     const raw = p == null ? void 0 : p["keys"];
     const keys = Array.isArray(raw) ? raw.map(String) : [];
     return run(
-      () => cached(
-        "grouping",
-        { domain, supportGroup, supportGroups: supportGroupSet, keys, severities: readSeverities(p) },
-        () => groupingData(p),
-        3600
+      () => (
+        // "grouping" → "grouping2": the breakdown tree is built over scopedFrameRecords, which
+        // now honors the show-no-fix toggle; key gains showNoFix so on/off states cache apart.
+        cached(
+          "grouping2",
+          {
+            domain,
+            supportGroup,
+            supportGroups: supportGroupSet,
+            keys,
+            severities: readSeverities(p),
+            showNoFix: getShowNoFix2()
+          },
+          () => groupingData(p),
+          3600
+        )
       )
     );
   }
@@ -5787,7 +5868,7 @@ var Server = (() => {
         return String((_a2 = r[field2]) != null ? _a2 : "");
       },
       groups,
-      { severities: readSeverities(p) }
+      { severities: readSeverities(p), hideNoFix: !getShowNoFix2() }
     );
     return { supported: true, key, groups, points };
   }
@@ -5799,18 +5880,23 @@ var Server = (() => {
     return run(
       () => {
         var _a2;
-        return cached(
-          "groupTrend",
-          {
-            domain,
-            supportGroup,
-            supportGroups: supportGroupSet,
-            key: String((_a2 = p == null ? void 0 : p["key"]) != null ? _a2 : ""),
-            groups: readStringArray(p, "groups"),
-            severities: readSeverities(p)
-          },
-          () => groupTrendData(p),
-          3600
+        return (
+          // "groupTrend" → "groupTrend2": the open-by-group series now excludes no-fix findings
+          // as-of-date when the toggle is off; key gains showNoFix so on/off states cache apart.
+          cached(
+            "groupTrend2",
+            {
+              domain,
+              supportGroup,
+              supportGroups: supportGroupSet,
+              key: String((_a2 = p == null ? void 0 : p["key"]) != null ? _a2 : ""),
+              groups: readStringArray(p, "groups"),
+              severities: readSeverities(p),
+              showNoFix: getShowNoFix2()
+            },
+            () => groupTrendData(p),
+            3600
+          )
         );
       }
     );
@@ -5818,7 +5904,10 @@ var Server = (() => {
   function attributionData(p) {
     const scan = currentScan();
     if (!scan) return { flatScan: false };
-    const recs = filterSeverities(scan.records, readSeverities(p));
+    const recs = filterNoFixFrame(
+      filterSeverities(scan.records, readSeverities(p)),
+      getShowNoFix2()
+    );
     const dom = getDomains2();
     const compiled = compileDomains(dom.items);
     const sgMap = getSupportGroupMap2();
@@ -5836,7 +5925,11 @@ var Server = (() => {
   function getAttribution(p) {
     return run(() => {
       var _a, _b;
-      const data = cached("attribution", { severities: readSeverities(p) }, () => attributionData(p));
+      const data = cached(
+        "attribution2",
+        { severities: readSeverities(p), showNoFix: getShowNoFix2() },
+        () => attributionData(p)
+      );
       if (!data["flatScan"]) return data;
       const { unassignedAll, ...rest } = data;
       const params = p != null ? p : {};
@@ -5863,6 +5956,14 @@ var Server = (() => {
     const keep = /* @__PURE__ */ new Set([...severities, "UNKNOWN"]);
     return rows.filter((r) => keep.has(normalizeSeverity(r["severity"])));
   }
+  function filterNoFixBase(rows, showNoFix) {
+    if (showNoFix || !rows.length) return rows;
+    return rows.filter((r) => !baseRowNoFix(r));
+  }
+  function filterNoFixFrame(records, showNoFix) {
+    if (showNoFix || !records.length) return records;
+    return records.filter((r) => !recordNoFix(r));
+  }
   function mttrData(p) {
     var _a, _b;
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
@@ -5880,6 +5981,7 @@ var Server = (() => {
       }
     }
     rows = filterSeverities(rows, readSeverities(p));
+    rows = filterNoFixBase(rows, getShowNoFix2());
     const { perSev, overall } = mttrFromLedger(rows);
     const { slaPct, oldestDays } = overallSlaOldest(perSev);
     const remRows = rows;
@@ -5903,7 +6005,9 @@ var Server = (() => {
     const severities = readSeverities(p);
     return {
       history: loadHistory(),
-      trend: loadTrend(severities)
+      // showNoFix off → the open / KM-median series exclude no-fix findings as-of-date; the
+      // resolved / median / SLA-burn / attainment series are untouched (see loadTrend).
+      trend: loadTrend(severities, getShowNoFix2())
     };
   }
   function mttrByDomainData(p) {
@@ -5913,6 +6017,7 @@ var Server = (() => {
       loadBaseRows(),
       readSeverities(p)
     );
+    rows = filterNoFixBase(rows, getShowNoFix2());
     attachSupportGroups(rows);
     if (supportGroup) rows = rows.filter((r) => {
       var _a2;
@@ -5977,11 +6082,14 @@ var Server = (() => {
       // "mttr3" → "mttr4": fast-lane machinery removed; remediation now carries the full KM
       // estimate (km / kmActionable) and dropped fastLane / scalar kmMedian; bump so no stale
       // old-shape entry survives the persistent dataVersion.
-      "mttr4",
+      // "mttr4" → "mttr5": the remediation block now honors the show-no-fix toggle (awaiting
+      // rows dropped when off); key gains showNoFix so on/off states don't share an entry.
+      "mttr5",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
-        severities: readSeverities(p)
+        severities: readSeverities(p),
+        showNoFix: getShowNoFix2()
       },
       () => mttrData(p),
       3600
@@ -5996,9 +6104,11 @@ var Server = (() => {
     // "mttrTrend3" → "mttrTrend4": the tail-median series (tail_median_days) became the KM-median
     // series (km_median_days) and the fast-lane window left the key; bump so no stale entry
     // survives.
+    // "mttrTrend4" → "mttrTrend5": the open / KM-median series now exclude no-fix findings
+    // as-of-date when the toggle is off; key gains showNoFix so on/off states cache apart.
     cached(
-      "mttrTrend4",
-      { severities: readSeverities(p) },
+      "mttrTrend5",
+      { severities: readSeverities(p), showNoFix: getShowNoFix2() },
       () => mttrTrendData(p)
     )
   );
@@ -6020,10 +6130,13 @@ var Server = (() => {
       // `tailResolved` became a single `kmMedian`, `trend` lost `tailPoints`, the payload
       // dropped `thresholdDays`, and the fast-lane window left the key; bump so no stale
       // old-shape entry survives.
-      "mttrByDomain7",
+      // "mttrByDomain7" → "mttrByDomain8": the per-domain split now honors the show-no-fix
+      // toggle (awaiting rows dropped when off); key gains showNoFix so on/off states cache apart.
+      "mttrByDomain8",
       {
         supportGroup: String((_a = p == null ? void 0 : p["supportGroup"]) != null ? _a : ""),
-        severities: readSeverities(p)
+        severities: readSeverities(p),
+        showNoFix: getShowNoFix2()
       },
       () => mttrByDomainData(p),
       3600
@@ -6047,7 +6160,10 @@ var Server = (() => {
   function scanHistoryData() {
     var _a;
     const scans = loadScanRows().slice().reverse();
-    const base = loadBaseRows();
+    const base = filterNoFixBase(
+      loadBaseRows(),
+      getShowNoFix2()
+    );
     const open = base.filter((r) => r.status === "OPEN").length;
     const resolved = base.filter((r) => r.status === "RESOLVED").length;
     const { overall } = mttrFromLedger(base);
@@ -6061,7 +6177,11 @@ var Server = (() => {
       }
     };
   }
-  var cachedScanHistoryData = () => cached("scanHistory", null, scanHistoryData);
+  var cachedScanHistoryData = () => (
+    // "scanHistory" → "scanHistory2": the KPI band now drops no-fix findings when the toggle is
+    // off; params null → {showNoFix} so on/off states cache apart and no stale entry survives.
+    cached("scanHistory2", { showNoFix: getShowNoFix2() }, scanHistoryData)
+  );
   function getScanHistory(_p) {
     return run(() => cachedScanHistoryData());
   }
@@ -6185,11 +6305,15 @@ var Server = (() => {
       if (!scan) return { content: "", filename: "", matrix: [] };
       const domains = (_b = params["domains"]) != null ? _b : [];
       const sgFilter = (_c = params["supportGroups"]) != null ? _c : [];
-      const displayed = applyFilters(scan.records, {
-        severities: getDisplaySeverities2(),
-        domains,
-        supportGroups: sgFilter
-      });
+      const showNoFix = getShowNoFix2();
+      const displayed = filterNoFixFrame(
+        applyFilters(scan.records, {
+          severities: getDisplaySeverities2(),
+          domains,
+          supportGroups: sgFilter
+        }),
+        showNoFix
+      );
       const counts = sevCountsOf(displayed);
       let baseRows2 = loadBaseRows();
       if (domains.length || sgFilter.length) {
@@ -6206,6 +6330,7 @@ var Server = (() => {
           baseRows2 = baseRows2.filter((r) => domains.includes(assignDomain(r, compiled)));
         }
       }
+      baseRows2 = filterNoFixBase(baseRows2, showNoFix);
       const { perSev, overall } = mttrFromLedger(baseRows2);
       const generated = (/* @__PURE__ */ new Date()).toISOString().replace(/\.\d{3}Z$/, "Z");
       const matrix = [
@@ -6266,15 +6391,18 @@ var Server = (() => {
       const params = p != null ? p : {};
       const scan = currentScan();
       if (!scan) return { content: "", filename: "" };
-      const filtered = applyFilters(scan.records, {
-        severities: (_a = params["severities"]) != null ? _a : getDisplaySeverities2(),
-        statuses: (_b = params["statuses"]) != null ? _b : [],
-        assetTypes: (_c = params["assetTypes"]) != null ? _c : [],
-        clouds: (_d = params["clouds"]) != null ? _d : [],
-        domains: (_e = params["domains"]) != null ? _e : [],
-        supportGroups: (_f = params["supportGroups"]) != null ? _f : [],
-        q: (_g = params["q"]) != null ? _g : ""
-      });
+      const filtered = filterNoFixFrame(
+        applyFilters(scan.records, {
+          severities: (_a = params["severities"]) != null ? _a : getDisplaySeverities2(),
+          statuses: (_b = params["statuses"]) != null ? _b : [],
+          assetTypes: (_c = params["assetTypes"]) != null ? _c : [],
+          clouds: (_d = params["clouds"]) != null ? _d : [],
+          domains: (_e = params["domains"]) != null ? _e : [],
+          supportGroups: (_f = params["supportGroups"]) != null ? _f : [],
+          q: (_g = params["q"]) != null ? _g : ""
+        }),
+        getShowNoFix2()
+      );
       const cols = TABLE_COLUMNS.filter((c) => !c.startsWith("_"));
       const lines = [cols.join(",")];
       for (const r of filtered) lines.push(cols.map((c) => csvCell(r[c])).join(","));
@@ -6309,6 +6437,7 @@ var Server = (() => {
       displaySeverities: getDisplaySeverities2(),
       retentionDays: getRetentionDays2(),
       autoCompact: getAutoCompact2(),
+      showNoFix: getShowNoFix2(),
       domains: getDomains2()
     }));
   }
@@ -6334,6 +6463,12 @@ var Server = (() => {
     return mutate(() => {
       setAutoCompact(Boolean(p == null ? void 0 : p["on"]));
       return { autoCompact: getAutoCompact2() };
+    });
+  }
+  function setShowNoFix2(p) {
+    return mutate(() => {
+      setShowNoFix(Boolean(p == null ? void 0 : p["on"]));
+      return { showNoFix: getShowNoFix2() };
     });
   }
   function setRetentionSettings(p) {

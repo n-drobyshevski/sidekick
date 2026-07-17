@@ -78,6 +78,16 @@ The MTTR page's primary numbers come from a **Kaplan–Meier** survival estimate
   (`mttr_actionable_days` / `actionable_age_days`), measuring from vendor-fix
   availability instead of first detection; awaiting-vendor-fix rows carry null actionable
   fields and drop out.
+- **Show findings without a vendor fix** (Settings, default on). Findings awaiting a
+  vendor fix — no patch exists yet — sit outside the SLA clock and can dominate open
+  counts, aging, and the from-detection KM inputs. Turning the toggle **off** hides them
+  from *every* finding-derived surface (charts, tables, KPIs, exports, Attribution, Scan
+  History KPIs). For the from-detection KM estimate that means those still-open no-fix
+  rows leave the censored risk set, so the median can surface earlier; the trend series
+  apply the same exclusion **as of each historical date**, so a finding that later gets a
+  fix re-enters the open/KM series at the point its fix landed. The **actionable-clock**
+  KM (`kmActionable`) is unchanged either way — awaiting rows already carry null actionable
+  fields and never entered it. The toggle is a persisted global setting (`show_no_fix`).
 - The old **fast-lane exclusion** method (drop resolved findings with `mttr_days` under a
   configurable window) and its `fast_lane_days` setting have been **removed** — KM
   subsumes the de-biasing it was reaching for.

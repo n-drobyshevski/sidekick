@@ -5,10 +5,10 @@
 
 import { call } from "../api.js";
 import { openResolvedLines, trendLine } from "../charts.js";
-import { swrCall } from "../store.js";
+import { bootstrap, swrCall } from "../store.js";
 import {
   clear, confirmDialog, el, emptyState, fmtDays, fmtDateTime,
-  kpiCard, pager, sectionLabel, statusPill, toast,
+  kpiCard, noFixHiddenNote, pager, sectionLabel, statusPill, toast,
 } from "../ui.js";
 
 const PAGE_SIZE = 25;
@@ -53,6 +53,8 @@ function relativeAge(ts) {
 }
 
 export async function renderHistory(main, _params, ctx) {
+  const boot = await bootstrap();
+
   // Sort/page persist across SWR repaints so a background refresh doesn't reset the view.
   let sortDir = "desc";
   let page = 0;
@@ -73,6 +75,7 @@ export async function renderHistory(main, _params, ctx) {
     el("p", { class: "page-sub" },
       "Every saved scan retained in the durable ledger, with remediation trends."),
   );
+  if (boot.settings.showNoFix === false) main.append(noFixHiddenNote());
 
   const freshLine = el("p", { class: "section-note" });
   const kpiRow = el("div", { class: "kpi-row" });
