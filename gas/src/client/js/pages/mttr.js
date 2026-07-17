@@ -138,10 +138,9 @@ export async function renderMttr(main, _params, ctx) {
   const heroHost = el("div", {});
   const chartsHost = el("div", {});
   const survivalHost = el("div", {});
-  const resolutionHost = el("div", {});
   const slaHost = el("div", {});
   const byDomainHost = el("div", {});
-  main.append(heroHost, chartsHost, survivalHost, resolutionHost, slaHost, byDomainHost);
+  main.append(heroHost, chartsHost, survivalHost, slaHost, byDomainHost);
 
   // Scope comes from the global Value Chain + Support group filters in the sidebar;
   // "" = no filter on that dimension.
@@ -168,7 +167,6 @@ export async function renderMttr(main, _params, ctx) {
     clear(heroHost).append(el("p", { class: "muted" }, "Computing…"));
     clear(chartsHost);
     clear(survivalHost);
-    clear(resolutionHost);
     clear(slaHost);
     clear(byDomainHost);
     // One batched RPC — summary and trends share a single ledger-state load
@@ -178,7 +176,6 @@ export async function renderMttr(main, _params, ctx) {
       renderHero(data.mttr, data.trends);
       renderCharts(data.trends, data.mttr);
       renderSurvivalCurve(data.mttr);
-      renderResolutionProfile(data.mttr);
       renderSla(data.mttr);
       renderByDomain(data.byDomain);
     };
@@ -487,10 +484,11 @@ export async function renderMttr(main, _params, ctx) {
     );
   }
 
-  /** Full-width Kaplan–Meier survival curve card, before Resolution profile. Gated on a
-   *  drawable curve: `rem` missing entirely means a stale pre-KM cache (nothing shown, same
-   *  convention as renderResolutionProfile); `rem.km` present but empty means genuinely no
-   *  resolved findings yet to estimate from (a muted note instead of an empty chart). */
+  /** The distribution row: the Kaplan–Meier survival curve (2 of 3 blocks) beside the
+   *  time-to-resolve histogram (1 block) — cumulative S(t) and its binned-density companion.
+   *  Gated on a drawable curve: `rem` missing entirely means a stale pre-KM cache (nothing
+   *  shown); `rem.km` present but empty means genuinely no resolved findings yet to estimate
+   *  from (a muted note instead of an empty chart — the histogram is empty then too). */
   function renderSurvivalCurve(mttr) {
     clear(survivalHost);
     const rem = mttr.remediation;
@@ -515,9 +513,14 @@ export async function renderMttr(main, _params, ctx) {
         }, label)));
     survivalHost.append(el("div", { class: "section-head" },
       sectionLabel("Remediation survival (Kaplan–Meier)"), segRow));
+
+    // One distribution row: the survival curve (cumulative S(t)) takes 2 of the 3 chart
+    // blocks, the time-to-resolve histogram (its binned-density companion) takes the third.
+    // Reuses the capped-3 .chart-grid, so on a narrow pane the survival span clamps to one
+    // column and the two cards stack.
     const canvas = el("canvas", { id: "survival-curve" });
-    survivalHost.append(
-      el("div", { class: "chart-card" },
+    const grid = el("div", { class: "chart-grid dist-grid" },
+      el("div", { class: "chart-card dist-main" },
         el("h3", {}, "S(t): share of findings still open"),
         el("div", { class: "chart-box chart-box--tall" }, canvas),
         el("p", { class: "chart-caption muted" },
@@ -525,6 +528,22 @@ export async function renderMttr(main, _params, ctx) {
           "all), Mean (closed), Mean (KM · RMST, all)."),
       ),
     );
+    // Time-to-resolve histogram — only when there are bucketed resolved lifecycles (which,
+    // like the curve, requires resolved findings, so the two appear together).
+    let bucketCanvas = null;
+    if (rem.buckets && rem.buckets.total) {
+      bucketCanvas = el("canvas", { id: "resolution-buckets" });
+      grid.append(
+        el("div", { class: "chart-card" },
+          el("h3", {},
+            helpTip("Time to resolve",
+              ["How long resolved findings actually took, bucketed by severity. The " +
+                "right-hand bars are the tail the median hides."],
+              { className: "help-label" })),
+          el("div", { class: "chart-box chart-box--tall" }, bucketCanvas)),
+      );
+    }
+    survivalHost.append(grid);
     requestAnimationFrame(() => {
       survivalCurve(canvas, rem.km.curve, {
         naiveMedian: rem.km.naiveMedian,
@@ -532,6 +551,10 @@ export async function renderMttr(main, _params, ctx) {
         naiveMean: rem.km.naiveMean,
         mean: rem.km.mean,
       }, { maxWeeks: survivalWeeks });
+      if (bucketCanvas) {
+        stackedAgeBar(bucketCanvas, rem.buckets.labels || RESOLUTION_LABELS, rem.buckets.perSev,
+          boot.palette, "Resolved findings by time-to-resolve bucket and severity.");
+      }
     });
   }
 
@@ -715,35 +738,6 @@ export async function renderMttr(main, _params, ctx) {
       if (hasSlaAttainment) {
         trendLine(slaAttainmentCanvas, slaAttainmentPoints, { yLabel: "%", xRange });
       }
-    });
-  }
-
-  /** Resolution profile: the histogram of time-to-resolve (stacked by severity) beside a
-   *  compact stat card of Kaplan–Meier + naive-comparison numbers. All of it comes from
-   *  `mttr.remediation`, which is additive on the server — skip the whole section when it's
-   *  missing (stale cache) or empty (no resolved lifecycles to bucket yet). */
-  function renderResolutionProfile(mttr) {
-    clear(resolutionHost);
-    const rem = mttr.remediation;
-    if (!rem || !rem.buckets || !rem.buckets.total) return;
-
-    // Density companion to the survival curve above (that plots the cumulative S(t); this
-    // is the per-severity, SLA-bucketed distribution). The point estimates that used to sit
-    // in a stat card here were a third rendering of the hero values / survival markers —
-    // dropped as redundant; the actionable KM median lives on as a hero mini instead.
-    const bucketCanvas = el("canvas", { id: "resolution-buckets" });
-    resolutionHost.append(
-      el("div", { class: "chart-card" },
-        el("h3", {},
-          helpTip("Time to resolve",
-            ["How long resolved findings actually took, bucketed by severity. The " +
-              "right-hand bars are the tail the median hides."],
-            { className: "help-label" })),
-        el("div", { class: "chart-box" }, bucketCanvas)));
-
-    requestAnimationFrame(() => {
-      stackedAgeBar(bucketCanvas, rem.buckets.labels || RESOLUTION_LABELS, rem.buckets.perSev,
-        boot.palette, "Resolved findings by time-to-resolve bucket and severity.");
     });
   }
 
