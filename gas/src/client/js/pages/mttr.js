@@ -57,6 +57,16 @@ function fmtOpenPastSla(o) {
   return `${(o.breached ?? 0).toLocaleString()} (${pct})`;
 }
 
+// Awaiting-vendor-fix summary for the hero mini: "N (x% of open)"; "—" when the payload
+// doesn't carry the segment at all (a stale pre-actionable cache). pctOfOpen is null when
+// nothing is open, so the share is dropped rather than shown as a fake 0%.
+function fmtAwaiting(a) {
+  if (!a || a.overall === null || a.overall === undefined) return "—";
+  const pct = a.pctOfOpen !== null && a.pctOfOpen !== undefined
+    ? ` (${a.pctOfOpen.toFixed(0)}% of open)` : "";
+  return `${a.overall.toLocaleString()}${pct}`;
+}
+
 // A helpTip'd label/value row for the Resolution profile stat card — reuses the
 // per-severity stat-card row classes (hairline divider + name/value) so the visual stays
 // identical to "Remediation by severity" below, just without the sev-dot.
@@ -90,7 +100,9 @@ export async function renderMttr(main, _params, ctx) {
         onApply: () => load(), ariaContext: "MTTR",
       })),
     el("p", { class: "page-sub" },
-      "How fast risk gets closed, measured over observed lifecycles in the durable base."),
+      "How fast risk gets closed, measured over observed lifecycles in the durable base. " +
+      "The SLA clock starts once a vendor fix is available; findings awaiting a vendor fix " +
+      "are shown separately."),
   );
 
   const scopeChips = scopeBar({
@@ -339,6 +351,15 @@ export async function renderMttr(main, _params, ctx) {
     }
     table.append(tbody);
     byDomainHost.append(el("div", { class: "table-wrap" }, table));
+
+    // Awaiting-vendor-fix findings aren't a column (they don't breach any SLA) — a footnote
+    // sums the per-domain `awaiting` counts so the excluded population is still visible.
+    const awaitingTotal = byDomain.rows.reduce((a, r) => a + (r.awaiting ?? 0), 0);
+    if (awaitingTotal > 0) {
+      byDomainHost.append(el("p", { class: "small muted", style: "margin:8px 0 0" },
+        `${awaitingTotal.toLocaleString()} open finding${awaitingTotal === 1 ? "" : "s"} across `
+        + "these domains are awaiting a vendor fix — excluded from Open past SLA until a fix appears."));
+    }
   }
 
   function renderHero(mttr, trends) {
@@ -363,12 +384,17 @@ export async function renderMttr(main, _params, ctx) {
     // from before the rollout won't carry it, so every read below is optional-chained and
     // every affected mini/cell degrades to "—" rather than throwing.
     const rem = mttr.remediation;
-    const openPastSla = rem?.openPastSla?.overall; // {open, breached, pct}
+    // Actionable-clock open-past-SLA, falling back to the from-detection value for a stale
+    // pre-actionable cache (both share the {open, breached, pct} shape).
+    const openPastSla = rem?.openPastSlaActionable?.overall ?? rem?.openPastSla?.overall;
     const overallPctiles = rem?.pctiles?.overall; // {p50, p90, count}
+    const awaiting = rem?.awaiting; // {perSev, overall, openTotal, pctOfOpen}
 
     const minis = el("div", { class: "hero-minis" });
     const miniDefs = [
-      ["In SLA", mttr.slaPct !== null ? `${mttr.slaPct.toFixed(1)}%` : "—",
+      // "of resolved" makes the survivorship explicit: In-SLA % scores only resolved
+      // findings, so it can look healthy while the open backlog ages (Open past SLA below).
+      ["In SLA (of resolved)", mttr.slaPct !== null ? `${mttr.slaPct.toFixed(1)}%` : "—",
         !scoped && prev && prev.sla_pct !== null && mttr.slaPct !== null
           ? changeChip(mttr.slaPct, prev.sla_pct, { invert: true, suffix: "%" }) : null],
       // Open findings already past their SLA target — unlike In SLA %, this scores open
@@ -379,6 +405,9 @@ export async function renderMttr(main, _params, ctx) {
         !scoped && prev && prev.open_past_sla !== null && prev.open_past_sla !== undefined &&
           openPastSla && openPastSla.breached !== null && openPastSla.breached !== undefined
           ? changeChip(openPastSla.breached, prev.open_past_sla) : null],
+      // Open findings with no vendor fix available yet — outside the SLA clock entirely, so
+      // shown here rather than folded into Open past SLA. No history series to diff, no chip.
+      ["Awaiting vendor fix", fmtAwaiting(awaiting), null],
       ["MTTR p90", fmtDays(overallPctiles?.p90), null],
       // p90 of open-finding age, not the single oldest — labelled to match the table below.
       ["Open age p90", fmtDays(mttr.oldestDays),
@@ -458,6 +487,8 @@ export async function renderMttr(main, _params, ctx) {
     const tailMedianCanvas = el("canvas", { id: "tail-median-trend" });
     const openResolvedCanvas = el("canvas", { id: "open-resolved" });
     const openSlaCanvas = el("canvas", { id: "open-sla-trend" });
+    const slaBurnCanvas = el("canvas", { id: "sla-burn-trend" });
+    const slaAttainmentCanvas = el("canvas", { id: "sla-attainment-trend" });
 
     const points = trend.length
       ? trend.map((t) => ({ x: t.date, y: t.median_days, reconstructed: t.reconstructed }))
@@ -479,11 +510,24 @@ export async function renderMttr(main, _params, ctx) {
       : history.map((h) => ({ x: h.date, y: h.open_past_sla, reconstructed: false })))
       .filter((p) => p.y !== null && p.y !== undefined);
 
+    // Backlog-flow series — reconstructed-trend only, like the tail median (mttr_history
+    // snapshots don't carry them). sla_net is a signed per-window flow (can be negative);
+    // sla_attainment_pct is the unbiased cohort In-SLA. Null points (first point / stale
+    // history rows) are dropped rather than drawn as a dip to zero.
+    const slaBurnPoints = trend
+      .map((t) => ({ x: t.date, y: t.sla_net, reconstructed: t.reconstructed }))
+      .filter((p) => p.y !== null && p.y !== undefined);
+    const slaAttainmentPoints = trend
+      .map((t) => ({ x: t.date, y: t.sla_attainment_pct, reconstructed: t.reconstructed }))
+      .filter((p) => p.y !== null && p.y !== undefined);
+
     // A "trend" needs at least two points — one lone dot is not a trajectory. This matches the
     // Open-vs-resolved gate and the "after two saved scans" copy below.
     const hasTrend = points.length > 1;
     const hasTailTrend = tailMedianPoints.length > 1;
     const hasOpenSlaTrend = openSlaPoints.length > 1;
+    const hasSlaBurn = slaBurnPoints.length > 1;
+    const hasSlaAttainment = slaAttainmentPoints.length > 1;
     const grid = el("div", { class: "chart-grid", style: "align-items:start" });
     if (hasTrend) {
       grid.append(el("div", { class: "chart-card" },
@@ -505,7 +549,30 @@ export async function renderMttr(main, _params, ctx) {
       // deliberately encodes red/green + dash + point-shape; a third line would crowd it.
       grid.append(el("div", { class: "chart-card" },
         el("h3", {}, "Open past SLA"),
-        el("div", { class: "chart-box" }, openSlaCanvas)));
+        el("div", { class: "chart-box" }, openSlaCanvas),
+        el("p", { class: "chart-caption muted" },
+          "Open findings past their SLA deadline, now measured from when a vendor fix became "
+          + "available rather than first detection. Counts step up at the fix-tracking rollout "
+          + "— findings awaiting a vendor fix are now included in the register.")));
+    }
+    if (hasSlaBurn) {
+      // Net backlog-of-breach flow per scan window: findings crossing their SLA deadline
+      // minus breached findings cleared. A signed series (can go below zero), so it reads
+      // against the zero baseline trendLine's beginAtZero axis already includes.
+      grid.append(el("div", { class: "chart-card" },
+        el("h3", {}, "SLA burn (net flow)"),
+        el("div", { class: "chart-box" }, slaBurnCanvas),
+        el("p", { class: "chart-caption muted" },
+          "Findings crossing their SLA deadline minus breached findings cleared, per scan. "
+          + "Above zero = the past-SLA backlog is growing.")));
+    }
+    if (hasSlaAttainment) {
+      grid.append(el("div", { class: "chart-card" },
+        el("h3", {}, "SLA attainment (cohort)"),
+        el("div", { class: "chart-box" }, slaAttainmentCanvas),
+        el("p", { class: "chart-caption muted" },
+          "Of findings whose SLA deadline has passed, the share met on time — unlike In-SLA "
+          + "(of resolved), unaffected by how much is still open.")));
     }
     if (!grid.hasChildNodes()) {
       if (trendWindowDays === null) {
@@ -543,6 +610,12 @@ export async function renderMttr(main, _params, ctx) {
       if (hasOpenSlaTrend) {
         trendLine(openSlaCanvas, openSlaPoints, { yLabel: "findings", xRange });
       }
+      if (hasSlaBurn) {
+        trendLine(slaBurnCanvas, slaBurnPoints, { yLabel: "findings", xRange });
+      }
+      if (hasSlaAttainment) {
+        trendLine(slaAttainmentCanvas, slaAttainmentPoints, { yLabel: "%", xRange });
+      }
     });
   }
 
@@ -576,10 +649,14 @@ export async function renderMttr(main, _params, ctx) {
       statRow("Median (excl. fast lane)", fmtDays(fastLane.tailMedian),
         ["Median remediation time after removing the fast lane, so auto-patched vulns " +
           "don't drag the median toward zero."]),
-      statRow("KM median", fmtDays(rem.kmMedian),
+      statRow("KM median (from detection)", fmtDays(rem.kmMedian),
         ["Kaplan–Meier median time-to-remediation. Counts still-open findings as censored " +
           "(not-yet-resolved) instead of ignoring them, so it isn't biased low by fresh " +
           "fast-patched vulns. “—” means over half of findings are still open."]),
+      statRow("KM median (actionable)", fmtDays(rem.kmMedianActionable),
+        ["The same Kaplan–Meier median, but the clock starts when a vendor fix became " +
+          "available rather than at first detection — so a fix that arrives late doesn't " +
+          "count against the team. Findings still awaiting a vendor fix don't count at all."]),
     );
 
     resolutionHost.append(
@@ -611,8 +688,12 @@ export async function renderMttr(main, _params, ctx) {
       ["Resolved", null],
       ["Open", null],
       ["Open past SLA",
-        ["Open findings already older than their severity's SLA target. Unlike In-SLA % " +
-          "(which only scores resolved findings), an aged-out open CRITICAL counts here."]],
+        ["Open findings already older than their severity's SLA target, measured from when " +
+          "a vendor fix became available. Unlike In-SLA % (which only scores resolved " +
+          "findings), an aged-out open CRITICAL counts here."]],
+      ["Awaiting",
+        ["Open findings with no vendor fix available yet — excluded from the SLA clock " +
+          "until a fix appears, so they don't count as breached above."]],
       ["Open age p90", null],
       ["SLA target", null],
       ["In SLA", null],
@@ -631,7 +712,10 @@ export async function renderMttr(main, _params, ctx) {
         el("td", { class: "num" }, fmtDays(mttr.remediation?.pctiles?.perSev?.[sev]?.p90)),
         el("td", { class: "num" }, d.resolved),
         el("td", { class: "num" }, d.open),
-        el("td", { class: "num" }, fmtOpenPastSla(mttr.remediation?.openPastSla?.perSev?.[sev])),
+        el("td", { class: "num" }, fmtOpenPastSla(
+          mttr.remediation?.openPastSlaActionable?.perSev?.[sev]
+          ?? mttr.remediation?.openPastSla?.perSev?.[sev])),
+        el("td", { class: "num" }, (mttr.remediation?.awaiting?.perSev?.[sev] ?? 0).toLocaleString()),
         el("td", { class: "num" }, fmtDays(d.open_age_p90)),
         el("td", { class: "num" }, d.sla_target ? `${d.sla_target}d` : "—"),
         el("td", { class: "num" }, d.sla_pct !== null ? `${d.sla_pct.toFixed(0)}%` : "—"),

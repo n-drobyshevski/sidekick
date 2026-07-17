@@ -142,6 +142,8 @@ export function toEpisodeRow(live: LedgerRow, compactionId: string): EpisodeRow 
     reopened_count: Number(live.reopened_count ?? 0),
     compaction_id: compactionId,
     superseded_by_scan: null,
+    fix_date: live.fix_date,
+    fix_observed_at: live.fix_observed_at,
   };
 }
 

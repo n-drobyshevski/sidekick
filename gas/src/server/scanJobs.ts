@@ -112,6 +112,9 @@ const SLIM_TOP = [
   "detailedNameV2", "fixedVersion", "detectionMethod", "vendorSeverity", "nvdSeverity",
   "weightedSeverity", "score", "epssSeverity", "epssProbability", "hasExploit",
   "hasCisaKevExploit", "publishedDate", "dataSourceName",
+  // Vendor-fix signals for the actionable clock / awaiting-vendor-fix segment.
+  // Additive: frames persisted before this simply lack the keys (read as null).
+  "fixDate", "fixDateBefore", "isOperatingSystemEndOfLife",
 ];
 const SLIM_ASSET = [
   "id", "name", "type", "cloudPlatform", "region", "subscriptionName",

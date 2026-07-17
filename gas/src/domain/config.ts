@@ -61,6 +61,14 @@ export const RESOLVED_STATUSES = new Set(["RESOLVED", "REMEDIATED", "FIXED", "CL
 // Disappearance-resolution timestamping: "scan_ts" (conservative; default) or "midpoint".
 export const DISAPPEARANCE_RESOLUTION = "scan_ts";
 
+// The actionable-clock legacy boundary. Rows first seen before this were captured under
+// the old hasFix-only Wiz filter, so a vendor fix was — by construction — available as of
+// their first_seen; withDerived treats them as fix_available_at == first_seen. Set to the
+// deploy date of broadened (no-hasFix) ingestion. NOTE: pinned earlier than today's deploy
+// so the dev sample harness (recent backdated scans) genuinely exercises the awaiting-
+// vendor-fix path; UPDATE this to the real broadened-scan deploy date at production rollout.
+export const REMEDIATION_ROLLOUT_ISO = "2026-07-01T00:00:00Z";
+
 // Retention / compaction guardrails.
 export const DEFAULT_RETENTION_DAYS = 180;
 export const RETENTION_MIN_DAYS = 30;

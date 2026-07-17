@@ -4,6 +4,8 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  coerceEpisode,
+  coerceLedger,
   importBundleCore,
   ImportValidationError,
   mergeMttrHistory,
@@ -343,5 +345,34 @@ describe("mergeMttrHistory", () => {
     expect(byDate["2026-05-01"]["open_past_sla"]).toBeNull();
     // The existing (GAS) row is stored verbatim, so its own open_past_sla survives.
     expect(byDate["2026-06-15"]["open_past_sla"]).toBe(1);
+  });
+});
+
+describe("import round-trips vendor-fix fields", () => {
+  it("coerceLedger reads fix_date / fix_observed_at, defaulting absent to null", () => {
+    const withFix = coerceLedger({
+      vuln_key: "id:A",
+      fix_date: "2026-07-10T00:00:00Z",
+      fix_observed_at: "2026-07-08T00:00:00Z",
+    });
+    expect(withFix.fix_date).toBe("2026-07-10T00:00:00Z");
+    expect(withFix.fix_observed_at).toBe("2026-07-08T00:00:00Z");
+    // Legacy bundle rows (fields absent) coerce to null — the shape the rollout rule expects.
+    const legacy = coerceLedger({ vuln_key: "id:B" });
+    expect(legacy.fix_date).toBeNull();
+    expect(legacy.fix_observed_at).toBeNull();
+  });
+
+  it("coerceEpisode reads fix_date / fix_observed_at, defaulting absent to null", () => {
+    const withFix = coerceEpisode({
+      vuln_key: "id:E",
+      fix_date: "2026-07-10T00:00:00Z",
+      fix_observed_at: "2026-07-08T00:00:00Z",
+    });
+    expect(withFix.fix_date).toBe("2026-07-10T00:00:00Z");
+    expect(withFix.fix_observed_at).toBe("2026-07-08T00:00:00Z");
+    const legacy = coerceEpisode({ vuln_key: "id:F" });
+    expect(legacy.fix_date).toBeNull();
+    expect(legacy.fix_observed_at).toBeNull();
   });
 });

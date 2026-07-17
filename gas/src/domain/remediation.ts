@@ -267,3 +267,61 @@ export function openPastSlaFromRecords(records: Rec[], now?: number): number {
   }
   return breached;
 }
+
+/**
+ * Re-project base rows onto the RemediationRow shape using the *actionable* clock —
+ * mttr_actionable_days / actionable_age_days (baked by ledgerCore.baseRows) in place of
+ * the from-detection mttr_days / age_days. Feed the result to openPastSla, kmMedian,
+ * mttrPercentiles, or fastLaneSplit and they measure from vendor-fix availability instead
+ * of first detection, with no change to their bodies. Awaiting-vendor-fix rows carry null
+ * actionable fields, so they drop out of every clock here automatically (a resolved row
+ * with no fix ever observed likewise has a null mttr_actionable_days) while still counting
+ * in awaitingVendorFix / the open backlog.
+ */
+export function actionableView(
+  rows: Pick<BaseRow, "severity" | "status" | "mttr_actionable_days" | "actionable_age_days">[],
+): RemediationRow[] {
+  return rows.map((r) => ({
+    severity: r.severity,
+    status: r.status,
+    mttr_days: r.mttr_actionable_days,
+    age_days: r.actionable_age_days,
+  }));
+}
+
+export interface AwaitingVendorFix {
+  perSev: Record<string, number>;
+  overall: number;
+  openTotal: number;
+  pctOfOpen: number | null;
+}
+
+/**
+ * The "awaiting vendor fix" segment: OPEN findings with no vendor fix available yet
+ * (awaiting_vendor_fix, set in ledgerCore.baseRows), which is exactly the population the
+ * actionable clock excludes — they sit outside every SLA/MTTR deadline until a fix
+ * appears. perSev / overall count those rows by normalized severity; openTotal is the full
+ * open backlog for context, and pctOfOpen is the awaiting share of it — null when nothing
+ * is open, so the UI never renders a fake 0% against an empty denominator.
+ */
+export function awaitingVendorFix(
+  rows: Pick<BaseRow, "severity" | "status" | "awaiting_vendor_fix">[],
+): AwaitingVendorFix {
+  const perSev: Record<string, number> = {};
+  let overall = 0;
+  let openTotal = 0;
+  for (const row of rows) {
+    if (!isOpen(row.status)) continue;
+    openTotal += 1;
+    if (!row.awaiting_vendor_fix) continue;
+    const s = normalizeSeverity(row.severity);
+    perSev[s] = (perSev[s] ?? 0) + 1;
+    overall += 1;
+  }
+  return {
+    perSev,
+    overall,
+    openTotal,
+    pctOfOpen: openTotal ? (overall / openTotal) * 100 : null,
+  };
+}

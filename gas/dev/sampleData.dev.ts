@@ -127,8 +127,15 @@ const ASSETS: AssetSpec[] = Array.from({ length: 26 }, (_, i) => {
 // -------------------------------------------------------------------- generation
 function makeNode(spec: CveSpec, asset: AssetSpec, idx: number): Rec {
   const node: Rec = JSON.parse(JSON.stringify(pick(TEMPLATES)));
-  const firstMs = NOW - (1 + rnd() * 119) * DAY; // detected 1–120 days ago (spans all age buckets)
-  const resolved = rnd() < 0.32;
+  // ~17% are awaiting a vendor fix (no upstream patch yet). They stay OPEN with no fix
+  // signal and, crucially, are detected AFTER REMEDIATION_ROLLOUT_ISO (2026-07-01) so
+  // withDerived reads them as awaiting rather than legacy-fixed. The rest span the full
+  // 1–120 day age range as before.
+  const awaiting = rnd() < 0.17;
+  const firstMs = awaiting
+    ? NOW - rnd() * 9 * DAY
+    : NOW - (1 + rnd() * 119) * DAY; // detected 1–120 days ago (spans all age buckets)
+  const resolved = !awaiting && rnd() < 0.32;
   const resolvedMs = firstMs + (2 + rnd() * 40) * DAY;
 
   node["id"] = `vf_dev-${String(idx).padStart(4, "0")}`;
@@ -155,15 +162,31 @@ function makeNode(spec: CveSpec, asset: AssetSpec, idx: number): Rec {
   node["description"] =
     `A vulnerability in ${spec.pkg} (${spec.cve}) affecting ${spec.version}; ` +
     `fixed in ${spec.fixed}. ${String(node["description"] ?? "")}`.slice(0, 300);
-  if (resolved && resolvedMs < NOW - DAY) {
+  if (awaiting) {
+    // Vendor-blocked: no fix published. Empty fixedVersion + null fixDate = no fix
+    // signal, so the actionable clock skips it while it stays OPEN in exposure counts.
+    // Some carry a vendor ETA (future fixDateBefore); a few are on an end-of-life OS.
+    node["status"] = "OPEN";
+    node["resolvedAt"] = null;
+    node["fixedVersion"] = null;
+    node["recommendedVersion"] = null;
+    node["fixDate"] = null;
+    node["fixDateBefore"] = rnd() < 0.5 ? iso(NOW + (14 + rnd() * 60) * DAY) : null;
+    node["isOperatingSystemEndOfLife"] = rnd() < 0.25;
+    node["lastDetectedAt"] = iso(NOW - rnd() * 2 * DAY);
+  } else if (resolved && resolvedMs < NOW - DAY) {
     node["status"] = "RESOLVED";
     node["resolvedAt"] = iso(resolvedMs);
     node["fixDate"] = node["resolvedAt"];
+    node["fixDateBefore"] = null;
+    node["isOperatingSystemEndOfLife"] = false;
     node["lastDetectedAt"] = iso(resolvedMs - DAY / 2);
   } else {
     node["status"] = "OPEN";
     node["resolvedAt"] = null;
     node["fixDate"] = null;
+    node["fixDateBefore"] = null;
+    node["isOperatingSystemEndOfLife"] = false;
     node["lastDetectedAt"] = iso(NOW - rnd() * 2 * DAY);
   }
 

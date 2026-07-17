@@ -292,6 +292,19 @@ export async function renderOverview(main, params, ctx) {
         `Open findings only (${s.open.toLocaleString()} open in this scan); one finding can carry several signals.`),
       tiles,
     );
+    // Awaiting-vendor-fix line: open findings with no patch available yet, sourced from the
+    // insights payload (awaitingVendorFix over the same scoped base). Sits outside the SLA
+    // clock, and explains the open-count step-up once fix-tracking rolled out. Optional-
+    // chained so a stale pre-rollout cache simply omits it rather than throwing.
+    const aw = insights.awaiting;
+    if (aw && aw.overall > 0) {
+      const pct = aw.pctOfOpen !== null && aw.pctOfOpen !== undefined
+        ? ` (${aw.pctOfOpen.toFixed(0)}% of open)` : "";
+      insightsHost.append(el("p", { class: "small muted", style: "margin:8px 0 0" },
+        `${aw.overall.toLocaleString()} open finding${aw.overall === 1 ? "" : "s"}${pct} `
+        + "awaiting a vendor fix — no patch is available yet, so they sit outside the SLA "
+        + "clock. Included in the register since fix-tracking rolled out."));
+    }
   }
 
   // ------------------------------------------------------------------------- aging

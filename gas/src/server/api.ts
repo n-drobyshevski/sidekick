@@ -17,6 +17,8 @@ import { extractNodes } from "../domain/transform";
 import { overallSlaOldest } from "../domain/metrics";
 import { normalizeSeverity } from "../domain/severity";
 import {
+  actionableView,
+  awaitingVendorFix,
   fastLaneSplit,
   kmMedian,
   mttrPercentiles,
@@ -364,6 +366,9 @@ function insightsData(p?: unknown): Rec {
       severities,
     ),
     exploit: insights.exploitSummary(recs),
+    // Open findings awaiting a vendor fix (no patch available yet) over the same scoped base
+    // rows — sourced here so the Overview can explain the post-rollout open-count step-up.
+    awaiting: awaitingVendorFix(base),
     aging: insights.ageBuckets(base),
     // Top oldest open findings + 90+ backlog per asset / support group / domain,
     // for the aging panel's toggle (repaints client-side, no extra RPC).
@@ -595,6 +600,12 @@ function mttrData(p?: unknown): Rec {
     buckets: resolutionBuckets(remRows),
     kmMedian: kmMedian(remRows),
     openPastSla: openPastSla(remRows),
+    // Actionable-clock companions (clock starts at vendor-fix availability): the same
+    // functions over the actionableView projection. Awaiting-vendor-fix rows carry null
+    // actionable fields, so they drop out of these while staying in `awaiting`.
+    kmMedianActionable: kmMedian(actionableView(remRows)),
+    openPastSlaActionable: openPastSla(actionableView(remRows)),
+    awaiting: awaitingVendorFix(remRows),
   };
   return { perSev, overall, slaPct, oldestDays, rowCount: rows.length, remediation };
 }
@@ -648,7 +659,12 @@ function mttrByDomainData(p?: unknown): Rec {
       // "Excl. fast lane" (resolved with mttr_days above the fast-lane threshold).
       tailResolved: split.tailCount,
       slaPct,
-      openPastSla: openPastSla(rem).overall,
+      // Actionable-clock open-past-SLA (measured from vendor-fix availability, awaiting
+      // rows excluded) — the same basis the hero and severity table now use.
+      openPastSla: openPastSla(actionableView(rem)).overall,
+      // Open findings in this bucket still awaiting a vendor fix — surfaced as a footnote
+      // under the table, not a column.
+      awaiting: awaitingVendorFix(rem).overall,
       open: overall.open ?? 0,
       resolved: overall.resolved ?? 0,
     });
@@ -685,7 +701,9 @@ const cachedMttrData = (p?: unknown) =>
   cached(
     // "mttr" → "mttr2": payload gained the `remediation` block; dataVersion persists across
     // deploys, so bumping the namespace prevents serving a stale old-shape entry (up to 1h).
-    "mttr2",
+    // "mttr2" → "mttr3": remediation gained the actionable-clock keys (kmMedianActionable,
+    // openPastSlaActionable, awaiting); same reasoning — bump so no stale entry lacks them.
+    "mttr3",
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
@@ -702,8 +720,11 @@ const cachedMttrTrendData = (p?: unknown) =>
   // "mttrTrend" → "mttrTrend2": trend points gained `open_past_sla`; namespace bump avoids a
   // stale old-shape entry surviving the deploy under the persistent dataVersion. The
   // fast-lane window feeds the tail-median series, so it rides in the key like cachedMttrData.
+  // "mttrTrend2" → "mttrTrend3": trend points gained the backlog-flow series (sla_net /
+  // sla_entered / sla_cleared, sla_attainment_pct) and open_past_sla switched to the
+  // actionable clock; bump so a stale old-shape entry can't survive the persistent dataVersion.
   cached(
-    "mttrTrend2",
+    "mttrTrend3",
     { severities: readSeverities(p), fastLane: settingsStore.getFastLaneDays() },
     () => mttrTrendData(p),
   );
@@ -720,7 +741,9 @@ const cachedMttrByDomainData = (p?: unknown) =>
     // medians for the chart's Median / Excl. fast lane toggle).
     // "mttrByDomain4" → "mttrByDomain5": rows gained `tailResolved` (the toggle now also
     // drives the Remediation-share pie).
-    "mttrByDomain5",
+    // "mttrByDomain5" → "mttrByDomain6": rows gained `awaiting` and switched `openPastSla`
+    // to the actionable-clock view; bump so a stale from-detection entry can't survive.
+    "mttrByDomain6",
     {
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
       severities: readSeverities(p),

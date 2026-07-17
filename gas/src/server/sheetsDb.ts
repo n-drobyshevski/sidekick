@@ -29,10 +29,12 @@ export const TAB_HEADERS: Record<string, string[]> = {
     "first_seen", "last_seen", "status", "resolved_at", "resolution_src",
     "reopened_count", "first_scan_id", "last_scan_id",
     "subscription_name", "subscription_ext_id", "tags_json",
+    "fix_date", "fix_observed_at",
   ],
   [TABS.episodes]: [
     "vuln_key", "cve", "severity", "first_seen", "resolved_at", "resolution_src",
     "reopened_count", "compaction_id", "superseded_by_scan",
+    "fix_date", "fix_observed_at",
   ],
   [TABS.compactions]: [
     "compaction_id", "ts", "floor_scan_id", "floor_ts", "scans_sealed",

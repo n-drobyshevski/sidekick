@@ -7,6 +7,7 @@ import {
   statsEqual,
 } from "../src/domain/compaction";
 import type { LedgerRow } from "../src/domain/reconcile";
+import { toEpisodeRow } from "../src/domain/maintenance";
 import { fixture } from "./helpers";
 
 describe("severity scope (fixture parity)", () => {
@@ -52,6 +53,7 @@ describe("episodeEligible", () => {
     last_seen: null, status: "RESOLVED", resolved_at: "2026-02-01T00:00:00Z",
     resolution_src: "api", reopened_count: 0, first_scan_id: null, last_scan_id: null,
     subscription_name: null, subscription_ext_id: null, tags_json: null,
+    fix_date: null, fix_observed_at: null,
   };
   const floor = Date.parse("2026-03-01T00:00:00Z");
   it("resolved before the floor -> eligible", () => {
@@ -60,6 +62,22 @@ describe("episodeEligible", () => {
   it("open or resolved after the floor -> not eligible", () => {
     expect(episodeEligible({ ...base, status: "OPEN", resolved_at: null }, floor)).toBe(false);
     expect(episodeEligible({ ...base, resolved_at: "2026-04-01T00:00:00Z" }, floor)).toBe(false);
+  });
+});
+
+describe("toEpisodeRow carries vendor-fix fields", () => {
+  const live: LedgerRow = {
+    vuln_key: "k", cve: null, severity: "HIGH", asset_id: null, asset_name: null,
+    asset_type: null, cloud: null, first_seen: "2026-07-04T00:00:00Z",
+    last_seen: "2026-07-18T00:00:00Z", status: "RESOLVED", resolved_at: "2026-07-18T00:00:00Z",
+    resolution_src: "api", reopened_count: 0, first_scan_id: null, last_scan_id: null,
+    subscription_name: null, subscription_ext_id: null, tags_json: null,
+    fix_date: "2026-07-10T00:00:00Z", fix_observed_at: "2026-07-08T00:00:00Z",
+  };
+  it("preserves fix_date and fix_observed_at through episode conversion", () => {
+    const ep = toEpisodeRow(live, "cmp-1");
+    expect(ep.fix_date).toBe("2026-07-10T00:00:00Z");
+    expect(ep.fix_observed_at).toBe("2026-07-08T00:00:00Z");
   });
 });
 

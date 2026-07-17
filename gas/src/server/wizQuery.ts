@@ -17,7 +17,6 @@ export const BASE_VARIABLES = {
   "fetchPrivilegedActionRequests": false,
   "first": 500,
   "filterBy": {
-    "hasFix": true,
     "projectIdV2": {
       "equals": [
         "1dfea0cf-834f-5522-b797-bee5aaf09251"
