@@ -443,9 +443,13 @@ function stepAt(curve, day) {
  * (`{ naiveMedian, median, naiveMean, mean }` — any may be null, which skips that marker's
  * point rather than plotting a fake one).
  */
-export function survivalCurve(canvas, curve, markers) {
+export function survivalCurve(canvas, curve, markers, viewOpts = {}) {
   destroyExisting(canvas);
   const points = curve || [];
+  // A positive maxWeeks hard-crops the x-axis to that window (the 30w/15w/5w view filter);
+  // absent it, keep the auto-extending 26w default. Points/markers past the max clip out —
+  // the describe() aria text below still names every marker's day value, so nothing is lost.
+  const maxWeeks = Number.isFinite(viewOpts.maxWeeks) && viewOpts.maxWeeks > 0 ? viewOpts.maxWeeks : null;
   const survivalPoints = [{ x: 0, y: 100 }, ...points.map((p) => ({ x: p.t / 7, y: p.s * 100 }))];
 
   const markerDatasets = KM_MARKERS.map((m) => {
@@ -509,7 +513,8 @@ export function survivalCurve(canvas, curve, markers) {
       x: {
         type: "linear",
         min: 0,
-        suggestedMax: 26, // auto-extends past 26w if a curve point or marker runs longer
+        // Hard max when a window is chosen; else auto-extend past the 26w default.
+        ...(maxWeeks !== null ? { max: maxWeeks } : { suggestedMax: 26 }),
         title: { display: true, text: "weeks", font: FONT, color: INK2 },
         ticks: { font: FONT, color: INK2 },
         grid: { color: HAIRLINE, drawTicks: false },
