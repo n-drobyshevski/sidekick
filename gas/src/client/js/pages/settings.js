@@ -143,6 +143,43 @@ export async function renderSettings(main, params, ctx) {
     }
   }
 
+  // ---------------------------------------------------------------- remediation
+  main.append(sectionLabel("Remediation"));
+  const fastLaneDays = el("input", {
+    type: "number", min: "0.5", step: "0.5", max: "90",
+    value: boot.settings.fastLaneDays ?? 1,
+    style: "width:90px", "aria-label": "Fast-lane window in days",
+  });
+  const saveFastLaneBtn = el("button", { class: "primary", onclick: saveFastLane }, "Save fast lane");
+  main.append(
+    el("div", { class: "card", style: "display:flex; flex-direction:column; gap:10px" },
+      el("div", { style: "display:flex; align-items:center; gap:8px" },
+        "Fast-lane window ", fastLaneDays, " days"),
+      el("p", { class: "muted small" },
+        "Resolutions at or under this many days count as the auto-patch fast lane on the " +
+        "MTTR page."),
+      el("div", {}, saveFastLaneBtn),
+    ),
+  );
+
+  async function saveFastLane() {
+    if (!(await guardUnsavedDrafts())) return;
+    const days = Number(fastLaneDays.value);
+    if (!Number.isFinite(days) || days <= 0 || days > 90) {
+      toast("Fast-lane window must be between 0.5 and 90 days.", "warn");
+      return;
+    }
+    saveFastLaneBtn.disabled = true;
+    try {
+      await call("api_setFastLaneDays", { days });
+      toast("Fast-lane window saved.");
+      ctx.refresh();
+    } catch (e) {
+      toast(`Save failed: ${e.message}`, "error");
+      saveFastLaneBtn.disabled = false;
+    }
+  }
+
   // -------------------------------------------------------------- support groups
   main.append(sectionLabel("Support groups"));
   main.append(el("p", { class: "muted small" },

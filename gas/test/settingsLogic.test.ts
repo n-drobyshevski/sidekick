@@ -4,9 +4,11 @@ import {
   canonicalSeverities,
   getDisplaySeverities,
   getDomains,
+  getFastLaneDays,
   getRetentionDays,
   getSupportGroupMap,
   withDomains,
+  withFastLaneDays,
   withFetchSeverities,
   withSupportGroupMap,
 } from "../src/domain/settingsLogic";
@@ -42,6 +44,22 @@ describe("settings logic", () => {
     expect(getRetentionDays({ retention_days: 7 })).toBe(30);
     expect(getRetentionDays({ retention_days: null })).toBeNull();
     expect(getRetentionDays({ retention_days: "bogus" })).toBe(180);
+  });
+
+  it("fast-lane window defaults to 1, keeps fractional, rejects junk, clamps to 90", () => {
+    expect(getFastLaneDays({})).toBe(1);
+    expect(getFastLaneDays({ fast_lane_days: 2 })).toBe(2);
+    expect(getFastLaneDays({ fast_lane_days: 0.5 })).toBe(0.5); // fractional kept, no trunc
+    expect(getFastLaneDays({ fast_lane_days: 0 })).toBe(1);
+    expect(getFastLaneDays({ fast_lane_days: -3 })).toBe(1);
+    expect(getFastLaneDays({ fast_lane_days: "bogus" })).toBe(1);
+    expect(getFastLaneDays({ fast_lane_days: 200 })).toBe(90);
+  });
+
+  it("withFastLaneDays stores the already-clamped value", () => {
+    expect(withFastLaneDays({}, 5)["fast_lane_days"]).toBe(5);
+    expect(withFastLaneDays({}, -3)["fast_lane_days"]).toBe(1);
+    expect(withFastLaneDays({}, 500)["fast_lane_days"]).toBe(90);
   });
 
   it("domains version bumps on save and cleans junk items", () => {

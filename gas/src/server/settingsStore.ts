@@ -48,6 +48,7 @@ export function saveSettings(settings: Rec): void {
 export const getFetchSeverities = (): string[] => logic.getFetchSeverities(loadSettings());
 export const getDisplaySeverities = (): string[] => logic.getDisplaySeverities(loadSettings());
 export const getRetentionDays = (): number | null => logic.getRetentionDays(loadSettings());
+export const getFastLaneDays = (): number => logic.getFastLaneDays(loadSettings());
 export const getAutoCompact = (): boolean => logic.getAutoCompact(loadSettings());
 export const getDomains = (): { version: number; items: Rec[] } =>
   logic.getDomains(loadSettings());
@@ -62,6 +63,9 @@ export function setDisplaySeverities(sevs: unknown): void {
 }
 export function setRetentionDays(days: number | null): void {
   saveSettings(logic.withRetentionDays(loadSettings(), days));
+}
+export function setFastLaneDays(days: number): void {
+  saveSettings(logic.withFastLaneDays(loadSettings(), days));
 }
 export function setAutoCompact(enabled: boolean): void {
   saveSettings(logic.withAutoCompact(loadSettings(), enabled));

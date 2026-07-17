@@ -3,7 +3,6 @@
 // lock; mutations run inside withScriptLock + recoverIfNeeded.
 
 import {
-  FAST_LANE_DAYS,
   SEVERITY_COLORS,
   SEVERITY_GLYPHS,
   SEVERITY_ORDER,
@@ -111,6 +110,7 @@ function bootstrapCore(): Rec {
       fetchSeverities: settingsStore.getFetchSeverities(),
       displaySeverities: settingsStore.getDisplaySeverities(),
       retentionDays: settingsStore.getRetentionDays(),
+      fastLaneDays: settingsStore.getFastLaneDays(),
       autoCompact: settingsStore.getAutoCompact(),
       domains: settingsStore.getDomains(),
     },
@@ -525,11 +525,12 @@ function mttrData(p?: unknown): Rec {
   const { slaPct, oldestDays } = overallSlaOldest(perSev);
   // Remediation-tail block over the same scoped rows (BaseRows cast to Rec by loadBaseRows;
   // cast back for the typed remediation projection). thresholdDays rides in the payload
-  // because the client bundle can't import the TS domain constant FAST_LANE_DAYS.
+  // because the client bundle can't import the TS domain fast-lane window.
   const remRows = rows as unknown as BaseRow[];
+  const t = settingsStore.getFastLaneDays();
   const remediation = {
     pctiles: mttrPercentiles(remRows),
-    fastLane: { ...fastLaneSplit(remRows), thresholdDays: FAST_LANE_DAYS },
+    fastLane: { ...fastLaneSplit(remRows, t), thresholdDays: t },
     buckets: resolutionBuckets(remRows),
     kmMedian: kmMedian(remRows),
     openPastSla: openPastSla(remRows),
@@ -568,23 +569,26 @@ function mttrByDomainData(p?: unknown): Rec {
     if (!arr) buckets.set(name, (arr = []));
     arr.push(r);
   });
+  const t = settingsStore.getFastLaneDays();
   const out: Rec[] = [];
   for (const name of domainNames(items)) {
     const drows = buckets.get(name);
     if (!drows || !drows.length) continue;
     const { perSev, overall } = mttrFromLedger(drows);
-    const { slaPct, oldestDays } = overallSlaOldest(perSev);
+    const { slaPct } = overallSlaOldest(perSev);
+    const rem = drows as unknown as BaseRow[];
     out.push({
       domain: name,
       median: overall.mttr_median ?? null,
+      p90: mttrPercentiles(rem).overall.p90,
+      tailMedian: fastLaneSplit(rem, t).tailMedian,
       slaPct,
-      oldestDays,
+      openPastSla: openPastSla(rem).overall,
       open: overall.open ?? 0,
       resolved: overall.resolved ?? 0,
-      tracked: drows.length,
     });
   }
-  return { rows: out };
+  return { rows: out, thresholdDays: t };
 }
 
 // Cached per DATA_VERSION, keyed on exactly the params each computation reads — so
@@ -612,7 +616,10 @@ const cachedMttrTrendData = (p?: unknown) =>
 // (carries open ages).
 const cachedMttrByDomainData = (p?: unknown) =>
   cached(
-    "mttrByDomain",
+    // "mttrByDomain" → "mttrByDomain2": payload shape changed (added p90/tailMedian/
+    // openPastSla, dropped tracked/oldestDays); dataVersion persists across deploys, so
+    // bumping the namespace prevents serving a stale old-shape entry.
+    "mttrByDomain2",
     {
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
       severities: readSeverities(p),
@@ -926,6 +933,7 @@ export function getSettings(_p?: unknown): ApiResult {
     fetchSeverities: settingsStore.getFetchSeverities(),
     displaySeverities: settingsStore.getDisplaySeverities(),
     retentionDays: settingsStore.getRetentionDays(),
+    fastLaneDays: settingsStore.getFastLaneDays(),
     autoCompact: settingsStore.getAutoCompact(),
     domains: settingsStore.getDomains(),
   }));
@@ -948,6 +956,14 @@ export function setRetention(p?: unknown): ApiResult {
   return mutate(() => {
     settingsStore.setRetentionDays(days === null || days === undefined ? null : Number(days));
     return { retentionDays: settingsStore.getRetentionDays() };
+  });
+}
+
+export function setFastLaneDays(p?: unknown): ApiResult {
+  const days = (p as Rec)?.["days"];
+  return mutate(() => {
+    settingsStore.setFastLaneDays(Number(days));
+    return { fastLaneDays: settingsStore.getFastLaneDays() };
   });
 }
 

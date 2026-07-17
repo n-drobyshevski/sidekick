@@ -115,21 +115,41 @@ export async function renderMttr(main, _params, ctx) {
     byDomainHost.append(sectionLabel("By domain"));
     byDomainHost.append(el("p", { class: "small muted", style: "margin:-6px 0 12px" },
       "Remediation for each domain that makes up the value chain."));
+    // Column headers carry the two new metrics' definitions via helpTip, matching the
+    // per-severity table's convention in renderSla above.
+    const columns = [
+      ["Domain", null],
+      ["Median MTTR", null],
+      ["MTTR p90",
+        ["90th-percentile time from first detection to remediation — the slow tail. Nine " +
+          "in ten findings beat it; one in ten is slower."]],
+      ["Excl. fast lane",
+        ["Median remediation time after removing the fast lane (resolutions ≤ " +
+          `${byDomain.thresholdDays ?? 1}d), so auto-patched vulns don't drag the median ` +
+          "toward zero."]],
+      ["In SLA", null],
+      ["Open past SLA",
+        ["Open findings already older than their severity's SLA target. Unlike In-SLA % " +
+          "(which only scores resolved findings), an aged-out open CRITICAL counts here."]],
+      ["Open", null],
+      ["Resolved", null],
+    ];
     const table = el("table", { class: "data" },
       el("thead", {}, el("tr", {},
-        ...["Domain", "Median MTTR", "In SLA", "Open", "Resolved", "Tracked"]
-          .map((h) => el("th", { scope: "col" }, h)))),
+        ...columns.map(([h, lines]) => el("th", { scope: "col" },
+          lines ? helpTip(h, lines, { className: "help-label" }) : h)))),
     );
     const tbody = el("tbody", {});
     for (const r of byDomain.rows) {
       tbody.append(el("tr", {},
         el("td", {}, r.domain),
         el("td", { class: "num" }, fmtDays(r.median)),
-        el("td", { class: "num" }, r.slaPct !== null && r.slaPct !== undefined
-          ? `${r.slaPct.toFixed(0)}%` : "—"),
+        el("td", { class: "num" }, fmtDays(r.p90)),
+        el("td", { class: "num" }, fmtDays(r.tailMedian)),
+        el("td", { class: "num" }, r.slaPct != null ? `${r.slaPct.toFixed(0)}%` : "—"),
+        el("td", { class: "num" }, fmtOpenPastSla(r.openPastSla)),
         el("td", { class: "num" }, (r.open ?? 0).toLocaleString()),
         el("td", { class: "num" }, (r.resolved ?? 0).toLocaleString()),
-        el("td", { class: "num" }, (r.tracked ?? 0).toLocaleString()),
       ));
     }
     table.append(tbody);

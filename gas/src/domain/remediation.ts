@@ -8,7 +8,7 @@
 // ledgerCore.baseRows). openPastSlaFromRecords is the lone frame-based variant, for
 // the snapshot writer that runs before any ledger exists (see its note).
 
-import { FAST_LANE_DAYS, RESOLVED_STATUSES, SEVERITY_ORDER, SLA_TARGETS } from "./config";
+import { DEFAULT_FAST_LANE_DAYS, RESOLVED_STATUSES, SEVERITY_ORDER, SLA_TARGETS } from "./config";
 import type { BaseRow } from "./ledgerCore";
 import { findCol, recordColumns } from "./metrics";
 import { normalizeSeverity } from "./severity";
@@ -99,7 +99,7 @@ export interface FastLaneSplit {
  */
 export function fastLaneSplit(
   rows: RemediationRow[],
-  threshold: number = FAST_LANE_DAYS,
+  threshold: number = DEFAULT_FAST_LANE_DAYS,
 ): FastLaneSplit {
   const resolved: number[] = [];
   for (const row of rows) {
