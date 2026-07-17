@@ -14,7 +14,29 @@ import {
 const RESOLUTION_LABELS = ["≤1d", "2–7d", "8–30d", "31–90d", "90+d"];
 
 // Timeframe presets for the Trends charts. null = no window (full history).
-const TREND_WINDOWS = [["5d", 5], ["2w", 14], ["30d", 30], ["90d", 90], ["All", null]];
+const TREND_WINDOWS = [
+  ["5d", 5], ["2w", 14], ["30d", 30], ["60d", 60], ["90d", 90], ["All", null],
+];
+
+// The chosen window persists across visits in localStorage, stored by preset label so a
+// stale or hand-edited value degrades to All. Some GAS iframe sandboxes block web storage
+// (see attributionPrefill.js), hence the try/catch — blocked storage just means no recall.
+const TREND_WINDOW_KEY = "mttrTrendWindow";
+function loadTrendWindow() {
+  try {
+    const hit = TREND_WINDOWS.find(([label]) => label === localStorage.getItem(TREND_WINDOW_KEY));
+    return hit ? hit[1] : null;
+  } catch {
+    return null;
+  }
+}
+function saveTrendWindow(label) {
+  try {
+    localStorage.setItem(TREND_WINDOW_KEY, label);
+  } catch {
+    // Sandbox without storage — the choice simply won't survive the visit.
+  }
+}
 
 // Open-past-SLA cell, shared by the hero mini and the per-severity table: "breached
 // (pct%)"; "0" when nothing is open (pct is null then, not a fake 0%); "—" when the
@@ -79,9 +101,9 @@ export async function renderMttr(main, _params, ctx) {
   const domain = ctx.domain || "";
   const supportGroup = ctx.supportGroup || "";
 
-  // Trends timeframe (days back from now; null = full history). Page-local and
-  // non-persisted like the severity scope: survives in-page reloads, resets on visit.
-  let trendWindowDays = null;
+  // Trends timeframe (days back from now; null = full history). Recalled from
+  // localStorage across visits; falls back to All where storage is unavailable.
+  let trendWindowDays = loadTrendWindow();
 
   await load();
 
@@ -266,7 +288,7 @@ export async function renderMttr(main, _params, ctx) {
         el("button", {
           type: "button", class: "seg-btn seg-btn--sm",
           "aria-pressed": String(days === trendWindowDays),
-          onclick: () => { trendWindowDays = days; renderCharts(trends, mttr); },
+          onclick: () => { trendWindowDays = days; saveTrendWindow(label); renderCharts(trends, mttr); },
         }, label)));
     const sectionHead = el("div", { class: "section-head" }, sectionLabel("Trends"), segRow);
 
