@@ -5605,7 +5605,11 @@ var Server = (() => {
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
-        severities: readSeverities(p)
+        severities: readSeverities(p),
+        // The fast-lane window is an input of the payload (thresholdDays, split, tail
+        // median), so it belongs in the key: entries minted under another window — or under
+        // the pre-setting constant, which no dataVersion bump ever retired — can't be served.
+        fastLane: getFastLaneDays2()
       },
       () => mttrData(p),
       3600
@@ -5625,7 +5629,9 @@ var Server = (() => {
       "mttrByDomain2",
       {
         supportGroup: String((_a = p == null ? void 0 : p["supportGroup"]) != null ? _a : ""),
-        severities: readSeverities(p)
+        severities: readSeverities(p),
+        // Same reasoning as cachedMttrData: tailMedian/thresholdDays depend on the window.
+        fastLane: getFastLaneDays2()
       },
       () => mttrByDomainData(p),
       3600
