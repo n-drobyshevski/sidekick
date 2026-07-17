@@ -41,6 +41,27 @@ function saveTrendWindow(label) {
   }
 }
 
+// X-axis width presets for the survival curve (weeks). Purely a view zoom — the full
+// curve is already in the payload, so switching windows never re-requests. Persisted by
+// label like the Trends window; a stale/blocked value degrades to the widest (30w).
+const SURVIVAL_WINDOWS = [["30w", 30], ["15w", 15], ["5w", 5]];
+const SURVIVAL_WEEKS_KEY = "mttrSurvivalWeeks";
+function loadSurvivalWeeks() {
+  try {
+    const hit = SURVIVAL_WINDOWS.find(([label]) => label === localStorage.getItem(SURVIVAL_WEEKS_KEY));
+    return hit ? hit[1] : 30;
+  } catch {
+    return 30;
+  }
+}
+function saveSurvivalWeeks(label) {
+  try {
+    localStorage.setItem(SURVIVAL_WEEKS_KEY, label);
+  } catch {
+    // Sandbox without storage — the choice simply won't survive the visit.
+  }
+}
+
 // Open-past-SLA cell, shared by the hero mini, the per-severity table, and the
 // by-domain table: "632 of 816 open (77%)" — the denominator makes the population
 // explicit instead of leaving the breached count to be read against whatever total the
@@ -154,6 +175,8 @@ export async function renderMttr(main, _params, ctx) {
   // Trends timeframe (days back from now; null = full history). Recalled from
   // localStorage across visits; falls back to All where storage is unavailable.
   let trendWindowDays = loadTrendWindow();
+  // Survival-curve x-axis window (weeks); recalled across visits, defaults to 30w.
+  let survivalWeeks = loadSurvivalWeeks();
 
   await load();
 
@@ -489,18 +512,31 @@ export async function renderMttr(main, _params, ctx) {
     clear(survivalHost);
     const rem = mttr.remediation;
     if (!rem) return;
-    survivalHost.append(sectionLabel("Remediation survival (Kaplan–Meier)"));
     if (!rem.km?.curve?.length) {
+      // No curve to zoom — plain label, no window toggle.
+      survivalHost.append(sectionLabel("Remediation survival (Kaplan–Meier)"));
       survivalHost.append(el("p", { class: "muted small" },
         "Not enough resolved findings yet to draw a survival curve — it appears once the " +
         "first remediation is recorded."));
       return;
     }
+    // Compact x-axis width toggle inline with the section label — the same segmented
+    // pattern as the Trends timeframe control. Purely a view zoom: clicking repaints the
+    // closed-over curve at a new x-axis max, no RPC.
+    const segRow = el("div", { class: "seg-row", role: "group", "aria-label": "Survival window" },
+      ...SURVIVAL_WINDOWS.map(([label, weeks]) =>
+        el("button", {
+          type: "button", class: "seg-btn seg-btn--sm",
+          "aria-pressed": String(weeks === survivalWeeks),
+          onclick: () => { survivalWeeks = weeks; saveSurvivalWeeks(label); renderSurvivalCurve(mttr); },
+        }, label)));
+    survivalHost.append(el("div", { class: "section-head" },
+      sectionLabel("Remediation survival (Kaplan–Meier)"), segRow));
     const canvas = el("canvas", { id: "survival-curve" });
     survivalHost.append(
       el("div", { class: "chart-card" },
         el("h3", {}, "S(t): share of findings still open"),
-        el("div", { class: "chart-box" }, canvas),
+        el("div", { class: "chart-box chart-box--tall" }, canvas),
         el("p", { class: "chart-caption muted" },
           "Time from first detection to remediation. Markers: Median (closed), Median (KM, " +
           "all), Mean (closed), Mean (KM · RMST, all)."),
@@ -512,7 +548,7 @@ export async function renderMttr(main, _params, ctx) {
         median: rem.km.median,
         naiveMean: rem.km.naiveMean,
         mean: rem.km.mean,
-      });
+      }, { maxWeeks: survivalWeeks });
     });
   }
 
