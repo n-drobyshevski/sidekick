@@ -159,6 +159,187 @@ export function openBySeverityTrend(
   });
 }
 
+export interface OpenByGroupPoint {
+  date: string; // the scan ts (ISO)
+  byGroup: Record<string, number>; // open count per group value as of `date`
+}
+
+/**
+ * Open findings per breakdown group over time — the data behind the Overview
+ * "Breakdown" group-evolution line chart. Generalizes `openBySeverityTrend` from the
+ * fixed severity key to an arbitrary `keyOf` group value: for each saved flat-scan
+ * timestamp it replays the durable ledger and counts, per group, the vulns open as of
+ * that instant (the same open predicate `trendFromFrames` uses: first_seen <= ts and
+ * not resolved by ts).
+ *
+ * Group value is `keyOf(r)`; blank/missing folds to "(none)" (matching `groupTree`'s
+ * normalization). Only values in `groups` keep their own series; everything else folds
+ * into `otherLabel` (default "Other") when `includeOther` (default true), else drops.
+ *
+ * GAS-first (no Python fixture parity — mirrors `openBySeverityTrend`): a UI-only
+ * aggregation of the same durable rows, kept separate from `trendFromFrames` so its
+ * parity-tested shape stays untouched.
+ *
+ * scans: rows with {ts, shape}; base: ledger+episode rows with {first_seen, resolved_at,
+ * severity} plus whatever column `keyOf` reads. opts.severities (optional) restricts to
+ * those + UNKNOWN, as elsewhere.
+ */
+export function openByGroupTrend(
+  scans: Rec[],
+  base: Rec[],
+  keyOf: (r: Rec) => string,
+  groups: string[],
+  opts: { severities?: string[] | null; includeOther?: boolean; otherLabel?: string } = {},
+): OpenByGroupPoint[] {
+  const severities = opts.severities ?? null;
+  const includeOther = opts.includeOther ?? true;
+  const otherLabel = opts.otherLabel ?? "Other";
+
+  let rows = base;
+  if (severities !== null && base.length) {
+    const keep = new Set([...severities, "UNKNOWN"]);
+    rows = base.filter((r) => keep.has(normalizeSeverity(r["severity"])));
+  }
+  if (!scans.length || !rows.length) return [];
+
+  const flatTs = scans
+    .filter((s) => s["shape"] === "flat")
+    .map((s) => ({ iso: String(s["ts"]), ms: parseTs(s["ts"]) }))
+    .filter((t): t is { iso: string; ms: number } => t.ms !== null)
+    .sort((a, b) => a.ms - b.ms);
+  if (!flatTs.length) return [];
+
+  const inGroup = new Set(groups);
+  const parsed = rows.map((r) => {
+    const raw = keyOf(r);
+    const value = raw.trim() === "" ? "(none)" : raw;
+    const known = inGroup.has(value);
+    return {
+      first: parseTs(r["first_seen"]),
+      resolvedAt: parseTs(r["resolved_at"]),
+      group: known ? value : otherLabel,
+      kept: known || includeOther,
+    };
+  });
+
+  return flatTs.map((ts) => {
+    const byGroup: Record<string, number> = {};
+    for (const r of parsed) {
+      if (!r.kept) continue;
+      const isOpen =
+        r.first !== null &&
+        r.first <= ts.ms &&
+        (r.resolvedAt === null || r.resolvedAt > ts.ms);
+      if (isOpen) byGroup[r.group] = (byGroup[r.group] ?? 0) + 1;
+    }
+    return { date: ts.iso, byGroup };
+  });
+}
+
+export interface MttrByGroupPoint {
+  date: string; // the scan ts (ISO)
+  byGroup: Record<string, number | null>; // median mttr_days as of `date`; null = no resolved rows yet
+}
+
+/**
+ * Median MTTR (days) per breakdown group over time — the data behind the MTTR page
+ * "MTTR by domain" line chart. The remediation sibling of `openByGroupTrend`: for each
+ * saved flat-scan timestamp it replays the durable ledger and computes, per group, the
+ * median `mttr_days` over that group's rows resolved as of that instant (the same
+ * cumulative resolved predicate `trendFromFrames` uses: resolved_at <= ts, stored
+ * mttr_days sampled directly since it's fixed once resolved).
+ *
+ * Group value is `keyOf(r)`; blank/missing folds to "(none)" (matching `groupTree`'s
+ * normalization). Only values in `groups` keep their own series; everything else folds
+ * into `otherLabel` (default "Other") when `includeOther` (default true), else drops —
+ * Other's median is over the pooled remainder rows, never a sum. Every name in `groups`
+ * (plus `otherLabel` when at least one row folded into it) gets a `byGroup` entry at
+ * every point, `null` until it has a resolution — so leading gaps stay explicit.
+ *
+ * GAS-first (no Python fixture parity — mirrors `openByGroupTrend`): a UI-only
+ * aggregation of the same durable rows, kept separate from `trendFromFrames` so its
+ * parity-tested shape stays untouched.
+ *
+ * scans: rows with {ts, shape}; base: ledger+episode rows with {resolved_at, mttr_days,
+ * severity} plus whatever column `keyOf` reads. opts.severities (optional) restricts to
+ * those + UNKNOWN, as elsewhere. opts.minMttrDays (optional) pools only samples with
+ * mttr_days strictly above it — the per-group analogue of `fastLaneSplit`'s tail median,
+ * so auto-patched fast-lane resolutions don't drag a domain's median toward zero.
+ */
+export function medianMttrByGroupTrend(
+  scans: Rec[],
+  base: Rec[],
+  keyOf: (r: Rec) => string,
+  groups: string[],
+  opts: {
+    severities?: string[] | null;
+    includeOther?: boolean;
+    otherLabel?: string;
+    minMttrDays?: number | null;
+  } = {},
+): MttrByGroupPoint[] {
+  const severities = opts.severities ?? null;
+  const includeOther = opts.includeOther ?? true;
+  const otherLabel = opts.otherLabel ?? "Other";
+  const minMttrDays = opts.minMttrDays ?? null;
+
+  let rows = base;
+  if (severities !== null && base.length) {
+    const keep = new Set([...severities, "UNKNOWN"]);
+    rows = base.filter((r) => keep.has(normalizeSeverity(r["severity"])));
+  }
+  if (!scans.length || !rows.length) return [];
+
+  const flatTs = scans
+    .filter((s) => s["shape"] === "flat")
+    .map((s) => ({ iso: String(s["ts"]), ms: parseTs(s["ts"]) }))
+    .filter((t): t is { iso: string; ms: number } => t.ms !== null)
+    .sort((a, b) => a.ms - b.ms);
+  if (!flatTs.length) return [];
+
+  const inGroup = new Set(groups);
+  const parsed = rows.map((r) => {
+    const raw = keyOf(r);
+    const value = raw.trim() === "" ? "(none)" : raw;
+    const known = inGroup.has(value);
+    return {
+      resolvedAt: parseTs(r["resolved_at"]),
+      mttr: typeof r["mttr_days"] === "number" && !Number.isNaN(r["mttr_days"])
+        ? (r["mttr_days"] as number)
+        : null,
+      group: known ? value : otherLabel,
+      folded: !known && includeOther,
+      kept: known || includeOther,
+    };
+  });
+
+  // Emit a series for every requested group always, plus Other only when a row folded
+  // into it — so a group with no resolution yet reads as an explicit leading `null`.
+  const hasOther = parsed.some((r) => r.folded);
+  const names = hasOther ? [...groups, otherLabel] : groups;
+
+  return flatTs.map((ts) => {
+    const samples: Record<string, number[]> = {};
+    for (const r of parsed) {
+      if (!r.kept || r.mttr === null) continue;
+      if (minMttrDays !== null && r.mttr <= minMttrDays) continue;
+      if (r.resolvedAt === null || r.resolvedAt > ts.ms) continue;
+      (samples[r.group] ??= []).push(r.mttr);
+    }
+    const byGroup: Record<string, number | null> = {};
+    for (const name of names) {
+      const s = samples[name];
+      if (s && s.length) {
+        const med = median(s)!;
+        byGroup[name] = Math.round(med * 1000) / 1000;
+      } else {
+        byGroup[name] = null;
+      }
+    }
+    return { date: ts.iso, byGroup };
+  });
+}
+
 export type BackfilledTrendPoint = TrendPoint & { reconstructed: boolean };
 
 /**

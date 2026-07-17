@@ -275,6 +275,23 @@ export const GROUP_COLUMNS: Record<string, string> = {
   cve: "name",
 };
 
+// Ledger analogue of GROUP_COLUMNS for the historical group trend: each breakdown
+// dimension maps to the base-row (LedgerRow) column carrying its value. _domain and
+// _supportGroup are server-attached before the trend runs; the rest are native columns.
+//
+// `os` is intentionally absent: LedgerRow has no operating-system column (reconcile.ts),
+// so a historical OS trend is impossible without a ledger schema change. The UI degrades
+// to an honest empty state when the top-level dimension is `os`.
+export const GROUP_BASE_FIELDS: Record<string, string> = {
+  domain: "_domain",
+  supportGroup: "_supportGroup",
+  asset: "asset_name",
+  atype: "asset_type",
+  cloud: "cloud",
+  subscription: "subscription_name",
+  cve: "cve",
+};
+
 export interface GroupNode {
   key: string; // the group value ("(none)" for blank/missing)
   dim: string; // the dimension this level groups by

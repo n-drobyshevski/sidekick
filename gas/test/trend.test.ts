@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  openBySeverityTrend, trendFromBase, trendFromFrames, withOpenPastSla, withTailMedian,
+  medianMttrByGroupTrend,
+  openByGroupTrend, openBySeverityTrend, trendFromBase, trendFromFrames,
+  withOpenPastSla, withTailMedian,
 } from "../src/domain/trend";
+import type { Rec } from "../src/domain/util";
 import { expectParity, fixture } from "./helpers";
 
 describe("trendFromFrames (fixture parity)", () => {
@@ -56,6 +59,232 @@ describe("openBySeverityTrend", () => {
     expect(openBySeverityTrend([{ ts: "2026-01-01T00:00:00Z", shape: "grouped" }], base)).toEqual([]);
     expect(openBySeverityTrend([], base)).toEqual([]);
     expect(openBySeverityTrend(scans, [])).toEqual([]);
+  });
+});
+
+describe("openByGroupTrend", () => {
+  // Two flat scans a day apart. keyOf reads the `asset` field; groups ["web", "db"] each
+  // keep their own series, everything else folds into "Other".
+  const scans = [
+    { ts: "2026-01-01T00:00:00Z", shape: "flat" },
+    { ts: "2026-01-02T00:00:00Z", shape: "flat" },
+  ];
+  const keyOf = (r: Rec) => String(r["asset"] ?? "");
+  const groups = ["web", "db"];
+  const open = (asset: unknown, over: Rec = {}) => ({
+    asset, severity: "HIGH", first_seen: "2025-12-31T00:00:00Z", resolved_at: null, ...over,
+  });
+
+  it("returns [] with no scans or no base rows", () => {
+    expect(openByGroupTrend([], [open("web")], keyOf, groups)).toEqual([]);
+    expect(openByGroupTrend(scans, [], keyOf, groups)).toEqual([]);
+  });
+
+  it("counts open per group as of a single flat scan", () => {
+    const base = [open("web"), open("web"), open("db")];
+    expect(openByGroupTrend([scans[0]], base, keyOf, groups)).toEqual([
+      { date: "2026-01-01T00:00:00Z", byGroup: { web: 2, db: 1 } },
+    ]);
+  });
+
+  it("drops a row from its group at the scan after it resolves", () => {
+    const base = [
+      open("web", { resolved_at: "2026-01-01T12:00:00Z" }),
+      open("db"),
+    ];
+    expect(openByGroupTrend(scans, base, keyOf, groups)).toEqual([
+      { date: "2026-01-01T00:00:00Z", byGroup: { web: 1, db: 1 } },
+      { date: "2026-01-02T00:00:00Z", byGroup: { db: 1 } },
+    ]);
+  });
+
+  it("ignores non-flat scans (no flat scan -> [])", () => {
+    expect(
+      openByGroupTrend([{ ts: "2026-01-01T00:00:00Z", shape: "grouped" }], [open("web")], keyOf, groups),
+    ).toEqual([]);
+  });
+
+  it("normalizes null / blank group values to (none)", () => {
+    const base = [open(null), open(""), open("web")];
+    // "(none)" only keeps its own series when it's one of the requested groups.
+    expect(openByGroupTrend([scans[0]], base, keyOf, ["(none)", "web"])).toEqual([
+      { date: "2026-01-01T00:00:00Z", byGroup: { "(none)": 2, web: 1 } },
+    ]);
+  });
+
+  it("folds values outside groups into Other; includeOther:false drops them", () => {
+    const base = [open("web"), open("cache"), open("queue")];
+    expect(openByGroupTrend([scans[0]], base, keyOf, groups)).toEqual([
+      { date: "2026-01-01T00:00:00Z", byGroup: { web: 1, Other: 2 } },
+    ]);
+    expect(openByGroupTrend([scans[0]], base, keyOf, groups, { includeOther: false })).toEqual([
+      { date: "2026-01-01T00:00:00Z", byGroup: { web: 1 } },
+    ]);
+  });
+
+  it("honors a custom otherLabel", () => {
+    expect(
+      openByGroupTrend([scans[0]], [open("cache")], keyOf, groups, { otherLabel: "Rest" }),
+    ).toEqual([{ date: "2026-01-01T00:00:00Z", byGroup: { Rest: 1 } }]);
+  });
+
+  it("scopes to the chosen severities plus UNKNOWN", () => {
+    const base = [
+      open("web", { severity: "CRITICAL" }),
+      open("web", { severity: "HIGH" }),   // filtered out when scoped to CRITICAL
+      open("db", { severity: "UNKNOWN" }), // UNKNOWN is never hidden
+    ];
+    expect(openByGroupTrend([scans[0]], base, keyOf, groups, { severities: ["CRITICAL"] })).toEqual([
+      { date: "2026-01-01T00:00:00Z", byGroup: { web: 1, db: 1 } },
+    ]);
+  });
+});
+
+describe("medianMttrByGroupTrend", () => {
+  // Two flat scans a day apart. keyOf reads the `asset` field; groups ["web", "db"] each
+  // keep their own series, everything else folds into "Other". `res` mints a resolved row
+  // with a fixed mttr sample; resolved_at null (+ mttr null) is an open row.
+  const scans = [
+    { ts: "2026-01-01T00:00:00Z", shape: "flat" },
+    { ts: "2026-01-02T00:00:00Z", shape: "flat" },
+  ];
+  const keyOf = (r: Rec) => String(r["asset"] ?? "");
+  const groups = ["web", "db"];
+  const res = (
+    asset: unknown,
+    mttr: number | null,
+    resolved_at: string | null,
+    over: Rec = {},
+  ) => ({
+    asset, severity: "HIGH", first_seen: "2025-12-31T00:00:00Z", resolved_at, mttr_days: mttr, ...over,
+  });
+
+  it("computes the exact median per group per ts (odd + even counts, 3-dp rounding)", () => {
+    const base = [
+      res("web", 2, "2026-01-01T00:00:00Z"),
+      res("web", 9, "2026-01-01T00:00:00Z"),
+      res("web", 4, "2026-01-01T00:00:00Z"),     // odd -> middle sample 4
+      res("db", 1, "2026-01-01T00:00:00Z"),
+      res("db", 1.3334, "2026-01-01T00:00:00Z"), // even -> (1 + 1.3334)/2 = 1.1667 -> 1.167
+    ];
+    expect(medianMttrByGroupTrend([scans[1]], base, keyOf, groups)).toEqual([
+      { date: "2026-01-02T00:00:00Z", byGroup: { web: 4, db: 1.167 } },
+    ]);
+  });
+
+  it("emits null before a group's first resolution, then a number once one resolves <= ts", () => {
+    // web resolves at noon on Jan 1 (after scan 1, before scan 2); db never resolves.
+    const base = [res("web", 3, "2026-01-01T12:00:00Z")];
+    expect(medianMttrByGroupTrend(scans, base, keyOf, groups)).toEqual([
+      { date: "2026-01-01T00:00:00Z", byGroup: { web: null, db: null } },
+      { date: "2026-01-02T00:00:00Z", byGroup: { web: 3, db: null } },
+    ]);
+  });
+
+  it("excludes rows resolved after ts, includes them (and the <= boundary) once resolved", () => {
+    const base = [
+      res("web", 5, "2026-01-01T00:00:00Z"),  // resolved exactly at scan 1 -> included (<=)
+      res("web", 7, "2026-01-01T18:00:00Z"),  // resolved after scan 1 -> in only at scan 2
+    ];
+    expect(medianMttrByGroupTrend(scans, base, keyOf, groups)).toEqual([
+      { date: "2026-01-01T00:00:00Z", byGroup: { web: 5, db: null } }, // just [5]
+      { date: "2026-01-02T00:00:00Z", byGroup: { web: 6, db: null } }, // median [5,7]
+    ]);
+  });
+
+  it("never pools open rows or resolved rows without an mttr sample", () => {
+    const base = [
+      res("web", 4, "2026-01-01T00:00:00Z"),
+      res("web", null, null),                   // still open -> skipped
+      res("db", null, "2026-01-01T00:00:00Z"),  // resolved but mttr null -> skipped
+    ];
+    expect(medianMttrByGroupTrend([scans[1]], base, keyOf, groups)).toEqual([
+      { date: "2026-01-02T00:00:00Z", byGroup: { web: 4, db: null } },
+    ]);
+  });
+
+  it("scopes to the chosen severities plus UNKNOWN", () => {
+    const base = [
+      res("web", 2, "2026-01-01T00:00:00Z", { severity: "CRITICAL" }),
+      res("web", 10, "2026-01-01T00:00:00Z", { severity: "HIGH" }),   // filtered out
+      res("db", 6, "2026-01-01T00:00:00Z", { severity: "UNKNOWN" }),  // never hidden
+    ];
+    expect(medianMttrByGroupTrend([scans[1]], base, keyOf, groups, { severities: ["CRITICAL"] })).toEqual([
+      { date: "2026-01-02T00:00:00Z", byGroup: { web: 2, db: 6 } },
+    ]);
+  });
+
+  it("pools Other's median over the remainder (not a sum); includeOther:false drops; custom otherLabel", () => {
+    const base = [
+      res("web", 4, "2026-01-01T00:00:00Z"),
+      res("cache", 2, "2026-01-01T00:00:00Z"),
+      res("queue", 8, "2026-01-01T00:00:00Z"),
+    ];
+    // cache + queue fold to Other -> median([2, 8]) = 5, never the sum 10.
+    expect(medianMttrByGroupTrend([scans[1]], base, keyOf, groups)).toEqual([
+      { date: "2026-01-02T00:00:00Z", byGroup: { web: 4, db: null, Other: 5 } },
+    ]);
+    expect(medianMttrByGroupTrend([scans[1]], base, keyOf, groups, { includeOther: false })).toEqual([
+      { date: "2026-01-02T00:00:00Z", byGroup: { web: 4, db: null } },
+    ]);
+    expect(
+      medianMttrByGroupTrend(
+        [scans[1]],
+        [res("cache", 2, "2026-01-01T00:00:00Z"), res("queue", 8, "2026-01-01T00:00:00Z")],
+        keyOf,
+        groups,
+        { otherLabel: "Rest" },
+      ),
+    ).toEqual([{ date: "2026-01-02T00:00:00Z", byGroup: { web: null, db: null, Rest: 5 } }]);
+  });
+
+  it("normalizes null / blank group values to (none)", () => {
+    const base = [
+      res(null, 3, "2026-01-01T00:00:00Z"),
+      res("", 5, "2026-01-01T00:00:00Z"),
+      res("web", 9, "2026-01-01T00:00:00Z"),
+    ];
+    // "(none)" only keeps its own series when it's one of the requested groups; median([3,5]) = 4.
+    expect(medianMttrByGroupTrend([scans[1]], base, keyOf, ["(none)", "web"])).toEqual([
+      { date: "2026-01-02T00:00:00Z", byGroup: { "(none)": 4, web: 9 } },
+    ]);
+  });
+
+  it("ignores non-flat scans and returns [] for empty inputs", () => {
+    expect(
+      medianMttrByGroupTrend(
+        [{ ts: "2026-01-01T00:00:00Z", shape: "grouped" }],
+        [res("web", 3, "2026-01-01T00:00:00Z")],
+        keyOf,
+        groups,
+      ),
+    ).toEqual([]);
+    expect(medianMttrByGroupTrend([], [res("web", 3, "2026-01-01T00:00:00Z")], keyOf, groups)).toEqual([]);
+    expect(medianMttrByGroupTrend(scans, [], keyOf, groups)).toEqual([]);
+  });
+
+  it("minMttrDays drops fast-lane samples (mttr <= threshold), strictly", () => {
+    const base = [
+      res("web", 0.5, "2026-01-01T00:00:00Z"), // fast lane — dropped
+      res("web", 1, "2026-01-01T00:00:00Z"),   // exactly at threshold — dropped (strict >)
+      res("web", 6, "2026-01-01T00:00:00Z"),
+      res("web", 10, "2026-01-01T00:00:00Z"),  // tail median = (6+10)/2 = 8
+      res("db", 0.2, "2026-01-01T00:00:00Z"),  // db has only fast-lane resolutions -> null
+    ];
+    expect(medianMttrByGroupTrend([scans[1]], base, keyOf, groups, { minMttrDays: 1 })).toEqual([
+      { date: "2026-01-02T00:00:00Z", byGroup: { web: 8, db: null } },
+    ]);
+  });
+
+  it("minMttrDays applies to the pooled Other remainder too", () => {
+    const base = [
+      res("cache", 0.5, "2026-01-01T00:00:00Z"), // dropped from the pool
+      res("cache", 4, "2026-01-01T00:00:00Z"),
+      res("queue", 12, "2026-01-01T00:00:00Z"),  // Other tail median = (4+12)/2 = 8
+    ];
+    expect(medianMttrByGroupTrend([scans[1]], base, keyOf, groups, { minMttrDays: 1 })).toEqual([
+      { date: "2026-01-02T00:00:00Z", byGroup: { web: null, db: null, Other: 8 } },
+    ]);
   });
 });
 

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   AGE_BUCKET_LABELS,
   EPSS_PRIORITY_THRESHOLD,
+  GROUP_BASE_FIELDS,
+  GROUP_COLUMNS,
   ageBuckets,
   exploitSummary,
   groupTree,
@@ -189,6 +191,19 @@ describe("oldestOpen", () => {
 
   it("empty base yields empty lists", () => {
     expect(oldestOpen([])).toEqual({ findings: [], byAsset: [], bySupportGroup: [], byDomain: [] });
+  });
+});
+
+describe("GROUP_BASE_FIELDS", () => {
+  it("omits os (no OS column in the ledger — no historical OS trend)", () => {
+    expect("os" in GROUP_BASE_FIELDS).toBe(false);
+    expect(GROUP_BASE_FIELDS["os"]).toBeUndefined();
+  });
+
+  it("covers exactly the groupable dimensions minus os", () => {
+    expect(new Set(Object.keys(GROUP_BASE_FIELDS))).toEqual(
+      new Set(Object.keys(GROUP_COLUMNS).filter((k) => k !== "os")),
+    );
   });
 });
 

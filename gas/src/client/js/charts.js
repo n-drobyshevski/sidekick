@@ -5,6 +5,7 @@
 // controller/scale/plugin and roughly double the bundle's Chart.js footprint.
 
 import {
+  ArcElement,
   BarController,
   BarElement,
   CategoryScale,
@@ -14,13 +15,14 @@ import {
   LinearScale,
   LineController,
   LineElement,
+  PieController,
   PointElement,
   Tooltip,
 } from "chart.js";
 
 Chart.register(
-  BarController, BarElement, CategoryScale, Filler, Legend,
-  LinearScale, LineController, LineElement, PointElement, Tooltip,
+  ArcElement, BarController, BarElement, CategoryScale, Filler, Legend,
+  LinearScale, LineController, LineElement, PieController, PointElement, Tooltip,
 );
 
 const FONT = {
@@ -400,5 +402,179 @@ export function openResolvedLines(canvas, points, { xRange } = {}) {
     },
     options: opts,
     plugins: band ? [band] : [],
+  });
+}
+
+// ------------------------------------------------------------------- grouping charts
+
+// Categorical hues for the grouping charts (pie + group trend). Deliberately kept OUTSIDE
+// the severity red/orange/amber band (see --sev-* in styles.css) so a group is never read
+// as a severity; #2563eb is the shared brand/data blue. This order was validated with the
+// dataviz skill's palette check on the light surface: all eight sit in the lightness band
+// and clear 3:1 on the surface, worst adjacent CVD ΔE 10.3, worst adjacent normal-vision
+// ΔE 22.6. A pie is an all-pairs form, so eight hues can't all separate under CVD at once —
+// the on-arc %, legend point-styles, and tooltip carry identity when a pair is close.
+// Kept in sync with --cat-* in styles.css by convention (canvas can't read CSS vars).
+const CATEGORICAL = [
+  "#2563eb", "#0d9488", "#c026d3", "#4d7c0f",
+  "#7c3aed", "#0891b2", "#db2777", "#9333ea",
+];
+// Neutral gray for the folded-in "Other" bucket — reads as "everything else", not a hue,
+// and never collides with a real group's color.
+const OTHER_COLOR = "#94a3b8";
+// One distinct marker per group series so each vertex carries a shape cue, not color alone
+// (mirrors SEV_POINT_STYLE). Cycled only past eight, which the caller never reaches.
+const GROUP_POINT_STYLES = [
+  "circle", "triangle", "rect", "rectRot",
+  "star", "crossRot", "cross", "dash",
+];
+
+/**
+ * Canonical name->color Map for a set of group names, so the pie and the trend line paint
+ * the same group with the same hue. Names take CATEGORICAL in fixed order (never cycled —
+ * the caller caps at eight and folds the rest into `otherLabel`); `otherLabel` always maps
+ * to the neutral OTHER_COLOR.
+ */
+export function groupPalette(names, otherLabel = "Other") {
+  const map = new Map();
+  names.forEach((name, i) => map.set(name, CATEGORICAL[i % CATEGORICAL.length]));
+  map.set(otherLabel, OTHER_COLOR);
+  return map;
+}
+
+// Draws each slice's share as a % at its arc centroid, but only for slices with enough
+// sweep to hold a legible label (>= ~8%); the legend, tooltip, and aria label cover the
+// thin ones. Modeled on barEndLabels. White text reads on every CATEGORICAL/OTHER fill.
+const arcPercentLabels = {
+  id: "arcPercentLabels",
+  afterDatasetsDraw(chart) {
+    const { ctx } = chart;
+    const meta = chart.getDatasetMeta(0);
+    const data = chart.data.datasets[0].data;
+    const total = data.reduce((a, b) => a + (Number(b) || 0), 0);
+    if (!total) return;
+    ctx.save();
+    ctx.font = "600 11px " + FONT.family;
+    ctx.fillStyle = "#ffffff";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    meta.data.forEach((arc, i) => {
+      const share = (Number(data[i]) || 0) / total;
+      if (share < 0.08) return; // too thin for a label; legend + tooltip cover it
+      const p = arc.tooltipPosition();
+      ctx.fillText(Math.round(share * 100) + "%", p.x, p.y);
+    });
+    ctx.restore();
+  },
+};
+
+/**
+ * Pie partitioning a population across the top-level groups. `slices` = [{label, value,
+ * color, detail?}] (the caller appends an "Other" slice when present). Plain pie, not a
+ * doughnut — the total already lives in the KPI band. Meaning never rides on color alone: a
+ * right-side legend (point-style swatches), on-arc percentages, tooltip, and a text
+ * alternative all name each group. `opts.subject` is the leading noun of the text
+ * alternative (default "Open findings by group"); a slice's optional `detail` string is
+ * shown as a second tooltip line and folded into that slice's aria part.
+ */
+export function groupPie(canvas, slices, opts = {}) {
+  destroyExisting(canvas);
+  const subject = opts.subject || "Open findings by group";
+  const total = slices.reduce((a, s) => a + (Number(s.value) || 0), 0);
+  const parts = slices.map((s) => {
+    const pct = total ? Math.round((Number(s.value) || 0) / total * 100) : 0;
+    const base = s.label + " " + localeNum(s.value) + " (" + pct + "%)";
+    return s.detail ? base + ", " + s.detail : base;
+  });
+  describe(canvas, subject + ": " + (parts.join(", ") || "none") + ".");
+  return new Chart(canvas, {
+    type: "pie",
+    data: {
+      labels: slices.map((s) => s.label),
+      datasets: [
+        {
+          data: slices.map((s) => s.value),
+          backgroundColor: slices.map((s) => s.color),
+          borderColor: "#ffffff",
+          borderWidth: 1.5,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: reducedMotion ? false : { duration: 300 },
+      plugins: {
+        legend: {
+          display: true,
+          position: "right",
+          labels: { font: FONT, color: INK2, usePointStyle: true, boxWidth: 8 },
+        },
+        tooltip: {
+          backgroundColor: "#0a0a0a",
+          titleFont: FONT,
+          bodyFont: FONT,
+          cornerRadius: 6,
+          padding: 10,
+          callbacks: {
+            // Slice label is the tooltip title; the body adds the grouped count + share.
+            label: (ctx) => {
+              const v = Number(ctx.parsed) || 0;
+              const pct = total ? Math.round(v / total * 100) : 0;
+              return " " + localeNum(v) + " (" + pct + "%)";
+            },
+            // A second line carrying the slice's optional detail (e.g. that group's median
+            // MTTR) — undefined when the slice has none, so Breakdown slices are unchanged.
+            afterLabel: (ctx) => slices[ctx.dataIndex].detail,
+          },
+        },
+      },
+    },
+    plugins: [arcPercentLabels],
+  });
+}
+
+/**
+ * A value per group over time: one line per series, encoded by color + legend/tooltip
+ * label + a distinct point marker (never color alone). Mirrors severityTrendLines — a
+ * category x axis of ISO days, not the proportional day axis. `points` are
+ * `{ date, byGroup }` rows; `series` = [{name, color}] (Other last when present), the same
+ * canonical set the pie uses. `cfg`: `unit` labels the y axis and tooltip (default
+ * "findings", which adds no y-axis title); `nullAsGap` plots missing/`null` values as line
+ * breaks (spanGaps) rather than fake zeros — for a median that has no sample yet; `describe`
+ * overrides the text alternative.
+ */
+export function groupTrendLines(canvas, points, series, cfg = {}) {
+  destroyExisting(canvas);
+  const { unit = "findings", nullAsGap = false, describe: aria } = cfg;
+  describe(canvas, aria || "Open findings per group over time.");
+  const opts = baseOptions(unit);
+  // A magnitude unit gets a y-axis title (mirrors trendLine); "findings" stays untitled,
+  // matching the Breakdown call site's original look.
+  if (unit !== "findings") {
+    opts.scales.y.title = { display: true, text: unit, font: FONT, color: INK2 };
+  }
+  opts.plugins.legend = {
+    display: true,
+    labels: { font: FONT, color: INK2, boxWidth: 12, usePointStyle: true },
+  };
+  return new Chart(canvas, {
+    type: "line",
+    data: {
+      labels: points.map((p) => p.date.slice(0, 10)),
+      datasets: series.map((s, i) => ({
+        label: s.name,
+        data: points.map((p) => (nullAsGap ? (p.byGroup[s.name] ?? null) : (p.byGroup[s.name] || 0))),
+        spanGaps: nullAsGap,
+        borderColor: s.color,
+        backgroundColor: s.color,
+        pointStyle: GROUP_POINT_STYLES[i % GROUP_POINT_STYLES.length],
+        pointRadius: points.length > 40 ? 0 : 3,
+        pointHoverRadius: 4,
+        borderWidth: 2,
+        tension: 0.25,
+      })),
+    },
+    options: opts,
   });
 }
