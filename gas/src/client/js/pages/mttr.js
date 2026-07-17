@@ -782,7 +782,11 @@ export async function renderMttr(main, _params, ctx) {
           "observed lifecycle, treating still-open findings as censored. \"≥\" marks a " +
           "lower bound when the curve hadn't fully decayed to zero by then."],
         kmSub),
-      statRow("KM median (actionable)", fmtKmMedian(kmA),
+      // The actionable clock only tells you something when findings awaiting a vendor fix
+      // are in scope; with them hidden (show_no_fix off) the population is already
+      // fix-bearing, so this row would just restate the from-detection figure — drop it
+      // (el() skips null children).
+      boot.settings.showNoFix === false ? null : statRow("KM median (actionable)", fmtKmMedian(kmA),
         ["The same Kaplan–Meier median, but the clock starts when a vendor fix became " +
           "available rather than at first detection — so a fix that arrives late doesn't " +
           "count against the team. Findings still awaiting a vendor fix don't count at all."],
