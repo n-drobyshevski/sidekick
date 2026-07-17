@@ -81,6 +81,15 @@ export function withAutoCompact(settings: Rec, enabled: boolean): Rec {
   return { ...settings, auto_compact: Boolean(enabled) };
 }
 
+export function getShowNoFix(settings: Rec): boolean {
+  const val = "show_no_fix" in settings ? settings["show_no_fix"] : true;
+  return typeof val === "boolean" ? val : true;
+}
+
+export function withShowNoFix(settings: Rec, enabled: boolean): Rec {
+  return { ...settings, show_no_fix: Boolean(enabled) };
+}
+
 /** Structurally valid domain items only (non-dict / blank-name entries dropped). */
 export function cleanDomainItems(items: unknown): Rec[] {
   if (!Array.isArray(items)) return [];

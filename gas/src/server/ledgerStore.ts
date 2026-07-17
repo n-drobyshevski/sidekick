@@ -292,8 +292,14 @@ export function loadBaseRows(now?: number): BaseRow[] {
 
 export function loadTrend(
   severities: string[] | null = null,
+  // When false (the global "show findings without a vendor fix" toggle is off) the open /
+  // KM-median series exclude findings awaiting a vendor fix as of each historical date; a
+  // fix that lands later re-admits the row at that point (see trend.awaitingFixAsOf). The
+  // resolved / median / SLA-burn / attainment series are untouched. Default true = today.
+  showNoFix = true,
 ): BackfilledTrendPoint[] {
   const state = loadState();
+  const hideNoFix = !showNoFix;
   // Backfill on: reconstruct pre-first-scan trend points from findings' first-seen dates so
   // the trend reaches back to the earliest detection, not just the first saved scan. The
   // compaction gate (maintenance.trendOf) deliberately keeps calling trendFromFrames instead,
@@ -306,12 +312,15 @@ export function loadTrend(
     // actionable_from feeds the actionable-clock open-past-SLA plus the SLA-burn / cohort-
     // attainment decorators below (deadline = actionable_from + severity target).
     actionable_from: r.actionable_from,
+    // fix_available_at feeds the as-of no-fix exclusion in the open / KM-median series when
+    // the show-no-fix toggle is off (hideNoFix); ignored on the default path.
+    fix_available_at: r.fix_available_at,
   }));
   const points = trendFromBase(
     state.scans.map((s) => ({ ts: s.ts, shape: s.shape })),
     base,
     severities,
-    { backfill: true },
+    { backfill: true, hideNoFix },
   );
   // Augment every point (real + reconstructed) with the series the resolved-only headline
   // hides, all from the same scoped base rows:
@@ -323,7 +332,7 @@ export function loadTrend(
   const withSla = withOpenPastSla(points, base, severities, "actionable_from");
   const withBurn = withSlaBurn(withSla, base, severities);
   const withAttainment = cohortSlaAttainment(withBurn, base, severities);
-  return withKmMedian(withAttainment, base, severities);
+  return withKmMedian(withAttainment, base, severities, { hideNoFix });
 }
 
 /** Per-severity counts of the second-newest flat scan (change-badge baseline). */

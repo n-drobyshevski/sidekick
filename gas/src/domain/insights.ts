@@ -253,6 +253,10 @@ export function movement(
       persisting += 1;
     }
   }
+  // Persisting is derived from `baseRows`, so when the caller passes a no-fix-filtered
+  // population (the show-no-fix toggle off) it filters with them. New/Resolved/Reopened come
+  // from the scan-wide reconcile deltas below and can't be re-split without re-reconciling the
+  // raw archives, so they stay scan-wide — the client's "scan-wide" caveat covers them.
   return {
     newCount: latestFlatScan.new_count,
     resolvedCount: latestFlatScan.resolved_count,

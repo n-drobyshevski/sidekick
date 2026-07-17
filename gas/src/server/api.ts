@@ -19,9 +19,11 @@ import { normalizeSeverity } from "../domain/severity";
 import {
   actionableView,
   awaitingVendorFix,
+  baseRowNoFix,
   kaplanMeier,
   mttrPercentiles,
   openPastSla,
+  recordNoFix,
   resolutionBuckets,
 } from "../domain/remediation";
 import { validateBundle } from "../domain/importMerge";
@@ -79,7 +81,10 @@ function mutate<T>(fn: () => T): ApiResult<T> {
 export function bootstrap(_p?: unknown): ApiResult {
   return run(() => ({
     // The core is a pure function of ledger + settings state — cached per DATA_VERSION.
-    ...(cached("bootstrapCore", null, bootstrapCore) as Rec),
+    // "bootstrapCore" → "bootstrapCore2": counts / unassigned / filterOptions now honor the
+    // show-no-fix toggle and settings gained `showNoFix`; params null → {showNoFix} so the
+    // on/off states cache separately and no stale old-shape entry survives the deploy.
+    ...(cached("bootstrapCore2", { showNoFix: settingsStore.getShowNoFix() }, bootstrapCore) as Rec),
     // Live per-request fields: never cached (activeJob changes every poll tick).
     dataVersion: dataVersion(),
     hasCredentials: hasWizCredentials(),
@@ -90,14 +95,17 @@ export function bootstrap(_p?: unknown): ApiResult {
 function bootstrapCore(): Rec {
   const scan = findings.currentScan();
   const latest = ledgerStore.latestScanRow();
+  const showNoFix = settingsStore.getShowNoFix();
+  // When the toggle is off, no-fix findings drop out of the bootstrap counts, the unassigned
+  // tally, and the filter-option domains, so the whole payload stays coherent with the
+  // filtered views. No-op on the default path.
+  const records = scan ? filterNoFixFrame(scan.records, showNoFix) : [];
   const counts: Record<string, number> = {};
   let unassignedCount = 0;
-  if (scan) {
-    for (const r of scan.records) {
-      const sev = String(r["_sev"]);
-      counts[sev] = (counts[sev] ?? 0) + 1;
-      if (r["_domain"] === UNASSIGNED) unassignedCount += 1;
-    }
+  for (const r of records) {
+    const sev = String(r["_sev"]);
+    counts[sev] = (counts[sev] ?? 0) + 1;
+    if (r["_domain"] === UNASSIGNED) unassignedCount += 1;
   }
   return {
     palette: {
@@ -112,6 +120,7 @@ function bootstrapCore(): Rec {
       displaySeverities: settingsStore.getDisplaySeverities(),
       retentionDays: settingsStore.getRetentionDays(),
       autoCompact: settingsStore.getAutoCompact(),
+      showNoFix,
       domains: settingsStore.getDomains(),
     },
     latestScan: latest
@@ -130,11 +139,11 @@ function bootstrapCore(): Rec {
     domainNames: domainNames(settingsStore.getDomains().items),
     filterOptions: scan
       ? {
-          statuses: findings.distinct(scan.records, "status"),
-          assetTypes: findings.distinct(scan.records, "vulnerableAsset.type"),
-          clouds: findings.distinct(scan.records, "vulnerableAsset.cloudPlatform"),
-          subscriptions: findings.distinct(scan.records, "vulnerableAsset.subscriptionName"),
-          supportGroups: findings.distinct(scan.records, "_supportGroup"),
+          statuses: findings.distinct(records, "status"),
+          assetTypes: findings.distinct(records, "vulnerableAsset.type"),
+          clouds: findings.distinct(records, "vulnerableAsset.cloudPlatform"),
+          subscriptions: findings.distinct(records, "vulnerableAsset.subscriptionName"),
+          supportGroups: findings.distinct(records, "_supportGroup"),
         }
       : { statuses: [], assetTypes: [], clouds: [], subscriptions: [], supportGroups: [] },
   };
@@ -162,7 +171,10 @@ export function getFindings(p?: unknown): ApiResult {
       supportGroups: (params["supportGroups"] as string[]) ?? [],
       q: (params["q"] as string) ?? "",
     };
-    const filtered = findings.applyFilters(scan.records, filters);
+    const filtered = filterNoFixFrame(
+      findings.applyFilters(scan.records, filters),
+      settingsStore.getShowNoFix(),
+    );
 
     const counts: Record<string, number> = {};
     for (const r of filtered) {
@@ -275,7 +287,10 @@ export function getFindingDetail(p?: unknown): ApiResult {
     const key = String((p as Rec)?.["vulnKey"] ?? "");
     const scan = findings.currentScan();
     if (!scan || !key) return { record: null, raw: null };
-    const record = scan.records.find((r) => r["_vuln_key"] === key) ?? null;
+    const record =
+      filterNoFixFrame(scan.records, settingsStore.getShowNoFix()).find(
+        (r) => r["_vuln_key"] === key,
+      ) ?? null;
     // The raw node (full fields) lives in the scan's page archive. The frame tags each
     // record with its page, so normally exactly one page file is read; scans persisted
     // before the frame existed fall back to walking the whole archive.
@@ -343,6 +358,14 @@ function insightsData(p?: unknown): Rec {
   const severities = readSeverities(p);
   recs = filterSeverities(recs, severities);
   base = filterSeverities(base as unknown as Rec[], severities) as unknown as typeof base;
+  // Global show-no-fix toggle. When off, no-fix findings drop out of the current-scan blocks
+  // and the durable-ledger blocks (counts/total/sevStats/exploit + aging/oldest/awaiting/
+  // movement). `openTrend` is the exception: it keeps the UNFILTERED base and excludes no-fix
+  // rows AS OF each historical date (a fixed-later finding re-enters at the point its fix
+  // landed), so it reads the {hideNoFix} option instead of a pre-filtered population.
+  const showNoFix = settingsStore.getShowNoFix();
+  const recsVisible = filterNoFixFrame(recs, showNoFix);
+  const baseVisible = filterNoFixBase(base as unknown as Rec[], showNoFix) as unknown as typeof base;
   const latestFlat = ledgerStore.latestFlatScanRow();
   return {
     flatScan: true,
@@ -352,26 +375,31 @@ function insightsData(p?: unknown): Rec {
     // Domain-scoped severity counts + total so the Overview headline can stay
     // coherent under a filter (the KPI band otherwise reads whole-scan bootstrap
     // counts). Movement's new/resolved/reopened remain chain-wide — see below.
-    counts: sevCountsOf(recs),
-    total: recs.length,
+    counts: sevCountsOf(recsVisible),
+    total: recsVisible.length,
     // Per-severity total/open/resolved for the severity breakdown card.
-    sevStats: insights.severityStats(recs),
+    sevStats: insights.severityStats(recsVisible),
     // Open findings per severity over time — powers the breakdown line chart. Uses the
-    // already-scoped base + severities so the series matches the counts shown beside it.
+    // UNFILTERED base + severities and the as-of no-fix exclusion, so the series matches the
+    // counts shown beside it while letting a fixed-later finding re-enter at the right date.
     openTrend: openBySeverityTrend(
       ledgerStore.loadScanRows() as unknown as Rec[],
       base as unknown as Rec[],
       severities,
+      { hideNoFix: !showNoFix },
     ),
-    exploit: insights.exploitSummary(recs),
+    exploit: insights.exploitSummary(recsVisible),
     // Open findings awaiting a vendor fix (no patch available yet) over the same scoped base
     // rows — sourced here so the Overview can explain the post-rollout open-count step-up.
-    awaiting: awaitingVendorFix(base),
-    aging: insights.ageBuckets(base),
+    // (Naturally zero when the toggle hides them, so the client drops the surface entirely.)
+    awaiting: awaitingVendorFix(baseVisible),
+    aging: insights.ageBuckets(baseVisible),
     // Top oldest open findings + 90+ backlog per asset / support group / domain,
     // for the aging panel's toggle (repaints client-side, no extra RPC).
-    oldest: insights.oldestOpen(base as unknown as Parameters<typeof insights.oldestOpen>[0]),
-    movement: insights.movement(base, latestFlat, ledgerStore.loadScanRows().length),
+    oldest: insights.oldestOpen(baseVisible as unknown as Parameters<typeof insights.oldestOpen>[0]),
+    // Movement's Persisting is filtered (it's derived from these base rows); New/Resolved/
+    // Reopened come from scan-wide reconcile deltas and stay scan-wide (see movement()).
+    movement: insights.movement(baseVisible, latestFlat, ledgerStore.loadScanRows().length),
   };
 }
 
@@ -380,12 +408,16 @@ export function getInsights(p?: unknown): ApiResult {
   // Keyed on domain so per-chain payloads don't clobber each other.
   return run(() =>
     cached(
-      "insights",
+      // "insights" → "insights2": the payload now honors the show-no-fix toggle (counts,
+      // total, sevStats, exploit, aging, oldest, awaiting, movement, and the as-of openTrend
+      // all reflect it); key gains showNoFix so on/off states don't share an entry.
+      "insights2",
       {
         domain: String((p as Rec)?.["domain"] ?? ""),
         supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
         supportGroups: readStringArray(p, "supportGroups"),
         severities: readSeverities(p),
+        showNoFix: settingsStore.getShowNoFix(),
       },
       () => insightsData(p),
       3600,
@@ -405,7 +437,7 @@ function scopedFrameRecords(domain: string, supportGroup: string, supportGroupSe
     recs = recs.filter((r) => sgMatch(String(r["_supportGroup"] ?? "")));
   }
   if (domain) recs = recs.filter((r) => String(r["_domain"] ?? UNASSIGNED) === domain);
-  return recs;
+  return filterNoFixFrame(recs, settingsStore.getShowNoFix());
 }
 
 /** The multi-level breakdown tree for an ordered list of grouping dimensions. */
@@ -435,8 +467,13 @@ export function getGrouping(p?: unknown): ApiResult {
   const raw = (p as Rec)?.["keys"];
   const keys = Array.isArray(raw) ? (raw as unknown[]).map(String) : [];
   return run(() =>
-    cached("grouping",
-      { domain, supportGroup, supportGroups: supportGroupSet, keys, severities: readSeverities(p) },
+    // "grouping" → "grouping2": the breakdown tree is built over scopedFrameRecords, which
+    // now honors the show-no-fix toggle; key gains showNoFix so on/off states cache apart.
+    cached("grouping2",
+      {
+        domain, supportGroup, supportGroups: supportGroupSet, keys,
+        severities: readSeverities(p), showNoFix: settingsStore.getShowNoFix(),
+      },
       () => groupingData(p), 3600),
   );
 }
@@ -476,12 +513,14 @@ function groupTrendData(p?: unknown): Rec {
   if (sgActive) base = base.filter((r) => sgMatch(String(r["_supportGroup"] ?? "")));
   if (domain) base = base.filter((r) => String(r["_domain"] ?? UNASSIGNED) === domain);
 
+  // Base stays unfiltered here — the as-of {hideNoFix} exclusion re-admits a fixed-later
+  // finding at the point its fix landed, matching the openTrend series in insightsData.
   const points = openByGroupTrend(
     ledgerStore.loadScanRows() as unknown as Rec[],
     base,
     (r) => String(r[field] ?? ""),
     groups,
-    { severities: readSeverities(p) },
+    { severities: readSeverities(p), hideNoFix: !settingsStore.getShowNoFix() },
   );
   return { supported: true, key, groups, points };
 }
@@ -491,12 +530,15 @@ export function getGroupTrend(p?: unknown): ApiResult {
   const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
   const supportGroupSet = readStringArray(p, "supportGroups");
   return run(() =>
-    cached("groupTrend",
+    // "groupTrend" → "groupTrend2": the open-by-group series now excludes no-fix findings
+    // as-of-date when the toggle is off; key gains showNoFix so on/off states cache apart.
+    cached("groupTrend2",
       {
         domain, supportGroup, supportGroups: supportGroupSet,
         key: String((p as Rec)?.["key"] ?? ""),
         groups: readStringArray(p, "groups"),
         severities: readSeverities(p),
+        showNoFix: settingsStore.getShowNoFix(),
       },
       () => groupTrendData(p), 3600),
   );
@@ -514,7 +556,10 @@ export function getGroupTrend(p?: unknown): ApiResult {
 function attributionData(p?: unknown): Rec {
   const scan = findings.currentScan();
   if (!scan) return { flatScan: false };
-  const recs = filterSeverities(scan.records, readSeverities(p));
+  const recs = filterNoFixFrame(
+    filterSeverities(scan.records, readSeverities(p)),
+    settingsStore.getShowNoFix(),
+  );
   const dom = settingsStore.getDomains();
   const compiled = compileDomains(dom.items);
   const sgMap = settingsStore.getSupportGroupMap();
@@ -535,7 +580,13 @@ function attributionData(p?: unknown): Rec {
  *  one cached compute. */
 export function getAttribution(p?: unknown): ApiResult {
   return run(() => {
-    const data = cached("attribution", { severities: readSeverities(p) }, () => attributionData(p));
+    // "attribution" → "attribution2": coverage / rule-health / unassigned now honor the
+    // show-no-fix toggle; key gains showNoFix so on/off states cache apart.
+    const data = cached(
+      "attribution2",
+      { severities: readSeverities(p), showNoFix: settingsStore.getShowNoFix() },
+      () => attributionData(p),
+    );
     if (!(data as Rec)["flatScan"]) return data;
     const { unassignedAll, ...rest } = data as Rec & { unassignedAll: unknown[] };
     const params = (p ?? {}) as Rec;
@@ -572,6 +623,20 @@ function filterSeverities(rows: Rec[], severities: string[] | null): Rec[] {
   return rows.filter((r) => keep.has(normalizeSeverity(r["severity"])));
 }
 
+// The global "show findings without a vendor fix" toggle, applied at every finding-derived
+// choke point. Both are HARD no-ops when showNoFix is true (the default) — the read happens
+// once per data function via settingsStore.getShowNoFix(), and when off the no-fix rows
+// (baseRowNoFix / recordNoFix — resolved rows and legacy pre-rollout rows never qualify)
+// drop out of the population before any aggregation runs.
+function filterNoFixBase(rows: Rec[], showNoFix: boolean): Rec[] {
+  if (showNoFix || !rows.length) return rows;
+  return rows.filter((r) => !baseRowNoFix(r as unknown as BaseRow));
+}
+function filterNoFixFrame(records: Rec[], showNoFix: boolean): Rec[] {
+  if (showNoFix || !records.length) return records;
+  return records.filter((r) => !recordNoFix(r));
+}
+
 function mttrData(p?: unknown): Rec {
   const domain = String((p as Rec)?.["domain"] ?? "");
   const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
@@ -585,6 +650,10 @@ function mttrData(p?: unknown): Rec {
     }
   }
   rows = filterSeverities(rows, readSeverities(p));
+  // Global show-no-fix toggle: drop awaiting-vendor-fix rows so the whole remediation block
+  // (percentiles, buckets, KM, open-past-SLA, awaiting) measures only the fixable population.
+  // No-op on the default path.
+  rows = filterNoFixBase(rows, settingsStore.getShowNoFix());
   const { perSev, overall } = mttrFromLedger(rows);
   const { slaPct, oldestDays } = overallSlaOldest(perSev);
   // Remediation-tail block over the same scoped rows (BaseRows cast to Rec by loadBaseRows;
@@ -611,7 +680,9 @@ function mttrTrendData(p?: unknown): Rec {
   const severities = readSeverities(p);
   return {
     history: history.loadHistory(),
-    trend: ledgerStore.loadTrend(severities),
+    // showNoFix off → the open / KM-median series exclude no-fix findings as-of-date; the
+    // resolved / median / SLA-burn / attainment series are untouched (see loadTrend).
+    trend: ledgerStore.loadTrend(severities, settingsStore.getShowNoFix()),
   };
 }
 
@@ -626,6 +697,8 @@ function mttrByDomainData(p?: unknown): Rec {
     ledgerStore.loadBaseRows() as unknown as Rec[],
     readSeverities(p),
   );
+  // Same show-no-fix toggle as mttrData, so the by-domain split matches the hero.
+  rows = filterNoFixBase(rows, settingsStore.getShowNoFix());
   supportGroups.attachSupportGroups(rows);
   if (supportGroup) rows = rows.filter((r) => String(r["_supportGroup"] ?? "") === supportGroup);
   const items = settingsStore.getDomains().items;
@@ -694,11 +767,14 @@ const cachedMttrData = (p?: unknown) =>
     // "mttr3" → "mttr4": fast-lane machinery removed; remediation now carries the full KM
     // estimate (km / kmActionable) and dropped fastLane / scalar kmMedian; bump so no stale
     // old-shape entry survives the persistent dataVersion.
-    "mttr4",
+    // "mttr4" → "mttr5": the remediation block now honors the show-no-fix toggle (awaiting
+    // rows dropped when off); key gains showNoFix so on/off states don't share an entry.
+    "mttr5",
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
       severities: readSeverities(p),
+      showNoFix: settingsStore.getShowNoFix(),
     },
     () => mttrData(p),
     3600,
@@ -712,9 +788,11 @@ const cachedMttrTrendData = (p?: unknown) =>
   // "mttrTrend3" → "mttrTrend4": the tail-median series (tail_median_days) became the KM-median
   // series (km_median_days) and the fast-lane window left the key; bump so no stale entry
   // survives.
+  // "mttrTrend4" → "mttrTrend5": the open / KM-median series now exclude no-fix findings
+  // as-of-date when the toggle is off; key gains showNoFix so on/off states cache apart.
   cached(
-    "mttrTrend4",
-    { severities: readSeverities(p) },
+    "mttrTrend5",
+    { severities: readSeverities(p), showNoFix: settingsStore.getShowNoFix() },
     () => mttrTrendData(p),
   );
 // Domain-independent (always all domains); severity-scoped; 1h TTL like the summary
@@ -736,10 +814,13 @@ const cachedMttrByDomainData = (p?: unknown) =>
     // `tailResolved` became a single `kmMedian`, `trend` lost `tailPoints`, the payload
     // dropped `thresholdDays`, and the fast-lane window left the key; bump so no stale
     // old-shape entry survives.
-    "mttrByDomain7",
+    // "mttrByDomain7" → "mttrByDomain8": the per-domain split now honors the show-no-fix
+    // toggle (awaiting rows dropped when off); key gains showNoFix so on/off states cache apart.
+    "mttrByDomain8",
     {
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
       severities: readSeverities(p),
+      showNoFix: settingsStore.getShowNoFix(),
     },
     () => mttrByDomainData(p),
     3600,
@@ -769,7 +850,12 @@ export function getMttrPage(p?: unknown): ApiResult {
 
 function scanHistoryData(): Rec {
   const scans = ledgerStore.loadScanRows().slice().reverse(); // newest first
-  const base = ledgerStore.loadBaseRows();
+  // KPI band only: drop no-fix findings when the toggle is off, so tracked/open/resolved/
+  // median match the rest of the dashboard. The scans table (+ delete flow) stays unfiltered.
+  const base = filterNoFixBase(
+    ledgerStore.loadBaseRows() as unknown as Rec[],
+    settingsStore.getShowNoFix(),
+  ) as unknown as BaseRow[];
   const open = base.filter((r) => r.status === "OPEN").length;
   const resolved = base.filter((r) => r.status === "RESOLVED").length;
   const { overall } = mttrFromLedger(base as unknown as Rec[]);
@@ -784,7 +870,10 @@ function scanHistoryData(): Rec {
   };
 }
 
-const cachedScanHistoryData = () => cached("scanHistory", null, scanHistoryData);
+const cachedScanHistoryData = () =>
+  // "scanHistory" → "scanHistory2": the KPI band now drops no-fix findings when the toggle is
+  // off; params null → {showNoFix} so on/off states cache apart and no stale entry survives.
+  cached("scanHistory2", { showNoFix: settingsStore.getShowNoFix() }, scanHistoryData);
 
 export function getScanHistory(_p?: unknown): ApiResult {
   return run(() => cachedScanHistoryData());
@@ -926,11 +1015,16 @@ export function getReport(p?: unknown): ApiResult {
     // Honor the global "Value Chain" and "Support group" filters (empty = no filter).
     const domains = (params["domains"] as string[]) ?? [];
     const sgFilter = (params["supportGroups"] as string[]) ?? [];
-    const displayed = findings.applyFilters(scan.records, {
-      severities: settingsStore.getDisplaySeverities(),
-      domains,
-      supportGroups: sgFilter,
-    });
+    // Report counts + MTTR honor the global show-no-fix toggle, like the dashboard views.
+    const showNoFix = settingsStore.getShowNoFix();
+    const displayed = filterNoFixFrame(
+      findings.applyFilters(scan.records, {
+        severities: settingsStore.getDisplaySeverities(),
+        domains,
+        supportGroups: sgFilter,
+      }),
+      showNoFix,
+    );
     const counts = sevCountsOf(displayed);
     let baseRows = ledgerStore.loadBaseRows() as unknown as Rec[];
     if (domains.length || sgFilter.length) {
@@ -944,6 +1038,7 @@ export function getReport(p?: unknown): ApiResult {
         baseRows = baseRows.filter((r) => domains.includes(assignDomain(r, compiled)));
       }
     }
+    baseRows = filterNoFixBase(baseRows, showNoFix);
     const { perSev, overall } = mttrFromLedger(baseRows);
     void perSev;
     const generated = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -1003,15 +1098,18 @@ export function getExportCsv(p?: unknown): ApiResult {
     const params = (p ?? {}) as Rec;
     const scan = findings.currentScan();
     if (!scan) return { content: "", filename: "" };
-    const filtered = findings.applyFilters(scan.records, {
-      severities: (params["severities"] as string[]) ?? settingsStore.getDisplaySeverities(),
-      statuses: (params["statuses"] as string[]) ?? [],
-      assetTypes: (params["assetTypes"] as string[]) ?? [],
-      clouds: (params["clouds"] as string[]) ?? [],
-      domains: (params["domains"] as string[]) ?? [],
-      supportGroups: (params["supportGroups"] as string[]) ?? [],
-      q: (params["q"] as string) ?? "",
-    });
+    const filtered = filterNoFixFrame(
+      findings.applyFilters(scan.records, {
+        severities: (params["severities"] as string[]) ?? settingsStore.getDisplaySeverities(),
+        statuses: (params["statuses"] as string[]) ?? [],
+        assetTypes: (params["assetTypes"] as string[]) ?? [],
+        clouds: (params["clouds"] as string[]) ?? [],
+        domains: (params["domains"] as string[]) ?? [],
+        supportGroups: (params["supportGroups"] as string[]) ?? [],
+        q: (params["q"] as string) ?? "",
+      }),
+      settingsStore.getShowNoFix(),
+    );
     const cols = findings.TABLE_COLUMNS.filter((c) => !c.startsWith("_"));
     const lines = [cols.join(",")];
     for (const r of filtered) lines.push(cols.map((c) => csvCell(r[c])).join(","));
@@ -1051,6 +1149,7 @@ export function getSettings(_p?: unknown): ApiResult {
     displaySeverities: settingsStore.getDisplaySeverities(),
     retentionDays: settingsStore.getRetentionDays(),
     autoCompact: settingsStore.getAutoCompact(),
+    showNoFix: settingsStore.getShowNoFix(),
     domains: settingsStore.getDomains(),
   }));
 }
@@ -1079,6 +1178,13 @@ export function setAutoCompact(p?: unknown): ApiResult {
   return mutate(() => {
     settingsStore.setAutoCompact(Boolean((p as Rec)?.["on"]));
     return { autoCompact: settingsStore.getAutoCompact() };
+  });
+}
+
+export function setShowNoFix(p?: unknown): ApiResult {
+  return mutate(() => {
+    settingsStore.setShowNoFix(Boolean((p as Rec)?.["on"]));
+    return { showNoFix: settingsStore.getShowNoFix() };
   });
 }
 

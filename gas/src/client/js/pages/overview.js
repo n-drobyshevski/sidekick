@@ -8,7 +8,7 @@ import {
 } from "../charts.js";
 import { bootstrap, setParams, swrCall } from "../store.js";
 import {
-  clear, el, emptyState, fmtDate, kpiCard, nvdUrl, scopeBar, sectionLabel,
+  clear, el, emptyState, fmtDate, kpiCard, noFixHiddenNote, nvdUrl, scopeBar, sectionLabel,
   severityScopeFilter,
 } from "../ui.js";
 
@@ -97,6 +97,7 @@ export async function renderOverview(main, params, ctx) {
     domain: ctx.domain, supportGroup: ctx.supportGroup, onClear: ctx.clearScope,
   });
   if (scopeChips) main.append(scopeChips);
+  if (boot.settings.showNoFix === false) main.append(noFixHiddenNote());
 
   if (!boot.latestScan) {
     main.append(emptyState(
@@ -295,9 +296,11 @@ export async function renderOverview(main, params, ctx) {
     // Awaiting-vendor-fix line: open findings with no patch available yet, sourced from the
     // insights payload (awaitingVendorFix over the same scoped base). Sits outside the SLA
     // clock, and explains the open-count step-up once fix-tracking rolled out. Optional-
-    // chained so a stale pre-rollout cache simply omits it rather than throwing.
+    // chained so a stale pre-rollout cache simply omits it rather than throwing. Hidden
+    // entirely when the vendor-fix filter is off — awaiting stats arrive zeroed then, and the
+    // page-level honesty note already covers it.
     const aw = insights.awaiting;
-    if (aw && aw.overall > 0) {
+    if (boot.settings.showNoFix !== false && aw && aw.overall > 0) {
       const pct = aw.pctOfOpen !== null && aw.pctOfOpen !== undefined
         ? ` (${aw.pctOfOpen.toFixed(0)}% of open)` : "";
       insightsHost.append(el("p", { class: "small muted", style: "margin:8px 0 0" },

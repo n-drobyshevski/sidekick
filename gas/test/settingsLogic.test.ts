@@ -5,9 +5,11 @@ import {
   getDisplaySeverities,
   getDomains,
   getRetentionDays,
+  getShowNoFix,
   getSupportGroupMap,
   withDomains,
   withFetchSeverities,
+  withShowNoFix,
   withSupportGroupMap,
 } from "../src/domain/settingsLogic";
 
@@ -67,6 +69,23 @@ describe("settings logic", () => {
     expect(getSupportGroupMap(s2).version).toBe(2);
     // a corrupt blob reads as empty, never throws
     expect(getSupportGroupMap({ support_group_map: "junk" })).toEqual({ version: 0, map: {} });
+  });
+
+  it("show-no-fix defaults true; only a real boolean overrides; junk falls back to true", () => {
+    expect(getShowNoFix({})).toBe(true); // absent -> today's behavior
+    expect(getShowNoFix({ show_no_fix: false })).toBe(false);
+    expect(getShowNoFix({ show_no_fix: true })).toBe(true);
+    expect(getShowNoFix({ show_no_fix: "false" })).toBe(true); // non-boolean junk -> true
+    expect(getShowNoFix({ show_no_fix: 0 })).toBe(true);
+    expect(getShowNoFix({ show_no_fix: null })).toBe(true);
+  });
+
+  it("withShowNoFix coerces to a boolean", () => {
+    expect(withShowNoFix({}, false)).toEqual({ show_no_fix: false });
+    expect(withShowNoFix({ a: 1 }, true)).toEqual({ a: 1, show_no_fix: true });
+    // truthy/falsy inputs are coerced, never stored raw.
+    expect(withShowNoFix({}, 0 as unknown as boolean)).toEqual({ show_no_fix: false });
+    expect(withShowNoFix({}, 1 as unknown as boolean)).toEqual({ show_no_fix: true });
   });
 
   it("apiSeverityFilter maps INFO and elides the full scope", () => {

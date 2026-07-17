@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  awaitingFixAsOf,
   cohortSlaAttainment,
   medianMttrByGroupTrend,
   openByGroupTrend, openBySeverityTrend, trendFromBase, trendFromFrames,
@@ -22,6 +23,66 @@ describe("trendFromFrames (fixture parity)", () => {
   it("returns [] for empty inputs", () => {
     expectParity(trendFromFrames([], fx.base), []);
     expectParity(trendFromFrames(fx.scans, []), []);
+  });
+});
+
+describe("awaitingFixAsOf", () => {
+  // Millisecond scalars keep the arithmetic legible: open as of d iff first<=d and not
+  // resolved by d; awaiting iff also no fix available by d (fixAvail null or > d).
+  it("open with no fix ever -> awaiting", () => {
+    expect(awaitingFixAsOf(5, null, null, 10)).toBe(true);
+  });
+  it("open with a fix available by d -> not awaiting", () => {
+    expect(awaitingFixAsOf(5, null, 8, 10)).toBe(false);
+  });
+  it("open with a fix that only lands after d -> awaiting (re-enters later)", () => {
+    expect(awaitingFixAsOf(5, null, 20, 10)).toBe(true);
+  });
+  it("resolved by d -> not open as of d -> not awaiting", () => {
+    expect(awaitingFixAsOf(5, 8, null, 10)).toBe(false);
+  });
+  it("not yet detected as of d -> not open -> not awaiting", () => {
+    expect(awaitingFixAsOf(15, null, null, 10)).toBe(false);
+  });
+  it("open now, resolves after d, no fix -> still awaiting as of d", () => {
+    expect(awaitingFixAsOf(5, 20, null, 10)).toBe(true);
+  });
+});
+
+describe("trendFromFrames hideNoFix (as-of-date open exclusion)", () => {
+  // The plan's hand-computed spec. Three findings first seen 2026-07-03:
+  //   R1 open, no fix ever;  R2 open, fix available 07-10;  R3 resolved 07-08, fix 07-04.
+  // Points d1 = 07-05, d2 = 07-15.
+  const scans = [
+    { ts: "2026-07-05T00:00:00Z", shape: "flat" },
+    { ts: "2026-07-15T00:00:00Z", shape: "flat" },
+  ];
+  const base = [
+    { severity: "HIGH", first_seen: "2026-07-03T00:00:00Z", resolved_at: null, mttr_days: null, fix_available_at: null },
+    { severity: "HIGH", first_seen: "2026-07-03T00:00:00Z", resolved_at: null, mttr_days: null, fix_available_at: "2026-07-10T00:00:00Z" },
+    { severity: "HIGH", first_seen: "2026-07-03T00:00:00Z", resolved_at: "2026-07-08T00:00:00Z", mttr_days: 5, fix_available_at: "2026-07-04T00:00:00Z" },
+  ];
+
+  it("hideNoFix:true steps the open count down, R2 re-entering once its fix lands", () => {
+    const out = trendFromFrames(scans, base, null, { hideNoFix: true });
+    // d1: R1 hidden (no fix), R2 hidden (fix 07-10 > 07-05), R3 open + fix-by-d1 -> shown. open 1.
+    // d2: R1 hidden, R2 re-enters (fix 07-10 <= 07-15), R3 resolved. open 1.
+    expect(out.map((p) => p.open)).toEqual([1, 1]);
+    // Resolved series is independent of hideNoFix: none by d1, R3 by d2.
+    expect(out.map((p) => p.resolved)).toEqual([0, 1]);
+  });
+
+  it("hideNoFix absent / false is byte-identical to today (parity lock)", () => {
+    const today = trendFromFrames(scans, base);
+    expect(trendFromFrames(scans, base, null, {})).toEqual(today);
+    expect(trendFromFrames(scans, base, null, { hideNoFix: false })).toEqual(today);
+    // With the toggle on (today), all three are open at d1 and R1+R2 at d2.
+    expect(today.map((p) => p.open)).toEqual([3, 2]);
+    expect(today.map((p) => p.resolved)).toEqual([0, 1]);
+    // The resolved-derived series match between hideNoFix on and off.
+    const hidden = trendFromFrames(scans, base, null, { hideNoFix: true });
+    expect(hidden.map((p) => p.median_days)).toEqual(today.map((p) => p.median_days));
+    expect(hidden.map((p) => p.sla_pct)).toEqual(today.map((p) => p.sla_pct));
   });
 });
 
@@ -60,6 +121,29 @@ describe("openBySeverityTrend", () => {
     expect(openBySeverityTrend([{ ts: "2026-01-01T00:00:00Z", shape: "grouped" }], base)).toEqual([]);
     expect(openBySeverityTrend([], base)).toEqual([]);
     expect(openBySeverityTrend(scans, [])).toEqual([]);
+  });
+
+  it("hideNoFix excludes awaiting-as-of-date findings; a fixed-later severity re-enters", () => {
+    const nfScans = [
+      { ts: "2026-07-05T00:00:00Z", shape: "flat" },
+      { ts: "2026-07-15T00:00:00Z", shape: "flat" },
+    ];
+    const nfBase = [
+      { severity: "HIGH", first_seen: "2026-07-03T00:00:00Z", resolved_at: null, fix_available_at: null }, // awaiting -> hidden both
+      { severity: "CRITICAL", first_seen: "2026-07-03T00:00:00Z", resolved_at: null, fix_available_at: "2026-07-10T00:00:00Z" }, // fix 07-10: hidden at d1, shown at d2
+      { severity: "LOW", first_seen: "2026-07-03T00:00:00Z", resolved_at: null, fix_available_at: "2026-07-01T00:00:00Z" }, // fix before: shown both
+    ];
+    expect(openBySeverityTrend(nfScans, nfBase, null, { hideNoFix: true })).toEqual([
+      { date: "2026-07-05T00:00:00Z", bySev: { LOW: 1 } },
+      { date: "2026-07-15T00:00:00Z", bySev: { CRITICAL: 1, LOW: 1 } },
+    ]);
+    // Parity: absent/false is byte-identical, with all three open at both dates.
+    const today = openBySeverityTrend(nfScans, nfBase);
+    expect(openBySeverityTrend(nfScans, nfBase, null, { hideNoFix: false })).toEqual(today);
+    expect(today).toEqual([
+      { date: "2026-07-05T00:00:00Z", bySev: { HIGH: 1, CRITICAL: 1, LOW: 1 } },
+      { date: "2026-07-15T00:00:00Z", bySev: { HIGH: 1, CRITICAL: 1, LOW: 1 } },
+    ]);
   });
 });
 
@@ -561,5 +645,24 @@ describe("withKmMedian", () => {
     // A single event at 5.0006: S drops straight to 0, so the median is that event time.
     const b = [{ severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-06T00:00:00Z", mttr_days: 5.0006 }];
     expect(withKmMedian([{ date: "2026-01-15T00:00:00Z" }], b)[0].km_median_days).toBe(5.001);
+  });
+
+  it("hideNoFix drops awaiting-as-of-date rows from the censored risk set (median can appear)", () => {
+    // One resolved event at 2 (fix available), plus three awaiting-vendor-fix rows open as of
+    // the point date (age 9, no fix ever). Censored, those three keep S above 0.5 -> no median;
+    // hideNoFix removes them from the risk set, so the lone event crosses to 0 -> median 2.
+    const b = [
+      { severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-03T00:00:00Z", mttr_days: 2, fix_available_at: "2026-01-01T00:00:00Z" },
+      { severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at: null, mttr_days: null, fix_available_at: null },
+      { severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at: null, mttr_days: null, fix_available_at: null },
+      { severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at: null, mttr_days: null, fix_available_at: null },
+    ];
+    const points = [{ date: "2026-01-10T00:00:00Z" }];
+    // Default (toggle on): the three censored awaiting rows hold S at 0.75 -> null.
+    expect(withKmMedian(points, b)[0].km_median_days).toBeNull();
+    // Parity: absent vs explicit false are identical.
+    expect(withKmMedian(points, b, null, { hideNoFix: false })).toEqual(withKmMedian(points, b));
+    // hideNoFix: the awaiting rows leave the risk set; the resolved event still counts.
+    expect(withKmMedian(points, b, null, { hideNoFix: true })[0].km_median_days).toBe(2);
   });
 });

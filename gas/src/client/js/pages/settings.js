@@ -143,6 +143,40 @@ export async function renderSettings(main, params, ctx) {
     }
   }
 
+  // ---------------------------------------------------------- vendor-fix filter
+  main.append(sectionLabel("Vendor-fix filter"));
+  main.append(el("p", { class: "muted small" },
+    "Findings with no vendor fix available yet sit outside the SLA clock. Unchecking this " +
+    "hides them from every chart, table, KPI, and export across the whole register."));
+  const showNoFixToggle = el("input", {
+    type: "checkbox", id: "show-no-fix",
+    checked: boot.settings.showNoFix !== false ? true : null,
+  });
+  const saveNoFixBtn = el("button", { class: "primary", onclick: saveShowNoFix }, "Save vendor-fix filter");
+  main.append(
+    el("div", { class: "card", style: "display:flex; flex-direction:column; gap:10px" },
+      el("label", { for: "show-no-fix", style: "display:flex; align-items:center; gap:8px" },
+        showNoFixToggle,
+        "Show findings awaiting a vendor fix ",
+        el("span", { class: "muted small" },
+          "(unchecking hides them from every chart, table, KPI, and export)")),
+      saveNoFixBtn,
+    ),
+  );
+
+  async function saveShowNoFix() {
+    if (!(await guardUnsavedDrafts())) return;
+    saveNoFixBtn.disabled = true;
+    try {
+      await call("api_setShowNoFix", { on: showNoFixToggle.checked });
+      toast("Vendor-fix filter saved.");
+      ctx.refresh();
+    } catch (e) {
+      toast(`Save failed: ${e.message}`, "error");
+      saveNoFixBtn.disabled = false;
+    }
+  }
+
   // -------------------------------------------------------------- support groups
   main.append(sectionLabel("Support groups"));
   main.append(el("p", { class: "muted small" },
