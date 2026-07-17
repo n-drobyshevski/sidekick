@@ -279,6 +279,12 @@ export async function renderMttr(main, _params, ctx) {
     const inWindow = (iso) => cutoff === null || Date.parse(iso) >= cutoff;
     const trend = trends.trend.filter((t) => inWindow(t.date));
     const history = trends.history.filter((h) => inWindow(h.date));
+    // Pin the x-axis to the chosen window (epoch days) — the charts' day axis is
+    // time-proportional, so a 30d window stays 30 days wide even when the data only
+    // reaches back a fortnight: short history reads as empty space, not a full chart.
+    const xRange = cutoff === null
+      ? null
+      : { min: Math.floor(cutoff / 86400000), max: Math.floor(Date.now() / 86400000) };
 
     // Compact timeframe toggle inline with the section label. aria-pressed toggle
     // buttons, not a radiogroup — the same segmented pattern as the report-format and
@@ -356,13 +362,13 @@ export async function renderMttr(main, _params, ctx) {
 
     requestAnimationFrame(() => {
       if (hasTrend) {
-        trendLine(mttrCanvas, points.filter((p) => p.y !== null), { yLabel: "days" });
+        trendLine(mttrCanvas, points.filter((p) => p.y !== null), { yLabel: "days", xRange });
       }
       if (trend.length > 1) {
-        openResolvedLines(openResolvedCanvas, trend);
+        openResolvedLines(openResolvedCanvas, trend, { xRange });
       }
       if (hasOpenSlaTrend) {
-        trendLine(openSlaCanvas, openSlaPoints, { yLabel: "findings" });
+        trendLine(openSlaCanvas, openSlaPoints, { yLabel: "findings", xRange });
       }
     });
   }
