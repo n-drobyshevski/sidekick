@@ -182,7 +182,7 @@ html, body {
 .linklike.danger { color: var(--bad); }
 .linklike:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
 
-/* Track/fill progress bar (mirrors .sla-track). Fill is Signal Blue — the data color. */
+/* Track/fill progress bar. Fill is Signal Blue — the data color. */
 .progress-track {
   position: relative;
   height: 8px;
@@ -455,6 +455,7 @@ input[aria-invalid="true"]:focus-visible, select[aria-invalid="true"]:focus-visi
   box-shadow: var(--shadow-card);
   font-size: 12px; font-weight: 400; line-height: 1.45;
   letter-spacing: 0; text-transform: none; text-align: left;
+  white-space: normal; /* table headers set nowrap — the bubble must wrap, not overflow */
   opacity: 0; pointer-events: none; transform: translateY(-2px);
   transition: opacity 0.14s ease, transform 0.14s ease;
 }
@@ -698,15 +699,6 @@ a { color: var(--accent); }
 }
 .th-sort:hover { color: var(--ink); }
 .th-sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
-
-/* --------------------------------------------------------------------- sla bars */
-.sla-bullet { margin: 6px 0; }
-.sla-track { height: 8px; border-radius: 999px; background: rgba(0, 0, 0, 0.07); overflow: hidden; }
-.sla-fill { height: 100%; border-radius: 999px; }
-.sla-fill.ok { background: var(--ok); }
-.sla-fill.warn { background: var(--warn); }
-.sla-fill.bad { background: var(--bad); }
-.sla-line { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 3px; }
 
 /* ---------------------------------------------------- insight ranks & mix strips */
 .rank-list { margin-top: 4px; }

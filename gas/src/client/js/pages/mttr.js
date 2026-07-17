@@ -616,28 +616,5 @@ export async function renderMttr(main, _params, ctx) {
     }
     table.append(tbody);
     slaHost.append(el("div", { class: "table-wrap" }, table));
-
-    // SLA posture bars: >=90% ok, >=70% warn, else bad (the fixed 90/70 policy).
-    slaHost.append(sectionLabel("SLA posture"));
-    const posture = el("div", { class: "card" });
-    for (const sev of sevs) {
-      const d = mttr.perSev[sev];
-      if (d.sla_pct === null) continue;
-      const state = d.sla_pct >= 90 ? "ok" : d.sla_pct >= 70 ? "warn" : "bad";
-      const stateWord = state === "ok" ? "on target" : state === "warn" ? "at risk" : "breached";
-      posture.append(
-        el("div", { class: "sla-bullet" },
-          el("div", { class: "sla-line" },
-            el("span", {}, sevBadge(sev), ` target ${d.sla_target}d`),
-            el("span", { class: "num" }, `${d.sla_pct.toFixed(1)}% — ${stateWord}`),
-          ),
-          // Decorative — the .sla-line above already states the percent + verdict in text.
-          el("div", { class: "sla-track", "aria-hidden": "true" },
-            el("div", { class: `sla-fill ${state}`, style: `width:${Math.min(d.sla_pct, 100)}%` }),
-          ),
-        ),
-      );
-    }
-    slaHost.append(posture);
   }
 }
