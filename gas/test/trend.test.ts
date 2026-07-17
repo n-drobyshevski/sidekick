@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  cohortSlaAttainment,
   medianMttrByGroupTrend,
   openByGroupTrend, openBySeverityTrend, trendFromBase, trendFromFrames,
-  withOpenPastSla, withTailMedian,
+  withOpenPastSla, withSlaBurn, withTailMedian,
 } from "../src/domain/trend";
 import type { Rec } from "../src/domain/util";
 import { expectParity, fixture } from "./helpers";
@@ -392,6 +393,130 @@ describe("withOpenPastSla", () => {
     expect(out[1].open_past_sla).toBe(out[0].open_past_sla);
     // Passthrough keeps the reconstructed flag untouched.
     expect(out.map((p) => p.reconstructed)).toEqual([true, false]);
+  });
+
+  it("fromField 'actionable_from' shifts breach ages and skips null-actionable rows", () => {
+    // All CRITICAL (target 7). A has a fix from detection; B's fix arrived on Jan 10; C is
+    // awaiting a vendor fix (null actionable_from). As of Jan 15:
+    //   default (first_seen origin): all three age 14d > 7 -> 3 breached.
+    //   actionable_from origin: A ages from Jan 1 (14d, breached); B ages from Jan 10 (5d,
+    //   within target); C is skipped (null origin) -> 1 breached.
+    const b = [
+      { severity: "CRITICAL", first_seen: "2026-01-01T00:00:00Z", actionable_from: "2026-01-01T00:00:00Z", resolved_at: null },
+      { severity: "CRITICAL", first_seen: "2026-01-01T00:00:00Z", actionable_from: "2026-01-10T00:00:00Z", resolved_at: null },
+      { severity: "CRITICAL", first_seen: "2026-01-01T00:00:00Z", actionable_from: null, resolved_at: null },
+    ];
+    const points = [{ date: "2026-01-15T00:00:00Z" }];
+    expect(withOpenPastSla(points, b)[0].open_past_sla).toBe(3);
+    expect(withOpenPastSla(points, b, null, "actionable_from")[0].open_past_sla).toBe(1);
+  });
+});
+
+describe("withSlaBurn", () => {
+  // All CRITICAL (target 7), actionable_from Jan 1 -> deadline Jan 8. Scans Jan 1 / Jan 10 /
+  // Jan 20 bracket the deadline (crossing in window 2) and B's late resolution (window 3).
+  //   A: never resolved -> crosses into breach.
+  //   B: resolved Jan 15, AFTER the deadline -> crosses, then clears.
+  //   C: resolved Jan 5, BEFORE the deadline -> never breaches, never counts.
+  //   D: awaiting a vendor fix (null actionable_from) -> never counts.
+  //   E: UNKNOWN, no SLA target -> never counts.
+  const base = [
+    { severity: "CRITICAL", actionable_from: "2026-01-01T00:00:00Z", resolved_at: null },
+    { severity: "CRITICAL", actionable_from: "2026-01-01T00:00:00Z", resolved_at: "2026-01-15T00:00:00Z" },
+    { severity: "CRITICAL", actionable_from: "2026-01-01T00:00:00Z", resolved_at: "2026-01-05T00:00:00Z" },
+    { severity: "CRITICAL", actionable_from: null, resolved_at: null },
+    { severity: "UNKNOWN", actionable_from: "2026-01-01T00:00:00Z", resolved_at: null },
+  ];
+  const points = [
+    { date: "2026-01-01T00:00:00Z", foo: "a" },
+    { date: "2026-01-10T00:00:00Z", foo: "b" },
+    { date: "2026-01-20T00:00:00Z", foo: "c" },
+  ];
+
+  it("first point is null; entered/cleared/net per window; exclusions never count", () => {
+    expect(withSlaBurn(points, base)).toEqual([
+      { date: "2026-01-01T00:00:00Z", foo: "a", sla_entered: null, sla_cleared: null, sla_net: null },
+      // Window (Jan 1, Jan 10]: A and B cross into breach (deadline Jan 8, unresolved by it);
+      // C resolved before its deadline; D/E excluded. entered 2, cleared 0.
+      { date: "2026-01-10T00:00:00Z", foo: "b", sla_entered: 2, sla_cleared: 0, sla_net: 2 },
+      // Window (Jan 10, Jan 20]: no new deadlines; B's late resolution (Jan 15 > deadline)
+      // clears. entered 0, cleared 1.
+      { date: "2026-01-20T00:00:00Z", foo: "c", sla_entered: 0, sla_cleared: 1, sla_net: -1 },
+    ]);
+  });
+
+  it("scopes to the chosen severities plus UNKNOWN", () => {
+    // A HIGH crossing and a MEDIUM crossing in window 2; scoping to HIGH drops MEDIUM but
+    // keeps UNKNOWN (which never has a target anyway).
+    const b = [
+      { severity: "HIGH", actionable_from: "2026-01-01T00:00:00Z", resolved_at: null }, // deadline Jan 15
+      { severity: "MEDIUM", actionable_from: "2025-12-01T00:00:00Z", resolved_at: null }, // deadline ~Dec 31
+    ];
+    const pts = [
+      { date: "2026-01-01T00:00:00Z" },
+      { date: "2026-01-20T00:00:00Z" },
+    ];
+    // Unscoped window (Jan 1, Jan 20]: HIGH deadline Jan 15 in window; MEDIUM deadline Dec 31
+    // is before Jan 1, so it does not cross this window -> only HIGH enters.
+    expect(withSlaBurn(pts, b)[1].sla_entered).toBe(1);
+    // Scoped to HIGH: MEDIUM filtered out entirely -> still 1.
+    expect(withSlaBurn(pts, b, ["HIGH"])[1].sla_entered).toBe(1);
+    // A window that brackets the MEDIUM deadline shows it unscoped but not when scoped to HIGH.
+    const ptsDec = [
+      { date: "2025-12-01T00:00:00Z" },
+      { date: "2026-01-20T00:00:00Z" },
+    ];
+    expect(withSlaBurn(ptsDec, b)[1].sla_entered).toBe(2);
+    expect(withSlaBurn(ptsDec, b, ["HIGH"])[1].sla_entered).toBe(1);
+  });
+});
+
+describe("cohortSlaAttainment", () => {
+  // All CRITICAL (target 7), actionable_from Jan 1 -> deadline Jan 8.
+  //   A: still open -> misses (open past deadline).
+  //   B: resolved Jan 15, after the deadline -> misses (late).
+  //   C: resolved Jan 5, on time -> hits.
+  const base = [
+    { severity: "CRITICAL", actionable_from: "2026-01-01T00:00:00Z", resolved_at: null },
+    { severity: "CRITICAL", actionable_from: "2026-01-01T00:00:00Z", resolved_at: "2026-01-15T00:00:00Z" },
+    { severity: "CRITICAL", actionable_from: "2026-01-01T00:00:00Z", resolved_at: "2026-01-05T00:00:00Z" },
+  ];
+
+  it("cohort membership by deadline<=d; late/open miss, on-time hits; empty cohort null", () => {
+    const points = [
+      { date: "2026-01-05T00:00:00Z", foo: "a" }, // deadline Jan 8 not yet passed -> empty cohort
+      { date: "2026-01-10T00:00:00Z", foo: "b" }, // all three in cohort; 1 of 3 on time -> 33.3
+    ];
+    expect(cohortSlaAttainment(points, base)).toEqual([
+      { date: "2026-01-05T00:00:00Z", foo: "a", sla_attainment_pct: null },
+      { date: "2026-01-10T00:00:00Z", foo: "b", sla_attainment_pct: 33.3 },
+    ]);
+  });
+
+  it("excludes awaiting-vendor-fix and no-target rows from the cohort", () => {
+    const b = [
+      { severity: "CRITICAL", actionable_from: "2026-01-01T00:00:00Z", resolved_at: "2026-01-05T00:00:00Z" }, // on time
+      { severity: "CRITICAL", actionable_from: null, resolved_at: null }, // awaiting -> excluded
+      { severity: "UNKNOWN", actionable_from: "2026-01-01T00:00:00Z", resolved_at: null }, // no target -> excluded
+    ];
+    // Only the one CRITICAL is in the cohort as of Jan 10, and it was on time -> 100.
+    expect(cohortSlaAttainment([{ date: "2026-01-10T00:00:00Z" }], b)[0].sla_attainment_pct).toBe(100);
+  });
+
+  it("resolved exactly at the deadline counts as on time (<=)", () => {
+    const b = [{ severity: "CRITICAL", actionable_from: "2026-01-01T00:00:00Z", resolved_at: "2026-01-08T00:00:00Z" }];
+    // deadline is Jan 1 + 7d = Jan 8; resolved exactly then -> met.
+    expect(cohortSlaAttainment([{ date: "2026-01-10T00:00:00Z" }], b)[0].sla_attainment_pct).toBe(100);
+  });
+
+  it("rounds attainment to one decimal place", () => {
+    // 2 of 3 on time = 66.666… -> 66.7.
+    const b = [
+      { severity: "CRITICAL", actionable_from: "2026-01-01T00:00:00Z", resolved_at: "2026-01-05T00:00:00Z" },
+      { severity: "CRITICAL", actionable_from: "2026-01-01T00:00:00Z", resolved_at: "2026-01-06T00:00:00Z" },
+      { severity: "CRITICAL", actionable_from: "2026-01-01T00:00:00Z", resolved_at: null },
+    ];
+    expect(cohortSlaAttainment([{ date: "2026-01-10T00:00:00Z" }], b)[0].sla_attainment_pct).toBe(66.7);
   });
 });
 

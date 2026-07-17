@@ -43,7 +43,14 @@ import {
   checkpointManifest,
   type BeganSession,
 } from "../domain/importShard";
-import { type BackfilledTrendPoint, trendFromBase, withOpenPastSla, withTailMedian } from "../domain/trend";
+import {
+  type BackfilledTrendPoint,
+  cohortSlaAttainment,
+  trendFromBase,
+  withOpenPastSla,
+  withSlaBurn,
+  withTailMedian,
+} from "../domain/trend";
 import { nowIso, type Rec } from "../domain/util";
 import * as archive from "./archiveStore";
 import * as history from "./historyStore";
@@ -299,6 +306,9 @@ export function loadTrend(
     first_seen: r.first_seen,
     resolved_at: r.resolved_at,
     mttr_days: r.mttr_days,
+    // actionable_from feeds the actionable-clock open-past-SLA plus the SLA-burn / cohort-
+    // attainment decorators below (deadline = actionable_from + severity target).
+    actionable_from: r.actionable_from,
   }));
   const points = trendFromBase(
     state.scans.map((s) => ({ ts: s.ts, shape: s.shape })),
@@ -306,13 +316,18 @@ export function loadTrend(
     severities,
     { backfill: true },
   );
-  // Augment every point (real + reconstructed) with its as-of open-past-SLA count — and,
-  // when a fast-lane window is supplied, the as-of tail median ("MTTR excl. fast lane") —
-  // from the same scoped base rows, so the trend carries the series the headline hides.
-  const withSla = withOpenPastSla(points, base, severities);
+  // Augment every point (real + reconstructed) with the series the resolved-only headline
+  // hides, all from the same scoped base rows:
+  //   - open-past-SLA measured from vendor-fix availability (actionable_from), so it matches
+  //     the page's actionable metric and drops awaiting-vendor-fix rows (null actionable_from);
+  //   - the SLA-burn net flow and the cohort SLA attainment (backlog-flow metrics);
+  //   - and, when a fast-lane window is supplied, the as-of tail median ("MTTR excl. fast lane").
+  const withSla = withOpenPastSla(points, base, severities, "actionable_from");
+  const withBurn = withSlaBurn(withSla, base, severities);
+  const withAttainment = cohortSlaAttainment(withBurn, base, severities);
   return tailThresholdDays === null
-    ? withSla
-    : withTailMedian(withSla, base, tailThresholdDays, severities);
+    ? withAttainment
+    : withTailMedian(withAttainment, base, tailThresholdDays, severities);
 }
 
 /** Per-severity counts of the second-newest flat scan (change-badge baseline). */

@@ -366,6 +366,9 @@ function insightsData(p?: unknown): Rec {
       severities,
     ),
     exploit: insights.exploitSummary(recs),
+    // Open findings awaiting a vendor fix (no patch available yet) over the same scoped base
+    // rows — sourced here so the Overview can explain the post-rollout open-count step-up.
+    awaiting: awaitingVendorFix(base),
     aging: insights.ageBuckets(base),
     // Top oldest open findings + 90+ backlog per asset / support group / domain,
     // for the aging panel's toggle (repaints client-side, no extra RPC).
@@ -717,8 +720,11 @@ const cachedMttrTrendData = (p?: unknown) =>
   // "mttrTrend" → "mttrTrend2": trend points gained `open_past_sla`; namespace bump avoids a
   // stale old-shape entry surviving the deploy under the persistent dataVersion. The
   // fast-lane window feeds the tail-median series, so it rides in the key like cachedMttrData.
+  // "mttrTrend2" → "mttrTrend3": trend points gained the backlog-flow series (sla_net /
+  // sla_entered / sla_cleared, sla_attainment_pct) and open_past_sla switched to the
+  // actionable clock; bump so a stale old-shape entry can't survive the persistent dataVersion.
   cached(
-    "mttrTrend2",
+    "mttrTrend3",
     { severities: readSeverities(p), fastLane: settingsStore.getFastLaneDays() },
     () => mttrTrendData(p),
   );

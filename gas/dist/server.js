@@ -2792,14 +2792,14 @@ var Server = (() => {
       return { ...p, tail_median_days: med !== null ? Math.round(med * 1e3) / 1e3 : null };
     });
   }
-  function withOpenPastSla(points, base, severities = null) {
+  function withOpenPastSla(points, base, severities = null, fromField = "first_seen") {
     let rows = base;
     if (severities !== null && base.length) {
       const keep = /* @__PURE__ */ new Set([...severities, "UNKNOWN"]);
       rows = base.filter((r) => keep.has(normalizeSeverity(r["severity"])));
     }
     const parsed = rows.map((r) => ({
-      first: parseTs(r["first_seen"]),
+      origin: parseTs(r[fromField]),
       resolvedAt: parseTs(r["resolved_at"]),
       sev: normalizeSeverity(r["severity"])
     }));
@@ -2808,13 +2808,73 @@ var Server = (() => {
       let breached = 0;
       if (d !== null) {
         for (const r of parsed) {
-          const open = r.first !== null && r.first <= d && (r.resolvedAt === null || r.resolvedAt > d);
+          const open = r.origin !== null && r.origin <= d && (r.resolvedAt === null || r.resolvedAt > d);
           if (!open) continue;
           const target = SLA_TARGETS[r.sev];
-          if (target !== void 0 && (d - r.first) / DAY_MS4 > target) breached += 1;
+          if (target !== void 0 && (d - r.origin) / DAY_MS4 > target) breached += 1;
         }
       }
       return { ...p, open_past_sla: breached };
+    });
+  }
+  function slaDeadlineRows(base, severities) {
+    let rows = base;
+    if (severities !== null && base.length) {
+      const keep = /* @__PURE__ */ new Set([...severities, "UNKNOWN"]);
+      rows = base.filter((r) => keep.has(normalizeSeverity(r["severity"])));
+    }
+    const out = [];
+    for (const r of rows) {
+      const actionable = parseTs(r["actionable_from"]);
+      const target = SLA_TARGETS[normalizeSeverity(r["severity"])];
+      if (actionable === null || target === void 0) continue;
+      out.push({ deadline: actionable + target * DAY_MS4, resolvedAt: parseTs(r["resolved_at"]) });
+    }
+    return out;
+  }
+  function withSlaBurn(points, base, severities = null) {
+    const parsed = slaDeadlineRows(base, severities);
+    let prevMs = null;
+    return points.map((p, i) => {
+      const d = parseTs(p.date);
+      let entered = null;
+      let cleared = null;
+      if (i > 0 && prevMs !== null && d !== null) {
+        entered = 0;
+        cleared = 0;
+        for (const r of parsed) {
+          if (r.deadline > prevMs && r.deadline <= d && (r.resolvedAt === null || r.resolvedAt > r.deadline)) {
+            entered += 1;
+          }
+          if (r.resolvedAt !== null && r.resolvedAt > prevMs && r.resolvedAt <= d && r.resolvedAt > r.deadline) {
+            cleared += 1;
+          }
+        }
+      }
+      prevMs = d;
+      return {
+        ...p,
+        sla_entered: entered,
+        sla_cleared: cleared,
+        sla_net: entered !== null && cleared !== null ? entered - cleared : null
+      };
+    });
+  }
+  function cohortSlaAttainment(points, base, severities = null) {
+    const parsed = slaDeadlineRows(base, severities);
+    return points.map((p) => {
+      const d = parseTs(p.date);
+      let cohort = 0;
+      let met = 0;
+      if (d !== null) {
+        for (const r of parsed) {
+          if (r.deadline > d) continue;
+          cohort += 1;
+          if (r.resolvedAt !== null && r.resolvedAt <= r.deadline) met += 1;
+        }
+      }
+      const pct = cohort ? Math.round(met / cohort * 100 * 10) / 10 : null;
+      return { ...p, sla_attainment_pct: pct };
     });
   }
 
@@ -4033,7 +4093,10 @@ var Server = (() => {
       severity: r.severity,
       first_seen: r.first_seen,
       resolved_at: r.resolved_at,
-      mttr_days: r.mttr_days
+      mttr_days: r.mttr_days,
+      // actionable_from feeds the actionable-clock open-past-SLA plus the SLA-burn / cohort-
+      // attainment decorators below (deadline = actionable_from + severity target).
+      actionable_from: r.actionable_from
     }));
     const points = trendFromBase(
       state.scans.map((s) => ({ ts: s.ts, shape: s.shape })),
@@ -4041,8 +4104,10 @@ var Server = (() => {
       severities,
       { backfill: true }
     );
-    const withSla = withOpenPastSla(points, base, severities);
-    return tailThresholdDays === null ? withSla : withTailMedian(withSla, base, tailThresholdDays, severities);
+    const withSla = withOpenPastSla(points, base, severities, "actionable_from");
+    const withBurn = withSlaBurn(withSla, base, severities);
+    const withAttainment = cohortSlaAttainment(withBurn, base, severities);
+    return tailThresholdDays === null ? withAttainment : withTailMedian(withAttainment, base, tailThresholdDays, severities);
   }
   function previousSeverityCounts() {
     const flats = loadScanRows().filter((s) => s.shape === "flat");
@@ -5576,6 +5641,9 @@ var Server = (() => {
         severities
       ),
       exploit: exploitSummary(recs),
+      // Open findings awaiting a vendor fix (no patch available yet) over the same scoped base
+      // rows — sourced here so the Overview can explain the post-rollout open-count step-up.
+      awaiting: awaitingVendorFix(base),
       aging: ageBuckets(base),
       // Top oldest open findings + 90+ backlog per asset / support group / domain,
       // for the aging panel's toggle (repaints client-side, no extra RPC).
@@ -5899,8 +5967,11 @@ var Server = (() => {
     // "mttrTrend" → "mttrTrend2": trend points gained `open_past_sla`; namespace bump avoids a
     // stale old-shape entry surviving the deploy under the persistent dataVersion. The
     // fast-lane window feeds the tail-median series, so it rides in the key like cachedMttrData.
+    // "mttrTrend2" → "mttrTrend3": trend points gained the backlog-flow series (sla_net /
+    // sla_entered / sla_cleared, sla_attainment_pct) and open_past_sla switched to the
+    // actionable clock; bump so a stale old-shape entry can't survive the persistent dataVersion.
     cached(
-      "mttrTrend2",
+      "mttrTrend3",
       { severities: readSeverities(p), fastLane: getFastLaneDays2() },
       () => mttrTrendData(p)
     )

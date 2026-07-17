@@ -487,6 +487,8 @@ export async function renderMttr(main, _params, ctx) {
     const tailMedianCanvas = el("canvas", { id: "tail-median-trend" });
     const openResolvedCanvas = el("canvas", { id: "open-resolved" });
     const openSlaCanvas = el("canvas", { id: "open-sla-trend" });
+    const slaBurnCanvas = el("canvas", { id: "sla-burn-trend" });
+    const slaAttainmentCanvas = el("canvas", { id: "sla-attainment-trend" });
 
     const points = trend.length
       ? trend.map((t) => ({ x: t.date, y: t.median_days, reconstructed: t.reconstructed }))
@@ -508,11 +510,24 @@ export async function renderMttr(main, _params, ctx) {
       : history.map((h) => ({ x: h.date, y: h.open_past_sla, reconstructed: false })))
       .filter((p) => p.y !== null && p.y !== undefined);
 
+    // Backlog-flow series — reconstructed-trend only, like the tail median (mttr_history
+    // snapshots don't carry them). sla_net is a signed per-window flow (can be negative);
+    // sla_attainment_pct is the unbiased cohort In-SLA. Null points (first point / stale
+    // history rows) are dropped rather than drawn as a dip to zero.
+    const slaBurnPoints = trend
+      .map((t) => ({ x: t.date, y: t.sla_net, reconstructed: t.reconstructed }))
+      .filter((p) => p.y !== null && p.y !== undefined);
+    const slaAttainmentPoints = trend
+      .map((t) => ({ x: t.date, y: t.sla_attainment_pct, reconstructed: t.reconstructed }))
+      .filter((p) => p.y !== null && p.y !== undefined);
+
     // A "trend" needs at least two points — one lone dot is not a trajectory. This matches the
     // Open-vs-resolved gate and the "after two saved scans" copy below.
     const hasTrend = points.length > 1;
     const hasTailTrend = tailMedianPoints.length > 1;
     const hasOpenSlaTrend = openSlaPoints.length > 1;
+    const hasSlaBurn = slaBurnPoints.length > 1;
+    const hasSlaAttainment = slaAttainmentPoints.length > 1;
     const grid = el("div", { class: "chart-grid", style: "align-items:start" });
     if (hasTrend) {
       grid.append(el("div", { class: "chart-card" },
@@ -534,7 +549,30 @@ export async function renderMttr(main, _params, ctx) {
       // deliberately encodes red/green + dash + point-shape; a third line would crowd it.
       grid.append(el("div", { class: "chart-card" },
         el("h3", {}, "Open past SLA"),
-        el("div", { class: "chart-box" }, openSlaCanvas)));
+        el("div", { class: "chart-box" }, openSlaCanvas),
+        el("p", { class: "chart-caption muted" },
+          "Open findings past their SLA deadline, now measured from when a vendor fix became "
+          + "available rather than first detection. Counts step up at the fix-tracking rollout "
+          + "— findings awaiting a vendor fix are now included in the register.")));
+    }
+    if (hasSlaBurn) {
+      // Net backlog-of-breach flow per scan window: findings crossing their SLA deadline
+      // minus breached findings cleared. A signed series (can go below zero), so it reads
+      // against the zero baseline trendLine's beginAtZero axis already includes.
+      grid.append(el("div", { class: "chart-card" },
+        el("h3", {}, "SLA burn (net flow)"),
+        el("div", { class: "chart-box" }, slaBurnCanvas),
+        el("p", { class: "chart-caption muted" },
+          "Findings crossing their SLA deadline minus breached findings cleared, per scan. "
+          + "Above zero = the past-SLA backlog is growing.")));
+    }
+    if (hasSlaAttainment) {
+      grid.append(el("div", { class: "chart-card" },
+        el("h3", {}, "SLA attainment (cohort)"),
+        el("div", { class: "chart-box" }, slaAttainmentCanvas),
+        el("p", { class: "chart-caption muted" },
+          "Of findings whose SLA deadline has passed, the share met on time — unlike In-SLA "
+          + "(of resolved), unaffected by how much is still open.")));
     }
     if (!grid.hasChildNodes()) {
       if (trendWindowDays === null) {
@@ -571,6 +609,12 @@ export async function renderMttr(main, _params, ctx) {
       }
       if (hasOpenSlaTrend) {
         trendLine(openSlaCanvas, openSlaPoints, { yLabel: "findings", xRange });
+      }
+      if (hasSlaBurn) {
+        trendLine(slaBurnCanvas, slaBurnPoints, { yLabel: "findings", xRange });
+      }
+      if (hasSlaAttainment) {
+        trendLine(slaAttainmentCanvas, slaAttainmentPoints, { yLabel: "%", xRange });
       }
     });
   }

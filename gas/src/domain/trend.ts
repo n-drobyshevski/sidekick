@@ -468,6 +468,11 @@ export function withOpenPastSla<T extends { date: string }>(
   points: T[],
   base: Rec[],
   severities: string[] | null = null,
+  // Which column is the age/breach origin. "first_seen" (default) is the from-detection
+  // clock and preserves this function's original behaviour byte-for-byte. "actionable_from"
+  // switches to the vendor-fix-availability clock: rows with a null value for the chosen
+  // field are skipped, which is exactly what drops awaiting-vendor-fix rows in that mode.
+  fromField: "first_seen" | "actionable_from" = "first_seen",
 ): (T & { open_past_sla: number })[] {
   let rows = base;
   if (severities !== null && base.length) {
@@ -475,7 +480,7 @@ export function withOpenPastSla<T extends { date: string }>(
     rows = base.filter((r) => keep.has(normalizeSeverity(r["severity"])));
   }
   const parsed = rows.map((r) => ({
-    first: parseTs(r["first_seen"]),
+    origin: parseTs(r[fromField]),
     resolvedAt: parseTs(r["resolved_at"]),
     sev: normalizeSeverity(r["severity"]),
   }));
@@ -486,12 +491,130 @@ export function withOpenPastSla<T extends { date: string }>(
     if (d !== null) {
       for (const r of parsed) {
         const open =
-          r.first !== null && r.first <= d && (r.resolvedAt === null || r.resolvedAt > d);
+          r.origin !== null && r.origin <= d && (r.resolvedAt === null || r.resolvedAt > d);
         if (!open) continue;
         const target = SLA_TARGETS[r.sev];
-        if (target !== undefined && (d - r.first!) / DAY_MS > target) breached += 1;
+        if (target !== undefined && (d - r.origin!) / DAY_MS > target) breached += 1;
       }
     }
     return { ...p, open_past_sla: breached };
+  });
+}
+
+// A row's SLA deadline (actionable_from + its severity target, in ms) paired with its
+// resolution time — the shared derivation behind withSlaBurn and cohortSlaAttainment. Rows
+// with a null actionable_from (awaiting a vendor fix) or a severity with no SLA target are
+// dropped, so neither the burn flow nor the attainment cohort ever counts them.
+function slaDeadlineRows(
+  base: Rec[],
+  severities: string[] | null,
+): { deadline: number; resolvedAt: number | null }[] {
+  let rows = base;
+  if (severities !== null && base.length) {
+    const keep = new Set([...severities, "UNKNOWN"]);
+    rows = base.filter((r) => keep.has(normalizeSeverity(r["severity"])));
+  }
+  const out: { deadline: number; resolvedAt: number | null }[] = [];
+  for (const r of rows) {
+    const actionable = parseTs(r["actionable_from"]);
+    const target = SLA_TARGETS[normalizeSeverity(r["severity"])];
+    if (actionable === null || target === undefined) continue;
+    out.push({ deadline: actionable + target * DAY_MS, resolvedAt: parseTs(r["resolved_at"]) });
+  }
+  return out;
+}
+
+/**
+ * Augment trend points with the SLA-burn net flow — the backlog-of-breach's rate of
+ * change per scan window, so a falling MTTR beside a growing past-SLA backlog reads as one
+ * story. For each point date d with previous point p (exclusive-left window `(p, d]`):
+ *   - `sla_entered`: findings whose SLA deadline (actionable_from + target) falls in `(p, d]`
+ *     AND that were still unresolved by that deadline — i.e. crossed into breach this window.
+ *   - `sla_cleared`: breached findings (resolved AFTER their deadline) whose resolution falls
+ *     in `(p, d]` — i.e. left the past-SLA backlog this window.
+ *   - `sla_net`: entered − cleared. Above zero means the past-SLA backlog grew.
+ * The first point has no predecessor window, so all three are null. Awaiting-vendor-fix rows
+ * (null actionable_from) and no-target severities never contribute (see slaDeadlineRows).
+ * Severity scoping matches every sibling here.
+ *
+ * GAS-first (no Python fixture parity — mirrors withOpenPastSla): a UI-only augmentation of
+ * the same durable rows, kept out of the parity-tested trendFromFrames.
+ */
+export function withSlaBurn<T extends { date: string }>(
+  points: T[],
+  base: Rec[],
+  severities: string[] | null = null,
+): (T & { sla_entered: number | null; sla_cleared: number | null; sla_net: number | null })[] {
+  const parsed = slaDeadlineRows(base, severities);
+
+  let prevMs: number | null = null;
+  return points.map((p, i) => {
+    const d = parseTs(p.date);
+    let entered: number | null = null;
+    let cleared: number | null = null;
+    if (i > 0 && prevMs !== null && d !== null) {
+      entered = 0;
+      cleared = 0;
+      for (const r of parsed) {
+        // Crossed into breach this window: deadline in (prev, d] and not yet resolved by it.
+        if (
+          r.deadline > prevMs && r.deadline <= d &&
+          (r.resolvedAt === null || r.resolvedAt > r.deadline)
+        ) {
+          entered += 1;
+        }
+        // Left the past-SLA backlog this window: a breached row (resolved after its deadline)
+        // whose resolution landed in (prev, d].
+        if (
+          r.resolvedAt !== null && r.resolvedAt > prevMs && r.resolvedAt <= d &&
+          r.resolvedAt > r.deadline
+        ) {
+          cleared += 1;
+        }
+      }
+    }
+    prevMs = d;
+    return {
+      ...p,
+      sla_entered: entered,
+      sla_cleared: cleared,
+      sla_net: entered !== null && cleared !== null ? entered - cleared : null,
+    };
+  });
+}
+
+/**
+ * Augment trend points with cohort SLA attainment — the unbiased dual of the resolved-only
+ * "In SLA %". For each point date d, over the cohort of findings whose SLA deadline has
+ * already passed as of d (deadline <= d, so the verdict is knowable), the share that was
+ * actually resolved on time (resolved_at != null AND resolved_at <= deadline), as a
+ * 1-decimal-rounded percentage. An open-past-deadline finding counts against attainment
+ * (unlike In-SLA %, which never scores it); null when the cohort is empty. Awaiting-vendor-
+ * fix rows and no-target severities are excluded from the cohort (see slaDeadlineRows).
+ * Severity scoping matches every sibling here.
+ *
+ * GAS-first (no Python fixture parity — mirrors withOpenPastSla): a UI-only augmentation of
+ * the same durable rows, kept out of the parity-tested trendFromFrames.
+ */
+export function cohortSlaAttainment<T extends { date: string }>(
+  points: T[],
+  base: Rec[],
+  severities: string[] | null = null,
+): (T & { sla_attainment_pct: number | null })[] {
+  const parsed = slaDeadlineRows(base, severities);
+
+  return points.map((p) => {
+    const d = parseTs(p.date);
+    let cohort = 0;
+    let met = 0;
+    if (d !== null) {
+      for (const r of parsed) {
+        if (r.deadline > d) continue; // verdict not yet knowable
+        cohort += 1;
+        if (r.resolvedAt !== null && r.resolvedAt <= r.deadline) met += 1;
+      }
+    }
+    const pct = cohort ? Math.round((met / cohort) * 100 * 10) / 10 : null;
+    return { ...p, sla_attainment_pct: pct };
   });
 }
