@@ -1,7 +1,10 @@
 // MTTR & SLA — remediation performance from the durable ledger. Hero stat, trend
 // charts, per-severity SLA table, posture bars. Never fetches from Wiz.
 
-import { openResolvedLines, stackedAgeBar, trendLine } from "../charts.js";
+import {
+  destroyChart, groupPalette, groupPie, groupTrendLines, openResolvedLines, stackedAgeBar,
+  trendLine,
+} from "../charts.js";
 import { bootstrap, swrCall } from "../store.js";
 import {
   changeChip, clear, el, emptyState, fmtDays, helpTip, scopeBar, sectionLabel, sevBadge,
@@ -137,13 +140,102 @@ export async function renderMttr(main, _params, ctx) {
 
   /** Per-domain remediation, shown only at the whole-chain view (the server omits it
    *  when a single value chain is selected). A value chain is composed of domains, so
-   *  this is how each component is doing. */
+   *  this is how each component is doing.
+   *
+   *  Above the table, a chart pair shows how the domains participate in MTTR — both keyed
+   *  to the same canonical `byDomain.trend.groups` (resolved-desc, capped at 8 + pooled
+   *  "Other") so a domain wears one hue across the two: a "Remediation share" pie
+   *  partitioning the *resolved* population (who's carrying the remediation work, tooltip
+   *  carrying each domain's median MTTR), and an "MTTR by domain" line replaying each
+   *  domain's median MTTR in days over scan history. This section is all-time like its
+   *  table — the Trends timeframe toggle is deliberately not wired in. */
   function renderByDomain(byDomain) {
     clear(byDomainHost);
     if (!byDomain || !byDomain.rows.length || boot.domainNames.length < 2) return;
     byDomainHost.append(sectionLabel("By domain"));
     byDomainHost.append(el("p", { class: "small muted", style: "margin:-6px 0 12px" },
       "Remediation for each domain that makes up the value chain."));
+
+    // Chart pair over the domain trend the server ships alongside the table. Each card swaps
+    // its canvas for a muted message when there's nothing to draw (copied from overview.js's
+    // Breakdown helpers). Both share one groupPalette so a domain's hue is stable across them.
+    const pieCanvas = el("canvas", {});
+    const pieMsg = el("p", { class: "chart-empty muted", style: "display:none" });
+    const pieCaption = el("p", { class: "chart-caption muted" });
+    const lineCanvas = el("canvas", {});
+    const lineMsg = el("p", { class: "chart-empty muted", style: "display:none" });
+    const lineCaption = el("p", { class: "chart-caption muted" });
+    byDomainHost.append(el("div", { class: "chart-grid", style: "align-items:start" },
+      el("div", { class: "chart-card" },
+        el("h3", {}, "Remediation share"),
+        el("div", { class: "chart-box" }, pieCanvas, pieMsg),
+        pieCaption),
+      el("div", { class: "chart-card" },
+        el("h3", {}, "MTTR by domain"),
+        el("div", { class: "chart-box" }, lineCanvas, lineMsg),
+        lineCaption),
+    ));
+
+    // Swap a card between its live canvas and a centered muted message.
+    function showChart(canvas, msg) {
+      msg.style.display = "none";
+      canvas.style.display = "";
+    }
+    function showMsg(canvas, msg, text) {
+      destroyChart(canvas);
+      canvas.style.display = "none";
+      msg.textContent = text;
+      msg.style.display = "";
+    }
+
+    requestAnimationFrame(() => {
+      const trend = byDomain.trend;
+      const groups = (trend && trend.groups) || [];
+      const colors = groupPalette(groups);
+      const byName = new Map(byDomain.rows.map((r) => [r.domain, r]));
+      const inGroups = new Set(groups);
+      // Rows outside the canonical groups pool into "Other" — the pie sums their resolved
+      // share; the line's Other series is the same pooled remainder the server replays.
+      const resolvedOther = byDomain.rows
+        .filter((r) => !inGroups.has(r.domain))
+        .reduce((a, r) => a + (r.resolved ?? 0), 0);
+
+      // Pie: each domain's share of resolved findings — the population the MTTR median runs
+      // over. Tooltip detail carries that domain's median MTTR.
+      pieCaption.textContent =
+        "Each domain's share of resolved findings — the population feeding MTTR.";
+      if (groups.length === 0) {
+        showMsg(pieCanvas, pieMsg, "No resolved findings to partition.");
+      } else {
+        const slices = groups.map((name) => ({
+          label: name,
+          value: byName.get(name)?.resolved ?? 0,
+          color: colors.get(name),
+          detail: "Median MTTR " + fmtDays(byName.get(name)?.median),
+        }));
+        if (resolvedOther > 0) {
+          slices.push({ label: "Other", value: resolvedOther, color: colors.get("Other") });
+        }
+        showChart(pieCanvas, pieMsg);
+        groupPie(pieCanvas, slices, { subject: "Resolved findings by domain" });
+      }
+
+      // Line: per-domain median MTTR (days) replayed over scan history.
+      lineCaption.textContent = "Median MTTR (days) by domain, per scan.";
+      const series = groups.map((name) => ({ name, color: colors.get(name) }));
+      if (resolvedOther > 0) series.push({ name: "Other", color: colors.get("Other") });
+      if (!trend || (trend.points || []).length < 2) {
+        showMsg(lineCanvas, lineMsg, "Trend appears after the second saved scan.");
+      } else {
+        showChart(lineCanvas, lineMsg);
+        groupTrendLines(lineCanvas, trend.points, series, {
+          unit: "days",
+          nullAsGap: true,
+          describe: "Median MTTR in days per domain over scan history.",
+        });
+      }
+    });
+
     // Column headers carry the two new metrics' definitions via helpTip, matching the
     // per-severity table's convention in renderSla above.
     const columns = [

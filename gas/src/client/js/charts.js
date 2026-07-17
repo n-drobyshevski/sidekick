@@ -469,20 +469,24 @@ const arcPercentLabels = {
 };
 
 /**
- * Pie partitioning open findings across the top-level groups. `slices` = [{label, value,
- * color}] (the caller appends an "Other" slice when present). Plain pie, not a doughnut —
- * the total already lives in the KPI band. Meaning never rides on color alone: a right-side
- * legend (point-style swatches), on-arc percentages, tooltip, and a text alternative all
- * name each group.
+ * Pie partitioning a population across the top-level groups. `slices` = [{label, value,
+ * color, detail?}] (the caller appends an "Other" slice when present). Plain pie, not a
+ * doughnut — the total already lives in the KPI band. Meaning never rides on color alone: a
+ * right-side legend (point-style swatches), on-arc percentages, tooltip, and a text
+ * alternative all name each group. `opts.subject` is the leading noun of the text
+ * alternative (default "Open findings by group"); a slice's optional `detail` string is
+ * shown as a second tooltip line and folded into that slice's aria part.
  */
-export function groupPie(canvas, slices) {
+export function groupPie(canvas, slices, opts = {}) {
   destroyExisting(canvas);
+  const subject = opts.subject || "Open findings by group";
   const total = slices.reduce((a, s) => a + (Number(s.value) || 0), 0);
   const parts = slices.map((s) => {
     const pct = total ? Math.round((Number(s.value) || 0) / total * 100) : 0;
-    return s.label + " " + localeNum(s.value) + " (" + pct + "%)";
+    const base = s.label + " " + localeNum(s.value) + " (" + pct + "%)";
+    return s.detail ? base + ", " + s.detail : base;
   });
-  describe(canvas, "Open findings by group: " + (parts.join(", ") || "none") + ".");
+  describe(canvas, subject + ": " + (parts.join(", ") || "none") + ".");
   return new Chart(canvas, {
     type: "pie",
     data: {
@@ -519,6 +523,9 @@ export function groupPie(canvas, slices) {
               const pct = total ? Math.round(v / total * 100) : 0;
               return " " + localeNum(v) + " (" + pct + "%)";
             },
+            // A second line carrying the slice's optional detail (e.g. that group's median
+            // MTTR) — undefined when the slice has none, so Breakdown slices are unchanged.
+            afterLabel: (ctx) => slices[ctx.dataIndex].detail,
           },
         },
       },
@@ -528,16 +535,25 @@ export function groupPie(canvas, slices) {
 }
 
 /**
- * Open findings per group over time: one line per series, encoded by color +
- * legend/tooltip label + a distinct point marker (never color alone). Mirrors
- * severityTrendLines — a category x axis of ISO days, not the proportional day axis.
- * `points` are `{ date, byGroup }` rows; `series` = [{name, color}] (Other last when
- * present), the same canonical set the pie uses.
+ * A value per group over time: one line per series, encoded by color + legend/tooltip
+ * label + a distinct point marker (never color alone). Mirrors severityTrendLines — a
+ * category x axis of ISO days, not the proportional day axis. `points` are
+ * `{ date, byGroup }` rows; `series` = [{name, color}] (Other last when present), the same
+ * canonical set the pie uses. `cfg`: `unit` labels the y axis and tooltip (default
+ * "findings", which adds no y-axis title); `nullAsGap` plots missing/`null` values as line
+ * breaks (spanGaps) rather than fake zeros — for a median that has no sample yet; `describe`
+ * overrides the text alternative.
  */
-export function groupTrendLines(canvas, points, series) {
+export function groupTrendLines(canvas, points, series, cfg = {}) {
   destroyExisting(canvas);
-  describe(canvas, "Open findings per group over time.");
-  const opts = baseOptions("findings");
+  const { unit = "findings", nullAsGap = false, describe: aria } = cfg;
+  describe(canvas, aria || "Open findings per group over time.");
+  const opts = baseOptions(unit);
+  // A magnitude unit gets a y-axis title (mirrors trendLine); "findings" stays untitled,
+  // matching the Breakdown call site's original look.
+  if (unit !== "findings") {
+    opts.scales.y.title = { display: true, text: unit, font: FONT, color: INK2 };
+  }
   opts.plugins.legend = {
     display: true,
     labels: { font: FONT, color: INK2, boxWidth: 12, usePointStyle: true },
@@ -548,7 +564,8 @@ export function groupTrendLines(canvas, points, series) {
       labels: points.map((p) => p.date.slice(0, 10)),
       datasets: series.map((s, i) => ({
         label: s.name,
-        data: points.map((p) => p.byGroup[s.name] || 0),
+        data: points.map((p) => (nullAsGap ? (p.byGroup[s.name] ?? null) : (p.byGroup[s.name] || 0))),
+        spanGaps: nullAsGap,
         borderColor: s.color,
         backgroundColor: s.color,
         pointStyle: GROUP_POINT_STYLES[i % GROUP_POINT_STYLES.length],
