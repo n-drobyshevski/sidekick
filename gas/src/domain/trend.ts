@@ -5,6 +5,7 @@
 // age (max over severities of the p90 open age) — matching the headline KPIs.
 
 import { SEVERITY_ORDER, SLA_TARGETS } from "./config";
+import { kmCurve, kmMedianFromCurve } from "./remediation";
 import { normalizeSeverity } from "./severity";
 import { median, parseTs, quantile, toIso, type Rec } from "./util";
 
@@ -263,8 +264,8 @@ export interface MttrByGroupPoint {
  * scans: rows with {ts, shape}; base: ledger+episode rows with {resolved_at, mttr_days,
  * severity} plus whatever column `keyOf` reads. opts.severities (optional) restricts to
  * those + UNKNOWN, as elsewhere. opts.minMttrDays (optional) pools only samples with
- * mttr_days strictly above it — the per-group analogue of `fastLaneSplit`'s tail median,
- * so auto-patched fast-lane resolutions don't drag a domain's median toward zero.
+ * mttr_days strictly above it — a general-purpose lower cutoff, so auto-patched fast
+ * resolutions don't drag a domain's median toward zero.
  */
 export function medianMttrByGroupTrend(
   scans: Rec[],
@@ -408,43 +409,59 @@ export function trendFromBase(
 }
 
 /**
- * Augment already-emitted trend points with `tail_median_days` — the as-of-date median
- * MTTR over resolutions SLOWER than the fast-lane window, i.e. the "MTTR excl. fast
- * lane" series. For each point date d it pools `mttr_days` of rows resolved by d with
- * `mttr_days > thresholdDays` (the strict dual of the fast lane's `<=`), and takes the
- * same linear-interpolation median / 3-decimal rounding `trendFromFrames` uses; null
- * when nothing tail-resolved yet. Severity scoping matches every sibling here.
+ * Augment already-emitted trend points with `km_median_days` — the Kaplan–Meier median
+ * time-to-remediation as of each point's date, the censoring-aware replacement for the old
+ * "MTTR excl. fast lane" series. For each point date d it replays the durable base as of d:
+ * rows resolved by d (resolved_at <= d) are events at their stored `mttr_days` (fixed once
+ * resolved); rows still open as of d (first_seen <= d and not resolved by d) are right-
+ * censored at age `(d − first_seen)/day`. The KM median is the smallest event time whose
+ * survival has fallen to <= 0.5 (remediation.kmMedianFromCurve over remediation.kmCurve —
+ * the same estimator the hero's kaplanMeier uses, shared so the two can't drift), rounded to
+ * 3 decimals like `trendFromFrames`; null before any event or when survival never reaches 0.5
+ * (too much censoring). Severity scoping matches every sibling here.
  *
- * GAS-first (no Python fixture parity — mirrors `withOpenPastSla`): a UI-only
- * augmentation of the same durable rows, kept out of the parity-tested `trendFromFrames`.
+ * GAS-first (no Python fixture parity — mirrors `withOpenPastSla`): a UI-only augmentation
+ * of the same durable rows, kept out of the parity-tested `trendFromFrames`.
  */
-export function withTailMedian<T extends { date: string }>(
+export function withKmMedian<T extends { date: string }>(
   points: T[],
   base: Rec[],
-  thresholdDays: number,
   severities: string[] | null = null,
-): (T & { tail_median_days: number | null })[] {
+): (T & { km_median_days: number | null })[] {
   let rows = base;
   if (severities !== null && base.length) {
     const keep = new Set([...severities, "UNKNOWN"]);
     rows = base.filter((r) => keep.has(normalizeSeverity(r["severity"])));
   }
-  const parsed = rows
-    .map((r) => ({
-      resolvedAt: parseTs(r["resolved_at"]),
-      mttr: typeof r["mttr_days"] === "number" && !Number.isNaN(r["mttr_days"])
-        ? (r["mttr_days"] as number)
-        : null,
-    }))
-    .filter((r) => r.resolvedAt !== null && r.mttr !== null && r.mttr! > thresholdDays);
+  const parsed = rows.map((r) => ({
+    first: parseTs(r["first_seen"]),
+    resolvedAt: parseTs(r["resolved_at"]),
+    mttr: typeof r["mttr_days"] === "number" && !Number.isNaN(r["mttr_days"])
+      ? (r["mttr_days"] as number)
+      : null,
+  }));
 
   return points.map((p) => {
     const d = parseTs(p.date);
-    const tail = d === null
-      ? []
-      : parsed.filter((r) => r.resolvedAt! <= d).map((r) => r.mttr!);
-    const med = median(tail);
-    return { ...p, tail_median_days: med !== null ? Math.round(med * 1000) / 1000 : null };
+    let med: number | null = null;
+    if (d !== null) {
+      const events: number[] = []; // resolved by d, at their stored mttr_days
+      const times: number[] = []; // the risk set: events + open-as-of-d censored ages
+      for (const r of parsed) {
+        if (r.resolvedAt !== null && r.resolvedAt <= d) {
+          // Resolved by d: an event at its final mttr_days (a null-mttr resolution drops out).
+          if (r.mttr !== null) {
+            events.push(r.mttr);
+            times.push(r.mttr);
+          }
+        } else if (r.first !== null && r.first <= d) {
+          // Open as of d: right-censored at its current age.
+          times.push((d - r.first) / DAY_MS);
+        }
+      }
+      med = kmMedianFromCurve(kmCurve(events, times));
+    }
+    return { ...p, km_median_days: med !== null ? Math.round(med * 1000) / 1000 : null };
   });
 }
 

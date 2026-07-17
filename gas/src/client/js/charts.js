@@ -1,8 +1,9 @@
 // Chart.js wrappers themed to DESIGN.md: severity bar (click-to-filter), MTTR trend
-// line, open-vs-resolved dual line. Chart.js 4 is bundled (no CDN) so the app works
-// behind proxies that block or rewrite third-party script hosts. Only the components
-// these three chart types use are registered — chart.js/auto would pull in every
-// controller/scale/plugin and roughly double the bundle's Chart.js footprint.
+// line, open-vs-resolved dual line, and a Kaplan-Meier survival curve. Chart.js 4 is
+// bundled (no CDN) so the app works behind proxies that block or rewrite third-party
+// script hosts. Only the components these chart types use are registered —
+// chart.js/auto would pull in every controller/scale/plugin and roughly double the
+// bundle's Chart.js footprint.
 
 import {
   ArcElement,
@@ -402,6 +403,144 @@ export function openResolvedLines(canvas, points, { xRange } = {}) {
     },
     options: opts,
     plugins: band ? [band] : [],
+  });
+}
+
+// -------------------------------------------------------------- survival curve (KM)
+
+// Marker glossary for the KM survival chart: key into the {naiveMedian, median, naiveMean,
+// mean} day values, its legend label, hex color, and a Chart.js pointStyle distinct from
+// every other marker on the chart. KM (all-findings) markers are Signal Blue; naive
+// (closed-only) markers are Ink — meaning is carried by label + point-style too, matching
+// the rest of the app's "never color alone" rule.
+const KM_MARKERS = [
+  { key: "naiveMedian", label: "Median (closed)", color: "#171717", pointStyle: "circle" },
+  { key: "median", label: "Median (KM, all)", color: "#2563eb", pointStyle: "triangle" },
+  { key: "naiveMean", label: "Mean (closed)", color: "#171717", pointStyle: "rect" },
+  { key: "mean", label: "Mean (KM · RMST, all)", color: "#2563eb", pointStyle: "rectRot" },
+];
+
+// S(day) off a KM curve (distinct event times ascending, implicit S(0)=1). The staircase is
+// right-continuous ("after"): survival holds at its pre-drop level until an event time, then
+// drops and holds at the new level — so the answer is the last point with t <= day.
+function stepAt(curve, day) {
+  let s = 1;
+  for (const p of curve) {
+    if (p.t <= day) s = p.s;
+    else break;
+  }
+  return s;
+}
+
+/**
+ * Kaplan-Meier survival curve: an S(t) staircase (x in weeks, y = S(t)*100) with four
+ * annotated markers — median/mean, each closed-only (naive) vs all-findings (KM) — sitting
+ * on the curve at their day value. No new Chart.js registrations: the staircase is a
+ * `type:'line'` dataset (`stepped:'after'`, right-continuous), and the markers are
+ * `showLine:false` line datasets (PointElement/LineController are already registered;
+ * ScatterController is not, and isn't needed). `curve` is KMResult.curve
+ * (`[{t,s,atRisk,events}]`); `markers` is the four day values
+ * (`{ naiveMedian, median, naiveMean, mean }` — any may be null, which skips that marker's
+ * point rather than plotting a fake one).
+ */
+export function survivalCurve(canvas, curve, markers) {
+  destroyExisting(canvas);
+  const points = curve || [];
+  const survivalPoints = [{ x: 0, y: 100 }, ...points.map((p) => ({ x: p.t / 7, y: p.s * 100 }))];
+
+  const markerDatasets = KM_MARKERS.map((m) => {
+    const day = markers ? markers[m.key] : null;
+    const data = day === null || day === undefined
+      ? []
+      : [{ x: day / 7, y: stepAt(points, day) * 100, day }];
+    return {
+      label: m.label,
+      data,
+      showLine: false,
+      pointRadius: 6,
+      pointHoverRadius: 7,
+      pointStyle: m.pointStyle,
+      backgroundColor: m.color,
+      borderColor: m.color,
+    };
+  });
+
+  const named = KM_MARKERS
+    .map((m) => ({ ...m, day: markers ? markers[m.key] : null }))
+    .filter((m) => m.day !== null && m.day !== undefined);
+  describe(
+    canvas,
+    "Kaplan-Meier survival curve of time to remediation." +
+      (named.length
+        ? " Markers: " + named.map((m) => `${m.label} at ${m.day} day(s)`).join(", ") + "."
+        : ""),
+  );
+
+  const opts = {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: reducedMotion ? false : { duration: 300 },
+    plugins: {
+      legend: {
+        display: true,
+        labels: {
+          font: FONT, color: INK2, usePointStyle: true, boxWidth: 8,
+          // The staircase itself doesn't need a legend swatch — meaning attaches to the
+          // four markers (label + point-style), not to the curve's color.
+          filter: (item) => item.datasetIndex !== 0,
+        },
+      },
+      tooltip: {
+        backgroundColor: "#0a0a0a",
+        titleFont: FONT,
+        bodyFont: FONT,
+        cornerRadius: 6,
+        padding: 10,
+        callbacks: {
+          title: () => "",
+          label: (ctx) =>
+            ctx.datasetIndex === 0
+              ? `Week ${ctx.parsed.x.toFixed(1)}: ${Math.round(ctx.parsed.y)}% still open`
+              : `${ctx.dataset.label}: ${ctx.raw.day}d (${Math.round(ctx.parsed.y)}% still open)`,
+        },
+      },
+    },
+    scales: {
+      x: {
+        type: "linear",
+        min: 0,
+        suggestedMax: 26, // auto-extends past 26w if a curve point or marker runs longer
+        title: { display: true, text: "weeks", font: FONT, color: INK2 },
+        ticks: { font: FONT, color: INK2 },
+        grid: { color: HAIRLINE, drawTicks: false },
+        border: { color: HAIRLINE },
+      },
+      y: {
+        min: 0,
+        max: 100,
+        ticks: { font: FONT, color: INK2, callback: (v) => v + "%" },
+        grid: { color: HAIRLINE, drawTicks: false },
+        border: { display: false },
+      },
+    },
+  };
+
+  return new Chart(canvas, {
+    type: "line",
+    data: {
+      datasets: [
+        {
+          label: "S(t)",
+          data: survivalPoints,
+          stepped: "after",
+          borderColor: "#2563eb",
+          pointRadius: 0,
+          borderWidth: 2,
+        },
+        ...markerDatasets,
+      ],
+    },
+    options: opts,
   });
 }
 
