@@ -427,11 +427,31 @@ export function helpTip(content, lines, { label, className } = {}) {
     { class: "helptip-bubble", role: "tooltip", id },
     ...items.map((t) => el("span", { class: "helptip-line" }, t)),
   );
+  // Pin the bubble to the viewport just before each reveal. Left in document flow it's
+  // absolutely positioned inside the trigger, so any overflow ancestor (e.g. a
+  // .table-wrap's overflow-x:auto, which clips vertically too) cuts it off — table-header
+  // tips were unreadable. position:fixed escapes every clipping context; coordinates are
+  // recomputed on every reveal so no hide-time cleanup is needed (an opacity-0 fixed
+  // bubble can't affect layout). The bubble keeps layout at opacity 0, so its rect is
+  // measurable before it fades in. Below the trigger by default, flipped above when it
+  // would cross the viewport bottom, clamped to the side edges.
+  const place = (wrapper) => {
+    const r = wrapper.getBoundingClientRect();
+    const b = bubble.getBoundingClientRect();
+    let top = r.bottom + 8;
+    if (top + b.height > window.innerHeight - 8) top = Math.max(8, r.top - b.height - 8);
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - b.width - 8));
+    bubble.style.position = "fixed";
+    bubble.style.left = `${left}px`;
+    bubble.style.top = `${top}px`;
+  };
   const attrs = {
     class: `helptip${className ? " " + className : ""}`,
     tabindex: "0",
     "aria-describedby": id,
     onkeydown: (e) => { if (e.key === "Escape") e.currentTarget.blur(); },
+    onmouseenter: (e) => place(e.currentTarget),
+    onfocusin: (e) => place(e.currentTarget),
   };
   if (label) attrs["aria-label"] = label;
   const kids = Array.isArray(content) ? content : [content];
