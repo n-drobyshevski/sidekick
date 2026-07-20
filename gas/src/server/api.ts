@@ -8,8 +8,9 @@ import {
   SEVERITY_ORDER,
   SLA_TARGETS,
   SELECTABLE_SEVERITIES,
+  RESOLVED_STATUSES,
 } from "../domain/config";
-import { domainNames, validateDomains, compileDomains, assignDomain, assignDomains, UNASSIGNED } from "../domain/domainRules";
+import { domainNames, validateDomains, compileDomains, assignDomain, assignDomains, hasDomainInputs, UNASSIGNED } from "../domain/domainRules";
 import { coverage, ruleHealth, unassignedResources, untaggedSubscriptions } from "../domain/attribution";
 import { mttrFromLedger, vulnKey } from "../domain/lifecycle";
 import type { BaseRow } from "../domain/ledgerCore";
@@ -720,6 +721,18 @@ function mttrByDomainData(p?: unknown): Rec {
   rows = filterNoFixBase(rows, settingsStore.getShowNoFix());
   supportGroups.attachSupportGroups(rows);
   if (supportGroup) rows = rows.filter((r) => String(r["_supportGroup"] ?? "") === supportGroup);
+  // Drop rows that carry no domain-rule inputs at all — compacted resolved episodes and the
+  // pre-v5 / imported resolved history that surface with null tags+subscription+name. They can
+  // only ever fall through to Unassigned because their inputs are missing, not because they
+  // genuinely matched no rule (see domainRules.hasDomainInputs). Left in, they'd swamp the
+  // breakdown with a giant fake "Unassigned" domain that has no counterpart on the live
+  // Attribution page; a footnote surfaces how many resolved findings were set aside. Applied to
+  // `rows` so they drop out of both the per-domain table and the trend replay below, together.
+  const excluded = rows.filter((r) => !hasDomainInputs(r));
+  rows = rows.filter((r) => hasDomainInputs(r));
+  const excludedResolved = excluded.filter((r) =>
+    RESOLVED_STATUSES.has(String(r["status"] ?? "").toUpperCase()),
+  ).length;
   const items = settingsStore.getDomains().items;
   const compiled = compileDomains(items);
   const assigned = assignDomains(rows, compiled);
@@ -774,7 +787,12 @@ function mttrByDomainData(p?: unknown): Rec {
   // naive `points` above is kept only as the toggle's comparison. Same scoped `rows`, same
   // canonical `groups`/keyOf, so KM and naive line up point-for-point.
   const kmPoints = kmMedianByGroupTrend(scanRows, rows, byDomainKey, groups, { severities: null });
-  return { rows: out, trend: { groups, points, kmPoints } };
+  return {
+    rows: out,
+    trend: { groups, points, kmPoints },
+    // Resolved history set aside above for lacking any domain input — the by-domain footnote.
+    excluded: { total: excluded.length, resolved: excludedResolved },
+  };
 }
 
 // Cached per DATA_VERSION, keyed on exactly the params each computation reads — so
@@ -850,7 +868,10 @@ const cachedMttrByDomainData = (p?: unknown) =>
     // "mttrByDomain8" → "mttrByDomain9": `trend` gained the KM-median-by-domain series
     // (`kmPoints`) that the chart now defaults to; bump so a stale kmPoints-less entry can't
     // survive the persistent dataVersion.
-    "mttrByDomain9",
+    // "mttrByDomain9" → "mttrByDomain10": rows/trend now exclude rows with no domain inputs
+    // (unattributable compacted/imported resolved history) and the payload gained `excluded`;
+    // bump so no stale old-shape entry survives the persistent dataVersion.
+    "mttrByDomain10",
     {
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
       severities: readSeverities(p),
