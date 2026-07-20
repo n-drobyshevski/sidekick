@@ -584,6 +584,10 @@ function attributionData(p?: unknown): Rec {
       keys: sgKeys.length,
       groups: sgMapGroups,
       tagKey: supportGroups.configuredTagKey(),
+      // A sample of the identity tokens the map is actually indexed under (folded, as the
+      // join compares them) — the concrete map side of the join, to eyeball against the
+      // subscription id / ext id / name the findings carry when nothing resolves.
+      sampleKeys: sgKeys.slice(0, 12),
     },
   };
 }
@@ -598,8 +602,10 @@ export function getAttribution(p?: unknown): ApiResult {
     // "attribution2" → "attribution3": payload gained the support-group breakdown
     // (`supportGroups`) and richer `supportGroupMap` (groups + tagKey); bump so a stale
     // old-shape entry can't survive the persistent dataVersion.
+    // "attribution3" → "attribution4": `supportGroupMap` gained `sampleKeys` (indexed
+    // subscription identities); bump so a stale sampleKeys-less entry can't survive.
     const data = cached(
-      "attribution3",
+      "attribution4",
       { severities: readSeverities(p), showNoFix: settingsStore.getShowNoFix() },
       () => attributionData(p),
     );

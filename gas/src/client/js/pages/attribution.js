@@ -258,6 +258,26 @@ export async function renderAttribution(main, params, ctx) {
           + "isn’t joining the map. Check the tag key and that findings carry the same "
           + "subscription id / external id / name the map is indexed under."));
       }
+
+      // The concrete map side of the join: a sample of the identity tokens the map is
+      // indexed under (folded, exactly as the join compares them). Shown only when something
+      // is unresolved — the case where eyeballing them against the subscription id / ext id /
+      // name in the Untagged subscriptions table below reveals a mismatch. Chips, not prose,
+      // so the actual values are scannable.
+      const sample = sgMap.sampleKeys || [];
+      if (sample.length && (sg.unresolvedFindings || 0) > 0) {
+        const more = (sgMap.keys || 0) - sample.length;
+        const chips = [];
+        sample.forEach((k, i) => {
+          if (i) chips.push(document.createTextNode(", "));
+          chips.push(el("code", {}, k));
+        });
+        bodyHost.append(el("p", { class: "small muted", style: "margin-top:-4px" },
+          "Indexed under (sample): ", ...chips,
+          more > 0 ? ` … (+${more.toLocaleString()} more)` : "",
+          ". Compare these against the subscription id / external id / name your findings "
+          + "carry — the Untagged subscriptions table below lists the unresolved ones."));
+      }
     }
 
     const rows = sg.rows || [];

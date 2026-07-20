@@ -6078,7 +6078,11 @@ var Server = (() => {
         configured: sgKeys.length > 0,
         keys: sgKeys.length,
         groups: sgMapGroups,
-        tagKey: configuredTagKey()
+        tagKey: configuredTagKey(),
+        // A sample of the identity tokens the map is actually indexed under (folded, as the
+        // join compares them) — the concrete map side of the join, to eyeball against the
+        // subscription id / ext id / name the findings carry when nothing resolves.
+        sampleKeys: sgKeys.slice(0, 12)
       }
     };
   }
@@ -6086,7 +6090,7 @@ var Server = (() => {
     return run(() => {
       var _a, _b;
       const data = cached(
-        "attribution3",
+        "attribution4",
         { severities: readSeverities(p), showNoFix: getShowNoFix2() },
         () => attributionData(p)
       );
