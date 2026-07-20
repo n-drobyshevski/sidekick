@@ -972,9 +972,8 @@ var Server = (() => {
     }
     throw new WizQueryError(`Wiz query failed after retries (${lastError}).`);
   }
-  function graphSearchPage(query, variables) {
+  function parseGraphSearchPage(data) {
     var _a, _b, _c;
-    const data = gqlPost(query, variables);
     const connection = data["graphSearch"];
     if (!connection) {
       throw new WizQueryError("Wiz response carried no graphSearch connection.");
@@ -985,6 +984,16 @@ var Server = (() => {
       hasNextPage: Boolean(pageInfo["hasNextPage"]),
       endCursor: (_c = pageInfo["endCursor"]) != null ? _c : null
     };
+  }
+  function graphSearchPage(query, variables, fallbackFirst) {
+    try {
+      return parseGraphSearchPage(gqlPost(query, variables));
+    } catch (e) {
+      const first = Number(variables["first"]);
+      const smaller = fallbackFirst != null ? fallbackFirst : Number.isFinite(first) ? Math.max(1, Math.floor(first / 2)) : NaN;
+      if (!Number.isFinite(smaller) || !(smaller < first)) throw e;
+      return parseGraphSearchPage(gqlPost(query, { ...variables, first: smaller }));
+    }
   }
   function fetchPage(options) {
     var _a;
@@ -4806,6 +4815,7 @@ var Server = (() => {
 
   // src/server/wizSubscriptionsQuery.ts
   var PAGE_SIZE2 = 100;
+  var PAGE_SIZE_FALLBACK2 = 50;
   var MAX_PAGES2 = 50;
   function isSafeTagKey(key) {
     return /^[\w/.:-]{1,120}$/.test(key);
@@ -4936,7 +4946,7 @@ var Server = (() => {
     let subscriptions = 0;
     let logged = false;
     for (let page = 0; page < MAX_PAGES2; page++) {
-      const result = graphSearchPage(query, { first: PAGE_SIZE2, after: cursor });
+      const result = graphSearchPage(query, { first: PAGE_SIZE2, after: cursor }, PAGE_SIZE_FALLBACK2);
       for (const node of result.nodes) {
         const entities = (_a = node["entities"]) != null ? _a : [];
         for (const entity of entities) {

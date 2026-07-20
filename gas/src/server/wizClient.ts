@@ -200,9 +200,7 @@ export interface GraphSearchPage {
   endCursor: string | null;
 }
 
-/** One page of a graphSearch connection (nodes[].entities + pageInfo). */
-export function graphSearchPage(query: string, variables: Rec): GraphSearchPage {
-  const data = gqlPost(query, variables);
+function parseGraphSearchPage(data: Rec): GraphSearchPage {
   const connection = data["graphSearch"] as Rec | undefined;
   if (!connection) {
     throw new WizQueryError("Wiz response carried no graphSearch connection.");
@@ -213,6 +211,30 @@ export function graphSearchPage(query: string, variables: Rec): GraphSearchPage 
     hasNextPage: Boolean(pageInfo["hasNextPage"]),
     endCursor: (pageInfo["endCursor"] as string | null) ?? null,
   };
+}
+
+/**
+ * One page of a graphSearch connection (nodes[].entities + pageInfo). On a query failure it
+ * retries once at a smaller page size — a Wiz "input exceeded" / query-cost error on a heavy
+ * page (e.g. large `properties` blobs) clears when fewer entities are requested, the same
+ * first-page size probe fetchPage does. `fallbackFirst` pins the retry size; absent, it halves
+ * `variables.first` (floored at 1). The retry is skipped when `first` can't be reduced, so a
+ * non-size error surfaces on the first throw rather than being masked by a pointless second call.
+ */
+export function graphSearchPage(
+  query: string,
+  variables: Rec,
+  fallbackFirst?: number,
+): GraphSearchPage {
+  try {
+    return parseGraphSearchPage(gqlPost(query, variables));
+  } catch (e) {
+    const first = Number(variables["first"]);
+    const smaller =
+      fallbackFirst ?? (Number.isFinite(first) ? Math.max(1, Math.floor(first / 2)) : NaN);
+    if (!Number.isFinite(smaller) || !(smaller < first)) throw e;
+    return parseGraphSearchPage(gqlPost(query, { ...variables, first: smaller }));
+  }
 }
 
 export interface FetchPageOptions {
