@@ -29,7 +29,7 @@ import {
 import { validateBundle } from "../domain/importMerge";
 import { SealedScanError, LedgerRebuildError } from "../domain/maintenance";
 import { parseTs, present, type Rec } from "../domain/util";
-import { medianMttrByGroupTrend, openByGroupTrend, openBySeverityTrend } from "../domain/trend";
+import { kmMedianByGroupTrend, medianMttrByGroupTrend, openByGroupTrend, openBySeverityTrend } from "../domain/trend";
 import * as insights from "../domain/insights";
 import * as archive from "./archiveStore";
 import * as findings from "./findings";
@@ -751,7 +751,11 @@ function mttrByDomainData(p?: unknown): Rec {
   const scanRows = ledgerStore.loadScanRows() as unknown as Rec[];
   const byDomainKey = (r: Rec) => String(r["_domain"] ?? UNASSIGNED);
   const points = medianMttrByGroupTrend(scanRows, rows, byDomainKey, groups, { severities: null });
-  return { rows: out, trend: { groups, points } };
+  // KM-median-by-domain series (open findings right-censored) — the chart's default clock; the
+  // naive `points` above is kept only as the toggle's comparison. Same scoped `rows`, same
+  // canonical `groups`/keyOf, so KM and naive line up point-for-point.
+  const kmPoints = kmMedianByGroupTrend(scanRows, rows, byDomainKey, groups, { severities: null });
+  return { rows: out, trend: { groups, points, kmPoints } };
 }
 
 // Cached per DATA_VERSION, keyed on exactly the params each computation reads — so
@@ -816,7 +820,10 @@ const cachedMttrByDomainData = (p?: unknown) =>
     // old-shape entry survives.
     // "mttrByDomain7" → "mttrByDomain8": the per-domain split now honors the show-no-fix
     // toggle (awaiting rows dropped when off); key gains showNoFix so on/off states cache apart.
-    "mttrByDomain8",
+    // "mttrByDomain8" → "mttrByDomain9": `trend` gained the KM-median-by-domain series
+    // (`kmPoints`) that the chart now defaults to; bump so a stale kmPoints-less entry can't
+    // survive the persistent dataVersion.
+    "mttrByDomain9",
     {
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
       severities: readSeverities(p),

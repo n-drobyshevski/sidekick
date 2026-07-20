@@ -2816,6 +2816,61 @@ var Server = (() => {
       return { date: ts.iso, byGroup };
     });
   }
+  function kmMedianByGroupTrend(scans, base, keyOf, groups, opts = {}) {
+    var _a, _b, _c, _d;
+    const severities = (_a = opts.severities) != null ? _a : null;
+    const includeOther = (_b = opts.includeOther) != null ? _b : true;
+    const otherLabel = (_c = opts.otherLabel) != null ? _c : "Other";
+    const hideNoFix = (_d = opts.hideNoFix) != null ? _d : false;
+    let rows = base;
+    if (severities !== null && base.length) {
+      const keep = /* @__PURE__ */ new Set([...severities, "UNKNOWN"]);
+      rows = base.filter((r) => keep.has(normalizeSeverity(r["severity"])));
+    }
+    if (!scans.length || !rows.length) return [];
+    const flatTs = scans.filter((s) => s["shape"] === "flat").map((s) => ({ iso: String(s["ts"]), ms: parseTs(s["ts"]) })).filter((t) => t.ms !== null).sort((a, b) => a.ms - b.ms);
+    if (!flatTs.length) return [];
+    const inGroup = new Set(groups);
+    const parsed = rows.map((r) => {
+      const raw = keyOf(r);
+      const value = raw.trim() === "" ? "(none)" : raw;
+      const known = inGroup.has(value);
+      return {
+        first: parseTs(r["first_seen"]),
+        resolvedAt: parseTs(r["resolved_at"]),
+        mttr: typeof r["mttr_days"] === "number" && !Number.isNaN(r["mttr_days"]) ? r["mttr_days"] : null,
+        fixAvail: parseTs(r["fix_available_at"]),
+        group: known ? value : otherLabel,
+        folded: !known && includeOther,
+        kept: known || includeOther
+      };
+    });
+    const hasOther = parsed.some((r) => r.folded);
+    const names = hasOther ? [...groups, otherLabel] : groups;
+    return flatTs.map((ts) => {
+      var _a2, _b2, _c2, _d2, _e, _f, _g, _h;
+      const events = {};
+      const times = {};
+      for (const r of parsed) {
+        if (!r.kept) continue;
+        if (r.resolvedAt !== null && r.resolvedAt <= ts.ms) {
+          if (r.mttr !== null) {
+            ((_b2 = events[_a2 = r.group]) != null ? _b2 : events[_a2] = []).push(r.mttr);
+            ((_d2 = times[_c2 = r.group]) != null ? _d2 : times[_c2] = []).push(r.mttr);
+          }
+        } else if (r.first !== null && r.first <= ts.ms) {
+          if (hideNoFix && awaitingFixAsOf(r.first, r.resolvedAt, r.fixAvail, ts.ms)) continue;
+          ((_f = times[_e = r.group]) != null ? _f : times[_e] = []).push((ts.ms - r.first) / DAY_MS4);
+        }
+      }
+      const byGroup = {};
+      for (const name of names) {
+        const med = kmMedianFromCurve(kmCurve((_g = events[name]) != null ? _g : [], (_h = times[name]) != null ? _h : []));
+        byGroup[name] = med !== null ? Math.round(med * 1e3) / 1e3 : null;
+      }
+      return { date: ts.iso, byGroup };
+    });
+  }
   function trendFromBase(scans, base, severities = null, opts = {}) {
     var _a;
     const hideNoFix = (_a = opts.hideNoFix) != null ? _a : false;
@@ -6094,7 +6149,8 @@ var Server = (() => {
       return String((_a2 = r["_domain"]) != null ? _a2 : UNASSIGNED);
     };
     const points = medianMttrByGroupTrend(scanRows, rows, byDomainKey, groups, { severities: null });
-    return { rows: out, trend: { groups, points } };
+    const kmPoints = kmMedianByGroupTrend(scanRows, rows, byDomainKey, groups, { severities: null });
+    return { rows: out, trend: { groups, points, kmPoints } };
   }
   var cachedMttrData = (p) => {
     var _a, _b;
@@ -6156,7 +6212,10 @@ var Server = (() => {
       // old-shape entry survives.
       // "mttrByDomain7" → "mttrByDomain8": the per-domain split now honors the show-no-fix
       // toggle (awaiting rows dropped when off); key gains showNoFix so on/off states cache apart.
-      "mttrByDomain8",
+      // "mttrByDomain8" → "mttrByDomain9": `trend` gained the KM-median-by-domain series
+      // (`kmPoints`) that the chart now defaults to; bump so a stale kmPoints-less entry can't
+      // survive the persistent dataVersion.
+      "mttrByDomain9",
       {
         supportGroup: String((_a = p == null ? void 0 : p["supportGroup"]) != null ? _a : ""),
         severities: readSeverities(p),

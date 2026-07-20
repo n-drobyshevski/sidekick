@@ -831,6 +831,9 @@ table.data tbody tr:hover { background: rgba(0, 0, 0, 0.025); }
 table.data tbody tr.clickable { cursor: pointer; }
 table.data td.clickable { cursor: pointer; }
 td.num { text-align: right; }
+/* The principal KPI cell in a comparison pair (e.g. KM median beside the muted naive median):
+   heavier weight + full ink so the eye lands on it first while the .muted comparison recedes. */
+td.num--key { font-weight: 600; color: var(--ink); }
 a { color: var(--accent); }
 
 .pager { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 13px; color: var(--text-2); }
