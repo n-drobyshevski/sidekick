@@ -335,3 +335,30 @@ export function assignDomain(record: Rec, compiled: CompiledDomain[]): string {
 export function assignDomains(records: Rec[], compiled: CompiledDomain[]): string[] {
   return records.map((r) => assignDomain(r, compiled));
 }
+
+/**
+ * Whether a record carries ANY input a rule could ever match on — a name (not the
+ * '(compacted)' placeholder), a subscription, a support group, or a present tag. Reads
+ * the exact same columns as conditionMatches / assignDomain, so the two can't drift.
+ *
+ * The point is to tell "Unassigned because its inputs are missing" (a compacted episode,
+ * or pre-v5 / imported resolved history with null tags+subscription+name — which can only
+ * ever fall through to UNASSIGNED) apart from "has inputs but genuinely matched no rule"
+ * (the real, actionable Unassigned the Attribution page shows). Surfaces used by the MTTR
+ * by-domain breakdown to drop the former from the split instead of counting it as a fake
+ * Unassigned domain.
+ */
+export function hasDomainInputs(record: Rec): boolean {
+  const names = recordValues(record, ...FRAME_NAME_COLS, ...LEDGER_NAME_COLS).filter(
+    (n) => n !== COMPACTED_ASSET,
+  );
+  if (names.length) return true;
+  if (recordValues(record, ...FRAME_SUB_COLS, ...LEDGER_SUB_COLS).length) return true;
+  if (
+    recordValues(record, ...FRAME_SG_COLS).length ||
+    recordValues(record, ...LEDGER_SG_COLS).length
+  ) {
+    return true;
+  }
+  return Object.values(recordTags(record)).some((v) => present(v));
+}

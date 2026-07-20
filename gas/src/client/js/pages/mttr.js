@@ -431,12 +431,26 @@ export async function renderMttr(main, _params, ctx) {
         + "these domains are awaiting a vendor fix — excluded from Open past SLA until a fix appears.")
       : null;
 
+    // Resolved history the server set aside for carrying no domain inputs — compacted episodes
+    // and imported/pre-triage rows that could only ever read as Unassigned. Kept out of the
+    // split so the breakdown isn't swamped by a fake Unassigned domain with no live counterpart;
+    // this note keeps the set-aside population honest. Optional-chained so a stale payload
+    // lacking `excluded` degrades to no note rather than throwing.
+    const excludedResolved = byDomain.excluded?.resolved ?? 0;
+    const excludedNote = excludedResolved > 0
+      ? el("p", { class: "small muted", style: "margin:8px 0 0" },
+        `${excludedResolved.toLocaleString()} resolved finding${excludedResolved === 1 ? "" : "s"} `
+        + "from sealed history are excluded from this breakdown — they carry no domain inputs and "
+        + "can't be attributed to a value chain.")
+      : null;
+
     // Progressive disclosure: the whole breakdown opens in a right-drawer instead of
     // stacking on the page. openSheet calls renderBody synchronously, so the paint rAF
     // scheduled here fires after the canvases are attached to the (animating) sheet.
     function renderBody(body) {
       body.append(chartPair, tableWrap);
       if (footnote) body.append(footnote);
+      if (excludedNote) body.append(excludedNote);
       requestAnimationFrame(() => {
         paintPie();
         paintLine();

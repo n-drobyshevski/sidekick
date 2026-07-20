@@ -1456,6 +1456,17 @@ var Server = (() => {
   function assignDomains(records, compiled) {
     return records.map((r) => assignDomain(r, compiled));
   }
+  function hasDomainInputs(record) {
+    const names = recordValues(record, ...FRAME_NAME_COLS, ...LEDGER_NAME_COLS).filter(
+      (n) => n !== COMPACTED_ASSET
+    );
+    if (names.length) return true;
+    if (recordValues(record, ...FRAME_SUB_COLS, ...LEDGER_SUB_COLS).length) return true;
+    if (recordValues(record, ...FRAME_SG_COLS).length || recordValues(record, ...LEDGER_SG_COLS).length) {
+      return true;
+    }
+    return Object.values(recordTags(record)).some((v) => present(v));
+  }
 
   // src/domain/attribution.ts
   var COMPACTED_ASSET2 = "(compacted)";
@@ -6111,6 +6122,14 @@ var Server = (() => {
       var _a2;
       return String((_a2 = r["_supportGroup"]) != null ? _a2 : "") === supportGroup;
     });
+    const excluded = rows.filter((r) => !hasDomainInputs(r));
+    rows = rows.filter((r) => hasDomainInputs(r));
+    const excludedResolved = excluded.filter(
+      (r) => {
+        var _a2;
+        return RESOLVED_STATUSES.has(String((_a2 = r["status"]) != null ? _a2 : "").toUpperCase());
+      }
+    ).length;
     const items = getDomains2().items;
     const compiled = compileDomains(items);
     const assigned = assignDomains(rows, compiled);
@@ -6159,7 +6178,12 @@ var Server = (() => {
     };
     const points = medianMttrByGroupTrend(scanRows, rows, byDomainKey, groups, { severities: null });
     const kmPoints = kmMedianByGroupTrend(scanRows, rows, byDomainKey, groups, { severities: null });
-    return { rows: out, trend: { groups, points, kmPoints } };
+    return {
+      rows: out,
+      trend: { groups, points, kmPoints },
+      // Resolved history set aside above for lacking any domain input — the by-domain footnote.
+      excluded: { total: excluded.length, resolved: excludedResolved }
+    };
   }
   var cachedMttrData = (p) => {
     var _a, _b;
@@ -6235,7 +6259,10 @@ var Server = (() => {
       // "mttrByDomain8" → "mttrByDomain9": `trend` gained the KM-median-by-domain series
       // (`kmPoints`) that the chart now defaults to; bump so a stale kmPoints-less entry can't
       // survive the persistent dataVersion.
-      "mttrByDomain9",
+      // "mttrByDomain9" → "mttrByDomain10": rows/trend now exclude rows with no domain inputs
+      // (unattributable compacted/imported resolved history) and the payload gained `excluded`;
+      // bump so no stale old-shape entry survives the persistent dataVersion.
+      "mttrByDomain10",
       {
         supportGroup: String((_a = p == null ? void 0 : p["supportGroup"]) != null ? _a : ""),
         severities: readSeverities(p),
