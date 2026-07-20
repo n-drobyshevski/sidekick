@@ -13,6 +13,7 @@ import * as remediation from "../domain/remediation";
 import { extractNodes, mergeNodes } from "../domain/transform";
 import { nowIso, parseTs, toIso, type Rec } from "../domain/util";
 import * as archive from "./archiveStore";
+import * as errorLog from "./errorLog";
 import { buildFrame, pageOfFromRuns } from "./frameCore";
 import * as history from "./historyStore";
 import { activeJob, createJob, getJob, newJobId, updateJob, type JobRow } from "./jobsStore";
@@ -388,6 +389,7 @@ function step(job: JobRow, budgetMs = BUDGET_MS): void {
       phase: "FAILED",
       error: e == null ? "Scan failed." : String(e).slice(0, 1000),
     });
+    errorLog.recordError("scan", e);
     throw e;
   }
 }
@@ -470,6 +472,7 @@ function afterPersist(records: Rec[]): void {
     }
   } catch (e) {
     console.warn(`Failed to record MTTR snapshot: ${e}`);
+    errorLog.recordError("mttrSnapshot", e);
   }
   try {
     if (!settingsStore.getAutoCompact()) return;
@@ -478,6 +481,7 @@ function afterPersist(records: Rec[]): void {
     ledgerStore.compactLedger(days);
   } catch (e) {
     console.warn(`Auto-compaction failed: ${e}`);
+    errorLog.recordError("autoCompact", e);
   }
 }
 
@@ -492,6 +496,7 @@ function refreshSupportGroupsAfterScan(): void {
     supportGroups.refreshSupportGroups();
   } catch (e) {
     console.warn(`Support-group refresh after scan failed: ${e}`);
+    errorLog.recordError("supportGroupRefresh", e);
   }
 }
 

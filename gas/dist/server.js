@@ -1097,6 +1097,7 @@ var Server = (() => {
   __export(api_exports, {
     bootstrap: () => bootstrap,
     cancelScan: () => cancelScan2,
+    clearRecentErrors: () => clearRecentErrors,
     compact: () => compact,
     deleteScans: () => deleteScans2,
     getAttribution: () => getAttribution,
@@ -1113,6 +1114,7 @@ var Server = (() => {
     getMttr: () => getMttr,
     getMttrPage: () => getMttrPage,
     getMttrTrend: () => getMttrTrend,
+    getRecentErrors: () => getRecentErrors,
     getReport: () => getReport,
     getScanHistory: () => getScanHistory,
     getSettings: () => getSettings,
@@ -3867,6 +3869,45 @@ var Server = (() => {
     return kept.map((row) => row.node);
   }
 
+  // src/server/errorLog.ts
+  var KEY = "RECENT_ERRORS";
+  var MAX_ENTRIES = 25;
+  var MAX_MESSAGE_LEN = 500;
+  function truncate(s) {
+    return s.length > MAX_MESSAGE_LEN ? s.slice(0, MAX_MESSAGE_LEN) + "\u2026" : s;
+  }
+  function recentErrors() {
+    const raw = getProp(KEY);
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter((e) => Boolean(e) && typeof e === "object" && !Array.isArray(e)).map((e) => {
+        var _a, _b, _c, _d;
+        return {
+          ts: String((_a = e["ts"]) != null ? _a : ""),
+          op: String((_b = e["op"]) != null ? _b : "api"),
+          kind: String((_c = e["kind"]) != null ? _c : "error"),
+          message: String((_d = e["message"]) != null ? _d : "")
+        };
+      });
+    } catch {
+      return [];
+    }
+  }
+  function recordError(op, err, kind = "error", now) {
+    try {
+      const message = err instanceof Error ? err.message : typeof err === "string" ? err : String(err);
+      const entry = { ts: nowIso(now), op, kind, message: truncate(message) };
+      const next = [entry, ...recentErrors()].slice(0, MAX_ENTRIES);
+      setProp(KEY, JSON.stringify(next));
+    } catch {
+    }
+  }
+  function clearErrors() {
+    deleteProp(KEY);
+  }
+
   // src/domain/importShard.ts
   var MANIFEST_KIND = "wiz-sidekick-migration-manifest";
   function beginImportSession(rawManifest) {
@@ -5489,6 +5530,7 @@ var Server = (() => {
         phase: "FAILED",
         error: e == null ? "Scan failed." : String(e).slice(0, 1e3)
       });
+      recordError("scan", e);
       throw e;
     }
   }
@@ -5560,6 +5602,7 @@ var Server = (() => {
       }
     } catch (e) {
       console.warn(`Failed to record MTTR snapshot: ${e}`);
+      recordError("mttrSnapshot", e);
     }
     try {
       if (!getAutoCompact2()) return;
@@ -5568,6 +5611,7 @@ var Server = (() => {
       compactLedger(days);
     } catch (e) {
       console.warn(`Auto-compaction failed: ${e}`);
+      recordError("autoCompact", e);
     }
   }
   function refreshSupportGroupsAfterScan() {
@@ -5576,6 +5620,7 @@ var Server = (() => {
       refreshSupportGroups();
     } catch (e) {
       console.warn(`Support-group refresh after scan failed: ${e}`);
+      recordError("supportGroupRefresh", e);
     }
   }
   function scheduleContinuation() {
@@ -5614,20 +5659,22 @@ var Server = (() => {
   }
 
   // src/server/api.ts
-  function run(fn) {
+  function run(fn, label = "api") {
     try {
       return { ok: true, data: fn() };
     } catch (e) {
       const kind = e instanceof SealedScanError ? "sealed" : e instanceof LedgerRebuildError ? "rebuild" : e instanceof LedgerBusyError ? "busy" : "error";
+      if (kind !== "busy") recordError(label, e, kind);
       return { ok: false, error: String(e instanceof Error ? e.message : e), errorKind: kind };
     }
   }
-  function mutate(fn) {
+  function mutate(fn, label = "api") {
     return run(
       () => withScriptLock(() => {
         recoverIfNeeded();
         return fn();
-      })
+      }),
+      label
     );
   }
   function bootstrap(_p) {
@@ -6414,7 +6461,8 @@ var Server = (() => {
           incremental: Boolean(params["incremental"]),
           sampleShape: (_a = params["sampleShape"]) != null ? _a : void 0
         });
-      }
+      },
+      "scan"
     );
   }
   function getJobStatus(p) {
@@ -6743,6 +6791,15 @@ var Server = (() => {
       const stats = refreshSupportGroups();
       invalidateFrameMemo();
       return stats;
+    }, "supportGroupRefresh");
+  }
+  function getRecentErrors(_p) {
+    return run(() => recentErrors());
+  }
+  function clearRecentErrors(_p) {
+    return run(() => {
+      clearErrors();
+      return { cleared: true };
     });
   }
   function getStorageStats(_p) {
