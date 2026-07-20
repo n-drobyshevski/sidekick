@@ -69,6 +69,12 @@ export function attachSupportGroups(records: Rec[]): void {
   }
 }
 
+/** The Support Group tag key in effect — the configured override, else the default. The
+ *  single source of truth for both the fetch query and the Attribution page's map-health note. */
+export function configuredTagKey(): string {
+  return getProp(PROP_KEYS.wizSupportGroupTagKey)?.trim() || DEFAULT_SUPPORT_GROUP_TAG_KEY;
+}
+
 // --------------------------------------------------------------- fetch (graphSearch)
 
 /** Coerce an entity's `properties` (object, JSON string, or absent) to a plain object. */
@@ -167,7 +173,7 @@ export interface SupportGroupRefresh {
  * no group and is skipped.
  */
 export function fetchSupportGroups(): { map: Record<string, string>; stats: SupportGroupRefresh } {
-  const tagKey = getProp(PROP_KEYS.wizSupportGroupTagKey)?.trim() || DEFAULT_SUPPORT_GROUP_TAG_KEY;
+  const tagKey = configuredTagKey();
   const query = subscriptionsByTagQuery(tagKey);
   const map: Record<string, string> = {};
   const groups = new Set<string>();

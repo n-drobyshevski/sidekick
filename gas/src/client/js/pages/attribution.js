@@ -126,7 +126,8 @@ export async function renderAttribution(main, params, ctx) {
     const unassigned = data.unassigned || { rows: [], total: 0, page: 0, pageCount: 0 };
     const ruleHealthRows = data.ruleHealth || [];
     const untagged = data.untagged || [];
-    const sgMap = data.supportGroupMap || { configured: false, keys: [] };
+    const supportGroups = data.supportGroups || null;
+    const sgMap = data.supportGroupMap || { configured: false, keys: 0, groups: 0, tagKey: "" };
 
     // Honest source: when the latest scan is grouped (counts only), these sections read the
     // last per-finding scan. Same note Overview shows.
@@ -138,6 +139,7 @@ export async function renderAttribution(main, params, ctx) {
 
     renderKpis(coverage, unassigned, untagged);
     renderCoverageTable(coverage);
+    renderSupportGroupCoverage(supportGroups, sgMap);
 
     // Nothing to troubleshoot: every finding is attributed and every subscription with
     // findings carries a support group. Replace the three diagnostic sections (unassigned
@@ -216,6 +218,95 @@ export async function renderAttribution(main, params, ctx) {
       el("table", { class: "data" },
         el("thead", {}, el("tr", {},
           ...["Value chain", "Findings", "Assets", "Share"].map((h) => el("th", { scope: "col" }, h)))),
+        body)));
+  }
+
+  // -------------------------------------------------- coverage by support group
+
+  // The support-group dual of the value-chain coverage table, plus a map-health line — the
+  // view for troubleshooting why findings resolve to (none). A finding's support group is the
+  // Wiz/provisioning tag of its subscription, resolved live from the refreshed map; the "(none)"
+  // row is the unresolved bucket (subscription untagged, or its identity not joining the map).
+  function renderSupportGroupCoverage(sg, sgMap) {
+    bodyHost.append(sectionLabel("Coverage by support group"));
+    sg = sg || { rows: [], totalFindings: 0, resolvedFindings: 0 };
+
+    // Map-health note: the one line that tells an unrefreshed map (0 keys) apart from a
+    // populated one that isn't joining the findings' subscription identity (keys > 0 yet
+    // nothing resolves) — the two failure modes an operator otherwise can't distinguish.
+    if (!sgMap.configured) {
+      bodyHost.append(el("p", { class: "section-note" },
+        "Support groups aren’t mapped yet — every finding resolves to (none). Use “Refresh " +
+        "support groups” in ",
+        el("a", { href: "#/settings", target: "_self" }, "Settings"), " to build the map."));
+    } else {
+      const total = sg.totalFindings || 0;
+      const resolved = sg.resolvedFindings || 0;
+      const pct = total ? Math.round((resolved / total) * 100) : 0;
+      const stuck = (sgMap.keys || 0) > 0 && resolved === 0 && total > 0;
+      bodyHost.append(el("p", { class: "section-note" },
+        `Map: ${(sgMap.keys || 0).toLocaleString()} subscription key${sgMap.keys === 1 ? "" : "s"} → `
+        + `${(sgMap.groups || 0).toLocaleString()} group${sgMap.groups === 1 ? "" : "s"} (tag `,
+        el("code", {}, sgMap.tagKey || "Wiz/provisioning"),
+        `). ${resolved.toLocaleString()} of ${total.toLocaleString()} findings resolved (${pct}%).`));
+      // Keys present but nothing joins → a subscription-identity mismatch, not an empty map.
+      // Its own paragraph (statusPill is inline, but the copy is a distinct diagnostic line).
+      if (stuck) {
+        bodyHost.append(el("p", { class: "small", style: "margin-top:-4px" },
+          statusPill("bad", "not joining"),
+          " The map has keys but no finding matched — the subscription identity on findings "
+          + "isn’t joining the map. Check the tag key and that findings carry the same "
+          + "subscription id / external id / name the map is indexed under."));
+      }
+
+      // The concrete map side of the join: a sample of the identity tokens the map is
+      // indexed under (folded, exactly as the join compares them). Shown only when something
+      // is unresolved — the case where eyeballing them against the subscription id / ext id /
+      // name in the Untagged subscriptions table below reveals a mismatch. Chips, not prose,
+      // so the actual values are scannable.
+      const sample = sgMap.sampleKeys || [];
+      if (sample.length && (sg.unresolvedFindings || 0) > 0) {
+        const more = (sgMap.keys || 0) - sample.length;
+        const chips = [];
+        sample.forEach((k, i) => {
+          if (i) chips.push(document.createTextNode(", "));
+          chips.push(el("code", {}, k));
+        });
+        bodyHost.append(el("p", { class: "small muted", style: "margin-top:-4px" },
+          "Indexed under (sample): ", ...chips,
+          more > 0 ? ` … (+${more.toLocaleString()} more)` : "",
+          ". Compare these against the subscription id / external id / name your findings "
+          + "carry — the Untagged subscriptions table below lists the unresolved ones."));
+      }
+    }
+
+    const rows = sg.rows || [];
+    if (!rows.length) {
+      bodyHost.append(emptyState("No findings to attribute to a support group."));
+      return;
+    }
+    const total = sg.totalFindings || 0;
+    const body = el("tbody", {});
+    for (const g of rows) {
+      const share = total ? g.findings / total : 0;
+      // A non-empty "(none)" row is the unresolved gap; resolved groups carry no marker.
+      const marker = g.unresolved && g.findings > 0 ? statusPill("bad", "unresolved") : null;
+      body.append(el("tr", {},
+        el("td", {},
+          el("span", { style: "display:inline-flex; align-items:center; gap:8px" },
+            el("strong", {}, g.group), marker)),
+        el("td", { class: "num" }, (g.findings || 0).toLocaleString()),
+        el("td", { class: "num" }, (g.assets || 0).toLocaleString()),
+        el("td", {},
+          el("div", { class: "mix-cell" },
+            shareBar(share),
+            el("span", { class: "mix-text small muted num" }, `${Math.round(share * 100)}%`))),
+      ));
+    }
+    bodyHost.append(el("div", { class: "table-wrap" },
+      el("table", { class: "data" },
+        el("thead", {}, el("tr", {},
+          ...["Support group", "Findings", "Assets", "Share"].map((h) => el("th", { scope: "col" }, h)))),
         body)));
   }
 

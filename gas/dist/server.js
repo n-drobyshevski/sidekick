@@ -1620,6 +1620,63 @@ var Server = (() => {
       byDomain
     };
   }
+  function supportGroupBreakdown(records) {
+    var _a, _b, _c, _d;
+    const findingsByGroup = /* @__PURE__ */ new Map();
+    const assetsByGroup = /* @__PURE__ */ new Map();
+    const allAssets = /* @__PURE__ */ new Set();
+    const resolvedAssets = /* @__PURE__ */ new Set();
+    const unresolvedAssets = /* @__PURE__ */ new Set();
+    let resolvedFindings = 0;
+    let unresolvedFindings = 0;
+    for (const r of records) {
+      const sg = flatVal(r, SG_COL);
+      const group = sg != null ? sg : NONE;
+      const asset = assetKey(r);
+      findingsByGroup.set(group, ((_a = findingsByGroup.get(group)) != null ? _a : 0) + 1);
+      let set = assetsByGroup.get(group);
+      if (!set) assetsByGroup.set(group, set = /* @__PURE__ */ new Set());
+      if (asset) {
+        set.add(asset);
+        allAssets.add(asset);
+      }
+      if (sg) {
+        resolvedFindings += 1;
+        if (asset) resolvedAssets.add(asset);
+      } else {
+        unresolvedFindings += 1;
+        if (asset) unresolvedAssets.add(asset);
+      }
+    }
+    const rows = [...findingsByGroup.entries()].filter(([g]) => g !== NONE).map(([group, findings]) => {
+      var _a2, _b2;
+      return {
+        group,
+        findings,
+        assets: (_b2 = (_a2 = assetsByGroup.get(group)) == null ? void 0 : _a2.size) != null ? _b2 : 0,
+        unresolved: false
+      };
+    }).sort((a, b) => b.findings - a.findings || a.group.localeCompare(b.group));
+    const distinctGroups = rows.length;
+    if (findingsByGroup.has(NONE)) {
+      rows.push({
+        group: NONE,
+        findings: (_b = findingsByGroup.get(NONE)) != null ? _b : 0,
+        assets: (_d = (_c = assetsByGroup.get(NONE)) == null ? void 0 : _c.size) != null ? _d : 0,
+        unresolved: true
+      });
+    }
+    return {
+      totalFindings: records.length,
+      totalAssets: allAssets.size,
+      resolvedFindings,
+      unresolvedFindings,
+      resolvedAssets: resolvedAssets.size,
+      unresolvedAssets: unresolvedAssets.size,
+      distinctGroups,
+      rows
+    };
+  }
   function cappedTags(record) {
     const out = {};
     let n = 0;
@@ -4804,6 +4861,10 @@ var Server = (() => {
       if (group) r["_supportGroup"] = group;
     }
   }
+  function configuredTagKey() {
+    var _a;
+    return ((_a = getProp(PROP_KEYS.wizSupportGroupTagKey)) == null ? void 0 : _a.trim()) || DEFAULT_SUPPORT_GROUP_TAG_KEY;
+  }
   function entityProperties(entity) {
     const p = entity["properties"];
     if (p && typeof p === "object" && !Array.isArray(p)) return p;
@@ -4866,8 +4927,8 @@ var Server = (() => {
     return group;
   }
   function fetchSupportGroups() {
-    var _a, _b;
-    const tagKey = ((_a = getProp(PROP_KEYS.wizSupportGroupTagKey)) == null ? void 0 : _a.trim()) || DEFAULT_SUPPORT_GROUP_TAG_KEY;
+    var _a;
+    const tagKey = configuredTagKey();
     const query = subscriptionsByTagQuery(tagKey);
     const map = {};
     const groups = /* @__PURE__ */ new Set();
@@ -4877,7 +4938,7 @@ var Server = (() => {
     for (let page = 0; page < MAX_PAGES2; page++) {
       const result = graphSearchPage(query, { first: PAGE_SIZE2, after: cursor });
       for (const node of result.nodes) {
-        const entities = (_b = node["entities"]) != null ? _b : [];
+        const entities = (_a = node["entities"]) != null ? _a : [];
         for (const entity of entities) {
           if (!logged) {
             console.log(`Support-group sample entity: ${JSON.stringify(entity).slice(0, 800)}`);
@@ -6002,21 +6063,34 @@ var Server = (() => {
     const compiled = compileDomains(dom.items);
     const sgMap = getSupportGroupMap2();
     const sgKeys = Object.keys(sgMap.map);
+    const sgMapGroups = new Set(Object.values(sgMap.map)).size;
     return {
       flatScan: true,
       scan: { scanId: scan.scanId, ts: scan.ts },
       coverage: coverage(recs, domainNames(dom.items)),
       ruleHealth: ruleHealth(recs, compiled),
       unassignedAll: unassignedResources(recs, compiled),
+      // Findings split by resolved support group — the support-group coverage table + the
+      // resolved/unresolved headline the page needs to troubleshoot the join.
+      supportGroups: supportGroupBreakdown(recs),
       untagged: untaggedSubscriptions(recs).slice(0, 200),
-      supportGroupMap: { configured: sgKeys.length > 0, keys: sgKeys.length }
+      supportGroupMap: {
+        configured: sgKeys.length > 0,
+        keys: sgKeys.length,
+        groups: sgMapGroups,
+        tagKey: configuredTagKey(),
+        // A sample of the identity tokens the map is actually indexed under (folded, as the
+        // join compares them) — the concrete map side of the join, to eyeball against the
+        // subscription id / ext id / name the findings carry when nothing resolves.
+        sampleKeys: sgKeys.slice(0, 12)
+      }
     };
   }
   function getAttribution(p) {
     return run(() => {
       var _a, _b;
       const data = cached(
-        "attribution2",
+        "attribution4",
         { severities: readSeverities(p), showNoFix: getShowNoFix2() },
         () => attributionData(p)
       );

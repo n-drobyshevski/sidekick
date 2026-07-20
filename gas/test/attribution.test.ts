@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   coverage,
   ruleHealth,
+  supportGroupBreakdown,
   traceRecord,
   unassignedResources,
   untaggedSubscriptions,
@@ -251,5 +252,48 @@ describe("untaggedSubscriptions", () => {
     ]);
     expect(out).toHaveLength(2);
     expect(out.map((s) => s.extId).sort()).toEqual(["e1", "e2"]);
+  });
+});
+
+describe("supportGroupBreakdown", () => {
+  const SG = "_supportGroup";
+
+  it("empty input yields zeros and no rows", () => {
+    expect(supportGroupBreakdown([])).toMatchObject({
+      totalFindings: 0,
+      totalAssets: 0,
+      resolvedFindings: 0,
+      unresolvedFindings: 0,
+      distinctGroups: 0,
+      rows: [],
+    });
+  });
+
+  it("splits findings by resolved group, ranks by findings, and puts (none) last", () => {
+    const records = [
+      rec({ [NAME]: "a1", [SG]: "CS-PAY" }),
+      rec({ [NAME]: "a2", [SG]: "CS-PAY" }),
+      rec({ [NAME]: "a3", [SG]: "CS-NET" }),
+      rec({ [NAME]: "a4" }), // no _supportGroup -> "(none)"
+      rec({ [NAME]: "a4" }), // same asset, still unresolved
+    ];
+    const b = supportGroupBreakdown(records);
+    expect(b.totalFindings).toBe(5);
+    expect(b.totalAssets).toBe(4);
+    expect(b.resolvedFindings).toBe(3);
+    expect(b.unresolvedFindings).toBe(2);
+    expect(b.resolvedAssets).toBe(3);
+    expect(b.unresolvedAssets).toBe(1); // a4 counted once
+    expect(b.distinctGroups).toBe(2);
+    expect(b.rows.map((r) => r.group)).toEqual(["CS-PAY", "CS-NET", "(none)"]);
+    expect(b.rows[0]).toEqual({ group: "CS-PAY", findings: 2, assets: 2, unresolved: false });
+    expect(b.rows[2]).toEqual({ group: "(none)", findings: 2, assets: 1, unresolved: true });
+  });
+
+  it("omits the (none) row when every finding resolves", () => {
+    const b = supportGroupBreakdown([rec({ [NAME]: "x", [SG]: "G" })]);
+    expect(b.rows).toHaveLength(1);
+    expect(b.unresolvedFindings).toBe(0);
+    expect(b.rows[0].unresolved).toBe(false);
   });
 });
