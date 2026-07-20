@@ -442,8 +442,10 @@ export async function renderMttr(main, _params, ctx) {
           "findings only — no censoring. Biased low by a wave of fresh open findings, which is " +
           "what the KM median corrects for; kept only for comparison."]],
       ["MTTR p90",
-        ["90th-percentile time from first detection to remediation — the slow tail. Nine " +
-          "in ten findings beat it; one in ten is slower."]],
+        ["Kaplan–Meier 90th-percentile time-to-remediation — the slow tail. Nine in ten " +
+          "findings beat it; one in ten is slower. Censoring-aware like the KM median (read off " +
+          "the same survival curve), so the tail isn't biased low by fresh fast-patched vulns; " +
+          "shows \"—\" when too much is still open to observe it."]],
       ["In SLA (of resolved)", null],
       ["Open past SLA",
         ["Open findings already older than their severity's SLA target, measured from when " +

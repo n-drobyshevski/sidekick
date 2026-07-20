@@ -22,6 +22,7 @@ import {
   awaitingVendorFix,
   baseRowNoFix,
   kaplanMeier,
+  kmQuantileFromCurve,
   mttrPercentiles,
   openPastSla,
   recordNoFix,
@@ -793,13 +794,18 @@ function mttrByDomainData(p?: unknown): Rec {
     const { perSev, overall } = mttrFromLedger(drows);
     const { slaPct } = overallSlaOldest(perSev);
     const rem = drows as unknown as BaseRow[];
+    const km = kaplanMeier(rem);
     out.push({
       domain: name,
       median: overall.mttr_median ?? null,
-      p90: mttrPercentiles(rem).overall.p90,
+      // Censoring-aware KM p90 (open findings right-censored), the slow-tail sibling of the KM
+      // median below — read off the same survival curve (smallest t with S(t) ≤ 0.10) so the
+      // tail isn't biased low by the fast-patched vulns that close first, the way a closed-only
+      // percentile would be. Null (renders "—") when too much is still open to observe it.
+      p90: kmQuantileFromCurve(km.curve, 0.9),
       // Censoring-aware KM median (open findings right-censored) — the column that replaces
       // the old "Excl. fast lane" tail median.
-      kmMedian: kaplanMeier(rem).median,
+      kmMedian: km.median,
       slaPct,
       // Actionable-clock open-past-SLA (measured from vendor-fix availability, awaiting
       // rows excluded) — the same basis the hero and severity table now use.
@@ -916,7 +922,10 @@ const cachedMttrByDomainData = (p?: unknown) =>
     // "mttrByDomain9" → "mttrByDomain10": rows/trend now exclude rows with no domain inputs
     // (unattributable compacted/imported resolved history) and the payload gained `excluded`;
     // bump so no stale old-shape entry survives the persistent dataVersion.
-    "mttrByDomain10",
+    // "mttrByDomain10" → "mttrByDomain11": `p90` switched from the naive closed-only percentile
+    // to the censoring-aware KM p90 (off the same survival curve as the KM median); same shape,
+    // new value, so bump the namespace to retire stale naive-p90 entries.
+    "mttrByDomain11",
     {
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
       severities: readSeverities(p),
