@@ -397,9 +397,18 @@ export async function renderMttr(main, _params, ctx) {
       "Per-domain remediation — share of resolved work, MTTR trend, and a full breakdown table."));
     byDomainHost.append(el("button", {
       type: "button",
+      // Wider default than other sheets: this one carries a trend chart *and* a full data
+      // table (8 columns) side by side, which cramps hard at the shared 520px default. 820px
+      // gives the table room to breathe on a normal desktop viewport while still clamping to
+      // 94vw on narrow ones. minWidth keeps a manual drag from shrinking the table into
+      // uselessness; storageKey remembers whatever width the user settles on across opens,
+      // same as the trend-window/survival-window prefs above.
       onclick: () => openSheet(renderBody, {
         title: "By domain",
         subtitle: "Remediation for each domain in the value chain.",
+        width: "min(820px, 94vw)",
+        minWidth: 480,
+        storageKey: "sheetWidthByDomain",
       }),
     }, "Open by-domain breakdown →"));
   }

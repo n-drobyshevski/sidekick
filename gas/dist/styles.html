@@ -900,6 +900,31 @@ a { color: var(--accent); }
   display: flex; flex-direction: column;
 }
 .sheet.open { transform: translateX(0); }
+/* Resize handle: a slim hit-strip on the sheet's left edge (the sheet itself is `position:
+   fixed`, which is enough of a containing block for this absolutely-positioned child — no
+   extra positioning context needed). The hit area is 6px so it's easy to grab, but the visible
+   hairline is a slender 1px centered in it, brightening to the accent on hover/focus so it
+   reads as "grabbable" without competing with the sheet's own left border at rest. No width
+   transition here (or anywhere on .sheet) — live drag updates would look laggy if animated. */
+.sheet-resize-handle {
+  position: absolute; top: 0; left: 0; bottom: 0; width: 6px;
+  cursor: ew-resize; touch-action: none; z-index: 1;
+  background: transparent;
+}
+.sheet-resize-handle::before {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 2px; width: 1px;
+  background: var(--hairline);
+}
+.sheet-resize-handle:hover::before {
+  background: var(--accent);
+}
+.sheet-resize-handle:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: -2px;
+}
+.sheet-resize-handle:focus-visible::before,
+.sheet-resize-handle:active::before {
+  background: var(--accent); width: 2px;
+}
 .sheet-header {
   padding: 16px 20px 12px; border-bottom: 1px solid var(--hairline);
   display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
