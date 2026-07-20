@@ -282,7 +282,10 @@ function renderSidebar(sidebar, data) {
     if (activeDomain && !data.domainNames.includes(activeDomain)) activeDomain = "";
     const sel = el(
       "select",
-      { id: "filter-domain", class: activeDomain ? "active" : null, "aria-label": "Filter by value chain" },
+      { id: "filter-domain", class: activeDomain ? "active" : null, "aria-label": "Filter by value chain",
+        // Collapsed to icons the select text is hidden behind a funnel glyph, so a native
+        // title carries the current scope on hover; kept in sync with the selection below.
+        title: activeDomain || "Value Chain" },
       el("option", { value: "" }, "Value Chain"),
       ...data.domainNames.map((d) =>
         el("option", { value: d, selected: d === activeDomain || null }, d)),
@@ -290,13 +293,15 @@ function renderSidebar(sidebar, data) {
     sel.addEventListener("change", () => {
       activeDomain = sel.value;
       sel.classList.toggle("active", !!sel.value);
+      sel.title = sel.value || "Value Chain";
       syncScanZoneFiltering();
       route();
     });
     zone.prepend(
       // No visible label — the default option reads "Value Chain" and the select keeps
-      // its aria-label for assistive tech.
-      el("div", { class: "sidebar-filter" }, sel),
+      // its aria-label for assistive tech. The --domain modifier keeps this one filter
+      // reachable in the collapsed icon rail (as a funnel trigger), unlike Support group.
+      el("div", { class: "sidebar-filter sidebar-filter--domain" }, sel),
     );
   }
 
