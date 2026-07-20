@@ -893,7 +893,10 @@ export async function renderMttr(main, _params, ctx) {
     // hero minis can stay plain.
     const columns = [
       ["Severity", null],
-      ["Median MTTR", null],
+      ["Median MTTR (KM)",
+        ["Kaplan–Meier median time-to-remediation for this severity — the principal MTTR " +
+          "figure. Still-open findings count as censored instead of being ignored, so it isn't " +
+          "biased low by fresh fast-patched vulns."]],
       ["MTTR p90",
         ["90th-percentile time from first detection to remediation — the slow tail. Nine " +
           "in ten findings beat it; one in ten is slower."]],
@@ -914,9 +917,12 @@ export async function renderMttr(main, _params, ctx) {
     const tbody = el("tbody", {});
     for (const sev of sevs) {
       const d = mttr.perSev[sev];
+      // KM median (still-open findings censored) when the payload carries it, falling back to
+      // the naive closed-only median for a stale pre-kmMedianPerSev cache.
+      const kmMedian = mttr.remediation?.kmMedianPerSev?.[sev];
       tbody.append(el("tr", {},
         el("td", {}, sevBadge(sev)),
-        el("td", { class: "num" }, fmtDays(d.mttr_median)),
+        el("td", { class: "num" }, fmtDays(kmMedian !== undefined ? kmMedian : d.mttr_median)),
         el("td", { class: "num" }, fmtDays(mttr.remediation?.pctiles?.perSev?.[sev]?.p90)),
         el("td", { class: "num" }, d.open),
         el("td", { class: "num" }, fmtOpenPastSla(

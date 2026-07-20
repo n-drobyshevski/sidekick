@@ -698,12 +698,27 @@ function mttrData(p?: unknown): Rec {
   // Remediation-tail block over the same scoped rows (BaseRows cast to Rec by loadBaseRows;
   // cast back for the typed remediation projection).
   const remRows = rows as unknown as BaseRow[];
+  // Per-severity Kaplan–Meier median (still-open findings censored) so the per-severity
+  // table shows the same censoring-aware clock as the hero, not the naive closed-only median
+  // that biases low on a wave of fresh open findings. Keyed by normalized severity to line up
+  // with `perSev` (UNKNOWN included). Grouped over the same from-detection rows as the
+  // overall `km` below.
+  const kmMedianPerSev: Record<string, number | null> = {};
+  {
+    const bySev: Record<string, BaseRow[]> = {};
+    for (const r of remRows) {
+      const s = normalizeSeverity((r as unknown as Rec)["severity"]);
+      (bySev[s] ?? (bySev[s] = [])).push(r);
+    }
+    for (const [s, rs] of Object.entries(bySev)) kmMedianPerSev[s] = kaplanMeier(rs).median;
+  }
   const remediation = {
     pctiles: mttrPercentiles(remRows),
     buckets: resolutionBuckets(remRows),
     // Full Kaplan–Meier estimate (curve + KM median/RMST mean + naive comparison stats),
     // open findings right-censored so the headline isn't biased low by fresh fast patches.
     km: kaplanMeier(remRows),
+    kmMedianPerSev,
     openPastSla: openPastSla(remRows),
     // Actionable-clock companions (clock starts at vendor-fix availability): the same
     // functions over the actionableView projection. Awaiting-vendor-fix rows carry null
@@ -838,7 +853,9 @@ const cachedMttrData = (p?: unknown) =>
     // old-shape entry survives the persistent dataVersion.
     // "mttr4" → "mttr5": the remediation block now honors the show-no-fix toggle (awaiting
     // rows dropped when off); key gains showNoFix so on/off states don't share an entry.
-    "mttr5",
+    // "mttr5" → "mttr6": remediation gained `kmMedianPerSev` (per-severity KM median for the
+    // per-severity table); bump so no stale entry lacks it.
+    "mttr6",
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
