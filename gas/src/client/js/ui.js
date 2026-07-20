@@ -211,9 +211,45 @@ export function confirmDialog({ title, body, confirmLabel = "Confirm", danger = 
   });
 }
 
-/** Right-anchored sheet (the signature drill-down overlay). Returns {close}. */
+// Nudge size for the resize handle's ArrowLeft/ArrowRight keyboard control. Roughly what a
+// couple of drag-pixels-worth of intent looks like as a single discrete step.
+const SHEET_RESIZE_STEP = 24;
+
+// Sandbox-tolerant localStorage read/write for a sheet's user-chosen width, same try/catch
+// pattern as loadPref/savePref in mttr.js — duplicated here (rather than imported) because
+// ui.js is shared infrastructure and can't reach into a page module's private helpers.
+function loadSheetWidth(storageKey) {
+  if (!storageKey) return null;
+  try {
+    const raw = Number(localStorage.getItem(storageKey));
+    return Number.isFinite(raw) && raw > 0 ? raw : null;
+  } catch {
+    return null;
+  }
+}
+function saveSheetWidth(storageKey, px) {
+  if (!storageKey) return;
+  try {
+    localStorage.setItem(storageKey, String(Math.round(px)));
+  } catch {
+    // Sandbox without storage — the resize simply won't survive the next open.
+  }
+}
+
+/**
+ * Right-anchored sheet (the signature drill-down overlay). Returns {close}.
+ *
+ * Resizing: `width` sets the initial CSS width (a plain default of `min(520px, 92vw)` applies
+ * when omitted, unchanged from before resizing existed); `minWidth` floors how far the user can
+ * drag it in (px, default 360); `storageKey`, when given, persists the user's dragged/keyboard-
+ * resized width across opens (clamped to the viewport at hand) — omit it for sheets where a
+ * remembered width isn't worth the localStorage key (e.g. transient scan-detail popovers).
+ */
 export function openSheet(renderBody, opts = {}) {
-  const { title = "", subtitle = "", ariaLabel = title || "Detail" } = opts;
+  const {
+    title = "", subtitle = "", ariaLabel = title || "Detail",
+    width, minWidth = 360, storageKey,
+  } = opts;
   const scrim = el("div", { class: "sheet-scrim" });
   const sheet = el("aside", {
     class: "sheet",
@@ -222,6 +258,23 @@ export function openSheet(renderBody, opts = {}) {
     "aria-label": ariaLabel,
     tabindex: "-1",
   });
+
+  // The sheet is right-anchored, so its right edge is pinned and only its *width* — i.e. its
+  // left edge — moves. `maxWidthPx` is recomputed on every clamp rather than cached, since the
+  // viewport can change (window resize) between an initial open and a later drag.
+  const maxWidthPx = () => window.innerWidth * 0.96;
+  const clampWidth = (px) => Math.min(Math.max(px, minWidth), maxWidthPx());
+
+  // A persisted width (from a previous drag/keyboard resize, if storageKey is set) wins over
+  // the caller's `width` default, which wins over the bare CSS default. Re-clamping the stored
+  // value guards against it having been saved on a wider viewport than the current one.
+  const storedWidth = loadSheetWidth(storageKey);
+  if (storedWidth !== null) {
+    sheet.style.width = `${clampWidth(storedWidth)}px`;
+  } else if (width) {
+    sheet.style.width = width;
+  }
+
   const prevFocus = document.activeElement;
   function close() {
     scrim.classList.remove("open");
@@ -253,6 +306,56 @@ export function openSheet(renderBody, opts = {}) {
   scrim.addEventListener("click", close);
   document.addEventListener("keydown", onKey);
   document.body.append(scrim, sheet);
+
+  // Resize handle: a slim strip on the sheet's left edge. Dragging (or ArrowLeft/ArrowRight
+  // once focused) widens/narrows the sheet. It's inserted before the header/body so it's the
+  // first thing a keyboard user tabs to — a reasonable place for a structural, always-present
+  // control — and it's a normal focusable element, so the Tab-trap above already covers it.
+  const handle = el("div", {
+    class: "sheet-resize-handle",
+    role: "separator",
+    "aria-orientation": "vertical",
+    "aria-label": "Resize panel",
+    tabindex: "0",
+  });
+  function applyWidth(px, persist) {
+    const clamped = clampWidth(px);
+    sheet.style.width = `${clamped}px`;
+    if (persist) saveSheetWidth(storageKey, clamped);
+  }
+  let dragging = false;
+  handle.addEventListener("pointerdown", (e) => {
+    dragging = true;
+    handle.setPointerCapture(e.pointerId);
+    // Suppress text selection for the duration of the drag — without this, a fast drag over
+    // the chart/table content behind the handle selects it like a click-drag would.
+    document.body.style.userSelect = "none";
+    e.preventDefault();
+  });
+  handle.addEventListener("pointermove", (e) => {
+    if (!dragging) return;
+    // Right-anchored sheet: width is simply the distance from the pointer to the viewport's
+    // right edge, recomputed fresh each move (not a delta from drag-start) so the sheet can
+    // never "drift" out of sync with the pointer.
+    applyWidth(window.innerWidth - e.clientX, false);
+  });
+  function endDrag(e) {
+    if (!dragging) return;
+    dragging = false;
+    document.body.style.userSelect = "";
+    applyWidth(window.innerWidth - e.clientX, true);
+  }
+  handle.addEventListener("pointerup", endDrag);
+  handle.addEventListener("pointercancel", endDrag);
+  handle.addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    // ArrowLeft widens (matches dragging the left edge further left); ArrowRight narrows.
+    const delta = e.key === "ArrowLeft" ? SHEET_RESIZE_STEP : -SHEET_RESIZE_STEP;
+    applyWidth(sheet.getBoundingClientRect().width + delta, true);
+  });
+  sheet.append(handle);
+
   if (title) {
     sheet.append(
       el("div", { class: "sheet-header" },
