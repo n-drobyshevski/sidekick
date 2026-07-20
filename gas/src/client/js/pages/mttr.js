@@ -592,14 +592,15 @@ export async function renderMttr(main, _params, ctx) {
       survivalHost.append(chartCard("S(t): share of findings still open", box, {
         helpLines: [
           "Time from first detection to remediation, as a Kaplan–Meier survival curve. " +
-            "Markers: Median (KM) and Mean (KM · RMST) — still-open findings censored.",
+            "Markers: Median (KM) and Mean (KM · RMST) — still-open findings censored — plus " +
+            "Median (closed), the naive closed-only median KM corrects for.",
         ],
       }));
       requestAnimationFrame(() => {
-        // Only the two KM markers now (naive median/mean are null → skipped); the naive
-        // series lives on the "MTTR over time" toggle above.
+        // The two KM markers plus the naive closed-only median dot, so the curve shows the
+        // bias KM corrects for in place (naiveMean stays off the "MTTR over time" toggle).
         survivalCurve(canvas, rem.km.curve,
-          { naiveMedian: null, median: rem.km.median, naiveMean: null, mean: rem.km.mean },
+          { naiveMedian: rem.km.naiveMedian, median: rem.km.median, naiveMean: null, mean: rem.km.mean },
           { maxWeeks: survivalWeeks });
       });
     } else {
