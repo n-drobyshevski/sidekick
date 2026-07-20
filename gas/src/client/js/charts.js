@@ -306,6 +306,10 @@ export function trendLine(canvas, points, { yLabel, xRange } = {}) {
   if (yLabel) {
     opts.scales.y.title = { display: true, text: yLabel, font: FONT, color: INK2 };
   }
+  // Points hide (pointRadius 0) above 40 samples, so a nearest/intersect tooltip has nothing
+  // to hit; index mode reveals every series' value at the nearest date on hover. Matches
+  // openResolvedLines.
+  opts.interaction = { mode: "index", intersect: false };
   const days = points.map((p) => dayOf(p.x));
   dayAxis(opts, xRange);
   const band = reconstructedBand(points.map((p) => p.reconstructed), days);
@@ -320,6 +324,7 @@ export function trendLine(canvas, points, { yLabel, xRange } = {}) {
           fill: true,
           tension: 0.25,
           pointRadius: points.length > 40 ? 0 : 3,
+          pointHoverRadius: 4,
           // Reconstructed vertices are hollow (white fill), measured ones solid — a shape cue
           // that reads without colour, matching the shaded band and caption.
           pointBackgroundColor: (c) =>
@@ -371,6 +376,10 @@ export function severityTrendLines(canvas, points, palette, sevScope) {
     display: true,
     labels: { font: FONT, color: INK2, boxWidth: 12, usePointStyle: true },
   };
+  // Points hide (pointRadius 0) above 40 samples, so a nearest/intersect tooltip has nothing
+  // to hit; index mode reveals every series' value at the nearest date on hover. Matches
+  // openResolvedLines.
+  opts.interaction = { mode: "index", intersect: false };
   return new Chart(canvas, {
     type: "line",
     data: {
@@ -750,6 +759,10 @@ export function groupTrendLines(canvas, points, series, cfg = {}) {
     display: true,
     labels: { font: FONT, color: INK2, boxWidth: 12, usePointStyle: true },
   };
+  // Points hide (pointRadius 0) above 40 samples, so a nearest/intersect tooltip has nothing
+  // to hit; index mode reveals every series' value at the nearest date on hover. Matches
+  // openResolvedLines.
+  opts.interaction = { mode: "index", intersect: false };
   return new Chart(canvas, {
     type: "line",
     data: {
