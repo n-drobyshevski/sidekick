@@ -42,6 +42,38 @@ const reducedMotion =
 // ignores font-variant-numeric, so a formatter callback is the only way to get grouping).
 const localeNum = (v) => (typeof v === "number" ? Number(v).toLocaleString() : v);
 
+// Human-readable duration for chart tooltips: break a fractional day/week count into a
+// compound "big unit + next unit" figure so a hover never shows a bare "0.4 days" / "1.5
+// weeks" (hard to eyeball). Tiers by magnitude, the way a person would say it:
+//   >= 7d  -> "Xw Y.Yd"  (1.5 weeks -> "1w 3.5d")
+//   1-7d   -> "Xd Yh"    (2.3 days  -> "2d 7h")
+//   1h-1d  -> "Xh"       (0.4 days  -> "10h")
+//   < 1h   -> "<1h"
+// Rounding carries up so a boundary value never prints a full next unit (6.98d is "1w",
+// not "1w 7.0d"; 23.7h is "1d", not "0d 24h"). `days` is a non-negative day count;
+// nullish/NaN -> "—" (tooltips always pass a number, but stay defensive). Decimal points
+// use "." to match fmtDays and the rest of the app's duration formatting.
+export function fmtDuration(days) {
+  if (days === null || days === undefined || Number.isNaN(days)) return "—";
+  const d = Number(days);
+  if (d <= 0) return "0d";
+  if (d < 1 / 24) return "<1h";
+  if (d < 1) {
+    const h = Math.round(d * 24);
+    return h >= 24 ? "1d" : `${h}h`;
+  }
+  if (d < 7) {
+    let dd = Math.floor(d);
+    let h = Math.round((d - dd) * 24);
+    if (h >= 24) { dd += 1; h = 0; }
+    return h ? `${dd}d ${h}h` : `${dd}d`;
+  }
+  let w = Math.floor(d / 7);
+  let rem = Math.round((d - w * 7) * 10) / 10; // remaining days, 1 decimal
+  if (rem >= 7) { w += 1; rem = 0; }
+  return rem ? `${w}w ${rem}d` : `${w}w`;
+}
+
 // Trend x-values are whole UTC days (epoch-day numbers) on a LINEAR scale, so horizontal
 // distance is proportional to elapsed time: a sparse fortnight of scans no longer fills a
 // 30-day window edge to edge, and gaps in the scan cadence read as gaps rather than
@@ -92,6 +124,11 @@ function baseOptions(unit = "") {
             const horiz = ctx.chart && ctx.chart.options && ctx.chart.options.indexAxis === "y";
             const raw = horiz ? ctx.parsed.x : ctx.parsed.y;
             const name = ctx.dataset && ctx.dataset.label ? `${ctx.dataset.label}: ` : "";
+            // Duration units render as a compound figure (2d 7h, not "2.3 days"); every other
+            // unit keeps the grouped number + unit suffix.
+            if (unit === "days" || unit === "weeks") {
+              return `${name}${fmtDuration(unit === "weeks" ? raw * 7 : raw)}`;
+            }
             return `${name}${localeNum(raw)}${suffix}`;
           },
         },
@@ -269,6 +306,10 @@ export function trendLine(canvas, points, { yLabel, xRange } = {}) {
   if (yLabel) {
     opts.scales.y.title = { display: true, text: yLabel, font: FONT, color: INK2 };
   }
+  // Points hide (pointRadius 0) above 40 samples, so a nearest/intersect tooltip has nothing
+  // to hit; index mode reveals every series' value at the nearest date on hover. Matches
+  // openResolvedLines.
+  opts.interaction = { mode: "index", intersect: false };
   const days = points.map((p) => dayOf(p.x));
   dayAxis(opts, xRange);
   const band = reconstructedBand(points.map((p) => p.reconstructed), days);
@@ -283,6 +324,7 @@ export function trendLine(canvas, points, { yLabel, xRange } = {}) {
           fill: true,
           tension: 0.25,
           pointRadius: points.length > 40 ? 0 : 3,
+          pointHoverRadius: 4,
           // Reconstructed vertices are hollow (white fill), measured ones solid — a shape cue
           // that reads without colour, matching the shaded band and caption.
           pointBackgroundColor: (c) =>
@@ -334,6 +376,10 @@ export function severityTrendLines(canvas, points, palette, sevScope) {
     display: true,
     labels: { font: FONT, color: INK2, boxWidth: 12, usePointStyle: true },
   };
+  // Points hide (pointRadius 0) above 40 samples, so a nearest/intersect tooltip has nothing
+  // to hit; index mode reveals every series' value at the nearest date on hover. Matches
+  // openResolvedLines.
+  opts.interaction = { mode: "index", intersect: false };
   return new Chart(canvas, {
     type: "line",
     data: {
@@ -373,6 +419,10 @@ export function openResolvedLines(canvas, points, { xRange } = {}) {
     display: true,
     labels: { font: FONT, color: INK2, usePointStyle: true, boxWidth: 8 },
   };
+  // Both lines use pointRadius 0, so the default nearest/intersect tooltip has nothing to
+  // hit and the chart showed no tooltip at all. Index mode reveals both Open and Resolved at
+  // the nearest date in one tooltip when hovering anywhere along the x.
+  opts.interaction = { mode: "index", intersect: false };
   const days = points.map((p) => dayOf(p.date));
   dayAxis(opts, xRange);
   const band = reconstructedBand(points.map((p) => p.reconstructed), days);
@@ -387,6 +437,7 @@ export function openResolvedLines(canvas, points, { xRange } = {}) {
           borderWidth: 2,
           pointStyle: "circle",
           pointRadius: 0,
+          pointHoverRadius: 4,
           tension: 0.25,
         },
         {
@@ -397,6 +448,7 @@ export function openResolvedLines(canvas, points, { xRange } = {}) {
           borderWidth: 2,
           pointStyle: "rect",
           pointRadius: 0,
+          pointHoverRadius: 4,
           tension: 0.25,
         },
       ],
@@ -509,8 +561,8 @@ export function survivalCurve(canvas, curve, markers, viewOpts = {}) {
           title: () => "",
           label: (ctx) =>
             ctx.datasetIndex === 0
-              ? `Week ${ctx.parsed.x.toFixed(1)}: ${Math.round(ctx.parsed.y)}% still open`
-              : `${ctx.dataset.label}: ${Math.round(ctx.raw.day)}d (${Math.round(ctx.parsed.y)}% still open)`,
+              ? `${fmtDuration(ctx.parsed.x * 7)}: ${Math.round(ctx.parsed.y)}% still open`
+              : `${ctx.dataset.label}: ${fmtDuration(ctx.raw.day)} (${Math.round(ctx.parsed.y)}% still open)`,
         },
       },
     },
@@ -707,6 +759,10 @@ export function groupTrendLines(canvas, points, series, cfg = {}) {
     display: true,
     labels: { font: FONT, color: INK2, boxWidth: 12, usePointStyle: true },
   };
+  // Points hide (pointRadius 0) above 40 samples, so a nearest/intersect tooltip has nothing
+  // to hit; index mode reveals every series' value at the nearest date on hover. Matches
+  // openResolvedLines.
+  opts.interaction = { mode: "index", intersect: false };
   return new Chart(canvas, {
     type: "line",
     data: {
