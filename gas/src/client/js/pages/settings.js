@@ -3,7 +3,9 @@
 import { call } from "../api.js";
 import { decodePrefill, PREFILL_KEY } from "../attributionPrefill.js";
 import { bootstrap, setParams } from "../store.js";
-import { clear, confirmDialog, el, sectionLabel, statusPill, toast } from "../ui.js";
+import {
+  clear, confirmDialog, el, emptyState, fmtDateTime, openSheet, sectionLabel, statusPill, toast,
+} from "../ui.js";
 import { renderDomainsEditor } from "./domainsEditor.js";
 
 export async function renderSettings(main, params, ctx) {
@@ -372,5 +374,96 @@ export async function renderSettings(main, params, ctx) {
     }
   } catch {
     /* stats are decorative */
+  }
+
+  // ------------------------------------------------------------- diagnostics
+  // Recent server-side errors, surfaced in-app so a failure — especially a background one
+  // that never shows a toast (post-scan support-group refresh, MTTR snapshot, auto-compaction)
+  // — is visible without opening the Apps Script execution log the web app can't reach.
+  main.append(sectionLabel("Diagnostics"));
+  main.append(el("p", { class: "muted small" },
+    "The last 25 server-side errors across scan, support-group refresh, import, compaction, and " +
+    "other operations — including background failures that never surface a toast."));
+  const errCountHost = el("span", { class: "muted small", style: "margin-left:10px" });
+  const recentErrorsBtn = el("button", { onclick: openRecentErrors }, "Recent errors");
+  main.append(el("div", { style: "display:flex; align-items:center; gap:6px" },
+    recentErrorsBtn, errCountHost));
+
+  // Best-effort count badge so a silent failure is discoverable at a glance (the log itself
+  // is decorative — a failed fetch just leaves the badge blank).
+  (async () => {
+    try {
+      const errs = await call("api_getRecentErrors", {});
+      clear(errCountHost);
+      if (errs && errs.length) errCountHost.append(statusPill("bad", `${errs.length} recorded`));
+      else errCountHost.textContent = "None recorded.";
+    } catch {
+      /* decorative */
+    }
+  })();
+
+  function openRecentErrors() {
+    openSheet(renderRecentErrors, {
+      title: "Recent errors",
+      subtitle: "Newest first — the last 25 server-side errors.",
+      width: "min(680px, 94vw)",
+      minWidth: 420,
+      storageKey: "sheetWidthDiagnostics",
+    });
+  }
+
+  async function renderRecentErrors(body) {
+    clear(body).append(el("p", { class: "muted" }, "Loading…"));
+    let errs;
+    try {
+      errs = await call("api_getRecentErrors", {});
+    } catch (e) {
+      clear(body).append(el("p", { class: "muted" }, `Couldn't load errors: ${e.message}`));
+      return;
+    }
+    clear(body);
+    body.append(el("div", { style: "display:flex; gap:8px; margin-bottom:12px" },
+      el("button", { onclick: () => renderRecentErrors(body) }, "Refresh"),
+      el("button", {
+        disabled: errs.length ? null : true,
+        onclick: async () => {
+          const ok = await confirmDialog({
+            title: "Clear the error log?",
+            body: el("p", {}, "Removes all recorded errors. It doesn't affect any scan or ledger data."),
+            confirmLabel: "Clear",
+          });
+          if (!ok) return;
+          try {
+            await call("api_clearRecentErrors", {});
+            toast("Error log cleared.");
+            clear(errCountHost);
+            errCountHost.textContent = "None recorded.";
+            renderRecentErrors(body);
+          } catch (e) {
+            toast(`Clear failed: ${e.message}`, "error");
+          }
+        },
+      }, "Clear log")));
+    if (!errs.length) {
+      body.append(emptyState("No errors recorded.",
+        "Background and foreground failures will appear here as they happen."));
+      return;
+    }
+    const tbody = el("tbody", {});
+    for (const e of errs) {
+      tbody.append(el("tr", {},
+        el("td", { class: "small muted", style: "white-space:nowrap" }, fmtDateTime(e.ts)),
+        el("td", {}, el("strong", {}, e.op || "—")),
+        el("td", {}, statusPill(e.kind === "error" ? "bad" : "warn", e.kind || "error")),
+        el("td", {},
+          el("code", { class: "small", style: "white-space:pre-wrap; word-break:break-word" },
+            e.message || "—")),
+      ));
+    }
+    body.append(el("div", { class: "table-wrap" },
+      el("table", { class: "data" },
+        el("thead", {}, el("tr", {},
+          ...["When", "Operation", "Kind", "Message"].map((h) => el("th", { scope: "col" }, h)))),
+        tbody)));
   }
 }

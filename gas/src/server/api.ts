@@ -33,6 +33,7 @@ import { parseTs, present, type Rec } from "../domain/util";
 import { kmMedianByGroupTrend, medianMttrByGroupTrend, openByGroupTrend, openBySeverityTrend } from "../domain/trend";
 import * as insights from "../domain/insights";
 import * as archive from "./archiveStore";
+import * as errorLog from "./errorLog";
 import * as findings from "./findings";
 import * as history from "./historyStore";
 import { activeJob, getJob } from "./jobsStore";
@@ -52,7 +53,7 @@ export interface ApiResult<T = unknown> {
   errorKind?: string;
 }
 
-function run<T>(fn: () => T): ApiResult<T> {
+function run<T>(fn: () => T, label = "api"): ApiResult<T> {
   try {
     return { ok: true, data: fn() };
   } catch (e) {
@@ -64,16 +65,22 @@ function run<T>(fn: () => T): ApiResult<T> {
           : e instanceof LedgerBusyError
             ? "busy"
             : "error";
+    // Capture into the durable recent-errors log so a failure is visible in-app (Settings →
+    // Diagnostics), not just the execution transcript. "busy" is skipped — it's the expected
+    // "a scan is running, retry" contention signal, not a fault, and would evict real errors.
+    if (kind !== "busy") errorLog.recordError(label, e, kind);
     return { ok: false, error: String(e instanceof Error ? e.message : e), errorKind: kind };
   }
 }
 
-function mutate<T>(fn: () => T): ApiResult<T> {
-  return run(() =>
-    withScriptLock(() => {
-      recoverIfNeeded();
-      return fn();
-    }),
+function mutate<T>(fn: () => T, label = "api"): ApiResult<T> {
+  return run(
+    () =>
+      withScriptLock(() => {
+        recoverIfNeeded();
+        return fn();
+      }),
+    label,
   );
 }
 
@@ -967,11 +974,13 @@ export function getHistoryPage(p?: unknown): ApiResult {
 
 export function runScan(p?: unknown): ApiResult {
   const params = (p ?? {}) as Rec;
-  return run(() =>
-    scanJobs.startScan({
-      incremental: Boolean(params["incremental"]),
-      sampleShape: (params["sampleShape"] as string) ?? undefined,
-    }),
+  return run(
+    () =>
+      scanJobs.startScan({
+        incremental: Boolean(params["incremental"]),
+        sampleShape: (params["sampleShape"] as string) ?? undefined,
+      }),
+    "scan",
   );
 }
 
@@ -1333,6 +1342,21 @@ export function refreshSupportGroups(_p?: unknown): ApiResult {
     // Support-group map changed → the frame's memoized _supportGroup attachment is stale.
     findings.invalidateFrameMemo();
     return stats;
+  }, "supportGroupRefresh");
+}
+
+// -------------------------------------------------------------------- diagnostics
+
+/** The recent server-side errors (newest first) for Settings → Diagnostics. */
+export function getRecentErrors(_p?: unknown): ApiResult {
+  return run(() => errorLog.recentErrors());
+}
+
+/** Clear the recent-errors log (the Diagnostics "Clear" action). */
+export function clearRecentErrors(_p?: unknown): ApiResult {
+  return run(() => {
+    errorLog.clearErrors();
+    return { cleared: true };
   });
 }
 

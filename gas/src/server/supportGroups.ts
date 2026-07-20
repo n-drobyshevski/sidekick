@@ -12,7 +12,7 @@ import { present, type Rec } from "../domain/util";
 import { DEFAULT_SUPPORT_GROUP_TAG_KEY, getProp, PROP_KEYS } from "./props";
 import * as settingsStore from "./settingsStore";
 import { graphSearchPage } from "./wizClient";
-import { MAX_PAGES, PAGE_SIZE, subscriptionsByTagQuery } from "./wizSubscriptionsQuery";
+import { MAX_PAGES, PAGE_SIZE, PAGE_SIZE_FALLBACK, subscriptionsByTagQuery } from "./wizSubscriptionsQuery";
 
 /** The same trim+lowercase fold the domain engine uses, so keys and lookups agree. */
 export function foldToken(v: unknown): string {
@@ -181,7 +181,7 @@ export function fetchSupportGroups(): { map: Record<string, string>; stats: Supp
   let subscriptions = 0;
   let logged = false;
   for (let page = 0; page < MAX_PAGES; page++) {
-    const result = graphSearchPage(query, { first: PAGE_SIZE, after: cursor });
+    const result = graphSearchPage(query, { first: PAGE_SIZE, after: cursor }, PAGE_SIZE_FALLBACK);
     for (const node of result.nodes) {
       const entities = (node["entities"] as Rec[]) ?? [];
       for (const entity of entities) {
