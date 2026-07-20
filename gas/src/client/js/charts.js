@@ -783,3 +783,124 @@ export function groupTrendLines(canvas, points, series, cfg = {}) {
     options: opts,
   });
 }
+
+// Draws each waterfall step's magnitude above its top edge — "+value" for a contribution step,
+// the plain figure for the grounded Total bar. Sibling of barEndLabels, but for vertical floating
+// bars: the label sits above the mark on the surface, so it wears INK2 (not white-on-fill).
+function waterfallLabels(bars) {
+  return {
+    id: "waterfallLabels",
+    afterDatasetsDraw(chart) {
+      const { ctx } = chart;
+      const meta = chart.getDatasetMeta(0);
+      ctx.save();
+      ctx.font = `600 11px ${FONT.family}`;
+      ctx.fillStyle = INK2;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      meta.data.forEach((bar, i) => {
+        const b = bars[i];
+        ctx.fillText((b.isTotal ? "" : "+") + localeNum(b.value), bar.x, bar.y - 4);
+      });
+      ctx.restore();
+    },
+  };
+}
+
+// A thin dashed tie from the top of each contribution step to the foot of the next, so the eye
+// reads the running cumulative the way a printed waterfall does. Next floor == this top, so the
+// tie is horizontal at that level. The Total bar is grounded at 0, not stacked, so nothing ties
+// into it.
+function waterfallConnectors(bars) {
+  return {
+    id: "waterfallConnectors",
+    afterDatasetsDraw(chart) {
+      const { ctx } = chart;
+      const meta = chart.getDatasetMeta(0);
+      ctx.save();
+      ctx.strokeStyle = "#d6d6db";
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      for (let i = 0; i < meta.data.length - 1; i++) {
+        if (bars[i + 1].isTotal) continue;
+        const cur = meta.data[i], next = meta.data[i + 1];
+        ctx.beginPath();
+        ctx.moveTo(cur.x + cur.width / 2, cur.y);
+        ctx.lineTo(next.x - next.width / 2, cur.y);
+        ctx.stroke();
+      }
+      ctx.restore();
+    },
+  };
+}
+
+/**
+ * Waterfall of each group's additive contribution to a total magnitude: floating bars that build
+ * cumulatively left-to-right, capped by a solid Total bar. Used for "domain contribution to MTTR",
+ * where a step is a domain's remediation wait-time (resolved × KM median, in finding·days). The
+ * overall KM median is a censored-survival statistic — NOT a weighted sum of per-domain medians —
+ * so this ranks domains by that additive wait-time proxy rather than claiming to split the headline
+ * figure. Meaning never rides on colour alone: every step is direct-labeled with its value, named on
+ * the category axis, and enumerated in the text alternative.
+ *
+ * `steps` = [{ label, value, color }] in draw order (the caller sorts domains desc and appends an
+ * "Other" step); this helper appends the grounded Total bar itself. `opts.unit` labels the y axis,
+ * tooltip, and aria text (default "finding·days"); `opts.subject` leads the text alternative.
+ */
+export function contributionWaterfall(canvas, steps, opts = {}) {
+  destroyExisting(canvas);
+  const unit = opts.unit || "finding·days";
+  const subject = opts.subject || "Contribution by group";
+  const total = steps.reduce((a, s) => a + (Number(s.value) || 0), 0);
+  const pct = (v) => (total ? Math.round((v / total) * 100) : 0);
+
+  // Cumulative floors: each contribution bar floats [runningBefore, runningAfter]; the Total bar is
+  // grounded [0, total] and inked (#0a0a0a), never a category hue.
+  const bars = [];
+  let cum = 0;
+  for (const s of steps) {
+    const v = Number(s.value) || 0;
+    bars.push({ label: s.label, value: v, data: [cum, cum + v], color: s.color });
+    cum += v;
+  }
+  bars.push({ label: "Total", value: total, data: [0, total], color: "#0a0a0a", isTotal: true });
+
+  describe(canvas, `${subject} (${unit}): ` +
+    (steps.map((s) => `${s.label} ${localeNum(Number(s.value) || 0)} (${pct(Number(s.value) || 0)}%)`)
+      .join(", ") || "none") +
+    `; total ${localeNum(total)}.`);
+
+  const opt = baseOptions("");
+  opt.scales.x.grid = { display: false };
+  opt.scales.y.beginAtZero = true;
+  opt.scales.y.grace = "10%"; // headroom so the top +value label isn't clipped at the axis edge
+  opt.scales.y.title = { display: true, text: unit, font: FONT, color: INK2 };
+  // Floating bars expose ctx.parsed as a pair, so the baseOptions label callback can't read a value;
+  // pull it from the closed-over `bars` by index instead.
+  opt.plugins.tooltip.callbacks = {
+    title: (items) => (items.length ? bars[items[0].dataIndex].label : ""),
+    label: (ctx) => {
+      const b = bars[ctx.dataIndex];
+      return b.isTotal
+        ? ` Total remediation wait: ${localeNum(b.value)} ${unit}`
+        : ` +${localeNum(b.value)} ${unit} (${pct(b.value)}%)`;
+    },
+  };
+
+  return new Chart(canvas, {
+    type: "bar",
+    data: {
+      labels: bars.map((b) => b.label),
+      datasets: [
+        {
+          data: bars.map((b) => b.data),
+          backgroundColor: bars.map((b) => b.color),
+          borderRadius: 3,
+          maxBarThickness: 56,
+        },
+      ],
+    },
+    options: opt,
+    plugins: [waterfallConnectors(bars), waterfallLabels(bars)],
+  });
+}
