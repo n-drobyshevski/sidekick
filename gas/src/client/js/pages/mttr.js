@@ -859,10 +859,6 @@ export async function renderMttr(main, _params, ctx) {
         "Shaded days precede the first saved scan — reconstructed from first-detection dates. "
           + "Open counts there are exact; resolved and MTTR are lower bounds."));
     }
-    if (domain) {
-      chartsHost.append(el("p", { class: "small muted", style: "margin:0" },
-        "Trends span every value chain — per-chain history isn't stored."));
-    }
 
     requestAnimationFrame(() => {
       for (const paint of painters) paint();

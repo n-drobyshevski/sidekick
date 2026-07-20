@@ -4237,10 +4237,10 @@ var Server = (() => {
   function loadBaseRows(now) {
     return baseRows(loadState(), now);
   }
-  function loadTrend(severities = null, showNoFix = true) {
+  function loadTrend(severities = null, showNoFix = true, baseOverride) {
     const state = loadState();
     const hideNoFix = !showNoFix;
-    const base = baseRows(state).map((r) => ({
+    const base = (baseOverride != null ? baseOverride : baseRows(state)).map((r) => ({
       severity: r.severity,
       first_seen: r.first_seen,
       resolved_at: r.resolved_at,
@@ -6043,22 +6043,26 @@ var Server = (() => {
     if (showNoFix || !records.length) return records;
     return records.filter((r) => !recordNoFix(r));
   }
-  function mttrData(p) {
-    var _a, _b;
-    const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
-    const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
+  function scopedBaseRows(domain, supportGroup) {
     let rows = loadBaseRows();
     if (domain || supportGroup) {
       attachSupportGroups(rows);
       if (supportGroup) rows = rows.filter((r) => {
-        var _a2;
-        return String((_a2 = r["_supportGroup"]) != null ? _a2 : "") === supportGroup;
+        var _a;
+        return String((_a = r["_supportGroup"]) != null ? _a : "") === supportGroup;
       });
       if (domain) {
         const compiled = compileDomains(getDomains2().items);
         rows = rows.filter((r) => assignDomain(r, compiled) === domain);
       }
     }
+    return rows;
+  }
+  function mttrData(p) {
+    var _a, _b;
+    const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
+    const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
+    let rows = scopedBaseRows(domain, supportGroup);
     rows = filterSeverities(rows, readSeverities(p));
     rows = filterNoFixBase(rows, getShowNoFix2());
     const { perSev, overall } = mttrFromLedger(rows);
@@ -6081,12 +6085,17 @@ var Server = (() => {
     return { perSev, overall, slaPct, oldestDays, rowCount: rows.length, remediation };
   }
   function mttrTrendData(p) {
+    var _a, _b;
+    const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
+    const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
     const severities = readSeverities(p);
+    const scoped = Boolean(domain || supportGroup);
+    const rows = scopedBaseRows(domain, supportGroup);
     return {
-      history: loadHistory(),
+      history: scoped ? [] : loadHistory(),
       // showNoFix off → the open / KM-median series exclude no-fix findings as-of-date; the
       // resolved / median / SLA-burn / attainment series are untouched (see loadTrend).
-      trend: loadTrend(severities, getShowNoFix2())
+      trend: loadTrend(severities, getShowNoFix2(), rows)
     };
   }
   function mttrByDomainData(p) {
@@ -6175,23 +6184,34 @@ var Server = (() => {
       3600
     );
   };
-  var cachedMttrTrendData = (p) => (
-    // "mttrTrend" → "mttrTrend2": trend points gained `open_past_sla`; namespace bump avoids a
-    // stale old-shape entry surviving the deploy under the persistent dataVersion.
-    // "mttrTrend2" → "mttrTrend3": trend points gained the backlog-flow series (sla_net /
-    // sla_entered / sla_cleared, sla_attainment_pct) and open_past_sla switched to the
-    // actionable clock; bump so a stale old-shape entry can't survive the persistent dataVersion.
-    // "mttrTrend3" → "mttrTrend4": the tail-median series (tail_median_days) became the KM-median
-    // series (km_median_days) and the fast-lane window left the key; bump so no stale entry
-    // survives.
-    // "mttrTrend4" → "mttrTrend5": the open / KM-median series now exclude no-fix findings
-    // as-of-date when the toggle is off; key gains showNoFix so on/off states cache apart.
-    cached(
-      "mttrTrend5",
-      { severities: readSeverities(p), showNoFix: getShowNoFix2() },
-      () => mttrTrendData(p)
-    )
-  );
+  var cachedMttrTrendData = (p) => {
+    var _a, _b;
+    return (
+      // "mttrTrend" → "mttrTrend2": trend points gained `open_past_sla`; namespace bump avoids a
+      // stale old-shape entry surviving the deploy under the persistent dataVersion.
+      // "mttrTrend2" → "mttrTrend3": trend points gained the backlog-flow series (sla_net /
+      // sla_entered / sla_cleared, sla_attainment_pct) and open_past_sla switched to the
+      // actionable clock; bump so a stale old-shape entry can't survive the persistent dataVersion.
+      // "mttrTrend3" → "mttrTrend4": the tail-median series (tail_median_days) became the KM-median
+      // series (km_median_days) and the fast-lane window left the key; bump so no stale entry
+      // survives.
+      // "mttrTrend4" → "mttrTrend5": the open / KM-median series now exclude no-fix findings
+      // as-of-date when the toggle is off; key gains showNoFix so on/off states cache apart.
+      // "mttrTrend5" → "mttrTrend6": the reconstructed trend now scopes to the active Value Chain /
+      // Support group (was always whole-register); key gains domain + supportGroup so scopes cache
+      // apart.
+      cached(
+        "mttrTrend6",
+        {
+          domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
+          supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
+          severities: readSeverities(p),
+          showNoFix: getShowNoFix2()
+        },
+        () => mttrTrendData(p)
+      )
+    );
+  };
   var cachedMttrByDomainData = (p) => {
     var _a;
     return cached(
