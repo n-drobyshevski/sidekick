@@ -702,6 +702,13 @@ input[aria-invalid="true"]:focus-visible, select[aria-invalid="true"]:focus-visi
 .section-head .section-label { margin: 0; }
 /* Unboxed row for segmented buttons (the .pill-row shape, no .filter-bar chrome). */
 .seg-row { display: flex; gap: 6px; }
+/* Card title + inline toggle on one row — the in-card variant of .section-head with no
+   outer margin (the .chart-card padding owns the rhythm). */
+.chart-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin: 0 0 8px;
+}
+.chart-head h3 { margin: 0; }
 
 /* ----------------------------------------------------------------------- tables */
 .table-wrap { overflow-x: auto; border: 1px solid var(--hairline); border-radius: var(--radius-lg); }
@@ -780,6 +787,11 @@ a { color: var(--accent); }
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(max(320px, (100% - 28px) / 3), 1fr));
   gap: 14px;
+}
+/* Two-up variant — two cards per row (one 14px gutter), collapsing to a single column on a
+   narrow pane. Used by the Trends section. */
+.chart-grid--2 {
+  grid-template-columns: repeat(auto-fit, minmax(max(320px, (100% - 14px) / 2), 1fr));
 }
 .chart-box { position: relative; height: 240px; }
 /* Distribution row: the survival curve spans 2 of the 3 chart blocks, the time-to-resolve

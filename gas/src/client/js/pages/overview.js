@@ -8,8 +8,8 @@ import {
 } from "../charts.js";
 import { bootstrap, setParams, swrCall } from "../store.js";
 import {
-  clear, el, emptyState, fmtDate, kpiCard, noFixHiddenNote, nvdUrl, scopeBar, sectionLabel,
-  severityScopeFilter,
+  clear, el, emptyState, fmtDate, helpTip, kpiCard, noFixHiddenNote, nvdUrl, openSheet, scopeBar,
+  sectionLabel, severityScopeFilter,
 } from "../ui.js";
 
 // Keep in sync with AGE_BUCKET_LABELS in src/domain/insights.ts (the client bundle
@@ -88,7 +88,7 @@ export async function renderOverview(main, params, ctx) {
         onApply: () => loadInsights(), ariaContext: "OS vulnerabilities",
       })),
     el("p", { class: "page-sub" },
-      "What the latest scan means: what is exploitable, where risk concentrates, and what to fix next. ",
+      "What's exploitable, where risk concentrates, and what to fix next. ",
       el("a", { href: "#/mttr", target: "_self" }, "Remediation performance →"),
     ),
   );
@@ -282,14 +282,30 @@ export async function renderOverview(main, params, ctx) {
     renderExploitability(insights);
     renderAging(insights);
     renderMovement(insights);
-    renderBreakdown();
+    // The multi-dimension group explorer (group-by controls + pie + trend + expandable tree)
+    // is the page's heaviest surface — it opens in a drawer so the default scroll stays
+    // focused. The grouping path still persists to the URL (?by=) from inside the sheet.
+    insightsHost.append(sectionLabel("Breakdown"));
+    insightsHost.append(el("p", { class: "small muted", style: "margin:-6px 0 10px" },
+      "Group open findings by any dimension — domain, asset, CVE, OS … — and drill in."));
+    insightsHost.append(el("button", {
+      type: "button",
+      onclick: () => openSheet((body) => renderBreakdown(body),
+        { title: "Breakdown", subtitle: "Group open findings by any dimension and drill in." }),
+    }, "Explore breakdown →"));
   }
 
   // ------------------------------------------------------- exploitability & priority
 
   function renderExploitability(insights) {
     const s = insights.exploit;
-    insightsHost.append(sectionLabel("Exploitability & priority"));
+    // The "open-only, signals overlap" caveat moves from an always-on note onto the section
+    // label's hover, matching the MTTR convention.
+    insightsHost.append(el("h2", { class: "section-label" },
+      helpTip("Exploitability & priority",
+        [`Open findings only — ${s.open.toLocaleString()} open in this scan; ` +
+          "one finding can carry several signals."],
+        { className: "help-label" })));
     const tiles = el("div", { class: "kpi-row" },
       kpiCard("CISA KEV", s.kev.toLocaleString(), "known exploited in the wild"),
       kpiCard("Exploit available", s.exploit.toLocaleString(), "public exploit exists"),
@@ -298,11 +314,7 @@ export async function renderOverview(main, params, ctx) {
         ? kpiCard("Internet-exposed", s.internetExposed.toLocaleString(), "reachable from outside")
         : kpiCard("Internet-exposed", "n/a", "rescan to capture exposure"),
     );
-    insightsHost.append(
-      el("p", { class: "section-note" },
-        `Open findings only (${s.open.toLocaleString()} open in this scan); one finding can carry several signals.`),
-      tiles,
-    );
+    insightsHost.append(tiles);
     // Awaiting-vendor-fix line: open findings with no patch available yet, sourced from the
     // insights payload (awaitingVendorFix over the same scoped base). Sits outside the SLA
     // clock, and explains the open-count step-up once fix-tracking rolled out. Optional-
@@ -329,24 +341,25 @@ export async function renderOverview(main, params, ctx) {
       return;
     }
     const canvas = el("canvas", { id: "aging-chart" });
-    const chartCard = el("div", { class: "chart-card fill-height" },
+    insightsHost.append(el("div", { class: "chart-card" },
       el("h3", {}, "How long open findings have been open"),
       el("div", { class: "small muted", style: "margin-bottom:8px" },
-        `${insights.aging.totalOpen.toLocaleString()} still-open findings from the durable ` +
-        "ledger, bucketed by age since first seen."),
+        `${insights.aging.totalOpen.toLocaleString()} still-open findings, bucketed by age since first seen.`),
       el("div", { class: "chart-box" }, canvas),
-    );
-    // Two columns like the Severity breakdown: the age histogram (left) beside a ranked
-    // table of the actual stale items (right), toggling between individual findings and
-    // the 90+ backlog per asset / support group / domain. align-items:stretch keeps the
-    // two cards the same height as each other whichever view (3–7 rows) is showing.
-    // `oldest` is missing when a newer client meets an older/cached server payload — fall
-    // back to the chart alone rather than crashing the whole page.
-    insightsHost.append(insights.oldest
-      ? el("div", { class: "chart-grid", style: "align-items:stretch" },
-          chartCard,
-          renderOldestPanel(insights.oldest))
-      : chartCard);
+    ));
+    // The histogram above answers "how aged is the backlog?"; the ranked detail — the
+    // longest-open findings and the assets / support groups / domains carrying the 90+ tail —
+    // moves into a drawer to answer "which ones?". `oldest` is missing when a newer client
+    // meets an older/cached payload, so the button only shows when it's present.
+    if (insights.oldest) {
+      insightsHost.append(el("button", {
+        type: "button", style: "margin-top:10px",
+        onclick: () => openSheet(
+          (body) => body.append(renderOldestPanel(insights.oldest)),
+          { title: "Oldest open findings",
+            subtitle: "The longest-open findings, and the assets, groups and domains carrying the aged backlog." }),
+      }, "Oldest open findings →"));
+    }
     requestAnimationFrame(() => {
       stackedAgeBar(canvas, AGE_LABELS, insights.aging.perSev, boot.palette);
     });
@@ -454,19 +467,36 @@ export async function renderOverview(main, params, ctx) {
     if (!m.hasPrevious) {
       insightsHost.append(el("p", { class: "muted" },
         "First scan — movement appears once there is a previous scan to compare against."));
-    } else {
-      insightsHost.append(el("div", { class: "kpi-row" },
+      return;
+    }
+    // Compact by default: the two trajectory numbers (New vs Newly resolved — are we gaining
+    // or losing ground) inline, with the full New / Newly resolved / Reopened / Persisting
+    // breakdown and the scope caveat one click away in a drawer.
+    const miniStat = (value, label) => el("div", {},
+      el("div", { class: "mini-value num" }, value),
+      el("div", { class: "mini-label" }, label));
+    const renderMovementDetail = (body) => {
+      body.append(el("div", { class: "kpi-row" },
         kpiCard("New", m.newCount.toLocaleString(), "first seen in the latest scan"),
         kpiCard("Newly resolved", m.resolvedCount.toLocaleString(), "closed since the previous scan"),
         kpiCard("Reopened", m.reopenedCount.toLocaleString(), "back after being resolved"),
         kpiCard("Persisting", m.persisting.toLocaleString(), "open since an earlier scan"),
       ));
       if (ctx.domain || ctx.supportGroup) {
-        insightsHost.append(el("p", { class: "small muted", style: "margin:8px 0 0" },
+        body.append(el("p", { class: "small muted", style: "margin:12px 0 0" },
           "New / Resolved / Reopened are scan-wide — scan-over-scan deltas can't be " +
           "split by the active filter. Persisting reflects the filtered scope."));
       }
-    }
+    };
+    insightsHost.append(el("div",
+      { style: "display:flex; gap:32px; align-items:flex-end; flex-wrap:wrap" },
+      miniStat(m.newCount.toLocaleString(), "New"),
+      miniStat(m.resolvedCount.toLocaleString(), "Newly resolved"),
+      el("button", {
+        type: "button", style: "margin-left:auto",
+        onclick: () => openSheet(renderMovementDetail, { title: "Scan-over-scan movement" }),
+      }, "Movement details →"),
+    ));
   }
 
   // --------------------------------------------------------------------- breakdown
@@ -475,8 +505,7 @@ export async function renderOverview(main, params, ctx) {
    *  an expandable tree table. Domain and CVE are just dimensions here — grouping by CVE
    *  reproduces the old Top-CVEs table. Data comes from api_getGrouping (the insights
    *  payload doesn't carry arbitrary N-level groupings). */
-  function renderBreakdown() {
-    insightsHost.append(sectionLabel("Breakdown"));
+  function renderBreakdown(host) {
     const controls = el("div", { class: "filter-bar" });
     const tableHost = el("div", {});
 
@@ -501,7 +530,7 @@ export async function renderOverview(main, params, ctx) {
         el("div", { class: "chart-box" }, lineCanvas, lineMsg),
         lineCaption),
     );
-    insightsHost.append(controls, chartGrid, tableHost);
+    host.append(controls, chartGrid, tableHost);
     renderControls();
     loadGrouping();
 

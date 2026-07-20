@@ -7,8 +7,8 @@ import {
 } from "../charts.js";
 import { bootstrap, swrCall } from "../store.js";
 import {
-  changeChip, clear, el, emptyState, fmtDays, helpTip, noFixHiddenNote, scopeBar, sectionLabel,
-  sevBadge, severityScopeFilter,
+  changeChip, clear, el, emptyState, fmtDays, helpTip, noFixHiddenNote, openSheet, scopeBar,
+  sectionLabel, sevBadge, severityScopeFilter,
 } from "../ui.js";
 
 // Keep in sync with RESOLUTION_BUCKET_LABELS in src/domain/remediation.ts (the client
@@ -62,6 +62,50 @@ function saveSurvivalWeeks(label) {
   }
 }
 
+// Generic recall/persist for the two-option in-card toggles (MTTR clock, SLA-quality
+// series, distribution view). Same sandbox-tolerant try/catch as the window prefs above;
+// an unknown or blocked value degrades to `fallback`.
+function loadPref(key, allowed, fallback) {
+  try {
+    const v = localStorage.getItem(key);
+    return allowed.includes(v) ? v : fallback;
+  } catch {
+    return fallback;
+  }
+}
+function savePref(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Sandbox without storage — the choice simply won't survive the visit.
+  }
+}
+
+// A compact two-option segmented toggle, reusing the exact .seg-row / .seg-btn--sm /
+// aria-pressed pattern as the Trends timeframe and survival-window controls (no invented
+// control — DESIGN.md "earned familiarity"). `options` is [[label, value], …]; `onPick`
+// gets the chosen value and is expected to persist + repaint.
+function toggleRow(ariaLabel, options, current, onPick) {
+  return el("div", { class: "seg-row", role: "group", "aria-label": ariaLabel },
+    ...options.map(([label, value]) =>
+      el("button", {
+        type: "button", class: "seg-btn seg-btn--sm",
+        "aria-pressed": String(value === current),
+        onclick: () => onPick(value),
+      }, label)));
+}
+
+// A chart card whose title row can carry an inline toggle on the right (via .chart-head)
+// and whose title can be a helpTip (methodology moves off the always-on caption onto a
+// hover, matching the table columns' convention). `box` is the .chart-box element.
+function chartCard(title, box, opts = {}) {
+  const h3 = opts.helpLines
+    ? el("h3", {}, helpTip(title, opts.helpLines, { className: "help-label" }))
+    : el("h3", {}, title);
+  const head = opts.toggle ? el("div", { class: "chart-head" }, h3, opts.toggle) : h3;
+  return el("div", { class: "chart-card" }, head, box);
+}
+
 // Open-past-SLA cell, shared by the hero mini, the per-severity table, and the
 // by-domain table: "632 of 816 open (77%)" — the denominator makes the population
 // explicit instead of leaving the breached count to be read against whatever total the
@@ -97,14 +141,6 @@ function fmtKmMedian(km) {
   return "—";
 }
 
-// Kaplan-Meier mean (RMST) formatter: a "≥" prefix marks a lower bound (the curve hadn't
-// fully decayed to zero by the restriction time τ, so some findings would resolve later),
-// else the exact restricted mean.
-function fmtKmMean(km) {
-  if (!km || km.mean === null || km.mean === undefined) return "—";
-  return (km.meanTruncated ? "≥ " : "") + fmtDays(km.mean);
-}
-
 export async function renderMttr(main, _params, ctx) {
   const boot = await bootstrap();
 
@@ -124,9 +160,8 @@ export async function renderMttr(main, _params, ctx) {
         onApply: () => load(), ariaContext: "MTTR",
       })),
     el("p", { class: "page-sub" },
-      "How fast risk gets closed, measured over observed lifecycles in the durable base. " +
-      "The SLA clock starts once a vendor fix is available; findings awaiting a vendor fix " +
-      "are shown separately."),
+      "How fast risk gets closed — measured over observed lifecycles. " +
+      "The SLA clock starts once a vendor fix is available."),
   );
 
   const scopeChips = scopeBar({
@@ -152,6 +187,12 @@ export async function renderMttr(main, _params, ctx) {
   let trendWindowDays = loadTrendWindow();
   // Survival-curve x-axis window (weeks); recalled across visits, defaults to 30w.
   let survivalWeeks = loadSurvivalWeeks();
+  // In-card toggle modes, recalled across visits. MTTR-over-time clock (KM headline vs the
+  // naive closed-only comparison), SLA-quality series (cohort attainment vs net-flow burn),
+  // and the distribution view (survival curve vs time-to-resolve histogram).
+  let overTimeMode = loadPref("mttrOverTimeMode", ["km", "naive"], "km");
+  let slaQualMode = loadPref("mttrSlaQualMode", ["attainment", "burn"], "attainment");
+  let distMode = loadPref("mttrDistMode", ["survival", "histogram"], "survival");
 
   await load();
 
@@ -197,9 +238,6 @@ export async function renderMttr(main, _params, ctx) {
   function renderByDomain(byDomain) {
     clear(byDomainHost);
     if (!byDomain || !byDomain.rows.length || boot.domainNames.length < 2) return;
-    byDomainHost.append(sectionLabel("By domain"));
-    byDomainHost.append(el("p", { class: "small muted", style: "margin:-6px 0 12px" },
-      "Remediation for each domain that makes up the value chain."));
 
     // Chart pair over the domain trend the server ships alongside the table. Each card swaps
     // its canvas for a muted message when there's nothing to draw (copied from overview.js's
@@ -210,7 +248,7 @@ export async function renderMttr(main, _params, ctx) {
     const lineCanvas = el("canvas", {});
     const lineMsg = el("p", { class: "chart-empty muted", style: "display:none" });
     const lineCaption = el("p", { class: "chart-caption muted" });
-    byDomainHost.append(el("div", { class: "chart-grid", style: "align-items:start" },
+    const chartPair = el("div", { class: "chart-grid", style: "align-items:start" },
       el("div", { class: "chart-card" },
         el("h3", {}, "Remediation share"),
         el("div", { class: "chart-box" }, pieCanvas, pieMsg),
@@ -219,7 +257,7 @@ export async function renderMttr(main, _params, ctx) {
         el("h3", {}, "MTTR by domain"),
         el("div", { class: "chart-box" }, lineCanvas, lineMsg),
         lineCaption),
-    ));
+    );
 
     // Swap a card between its live canvas and a centered muted message.
     function showChart(canvas, msg) {
@@ -290,11 +328,6 @@ export async function renderMttr(main, _params, ctx) {
       groupPie(pieCanvas, slices, { subject: "Resolved findings by domain" });
     }
 
-    requestAnimationFrame(() => {
-      paintPie();
-      paintLine();
-    });
-
     // Column headers carry the two new metrics' definitions via helpTip, matching the
     // per-severity table's convention in renderSla above.
     const columns = [
@@ -334,18 +367,41 @@ export async function renderMttr(main, _params, ctx) {
       ));
     }
     table.append(tbody);
-    byDomainHost.append(el("div", { class: "table-wrap" }, table));
+    const tableWrap = el("div", { class: "table-wrap" }, table);
 
     // Awaiting-vendor-fix findings aren't a column (they don't breach any SLA) — a footnote
     // sums the per-domain `awaiting` counts so the excluded population is still visible.
     // Hidden entirely when the vendor-fix filter is off (the counts arrive zeroed anyway, and
     // the page-level honesty note already covers it).
     const awaitingTotal = byDomain.rows.reduce((a, r) => a + (r.awaiting ?? 0), 0);
-    if (boot.settings.showNoFix !== false && awaitingTotal > 0) {
-      byDomainHost.append(el("p", { class: "small muted", style: "margin:8px 0 0" },
+    const footnote = boot.settings.showNoFix !== false && awaitingTotal > 0
+      ? el("p", { class: "small muted", style: "margin:8px 0 0" },
         `${awaitingTotal.toLocaleString()} open finding${awaitingTotal === 1 ? "" : "s"} across `
-        + "these domains are awaiting a vendor fix — excluded from Open past SLA until a fix appears."));
+        + "these domains are awaiting a vendor fix — excluded from Open past SLA until a fix appears.")
+      : null;
+
+    // Progressive disclosure: the whole breakdown opens in a right-drawer instead of
+    // stacking on the page. openSheet calls renderBody synchronously, so the paint rAF
+    // scheduled here fires after the canvases are attached to the (animating) sheet.
+    function renderBody(body) {
+      body.append(chartPair, tableWrap);
+      if (footnote) body.append(footnote);
+      requestAnimationFrame(() => {
+        paintPie();
+        paintLine();
+      });
     }
+
+    byDomainHost.append(sectionLabel("By domain"));
+    byDomainHost.append(el("p", { class: "small muted", style: "margin:-6px 0 10px" },
+      "Per-domain remediation — share of resolved work, MTTR trend, and a full breakdown table."));
+    byDomainHost.append(el("button", {
+      type: "button",
+      onclick: () => openSheet(renderBody, {
+        title: "By domain",
+        subtitle: "Remediation for each domain in the value chain.",
+      }),
+    }, "Open by-domain breakdown →"));
   }
 
   function renderHero(mttr, trends) {
@@ -381,41 +437,23 @@ export async function renderMttr(main, _params, ctx) {
     const awaiting = rem?.awaiting; // {perSev, overall, openTotal, pctOfOpen}
 
     const minis = el("div", { class: "hero-minis" });
+    // The four numbers a reader acts on beside the headline MTTR: how much resolved on
+    // time, how much open work has already breached, the slow tail, and how old the open
+    // backlog is. The naive closed-only comparison now lives on the "MTTR over time"
+    // toggle, the actionable clock is dropped from the default view, and awaiting-vendor-fix
+    // moves to the source line below — so this band matches Overview's 3–4-tile rhythm.
     const miniDefs = [
-      // The naive figures are demoted to minis now that Kaplan–Meier is the headline
-      // methodology — closed-findings-only, no censoring. The median keeps mttr_history's
-      // change chip (the KM series itself isn't persisted, see the plan); the mean has no
-      // history series to diff against.
-      ["Median (naive, closed)", fmtDays(km?.naiveMedian),
-        !scoped && prev && prev.median_days !== null && prev.median_days !== undefined &&
-          km?.naiveMedian !== null && km?.naiveMedian !== undefined
-          ? changeChip(km.naiveMedian, prev.median_days, { fmt: fmtDays }) : null],
-      ["Mean (naive, closed)", fmtDays(km?.naiveMean), null],
-      // KM median on the actionable clock (starts at vendor-fix availability) — the one
-      // stat the dropped Resolution-profile card carried that isn't already a hero value or
-      // survival marker. Only meaningful while no-fix findings are in scope; hidden when the
-      // vendor-fix filter is off, since then the population is already fix-bearing.
-      boot.settings.showNoFix === false
-        ? null
-        : ["Median (KM, actionable)", fmtKmMedian(rem?.kmActionable), null],
       // "of resolved" makes the survivorship explicit: In-SLA % scores only resolved
-      // findings, so it can look healthy while the open backlog ages (Open past SLA below).
+      // findings, so it can look healthy while the open backlog ages (Open past SLA next).
       ["In SLA (of resolved)", mttr.slaPct !== null ? `${mttr.slaPct.toFixed(1)}%` : "—",
         !scoped && prev && prev.sla_pct !== null && mttr.slaPct !== null
           ? changeChip(mttr.slaPct, prev.sla_pct, { invert: true, suffix: "%" }) : null],
       // Open findings already past their SLA target — unlike In SLA %, this scores open
-      // findings too (definition lives on the "Open past SLA" table column below; minis
-      // stay plain, matching the existing convention). Up is worse, same as every other
-      // count-of-risk chip here, so no invert.
+      // findings too. Up is worse, same as every other count-of-risk chip here, so no invert.
       ["Open past SLA", fmtOpenPastSla(openPastSla),
         !scoped && prev && prev.open_past_sla !== null && prev.open_past_sla !== undefined &&
           openPastSla && openPastSla.breached !== null && openPastSla.breached !== undefined
           ? changeChip(openPastSla.breached, prev.open_past_sla) : null],
-      // Open findings with no vendor fix available yet — outside the SLA clock entirely, so
-      // shown here rather than folded into Open past SLA. No history series to diff, no chip.
-      // Dropped entirely when the vendor-fix filter is off — the page-level honesty note
-      // already covers the exclusion, and the count would arrive zeroed anyway.
-      boot.settings.showNoFix === false ? null : ["Awaiting vendor fix", fmtAwaiting(awaiting), null],
       ["MTTR p90", fmtDays(overallPctiles?.p90), null],
       // p90 of open-finding age, not the single oldest — labelled to match the table below.
       ["Open age p90", fmtDays(mttr.oldestDays),
@@ -438,6 +476,9 @@ export async function renderMttr(main, _params, ctx) {
     // The metric itself (label + value) is the hover/focus target — no separate "i" glyph.
     // No change chip on either KM stat: mttr_history only ever persisted the naive median
     // (now a mini above), never a KM series, so there's nothing to diff against.
+    // The single hero value (DESIGN.md: at most one per page). The mean (KM · RMST) is no
+    // longer a second headline stat — it survives as a marker on the survival curve below,
+    // pointed to from the last helpTip line, so no methodology is lost.
     const metric = helpTip(
       [
         el("div", { class: "label" }, "Median MTTR (Kaplan–Meier)" + (domain ? ` — ${domain}` : "")),
@@ -451,111 +492,130 @@ export async function renderMttr(main, _params, ctx) {
           "half of tracked findings are still open, so the true median is at least that " +
           "many days out.",
         "A vuln that disappears between scans counts as resolved.",
+        "Mean remediation time (KM · RMST) is marked on the survival curve below.",
       ],
       { className: "hero-metric" },
     );
-    // Second stat, not a second hero — deliberately a step below the 2rem hero value (see
-    // DESIGN.md: at most one hero value per page) while still living beside the headline.
-    const meanStat = helpTip(
+    // Secondary metric beside the hero — the naive median (closed findings only), the biased
+    // comparison the KM headline corrects for. Deliberately a step below the 2rem hero value
+    // (DESIGN.md: one hero value per page) while still reading beside the headline. It's the
+    // one MTTR figure with a persisted history series, so it keeps the change chip (only at
+    // the unscoped view, where the current population matches the global snapshot).
+    const naiveChip = !scoped && prev && prev.median_days !== null && prev.median_days !== undefined
+      && km?.naiveMedian !== null && km?.naiveMedian !== undefined
+      ? changeChip(km.naiveMedian, prev.median_days, { fmt: fmtDays })
+      : null;
+    const naiveStat = helpTip(
       [
-        el("div", { class: "label" }, "Mean MTTR (KM · RMST)"),
-        el("div", { class: "kpi-value num" }, fmtKmMean(km)),
+        el("div", { class: "label" }, "Median (naive, closed)"),
+        el("div", { class: "kpi-value num" }, fmtDays(km?.naiveMedian), naiveChip),
       ],
       [
-        "Restricted mean survival time (RMST) — the average remediation time up to the " +
-          "longest observed lifecycle (τ), with still-open findings censored.",
-        "\"≥\" marks a lower bound: the curve hadn't fully decayed to zero by τ, so some " +
-          "findings would still resolve later and the true mean is at least this.",
+        "Median days from first detection to remediation, counting closed findings only — no " +
+          "censoring. A wave of fresh open findings biases this down, which is exactly what " +
+          "the Kaplan–Meier headline corrects for.",
       ],
       { className: "hero-metric" },
     );
+    // Awaiting-vendor-fix moves off its own tile onto the source line — the honest-state
+    // context stays legible without spending a KPI slot. Dropped when the vendor-fix filter
+    // is off (the count arrives zeroed and the page-level honesty note already covers it).
+    const awaitingClause = boot.settings.showNoFix !== false && awaiting && awaiting.overall
+      ? ` · ${fmtAwaiting(awaiting)} awaiting vendor fix`
+      : "";
     heroHost.append(
       el("div", { class: "hero" },
         el("div", { style: "display:flex; align-items:baseline; gap:32px; flex-wrap:wrap" },
-          metric, meanStat),
+          metric, naiveStat),
         el("div", { class: "hero-src" },
           `${mttr.rowCount.toLocaleString()} tracked lifecycle(s) in the durable base · ` +
           `${resolved.toLocaleString()} resolved · ${open.toLocaleString()} open` +
           (unclassified > 0
             ? ` · ${unclassified.toLocaleString()} unclassified severity`
-            : "")),
+            : "") +
+          awaitingClause),
         minis,
       ),
     );
   }
 
-  /** The distribution row: the Kaplan–Meier survival curve (2 of 3 blocks) beside the
-   *  time-to-resolve histogram (1 block) — cumulative S(t) and its binned-density companion.
-   *  Gated on a drawable curve: `rem` missing entirely means a stale pre-KM cache (nothing
-   *  shown); `rem.km` present but empty means genuinely no resolved findings yet to estimate
-   *  from (a muted note instead of an empty chart — the histogram is empty then too). */
+  /** The distribution — one card that toggles between the Kaplan–Meier survival curve
+   *  (cumulative S(t)) and its binned-density companion, the time-to-resolve histogram.
+   *  `rem` missing entirely means a stale pre-KM cache (nothing shown); a curve with no
+   *  points AND no buckets means genuinely no resolved findings yet (a muted note instead
+   *  of an empty chart). The survival curve keeps only its two KM markers (median + RMST
+   *  mean) — the naive closed-only comparison now lives on the "MTTR over time" toggle. */
   function renderSurvivalCurve(mttr) {
     clear(survivalHost);
     const rem = mttr.remediation;
     if (!rem) return;
-    if (!rem.km?.curve?.length) {
-      // No curve to zoom — plain label, no window toggle.
-      survivalHost.append(sectionLabel("Remediation survival (Kaplan–Meier)"));
+    const hasCurve = !!rem.km?.curve?.length;
+    const hasBuckets = !!(rem.buckets && rem.buckets.total);
+    if (!hasCurve && !hasBuckets) {
+      survivalHost.append(sectionLabel("Distribution"));
       survivalHost.append(el("p", { class: "muted small" },
-        "Not enough resolved findings yet to draw a survival curve — it appears once the " +
+        "Not enough resolved findings yet to draw the distribution — it appears once the " +
         "first remediation is recorded."));
       return;
     }
-    // Compact x-axis width toggle inline with the section label — the same segmented
-    // pattern as the Trends timeframe control. Purely a view zoom: clicking repaints the
-    // closed-over curve at a new x-axis max, no RPC.
-    const segRow = el("div", { class: "seg-row", role: "group", "aria-label": "Survival window" },
-      ...SURVIVAL_WINDOWS.map(([label, weeks]) =>
-        el("button", {
-          type: "button", class: "seg-btn seg-btn--sm",
-          "aria-pressed": String(weeks === survivalWeeks),
-          onclick: () => { survivalWeeks = weeks; saveSurvivalWeeks(label); renderSurvivalCurve(mttr); },
-        }, label)));
-    survivalHost.append(el("div", { class: "section-head" },
-      sectionLabel("Remediation survival (Kaplan–Meier)"), segRow));
 
-    // One distribution row: the survival curve (cumulative S(t)) takes 2 of the 3 chart
-    // blocks, the time-to-resolve histogram (its binned-density companion) takes the third.
-    // Reuses the capped-3 .chart-grid, so on a narrow pane the survival span clamps to one
-    // column and the two cards stack.
-    const canvas = el("canvas", { id: "survival-curve" });
-    const grid = el("div", { class: "chart-grid dist-grid" },
-      el("div", { class: "chart-card dist-main" },
-        el("h3", {}, "S(t): share of findings still open"),
-        el("div", { class: "chart-box chart-box--tall" }, canvas),
-        el("p", { class: "chart-caption muted" },
-          "Time from first detection to remediation. Markers: Median (closed), Median (KM, " +
-          "all), Mean (closed), Mean (KM · RMST, all)."),
-      ),
-    );
-    // Time-to-resolve histogram — only when there are bucketed resolved lifecycles (which,
-    // like the curve, requires resolved findings, so the two appear together).
-    let bucketCanvas = null;
-    if (rem.buckets && rem.buckets.total) {
-      bucketCanvas = el("canvas", { id: "resolution-buckets" });
-      grid.append(
-        el("div", { class: "chart-card" },
-          el("h3", {},
-            helpTip("Time to resolve",
-              ["How long resolved findings actually took, bucketed by severity. The " +
-                "right-hand bars are the tail the median hides."],
-              { className: "help-label" })),
-          el("div", { class: "chart-box chart-box--tall" }, bucketCanvas)),
-      );
+    const modes = [];
+    if (hasCurve) modes.push("survival");
+    if (hasBuckets) modes.push("histogram");
+    const mode = modes.includes(distMode) ? distMode : modes[0];
+
+    // Section-head controls: the view toggle (survival ⇄ histogram, only when both draw)
+    // plus the survival x-axis width control, the latter shown only while the curve is up.
+    const controls = el("div", { style: "display:flex; gap:12px; flex-wrap:wrap" });
+    if (modes.length > 1) {
+      controls.append(toggleRow("Distribution view",
+        [["Survival", "survival"], ["Time to resolve", "histogram"]], mode, (v) => {
+          distMode = v; savePref("mttrDistMode", v); renderSurvivalCurve(mttr);
+        }));
     }
-    survivalHost.append(grid);
-    requestAnimationFrame(() => {
-      survivalCurve(canvas, rem.km.curve, {
-        naiveMedian: rem.km.naiveMedian,
-        median: rem.km.median,
-        naiveMean: rem.km.naiveMean,
-        mean: rem.km.mean,
-      }, { maxWeeks: survivalWeeks });
-      if (bucketCanvas) {
-        stackedAgeBar(bucketCanvas, rem.buckets.labels || RESOLUTION_LABELS, rem.buckets.perSev,
+    if (mode === "survival") {
+      controls.append(el("div", { class: "seg-row", role: "group", "aria-label": "Survival window" },
+        ...SURVIVAL_WINDOWS.map(([label, weeks]) =>
+          el("button", {
+            type: "button", class: "seg-btn seg-btn--sm",
+            "aria-pressed": String(weeks === survivalWeeks),
+            onclick: () => { survivalWeeks = weeks; saveSurvivalWeeks(label); renderSurvivalCurve(mttr); },
+          }, label))));
+    }
+    survivalHost.append(el("div", { class: "section-head" },
+      sectionLabel("Distribution"), controls));
+
+    const box = el("div", { class: "chart-box chart-box--tall" });
+    if (mode === "survival") {
+      const canvas = el("canvas", { id: "survival-curve" });
+      box.append(canvas);
+      survivalHost.append(chartCard("S(t): share of findings still open", box, {
+        helpLines: [
+          "Time from first detection to remediation, as a Kaplan–Meier survival curve. " +
+            "Markers: Median (KM) and Mean (KM · RMST) — still-open findings censored.",
+        ],
+      }));
+      requestAnimationFrame(() => {
+        // Only the two KM markers now (naive median/mean are null → skipped); the naive
+        // series lives on the "MTTR over time" toggle above.
+        survivalCurve(canvas, rem.km.curve,
+          { naiveMedian: null, median: rem.km.median, naiveMean: null, mean: rem.km.mean },
+          { maxWeeks: survivalWeeks });
+      });
+    } else {
+      const canvas = el("canvas", { id: "resolution-buckets" });
+      box.append(canvas);
+      survivalHost.append(chartCard("Time to resolve", box, {
+        helpLines: [
+          "How long resolved findings actually took, bucketed by severity. The right-hand " +
+            "bars are the tail the median hides.",
+        ],
+      }));
+      requestAnimationFrame(() => {
+        stackedAgeBar(canvas, rem.buckets.labels || RESOLUTION_LABELS, rem.buckets.perSev,
           boot.palette, "Resolved findings by time-to-resolve bucket and severity.");
-      }
-    });
+      });
+    }
   }
 
   function renderCharts(trends, mttr) {
@@ -589,13 +649,6 @@ export async function renderMttr(main, _params, ctx) {
           onclick: () => { trendWindowDays = days; saveTrendWindow(label); renderCharts(trends, mttr); },
         }, label)));
     const sectionHead = el("div", { class: "section-head" }, sectionLabel("Trends"), segRow);
-
-    const mttrCanvas = el("canvas", { id: "mttr-trend" });
-    const kmMedianCanvas = el("canvas", { id: "km-median-trend" });
-    const openResolvedCanvas = el("canvas", { id: "open-resolved" });
-    const openSlaCanvas = el("canvas", { id: "open-sla-trend" });
-    const slaBurnCanvas = el("canvas", { id: "sla-burn-trend" });
-    const slaAttainmentCanvas = el("canvas", { id: "sla-attainment-trend" });
 
     // With the vendor-fix filter off, mttr_history's snapshots were captured before any
     // no-fix exclusion existed — falling back to them would paint an unfiltered register on
@@ -640,62 +693,93 @@ export async function renderMttr(main, _params, ctx) {
     const hasOpenSlaTrend = openSlaPoints.length > 1;
     const hasSlaBurn = slaBurnPoints.length > 1;
     const hasSlaAttainment = slaAttainmentPoints.length > 1;
-    const grid = el("div", { class: "chart-grid", style: "align-items:start" });
-    if (hasKmTrend) {
-      // KM ordered first — it's the primary methodology now; naive MTTR trend follows as
-      // the comparison series.
-      grid.append(el("div", { class: "chart-card" },
-        el("h3", {}, "KM median trend"),
-        el("div", { class: "chart-box" }, kmMedianCanvas),
-        el("p", { class: "chart-caption muted" },
-          "Kaplan–Meier median days from first detection to remediation, replayed as of " +
-          "each scan; still-open findings censored.")));
+    // Four cards, two of them carrying a two-option toggle that folds in the comparison
+    // series (KM vs naive; attainment vs burn) — the methodology moves from an always-on
+    // caption onto the card-title helpTip. Chart draws are deferred into `painters` and run
+    // in one rAF after layout, so a card's canvas is in the DOM before it's sized.
+    const grid = el("div", { class: "chart-grid chart-grid--2", style: "align-items:start" });
+    const painters = [];
+
+    // Card 1 — MTTR over time: the KM headline vs the naive closed-only comparison, one
+    // card. Only the modes that have ≥2 points offer a button; if just one does, no toggle.
+    {
+      const modes = [];
+      if (hasKmTrend) modes.push("km");
+      if (hasTrend) modes.push("naive");
+      if (modes.length) {
+        const mode = modes.includes(overTimeMode) ? overTimeMode : modes[0];
+        const canvas = el("canvas", { id: "mttr-over-time" });
+        const toggle = modes.length > 1
+          ? toggleRow("MTTR clock", [["KM", "km"], ["Naive", "naive"]], mode, (v) => {
+            overTimeMode = v; savePref("mttrOverTimeMode", v); renderCharts(trends, mttr);
+          })
+          : null;
+        grid.append(chartCard("MTTR over time", el("div", { class: "chart-box" }, canvas), {
+          toggle,
+          helpLines: [
+            "KM: Kaplan–Meier median days from first detection to remediation, replayed as " +
+              "of each scan; still-open findings censored, so a wave of fresh open findings " +
+              "can't bias it down.",
+            "Naive: median of closed findings only, per scan — the biased comparison KM " +
+              "corrects for.",
+          ],
+        }));
+        painters.push(() => (mode === "km"
+          ? trendLine(canvas, kmMedianPoints, { yLabel: "days", xRange })
+          : trendLine(canvas, points.filter((p) => p.y !== null), { yLabel: "days", xRange })));
+      }
     }
-    if (hasTrend) {
-      grid.append(el("div", { class: "chart-card" },
-        el("h3", {}, "MTTR trend"),
-        el("div", { class: "chart-box" }, mttrCanvas),
-        el("p", { class: "chart-caption muted" },
-          "Naive median days from first detection to remediation (closed findings only), " +
-          "per scan.")));
-    }
+
+    // Card 2 — Open vs resolved (the red/green dual line already encodes color + dash +
+    // point-shape, so it stays its own card rather than a third overlay on anything).
     if (trend.length > 1) {
-      grid.append(el("div", { class: "chart-card" },
-        el("h3", {}, "Open vs resolved"),
-        el("div", { class: "chart-box" }, openResolvedCanvas)));
+      const canvas = el("canvas", { id: "open-resolved" });
+      grid.append(chartCard("Open vs resolved", el("div", { class: "chart-box" }, canvas)));
+      painters.push(() => openResolvedLines(canvas, trend, { xRange }));
     }
+
+    // Card 3 — Open past SLA (aged backlog level).
     if (hasOpenSlaTrend) {
-      // A separate card, not a third overlay line on Open vs resolved — that pair already
-      // deliberately encodes red/green + dash + point-shape; a third line would crowd it.
-      grid.append(el("div", { class: "chart-card" },
-        el("h3", {}, "Open past SLA"),
-        el("div", { class: "chart-box" }, openSlaCanvas),
-        el("p", { class: "chart-caption muted" },
-          "Open findings past their SLA deadline, now measured from when a vendor fix became "
-          + "available rather than first detection. Counts step up at the fix-tracking rollout "
-          + "— findings awaiting a vendor fix are now included in the register.")));
+      const canvas = el("canvas", { id: "open-sla-trend" });
+      grid.append(chartCard("Open past SLA", el("div", { class: "chart-box" }, canvas), {
+        helpLines: [
+          "Open findings past their SLA deadline, measured from when a vendor fix became " +
+            "available rather than first detection. Counts step up at the fix-tracking " +
+            "rollout — findings awaiting a vendor fix are now included in the register.",
+        ],
+      }));
+      painters.push(() => trendLine(canvas, openSlaPoints, { yLabel: "findings", xRange }));
     }
-    if (hasSlaBurn) {
-      // Net backlog-of-breach flow per scan window: findings crossing their SLA deadline
-      // minus breached findings cleared. A signed series (can go below zero), so it reads
-      // against the zero baseline trendLine's beginAtZero axis already includes.
-      grid.append(el("div", { class: "chart-card" },
-        el("h3", {}, "SLA burn (net flow)"),
-        el("div", { class: "chart-box" }, slaBurnCanvas),
-        el("p", { class: "chart-caption muted" },
-          "Findings crossing their SLA deadline minus breached findings cleared, per scan. "
-          + "Above zero = the past-SLA backlog is growing. SLA deadlines are measured from "
-          + "when a vendor fix became available.")));
+
+    // Card 4 — SLA quality: cohort attainment (rate) vs net-flow burn (direction), one card.
+    {
+      const modes = [];
+      if (hasSlaAttainment) modes.push("attainment");
+      if (hasSlaBurn) modes.push("burn");
+      if (modes.length) {
+        const mode = modes.includes(slaQualMode) ? slaQualMode : modes[0];
+        const canvas = el("canvas", { id: "sla-quality" });
+        const toggle = modes.length > 1
+          ? toggleRow("SLA quality series",
+            [["Attainment", "attainment"], ["Burn", "burn"]], mode, (v) => {
+              slaQualMode = v; savePref("mttrSlaQualMode", v); renderCharts(trends, mttr);
+            })
+          : null;
+        grid.append(chartCard("SLA quality", el("div", { class: "chart-box" }, canvas), {
+          toggle,
+          helpLines: [
+            "Attainment (cohort): of findings whose SLA deadline has passed, the share met " +
+              "on time — unlike In-SLA (of resolved), unaffected by how much is still open.",
+            "Burn (net flow): findings crossing their SLA deadline minus breached findings " +
+              "cleared, per scan. Above zero = the past-SLA backlog is growing.",
+          ],
+        }));
+        painters.push(() => (mode === "attainment"
+          ? trendLine(canvas, slaAttainmentPoints, { yLabel: "%", xRange })
+          : trendLine(canvas, slaBurnPoints, { yLabel: "findings", xRange })));
+      }
     }
-    if (hasSlaAttainment) {
-      grid.append(el("div", { class: "chart-card" },
-        el("h3", {}, "SLA attainment (cohort)"),
-        el("div", { class: "chart-box" }, slaAttainmentCanvas),
-        el("p", { class: "chart-caption muted" },
-          "Of findings whose SLA deadline has passed, the share met on time — unlike In-SLA "
-          + "(of resolved), unaffected by how much is still open. Deadlines measured from "
-          + "vendor-fix availability.")));
-    }
+
     if (!grid.hasChildNodes()) {
       if (trendWindowDays === null) {
         // Nothing to plot at all — same single empty state as before the filter existed.
@@ -720,24 +804,7 @@ export async function renderMttr(main, _params, ctx) {
     }
 
     requestAnimationFrame(() => {
-      if (hasTrend) {
-        trendLine(mttrCanvas, points.filter((p) => p.y !== null), { yLabel: "days", xRange });
-      }
-      if (hasKmTrend) {
-        trendLine(kmMedianCanvas, kmMedianPoints, { yLabel: "days", xRange });
-      }
-      if (trend.length > 1) {
-        openResolvedLines(openResolvedCanvas, trend, { xRange });
-      }
-      if (hasOpenSlaTrend) {
-        trendLine(openSlaCanvas, openSlaPoints, { yLabel: "findings", xRange });
-      }
-      if (hasSlaBurn) {
-        trendLine(slaBurnCanvas, slaBurnPoints, { yLabel: "findings", xRange });
-      }
-      if (hasSlaAttainment) {
-        trendLine(slaAttainmentCanvas, slaAttainmentPoints, { yLabel: "%", xRange });
-      }
+      for (const paint of painters) paint();
     });
   }
 
@@ -748,33 +815,25 @@ export async function renderMttr(main, _params, ctx) {
     const sevs = boot.palette.order.filter((s) => mttr.perSev[s] && sevScope.includes(s));
     if (!sevs.length) return;
 
-    // Hidden entirely when the vendor-fix filter is off — the counts arrive zeroed anyway,
-    // and the page-level honesty note already covers the exclusion. Built conditionally
-    // (header and every row's cell) so the table stays column-aligned either way.
-    const showAwaiting = boot.settings.showNoFix !== false;
-
     slaHost.append(sectionLabel("Remediation by severity"));
-    // Column headers carry the two new metrics' definitions via helpTip — the hero minis
-    // stay plain (the page's existing convention), so this table is where "MTTR p90" and
-    // "Open past SLA" get explained.
+    // Trimmed to the high-signal columns — Resolved, Awaiting, Open age p90 and the SLA
+    // target column are dropped from the default view (the target folds into the In-SLA
+    // header helpTip). Column headers carry each metric's definition via helpTip so the
+    // hero minis can stay plain.
     const columns = [
       ["Severity", null],
       ["Median MTTR", null],
       ["MTTR p90",
         ["90th-percentile time from first detection to remediation — the slow tail. Nine " +
           "in ten findings beat it; one in ten is slower."]],
-      ["Resolved", null],
       ["Open", null],
       ["Open past SLA",
         ["Open findings already older than their severity's SLA target, measured from when " +
           "a vendor fix became available. Unlike In-SLA % (which only scores resolved " +
           "findings), an aged-out open CRITICAL counts here."]],
-      ...(showAwaiting ? [["Awaiting",
-        ["Open findings with no vendor fix available yet — excluded from the SLA clock " +
-          "until a fix appears, so they don't count as breached above."]]] : []),
-      ["Open age p90", null],
-      ["SLA target", null],
-      ["In SLA (of resolved)", null],
+      ["In SLA (of resolved)",
+        ["Share of resolved findings closed within their severity's SLA target — " +
+          "CRITICAL 7d · HIGH 14d · MEDIUM 30d · LOW 90d · INFO 180d."]],
     ];
     const table = el("table", { class: "data" },
       el("thead", {}, el("tr", {},
@@ -788,25 +847,19 @@ export async function renderMttr(main, _params, ctx) {
         el("td", {}, sevBadge(sev)),
         el("td", { class: "num" }, fmtDays(d.mttr_median)),
         el("td", { class: "num" }, fmtDays(mttr.remediation?.pctiles?.perSev?.[sev]?.p90)),
-        el("td", { class: "num" }, d.resolved),
         el("td", { class: "num" }, d.open),
         el("td", { class: "num" }, fmtOpenPastSla(
           mttr.remediation?.openPastSlaActionable?.perSev?.[sev]
           ?? mttr.remediation?.openPastSla?.perSev?.[sev])),
-        showAwaiting
-          ? el("td", { class: "num" }, (mttr.remediation?.awaiting?.perSev?.[sev] ?? 0).toLocaleString())
-          : null,
-        el("td", { class: "num" }, fmtDays(d.open_age_p90)),
-        el("td", { class: "num" }, d.sla_target ? `${d.sla_target}d` : "—"),
         el("td", { class: "num" }, d.sla_pct !== null ? `${d.sla_pct.toFixed(0)}%` : "—"),
       ));
     }
     // Data-quality row: findings whose severity never normalized to a real value —
     // already folded into every hero/table total above (SEVERITY_ORDER includes UNKNOWN),
     // but otherwise invisible since this table gates on sevScope, which never includes it.
-    // Shown independent of sevScope/showAwaiting selection (it's not a selectable
-    // severity) whenever the payload carries it at all. SLA-exempt by definition — there's
-    // no target to measure against, so those cells read "—" rather than a computed 0%.
+    // Shown independent of the sevScope selection (it's not a selectable severity)
+    // whenever the payload carries it at all. SLA-exempt by definition — there's no target
+    // to measure against, so those cells read "—" rather than a computed 0%.
     const u = mttr.perSev.UNKNOWN;
     if (u) {
       tbody.append(el("tr", {},
@@ -818,13 +871,7 @@ export async function renderMttr(main, _params, ctx) {
             { className: "help-label" })),
         el("td", { class: "num" }, fmtDays(u.mttr_median)),
         el("td", { class: "num" }, fmtDays(mttr.remediation?.pctiles?.perSev?.UNKNOWN?.p90)),
-        el("td", { class: "num" }, u.resolved),
         el("td", { class: "num" }, u.open),
-        el("td", { class: "num" }, "—"),
-        showAwaiting
-          ? el("td", { class: "num" }, (mttr.remediation?.awaiting?.perSev?.UNKNOWN ?? 0).toLocaleString())
-          : null,
-        el("td", { class: "num" }, fmtDays(u.open_age_p90)),
         el("td", { class: "num" }, "—"),
         el("td", { class: "num" }, "—"),
       ));

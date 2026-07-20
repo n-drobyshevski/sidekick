@@ -452,22 +452,27 @@ export function survivalCurve(canvas, curve, markers, viewOpts = {}) {
   const maxWeeks = Number.isFinite(viewOpts.maxWeeks) && viewOpts.maxWeeks > 0 ? viewOpts.maxWeeks : null;
   const survivalPoints = [{ x: 0, y: 100 }, ...points.map((p) => ({ x: p.t / 7, y: p.s * 100 }))];
 
-  const markerDatasets = KM_MARKERS.map((m) => {
-    const day = markers ? markers[m.key] : null;
-    const data = day === null || day === undefined
-      ? []
-      : [{ x: day / 7, y: stepAt(points, day) * 100, day }];
-    return {
-      label: m.label,
-      data,
-      showLine: false,
-      pointRadius: 6,
-      pointHoverRadius: 7,
-      pointStyle: m.pointStyle,
-      backgroundColor: m.color,
-      borderColor: m.color,
-    };
-  });
+  // Only build a dataset for markers the caller actually supplied — a null value means the
+  // marker is omitted entirely (no plotted point AND no dead legend entry). This lets a
+  // caller pass e.g. {median, mean} to show just the two KM markers.
+  const markerDatasets = KM_MARKERS
+    .filter((m) => {
+      const day = markers ? markers[m.key] : null;
+      return day !== null && day !== undefined;
+    })
+    .map((m) => {
+      const day = markers[m.key];
+      return {
+        label: m.label,
+        data: [{ x: day / 7, y: stepAt(points, day) * 100, day }],
+        showLine: false,
+        pointRadius: 6,
+        pointHoverRadius: 7,
+        pointStyle: m.pointStyle,
+        backgroundColor: m.color,
+        borderColor: m.color,
+      };
+    });
 
   const named = KM_MARKERS
     .map((m) => ({ ...m, day: markers ? markers[m.key] : null }))
