@@ -11,7 +11,7 @@ import {
   RESOLVED_STATUSES,
 } from "../domain/config";
 import { domainNames, validateDomains, compileDomains, assignDomain, assignDomains, hasDomainInputs, UNASSIGNED } from "../domain/domainRules";
-import { coverage, ruleHealth, unassignedResources, untaggedSubscriptions } from "../domain/attribution";
+import { coverage, ruleHealth, supportGroupBreakdown, unassignedResources, untaggedSubscriptions } from "../domain/attribution";
 import { mttrFromLedger, vulnKey } from "../domain/lifecycle";
 import type { BaseRow } from "../domain/ledgerCore";
 import { extractNodes } from "../domain/transform";
@@ -565,14 +565,26 @@ function attributionData(p?: unknown): Rec {
   const compiled = compileDomains(dom.items);
   const sgMap = settingsStore.getSupportGroupMap();
   const sgKeys = Object.keys(sgMap.map);
+  // Distinct groups the persisted map can resolve TO — surfaced so an operator can tell an
+  // empty/unrefreshed map (keys 0) apart from a populated one that simply isn't joining the
+  // findings' subscription identity (keys > 0 but every finding still resolves to "(none)").
+  const sgMapGroups = new Set(Object.values(sgMap.map)).size;
   return {
     flatScan: true,
     scan: { scanId: scan.scanId, ts: scan.ts },
     coverage: coverage(recs, domainNames(dom.items)),
     ruleHealth: ruleHealth(recs, compiled),
     unassignedAll: unassignedResources(recs, compiled),
+    // Findings split by resolved support group — the support-group coverage table + the
+    // resolved/unresolved headline the page needs to troubleshoot the join.
+    supportGroups: supportGroupBreakdown(recs),
     untagged: untaggedSubscriptions(recs).slice(0, 200),
-    supportGroupMap: { configured: sgKeys.length > 0, keys: sgKeys.length },
+    supportGroupMap: {
+      configured: sgKeys.length > 0,
+      keys: sgKeys.length,
+      groups: sgMapGroups,
+      tagKey: supportGroups.configuredTagKey(),
+    },
   };
 }
 
@@ -583,8 +595,11 @@ export function getAttribution(p?: unknown): ApiResult {
   return run(() => {
     // "attribution" → "attribution2": coverage / rule-health / unassigned now honor the
     // show-no-fix toggle; key gains showNoFix so on/off states cache apart.
+    // "attribution2" → "attribution3": payload gained the support-group breakdown
+    // (`supportGroups`) and richer `supportGroupMap` (groups + tagKey); bump so a stale
+    // old-shape entry can't survive the persistent dataVersion.
     const data = cached(
-      "attribution2",
+      "attribution3",
       { severities: readSeverities(p), showNoFix: settingsStore.getShowNoFix() },
       () => attributionData(p),
     );

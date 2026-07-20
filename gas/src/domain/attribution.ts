@@ -268,6 +268,91 @@ export function coverage(records: Rec[], orderedDomainNames: string[]): Coverage
   };
 }
 
+// --- supportGroupBreakdown ------------------------------------------------------
+
+export interface SupportGroupRow {
+  group: string; // a resolved support group, or "(none)" for the unresolved bucket
+  findings: number;
+  assets: number; // distinct affected assets
+  unresolved: boolean; // true only for the "(none)" row
+}
+
+export interface SupportGroupBreakdown {
+  totalFindings: number;
+  totalAssets: number;
+  resolvedFindings: number; // findings carrying a _supportGroup
+  unresolvedFindings: number; // findings resolving to "(none)"
+  resolvedAssets: number;
+  unresolvedAssets: number;
+  distinctGroups: number; // distinct resolved groups actually present on findings this scan
+  rows: SupportGroupRow[]; // resolved groups by findings desc (name tiebreak), then "(none)" last
+}
+
+/**
+ * Findings split by their resolved support group — the support-group dual of `coverage`'s
+ * per-domain table, and the view that makes "why is this (none)?" answerable. Each record's
+ * group is the pre-attached `_supportGroup` (server-resolved from the subscription→group
+ * map), defaulting to "(none)" when absent. Resolved groups are ranked by findings; the
+ * unresolved "(none)" bucket is always last when present. Asset identity is
+ * `vulnerableAsset.name`, matching the rest of this module.
+ */
+export function supportGroupBreakdown(records: Rec[]): SupportGroupBreakdown {
+  const findingsByGroup = new Map<string, number>();
+  const assetsByGroup = new Map<string, Set<string>>();
+  const allAssets = new Set<string>();
+  const resolvedAssets = new Set<string>();
+  const unresolvedAssets = new Set<string>();
+  let resolvedFindings = 0;
+  let unresolvedFindings = 0;
+  for (const r of records) {
+    const sg = flatVal(r, SG_COL);
+    const group = sg ?? NONE;
+    const asset = assetKey(r);
+    findingsByGroup.set(group, (findingsByGroup.get(group) ?? 0) + 1);
+    let set = assetsByGroup.get(group);
+    if (!set) assetsByGroup.set(group, (set = new Set()));
+    if (asset) {
+      set.add(asset);
+      allAssets.add(asset);
+    }
+    if (sg) {
+      resolvedFindings += 1;
+      if (asset) resolvedAssets.add(asset);
+    } else {
+      unresolvedFindings += 1;
+      if (asset) unresolvedAssets.add(asset);
+    }
+  }
+  const rows: SupportGroupRow[] = [...findingsByGroup.entries()]
+    .filter(([g]) => g !== NONE)
+    .map(([group, findings]) => ({
+      group,
+      findings,
+      assets: assetsByGroup.get(group)?.size ?? 0,
+      unresolved: false,
+    }))
+    .sort((a, b) => b.findings - a.findings || a.group.localeCompare(b.group));
+  const distinctGroups = rows.length;
+  if (findingsByGroup.has(NONE)) {
+    rows.push({
+      group: NONE,
+      findings: findingsByGroup.get(NONE) ?? 0,
+      assets: assetsByGroup.get(NONE)?.size ?? 0,
+      unresolved: true,
+    });
+  }
+  return {
+    totalFindings: records.length,
+    totalAssets: allAssets.size,
+    resolvedFindings,
+    unresolvedFindings,
+    resolvedAssets: resolvedAssets.size,
+    unresolvedAssets: unresolvedAssets.size,
+    distinctGroups,
+    rows,
+  };
+}
+
 // --- unassignedResources --------------------------------------------------------
 
 export interface NearMiss {
