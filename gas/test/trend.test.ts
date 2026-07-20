@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   awaitingFixAsOf,
   cohortSlaAttainment,
-  medianMttrByGroupTrend,
+  kmMedianByGroupTrend, medianMttrByGroupTrend,
   openByGroupTrend, openBySeverityTrend, trendFromBase, trendFromFrames,
   withKmMedian, withOpenPastSla, withSlaBurn,
 } from "../src/domain/trend";
@@ -370,6 +370,122 @@ describe("medianMttrByGroupTrend", () => {
     expect(medianMttrByGroupTrend([scans[1]], base, keyOf, groups, { minMttrDays: 1 })).toEqual([
       { date: "2026-01-02T00:00:00Z", byGroup: { web: null, db: null, Other: 8 } },
     ]);
+  });
+});
+
+describe("kmMedianByGroupTrend", () => {
+  // Same asset-keyed groups as medianMttrByGroupTrend, but rows carry first_seen (for the
+  // censored risk set) and open rows are real (resolved_at: null, mttr_days: null) instead of
+  // being skipped — a KM curve needs its censored ages, not just its events.
+  const keyOf = (r: Rec) => String(r["asset"] ?? "");
+  const groups = ["web", "db"];
+  const res = (
+    asset: unknown,
+    mttr: number | null,
+    resolved_at: string | null,
+    over: Rec = {},
+  ) => ({
+    asset, severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at, mttr_days: mttr, ...over,
+  });
+
+  it("per-group KM median, with censoring pulling it above the naive (closed-only) median", () => {
+    // web: two events (2, 4) plus two still-open rows, all first seen Jan 1. As of Jan 10
+    // (age 9 for the open pair): events [2,4], risk set [2,4,9,9].
+    //   t=2: atRisk 4, d 1 -> S=.75.  t=4: atRisk 3, d 1 -> S=.75*(2/3)=.5 <= .5 -> median 4.
+    const base = [
+      res("web", 2, "2026-01-03T00:00:00Z"),
+      res("web", 4, "2026-01-05T00:00:00Z"),
+      res("web", null, null),
+      res("web", null, null),
+    ];
+    const scan = { ts: "2026-01-10T00:00:00Z", shape: "flat" };
+    expect(kmMedianByGroupTrend([scan], base, keyOf, groups)).toEqual([
+      { date: "2026-01-10T00:00:00Z", byGroup: { web: 4, db: null } },
+    ]);
+    // Naive median (closed-only [2,4]) is 3 — lower than KM's 4, proving the two open rows'
+    // censoring is doing real work rather than KM silently matching the naive figure.
+    expect(medianMttrByGroupTrend([scan], base, keyOf, groups)).toEqual([
+      { date: "2026-01-10T00:00:00Z", byGroup: { web: 3, db: null } },
+    ]);
+  });
+
+  it("emits null before any event and before the 0.5 crossing, then a number once crossed", () => {
+    // Four web findings first seen Jan 1, resolved 2/4/6/8 days later (mirrors the
+    // withKmMedian fixture, replayed per group instead of globally).
+    const base = [
+      res("web", 2, "2026-01-03T00:00:00Z"),
+      res("web", 4, "2026-01-05T00:00:00Z"),
+      res("web", 6, "2026-01-07T00:00:00Z"),
+      res("web", 8, "2026-01-09T00:00:00Z"),
+    ];
+    const scans = [
+      { ts: "2026-01-02T00:00:00Z", shape: "flat" }, // nothing resolved yet -> no curve -> null
+      { ts: "2026-01-04T00:00:00Z", shape: "flat" }, // event [2], 3 censored at age 3: S=.75 -> null
+      { ts: "2026-01-10T00:00:00Z", shape: "flat" }, // events [2,4,6,8]: t2 S=.75, t4 S=.5 -> median 4
+    ];
+    expect(kmMedianByGroupTrend(scans, base, keyOf, groups)).toEqual([
+      { date: "2026-01-02T00:00:00Z", byGroup: { web: null, db: null } },
+      { date: "2026-01-04T00:00:00Z", byGroup: { web: null, db: null } },
+      { date: "2026-01-10T00:00:00Z", byGroup: { web: 4, db: null } },
+    ]);
+  });
+
+  it("pools Other's KM median over the remainder (not per-domain); includeOther:false drops", () => {
+    // cache + queue both fold into Other and share ONE risk set — proving Other's curve is
+    // pooled, not computed per source domain. cache has an event (3) plus a still-open row
+    // (censored at age 9); queue has an event (7).
+    //   events [3,7], risk set [3,7,9]: t=3 atRisk 3 d1 -> S=.667; t=7 atRisk 2 d1 ->
+    //   S=.667*.5=.333 <= .5 -> median 7.
+    const base = [
+      res("cache", 3, "2026-01-04T00:00:00Z"),
+      res("cache", null, null),
+      res("queue", 7, "2026-01-08T00:00:00Z"),
+    ];
+    const scan = { ts: "2026-01-10T00:00:00Z", shape: "flat" };
+    expect(kmMedianByGroupTrend([scan], base, keyOf, groups)).toEqual([
+      { date: "2026-01-10T00:00:00Z", byGroup: { web: null, db: null, Other: 7 } },
+    ]);
+    expect(kmMedianByGroupTrend([scan], base, keyOf, groups, { includeOther: false })).toEqual([
+      { date: "2026-01-10T00:00:00Z", byGroup: { web: null, db: null } },
+    ]);
+  });
+
+  it("scopes to the chosen severities plus UNKNOWN", () => {
+    const base = [
+      res("web", 2, "2026-01-03T00:00:00Z", { severity: "CRITICAL" }),
+      res("web", 10, "2026-01-01T00:00:00Z", { severity: "HIGH" }), // filtered out
+      res("db", 6, "2026-01-05T00:00:00Z", { severity: "UNKNOWN" }), // never hidden
+    ];
+    const scan = { ts: "2026-01-10T00:00:00Z", shape: "flat" };
+    // web scoped to CRITICAL: only event [2] -> atRisk 1, d1 -> S=0 <= .5 -> median 2.
+    // db (UNKNOWN, always kept): only event [6] -> median 6.
+    expect(kmMedianByGroupTrend([scan], base, keyOf, groups, { severities: ["CRITICAL"] })).toEqual([
+      { date: "2026-01-10T00:00:00Z", byGroup: { web: 2, db: 6 } },
+    ]);
+  });
+
+  it("hideNoFix drops awaiting-as-of-ts rows from the censored risk set (median can appear)", () => {
+    // One resolved event (mttr 2, fix available) plus three awaiting-vendor-fix open rows
+    // (fix_available_at null) — mirrors the withKmMedian hideNoFix fixture, per group.
+    const base = [
+      res("web", 2, "2026-01-03T00:00:00Z", { fix_available_at: "2026-01-01T00:00:00Z" }),
+      res("web", null, null, { fix_available_at: null }),
+      res("web", null, null, { fix_available_at: null }),
+      res("web", null, null, { fix_available_at: null }),
+    ];
+    const scan = { ts: "2026-01-10T00:00:00Z", shape: "flat" };
+    // Default: the three awaiting rows stay censored at age 9 -> risk set [2,9,9,9] ->
+    // t=2 atRisk 4 d1 -> S=.75 -> null.
+    expect(kmMedianByGroupTrend([scan], base, keyOf, groups)[0].byGroup.web).toBeNull();
+    // hideNoFix: those three leave the risk set entirely -> risk set [2] -> S=0 -> median 2.
+    expect(kmMedianByGroupTrend([scan], base, keyOf, groups, { hideNoFix: true })[0].byGroup.web).toBe(2);
+  });
+
+  it("returns [] for empty inputs", () => {
+    const base = [res("web", 3, "2026-01-05T00:00:00Z")];
+    const scans = [{ ts: "2026-01-10T00:00:00Z", shape: "flat" }];
+    expect(kmMedianByGroupTrend([], base, keyOf, groups)).toEqual([]);
+    expect(kmMedianByGroupTrend(scans, [], keyOf, groups)).toEqual([]);
   });
 });
 

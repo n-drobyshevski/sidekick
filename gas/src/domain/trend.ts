@@ -387,6 +387,115 @@ export function medianMttrByGroupTrend(
   });
 }
 
+/**
+ * Kaplan–Meier median time-to-remediation per breakdown group over time — the censoring-aware
+ * companion of `medianMttrByGroupTrend`, and the data behind the MTTR page "MTTR by domain"
+ * line chart's default (KM) series. For each saved flat-scan timestamp it replays the durable
+ * ledger and computes, per group, the KM median over that group's rows: rows resolved as of
+ * that instant (resolved_at <= ts) are events at their stored `mttr_days`; rows still open as
+ * of ts (first_seen <= ts, not resolved by ts) are right-censored at age (ts − first_seen)/day.
+ * The KM median is the smallest event time whose survival has fallen to <= 0.5
+ * (kmMedianFromCurve over kmCurve — the same estimator the hero's `kaplanMeier` and the page
+ * KM-median trend `withKmMedian` use, shared so the three can't drift), rounded to 3 decimals;
+ * null before any event or when survival never reaches 0.5 (too much censoring) — matching the
+ * "null until it has a resolution" leading-gap semantics of its naive sibling.
+ *
+ * Group value is `keyOf(r)`; blank/missing folds to "(none)"; values outside `groups` fold
+ * into `otherLabel` (default "Other") when `includeOther` (default true), else drop. Every
+ * name in `groups` (plus `otherLabel` when at least one row folded into it) gets a `byGroup`
+ * entry at every point. opts.severities restricts to those + UNKNOWN. opts.hideNoFix (default
+ * false) drops an open-as-of-ts finding from the censored risk set when it was still awaiting a
+ * vendor fix then (awaitingFixAsOf) — the same as-of no-fix rule as `withKmMedian`; resolved
+ * rows (events) are always kept.
+ *
+ * GAS-first (no Python fixture parity — mirrors `medianMttrByGroupTrend` / `withKmMedian`): a
+ * UI-only aggregation of the same durable rows, kept separate from `trendFromFrames`.
+ *
+ * scans: rows with {ts, shape}; base: ledger+episode rows with {first_seen, resolved_at,
+ * mttr_days, severity, fix_available_at} plus whatever column `keyOf` reads.
+ */
+export function kmMedianByGroupTrend(
+  scans: Rec[],
+  base: Rec[],
+  keyOf: (r: Rec) => string,
+  groups: string[],
+  opts: {
+    severities?: string[] | null;
+    includeOther?: boolean;
+    otherLabel?: string;
+    hideNoFix?: boolean;
+  } = {},
+): MttrByGroupPoint[] {
+  const severities = opts.severities ?? null;
+  const includeOther = opts.includeOther ?? true;
+  const otherLabel = opts.otherLabel ?? "Other";
+  const hideNoFix = opts.hideNoFix ?? false;
+
+  let rows = base;
+  if (severities !== null && base.length) {
+    const keep = new Set([...severities, "UNKNOWN"]);
+    rows = base.filter((r) => keep.has(normalizeSeverity(r["severity"])));
+  }
+  if (!scans.length || !rows.length) return [];
+
+  const flatTs = scans
+    .filter((s) => s["shape"] === "flat")
+    .map((s) => ({ iso: String(s["ts"]), ms: parseTs(s["ts"]) }))
+    .filter((t): t is { iso: string; ms: number } => t.ms !== null)
+    .sort((a, b) => a.ms - b.ms);
+  if (!flatTs.length) return [];
+
+  const inGroup = new Set(groups);
+  const parsed = rows.map((r) => {
+    const raw = keyOf(r);
+    const value = raw.trim() === "" ? "(none)" : raw;
+    const known = inGroup.has(value);
+    return {
+      first: parseTs(r["first_seen"]),
+      resolvedAt: parseTs(r["resolved_at"]),
+      mttr: typeof r["mttr_days"] === "number" && !Number.isNaN(r["mttr_days"])
+        ? (r["mttr_days"] as number)
+        : null,
+      fixAvail: parseTs(r["fix_available_at"]),
+      group: known ? value : otherLabel,
+      folded: !known && includeOther,
+      kept: known || includeOther,
+    };
+  });
+
+  // Emit a series for every requested group always, plus Other only when a row folded into it
+  // — so a group with no resolution yet reads as an explicit leading `null` (mirrors the naive
+  // `medianMttrByGroupTrend`).
+  const hasOther = parsed.some((r) => r.folded);
+  const names = hasOther ? [...groups, otherLabel] : groups;
+
+  return flatTs.map((ts) => {
+    const events: Record<string, number[]> = {}; // per group: resolved-by-ts mttr_days
+    const times: Record<string, number[]> = {};  // per group: risk set (events + censored ages)
+    for (const r of parsed) {
+      if (!r.kept) continue;
+      if (r.resolvedAt !== null && r.resolvedAt <= ts.ms) {
+        // Resolved by ts: an event at its final mttr_days (a null-mttr resolution drops out).
+        if (r.mttr !== null) {
+          (events[r.group] ??= []).push(r.mttr);
+          (times[r.group] ??= []).push(r.mttr);
+        }
+      } else if (r.first !== null && r.first <= ts.ms) {
+        // Open as of ts: right-censored at its current age — unless hiding no-fix rows and this
+        // one was still awaiting a vendor fix as of ts (not yet on the clock).
+        if (hideNoFix && awaitingFixAsOf(r.first, r.resolvedAt, r.fixAvail, ts.ms)) continue;
+        (times[r.group] ??= []).push((ts.ms - r.first) / DAY_MS);
+      }
+    }
+    const byGroup: Record<string, number | null> = {};
+    for (const name of names) {
+      const med = kmMedianFromCurve(kmCurve(events[name] ?? [], times[name] ?? []));
+      byGroup[name] = med !== null ? Math.round(med * 1000) / 1000 : null;
+    }
+    return { date: ts.iso, byGroup };
+  });
+}
+
 export type BackfilledTrendPoint = TrendPoint & { reconstructed: boolean };
 
 /**

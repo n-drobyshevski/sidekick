@@ -193,6 +193,9 @@ export async function renderMttr(main, _params, ctx) {
   let overTimeMode = loadPref("mttrOverTimeMode", ["km", "naive"], "km");
   let slaQualMode = loadPref("mttrSlaQualMode", ["attainment", "burn"], "attainment");
   let distMode = loadPref("mttrDistMode", ["survival", "histogram"], "survival");
+  // By-domain "MTTR by domain" chart clock: KM median (censoring-aware, the default) vs the
+  // naive closed-only comparison. Persisted across visits like the other in-card toggles.
+  let byDomainClock = loadPref("mttrByDomainClock", ["km", "naive"], "km");
 
   await load();
 
@@ -248,16 +251,6 @@ export async function renderMttr(main, _params, ctx) {
     const lineCanvas = el("canvas", {});
     const lineMsg = el("p", { class: "chart-empty muted", style: "display:none" });
     const lineCaption = el("p", { class: "chart-caption muted" });
-    const chartPair = el("div", { class: "chart-grid", style: "align-items:start" },
-      el("div", { class: "chart-card" },
-        el("h3", {}, "Remediation share"),
-        el("div", { class: "chart-box" }, pieCanvas, pieMsg),
-        pieCaption),
-      el("div", { class: "chart-card" },
-        el("h3", {}, "MTTR by domain"),
-        el("div", { class: "chart-box" }, lineCanvas, lineMsg),
-        lineCaption),
-    );
 
     // Swap a card between its live canvas and a centered muted message.
     function showChart(canvas, msg) {
@@ -283,21 +276,76 @@ export async function renderMttr(main, _params, ctx) {
     const series = groups.map((name) => ({ name, color: colors.get(name) }));
     if (resolvedOther > 0) series.push({ name: "Other", color: colors.get("Other") });
 
-    // Line: per-domain median MTTR (days) replayed over scan history.
+    const naivePts = (trend && trend.points) || [];
+    const kmPts = (trend && trend.kmPoints) || [];
+    // ≥2 scan points = a drawable trend. kmPoints and points share one point-per-flat-scan
+    // backbone, so when one is drawable both are — the toggle appears together with the chart.
+    const canToggleClock = kmPts.length >= 2 && naivePts.length >= 2;
+
+    // Line: per-domain median MTTR (days) replayed over scan history — KM by default (open
+    // findings censored), with the naive closed-only median available via the card toggle.
     function paintLine() {
-      const points = (trend && trend.points) || [];
-      lineCaption.textContent = "Median MTTR (days) by domain, per scan.";
-      if (points.length < 2) {
+      const usingKm = byDomainClock === "km";
+      const pts = usingKm ? kmPts : naivePts;
+      lineCaption.textContent = usingKm
+        ? "Kaplan–Meier median time-to-remediation (days) by domain, per scan — still-open findings censored."
+        : "Naive median MTTR (days) by domain, per scan — closed findings only.";
+      if (pts.length < 2) {
         showMsg(lineCanvas, lineMsg, "Trend appears after the second saved scan.");
         return;
       }
       showChart(lineCanvas, lineMsg);
-      groupTrendLines(lineCanvas, points, series, {
+      groupTrendLines(lineCanvas, pts, series, {
         unit: "days",
         nullAsGap: true,
-        describe: "Median MTTR in days per domain over scan history.",
+        describe: usingKm
+          ? "Kaplan–Meier median time-to-remediation in days per domain over scan history."
+          : "Naive median MTTR in days per domain over scan history.",
       });
     }
+
+    // KM ⇄ Naive clock toggle for the by-domain line — same .seg-row/.seg-btn--sm pattern as
+    // the "MTTR over time" card. Buttons hold their own refs so a pick can flip aria-pressed and
+    // repaint the one canvas without rebuilding the sheet.
+    const kmClockBtn = el("button", {
+      type: "button", class: "seg-btn seg-btn--sm",
+      "aria-pressed": String(byDomainClock === "km"), onclick: () => pickClock("km"),
+    }, "KM");
+    const naiveClockBtn = el("button", {
+      type: "button", class: "seg-btn seg-btn--sm",
+      "aria-pressed": String(byDomainClock === "naive"), onclick: () => pickClock("naive"),
+    }, "Naive");
+    function pickClock(v) {
+      byDomainClock = v;
+      savePref("mttrByDomainClock", v);
+      kmClockBtn.setAttribute("aria-pressed", String(v === "km"));
+      naiveClockBtn.setAttribute("aria-pressed", String(v === "naive"));
+      paintLine();
+    }
+    const lineToggle = canToggleClock
+      ? el("div", { class: "seg-row", role: "group", "aria-label": "MTTR by domain clock" },
+        kmClockBtn, naiveClockBtn)
+      : null;
+    const lineHelp = [
+      "KM: Kaplan–Meier median days from first detection to remediation per domain, replayed " +
+        "as of each scan; still-open findings censored, so a wave of fresh open findings can't " +
+        "bias it down. The principal figure.",
+      "Naive: median of closed findings only per domain, per scan — the biased comparison KM " +
+        "corrects for, kept only to compare.",
+    ];
+    const lineTitle = el("h3", {}, helpTip("MTTR by domain", lineHelp, { className: "help-label" }));
+    const lineHead = lineToggle ? el("div", { class: "chart-head" }, lineTitle, lineToggle) : lineTitle;
+
+    const chartPair = el("div", { class: "chart-grid", style: "align-items:start" },
+      el("div", { class: "chart-card" },
+        el("h3", {}, "Remediation share"),
+        el("div", { class: "chart-box" }, pieCanvas, pieMsg),
+        pieCaption),
+      el("div", { class: "chart-card" },
+        lineHead,
+        el("div", { class: "chart-box" }, lineCanvas, lineMsg),
+        lineCaption),
+    );
 
     // Pie: each domain's share of resolved findings — the population the MTTR median runs
     // over. Tooltip detail carries the matching per-domain median. Canonical groups/hues
@@ -312,7 +360,7 @@ export async function renderMttr(main, _params, ctx) {
             label: name,
             value: r?.resolved ?? 0,
             color: colors.get(name),
-            detail: "Median MTTR " + fmtDays(r?.median),
+            detail: "KM median " + fmtDays(r?.kmMedian),
           };
         })
         .filter((s) => s.value > 0);
@@ -332,14 +380,17 @@ export async function renderMttr(main, _params, ctx) {
     // per-severity table's convention in renderSla above.
     const columns = [
       ["Domain", null],
-      ["Median MTTR", null],
+      ["Median MTTR (KM)",
+        ["Kaplan–Meier median time-to-remediation for this domain — the principal MTTR figure. " +
+          "Still-open findings count as censored instead of being ignored, so it isn't biased " +
+          "low by fresh fast-patched vulns."]],
+      ["Median (naive)",
+        ["Median days from first detection to remediation for this domain, counting closed " +
+          "findings only — no censoring. Biased low by a wave of fresh open findings, which is " +
+          "what the KM median corrects for; kept only for comparison."]],
       ["MTTR p90",
         ["90th-percentile time from first detection to remediation — the slow tail. Nine " +
           "in ten findings beat it; one in ten is slower."]],
-      ["KM median",
-        ["Kaplan–Meier median time-to-remediation for this domain. Still-open findings " +
-          "count as censored instead of being ignored, so it isn't biased low by fresh " +
-          "fast-patched vulns."]],
       ["In SLA (of resolved)", null],
       ["Open past SLA",
         ["Open findings already older than their severity's SLA target, measured from when " +
@@ -357,9 +408,9 @@ export async function renderMttr(main, _params, ctx) {
     for (const r of byDomain.rows) {
       tbody.append(el("tr", {},
         el("td", {}, r.domain),
-        el("td", { class: "num" }, fmtDays(r.median)),
+        el("td", { class: "num num--key" }, fmtDays(r.kmMedian)),
+        el("td", { class: "num muted small" }, fmtDays(r.median)),
         el("td", { class: "num" }, fmtDays(r.p90)),
-        el("td", { class: "num" }, fmtDays(r.kmMedian)),
         el("td", { class: "num" }, r.slaPct != null ? `${r.slaPct.toFixed(0)}%` : "—"),
         el("td", { class: "num" }, fmtOpenPastSla(r.openPastSla)),
         el("td", { class: "num" }, (r.open ?? 0).toLocaleString()),
@@ -394,7 +445,7 @@ export async function renderMttr(main, _params, ctx) {
 
     byDomainHost.append(sectionLabel("By domain"));
     byDomainHost.append(el("p", { class: "small muted", style: "margin:-6px 0 10px" },
-      "Per-domain remediation — share of resolved work, MTTR trend, and a full breakdown table."));
+      "Per-domain remediation — share of resolved work, KM median MTTR trend, and a full breakdown table."));
     byDomainHost.append(el("button", {
       type: "button",
       // Wider default than other sheets: this one carries a trend chart *and* a full data
