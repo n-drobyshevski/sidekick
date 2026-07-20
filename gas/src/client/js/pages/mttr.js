@@ -107,15 +107,15 @@ function chartCard(title, box, opts = {}) {
 }
 
 // Open-past-SLA cell, shared by the hero mini, the per-severity table, and the
-// by-domain table: "632 of 816 open (77%)" — the denominator makes the population
-// explicit instead of leaving the breached count to be read against whatever total the
-// reader assumes. "0" when nothing is open (pct is null then, not a fake 0%); "—" when
-// the payload doesn't carry this metric at all (e.g. a stale pre-remediation cache).
+// by-domain table: "632 (77%)" — the breached count with its share of the open
+// population in parentheses. "0" when nothing is open (pct is null then, not a fake
+// 0%); "—" when the payload doesn't carry this metric at all (e.g. a stale
+// pre-remediation cache).
 function fmtOpenPastSla(o) {
   if (!o || o.open === null || o.open === undefined) return "—";
   if (!o.open) return "0";
   const pct = o.pct !== null && o.pct !== undefined ? `${o.pct.toFixed(0)}%` : "—";
-  return `${(o.breached ?? 0).toLocaleString()} of ${o.open.toLocaleString()} open (${pct})`;
+  return `${(o.breached ?? 0).toLocaleString()} (${pct})`;
 }
 
 // Awaiting-vendor-fix summary for the hero mini: "N (x% of open)"; "—" when the payload
@@ -893,7 +893,10 @@ export async function renderMttr(main, _params, ctx) {
     // hero minis can stay plain.
     const columns = [
       ["Severity", null],
-      ["Median MTTR", null],
+      ["Median MTTR (KM)",
+        ["Kaplan–Meier median time-to-remediation for this severity — the principal MTTR " +
+          "figure. Still-open findings count as censored instead of being ignored, so it isn't " +
+          "biased low by fresh fast-patched vulns."]],
       ["MTTR p90",
         ["90th-percentile time from first detection to remediation — the slow tail. Nine " +
           "in ten findings beat it; one in ten is slower."]],
@@ -914,9 +917,12 @@ export async function renderMttr(main, _params, ctx) {
     const tbody = el("tbody", {});
     for (const sev of sevs) {
       const d = mttr.perSev[sev];
+      // KM median (still-open findings censored) when the payload carries it, falling back to
+      // the naive closed-only median for a stale pre-kmMedianPerSev cache.
+      const kmMedian = mttr.remediation?.kmMedianPerSev?.[sev];
       tbody.append(el("tr", {},
         el("td", {}, sevBadge(sev)),
-        el("td", { class: "num" }, fmtDays(d.mttr_median)),
+        el("td", { class: "num" }, fmtDays(kmMedian !== undefined ? kmMedian : d.mttr_median)),
         el("td", { class: "num" }, fmtDays(mttr.remediation?.pctiles?.perSev?.[sev]?.p90)),
         el("td", { class: "num" }, d.open),
         el("td", { class: "num" }, fmtOpenPastSla(
@@ -925,28 +931,9 @@ export async function renderMttr(main, _params, ctx) {
         el("td", { class: "num" }, d.sla_pct !== null ? `${d.sla_pct.toFixed(0)}%` : "—"),
       ));
     }
-    // Data-quality row: findings whose severity never normalized to a real value —
-    // already folded into every hero/table total above (SEVERITY_ORDER includes UNKNOWN),
-    // but otherwise invisible since this table gates on sevScope, which never includes it.
-    // Shown independent of the sevScope selection (it's not a selectable severity)
-    // whenever the payload carries it at all. SLA-exempt by definition — there's no target
-    // to measure against, so those cells read "—" rather than a computed 0%.
-    const u = mttr.perSev.UNKNOWN;
-    if (u) {
-      tbody.append(el("tr", {},
-        el("td", {},
-          helpTip(sevBadge("UNKNOWN"),
-            ["Severity was missing or unrecognized when this finding was ingested. Counted " +
-              "in every total above, but SLA-exempt: with no target to measure against, the " +
-              "SLA cells here read \"—\"."],
-            { className: "help-label" })),
-        el("td", { class: "num" }, fmtDays(u.mttr_median)),
-        el("td", { class: "num" }, fmtDays(mttr.remediation?.pctiles?.perSev?.UNKNOWN?.p90)),
-        el("td", { class: "num" }, u.open),
-        el("td", { class: "num" }, "—"),
-        el("td", { class: "num" }, "—"),
-      ));
-    }
+    // The UNKNOWN severity (findings whose severity never normalized to a real value) is
+    // deliberately not rendered as a row here — it's still folded into every hero/table
+    // total above, and the hero source line surfaces the count as "unclassified severity".
     table.append(tbody);
     slaHost.append(el("div", { class: "table-wrap" }, table));
   }

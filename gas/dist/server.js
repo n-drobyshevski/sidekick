@@ -6256,7 +6256,7 @@ var Server = (() => {
     return rows;
   }
   function mttrData(p) {
-    var _a, _b;
+    var _a, _b, _c;
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
     const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
     let rows = scopedBaseRows(domain, supportGroup);
@@ -6265,12 +6265,22 @@ var Server = (() => {
     const { perSev, overall } = mttrFromLedger(rows);
     const { slaPct, oldestDays } = overallSlaOldest(perSev);
     const remRows = rows;
+    const kmMedianPerSev = {};
+    {
+      const bySev = {};
+      for (const r of remRows) {
+        const s = normalizeSeverity(r["severity"]);
+        ((_c = bySev[s]) != null ? _c : bySev[s] = []).push(r);
+      }
+      for (const [s, rs] of Object.entries(bySev)) kmMedianPerSev[s] = kaplanMeier(rs).median;
+    }
     const remediation = {
       pctiles: mttrPercentiles(remRows),
       buckets: resolutionBuckets(remRows),
       // Full Kaplan–Meier estimate (curve + KM median/RMST mean + naive comparison stats),
       // open findings right-censored so the headline isn't biased low by fresh fast patches.
       km: kaplanMeier(remRows),
+      kmMedianPerSev,
       openPastSla: openPastSla(remRows),
       // Actionable-clock companions (clock starts at vendor-fix availability): the same
       // functions over the actionableView projection. Awaiting-vendor-fix rows carry null
@@ -6383,7 +6393,9 @@ var Server = (() => {
       // old-shape entry survives the persistent dataVersion.
       // "mttr4" → "mttr5": the remediation block now honors the show-no-fix toggle (awaiting
       // rows dropped when off); key gains showNoFix so on/off states don't share an entry.
-      "mttr5",
+      // "mttr5" → "mttr6": remediation gained `kmMedianPerSev` (per-severity KM median for the
+      // per-severity table); bump so no stale entry lacks it.
+      "mttr6",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
