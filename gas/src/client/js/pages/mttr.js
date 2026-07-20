@@ -565,6 +565,10 @@ export async function renderMttr(main, _params, ctx) {
     // pre-actionable cache (both share the {open, breached, pct} shape).
     const openPastSla = rem?.openPastSlaActionable?.overall ?? rem?.openPastSla?.overall;
     const overallPctiles = rem?.pctiles?.overall; // {p50, p90, count}
+    // Censoring-aware overall p90 (same survival curve as the KM median), replacing the naive
+    // closed-only p90. `undefined` means a stale pre-kmP90 cache → fall back to the naive p90;
+    // `null` means present but unobservable under censoring → renders "—" (never the naive one).
+    const overallKmP90 = rem?.kmP90;
     const awaiting = rem?.awaiting; // {perSev, overall, openTotal, pctOfOpen}
 
     const minis = el("div", { class: "hero-minis" });
@@ -585,7 +589,7 @@ export async function renderMttr(main, _params, ctx) {
         !scoped && prev && prev.open_past_sla !== null && prev.open_past_sla !== undefined &&
           openPastSla && openPastSla.breached !== null && openPastSla.breached !== undefined
           ? changeChip(openPastSla.breached, prev.open_past_sla) : null],
-      ["MTTR p90", fmtDays(overallPctiles?.p90), null],
+      ["MTTR p90", fmtDays(overallKmP90 !== undefined ? overallKmP90 : overallPctiles?.p90), null],
       // p90 of open-finding age, not the single oldest — labelled to match the table below.
       ["Open age p90", fmtDays(mttr.oldestDays),
         !scoped && prev && prev.oldest_open_days !== null && mttr.oldestDays !== null
@@ -955,8 +959,10 @@ export async function renderMttr(main, _params, ctx) {
           "figure. Still-open findings count as censored instead of being ignored, so it isn't " +
           "biased low by fresh fast-patched vulns."]],
       ["MTTR p90",
-        ["90th-percentile time from first detection to remediation — the slow tail. Nine " +
-          "in ten findings beat it; one in ten is slower."]],
+        ["Kaplan–Meier 90th-percentile time-to-remediation — the slow tail. Nine in ten " +
+          "findings beat it; one in ten is slower. Censoring-aware like the KM median (read off " +
+          "the same survival curve), so the tail isn't biased low by fresh fast-patched vulns; " +
+          "shows \"—\" when too much is still open to observe it."]],
       ["Open", null],
       ["Open past SLA",
         ["Open findings already older than their severity's SLA target, measured from when " +
@@ -977,10 +983,14 @@ export async function renderMttr(main, _params, ctx) {
       // KM median (still-open findings censored) when the payload carries it, falling back to
       // the naive closed-only median for a stale pre-kmMedianPerSev cache.
       const kmMedian = mttr.remediation?.kmMedianPerSev?.[sev];
+      // KM p90 (still-open findings censored) when present, falling back to the naive closed-only
+      // p90 for a stale pre-kmP90PerSev cache; a present-but-null value renders "—" (censored).
+      const kmP90 = mttr.remediation?.kmP90PerSev?.[sev];
       tbody.append(el("tr", {},
         el("td", {}, sevBadge(sev)),
         el("td", { class: "num" }, fmtDays(kmMedian !== undefined ? kmMedian : d.mttr_median)),
-        el("td", { class: "num" }, fmtDays(mttr.remediation?.pctiles?.perSev?.[sev]?.p90)),
+        el("td", { class: "num" },
+          fmtDays(kmP90 !== undefined ? kmP90 : mttr.remediation?.pctiles?.perSev?.[sev]?.p90)),
         el("td", { class: "num" }, d.open),
         el("td", { class: "num" }, fmtOpenPastSla(
           mttr.remediation?.openPastSlaActionable?.perSev?.[sev]

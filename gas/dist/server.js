@@ -6270,21 +6270,30 @@ var Server = (() => {
     const { slaPct, oldestDays } = overallSlaOldest(perSev);
     const remRows = rows;
     const kmMedianPerSev = {};
+    const kmP90PerSev = {};
     {
       const bySev = {};
       for (const r of remRows) {
         const s = normalizeSeverity(r["severity"]);
         ((_c = bySev[s]) != null ? _c : bySev[s] = []).push(r);
       }
-      for (const [s, rs] of Object.entries(bySev)) kmMedianPerSev[s] = kaplanMeier(rs).median;
+      for (const [s, rs] of Object.entries(bySev)) {
+        const k = kaplanMeier(rs);
+        kmMedianPerSev[s] = k.median;
+        kmP90PerSev[s] = kmQuantileFromCurve(k.curve, 0.9);
+      }
     }
+    const km = kaplanMeier(remRows);
     const remediation = {
       pctiles: mttrPercentiles(remRows),
       buckets: resolutionBuckets(remRows),
-      // Full Kaplan–Meier estimate (curve + KM median/RMST mean + naive comparison stats),
-      // open findings right-censored so the headline isn't biased low by fresh fast patches.
-      km: kaplanMeier(remRows),
+      km,
+      // Overall censoring-aware KM p90 off that same curve (smallest t with S(t) ≤ 0.10) — the
+      // slow-tail sibling of the KM median that replaces the naive `pctiles.overall.p90` in the
+      // KPI band. Null (renders "—") when too much is still open to observe it.
+      kmP90: kmQuantileFromCurve(km.curve, 0.9),
       kmMedianPerSev,
+      kmP90PerSev,
       openPastSla: openPastSla(remRows),
       // Actionable-clock companions (clock starts at vendor-fix availability): the same
       // functions over the actionableView projection. Awaiting-vendor-fix rows carry null
@@ -6404,7 +6413,10 @@ var Server = (() => {
       // rows dropped when off); key gains showNoFix so on/off states don't share an entry.
       // "mttr5" → "mttr6": remediation gained `kmMedianPerSev` (per-severity KM median for the
       // per-severity table); bump so no stale entry lacks it.
-      "mttr6",
+      // "mttr6" → "mttr7": remediation gained the censoring-aware KM p90 — `kmP90` (overall, for
+      // the KPI band) and `kmP90PerSev` (per-severity table) — replacing the naive `pctiles` p90
+      // at those call sites; bump so no stale entry lacks them.
+      "mttr7",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
