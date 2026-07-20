@@ -69,6 +69,9 @@ def page():
     compact_toast = st.session_state.pop("_settings_compact_toast", None)
     if compact_toast:
         ui.show_toast(compact_toast, "success")
+    purge_toast = st.session_state.pop("_settings_purge_toast", None)
+    if purge_toast:
+        ui.show_toast(purge_toast, "success")
 
     _severity_scope()
 
@@ -83,6 +86,12 @@ def page():
     pending = st.session_state.pop("_compact_pending", None)
     if pending is not None:
         _confirm_compact(pending)
+
+    # ---- Purge by severity --------------------------------------------------------- #
+    _purge_by_severity()
+    purge_pending = st.session_state.pop("_purge_pending", None)
+    if purge_pending:
+        _confirm_purge(purge_pending)
 
     # ---- Saved state -------------------------------------------------------------- #
     ui.section_label("Saved settings")
@@ -291,5 +300,102 @@ def _confirm_compact(days: int) -> None:
             f"Compacted {result['scans_sealed']} scan(s) — "
             f"{result['episodes_created']} closed finding(s) rolled up, "
             f"{format_bytes(freed)} reclaimed. Stats verified identical."
+        )
+        st.rerun()
+
+
+@st.fragment
+def _purge_by_severity() -> None:
+    """Pick severities to erase, then Purge — one fragment. Like "Compact now", the
+    button stashes the selection and full-reruns; ``page()`` opens the confirm dialog at
+    app scope (a dialog can't open during a fragment rerun)."""
+    ui.section_label("Purge by severity")
+    st.caption(
+        "Permanently erase whole severity classes from storage — every stored "
+        "vulnerability of the selected severities, across the ledger, the compacted "
+        "baseline and the raw scan archives. Use it to keep only the severities worth "
+        "retaining (e.g. purge everything below Critical). Unlike compacting, this is "
+        "**lossy**: MTTR, SLA and every trend recompute without the removed severities."
+    )
+    remove = st.pills(
+        "Severities to remove",
+        options=list(SELECTABLE_SEVERITIES),
+        default=[],
+        selection_mode="multi",
+        format_func=_sev_option_label,
+        key="settings_purge_sevs",
+        label_visibility="collapsed",
+    )
+    remove = list(remove or [])
+    keep = [s for s in SELECTABLE_SEVERITIES if s not in remove]
+    if remove:
+        st.markdown(
+            f"<div>After purging, the base keeps:&nbsp; {_badges(keep)}"
+            "&nbsp; plus any unclassified findings.</div>",
+            unsafe_allow_html=True,
+        )
+    all_selected = not keep
+    if all_selected:
+        st.warning("Keep at least one severity — a purge can't empty the whole base.",
+                   icon="⚠️")
+    if st.button("Purge now", key="settings_purge_now", icon=":material/delete_sweep:",
+                 disabled=not remove or all_selected):
+        st.session_state["_purge_pending"] = list(remove)
+        st.rerun()
+
+
+@st.dialog("Purge severities from storage?")
+def _confirm_purge(severities) -> None:
+    """Dry-run preview → explicit confirm → real purge. The preview reads and filters
+    every archive, so the counts the user confirms are exact."""
+    try:
+        preview = ledger.purge_severities(severities, dry_run=True)
+    except ledger.LedgerRebuildError as exc:
+        st.error(str(exc))
+        if st.button("Close", key="settings_purge_close"):
+            st.rerun()
+        return
+    labels = ", ".join(s.title() for s in preview["severities"])
+    if preview["no_op"]:
+        st.info(f"Nothing to purge — no stored vulnerabilities have severity {labels}.")
+        if st.button("Close", key="settings_purge_close"):
+            st.rerun()
+        return
+    st.write(
+        f"Permanently remove **{labels}** from storage: "
+        f"**{preview['vulns_removed']:,}** vulnerability row(s), "
+        f"**{preview['episodes_removed']:,}** compacted finding(s) and "
+        f"**{preview['observations_removed']:,}** observation(s), rewriting "
+        f"**{preview['scans_rewritten']}** raw scan archive(s) and freeing about "
+        f"{format_bytes(preview['archive_bytes_freed'])}."
+    )
+    st.warning(
+        "This is permanent and lossy: the removed findings are erased from the raw "
+        "archives, and MTTR, SLA and every trend recompute without these severities. "
+        "Unlike compacting, the numbers WILL change.",
+        icon="⚠️",
+    )
+    c1, c2 = st.columns(2)
+    if c1.button("Cancel", key="settings_purge_cancel", width="stretch"):
+        st.rerun()
+    if c2.button("Purge", type="primary", key="settings_purge_confirm", width="stretch"):
+        try:
+            result = ledger.purge_severities(severities)
+        except ledger.LedgerRebuildError as exc:
+            ui.show_toast(str(exc), "warning")
+            st.rerun()
+            return
+        except Exception:  # noqa: BLE001 -- a locked DB shouldn't crash the page
+            logger.warning("Purge failed", exc_info=True)
+            ui.show_toast("Purge failed — storage was left unchanged.", "error")
+            st.rerun()
+            return
+        _derived.clear_ledger_caches()
+        # Archives and parsed-frame snapshots changed on disk — drop any shared handles.
+        _derived.clear_scan_resources()
+        freed = result["archive_bytes_freed"] + result["db_bytes_freed"]
+        st.session_state["_settings_purge_toast"] = (
+            f"Purged {labels} — {result['vulns_removed']:,} vuln(s) removed, "
+            f"{format_bytes(freed)} reclaimed."
         )
         st.rerun()

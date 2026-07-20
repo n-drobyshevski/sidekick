@@ -669,6 +669,71 @@ def _reinsert_scan_row(db_path, row):
         conn.close()
 
 
+def _rebuild_from_replay(db_path, replay) -> None:
+    """Wipe the derived tables, reseed the ledger from the compaction checkpoint, then
+    replay ``replay`` through the production persist writers.
+
+    ``replay`` is ``[(scan_row, payload), ...]`` for the UNSEALED scans to keep, in ts
+    order; a flat ``payload`` is the raw nodes to reconcile (``_records_from_payload``
+    understands both the archived envelope and a bare node list), a grouped ``payload``
+    is the archived nodes (``None`` → the scans row is re-inserted verbatim). Shared by
+    delete→rebuild and the severity purge: sealed ``scans`` rows and ``resolved_episodes``
+    stay in place (the compacted baseline), so the rebuild starts from the checkpoint,
+    not empty tables. Keys already converted to ``resolved_episodes`` are NOT seeded —
+    their stats live in the episode table, and a post-floor scan that re-lists one flows
+    through the same reopen-collision path as a live scan. Callers snapshot the DB (and,
+    for the purge, the rewritten archives) first and restore on any exception.
+    """
+    conn = _connect(db_path)
+    try:
+        with conn:
+            conn.execute("DELETE FROM vuln_ledger")
+            conn.execute("DELETE FROM observations")
+            conn.execute("DELETE FROM scans WHERE sealed=0")
+            checkpoint = _load_latest_checkpoint(conn)
+            if checkpoint is not None:
+                episode_keys = {
+                    r["vuln_key"]
+                    for r in conn.execute("SELECT vuln_key FROM resolved_episodes")
+                }
+                _upsert_ledger(
+                    conn,
+                    [row for row in checkpoint.get("ledger", [])
+                     if row.get("vuln_key") not in episode_keys],
+                )
+                # Supersessions were derived from post-floor scans; the surviving
+                # post-floor scans re-derive them during replay below.
+                conn.execute("UPDATE resolved_episodes SET superseded_by_scan=NULL")
+    finally:
+        conn.close()
+
+    for r, payload in replay:
+        if r["shape"] == "grouped":
+            if payload is None:
+                logger.warning(
+                    "Grouped survivor %s has no archived payload; preserving its scans row "
+                    "from stored columns (grouped scans don't affect the ledger).",
+                    r["scan_id"],
+                )
+                _reinsert_scan_row(db_path, r)
+            else:
+                persist_grouped_scan(
+                    extract_nodes(payload), mode=r["mode"], raw=payload,
+                    db_path=db_path, scan_id=r["scan_id"],
+                    scanned_severities=parse_severities(r.get("severities")),
+                )
+        else:
+            # Replay uses the current config.DISAPPEARANCE_RESOLUTION (same as the original
+            # persist, which never overrides it); it isn't stored per-scan. The severity
+            # scope IS stored per-scan and must ride along, or a rebuild would falsely
+            # mass-resolve severities the original scan never covered.
+            persist_flat_scan(
+                _records_from_payload(payload), mode=r["mode"], raw=payload,
+                db_path=db_path, scan_id=r["scan_id"],
+                scanned_severities=parse_severities(r.get("severities")),
+            )
+
+
 def delete_scan(scan_id, db_path=None) -> dict:
     """Delete one scan (convenience wrapper over ``delete_scans``)."""
     return delete_scans([scan_id], db_path=db_path)
@@ -741,61 +806,7 @@ def delete_scans(scan_ids, db_path=None) -> dict:
     bak = _snapshot_db(db_path)
 
     try:
-        # Wipe the derived tables (sealed scans rows are the compacted baseline — they
-        # stay), seed the ledger from the compaction checkpoint, then replay unsealed
-        # survivors in ts order. Keys already converted to resolved_episodes are NOT
-        # seeded — their stats live in the episode table, and a post-floor scan that
-        # re-lists one flows through the same reopen-collision path as a live scan.
-        conn = _connect(db_path)
-        try:
-            with conn:
-                conn.execute("DELETE FROM vuln_ledger")
-                conn.execute("DELETE FROM observations")
-                conn.execute("DELETE FROM scans WHERE sealed=0")
-                checkpoint = _load_latest_checkpoint(conn)
-                if checkpoint is not None:
-                    episode_keys = {
-                        r["vuln_key"]
-                        for r in conn.execute("SELECT vuln_key FROM resolved_episodes")
-                    }
-                    _upsert_ledger(
-                        conn,
-                        [row for row in checkpoint.get("ledger", [])
-                         if row.get("vuln_key") not in episode_keys],
-                    )
-                    # Supersessions were derived from post-floor scans; the surviving
-                    # post-floor scans re-derive them during replay below.
-                    conn.execute(
-                        "UPDATE resolved_episodes SET superseded_by_scan=NULL"
-                    )
-        finally:
-            conn.close()
-
-        for r, payload in replay:
-            if r["shape"] == "grouped":
-                if payload is None:
-                    logger.warning(
-                        "Grouped survivor %s has no archived payload; preserving its scans row "
-                        "from stored columns (grouped scans don't affect the ledger).",
-                        r["scan_id"],
-                    )
-                    _reinsert_scan_row(db_path, r)
-                else:
-                    persist_grouped_scan(
-                        extract_nodes(payload), mode=r["mode"], raw=payload,
-                        db_path=db_path, scan_id=r["scan_id"],
-                        scanned_severities=parse_severities(r.get("severities")),
-                    )
-            else:
-                # Replay uses the current config.DISAPPEARANCE_RESOLUTION (same as the original
-                # persist, which never overrides it); it isn't stored per-scan. The severity
-                # scope IS stored per-scan and must ride along, or a rebuild would falsely
-                # mass-resolve severities the original scan never covered.
-                persist_flat_scan(
-                    _records_from_payload(payload), mode=r["mode"], raw=payload,
-                    db_path=db_path, scan_id=r["scan_id"],
-                    scanned_severities=parse_severities(r.get("severities")),
-                )
+        _rebuild_from_replay(db_path, replay)
     except Exception:
         _restore_db(db_path, bak)
         raise
@@ -1230,6 +1241,273 @@ def compact_ledger(retention_days, *, db_path=None, dry_run=False, now=None) -> 
             )
     finally:
         conn.close()
+    return result
+
+
+# --------------------------------------------------------------------------- #
+#  Severity purge (lossy cleanup: drop whole severity classes from storage)
+# --------------------------------------------------------------------------- #
+# The complement of compaction. Compaction is *lossless* — it seals old scans and keeps
+# every MTTR/SLA/trend number bit-identical. A purge is deliberately *lossy*: it erases
+# whole severity classes so the durable base can be shrunk to only the severities worth
+# keeping ("keep only Critical" = purge everything below it). Every trace goes — live
+# ledger rows, resolved episodes, observations, the purged findings inside each unsealed
+# scan's raw archive, and the purged rows in the compaction checkpoint — and the ledger
+# is rebuilt so the stats recompute as if those severities had never been scanned. Once
+# the archives are rewritten, a later delete→rebuild can never resurrect them.
+
+
+def _node_severity(node) -> str:
+    """Normalized severity of a raw finding node — top-level ``severity``, mirroring
+    ``reconcile``'s ``rec.get('severity')`` so the filter agrees with reconciliation."""
+    if not isinstance(node, dict):
+        return "UNKNOWN"
+    return normalize_severity(node.get("severity"))
+
+
+def _backup_files(paths) -> dict:
+    """Copy each existing path to a ``.purgebak`` sibling; returns ``{orig: bak}``.
+
+    The file-level counterpart of ``_snapshot_db`` for the purge, which rewrites archives
+    in place during replay and so can't roll back on the DB snapshot alone. Best-effort:
+    an un-backupable file is simply skipped (its rewrite is then unprotected, but the DB
+    snapshot still restores the authoritative derived state)."""
+    backups = {}
+    for p in paths:
+        if not p:
+            continue
+        src = Path(p)
+        if not src.exists():
+            continue
+        dst = src.with_name(src.name + ".purgebak")
+        try:
+            shutil.copy2(src, dst)
+            backups[str(src)] = str(dst)
+        except Exception:
+            logger.warning("Couldn't back up %s before purge", src, exc_info=True)
+    return backups
+
+
+def _restore_files(backups) -> None:
+    """Restore originals from their ``.purgebak`` copies, then drop the copies."""
+    for orig, bak in backups.items():
+        try:
+            shutil.copy2(bak, orig)
+        except Exception:
+            logger.warning("Couldn't restore %s from purge backup", orig, exc_info=True)
+        finally:
+            Path(bak).unlink(missing_ok=True)
+
+
+def _drop_backups(backups) -> None:
+    for bak in backups.values():
+        try:
+            Path(bak).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def _purge_checkpoint_severities(db_path, purge) -> None:
+    """Drop purged-severity ledger rows from the latest compaction checkpoint blob, so a
+    later delete→rebuild reseeds the sealed baseline without them. No-op on an
+    uncompacted DB (no checkpoint) or an unreadable blob."""
+    conn = _connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT compaction_id, checkpoint FROM compactions "
+            "WHERE checkpoint IS NOT NULL ORDER BY ts DESC, compaction_id DESC LIMIT 1"
+        ).fetchone()
+        if row is None:
+            return
+        cp = _decode_checkpoint(row["checkpoint"])
+        if cp is None:
+            return
+        cp["ledger"] = [
+            r for r in cp.get("ledger", [])
+            if normalize_severity(r.get("severity")) not in purge
+        ]
+        with conn:
+            conn.execute(
+                "UPDATE compactions SET checkpoint=? WHERE compaction_id=?",
+                (_encode_checkpoint(cp), row["compaction_id"]),
+            )
+    finally:
+        conn.close()
+
+
+def purge_severities(severities, *, db_path=None, dry_run=False) -> dict:
+    """Permanently remove all stored data for the given severities. Returns a result dict.
+
+    ``{no_op, dry_run, severities, vulns_removed, episodes_removed,
+    observations_removed, scans_rewritten, archive_bytes_freed, db_bytes_freed}``.
+    ``dry_run=True`` computes the identical preview (reading + filtering every archive so
+    the counts are exact) without mutating anything.
+
+    Correctness/safety discipline mirrors the delete and compaction paths: unreadable
+    unsealed *flat* archives raise ``LedgerRebuildError`` BEFORE anything is touched; the
+    DB is snapshotted to ``<db>.bak`` and every archive/​snapshot the rebuild will rewrite
+    to a ``.purgebak`` sibling, all restored on any error; files are only dropped after a
+    clean rebuild. The rebuild reseeds from the purged checkpoint and replays the filtered
+    survivors through ``_rebuild_from_replay``, so live rows, episodes and archives all
+    lose the purged severities together. Callers must run
+    ``_derived.clear_ledger_caches()`` and ``clear_scan_resources()`` after a non-no-op
+    run (the archives and snapshots changed on disk).
+    """
+    purge = {normalize_severity(s) for s in (severities or []) if isinstance(s, str)}
+    purge &= set(config.SEVERITY_ORDER)
+    result = {
+        "no_op": True, "dry_run": bool(dry_run),
+        "severities": [s for s in config.SEVERITY_ORDER if s in purge],
+        "vulns_removed": 0, "episodes_removed": 0, "observations_removed": 0,
+        "scans_rewritten": 0, "archive_bytes_freed": 0, "db_bytes_freed": 0,
+    }
+    if not purge:
+        return result
+    db_path = _resolve(db_path)
+    if not db_path.exists():
+        return result
+    init_db(db_path)
+
+    conn = _connect(db_path)
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM scans ORDER BY ts ASC, scan_id ASC"
+        )]
+        live_ledger = _load_ledger_map(conn)
+        episode_keys_removed = [
+            r["vuln_key"] for r in conn.execute(
+                "SELECT vuln_key, severity FROM resolved_episodes"
+            ) if normalize_severity(r["severity"]) in purge
+        ]
+        placeholders = ",".join("?" for _ in purge)
+        obs_removed = conn.execute(
+            f"SELECT COUNT(*) FROM observations WHERE severity IN ({placeholders})",
+            list(purge),
+        ).fetchone()[0]
+    finally:
+        conn.close()
+
+    vulns_removed = sum(
+        1 for r in live_ledger.values() if normalize_severity(r.get("severity")) in purge
+    )
+    result.update(
+        vulns_removed=vulns_removed, episodes_removed=len(episode_keys_removed),
+        observations_removed=int(obs_removed),
+    )
+    # Nothing of these severities is stored anywhere (live rows + episodes cover every
+    # tracked vuln, resolved ones included) — a faithful no-op.
+    if vulns_removed == 0 and not episode_keys_removed:
+        return result
+
+    # Plan the archive rewrites. Read every unsealed survivor's payload up front and
+    # filter flat nodes by severity; a missing FLAT archive refuses before any mutation.
+    replay = []          # (row, payload_for_rebuild)
+    changed_rows = []    # unsealed flat rows whose archive loses findings
+    est_freed = 0
+    for r in rows:
+        if r.get("sealed"):
+            continue
+        payload = _read_raw_payload(r["raw_path"])
+        if r["shape"] == "flat":
+            if payload is None:
+                raise LedgerRebuildError(
+                    f"Cannot purge: the archived payload for scan {r['scan_id']} is "
+                    "missing, so the ledger can't be rebuilt."
+                )
+            nodes = extract_nodes(payload)
+            kept = [n for n in nodes if _node_severity(n) not in purge]
+            replay.append((r, kept))
+            if len(kept) != len(nodes):
+                changed_rows.append(r)
+                if nodes and r.get("raw_path"):
+                    frac = (len(nodes) - len(kept)) / len(nodes)
+                    est_freed += int(_sealed_file_sizes([r]) * frac)
+        else:
+            # Grouped scans never touch the ledger; leave their archive untouched.
+            replay.append((r, payload))
+
+    result["scans_rewritten"] = len(changed_rows)
+    result["no_op"] = False
+    if dry_run:
+        result["archive_bytes_freed"] = est_freed
+        return result
+
+    # ---- Mutate: snapshot the DB and every archive/snapshot the rebuild will rewrite. -- #
+    rewrite_paths = [r["raw_path"] for r in changed_rows if r.get("raw_path")]
+    snapshot_paths = [str(snapshot.snapshot_path_for(p)) for p in rewrite_paths]
+    size_before = sum(_sealed_file_sizes([r]) for r in changed_rows)
+    bak = _snapshot_db(db_path)
+    file_backups = _backup_files(rewrite_paths + snapshot_paths)
+    try:
+        _purge_checkpoint_severities(db_path, purge)
+        if episode_keys_removed:
+            conn = _connect(db_path)
+            try:
+                with conn:
+                    for chunk in _chunked(episode_keys_removed):
+                        conn.execute(
+                            "DELETE FROM resolved_episodes WHERE vuln_key IN "
+                            f"({','.join('?' for _ in chunk)})",
+                            chunk,
+                        )
+            finally:
+                conn.close()
+        # Replay re-archives each flat survivor from its filtered node list, so the raw
+        # archives lose the purged findings as a side effect of the rebuild.
+        _rebuild_from_replay(db_path, replay)
+    except Exception:
+        _restore_db(db_path, bak)
+        _restore_files(file_backups)
+        raise
+    bak.unlink(missing_ok=True)
+    _drop_backups(file_backups)
+
+    # Post-rebuild, best-effort cleanup + measurement.
+    conn = _connect(db_path)
+    try:
+        fresh = {r["scan_id"]: r["raw_path"]
+                 for r in conn.execute("SELECT scan_id, raw_path FROM scans")}
+    finally:
+        conn.close()
+    changed_ids = {r["scan_id"] for r in changed_rows}
+    # Replay re-archives every unsealed survivor; a legacy plain-.json archive it moved to
+    # .json.gz leaves the old file behind — drop those orphans for ALL replayed scans.
+    for r, _ in replay:
+        old_path, new_path = r.get("raw_path"), fresh.get(r["scan_id"])
+        if old_path and new_path and old_path != new_path:
+            Path(old_path).unlink(missing_ok=True)
+        # Replay writes no snapshot (it gets no parsed frame), so a rewritten scan's
+        # snapshot is now stale — drop it (start-up re-derives it from the filtered
+        # archive). Unchanged scans keep their still-valid snapshot.
+        if old_path and r["scan_id"] in changed_ids:
+            snapshot.snapshot_path_for(old_path).unlink(missing_ok=True)
+    size_after = 0
+    for r in changed_rows:
+        new_path = fresh.get(r["scan_id"])
+        if new_path:
+            try:
+                if Path(new_path).exists():
+                    size_after += Path(new_path).stat().st_size
+            except Exception:
+                pass
+    result["archive_bytes_freed"] = max(0, size_before - size_after)
+
+    # Reclaim the DB space the deleted rows freed (best-effort, like compaction).
+    cp = _connect(db_path)
+    try:
+        cp.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    finally:
+        cp.close()
+    db_before = db_path.stat().st_size
+    try:
+        vac = _connect(db_path)
+        try:
+            vac.execute("VACUUM")
+        finally:
+            vac.close()
+    except Exception:
+        logger.warning("Post-purge VACUUM skipped.", exc_info=True)
+    result["db_bytes_freed"] = max(0, db_before - db_path.stat().st_size)
     return result
 
 

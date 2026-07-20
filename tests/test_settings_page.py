@@ -191,3 +191,61 @@ def test_compact_stash_opens_confirm_dialog():
     at.run()
     assert not at.exception, at.exception
     assert [b for b in at.get("button") if b.key == "settings_compact_close"]
+
+
+# --------------------------------------------------------------------------- #
+#  Purge by severity
+# --------------------------------------------------------------------------- #
+def test_purge_controls_render_disabled_by_default():
+    at = _run("from wiz_dashboard.ui.pages import settings as sp\nsp.page()\n")
+    assert any("Purge by severity" in m.value for m in at.markdown)
+    purge = [b for b in at.get("button") if b.key == "settings_purge_now"][0]
+    assert purge.disabled  # nothing selected -> nothing to purge
+
+
+def test_purge_select_enables_and_opens_exact_preview():
+    at = _run(
+        "from wiz_dashboard.data import ledger\n"
+        "ledger.persist_flat_scan(["
+        "  {'id':'h1','name':'CVE-2026-1','severity':'HIGH','vulnerableAsset.name':'vm'},"
+        "  {'id':'c1','name':'CVE-2026-2','severity':'CRITICAL','vulnerableAsset.name':'vm'}"
+        "], mode='dry-run', scan_id='2026-06-01T00:00:00Z')\n"
+        "from wiz_dashboard.ui.pages import settings as sp\nsp.page()\n"
+    )
+    _widget(at, "settings_purge_sevs").set_value(["HIGH"])
+    at.run()
+    assert not at.exception
+    purge = [b for b in at.get("button") if b.key == "settings_purge_now"][0]
+    assert not purge.disabled
+    assert any("After purging, the base keeps" in m.value for m in at.markdown)
+
+    purge.click()
+    at.run()
+    assert not at.exception
+    # The confirm dialog shows the exact, non-estimated counts from a real dry run.
+    assert any("Permanently remove **High**" in m.value for m in at.markdown)
+    assert any("1** vulnerability row(s)" in m.value for m in at.markdown)
+    assert [b for b in at.get("button") if b.key == "settings_purge_confirm"]
+
+
+def test_purge_keeping_nothing_is_blocked():
+    at = _run("from wiz_dashboard.ui.pages import settings as sp\nsp.page()\n")
+    _widget(at, "settings_purge_sevs").set_value(list(config.SELECTABLE_SEVERITIES))
+    at.run()
+    assert not at.exception
+    purge = [b for b in at.get("button") if b.key == "settings_purge_now"][0]
+    assert purge.disabled
+    assert any("Keep at least one severity" in w.value for w in at.warning)
+
+
+def test_purge_stash_opens_confirm_dialog_noop_on_empty():
+    # Like the compaction dialog: "Purge now" stashes _purge_pending; page() opens the
+    # confirm at app scope. With an empty ledger the preview is a no-op → Close button.
+    at = AppTest.from_string(
+        "from wiz_dashboard.ui.pages import settings as sp\nsp.page()\n",
+        default_timeout=60,
+    )
+    at.session_state["_purge_pending"] = ["HIGH"]
+    at.run()
+    assert not at.exception, at.exception
+    assert [b for b in at.get("button") if b.key == "settings_purge_close"]
