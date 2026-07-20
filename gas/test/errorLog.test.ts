@@ -60,6 +60,14 @@ describe("errorLog", () => {
     expect(msg.endsWith("…")).toBe(true);
   });
 
+  it("keeps the stored blob under the Script Property size cap", () => {
+    for (let i = 0; i < 25; i++) recordError("supportGroupRefresh", "x".repeat(500), "error", i);
+    const raw = propStore.get("RECENT_ERRORS")!;
+    expect(raw.length).toBeLessThanOrEqual(8500);
+    // Even after trimming, the just-added (newest) entry is always retained.
+    expect(recentErrors()[0].message.startsWith("x")).toBe(true);
+  });
+
   it("clearErrors empties the log", () => {
     recordError("api", "one");
     expect(recentErrors()).toHaveLength(1);

@@ -16,6 +16,10 @@ import { getProp, setProp, deleteProp } from "./props";
 const KEY = "RECENT_ERRORS";
 const MAX_ENTRIES = 25;
 const MAX_MESSAGE_LEN = 500;
+// Script Properties cap a single value at ~9 KB. 25 long messages can exceed that, so the
+// serialized blob is trimmed (oldest first) to stay under this ceiling — otherwise setProperty
+// throws and recordError silently drops the write, defeating the whole log.
+const MAX_BLOB_CHARS = 8500;
 
 export interface ErrorEntry {
   ts: string; // ISO-Z of when it was recorded
@@ -59,7 +63,13 @@ export function recordError(op: string, err: unknown, kind = "error", now?: numb
       err instanceof Error ? err.message : typeof err === "string" ? err : String(err);
     const entry: ErrorEntry = { ts: nowIso(now), op, kind, message: truncate(message) };
     const next = [entry, ...recentErrors()].slice(0, MAX_ENTRIES);
-    setProp(KEY, JSON.stringify(next));
+    // Trim oldest-first until the blob fits a Script Property (always keep the just-added one).
+    let blob = JSON.stringify(next);
+    while (next.length > 1 && blob.length > MAX_BLOB_CHARS) {
+      next.pop();
+      blob = JSON.stringify(next);
+    }
+    setProp(KEY, blob);
   } catch {
     // Diagnostics are best-effort — never let logging an error raise one.
   }

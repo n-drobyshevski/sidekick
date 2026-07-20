@@ -327,6 +327,7 @@ var Server = (() => {
     episodes: "resolved_episodes",
     compactions: "compactions",
     settings: "settings",
+    supportGroupMap: "support_group_map",
     mttrHistory: "mttr_history",
     schemaMeta: "schema_meta",
     jobs: "jobs"
@@ -394,6 +395,10 @@ var Server = (() => {
       "checkpoint_ref"
     ],
     [TABS.settings]: ["key", "value_json"],
+    // One tiny row per subscription-identity → support-group entry. Deliberately NOT a single
+    // JSON blob in a settings cell: a large map (hundreds of subscriptions × several identity
+    // tokens each) overflows the ~50k-char Sheets per-cell limit and the whole write throws.
+    [TABS.supportGroupMap]: ["token", "group"],
     [TABS.mttrHistory]: [
       "date",
       "median_days",
@@ -454,6 +459,16 @@ var Server = (() => {
     }
     const dflt = ss.getSheetByName("Sheet1");
     if (dflt && ss.getSheets().length > 1) ss.deleteSheet(dflt);
+  }
+  function ensureTab(tab) {
+    const ss = ledgerSpreadsheet();
+    if (ss.getSheetByName(tab)) return;
+    const headers = TAB_HEADERS[tab];
+    if (!headers) throw new Error(`No headers defined for tab ${tab}.`);
+    const sh = ss.insertSheet(tab);
+    sh.getRange(1, 1, sh.getMaxRows(), sh.getMaxColumns()).setNumberFormat("@");
+    sh.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sh.setFrozenRows(1);
   }
   function fromCell(v) {
     if (v === "" || v === null || v === void 0) return null;
@@ -768,13 +783,6 @@ var Server = (() => {
     const v = Number((_a = r["version"]) != null ? _a : 0);
     if (Number.isFinite(v)) version = Math.max(Math.trunc(v), 0);
     return { version, map: cleanStringMap(r["map"]) };
-  }
-  function withSupportGroupMap(settings, map) {
-    const current = getSupportGroupMap(settings);
-    return {
-      ...settings,
-      support_group_map: { version: current.version + 1, map: cleanStringMap(map) }
-    };
   }
   function apiSeverityFilter(severities) {
     const sevs = canonicalSeverities(severities, DEFAULT_FETCH_SEVERITIES);
@@ -3873,6 +3881,7 @@ var Server = (() => {
   var KEY = "RECENT_ERRORS";
   var MAX_ENTRIES = 25;
   var MAX_MESSAGE_LEN = 500;
+  var MAX_BLOB_CHARS = 8500;
   function truncate(s) {
     return s.length > MAX_MESSAGE_LEN ? s.slice(0, MAX_MESSAGE_LEN) + "\u2026" : s;
   }
@@ -3900,7 +3909,12 @@ var Server = (() => {
       const message = err instanceof Error ? err.message : typeof err === "string" ? err : String(err);
       const entry = { ts: nowIso(now), op, kind, message: truncate(message) };
       const next = [entry, ...recentErrors()].slice(0, MAX_ENTRIES);
-      setProp(KEY, JSON.stringify(next));
+      let blob = JSON.stringify(next);
+      while (next.length > 1 && blob.length > MAX_BLOB_CHARS) {
+        next.pop();
+        blob = JSON.stringify(next);
+      }
+      setProp(KEY, blob);
     } catch {
     }
   }
@@ -4828,7 +4842,37 @@ var Server = (() => {
   var getAutoCompact2 = () => getAutoCompact(loadSettings());
   var getShowNoFix2 = () => getShowNoFix(loadSettings());
   var getDomains2 = () => getDomains(loadSettings());
-  var getSupportGroupMap2 = () => getSupportGroupMap(loadSettings());
+  var sgMapMemo;
+  function supportGroupRowsToMap(rows) {
+    const map = {};
+    for (const r of rows) {
+      const token = r["token"];
+      const group = r["group"];
+      if (typeof token === "string" && token && typeof group === "string" && group) {
+        map[token] = group;
+      }
+    }
+    return map;
+  }
+  function supportGroupMapToRows(map) {
+    const rows = [];
+    if (map && typeof map === "object" && !Array.isArray(map)) {
+      for (const [token, group] of Object.entries(map)) {
+        if (typeof token === "string" && token && typeof group === "string" && group) {
+          rows.push({ token, group });
+        }
+      }
+    }
+    return rows;
+  }
+  function getSupportGroupMap2() {
+    if (sgMapMemo !== void 0) return { version: 0, map: sgMapMemo };
+    ensureTab(TABS.supportGroupMap);
+    const rows = readAll(TABS.supportGroupMap);
+    const map = rows.length ? supportGroupRowsToMap(rows) : getSupportGroupMap(loadSettings()).map;
+    sgMapMemo = map;
+    return { version: 0, map };
+  }
   function setFetchSeverities(sevs) {
     saveSettings(withFetchSeverities(loadSettings(), sevs));
   }
@@ -4851,7 +4895,18 @@ var Server = (() => {
     saveSettings(withDomains(loadSettings(), items));
   }
   function setSupportGroupMap(map) {
-    saveSettings(withSupportGroupMap(loadSettings(), map));
+    const rows = supportGroupMapToRows(map);
+    ensureTab(TABS.supportGroupMap);
+    overwrite(TABS.supportGroupMap, rows);
+    sgMapMemo = supportGroupRowsToMap(rows);
+    const settings = loadSettings();
+    if ("support_group_map" in settings) {
+      const cleaned = { ...settings };
+      delete cleaned["support_group_map"];
+      saveSettings(cleaned);
+    } else {
+      bumpDataVersion();
+    }
   }
 
   // src/server/wizSubscriptionsQuery.ts

@@ -14,6 +14,7 @@ export const TABS = {
   episodes: "resolved_episodes",
   compactions: "compactions",
   settings: "settings",
+  supportGroupMap: "support_group_map",
   mttrHistory: "mttr_history",
   schemaMeta: "schema_meta",
   jobs: "jobs",
@@ -42,6 +43,10 @@ export const TAB_HEADERS: Record<string, string[]> = {
     "db_bytes_freed", "checkpoint_ref",
   ],
   [TABS.settings]: ["key", "value_json"],
+  // One tiny row per subscription-identity → support-group entry. Deliberately NOT a single
+  // JSON blob in a settings cell: a large map (hundreds of subscriptions × several identity
+  // tokens each) overflows the ~50k-char Sheets per-cell limit and the whole write throws.
+  [TABS.supportGroupMap]: ["token", "group"],
   [TABS.mttrHistory]: [
     "date", "median_days", "resolved", "open", "total", "sla_pct", "oldest_open_days",
     "open_past_sla",
@@ -99,6 +104,22 @@ export function ensureTabs(ss: GoogleAppsScript.Spreadsheet.Spreadsheet): void {
   }
   const dflt = ss.getSheetByName("Sheet1");
   if (dflt && ss.getSheets().length > 1) ss.deleteSheet(dflt);
+}
+
+/**
+ * Create one tab with its frozen header row if it's missing (idempotent). Self-healing for
+ * deployments that predate a newly-added tab, so a schema addition doesn't require re-running
+ * setup() before the new tab can be read or written. Mirrors ensureTabs' per-tab shape.
+ */
+export function ensureTab(tab: string): void {
+  const ss = ledgerSpreadsheet();
+  if (ss.getSheetByName(tab)) return;
+  const headers = TAB_HEADERS[tab];
+  if (!headers) throw new Error(`No headers defined for tab ${tab}.`);
+  const sh = ss.insertSheet(tab);
+  sh.getRange(1, 1, sh.getMaxRows(), sh.getMaxColumns()).setNumberFormat("@");
+  sh.getRange(1, 1, 1, headers.length).setValues([headers]);
+  sh.setFrozenRows(1);
 }
 
 /** Cell -> JS value: '' -> null; Date -> canonical ISO; numbers/strings verbatim. */
