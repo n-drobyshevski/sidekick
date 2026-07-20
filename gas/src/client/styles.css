@@ -197,6 +197,23 @@ html, body {
   .sidebar.collapsed .scan-buttons { justify-content: center; }
   .sidebar.collapsed .scan-buttons .primary { padding: 8px; }
   .sidebar.collapsed .rail-status-dot { display: block; }
+  /* Loading panel in the icon rail: drop the full card chrome and its text/bar/buttons,
+     leaving the compact ring indicator centered — the card's phase, counts and controls
+     are too wide for 56px, so they collapse to the ring (status) + its Details button. */
+  .sidebar.collapsed .scan-progress {
+    padding: 6px 0; gap: 0; align-items: center;
+    background: transparent; border: none; box-shadow: none;
+  }
+  .sidebar.collapsed .scan-progress-bar-slot,
+  .sidebar.collapsed .scan-progress-counts,
+  .sidebar.collapsed .scan-progress-actions { display: none; }
+  /* The phase line is the card's aria-live announcement target — visually hide it rather
+     than display:none it, so screen readers still hear phase transitions in the icon rail. */
+  .sidebar.collapsed .scan-progress-head {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+    overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+  }
+  .sidebar.collapsed .scan-progress-mini { display: inline-flex; }
 }
 /* The rail becomes a horizontal wrapping top-bar here, so icon-collapse doesn't apply. */
 @media (max-width: 800px) { .rail-toggle { display: none; } }
@@ -226,6 +243,55 @@ html, body {
 .scan-progress.stuck .scan-progress-phase,
 .scan-progress.stuck .scan-progress-counts { color: var(--warn); }
 .scan-progress-actions { display: flex; gap: 12px; }
+
+/* Compact collapsed-rail indicator: a ring (spinner / arc / filled) with a centered
+   glyph or percent. Hidden by default; the .sidebar.collapsed rule above reveals it. The
+   ring is a masked conic-gradient donut so a single element carries both the track and
+   the coloured arc; --ring is re-tinted per run state, matching the progress-bar colours. */
+.scan-progress-mini {
+  display: none; position: relative; align-items: center; justify-content: center;
+  width: 100%; padding: 2px 0; border: none; background: none; cursor: pointer;
+}
+.scan-progress-mini:disabled { cursor: default; }
+.scan-progress-mini:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 3px; border-radius: var(--radius-md);
+}
+.scan-spinner {
+  --ring: var(--accent);
+  --track: rgba(0, 0, 0, 0.10);
+  width: 28px; height: 28px; border-radius: 50%;
+  /* Terminal states show a full ring; a running scan with no percent yet spins a 25% arc. */
+  background: conic-gradient(var(--ring) 0 100%, var(--track) 0);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3.5px), #000 calc(100% - 3.5px));
+          mask: radial-gradient(farthest-side, transparent calc(100% - 3.5px), #000 calc(100% - 3.5px));
+}
+.scan-progress.running .scan-spinner {
+  background: conic-gradient(var(--ring) 0 25%, var(--track) 0);
+  animation: scan-spin 0.9s linear infinite;
+}
+/* A known percent freezes the spin into a static arc filled to that share. */
+.scan-progress.running .scan-spinner.is-determinate {
+  background: conic-gradient(var(--ring) calc(var(--scan-pct, 0) * 1%), var(--track) 0);
+  animation: none;
+}
+.scan-progress.done .scan-spinner { --ring: var(--ok); }
+.scan-progress.failed .scan-spinner { --ring: var(--bad); }
+.scan-progress.cancelled .scan-spinner { --ring: var(--text-3); }
+.scan-progress.stuck .scan-spinner { --ring: var(--warn); }
+.scan-progress-mini-pct {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums;
+}
+.scan-progress.done .scan-progress-mini-pct { color: var(--ok); font-size: 13px; }
+.scan-progress.failed .scan-progress-mini-pct { color: var(--bad); font-size: 12px; }
+.scan-progress.stuck .scan-progress-mini-pct { color: var(--warn); font-size: 12px; }
+@keyframes scan-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  /* No spin: a calm 40% arc still reads as "working" without motion. */
+  .scan-progress.running .scan-spinner {
+    animation: none; background: conic-gradient(var(--ring) 0 40%, var(--track) 0);
+  }
+}
 .linklike {
   background: none; border: none; padding: 0; font-size: 12px; font-weight: 600;
   color: var(--accent); cursor: pointer;

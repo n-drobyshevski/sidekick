@@ -143,6 +143,13 @@ export function renderScanCard(host, job, { onStop, onDetails, nowMs, stopping }
       el("div", { class: "scan-progress-bar-slot", "aria-hidden": "true" }),
       el("div", { class: "scan-progress-counts", "aria-hidden": "true" }),
       el("div", { class: "scan-progress-actions" }),
+      // Compact stand-in shown only while the sidebar is collapsed to icons (CSS-gated on
+      // .sidebar.collapsed). A real button so the Details drawer — and through it Stop —
+      // stays reachable in the 56px rail; the ring + centered glyph mirror the phase/bar
+      // for a glanceable "still working / done / failed" cue where the full card can't fit.
+      el("button", { class: "scan-progress-mini", type: "button" },
+        el("span", { class: "scan-spinner", "aria-hidden": "true" }),
+        el("span", { class: "scan-progress-mini-pct", "aria-hidden": "true" })),
     );
   }
   const phaseEl = host.querySelector(".scan-progress-phase");
@@ -158,6 +165,31 @@ export function renderScanCard(host, job, { onStop, onDetails, nowMs, stopping }
   elapsedEl.style.display = v.elapsedText ? "" : "none";
 
   clear(barSlot).append(progressBar(v.pct, v.state === "running" ? "" : v.state));
+
+  // Collapsed-rail mini indicator: a determinate arc while a percent is known, an
+  // indeterminate spin otherwise, and a terminal glyph once the run settles. The card's
+  // state class (.running/.done/.failed/.stuck) tints the ring in CSS; here we only feed
+  // the percent and the centered glyph/number and keep the button pointed at Details.
+  const miniBtn = host.querySelector(".scan-progress-mini");
+  const miniSpinner = miniBtn.querySelector(".scan-spinner");
+  const miniPct = miniBtn.querySelector(".scan-progress-mini-pct");
+  const determinate = v.state === "running" && typeof v.pct === "number" && !Number.isNaN(v.pct);
+  miniSpinner.classList.toggle("is-determinate", determinate);
+  if (determinate) miniSpinner.style.setProperty("--scan-pct", String(v.pct));
+  else miniSpinner.style.removeProperty("--scan-pct");
+  const MINI_GLYPH = { done: "✓", failed: "✕", cancelled: "–" };
+  miniPct.textContent =
+    stopping ? "…"
+    : v.stuck ? "!"
+    : v.state === "running" ? (determinate ? `${v.pct}%` : "")
+    : (MINI_GLYPH[v.state] || "");
+  // The rail is too narrow for the phase words, so they live on the tooltip / accessible
+  // name of the button instead — hover or focus surfaces the same status the card shows.
+  const summary = [phaseText, v.countsText].filter(Boolean).join(" · ");
+  miniBtn.setAttribute("aria-label", summary || "Scan progress");
+  miniBtn.title = summary || "";
+  miniBtn.onclick = onDetails || null;
+  miniBtn.disabled = !onDetails;
 
   countsEl.textContent =
     v.state === "failed" ? (v.error || "Scan failed.")
