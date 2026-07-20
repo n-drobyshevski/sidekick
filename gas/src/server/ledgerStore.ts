@@ -297,6 +297,11 @@ export function loadTrend(
   // fix that lands later re-admits the row at that point (see trend.awaitingFixAsOf). The
   // resolved / median / SLA-burn / attainment series are untouched. Default true = today.
   showNoFix = true,
+  // Pre-scoped base rows (already narrowed to a Value Chain / Support group by the caller).
+  // When omitted the whole durable base is used, so existing callers stay byte-identical. A
+  // scope narrows which findings the trend replays, never which scans it samples at — the
+  // scans backbone always comes from state below.
+  baseOverride?: BaseRow[],
 ): BackfilledTrendPoint[] {
   const state = loadState();
   const hideNoFix = !showNoFix;
@@ -304,7 +309,7 @@ export function loadTrend(
   // the trend reaches back to the earliest detection, not just the first saved scan. The
   // compaction gate (maintenance.trendOf) deliberately keeps calling trendFromFrames instead,
   // so its before/after identity check stays anchored to real scans only.
-  const base = baseRows(state).map((r) => ({
+  const base = (baseOverride ?? baseRows(state)).map((r) => ({
     severity: r.severity,
     first_seen: r.first_seen,
     resolved_at: r.resolved_at,

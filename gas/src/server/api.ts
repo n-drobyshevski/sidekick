@@ -637,10 +637,13 @@ function filterNoFixFrame(records: Rec[], showNoFix: boolean): Rec[] {
   return records.filter((r) => !recordNoFix(r));
 }
 
-function mttrData(p?: unknown): Rec {
-  const domain = String((p as Rec)?.["domain"] ?? "");
-  const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
-  let rows: Rec[] = ledgerStore.loadBaseRows() as unknown as Rec[];
+// The durable base rows narrowed to the active Value Chain + Support group scope — the shared
+// preamble both the MTTR summary and the MTTR trend key their populations off, so the hero and
+// the charts beneath it always measure the same findings. attachSupportGroups runs only when a
+// scope is active (otherwise the whole base passes through untouched), matching the old inline
+// scoping. Severity / no-fix filtering stays with each caller, which apply their own.
+function scopedBaseRows(domain: string, supportGroup: string): Rec[] {
+  let rows = ledgerStore.loadBaseRows() as unknown as Rec[];
   if (domain || supportGroup) {
     supportGroups.attachSupportGroups(rows);
     if (supportGroup) rows = rows.filter((r) => String(r["_supportGroup"] ?? "") === supportGroup);
@@ -649,6 +652,13 @@ function mttrData(p?: unknown): Rec {
       rows = rows.filter((r) => assignDomain(r, compiled) === domain);
     }
   }
+  return rows;
+}
+
+function mttrData(p?: unknown): Rec {
+  const domain = String((p as Rec)?.["domain"] ?? "");
+  const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
+  let rows = scopedBaseRows(domain, supportGroup);
   rows = filterSeverities(rows, readSeverities(p));
   // Global show-no-fix toggle: drop awaiting-vendor-fix rows so the whole remediation block
   // (percentiles, buckets, KM, open-past-SLA, awaiting) measures only the fixable population.
@@ -677,12 +687,21 @@ function mttrData(p?: unknown): Rec {
 }
 
 function mttrTrendData(p?: unknown): Rec {
+  const domain = String((p as Rec)?.["domain"] ?? "");
+  const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
   const severities = readSeverities(p);
+  const scoped = Boolean(domain || supportGroup);
+  // Scope the reconstructed trend to the active Value Chain + Support group by handing the
+  // pre-filtered base rows to loadTrend (the scans backbone stays whole). Under a scope the
+  // persisted mttr_history snapshots — always whole-register — no longer describe the shown
+  // population, so drop them; the reconstructed trend stands on its own (the client already
+  // suppresses the history-based change chips whenever a scope is active).
+  const rows = scopedBaseRows(domain, supportGroup) as unknown as BaseRow[];
   return {
-    history: history.loadHistory(),
+    history: scoped ? [] : history.loadHistory(),
     // showNoFix off → the open / KM-median series exclude no-fix findings as-of-date; the
     // resolved / median / SLA-burn / attainment series are untouched (see loadTrend).
-    trend: ledgerStore.loadTrend(severities, settingsStore.getShowNoFix()),
+    trend: ledgerStore.loadTrend(severities, settingsStore.getShowNoFix(), rows),
   };
 }
 
@@ -794,9 +813,17 @@ const cachedMttrTrendData = (p?: unknown) =>
   // survives.
   // "mttrTrend4" → "mttrTrend5": the open / KM-median series now exclude no-fix findings
   // as-of-date when the toggle is off; key gains showNoFix so on/off states cache apart.
+  // "mttrTrend5" → "mttrTrend6": the reconstructed trend now scopes to the active Value Chain /
+  // Support group (was always whole-register); key gains domain + supportGroup so scopes cache
+  // apart.
   cached(
-    "mttrTrend5",
-    { severities: readSeverities(p), showNoFix: settingsStore.getShowNoFix() },
+    "mttrTrend6",
+    {
+      domain: String((p as Rec)?.["domain"] ?? ""),
+      supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
+      severities: readSeverities(p),
+      showNoFix: settingsStore.getShowNoFix(),
+    },
     () => mttrTrendData(p),
   );
 // Domain-independent (always all domains); severity-scoped; 1h TTL like the summary
