@@ -2,7 +2,7 @@
 // charts, per-severity SLA table, posture bars. Never fetches from Wiz.
 
 import {
-  destroyChart, groupPalette, groupPie, groupTrendLines, openResolvedLines, stackedAgeBar,
+  destroyChart, fmtDuration, groupPalette, groupPie, groupTrendLines, openResolvedLines, stackedAgeBar,
   survivalCurve, trendLine,
 } from "../charts.js";
 import { bootstrap, swrCall } from "../store.js";
@@ -360,7 +360,7 @@ export async function renderMttr(main, _params, ctx) {
             label: name,
             value: r?.resolved ?? 0,
             color: colors.get(name),
-            detail: "KM median " + fmtDays(r?.kmMedian),
+            detail: "KM median " + fmtDuration(r?.kmMedian),
           };
         })
         .filter((s) => s.value > 0);

@@ -53,7 +53,7 @@ const localeNum = (v) => (typeof v === "number" ? Number(v).toLocaleString() : v
 // not "1w 7.0d"; 23.7h is "1d", not "0d 24h"). `days` is a non-negative day count;
 // nullish/NaN -> "—" (tooltips always pass a number, but stay defensive). Decimal points
 // use "." to match fmtDays and the rest of the app's duration formatting.
-function fmtDuration(days) {
+export function fmtDuration(days) {
   if (days === null || days === undefined || Number.isNaN(days)) return "—";
   const d = Number(days);
   if (d <= 0) return "0d";
@@ -410,6 +410,10 @@ export function openResolvedLines(canvas, points, { xRange } = {}) {
     display: true,
     labels: { font: FONT, color: INK2, usePointStyle: true, boxWidth: 8 },
   };
+  // Both lines use pointRadius 0, so the default nearest/intersect tooltip has nothing to
+  // hit and the chart showed no tooltip at all. Index mode reveals both Open and Resolved at
+  // the nearest date in one tooltip when hovering anywhere along the x.
+  opts.interaction = { mode: "index", intersect: false };
   const days = points.map((p) => dayOf(p.date));
   dayAxis(opts, xRange);
   const band = reconstructedBand(points.map((p) => p.reconstructed), days);
@@ -424,6 +428,7 @@ export function openResolvedLines(canvas, points, { xRange } = {}) {
           borderWidth: 2,
           pointStyle: "circle",
           pointRadius: 0,
+          pointHoverRadius: 4,
           tension: 0.25,
         },
         {
@@ -434,6 +439,7 @@ export function openResolvedLines(canvas, points, { xRange } = {}) {
           borderWidth: 2,
           pointStyle: "rect",
           pointRadius: 0,
+          pointHoverRadius: 4,
           tension: 0.25,
         },
       ],
