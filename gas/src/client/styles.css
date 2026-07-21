@@ -677,6 +677,49 @@ input[aria-invalid="true"]:focus-visible, select[aria-invalid="true"]:focus-visi
 .mini-label { font-size: 12px; color: var(--text-3); }
 .mini-value { font-size: 18px; font-weight: 600; }
 
+/* ---------------------------------------------------------------- executive view */
+/* The default landing page: a centered single-column summary. This is the one place the
+   shell gets a max-width, centered container — every other page is full-bleed against the
+   left rail. Leadership landing page, so hierarchy is dominated by one big number. */
+.exec { max-width: 720px; margin: 0 auto; text-align: center; }
+.exec .page-sub { margin: 0 0 24px; }
+/* The single hero value (DESIGN.md: at most one per page). A deliberate exec-only step above
+   the 2rem .hero-value cap — this page *is* that number, so the larger size earns its place;
+   it is still the only hero value on the page. Tabular figures so it never jitters. */
+.exec-hero { margin: 8px 0 18px; }
+.exec-hero .label { margin-bottom: 4px; }
+.exec-hero-value {
+  font-size: clamp(2.5rem, 6vw, 4rem);
+  font-weight: 600; letter-spacing: -0.02em; line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.exec-hero .hero-src { margin-top: 6px; }
+/* Scan bar: last-scan caption + a single primary Run scan, centered under the hero. */
+.exec-scan { display: flex; flex-direction: column; align-items: center; gap: 10px; margin: 0 0 8px; }
+.exec-scan .primary { display: inline-flex; align-items: center; gap: 6px; }
+.exec-scan .btn-icon { display: inline-flex; width: 16px; height: 16px; }
+.exec-scan .btn-icon svg { width: 16px; height: 16px; display: block; }
+/* Open-vulns-by-severity tiles: dot + count + label. Colour rides only on the dot — the
+   count and name carry the meaning too (DESIGN two-token + non-colour-signal rules). */
+.exec-sev-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin: 0 0 4px; }
+.exec-sev-tile {
+  min-width: 108px;
+  background: var(--surface); border: 1px solid var(--hairline);
+  border-radius: var(--radius-xl); box-shadow: var(--shadow-card);
+  padding: 12px 16px;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+}
+.exec-sev-count {
+  font-size: 1.5rem; font-weight: 600; letter-spacing: -0.02em; line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.exec-sev-name {
+  display: inline-flex; align-items: center;
+  font-size: 12px; font-weight: 600; color: var(--text-2);
+}
+/* The by-domain table reads left-to-right even inside the centered column. */
+.exec-by-domain { text-align: left; margin-top: 4px; }
+
 /* Help explainer (how a headline metric is calculated). The wrapped metric itself is the
    hover/focus target — no separate glyph; the bubble is the neutral popover recipe (white /
    hairline / --shadow-card, like .sev-filter-menu). Revealed on hover/focus-within; the

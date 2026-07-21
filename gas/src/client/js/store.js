@@ -78,8 +78,8 @@ export function parseHash() {
       params[decodeURIComponent(k)] = decodeURIComponent(v || "");
     }
   }
-  // Empty hash -> the default landing page (MTTR & SLA); keep in sync with PAGES order in app.js.
-  return { route: ROUTE_ALIASES[pathPart] || pathPart || "mttr", params };
+  // Empty hash -> the default landing page (Executive); keep in sync with PAGES order in app.js.
+  return { route: ROUTE_ALIASES[pathPart] || pathPart || "executive", params };
 }
 
 export function buildHash(route, params) {
