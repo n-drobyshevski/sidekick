@@ -610,21 +610,26 @@ export function survivalCurve(canvas, curve, markers, viewOpts = {}) {
 
 // Categorical hues for the grouping charts (pie + group trend). Deliberately kept OUTSIDE
 // the severity red/orange/amber band (see --sev-* in styles.css) so a group is never read
-// as a severity; #2563eb is the shared brand/data blue. This order was validated with the
-// dataviz skill's palette check on the light surface: all eight sit in the lightness band
-// and clear 3:1 on the surface, worst adjacent CVD ΔE 10.3, worst adjacent normal-vision
-// ΔE 22.6. A pie is an all-pairs form, so eight hues can't all separate under CVD at once —
-// the on-arc %, legend point-styles, and tooltip carry identity when a pair is close.
-// Kept in sync with --cat-* in styles.css by convention (canvas can't read CSS vars).
+// as a severity; #2563eb is the shared brand/data blue and #0d9488 the established teal.
+//
+// FIVE hues, not eight, on purpose: the arc is narrow (no warm severity hues) and the light
+// surface + WCAG bar mean 8 fully-distinct AND colorblind-safe hues aren't achievable — the
+// old eight failed the dataviz check hard (violet↔blue ΔE 0.4 under deuteranopia; purple↔violet
+// ΔE 4.4 even for normal vision). So the caller now caps the colored groups at 5 and folds the
+// tail into a neutral "Other" (rationed-ink; the table still lists every group). This set passes
+// the dataviz check all-pairs on the light surface — normal-vision ΔE 19.8, colorblind ΔE 8.2 —
+// with the vivid light green/pink last (assigned to the smallest groups). The two lightest fills
+// clear only the surface-contrast relief bar, covered by the on-arc %, legend point-styles, and
+// direct labels. Kept in sync with --cat-* in styles.css by convention (canvas can't read CSS vars).
 const CATEGORICAL = [
-  "#2563eb", "#0d9488", "#c026d3", "#4d7c0f",
-  "#7c3aed", "#0891b2", "#db2777", "#9333ea",
+  "#2563eb", "#0d9488", "#90396a", "#7fba04", "#f66bb9",
 ];
 // Neutral gray for the folded-in "Other" bucket — reads as "everything else", not a hue,
 // and never collides with a real group's color.
 const OTHER_COLOR = "#94a3b8";
 // One distinct marker per group series so each vertex carries a shape cue, not color alone
-// (mirrors SEV_POINT_STYLE). Cycled only past eight, which the caller never reaches.
+// (mirrors SEV_POINT_STYLE). More styles than hues so the pooled "Other" series (a 6th line
+// past the 5 groups) still gets its own marker rather than reusing slot 1's.
 const GROUP_POINT_STYLES = [
   "circle", "triangle", "rect", "rectRot",
   "star", "crossRot", "cross", "dash",
@@ -632,37 +637,51 @@ const GROUP_POINT_STYLES = [
 
 /**
  * Canonical name->color Map for a set of group names, so the pie and the trend line paint
- * the same group with the same hue. Names take CATEGORICAL in fixed order (never cycled —
- * the caller caps at eight and folds the rest into `otherLabel`); `otherLabel` always maps
- * to the neutral OTHER_COLOR.
+ * the same group with the same hue. Names take CATEGORICAL in fixed order (the caller caps at
+ * CATEGORICAL.length and folds the rest into `otherLabel`); any name past the palette falls
+ * back to OTHER_COLOR rather than cycling a hue, so a cap/palette mismatch degrades to a gray
+ * "Other" instead of two groups sharing a color. `otherLabel` always maps to OTHER_COLOR.
  */
 export function groupPalette(names, otherLabel = "Other") {
   const map = new Map();
-  names.forEach((name, i) => map.set(name, CATEGORICAL[i % CATEGORICAL.length]));
+  names.forEach((name, i) => map.set(name, CATEGORICAL[i] ?? OTHER_COLOR));
   map.set(otherLabel, OTHER_COLOR);
   return map;
 }
 
+// Ink vs white for a label sitting ON a fill: pick whichever keeps the on-fill text legible.
+// White reads on the dark/mid fills, but the categorical palette also carries two light fills
+// (lime, pink) where white text would wash out — those take near-black. Threshold is where
+// white text drops below 3:1 on the fill (WCAG relative luminance).
+function onFillText(hex) {
+  const lin = (v) => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+  const L = 0.2126 * lin(parseInt(hex.slice(1, 3), 16)) +
+    0.7152 * lin(parseInt(hex.slice(3, 5), 16)) +
+    0.0722 * lin(parseInt(hex.slice(5, 7), 16));
+  return 1.05 / (L + 0.05) < 3 ? "#0a0a0a" : "#ffffff"; // white contrast < 3:1 → use ink
+}
+
 // Draws each slice's share as a % at its arc centroid, but only for slices with enough
 // sweep to hold a legible label (>= ~8%); the legend, tooltip, and aria label cover the
-// thin ones. Modeled on barEndLabels. White text reads on every CATEGORICAL/OTHER fill.
+// thin ones. Modeled on barEndLabels. Label ink adapts per slice so it reads on light fills too.
 const arcPercentLabels = {
   id: "arcPercentLabels",
   afterDatasetsDraw(chart) {
     const { ctx } = chart;
     const meta = chart.getDatasetMeta(0);
     const data = chart.data.datasets[0].data;
+    const colors = chart.data.datasets[0].backgroundColor || [];
     const total = data.reduce((a, b) => a + (Number(b) || 0), 0);
     if (!total) return;
     ctx.save();
     ctx.font = "600 11px " + FONT.family;
-    ctx.fillStyle = "#ffffff";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     meta.data.forEach((arc, i) => {
       const share = (Number(data[i]) || 0) / total;
       if (share < 0.08) return; // too thin for a label; legend + tooltip cover it
       const p = arc.tooltipPosition();
+      ctx.fillStyle = typeof colors[i] === "string" ? onFillText(colors[i]) : "#ffffff";
       ctx.fillText(Math.round(share * 100) + "%", p.x, p.y);
     });
     ctx.restore();

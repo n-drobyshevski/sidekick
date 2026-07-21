@@ -6384,7 +6384,7 @@ var Server = (() => {
       var _a2;
       r["_domain"] = (_a2 = assigned[i]) != null ? _a2 : UNASSIGNED;
     });
-    const groups = out.filter((r) => r["resolved"] > 0).sort((a, b) => b["resolved"] - a["resolved"]).slice(0, 8).map((r) => String(r["domain"]));
+    const groups = out.filter((r) => r["resolved"] > 0).sort((a, b) => b["resolved"] - a["resolved"]).slice(0, 5).map((r) => String(r["domain"]));
     const scanRows = loadScanRows();
     const byDomainKey = (r) => {
       var _a2;
@@ -6484,7 +6484,10 @@ var Server = (() => {
       // "mttrByDomain10" → "mttrByDomain11": `p90` switched from the naive closed-only percentile
       // to the censoring-aware KM p90 (off the same survival curve as the KM median); same shape,
       // new value, so bump the namespace to retire stale naive-p90 entries.
-      "mttrByDomain11",
+      // "mttrByDomain11" → "mttrByDomain12": the colored-group cap dropped from 8 to 5 (matching the
+      // new categorical palette), so `trend.groups`/`points`/`kmPoints` now carry fewer groups and a
+      // larger pooled "Other"; bump so a stale 8-group entry can't survive the persistent dataVersion.
+      "mttrByDomain12",
       {
         supportGroup: String((_a = p == null ? void 0 : p["supportGroup"]) != null ? _a : ""),
         severities: readSeverities(p),

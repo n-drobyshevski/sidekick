@@ -232,7 +232,7 @@ export async function renderMttr(main, _params, ctx) {
    *  this is how each component is doing.
    *
    *  Above the table, a chart pair shows how the domains participate in MTTR — both keyed
-   *  to the same canonical `byDomain.trend.groups` (resolved-desc, capped at 8 + pooled
+   *  to the same canonical `byDomain.trend.groups` (resolved-desc, capped at 5 + pooled
    *  "Other") so a domain wears one hue across the two: a "Remediation share" pie
    *  partitioning the *resolved* population (who's carrying the remediation work, tooltip
    *  carrying each domain's median MTTR), and an "MTTR by domain" line replaying each

@@ -831,14 +831,15 @@ function mttrByDomainData(p?: unknown): Rec {
   // Median-MTTR-by-domain trend shares the exact scoped population and canonical group
   // order the per-domain table just built. Tag each scoped row with its assigned domain
   // (reusing `assigned`, positionally aligned with `rows`), then replay medians over the
-  // domains that actually carry resolved work — capped at 8, the rest folds to "Other".
+  // domains that actually carry resolved work — capped at 5 (the categorical palette size,
+  // charts.js CATEGORICAL), the rest folds to "Other".
   rows.forEach((r, i) => {
     r["_domain"] = assigned[i] ?? UNASSIGNED;
   });
   const groups = out
     .filter((r) => (r["resolved"] as number) > 0)
     .sort((a, b) => (b["resolved"] as number) - (a["resolved"] as number))
-    .slice(0, 8)
+    .slice(0, 5)
     .map((r) => String(r["domain"]));
   const scanRows = ledgerStore.loadScanRows() as unknown as Rec[];
   const byDomainKey = (r: Rec) => String(r["_domain"] ?? UNASSIGNED);
@@ -939,7 +940,10 @@ const cachedMttrByDomainData = (p?: unknown) =>
     // "mttrByDomain10" → "mttrByDomain11": `p90` switched from the naive closed-only percentile
     // to the censoring-aware KM p90 (off the same survival curve as the KM median); same shape,
     // new value, so bump the namespace to retire stale naive-p90 entries.
-    "mttrByDomain11",
+    // "mttrByDomain11" → "mttrByDomain12": the colored-group cap dropped from 8 to 5 (matching the
+    // new categorical palette), so `trend.groups`/`points`/`kmPoints` now carry fewer groups and a
+    // larger pooled "Other"; bump so a stale 8-group entry can't survive the persistent dataVersion.
+    "mttrByDomain12",
     {
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
       severities: readSeverities(p),

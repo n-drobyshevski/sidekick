@@ -28,10 +28,11 @@
 
   /* Categorical hues for the grouping charts (pie + group trend). charts.js CATEGORICAL is
      the copy the canvas actually consumes (canvas can't read CSS vars); these mirror it and
-     are kept in sync by convention. Chosen outside the severity band above so a group is
-     never mistaken for a severity; --cat-other is the neutral "everything else" bucket. */
-  --cat-1: #2563eb;  --cat-2: #0d9488;  --cat-3: #c026d3;  --cat-4: #4d7c0f;
-  --cat-5: #7c3aed;  --cat-6: #0891b2;  --cat-7: #db2777;  --cat-8: #9333ea;
+     are kept in sync by convention. Chosen outside the severity band above so a group is never
+     mistaken for a severity. Five hues (not more): the colored groups are capped at five and
+     the tail folds into --cat-other — the accessible ceiling for a warm-band-free, light-tuned,
+     colorblind-safe categorical set (see the CATEGORICAL comment in charts.js). */
+  --cat-1: #2563eb;  --cat-2: #0d9488;  --cat-3: #90396a;  --cat-4: #7fba04;  --cat-5: #f66bb9;
   --cat-other: #94a3b8;
 
   --ok: #15803d;
