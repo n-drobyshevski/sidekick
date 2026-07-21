@@ -403,9 +403,14 @@ function insightsData(p?: unknown): Rec {
     // (Naturally zero when the toggle hides them, so the client drops the surface entirely.)
     awaiting: awaitingVendorFix(baseVisible),
     aging: insights.ageBuckets(baseVisible),
-    // Top oldest open findings + 90+ backlog per asset / support group / domain,
-    // for the aging panel's toggle (repaints client-side, no extra RPC).
-    oldest: insights.oldestOpen(baseVisible as unknown as Parameters<typeof insights.oldestOpen>[0]),
+    // Oldest open findings + 90+ backlog per asset / support group / domain, for the aging
+    // panel's toggle. Capped at 100 (up from the old top-7) so the client can page through the
+    // aged tail with prev/next controls — the whole set ships once and repaints client-side,
+    // no per-page RPC. The panel triages the oldest backlog, so 100 rows is ample depth.
+    oldest: insights.oldestOpen(
+      baseVisible as unknown as Parameters<typeof insights.oldestOpen>[0],
+      100,
+    ),
     // Movement's Persisting is filtered (it's derived from these base rows); New/Resolved/
     // Reopened come from scan-wide reconcile deltas and stay scan-wide (see movement()).
     movement: insights.movement(baseVisible, latestFlat, ledgerStore.loadScanRows().length),
@@ -420,7 +425,9 @@ export function getInsights(p?: unknown): ApiResult {
       // "insights" → "insights2": the payload now honors the show-no-fix toggle (counts,
       // total, sevStats, exploit, aging, oldest, awaiting, movement, and the as-of openTrend
       // all reflect it); key gains showNoFix so on/off states don't share an entry.
-      "insights2",
+      // "insights2" → "insights3": `oldest.*` now carries up to 100 rows (was 7) for the aging
+      // panel's prev/next pagination; bump so stale 7-row entries can't survive the deploy.
+      "insights3",
       {
         domain: String((p as Rec)?.["domain"] ?? ""),
         supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),

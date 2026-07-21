@@ -8,9 +8,13 @@ import {
 } from "../charts.js";
 import { bootstrap, setParams, swrCall } from "../store.js";
 import {
-  clear, el, emptyState, fmtDate, helpTip, kpiCard, noFixHiddenNote, nvdUrl, openSheet, scopeBar,
-  sectionLabel, severityScopeFilter,
+  clear, el, emptyState, fmtDate, helpTip, kpiCard, noFixHiddenNote, nvdUrl, openSheet, pager,
+  scopeBar, sectionLabel, severityScopeFilter,
 } from "../ui.js";
+
+// Rows per page in the "Oldest open findings" panel's prev/next pagination. The server ships
+// up to 100 rows per view (see api.getInsights → oldest), so this yields up to ten pages.
+const OLDEST_PAGE_SIZE = 10;
 
 // Keep in sync with AGE_BUCKET_LABELS in src/domain/insights.ts (the client bundle
 // can't import the TS domain module).
@@ -369,8 +373,13 @@ export async function renderOverview(main, params, ctx) {
    *  views with a ranked table beneath. Repaints from the already-loaded payload, no RPC. */
   function renderOldestPanel(oldest) {
     let view = "findings";
+    // Current page within the active view, reset to 0 whenever the view switches. The server
+    // ships the full (capped) row set for every view, so paging is pure client-side slicing —
+    // no RPC per page.
+    let page = 0;
     const toggle = el("div", { class: "filter-bar", role: "group", "aria-label": "Oldest open findings view" });
     const tableHost = el("div", {});
+    const pagerHost = el("div", {});
     const caption = el("p", { class: "chart-caption muted" });
     for (const [value, label] of OLDEST_VIEWS) {
       const btn = el("button", {
@@ -379,6 +388,7 @@ export async function renderOverview(main, params, ctx) {
         onclick: () => {
           if (view === value) return;
           view = value;
+          page = 0;
           toggle.querySelectorAll("button.seg-btn").forEach((b) =>
             b.setAttribute("aria-pressed", b === btn ? "true" : "false"));
           paint();
@@ -390,22 +400,33 @@ export async function renderOverview(main, params, ctx) {
     function paint() {
       const individual = view === "findings";
       caption.textContent = individual
-        ? "Top 7 longest-open findings."
-        : "Top 7 by open findings older than 90 days.";
+        ? "Longest-open findings, oldest first."
+        : "Ranked by open findings older than 90 days.";
+      const allRows = (individual ? oldest.findings : oldest[view]) || [];
+      const pageCount = Math.max(1, Math.ceil(allRows.length / OLDEST_PAGE_SIZE));
+      // Clamp when a view switch (or a smaller payload on revalidation) leaves `page` past the end.
+      if (page >= pageCount) page = pageCount - 1;
+      const pageRows = allRows.slice(page * OLDEST_PAGE_SIZE, (page + 1) * OLDEST_PAGE_SIZE);
       // The Assets view carries per-asset Subscription / Domain; other group views don't.
       const extraCols = view === "byAsset"
         ? [{ header: "Subscription", get: (g) => g.subscription || "—" },
            { header: "Domain", get: (g) => g.domain || "—" }]
         : [];
       clear(tableHost).append(individual
-        ? oldestFindingsTable(oldest.findings || [])
-        : oldestGroupTable(oldest[view] || [], OLDEST_VIEWS.find(([v]) => v === view)[1], extraCols));
+        ? oldestFindingsTable(pageRows)
+        : oldestGroupTable(pageRows, OLDEST_VIEWS.find(([v]) => v === view)[1], extraCols));
+      // Prev/Next controls (pager() shows just "N rows" when a single page fits). onPage
+      // repaints from the already-loaded rows, so paging never hits the server.
+      clear(pagerHost);
+      if (allRows.length) {
+        pagerHost.append(pager(page, pageCount, allRows.length, (p) => { page = p; paint(); }));
+      }
     }
 
     paint();
     return el("div", { class: "chart-card" },
       el("h3", {}, "Oldest open findings"),
-      toggle, tableHost, caption);
+      toggle, tableHost, pagerHost, caption);
   }
 
   /** Ranked table of individual oldest open findings (CVE · Asset · Subscription · Severity · Age). */
