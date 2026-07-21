@@ -198,13 +198,14 @@ html, body {
   .sidebar.collapsed .scan-buttons { justify-content: center; }
   .sidebar.collapsed .scan-buttons .primary { padding: 8px; }
   .sidebar.collapsed .rail-status-dot { display: block; }
-  /* Value Chain filter stays reachable in the icon rail as a compact funnel trigger. The
-     native <select> is laid over the funnel at full size but transparent, so a click still
-     opens the normal option list (Chrome renders that popup regardless of the control's own
-     opacity) and the control keeps its keyboard behaviour + aria-label. Only this filter is
-     kept — Support group stays hidden by the blanket .sidebar-filter rule above; the extra
-     .sidebar-filter class here out-specifies that display:none. */
-  .sidebar.collapsed .sidebar-filter.sidebar-filter--domain {
+  /* Value Chain and Support group both stay reachable in the icon rail as compact trigger
+     boxes — a funnel glyph for Value Chain, a users glyph for Support group, so the two stay
+     distinguishable at a glance. Each native <select> is laid over its box at full size but
+     transparent, so a click still opens the normal option list (Chrome renders that popup
+     regardless of the control's own opacity) and the control keeps its keyboard behaviour +
+     aria-label. The extra .sidebar-filter--domain/--support class here out-specifies the
+     blanket .sidebar-filter display:none above. */
+  .sidebar.collapsed .sidebar-filter:is(.sidebar-filter--domain, .sidebar-filter--support) {
     display: block; position: relative;
     width: 40px; height: 34px; margin: 2px auto 4px;
     border: 1px solid var(--hairline); border-radius: var(--radius-md); background: var(--page);
@@ -215,20 +216,29 @@ html, body {
     -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolygon points='22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3'/%3E%3C/svg%3E") center / 16px 16px no-repeat;
             mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolygon points='22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3'/%3E%3C/svg%3E") center / 16px 16px no-repeat;
   }
-  .sidebar.collapsed .sidebar-filter--domain select {
+  .sidebar.collapsed .sidebar-filter--support::before {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background-color: var(--text-2);
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2'/%3E%3Ccircle cx='9' cy='7' r='4'/%3E%3Cpath d='M22 21v-2a4 4 0 0 0-3-3.87'/%3E%3Cpath d='M16 3.13a4 4 0 0 1 0 7.75'/%3E%3C/svg%3E") center / 16px 16px no-repeat;
+            mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2'/%3E%3Ccircle cx='9' cy='7' r='4'/%3E%3Cpath d='M22 21v-2a4 4 0 0 0-3-3.87'/%3E%3Cpath d='M16 3.13a4 4 0 0 1 0 7.75'/%3E%3C/svg%3E") center / 16px 16px no-repeat;
+  }
+  .sidebar.collapsed .sidebar-filter:is(.sidebar-filter--domain, .sidebar-filter--support) select {
     position: absolute; inset: 0; width: 100%; height: 100%;
     margin: 0; padding: 0; opacity: 0; cursor: pointer;
   }
-  /* Active scope: funnel + frame go accent so a filtered rail is legible at a glance
+  /* Active scope: glyph + frame go accent so a filtered rail is legible at a glance
      (:has drives it off the select's own .active class — a progressive tint, no JS coupling). */
-  .sidebar.collapsed .sidebar-filter--domain:has(select.active) { border-color: var(--accent); }
-  .sidebar.collapsed .sidebar-filter--domain:has(select.active)::before { background-color: var(--accent); }
+  .sidebar.collapsed .sidebar-filter:is(.sidebar-filter--domain, .sidebar-filter--support):has(select.active) { border-color: var(--accent); }
+  .sidebar.collapsed .sidebar-filter:is(.sidebar-filter--domain, .sidebar-filter--support):has(select.active)::before { background-color: var(--accent); }
   /* Focus lives on the transparent select, so surface it on the frame instead — the select's
      own outline would be invisible under opacity:0. Matches the app's 2px accent focus ring. */
-  .sidebar.collapsed .sidebar-filter--domain:focus-within {
+  .sidebar.collapsed .sidebar-filter:is(.sidebar-filter--domain, .sidebar-filter--support):focus-within {
     outline: 2px solid var(--accent); outline-offset: 2px; border-color: var(--accent);
   }
-  .sidebar.collapsed .sidebar-filter--domain:focus-within::before { background-color: var(--accent); }
+  .sidebar.collapsed .sidebar-filter:is(.sidebar-filter--domain, .sidebar-filter--support):focus-within::before { background-color: var(--accent); }
+  /* The support-group filter shows a visible "Support group" text label when the rail is
+     expanded; collapsed it would break out of the 40x34 icon box, so hide it only here. */
+  .sidebar.collapsed .sidebar-filter--support .field-label { display: none; }
   /* Loading panel in the icon rail: drop the full card chrome and its text/bar/buttons,
      leaving the compact ring indicator centered — the card's phase, counts and controls
      are too wide for 56px, so they collapse to the ring (status) + its Details button. */

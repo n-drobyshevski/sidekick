@@ -299,8 +299,9 @@ function renderSidebar(sidebar, data) {
     });
     zone.prepend(
       // No visible label — the default option reads "Value Chain" and the select keeps
-      // its aria-label for assistive tech. The --domain modifier keeps this one filter
-      // reachable in the collapsed icon rail (as a funnel trigger), unlike Support group.
+      // its aria-label for assistive tech. The --domain modifier keeps this filter
+      // reachable in the collapsed icon rail (as a funnel trigger); Support group has
+      // its own --support modifier for the same purpose, below.
       el("div", { class: "sidebar-filter sidebar-filter--domain" }, sel),
     );
   }
@@ -314,7 +315,10 @@ function renderSidebar(sidebar, data) {
     const sgSel = el(
       "select",
       { id: "filter-supportgroup", class: activeSupportGroup ? "active" : null,
-        "aria-label": "Filter by support group" },
+        "aria-label": "Filter by support group",
+        // Collapsed to icons the select text is hidden behind a users glyph, so a native
+        // title carries the current scope on hover; kept in sync with the selection below.
+        title: activeSupportGroup || "Support group" },
       el("option", { value: "" }, "All support groups"),
       ...groups.map((g) =>
         el("option", { value: g, selected: g === activeSupportGroup || null }, g)),
@@ -322,11 +326,12 @@ function renderSidebar(sidebar, data) {
     sgSel.addEventListener("change", () => {
       activeSupportGroup = sgSel.value;
       sgSel.classList.toggle("active", !!sgSel.value);
+      sgSel.title = sgSel.value || "Support group";
       syncScanZoneFiltering();
       route();
     });
     zone.prepend(
-      el("div", { class: "sidebar-filter" },
+      el("div", { class: "sidebar-filter sidebar-filter--support" },
         el("label", { class: "field-label" }, "Support group"), sgSel),
     );
   }
