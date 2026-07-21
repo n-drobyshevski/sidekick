@@ -377,6 +377,24 @@ export function openSheet(renderBody, opts = {}) {
   return { close };
 }
 
+/**
+ * A calm, aria-hidden placeholder block for the app-shell skeleton (see pages/mttr.js
+ * renderMttrSkeleton). `variant` selects the sizing preset ("" | "line" | "title" | "stat" |
+ * "pill" | "chart"); `width`/`height`/`radius` set inline overrides on top of it. Pure opacity
+ * pulse, no shimmer sweep (DESIGN.md forbids the SaaS tell) — see .skeleton in styles.css,
+ * which also carries the reduced-motion static fallback.
+ */
+export function skeleton(variant = "", { width, height, radius } = {}) {
+  const node = el("div", {
+    class: `skeleton${variant ? " skeleton--" + variant : ""}`,
+    "aria-hidden": "true",
+  });
+  if (width) node.style.width = width;
+  if (height) node.style.height = height;
+  if (radius) node.style.borderRadius = radius;
+  return node;
+}
+
 export function emptyState(message, hint) {
   return el(
     "div",
