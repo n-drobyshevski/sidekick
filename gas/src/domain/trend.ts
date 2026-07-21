@@ -581,7 +581,38 @@ export function trendFromBase(
  * GAS-first (no Python fixture parity — mirrors `withOpenPastSla`): a UI-only augmentation
  * of the same durable rows, kept out of the parity-tested `trendFromFrames`.
  */
-export function withKmMedian<T extends { date: string }>(
+/**
+ * Build a skip-mask for `withKmMedian`: true at indices whose KM computation should be
+ * skipped (emitted as null). Reconstructed points beyond `max` are thinned to an evenly
+ * spaced sample (first + last always kept); real points are never skipped. Returns null
+ * (skip nothing) when `max` is unset or the backbone already fits — the byte-identical path.
+ * Exported for the trend spec.
+ */
+export function kmSkipMask(
+  points: { reconstructed?: boolean }[],
+  max?: number,
+): boolean[] | null {
+  if (max === undefined || max < 0) return null;
+  const reconIdx: number[] = [];
+  points.forEach((p, i) => {
+    if (p.reconstructed) reconIdx.push(i);
+  });
+  if (reconIdx.length <= max) return null;
+  const skip = new Array(points.length).fill(false);
+  for (const i of reconIdx) skip[i] = false; // start from "compute all real; thin recon below"
+  // Mark every reconstructed point skipped, then un-skip an evenly spaced sample of `max`.
+  for (const i of reconIdx) skip[i] = true;
+  if (max > 0) {
+    const last = reconIdx.length - 1;
+    const denom = max === 1 ? 1 : max - 1;
+    for (let k = 0; k < max; k++) {
+      skip[reconIdx[Math.round((k * last) / denom)]] = false;
+    }
+  }
+  return skip;
+}
+
+export function withKmMedian<T extends { date: string; reconstructed?: boolean }>(
   points: T[],
   base: Rec[],
   severities: string[] | null = null,
@@ -589,7 +620,17 @@ export function withKmMedian<T extends { date: string }>(
   // when no vendor fix was available by d (awaitingFixAsOf) — such a row isn't yet on the
   // from-detection remediation clock, so it shouldn't inflate the censoring. Resolved rows
   // (events) are always kept, per the shared no-fix rule. Absent/false is unchanged.
-  opts: { hideNoFix?: boolean } = {},
+  //
+  // opts.maxReconstructed (default: unlimited) caps how many *reconstructed* points get a full
+  // KM computation. This is the trend's single heaviest op — one KM curve rebuilt per point —
+  // and `trendFromBase` seeds a synthetic point for every DAY between the earliest detection
+  // and the first saved scan, so a register with long pre-scan history pays hundreds of curve
+  // builds for a backbone the chart draws as a single reconstructed line. Real (saved-scan)
+  // points always compute; when the synthetic backbone exceeds the cap, KM runs on an evenly
+  // spaced sample of it (endpoints included) and the rest carry `km_median_days: null`. The
+  // client filters nulls out of the KM line (pages/mttr.js), so the line stays continuous
+  // through the sampled + real points and every real scan point keeps an exact value.
+  opts: { hideNoFix?: boolean; maxReconstructed?: number } = {},
 ): (T & { km_median_days: number | null })[] {
   const hideNoFix = opts.hideNoFix ?? false;
   let rows = base;
@@ -606,7 +647,12 @@ export function withKmMedian<T extends { date: string }>(
     fixAvail: parseTs(r["fix_available_at"]),
   }));
 
-  return points.map((p) => {
+  // Which point indices actually get a KM build. Default: all. With a cap, thin only the
+  // reconstructed backbone (real scan points stay exact), keeping an evenly spaced sample.
+  const skip = kmSkipMask(points, opts.maxReconstructed);
+
+  return points.map((p, i) => {
+    if (skip !== null && skip[i]) return { ...p, km_median_days: null };
     const d = parseTs(p.date);
     let med: number | null = null;
     if (d !== null) {

@@ -1143,7 +1143,8 @@ var Server = (() => {
     setRetention: () => setRetention,
     setRetentionSettings: () => setRetentionSettings,
     setSeverities: () => setSeverities,
-    setShowNoFix: () => setShowNoFix2
+    setShowNoFix: () => setShowNoFix2,
+    warmReadModels: () => warmReadModels
   });
 
   // src/domain/util.ts
@@ -2998,6 +2999,25 @@ var Server = (() => {
     }
     return tag(trendFromFrames(synthetic.concat(scans), base, severities, { hideNoFix }), syntheticIso);
   }
+  function kmSkipMask(points, max) {
+    if (max === void 0 || max < 0) return null;
+    const reconIdx = [];
+    points.forEach((p, i) => {
+      if (p.reconstructed) reconIdx.push(i);
+    });
+    if (reconIdx.length <= max) return null;
+    const skip = new Array(points.length).fill(false);
+    for (const i of reconIdx) skip[i] = false;
+    for (const i of reconIdx) skip[i] = true;
+    if (max > 0) {
+      const last = reconIdx.length - 1;
+      const denom = max === 1 ? 1 : max - 1;
+      for (let k = 0; k < max; k++) {
+        skip[reconIdx[Math.round(k * last / denom)]] = false;
+      }
+    }
+    return skip;
+  }
   function withKmMedian(points, base, severities = null, opts = {}) {
     var _a;
     const hideNoFix = (_a = opts.hideNoFix) != null ? _a : false;
@@ -3012,7 +3032,9 @@ var Server = (() => {
       mttr: typeof r["mttr_days"] === "number" && !Number.isNaN(r["mttr_days"]) ? r["mttr_days"] : null,
       fixAvail: parseTs(r["fix_available_at"])
     }));
-    return points.map((p) => {
+    const skip = kmSkipMask(points, opts.maxReconstructed);
+    return points.map((p, i) => {
+      if (skip !== null && skip[i]) return { ...p, km_median_days: null };
       const d = parseTs(p.date);
       let med = null;
       if (d !== null) {
@@ -4383,6 +4405,7 @@ var Server = (() => {
   function loadBaseRows(now) {
     return baseRows(loadState(), now);
   }
+  var KM_TREND_MAX_RECONSTRUCTED = 48;
   function loadTrend(severities = null, showNoFix = true, baseOverride) {
     const state = loadState();
     const hideNoFix = !showNoFix;
@@ -4407,7 +4430,10 @@ var Server = (() => {
     const withSla = withOpenPastSla(points, base, severities, "actionable_from");
     const withBurn = withSlaBurn(withSla, base, severities);
     const withAttainment = cohortSlaAttainment(withBurn, base, severities);
-    return withKmMedian(withAttainment, base, severities, { hideNoFix });
+    return withKmMedian(withAttainment, base, severities, {
+      hideNoFix,
+      maxReconstructed: KM_TREND_MAX_RECONSTRUCTED
+    });
   }
   function previousSeverityCounts() {
     const flats = loadScanRows().filter((s) => s.shape === "flat");
@@ -5673,6 +5699,15 @@ var Server = (() => {
       console.warn(`Failed to record MTTR snapshot: ${e}`);
       recordError("mttrSnapshot", e);
     }
+    autoCompactIfDue();
+    try {
+      warmReadModels();
+    } catch (e) {
+      console.warn(`Cache warming after scan failed: ${e}`);
+      recordError("cacheWarm", e);
+    }
+  }
+  function autoCompactIfDue() {
     try {
       if (!getAutoCompact2()) return;
       const days = getRetentionDays2();
@@ -6031,29 +6066,28 @@ var Server = (() => {
       movement: movement(baseVisible, latestFlat, loadScanRows().length)
     };
   }
-  function getInsights(p) {
-    return run(
-      () => {
-        var _a, _b;
-        return cached(
-          // "insights" → "insights2": the payload now honors the show-no-fix toggle (counts,
-          // total, sevStats, exploit, aging, oldest, awaiting, movement, and the as-of openTrend
-          // all reflect it); key gains showNoFix so on/off states don't share an entry.
-          // "insights2" → "insights3": `oldest.*` now carries up to 100 rows (was 7) for the aging
-          // panel's prev/next pagination; bump so stale 7-row entries can't survive the deploy.
-          "insights3",
-          {
-            domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
-            supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
-            supportGroups: readStringArray(p, "supportGroups"),
-            severities: readSeverities(p),
-            showNoFix: getShowNoFix2()
-          },
-          () => insightsData(p),
-          3600
-        );
-      }
+  var cachedInsightsData = (p) => {
+    var _a, _b;
+    return cached(
+      // "insights" → "insights2": the payload now honors the show-no-fix toggle (counts,
+      // total, sevStats, exploit, aging, oldest, awaiting, movement, and the as-of openTrend
+      // all reflect it); key gains showNoFix so on/off states don't share an entry.
+      // "insights2" → "insights3": `oldest.*` now carries up to 100 rows (was 7) for the aging
+      // panel's prev/next pagination; bump so stale 7-row entries can't survive the deploy.
+      "insights3",
+      {
+        domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
+        supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
+        supportGroups: readStringArray(p, "supportGroups"),
+        severities: readSeverities(p),
+        showNoFix: getShowNoFix2()
+      },
+      () => insightsData(p),
+      3600
     );
+  };
+  function getInsights(p) {
+    return run(() => cachedInsightsData(p));
   }
   function scopedFrameRecords(domain, supportGroup, supportGroupSet) {
     const scan = currentScan();
@@ -6093,32 +6127,29 @@ var Server = (() => {
       )
     };
   }
-  function getGrouping(p) {
+  var cachedGroupingData = (p) => {
     var _a, _b;
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
     const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
     const supportGroupSet = readStringArray(p, "supportGroups");
     const raw = p == null ? void 0 : p["keys"];
     const keys = Array.isArray(raw) ? raw.map(String) : [];
-    return run(
-      () => (
-        // "grouping" → "grouping2": the breakdown tree is built over scopedFrameRecords, which
-        // now honors the show-no-fix toggle; key gains showNoFix so on/off states cache apart.
-        cached(
-          "grouping2",
-          {
-            domain,
-            supportGroup,
-            supportGroups: supportGroupSet,
-            keys,
-            severities: readSeverities(p),
-            showNoFix: getShowNoFix2()
-          },
-          () => groupingData(p),
-          3600
-        )
-      )
+    return cached(
+      "grouping2",
+      {
+        domain,
+        supportGroup,
+        supportGroups: supportGroupSet,
+        keys,
+        severities: readSeverities(p),
+        showNoFix: getShowNoFix2()
+      },
+      () => groupingData(p),
+      3600
     );
+  };
+  function getGrouping(p) {
+    return run(() => cachedGroupingData(p));
   }
   function groupTrendData(p) {
     var _a, _b, _c;
@@ -6944,6 +6975,34 @@ var Server = (() => {
         })
       )
     );
+  }
+  function defaultGroupingKeys() {
+    return domainNames(getDomains2().items).length > 1 ? ["domain"] : ["atype"];
+  }
+  function warmReadModels() {
+    const warm = (label, fn) => {
+      try {
+        fn();
+      } catch (e) {
+        console.warn(`Cache warm (${label}) failed: ${e}`);
+      }
+    };
+    warm("bootstrap", () => bootstrap());
+    warm("scanHistory", () => cachedScanHistoryData());
+    const display = getDisplaySeverities2();
+    const scopes = [null];
+    if (Array.isArray(display) && display.length && display.length < SELECTABLE_SEVERITIES.length) {
+      scopes.push([...display]);
+    }
+    const groupingKeys = defaultGroupingKeys();
+    for (const severities of scopes) {
+      const p = { domain: "", supportGroup: "", severities };
+      warm("mttr", () => cachedMttrData(p));
+      warm("mttrByDomain", () => cachedMttrByDomainData(p));
+      warm("mttrTrend", () => cachedMttrTrendData(p));
+      warm("insights", () => cachedInsightsData(p));
+      warm("grouping", () => cachedGroupingData({ ...p, keys: groupingKeys }));
+    }
   }
   return __toCommonJS(server_exports);
 })();

@@ -417,28 +417,30 @@ function insightsData(p?: unknown): Rec {
   };
 }
 
-export function getInsights(p?: unknown): ApiResult {
-  // 1h TTL like the MTTR summary: aging carries wall-clock-relative day counts.
-  // Keyed on domain so per-chain payloads don't clobber each other.
-  return run(() =>
-    cached(
-      // "insights" → "insights2": the payload now honors the show-no-fix toggle (counts,
-      // total, sevStats, exploit, aging, oldest, awaiting, movement, and the as-of openTrend
-      // all reflect it); key gains showNoFix so on/off states don't share an entry.
-      // "insights2" → "insights3": `oldest.*` now carries up to 100 rows (was 7) for the aging
-      // panel's prev/next pagination; bump so stale 7-row entries can't survive the deploy.
-      "insights3",
-      {
-        domain: String((p as Rec)?.["domain"] ?? ""),
-        supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
-        supportGroups: readStringArray(p, "supportGroups"),
-        severities: readSeverities(p),
-        showNoFix: settingsStore.getShowNoFix(),
-      },
-      () => insightsData(p),
-      3600,
-    ),
+// 1h TTL like the MTTR summary: aging carries wall-clock-relative day counts. Keyed on
+// domain so per-chain payloads don't clobber each other. Extracted so warmReadModels and the
+// getInsights endpoint share one cache entry.
+const cachedInsightsData = (p?: unknown) =>
+  cached(
+    // "insights" → "insights2": the payload now honors the show-no-fix toggle (counts,
+    // total, sevStats, exploit, aging, oldest, awaiting, movement, and the as-of openTrend
+    // all reflect it); key gains showNoFix so on/off states don't share an entry.
+    // "insights2" → "insights3": `oldest.*` now carries up to 100 rows (was 7) for the aging
+    // panel's prev/next pagination; bump so stale 7-row entries can't survive the deploy.
+    "insights3",
+    {
+      domain: String((p as Rec)?.["domain"] ?? ""),
+      supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
+      supportGroups: readStringArray(p, "supportGroups"),
+      severities: readSeverities(p),
+      showNoFix: settingsStore.getShowNoFix(),
+    },
+    () => insightsData(p),
+    3600,
   );
+
+export function getInsights(p?: unknown): ApiResult {
+  return run(() => cachedInsightsData(p));
 }
 
 // ------------------------------------------------------------------------- grouping
@@ -476,22 +478,25 @@ function groupingData(p?: unknown): Rec {
   };
 }
 
-export function getGrouping(p?: unknown): ApiResult {
+// Extracted so warmReadModels and the getGrouping endpoint share one cache entry.
+const cachedGroupingData = (p?: unknown) => {
   const domain = String((p as Rec)?.["domain"] ?? "");
   const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
   const supportGroupSet = readStringArray(p, "supportGroups");
   const raw = (p as Rec)?.["keys"];
   const keys = Array.isArray(raw) ? (raw as unknown[]).map(String) : [];
-  return run(() =>
-    // "grouping" → "grouping2": the breakdown tree is built over scopedFrameRecords, which
-    // now honors the show-no-fix toggle; key gains showNoFix so on/off states cache apart.
-    cached("grouping2",
-      {
-        domain, supportGroup, supportGroups: supportGroupSet, keys,
-        severities: readSeverities(p), showNoFix: settingsStore.getShowNoFix(),
-      },
-      () => groupingData(p), 3600),
-  );
+  // "grouping" → "grouping2": the breakdown tree is built over scopedFrameRecords, which
+  // now honors the show-no-fix toggle; key gains showNoFix so on/off states cache apart.
+  return cached("grouping2",
+    {
+      domain, supportGroup, supportGroups: supportGroupSet, keys,
+      severities: readSeverities(p), showNoFix: settingsStore.getShowNoFix(),
+    },
+    () => groupingData(p), 3600);
+};
+
+export function getGrouping(p?: unknown): ApiResult {
+  return run(() => cachedGroupingData(p));
 }
 
 // ------------------------------------------------------------------- group trend
@@ -1452,4 +1457,59 @@ export function getStorageStats(_p?: unknown): ApiResult {
       };
     }),
   );
+}
+
+// ------------------------------------------------------------------- cache warming
+
+// The default breakdown grouping key the OS-vulns page opens with at the whole-chain view
+// (mirrors overview.js: domains when >1 configured, else asset type). Warmed so the lazy
+// "Explore breakdown" drawer opens instantly right after a scan.
+function defaultGroupingKeys(): string[] {
+  return domainNames(settingsStore.getDomains().items).length > 1 ? ["domain"] : ["atype"];
+}
+
+/**
+ * Precompute the derived read-models the landing pages open with, so the first analyst load
+ * after a scan hits a warm cache instead of paying the full recompute on the interactive path.
+ *
+ * Every mutation calls bumpDataVersion(), so all cross-request caches go cold after a scan;
+ * this runs at the tail of afterPersist (scanJobs), once DATA_VERSION is final (after any
+ * auto-compaction), inside the scan job's own execution — the state + current-scan frame are
+ * already loaded there, so warming reuses them. Best-effort: every entry is guarded so one
+ * failure never aborts the rest or the scan, and the whole thing is a no-op on cache errors.
+ *
+ * Scope: whole-chain only (a specific Value Chain / Support group stays cold — acceptable),
+ * for the current show-no-fix state, at both the severity scopes the pages request — the
+ * all-severities entry (severities: null, the shared default) plus the configured Display
+ * severity subset when it's narrower (pages send exactly that array via scopeParam).
+ */
+export function warmReadModels(): void {
+  const warm = (label: string, fn: () => unknown) => {
+    try {
+      fn();
+    } catch (e) {
+      console.warn(`Cache warm (${label}) failed: ${e}`);
+    }
+  };
+
+  // Severity-independent entries: the bootstrap core (also feeds the sidebar/counts) and the
+  // scan-history KPI band.
+  warm("bootstrap", () => bootstrap());
+  warm("scanHistory", () => cachedScanHistoryData());
+
+  // The severity scopes the pages actually request (see the executive/mttr/overview pages).
+  const display = settingsStore.getDisplaySeverities();
+  const scopes: (string[] | null)[] = [null];
+  if (Array.isArray(display) && display.length && display.length < SELECTABLE_SEVERITIES.length) {
+    scopes.push([...display]);
+  }
+  const groupingKeys = defaultGroupingKeys();
+  for (const severities of scopes) {
+    const p = { domain: "", supportGroup: "", severities };
+    warm("mttr", () => cachedMttrData(p));
+    warm("mttrByDomain", () => cachedMttrByDomainData(p));
+    warm("mttrTrend", () => cachedMttrTrendData(p));
+    warm("insights", () => cachedInsightsData(p));
+    warm("grouping", () => cachedGroupingData({ ...p, keys: groupingKeys }));
+  }
 }

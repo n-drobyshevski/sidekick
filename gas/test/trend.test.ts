@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   awaitingFixAsOf,
   cohortSlaAttainment,
+  kmSkipMask,
   kmMedianByGroupTrend, medianMttrByGroupTrend,
   openByGroupTrend, openBySeverityTrend, trendFromBase, trendFromFrames,
   withKmMedian, withOpenPastSla, withSlaBurn,
@@ -780,5 +781,75 @@ describe("withKmMedian", () => {
     expect(withKmMedian(points, b, null, { hideNoFix: false })).toEqual(withKmMedian(points, b));
     // hideNoFix: the awaiting rows leave the risk set; the resolved event still counts.
     expect(withKmMedian(points, b, null, { hideNoFix: true })[0].km_median_days).toBe(2);
+  });
+
+  describe("maxReconstructed sampling", () => {
+    // A base whose events (as of a late date) give a stable KM median of 4, so every computed
+    // point carries the same non-null value and only the compute/skip pattern varies.
+    const late = base; // events [2,4,6,8] -> median 4 as of 2026-01-10+
+    const mk = (n: number, reconstructed: boolean) =>
+      Array.from({ length: n }, (_, i) => ({
+        date: `2026-02-${String(i + 1).padStart(2, "0")}T00:00:00Z`,
+        reconstructed,
+      }));
+
+    it("is byte-identical to unlimited when the backbone fits under the cap", () => {
+      const points = mk(5, true);
+      expect(withKmMedian(points, late, null, { maxReconstructed: 10 }))
+        .toEqual(withKmMedian(points, late));
+    });
+
+    it("never skips real (non-reconstructed) points", () => {
+      const points = mk(20, false);
+      const out = withKmMedian(points, late, null, { maxReconstructed: 3 });
+      expect(out.every((p) => p.km_median_days === 4)).toBe(true);
+    });
+
+    it("thins reconstructed points to an evenly spaced sample, keeping first + last", () => {
+      const points = mk(20, true);
+      const out = withKmMedian(points, late, null, { maxReconstructed: 5 });
+      const computed = out.filter((p) => p.km_median_days !== null);
+      expect(computed).toHaveLength(5);
+      // Endpoints always retained.
+      expect(out[0].km_median_days).toBe(4);
+      expect(out[out.length - 1].km_median_days).toBe(4);
+    });
+
+    it("computes every real point and only samples the reconstructed backbone", () => {
+      // 2 real points bracketing 10 reconstructed ones; cap the backbone at 4.
+      const points = [
+        { date: "2026-02-01T00:00:00Z", reconstructed: false },
+        ...mk(10, true).map((p, i) => ({ ...p, date: `2026-02-${String(i + 2).padStart(2, "0")}T00:00:00Z` })),
+        { date: "2026-02-20T00:00:00Z", reconstructed: false },
+      ];
+      const out = withKmMedian(points, late, null, { maxReconstructed: 4 });
+      const realComputed = out.filter((p) => !p.reconstructed && p.km_median_days !== null);
+      const reconComputed = out.filter((p) => p.reconstructed && p.km_median_days !== null);
+      expect(realComputed).toHaveLength(2); // both real points always compute
+      expect(reconComputed).toHaveLength(4); // backbone sampled to the cap
+    });
+  });
+
+  describe("kmSkipMask", () => {
+    it("returns null (skip nothing) when unset or the backbone fits", () => {
+      const pts = [{ reconstructed: true }, { reconstructed: true }];
+      expect(kmSkipMask(pts)).toBeNull();
+      expect(kmSkipMask(pts, 5)).toBeNull();
+    });
+
+    it("skips only surplus reconstructed points, keeping evenly spaced endpoints", () => {
+      const pts = [
+        { reconstructed: false },
+        { reconstructed: true }, { reconstructed: true }, { reconstructed: true },
+        { reconstructed: true }, { reconstructed: true },
+        { reconstructed: false },
+      ];
+      const mask = kmSkipMask(pts, 2)!;
+      expect(mask[0]).toBe(false); // real point never skipped
+      expect(mask[6]).toBe(false); // real point never skipped
+      // Of the 5 reconstructed points (idx 1..5), exactly 2 kept (first + last of the run).
+      const keptRecon = [1, 2, 3, 4, 5].filter((i) => !mask[i]);
+      expect(keptRecon).toEqual([1, 5]);
+    });
   });
 });

@@ -290,6 +290,10 @@ export function loadBaseRows(now?: number): BaseRow[] {
   return baseRows(loadState(), now);
 }
 
+// Ceiling on how many reconstructed (synthetic pre-scan) points get a full KM-median build in
+// the trend — see withKmMedian(opts.maxReconstructed). Real saved-scan points are never capped.
+const KM_TREND_MAX_RECONSTRUCTED = 48;
+
 export function loadTrend(
   severities: string[] | null = null,
   // When false (the global "show findings without a vendor fix" toggle is off) the open /
@@ -337,7 +341,16 @@ export function loadTrend(
   const withSla = withOpenPastSla(points, base, severities, "actionable_from");
   const withBurn = withSlaBurn(withSla, base, severities);
   const withAttainment = cohortSlaAttainment(withBurn, base, severities);
-  return withKmMedian(withAttainment, base, severities, { hideNoFix });
+  // Cap the KM-median builds over the synthetic pre-scan backbone: it's the trend's heaviest
+  // op (one KM curve per point) and `trendFromBase` seeds one synthetic point per DAY of
+  // pre-first-scan history. Real scan points always compute; the reconstructed backbone is
+  // sampled to KM_TREND_MAX_RECONSTRUCTED points (the chart draws a continuous line through
+  // the non-null values). 48 keeps the reconstructed curve visually smooth while bounding the
+  // cost regardless of how far back detections reach.
+  return withKmMedian(withAttainment, base, severities, {
+    hideNoFix,
+    maxReconstructed: KM_TREND_MAX_RECONSTRUCTED,
+  });
 }
 
 /** Per-severity counts of the second-newest flat scan (change-badge baseline). */
