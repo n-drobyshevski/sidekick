@@ -141,6 +141,13 @@ function fmtKmMedian(km) {
   return "—";
 }
 
+// Circular-arrows (refresh) glyph for the by-domain panel's single lens-swap button. Inline
+// SVG with stroke:currentColor so it inherits the button's ink, like NAV_ICONS / CHEVRON_ICON.
+const SWAP_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" '
+  + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>'
+  + '<path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>';
+
 // App-shell skeleton for the cold-load MTTR page — mirrors the real hero / Trends / Distribution
 // / SLA hosts so the swap to live content doesn't reflow. Blocks are aria-hidden; the hero host
 // carries the "Computing MTTR" announcement the old muted "Computing…" text used to give. The
@@ -234,6 +241,9 @@ export async function renderMttr(main, _params, ctx) {
   // By-domain "MTTR by domain" chart clock: KM median (censoring-aware, the default) vs the
   // naive closed-only comparison. Persisted across visits like the other in-card toggles.
   let byDomainClock = loadPref("mttrByDomainClock", ["km", "naive"], "km");
+  // Which lens the merged by-domain panel shows: "share" (resolved-share pie) or "contribution"
+  // (MTTR-wait waterfall). Persisted across visits like the clock above.
+  let byDomainShareView = loadPref("mttrByDomainShareView", ["share", "contribution"], "share");
 
   await load();
 
@@ -283,13 +293,13 @@ export async function renderMttr(main, _params, ctx) {
     // Breakdown helpers). Both share one groupPalette so a domain's hue is stable across them.
     const pieCanvas = el("canvas", {});
     const pieMsg = el("p", { class: "chart-empty muted", style: "display:none" });
-    const pieCaption = el("p", { class: "chart-caption muted" });
     const lineCanvas = el("canvas", {});
     const lineMsg = el("p", { class: "chart-empty muted", style: "display:none" });
     const lineCaption = el("p", { class: "chart-caption muted" });
     const wfCanvas = el("canvas", {});
     const wfMsg = el("p", { class: "chart-empty muted", style: "display:none" });
-    const wfCaption = el("p", { class: "chart-caption muted" });
+    // The pie and the waterfall share one switchable card, so they share one caption too.
+    const shareCaption = el("p", { class: "chart-caption muted" });
 
     // Swap a card between its live canvas and a centered muted message.
     function showChart(canvas, msg) {
@@ -397,11 +407,62 @@ export async function renderMttr(main, _params, ctx) {
     const lineTitle = el("h3", {}, helpTip("MTTR by domain", lineHelp, { className: "help-label" }));
     const lineHead = lineToggle ? el("div", { class: "chart-head" }, lineTitle, lineToggle) : lineTitle;
 
+    // Unified by-domain panel: the "Remediation share" pie and the "Domain contribution to MTTR"
+    // waterfall are two lenses on the same domains (who carries the resolved work vs who owns the
+    // remediation wait), so they share one card switched by a segmented toggle instead of two
+    // separate cards. It sits in a row with the "MTTR by domain" line; the chosen lens persists.
+    const shareHelp = [
+      "Each domain's share of the resolved findings the MTTR median runs over — who is carrying " +
+        "the remediation work. Hover a slice for that domain's KM median.",
+    ];
+    const wfHelp = [
+      "Ranks domains by remediation wait-time — resolved findings × that domain's KM median MTTR " +
+        "(finding·days) — stacked to a running total. A tall step is a big lever on the overall figure.",
+      "A proxy, not an exact split: the overall KM median is a censored-survival statistic, not a " +
+        "weighted average of per-domain medians, so the headline MTTR can't be decomposed exactly.",
+    ];
+    const shareTitleHost = el("h3", {}); // retitled per lens by applyShareView
+    // A single circular-arrows button swaps the two lenses (share ⇄ contribution). The card title
+    // names the active lens, so one icon toggle reads cleaner than two buttons; its aria-label /
+    // title announce what the next click switches to (updated in applyShareView).
+    const swapBtn = el("button", { type: "button", class: "chart-swap" });
+    swapBtn.innerHTML = SWAP_ICON;
+    swapBtn.addEventListener("click", () =>
+      pickShareView(byDomainShareView === "share" ? "contribution" : "share"));
+    // Both canvases live in one box (same height as the line card so the row aligns); the inactive
+    // one starts hidden so there's no flash before the first paint in the rAF below.
+    pieCanvas.style.display = byDomainShareView === "share" ? "" : "none";
+    wfCanvas.style.display = byDomainShareView === "contribution" ? "" : "none";
+    const shareCard = el("div", { class: "chart-card" },
+      el("div", { class: "chart-head" }, shareTitleHost, swapBtn),
+      el("div", { class: "chart-box" }, pieCanvas, pieMsg, wfCanvas, wfMsg),
+      shareCaption);
+
+    // Switch the lens: flip aria-pressed, retitle with the matching help, tear down the hidden
+    // chart, and paint the active one (each paint fn shows its own canvas / empty message).
+    function applyShareView(view) {
+      byDomainShareView = view;
+      // The label names what the *next* click switches to (the title already names the current lens).
+      const nextLabel = view === "share" ? "Show domain contribution to MTTR" : "Show remediation share";
+      swapBtn.setAttribute("aria-label", nextLabel);
+      swapBtn.title = nextLabel;
+      clear(shareTitleHost).append(
+        view === "share"
+          ? helpTip("Remediation share", shareHelp, { className: "help-label" })
+          : helpTip("Domain contribution to MTTR", wfHelp, { className: "help-label" }));
+      const [hideCanvas, hideMsg] = view === "share" ? [wfCanvas, wfMsg] : [pieCanvas, pieMsg];
+      destroyChart(hideCanvas);
+      hideCanvas.style.display = "none";
+      hideMsg.style.display = "none";
+      if (view === "share") paintPie(); else paintWaterfall();
+    }
+    function pickShareView(view) {
+      savePref("mttrByDomainShareView", view);
+      applyShareView(view);
+    }
+
     const chartPair = el("div", { class: "chart-grid", style: "align-items:start" },
-      el("div", { class: "chart-card" },
-        el("h3", {}, "Remediation share"),
-        el("div", { class: "chart-box" }, pieCanvas, pieMsg),
-        pieCaption),
+      shareCard,
       el("div", { class: "chart-card" },
         lineHead,
         el("div", { class: "chart-box" }, lineCanvas, lineMsg),
@@ -413,7 +474,7 @@ export async function renderMttr(main, _params, ctx) {
     // stay fixed (slices resize, never recolor).
     function paintPie() {
       const byName = new Map(byDomain.rows.map((r) => [r.domain, r]));
-      pieCaption.textContent = "Each domain's share of resolved findings — the population feeding MTTR.";
+      shareCaption.textContent = "Each domain's share of resolved findings — the population feeding MTTR.";
       const slices = groups
         .map((name) => {
           const r = byName.get(name);
@@ -441,7 +502,7 @@ export async function renderMttr(main, _params, ctx) {
     // a taller step is a bigger lever on the overall MTTR. Ordered biggest-driver first so the top
     // contributors read left-to-right; the pooled "Other" and grounded Total come last.
     function paintWaterfall() {
-      wfCaption.textContent = "Each domain's remediation wait-time (resolved × KM median) building to "
+      shareCaption.textContent = "Each domain's remediation wait-time (resolved × KM median) building to "
         + "the total — a taller step drives the overall MTTR more.";
       if (!wfSteps.length) {
         showMsg(wfCanvas, wfMsg, "No resolved findings to attribute.");
@@ -454,17 +515,6 @@ export async function renderMttr(main, _params, ctx) {
         { unit: "finding·days", subject: "Domain contribution to remediation wait" },
       );
     }
-    const wfHelp = [
-      "Ranks domains by remediation wait-time — resolved findings × that domain's KM median MTTR "
-        + "(finding·days) — stacked to a running total. A tall step is a big lever on the overall figure.",
-      "A proxy, not an exact split: the overall KM median is a censored-survival statistic, not a "
-        + "weighted average of per-domain medians, so the headline MTTR can't be decomposed exactly.",
-    ];
-    const wfCard = el("div", { class: "chart-card" },
-      el("h3", {}, helpTip("Domain contribution to MTTR", wfHelp, { className: "help-label" })),
-      el("div", { class: "chart-box chart-box--tall" }, wfCanvas, wfMsg),
-      wfCaption);
-
     // Column headers carry the two new metrics' definitions via helpTip, matching the
     // per-severity table's convention in renderSla above.
     const columns = [
@@ -539,13 +589,12 @@ export async function renderMttr(main, _params, ctx) {
     // stacking on the page. openSheet calls renderBody synchronously, so the paint rAF
     // scheduled here fires after the canvases are attached to the (animating) sheet.
     function renderBody(body) {
-      body.append(chartPair, wfCard, tableWrap);
+      body.append(chartPair, tableWrap);
       if (footnote) body.append(footnote);
       if (excludedNote) body.append(excludedNote);
       requestAnimationFrame(() => {
-        paintPie();
+        applyShareView(byDomainShareView); // paints the active lens (pie or waterfall)
         paintLine();
-        paintWaterfall();
       });
     }
 
