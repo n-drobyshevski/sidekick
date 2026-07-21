@@ -1110,6 +1110,7 @@ var Server = (() => {
     deleteScans: () => deleteScans2,
     getAttribution: () => getAttribution,
     getDomains: () => getDomains3,
+    getExecutivePage: () => getExecutivePage,
     getExportCsv: () => getExportCsv,
     getExportRawUrl: () => getExportRawUrl,
     getFindingDetail: () => getFindingDetail,
@@ -6526,6 +6527,12 @@ var Server = (() => {
       mttr: cachedMttrData(p),
       trends: cachedMttrTrendData(p),
       byDomain: domain ? null : cachedMttrByDomainData(p)
+    }));
+  }
+  function getExecutivePage(p) {
+    return run(() => ({
+      mttr: cachedMttrData(p),
+      byDomain: cachedMttrByDomainData(p)
     }));
   }
   function scanHistoryData() {

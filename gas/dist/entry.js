@@ -36,6 +36,7 @@ function api_getAttribution(p) { return timedApi_("getAttribution", p); }
 function api_getMttr(p) { return timedApi_("getMttr", p); }
 function api_getMttrTrend(p) { return timedApi_("getMttrTrend", p); }
 function api_getMttrPage(p) { return timedApi_("getMttrPage", p); }
+function api_getExecutivePage(p) { return timedApi_("getExecutivePage", p); }
 function api_getScanHistory(p) { return timedApi_("getScanHistory", p); }
 function api_getHistoryPage(p) { return timedApi_("getHistoryPage", p); }
 function api_runScan(p) { return timedApi_("runScan", p); }

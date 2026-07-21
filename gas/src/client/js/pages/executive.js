@@ -1,7 +1,9 @@
 // Executive View — the default landing page. A calm, centered summary of the numbers
 // leadership acts on: one big Kaplan–Meier MTTR score, open vulnerabilities by severity,
 // the last scan (with a Run scan button), and KM MTTR by domain. Composes existing
-// endpoints (api_bootstrap + api_getMttrPage) — no page-specific server code.
+// read-models (api_bootstrap + api_getExecutivePage) — the latter a lean sibling of the
+// MTTR page's endpoint that ships only the hero + per-domain slices this page paints,
+// sharing their cache entries but skipping the unused trend reconstruction.
 
 import { bootstrap, swrCall } from "../store.js";
 import {
@@ -38,6 +40,18 @@ function fmtKmMedian(km) {
 }
 
 export async function renderExecutive(main, _params, ctx) {
+  // Kick the executive-data RPC off first, before awaiting bootstrap — the two round trips
+  // are independent, so overlapping them removes one serial network hop from the default
+  // landing page. `paint` is assigned once the section hosts exist (just below); the SWR
+  // background revalidation resolves far later than that, so the guarded reference is safe.
+  // Whole-chain, all-severities (no scope) so it shares the MTTR page's default cache entry.
+  let paint;
+  const execData = swrCall(
+    "api_getExecutivePage",
+    { domain: "", supportGroup: "", severities: null },
+    (fresh) => paint && paint(fresh),
+  );
+
   const boot = await bootstrap();
 
   const page = el("div", { class: "exec" });
@@ -75,18 +89,17 @@ export async function renderExecutive(main, _params, ctx) {
   guard("severity", sevHost, renderSeverity);
   renderHeroSkeleton();
 
-  // One batched round trip; we use only `.mttr` (hero) and `.byDomain` (per-domain split).
-  // Whole-chain, all-severities (no scope) so it shares the default MTTR cache entry.
-  const paint = (data) => {
+  // We use only `.mttr` (hero) and `.byDomain` (per-domain split) — api_getExecutivePage
+  // ships exactly those two slices and skips the trend reconstruction the MTTR page needs.
+  paint = (data) => {
     guard("MTTR", heroHost, () => renderHero(data && data.mttr));
     guard("by domain", byDomainHost, () => renderByDomain(data && data.byDomain));
   };
   try {
-    paint(await swrCall("api_getMttrPage",
-      { domain: "", supportGroup: "", severities: null }, paint));
+    paint(await execData);
   } catch (e) {
     // eslint-disable-next-line no-console
-    console.error("[executive] getMttrPage failed:", e);
+    console.error("[executive] getExecutivePage failed:", e);
     clear(heroHost).append(emptyState(
       "Couldn't load remediation data.",
       "Try running a scan or reloading the page.",

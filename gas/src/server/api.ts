@@ -980,6 +980,21 @@ export function getMttrPage(p?: unknown): ApiResult {
   }));
 }
 
+/** Executive landing page in one round trip — the lean sibling of getMttrPage. The exec
+ *  view paints only the KM-median hero (`mttr`) and the per-domain split (`byDomain`); it
+ *  never reads the trend series, so this endpoint deliberately omits `cachedMttrTrendData`
+ *  — the heaviest read-model (full history backbone + per-point KM curves + SLA-burn +
+ *  cohort attainment). Skipping it keeps the default landing page's cold path off that
+ *  reconstruction entirely. Both slices come from the *same* `cached()` entries the MTTR
+ *  page uses (whole-chain, all-severities), so exec→MTTR navigation still lands warm and
+ *  the only difference is which slices this round trip computes. */
+export function getExecutivePage(p?: unknown): ApiResult {
+  return run(() => ({
+    mttr: cachedMttrData(p),
+    byDomain: cachedMttrByDomainData(p),
+  }));
+}
+
 // --------------------------------------------------------------------- scan history
 
 function scanHistoryData(): Rec {
