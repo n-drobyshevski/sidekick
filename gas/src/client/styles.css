@@ -149,9 +149,48 @@ html, body {
 .scan-controls { display: flex; flex-direction: column; gap: 8px; }
 .scan-buttons { display: flex; gap: 8px; }
 
-/* Global Value Chain filter — sits at the top of the bottom cluster. The select
-   spans the rail so long chain names don't clip. */
-.sidebar-filter select { width: 100%; }
+/* Global Value Chain / Support group filters — searchable comboboxes (ui.js
+   filterCombobox()) sitting at the top of the bottom cluster. The trigger spans the
+   rail, matching the app's field look (white, hairline border, 36px min-height). */
+.combobox { position: relative; }
+.combobox-trigger {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  width: 100%; min-height: 36px; padding: 4px 10px;
+  font-family: var(--font); font-size: 0.875rem; font-weight: 400; text-align: left;
+  background: var(--page); color: var(--ink);
+  border: 1px solid var(--hairline); border-radius: var(--radius-md); box-shadow: none;
+}
+.combobox-trigger:hover { background: #f1f1f4; }
+.combobox-trigger.active { border-color: var(--accent); }
+.combobox-trigger-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.combobox-caret { font-size: 0.7rem; color: var(--text-3); flex: 0 0 auto; }
+
+/* Popover: portaled to <body> (see ui.js filterCombobox — the sidebar's overflow-y:auto
+   would clip an in-rail popover) and positioned `fixed`, growing upward from the
+   trigger. Card-surface recipe matching .sev-filter-menu / .helptip-bubble, but with
+   --shadow-sheet since it floats fully detached from any panel. */
+.combobox-pop {
+  position: fixed; z-index: var(--z-popover);
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 6px; background: var(--page); color: var(--ink);
+  border: 1px solid var(--hairline); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sheet);
+  font-family: var(--font);
+}
+.combobox-search { width: 100%; margin: 0; }
+/* The list itself scrolls (max-height set inline by ui.js position()) so the search
+   input above it stays pinned. */
+.combobox-list { list-style: none; margin: 0; padding: 2px; overflow-y: auto; }
+.combobox-option {
+  padding: 6px 8px; border-radius: var(--radius-sm);
+  font-size: 0.8125rem; line-height: 1.3; color: var(--ink); cursor: pointer;
+}
+.combobox-option:hover, .combobox-option.active { background: var(--surface); }
+/* Selected option: meaning is text weight + accent color together, not color alone —
+   aria-selected already carries it for assistive tech. */
+.combobox-option[aria-selected="true"] { font-weight: 600; color: var(--accent); }
+.combobox-option--reset { border-bottom: 1px solid var(--hairline); margin-bottom: 2px; padding-bottom: 8px; }
+.combobox-empty { padding: 6px 8px; font-size: 0.8125rem; color: var(--text-3); cursor: default; }
 
 /* Collapsible rail — icon-only mode (desktop only; the <=800px top-bar layout further
    down ignores .collapsed). Width rides --rail-w so the flex main pane and the reload
@@ -200,42 +239,42 @@ html, body {
   .sidebar.collapsed .rail-status-dot { display: block; }
   /* Value Chain and Support group both stay reachable in the icon rail as compact trigger
      boxes — a funnel glyph for Value Chain, a users glyph for Support group, so the two stay
-     distinguishable at a glance. Each native <select> is laid over its box at full size but
-     transparent, so a click still opens the normal option list (Chrome renders that popup
-     regardless of the control's own opacity) and the control keeps its keyboard behaviour +
-     aria-label. The extra .sidebar-filter--domain/--support class here out-specifies the
-     blanket .sidebar-filter display:none above. */
+     distinguishable at a glance. The combobox-trigger <button> itself becomes the 40x34 box
+     (its text label + caret hidden); the glyph is painted via ::before, same masks as before.
+     The extra .sidebar-filter--domain/--support class here out-specifies the blanket
+     .sidebar-filter display:none above. */
   .sidebar.collapsed .sidebar-filter:is(.sidebar-filter--domain, .sidebar-filter--support) {
-    display: block; position: relative;
-    width: 40px; height: 34px; margin: 2px auto 4px;
+    display: block;
+  }
+  .sidebar.collapsed .sidebar-filter:is(.sidebar-filter--domain, .sidebar-filter--support) .combobox-trigger {
+    position: relative;
+    width: 40px; height: 34px; margin: 2px auto 4px; padding: 0;
     border: 1px solid var(--hairline); border-radius: var(--radius-md); background: var(--page);
   }
-  .sidebar.collapsed .sidebar-filter--domain::before {
+  .sidebar.collapsed .sidebar-filter:is(.sidebar-filter--domain, .sidebar-filter--support) .combobox-trigger-text,
+  .sidebar.collapsed .sidebar-filter:is(.sidebar-filter--domain, .sidebar-filter--support) .combobox-caret {
+    display: none;
+  }
+  .sidebar.collapsed .sidebar-filter--domain .combobox-trigger::before {
     content: ""; position: absolute; inset: 0; pointer-events: none;
     background-color: var(--text-2);
     -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolygon points='22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3'/%3E%3C/svg%3E") center / 16px 16px no-repeat;
             mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolygon points='22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3'/%3E%3C/svg%3E") center / 16px 16px no-repeat;
   }
-  .sidebar.collapsed .sidebar-filter--support::before {
+  .sidebar.collapsed .sidebar-filter--support .combobox-trigger::before {
     content: ""; position: absolute; inset: 0; pointer-events: none;
     background-color: var(--text-2);
     -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2'/%3E%3Ccircle cx='9' cy='7' r='4'/%3E%3Cpath d='M22 21v-2a4 4 0 0 0-3-3.87'/%3E%3Cpath d='M16 3.13a4 4 0 0 1 0 7.75'/%3E%3C/svg%3E") center / 16px 16px no-repeat;
             mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2'/%3E%3Ccircle cx='9' cy='7' r='4'/%3E%3Cpath d='M22 21v-2a4 4 0 0 0-3-3.87'/%3E%3Cpath d='M16 3.13a4 4 0 0 1 0 7.75'/%3E%3C/svg%3E") center / 16px 16px no-repeat;
   }
-  .sidebar.collapsed .sidebar-filter:is(.sidebar-filter--domain, .sidebar-filter--support) select {
-    position: absolute; inset: 0; width: 100%; height: 100%;
-    margin: 0; padding: 0; opacity: 0; cursor: pointer;
+  /* Active scope: glyph + frame go accent so a filtered rail is legible at a glance. */
+  .sidebar.collapsed .sidebar-filter:is(.sidebar-filter--domain, .sidebar-filter--support) .combobox-trigger.active { border-color: var(--accent); }
+  .sidebar.collapsed .sidebar-filter:is(.sidebar-filter--domain, .sidebar-filter--support) .combobox-trigger.active::before { background-color: var(--accent); }
+  /* Matches the app's 2px accent focus ring; button:focus-visible already applies it, this
+     just keeps the accent border in step while focused. */
+  .sidebar.collapsed .sidebar-filter:is(.sidebar-filter--domain, .sidebar-filter--support) .combobox-trigger:focus-visible {
+    border-color: var(--accent);
   }
-  /* Active scope: glyph + frame go accent so a filtered rail is legible at a glance
-     (:has drives it off the select's own .active class — a progressive tint, no JS coupling). */
-  .sidebar.collapsed .sidebar-filter:is(.sidebar-filter--domain, .sidebar-filter--support):has(select.active) { border-color: var(--accent); }
-  .sidebar.collapsed .sidebar-filter:is(.sidebar-filter--domain, .sidebar-filter--support):has(select.active)::before { background-color: var(--accent); }
-  /* Focus lives on the transparent select, so surface it on the frame instead — the select's
-     own outline would be invisible under opacity:0. Matches the app's 2px accent focus ring. */
-  .sidebar.collapsed .sidebar-filter:is(.sidebar-filter--domain, .sidebar-filter--support):focus-within {
-    outline: 2px solid var(--accent); outline-offset: 2px; border-color: var(--accent);
-  }
-  .sidebar.collapsed .sidebar-filter:is(.sidebar-filter--domain, .sidebar-filter--support):focus-within::before { background-color: var(--accent); }
   /* The support-group filter shows a visible "Support group" text label when the rail is
      expanded; collapsed it would break out of the 40x34 icon box, so hide it only here. */
   .sidebar.collapsed .sidebar-filter--support .field-label { display: none; }
@@ -778,9 +817,9 @@ input[aria-invalid="true"]:focus-visible, select[aria-invalid="true"]:focus-visi
 }
 .scope-chip-x:hover { background: rgba(37, 99, 235, 0.14); }
 
-/* The global filter selects gain an accent border when active, and the scan zone a hairline
-   accent, so the source of a scoped view is visible in the rail too. */
-.sidebar-filter select.active { border-color: var(--accent); }
+/* The global filter combobox triggers gain an accent border when active (see
+   .combobox-trigger.active above), and the scan zone a hairline accent, so the source of
+   a scoped view is visible in the rail too. */
 .scan-zone.filtering { border-top-color: var(--accent); }
 
 /* ------------------------------------------------------------------ filter bar */

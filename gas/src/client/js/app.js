@@ -3,7 +3,7 @@
 import { call } from "./api.js";
 import { renderScanCard, openScanDetails } from "./scanProgress.js";
 import { bootstrap, invalidateBootstrap, invalidateRpcCache, parseHash } from "./store.js";
-import { clear, el, fmtDateTime, statusPill, toast } from "./ui.js";
+import { clear, el, filterCombobox, fmtDateTime, statusPill, toast } from "./ui.js";
 import { renderOverview } from "./pages/overview.js";
 import { renderMttr } from "./pages/mttr.js";
 import { renderHistory } from "./pages/history.js";
@@ -84,6 +84,11 @@ let sidebarCollapsed = loadCollapsed();
 let activeDomain = "";
 // The global "Support group" filter, shared by every page the same way. "" = all groups.
 let activeSupportGroup = "";
+// Live handles to the two sidebar filterCombobox() wrappers, rebuilt each refresh() —
+// held so clearScope() can reset their shown label/active state via wrapper.setValue()
+// without hunting the DOM (a combobox has no <select> to look up by id/value).
+let domainCombobox = null;
+let supportCombobox = null;
 
 // Toggle the scan-zone's "filtering" accent to match the active global filters.
 function syncScanZoneFiltering() {
@@ -92,14 +97,13 @@ function syncScanZoneFiltering() {
 }
 
 // Clear one global filter from a page-header scope chip: reset the state, sync the
-// matching sidebar <select> (value + active accent), and re-render the active page.
+// matching sidebar combobox (shown label + active accent) via its setValue(), and
+// re-render the active page.
 function clearScope(kind) {
   if (kind === "domain") activeDomain = "";
   else if (kind === "supportGroup") activeSupportGroup = "";
-  const dSel = document.getElementById("filter-domain");
-  if (dSel) { dSel.value = activeDomain; dSel.classList.toggle("active", !!activeDomain); }
-  const sSel = document.getElementById("filter-supportgroup");
-  if (sSel) { sSel.value = activeSupportGroup; sSel.classList.toggle("active", !!activeSupportGroup); }
+  if (domainCombobox) domainCombobox.setValue(activeDomain);
+  if (supportCombobox) supportCombobox.setValue(activeSupportGroup);
   syncScanZoneFiltering();
   route();
 }
@@ -274,66 +278,61 @@ function renderSidebar(sidebar, data) {
     }
   }
 
-  // Global "Value Chain" filter — one domain selector shared by every page, at the
-  // top of the bottom cluster (above the scan controls). Only shown when more than
-  // one value chain is configured; otherwise every page is already the whole chain.
+  // Global "Value Chain" filter — one searchable combobox shared by every page, at the
+  // top of the bottom cluster (above the scan controls). Only shown when more than one
+  // value chain is configured; otherwise every page is already the whole chain. The
+  // sidebar (and this filter with it) is rebuilt wholesale on every refresh(), so the
+  // handle is re-created and re-stashed here each time too.
+  domainCombobox = null;
   if (data && data.domainNames && data.domainNames.length > 1) {
     // Drop a stale selection if its value chain was removed from settings.
     if (activeDomain && !data.domainNames.includes(activeDomain)) activeDomain = "";
-    const sel = el(
-      "select",
-      { id: "filter-domain", class: activeDomain ? "active" : null, "aria-label": "Filter by value chain",
-        // Collapsed to icons the select text is hidden behind a funnel glyph, so a native
-        // title carries the current scope on hover; kept in sync with the selection below.
-        title: activeDomain || "Value Chain" },
-      el("option", { value: "" }, "Value Chain"),
-      ...data.domainNames.map((d) =>
-        el("option", { value: d, selected: d === activeDomain || null }, d)),
-    );
-    sel.addEventListener("change", () => {
-      activeDomain = sel.value;
-      sel.classList.toggle("active", !!sel.value);
-      sel.title = sel.value || "Value Chain";
-      syncScanZoneFiltering();
-      route();
+    domainCombobox = filterCombobox({
+      value: activeDomain,
+      options: data.domainNames,
+      defaultLabel: "Value Chain",
+      ariaLabel: "Filter by value chain",
+      variant: "domain",
+      onChange: (v) => {
+        activeDomain = v;
+        syncScanZoneFiltering();
+        route();
+      },
     });
-    zone.prepend(
-      // No visible label — the default option reads "Value Chain" and the select keeps
-      // its aria-label for assistive tech. The --domain modifier keeps this filter
-      // reachable in the collapsed icon rail (as a funnel trigger); Support group has
-      // its own --support modifier for the same purpose, below.
-      el("div", { class: "sidebar-filter sidebar-filter--domain" }, sel),
-    );
+    // No visible label — the default option reads "Value Chain" and the trigger keeps
+    // its aria-label for assistive tech. The --domain modifier (set by filterCombobox)
+    // keeps this filter reachable in the collapsed icon rail (as a funnel trigger);
+    // Support group has its own --support modifier for the same purpose, below.
+    zone.prepend(domainCombobox);
   }
 
-  // Global "Support group" filter — a second sidebar selector alongside Value Chain,
+  // Global "Support group" filter — a second sidebar combobox alongside Value Chain,
   // driven by the subscriptions' Wiz/provisioning tag. Shown only when the scan surfaced
-  // at least one support group (i.e. the map has been refreshed and joined).
+  // at least one support group (i.e. the map has been refreshed and joined). A
+  // deployment can have ~20 groups, so this is the one that actually needs the
+  // combobox's adaptive search box (searchThreshold defaults to 7).
   const groups = (data && data.filterOptions && data.filterOptions.supportGroups) || [];
+  supportCombobox = null;
   if (groups.length) {
     if (activeSupportGroup && !groups.includes(activeSupportGroup)) activeSupportGroup = "";
-    const sgSel = el(
-      "select",
-      { id: "filter-supportgroup", class: activeSupportGroup ? "active" : null,
-        "aria-label": "Filter by support group",
-        // Collapsed to icons the select text is hidden behind a users glyph, so a native
-        // title carries the current scope on hover; kept in sync with the selection below.
-        title: activeSupportGroup || "Support group" },
-      el("option", { value: "" }, "All support groups"),
-      ...groups.map((g) =>
-        el("option", { value: g, selected: g === activeSupportGroup || null }, g)),
-    );
-    sgSel.addEventListener("change", () => {
-      activeSupportGroup = sgSel.value;
-      sgSel.classList.toggle("active", !!sgSel.value);
-      sgSel.title = sgSel.value || "Support group";
-      syncScanZoneFiltering();
-      route();
+    supportCombobox = filterCombobox({
+      value: activeSupportGroup,
+      options: groups,
+      defaultLabel: "All support groups",
+      searchPlaceholder: "Search support groups…",
+      ariaLabel: "Filter by support group",
+      variant: "support",
+      onChange: (v) => {
+        activeSupportGroup = v;
+        syncScanZoneFiltering();
+        route();
+      },
     });
-    zone.prepend(
-      el("div", { class: "sidebar-filter sidebar-filter--support" },
-        el("label", { class: "field-label" }, "Support group"), sgSel),
-    );
+    // Visible "Support group" label above the trigger, expanded-rail only — the combobox
+    // wrapper already carries the sidebar-filter--support modifier the collapsed CSS
+    // hides this label inside (matching the funnel filter, which has no visible label).
+    supportCombobox.prepend(el("label", { class: "field-label" }, "Support group"));
+    zone.prepend(supportCombobox);
   }
   sidebar.append(zone);
   // Re-apply the persisted collapsed state — the rail is rebuilt wholesale on every
