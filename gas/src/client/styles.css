@@ -719,6 +719,13 @@ input[aria-invalid="true"]:focus-visible, select[aria-invalid="true"]:focus-visi
 }
 /* The by-domain table reads left-to-right even inside the centered column. */
 .exec-by-domain { text-align: left; margin-top: 4px; }
+/* The KM median is this table's headline number — size it up (a step above the body rows)
+   so the per-domain MTTR reads as the figure to scan, echoing the page's single big hero.
+   Tabular nums keep the column from jittering across rows. */
+.exec-by-domain td.num--key {
+  font-size: 1.25rem; line-height: 1.15; letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
 
 /* Help explainer (how a headline metric is calculated). The wrapped metric itself is the
    hover/focus target — no separate glyph; the bubble is the neutral popover recipe (white /
