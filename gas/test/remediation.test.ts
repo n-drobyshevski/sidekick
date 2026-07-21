@@ -240,6 +240,21 @@ describe("kaplanMeier", () => {
     const rows = [res(1), res(2), res(3), res(4)];
     expect(kmMedian(rows)).toBe(kaplanMeier(rows).median);
   });
+
+  it("large risk set does not overflow the call stack (regression: Math.max(...times) spread)", () => {
+    // The risk set holds one observation per finding, so a real register is tens of thousands
+    // of entries. Spreading it into Math.max/Math.min ("Math.max(...times)") overflows the call
+    // stack once the array is large — the crash that took down the Executive view (which asks
+    // for every severity, maximizing the set). 200k rows is well past that spread limit; maxNum
+    // must fold it with a two-arg reduce instead. Guards against reintroducing the spread.
+    const N = 200_000;
+    const rows: ReturnType<typeof res>[] = [];
+    for (let i = 0; i < N; i++) rows.push(res((i % 500) + 1));
+    const km = kaplanMeier(rows);
+    expect(km.total).toBe(N);
+    expect(km.events).toBe(N);
+    expect(km.restrictionTime).toBe(500); // maxNum(times) — the largest mttr_days
+  });
 });
 
 describe("kmQuantileFromCurve", () => {

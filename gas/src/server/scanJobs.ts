@@ -11,7 +11,7 @@ import { countBySeverity, effectiveSeverity } from "../domain/severity";
 import { calculateMttr, overallSlaOldest } from "../domain/metrics";
 import * as remediation from "../domain/remediation";
 import { extractNodes, mergeNodes } from "../domain/transform";
-import { nowIso, parseTs, toIso, type Rec } from "../domain/util";
+import { nowIso, parseTs, pushAll, toIso, type Rec } from "../domain/util";
 import * as archive from "./archiveStore";
 import * as errorLog from "./errorLog";
 import { buildFrame, pageOfFromRuns } from "./frameCore";
@@ -347,7 +347,7 @@ function step(job: JobRow, budgetMs = BUDGET_MS): void {
       // Delta pages archive under a high page number so the merged set (written at
       // finish) occupies page-0001..N and stays the payload replay reads.
       archive.writeScanPage(scanId, pageName, envelope(result.nodes));
-      slim.push(...result.nodes.map(slimRecord));
+      pushAll(slim, result.nodes.map(slimRecord)); // not slim.push(...): a page is findings-scale
       pageRuns.push([pageName, result.nodes.length]);
       page += 1;
       findings += result.nodes.length;

@@ -1178,7 +1178,7 @@ var Server = (() => {
   }
   function minIso(...values) {
     const parsed = values.map(parseTs).filter((t) => t !== null);
-    return parsed.length ? toIso(Math.min(...parsed)) : null;
+    return parsed.length ? toIso(minNum(parsed)) : null;
   }
   function midpointIso(a, b) {
     var _a;
@@ -1193,6 +1193,15 @@ var Server = (() => {
   function mean(values) {
     if (!values.length) return null;
     return values.reduce((a, b) => a + b, 0) / values.length;
+  }
+  function maxNum(values) {
+    return values.reduce((m, v) => Math.max(m, v), -Infinity);
+  }
+  function minNum(values) {
+    return values.reduce((m, v) => Math.min(m, v), Infinity);
+  }
+  function pushAll(target, items) {
+    for (const item of items) target.push(item);
   }
   function quantile(values, q) {
     if (!values.length) return null;
@@ -1953,7 +1962,7 @@ var Server = (() => {
     }, 0);
     const slaPct = resolved ? compliant / resolved * 100 : null;
     const p90s = stats.map((d) => d.open_age_p90).filter((v) => v !== null && v !== void 0);
-    const oldestDays = p90s.length ? Math.max(...p90s) : null;
+    const oldestDays = p90s.length ? maxNum(p90s) : null;
     return { slaPct, oldestDays };
   }
 
@@ -2020,7 +2029,7 @@ var Server = (() => {
         if (page && typeof page === "object" && !Array.isArray(page)) {
           const sub = extractNodes(page);
           if (sub.length) {
-            merged.push(...sub);
+            pushAll(merged, sub);
             ok = true;
           }
         }
@@ -2060,7 +2069,7 @@ var Server = (() => {
         merged.push(node);
       }
     }
-    merged.push(...byKey.values());
+    pushAll(merged, byKey.values());
     return merged;
   }
   function flattenNode(node, prefix = "") {
@@ -2163,7 +2172,7 @@ var Server = (() => {
     }
     const times = events.concat(censored);
     const total = events.length + censored.length;
-    const restrictionTime = times.length ? Math.max(...times) : null;
+    const restrictionTime = times.length ? maxNum(times) : null;
     const naiveMean = mean(events);
     const naiveMedian = median(events);
     if (!events.length) {
@@ -2775,7 +2784,7 @@ var Server = (() => {
           if (p !== null) p90s.push(p);
         }
       }
-      const oldest = p90s.length ? Math.max(...p90s) : null;
+      const oldest = p90s.length ? maxNum(p90s) : null;
       out.push({
         date: ts.iso,
         open: openMask.filter(Boolean).length,
@@ -2977,8 +2986,8 @@ var Server = (() => {
     const synthetic = [];
     const syntheticIso = /* @__PURE__ */ new Set();
     if (realFlatMs.length && firstSeenMs.length) {
-      const firstScanDay = Math.floor(Math.min(...realFlatMs) / DAY_MS4) * DAY_MS4;
-      const startDay = Math.floor(Math.min(...firstSeenMs) / DAY_MS4) * DAY_MS4;
+      const firstScanDay = Math.floor(minNum(realFlatMs) / DAY_MS4) * DAY_MS4;
+      const startDay = Math.floor(minNum(firstSeenMs) / DAY_MS4) * DAY_MS4;
       for (let day = startDay; day < firstScanDay; day += DAY_MS4) {
         const iso = toIso(day);
         if (iso === null) continue;
@@ -5552,7 +5561,7 @@ var Server = (() => {
         });
         const pageName = params.incremental ? page + 1001 : page + 1;
         writeScanPage(scanId, pageName, envelope(result.nodes));
-        slim.push(...result.nodes.map(slimRecord));
+        pushAll(slim, result.nodes.map(slimRecord));
         pageRuns.push([pageName, result.nodes.length]);
         page += 1;
         findings += result.nodes.length;

@@ -13,7 +13,7 @@ import { REMEDIATION_ROLLOUT_ISO, RESOLVED_STATUSES, SEVERITY_ORDER, SLA_TARGETS
 import type { BaseRow } from "./ledgerCore";
 import { findCol, recordColumns } from "./metrics";
 import { normalizeSeverity } from "./severity";
-import { mean, median, parseTs, present, quantile, type Rec } from "./util";
+import { maxNum, mean, median, parseTs, present, quantile, type Rec } from "./util";
 
 const DAY_MS = 86_400_000;
 
@@ -229,7 +229,9 @@ export function kaplanMeier(rows: RemediationRow[]): KMResult {
   }
   const times = events.concat(censored); // the risk set: every observation time
   const total = events.length + censored.length;
-  const restrictionTime = times.length ? Math.max(...times) : null;
+  // maxNum, not Math.max(...times): `times` holds one entry per finding (the whole risk set),
+  // so spreading it into Math.max overflows the call stack on large registers.
+  const restrictionTime = times.length ? maxNum(times) : null;
   const naiveMean = mean(events);
   const naiveMedian = median(events);
 

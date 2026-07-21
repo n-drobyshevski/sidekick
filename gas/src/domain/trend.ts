@@ -7,7 +7,7 @@
 import { SEVERITY_ORDER, SLA_TARGETS } from "./config";
 import { kmCurve, kmMedianFromCurve } from "./remediation";
 import { normalizeSeverity } from "./severity";
-import { median, parseTs, quantile, toIso, type Rec } from "./util";
+import { maxNum, median, minNum, parseTs, quantile, toIso, type Rec } from "./util";
 
 export interface TrendPoint {
   date: string; // the scan ts (ISO)
@@ -119,7 +119,7 @@ export function trendFromFrames(
         if (p !== null) p90s.push(p);
       }
     }
-    const oldest = p90s.length ? Math.max(...p90s) : null;
+    const oldest = p90s.length ? maxNum(p90s) : null;
 
     out.push({
       date: ts.iso,
@@ -549,8 +549,10 @@ export function trendFromBase(
   if (realFlatMs.length && firstSeenMs.length) {
     // Stop at the first scan's UTC *day*, not its instant: that day is already represented by
     // the real scan point, so a synthetic midnight on it would just add an empty leading dot.
-    const firstScanDay = Math.floor(Math.min(...realFlatMs) / DAY_MS) * DAY_MS;
-    const startDay = Math.floor(Math.min(...firstSeenMs) / DAY_MS) * DAY_MS;
+    // minNum, not Math.min(...): firstSeenMs holds one entry per finding, so the spread form
+    // overflows the stack on large registers (realFlatMs matched for consistency).
+    const firstScanDay = Math.floor(minNum(realFlatMs) / DAY_MS) * DAY_MS;
+    const startDay = Math.floor(minNum(firstSeenMs) / DAY_MS) * DAY_MS;
     for (let day = startDay; day < firstScanDay; day += DAY_MS) {
       const iso = toIso(day);
       if (iso === null) continue;
