@@ -1200,6 +1200,9 @@ var Server = (() => {
   function minNum(values) {
     return values.reduce((m, v) => Math.min(m, v), Infinity);
   }
+  function pushAll(target, items) {
+    for (const item of items) target.push(item);
+  }
   function quantile(values, q) {
     if (!values.length) return null;
     const sorted = [...values].sort((a, b) => a - b);
@@ -2026,7 +2029,7 @@ var Server = (() => {
         if (page && typeof page === "object" && !Array.isArray(page)) {
           const sub = extractNodes(page);
           if (sub.length) {
-            merged.push(...sub);
+            pushAll(merged, sub);
             ok = true;
           }
         }
@@ -2066,7 +2069,7 @@ var Server = (() => {
         merged.push(node);
       }
     }
-    merged.push(...byKey.values());
+    pushAll(merged, byKey.values());
     return merged;
   }
   function flattenNode(node, prefix = "") {
@@ -5558,7 +5561,7 @@ var Server = (() => {
         });
         const pageName = params.incremental ? page + 1001 : page + 1;
         writeScanPage(scanId, pageName, envelope(result.nodes));
-        slim.push(...result.nodes.map(slimRecord));
+        pushAll(slim, result.nodes.map(slimRecord));
         pageRuns.push([pageName, result.nodes.length]);
         page += 1;
         findings += result.nodes.length;

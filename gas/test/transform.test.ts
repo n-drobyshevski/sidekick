@@ -22,6 +22,15 @@ describe("mergeNodes (fixture parity)", () => {
     mergeNodes(b, d);
     expect(b).toEqual([{ id: "x" }]);
   });
+  it("large delta does not overflow the call stack (regression: push(...) spread)", () => {
+    // Remaining delta nodes are appended via the Map's values(); a full scan's delta is
+    // findings-scale, so spreading it into push() ("merged.push(...byKey.values())") overflowed
+    // the stack. 200k distinct nodes is past that limit; pushAll must loop instead.
+    const N = 200_000;
+    const delta: { id: string }[] = [];
+    for (let i = 0; i < N; i++) delta.push({ id: "f-" + i });
+    expect(mergeNodes(null, delta).length).toBe(N);
+  });
 });
 
 describe("flattenNode", () => {

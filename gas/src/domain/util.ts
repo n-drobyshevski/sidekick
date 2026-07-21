@@ -93,6 +93,17 @@ export function minNum(values: number[]): number {
 }
 
 /**
+ * Append every item of `items` onto `target` in place, WITHOUT spreading into arguments.
+ * `target.push(...items)` makes each item a call argument, so it overflows the call stack
+ * once `items` is large — the same failure class as `Math.max(...arr)` (see maxNum). The
+ * node-page merges and slim-record accumulation on the scan path are findings-scale, so they
+ * use this. Accepts any iterable (arrays and Map value iterators alike).
+ */
+export function pushAll<T>(target: T[], items: Iterable<T>): void {
+  for (const item of items) target.push(item);
+}
+
+/**
  * Linear-interpolation quantile, matching pandas Series.quantile / .median exactly
  * (numpy "linear" method): index = q * (n - 1), interpolate between neighbors.
  */

@@ -4,7 +4,7 @@
 // json_normalize equivalent used to build table records with dotted keys).
 
 import { vulnKey } from "./lifecycle";
-import type { Rec } from "./util";
+import { pushAll, type Rec } from "./util";
 
 export function coerceResults(results: unknown): unknown {
   if (results === null || results === undefined) return results;
@@ -32,7 +32,7 @@ export function extractNodes(results: unknown): Rec[] {
       if (page && typeof page === "object" && !Array.isArray(page)) {
         const sub = extractNodes(page);
         if (sub.length) {
-          merged.push(...sub);
+          pushAll(merged, sub); // not merged.push(...sub): a page can be findings-scale
           ok = true;
         }
       }
@@ -79,7 +79,7 @@ export function mergeNodes(baselineNodes: Rec[] | null, deltaNodes: Rec[] | null
       merged.push(node);
     }
   }
-  merged.push(...byKey.values()); // Map preserves insertion order
+  pushAll(merged, byKey.values()); // remaining delta nodes (Map preserves insertion order)
   return merged;
 }
 
