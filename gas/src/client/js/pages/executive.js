@@ -68,11 +68,7 @@ export async function renderExecutive(main, _params, ctx) {
   );
 
   const page = el("div", { class: "exec" });
-  page.append(
-    el("h1", {}, "Security posture"),
-    el("p", { class: "page-sub" },
-      "At-a-glance remediation and open-risk summary across the register."),
-  );
+  page.append(el("h1", {}, "Security posture"));
   if (boot.settings.showNoFix === false) page.append(noFixHiddenNote());
   main.append(page);
 
