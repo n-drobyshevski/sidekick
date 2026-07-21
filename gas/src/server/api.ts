@@ -615,20 +615,26 @@ function attributionData(p?: unknown): Rec {
 /** Attribution page in one round trip; the whole payload is cached per DATA_VERSION +
  *  severities, and `unassignedAll` is paginated OUTSIDE the cache so every page shares
  *  one cached compute. */
+// The whole attribution payload cached per DATA_VERSION + (severities, showNoFix). Extracted
+// so warmReadModels and the endpoint share one entry; pagination happens OUTSIDE the cache in
+// getAttribution, so every page reuses this one compute.
+const cachedAttributionData = (p?: unknown) =>
+  // "attribution" → "attribution2": coverage / rule-health / unassigned now honor the
+  // show-no-fix toggle; key gains showNoFix so on/off states cache apart.
+  // "attribution2" → "attribution3": payload gained the support-group breakdown
+  // (`supportGroups`) and richer `supportGroupMap` (groups + tagKey); bump so a stale
+  // old-shape entry can't survive the persistent dataVersion.
+  // "attribution3" → "attribution4": `supportGroupMap` gained `sampleKeys` (indexed
+  // subscription identities); bump so a stale sampleKeys-less entry can't survive.
+  cached(
+    "attribution4",
+    { severities: readSeverities(p), showNoFix: settingsStore.getShowNoFix() },
+    () => attributionData(p),
+  );
+
 export function getAttribution(p?: unknown): ApiResult {
   return run(() => {
-    // "attribution" → "attribution2": coverage / rule-health / unassigned now honor the
-    // show-no-fix toggle; key gains showNoFix so on/off states cache apart.
-    // "attribution2" → "attribution3": payload gained the support-group breakdown
-    // (`supportGroups`) and richer `supportGroupMap` (groups + tagKey); bump so a stale
-    // old-shape entry can't survive the persistent dataVersion.
-    // "attribution3" → "attribution4": `supportGroupMap` gained `sampleKeys` (indexed
-    // subscription identities); bump so a stale sampleKeys-less entry can't survive.
-    const data = cached(
-      "attribution4",
-      { severities: readSeverities(p), showNoFix: settingsStore.getShowNoFix() },
-      () => attributionData(p),
-    );
+    const data = cachedAttributionData(p);
     if (!(data as Rec)["flatScan"]) return data;
     const { unassignedAll, ...rest } = data as Rec & { unassignedAll: unknown[] };
     const params = (p ?? {}) as Rec;
@@ -1433,30 +1439,32 @@ export function clearRecentErrors(_p?: unknown): ApiResult {
 
 // ---------------------------------------------------------------------------- misc
 
+// cellCount() walks every sheet in the spreadsheet — cache it per DATA_VERSION. Extracted so
+// warmReadModels and the endpoint share one entry.
+const cachedStorageStatsData = () =>
+  // "storageStats" → "storageStats2": payload gained the severity data-quality diagnostic
+  // (distinctSeverities, unknownSeverityCount); dataVersion persists across deploys, so
+  // bumping the namespace prevents serving a stale old-shape entry (up to the TTL).
+  cached("storageStats2", null, () => {
+    const scans = ledgerStore.loadScanRows();
+    const scan = findings.currentScan();
+    const baseRows = ledgerStore.loadBaseRows() as unknown as Rec[];
+    return {
+      cellCount: cellCount(),
+      cellLimit: 10_000_000,
+      scanCount: scans.length,
+      sealedCount: scans.filter((s) => s.sealed).length,
+      oldestScanTs: scans.length ? scans[0].ts : null,
+      trackedVulns: baseRows.length,
+      distinctSeverities: scan ? findings.distinct(scan.records, "severity") : [],
+      unknownSeverityCount: baseRows.filter(
+        (r) => normalizeSeverity(r["severity"]) === "UNKNOWN",
+      ).length,
+    };
+  });
+
 export function getStorageStats(_p?: unknown): ApiResult {
-  // cellCount() walks every sheet in the spreadsheet — cache it per DATA_VERSION.
-  return run(() =>
-    // "storageStats" → "storageStats2": payload gained the severity data-quality diagnostic
-    // (distinctSeverities, unknownSeverityCount); dataVersion persists across deploys, so
-    // bumping the namespace prevents serving a stale old-shape entry (up to the TTL).
-    cached("storageStats2", null, () => {
-      const scans = ledgerStore.loadScanRows();
-      const scan = findings.currentScan();
-      const baseRows = ledgerStore.loadBaseRows() as unknown as Rec[];
-      return {
-        cellCount: cellCount(),
-        cellLimit: 10_000_000,
-        scanCount: scans.length,
-        sealedCount: scans.filter((s) => s.sealed).length,
-        oldestScanTs: scans.length ? scans[0].ts : null,
-        trackedVulns: baseRows.length,
-        distinctSeverities: scan ? findings.distinct(scan.records, "severity") : [],
-        unknownSeverityCount: baseRows.filter(
-          (r) => normalizeSeverity(r["severity"]) === "UNKNOWN",
-        ).length,
-      };
-    }),
-  );
+  return run(() => cachedStorageStatsData());
 }
 
 // ------------------------------------------------------------------- cache warming
@@ -1492,12 +1500,15 @@ export function warmReadModels(): void {
     }
   };
 
-  // Severity-independent entries: the bootstrap core (also feeds the sidebar/counts) and the
-  // scan-history KPI band.
+  // Severity-independent entries: the bootstrap core (also feeds the sidebar/counts), the
+  // scan-history KPI band, and the Settings storage panel (cellCount walks every sheet).
   warm("bootstrap", () => bootstrap());
   warm("scanHistory", () => cachedScanHistoryData());
+  warm("storageStats", () => cachedStorageStatsData());
 
-  // The severity scopes the pages actually request (see the executive/mttr/overview pages).
+  // The severity scopes the pages actually request (see the executive/mttr/overview/
+  // attribution pages): the all-severities entry (severities null, the shared default) plus
+  // the configured Display-severity subset when it's narrower.
   const display = settingsStore.getDisplaySeverities();
   const scopes: (string[] | null)[] = [null];
   if (Array.isArray(display) && display.length && display.length < SELECTABLE_SEVERITIES.length) {
@@ -1511,5 +1522,6 @@ export function warmReadModels(): void {
     warm("mttrTrend", () => cachedMttrTrendData(p));
     warm("insights", () => cachedInsightsData(p));
     warm("grouping", () => cachedGroupingData({ ...p, keys: groupingKeys }));
+    warm("attribution", () => cachedAttributionData({ severities }));
   }
 }

@@ -6250,14 +6250,24 @@ var Server = (() => {
       }
     };
   }
+  var cachedAttributionData = (p) => (
+    // "attribution" → "attribution2": coverage / rule-health / unassigned now honor the
+    // show-no-fix toggle; key gains showNoFix so on/off states cache apart.
+    // "attribution2" → "attribution3": payload gained the support-group breakdown
+    // (`supportGroups`) and richer `supportGroupMap` (groups + tagKey); bump so a stale
+    // old-shape entry can't survive the persistent dataVersion.
+    // "attribution3" → "attribution4": `supportGroupMap` gained `sampleKeys` (indexed
+    // subscription identities); bump so a stale sampleKeys-less entry can't survive.
+    cached(
+      "attribution4",
+      { severities: readSeverities(p), showNoFix: getShowNoFix2() },
+      () => attributionData(p)
+    )
+  );
   function getAttribution(p) {
     return run(() => {
       var _a, _b;
-      const data = cached(
-        "attribution4",
-        { severities: readSeverities(p), showNoFix: getShowNoFix2() },
-        () => attributionData(p)
-      );
+      const data = cachedAttributionData(p);
       if (!data["flatScan"]) return data;
       const { unassignedAll, ...rest } = data;
       const params = p != null ? p : {};
@@ -6950,31 +6960,30 @@ var Server = (() => {
       return { cleared: true };
     });
   }
+  var cachedStorageStatsData = () => (
+    // "storageStats" → "storageStats2": payload gained the severity data-quality diagnostic
+    // (distinctSeverities, unknownSeverityCount); dataVersion persists across deploys, so
+    // bumping the namespace prevents serving a stale old-shape entry (up to the TTL).
+    cached("storageStats2", null, () => {
+      const scans = loadScanRows();
+      const scan = currentScan();
+      const baseRows2 = loadBaseRows();
+      return {
+        cellCount: cellCount(),
+        cellLimit: 1e7,
+        scanCount: scans.length,
+        sealedCount: scans.filter((s) => s.sealed).length,
+        oldestScanTs: scans.length ? scans[0].ts : null,
+        trackedVulns: baseRows2.length,
+        distinctSeverities: scan ? distinct(scan.records, "severity") : [],
+        unknownSeverityCount: baseRows2.filter(
+          (r) => normalizeSeverity(r["severity"]) === "UNKNOWN"
+        ).length
+      };
+    })
+  );
   function getStorageStats(_p) {
-    return run(
-      () => (
-        // "storageStats" → "storageStats2": payload gained the severity data-quality diagnostic
-        // (distinctSeverities, unknownSeverityCount); dataVersion persists across deploys, so
-        // bumping the namespace prevents serving a stale old-shape entry (up to the TTL).
-        cached("storageStats2", null, () => {
-          const scans = loadScanRows();
-          const scan = currentScan();
-          const baseRows2 = loadBaseRows();
-          return {
-            cellCount: cellCount(),
-            cellLimit: 1e7,
-            scanCount: scans.length,
-            sealedCount: scans.filter((s) => s.sealed).length,
-            oldestScanTs: scans.length ? scans[0].ts : null,
-            trackedVulns: baseRows2.length,
-            distinctSeverities: scan ? distinct(scan.records, "severity") : [],
-            unknownSeverityCount: baseRows2.filter(
-              (r) => normalizeSeverity(r["severity"]) === "UNKNOWN"
-            ).length
-          };
-        })
-      )
-    );
+    return run(() => cachedStorageStatsData());
   }
   function defaultGroupingKeys() {
     return domainNames(getDomains2().items).length > 1 ? ["domain"] : ["atype"];
@@ -6989,6 +6998,7 @@ var Server = (() => {
     };
     warm("bootstrap", () => bootstrap());
     warm("scanHistory", () => cachedScanHistoryData());
+    warm("storageStats", () => cachedStorageStatsData());
     const display = getDisplaySeverities2();
     const scopes = [null];
     if (Array.isArray(display) && display.length && display.length < SELECTABLE_SEVERITIES.length) {
@@ -7002,6 +7012,7 @@ var Server = (() => {
       warm("mttrTrend", () => cachedMttrTrendData(p));
       warm("insights", () => cachedInsightsData(p));
       warm("grouping", () => cachedGroupingData({ ...p, keys: groupingKeys }));
+      warm("attribution", () => cachedAttributionData({ severities }));
     }
   }
   return __toCommonJS(server_exports);
