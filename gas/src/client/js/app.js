@@ -3,7 +3,7 @@
 import { call } from "./api.js";
 import { renderScanCard, openScanDetails } from "./scanProgress.js";
 import { bootstrap, invalidateBootstrap, invalidateRpcCache, parseHash } from "./store.js";
-import { clear, el, filterCombobox, fmtDateTime, statusPill, toast } from "./ui.js";
+import { clear, el, filterCombobox, fmtDateTime, progressBar, statusPill, toast } from "./ui.js";
 import { renderOverview } from "./pages/overview.js";
 import { renderMttr } from "./pages/mttr.js";
 import { renderHistory } from "./pages/history.js";
@@ -116,6 +116,9 @@ let routeOverlay = null;
 let routeSeq = 0;
 let routeLoadingTimer = null;
 const ROUTE_LOADING_DELAY_MS = 120;
+// The first page render after each boot is covered by the boot splash → page skeleton, so it
+// skips the route-overlay veil; every subsequent navigation uses the veil as normal.
+let firstRoute = true;
 
 function beginRouteLoading() {
   clearTimeout(routeLoadingTimer);
@@ -142,8 +145,49 @@ let stoppingJobId = null; // optimistic "Stopping…" until the server confirms 
 let lastJob = null; // most recent JobRow, for an immediate repaint on Stop
 let scanDetails = null; // open scan-details drawer handle, kept live by the poller
 
+// Recreate the branded boot splash index.html paints on first load, so refresh() (which
+// re-runs boot()) shows the same veil. Keep this markup in sync with the static copy in
+// index.html. Reuses the indeterminate progress bar so it reads as the same loader family
+// as the route-overlay (and inherits its reduced-motion striped fallback).
+function bootSplash() {
+  const bar = progressBar(null);
+  bar.classList.add("boot-splash-bar");
+  bar.setAttribute("aria-label", "Opening the ledger");
+  return el(
+    "div",
+    { class: "boot-splash", role: "status", "aria-live": "polite" },
+    el("div", { class: "boot-splash-inner" },
+      el("div", { class: "boot-brand" },
+        el("span", { class: "wordmark-dot", "aria-hidden": "true" }),
+        el("span", { class: "boot-brand-label" }, "Wiz Sidekick OS")),
+      bar,
+      el("p", { class: "boot-splash-note" }, "Opening the ledger…")),
+  );
+}
+
+// Fade the splash out and remove it. transitionend removes it; a timeout is the fallback if
+// that never fires. Under reduced motion there's no fade, so remove immediately.
+function hideBootSplash() {
+  const splash = document.querySelector(".boot-splash");
+  if (!splash) return;
+  const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduce) { splash.remove(); return; }
+  splash.classList.add("hiding");
+  let done = false;
+  const finish = () => { if (done) return; done = true; splash.remove(); };
+  splash.addEventListener("transitionend", finish, { once: true });
+  setTimeout(finish, 240);
+}
+
 async function boot() {
-  clear(app);
+  firstRoute = true;
+  // Keep the splash index.html painted (first load) or recreate it (refresh) and remove only
+  // the *previous* app underneath it — so a refresh never flashes a cleared pane. clear(app)
+  // is deliberately avoided here: the splash must survive to cover the rebuild.
+  let splash = app.querySelector(".boot-splash");
+  if (!splash) { splash = bootSplash(); app.append(splash); }
+  for (const node of [...app.children]) if (node !== splash) node.remove();
+
   const sidebar = el("nav", { class: "sidebar", "aria-label": "Main navigation" });
   mainEl = el("main", { id: "main" });
   // Kept out of <main> so clear(mainEl) never removes it and it always covers the
@@ -156,7 +200,6 @@ async function boot() {
     el("span", { class: "route-overlay-label" }),
   );
   app.append(sidebar, mainEl, routeOverlay);
-  mainEl.append(el("p", { class: "muted" }, "Loading…"));
 
   let data;
   try {
@@ -170,10 +213,14 @@ async function boot() {
       ),
     );
     renderSidebar(sidebar, null);
+    hideBootSplash(); // reveal the error card
     return;
   }
   renderSidebar(sidebar, data);
-  route();
+  route(); // paints the page's skeleton synchronously up to its first data await
+  // Fade the splash only after the skeleton has laid out — double rAF flushes the (cached)
+  // bootstrap microtasks and one layout tick, so the splash reveals the skeleton, never a blank pane.
+  requestAnimationFrame(() => requestAnimationFrame(hideBootSplash));
 }
 
 function renderSidebar(sidebar, data) {
@@ -455,7 +502,10 @@ async function route() {
     else a.removeAttribute("aria-current");
   });
   clear(mainEl);
-  beginRouteLoading();
+  // The first render after a boot is covered by the boot splash → page skeleton, so it skips
+  // the veil to avoid stacking two loaders; later navigations use it as normal.
+  const useOverlay = !firstRoute;
+  if (useOverlay) beginRouteLoading();
   try {
     await page.render(mainEl, params, {
       refresh, clearScope, domain: activeDomain, supportGroup: activeSupportGroup,
@@ -469,7 +519,8 @@ async function route() {
     );
   } finally {
     // Only the latest route settles the overlay; a newer change keeps it up.
-    if (seq === routeSeq) endRouteLoading();
+    if (useOverlay && seq === routeSeq) endRouteLoading();
+    firstRoute = false;
   }
 }
 

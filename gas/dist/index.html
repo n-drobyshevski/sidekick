@@ -7,7 +7,24 @@
   </head>
   <body>
     <div id="app">
-      <noscript>Wiz Sidekick OS requires JavaScript.</noscript>
+      <!-- Boot splash: static first paint so there's no blank flash while api_bootstrap
+           resolves. app.js's boot()/refresh() replace this with the live shell, and
+           bootSplash()/hideBootSplash() in app.js recreate/remove it on every reload —
+           keep this markup in sync with bootSplash() in app.js. -->
+      <div class="boot-splash" role="status" aria-live="polite">
+        <div class="boot-splash-inner">
+          <div class="boot-brand">
+            <span class="wordmark-dot" aria-hidden="true"></span>
+            <span class="boot-brand-label">Wiz Sidekick OS</span>
+          </div>
+          <div class="boot-splash-bar progress-track indeterminate" role="progressbar"
+               aria-valuemin="0" aria-valuemax="100" aria-label="Opening the ledger">
+            <div class="progress-fill"></div>
+          </div>
+          <p class="boot-splash-note">Opening the ledger…</p>
+        </div>
+        <noscript>Wiz Sidekick OS requires JavaScript.</noscript>
+      </div>
     </div>
     <?!= include('js_app'); ?>
   </body>

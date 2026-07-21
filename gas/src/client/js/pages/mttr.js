@@ -8,7 +8,7 @@ import {
 import { bootstrap, swrCall } from "../store.js";
 import {
   changeChip, clear, el, emptyState, fmtDays, helpTip, noFixHiddenNote, openSheet, scopeBar,
-  sectionLabel, sevBadge, severityScopeFilter,
+  sectionLabel, sevBadge, severityScopeFilter, skeleton,
 } from "../ui.js";
 
 // Keep in sync with RESOLUTION_BUCKET_LABELS in src/domain/remediation.ts (the client
@@ -141,6 +141,44 @@ function fmtKmMedian(km) {
   return "—";
 }
 
+// App-shell skeleton for the cold-load MTTR page — mirrors the real hero / Trends / Distribution
+// / SLA hosts so the swap to live content doesn't reflow. Blocks are aria-hidden; the hero host
+// carries the "Computing MTTR" announcement the old muted "Computing…" text used to give. The
+// caller leaves the by-domain host (below the fold, whole-chain only) cleared.
+function renderMttrSkeleton({ heroHost, chartsHost, survivalHost, slaHost }) {
+  clear(heroHost).append(
+    el("div", { class: "hero", role: "status", "aria-label": "Computing MTTR" },
+      el("div", { style: "display:flex; align-items:baseline; gap:32px; flex-wrap:wrap" },
+        skeleton("title", { width: "150px" }),
+        skeleton("stat", { width: "96px" })),
+      el("div", { style: "margin-top:10px" }, skeleton("line", { width: "60%" })),
+      el("div", { class: "hero-minis" },
+        ...[0, 1, 2, 3].map(() => el("div", {},
+          el("div", { style: "margin-bottom:8px" }, skeleton("line", { width: "84px" })),
+          skeleton("stat", { width: "56px" }))))),
+  );
+  clear(chartsHost).append(
+    el("div", { class: "section-head" },
+      skeleton("line", { width: "110px" }),
+      skeleton("pill", { width: "180px" })),
+    el("div", { class: "chart-grid chart-grid--2", style: "align-items:start" },
+      ...[0, 1].map(() => el("div", { class: "chart-card" },
+        el("div", { style: "margin-bottom:12px" }, skeleton("line", { width: "140px" })),
+        el("div", { class: "chart-box" }, skeleton("chart"))))),
+  );
+  clear(survivalHost).append(
+    el("div", { style: "margin:28px 0 12px" }, skeleton("line", { width: "130px" })),
+    el("div", { class: "chart-card" },
+      el("div", { style: "margin-bottom:12px" }, skeleton("line", { width: "220px" })),
+      el("div", { class: "chart-box chart-box--tall" }, skeleton("chart"))),
+  );
+  clear(slaHost).append(
+    el("div", { style: "margin:28px 0 12px" }, skeleton("line", { width: "180px" })),
+    el("div", { class: "table-wrap", style: "padding:14px" },
+      ...[0, 1, 2, 3, 4].map(() => el("div", { style: "margin:10px 0" }, skeleton("line")))),
+  );
+}
+
 export async function renderMttr(main, _params, ctx) {
   const boot = await bootstrap();
 
@@ -207,11 +245,9 @@ export async function renderMttr(main, _params, ctx) {
 
   async function load() {
     // Put every section into a pending state before the await, so a severity change never
-    // leaves the charts / SLA table showing the old scope's numbers beside a "Computing…" hero.
-    clear(heroHost).append(el("p", { class: "muted" }, "Computing…"));
-    clear(chartsHost);
-    clear(survivalHost);
-    clear(slaHost);
+    // leaves the charts / SLA table showing the old scope's numbers. The skeleton mirrors the
+    // real layout so the swap to live content doesn't reflow; by-domain stays cleared.
+    renderMttrSkeleton({ heroHost, chartsHost, survivalHost, slaHost });
     clear(byDomainHost);
     // One batched RPC — summary and trends share a single ledger-state load
     // server-side. Revisits paint instantly from the session cache and repaint in

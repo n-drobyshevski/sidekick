@@ -49,6 +49,7 @@
   --z-popover: 30;
   --z-overlay: 40;
   --z-topbar: 45; /* mobile top-bar: above the route overlay, below sheets/toasts */
+  --z-splash: 55; /* boot splash: above the route overlay (40) and topbar (45), below toast (60) */
   --z-scrim: 50;
   --z-sheet: 51;
   --z-toast: 60;
@@ -511,6 +512,48 @@ main {
       color-mix(in srgb, var(--accent) 55%, white) 16px);
   }
   .route-overlay { transition: none; }
+}
+
+/* Boot splash: branded first-paint veil while api_bootstrap resolves. Baked into index.html
+   so it paints on first style application (no blank flash); JS owns removal. Same loader
+   family as .route-overlay — reuses .progress-track.indeterminate (inherits its reduced-motion
+   striped fallback). */
+.boot-splash {
+  position: fixed; inset: 0; z-index: var(--z-splash);
+  display: flex; align-items: center; justify-content: center;
+  background: var(--page); opacity: 1; transition: opacity 180ms ease-out;
+}
+.boot-splash.hiding { opacity: 0; }
+.boot-splash-inner {
+  display: flex; flex-direction: column; align-items: center; gap: 18px;
+  padding: 24px; width: min(280px, 80vw);
+}
+.boot-brand {
+  display: flex; align-items: center; gap: 9px; font-weight: 600;
+  font-size: 1.0625rem; letter-spacing: -0.02em; color: var(--ink);
+}
+.boot-brand .wordmark-dot { width: 11px; height: 11px; }
+.boot-splash-bar { width: 100%; }
+.boot-splash-note { margin: 0; font-size: 12px; color: var(--text-2); }
+@media (prefers-reduced-motion: reduce) { .boot-splash { transition: none; } }
+
+/* Skeleton placeholders: calm opacity pulse only — NO diagonal shimmer sweep (the SaaS tell
+   DESIGN.md forbids). Reduced motion → a static hairline block. Blocks are aria-hidden. */
+.skeleton {
+  background: color-mix(in srgb, var(--ink) 7%, var(--surface));
+  border-radius: var(--radius-md); animation: skeleton-pulse 1.6s ease-in-out infinite;
+}
+@keyframes skeleton-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+.skeleton--line { height: 12px; border-radius: 4px; }
+.skeleton--title { height: 30px; border-radius: 6px; }
+.skeleton--stat { height: 18px; border-radius: 5px; }
+.skeleton--pill { height: 30px; border-radius: 999px; }
+.skeleton--chart { position: absolute; inset: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none; background: color-mix(in srgb, var(--ink) 5%, var(--surface));
+    border: 1px solid var(--hairline);
+  }
 }
 
 @media (max-width: 800px) {
