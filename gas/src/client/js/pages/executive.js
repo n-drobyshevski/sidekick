@@ -40,19 +40,32 @@ function fmtKmMedian(km) {
 }
 
 export async function renderExecutive(main, _params, ctx) {
-  // Kick the executive-data RPC off first, before awaiting bootstrap — the two round trips
-  // are independent, so overlapping them removes one serial network hop from the default
-  // landing page. `paint` is assigned once the section hosts exist (just below); the SWR
-  // background revalidation resolves far later than that, so the guarded reference is safe.
-  // Whole-chain, all-severities (no scope) so it shares the MTTR page's default cache entry.
+  const boot = await bootstrap();
+
+  // Which severities every metric on this page reflects — the app-wide "Display severity"
+  // setting ("which severities every page shows"), so the exec view opens scoped exactly
+  // like Overview and MTTR; falls back to all selectable if that setting is somehow empty.
+  const sevScope = boot.settings.displaySeverities?.length
+    ? [...boot.settings.displaySeverities]
+    : [...boot.palette.selectable];
+  // Null when every selectable severity is chosen (no filter → shares the MTTR page's
+  // default cache entry); otherwise the chosen subset, which the server keeps alongside
+  // UNKNOWN. Same rule as pages/mttr.js scopeParam so exec and MTTR share cache entries.
+  const severities = sevScope.length === boot.palette.selectable.length ? null : sevScope;
+
+  // Kick the executive-data RPC off as soon as the severity scope is known — the hero +
+  // per-domain slices are the slow part, so the fetch overlaps the synchronous shell build
+  // below. Whole-chain (no domain/support scope), scoped to the display severities so a
+  // narrowed setting (e.g. Critical-only) also computes over fewer rows. `paint` is assigned
+  // once the section hosts exist; the SWR background revalidation resolves far later than
+  // that, so the guarded reference is safe. api_getExecutivePage ships only the hero +
+  // by-domain slices this page reads, skipping the unused trend reconstruction.
   let paint;
   const execData = swrCall(
     "api_getExecutivePage",
-    { domain: "", supportGroup: "", severities: null },
+    { domain: "", supportGroup: "", severities },
     (fresh) => paint && paint(fresh),
   );
-
-  const boot = await bootstrap();
 
   const page = el("div", { class: "exec" });
   page.append(
@@ -188,7 +201,10 @@ export async function renderExecutive(main, _params, ctx) {
   function renderSeverity() {
     clear(sevHost);
     const counts = boot.counts || {};
-    const sevs = boot.palette.order.filter((s) => boot.palette.selectable.includes(s));
+    // Scoped to the same "Display severity" setting the hero and by-domain table use, so the
+    // whole page reflects one severity scope — a Critical-only setting shows just the Critical
+    // tile, not the full selectable breakdown.
+    const sevs = boot.palette.order.filter((s) => sevScope.includes(s));
     if (!sevs.length) return;
 
     sevHost.append(sectionLabel("Open vulnerabilities"));
