@@ -57,18 +57,41 @@ export async function renderExecutive(main, _params, ctx) {
   const byDomainHost = el("div", {});
   page.append(heroHost, scanHost, sevHost, byDomainHost);
 
-  renderScan();
-  renderSeverity();
+  // This is the default landing page, so a single failing section must never blank the whole
+  // view. Each section renders inside a guard: on error it logs a tagged trace (so a recurrence
+  // is diagnosable to the exact section) and drops an honest fallback into that host, while the
+  // rest of the page still paints.
+  function guard(label, host, fn) {
+    try {
+      fn();
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error("[executive] " + label + " render failed:", e);
+      if (host) clear(host).append(emptyState("Couldn't render " + label + "."));
+    }
+  }
+
+  guard("scan", scanHost, renderScan);
+  guard("severity", sevHost, renderSeverity);
   renderHeroSkeleton();
 
   // One batched round trip; we use only `.mttr` (hero) and `.byDomain` (per-domain split).
   // Whole-chain, all-severities (no scope) so it shares the default MTTR cache entry.
   const paint = (data) => {
-    renderHero(data.mttr);
-    renderByDomain(data.byDomain);
+    guard("MTTR", heroHost, () => renderHero(data && data.mttr));
+    guard("by domain", byDomainHost, () => renderByDomain(data && data.byDomain));
   };
-  paint(await swrCall("api_getMttrPage",
-    { domain: "", supportGroup: "", severities: null }, paint));
+  try {
+    paint(await swrCall("api_getMttrPage",
+      { domain: "", supportGroup: "", severities: null }, paint));
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error("[executive] getMttrPage failed:", e);
+    clear(heroHost).append(emptyState(
+      "Couldn't load remediation data.",
+      "Try running a scan or reloading the page.",
+    ));
+  }
 
   function renderHeroSkeleton() {
     clear(heroHost).append(

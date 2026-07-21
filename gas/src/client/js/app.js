@@ -50,8 +50,11 @@ function iconSpan(svg, cls) {
 // GAS iframe sandbox can block web storage). Desktop-only: the <=800px top-bar layout
 // ignores the .collapsed class (see styles.css), so a stored flag is simply inert there.
 const SIDEBAR_COLLAPSED_KEY = "sidebarCollapsed";
+// Collapsed by default: an absent preference reads as collapsed, and only an explicit expand
+// (stored "0" by saveCollapsed) reopens it — so the rail stays out of the way until a user
+// deliberately widens it. A sandbox that blocks storage also lands on collapsed.
 function loadCollapsed() {
-  try { return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1"; } catch { return false; }
+  try { return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) !== "0"; } catch { return true; }
 }
 function saveCollapsed(v) {
   try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, v ? "1" : "0"); } catch { /* sandboxed */ }
