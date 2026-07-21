@@ -6,7 +6,7 @@
 
 import { SEVERITY_ORDER, SLA_TARGETS } from "./config";
 import { normalizeSeverity } from "./severity";
-import { mean, median, parseTs, quantile, type Rec } from "./util";
+import { maxNum, mean, median, parseTs, quantile, type Rec } from "./util";
 
 export interface SevStats {
   mttr_mean: number | null;
@@ -154,6 +154,6 @@ export function overallSlaOldest(
   const resolved = stats.reduce((a, d) => a + (d.resolved ?? 0), 0);
   const slaPct = resolved ? (compliant / resolved) * 100 : null;
   const p90s = stats.map((d) => d.open_age_p90).filter((v): v is number => v !== null && v !== undefined);
-  const oldestDays = p90s.length ? Math.max(...p90s) : null;
+  const oldestDays = p90s.length ? maxNum(p90s) : null;
   return { slaPct, oldestDays };
 }

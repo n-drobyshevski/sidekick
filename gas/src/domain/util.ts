@@ -53,7 +53,7 @@ export function toIso(ms: number | null): string | null {
 /** Earliest of the given timestamps as canonical ISO (null if none parse). */
 export function minIso(...values: unknown[]): string | null {
   const parsed = values.map(parseTs).filter((t): t is number => t !== null);
-  return parsed.length ? toIso(Math.min(...parsed)) : null;
+  return parsed.length ? toIso(minNum(parsed)) : null;
 }
 
 /** Canonical ISO halfway between two timestamps (falls back to whichever parses). */
@@ -73,6 +73,23 @@ export function nowIso(now?: number): string {
 export function mean(values: number[]): number | null {
   if (!values.length) return null;
   return values.reduce((a, b) => a + b, 0) / values.length;
+}
+
+/**
+ * Max of a numeric list WITHOUT spreading it into function arguments. `Math.max(...arr)`
+ * turns every element into a call argument, so it overflows the stack ("Maximum call stack
+ * size exceeded") once `arr` is large — fatal on findings-scale inputs like a Kaplan–Meier
+ * risk set or the per-finding first-seen times. This reduces with the two-argument Math.max,
+ * so it's O(n) with constant stack depth and NaN propagates exactly as the spread form did.
+ * Returns -Infinity for an empty list (callers guard `.length` first, as with the spreads).
+ */
+export function maxNum(values: number[]): number {
+  return values.reduce((m, v) => Math.max(m, v), -Infinity);
+}
+
+/** Min counterpart of maxNum — see its note on why this avoids `Math.min(...arr)`. */
+export function minNum(values: number[]): number {
+  return values.reduce((m, v) => Math.min(m, v), Infinity);
 }
 
 /**
