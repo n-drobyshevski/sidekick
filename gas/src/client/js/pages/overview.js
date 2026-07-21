@@ -547,16 +547,17 @@ export async function renderOverview(main, params, ctx) {
     }
 
     /** Repaint both breakdown charts from a fresh grouping payload. Charts are open-centric
-     *  (the tree sorts by total), so rank the top-level groups by open, keep the top eight
-     *  with any open finding, and fold ranks past eight into one neutral "Other". The pie
-     *  renders from this scan's payload; the line replays the ledger over scan history. */
+     *  (the tree sorts by total), so rank the top-level groups by open, keep the top five
+     *  with any open finding, and fold ranks past five into one neutral "Other". Five matches
+     *  the categorical palette size (charts.js CATEGORICAL). The pie renders from this scan's
+     *  payload; the line replays the ledger over scan history. */
     function renderCharts(data) {
       const key0 = groupKeys[0];
       const ranked = ((data && data.groups) || [])
         .filter((n) => (n.open || 0) > 0)
         .sort((a, b) => (b.open || 0) - (a.open || 0));
-      const head = ranked.slice(0, 8);
-      const tailOpen = ranked.slice(8).reduce((a, n) => a + (n.open || 0), 0);
+      const head = ranked.slice(0, 5);
+      const tailOpen = ranked.slice(5).reduce((a, n) => a + (n.open || 0), 0);
       const names = head.map((n) => n.key);
       const colors = groupPalette(names);
       const dimLabel = labelFor(key0);

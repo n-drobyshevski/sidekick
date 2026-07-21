@@ -509,6 +509,230 @@ export function severityScopeFilter({ selectable, scope, onApply, ariaContext = 
   return wrap;
 }
 
+let _comboboxSeq = 0;
+
+/**
+ * Reusable searchable combobox: a trigger `<button>` (same open/close/dismiss mechanics
+ * as severityScopeFilter — capture-phase document click to close on outside click,
+ * document keydown for Escape, focusout when focus leaves the widget) plus a listbox
+ * popover. Used for the two global sidebar filters (Value Chain, Support group), each
+ * needing ~20 options to stay scannable.
+ *
+ * The popover is portaled to `document.body` (not appended inside the wrapper) because
+ * the sidebar scrolls (`overflow-y:auto`) and would clip an in-rail popover, and is
+ * positioned `fixed`, opening upward from the trigger since the filters sit at the rail
+ * bottom. It closes (rather than repositions) on scroll/resize.
+ *
+ * `options` is the selectable string[], NOT including the reset entry — the reset row
+ * (label `defaultLabel`, value "") is always pinned at the top of the list regardless of
+ * the search query. A search input appears only once `options.length > searchThreshold`,
+ * so a short list (e.g. Value Chain) stays a plain dropdown.
+ *
+ * `onChange(newValue)` fires on selection. The returned wrapper carries `setValue(v)`,
+ * which updates the shown label/active state WITHOUT firing onChange — for callers (e.g.
+ * clearScope) that need to reset the control programmatically.
+ */
+export function filterCombobox({
+  value, options, defaultLabel, ariaLabel, searchPlaceholder = "Search…",
+  variant, searchThreshold = 7, onChange, id,
+}) {
+  const seq = ++_comboboxSeq;
+  const listboxId = `combobox-list-${seq}`;
+  let current = value || "";
+
+  const triggerText = el("span", { class: "combobox-trigger-text" }, current || defaultLabel);
+  const trigger = el(
+    "button",
+    {
+      type: "button", class: `combobox-trigger${current ? " active" : ""}`,
+      "aria-haspopup": "listbox", "aria-expanded": "false", "aria-label": ariaLabel,
+      title: current || defaultLabel,
+      onclick: (e) => { e.stopPropagation(); open ? close() : openPop(); },
+    },
+    triggerText,
+    el("span", { class: "combobox-caret", "aria-hidden": "true" }, "▾"),
+  );
+  const wrap = el(
+    "div",
+    { class: `combobox sidebar-filter sidebar-filter--${variant}`, id: id || null },
+    trigger,
+  );
+
+  let open = false;
+  let pop = null;
+  let searchEl = null;
+  let listEl = null;
+  let query = "";
+  let rows = []; // [{ value, id, node }], reset row first, in DOM order
+  let activeIndex = 0;
+
+  function matchingOptions() {
+    const q = query.trim().toLowerCase();
+    if (!q) return options;
+    return options.filter((o) => o.toLowerCase().includes(q));
+  }
+
+  // Rebuilds the option rows for the current query. `resetActive` re-lands the active
+  // (keyboard-highlighted) row on the first row — used when the query changes, per the
+  // adaptive-search spec ("typing... resets the active option to the first row");
+  // otherwise the active row tracks the current selection (used on open).
+  function buildRows({ resetActive = false } = {}) {
+    clear(listEl);
+    rows = [];
+    const resetId = `${listboxId}-opt-reset`;
+    const resetRow = el(
+      "li",
+      { id: resetId, role: "option", class: "combobox-option combobox-option--reset",
+        "aria-selected": current === "" ? "true" : "false" },
+      defaultLabel,
+    );
+    resetRow.addEventListener("click", () => select(""));
+    listEl.append(resetRow);
+    rows.push({ value: "", id: resetId, node: resetRow });
+
+    const matches = matchingOptions();
+    matches.forEach((opt, i) => {
+      const optId = `${listboxId}-opt-${i}`;
+      const row = el(
+        "li",
+        { id: optId, role: "option", class: "combobox-option",
+          "aria-selected": current === opt ? "true" : "false" },
+        opt,
+      );
+      row.addEventListener("click", () => select(opt));
+      listEl.append(row);
+      rows.push({ value: opt, id: optId, node: row });
+    });
+    if (matches.length === 0 && query.trim()) {
+      listEl.append(el("li", { role: "presentation", class: "combobox-empty" }, "No matches"));
+    }
+
+    if (resetActive) {
+      activeIndex = 0;
+    } else {
+      const idx = rows.findIndex((r) => r.value === current);
+      activeIndex = idx >= 0 ? idx : 0;
+    }
+    highlightActive();
+  }
+
+  function highlightActive() {
+    rows.forEach((r, i) => r.node.classList.toggle("active", i === activeIndex));
+    const activeId = rows[activeIndex] ? rows[activeIndex].id : "";
+    if (searchEl) searchEl.setAttribute("aria-activedescendant", activeId);
+    else if (listEl) listEl.setAttribute("aria-activedescendant", activeId);
+  }
+
+  function scrollActiveIntoView() {
+    const row = rows[activeIndex];
+    if (row) row.node.scrollIntoView({ block: "nearest" });
+  }
+
+  function select(v) {
+    current = v;
+    triggerText.textContent = current || defaultLabel;
+    trigger.title = current || defaultLabel;
+    trigger.classList.toggle("active", !!current);
+    close();
+    trigger.focus();
+    if (onChange) onChange(current);
+  }
+
+  // Position the portaled popover against the live trigger rect: clamp horizontally to
+  // the viewport, anchor its bottom edge just above the trigger (it always opens
+  // upward — the filters sit at the rail bottom, expanded or collapsed), and cap the
+  // list's own max-height to the space actually available above so the LIST scrolls
+  // internally rather than the popover running off the top of the screen.
+  function position() {
+    const rect = trigger.getBoundingClientRect();
+    const popWidth = Math.min(Math.max(rect.width, 240), window.innerWidth - 16);
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - popWidth - 8));
+    pop.style.width = `${popWidth}px`;
+    pop.style.left = `${left}px`;
+    pop.style.bottom = `${window.innerHeight - rect.top + 6}px`;
+    listEl.style.maxHeight = `${Math.min(320, Math.max(120, rect.top - 24))}px`;
+  }
+
+  function openPop() {
+    open = true;
+    query = "";
+    const showSearch = options.length > searchThreshold;
+    listEl = el("ul", { role: "listbox", class: "combobox-list", id: listboxId, "aria-label": ariaLabel });
+    if (showSearch) {
+      searchEl = el("input", {
+        type: "text", class: "combobox-search", placeholder: searchPlaceholder,
+        role: "combobox", "aria-expanded": "true", "aria-controls": listboxId,
+        "aria-autocomplete": "list", autocomplete: "off", spellcheck: "false",
+        oninput: () => { query = searchEl.value; buildRows({ resetActive: true }); },
+        onkeydown: onListKey,
+      });
+      pop = el("div", { class: "combobox-pop" }, searchEl, listEl);
+    } else {
+      searchEl = null;
+      listEl.setAttribute("tabindex", "-1");
+      listEl.addEventListener("keydown", onListKey);
+      pop = el("div", { class: "combobox-pop" }, listEl);
+    }
+    document.body.append(pop);
+    buildRows();
+    position();
+    trigger.setAttribute("aria-expanded", "true");
+
+    document.addEventListener("click", onDocClick, true);
+    document.addEventListener("keydown", onKey, true);
+    window.addEventListener("scroll", onScrollOrResize, true);
+    window.addEventListener("resize", onScrollOrResize);
+    wrap.addEventListener("focusout", onFocusOut);
+    pop.addEventListener("focusout", onFocusOut);
+
+    if (searchEl) searchEl.focus();
+    else listEl.focus();
+  }
+
+  function close() {
+    if (!open) return;
+    open = false;
+    trigger.setAttribute("aria-expanded", "false");
+    document.removeEventListener("click", onDocClick, true);
+    document.removeEventListener("keydown", onKey, true);
+    window.removeEventListener("scroll", onScrollOrResize, true);
+    window.removeEventListener("resize", onScrollOrResize);
+    wrap.removeEventListener("focusout", onFocusOut);
+    if (pop) { pop.removeEventListener("focusout", onFocusOut); pop.remove(); }
+    pop = null; searchEl = null; listEl = null; rows = [];
+  }
+
+  function isInside(node) { return node && (wrap.contains(node) || (pop && pop.contains(node))); }
+  function onDocClick(e) { if (!isInside(e.target)) close(); }
+  function onFocusOut(e) { if (!isInside(e.relatedTarget)) close(); }
+  function onKey(e) { if (e.key === "Escape") { close(); trigger.focus(); } }
+  // Closing (rather than repositioning) on scroll/resize avoids a stale `fixed` popover
+  // — cheap and correct, since these are rare while the popover is open. Scroll events
+  // don't bubble, so this capture-phase window listener also sees the LIST's own
+  // internal scrolling (e.g. scrollActiveIntoView() during keyboard nav) — that's not an
+  // "outside" scroll and must not self-close the popover it's happening inside of.
+  function onScrollOrResize(e) { if (e.target && pop && pop.contains(e.target)) return; close(); }
+
+  function onListKey(e) {
+    if (!rows.length) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); activeIndex = Math.min(activeIndex + 1, rows.length - 1); highlightActive(); scrollActiveIntoView(); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); activeIndex = Math.max(activeIndex - 1, 0); highlightActive(); scrollActiveIntoView(); }
+    else if (e.key === "Home") { e.preventDefault(); activeIndex = 0; highlightActive(); scrollActiveIntoView(); }
+    else if (e.key === "End") { e.preventDefault(); activeIndex = rows.length - 1; highlightActive(); scrollActiveIntoView(); }
+    else if (e.key === "Enter") { e.preventDefault(); const row = rows[activeIndex]; if (row) select(row.value); }
+  }
+
+  // Programmatic reset (clearScope): updates the shown label/active state without
+  // calling onChange or touching open state.
+  wrap.setValue = (v) => {
+    current = v || "";
+    triggerText.textContent = current || defaultLabel;
+    trigger.title = current || defaultLabel;
+    trigger.classList.toggle("active", !!current);
+  };
+  return wrap;
+}
+
 let _helpTipSeq = 0;
 
 /**

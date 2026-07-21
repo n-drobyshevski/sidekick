@@ -2,8 +2,8 @@
 // charts, per-severity SLA table, posture bars. Never fetches from Wiz.
 
 import {
-  destroyChart, fmtDuration, groupPalette, groupPie, groupTrendLines, openResolvedLines, stackedAgeBar,
-  survivalCurve, trendLine,
+  contributionWaterfall, destroyChart, fmtDuration, groupPalette, groupPie, groupTrendLines,
+  openResolvedLines, stackedAgeBar, survivalCurve, trendLine,
 } from "../charts.js";
 import { bootstrap, swrCall } from "../store.js";
 import {
@@ -232,7 +232,7 @@ export async function renderMttr(main, _params, ctx) {
    *  this is how each component is doing.
    *
    *  Above the table, a chart pair shows how the domains participate in MTTR — both keyed
-   *  to the same canonical `byDomain.trend.groups` (resolved-desc, capped at 8 + pooled
+   *  to the same canonical `byDomain.trend.groups` (resolved-desc, capped at 5 + pooled
    *  "Other") so a domain wears one hue across the two: a "Remediation share" pie
    *  partitioning the *resolved* population (who's carrying the remediation work, tooltip
    *  carrying each domain's median MTTR), and an "MTTR by domain" line replaying each
@@ -251,6 +251,9 @@ export async function renderMttr(main, _params, ctx) {
     const lineCanvas = el("canvas", {});
     const lineMsg = el("p", { class: "chart-empty muted", style: "display:none" });
     const lineCaption = el("p", { class: "chart-caption muted" });
+    const wfCanvas = el("canvas", {});
+    const wfMsg = el("p", { class: "chart-empty muted", style: "display:none" });
+    const wfCaption = el("p", { class: "chart-caption muted" });
 
     // Swap a card between its live canvas and a centered muted message.
     function showChart(canvas, msg) {
@@ -275,6 +278,28 @@ export async function renderMttr(main, _params, ctx) {
       .reduce((a, r) => a + (r.resolved ?? 0), 0);
     const series = groups.map((name) => ({ name, color: colors.get(name) }));
     if (resolvedOther > 0) series.push({ name: "Other", color: colors.get("Other") });
+
+    // Waterfall steps: each domain's remediation wait-time = resolved × KM median (finding·days),
+    // an additive proxy for how much it drives the overall MTTR (the KM median itself doesn't
+    // decompose — see the chart's help). Fall back to the naive median when KM is censored to null,
+    // and drop any domain with no resolved work or no usable median. Same canonical groups/hues as
+    // the pie and line; rows outside the groups pool into an additive "Other" (burden sums cleanly
+    // per domain, unlike a median).
+    const byNameWf = new Map(byDomain.rows.map((r) => [r.domain, r]));
+    const burdenOf = (r) => {
+      const m = r && (r.kmMedian ?? r.median);
+      const n = (r && r.resolved) ?? 0;
+      // Whole finding·days — the median is fractional, but sub-day precision on a ~700 total is
+      // just label noise. Rounding each step keeps the drawn Total (their sum) consistent.
+      return m != null && n > 0 ? Math.round(n * m) : 0;
+    };
+    const wfSteps = groups
+      .map((name) => ({ label: name, value: burdenOf(byNameWf.get(name)), color: colors.get(name) }))
+      .filter((s) => s.value > 0);
+    const wfOther = byDomain.rows
+      .filter((r) => !inGroups.has(r.domain))
+      .reduce((a, r) => a + burdenOf(r), 0);
+    if (wfOther > 0) wfSteps.push({ label: "Other", value: wfOther, color: colors.get("Other") });
 
     const naivePts = (trend && trend.points) || [];
     const kmPts = (trend && trend.kmPoints) || [];
@@ -376,6 +401,34 @@ export async function renderMttr(main, _params, ctx) {
       groupPie(pieCanvas, slices, { subject: "Resolved findings by domain" });
     }
 
+    // Waterfall: each domain's remediation wait-time (resolved × KM median) building to the total —
+    // a taller step is a bigger lever on the overall MTTR. Ordered biggest-driver first so the top
+    // contributors read left-to-right; the pooled "Other" and grounded Total come last.
+    function paintWaterfall() {
+      wfCaption.textContent = "Each domain's remediation wait-time (resolved × KM median) building to "
+        + "the total — a taller step drives the overall MTTR more.";
+      if (!wfSteps.length) {
+        showMsg(wfCanvas, wfMsg, "No resolved findings to attribute.");
+        return;
+      }
+      showChart(wfCanvas, wfMsg);
+      contributionWaterfall(
+        wfCanvas,
+        [...wfSteps].sort((a, b) => b.value - a.value),
+        { unit: "finding·days", subject: "Domain contribution to remediation wait" },
+      );
+    }
+    const wfHelp = [
+      "Ranks domains by remediation wait-time — resolved findings × that domain's KM median MTTR "
+        + "(finding·days) — stacked to a running total. A tall step is a big lever on the overall figure.",
+      "A proxy, not an exact split: the overall KM median is a censored-survival statistic, not a "
+        + "weighted average of per-domain medians, so the headline MTTR can't be decomposed exactly.",
+    ];
+    const wfCard = el("div", { class: "chart-card" },
+      el("h3", {}, helpTip("Domain contribution to MTTR", wfHelp, { className: "help-label" })),
+      el("div", { class: "chart-box chart-box--tall" }, wfCanvas, wfMsg),
+      wfCaption);
+
     // Column headers carry the two new metrics' definitions via helpTip, matching the
     // per-severity table's convention in renderSla above.
     const columns = [
@@ -389,8 +442,10 @@ export async function renderMttr(main, _params, ctx) {
           "findings only — no censoring. Biased low by a wave of fresh open findings, which is " +
           "what the KM median corrects for; kept only for comparison."]],
       ["MTTR p90",
-        ["90th-percentile time from first detection to remediation — the slow tail. Nine " +
-          "in ten findings beat it; one in ten is slower."]],
+        ["Kaplan–Meier 90th-percentile time-to-remediation — the slow tail. Nine in ten " +
+          "findings beat it; one in ten is slower. Censoring-aware like the KM median (read off " +
+          "the same survival curve), so the tail isn't biased low by fresh fast-patched vulns; " +
+          "shows \"—\" when too much is still open to observe it."]],
       ["In SLA (of resolved)", null],
       ["Open past SLA",
         ["Open findings already older than their severity's SLA target, measured from when " +
@@ -448,18 +503,20 @@ export async function renderMttr(main, _params, ctx) {
     // stacking on the page. openSheet calls renderBody synchronously, so the paint rAF
     // scheduled here fires after the canvases are attached to the (animating) sheet.
     function renderBody(body) {
-      body.append(chartPair, tableWrap);
+      body.append(chartPair, wfCard, tableWrap);
       if (footnote) body.append(footnote);
       if (excludedNote) body.append(excludedNote);
       requestAnimationFrame(() => {
         paintPie();
         paintLine();
+        paintWaterfall();
       });
     }
 
     byDomainHost.append(sectionLabel("By domain"));
     byDomainHost.append(el("p", { class: "small muted", style: "margin:-6px 0 10px" },
-      "Per-domain remediation — share of resolved work, KM median MTTR trend, and a full breakdown table."));
+      "Per-domain remediation — share of resolved work, each domain's contribution to MTTR, "
+      + "the KM median trend, and a full breakdown table."));
     byDomainHost.append(el("button", {
       type: "button",
       // Wider default than other sheets: this one carries a trend chart *and* a full data
@@ -508,6 +565,10 @@ export async function renderMttr(main, _params, ctx) {
     // pre-actionable cache (both share the {open, breached, pct} shape).
     const openPastSla = rem?.openPastSlaActionable?.overall ?? rem?.openPastSla?.overall;
     const overallPctiles = rem?.pctiles?.overall; // {p50, p90, count}
+    // Censoring-aware overall p90 (same survival curve as the KM median), replacing the naive
+    // closed-only p90. `undefined` means a stale pre-kmP90 cache → fall back to the naive p90;
+    // `null` means present but unobservable under censoring → renders "—" (never the naive one).
+    const overallKmP90 = rem?.kmP90;
     const awaiting = rem?.awaiting; // {perSev, overall, openTotal, pctOfOpen}
 
     const minis = el("div", { class: "hero-minis" });
@@ -528,7 +589,7 @@ export async function renderMttr(main, _params, ctx) {
         !scoped && prev && prev.open_past_sla !== null && prev.open_past_sla !== undefined &&
           openPastSla && openPastSla.breached !== null && openPastSla.breached !== undefined
           ? changeChip(openPastSla.breached, prev.open_past_sla) : null],
-      ["MTTR p90", fmtDays(overallPctiles?.p90), null],
+      ["MTTR p90", fmtDays(overallKmP90 !== undefined ? overallKmP90 : overallPctiles?.p90), null],
       // p90 of open-finding age, not the single oldest — labelled to match the table below.
       ["Open age p90", fmtDays(mttr.oldestDays),
         !scoped && prev && prev.oldest_open_days !== null && mttr.oldestDays !== null
@@ -898,8 +959,10 @@ export async function renderMttr(main, _params, ctx) {
           "figure. Still-open findings count as censored instead of being ignored, so it isn't " +
           "biased low by fresh fast-patched vulns."]],
       ["MTTR p90",
-        ["90th-percentile time from first detection to remediation — the slow tail. Nine " +
-          "in ten findings beat it; one in ten is slower."]],
+        ["Kaplan–Meier 90th-percentile time-to-remediation — the slow tail. Nine in ten " +
+          "findings beat it; one in ten is slower. Censoring-aware like the KM median (read off " +
+          "the same survival curve), so the tail isn't biased low by fresh fast-patched vulns; " +
+          "shows \"—\" when too much is still open to observe it."]],
       ["Open", null],
       ["Open past SLA",
         ["Open findings already older than their severity's SLA target, measured from when " +
@@ -920,10 +983,14 @@ export async function renderMttr(main, _params, ctx) {
       // KM median (still-open findings censored) when the payload carries it, falling back to
       // the naive closed-only median for a stale pre-kmMedianPerSev cache.
       const kmMedian = mttr.remediation?.kmMedianPerSev?.[sev];
+      // KM p90 (still-open findings censored) when present, falling back to the naive closed-only
+      // p90 for a stale pre-kmP90PerSev cache; a present-but-null value renders "—" (censored).
+      const kmP90 = mttr.remediation?.kmP90PerSev?.[sev];
       tbody.append(el("tr", {},
         el("td", {}, sevBadge(sev)),
         el("td", { class: "num" }, fmtDays(kmMedian !== undefined ? kmMedian : d.mttr_median)),
-        el("td", { class: "num" }, fmtDays(mttr.remediation?.pctiles?.perSev?.[sev]?.p90)),
+        el("td", { class: "num" },
+          fmtDays(kmP90 !== undefined ? kmP90 : mttr.remediation?.pctiles?.perSev?.[sev]?.p90)),
         el("td", { class: "num" }, d.open),
         el("td", { class: "num" }, fmtOpenPastSla(
           mttr.remediation?.openPastSlaActionable?.perSev?.[sev]

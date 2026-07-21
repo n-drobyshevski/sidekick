@@ -2141,9 +2141,13 @@ var Server = (() => {
     }
     return curve;
   }
-  function kmMedianFromCurve(curve) {
-    for (const p of curve) if (p.s <= 0.5) return p.t;
+  function kmQuantileFromCurve(curve, q) {
+    const threshold = 1 - q;
+    for (const p of curve) if (p.s <= threshold) return p.t;
     return null;
+  }
+  function kmMedianFromCurve(curve) {
+    return kmQuantileFromCurve(curve, 0.5);
   }
   function kaplanMeier(rows) {
     const events = [];
@@ -6266,21 +6270,30 @@ var Server = (() => {
     const { slaPct, oldestDays } = overallSlaOldest(perSev);
     const remRows = rows;
     const kmMedianPerSev = {};
+    const kmP90PerSev = {};
     {
       const bySev = {};
       for (const r of remRows) {
         const s = normalizeSeverity(r["severity"]);
         ((_c = bySev[s]) != null ? _c : bySev[s] = []).push(r);
       }
-      for (const [s, rs] of Object.entries(bySev)) kmMedianPerSev[s] = kaplanMeier(rs).median;
+      for (const [s, rs] of Object.entries(bySev)) {
+        const k = kaplanMeier(rs);
+        kmMedianPerSev[s] = k.median;
+        kmP90PerSev[s] = kmQuantileFromCurve(k.curve, 0.9);
+      }
     }
+    const km = kaplanMeier(remRows);
     const remediation = {
       pctiles: mttrPercentiles(remRows),
       buckets: resolutionBuckets(remRows),
-      // Full Kaplan–Meier estimate (curve + KM median/RMST mean + naive comparison stats),
-      // open findings right-censored so the headline isn't biased low by fresh fast patches.
-      km: kaplanMeier(remRows),
+      km,
+      // Overall censoring-aware KM p90 off that same curve (smallest t with S(t) ≤ 0.10) — the
+      // slow-tail sibling of the KM median that replaces the naive `pctiles.overall.p90` in the
+      // KPI band. Null (renders "—") when too much is still open to observe it.
+      kmP90: kmQuantileFromCurve(km.curve, 0.9),
       kmMedianPerSev,
+      kmP90PerSev,
       openPastSla: openPastSla(remRows),
       // Actionable-clock companions (clock starts at vendor-fix availability): the same
       // functions over the actionableView projection. Awaiting-vendor-fix rows carry null
@@ -6344,13 +6357,18 @@ var Server = (() => {
       const { perSev, overall } = mttrFromLedger(drows);
       const { slaPct } = overallSlaOldest(perSev);
       const rem = drows;
+      const km = kaplanMeier(rem);
       out.push({
         domain: name,
         median: (_b = overall.mttr_median) != null ? _b : null,
-        p90: mttrPercentiles(rem).overall.p90,
+        // Censoring-aware KM p90 (open findings right-censored), the slow-tail sibling of the KM
+        // median below — read off the same survival curve (smallest t with S(t) ≤ 0.10) so the
+        // tail isn't biased low by the fast-patched vulns that close first, the way a closed-only
+        // percentile would be. Null (renders "—") when too much is still open to observe it.
+        p90: kmQuantileFromCurve(km.curve, 0.9),
         // Censoring-aware KM median (open findings right-censored) — the column that replaces
         // the old "Excl. fast lane" tail median.
-        kmMedian: kaplanMeier(rem).median,
+        kmMedian: km.median,
         slaPct,
         // Actionable-clock open-past-SLA (measured from vendor-fix availability, awaiting
         // rows excluded) — the same basis the hero and severity table now use.
@@ -6366,7 +6384,7 @@ var Server = (() => {
       var _a2;
       r["_domain"] = (_a2 = assigned[i]) != null ? _a2 : UNASSIGNED;
     });
-    const groups = out.filter((r) => r["resolved"] > 0).sort((a, b) => b["resolved"] - a["resolved"]).slice(0, 8).map((r) => String(r["domain"]));
+    const groups = out.filter((r) => r["resolved"] > 0).sort((a, b) => b["resolved"] - a["resolved"]).slice(0, 5).map((r) => String(r["domain"]));
     const scanRows = loadScanRows();
     const byDomainKey = (r) => {
       var _a2;
@@ -6395,7 +6413,10 @@ var Server = (() => {
       // rows dropped when off); key gains showNoFix so on/off states don't share an entry.
       // "mttr5" → "mttr6": remediation gained `kmMedianPerSev` (per-severity KM median for the
       // per-severity table); bump so no stale entry lacks it.
-      "mttr6",
+      // "mttr6" → "mttr7": remediation gained the censoring-aware KM p90 — `kmP90` (overall, for
+      // the KPI band) and `kmP90PerSev` (per-severity table) — replacing the naive `pctiles` p90
+      // at those call sites; bump so no stale entry lacks them.
+      "mttr7",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
@@ -6460,7 +6481,13 @@ var Server = (() => {
       // "mttrByDomain9" → "mttrByDomain10": rows/trend now exclude rows with no domain inputs
       // (unattributable compacted/imported resolved history) and the payload gained `excluded`;
       // bump so no stale old-shape entry survives the persistent dataVersion.
-      "mttrByDomain10",
+      // "mttrByDomain10" → "mttrByDomain11": `p90` switched from the naive closed-only percentile
+      // to the censoring-aware KM p90 (off the same survival curve as the KM median); same shape,
+      // new value, so bump the namespace to retire stale naive-p90 entries.
+      // "mttrByDomain11" → "mttrByDomain12": the colored-group cap dropped from 8 to 5 (matching the
+      // new categorical palette), so `trend.groups`/`points`/`kmPoints` now carry fewer groups and a
+      // larger pooled "Other"; bump so a stale 8-group entry can't survive the persistent dataVersion.
+      "mttrByDomain12",
       {
         supportGroup: String((_a = p == null ? void 0 : p["supportGroup"]) != null ? _a : ""),
         severities: readSeverities(p),

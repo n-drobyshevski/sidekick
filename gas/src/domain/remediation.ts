@@ -167,14 +167,27 @@ export function kmCurve(events: number[], times: number[]): KMPoint[] {
 }
 
 /**
+ * The Kaplan–Meier q-th quantile off a curve: the smallest event time whose survival has fallen
+ * to `S(t) <= 1 − q`. q=0.5 is the median (S ≤ 0.5); q=0.9 is the p90 (S ≤ 0.10 — the time by
+ * which nine in ten findings are remediated). Censoring-aware, so the slow tail isn't biased low
+ * by the fast-patched vulns that close first. Null when survival never falls that far (too much
+ * still open) or the curve is empty; the UI renders that null as "—". The inclusive crossing
+ * makes an exact tie (e.g. S(t) hits 0.5 exactly) return that time.
+ */
+export function kmQuantileFromCurve(curve: KMPoint[], q: number): number | null {
+  const threshold = 1 - q;
+  for (const p of curve) if (p.s <= threshold) return p.t;
+  return null;
+}
+
+/**
  * The Kaplan–Meier median off a curve: the smallest event time whose survival has fallen to
  * `S(t) <= 0.5` (the inclusive crossing makes an exact-0.5 tie return that time). Null when S
  * never reaches 0.5 (too much censoring — over half of findings still open) or the curve is
  * empty; the UI renders that null as "—" (or "> X d" against medianLowerBound).
  */
 export function kmMedianFromCurve(curve: KMPoint[]): number | null {
-  for (const p of curve) if (p.s <= 0.5) return p.t;
-  return null;
+  return kmQuantileFromCurve(curve, 0.5);
 }
 
 /**

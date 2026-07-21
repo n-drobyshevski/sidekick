@@ -6,12 +6,15 @@ import {
   baseRowNoFix,
   kaplanMeier,
   kmMedian,
+  kmMedianFromCurve,
+  kmQuantileFromCurve,
   mttrPercentiles,
   openPastSla,
   openPastSlaFromRecords,
   recordNoFix,
   resolutionBuckets,
 } from "../src/domain/remediation";
+import type { KMPoint } from "../src/domain/remediation";
 import { baseRows, emptyState, type LedgerState } from "../src/domain/ledgerCore";
 import type { LedgerRow } from "../src/domain/reconcile";
 import { quantile, type Rec } from "../src/domain/util";
@@ -236,6 +239,36 @@ describe("kaplanMeier", () => {
   it("kmMedian is the estimator's .median", () => {
     const rows = [res(1), res(2), res(3), res(4)];
     expect(kmMedian(rows)).toBe(kaplanMeier(rows).median);
+  });
+});
+
+describe("kmQuantileFromCurve", () => {
+  // Synthetic staircase with exact-binary survivals, so the threshold ties are float-clean (0.10
+  // is not a binary fraction — a real KM product landing "on" 0.10 can drift either side of it).
+  const curve: KMPoint[] = [
+    { t: 2, s: 0.5, atRisk: 4, events: 1 },
+    { t: 4, s: 0.25, atRisk: 2, events: 1 },
+    { t: 6, s: 0.0625, atRisk: 1, events: 1 },
+  ];
+
+  it("returns the first t whose survival has fallen to <= 1 - q (inclusive)", () => {
+    expect(kmQuantileFromCurve(curve, 0.5)).toBe(2);  // S <= 0.50 at t=2 (exact tie)
+    expect(kmQuantileFromCurve(curve, 0.75)).toBe(4); // S <= 0.25 at t=4 (exact tie)
+    expect(kmQuantileFromCurve(curve, 0.9)).toBe(6);  // p90: S <= 0.10 first at t=6; 0.25 skipped
+  });
+
+  it("delegates the median: q=0.5 equals kmMedianFromCurve", () => {
+    const c = kaplanMeier([res(1), res(2), res(3), res(4)]).curve;
+    expect(kmQuantileFromCurve(c, 0.5)).toBe(kmMedianFromCurve(c));
+    expect(kmMedianFromCurve(c)).toBe(2);
+  });
+
+  it("null when survival never falls to 1 - q (heavy censoring) or the curve is empty", () => {
+    // one event at 5, four censored: S stalls at 0.8, reaching neither 0.5 nor 0.1.
+    const censored = kaplanMeier([res(5), open(6), open(7), open(8), open(9)]).curve;
+    expect(kmQuantileFromCurve(censored, 0.9)).toBeNull();
+    expect(kmQuantileFromCurve(censored, 0.5)).toBeNull();
+    expect(kmQuantileFromCurve([], 0.9)).toBeNull();
   });
 });
 

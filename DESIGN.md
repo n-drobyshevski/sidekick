@@ -136,6 +136,12 @@ The signature palette, used for chart marks, severity dots, and badge fills. Eac
 
 Status verdicts reuse a fixed trio: **OK** `#15803d`, **Warn** `#a16207`, **Bad** `#b91c1c`, always on a low-alpha tint of the same hue.
 
+### Tertiary: The Categorical Group Palette
+Distinct from severity: the hues that identify *groups* (domains, support groups, OS) in the grouping charts — the breakdown pie and the group-trend line (and the by-domain MTTR contribution waterfall). Five hues, blue-first, held **outside** the severity red/orange/amber band so a group never reads as a severity, plus a neutral **Other** for the pooled tail:
+- **cat-1** `#2563eb` (the brand blue) · **cat-2** `#0d9488` (teal) · **cat-3** `#90396a` (plum) · **cat-4** `#7fba04` (light green) · **cat-5** `#f66bb9` (pink) · **Other** `#94a3b8`
+
+**Five, not more, on purpose.** A warm-band-free, light-tuned, WCAG-and-colorblind-safe categorical set caps out near five distinct hues — eight failed the check hard (violet≈blue under deuteranopia). So the colored groups are **capped at five and the rest fold into Other** (the table still lists every group); this is the categorical face of the Rationed-Ink Rule. The two lightest fills (green, pink) clear only the surface-contrast relief bar, so any label sitting *on* a fill picks its ink adaptively (near-black on the light fills, white elsewhere), and identity is always doubled by the on-arc %, legend point-styles, and direct labels — never color alone. This group palette lives in the GAS app only (the Streamlit `chartCategoricalColors` is the severity ramp): defined in `gas/src/client/styles.css` (`--cat-*`) and mirrored in `charts.js` `CATEGORICAL` (canvas can't read CSS vars), kept in sync by convention. Validate any change with the dataviz palette checker before shipping.
+
 ### Named Rules
 **The Rationed Ink Rule.** Saturated color is spent only on meaning: severity, state, or an SLA verdict. If a color is on screen, it is answering a question about risk. Neutral is the default; decorative color is forbidden.
 
