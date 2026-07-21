@@ -1,0 +1,212 @@
+// Executive View — the default landing page. A calm, centered summary of the numbers
+// leadership acts on: one big Kaplan–Meier MTTR score, open vulnerabilities by severity,
+// the last scan (with a Run scan button), and KM MTTR by domain. Composes existing
+// endpoints (api_bootstrap + api_getMttrPage) — no page-specific server code.
+
+import { bootstrap, swrCall } from "../store.js";
+import {
+  clear, el, emptyState, fmtDateTime, fmtDays, helpTip, noFixHiddenNote, sectionLabel,
+  skeleton, statusPill,
+} from "../ui.js";
+
+// A play triangle for the Run scan button — inlined stroke/fill SVG (the GAS/CSP sandbox
+// blocks icon fonts and CDNs), matching the sidebar's RUN_ICON so the control reads the same.
+const RUN_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5l12 7.5-12 7.5z"/></svg>';
+
+function iconSpan(svg) {
+  const s = el("span", { class: "btn-icon", "aria-hidden": "true" });
+  s.innerHTML = svg;
+  return s;
+}
+
+// Title-case a severity name for a label ("CRITICAL" -> "Critical").
+function nice(s) {
+  return s[0] + s.slice(1).toLowerCase();
+}
+
+// Kaplan–Meier median formatter (mirrors pages/mttr.js fmtKmMedian — the client bundle can't
+// import the TS domain module): the exact day count, "> X d" when the curve never drops to 50%
+// within the observed window (heavy censoring, so the true median is at least that far out), or
+// "—" when there's no KM result at all (a stale pre-KM cached payload).
+function fmtKmMedian(km) {
+  if (!km) return "—";
+  if (km.median !== null && km.median !== undefined) return fmtDays(km.median);
+  if (km.medianLowerBound !== null && km.medianLowerBound !== undefined) {
+    return `> ${fmtDays(km.medianLowerBound)}`;
+  }
+  return "—";
+}
+
+export async function renderExecutive(main, _params, ctx) {
+  const boot = await bootstrap();
+
+  const page = el("div", { class: "exec" });
+  page.append(
+    el("h1", {}, "Security posture"),
+    el("p", { class: "page-sub" },
+      "At-a-glance remediation and open-risk summary across the register."),
+  );
+  if (boot.settings.showNoFix === false) page.append(noFixHiddenNote());
+  main.append(page);
+
+  // Section hosts, painted below. Order = visual hierarchy: the headline MTTR, then the
+  // scan action, then open risk, then the per-domain split.
+  const heroHost = el("div", { class: "exec-hero" });
+  const scanHost = el("div", { class: "exec-scan" });
+  const sevHost = el("div", {});
+  const byDomainHost = el("div", {});
+  page.append(heroHost, scanHost, sevHost, byDomainHost);
+
+  renderScan();
+  renderSeverity();
+  renderHeroSkeleton();
+
+  // One batched round trip; we use only `.mttr` (hero) and `.byDomain` (per-domain split).
+  // Whole-chain, all-severities (no scope) so it shares the default MTTR cache entry.
+  const paint = (data) => {
+    renderHero(data.mttr);
+    renderByDomain(data.byDomain);
+  };
+  paint(await swrCall("api_getMttrPage",
+    { domain: "", supportGroup: "", severities: null }, paint));
+
+  function renderHeroSkeleton() {
+    clear(heroHost).append(
+      el("div", { role: "status", "aria-label": "Computing MTTR" },
+        el("div", { style: "margin-bottom:8px; display:flex; justify-content:center" },
+          skeleton("line", { width: "180px" })),
+        el("div", { style: "display:flex; justify-content:center" },
+          skeleton("stat", { width: "160px", height: "56px" }))),
+    );
+  }
+
+  // The single hero value (DESIGN.md: at most one per page) — the KM median MTTR, sized
+  // larger here as the deliberate exec-only exception (this page *is* the number). The label
+  // + value are the helpTip hover/focus target; no separate glyph. Source line states what
+  // the figure was measured over so the number is never shown without its base.
+  function renderHero(mttr) {
+    clear(heroHost);
+    if (!mttr || !mttr.rowCount) {
+      heroHost.append(emptyState(
+        "No lifecycle data yet.",
+        "MTTR needs at least one saved scan with resolved findings.",
+      ));
+      return;
+    }
+    const km = mttr.remediation?.km; // KMResult — the primary MTTR methodology
+    const resolved = mttr.overall?.resolved ?? 0;
+    const open = mttr.overall?.open ?? 0;
+    const metric = helpTip(
+      [
+        el("div", { class: "label" }, "Median MTTR (Kaplan–Meier)"),
+        el("div", { class: "exec-hero-value num" }, fmtKmMedian(km)),
+      ],
+      [
+        "Kaplan–Meier median days from first detection to remediation. Still-open findings " +
+          "count as censored observations instead of being ignored, so a wave of fresh open " +
+          "findings can't bias this down.",
+        "\"> X d\" means the curve never dropped to 50% within the observed window — over " +
+          "half of tracked findings are still open, so the true median is at least that many " +
+          "days out.",
+      ],
+      { className: "hero-metric" },
+    );
+    heroHost.append(
+      metric,
+      el("div", { class: "hero-src" },
+        `${mttr.rowCount.toLocaleString()} tracked lifecycle(s) · ` +
+        `${resolved.toLocaleString()} resolved · ${open.toLocaleString()} open`),
+    );
+  }
+
+  // Last-scan caption + a single primary (full) Run scan button. The scan itself is driven by
+  // the sidebar's job machinery via ctx.startScan — the progress card appears in the scan zone
+  // and a completed job refreshes the whole shell, exactly like the sidebar's own Run scan.
+  function renderScan() {
+    clear(scanHost);
+    const runBtn = el("button", { class: "primary", onclick: () => ctx.startScan(false, runBtn) },
+      iconSpan(RUN_ICON), el("span", { class: "btn-label" }, "Run scan"));
+
+    if (boot.latestScan) {
+      const age = Math.floor((Date.now() - Date.parse(boot.latestScan.ts)) / 86400000);
+      scanHost.append(
+        el("div", { class: "scan-caption" },
+          `Last scan ${fmtDateTime(boot.latestScan.ts)}` + (age >= 2 ? ` — ${age} days ago` : "")),
+      );
+    } else {
+      scanHost.append(el("div", { class: "scan-caption" }, "No scan saved yet."));
+    }
+    scanHost.append(runBtn);
+    // Honest state: name the dry-run when there are no Wiz credentials, so the numbers above
+    // aren't mistaken for a live register (matches the sidebar's credentials pill).
+    if (!boot.hasCredentials) {
+      scanHost.append(el("div", { class: "scan-caption" },
+        statusPill("neutral", "Dry-run (no credentials)")));
+    }
+  }
+
+  // Open vulnerabilities by severity, from the current scan's counts (the live open set, same
+  // source Overview's headline uses). One tile per selectable severity: a colored dot + the
+  // count + a plain label — color carries meaning only alongside the dot and text (DESIGN
+  // two-token + non-color-signal rules). A tile with zero is shown honestly, not hidden.
+  function renderSeverity() {
+    clear(sevHost);
+    const counts = boot.counts || {};
+    const sevs = boot.palette.order.filter((s) => boot.palette.selectable.includes(s));
+    if (!sevs.length) return;
+
+    sevHost.append(sectionLabel("Open vulnerabilities"));
+    const row = el("div", { class: "exec-sev-row" });
+    for (const sev of sevs) {
+      const n = counts[sev] ?? 0;
+      row.append(
+        el("div", { class: "exec-sev-tile" },
+          el("div", { class: "exec-sev-count num" }, n.toLocaleString()),
+          el("div", { class: "exec-sev-name" },
+            el("span", {
+              class: "sev-dot", "aria-hidden": "true",
+              style: `background:${boot.palette.colors[sev]}`,
+            }),
+            nice(sev)),
+        ),
+      );
+    }
+    sevHost.append(row);
+  }
+
+  // KM MTTR by domain — the per-domain remediation split. The server ships `byDomain` only at
+  // the whole-chain view (which this always is) and the MTTR page gates the section on ≥2
+  // configured domains, so mirror that: hidden entirely when there's nothing meaningful to
+  // split. A compact table (domain · KM median · open) sorted by open backlog, capped so the
+  // exec view stays a summary — the full breakdown lives on the MTTR page.
+  function renderByDomain(byDomain) {
+    clear(byDomainHost);
+    if (!byDomain || !byDomain.rows || !byDomain.rows.length || boot.domainNames.length < 2) return;
+
+    const rows = [...byDomain.rows]
+      .sort((a, b) => (b.open ?? 0) - (a.open ?? 0))
+      .slice(0, 5);
+
+    byDomainHost.append(sectionLabel("MTTR by domain"));
+    const table = el("table", { class: "data" },
+      el("thead", {}, el("tr", {},
+        el("th", { scope: "col" }, "Domain"),
+        el("th", { scope: "col" },
+          helpTip("Median MTTR (KM)",
+            ["Kaplan–Meier median time-to-remediation for this domain — still-open findings " +
+              "censored, so it isn't biased low by fresh fast-patched vulns."],
+            { className: "help-label" })),
+        el("th", { scope: "col" }, "Open"))),
+    );
+    const tbody = el("tbody", {});
+    for (const r of rows) {
+      tbody.append(el("tr", {},
+        el("td", {}, r.domain),
+        el("td", { class: "num num--key" }, fmtDays(r.kmMedian)),
+        el("td", { class: "num" }, (r.open ?? 0).toLocaleString()),
+      ));
+    }
+    table.append(tbody);
+    byDomainHost.append(el("div", { class: "table-wrap exec-by-domain" }, table));
+  }
+}
