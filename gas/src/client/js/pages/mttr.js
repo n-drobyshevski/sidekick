@@ -2,7 +2,7 @@
 // charts, per-severity SLA table, posture bars. Never fetches from Wiz.
 
 import {
-  destroyChart, fmtDuration, groupPalette, groupPie, groupTrendLines, mttrContributionBars,
+  destroyChart, groupPalette, groupTrendLines, mttrContributionBars, mttrImpactBars,
   openResolvedLines, stackedAgeBar, survivalCurve, trendLine,
 } from "../charts.js";
 import { bootstrap, swrCall } from "../store.js";
@@ -25,16 +25,16 @@ const DOMAIN_DIM = {
   noun: "domain",
   Noun: "Domain",
   title: "By domain",
-  subtitle: "Per-domain remediation — share of resolved work, each domain's contribution to "
-    + "MTTR, the KM median trend, and a full breakdown table.",
+  subtitle: "Per-domain remediation — each domain's contribution to the overall MTTR, its median "
+    + "vs the register, the KM median trend, and a full breakdown table.",
   sheetSubtitle: "Remediation for each domain in the value chain.",
 };
 const SUPPORT_GROUP_DIM = {
   noun: "support group",
   Noun: "Support group",
   title: "By support group",
-  subtitle: "Per-support-group remediation within this value chain — share of resolved work, "
-    + "each group's contribution to MTTR, the KM median trend, and a full breakdown table.",
+  subtitle: "Per-support-group remediation within this value chain — each group's contribution to "
+    + "the overall MTTR, its median vs the register, the KM median trend, and a full breakdown table.",
   sheetSubtitle: "Remediation for each support group in this value chain.",
 };
 
@@ -263,9 +263,10 @@ export async function renderMttr(main, _params, ctx) {
   // By-domain "MTTR by domain" chart clock: KM median (censoring-aware, the default) vs the
   // naive closed-only comparison. Persisted across visits like the other in-card toggles.
   let byDomainClock = loadPref("mttrByDomainClock", ["km", "naive"], "km");
-  // Which lens the merged by-domain panel shows: "share" (resolved-share pie) or "contribution"
-  // (MTTR-wait waterfall). Persisted across visits like the clock above.
-  let byDomainShareView = loadPref("mttrByDomainShareView", ["share", "contribution"], "share");
+  // Which lens the merged by-domain panel shows: "impact" (signed contribution to MTTR — the
+  // default) or "median" (per-group KM median vs the overall). Persisted across visits like the
+  // clock above; a stale value from an earlier layout degrades to "impact".
+  let byDomainLens = loadPref("mttrByDomainLens", ["impact", "median"], "impact");
 
   await load();
 
@@ -325,13 +326,13 @@ export async function renderMttr(main, _params, ctx) {
    *
    *  Above the table, a chart pair shows how the groups participate in MTTR — both keyed to the
    *  same canonical `byDomain.trend.groups` (resolved-desc, capped at 5 + pooled "Other") so a
-   *  group wears one hue across them. One card carries two switchable lenses: a "Remediation share"
-   *  pie partitioning the *resolved* population (who's carrying the work, tooltip carrying each
-   *  group's median MTTR), and a "… contribution to MTTR" bar ranking each group's KM median
-   *  against a reference line at the overall KM median (who is slow enough to pull the headline
-   *  figure up). Beside it, an "MTTR by …" line replays each group's median in days over scan
-   *  history. The overall KM median for the reference line comes from `mttr` (same scope as these
-   *  rows). This section is all-time like its table — the Trends timeframe toggle is not wired in. */
+   *  group wears one hue across them. One card carries two switchable lenses: "contribution to
+   *  MTTR" (default) — signed diverging bars of resolved × (group median − overall median), the
+   *  volume-weighted read of who drags the headline figure up vs down — and "median MTTR by …",
+   *  each group's KM median ranked against a reference line at the overall KM median (the pure
+   *  rate). Beside it, an "MTTR by …" line replays each group's median in days over scan history.
+   *  The overall KM median (the baseline both lenses read against) comes from `mttr`, same scope as
+   *  these rows. This section is all-time like its table — the Trends timeframe toggle is not wired in. */
   function renderByDomain(byDomain, mttr) {
     clear(byDomainHost);
     if (!byDomain || !byDomain.rows.length) return;
@@ -354,15 +355,15 @@ export async function renderMttr(main, _params, ctx) {
     // Chart pair over the group trend the server ships alongside the table. Each card swaps
     // its canvas for a muted message when there's nothing to draw (copied from overview.js's
     // Breakdown helpers). Both share one groupPalette so a domain's hue is stable across them.
-    const pieCanvas = el("canvas", {});
-    const pieMsg = el("p", { class: "chart-empty muted", style: "display:none" });
+    const impactCanvas = el("canvas", {});
+    const impactMsg = el("p", { class: "chart-empty muted", style: "display:none" });
     const lineCanvas = el("canvas", {});
     const lineMsg = el("p", { class: "chart-empty muted", style: "display:none" });
     const lineCaption = el("p", { class: "chart-caption muted" });
-    const contribCanvas = el("canvas", {});
-    const contribMsg = el("p", { class: "chart-empty muted", style: "display:none" });
-    // The pie and the contribution bars share one switchable card, so they share one caption too.
-    const shareCaption = el("p", { class: "chart-caption muted" });
+    const medianCanvas = el("canvas", {});
+    const medianMsg = el("p", { class: "chart-empty muted", style: "display:none" });
+    // The two lenses (contribution / median) share one switchable card, so they share one caption.
+    const lensCaption = el("p", { class: "chart-caption muted" });
 
     // Swap a card between its live canvas and a centered muted message.
     function showChart(canvas, msg) {
@@ -380,36 +381,54 @@ export async function renderMttr(main, _params, ctx) {
     const groups = (trend && trend.groups) || [];
     const colors = groupPalette(groups);
     const inGroups = new Set(groups);
-    // Rows outside the canonical groups pool into "Other" — the pie sums their resolved
-    // share; the line's Other series is the same pooled remainder the server replays.
+    // Rows outside the canonical groups pool into an "Other" line series iff any exist — the same
+    // pooled remainder the server replays as its "Other" trend point. (The two snapshot lenses show
+    // named groups only; this pooled check is just for the trend line's series list.)
     const resolvedOther = byDomain.rows
       .filter((r) => !inGroups.has(groupOf(r)))
       .reduce((a, r) => a + (r.resolved ?? 0), 0);
     const series = groups.map((name) => ({ name, color: colors.get(name) }));
     if (resolvedOther > 0) series.push({ name: "Other", color: colors.get("Other") });
 
-    // Contribution bars: each group's KM median MTTR (days), ranked slowest-first and read against
-    // the overall-median reference line — the groups above it are the ones pulling the headline
-    // MTTR up. Fall back to the naive median when KM is censored to null, and drop any group with no
-    // resolved work or no usable median (medians can't be estimated with too little closed). Same
-    // canonical groups/hues as the pie and line. There is deliberately NO "Other" bar: medians don't
-    // pool, so a fabricated pooled-remainder median would be meaningless (the pie keeps Other, whose
-    // counts *do* sum). Groups dropped for an unobservable median are surfaced in the caption.
-    const byNameContrib = new Map(byDomain.rows.map((r) => [groupOf(r), r]));
-    const contribRows = groups
+    // Both lenses read the same per-group row (canonical groups only, capped at 5 + a pooled tail
+    // the table below carries) with the same median accessor: KM median, falling back to the naive
+    // closed-only median when KM is censored to null. Groups with no resolved work or no observable
+    // median (too much still open) can't be placed on either chart and are dropped; the count is
+    // surfaced in each lens's caption.
+    const byName = new Map(byDomain.rows.map((r) => [groupOf(r), r]));
+    const medianOf = (r) => r && (r.kmMedian ?? r.median);
+    const omittedCount = groups.filter((name) => {
+      const r = byName.get(name);
+      return r && (r.resolved ?? 0) > 0 && medianOf(r) == null;
+    }).length;
+
+    // "Median MTTR by …" lens (secondary): each group's KM median in days, ranked slowest-first and
+    // read against the overall-median reference line. NO pooled "Other" bar — medians don't pool, so
+    // a fabricated pooled-remainder median would be meaningless.
+    const medianRows = groups
       .map((name) => {
-        const r = byNameContrib.get(name);
-        const v = r && (r.kmMedian ?? r.median);
-        return { label: name, value: v, resolved: (r && r.resolved) ?? 0, color: colors.get(name) };
+        const r = byName.get(name);
+        return { label: name, value: medianOf(r), resolved: (r && r.resolved) ?? 0, color: colors.get(name) };
       })
       .filter((g) => g.value != null && g.resolved > 0)
       .sort((a, b) => b.value - a.value);
-    // Named groups with resolved work but no observable median (too much still open) — dropped from
-    // the ranked bars and counted here so the caption can stay honest about the omission.
-    const contribOmitted = groups.filter((name) => {
-      const r = byNameContrib.get(name);
-      return r && (r.resolved ?? 0) > 0 && (r.kmMedian ?? r.median) == null;
-    }).length;
+
+    // "Contribution to MTTR" lens (default): each group's signed excess finding·days vs the overall
+    // median — resolved × (group median − overall median). Positive = the group's resolved findings
+    // ran slower than the register median and, weighted by volume, dragged MTTR up; negative = faster,
+    // held it down. Unlike a pooled median, this per-row product IS additive, but it still needs the
+    // overall baseline, so the whole lens is unavailable when the overall median is itself censored.
+    // Sorted desc so the biggest up-drivers sit at the top and the biggest down-drivers at the bottom.
+    const impactRows = overallKm == null ? [] : groups
+      .map((name) => {
+        const r = byName.get(name);
+        const med = medianOf(r);
+        const n = (r && r.resolved) ?? 0;
+        if (med == null || n <= 0) return null;
+        return { label: name, value: Math.round(n * (med - overallKm)), median: med, resolved: n, color: colors.get(name) };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.value - a.value);
 
     const naivePts = (trend && trend.points) || [];
     const kmPts = (trend && trend.kmPoints) || [];
@@ -471,118 +490,117 @@ export async function renderMttr(main, _params, ctx) {
     const lineTitle = el("h3", {}, helpTip(`MTTR by ${dim.noun}`, lineHelp, { className: "help-label" }));
     const lineHead = lineToggle ? el("div", { class: "chart-head" }, lineTitle, lineToggle) : lineTitle;
 
-    // Unified by-domain panel: the "Remediation share" pie and the "Domain contribution to MTTR"
-    // bars are two lenses on the same domains (who carries the resolved work vs who is slow enough
-    // to pull the headline MTTR up), so they share one card switched by a segmented toggle instead
-    // of two separate cards. It sits in a row with the "MTTR by domain" line; the chosen lens persists.
-    const shareHelp = [
-      `Each ${dim.noun}'s share of the resolved findings the MTTR median runs over — who is carrying `
-        + `the remediation work. Hover a slice for that ${dim.noun}'s KM median.`,
+    // Unified by-domain panel: "Contribution to MTTR" (signed impact) and "Median MTTR by …" (rate)
+    // are two lenses on the same groups — who drags the headline figure up/down, weighted by volume,
+    // vs how slow each group is on its own — so they share one card switched by a segmented toggle
+    // instead of two separate cards. It sits in a row with the "MTTR by domain" line; the lens persists.
+    const impactHelp = [
+      `Each ${dim.noun}'s resolved findings × (its KM median − the overall KM median), in finding·days. `
+        + `Right of the zero line the ${dim.noun} closed slower than the register median and — scaled by `
+        + `how much it closed — dragged the headline MTTR up; left of it the ${dim.noun} closed faster and `
+        + "held MTTR down. The zero line is the overall median: no drag.",
+      `Leverage, not just rate: a slightly-slow ${dim.noun} that closes a lot outweighs a very-slow one `
+        + `that closes little, and a fast high-volume ${dim.noun} reads as the down-driver it is. A proxy, `
+        + "not an exact split — the overall KM median is a censored-survival statistic, not a weighted "
+        + `average of per-${dim.noun} medians — so read the magnitudes as relative, not an exact day count.`,
     ];
-    const contribHelp = [
+    const medianHelp = [
       `Each ${dim.noun}'s Kaplan–Meier median time-to-remediation, ranked slowest first against the `
         + `dashed line at the overall KM median. Bars past the line take longer than the register `
         + `median — these ${dim.noun}s pull the headline MTTR up; bars short of it pull it down.`,
-      `Ranked by how slow, not how much: a high-volume ${dim.noun} that remediates fast sits left of `
-        + "the line here (it lowers the median), where a resolved-weighted view would rank it top. "
-        + "Hover a bar for its resolved count — few resolved findings mean little real leverage.",
+      `The pure rate, ignoring volume: a very-slow ${dim.noun} tops this even if it closed only a `
+        + `handful. The contribution lens weights the same medians by resolved count for real leverage; `
+        + "hover a bar here for that count.",
     ];
-    const shareTitleHost = el("h3", {}); // retitled per lens by applyShareView
-    // A single circular-arrows button swaps the two lenses (share ⇄ contribution). The card title
+    const lensTitleHost = el("h3", {}); // retitled per lens by applyLens
+    // A single circular-arrows button swaps the two lenses (contribution ⇄ median). The card title
     // names the active lens, so one icon toggle reads cleaner than two buttons; its aria-label /
-    // title announce what the next click switches to (updated in applyShareView).
+    // title announce what the next click switches to (updated in applyLens).
     const swapBtn = el("button", { type: "button", class: "chart-swap" });
     swapBtn.innerHTML = SWAP_ICON;
     swapBtn.addEventListener("click", () =>
-      pickShareView(byDomainShareView === "share" ? "contribution" : "share"));
+      pickLens(byDomainLens === "impact" ? "median" : "impact"));
     // Both canvases live in one box (same height as the line card so the row aligns); the inactive
     // one starts hidden so there's no flash before the first paint in the rAF below.
-    pieCanvas.style.display = byDomainShareView === "share" ? "" : "none";
-    contribCanvas.style.display = byDomainShareView === "contribution" ? "" : "none";
-    const shareCard = el("div", { class: "chart-card" },
-      el("div", { class: "chart-head" }, shareTitleHost, swapBtn),
-      el("div", { class: "chart-box" }, pieCanvas, pieMsg, contribCanvas, contribMsg),
-      shareCaption);
+    impactCanvas.style.display = byDomainLens === "impact" ? "" : "none";
+    medianCanvas.style.display = byDomainLens === "median" ? "" : "none";
+    const lensCard = el("div", { class: "chart-card" },
+      el("div", { class: "chart-head" }, lensTitleHost, swapBtn),
+      el("div", { class: "chart-box" }, impactCanvas, impactMsg, medianCanvas, medianMsg),
+      lensCaption);
 
     // Switch the lens: flip aria-pressed, retitle with the matching help, tear down the hidden
     // chart, and paint the active one (each paint fn shows its own canvas / empty message).
-    function applyShareView(view) {
-      byDomainShareView = view;
+    function applyLens(view) {
+      byDomainLens = view;
       // The label names what the *next* click switches to (the title already names the current lens).
-      const nextLabel = view === "share"
-        ? `Show ${dim.noun} contribution to MTTR` : "Show remediation share";
+      const nextLabel = view === "impact"
+        ? `Show median MTTR by ${dim.noun}` : `Show ${dim.noun} contribution to MTTR`;
       swapBtn.setAttribute("aria-label", nextLabel);
       swapBtn.title = nextLabel;
-      clear(shareTitleHost).append(
-        view === "share"
-          ? helpTip("Remediation share", shareHelp, { className: "help-label" })
-          : helpTip(`${dim.Noun} contribution to MTTR`, contribHelp, { className: "help-label" }));
-      const [hideCanvas, hideMsg] = view === "share" ? [contribCanvas, contribMsg] : [pieCanvas, pieMsg];
+      clear(lensTitleHost).append(
+        view === "impact"
+          ? helpTip(`${dim.Noun} contribution to MTTR`, impactHelp, { className: "help-label" })
+          : helpTip(`Median MTTR by ${dim.noun}`, medianHelp, { className: "help-label" }));
+      const [hideCanvas, hideMsg] = view === "impact" ? [medianCanvas, medianMsg] : [impactCanvas, impactMsg];
       destroyChart(hideCanvas);
       hideCanvas.style.display = "none";
       hideMsg.style.display = "none";
-      if (view === "share") paintPie(); else paintContribution();
+      if (view === "impact") paintImpact(); else paintMedian();
     }
-    function pickShareView(view) {
-      savePref("mttrByDomainShareView", view);
-      applyShareView(view);
+    function pickLens(view) {
+      savePref("mttrByDomainLens", view);
+      applyLens(view);
     }
 
     const chartPair = el("div", { class: "chart-grid", style: "align-items:start" },
-      shareCard,
+      lensCard,
       el("div", { class: "chart-card" },
         lineHead,
         el("div", { class: "chart-box" }, lineCanvas, lineMsg),
         lineCaption),
     );
 
-    // Pie: each domain's share of resolved findings — the population the MTTR median runs
-    // over. Tooltip detail carries the matching per-domain median. Canonical groups/hues
-    // stay fixed (slices resize, never recolor).
-    function paintPie() {
-      const byName = new Map(byDomain.rows.map((r) => [groupOf(r), r]));
-      shareCaption.textContent = `Each ${dim.noun}'s share of resolved findings — the population feeding MTTR.`;
-      const slices = groups
-        .map((name) => {
-          const r = byName.get(name);
-          return {
-            label: name,
-            value: r?.resolved ?? 0,
-            color: colors.get(name),
-            detail: "KM median " + fmtDuration(r?.kmMedian),
-          };
-        })
-        .filter((s) => s.value > 0);
-      const other = byDomain.rows
-        .filter((r) => !inGroups.has(groupOf(r)))
-        .reduce((a, r) => a + (r.resolved ?? 0), 0);
-      if (other > 0) slices.push({ label: "Other", value: other, color: colors.get("Other") });
-      if (!slices.length) {
-        showMsg(pieCanvas, pieMsg, "No resolved findings to partition.");
+    // Shared omission note for both lenses — named groups with resolved work but no observable
+    // median (too much still open) are dropped from either chart.
+    const omittedNote = omittedCount > 0
+      ? ` ${omittedCount} ${dim.noun}${omittedCount === 1 ? "" : "s"} omitted — too much still open `
+        + "to estimate a median."
+      : "";
+
+    // Contribution lens (default): signed excess finding·days vs the overall median — right of the
+    // zero line drags MTTR up, left holds it down. Needs the overall baseline, so when the overall
+    // median is itself censored (overallKm null) the whole lens shows a muted note instead.
+    function paintImpact() {
+      lensCaption.textContent = `Each ${dim.noun}'s resolved findings × (its median − the overall `
+        + `median), in finding·days — right of the line drags MTTR up, left holds it down.${omittedNote}`;
+      if (overallKm == null) {
+        showMsg(impactCanvas, impactMsg,
+          "The overall KM median isn't observable yet — too much is still open to baseline contribution.");
         return;
       }
-      showChart(pieCanvas, pieMsg);
-      groupPie(pieCanvas, slices, { subject: `Resolved findings by ${dim.noun}` });
+      if (!impactRows.length) {
+        showMsg(impactCanvas, impactMsg, "No resolved findings with an observable median to attribute.");
+        return;
+      }
+      showChart(impactCanvas, impactMsg);
+      mttrImpactBars(impactCanvas, impactRows, { subject: `${dim.Noun} contribution to MTTR` });
     }
 
-    // Contribution bars: each group's KM median MTTR against the overall-median reference line — a
-    // bar past the line is a group slower than the register median, i.e. one pulling the headline
-    // MTTR up. Slowest-first (contribRows is pre-sorted desc), so the up-drivers read top-down.
-    function paintContribution() {
-      const omittedNote = contribOmitted > 0
-        ? ` ${contribOmitted} ${dim.noun}${contribOmitted === 1 ? "" : "s"} omitted — too much still `
-          + "open to estimate a median."
-        : "";
+    // Median lens (secondary): each group's KM median MTTR against the overall-median reference line —
+    // a bar past the line is a group slower than the register median. Slowest-first (medianRows is
+    // pre-sorted desc), so the up-drivers read top-down.
+    function paintMedian() {
       const refClause = overallKm != null
         ? " vs the overall median (dashed) — bars past the line pull the headline MTTR up."
         : " — ranked slowest first.";
-      shareCaption.textContent = `Each ${dim.noun}'s KM median MTTR${refClause}${omittedNote}`;
-      if (!contribRows.length) {
-        showMsg(contribCanvas, contribMsg, "No resolved findings with an observable median to rank.");
+      lensCaption.textContent = `Each ${dim.noun}'s KM median MTTR${refClause}${omittedNote}`;
+      if (!medianRows.length) {
+        showMsg(medianCanvas, medianMsg, "No resolved findings with an observable median to rank.");
         return;
       }
-      showChart(contribCanvas, contribMsg);
-      mttrContributionBars(contribCanvas, contribRows, {
+      showChart(medianCanvas, medianMsg);
+      mttrContributionBars(medianCanvas, medianRows, {
         overall: overallKm,
         subject: `${dim.Noun} median MTTR vs overall`,
       });
@@ -665,7 +683,7 @@ export async function renderMttr(main, _params, ctx) {
       if (footnote) body.append(footnote);
       if (excludedNote) body.append(excludedNote);
       requestAnimationFrame(() => {
-        applyShareView(byDomainShareView); // paints the active lens (pie or waterfall)
+        applyLens(byDomainLens); // paints the active lens (contribution or median)
         paintLine();
       });
     }
