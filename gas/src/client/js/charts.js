@@ -803,123 +803,134 @@ export function groupTrendLines(canvas, points, series, cfg = {}) {
   });
 }
 
-// Draws each waterfall step's magnitude above its top edge — "+value" for a contribution step,
-// the plain figure for the grounded Total bar. Sibling of barEndLabels, but for vertical floating
-// bars: the label sits above the mark on the surface, so it wears INK2 (not white-on-fill).
-function waterfallLabels(bars) {
+// Draws each horizontal bar's KM median just past its end, as a compound duration (2d 7h, not
+// "2.3"). Sibling of barEndLabels, but formats days through fmtDuration instead of a bare count.
+function medianDayLabels(groups) {
   return {
-    id: "waterfallLabels",
+    id: "medianDayLabels",
     afterDatasetsDraw(chart) {
       const { ctx } = chart;
       const meta = chart.getDatasetMeta(0);
       ctx.save();
       ctx.font = `600 11px ${FONT.family}`;
       ctx.fillStyle = INK2;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "bottom";
+      ctx.textBaseline = "middle";
+      ctx.textAlign = "left";
       meta.data.forEach((bar, i) => {
-        const b = bars[i];
-        ctx.fillText((b.isTotal ? "" : "+") + localeNum(b.value), bar.x, bar.y - 4);
+        const v = groups[i] && groups[i].value;
+        if (v == null) return;
+        ctx.fillText(fmtDuration(Number(v)), bar.x + 6, bar.y);
       });
       ctx.restore();
     },
   };
 }
 
-// A thin dashed tie from the top of each contribution step to the foot of the next, so the eye
-// reads the running cumulative the way a printed waterfall does. Next floor == this top, so the
-// tie is horizontal at that level. The Total bar is grounded at 0, not stacked, so nothing ties
-// into it.
-function waterfallConnectors(bars) {
+// A dashed vertical rule at the overall KM median, with an inked chip naming it. This is the
+// baseline the bars are read against — a bar past the rule is a group slower than the register
+// median. Drawn on top of the bars (afterDatasetsDraw) so the rule and chip stay legible over a
+// fill. Skipped when the median falls outside the drawn range (defensive; the caller only passes
+// a finite value).
+function medianReferenceLine(overall) {
   return {
-    id: "waterfallConnectors",
+    id: "medianReferenceLine",
     afterDatasetsDraw(chart) {
+      const xs = chart.scales.x;
+      const area = chart.chartArea;
+      if (!xs || !area) return;
+      const x = xs.getPixelForValue(overall);
+      if (!Number.isFinite(x) || x < area.left || x > area.right) return;
       const { ctx } = chart;
-      const meta = chart.getDatasetMeta(0);
       ctx.save();
-      ctx.strokeStyle = "#d6d6db";
-      ctx.lineWidth = 1;
-      ctx.setLineDash([3, 3]);
-      for (let i = 0; i < meta.data.length - 1; i++) {
-        if (bars[i + 1].isTotal) continue;
-        const cur = meta.data[i], next = meta.data[i + 1];
-        ctx.beginPath();
-        ctx.moveTo(cur.x + cur.width / 2, cur.y);
-        ctx.lineTo(next.x - next.width / 2, cur.y);
-        ctx.stroke();
-      }
+      ctx.strokeStyle = "#0a0a0a";
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.moveTo(x, area.top);
+      ctx.lineTo(x, area.bottom);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // Inked chip naming the rule — placed to the right of the line, flipped left when it would
+      // spill past the plot edge so the text never clips.
+      const label = `overall ${fmtDuration(overall)}`;
+      ctx.font = `600 10px ${FONT.family}`;
+      const pad = 4;
+      const tw = ctx.measureText(label).width;
+      let lx = x + 5;
+      if (lx + tw + pad * 2 > area.right) lx = x - 5 - tw - pad * 2;
+      ctx.fillStyle = "#0a0a0a";
+      ctx.fillRect(lx, area.top + 2, tw + pad * 2, 15);
+      ctx.fillStyle = "#ffffff";
+      ctx.textBaseline = "middle";
+      ctx.textAlign = "left";
+      ctx.fillText(label, lx + pad, area.top + 2 + 7.5);
       ctx.restore();
     },
   };
 }
 
 /**
- * Waterfall of each group's additive contribution to a total magnitude: floating bars that build
- * cumulatively left-to-right, capped by a solid Total bar. Used for "domain contribution to MTTR",
- * where a step is a domain's remediation wait-time (resolved × KM median, in finding·days). The
- * overall KM median is a censored-survival statistic — NOT a weighted sum of per-domain medians —
- * so this ranks domains by that additive wait-time proxy rather than claiming to split the headline
- * figure. Meaning never rides on colour alone: every step is direct-labeled with its value, named on
- * the category axis, and enumerated in the text alternative.
+ * Horizontal bars of each group's Kaplan–Meier median time-to-remediation (days), ranked
+ * slowest-first, against a dashed reference line at the overall KM median. This is the honest
+ * "what pulls our MTTR up" view: a bar reaching past the line is a group whose findings take
+ * longer than the register median — the groups dragging the headline figure up; bars short of the
+ * line pull it down. It replaced a resolved×median wait-time waterfall, which conflated *slow* with
+ * *high-volume* — a fast group that closes a lot would tower there while actually lowering the
+ * median. Volume is kept as tooltip context (few resolved findings = little real leverage), not as
+ * the ranked quantity.
  *
- * `steps` = [{ label, value, color }] in draw order (the caller sorts domains desc and appends an
- * "Other" step); this helper appends the grounded Total bar itself. `opts.unit` labels the y axis,
- * tooltip, and aria text (default "finding·days"); `opts.subject` leads the text alternative.
+ * `groups` = [{ label, value (KM median, days), resolved, color }], sorted desc by the caller.
+ * `opts.overall` is the overall KM median (days) for the reference line — omit or pass null to skip
+ * it (e.g. when the overall median is itself censored). Meaning never rides on colour alone: bar
+ * length vs the labeled rule, the direct day labels, the tooltip, and the text alternative all
+ * carry the up/down read.
  */
-export function contributionWaterfall(canvas, steps, opts = {}) {
+export function mttrContributionBars(canvas, groups, opts = {}) {
   destroyExisting(canvas);
-  const unit = opts.unit || "finding·days";
-  const subject = opts.subject || "Contribution by group";
-  const total = steps.reduce((a, s) => a + (Number(s.value) || 0), 0);
-  const pct = (v) => (total ? Math.round((v / total) * 100) : 0);
+  const subject = opts.subject || "Median MTTR by group";
+  const overall = opts.overall;
+  const hasRef = overall !== null && overall !== undefined && Number.isFinite(Number(overall));
+  // The up/down clause shared by the tooltip and the text alternative, relative to the reference.
+  const dir = (v) => {
+    if (!hasRef) return "";
+    const d = Number(v) - Number(overall);
+    if (Math.abs(d) < 0.05) return ", at the overall median";
+    return d > 0
+      ? `, ${fmtDuration(d)} above overall — pulls MTTR up`
+      : `, ${fmtDuration(-d)} below overall — pulls MTTR down`;
+  };
+  describe(canvas, `${subject}: ` +
+    (groups.map((g) => `${g.label} ${fmtDuration(Number(g.value))}${dir(g.value)}`).join("; ") || "none") +
+    (hasRef ? `; overall KM median ${fmtDuration(Number(overall))}.` : "."));
 
-  // Cumulative floors: each contribution bar floats [runningBefore, runningAfter]; the Total bar is
-  // grounded [0, total] and inked (#0a0a0a), never a category hue.
-  const bars = [];
-  let cum = 0;
-  for (const s of steps) {
-    const v = Number(s.value) || 0;
-    bars.push({ label: s.label, value: v, data: [cum, cum + v], color: s.color });
-    cum += v;
-  }
-  bars.push({ label: "Total", value: total, data: [0, total], color: "#0a0a0a", isTotal: true });
-
-  describe(canvas, `${subject} (${unit}): ` +
-    (steps.map((s) => `${s.label} ${localeNum(Number(s.value) || 0)} (${pct(Number(s.value) || 0)}%)`)
-      .join(", ") || "none") +
-    `; total ${localeNum(total)}.`);
-
-  const opt = baseOptions("");
-  opt.scales.x.grid = { display: false };
-  opt.scales.y.beginAtZero = true;
-  opt.scales.y.grace = "10%"; // headroom so the top +value label isn't clipped at the axis edge
-  opt.scales.y.title = { display: true, text: unit, font: FONT, color: INK2 };
-  // Floating bars expose ctx.parsed as a pair, so the baseOptions label callback can't read a value;
-  // pull it from the closed-over `bars` by index instead.
-  opt.plugins.tooltip.callbacks = {
-    title: (items) => (items.length ? bars[items[0].dataIndex].label : ""),
-    label: (ctx) => {
-      const b = bars[ctx.dataIndex];
-      return b.isTotal
-        ? ` Total remediation wait: ${localeNum(b.value)} ${unit}`
-        : ` +${localeNum(b.value)} ${unit} (${pct(b.value)}%)`;
-    },
+  const opt = baseOptions("days");
+  opt.indexAxis = "y";
+  opt.scales.x.beginAtZero = true;
+  opt.scales.x.grace = "12%"; // headroom so the end-of-bar day labels aren't clipped
+  opt.scales.x.title = { display: true, text: "KM median (days)", font: FONT, color: INK2 };
+  opt.scales.y.grid = { display: false };
+  opt.plugins.tooltip.callbacks.label = (ctx) => {
+    const g = groups[ctx.dataIndex];
+    const n = g.resolved ?? 0;
+    return ` ${fmtDuration(Number(g.value))} · ${localeNum(n)} resolved${dir(g.value)}`;
   };
 
   return new Chart(canvas, {
     type: "bar",
     data: {
-      labels: bars.map((b) => b.label),
+      labels: groups.map((g) => g.label),
       datasets: [
         {
-          data: bars.map((b) => b.data),
-          backgroundColor: bars.map((b) => b.color),
+          data: groups.map((g) => g.value),
+          backgroundColor: groups.map((g) => g.color),
           borderRadius: 3,
-          maxBarThickness: 56,
+          maxBarThickness: 34,
         },
       ],
     },
     options: opt,
-    plugins: [waterfallConnectors(bars), waterfallLabels(bars)],
+    plugins: hasRef
+      ? [medianDayLabels(groups), medianReferenceLine(Number(overall))]
+      : [medianDayLabels(groups)],
   });
 }
