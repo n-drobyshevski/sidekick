@@ -24,7 +24,7 @@ const KEY_PREFIX = "wsk";
 // stamp, making prior entries unreachable at once. The `typeof` guard leaves vitest / the dev server
 // (no esbuild define) on a stable "dev" stamp so their caching behaviour is unchanged.
 declare const __BUILD_ID__: string;
-const BUILD_ID = typeof __BUILD_ID__ === "string" ? __BUILD_ID__ : "dev";
+export const BUILD_ID = typeof __BUILD_ID__ === "string" ? __BUILD_ID__ : "dev";
 const CHUNK_CHARS = 90_000; // base64 chars per entry, safely under the 100 KB cap
 const DEFAULT_TTL_SEC = 21_600; // the CacheService maximum (6 h)
 

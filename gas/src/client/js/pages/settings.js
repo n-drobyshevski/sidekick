@@ -416,6 +416,10 @@ export async function renderSettings(main, params, ctx) {
   // that never shows a toast (post-scan support-group refresh, MTTR snapshot, auto-compaction)
   // — is visible without opening the Apps Script execution log the web app can't reach.
   main.append(sectionLabel("Diagnostics"));
+  // Deployed code stamp — confirm at a glance whether a `clasp push` actually took effect (the
+  // recurring "I deployed the fix but still see the old behaviour" confusion). "dev" runs locally.
+  main.append(el("p", { class: "muted small" },
+    "Build ", el("code", { class: "small" }, boot.buildId || "—"), "."));
   main.append(el("p", { class: "muted small" },
     "The last 25 server-side errors across scan, support-group refresh, import, compaction, and " +
     "other operations — including background failures that never surface a toast."));

@@ -4096,7 +4096,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "9006fb85bc7b" : "dev";
+  var BUILD_ID = true ? "652de14a6395" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -5859,6 +5859,10 @@ var Server = (() => {
       if (r["_domain"] === UNASSIGNED) unassignedCount += 1;
     }
     return {
+      // The deployed code stamp (esbuild-injected source hash; "dev" locally). Surfaced so an
+      // operator can confirm at a glance whether a `clasp push` actually took — the recurring "I
+      // deployed the fix but still see the old behaviour" confusion.
+      buildId: BUILD_ID,
       palette: {
         order: SEVERITY_ORDER,
         colors: SEVERITY_COLORS,
