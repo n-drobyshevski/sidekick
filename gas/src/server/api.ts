@@ -21,10 +21,12 @@ import {
   actionableView,
   awaitingVendorFix,
   baseRowNoFix,
+  isEndOfLifeName,
   kaplanMeier,
   kmQuantileFromCurve,
   mttrPercentiles,
   openPastSla,
+  recordEol,
   recordNoFix,
   resolutionBuckets,
 } from "../domain/remediation";
@@ -687,19 +689,22 @@ function filterNoFixFrame(records: Rec[], showNoFix: boolean): Rec[] {
 }
 
 // The global "include end-of-life OS findings" toggle, the EOL sibling of the no-fix filter above.
-// isOperatingSystemEndOfLife lives only on the current-scan frame, never on the durable ledger, so
-// the two choke points differ: frame records filter on the flag directly, while base rows (which
-// carry no EOL flag) filter by joining on the set of vuln_keys currently on an EOL OS. Both are
-// HARD no-ops when includeEol is true (the default). Excluding EOL drops a lifecycle from analysis
-// entirely — the current EOL state is applied across its whole history, since an EOL OS can't be
-// remediated by patching the finding and would otherwise sit open forever, skewing MTTR/SLA.
+// An EOL finding is one Wiz flags (isOperatingSystemEndOfLife) OR its per-host EOL-OS notice, whose
+// vulnerability name — not a CVE — identifies it (recordEol / isEndOfLifeName). That flag lives only
+// on the current-scan frame, never on the durable ledger, so the two choke points differ: frame
+// records apply recordEol directly, while base rows filter by BOTH their `cve` (= the finding name,
+// so the notice matches everywhere, even resolved history) AND a join on the set of vuln_keys the
+// frame currently marks EOL (so a flagged CVE on an EOL host drops too). Both are HARD no-ops when
+// includeEol is true (the default). Excluding EOL drops the lifecycle from analysis entirely — an
+// EOL OS can't be remediated by patching the finding, so it would otherwise sit open forever,
+// skewing MTTR/SLA.
 function eolVulnKeys(): Set<string> {
   const keys = cached("eolKeys", {}, (): string[] => {
     const scan = findings.currentScan();
     if (!scan) return [];
     const out: string[] = [];
     for (const r of scan.records as Rec[]) {
-      if (r["isOperatingSystemEndOfLife"] === true) out.push(vulnKey(r));
+      if (recordEol(r)) out.push(vulnKey(r));
     }
     return out;
   });
@@ -708,12 +713,13 @@ function eolVulnKeys(): Set<string> {
 function filterEolBase(rows: Rec[], includeEol: boolean): Rec[] {
   if (includeEol || !rows.length) return rows;
   const keys = eolVulnKeys();
-  if (!keys.size) return rows;
-  return rows.filter((r) => !keys.has(String(r["vuln_key"] ?? "")));
+  return rows.filter(
+    (r) => !(keys.has(String(r["vuln_key"] ?? "")) || isEndOfLifeName(r["cve"])),
+  );
 }
 function filterEolFrame(records: Rec[], includeEol: boolean): Rec[] {
   if (includeEol || !records.length) return records;
-  return records.filter((r) => r["isOperatingSystemEndOfLife"] !== true);
+  return records.filter((r) => !recordEol(r));
 }
 
 // Both display filters (no vendor fix + end-of-life OS) at once, for the frame and base-row surfaces.
