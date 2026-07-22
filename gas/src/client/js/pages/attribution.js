@@ -9,7 +9,7 @@
 import { PREFILL_KEY, encodePrefill } from "../attributionPrefill.js";
 import { bootstrap, navigate, setParams, swrCall } from "../store.js";
 import {
-  clear, el, emptyState, fmtDate, helpTip, kpiCard, pager, sectionLabel,
+  clear, el, emptyState, fmtDate, helpTip, kpiCard, pager, settingsPanel,
   severityScopeFilter, statusPill,
 } from "../ui.js";
 
@@ -184,11 +184,13 @@ export async function renderAttribution(main, params, ctx) {
   // ---------------------------------------------------- coverage by value chain
 
   function renderCoverageTable(coverage) {
-    bodyHost.append(sectionLabel("Coverage by value chain"));
     const byDomain = coverage.byDomain || [];
     if (!byDomain.length) {
-      bodyHost.append(emptyState("No domains defined — every finding is Unassigned.",
-        "Add value chains in Settings to attribute findings."));
+      bodyHost.append(settingsPanel({
+        title: "Coverage by value chain",
+        body: emptyState("No domains defined — every finding is Unassigned.",
+          "Add value chains in Settings to attribute findings."),
+      }));
       return;
     }
     const total = coverage.totalFindings || 0;
@@ -213,11 +215,15 @@ export async function renderAttribution(main, params, ctx) {
             el("span", { class: "mix-text small muted num" }, `${Math.round(share * 100)}%`))),
       ));
     }
-    bodyHost.append(el("div", { class: "table-wrap" },
-      el("table", { class: "data" },
-        el("thead", {}, el("tr", {},
-          ...["Value chain", "Findings", "Assets", "Share"].map((h) => el("th", { scope: "col" }, h)))),
-        body)));
+    bodyHost.append(settingsPanel({
+      title: "Coverage by value chain",
+      description: "How this scan's findings distribute across your value-chain domains.",
+      body: el("div", { class: "table-wrap panel-flush" },
+        el("table", { class: "data" },
+          el("thead", {}, el("tr", {},
+            ...["Value chain", "Findings", "Assets", "Share"].map((h) => el("th", { scope: "col" }, h)))),
+          body)),
+    }));
   }
 
   // -------------------------------------------------- coverage by support group
@@ -227,14 +233,14 @@ export async function renderAttribution(main, params, ctx) {
   // Wiz/provisioning tag of its subscription, resolved live from the refreshed map; the "(none)"
   // row is the unresolved bucket (subscription untagged, or its identity not joining the map).
   function renderSupportGroupCoverage(sg, sgMap) {
-    bodyHost.append(sectionLabel("Coverage by support group"));
     sg = sg || { rows: [], totalFindings: 0, resolvedFindings: 0 };
+    const notes = [];
 
     // Map-health note: the one line that tells an unrefreshed map (0 keys) apart from a
     // populated one that isn't joining the findings' subscription identity (keys > 0 yet
     // nothing resolves) — the two failure modes an operator otherwise can't distinguish.
     if (!sgMap.configured) {
-      bodyHost.append(el("p", { class: "section-note" },
+      notes.push(el("p", { class: "section-note", style: "margin-top:0" },
         "Support groups aren’t mapped yet — every finding resolves to (none). Use “Refresh " +
         "support groups” in ",
         el("a", { href: "#/settings", target: "_self" }, "Settings"), " to build the map."));
@@ -243,7 +249,7 @@ export async function renderAttribution(main, params, ctx) {
       const resolved = sg.resolvedFindings || 0;
       const pct = total ? Math.round((resolved / total) * 100) : 0;
       const stuck = (sgMap.keys || 0) > 0 && resolved === 0 && total > 0;
-      bodyHost.append(el("p", { class: "section-note" },
+      notes.push(el("p", { class: "section-note", style: "margin-top:0" },
         `Map: ${(sgMap.keys || 0).toLocaleString()} subscription key${sgMap.keys === 1 ? "" : "s"} → `
         + `${(sgMap.groups || 0).toLocaleString()} group${sgMap.groups === 1 ? "" : "s"} (tag `,
         el("code", {}, sgMap.tagKey || "Wiz/provisioning"),
@@ -251,7 +257,7 @@ export async function renderAttribution(main, params, ctx) {
       // Keys present but nothing joins → a subscription-identity mismatch, not an empty map.
       // Its own paragraph (statusPill is inline, but the copy is a distinct diagnostic line).
       if (stuck) {
-        bodyHost.append(el("p", { class: "small", style: "margin-top:-4px" },
+        notes.push(el("p", { class: "small", style: "margin-top:-4px" },
           statusPill("bad", "not joining"),
           " The map has keys but no finding matched — the subscription identity on findings "
           + "isn’t joining the map. Check the tag key and that findings carry the same "
@@ -271,7 +277,7 @@ export async function renderAttribution(main, params, ctx) {
           if (i) chips.push(document.createTextNode(", "));
           chips.push(el("code", {}, k));
         });
-        bodyHost.append(el("p", { class: "small muted", style: "margin-top:-4px" },
+        notes.push(el("p", { class: "small muted", style: "margin-top:-4px" },
           "Indexed under (sample): ", ...chips,
           more > 0 ? ` … (+${more.toLocaleString()} more)` : "",
           ". Compare these against the subscription id / external id / name your findings "
@@ -281,7 +287,10 @@ export async function renderAttribution(main, params, ctx) {
 
     const rows = sg.rows || [];
     if (!rows.length) {
-      bodyHost.append(emptyState("No findings to attribute to a support group."));
+      bodyHost.append(settingsPanel({
+        title: "Coverage by support group",
+        body: [...notes, emptyState("No findings to attribute to a support group.")],
+      }));
       return;
     }
     const total = sg.totalFindings || 0;
@@ -302,21 +311,27 @@ export async function renderAttribution(main, params, ctx) {
             el("span", { class: "mix-text small muted num" }, `${Math.round(share * 100)}%`))),
       ));
     }
-    bodyHost.append(el("div", { class: "table-wrap" },
-      el("table", { class: "data" },
-        el("thead", {}, el("tr", {},
-          ...["Support group", "Findings", "Assets", "Share"].map((h) => el("th", { scope: "col" }, h)))),
-        body)));
+    bodyHost.append(settingsPanel({
+      title: "Coverage by support group",
+      description: "A finding's support group is its subscription's Wiz/provisioning tag.",
+      body: [...notes, el("div", { class: "table-wrap panel-flush" },
+        el("table", { class: "data" },
+          el("thead", {}, el("tr", {},
+            ...["Support group", "Findings", "Assets", "Share"].map((h) => el("th", { scope: "col" }, h)))),
+          body))],
+    }));
   }
 
   // ------------------------------------------------------- unassigned resources
 
   function renderUnassigned(unassigned) {
-    bodyHost.append(sectionLabel("Unassigned resources"));
     const rows = unassigned.rows || [];
     if (!rows.length) {
-      bodyHost.append(emptyState("No unassigned resources on this page.",
-        "Every finding here maps to a value chain."));
+      bodyHost.append(settingsPanel({
+        title: "Unassigned resources",
+        body: emptyState("No unassigned resources on this page.",
+          "Every finding here maps to a value chain."),
+      }));
       return;
     }
     const body = el("tbody", {});
@@ -349,14 +364,21 @@ export async function renderAttribution(main, params, ctx) {
           el("button", { type: "button", onclick: () => attribute(r) }, "Attribute…")),
       ));
     }
-    bodyHost.append(el("div", { class: "table-wrap" },
-      el("table", { class: "data" },
-        el("thead", {}, el("tr", {},
-          ...["Asset", "Type", "Subscription", "Support group", "Tags", "Findings", ""]
-            .map((h) => el("th", { scope: "col" }, h)))),
-        body)));
-    bodyHost.append(pager(unassigned.page || 0, unassigned.pageCount || 1,
-      unassigned.total || rows.length, goPage));
+    bodyHost.append(settingsPanel({
+      title: "Unassigned resources",
+      description: "Assets whose findings matched no domain rule. “Attribute…” seeds a new " +
+        "rule for the resource in the domain editor.",
+      body: [
+        el("div", { class: "table-wrap panel-flush" },
+          el("table", { class: "data" },
+            el("thead", {}, el("tr", {},
+              ...["Asset", "Type", "Subscription", "Support group", "Tags", "Findings", ""]
+                .map((h) => el("th", { scope: "col" }, h)))),
+            body)),
+        pager(unassigned.page || 0, unassigned.pageCount || 1,
+          unassigned.total || rows.length, goPage),
+      ],
+    }));
   }
 
   // Closed-loop handoff: stash the resource for the Settings domain-rule dialog and route
@@ -378,17 +400,19 @@ export async function renderAttribution(main, params, ctx) {
   // --------------------------------------------------------------- rule health
 
   function renderRuleHealth(rows) {
-    bodyHost.append(sectionLabel("Rule health"));
-    bodyHost.append(el("p", { class: "section-note" },
-      "How each mapping rule performs against this scan. ",
+    const desc = ["How each mapping rule performs against this scan. ",
       helpTip(el("span", { class: "linklike" }, "status guide"),
         ["Fires — claims findings under first-match priority.",
          "Shadowed — matches findings, but an earlier rule or domain claims them first.",
          "Never matches — matches nothing in this scan (a dead rule).",
-         "Malformed — the rule failed to compile and never matches."])));
+         "Malformed — the rule failed to compile and never matches."])];
+    const footer = el("a", { href: "#/settings", target: "_self" }, "Edit domains in Settings →");
     if (!rows.length) {
-      bodyHost.append(emptyState("No domain rules to check.",
-        "Add value chains in Settings to route findings."));
+      bodyHost.append(settingsPanel({
+        title: "Rule health", description: desc, footer,
+        body: emptyState("No domain rules to check.",
+          "Add value chains in Settings to route findings."),
+      }));
       return;
     }
     const items = (boot.settings.domains && boot.settings.domains.items) || [];
@@ -405,33 +429,37 @@ export async function renderAttribution(main, params, ctx) {
         el("td", {}, statusPill(kind, label)),
       ));
     }
-    bodyHost.append(el("div", { class: "table-wrap" },
-      el("table", { class: "data" },
-        el("thead", {}, el("tr", {},
-          ...["Value chain", "Rule", "Fired", "Matched", "Status"].map((h) => el("th", { scope: "col" }, h)))),
-        body)));
-    bodyHost.append(el("p", { class: "small", style: "margin-top:8px" },
-      el("a", { href: "#/settings", target: "_self" }, "Edit domains in Settings →")));
+    bodyHost.append(settingsPanel({
+      title: "Rule health", description: desc, footer,
+      body: el("div", { class: "table-wrap panel-flush" },
+        el("table", { class: "data" },
+          el("thead", {}, el("tr", {},
+            ...["Value chain", "Rule", "Fired", "Matched", "Status"].map((h) => el("th", { scope: "col" }, h)))),
+          body)),
+    }));
   }
 
   // ------------------------------------------------------ untagged subscriptions
 
   function renderUntagged(untagged, sgMap) {
-    bodyHost.append(sectionLabel("Untagged subscriptions"));
     if (!sgMap.configured) {
-      bodyHost.append(emptyState(
-        "Support groups aren’t mapped yet.",
-        el("span", {}, "Use “Refresh support groups” in ",
-          el("a", { href: "#/settings", target: "_self" }, "Settings"),
-          " to identify which subscriptions carry a support group."),
-      ));
+      bodyHost.append(settingsPanel({
+        title: "Untagged subscriptions",
+        body: emptyState(
+          "Support groups aren’t mapped yet.",
+          el("span", {}, "Use “Refresh support groups” in ",
+            el("a", { href: "#/settings", target: "_self" }, "Settings"),
+            " to identify which subscriptions carry a support group.")),
+      }));
       return;
     }
-    bodyHost.append(el("p", { class: "section-note" },
-      "A subscription’s support group is the value of its Wiz/provisioning tag. These " +
-      "subscriptions carry findings but no such tag, so their findings resolve to (none)."));
+    const desc = "A subscription’s support group is the value of its Wiz/provisioning tag. " +
+      "These subscriptions carry findings but no such tag, so their findings resolve to (none).";
     if (!untagged.length) {
-      bodyHost.append(emptyState("Every subscription with findings carries a support group."));
+      bodyHost.append(settingsPanel({
+        title: "Untagged subscriptions", description: desc,
+        body: emptyState("Every subscription with findings carries a support group."),
+      }));
       return;
     }
     const body = el("tbody", {});
@@ -447,11 +475,14 @@ export async function renderAttribution(main, params, ctx) {
               mixText(u.sevCounts || {}) || `${(u.findings || 0).toLocaleString()}`))),
       ));
     }
-    bodyHost.append(el("div", { class: "table-wrap" },
-      el("table", { class: "data" },
-        el("thead", {}, el("tr", {},
-          ...["Subscription", "Ext ID", "Assets", "Findings"].map((h) => el("th", { scope: "col" }, h)))),
-        body)));
+    bodyHost.append(settingsPanel({
+      title: "Untagged subscriptions", description: desc,
+      body: el("div", { class: "table-wrap panel-flush" },
+        el("table", { class: "data" },
+          el("thead", {}, el("tr", {},
+            ...["Subscription", "Ext ID", "Assets", "Findings"].map((h) => el("th", { scope: "col" }, h)))),
+          body)),
+    }));
   }
 
   // ----------------------------------------------------------------- helpers

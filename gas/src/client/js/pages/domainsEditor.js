@@ -158,26 +158,27 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
 
     const nameInput = el("input", { type: "text", value: editing.name,
       placeholder: "e.g. Payments", "aria-label": "Domain name", style: "width:100%" });
-    const rulesHost = el("div", {});
-    const previewHost = el("div", { class: "small muted", style: "margin-top:8px", "aria-live": "polite" });
+    const rulesHost = el("div", { class: "rules-host" });
+    const previewHost = el("div", { class: "rule-preview", "aria-live": "polite" },
+      el("span", { class: "rule-preview__text small muted" }, "Matching…"));
 
-    // Header + actions stay pinned while the rules/preview region scrolls, so a domain with
-    // several rules never pushes Apply/Cancel off-screen.
+    // Header + live preview + actions stay pinned while the rules region scrolls, so a domain
+    // with several rules never pushes the match count or Apply/Cancel off-screen.
     const dlg = el("dialog", { class: "domains-dialog" },
       el("h3", {}, index !== null ? `Edit “${editing.name}”` : "Add domain"),
       el("div", { class: "dialog-scroll" },
         el("label", { class: "field-label" }, "Name"),
         nameInput,
         prefill ? prefillContextLine(prefill.resource) : null,
-        el("p", { class: "small muted", style: "margin:10px 0 4px" },
+        el("p", { class: "small muted", style: "margin:10px 0 12px" },
           "A finding matches the domain when ANY rule matches; a rule matches when ALL its conditions do."),
         rulesHost,
-        el("button", { class: "link", onclick: () => {
+        el("button", { class: "add-rule-btn", type: "button", onclick: () => {
           editing.rules.push({ conditions: [emptyCondition()] });
           renderRules();
-        } }, "+ Add rule"),
-        previewHost,
+        } }, "+ Add rule (OR)"),
       ),
+      el("div", { class: "dialog-preview" }, previewHost),
       el("div", { class: "dialog-actions" },
         el("button", { onclick: () => dlg.close() }, "Cancel"),
         el("button", { class: "primary", onclick: commit }, index !== null ? "Apply" : "Add"),
@@ -233,26 +234,33 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
     function renderRules() {
       clear(rulesHost);
       editing.rules.forEach((rule, ri) => {
-        const ruleCard = el("div", { class: "card", style: "margin-bottom:8px; padding:10px" });
-        ruleCard.append(el("div", { class: "label", style: "margin-bottom:6px" },
-          `Rule ${ri + 1}`,
+        const ruleCard = el("div", { class: "rule-card" });
+        ruleCard.append(el("div", { class: "rule-card__head" },
+          el("span", { class: "rule-card__title" },
+            `Rule ${ri + 1}`,
+            el("span", { class: "rule-card__hint" }, "all conditions must match")),
           editing.rules.length > 1
-            ? el("button", { class: "link", style: "float:right",
-                "aria-label": `Remove rule ${ri + 1}`, onclick: () => {
+            ? el("button", { class: "rule-card__remove", type: "button",
+                "aria-label": `Remove rule ${ri + 1}`, title: "Remove rule", onclick: () => {
                 editing.rules.splice(ri, 1);
                 renderRules();
                 schedulePreview();
-              } }, "remove")
+              } }, "✕")
             : null,
         ));
         (rule.conditions || []).forEach((cond, ci) => {
           ruleCard.append(conditionRow(rule, cond, ci));
         });
-        ruleCard.append(el("button", { class: "link", onclick: () => {
+        ruleCard.append(el("button", { class: "btn-add", type: "button", onclick: () => {
           rule.conditions.push(emptyCondition());
           renderRules();
         } }, "+ AND condition"));
         rulesHost.append(ruleCard);
+        // Explicit OR divider between rule cards — the rules are OR-ed, shown, not just stated.
+        if (ri < editing.rules.length - 1) {
+          rulesHost.append(el("div", { class: "rule-or", "aria-hidden": "true" },
+            el("span", { class: "rule-or__chip" }, "OR")));
+        }
       });
     }
 
@@ -263,7 +271,7 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
         el("option", { value: "subscription", selected: cond.type === "subscription" || null }, "Subscription in"),
         el("option", { value: "support_group", selected: cond.type === "support_group" || null }, "Support group in"),
       );
-      const fields = el("span", {});
+      const fields = el("span", { class: "cond-fields" });
       typeSel.addEventListener("change", () => {
         if (typeSel.value === "tag") Object.assign(cond, { type: "tag", key: "", value: "" });
         else if (typeSel.value === "name_regex") {
@@ -397,15 +405,18 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
         return inp;
       }
 
-      return el("div", { style: "display:flex; align-items:center; gap:4px; flex-wrap:wrap; margin-bottom:6px" },
-        typeSel, fields,
+      return el("div", { class: "cond-row" },
+        el("span", { class: "cond-conn", "aria-hidden": "true" }, ci === 0 ? "IF" : "AND"),
+        typeSel,
         (rule.conditions.length > 1)
-          ? el("button", { class: "link", "aria-label": `Remove condition ${ci + 1}`, onclick: () => {
+          ? el("button", { class: "cond-remove", type: "button",
+              "aria-label": `Remove condition ${ci + 1}`, title: "Remove condition", onclick: () => {
               rule.conditions.splice(ci, 1);
               renderRules();
               schedulePreview();
             } }, "✕")
           : null,
+        fields,
       );
     }
 
@@ -415,8 +426,9 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
     }
 
     async function runPreview() {
-      const name = nameInput.value.trim() || "(this domain)";
-      previewHost.textContent = "Matching…";
+      const name = nameInput.value.trim() || "this domain";
+      clear(previewHost);
+      previewHost.append(el("span", { class: "rule-preview__text small muted" }, "Matching…"));
       try {
         // Preview the candidate list with this item swapped in at its priority slot.
         const candidate = JSON.parse(JSON.stringify(items));
@@ -425,11 +437,17 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
         else candidate.push(entry);
         const res = await call("api_previewDomains", { items: candidate });
         const mine = res.perDomain[entry.name] || { count: 0, samples: [] };
-        previewHost.textContent =
-          `${name} matches ${mine.count} of ${res.total} finding(s)` +
-          (mine.samples.length ? ` — e.g. ${mine.samples.join(", ")}` : "");
+        clear(previewHost);
+        // Neutral count pill (rationed ink — a preview isn't a risk state) + muted context.
+        previewHost.append(
+          statusPill("neutral", `${mine.count.toLocaleString()} matched`),
+          el("span", { class: "rule-preview__text small muted" },
+            `${name} matches ${mine.count.toLocaleString()} of ${res.total.toLocaleString()} finding(s)` +
+            (mine.samples.length ? ` — e.g. ${mine.samples.join(", ")}` : "")));
       } catch (e) {
-        previewHost.textContent = `Preview unavailable: ${e.message}`;
+        clear(previewHost);
+        previewHost.append(el("span", { class: "rule-preview__text small muted" },
+          `Preview unavailable: ${e.message}`));
       }
     }
 

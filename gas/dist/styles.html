@@ -1323,6 +1323,100 @@ dialog.domains-dialog .dialog-actions {
 .domain-row button { min-height: 30px; padding: 4px 10px; }
 .domain-row__actions { display: flex; gap: 6px; flex: 0 0 auto; }
 
+/* ---------------------------------------------------- domain rule builder (dialog) */
+/* The Add/Edit domain dialog's rule authoring UI (domainsEditor.js openEditor). Rules are
+   OR-ed (shown by an OR divider between cards); a rule's conditions are AND-ed (shown by the
+   IF/AND connector on each condition row). Neutral surface cards, hairline borders, dashed
+   "add" affordances, and a pinned live-match preview above the actions. */
+.rules-host { display: flex; flex-direction: column; }
+.rule-card {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  padding: 12px 14px;
+}
+.rule-card__head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-bottom: 10px;
+}
+.rule-card__title {
+  display: inline-flex; align-items: baseline; gap: 8px;
+  font-size: 12px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase;
+  color: var(--text-2);
+}
+.rule-card__hint {
+  font-size: 11px; font-weight: 500; letter-spacing: 0; text-transform: none;
+  color: var(--text-3);
+}
+.rule-card__remove, .cond-remove {
+  min-height: 0; padding: 2px 7px; font-size: 12px; line-height: 1;
+  background: none; border: 1px solid transparent; box-shadow: none;
+  color: var(--text-3); border-radius: var(--radius-sm);
+}
+.rule-card__remove:hover, .cond-remove:hover {
+  background: rgba(0, 0, 0, 0.05); color: var(--ink); border-color: var(--hairline);
+}
+
+/* OR divider between rule cards: a centered chip on a hairline (the rules are OR-ed). */
+.rule-or { display: flex; align-items: center; gap: 10px; margin: 10px 2px; }
+.rule-or::before, .rule-or::after {
+  content: ""; flex: 1; height: 1px; background: var(--hairline);
+}
+.rule-or__chip {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.08em; color: var(--text-3);
+}
+
+/* Condition row: a fixed IF/AND connector + type select on line one; the fields wrap to
+   their own line, indented under the select, so tag / regex / value-picker all align. */
+.cond-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.cond-conn {
+  flex: 0 0 auto; min-width: 30px;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.05em; color: var(--text-3);
+}
+.cond-row select { min-height: 32px; }
+.cond-remove { margin-left: auto; }
+.cond-fields {
+  flex: 1 1 100%; margin-left: 38px;
+  display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+}
+.cond-fields input { min-height: 32px; }
+
+/* Dashed "add" affordances (real buttons, not text links). */
+.btn-add, .add-rule-btn {
+  font-weight: 600; color: var(--text-2);
+  background: var(--page); border: 1px dashed var(--hairline); box-shadow: none;
+}
+.btn-add:hover, .add-rule-btn:hover {
+  background: var(--surface); border-color: var(--text-3); color: var(--ink);
+}
+.btn-add { margin-top: 2px; min-height: 30px; padding: 4px 12px; font-size: 12px; }
+.add-rule-btn { margin-top: 12px; width: 100%; min-height: 36px; font-size: 13px; }
+
+/* Pinned live-match preview between the scrolling rules and the Cancel/Apply actions. */
+dialog.domains-dialog .dialog-preview {
+  flex: 0 0 auto; padding: 12px 20px; border-top: 1px solid var(--hairline);
+}
+.rule-preview {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  min-height: 36px; padding: 8px 12px;
+  background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius-md);
+}
+.rule-preview__text { min-width: 0; }
+
+/* Value picker polish: hover on selectable rows; the "in <domain>" owner reads as a chip. */
+.sub-picker label { padding: 3px 6px; border-radius: var(--radius-sm); }
+.sub-picker label:hover:not(.claimed) { background: var(--surface); }
+.sub-owner {
+  background: rgba(0, 0, 0, 0.06); border-radius: var(--radius-sm); padding: 1px 6px;
+}
+
+/* Attribution: a table that runs edge-to-edge inside a .settings-panel card (cancels the
+   panel's 20px horizontal padding and drops the wrap's side borders) — a "card with a title
+   and a full-bleed table" instead of a card-border-around-a-table-border double frame. */
+.settings-panel .panel-flush {
+  margin: 4px -20px 0; border-left: none; border-right: none; border-radius: 0;
+}
+
 /* --------------------------------------------------------------- reduced motion */
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
