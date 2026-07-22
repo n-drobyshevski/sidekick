@@ -51,6 +51,7 @@ function api_setSeverities(p) { return timedApi_("setSeverities", p); }
 function api_setRetention(p) { return timedApi_("setRetention", p); }
 function api_setAutoCompact(p) { return timedApi_("setAutoCompact", p); }
 function api_setShowNoFix(p) { return timedApi_("setShowNoFix", p); }
+function api_setIncludeEol(p) { return timedApi_("setIncludeEol", p); }
 function api_setRetentionSettings(p) { return timedApi_("setRetentionSettings", p); }
 function api_getDomains(p) { return timedApi_("getDomains", p); }
 function api_saveDomains(p) { return timedApi_("saveDomains", p); }

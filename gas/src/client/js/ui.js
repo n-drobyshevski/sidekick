@@ -838,3 +838,14 @@ export function noFixHiddenNote() {
     "Findings without an available vendor fix are hidden. ",
     el("a", { href: "#/settings", target: "_self" }, "Settings"));
 }
+
+/**
+ * Honesty note for the end-of-life filter: shown (by the caller, guarded on
+ * `boot.settings.includeEol === false`) on every finding-visualizing page, so a dashboard with
+ * EOL-OS findings excluded never silently reads as the whole register. Links back to Settings.
+ */
+export function eolHiddenNote() {
+  return el("p", { class: "muted small", role: "note" },
+    "Findings on end-of-life operating systems are hidden. ",
+    el("a", { href: "#/settings", target: "_self" }, "Settings"));
+}

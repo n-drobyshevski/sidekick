@@ -8,7 +8,7 @@ import {
 } from "../charts.js";
 import { bootstrap, setParams, swrCall } from "../store.js";
 import {
-  clear, el, emptyState, fmtDate, helpTip, kpiCard, noFixHiddenNote, nvdUrl, openSheet, pager,
+  clear, el, emptyState, eolHiddenNote, fmtDate, helpTip, kpiCard, noFixHiddenNote, nvdUrl, openSheet, pager,
   scopeBar, sectionLabel, severityScopeFilter,
 } from "../ui.js";
 
@@ -102,6 +102,7 @@ export async function renderOverview(main, params, ctx) {
   });
   if (scopeChips) main.append(scopeChips);
   if (boot.settings.showNoFix === false) main.append(noFixHiddenNote());
+  if (boot.settings.includeEol === false) main.append(eolHiddenNote());
 
   if (!boot.latestScan) {
     main.append(emptyState(

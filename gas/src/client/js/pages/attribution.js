@@ -9,7 +9,7 @@
 import { PREFILL_KEY, encodePrefill } from "../attributionPrefill.js";
 import { bootstrap, navigate, setParams, swrCall } from "../store.js";
 import {
-  clear, el, emptyState, fmtDate, helpTip, kpiCard, noFixHiddenNote, pager, sectionLabel,
+  clear, el, emptyState, eolHiddenNote, fmtDate, helpTip, kpiCard, noFixHiddenNote, pager, sectionLabel,
   severityScopeFilter, statusPill,
 } from "../ui.js";
 
@@ -75,6 +75,7 @@ export async function renderAttribution(main, params, ctx) {
     ),
   );
   if (boot.settings.showNoFix === false) main.append(noFixHiddenNote());
+  if (boot.settings.includeEol === false) main.append(eolHiddenNote());
 
   if (!boot.latestScan) {
     main.append(emptyState(

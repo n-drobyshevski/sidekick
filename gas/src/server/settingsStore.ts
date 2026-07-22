@@ -50,6 +50,7 @@ export const getDisplaySeverities = (): string[] => logic.getDisplaySeverities(l
 export const getRetentionDays = (): number | null => logic.getRetentionDays(loadSettings());
 export const getAutoCompact = (): boolean => logic.getAutoCompact(loadSettings());
 export const getShowNoFix = (): boolean => logic.getShowNoFix(loadSettings());
+export const getIncludeEol = (): boolean => logic.getIncludeEol(loadSettings());
 export const getDomains = (): { version: number; items: Rec[] } =>
   logic.getDomains(loadSettings());
 // The subscription-identity → support-group map lives in its own tab (one row per token),
@@ -109,6 +110,9 @@ export function setAutoCompact(enabled: boolean): void {
 }
 export function setShowNoFix(enabled: boolean): void {
   saveSettings(logic.withShowNoFix(loadSettings(), enabled));
+}
+export function setIncludeEol(enabled: boolean): void {
+  saveSettings(logic.withIncludeEol(loadSettings(), enabled));
 }
 /** Set both retention-window and auto-compact in a single load+save so the write is atomic
  *  (no partial-commit window if the client changes both at once). */

@@ -679,6 +679,54 @@ export function withKmMedian<T extends { date: string; reconstructed?: boolean }
 }
 
 /**
+ * Kaplan–Meier median time-to-remediation as of a single instant `d` (ms epoch), over `base` rows.
+ * The one-date core of `withKmMedian`, split out so a caller needing just one as-of value — the
+ * executive week-over-week badge — doesn't reconstruct a whole trend series just to read two points.
+ * Same estimator (`kmCurve` → `kmMedianFromCurve`, shared so the two can't drift) and the same as-of
+ * predicate `withKmMedian` uses: rows resolved by d are events at their stored `mttr_days`; rows open
+ * as of d (first_seen ≤ d, not resolved by d) are right-censored at their age; with `hideNoFix`, an
+ * open row still awaiting a vendor fix as of d drops from the risk set. `severities` (optional)
+ * restricts to those + UNKNOWN. Returns the median in days (3 dp) or null when the curve never
+ * reaches 0.5, there are no rows, or `d` is null.
+ */
+export function kmMedianAsOf(
+  base: Rec[],
+  severities: string[] | null,
+  d: number | null,
+  opts: { hideNoFix?: boolean } = {},
+): number | null {
+  if (d === null || !base.length) return null;
+  const hideNoFix = opts.hideNoFix ?? false;
+  let rows = base;
+  if (severities !== null) {
+    const keep = new Set([...severities, "UNKNOWN"]);
+    rows = base.filter((r) => keep.has(normalizeSeverity(r["severity"])));
+  }
+  const events: number[] = []; // resolved by d, at their stored mttr_days
+  const times: number[] = []; // risk set: events + open-as-of-d censored ages
+  for (const r of rows) {
+    const resolvedAt = parseTs(r["resolved_at"]);
+    if (resolvedAt !== null && resolvedAt <= d) {
+      const mttr = typeof r["mttr_days"] === "number" && !Number.isNaN(r["mttr_days"] as number)
+        ? (r["mttr_days"] as number)
+        : null;
+      if (mttr !== null) {
+        events.push(mttr);
+        times.push(mttr);
+      }
+      continue;
+    }
+    const first = parseTs(r["first_seen"]);
+    if (first !== null && first <= d) {
+      if (hideNoFix && awaitingFixAsOf(first, resolvedAt, parseTs(r["fix_available_at"]), d)) continue;
+      times.push((d - first) / DAY_MS);
+    }
+  }
+  const med = kmMedianFromCurve(kmCurve(events, times));
+  return med !== null ? Math.round(med * 1000) / 1000 : null;
+}
+
+/**
  * Augment already-emitted trend points with an `open_past_sla` count — open findings
  * whose age at the point's date already exceeds their severity's SLA target (the tail
  * the resolved-only In-SLA % never scores). Replays the durable base at each point's

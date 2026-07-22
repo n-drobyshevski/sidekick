@@ -8,7 +8,7 @@ import { openResolvedLines, trendLine } from "../charts.js";
 import { bootstrap, swrCall } from "../store.js";
 import {
   clear, confirmDialog, el, emptyState, fmtDays, fmtDateTime,
-  kpiCard, noFixHiddenNote, pager, sectionLabel, statusPill, toast,
+  eolHiddenNote, kpiCard, noFixHiddenNote, pager, sectionLabel, statusPill, toast,
 } from "../ui.js";
 
 const PAGE_SIZE = 25;
@@ -76,6 +76,7 @@ export async function renderHistory(main, _params, ctx) {
       "Every saved scan retained in the durable ledger, with remediation trends."),
   );
   if (boot.settings.showNoFix === false) main.append(noFixHiddenNote());
+  if (boot.settings.includeEol === false) main.append(eolHiddenNote());
 
   const freshLine = el("p", { class: "section-note" });
   const kpiRow = el("div", { class: "kpi-row" });

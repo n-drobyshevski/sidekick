@@ -3,7 +3,7 @@ import {
   awaitingFixAsOf,
   cohortSlaAttainment,
   kmSkipMask,
-  kmMedianByGroupTrend, medianMttrByGroupTrend,
+  kmMedianAsOf, kmMedianByGroupTrend, medianMttrByGroupTrend,
   openByGroupTrend, openBySeverityTrend, trendFromBase, trendFromFrames,
   withKmMedian, withOpenPastSla, withSlaBurn,
 } from "../src/domain/trend";
@@ -851,5 +851,40 @@ describe("withKmMedian", () => {
       const keptRecon = [1, 2, 3, 4, 5].filter((i) => !mask[i]);
       expect(keptRecon).toEqual([1, 5]);
     });
+  });
+});
+
+describe("kmMedianAsOf", () => {
+  // A mix of resolved (events) and still-open (censored) rows spanning several weeks.
+  const base: Rec[] = [
+    { severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-05T00:00:00Z", mttr_days: 4, fix_available_at: null },
+    { severity: "HIGH", first_seen: "2026-01-02T00:00:00Z", resolved_at: "2026-01-12T00:00:00Z", mttr_days: 10, fix_available_at: null },
+    { severity: "CRITICAL", first_seen: "2026-01-03T00:00:00Z", resolved_at: null, mttr_days: null, fix_available_at: null },
+    { severity: "LOW", first_seen: "2026-01-04T00:00:00Z", resolved_at: "2026-01-20T00:00:00Z", mttr_days: 16, fix_available_at: null },
+  ];
+
+  it("matches withKmMedian point-for-point across dates and severity scopes", () => {
+    const dates = ["2026-01-06T00:00:00Z", "2026-01-13T00:00:00Z", "2026-01-21T00:00:00Z"];
+    for (const severities of [null, ["HIGH"], ["CRITICAL", "HIGH"]] as (string[] | null)[]) {
+      const series = withKmMedian(dates.map((date) => ({ date })), base, severities);
+      dates.forEach((date, i) => {
+        expect(kmMedianAsOf(base, severities, Date.parse(date))).toBe(series[i].km_median_days);
+      });
+    }
+  });
+
+  it("honors hideNoFix identically to withKmMedian (awaiting row drops from the risk set)", () => {
+    const nfBase: Rec[] = [
+      { severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-05T00:00:00Z", mttr_days: 4, fix_available_at: "2026-01-02T00:00:00Z" },
+      { severity: "HIGH", first_seen: "2026-01-02T00:00:00Z", resolved_at: null, mttr_days: null, fix_available_at: "2026-02-01T00:00:00Z" },
+    ];
+    const date = "2026-01-10T00:00:00Z";
+    const [pt] = withKmMedian([{ date }], nfBase, null, { hideNoFix: true });
+    expect(kmMedianAsOf(nfBase, null, Date.parse(date), { hideNoFix: true })).toBe(pt.km_median_days);
+  });
+
+  it("returns null for no rows or a null date", () => {
+    expect(kmMedianAsOf([], null, Date.parse("2026-01-10T00:00:00Z"))).toBeNull();
+    expect(kmMedianAsOf(base, null, null)).toBeNull();
   });
 });

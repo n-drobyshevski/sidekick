@@ -31,7 +31,7 @@ import {
 import { validateBundle } from "../domain/importMerge";
 import { SealedScanError, LedgerRebuildError } from "../domain/maintenance";
 import { parseTs, present, type Rec } from "../domain/util";
-import { kmMedianByGroupTrend, medianMttrByGroupTrend, openByGroupTrend, openBySeverityTrend } from "../domain/trend";
+import { kmMedianAsOf, kmMedianByGroupTrend, medianMttrByGroupTrend, openByGroupTrend, openBySeverityTrend } from "../domain/trend";
 import * as insights from "../domain/insights";
 import * as archive from "./archiveStore";
 import * as errorLog from "./errorLog";
@@ -108,7 +108,7 @@ function bootstrapCore(): Rec {
   // When the toggle is off, no-fix findings drop out of the bootstrap counts, the unassigned
   // tally, and the filter-option domains, so the whole payload stays coherent with the
   // filtered views. No-op on the default path.
-  const records = scan ? filterNoFixFrame(scan.records, showNoFix) : [];
+  const records = scan ? visibleFrame(scan.records) : [];
   const counts: Record<string, number> = {};
   let unassignedCount = 0;
   for (const r of records) {
@@ -130,6 +130,7 @@ function bootstrapCore(): Rec {
       retentionDays: settingsStore.getRetentionDays(),
       autoCompact: settingsStore.getAutoCompact(),
       showNoFix,
+      includeEol: settingsStore.getIncludeEol(),
       domains: settingsStore.getDomains(),
     },
     latestScan: latest
@@ -180,10 +181,7 @@ export function getFindings(p?: unknown): ApiResult {
       supportGroups: (params["supportGroups"] as string[]) ?? [],
       q: (params["q"] as string) ?? "",
     };
-    const filtered = filterNoFixFrame(
-      findings.applyFilters(scan.records, filters),
-      settingsStore.getShowNoFix(),
-    );
+    const filtered = visibleFrame(findings.applyFilters(scan.records, filters));
 
     const counts: Record<string, number> = {};
     for (const r of filtered) {
@@ -297,7 +295,7 @@ export function getFindingDetail(p?: unknown): ApiResult {
     const scan = findings.currentScan();
     if (!scan || !key) return { record: null, raw: null };
     const record =
-      filterNoFixFrame(scan.records, settingsStore.getShowNoFix()).find(
+      visibleFrame(scan.records).find(
         (r) => r["_vuln_key"] === key,
       ) ?? null;
     // The raw node (full fields) lives in the scan's page archive. The frame tags each
@@ -367,9 +365,15 @@ function insightsData(p?: unknown): Rec {
   const severities = readSeverities(p);
   recs = filterSeverities(recs, severities);
   base = filterSeverities(base as unknown as Rec[], severities) as unknown as typeof base;
+  // End-of-life OS toggle: when off, EOL lifecycles drop from BOTH the frame and the base up front
+  // — including the base `openTrend` reads unfiltered below — so every block excludes them the same
+  // way (EOL is a current-state fact with no as-of dimension, unlike no-fix). No-op when included.
+  const includeEol = settingsStore.getIncludeEol();
+  recs = filterEolFrame(recs, includeEol);
+  base = filterEolBase(base as unknown as Rec[], includeEol) as unknown as typeof base;
   // Global show-no-fix toggle. When off, no-fix findings drop out of the current-scan blocks
   // and the durable-ledger blocks (counts/total/sevStats/exploit + aging/oldest/awaiting/
-  // movement). `openTrend` is the exception: it keeps the UNFILTERED base and excludes no-fix
+  // movement). `openTrend` is the exception: it keeps the (EOL-filtered) base and excludes no-fix
   // rows AS OF each historical date (a fixed-later finding re-enters at the point its fix
   // landed), so it reads the {hideNoFix} option instead of a pre-filtered population.
   const showNoFix = settingsStore.getShowNoFix();
@@ -455,7 +459,7 @@ function scopedFrameRecords(domain: string, supportGroup: string, supportGroupSe
     recs = recs.filter((r) => sgMatch(String(r["_supportGroup"] ?? "")));
   }
   if (domain) recs = recs.filter((r) => String(r["_domain"] ?? UNASSIGNED) === domain);
-  return filterNoFixFrame(recs, settingsStore.getShowNoFix());
+  return visibleFrame(recs);
 }
 
 /** The multi-level breakdown tree for an ordered list of grouping dimensions. */
@@ -577,10 +581,7 @@ export function getGroupTrend(p?: unknown): ApiResult {
 function attributionData(p?: unknown): Rec {
   const scan = findings.currentScan();
   if (!scan) return { flatScan: false };
-  const recs = filterNoFixFrame(
-    filterSeverities(scan.records, readSeverities(p)),
-    settingsStore.getShowNoFix(),
-  );
+  const recs = visibleFrame(filterSeverities(scan.records, readSeverities(p)));
   const dom = settingsStore.getDomains();
   const compiled = compileDomains(dom.items);
   const sgMap = settingsStore.getSupportGroupMap();
@@ -685,6 +686,53 @@ function filterNoFixFrame(records: Rec[], showNoFix: boolean): Rec[] {
   return records.filter((r) => !recordNoFix(r));
 }
 
+// The global "include end-of-life OS findings" toggle, the EOL sibling of the no-fix filter above.
+// isOperatingSystemEndOfLife lives only on the current-scan frame, never on the durable ledger, so
+// the two choke points differ: frame records filter on the flag directly, while base rows (which
+// carry no EOL flag) filter by joining on the set of vuln_keys currently on an EOL OS. Both are
+// HARD no-ops when includeEol is true (the default). Excluding EOL drops a lifecycle from analysis
+// entirely — the current EOL state is applied across its whole history, since an EOL OS can't be
+// remediated by patching the finding and would otherwise sit open forever, skewing MTTR/SLA.
+function eolVulnKeys(): Set<string> {
+  const keys = cached("eolKeys", {}, (): string[] => {
+    const scan = findings.currentScan();
+    if (!scan) return [];
+    const out: string[] = [];
+    for (const r of scan.records as Rec[]) {
+      if (r["isOperatingSystemEndOfLife"] === true) out.push(vulnKey(r));
+    }
+    return out;
+  });
+  return new Set(keys);
+}
+function filterEolBase(rows: Rec[], includeEol: boolean): Rec[] {
+  if (includeEol || !rows.length) return rows;
+  const keys = eolVulnKeys();
+  if (!keys.size) return rows;
+  return rows.filter((r) => !keys.has(String(r["vuln_key"] ?? "")));
+}
+function filterEolFrame(records: Rec[], includeEol: boolean): Rec[] {
+  if (includeEol || !records.length) return records;
+  return records.filter((r) => r["isOperatingSystemEndOfLife"] !== true);
+}
+
+// Both display filters (no vendor fix + end-of-life OS) at once, for the frame and base-row surfaces.
+// Every finding-derived data function funnels its population through these so the two toggles apply
+// uniformly and no site can drift by honoring only one. Settings are read here (memoized per
+// execution); a toggle change bumps DATA_VERSION, so all cached payloads recompute against it.
+function visibleFrame(records: Rec[]): Rec[] {
+  return filterEolFrame(
+    filterNoFixFrame(records, settingsStore.getShowNoFix()),
+    settingsStore.getIncludeEol(),
+  );
+}
+function visibleBase(rows: Rec[]): Rec[] {
+  return filterEolBase(
+    filterNoFixBase(rows, settingsStore.getShowNoFix()),
+    settingsStore.getIncludeEol(),
+  );
+}
+
 // The durable base rows narrowed to the active Value Chain + Support group scope — the shared
 // preamble both the MTTR summary and the MTTR trend key their populations off, so the hero and
 // the charts beneath it always measure the same findings. attachSupportGroups runs only when a
@@ -711,7 +759,7 @@ function mttrData(p?: unknown): Rec {
   // Global show-no-fix toggle: drop awaiting-vendor-fix rows so the whole remediation block
   // (percentiles, buckets, KM, open-past-SLA, awaiting) measures only the fixable population.
   // No-op on the default path.
-  rows = filterNoFixBase(rows, settingsStore.getShowNoFix());
+  rows = visibleBase(rows);
   const { perSev, overall } = mttrFromLedger(rows);
   const { slaPct, oldestDays } = overallSlaOldest(perSev);
   // Remediation-tail block over the same scoped rows (BaseRows cast to Rec by loadBaseRows;
@@ -770,9 +818,16 @@ function mttrTrendData(p?: unknown): Rec {
   // persisted mttr_history snapshots — always whole-register — no longer describe the shown
   // population, so drop them; the reconstructed trend stands on its own (the client already
   // suppresses the history-based change chips whenever a scope is active).
-  const rows = scopedBaseRows(domain, supportGroup) as unknown as BaseRow[];
+  // EOL toggle: drop end-of-life lifecycles from the trend's base up front (no-fix stays as-of via
+  // loadTrend below). A whole-register history snapshot can't be EOL-filtered, so when EOL is
+  // excluded the snapshots no longer describe the shown population — drop them like a scope does.
+  const includeEol = settingsStore.getIncludeEol();
+  const rows = filterEolBase(
+    scopedBaseRows(domain, supportGroup) as unknown as Rec[],
+    includeEol,
+  ) as unknown as BaseRow[];
   return {
-    history: scoped ? [] : history.loadHistory(),
+    history: scoped || !includeEol ? [] : history.loadHistory(),
     // showNoFix off → the open / KM-median series exclude no-fix findings as-of-date; the
     // resolved / median / SLA-burn / attainment series are untouched (see loadTrend).
     trend: ledgerStore.loadTrend(severities, settingsStore.getShowNoFix(), rows),
@@ -860,7 +915,7 @@ function mttrByDomainData(p?: unknown): Rec {
     readSeverities(p),
   );
   // Same show-no-fix toggle as mttrData, so the by-domain split matches the hero.
-  rows = filterNoFixBase(rows, settingsStore.getShowNoFix());
+  rows = visibleBase(rows);
   supportGroups.attachSupportGroups(rows);
   if (supportGroup) rows = rows.filter((r) => String(r["_supportGroup"] ?? "") === supportGroup);
   // Drop rows that carry no domain-rule inputs at all — compacted resolved episodes and the
@@ -909,7 +964,7 @@ function mttrBySupportGroupData(p?: unknown): Rec {
     ledgerStore.loadBaseRows() as unknown as Rec[],
     readSeverities(p),
   );
-  rows = filterNoFixBase(rows, settingsStore.getShowNoFix());
+  rows = visibleBase(rows);
   supportGroups.attachSupportGroups(rows);
   // Scope to the selected value chain (assign domains, keep the matching rows) so the split
   // shows the support groups WITHIN this domain — mirroring how the hero is scoped.
@@ -1084,10 +1139,63 @@ export function getMttrPage(p?: unknown): ApiResult {
  *  reconstruction entirely. Both slices come from the *same* `cached()` entries the MTTR
  *  page uses (whole-chain, all-severities), so exec→MTTR navigation still lands warm and
  *  the only difference is which slices this round trip computes. */
+// Days the executive MTTR badge looks back — "last week".
+const WEEK_MS = 7 * 86_400_000;
+
+// Week-over-week KM-median delta for the executive hero badge: the KM median now vs the KM median
+// as of ~7 days ago, both over the same scoped + severity population via the ledger's as-of
+// estimator (the one the MTTR trend line replays). Severity-scoped, so it stays honest under a
+// display-severity filter — unlike the whole-register mttr_history snapshots the MTTR page can only
+// chip at the unscoped view, and KM-consistent with the hero value (mttr_history only ever held the
+// naive median). Returns null (→ no badge) when the register has under a week of history or either
+// endpoint's median is unobservable under censoring.
+function executiveWeekTrend(p?: unknown): Rec | null {
+  const domain = String((p as Rec)?.["domain"] ?? "");
+  const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
+  const severities = readSeverities(p);
+  const hideNoFix = !settingsStore.getShowNoFix();
+  // EOL exclusion applies to both endpoints of the delta (drop those lifecycles up front); no-fix
+  // stays as-of inside kmMedianAsOf via hideNoFix.
+  const base = filterEolBase(scopedBaseRows(domain, supportGroup), settingsStore.getIncludeEol());
+  if (!base.length) return null;
+  // Need at least a week of history to have something to compare against.
+  let earliest = Infinity;
+  for (const r of base) {
+    const f = parseTs(r["first_seen"]);
+    if (f !== null && f < earliest) earliest = f;
+  }
+  const now = Date.now();
+  const weekAgo = now - WEEK_MS;
+  if (!Number.isFinite(earliest) || earliest > weekAgo) return null;
+  const current = kmMedianAsOf(base, severities, now, { hideNoFix });
+  const previous = kmMedianAsOf(base, severities, weekAgo, { hideNoFix });
+  if (current === null || previous === null) return null;
+  return {
+    current,
+    previous,
+    deltaDays: Math.round((current - previous) * 1000) / 1000,
+    days: 7,
+  };
+}
+
+const cachedExecutiveWeekTrend = (p?: unknown) =>
+  cached(
+    "execWeekTrend",
+    {
+      domain: String((p as Rec)?.["domain"] ?? ""),
+      supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
+      severities: readSeverities(p),
+      showNoFix: settingsStore.getShowNoFix(),
+    },
+    () => executiveWeekTrend(p),
+    3600,
+  );
+
 export function getExecutivePage(p?: unknown): ApiResult {
   return run(() => ({
     mttr: cachedMttrData(p),
     byDomain: cachedMttrByDomainData(p),
+    weekTrend: cachedExecutiveWeekTrend(p),
   }));
 }
 
@@ -1097,10 +1205,7 @@ function scanHistoryData(): Rec {
   const scans = ledgerStore.loadScanRows().slice().reverse(); // newest first
   // KPI band only: drop no-fix findings when the toggle is off, so tracked/open/resolved/
   // median match the rest of the dashboard. The scans table (+ delete flow) stays unfiltered.
-  const base = filterNoFixBase(
-    ledgerStore.loadBaseRows() as unknown as Rec[],
-    settingsStore.getShowNoFix(),
-  ) as unknown as BaseRow[];
+  const base = visibleBase(ledgerStore.loadBaseRows() as unknown as Rec[]) as unknown as BaseRow[];
   const open = base.filter((r) => r.status === "OPEN").length;
   const resolved = base.filter((r) => r.status === "RESOLVED").length;
   const { overall } = mttrFromLedger(base as unknown as Rec[]);
@@ -1262,15 +1367,13 @@ export function getReport(p?: unknown): ApiResult {
     // Honor the global "Value Chain" and "Support group" filters (empty = no filter).
     const domains = (params["domains"] as string[]) ?? [];
     const sgFilter = (params["supportGroups"] as string[]) ?? [];
-    // Report counts + MTTR honor the global show-no-fix toggle, like the dashboard views.
-    const showNoFix = settingsStore.getShowNoFix();
-    const displayed = filterNoFixFrame(
+    // Report counts + MTTR honor the global vendor-fix and EOL filters, like the dashboard views.
+    const displayed = visibleFrame(
       findings.applyFilters(scan.records, {
         severities: settingsStore.getDisplaySeverities(),
         domains,
         supportGroups: sgFilter,
       }),
-      showNoFix,
     );
     const counts = sevCountsOf(displayed);
     let baseRows = ledgerStore.loadBaseRows() as unknown as Rec[];
@@ -1285,7 +1388,7 @@ export function getReport(p?: unknown): ApiResult {
         baseRows = baseRows.filter((r) => domains.includes(assignDomain(r, compiled)));
       }
     }
-    baseRows = filterNoFixBase(baseRows, showNoFix);
+    baseRows = visibleBase(baseRows);
     const { perSev, overall } = mttrFromLedger(baseRows);
     void perSev;
     const generated = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -1345,7 +1448,7 @@ export function getExportCsv(p?: unknown): ApiResult {
     const params = (p ?? {}) as Rec;
     const scan = findings.currentScan();
     if (!scan) return { content: "", filename: "" };
-    const filtered = filterNoFixFrame(
+    const filtered = visibleFrame(
       findings.applyFilters(scan.records, {
         severities: (params["severities"] as string[]) ?? settingsStore.getDisplaySeverities(),
         statuses: (params["statuses"] as string[]) ?? [],
@@ -1355,7 +1458,6 @@ export function getExportCsv(p?: unknown): ApiResult {
         supportGroups: (params["supportGroups"] as string[]) ?? [],
         q: (params["q"] as string) ?? "",
       }),
-      settingsStore.getShowNoFix(),
     );
     const cols = findings.TABLE_COLUMNS.filter((c) => !c.startsWith("_"));
     const lines = [cols.join(",")];
@@ -1397,6 +1499,7 @@ export function getSettings(_p?: unknown): ApiResult {
     retentionDays: settingsStore.getRetentionDays(),
     autoCompact: settingsStore.getAutoCompact(),
     showNoFix: settingsStore.getShowNoFix(),
+    includeEol: settingsStore.getIncludeEol(),
     domains: settingsStore.getDomains(),
   }));
 }
@@ -1432,6 +1535,13 @@ export function setShowNoFix(p?: unknown): ApiResult {
   return mutate(() => {
     settingsStore.setShowNoFix(Boolean((p as Rec)?.["on"]));
     return { showNoFix: settingsStore.getShowNoFix() };
+  });
+}
+
+export function setIncludeEol(p?: unknown): ApiResult {
+  return mutate(() => {
+    settingsStore.setIncludeEol(Boolean((p as Rec)?.["on"]));
+    return { includeEol: settingsStore.getIncludeEol() };
   });
 }
 

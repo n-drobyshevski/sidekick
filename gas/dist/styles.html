@@ -695,6 +695,17 @@ input[aria-invalid="true"]:focus-visible, select[aria-invalid="true"]:focus-visi
   font-variant-numeric: tabular-nums;
 }
 .exec-hero .hero-src { margin-top: 6px; }
+/* Hero value + week-over-week trend badge on one line; the badge aligns to the bottom of the big
+   number (flex-end), reading as a small marker at its bottom-right. Centered by .exec's text-align
+   and wraps under the number on a narrow viewport rather than overflowing. */
+.exec-hero-row {
+  display: inline-flex; align-items: flex-end; justify-content: center;
+  gap: 12px; flex-wrap: wrap;
+}
+.exec-trend { display: inline-flex; align-items: baseline; gap: 6px; padding-bottom: 10px; }
+.exec-trend .chg { margin-left: 0; }
+.exec-trend-arrow { margin-right: 2px; font-weight: 700; }
+.exec-trend-note { font-size: 12px; color: var(--text-3); }
 /* Scan bar: last-scan caption + a single primary Run scan, centered under the hero. */
 .exec-scan { display: flex; flex-direction: column; align-items: center; gap: 10px; margin: 0 0 8px; }
 .exec-scan .primary { display: inline-flex; align-items: center; gap: 6px; }
