@@ -2,7 +2,7 @@
 // charts, per-severity SLA table, posture bars. Never fetches from Wiz.
 
 import {
-  contributionWaterfall, destroyChart, fmtDuration, groupPalette, groupPie, groupTrendLines,
+  destroyChart, fmtDuration, groupPalette, groupPie, groupTrendLines, mttrContributionBars,
   openResolvedLines, stackedAgeBar, survivalCurve, trendLine,
 } from "../charts.js";
 import { bootstrap, swrCall } from "../store.js";
@@ -305,7 +305,7 @@ export async function renderMttr(main, _params, ctx) {
       renderCharts(data.trends, data.mttr);
       renderSurvivalCurve(data.mttr);
       renderSla(data.mttr);
-      renderByDomain(data.byDomain);
+      renderByDomain(data.byDomain, data.mttr);
     };
     const summary = swrCall("api_getMttr", params, paintSummary)
       .then(paintSummary).catch(() => {});
@@ -325,11 +325,14 @@ export async function renderMttr(main, _params, ctx) {
    *
    *  Above the table, a chart pair shows how the groups participate in MTTR — both keyed to the
    *  same canonical `byDomain.trend.groups` (resolved-desc, capped at 5 + pooled "Other") so a
-   *  group wears one hue across the two: a "Remediation share" pie partitioning the *resolved*
-   *  population (who's carrying the remediation work, tooltip carrying each group's median MTTR),
-   *  and an "MTTR by …" line replaying each group's median MTTR in days over scan history. This
-   *  section is all-time like its table — the Trends timeframe toggle is deliberately not wired in. */
-  function renderByDomain(byDomain) {
+   *  group wears one hue across them. One card carries two switchable lenses: a "Remediation share"
+   *  pie partitioning the *resolved* population (who's carrying the work, tooltip carrying each
+   *  group's median MTTR), and a "… contribution to MTTR" bar ranking each group's KM median
+   *  against a reference line at the overall KM median (who is slow enough to pull the headline
+   *  figure up). Beside it, an "MTTR by …" line replays each group's median in days over scan
+   *  history. The overall KM median for the reference line comes from `mttr` (same scope as these
+   *  rows). This section is all-time like its table — the Trends timeframe toggle is not wired in. */
+  function renderByDomain(byDomain, mttr) {
     clear(byDomainHost);
     if (!byDomain || !byDomain.rows.length) return;
     // The dimension follows the sidebar scope (server-tagged): per-domain at the whole-chain
@@ -343,6 +346,10 @@ export async function renderMttr(main, _params, ctx) {
     }
     const dim = isSg ? SUPPORT_GROUP_DIM : DOMAIN_DIM;
     const groupOf = (r) => r.group ?? r.domain;
+    // The overall KM median (same scope as these rows) — the reference line the contribution bars
+    // are read against. Null when the payload is a stale pre-KM cache or the overall median is
+    // itself censored; the bars then rank without a reference line (see mttrContributionBars).
+    const overallKm = mttr?.remediation?.km?.median ?? null;
 
     // Chart pair over the group trend the server ships alongside the table. Each card swaps
     // its canvas for a muted message when there's nothing to draw (copied from overview.js's
@@ -352,9 +359,9 @@ export async function renderMttr(main, _params, ctx) {
     const lineCanvas = el("canvas", {});
     const lineMsg = el("p", { class: "chart-empty muted", style: "display:none" });
     const lineCaption = el("p", { class: "chart-caption muted" });
-    const wfCanvas = el("canvas", {});
-    const wfMsg = el("p", { class: "chart-empty muted", style: "display:none" });
-    // The pie and the waterfall share one switchable card, so they share one caption too.
+    const contribCanvas = el("canvas", {});
+    const contribMsg = el("p", { class: "chart-empty muted", style: "display:none" });
+    // The pie and the contribution bars share one switchable card, so they share one caption too.
     const shareCaption = el("p", { class: "chart-caption muted" });
 
     // Swap a card between its live canvas and a centered muted message.
@@ -381,27 +388,28 @@ export async function renderMttr(main, _params, ctx) {
     const series = groups.map((name) => ({ name, color: colors.get(name) }));
     if (resolvedOther > 0) series.push({ name: "Other", color: colors.get("Other") });
 
-    // Waterfall steps: each domain's remediation wait-time = resolved × KM median (finding·days),
-    // an additive proxy for how much it drives the overall MTTR (the KM median itself doesn't
-    // decompose — see the chart's help). Fall back to the naive median when KM is censored to null,
-    // and drop any domain with no resolved work or no usable median. Same canonical groups/hues as
-    // the pie and line; rows outside the groups pool into an additive "Other" (burden sums cleanly
-    // per domain, unlike a median).
-    const byNameWf = new Map(byDomain.rows.map((r) => [groupOf(r), r]));
-    const burdenOf = (r) => {
-      const m = r && (r.kmMedian ?? r.median);
-      const n = (r && r.resolved) ?? 0;
-      // Whole finding·days — the median is fractional, but sub-day precision on a ~700 total is
-      // just label noise. Rounding each step keeps the drawn Total (their sum) consistent.
-      return m != null && n > 0 ? Math.round(n * m) : 0;
-    };
-    const wfSteps = groups
-      .map((name) => ({ label: name, value: burdenOf(byNameWf.get(name)), color: colors.get(name) }))
-      .filter((s) => s.value > 0);
-    const wfOther = byDomain.rows
-      .filter((r) => !inGroups.has(groupOf(r)))
-      .reduce((a, r) => a + burdenOf(r), 0);
-    if (wfOther > 0) wfSteps.push({ label: "Other", value: wfOther, color: colors.get("Other") });
+    // Contribution bars: each group's KM median MTTR (days), ranked slowest-first and read against
+    // the overall-median reference line — the groups above it are the ones pulling the headline
+    // MTTR up. Fall back to the naive median when KM is censored to null, and drop any group with no
+    // resolved work or no usable median (medians can't be estimated with too little closed). Same
+    // canonical groups/hues as the pie and line. There is deliberately NO "Other" bar: medians don't
+    // pool, so a fabricated pooled-remainder median would be meaningless (the pie keeps Other, whose
+    // counts *do* sum). Groups dropped for an unobservable median are surfaced in the caption.
+    const byNameContrib = new Map(byDomain.rows.map((r) => [groupOf(r), r]));
+    const contribRows = groups
+      .map((name) => {
+        const r = byNameContrib.get(name);
+        const v = r && (r.kmMedian ?? r.median);
+        return { label: name, value: v, resolved: (r && r.resolved) ?? 0, color: colors.get(name) };
+      })
+      .filter((g) => g.value != null && g.resolved > 0)
+      .sort((a, b) => b.value - a.value);
+    // Named groups with resolved work but no observable median (too much still open) — dropped from
+    // the ranked bars and counted here so the caption can stay honest about the omission.
+    const contribOmitted = groups.filter((name) => {
+      const r = byNameContrib.get(name);
+      return r && (r.resolved ?? 0) > 0 && (r.kmMedian ?? r.median) == null;
+    }).length;
 
     const naivePts = (trend && trend.points) || [];
     const kmPts = (trend && trend.kmPoints) || [];
@@ -464,18 +472,20 @@ export async function renderMttr(main, _params, ctx) {
     const lineHead = lineToggle ? el("div", { class: "chart-head" }, lineTitle, lineToggle) : lineTitle;
 
     // Unified by-domain panel: the "Remediation share" pie and the "Domain contribution to MTTR"
-    // waterfall are two lenses on the same domains (who carries the resolved work vs who owns the
-    // remediation wait), so they share one card switched by a segmented toggle instead of two
-    // separate cards. It sits in a row with the "MTTR by domain" line; the chosen lens persists.
+    // bars are two lenses on the same domains (who carries the resolved work vs who is slow enough
+    // to pull the headline MTTR up), so they share one card switched by a segmented toggle instead
+    // of two separate cards. It sits in a row with the "MTTR by domain" line; the chosen lens persists.
     const shareHelp = [
       `Each ${dim.noun}'s share of the resolved findings the MTTR median runs over — who is carrying `
         + `the remediation work. Hover a slice for that ${dim.noun}'s KM median.`,
     ];
-    const wfHelp = [
-      `Ranks ${dim.noun}s by remediation wait-time — resolved findings × that ${dim.noun}'s KM median MTTR `
-        + "(finding·days) — stacked to a running total. A tall step is a big lever on the overall figure.",
-      "A proxy, not an exact split: the overall KM median is a censored-survival statistic, not a " +
-        "weighted average of per-domain medians, so the headline MTTR can't be decomposed exactly.",
+    const contribHelp = [
+      `Each ${dim.noun}'s Kaplan–Meier median time-to-remediation, ranked slowest first against the `
+        + `dashed line at the overall KM median. Bars past the line take longer than the register `
+        + `median — these ${dim.noun}s pull the headline MTTR up; bars short of it pull it down.`,
+      `Ranked by how slow, not how much: a high-volume ${dim.noun} that remediates fast sits left of `
+        + "the line here (it lowers the median), where a resolved-weighted view would rank it top. "
+        + "Hover a bar for its resolved count — few resolved findings mean little real leverage.",
     ];
     const shareTitleHost = el("h3", {}); // retitled per lens by applyShareView
     // A single circular-arrows button swaps the two lenses (share ⇄ contribution). The card title
@@ -488,10 +498,10 @@ export async function renderMttr(main, _params, ctx) {
     // Both canvases live in one box (same height as the line card so the row aligns); the inactive
     // one starts hidden so there's no flash before the first paint in the rAF below.
     pieCanvas.style.display = byDomainShareView === "share" ? "" : "none";
-    wfCanvas.style.display = byDomainShareView === "contribution" ? "" : "none";
+    contribCanvas.style.display = byDomainShareView === "contribution" ? "" : "none";
     const shareCard = el("div", { class: "chart-card" },
       el("div", { class: "chart-head" }, shareTitleHost, swapBtn),
-      el("div", { class: "chart-box" }, pieCanvas, pieMsg, wfCanvas, wfMsg),
+      el("div", { class: "chart-box" }, pieCanvas, pieMsg, contribCanvas, contribMsg),
       shareCaption);
 
     // Switch the lens: flip aria-pressed, retitle with the matching help, tear down the hidden
@@ -506,12 +516,12 @@ export async function renderMttr(main, _params, ctx) {
       clear(shareTitleHost).append(
         view === "share"
           ? helpTip("Remediation share", shareHelp, { className: "help-label" })
-          : helpTip(`${dim.Noun} contribution to MTTR`, wfHelp, { className: "help-label" }));
-      const [hideCanvas, hideMsg] = view === "share" ? [wfCanvas, wfMsg] : [pieCanvas, pieMsg];
+          : helpTip(`${dim.Noun} contribution to MTTR`, contribHelp, { className: "help-label" }));
+      const [hideCanvas, hideMsg] = view === "share" ? [contribCanvas, contribMsg] : [pieCanvas, pieMsg];
       destroyChart(hideCanvas);
       hideCanvas.style.display = "none";
       hideMsg.style.display = "none";
-      if (view === "share") paintPie(); else paintWaterfall();
+      if (view === "share") paintPie(); else paintContribution();
     }
     function pickShareView(view) {
       savePref("mttrByDomainShareView", view);
@@ -555,22 +565,27 @@ export async function renderMttr(main, _params, ctx) {
       groupPie(pieCanvas, slices, { subject: `Resolved findings by ${dim.noun}` });
     }
 
-    // Waterfall: each domain's remediation wait-time (resolved × KM median) building to the total —
-    // a taller step is a bigger lever on the overall MTTR. Ordered biggest-driver first so the top
-    // contributors read left-to-right; the pooled "Other" and grounded Total come last.
-    function paintWaterfall() {
-      shareCaption.textContent = `Each ${dim.noun}'s remediation wait-time (resolved × KM median) building to `
-        + "the total — a taller step drives the overall MTTR more.";
-      if (!wfSteps.length) {
-        showMsg(wfCanvas, wfMsg, "No resolved findings to attribute.");
+    // Contribution bars: each group's KM median MTTR against the overall-median reference line — a
+    // bar past the line is a group slower than the register median, i.e. one pulling the headline
+    // MTTR up. Slowest-first (contribRows is pre-sorted desc), so the up-drivers read top-down.
+    function paintContribution() {
+      const omittedNote = contribOmitted > 0
+        ? ` ${contribOmitted} ${dim.noun}${contribOmitted === 1 ? "" : "s"} omitted — too much still `
+          + "open to estimate a median."
+        : "";
+      const refClause = overallKm != null
+        ? " vs the overall median (dashed) — bars past the line pull the headline MTTR up."
+        : " — ranked slowest first.";
+      shareCaption.textContent = `Each ${dim.noun}'s KM median MTTR${refClause}${omittedNote}`;
+      if (!contribRows.length) {
+        showMsg(contribCanvas, contribMsg, "No resolved findings with an observable median to rank.");
         return;
       }
-      showChart(wfCanvas, wfMsg);
-      contributionWaterfall(
-        wfCanvas,
-        [...wfSteps].sort((a, b) => b.value - a.value),
-        { unit: "finding·days", subject: `${dim.Noun} contribution to remediation wait` },
-      );
+      showChart(contribCanvas, contribMsg);
+      mttrContributionBars(contribCanvas, contribRows, {
+        overall: overallKm,
+        subject: `${dim.Noun} median MTTR vs overall`,
+      });
     }
     // Column headers carry the two new metrics' definitions via helpTip, matching the
     // per-severity table's convention in renderSla above.
