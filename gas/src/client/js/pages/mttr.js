@@ -7,7 +7,7 @@ import {
 } from "../charts.js";
 import { bootstrap, swrCall } from "../store.js";
 import {
-  changeChip, clear, el, emptyState, eolHiddenNote, fmtDays, helpTip, noFixHiddenNote, openSheet, scopeBar,
+  changeChip, clear, el, emptyState, fmtDays, helpTip, openSheet, scopeBar,
   sectionLabel, sevBadge, severityScopeFilter, skeleton,
 } from "../ui.js";
 
@@ -235,8 +235,6 @@ export async function renderMttr(main, _params, ctx) {
     domain: ctx.domain, supportGroup: ctx.supportGroup, onClear: ctx.clearScope,
   });
   if (scopeChips) main.append(scopeChips);
-  if (boot.settings.showNoFix === false) main.append(noFixHiddenNote());
-  if (boot.settings.includeEol === false) main.append(eolHiddenNote());
 
   const heroHost = el("div", {});
   const chartsHost = el("div", {});

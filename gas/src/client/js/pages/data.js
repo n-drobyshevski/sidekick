@@ -17,8 +17,6 @@ import {
   emptyState,
   fmtDateTime,
   fmtDays,
-  eolHiddenNote,
-  noFixHiddenNote,
   scopeBar,
   sectionLabel,
   toast,
@@ -43,8 +41,6 @@ export async function renderData(main, params, ctx) {
   );
   const scopeChips = scopeBar({ domain, supportGroup, onClear: ctx.clearScope });
   if (scopeChips) main.append(scopeChips);
-  if (boot.settings.showNoFix === false) main.append(noFixHiddenNote());
-  if (boot.settings.includeEol === false) main.append(eolHiddenNote());
 
   main.append(sectionLabel("Report"));
   if (boot.latestScan) {
