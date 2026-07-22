@@ -18,9 +18,9 @@ const PAGES = {
   executive: { title: "Executive", group: "Overview", render: renderExecutive },
   mttr: { title: "MTTR & SLA", group: "Security", render: renderMttr },
   overview: { title: "OS vulnerabilities", group: "Security", render: renderOverview },
-  scan_history: { title: "Scan History", group: "Security", render: renderHistory },
-  attribution: { title: "Attribution", group: "Security", render: renderAttribution },
   data: { title: "Data", group: "Data", render: renderData },
+  scan_history: { title: "Scan History", group: "Data", render: renderHistory },
+  attribution: { title: "Attribution", group: "Data", render: renderAttribution },
   settings: { title: "Settings", group: "Preferences", render: renderSettings },
 };
 
