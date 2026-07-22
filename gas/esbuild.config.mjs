@@ -2,6 +2,7 @@
 // can run, and inlines the client JS/CSS into HtmlService partials. `dist/entry.js` and
 // `dist/appsscript.json` are hand-maintained and never overwritten here.
 import { build } from "esbuild";
+import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +10,23 @@ import { fileURLToPath } from "node:url";
 const root = dirname(fileURLToPath(import.meta.url));
 const dist = join(root, "dist");
 mkdirSync(dist, { recursive: true });
+
+// A stamp of the source tree, folded into every server cache key (serverCache.BUILD_ID) so a code
+// deploy invalidates stale CacheService entries instead of serving payloads the old code computed.
+// A content hash (not a timestamp) keeps it deterministic: the same source yields the same stamp,
+// so a no-op rebuild produces no dist churn, while any code change flips it.
+function sourceStamp() {
+  const h = createHash("sha1");
+  const walk = (dir) => {
+    for (const e of readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/\.(ts|js|css|html|json)$/.test(e.name)) h.update(e.name + "\0").update(readFileSync(p));
+    }
+  };
+  walk(join(root, "src"));
+  return h.digest("hex").slice(0, 12);
+}
 
 // --- Server bundle -------------------------------------------------------------------
 await build({
@@ -18,6 +36,7 @@ await build({
   globalName: "Server",
   target: "es2019",
   outfile: join(dist, "server.js"),
+  define: { __BUILD_ID__: JSON.stringify(sourceStamp()) },
   logLevel: "info",
 });
 

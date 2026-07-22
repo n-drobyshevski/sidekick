@@ -16,6 +16,15 @@ import { getProp, setProp } from "./props";
 
 const VERSION_PROP = "DATA_VERSION";
 const KEY_PREFIX = "wsk";
+
+// A per-build code stamp (a hash of the source tree, injected by esbuild — see esbuild.config.mjs)
+// folded into every cache key. DATA_VERSION only bumps on data mutations, so without this a code
+// deploy would keep serving payloads computed by the OLD code until the TTL expires or the next
+// mutation — the classic "I deployed the fix but still see the bug" trap. Changing code changes the
+// stamp, making prior entries unreachable at once. The `typeof` guard leaves vitest / the dev server
+// (no esbuild define) on a stable "dev" stamp so their caching behaviour is unchanged.
+declare const __BUILD_ID__: string;
+const BUILD_ID = typeof __BUILD_ID__ === "string" ? __BUILD_ID__ : "dev";
 const CHUNK_CHARS = 90_000; // base64 chars per entry, safely under the 100 KB cap
 const DEFAULT_TTL_SEC = 21_600; // the CacheService maximum (6 h)
 
@@ -94,7 +103,7 @@ export function cached<T>(
 ): T {
   let key: string | null = null;
   try {
-    key = cacheKey(name, params, dataVersion());
+    key = cacheKey(name, params, `${BUILD_ID}.${dataVersion()}`);
     const hit = cacheGetJson(key);
     if (hit !== undefined) return hit as T;
   } catch (e) {
