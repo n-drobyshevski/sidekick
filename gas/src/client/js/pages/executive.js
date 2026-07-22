@@ -7,7 +7,7 @@
 
 import { bootstrap, swrCall } from "../store.js";
 import {
-  clear, el, emptyState, eolHiddenNote, fmtDateTime, fmtDays, helpTip, noFixHiddenNote, sectionLabel,
+  clear, el, emptyState, fmtDateTime, fmtDays, helpTip, sectionLabel,
   skeleton, statusPill,
 } from "../ui.js";
 
@@ -95,8 +95,9 @@ export async function renderExecutive(main, _params, ctx) {
 
   const page = el("div", { class: "exec" });
   page.append(el("h1", {}, "Security posture"));
-  if (boot.settings.showNoFix === false) page.append(noFixHiddenNote());
-  if (boot.settings.includeEol === false) page.append(eolHiddenNote());
+  // The vendor-fix / EOL "findings hidden" notes are deliberately omitted here: the executive view
+  // is the calm leadership summary, and those filter-honesty banners live on the analyst pages
+  // (Overview, MTTR, OS vulnerabilities, …) that this page links into.
   main.append(page);
 
   // Section hosts, painted below. Order = visual hierarchy: the headline MTTR, then the
