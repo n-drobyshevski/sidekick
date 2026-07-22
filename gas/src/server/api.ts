@@ -779,11 +779,80 @@ function mttrTrendData(p?: unknown): Rec {
   };
 }
 
+// The "(none)" bucket label for rows the support-group map can't resolve — one bucket so an
+// unattributed tail doesn't fragment the split.
+const NONE_SUPPORT_GROUP = "(none)";
+
+// Shared per-group remediation rows + trend for the MTTR breakdown, used by both the by-domain
+// and by-support-group variants. `rows` must already carry the grouping key at `keyField`
+// (e.g. "_domain" / "_supportGroup"); `orderedNames` fixes the table order (names with no rows
+// are skipped). Each row is keyed by a generic `group` label; the trend is the canonical
+// top-5-by-resolved (median + KM) over the same population. Reuses mttrFromLedger /
+// overallSlaOldest / kaplanMeier, so no domain-layer change.
+function remediationGroups(
+  rows: Rec[],
+  keyField: string,
+  orderedNames: string[],
+  scanRows: Rec[],
+): { rows: Rec[]; trend: { groups: string[]; points: unknown; kmPoints: unknown } } {
+  const buckets = new Map<string, Rec[]>();
+  for (const r of rows) {
+    const name = String(r[keyField] ?? "");
+    let arr = buckets.get(name);
+    if (!arr) buckets.set(name, (arr = []));
+    arr.push(r);
+  }
+  const out: Rec[] = [];
+  for (const name of orderedNames) {
+    const drows = buckets.get(name);
+    if (!drows || !drows.length) continue;
+    const { perSev, overall } = mttrFromLedger(drows);
+    const { slaPct } = overallSlaOldest(perSev);
+    const rem = drows as unknown as BaseRow[];
+    const km = kaplanMeier(rem);
+    out.push({
+      group: name,
+      median: overall.mttr_median ?? null,
+      // Censoring-aware KM p90 (open findings right-censored), the slow-tail sibling of the KM
+      // median below — read off the same survival curve (smallest t with S(t) ≤ 0.10) so the
+      // tail isn't biased low by the fast-patched vulns that close first, the way a closed-only
+      // percentile would be. Null (renders "—") when too much is still open to observe it.
+      p90: kmQuantileFromCurve(km.curve, 0.9),
+      // Censoring-aware KM median (open findings right-censored) — the column that replaces
+      // the old "Excl. fast lane" tail median.
+      kmMedian: km.median,
+      slaPct,
+      // Actionable-clock open-past-SLA (measured from vendor-fix availability, awaiting
+      // rows excluded) — the same basis the hero and severity table now use.
+      openPastSla: openPastSla(actionableView(rem)).overall,
+      // Open findings in this bucket still awaiting a vendor fix — surfaced as a footnote
+      // under the table, not a column.
+      awaiting: awaitingVendorFix(rem).overall,
+      open: overall.open ?? 0,
+      resolved: overall.resolved ?? 0,
+    });
+  }
+  // Trend shares the exact scoped population and the canonical group order the table just
+  // built — the groups that actually carry resolved work, capped at 5 (the categorical palette
+  // size, charts.js CATEGORICAL), the rest folds to "Other".
+  const groups = out
+    .filter((r) => (r["resolved"] as number) > 0)
+    .sort((a, b) => (b["resolved"] as number) - (a["resolved"] as number))
+    .slice(0, 5)
+    .map((r) => String(r["group"]));
+  const keyOf = (r: Rec) => String(r[keyField] ?? "");
+  const points = medianMttrByGroupTrend(scanRows, rows, keyOf, groups, { severities: null });
+  // KM-median series (open findings right-censored) — the chart's default clock; the naive
+  // `points` above is kept only as the toggle's comparison. Same scoped rows, same canonical
+  // groups/keyOf, so KM and naive line up point-for-point.
+  const kmPoints = kmMedianByGroupTrend(scanRows, rows, keyOf, groups, { severities: null });
+  return { rows: out, trend: { groups, points, kmPoints } };
+}
+
 // Per-domain remediation summary for the "By domain" section shown at the whole-chain
 // (aggregate) view — a value chain is composed of domains, so this splits the same
 // ledger base rows the MTTR hero uses by their assigned domain. Priority order (with
-// Unassigned last), empty domains omitted. Reuses mttrFromLedger/overallSlaOldest, so
-// no domain-layer change.
+// Unassigned last), empty domains omitted.
 function mttrByDomainData(p?: unknown): Rec {
   const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
   let rows = filterSeverities(
@@ -809,68 +878,66 @@ function mttrByDomainData(p?: unknown): Rec {
   const items = settingsStore.getDomains().items;
   const compiled = compileDomains(items);
   const assigned = assignDomains(rows, compiled);
-  const buckets = new Map<string, Rec[]>();
-  rows.forEach((r, i) => {
-    const name = assigned[i] ?? UNASSIGNED;
-    let arr = buckets.get(name);
-    if (!arr) buckets.set(name, (arr = []));
-    arr.push(r);
-  });
-  const out: Rec[] = [];
-  for (const name of domainNames(items)) {
-    const drows = buckets.get(name);
-    if (!drows || !drows.length) continue;
-    const { perSev, overall } = mttrFromLedger(drows);
-    const { slaPct } = overallSlaOldest(perSev);
-    const rem = drows as unknown as BaseRow[];
-    const km = kaplanMeier(rem);
-    out.push({
-      domain: name,
-      median: overall.mttr_median ?? null,
-      // Censoring-aware KM p90 (open findings right-censored), the slow-tail sibling of the KM
-      // median below — read off the same survival curve (smallest t with S(t) ≤ 0.10) so the
-      // tail isn't biased low by the fast-patched vulns that close first, the way a closed-only
-      // percentile would be. Null (renders "—") when too much is still open to observe it.
-      p90: kmQuantileFromCurve(km.curve, 0.9),
-      // Censoring-aware KM median (open findings right-censored) — the column that replaces
-      // the old "Excl. fast lane" tail median.
-      kmMedian: km.median,
-      slaPct,
-      // Actionable-clock open-past-SLA (measured from vendor-fix availability, awaiting
-      // rows excluded) — the same basis the hero and severity table now use.
-      openPastSla: openPastSla(actionableView(rem)).overall,
-      // Open findings in this bucket still awaiting a vendor fix — surfaced as a footnote
-      // under the table, not a column.
-      awaiting: awaitingVendorFix(rem).overall,
-      open: overall.open ?? 0,
-      resolved: overall.resolved ?? 0,
-    });
-  }
-  // Median-MTTR-by-domain trend shares the exact scoped population and canonical group
-  // order the per-domain table just built. Tag each scoped row with its assigned domain
-  // (reusing `assigned`, positionally aligned with `rows`), then replay medians over the
-  // domains that actually carry resolved work — capped at 5 (the categorical palette size,
-  // charts.js CATEGORICAL), the rest folds to "Other".
   rows.forEach((r, i) => {
     r["_domain"] = assigned[i] ?? UNASSIGNED;
   });
-  const groups = out
-    .filter((r) => (r["resolved"] as number) > 0)
-    .sort((a, b) => (b["resolved"] as number) - (a["resolved"] as number))
-    .slice(0, 5)
-    .map((r) => String(r["domain"]));
   const scanRows = ledgerStore.loadScanRows() as unknown as Rec[];
-  const byDomainKey = (r: Rec) => String(r["_domain"] ?? UNASSIGNED);
-  const points = medianMttrByGroupTrend(scanRows, rows, byDomainKey, groups, { severities: null });
-  // KM-median-by-domain series (open findings right-censored) — the chart's default clock; the
-  // naive `points` above is kept only as the toggle's comparison. Same scoped `rows`, same
-  // canonical `groups`/keyOf, so KM and naive line up point-for-point.
-  const kmPoints = kmMedianByGroupTrend(scanRows, rows, byDomainKey, groups, { severities: null });
+  const { rows: out, trend } = remediationGroups(rows, "_domain", domainNames(items), scanRows);
+  // Keep `domain` alongside the generic `group` label so the Executive page (reads r.domain)
+  // and any older client stay byte-compatible.
+  for (const r of out) r["domain"] = r["group"];
   return {
+    dimension: "domain",
     rows: out,
-    trend: { groups, points, kmPoints },
+    trend,
     // Resolved history set aside above for lacking any domain input — the by-domain footnote.
     excluded: { total: excluded.length, resolved: excludedResolved },
+  };
+}
+
+// Per-support-group remediation for the "By support group" section shown when a single Value
+// Chain is selected — the by-domain split would be one row then, so this splits that domain's
+// scoped base rows by their attached `_supportGroup` instead. Same row/trend shape as
+// mttrByDomainData so the client renders it identically (relabelled). Groups with no rows are
+// omitted; the unresolved tail folds into one "(none)" bucket. When support groups aren't
+// configured, attachSupportGroups is inert so everything lands in "(none)" (one group) and the
+// client hides the section — nothing to split by.
+function mttrBySupportGroupData(p?: unknown): Rec {
+  const domain = String((p as Rec)?.["domain"] ?? "");
+  const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
+  let rows = filterSeverities(
+    ledgerStore.loadBaseRows() as unknown as Rec[],
+    readSeverities(p),
+  );
+  rows = filterNoFixBase(rows, settingsStore.getShowNoFix());
+  supportGroups.attachSupportGroups(rows);
+  // Scope to the selected value chain (assign domains, keep the matching rows) so the split
+  // shows the support groups WITHIN this domain — mirroring how the hero is scoped.
+  const compiled = compileDomains(settingsStore.getDomains().items);
+  if (domain) rows = rows.filter((r) => assignDomain(r, compiled) === domain);
+  // A sidebar Support-group filter narrows to that one group (the split then collapses to a
+  // single row and the client hides it) — applied so the population matches the hero.
+  if (supportGroup) rows = rows.filter((r) => String(r["_supportGroup"] ?? "") === supportGroup);
+  for (const r of rows) r["_supportGroup"] = String(r["_supportGroup"] ?? "") || NONE_SUPPORT_GROUP;
+  // Order the table by bucket size (largest support group first), "(none)" always last.
+  const sizes = new Map<string, number>();
+  for (const r of rows) {
+    const g = String(r["_supportGroup"]);
+    sizes.set(g, (sizes.get(g) ?? 0) + 1);
+  }
+  const orderedNames = [...sizes.keys()].sort((a, b) => {
+    if (a === NONE_SUPPORT_GROUP) return 1;
+    if (b === NONE_SUPPORT_GROUP) return -1;
+    return (sizes.get(b) ?? 0) - (sizes.get(a) ?? 0);
+  });
+  const scanRows = ledgerStore.loadScanRows() as unknown as Rec[];
+  const { rows: out, trend } = remediationGroups(rows, "_supportGroup", orderedNames, scanRows);
+  return {
+    dimension: "supportGroup",
+    rows: out,
+    trend,
+    // The domain-input exclusion is a by-domain concern; not applicable to the support-group split.
+    excluded: { total: 0, resolved: 0 },
   };
 }
 
@@ -961,13 +1028,30 @@ const cachedMttrByDomainData = (p?: unknown) =>
     // "mttrByDomain11" → "mttrByDomain12": the colored-group cap dropped from 8 to 5 (matching the
     // new categorical palette), so `trend.groups`/`points`/`kmPoints` now carry fewer groups and a
     // larger pooled "Other"; bump so a stale 8-group entry can't survive the persistent dataVersion.
-    "mttrByDomain12",
+    // "mttrByDomain12" → "mttrByDomain13": rows gained a generic `group` label + the payload a
+    // `dimension` tag (shared with the by-support-group split); bump so no stale entry lacks them.
+    "mttrByDomain13",
     {
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
       severities: readSeverities(p),
       showNoFix: settingsStore.getShowNoFix(),
     },
     () => mttrByDomainData(p),
+    3600,
+  );
+
+// The by-support-group split shown when a Value Chain is selected — domain-scoped (keyed on
+// domain, unlike the by-domain split), 1h TTL like the summary (carries open ages).
+const cachedMttrBySupportGroupData = (p?: unknown) =>
+  cached(
+    "mttrBySupportGroup1",
+    {
+      domain: String((p as Rec)?.["domain"] ?? ""),
+      supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
+      severities: readSeverities(p),
+      showNoFix: settingsStore.getShowNoFix(),
+    },
+    () => mttrBySupportGroupData(p),
     3600,
   );
 
@@ -979,15 +1063,16 @@ export function getMttrTrend(p?: unknown): ApiResult {
   return run(() => cachedMttrTrendData(p));
 }
 
-/** MTTR page in one round trip (summary + trends share one state load). byDomain is
- *  the per-domain split for the whole-chain view only — omitted when a specific value
- *  chain is selected (the page is already that one domain). */
+/** MTTR page in one round trip (summary + trends share one state load). The breakdown section
+ *  adapts to the scope: at the whole-chain view it's the per-domain split; when a single Value
+ *  Chain is selected the by-domain split would be one row, so it becomes the per-support-group
+ *  split within that domain. Both carry a `dimension` tag so the client relabels accordingly. */
 export function getMttrPage(p?: unknown): ApiResult {
   const domain = String((p as Rec)?.["domain"] ?? "");
   return run(() => ({
     mttr: cachedMttrData(p),
     trends: cachedMttrTrendData(p),
-    byDomain: domain ? null : cachedMttrByDomainData(p),
+    byDomain: domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p),
   }));
 }
 

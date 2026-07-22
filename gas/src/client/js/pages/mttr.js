@@ -16,6 +16,28 @@ import {
 // somehow carries buckets without labels.
 const RESOLUTION_LABELS = ["≤1d", "2–7d", "8–30d", "31–90d", "90+d"];
 
+// The breakdown section (renderByDomain) serves two dimensions from one renderer, chosen by
+// the server payload's `dimension`: per-domain at the whole-chain view, per-support-group when
+// a Value Chain is selected (the by-domain split would be a single row then). These carry the
+// visible copy; the group-name reads go through a `.group ?? .domain` accessor so the same code
+// paints both. Keep the phrasing parallel so the two views read the same.
+const DOMAIN_DIM = {
+  noun: "domain",
+  Noun: "Domain",
+  title: "By domain",
+  subtitle: "Per-domain remediation — share of resolved work, each domain's contribution to "
+    + "MTTR, the KM median trend, and a full breakdown table.",
+  sheetSubtitle: "Remediation for each domain in the value chain.",
+};
+const SUPPORT_GROUP_DIM = {
+  noun: "support group",
+  Noun: "Support group",
+  title: "By support group",
+  subtitle: "Per-support-group remediation within this value chain — share of resolved work, "
+    + "each group's contribution to MTTR, the KM median trend, and a full breakdown table.",
+  sheetSubtitle: "Remediation for each support group in this value chain.",
+};
+
 // Timeframe presets for the Trends charts. null = no window (full history).
 const TREND_WINDOWS = [
   ["5d", 5], ["2w", 14], ["30d", 30], ["60d", 60], ["90d", 90], ["All", null],
@@ -295,22 +317,34 @@ export async function renderMttr(main, _params, ctx) {
     await Promise.allSettled([summary, full]);
   }
 
-  /** Per-domain remediation, shown only at the whole-chain view (the server omits it
-   *  when a single value chain is selected). A value chain is composed of domains, so
-   *  this is how each component is doing.
+  /** Remediation breakdown that adapts to the sidebar scope (the server tags the payload with
+   *  `dimension`): at the whole-chain view it splits by domain — a value chain is composed of
+   *  domains, so this is how each component is doing — and when a single value chain is selected
+   *  the by-domain split would be one row, so it splits that domain by SUPPORT GROUP instead.
+   *  One renderer serves both; `dim` carries the labels and `groupOf` reads the group name.
    *
-   *  Above the table, a chart pair shows how the domains participate in MTTR — both keyed
-   *  to the same canonical `byDomain.trend.groups` (resolved-desc, capped at 5 + pooled
-   *  "Other") so a domain wears one hue across the two: a "Remediation share" pie
-   *  partitioning the *resolved* population (who's carrying the remediation work, tooltip
-   *  carrying each domain's median MTTR), and an "MTTR by domain" line replaying each
-   *  domain's median MTTR in days over scan history. This section is all-time like its
-   *  table — the Trends timeframe toggle is deliberately not wired in. */
+   *  Above the table, a chart pair shows how the groups participate in MTTR — both keyed to the
+   *  same canonical `byDomain.trend.groups` (resolved-desc, capped at 5 + pooled "Other") so a
+   *  group wears one hue across the two: a "Remediation share" pie partitioning the *resolved*
+   *  population (who's carrying the remediation work, tooltip carrying each group's median MTTR),
+   *  and an "MTTR by …" line replaying each group's median MTTR in days over scan history. This
+   *  section is all-time like its table — the Trends timeframe toggle is deliberately not wired in. */
   function renderByDomain(byDomain) {
     clear(byDomainHost);
-    if (!byDomain || !byDomain.rows.length || boot.domainNames.length < 2) return;
+    if (!byDomain || !byDomain.rows.length) return;
+    // The dimension follows the sidebar scope (server-tagged): per-domain at the whole-chain
+    // view, per-support-group when a Value Chain is selected. `dim` carries the copy and
+    // `groupOf` reads the group name regardless of which payload shape arrived.
+    const isSg = byDomain.dimension === "supportGroup";
+    if (isSg) {
+      if (byDomain.rows.length < 2) return; // a single support group isn't a split
+    } else if (boot.domainNames.length < 2) {
+      return;
+    }
+    const dim = isSg ? SUPPORT_GROUP_DIM : DOMAIN_DIM;
+    const groupOf = (r) => r.group ?? r.domain;
 
-    // Chart pair over the domain trend the server ships alongside the table. Each card swaps
+    // Chart pair over the group trend the server ships alongside the table. Each card swaps
     // its canvas for a muted message when there's nothing to draw (copied from overview.js's
     // Breakdown helpers). Both share one groupPalette so a domain's hue is stable across them.
     const pieCanvas = el("canvas", {});
@@ -342,7 +376,7 @@ export async function renderMttr(main, _params, ctx) {
     // Rows outside the canonical groups pool into "Other" — the pie sums their resolved
     // share; the line's Other series is the same pooled remainder the server replays.
     const resolvedOther = byDomain.rows
-      .filter((r) => !inGroups.has(r.domain))
+      .filter((r) => !inGroups.has(groupOf(r)))
       .reduce((a, r) => a + (r.resolved ?? 0), 0);
     const series = groups.map((name) => ({ name, color: colors.get(name) }));
     if (resolvedOther > 0) series.push({ name: "Other", color: colors.get("Other") });
@@ -353,7 +387,7 @@ export async function renderMttr(main, _params, ctx) {
     // and drop any domain with no resolved work or no usable median. Same canonical groups/hues as
     // the pie and line; rows outside the groups pool into an additive "Other" (burden sums cleanly
     // per domain, unlike a median).
-    const byNameWf = new Map(byDomain.rows.map((r) => [r.domain, r]));
+    const byNameWf = new Map(byDomain.rows.map((r) => [groupOf(r), r]));
     const burdenOf = (r) => {
       const m = r && (r.kmMedian ?? r.median);
       const n = (r && r.resolved) ?? 0;
@@ -365,7 +399,7 @@ export async function renderMttr(main, _params, ctx) {
       .map((name) => ({ label: name, value: burdenOf(byNameWf.get(name)), color: colors.get(name) }))
       .filter((s) => s.value > 0);
     const wfOther = byDomain.rows
-      .filter((r) => !inGroups.has(r.domain))
+      .filter((r) => !inGroups.has(groupOf(r)))
       .reduce((a, r) => a + burdenOf(r), 0);
     if (wfOther > 0) wfSteps.push({ label: "Other", value: wfOther, color: colors.get("Other") });
 
@@ -381,8 +415,8 @@ export async function renderMttr(main, _params, ctx) {
       const usingKm = byDomainClock === "km";
       const pts = usingKm ? kmPts : naivePts;
       lineCaption.textContent = usingKm
-        ? "Kaplan–Meier median time-to-remediation (days) by domain, per scan — still-open findings censored."
-        : "Naive median MTTR (days) by domain, per scan — closed findings only.";
+        ? `Kaplan–Meier median time-to-remediation (days) by ${dim.noun}, per scan — still-open findings censored.`
+        : `Naive median MTTR (days) by ${dim.noun}, per scan — closed findings only.`;
       if (pts.length < 2) {
         showMsg(lineCanvas, lineMsg, "Trend appears after the second saved scan.");
         return;
@@ -392,8 +426,8 @@ export async function renderMttr(main, _params, ctx) {
         unit: "days",
         nullAsGap: true,
         describe: usingKm
-          ? "Kaplan–Meier median time-to-remediation in days per domain over scan history."
-          : "Naive median MTTR in days per domain over scan history.",
+          ? `Kaplan–Meier median time-to-remediation in days per ${dim.noun} over scan history.`
+          : `Naive median MTTR in days per ${dim.noun} over scan history.`,
       });
     }
 
@@ -416,17 +450,17 @@ export async function renderMttr(main, _params, ctx) {
       paintLine();
     }
     const lineToggle = canToggleClock
-      ? el("div", { class: "seg-row", role: "group", "aria-label": "MTTR by domain clock" },
+      ? el("div", { class: "seg-row", role: "group", "aria-label": `MTTR by ${dim.noun} clock` },
         kmClockBtn, naiveClockBtn)
       : null;
     const lineHelp = [
-      "KM: Kaplan–Meier median days from first detection to remediation per domain, replayed " +
-        "as of each scan; still-open findings censored, so a wave of fresh open findings can't " +
-        "bias it down. The principal figure.",
-      "Naive: median of closed findings only per domain, per scan — the biased comparison KM " +
-        "corrects for, kept only to compare.",
+      `KM: Kaplan–Meier median days from first detection to remediation per ${dim.noun}, replayed `
+        + "as of each scan; still-open findings censored, so a wave of fresh open findings can't "
+        + "bias it down. The principal figure.",
+      `Naive: median of closed findings only per ${dim.noun}, per scan — the biased comparison KM `
+        + "corrects for, kept only to compare.",
     ];
-    const lineTitle = el("h3", {}, helpTip("MTTR by domain", lineHelp, { className: "help-label" }));
+    const lineTitle = el("h3", {}, helpTip(`MTTR by ${dim.noun}`, lineHelp, { className: "help-label" }));
     const lineHead = lineToggle ? el("div", { class: "chart-head" }, lineTitle, lineToggle) : lineTitle;
 
     // Unified by-domain panel: the "Remediation share" pie and the "Domain contribution to MTTR"
@@ -434,12 +468,12 @@ export async function renderMttr(main, _params, ctx) {
     // remediation wait), so they share one card switched by a segmented toggle instead of two
     // separate cards. It sits in a row with the "MTTR by domain" line; the chosen lens persists.
     const shareHelp = [
-      "Each domain's share of the resolved findings the MTTR median runs over — who is carrying " +
-        "the remediation work. Hover a slice for that domain's KM median.",
+      `Each ${dim.noun}'s share of the resolved findings the MTTR median runs over — who is carrying `
+        + `the remediation work. Hover a slice for that ${dim.noun}'s KM median.`,
     ];
     const wfHelp = [
-      "Ranks domains by remediation wait-time — resolved findings × that domain's KM median MTTR " +
-        "(finding·days) — stacked to a running total. A tall step is a big lever on the overall figure.",
+      `Ranks ${dim.noun}s by remediation wait-time — resolved findings × that ${dim.noun}'s KM median MTTR `
+        + "(finding·days) — stacked to a running total. A tall step is a big lever on the overall figure.",
       "A proxy, not an exact split: the overall KM median is a censored-survival statistic, not a " +
         "weighted average of per-domain medians, so the headline MTTR can't be decomposed exactly.",
     ];
@@ -465,13 +499,14 @@ export async function renderMttr(main, _params, ctx) {
     function applyShareView(view) {
       byDomainShareView = view;
       // The label names what the *next* click switches to (the title already names the current lens).
-      const nextLabel = view === "share" ? "Show domain contribution to MTTR" : "Show remediation share";
+      const nextLabel = view === "share"
+        ? `Show ${dim.noun} contribution to MTTR` : "Show remediation share";
       swapBtn.setAttribute("aria-label", nextLabel);
       swapBtn.title = nextLabel;
       clear(shareTitleHost).append(
         view === "share"
           ? helpTip("Remediation share", shareHelp, { className: "help-label" })
-          : helpTip("Domain contribution to MTTR", wfHelp, { className: "help-label" }));
+          : helpTip(`${dim.Noun} contribution to MTTR`, wfHelp, { className: "help-label" }));
       const [hideCanvas, hideMsg] = view === "share" ? [wfCanvas, wfMsg] : [pieCanvas, pieMsg];
       destroyChart(hideCanvas);
       hideCanvas.style.display = "none";
@@ -495,8 +530,8 @@ export async function renderMttr(main, _params, ctx) {
     // over. Tooltip detail carries the matching per-domain median. Canonical groups/hues
     // stay fixed (slices resize, never recolor).
     function paintPie() {
-      const byName = new Map(byDomain.rows.map((r) => [r.domain, r]));
-      shareCaption.textContent = "Each domain's share of resolved findings — the population feeding MTTR.";
+      const byName = new Map(byDomain.rows.map((r) => [groupOf(r), r]));
+      shareCaption.textContent = `Each ${dim.noun}'s share of resolved findings — the population feeding MTTR.`;
       const slices = groups
         .map((name) => {
           const r = byName.get(name);
@@ -509,7 +544,7 @@ export async function renderMttr(main, _params, ctx) {
         })
         .filter((s) => s.value > 0);
       const other = byDomain.rows
-        .filter((r) => !inGroups.has(r.domain))
+        .filter((r) => !inGroups.has(groupOf(r)))
         .reduce((a, r) => a + (r.resolved ?? 0), 0);
       if (other > 0) slices.push({ label: "Other", value: other, color: colors.get("Other") });
       if (!slices.length) {
@@ -517,14 +552,14 @@ export async function renderMttr(main, _params, ctx) {
         return;
       }
       showChart(pieCanvas, pieMsg);
-      groupPie(pieCanvas, slices, { subject: "Resolved findings by domain" });
+      groupPie(pieCanvas, slices, { subject: `Resolved findings by ${dim.noun}` });
     }
 
     // Waterfall: each domain's remediation wait-time (resolved × KM median) building to the total —
     // a taller step is a bigger lever on the overall MTTR. Ordered biggest-driver first so the top
     // contributors read left-to-right; the pooled "Other" and grounded Total come last.
     function paintWaterfall() {
-      shareCaption.textContent = "Each domain's remediation wait-time (resolved × KM median) building to "
+      shareCaption.textContent = `Each ${dim.noun}'s remediation wait-time (resolved × KM median) building to `
         + "the total — a taller step drives the overall MTTR more.";
       if (!wfSteps.length) {
         showMsg(wfCanvas, wfMsg, "No resolved findings to attribute.");
@@ -534,21 +569,21 @@ export async function renderMttr(main, _params, ctx) {
       contributionWaterfall(
         wfCanvas,
         [...wfSteps].sort((a, b) => b.value - a.value),
-        { unit: "finding·days", subject: "Domain contribution to remediation wait" },
+        { unit: "finding·days", subject: `${dim.Noun} contribution to remediation wait` },
       );
     }
     // Column headers carry the two new metrics' definitions via helpTip, matching the
     // per-severity table's convention in renderSla above.
     const columns = [
-      ["Domain", null],
+      [dim.Noun, null],
       ["Median MTTR (KM)",
-        ["Kaplan–Meier median time-to-remediation for this domain — the principal MTTR figure. " +
-          "Still-open findings count as censored instead of being ignored, so it isn't biased " +
-          "low by fresh fast-patched vulns."]],
+        [`Kaplan–Meier median time-to-remediation for this ${dim.noun} — the principal MTTR figure. `
+          + "Still-open findings count as censored instead of being ignored, so it isn't biased "
+          + "low by fresh fast-patched vulns."]],
       ["Median (naive)",
-        ["Median days from first detection to remediation for this domain, counting closed " +
-          "findings only — no censoring. Biased low by a wave of fresh open findings, which is " +
-          "what the KM median corrects for; kept only for comparison."]],
+        [`Median days from first detection to remediation for this ${dim.noun}, counting closed `
+          + "findings only — no censoring. Biased low by a wave of fresh open findings, which is "
+          + "what the KM median corrects for; kept only for comparison."]],
       ["MTTR p90",
         ["Kaplan–Meier 90th-percentile time-to-remediation — the slow tail. Nine in ten " +
           "findings beat it; one in ten is slower. Censoring-aware like the KM median (read off " +
@@ -570,7 +605,7 @@ export async function renderMttr(main, _params, ctx) {
     const tbody = el("tbody", {});
     for (const r of byDomain.rows) {
       tbody.append(el("tr", {},
-        el("td", {}, r.domain),
+        el("td", {}, groupOf(r)),
         el("td", { class: "num num--key" }, fmtDays(r.kmMedian)),
         el("td", { class: "num muted small" }, fmtDays(r.median)),
         el("td", { class: "num" }, fmtDays(r.p90)),
@@ -591,7 +626,7 @@ export async function renderMttr(main, _params, ctx) {
     const footnote = boot.settings.showNoFix !== false && awaitingTotal > 0
       ? el("p", { class: "small muted", style: "margin:8px 0 0" },
         `${awaitingTotal.toLocaleString()} open finding${awaitingTotal === 1 ? "" : "s"} across `
-        + "these domains are awaiting a vendor fix — excluded from Open past SLA until a fix appears.")
+        + `these ${dim.noun}s are awaiting a vendor fix — excluded from Open past SLA until a fix appears.`)
       : null;
 
     // Resolved history the server set aside for carrying no domain inputs — compacted episodes
@@ -620,10 +655,8 @@ export async function renderMttr(main, _params, ctx) {
       });
     }
 
-    byDomainHost.append(sectionLabel("By domain"));
-    byDomainHost.append(el("p", { class: "small muted", style: "margin:-6px 0 10px" },
-      "Per-domain remediation — share of resolved work, each domain's contribution to MTTR, "
-      + "the KM median trend, and a full breakdown table."));
+    byDomainHost.append(sectionLabel(dim.title));
+    byDomainHost.append(el("p", { class: "small muted", style: "margin:-6px 0 10px" }, dim.subtitle));
     byDomainHost.append(el("button", {
       type: "button",
       // Wider default than other sheets: this one carries a trend chart *and* a full data
@@ -633,13 +666,13 @@ export async function renderMttr(main, _params, ctx) {
       // uselessness; storageKey remembers whatever width the user settles on across opens,
       // same as the trend-window/survival-window prefs above.
       onclick: () => openSheet(renderBody, {
-        title: "By domain",
-        subtitle: "Remediation for each domain in the value chain.",
+        title: dim.title,
+        subtitle: dim.sheetSubtitle,
         width: "min(820px, 94vw)",
         minWidth: 480,
         storageKey: "sheetWidthByDomain",
       }),
-    }, "Open by-domain breakdown →"));
+    }, `Open ${dim.noun} breakdown →`));
   }
 
   function renderHero(mttr, trends) {
