@@ -741,6 +741,13 @@ var Server = (() => {
   function withShowNoFix(settings, enabled) {
     return { ...settings, show_no_fix: Boolean(enabled) };
   }
+  function getIncludeEol(settings) {
+    const val = "include_eol" in settings ? settings["include_eol"] : true;
+    return typeof val === "boolean" ? val : true;
+  }
+  function withIncludeEol(settings, enabled) {
+    return { ...settings, include_eol: Boolean(enabled) };
+  }
   function cleanDomainItems(items) {
     if (!Array.isArray(items)) return [];
     return items.filter(
@@ -1140,6 +1147,7 @@ var Server = (() => {
     runScan: () => runScan,
     saveDomains: () => saveDomains,
     setAutoCompact: () => setAutoCompact2,
+    setIncludeEol: () => setIncludeEol2,
     setRetention: () => setRetention,
     setRetentionSettings: () => setRetentionSettings,
     setSeverities: () => setSeverities,
@@ -4911,6 +4919,7 @@ var Server = (() => {
   var getRetentionDays2 = () => getRetentionDays(loadSettings());
   var getAutoCompact2 = () => getAutoCompact(loadSettings());
   var getShowNoFix2 = () => getShowNoFix(loadSettings());
+  var getIncludeEol2 = () => getIncludeEol(loadSettings());
   var getDomains2 = () => getDomains(loadSettings());
   var sgMapMemo;
   function supportGroupRowsToMap(rows) {
@@ -4957,6 +4966,9 @@ var Server = (() => {
   }
   function setShowNoFix(enabled) {
     saveSettings(withShowNoFix(loadSettings(), enabled));
+  }
+  function setIncludeEol(enabled) {
+    saveSettings(withIncludeEol(loadSettings(), enabled));
   }
   function setRetentionAndCompact(days, enabled) {
     saveSettings(withAutoCompact(withRetentionDays(loadSettings(), days), enabled));
@@ -5829,7 +5841,7 @@ var Server = (() => {
     const scan = currentScan();
     const latest = latestScanRow();
     const showNoFix = getShowNoFix2();
-    const records = scan ? filterNoFixFrame(scan.records, showNoFix) : [];
+    const records = scan ? visibleFrame(scan.records) : [];
     const counts = {};
     let unassignedCount = 0;
     for (const r of records) {
@@ -5851,6 +5863,7 @@ var Server = (() => {
         retentionDays: getRetentionDays2(),
         autoCompact: getAutoCompact2(),
         showNoFix,
+        includeEol: getIncludeEol2(),
         domains: getDomains2()
       },
       latestScan: latest ? {
@@ -5893,10 +5906,7 @@ var Server = (() => {
         supportGroups: (_f = params["supportGroups"]) != null ? _f : [],
         q: (_g = params["q"]) != null ? _g : ""
       };
-      const filtered = filterNoFixFrame(
-        applyFilters(scan.records, filters),
-        getShowNoFix2()
-      );
+      const filtered = visibleFrame(applyFilters(scan.records, filters));
       const counts = {};
       for (const r of filtered) {
         const sev2 = String(r["_sev"]);
@@ -5990,7 +6000,7 @@ var Server = (() => {
       const key = String((_a = p == null ? void 0 : p["vulnKey"]) != null ? _a : "");
       const scan = currentScan();
       if (!scan || !key) return { record: null, raw: null };
-      const record = (_b = filterNoFixFrame(scan.records, getShowNoFix2()).find(
+      const record = (_b = visibleFrame(scan.records).find(
         (r) => r["_vuln_key"] === key
       )) != null ? _b : null;
       let raw = null;
@@ -6052,6 +6062,9 @@ var Server = (() => {
     const severities = readSeverities(p);
     recs = filterSeverities(recs, severities);
     base = filterSeverities(base, severities);
+    const includeEol = getIncludeEol2();
+    recs = filterEolFrame(recs, includeEol);
+    base = filterEolBase(base, includeEol);
     const showNoFix = getShowNoFix2();
     const recsVisible = filterNoFixFrame(recs, showNoFix);
     const baseVisible = filterNoFixBase(base, showNoFix);
@@ -6134,7 +6147,7 @@ var Server = (() => {
       var _a;
       return String((_a = r["_domain"]) != null ? _a : UNASSIGNED) === domain;
     });
-    return filterNoFixFrame(recs, getShowNoFix2());
+    return visibleFrame(recs);
   }
   function groupingData(p) {
     var _a, _b;
@@ -6249,10 +6262,7 @@ var Server = (() => {
   function attributionData(p) {
     const scan = currentScan();
     if (!scan) return { flatScan: false };
-    const recs = filterNoFixFrame(
-      filterSeverities(scan.records, readSeverities(p)),
-      getShowNoFix2()
-    );
+    const recs = visibleFrame(filterSeverities(scan.records, readSeverities(p)));
     const dom = getDomains2();
     const compiled = compileDomains(dom.items);
     const sgMap = getSupportGroupMap2();
@@ -6332,6 +6342,43 @@ var Server = (() => {
     if (showNoFix || !records.length) return records;
     return records.filter((r) => !recordNoFix(r));
   }
+  function eolVulnKeys() {
+    const keys = cached("eolKeys", {}, () => {
+      const scan = currentScan();
+      if (!scan) return [];
+      const out = [];
+      for (const r of scan.records) {
+        if (r["isOperatingSystemEndOfLife"] === true) out.push(vulnKey(r));
+      }
+      return out;
+    });
+    return new Set(keys);
+  }
+  function filterEolBase(rows, includeEol) {
+    if (includeEol || !rows.length) return rows;
+    const keys = eolVulnKeys();
+    if (!keys.size) return rows;
+    return rows.filter((r) => {
+      var _a;
+      return !keys.has(String((_a = r["vuln_key"]) != null ? _a : ""));
+    });
+  }
+  function filterEolFrame(records, includeEol) {
+    if (includeEol || !records.length) return records;
+    return records.filter((r) => r["isOperatingSystemEndOfLife"] !== true);
+  }
+  function visibleFrame(records) {
+    return filterEolFrame(
+      filterNoFixFrame(records, getShowNoFix2()),
+      getIncludeEol2()
+    );
+  }
+  function visibleBase(rows) {
+    return filterEolBase(
+      filterNoFixBase(rows, getShowNoFix2()),
+      getIncludeEol2()
+    );
+  }
   function scopedBaseRows(domain, supportGroup) {
     let rows = loadBaseRows();
     if (domain || supportGroup) {
@@ -6353,7 +6400,7 @@ var Server = (() => {
     const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
     let rows = scopedBaseRows(domain, supportGroup);
     rows = filterSeverities(rows, readSeverities(p));
-    rows = filterNoFixBase(rows, getShowNoFix2());
+    rows = visibleBase(rows);
     const { perSev, overall } = mttrFromLedger(rows);
     const { slaPct, oldestDays } = overallSlaOldest(perSev);
     const remRows = rows;
@@ -6398,9 +6445,13 @@ var Server = (() => {
     const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
     const severities = readSeverities(p);
     const scoped = Boolean(domain || supportGroup);
-    const rows = scopedBaseRows(domain, supportGroup);
+    const includeEol = getIncludeEol2();
+    const rows = filterEolBase(
+      scopedBaseRows(domain, supportGroup),
+      includeEol
+    );
     return {
-      history: scoped ? [] : loadHistory(),
+      history: scoped || !includeEol ? [] : loadHistory(),
       // showNoFix off → the open / KM-median series exclude no-fix findings as-of-date; the
       // resolved / median / SLA-burn / attainment series are untouched (see loadTrend).
       trend: loadTrend(severities, getShowNoFix2(), rows)
@@ -6462,7 +6513,7 @@ var Server = (() => {
       loadBaseRows(),
       readSeverities(p)
     );
-    rows = filterNoFixBase(rows, getShowNoFix2());
+    rows = visibleBase(rows);
     attachSupportGroups(rows);
     if (supportGroup) rows = rows.filter((r) => {
       var _a2;
@@ -6502,7 +6553,7 @@ var Server = (() => {
       loadBaseRows(),
       readSeverities(p)
     );
-    rows = filterNoFixBase(rows, getShowNoFix2());
+    rows = visibleBase(rows);
     attachSupportGroups(rows);
     const compiled = compileDomains(getDomains2().items);
     if (domain) rows = rows.filter((r) => assignDomain(r, compiled) === domain);
@@ -6668,7 +6719,7 @@ var Server = (() => {
     const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
     const severities = readSeverities(p);
     const hideNoFix = !getShowNoFix2();
-    const base = scopedBaseRows(domain, supportGroup);
+    const base = filterEolBase(scopedBaseRows(domain, supportGroup), getIncludeEol2());
     if (!base.length) return null;
     let earliest = Infinity;
     for (const r of base) {
@@ -6712,10 +6763,7 @@ var Server = (() => {
   function scanHistoryData() {
     var _a;
     const scans = loadScanRows().slice().reverse();
-    const base = filterNoFixBase(
-      loadBaseRows(),
-      getShowNoFix2()
-    );
+    const base = visibleBase(loadBaseRows());
     const open = base.filter((r) => r.status === "OPEN").length;
     const resolved = base.filter((r) => r.status === "RESOLVED").length;
     const { overall } = mttrFromLedger(base);
@@ -6858,14 +6906,12 @@ var Server = (() => {
       if (!scan) return { content: "", filename: "", matrix: [] };
       const domains = (_b = params["domains"]) != null ? _b : [];
       const sgFilter = (_c = params["supportGroups"]) != null ? _c : [];
-      const showNoFix = getShowNoFix2();
-      const displayed = filterNoFixFrame(
+      const displayed = visibleFrame(
         applyFilters(scan.records, {
           severities: getDisplaySeverities2(),
           domains,
           supportGroups: sgFilter
-        }),
-        showNoFix
+        })
       );
       const counts = sevCountsOf(displayed);
       let baseRows2 = loadBaseRows();
@@ -6883,7 +6929,7 @@ var Server = (() => {
           baseRows2 = baseRows2.filter((r) => domains.includes(assignDomain(r, compiled)));
         }
       }
-      baseRows2 = filterNoFixBase(baseRows2, showNoFix);
+      baseRows2 = visibleBase(baseRows2);
       const { perSev, overall } = mttrFromLedger(baseRows2);
       const generated = (/* @__PURE__ */ new Date()).toISOString().replace(/\.\d{3}Z$/, "Z");
       const matrix = [
@@ -6944,7 +6990,7 @@ var Server = (() => {
       const params = p != null ? p : {};
       const scan = currentScan();
       if (!scan) return { content: "", filename: "" };
-      const filtered = filterNoFixFrame(
+      const filtered = visibleFrame(
         applyFilters(scan.records, {
           severities: (_a = params["severities"]) != null ? _a : getDisplaySeverities2(),
           statuses: (_b = params["statuses"]) != null ? _b : [],
@@ -6953,8 +6999,7 @@ var Server = (() => {
           domains: (_e = params["domains"]) != null ? _e : [],
           supportGroups: (_f = params["supportGroups"]) != null ? _f : [],
           q: (_g = params["q"]) != null ? _g : ""
-        }),
-        getShowNoFix2()
+        })
       );
       const cols = TABLE_COLUMNS.filter((c) => !c.startsWith("_"));
       const lines = [cols.join(",")];
@@ -6991,6 +7036,7 @@ var Server = (() => {
       retentionDays: getRetentionDays2(),
       autoCompact: getAutoCompact2(),
       showNoFix: getShowNoFix2(),
+      includeEol: getIncludeEol2(),
       domains: getDomains2()
     }));
   }
@@ -7022,6 +7068,12 @@ var Server = (() => {
     return mutate(() => {
       setShowNoFix(Boolean(p == null ? void 0 : p["on"]));
       return { showNoFix: getShowNoFix2() };
+    });
+  }
+  function setIncludeEol2(p) {
+    return mutate(() => {
+      setIncludeEol(Boolean(p == null ? void 0 : p["on"]));
+      return { includeEol: getIncludeEol2() };
     });
   }
   function setRetentionSettings(p) {

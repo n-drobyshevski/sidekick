@@ -179,6 +179,41 @@ export async function renderSettings(main, params, ctx) {
     }
   }
 
+  // ------------------------------------------------------- end-of-life OS filter
+  main.append(sectionLabel("End-of-life OS filter"));
+  main.append(el("p", { class: "muted small" },
+    "Findings on end-of-life operating systems can't be remediated by patching — the OS itself " +
+    "must be replaced — so they sit open indefinitely and skew MTTR and SLA. Unchecking this " +
+    "excludes them from every chart, table, KPI, and export across the whole register."));
+  const includeEolToggle = el("input", {
+    type: "checkbox", id: "include-eol",
+    checked: boot.settings.includeEol !== false ? true : null,
+  });
+  const saveEolBtn = el("button", { class: "primary", onclick: saveIncludeEol }, "Save end-of-life filter");
+  main.append(
+    el("div", { class: "card", style: "display:flex; flex-direction:column; gap:10px" },
+      el("label", { for: "include-eol", style: "display:flex; align-items:center; gap:8px" },
+        includeEolToggle,
+        "Include findings on end-of-life operating systems ",
+        el("span", { class: "muted small" },
+          "(unchecking excludes them from every chart, table, KPI, and export)")),
+      saveEolBtn,
+    ),
+  );
+
+  async function saveIncludeEol() {
+    if (!(await guardUnsavedDrafts())) return;
+    saveEolBtn.disabled = true;
+    try {
+      await call("api_setIncludeEol", { on: includeEolToggle.checked });
+      toast("End-of-life filter saved.");
+      ctx.refresh();
+    } catch (e) {
+      toast(`Save failed: ${e.message}`, "error");
+      saveEolBtn.disabled = false;
+    }
+  }
+
   // -------------------------------------------------------------- support groups
   main.append(sectionLabel("Support groups"));
   main.append(el("p", { class: "muted small" },

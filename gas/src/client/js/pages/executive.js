@@ -7,7 +7,7 @@
 
 import { bootstrap, swrCall } from "../store.js";
 import {
-  clear, el, emptyState, fmtDateTime, fmtDays, helpTip, noFixHiddenNote, sectionLabel,
+  clear, el, emptyState, eolHiddenNote, fmtDateTime, fmtDays, helpTip, noFixHiddenNote, sectionLabel,
   skeleton, statusPill,
 } from "../ui.js";
 
@@ -96,6 +96,7 @@ export async function renderExecutive(main, _params, ctx) {
   const page = el("div", { class: "exec" });
   page.append(el("h1", {}, "Security posture"));
   if (boot.settings.showNoFix === false) page.append(noFixHiddenNote());
+  if (boot.settings.includeEol === false) page.append(eolHiddenNote());
   main.append(page);
 
   // Section hosts, painted below. Order = visual hierarchy: the headline MTTR, then the

@@ -90,6 +90,17 @@ export function withShowNoFix(settings: Rec, enabled: boolean): Rec {
   return { ...settings, show_no_fix: Boolean(enabled) };
 }
 
+/** Whether findings on an end-of-life OS are included in analysis and display. Defaults to true
+ *  (included) so the register reads whole until an operator deliberately excludes them. */
+export function getIncludeEol(settings: Rec): boolean {
+  const val = "include_eol" in settings ? settings["include_eol"] : true;
+  return typeof val === "boolean" ? val : true;
+}
+
+export function withIncludeEol(settings: Rec, enabled: boolean): Rec {
+  return { ...settings, include_eol: Boolean(enabled) };
+}
+
 /** Structurally valid domain items only (non-dict / blank-name entries dropped). */
 export function cleanDomainItems(items: unknown): Rec[] {
   if (!Array.isArray(items)) return [];

@@ -5,10 +5,12 @@ import {
   getDisplaySeverities,
   getDomains,
   getRetentionDays,
+  getIncludeEol,
   getShowNoFix,
   getSupportGroupMap,
   withDomains,
   withFetchSeverities,
+  withIncludeEol,
   withShowNoFix,
   withSupportGroupMap,
 } from "../src/domain/settingsLogic";
@@ -86,6 +88,22 @@ describe("settings logic", () => {
     // truthy/falsy inputs are coerced, never stored raw.
     expect(withShowNoFix({}, 0 as unknown as boolean)).toEqual({ show_no_fix: false });
     expect(withShowNoFix({}, 1 as unknown as boolean)).toEqual({ show_no_fix: true });
+  });
+
+  it("getIncludeEol defaults to true and ignores non-boolean junk", () => {
+    expect(getIncludeEol({})).toBe(true); // absent -> included (whole register)
+    expect(getIncludeEol({ include_eol: false })).toBe(false);
+    expect(getIncludeEol({ include_eol: true })).toBe(true);
+    expect(getIncludeEol({ include_eol: "false" })).toBe(true); // non-boolean junk -> true
+    expect(getIncludeEol({ include_eol: 0 })).toBe(true);
+    expect(getIncludeEol({ include_eol: null })).toBe(true);
+  });
+
+  it("withIncludeEol coerces to a boolean", () => {
+    expect(withIncludeEol({}, false)).toEqual({ include_eol: false });
+    expect(withIncludeEol({ a: 1 }, true)).toEqual({ a: 1, include_eol: true });
+    expect(withIncludeEol({}, 0 as unknown as boolean)).toEqual({ include_eol: false });
+    expect(withIncludeEol({}, 1 as unknown as boolean)).toEqual({ include_eol: true });
   });
 
   it("apiSeverityFilter maps INFO and elides the full scope", () => {
