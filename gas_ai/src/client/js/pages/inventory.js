@@ -8,7 +8,29 @@ import { bootstrap, navigate, setParams, swrCall } from "../store.js";
 import { openAssetSheet } from "../detailSheets.js";
 import { categoryBar } from "../charts.js";
 import { kindLabel } from "../icons.js";
-import { aarsChip, clear, el, emptyState, kpiCard, sectionLabel, sevBadge } from "../ui.js";
+import { aarsChip, clear, el, emptyState, kpiCard, sectionLabel, sevBadge, skeleton } from "../ui.js";
+
+// Synchronous placeholder shown until api_getAssets resolves — mirrors the KPI row, the
+// distribution chart and the table so the boot splash reveals a laid-out page (not a blank
+// pane), and later navigations show structure under the route-overlay veil. paint() clears
+// the host and swaps in the real content.
+function inventorySkeleton() {
+  const kpis = el("div", { class: "kpi-row" });
+  for (let i = 0; i < 5; i++) {
+    kpis.append(el("div", { class: "kpi-card" },
+      el("div", { style: "display:flex; flex-direction:column; gap:9px" },
+        skeleton("line", { width: "62%" }),
+        skeleton("stat", { width: "45%" }),
+        skeleton("line", { width: "78%" }))));
+  }
+  const chart = el("div", { class: "chart-card", style: "margin-bottom:20px" },
+    skeleton("line", { width: "180px" }),
+    el("div", { class: "chart-box", style: "height:200px; position:relative; margin-top:10px" },
+      skeleton("chart")));
+  const rows = el("div", { style: "display:flex; flex-direction:column; gap:12px" });
+  for (let i = 0; i < 6; i++) rows.append(skeleton("line", { height: "18px" }));
+  return el("div", { role: "status", "aria-label": "Loading inventory" }, kpis, chart, rows);
+}
 
 const SORTS = {
   aars: (a, b) => Number(b.aars ?? -1) - Number(a.aars ?? -1),
@@ -36,6 +58,7 @@ export async function renderInventory(main, params) {
 
   const host = el("div", {});
   main.append(host);
+  host.append(inventorySkeleton()); // replaced by paint() once api_getAssets resolves
 
   // Filter + sort state lives here (outside paint) so it survives SWR repaints;
   // it's seeded from the URL so a filtered view is shareable/reloadable.

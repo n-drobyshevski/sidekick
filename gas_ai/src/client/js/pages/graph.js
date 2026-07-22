@@ -10,7 +10,7 @@ import { bootstrap, listJoin, listSplit, parseHash, setParams, swrCall } from ".
 import { openAssetSheet } from "../detailSheets.js";
 import { graphTable, renderGraph } from "../graphView.js";
 import { CATEGORY_LABELS, CATEGORY_ORDER, categoryOf, kindLabel } from "../icons.js";
-import { clear, el, emptyState, openSheet, sevBadge } from "../ui.js";
+import { clear, el, emptyState, openSheet, sevBadge, skeleton } from "../ui.js";
 
 const DEPTH_TEXT = {
   1: "Depth 1: seeds and their direct relationships",
@@ -641,6 +641,13 @@ export async function renderGraphPage(main, params, _ctx) {
   // ---------------------------------------------------------------- boot-up
   // The first load is awaited so the route overlay covers it; later loads are
   // in-place and keep the previous view visible while updating.
+  // A full-bleed skeleton fills the canvas until the first paint, so the boot
+  // splash reveals a laid-out workbench rather than an empty pane; paint()/load()
+  // clear the body and swap in the graph.
+  body.append(el("div", {
+    class: "graph-skeleton", role: "status", "aria-label": "Loading graph",
+    style: "position:absolute; inset:12px; border-radius:var(--radius-lg); overflow:hidden",
+  }, skeleton("chart")));
   syncControls();
   await load();
   if (params.panel === "filters") openFilters(false);

@@ -2,7 +2,7 @@
 
 import { call, } from "../api.js";
 import { swrCall } from "../store.js";
-import { clear, confirmDialog, el, emptyState, fmtDateTime, sectionLabel, statusPill, toast } from "../ui.js";
+import { clear, confirmDialog, el, emptyState, fmtDateTime, sectionLabel, skeleton, statusPill, toast } from "../ui.js";
 
 function fmtBytes(n) {
   if (!Number.isFinite(n)) return "—";
@@ -21,6 +21,17 @@ export async function renderData(main, _params, ctx) {
   const historyHost = el("div", {});
   const statsHost = el("div", {});
   main.append(sectionLabel("Sync history"), historyHost, sectionLabel("Storage"), statsHost);
+
+  // Seed each host with a skeleton until its RPC resolves; paintHistory()/paintStats() clear.
+  historyHost.append(el("div", {
+    role: "status", "aria-label": "Loading sync history",
+    style: "display:flex; flex-direction:column; gap:12px",
+  }, ...Array.from({ length: 4 }, () => skeleton("line", { height: "18px" }))));
+  statsHost.append(el("div", { class: "kpi-row", role: "status", "aria-label": "Loading storage" },
+    ...Array.from({ length: 3 }, () => el("div", { class: "kpi-card" },
+      el("div", { style: "display:flex; flex-direction:column; gap:9px" },
+        skeleton("line", { width: "60%" }),
+        skeleton("stat", { width: "45%" }))))));
 
   try {
     const history = await swrCall("api_getSyncHistory", {}, (fresh) => paintHistory(fresh));
