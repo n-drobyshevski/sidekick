@@ -409,6 +409,92 @@ export function sectionLabel(text) {
 }
 
 /**
+ * A shadcn-style settings card: a header (title + optional description), a body of controls,
+ * and an optional hairline-topped footer for the action(s). `body` and `footer` each accept a
+ * single node or an array of nodes (nullish entries are skipped, like el()). The title is an
+ * <h2> so the page heading order stays h1 → h2 across panels. Callers keep ownership of their
+ * controls (and their event wiring) — this only assembles the frame.
+ */
+export function settingsPanel({ title, description, body, footer } = {}) {
+  const head = el("div", { class: "settings-panel__head" },
+    el("h2", { class: "settings-panel__title" }, title),
+    description ? el("p", { class: "settings-panel__desc muted small" }, description) : null);
+  const bodyNode = el("div", { class: "settings-panel__body" }, ...[].concat(body || []));
+  const panel = el("section", { class: "settings-panel" }, head, bodyNode);
+  if (footer !== null && footer !== undefined) {
+    panel.append(el("div", { class: "settings-panel__foot" }, ...[].concat(footer)));
+  }
+  return panel;
+}
+
+/**
+ * A label+control settings row: a left column (bold label over a muted description) and a
+ * right-aligned control (a switch, a number input…). The canonical toggle-row layout. The
+ * `control` is whatever node the caller built and wired; `htmlFor` optionally associates the
+ * label text with a control id for a bigger click target.
+ */
+export function settingRow({ label, description, control, htmlFor } = {}) {
+  const labelEl = htmlFor
+    ? el("label", { class: "setting-row__title", for: htmlFor }, label)
+    : el("span", { class: "setting-row__title" }, label);
+  return el("div", { class: "setting-row" },
+    el("div", { class: "setting-row__label" },
+      labelEl,
+      description ? el("span", { class: "setting-row__desc muted small" }, description) : null),
+    el("div", { class: "setting-row__control" }, control));
+}
+
+/**
+ * An accessible on/off switch. The real checkbox stays in the DOM (visually hidden but
+ * focusable and labelable); the track + thumb are the painted control. Returns { node, input }
+ * so callers read `input.checked` and keep their `disabled` wiring. The focus ring lands on the
+ * track (see .switch__input:focus-visible + .switch__track in styles.css); the thumb slide is
+ * zeroed under prefers-reduced-motion.
+ */
+export function switchToggle({ checked = false, id, ariaLabel, disabled = false, onChange } = {}) {
+  const input = el("input", {
+    type: "checkbox", class: "switch__input", id: id || null,
+    checked: checked ? true : null, disabled: disabled ? true : null,
+    "aria-label": ariaLabel || null, role: "switch",
+  });
+  if (onChange) input.addEventListener("change", () => onChange(input.checked));
+  // Reflect checkbox state to aria-checked so screen readers announce the switch correctly.
+  const syncAria = () => input.setAttribute("aria-checked", input.checked ? "true" : "false");
+  syncAria();
+  input.addEventListener("change", syncAria);
+  const node = el("label", { class: "switch" },
+    input,
+    el("span", { class: "switch__track", "aria-hidden": "true" },
+      el("span", { class: "switch__thumb" })));
+  return { node, input };
+}
+
+/**
+ * A labelled capacity meter: a caption ("`used` / `total` (pct%)") over a track/fill bar
+ * reusing the progress-bar recipe. `state` ("" | "warn" | "bad") tints the fill near a ceiling;
+ * meaning is also carried by the number and any note text, never color alone. `note` appends an
+ * extra muted line under the bar (e.g. the "approaching the ceiling" warning).
+ */
+export function usageMeter({ used, total, label, state = "", note } = {}) {
+  const pct = total > 0 ? Math.min(100, (used / total) * 100) : 0;
+  const fill = el("div", { class: "progress-fill" });
+  fill.style.width = `${pct}%`;
+  const track = el("div", {
+    class: `progress-track usage-meter__track${state ? " " + state : ""}`,
+    role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100",
+    "aria-valuenow": String(Math.round(pct)),
+    "aria-label": label || "Usage",
+  }, fill);
+  return el("div", { class: "usage-meter" },
+    el("div", { class: "usage-meter__head" },
+      label ? el("span", { class: "usage-meter__label label" }, label) : null,
+      el("span", { class: "usage-meter__caption num" },
+        `${used.toLocaleString()} / ${total.toLocaleString()} (${pct.toFixed(1)}%)`)),
+    track,
+    note ? el("p", { class: `usage-meter__note small${state ? " " + state : ""}` }, note) : null);
+}
+
+/**
  * Inline severity-scope filter: a trigger showing the current summary that opens a
  * popover of severity toggle pills. Shared by Overview and MTTR. `scope` is a live array
  * mutated in place so the caller's scopeParam() stays in sync; `onApply` fires (debounced)
