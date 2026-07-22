@@ -4,7 +4,8 @@ import { call } from "../api.js";
 import { decodePrefill, PREFILL_KEY } from "../attributionPrefill.js";
 import { bootstrap, setParams } from "../store.js";
 import {
-  clear, confirmDialog, el, emptyState, fmtDateTime, openSheet, sectionLabel, statusPill, toast,
+  clear, confirmDialog, el, emptyState, fmtDateTime, openSheet, settingRow, settingsPanel,
+  statusPill, switchToggle, toast, usageMeter,
 } from "../ui.js";
 import { renderDomainsEditor } from "./domainsEditor.js";
 
@@ -15,24 +16,14 @@ export async function renderSettings(main, params, ctx) {
     el("p", { class: "page-sub" }, "Scan scope, display filter, domains, and data retention."),
   );
 
-  // ---------------------------------------------------------------- scan scope
-  main.append(sectionLabel("Scan scope"));
-  main.append(el("p", { class: "muted small" },
-    "Which severities each scan pulls from Wiz. Narrower scope = faster scans; " +
-    "severities outside the scope pause their lifecycle tracking."));
+  // ---------------------------------------------- severity scope (scan + display)
+  // Scan scope and display filter are one coupled control (display ⊆ fetch), so they live in
+  // one panel with two labeled sub-blocks and a single Save in the footer.
   const fetchPills = pillGroup(boot.palette.selectable, [...boot.settings.fetchSeverities],
     { ariaLabel: "Severities each scan pulls",
       onChange: () => { syncDisplayCoupling(); refreshScopeDirty(); } });
-  main.append(fetchPills.node);
-
-  // ------------------------------------------------------------- display filter
-  main.append(sectionLabel("Display filter"));
-  main.append(el("p", { class: "muted small" },
-    "Which severities every page shows — always a subset of the scan scope. A severity " +
-    "outside the scan scope is locked here until you add it above."));
   const displayPills = pillGroup(boot.palette.selectable, [...boot.settings.displaySeverities],
     { ariaLabel: "Severities every page shows", onChange: () => refreshScopeDirty() });
-  main.append(displayPills.node);
   syncDisplayCoupling(); // enforce display ⊆ fetch on first paint
 
   // Snapshot the normalized scope so pill edits show an "Unsaved changes" cue and a sibling
@@ -48,9 +39,26 @@ export async function renderSettings(main, params, ctx) {
   }
 
   const saveScopeBtn = el("button", { class: "primary", onclick: saveScope }, "Save severity scope");
-  main.append(el("div",
-    { style: "display:flex; align-items:center; gap:10px; margin-top:12px" },
-    saveScopeBtn, scopeDirtyHost));
+  main.append(settingsPanel({
+    title: "Severity scope",
+    description: "Which severities each scan pulls from Wiz, and which of those every page " +
+      "shows. Display is always a subset of the scan scope.",
+    body: [
+      el("div", { class: "scope-block" },
+        el("span", { class: "label" }, "Pulled from every scan"),
+        el("p", { class: "muted small scope-block__note" },
+          "Fewer severities = faster scans; a severity outside the scope pauses its " +
+          "lifecycle tracking."),
+        fetchPills.node),
+      el("div", { class: "scope-block scope-block--divided" },
+        el("span", { class: "label" }, "Shown across the app"),
+        el("p", { class: "muted small scope-block__note" },
+          "A subset of the scan scope. A severity outside the scan scope is locked here " +
+          "until you add it above."),
+        displayPills.node),
+    ],
+    footer: [saveScopeBtn, scopeDirtyHost],
+  }));
 
   function pillGroup(options, selected, { onChange, ariaLabel } = {}) {
     const pills = {};
@@ -146,31 +154,30 @@ export async function renderSettings(main, params, ctx) {
   }
 
   // ---------------------------------------------------------- vendor-fix filter
-  main.append(sectionLabel("Vendor-fix filter"));
-  main.append(el("p", { class: "muted small" },
-    "Findings with no vendor fix available yet sit outside the SLA clock. Unchecking this " +
-    "hides them from every chart, table, KPI, and export across the whole register."));
-  const showNoFixToggle = el("input", {
-    type: "checkbox", id: "show-no-fix",
-    checked: boot.settings.showNoFix !== false ? true : null,
+  const showNoFix = switchToggle({
+    checked: boot.settings.showNoFix !== false, id: "show-no-fix",
+    ariaLabel: "Show findings awaiting a vendor fix",
   });
   const saveNoFixBtn = el("button", { class: "primary", onclick: saveShowNoFix }, "Save vendor-fix filter");
-  main.append(
-    el("div", { class: "card", style: "display:flex; flex-direction:column; gap:10px" },
-      el("label", { for: "show-no-fix", style: "display:flex; align-items:center; gap:8px" },
-        showNoFixToggle,
-        "Show findings awaiting a vendor fix ",
-        el("span", { class: "muted small" },
-          "(unchecking hides them from every chart, table, KPI, and export)")),
-      saveNoFixBtn,
-    ),
-  );
+  main.append(settingsPanel({
+    title: "Vendor-fix filter",
+    description: "Findings with no vendor fix available yet sit outside the SLA clock. " +
+      "Turning this off hides them from every chart, table, KPI, and export across the " +
+      "whole register.",
+    body: settingRow({
+      label: "Show findings awaiting a vendor fix",
+      description: "Off = excluded from every chart, table, KPI, and export.",
+      control: showNoFix.node,
+      htmlFor: "show-no-fix",
+    }),
+    footer: saveNoFixBtn,
+  }));
 
   async function saveShowNoFix() {
     if (!(await guardUnsavedDrafts())) return;
     saveNoFixBtn.disabled = true;
     try {
-      await call("api_setShowNoFix", { on: showNoFixToggle.checked });
+      await call("api_setShowNoFix", { on: showNoFix.input.checked });
       toast("Vendor-fix filter saved.");
       ctx.refresh();
     } catch (e) {
@@ -180,32 +187,29 @@ export async function renderSettings(main, params, ctx) {
   }
 
   // ------------------------------------------------------- end-of-life OS filter
-  main.append(sectionLabel("End-of-life OS filter"));
-  main.append(el("p", { class: "muted small" },
-    "Findings on end-of-life operating systems can't be remediated by patching — the OS itself " +
-    "must be replaced — so they sit open indefinitely and skew MTTR and SLA. Unchecking this " +
-    "excludes them from every chart, table, KPI, and export across the whole register."));
-  const includeEolToggle = el("input", {
-    type: "checkbox", id: "include-eol",
-    checked: boot.settings.includeEol !== false ? true : null,
+  const includeEol = switchToggle({
+    checked: boot.settings.includeEol !== false, id: "include-eol",
+    ariaLabel: "Include findings on end-of-life operating systems",
   });
   const saveEolBtn = el("button", { class: "primary", onclick: saveIncludeEol }, "Save end-of-life filter");
-  main.append(
-    el("div", { class: "card", style: "display:flex; flex-direction:column; gap:10px" },
-      el("label", { for: "include-eol", style: "display:flex; align-items:center; gap:8px" },
-        includeEolToggle,
-        "Include findings on end-of-life operating systems ",
-        el("span", { class: "muted small" },
-          "(unchecking excludes them from every chart, table, KPI, and export)")),
-      saveEolBtn,
-    ),
-  );
+  main.append(settingsPanel({
+    title: "End-of-life OS filter",
+    description: "Findings on end-of-life operating systems can't be remediated by patching — " +
+      "the OS itself must be replaced — so they sit open indefinitely and skew MTTR and SLA.",
+    body: settingRow({
+      label: "Include findings on end-of-life operating systems",
+      description: "Off = excluded from every chart, table, KPI, and export.",
+      control: includeEol.node,
+      htmlFor: "include-eol",
+    }),
+    footer: saveEolBtn,
+  }));
 
   async function saveIncludeEol() {
     if (!(await guardUnsavedDrafts())) return;
     saveEolBtn.disabled = true;
     try {
-      await call("api_setIncludeEol", { on: includeEolToggle.checked });
+      await call("api_setIncludeEol", { on: includeEol.input.checked });
       toast("End-of-life filter saved.");
       ctx.refresh();
     } catch (e) {
@@ -215,23 +219,24 @@ export async function renderSettings(main, params, ctx) {
   }
 
   // -------------------------------------------------------------- support groups
-  main.append(sectionLabel("Support groups"));
-  main.append(el("p", { class: "muted small" },
-    "A support group is the value of a subscription's Wiz/provisioning tag " +
-    "(e.g. CS-SUPPLY-MONITORING). Refreshing pulls every tagged subscription from Wiz " +
-    "and joins it onto findings, powering the Support group filter, breakdown, and " +
-    "domain condition. Also refreshes automatically after each scan."));
-  const sgStatus = el("span", { class: "muted small", style: "margin-left:10px" });
+  const sgStatus = el("span", { class: "muted small" });
   const refreshSgBtn = el("button", {
     onclick: refreshSupportGroups,
     disabled: boot.hasCredentials ? null : true,
     title: boot.hasCredentials ? null : "Live Wiz credentials are required.",
   }, "Refresh support groups");
-  main.append(el("div", { style: "display:flex; align-items:center; gap:4px" },
-    refreshSgBtn, sgStatus));
   if (!boot.hasCredentials) {
     sgStatus.textContent = "Dry-run mode — connect Wiz credentials to refresh.";
   }
+  main.append(settingsPanel({
+    title: "Support groups",
+    description: "A support group is the value of a subscription's Wiz/provisioning tag " +
+      "(e.g. CS-SUPPLY-MONITORING). Refreshing pulls every tagged subscription from Wiz and " +
+      "joins it onto findings, powering the Support group filter, breakdown, and domain " +
+      "condition. Also refreshes automatically after each scan.",
+    body: el("div", { style: "display:flex; align-items:center; gap:10px; flex-wrap:wrap" },
+      refreshSgBtn, sgStatus),
+  }));
 
   async function refreshSupportGroups() {
     if (!(await guardUnsavedDrafts())) return;
@@ -252,17 +257,22 @@ export async function renderSettings(main, params, ctx) {
   }
 
   // -------------------------------------------------------------------- domains
-  main.append(sectionLabel("Domains"));
-  main.append(el("p", { class: "muted small" },
-    "Rule-based triage: route findings to named domains by tag, asset-name pattern, " +
-    "subscription, or support group. Order is priority — the first matching domain wins."));
+  const domainsHost = el("div", {});
+  const domainsBody = [];
   if (typeof boot.unassignedCount === "number" && boot.unassignedCount > 0) {
-    main.append(el("p", { class: "small", style: "display:flex; align-items:center; gap:8px" },
+    domainsBody.push(el("p",
+      { class: "small", style: "display:flex; align-items:center; gap:8px; margin:0 0 12px" },
       statusPill("warn", `${boot.unassignedCount.toLocaleString()} findings unassigned`),
       el("a", { href: "#/attribution", target: "_self" }, "Review in Attribution →")));
   }
-  const domainsHost = el("div", {});
-  main.append(domainsHost);
+  domainsBody.push(domainsHost);
+  main.append(settingsPanel({
+    title: "Domains",
+    description: "Rule-based triage: route findings to named domains by tag, asset-name " +
+      "pattern, subscription, or support group. Order is priority — the first matching " +
+      "domain wins.",
+    body: domainsBody,
+  }));
   // Saving domains also reloads the page, so it must warn about unsaved severity-scope edits.
   const domainsEditor = renderDomainsEditor(domainsHost, boot, ctx,
     { guardOtherDrafts: () => guardUnsavedDrafts({ ignoreDomains: true }) });
@@ -287,43 +297,56 @@ export async function renderSettings(main, params, ctx) {
   }
 
   // ------------------------------------------------------------- data retention
-  main.append(sectionLabel("Data retention"));
   const r = boot.settings;
-  const retentionToggle = el("input", {
-    type: "checkbox", id: "ret-on", checked: r.retentionDays !== null ? true : null,
+  const retentionSwitch = switchToggle({
+    checked: r.retentionDays !== null, id: "ret-on",
+    ariaLabel: "Seal scans older than the retention window",
   });
   const retentionDays = el("input", {
     type: "number", min: "30", step: "1", value: r.retentionDays ?? 180,
-    style: "width:90px", "aria-label": "Retention window in days",
+    style: "width:96px", "aria-label": "Retention window in days",
     disabled: r.retentionDays === null ? true : null,
   });
-  retentionToggle.addEventListener("change", () => {
-    retentionDays.disabled = !retentionToggle.checked;
+  retentionSwitch.input.addEventListener("change", () => {
+    retentionDays.disabled = !retentionSwitch.input.checked;
   });
-  const autoCompact = el("input", { type: "checkbox", id: "auto-compact",
-    checked: r.autoCompact ? true : null });
+  const autoCompactSwitch = switchToggle({
+    checked: !!r.autoCompact, id: "auto-compact",
+    ariaLabel: "Compact automatically after each scan",
+  });
   const saveRetentionBtn = el("button", { class: "primary", onclick: saveRetention }, "Save retention");
   const compactBtn = el("button", { onclick: compactNow }, "Compact now…");
 
-  main.append(
-    el("div", { class: "card", style: "display:flex; flex-direction:column; gap:10px" },
-      el("label", { for: "ret-on", style: "display:flex; align-items:center; gap:8px" },
-        retentionToggle,
-        "Seal scans older than ", retentionDays, " days ",
-        el("span", { class: "muted small" },
-          "(closed findings roll into exact episode rows; MTTR and trends stay identical)")),
-      el("label", { for: "auto-compact", style: "display:flex; align-items:center; gap:8px" },
-        autoCompact, "Compact automatically after each scan"),
-      el("div", { style: "display:flex; gap:8px" },
-        saveRetentionBtn,
-        compactBtn,
-      ),
-    ),
-  );
+  main.append(settingsPanel({
+    title: "Data retention",
+    description: "Sealing rolls closed findings into exact episode rows and prunes raw " +
+      "archives; MTTR and every trend stay identical. The two most recent full scans always stay.",
+    body: [
+      settingRow({
+        label: "Seal old scans",
+        description: "Compact scans past the retention window into episode rows.",
+        control: retentionSwitch.node,
+        htmlFor: "ret-on",
+      }),
+      settingRow({
+        label: "Retention window",
+        description: "Scans older than this are sealed (minimum 30 days).",
+        control: el("div", { style: "display:flex; align-items:center; gap:6px" },
+          retentionDays, el("span", { class: "muted small" }, "days")),
+      }),
+      settingRow({
+        label: "Compact automatically after each scan",
+        description: "Runs the sealing pass whenever a scan finishes.",
+        control: autoCompactSwitch.node,
+        htmlFor: "auto-compact",
+      }),
+    ],
+    footer: [saveRetentionBtn, compactBtn],
+  }));
 
   async function saveRetention() {
     if (!(await guardUnsavedDrafts())) return;
-    if (retentionToggle.checked) {
+    if (retentionSwitch.input.checked) {
       const days = Number(retentionDays.value);
       if (!Number.isFinite(days) || days < 30) {
         toast("Retention window must be at least 30 days.", "warn");
@@ -335,8 +358,8 @@ export async function renderSettings(main, params, ctx) {
       // One atomic write — no partial-commit window where retention persists but auto-compact
       // fails while the toast says "Save failed".
       await call("api_setRetentionSettings", {
-        days: retentionToggle.checked ? Number(retentionDays.value) : null,
-        autoCompact: autoCompact.checked,
+        days: retentionSwitch.input.checked ? Number(retentionDays.value) : null,
+        autoCompact: autoCompactSwitch.input.checked,
       });
       toast("Retention settings saved.");
       ctx.refresh();
@@ -388,25 +411,28 @@ export async function renderSettings(main, params, ctx) {
   // ------------------------------------------------------------- storage stats
   try {
     const stats = await call("api_getStorageStats", {});
-    const pct = ((stats.cellCount / stats.cellLimit) * 100).toFixed(1);
-    main.append(sectionLabel("Storage"));
-    main.append(el("p", { class: "muted small" },
-      `${stats.cellCount.toLocaleString()} of ${stats.cellLimit.toLocaleString()} spreadsheet ` +
-      `cells in use (${pct}%) — ${stats.scanCount} scan(s), ${stats.sealedCount} sealed, ` +
-      `${stats.trackedVulns.toLocaleString()} tracked vulnerabilities.` +
-      (stats.cellCount > 6_000_000
-        ? " ⚠ Approaching the 10M-cell ceiling — lower the retention window."
-        : "")));
+    const near = stats.cellCount > 6_000_000;
+    const storageBody = [
+      usageMeter({
+        used: stats.cellCount, total: stats.cellLimit, label: "Spreadsheet cells",
+        state: near ? "warn" : "",
+        note: near ? "Approaching the 10M-cell ceiling — lower the retention window." : null,
+      }),
+      el("p", { class: "muted small", style: "margin:12px 0 0" },
+        `${stats.scanCount} scan(s), ${stats.sealedCount} sealed, ` +
+        `${stats.trackedVulns.toLocaleString()} tracked vulnerabilities.`),
+    ];
     // Data-quality line: tracked vulnerabilities whose severity never normalized to a real
     // value. distinctSeverities/unknownSeverityCount are additive fields on this payload —
     // guarded defensively so a stale pre-rollout cache (missing both) simply omits the line.
     if (stats.unknownSeverityCount) {
       const n = stats.unknownSeverityCount;
-      main.append(el("p", { class: "muted small" },
+      storageBody.push(el("p", { class: "muted small", style: "margin:6px 0 0" },
         `${n.toLocaleString()} tracked vulnerabilit${n === 1 ? "y" : "ies"} have an ` +
         "unrecognized severity. Severity values seen this scan: " +
         `${(stats.distinctSeverities || []).join(", ")}.`));
     }
+    main.append(settingsPanel({ title: "Storage", body: storageBody }));
   } catch {
     /* stats are decorative */
   }
@@ -415,14 +441,15 @@ export async function renderSettings(main, params, ctx) {
   // Recent server-side errors, surfaced in-app so a failure — especially a background one
   // that never shows a toast (post-scan support-group refresh, MTTR snapshot, auto-compaction)
   // — is visible without opening the Apps Script execution log the web app can't reach.
-  main.append(sectionLabel("Diagnostics"));
-  main.append(el("p", { class: "muted small" },
-    "The last 25 server-side errors across scan, support-group refresh, import, compaction, and " +
-    "other operations — including background failures that never surface a toast."));
-  const errCountHost = el("span", { class: "muted small", style: "margin-left:10px" });
+  const errCountHost = el("span", { class: "muted small" });
   const recentErrorsBtn = el("button", { onclick: openRecentErrors }, "Recent errors");
-  main.append(el("div", { style: "display:flex; align-items:center; gap:6px" },
-    recentErrorsBtn, errCountHost));
+  main.append(settingsPanel({
+    title: "Diagnostics",
+    description: "The last 25 server-side errors across scan, support-group refresh, import, " +
+      "compaction, and other operations — including background failures that never surface a toast.",
+    body: el("div", { style: "display:flex; align-items:center; gap:10px; flex-wrap:wrap" },
+      recentErrorsBtn, errCountHost),
+  }));
 
   // Best-effort count badge so a silent failure is discoverable at a glance (the log itself
   // is decorative — a failed fetch just leaves the badge blank).

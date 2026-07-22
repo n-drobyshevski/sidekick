@@ -1233,6 +1233,190 @@ dialog.domains-dialog .dialog-actions {
 .sub-owner { color: var(--text-2); font-size: 11px; margin-left: auto; white-space: nowrap; }
 .sub-add { display: flex; gap: 6px; margin-top: 6px; }
 
+/* --------------------------------------------------------- settings panels */
+/* A shadcn-style settings card (ui.js settingsPanel): the .card recipe with a header
+   (title + description), a body of controls, and an optional hairline-topped footer for the
+   action. One topic per card, action in the footer — the standard settings layout. Neutral
+   surface + hairline + card whisper only (no side-stripe, no heavier float). */
+.settings-panel {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-card);
+  padding: 18px 20px;
+  margin: 0 0 16px;
+}
+.settings-panel__title { font-size: 0.9375rem; font-weight: 600; margin: 0; }
+.settings-panel__desc { margin: 4px 0 0; max-width: 72ch; }
+.settings-panel__body { margin-top: 14px; }
+/* No description → the body sits directly under the title with tighter rhythm. */
+.settings-panel__head:not(:has(.settings-panel__desc)) + .settings-panel__body { margin-top: 12px; }
+.settings-panel__foot {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--hairline);
+}
+
+/* Two labeled sub-blocks inside the Severity scope panel (scan scope / display filter),
+   split by a hairline so the coupled pair reads as one control with two zones. */
+.scope-block__note { margin: 4px 0 8px; }
+.scope-block--divided {
+  margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--hairline);
+}
+
+/* Setting row (ui.js settingRow): a bold label over a muted description on the left, the
+   control (a switch / number input) on the right. Rows within one panel body are separated by
+   a hairline, echoing the stat-card list. */
+.setting-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap; padding: 12px 0;
+}
+.setting-row + .setting-row { border-top: 1px solid var(--hairline); }
+.settings-panel__body > .setting-row:first-child { padding-top: 0; }
+.settings-panel__body > .setting-row:last-child { padding-bottom: 0; }
+.setting-row__label { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.setting-row__title { font-size: 13px; font-weight: 600; color: var(--ink); }
+.setting-row__desc { max-width: 64ch; }
+.setting-row__control { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; }
+
+/* Accessible on/off switch (ui.js switchToggle). The real checkbox overlays the track
+   (opacity 0, still focusable/clickable); the track + thumb are the painted control. */
+.switch {
+  position: relative; display: inline-block; flex: none;
+  width: 36px; height: 20px; cursor: pointer;
+}
+.switch__input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.switch__track {
+  position: absolute; inset: 0; border-radius: 999px;
+  background: rgba(0, 0, 0, 0.16); border: 1px solid transparent;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.switch__thumb {
+  position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--page); box-shadow: var(--shadow-button);
+  transition: transform 0.15s ease;
+}
+.switch__input:checked + .switch__track { background: var(--accent); }
+.switch__input:checked + .switch__track .switch__thumb { transform: translateX(16px); }
+.switch__input:focus-visible + .switch__track {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+.switch__input:disabled { cursor: not-allowed; }
+.switch__input:disabled + .switch__track { opacity: 0.5; }
+.switch:has(.switch__input:disabled) { cursor: not-allowed; }
+
+/* Capacity meter (ui.js usageMeter): caption over a track/fill bar reusing .progress-track.
+   The warn/bad state recolors the fill AND the note text — meaning never rides on color alone
+   (the number and note carry it too). */
+.usage-meter__head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  margin-bottom: 6px;
+}
+.usage-meter__caption { font-size: 13px; color: var(--text-2); }
+.usage-meter__track.warn .progress-fill { background: var(--warn); }
+.usage-meter__track.bad .progress-fill { background: var(--bad); }
+.usage-meter__note { margin: 8px 0 0; color: var(--text-2); }
+.usage-meter__note.warn { color: var(--warn); }
+.usage-meter__note.bad { color: var(--bad); }
+
+/* Domain-row polish: compact inline buttons so the reorder/edit/delete cluster reads tighter
+   than page-scale actions (no structural change — see domainsEditor.js renderList). */
+.domain-row button { min-height: 30px; padding: 4px 10px; }
+.domain-row__actions { display: flex; gap: 6px; flex: 0 0 auto; }
+
+/* ---------------------------------------------------- domain rule builder (dialog) */
+/* The Add/Edit domain dialog's rule authoring UI (domainsEditor.js openEditor). Rules are
+   OR-ed (shown by an OR divider between cards); a rule's conditions are AND-ed (shown by the
+   IF/AND connector on each condition row). Neutral surface cards, hairline borders, dashed
+   "add" affordances, and a pinned live-match preview above the actions. */
+.rules-host { display: flex; flex-direction: column; }
+.rule-card {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  padding: 12px 14px;
+}
+.rule-card__head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-bottom: 10px;
+}
+.rule-card__title {
+  display: inline-flex; align-items: baseline; gap: 8px;
+  font-size: 12px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase;
+  color: var(--text-2);
+}
+.rule-card__hint {
+  font-size: 11px; font-weight: 500; letter-spacing: 0; text-transform: none;
+  color: var(--text-3);
+}
+.rule-card__remove, .cond-remove {
+  min-height: 0; padding: 2px 7px; font-size: 12px; line-height: 1;
+  background: none; border: 1px solid transparent; box-shadow: none;
+  color: var(--text-3); border-radius: var(--radius-sm);
+}
+.rule-card__remove:hover, .cond-remove:hover {
+  background: rgba(0, 0, 0, 0.05); color: var(--ink); border-color: var(--hairline);
+}
+
+/* OR divider between rule cards: a centered chip on a hairline (the rules are OR-ed). */
+.rule-or { display: flex; align-items: center; gap: 10px; margin: 10px 2px; }
+.rule-or::before, .rule-or::after {
+  content: ""; flex: 1; height: 1px; background: var(--hairline);
+}
+.rule-or__chip {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.08em; color: var(--text-3);
+}
+
+/* Condition row: a fixed IF/AND connector + type select on line one; the fields wrap to
+   their own line, indented under the select, so tag / regex / value-picker all align. */
+.cond-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.cond-conn {
+  flex: 0 0 auto; min-width: 30px;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.05em; color: var(--text-3);
+}
+.cond-row select { min-height: 32px; }
+.cond-remove { margin-left: auto; }
+.cond-fields {
+  flex: 1 1 100%; margin-left: 38px;
+  display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+}
+.cond-fields input { min-height: 32px; }
+
+/* Dashed "add" affordances (real buttons, not text links). */
+.btn-add, .add-rule-btn {
+  font-weight: 600; color: var(--text-2);
+  background: var(--page); border: 1px dashed var(--hairline); box-shadow: none;
+}
+.btn-add:hover, .add-rule-btn:hover {
+  background: var(--surface); border-color: var(--text-3); color: var(--ink);
+}
+.btn-add { margin-top: 2px; min-height: 30px; padding: 4px 12px; font-size: 12px; }
+.add-rule-btn { margin-top: 12px; width: 100%; min-height: 36px; font-size: 13px; }
+
+/* Pinned live-match preview between the scrolling rules and the Cancel/Apply actions. */
+dialog.domains-dialog .dialog-preview {
+  flex: 0 0 auto; padding: 12px 20px; border-top: 1px solid var(--hairline);
+}
+.rule-preview {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  min-height: 36px; padding: 8px 12px;
+  background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius-md);
+}
+.rule-preview__text { min-width: 0; }
+
+/* Value picker polish: hover on selectable rows; the "in <domain>" owner reads as a chip. */
+.sub-picker label { padding: 3px 6px; border-radius: var(--radius-sm); }
+.sub-picker label:hover:not(.claimed) { background: var(--surface); }
+.sub-owner {
+  background: rgba(0, 0, 0, 0.06); border-radius: var(--radius-sm); padding: 1px 6px;
+}
+
+/* Attribution: a table that runs edge-to-edge inside a .settings-panel card (cancels the
+   panel's 20px horizontal padding and drops the wrap's side borders) — a "card with a title
+   and a full-bleed table" instead of a card-border-around-a-table-border double frame. */
+.settings-panel .panel-flush {
+  margin: 4px -20px 0; border-left: none; border-right: none; border-radius: 0;
+}
+
 /* --------------------------------------------------------------- reduced motion */
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
