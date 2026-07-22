@@ -582,8 +582,17 @@ export async function renderSettings(main, params, ctx) {
     title: "Diagnostics",
     description: "The last 25 server-side errors across scan, support-group refresh, import, " +
       "compaction, and other operations — including background failures that never surface a toast.",
-    body: el("div", { style: "display:flex; align-items:center; gap:10px; flex-wrap:wrap" },
-      recentErrorsBtn, errCountHost),
+    body: [
+      el("div", { style: "display:flex; align-items:center; gap:10px; flex-wrap:wrap" },
+        recentErrorsBtn, errCountHost),
+      // Deployed code stamp — confirm at a glance whether a `clasp push` actually took effect
+      // (the recurring "I deployed the fix but still see the old behaviour" confusion). It rides
+      // on the cached bootstrap, but the cache key is itself stamped with the build id
+      // (serverCache.ts), so a cached payload can never report a build that is no longer live.
+      // Reads "dev" when running locally, where there is no esbuild define step.
+      el("p", { class: "muted small", style: "margin:12px 0 0" },
+        "Build ", el("code", { class: "small" }, boot.buildId || "—"), "."),
+    ],
   }));
 
   // Best-effort count badge so a silent failure is discoverable at a glance (the log itself

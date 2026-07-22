@@ -47,7 +47,7 @@ import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
 import { hasWizCredentials } from "./props";
 import * as backfillJobs from "./backfillJobs";
 import * as scanJobs from "./scanJobs";
-import { cached, dataVersion } from "./serverCache";
+import { BUILD_ID, cached, dataVersion } from "./serverCache";
 import * as settingsStore from "./settingsStore";
 import { cellCount, SCHEMA_VERSION } from "./sheetsDb";
 import * as supportGroups from "./supportGroups";
@@ -122,6 +122,10 @@ function bootstrapCore(): Rec {
     if (r["_domain"] === UNASSIGNED) unassignedCount += 1;
   }
   return {
+    // The deployed code stamp (esbuild-injected source hash; "dev" locally). Surfaced so an
+    // operator can confirm at a glance whether a `clasp push` actually took — the recurring "I
+    // deployed the fix but still see the old behaviour" confusion.
+    buildId: BUILD_ID,
     palette: {
       order: SEVERITY_ORDER,
       colors: SEVERITY_COLORS,
