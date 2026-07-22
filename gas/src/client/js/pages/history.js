@@ -60,15 +60,15 @@ export async function renderHistory(main, _params, ctx) {
   let page = 0;
   let anySample = false;
 
-  const pagePromise = swrCall(
-    "api_getHistoryPage",
-    {},
-    (fresh) => {
-      paintKpis(fresh.history.kpis, fresh.history.scans);
-      paintScans(fresh.history.scans);
-      paintTrends(fresh.trends);
-    },
-  );
+  // Progressive paint over two parallel RPCs that reuse the same cache entries getHistoryPage
+  // batched: api_getScanHistory is the KPI band + saved-scans table (the primary content, and
+  // the cheaper slice), api_getMttrTrend is the remediation-trend reconstruction (the heavier
+  // per-point KM slice) that fills the charts when it resolves — it no longer blocks the table.
+  const historyPromise = swrCall("api_getScanHistory", {}, (fresh) => {
+    paintKpis(fresh.kpis, fresh.scans);
+    paintScans(fresh.scans);
+  });
+  const trendPromise = swrCall("api_getMttrTrend", {}, paintTrends);
 
   main.append(
     el("h1", {}, "Scan History"),
@@ -83,8 +83,7 @@ export async function renderHistory(main, _params, ctx) {
   const chartsHost = el("div", { class: "chart-grid", style: "margin-top:20px" });
   main.append(freshLine, kpiRow, sectionLabel("Saved scans"), scansHost, chartsHost);
 
-  const pageData = await pagePromise;
-  const data = pageData.history;
+  const data = await historyPromise;
   paintKpis(data.kpis, data.scans);
   paintScans(data.scans);
 
@@ -250,8 +249,13 @@ export async function renderHistory(main, _params, ctx) {
     }
   }
 
-  // ---- trend charts
-  paintTrends(pageData.trends);
+  // ---- trend charts (filled when the trend reconstruction resolves; see trendPromise above).
+  // Until then a placeholder stands in — paintTrends clears chartsHost when it runs.
+  chartsHost.append(el("p", { class: "muted", style: "grid-column:1/-1" }, "Computing trends…"));
+  trendPromise
+    .then(paintTrends)
+    // eslint-disable-next-line no-console
+    .catch((e) => console.error("[history] trends failed:", e));
 
   function paintTrends(trends) {
     clear(chartsHost);

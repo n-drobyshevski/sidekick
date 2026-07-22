@@ -259,18 +259,40 @@ export async function renderMttr(main, _params, ctx) {
     // real layout so the swap to live content doesn't reflow; by-domain stays cleared.
     renderMttrSkeleton({ heroHost, chartsHost, survivalHost, slaHost });
     clear(byDomainHost);
-    // One batched RPC — summary and trends share a single ledger-state load
-    // server-side. Revisits paint instantly from the session cache and repaint in
-    // the background only if the revalidated data differs.
-    const paint = (data) => {
+    const params = { domain, supportGroup, severities: scopeParam() };
+
+    // Progressive paint over two parallel RPCs that share the same server cache entries
+    // getMttrPage's slices use (so a warm revisit is still a single-shot repaint):
+    //   - api_getMttr is the summary alone — no trend reconstruction — so the hero, survival
+    //     curve and SLA table land as soon as the (cheaper) KM summary is ready.
+    //   - api_getMttrPage carries trends + byDomain, the heaviest slice (per-point KM over the
+    //     reconstructed history); it fills the chart cards, the per-domain section, and the
+    //     hero's history-based change chips when the reconstruction finishes.
+    // The full paint always supersedes the summary for the hero, so a slow summary
+    // revalidation can never drop the chips a completed full paint drew.
+    let fullDone = false;
+    const paintSummary = (mttr) => {
+      if (fullDone) return;
+      renderHero(mttr, { history: [] }); // chips need trend history — they arrive with the full paint
+      renderSurvivalCurve(mttr);
+      renderSla(mttr);
+    };
+    const paintFull = (data) => {
+      fullDone = true;
       renderHero(data.mttr, data.trends);
       renderCharts(data.trends, data.mttr);
       renderSurvivalCurve(data.mttr);
       renderSla(data.mttr);
       renderByDomain(data.byDomain);
     };
-    paint(await swrCall("api_getMttrPage",
-      { domain, supportGroup, severities: scopeParam() }, paint));
+    const summary = swrCall("api_getMttr", params, paintSummary)
+      .then(paintSummary).catch(() => {});
+    const full = swrCall("api_getMttrPage", params, paintFull)
+      .then(paintFull).catch((e) => {
+        // eslint-disable-next-line no-console
+        console.error("[mttr] getMttrPage failed:", e);
+      });
+    await Promise.allSettled([summary, full]);
   }
 
   /** Per-domain remediation, shown only at the whole-chain view (the server omits it

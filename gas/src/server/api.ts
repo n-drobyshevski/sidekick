@@ -417,28 +417,30 @@ function insightsData(p?: unknown): Rec {
   };
 }
 
-export function getInsights(p?: unknown): ApiResult {
-  // 1h TTL like the MTTR summary: aging carries wall-clock-relative day counts.
-  // Keyed on domain so per-chain payloads don't clobber each other.
-  return run(() =>
-    cached(
-      // "insights" → "insights2": the payload now honors the show-no-fix toggle (counts,
-      // total, sevStats, exploit, aging, oldest, awaiting, movement, and the as-of openTrend
-      // all reflect it); key gains showNoFix so on/off states don't share an entry.
-      // "insights2" → "insights3": `oldest.*` now carries up to 100 rows (was 7) for the aging
-      // panel's prev/next pagination; bump so stale 7-row entries can't survive the deploy.
-      "insights3",
-      {
-        domain: String((p as Rec)?.["domain"] ?? ""),
-        supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
-        supportGroups: readStringArray(p, "supportGroups"),
-        severities: readSeverities(p),
-        showNoFix: settingsStore.getShowNoFix(),
-      },
-      () => insightsData(p),
-      3600,
-    ),
+// 1h TTL like the MTTR summary: aging carries wall-clock-relative day counts. Keyed on
+// domain so per-chain payloads don't clobber each other. Extracted so warmReadModels and the
+// getInsights endpoint share one cache entry.
+const cachedInsightsData = (p?: unknown) =>
+  cached(
+    // "insights" → "insights2": the payload now honors the show-no-fix toggle (counts,
+    // total, sevStats, exploit, aging, oldest, awaiting, movement, and the as-of openTrend
+    // all reflect it); key gains showNoFix so on/off states don't share an entry.
+    // "insights2" → "insights3": `oldest.*` now carries up to 100 rows (was 7) for the aging
+    // panel's prev/next pagination; bump so stale 7-row entries can't survive the deploy.
+    "insights3",
+    {
+      domain: String((p as Rec)?.["domain"] ?? ""),
+      supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
+      supportGroups: readStringArray(p, "supportGroups"),
+      severities: readSeverities(p),
+      showNoFix: settingsStore.getShowNoFix(),
+    },
+    () => insightsData(p),
+    3600,
   );
+
+export function getInsights(p?: unknown): ApiResult {
+  return run(() => cachedInsightsData(p));
 }
 
 // ------------------------------------------------------------------------- grouping
@@ -476,22 +478,25 @@ function groupingData(p?: unknown): Rec {
   };
 }
 
-export function getGrouping(p?: unknown): ApiResult {
+// Extracted so warmReadModels and the getGrouping endpoint share one cache entry.
+const cachedGroupingData = (p?: unknown) => {
   const domain = String((p as Rec)?.["domain"] ?? "");
   const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
   const supportGroupSet = readStringArray(p, "supportGroups");
   const raw = (p as Rec)?.["keys"];
   const keys = Array.isArray(raw) ? (raw as unknown[]).map(String) : [];
-  return run(() =>
-    // "grouping" → "grouping2": the breakdown tree is built over scopedFrameRecords, which
-    // now honors the show-no-fix toggle; key gains showNoFix so on/off states cache apart.
-    cached("grouping2",
-      {
-        domain, supportGroup, supportGroups: supportGroupSet, keys,
-        severities: readSeverities(p), showNoFix: settingsStore.getShowNoFix(),
-      },
-      () => groupingData(p), 3600),
-  );
+  // "grouping" → "grouping2": the breakdown tree is built over scopedFrameRecords, which
+  // now honors the show-no-fix toggle; key gains showNoFix so on/off states cache apart.
+  return cached("grouping2",
+    {
+      domain, supportGroup, supportGroups: supportGroupSet, keys,
+      severities: readSeverities(p), showNoFix: settingsStore.getShowNoFix(),
+    },
+    () => groupingData(p), 3600);
+};
+
+export function getGrouping(p?: unknown): ApiResult {
+  return run(() => cachedGroupingData(p));
 }
 
 // ------------------------------------------------------------------- group trend
@@ -610,20 +615,26 @@ function attributionData(p?: unknown): Rec {
 /** Attribution page in one round trip; the whole payload is cached per DATA_VERSION +
  *  severities, and `unassignedAll` is paginated OUTSIDE the cache so every page shares
  *  one cached compute. */
+// The whole attribution payload cached per DATA_VERSION + (severities, showNoFix). Extracted
+// so warmReadModels and the endpoint share one entry; pagination happens OUTSIDE the cache in
+// getAttribution, so every page reuses this one compute.
+const cachedAttributionData = (p?: unknown) =>
+  // "attribution" → "attribution2": coverage / rule-health / unassigned now honor the
+  // show-no-fix toggle; key gains showNoFix so on/off states cache apart.
+  // "attribution2" → "attribution3": payload gained the support-group breakdown
+  // (`supportGroups`) and richer `supportGroupMap` (groups + tagKey); bump so a stale
+  // old-shape entry can't survive the persistent dataVersion.
+  // "attribution3" → "attribution4": `supportGroupMap` gained `sampleKeys` (indexed
+  // subscription identities); bump so a stale sampleKeys-less entry can't survive.
+  cached(
+    "attribution4",
+    { severities: readSeverities(p), showNoFix: settingsStore.getShowNoFix() },
+    () => attributionData(p),
+  );
+
 export function getAttribution(p?: unknown): ApiResult {
   return run(() => {
-    // "attribution" → "attribution2": coverage / rule-health / unassigned now honor the
-    // show-no-fix toggle; key gains showNoFix so on/off states cache apart.
-    // "attribution2" → "attribution3": payload gained the support-group breakdown
-    // (`supportGroups`) and richer `supportGroupMap` (groups + tagKey); bump so a stale
-    // old-shape entry can't survive the persistent dataVersion.
-    // "attribution3" → "attribution4": `supportGroupMap` gained `sampleKeys` (indexed
-    // subscription identities); bump so a stale sampleKeys-less entry can't survive.
-    const data = cached(
-      "attribution4",
-      { severities: readSeverities(p), showNoFix: settingsStore.getShowNoFix() },
-      () => attributionData(p),
-    );
+    const data = cachedAttributionData(p);
     if (!(data as Rec)["flatScan"]) return data;
     const { unassignedAll, ...rest } = data as Rec & { unassignedAll: unknown[] };
     const params = (p ?? {}) as Rec;
@@ -1428,28 +1439,89 @@ export function clearRecentErrors(_p?: unknown): ApiResult {
 
 // ---------------------------------------------------------------------------- misc
 
+// cellCount() walks every sheet in the spreadsheet — cache it per DATA_VERSION. Extracted so
+// warmReadModels and the endpoint share one entry.
+const cachedStorageStatsData = () =>
+  // "storageStats" → "storageStats2": payload gained the severity data-quality diagnostic
+  // (distinctSeverities, unknownSeverityCount); dataVersion persists across deploys, so
+  // bumping the namespace prevents serving a stale old-shape entry (up to the TTL).
+  cached("storageStats2", null, () => {
+    const scans = ledgerStore.loadScanRows();
+    const scan = findings.currentScan();
+    const baseRows = ledgerStore.loadBaseRows() as unknown as Rec[];
+    return {
+      cellCount: cellCount(),
+      cellLimit: 10_000_000,
+      scanCount: scans.length,
+      sealedCount: scans.filter((s) => s.sealed).length,
+      oldestScanTs: scans.length ? scans[0].ts : null,
+      trackedVulns: baseRows.length,
+      distinctSeverities: scan ? findings.distinct(scan.records, "severity") : [],
+      unknownSeverityCount: baseRows.filter(
+        (r) => normalizeSeverity(r["severity"]) === "UNKNOWN",
+      ).length,
+    };
+  });
+
 export function getStorageStats(_p?: unknown): ApiResult {
-  // cellCount() walks every sheet in the spreadsheet — cache it per DATA_VERSION.
-  return run(() =>
-    // "storageStats" → "storageStats2": payload gained the severity data-quality diagnostic
-    // (distinctSeverities, unknownSeverityCount); dataVersion persists across deploys, so
-    // bumping the namespace prevents serving a stale old-shape entry (up to the TTL).
-    cached("storageStats2", null, () => {
-      const scans = ledgerStore.loadScanRows();
-      const scan = findings.currentScan();
-      const baseRows = ledgerStore.loadBaseRows() as unknown as Rec[];
-      return {
-        cellCount: cellCount(),
-        cellLimit: 10_000_000,
-        scanCount: scans.length,
-        sealedCount: scans.filter((s) => s.sealed).length,
-        oldestScanTs: scans.length ? scans[0].ts : null,
-        trackedVulns: baseRows.length,
-        distinctSeverities: scan ? findings.distinct(scan.records, "severity") : [],
-        unknownSeverityCount: baseRows.filter(
-          (r) => normalizeSeverity(r["severity"]) === "UNKNOWN",
-        ).length,
-      };
-    }),
-  );
+  return run(() => cachedStorageStatsData());
+}
+
+// ------------------------------------------------------------------- cache warming
+
+// The default breakdown grouping key the OS-vulns page opens with at the whole-chain view
+// (mirrors overview.js: domains when >1 configured, else asset type). Warmed so the lazy
+// "Explore breakdown" drawer opens instantly right after a scan.
+function defaultGroupingKeys(): string[] {
+  return domainNames(settingsStore.getDomains().items).length > 1 ? ["domain"] : ["atype"];
+}
+
+/**
+ * Precompute the derived read-models the landing pages open with, so the first analyst load
+ * after a scan hits a warm cache instead of paying the full recompute on the interactive path.
+ *
+ * Every mutation calls bumpDataVersion(), so all cross-request caches go cold after a scan;
+ * this runs at the tail of afterPersist (scanJobs), once DATA_VERSION is final (after any
+ * auto-compaction), inside the scan job's own execution — the state + current-scan frame are
+ * already loaded there, so warming reuses them. Best-effort: every entry is guarded so one
+ * failure never aborts the rest or the scan, and the whole thing is a no-op on cache errors.
+ *
+ * Scope: whole-chain only (a specific Value Chain / Support group stays cold — acceptable),
+ * for the current show-no-fix state, at both the severity scopes the pages request — the
+ * all-severities entry (severities: null, the shared default) plus the configured Display
+ * severity subset when it's narrower (pages send exactly that array via scopeParam).
+ */
+export function warmReadModels(): void {
+  const warm = (label: string, fn: () => unknown) => {
+    try {
+      fn();
+    } catch (e) {
+      console.warn(`Cache warm (${label}) failed: ${e}`);
+    }
+  };
+
+  // Severity-independent entries: the bootstrap core (also feeds the sidebar/counts), the
+  // scan-history KPI band, and the Settings storage panel (cellCount walks every sheet).
+  warm("bootstrap", () => bootstrap());
+  warm("scanHistory", () => cachedScanHistoryData());
+  warm("storageStats", () => cachedStorageStatsData());
+
+  // The severity scopes the pages actually request (see the executive/mttr/overview/
+  // attribution pages): the all-severities entry (severities null, the shared default) plus
+  // the configured Display-severity subset when it's narrower.
+  const display = settingsStore.getDisplaySeverities();
+  const scopes: (string[] | null)[] = [null];
+  if (Array.isArray(display) && display.length && display.length < SELECTABLE_SEVERITIES.length) {
+    scopes.push([...display]);
+  }
+  const groupingKeys = defaultGroupingKeys();
+  for (const severities of scopes) {
+    const p = { domain: "", supportGroup: "", severities };
+    warm("mttr", () => cachedMttrData(p));
+    warm("mttrByDomain", () => cachedMttrByDomainData(p));
+    warm("mttrTrend", () => cachedMttrTrendData(p));
+    warm("insights", () => cachedInsightsData(p));
+    warm("grouping", () => cachedGroupingData({ ...p, keys: groupingKeys }));
+    warm("attribution", () => cachedAttributionData({ severities }));
+  }
 }

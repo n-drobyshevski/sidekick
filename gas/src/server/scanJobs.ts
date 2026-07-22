@@ -7,6 +7,10 @@
 // record spill file, so the next hop resumes exactly where this one stopped.
 
 import { parseSeverities } from "../domain/compaction";
+// Namespace import used only at runtime (afterPersist → api.warmReadModels), never at module
+// eval — api.ts imports this module back, so a value used during evaluation would be a TDZ
+// risk; a runtime call sees the fully-initialized live binding.
+import * as api from "./api";
 import { countBySeverity, effectiveSeverity } from "../domain/severity";
 import { calculateMttr, overallSlaOldest } from "../domain/metrics";
 import * as remediation from "../domain/remediation";
@@ -474,6 +478,22 @@ function afterPersist(records: Rec[]): void {
     console.warn(`Failed to record MTTR snapshot: ${e}`);
     errorLog.recordError("mttrSnapshot", e);
   }
+  autoCompactIfDue();
+  // Warm the landing-view read-models LAST, against the now-final DATA_VERSION (any
+  // auto-compaction above bumped it again), so the first analyst load after this scan hits a
+  // warm cache instead of recomputing on the interactive path. The scan is already committed;
+  // this reuses the state + frame already loaded in this execution and never breaks a scan.
+  try {
+    api.warmReadModels();
+  } catch (e) {
+    console.warn(`Cache warming after scan failed: ${e}`);
+    errorLog.recordError("cacheWarm", e);
+  }
+}
+
+/** Auto-compaction after a persist, gated on the setting + a retention window. Its own
+ *  function so its early returns don't skip the post-persist steps that follow it. */
+function autoCompactIfDue(): void {
   try {
     if (!settingsStore.getAutoCompact()) return;
     const days = settingsStore.getRetentionDays();
