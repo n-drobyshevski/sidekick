@@ -2,7 +2,7 @@
 // secrets are set as Script Properties in the GAS editor, never through the UI).
 
 import { call } from "../api.js";
-import { clear, el, emptyState, statusPill, toast } from "../ui.js";
+import { clear, el, emptyState, skeleton, statusPill, toast } from "../ui.js";
 
 export async function renderSettings(main, _params, ctx) {
   main.append(
@@ -12,6 +12,16 @@ export async function renderSettings(main, _params, ctx) {
 
   const host = el("div", {});
   main.append(host);
+  // Placeholder form until api_getSettings resolves; paint() clears the host.
+  host.append(el("div", {
+    class: "card", role: "status", "aria-label": "Loading settings",
+    style: "display:flex; flex-direction:column; gap:16px",
+  },
+    skeleton("line", { width: "140px" }),
+    skeleton("pill", { width: "200px" }),
+    skeleton("line", { width: "140px" }),
+    skeleton("pill", { width: "200px" }),
+    skeleton("pill", { width: "120px" })));
 
   let settings;
   try {

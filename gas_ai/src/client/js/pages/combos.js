@@ -4,7 +4,24 @@
 
 import { bootstrap, navigate, swrCall } from "../store.js";
 import { openAssetSheet, openIssueSheet } from "../detailSheets.js";
-import { aarsChip, clear, el, emptyState, sevBadge } from "../ui.js";
+import { aarsChip, clear, el, emptyState, sevBadge, skeleton } from "../ui.js";
+
+// Placeholder combo cards shown until api_getToxicCombos resolves; paint() clears the host.
+function combosSkeleton() {
+  const wrap = el("div", { role: "status", "aria-label": "Loading toxic combinations" });
+  for (let i = 0; i < 3; i++) {
+    wrap.append(el("div", { class: "card combo-card", style: "margin-bottom:16px" },
+      el("div", { style: "display:flex; align-items:center; gap:10px" },
+        skeleton("pill", { width: "80px" }),
+        skeleton("line", { width: "40%" })),
+      el("div", { style: "margin-top:12px" }, skeleton("line", { width: "90%" })),
+      el("div", { style: "display:flex; gap:8px; margin-top:12px" },
+        skeleton("pill", { width: "90px" }),
+        skeleton("pill", { width: "110px" }),
+        skeleton("pill", { width: "70px" }))));
+  }
+  return wrap;
+}
 
 export async function renderCombos(main) {
   const boot = await bootstrap();
@@ -26,6 +43,7 @@ export async function renderCombos(main) {
 
   const host = el("div", {});
   main.append(host);
+  host.append(combosSkeleton()); // replaced by paint() once api_getToxicCombos resolves
 
   let data;
   try {

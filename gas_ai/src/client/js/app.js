@@ -3,7 +3,7 @@
 import { call } from "./api.js";
 import { renderSyncCard, openSyncDetails } from "./syncProgress.js";
 import { bootstrap, invalidateBootstrap, invalidateRpcCache, parseHash } from "./store.js";
-import { clear, el, fmtDateTime, statusPill } from "./ui.js";
+import { clear, el, fmtDateTime, progressBar, statusPill } from "./ui.js";
 import { toast } from "./ui.js";
 import { renderGraphPage } from "./pages/graph.js";
 import { renderInventory } from "./pages/inventory.js";
@@ -32,6 +32,9 @@ let routeOverlay = null;
 let routeSeq = 0;
 let routeLoadingTimer = null;
 const ROUTE_LOADING_DELAY_MS = 120;
+// The first page render after each boot is covered by the boot splash → page skeleton, so it
+// skips the route-overlay veil; every subsequent navigation uses the veil as normal.
+let firstRoute = true;
 
 function beginRouteLoading() {
   clearTimeout(routeLoadingTimer);
@@ -56,9 +59,51 @@ let syncCardHost = null;
 let syncButtonsRow = null;
 let stoppingJobId = null;
 let lastJob = null;
+let syncDetails = null; // open sync-details drawer handle, kept live by the poller
+
+// Recreate the branded boot splash index.html paints on first load, so refresh() (which
+// re-runs boot()) shows the same veil. Keep this markup in sync with the static copy in
+// index.html. Reuses the indeterminate progress bar so it reads as the same loader family
+// as the route-overlay (and inherits its reduced-motion striped fallback).
+function bootSplash() {
+  const bar = progressBar(null);
+  bar.classList.add("boot-splash-bar");
+  bar.setAttribute("aria-label", "Opening the graph");
+  return el(
+    "div",
+    { class: "boot-splash", role: "status", "aria-live": "polite" },
+    el("div", { class: "boot-splash-inner" },
+      el("div", { class: "boot-brand" },
+        el("span", { class: "wordmark-dot", "aria-hidden": "true" }),
+        el("span", { class: "boot-brand-label" }, "Wiz SIDEKICK AI")),
+      bar,
+      el("p", { class: "boot-splash-note" }, "Opening the graph…")),
+  );
+}
+
+// Fade the splash out and remove it. transitionend removes it; a timeout is the fallback if
+// that never fires. Under reduced motion there's no fade, so remove immediately.
+function hideBootSplash() {
+  const splash = document.querySelector(".boot-splash");
+  if (!splash) return;
+  const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduce) { splash.remove(); return; }
+  splash.classList.add("hiding");
+  let done = false;
+  const finish = () => { if (done) return; done = true; splash.remove(); };
+  splash.addEventListener("transitionend", finish, { once: true });
+  setTimeout(finish, 240);
+}
 
 async function boot() {
-  clear(app);
+  firstRoute = true;
+  // Keep the splash index.html painted (first load) or recreate it (refresh) and remove only
+  // the *previous* app underneath it — so a refresh never flashes a cleared pane. clear(app)
+  // is deliberately avoided here: the splash must survive to cover the rebuild.
+  let splash = app.querySelector(".boot-splash");
+  if (!splash) { splash = bootSplash(); app.append(splash); }
+  for (const node of [...app.children]) if (node !== splash) node.remove();
+
   const sidebar = el("nav", { class: "sidebar", "aria-label": "Main navigation" });
   mainEl = el("main", { id: "main" });
   routeOverlay = el(
@@ -69,7 +114,6 @@ async function boot() {
     el("span", { class: "route-overlay-label" }),
   );
   app.append(sidebar, mainEl, routeOverlay);
-  mainEl.append(el("p", { class: "muted" }, "Loading…"));
 
   let data;
   try {
@@ -78,14 +122,19 @@ async function boot() {
     clear(mainEl).append(
       el("div", { class: "empty" },
         el("div", {}, "Couldn't reach the server."),
-        el("div", { class: "small", style: "margin-top:6px" }, String(e.message || e)),
+        el("div", { class: "small", style: "margin:6px 0 14px" }, String(e.message || e)),
+        el("button", { class: "primary", onclick: () => refresh() }, "Retry"),
       ),
     );
     renderSidebar(sidebar, null);
+    hideBootSplash(); // reveal the error card
     return;
   }
   renderSidebar(sidebar, data);
-  route();
+  route(); // paints the page's skeleton synchronously up to its first data await
+  // Fade the splash only after the skeleton has laid out — double rAF flushes the (cached)
+  // bootstrap microtasks and one layout tick, so the splash reveals the skeleton, never a blank pane.
+  requestAnimationFrame(() => requestAnimationFrame(hideBootSplash));
 }
 
 function renderSidebar(sidebar, data) {
@@ -174,14 +223,22 @@ function paintCard(job) {
   lastJob = job;
   const stopping = stoppingJobId === job.job_id && job.phase !== "CANCELLED";
   renderSyncCard(syncCardHost, job, {
-    onDetails: () => openSyncDetails(job, { onStop: () => requestStop(job.job_id) }),
+    // Read lastJob at click time, not the job captured when this Details button was built —
+    // renderSyncCard reuses the button across polls, so a captured job would be stale and the
+    // drawer would flash 0 rows/query 1 for one tick before the poller updates it.
+    onDetails: () => {
+      syncDetails = openSyncDetails(lastJob, { onStop: () => requestStop(lastJob.job_id) });
+    },
     onStop: stopping ? null : () => requestStop(job.job_id),
     stopping,
   });
+  // Keep an open details drawer in step with the poll — otherwise its values freeze at open time.
+  if (syncDetails) syncDetails.update(job);
   if (syncButtonsRow) syncButtonsRow.style.display = "none";
 }
 
 function clearCard() {
+  syncDetails = null; // drop the stale drawer handle once the card is gone
   if (syncCardHost) clear(syncCardHost);
   if (syncButtonsRow) syncButtonsRow.style.display = "";
 }
@@ -210,11 +267,13 @@ function watchJob(jobId) {
       }
       if (job.phase === "DONE") {
         stopWatch();
+        if (syncDetails) syncDetails.update(job); // let an open drawer settle on "Complete"
         toast("Sync complete.");
         refresh();
       } else if (job.phase === "CANCELLED") {
         stopWatch();
         stoppingJobId = null;
+        if (syncDetails) syncDetails.update(job); // an open drawer settles on "Cancelled"
         toast("Sync stopped.");
         refresh();
       } else if (job.phase === "FAILED") {
@@ -255,7 +314,10 @@ async function route() {
   });
   clear(mainEl);
   mainEl.classList.toggle("full-bleed", !!page.fullBleed);
-  beginRouteLoading();
+  // The first render after a boot is covered by the boot splash → page skeleton, so it skips
+  // the veil to avoid stacking two loaders; later navigations use it as normal.
+  const useOverlay = !firstRoute;
+  if (useOverlay) beginRouteLoading();
   try {
     await page.render(mainEl, params, { refresh });
   } catch (e) {
@@ -267,7 +329,8 @@ async function route() {
       ),
     );
   } finally {
-    if (seq === routeSeq) endRouteLoading();
+    if (useOverlay && seq === routeSeq) endRouteLoading();
+    firstRoute = false;
   }
 }
 

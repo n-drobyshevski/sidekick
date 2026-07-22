@@ -152,6 +152,11 @@ html, body {
 .scan-progress-elapsed { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
 .scan-progress-counts { font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }
 .scan-progress.failed .scan-progress-counts { color: var(--bad); }
+/* A run with no progress for minutes: flag it amber on the always-visible card, not only
+   behind the details drawer, so a likely-dead sync is legible at a glance. */
+.scan-progress.stuck { border-color: rgba(161, 98, 7, 0.4); }
+.scan-progress.stuck .scan-progress-phase,
+.scan-progress.stuck .scan-progress-counts { color: var(--warn); }
 .scan-progress-actions { display: flex; gap: 12px; }
 .linklike {
   background: none; border: none; padding: 0; font-size: 12px; font-weight: 600;
@@ -296,6 +301,47 @@ main.full-bleed > .empty { margin: 28px 32px; }
       color-mix(in srgb, var(--accent) 55%, white) 16px);
   }
   .route-overlay { transition: none; }
+}
+
+/* Boot splash: full-viewport branded veil painted by index.html on first load and recreated
+   by bootSplash() on refresh(), faded out once the page skeleton has laid out. Sits above the
+   route overlay (20) and sheets (41), below toasts (60). */
+.boot-splash {
+  position: fixed; inset: 0; z-index: 55;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--page); opacity: 1; transition: opacity 180ms ease-out;
+}
+.boot-splash.hiding { opacity: 0; }
+.boot-splash-inner {
+  display: flex; flex-direction: column; align-items: center; gap: 18px;
+  padding: 24px; width: min(280px, 80vw);
+}
+.boot-brand {
+  display: flex; align-items: center; gap: 9px; font-weight: 600;
+  font-size: 1.0625rem; letter-spacing: -0.02em; color: var(--ink);
+}
+.boot-brand .wordmark-dot { width: 11px; height: 11px; }
+.boot-splash-bar { width: 100%; }
+.boot-splash-note { margin: 0; font-size: 12px; color: var(--text-2); }
+@media (prefers-reduced-motion: reduce) { .boot-splash { transition: none; } }
+
+/* Skeleton placeholders: calm opacity pulse only — NO diagonal shimmer sweep (the SaaS tell
+   DESIGN.md forbids). Reduced motion → a static hairline block. Blocks are aria-hidden. */
+.skeleton {
+  background: color-mix(in srgb, var(--ink) 7%, var(--surface));
+  border-radius: var(--radius-md); animation: skeleton-pulse 1.6s ease-in-out infinite;
+}
+@keyframes skeleton-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+.skeleton--line { height: 12px; border-radius: 4px; }
+.skeleton--title { height: 30px; border-radius: 6px; }
+.skeleton--stat { height: 18px; border-radius: 5px; }
+.skeleton--pill { height: 30px; border-radius: 999px; }
+.skeleton--chart { position: absolute; inset: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none; background: color-mix(in srgb, var(--ink) 5%, var(--surface));
+    border: 1px solid var(--hairline);
+  }
 }
 
 @media (max-width: 800px) {

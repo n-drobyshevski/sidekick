@@ -268,6 +268,23 @@ export function openSheet(renderBody, opts = {}) {
   return { close };
 }
 
+/**
+ * Loading placeholder block: a calm opacity pulse (no shimmer sweep — DESIGN.md forbids the
+ * SaaS tell), aria-hidden so screen readers hear the page's role=status label instead. Variants
+ * (line/title/stat/pill/chart) set default height/radius; width/height/radius override inline.
+ * Reduced motion drops the pulse for a static hairline block (in styles.css).
+ */
+export function skeleton(variant = "", { width, height, radius } = {}) {
+  const node = el("div", {
+    class: `skeleton${variant ? " skeleton--" + variant : ""}`,
+    "aria-hidden": "true",
+  });
+  if (width) node.style.width = width;
+  if (height) node.style.height = height;
+  if (radius) node.style.borderRadius = radius;
+  return node;
+}
+
 export function emptyState(message, hint) {
   return el(
     "div",
