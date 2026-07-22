@@ -4,6 +4,7 @@ import {
   actionableView,
   awaitingVendorFix,
   baseRowNoFix,
+  isEndOfLifeName,
   kaplanMeier,
   kmMedian,
   kmMedianFromCurve,
@@ -11,6 +12,7 @@ import {
   mttrPercentiles,
   openPastSla,
   openPastSlaFromRecords,
+  recordEol,
   recordNoFix,
   resolutionBuckets,
 } from "../src/domain/remediation";
@@ -512,5 +514,46 @@ describe("recordNoFix ↔ baseRow.awaiting_vendor_fix agreement", () => {
     // Sanity: the boundary is actually exercised — the two open/no-fix rows split on it.
     expect(recordNoFix(scenarios[0].rec)).toBe(true); // post-rollout awaiting
     expect(recordNoFix(scenarios[1].rec)).toBe(false); // pre-rollout legacy
+  });
+});
+
+describe("isEndOfLifeName / recordEol", () => {
+  it("matches the EOL-OS notice name across hyphen/case/spacing variants", () => {
+    expect(isEndOfLifeName("End-Of-life version of operating system")).toBe(true);
+    expect(isEndOfLifeName("end of life operating system")).toBe(true);
+    expect(isEndOfLifeName("End-of-Life Operating System detected")).toBe(true);
+  });
+  it("does not match CVEs or unrelated names", () => {
+    expect(isEndOfLifeName("CVE-2024-1234")).toBe(false);
+    expect(isEndOfLifeName("End of life for a library")).toBe(false); // no "operating system"
+    expect(isEndOfLifeName("Operating system misconfiguration")).toBe(false); // no "end of life"
+    expect(isEndOfLifeName("")).toBe(false);
+    expect(isEndOfLifeName(null)).toBe(false);
+    expect(isEndOfLifeName(42)).toBe(false);
+  });
+  it("recordEol fires on the flag or the notice name", () => {
+    expect(recordEol({ isOperatingSystemEndOfLife: true, name: "CVE-2024-1" })).toBe(true);
+    expect(recordEol({ name: "End-Of-life version of operating system" })).toBe(true);
+    expect(recordEol({ isOperatingSystemEndOfLife: false, name: "CVE-2024-1" })).toBe(false);
+    expect(recordEol({ name: "CVE-2024-1" })).toBe(false);
+  });
+});
+
+describe("EOL findings excluded from the MTTR KPI", () => {
+  // filterEolBase drops a notice finding by its base-row `cve` (= the finding name). This proves an
+  // old open EOL notice inflates the Kaplan–Meier median (the MTTR hero KPI) until it is filtered
+  // out — so with the toggle off, EOL findings no longer affect the KPI.
+  const eolRow = {
+    severity: "HIGH", status: "OPEN", mttr_days: null, age_days: 1000,
+    cve: "End-Of-life version of operating system",
+  };
+  const rows = [{ ...res(10), cve: "CVE-1" }, { ...res(20), cve: "CVE-2" }, eolRow];
+
+  it("an old open EOL notice raises the KM median until it is filtered out", () => {
+    // With the EOL notice censored at 1000d in the risk set, the curve crosses 0.5 at the 20d event.
+    expect(kaplanMeier(rows).median).toBe(20);
+    // Excluding it (the exact predicate filterEolBase applies to `cve`) drops the median to 10d.
+    const visible = rows.filter((r) => !isEndOfLifeName(r.cve));
+    expect(kaplanMeier(visible).median).toBe(10);
   });
 });

@@ -2311,6 +2311,14 @@ var Server = (() => {
     if (first !== null && ROLLOUT_MS !== null && first < ROLLOUT_MS) return false;
     return !(present(rec["fixedVersion"]) || present(rec["fixDate"]));
   }
+  function isEndOfLifeName(name) {
+    if (typeof name !== "string" || !name) return false;
+    const n = name.toLowerCase().replace(/[^a-z]+/g, " ");
+    return n.includes("end of life") && n.includes("operating system");
+  }
+  function recordEol(rec) {
+    return rec["isOperatingSystemEndOfLife"] === true || isEndOfLifeName(rec["name"]);
+  }
 
   // src/domain/compaction.ts
   var CHECKPOINT_VERSION = 1;
@@ -6348,7 +6356,7 @@ var Server = (() => {
       if (!scan) return [];
       const out = [];
       for (const r of scan.records) {
-        if (r["isOperatingSystemEndOfLife"] === true) out.push(vulnKey(r));
+        if (recordEol(r)) out.push(vulnKey(r));
       }
       return out;
     });
@@ -6357,15 +6365,16 @@ var Server = (() => {
   function filterEolBase(rows, includeEol) {
     if (includeEol || !rows.length) return rows;
     const keys = eolVulnKeys();
-    if (!keys.size) return rows;
-    return rows.filter((r) => {
-      var _a;
-      return !keys.has(String((_a = r["vuln_key"]) != null ? _a : ""));
-    });
+    return rows.filter(
+      (r) => {
+        var _a;
+        return !(keys.has(String((_a = r["vuln_key"]) != null ? _a : "")) || isEndOfLifeName(r["cve"]));
+      }
+    );
   }
   function filterEolFrame(records, includeEol) {
     if (includeEol || !records.length) return records;
-    return records.filter((r) => r["isOperatingSystemEndOfLife"] !== true);
+    return records.filter((r) => !recordEol(r));
   }
   function visibleFrame(records) {
     return filterEolFrame(

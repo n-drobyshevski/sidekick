@@ -695,17 +695,24 @@ input[aria-invalid="true"]:focus-visible, select[aria-invalid="true"]:focus-visi
   font-variant-numeric: tabular-nums;
 }
 .exec-hero .hero-src { margin-top: 6px; }
-/* Hero value + week-over-week trend badge on one line; the badge aligns to the bottom of the big
-   number (flex-end), reading as a small marker at its bottom-right. Centered by .exec's text-align
-   and wraps under the number on a narrow viewport rather than overflowing. */
-.exec-hero-row {
-  display: inline-flex; align-items: flex-end; justify-content: center;
-  gap: 12px; flex-wrap: wrap;
+/* Hero value + week-over-week trend badge. The badge is taken OUT of flow (absolute, at the
+   metric's bottom-right) so the big number stays centred under its label — an inline-flex row
+   would group number+badge and shift the number left by the badge's width. The row shrink-wraps
+   the metric and is centred by .exec's text-align. */
+.exec-hero-row { position: relative; display: inline-block; }
+.exec-trend {
+  position: absolute; left: 100%; bottom: 10px; margin-left: 12px;
+  display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap;
 }
-.exec-trend { display: inline-flex; align-items: baseline; gap: 6px; padding-bottom: 10px; }
 .exec-trend .chg { margin-left: 0; }
 .exec-trend-arrow { margin-right: 2px; font-weight: 700; }
 .exec-trend-note { font-size: 12px; color: var(--text-3); }
+/* Narrow viewports: the out-of-flow badge would overflow the right edge, so drop it back into
+   flow and stack it centred under the number instead (still centred, no horizontal scroll). */
+@media (max-width: 600px) {
+  .exec-hero-row { display: flex; flex-direction: column; align-items: center; }
+  .exec-trend { position: static; margin: 6px 0 0; }
+}
 /* Scan bar: last-scan caption + a single primary Run scan, centered under the hero. */
 .exec-scan { display: flex; flex-direction: column; align-items: center; gap: 10px; margin: 0 0 8px; }
 .exec-scan .primary { display: inline-flex; align-items: center; gap: 6px; }

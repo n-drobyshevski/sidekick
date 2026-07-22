@@ -452,3 +452,25 @@ export function recordNoFix(rec: Rec): boolean {
   if (first !== null && ROLLOUT_MS !== null && first < ROLLOUT_MS) return false; // legacy = fixed
   return !(present(rec["fixedVersion"]) || present(rec["fixDate"]));
 }
+
+/**
+ * Whether a vulnerability *name* is Wiz's end-of-life-OS notice — the finding it reports per host on
+ * an EOL operating system, whose name is a phrase (e.g. "End-Of-life version of operating system")
+ * rather than a CVE id. That record does NOT reliably carry `isOperatingSystemEndOfLife`, so the EOL
+ * filter matches the name too. Normalized to letters-and-single-spaces first, so hyphen / case /
+ * spacing variants all hit. Base rows carry this string as their `cve` (= the finding name).
+ */
+export function isEndOfLifeName(name: unknown): boolean {
+  if (typeof name !== "string" || !name) return false;
+  const n = name.toLowerCase().replace(/[^a-z]+/g, " ");
+  return n.includes("end of life") && n.includes("operating system");
+}
+
+/**
+ * "End-of-life OS" predicate over a current-scan frame record: Wiz flagged the finding's OS as EOL
+ * (`isOperatingSystemEndOfLife`), or the record IS the EOL-OS notice finding (matched by name). The
+ * frame-record choke point behind the global "include end-of-life OS findings" toggle.
+ */
+export function recordEol(rec: Rec): boolean {
+  return rec["isOperatingSystemEndOfLife"] === true || isEndOfLifeName(rec["name"]);
+}
