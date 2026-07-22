@@ -3056,6 +3056,36 @@ var Server = (() => {
       return { ...p, km_median_days: med !== null ? Math.round(med * 1e3) / 1e3 : null };
     });
   }
+  function kmMedianAsOf(base, severities, d, opts = {}) {
+    var _a;
+    if (d === null || !base.length) return null;
+    const hideNoFix = (_a = opts.hideNoFix) != null ? _a : false;
+    let rows = base;
+    if (severities !== null) {
+      const keep = /* @__PURE__ */ new Set([...severities, "UNKNOWN"]);
+      rows = base.filter((r) => keep.has(normalizeSeverity(r["severity"])));
+    }
+    const events = [];
+    const times = [];
+    for (const r of rows) {
+      const resolvedAt = parseTs(r["resolved_at"]);
+      if (resolvedAt !== null && resolvedAt <= d) {
+        const mttr = typeof r["mttr_days"] === "number" && !Number.isNaN(r["mttr_days"]) ? r["mttr_days"] : null;
+        if (mttr !== null) {
+          events.push(mttr);
+          times.push(mttr);
+        }
+        continue;
+      }
+      const first = parseTs(r["first_seen"]);
+      if (first !== null && first <= d) {
+        if (hideNoFix && awaitingFixAsOf(first, resolvedAt, parseTs(r["fix_available_at"]), d)) continue;
+        times.push((d - first) / DAY_MS4);
+      }
+    }
+    const med = kmMedianFromCurve(kmCurve(events, times));
+    return med !== null ? Math.round(med * 1e3) / 1e3 : null;
+  }
   function withOpenPastSla(points, base, severities = null, fromField = "first_seen") {
     let rows = base;
     if (severities !== null && base.length) {
@@ -6631,10 +6661,52 @@ var Server = (() => {
       byDomain: domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p)
     }));
   }
+  var WEEK_MS = 7 * 864e5;
+  function executiveWeekTrend(p) {
+    var _a, _b;
+    const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
+    const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
+    const severities = readSeverities(p);
+    const hideNoFix = !getShowNoFix2();
+    const base = scopedBaseRows(domain, supportGroup);
+    if (!base.length) return null;
+    let earliest = Infinity;
+    for (const r of base) {
+      const f = parseTs(r["first_seen"]);
+      if (f !== null && f < earliest) earliest = f;
+    }
+    const now = Date.now();
+    const weekAgo = now - WEEK_MS;
+    if (!Number.isFinite(earliest) || earliest > weekAgo) return null;
+    const current = kmMedianAsOf(base, severities, now, { hideNoFix });
+    const previous = kmMedianAsOf(base, severities, weekAgo, { hideNoFix });
+    if (current === null || previous === null) return null;
+    return {
+      current,
+      previous,
+      deltaDays: Math.round((current - previous) * 1e3) / 1e3,
+      days: 7
+    };
+  }
+  var cachedExecutiveWeekTrend = (p) => {
+    var _a, _b;
+    return cached(
+      "execWeekTrend",
+      {
+        domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
+        supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
+        severities: readSeverities(p),
+        showNoFix: getShowNoFix2()
+      },
+      () => executiveWeekTrend(p),
+      3600
+    );
+  };
   function getExecutivePage(p) {
     return run(() => ({
       mttr: cachedMttrData(p),
-      byDomain: cachedMttrByDomainData(p)
+      byDomain: cachedMttrByDomainData(p),
+      weekTrend: cachedExecutiveWeekTrend(p)
     }));
   }
   function scanHistoryData() {

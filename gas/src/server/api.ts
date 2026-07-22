@@ -31,7 +31,7 @@ import {
 import { validateBundle } from "../domain/importMerge";
 import { SealedScanError, LedgerRebuildError } from "../domain/maintenance";
 import { parseTs, present, type Rec } from "../domain/util";
-import { kmMedianByGroupTrend, medianMttrByGroupTrend, openByGroupTrend, openBySeverityTrend } from "../domain/trend";
+import { kmMedianAsOf, kmMedianByGroupTrend, medianMttrByGroupTrend, openByGroupTrend, openBySeverityTrend } from "../domain/trend";
 import * as insights from "../domain/insights";
 import * as archive from "./archiveStore";
 import * as errorLog from "./errorLog";
@@ -1084,10 +1084,61 @@ export function getMttrPage(p?: unknown): ApiResult {
  *  reconstruction entirely. Both slices come from the *same* `cached()` entries the MTTR
  *  page uses (whole-chain, all-severities), so exec→MTTR navigation still lands warm and
  *  the only difference is which slices this round trip computes. */
+// Days the executive MTTR badge looks back — "last week".
+const WEEK_MS = 7 * 86_400_000;
+
+// Week-over-week KM-median delta for the executive hero badge: the KM median now vs the KM median
+// as of ~7 days ago, both over the same scoped + severity population via the ledger's as-of
+// estimator (the one the MTTR trend line replays). Severity-scoped, so it stays honest under a
+// display-severity filter — unlike the whole-register mttr_history snapshots the MTTR page can only
+// chip at the unscoped view, and KM-consistent with the hero value (mttr_history only ever held the
+// naive median). Returns null (→ no badge) when the register has under a week of history or either
+// endpoint's median is unobservable under censoring.
+function executiveWeekTrend(p?: unknown): Rec | null {
+  const domain = String((p as Rec)?.["domain"] ?? "");
+  const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
+  const severities = readSeverities(p);
+  const hideNoFix = !settingsStore.getShowNoFix();
+  const base = scopedBaseRows(domain, supportGroup);
+  if (!base.length) return null;
+  // Need at least a week of history to have something to compare against.
+  let earliest = Infinity;
+  for (const r of base) {
+    const f = parseTs(r["first_seen"]);
+    if (f !== null && f < earliest) earliest = f;
+  }
+  const now = Date.now();
+  const weekAgo = now - WEEK_MS;
+  if (!Number.isFinite(earliest) || earliest > weekAgo) return null;
+  const current = kmMedianAsOf(base, severities, now, { hideNoFix });
+  const previous = kmMedianAsOf(base, severities, weekAgo, { hideNoFix });
+  if (current === null || previous === null) return null;
+  return {
+    current,
+    previous,
+    deltaDays: Math.round((current - previous) * 1000) / 1000,
+    days: 7,
+  };
+}
+
+const cachedExecutiveWeekTrend = (p?: unknown) =>
+  cached(
+    "execWeekTrend",
+    {
+      domain: String((p as Rec)?.["domain"] ?? ""),
+      supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
+      severities: readSeverities(p),
+      showNoFix: settingsStore.getShowNoFix(),
+    },
+    () => executiveWeekTrend(p),
+    3600,
+  );
+
 export function getExecutivePage(p?: unknown): ApiResult {
   return run(() => ({
     mttr: cachedMttrData(p),
     byDomain: cachedMttrByDomainData(p),
+    weekTrend: cachedExecutiveWeekTrend(p),
   }));
 }
 

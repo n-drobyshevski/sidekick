@@ -39,6 +39,32 @@ function fmtKmMedian(km) {
   return "—";
 }
 
+// Small week-over-week trend badge for the hero: a ↑/↓ arrow + magnitude coloured by whether the KM
+// MTTR rose (worse, red) or fell (better, green) over the last 7 days, with a muted "vs last week"
+// note. Reuses the shared .chg up/down/flat colours; meaning rides on the arrow + number + label,
+// never colour alone (DESIGN.md). `wt` is the server weekTrend ({ deltaDays, current, previous,
+// days }) or null — null (or a non-finite delta) yields no badge, so a register under a week old or
+// a censored endpoint simply shows nothing.
+function weekTrendBadge(wt) {
+  if (!wt) return null;
+  const delta = Number(wt.deltaDays);
+  if (!Number.isFinite(delta)) return null;
+  const note = el("span", { class: "exec-trend-note" }, "vs last week");
+  if (delta === 0) {
+    return el("span", { class: "exec-trend" },
+      el("span", { class: "chg flat", "aria-label": "MTTR unchanged versus last week" }, "±0"),
+      note);
+  }
+  const worse = delta > 0; // MTTR up = slower remediation = worse
+  const mag = fmtDays(Math.abs(delta));
+  const label = `MTTR ${worse ? "up" : "down"} ${mag} versus last week`;
+  return el("span", { class: "exec-trend" },
+    el("span", { class: `chg ${worse ? "up" : "down"}`, title: label, "aria-label": label },
+      el("span", { class: "exec-trend-arrow", "aria-hidden": "true" }, worse ? "↑" : "↓"),
+      mag),
+    note);
+}
+
 export async function renderExecutive(main, _params, ctx) {
   const boot = await bootstrap();
 
@@ -101,7 +127,7 @@ export async function renderExecutive(main, _params, ctx) {
   // We use only `.mttr` (hero) and `.byDomain` (per-domain split) — api_getExecutivePage
   // ships exactly those two slices and skips the trend reconstruction the MTTR page needs.
   paint = (data) => {
-    guard("MTTR", heroHost, () => renderHero(data && data.mttr));
+    guard("MTTR", heroHost, () => renderHero(data && data.mttr, data && data.weekTrend));
     guard("by domain", byDomainHost, () => renderByDomain(data && data.byDomain));
   };
   try {
@@ -129,7 +155,7 @@ export async function renderExecutive(main, _params, ctx) {
   // larger here as the deliberate exec-only exception (this page *is* the number). The label
   // + value are the helpTip hover/focus target; no separate glyph. Source line states what
   // the figure was measured over so the number is never shown without its base.
-  function renderHero(mttr) {
+  function renderHero(mttr, weekTrend) {
     clear(heroHost);
     if (!mttr || !mttr.rowCount) {
       heroHost.append(emptyState(
@@ -156,8 +182,15 @@ export async function renderExecutive(main, _params, ctx) {
       ],
       { className: "hero-metric" },
     );
+    // The metric sits in an inline row with the week-over-week badge to its bottom-right (a small
+    // arrow + number, red when MTTR rose, green when it fell). The badge is a sibling, not a child
+    // of the helpTip, so hovering it doesn't fire the KM tooltip; it's simply omitted when the
+    // server had no comparable week-ago baseline.
+    const badge = weekTrendBadge(weekTrend);
+    const metricRow = el("div", { class: "exec-hero-row" }, metric);
+    if (badge) metricRow.append(badge);
     heroHost.append(
-      metric,
+      metricRow,
       el("div", { class: "hero-src" },
         `${mttr.rowCount.toLocaleString()} tracked lifecycle(s) · ` +
         `${resolved.toLocaleString()} resolved · ${open.toLocaleString()} open`),
