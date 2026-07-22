@@ -6376,8 +6376,57 @@ var Server = (() => {
       trend: loadTrend(severities, getShowNoFix2(), rows)
     };
   }
-  function mttrByDomainData(p) {
+  var NONE_SUPPORT_GROUP = "(none)";
+  function remediationGroups(rows, keyField, orderedNames, scanRows) {
     var _a, _b, _c, _d;
+    const buckets = /* @__PURE__ */ new Map();
+    for (const r of rows) {
+      const name = String((_a = r[keyField]) != null ? _a : "");
+      let arr = buckets.get(name);
+      if (!arr) buckets.set(name, arr = []);
+      arr.push(r);
+    }
+    const out = [];
+    for (const name of orderedNames) {
+      const drows = buckets.get(name);
+      if (!drows || !drows.length) continue;
+      const { perSev, overall } = mttrFromLedger(drows);
+      const { slaPct } = overallSlaOldest(perSev);
+      const rem = drows;
+      const km = kaplanMeier(rem);
+      out.push({
+        group: name,
+        median: (_b = overall.mttr_median) != null ? _b : null,
+        // Censoring-aware KM p90 (open findings right-censored), the slow-tail sibling of the KM
+        // median below — read off the same survival curve (smallest t with S(t) ≤ 0.10) so the
+        // tail isn't biased low by the fast-patched vulns that close first, the way a closed-only
+        // percentile would be. Null (renders "—") when too much is still open to observe it.
+        p90: kmQuantileFromCurve(km.curve, 0.9),
+        // Censoring-aware KM median (open findings right-censored) — the column that replaces
+        // the old "Excl. fast lane" tail median.
+        kmMedian: km.median,
+        slaPct,
+        // Actionable-clock open-past-SLA (measured from vendor-fix availability, awaiting
+        // rows excluded) — the same basis the hero and severity table now use.
+        openPastSla: openPastSla(actionableView(rem)).overall,
+        // Open findings in this bucket still awaiting a vendor fix — surfaced as a footnote
+        // under the table, not a column.
+        awaiting: awaitingVendorFix(rem).overall,
+        open: (_c = overall.open) != null ? _c : 0,
+        resolved: (_d = overall.resolved) != null ? _d : 0
+      });
+    }
+    const groups = out.filter((r) => r["resolved"] > 0).sort((a, b) => b["resolved"] - a["resolved"]).slice(0, 5).map((r) => String(r["group"]));
+    const keyOf = (r) => {
+      var _a2;
+      return String((_a2 = r[keyField]) != null ? _a2 : "");
+    };
+    const points = medianMttrByGroupTrend(scanRows, rows, keyOf, groups, { severities: null });
+    const kmPoints = kmMedianByGroupTrend(scanRows, rows, keyOf, groups, { severities: null });
+    return { rows: out, trend: { groups, points, kmPoints } };
+  }
+  function mttrByDomainData(p) {
+    var _a;
     const supportGroup = String((_a = p == null ? void 0 : p["supportGroup"]) != null ? _a : "");
     let rows = filterSeverities(
       loadBaseRows(),
@@ -6400,61 +6449,57 @@ var Server = (() => {
     const items = getDomains2().items;
     const compiled = compileDomains(items);
     const assigned = assignDomains(rows, compiled);
-    const buckets = /* @__PURE__ */ new Map();
-    rows.forEach((r, i) => {
-      var _a2;
-      const name = (_a2 = assigned[i]) != null ? _a2 : UNASSIGNED;
-      let arr = buckets.get(name);
-      if (!arr) buckets.set(name, arr = []);
-      arr.push(r);
-    });
-    const out = [];
-    for (const name of domainNames(items)) {
-      const drows = buckets.get(name);
-      if (!drows || !drows.length) continue;
-      const { perSev, overall } = mttrFromLedger(drows);
-      const { slaPct } = overallSlaOldest(perSev);
-      const rem = drows;
-      const km = kaplanMeier(rem);
-      out.push({
-        domain: name,
-        median: (_b = overall.mttr_median) != null ? _b : null,
-        // Censoring-aware KM p90 (open findings right-censored), the slow-tail sibling of the KM
-        // median below — read off the same survival curve (smallest t with S(t) ≤ 0.10) so the
-        // tail isn't biased low by the fast-patched vulns that close first, the way a closed-only
-        // percentile would be. Null (renders "—") when too much is still open to observe it.
-        p90: kmQuantileFromCurve(km.curve, 0.9),
-        // Censoring-aware KM median (open findings right-censored) — the column that replaces
-        // the old "Excl. fast lane" tail median.
-        kmMedian: km.median,
-        slaPct,
-        // Actionable-clock open-past-SLA (measured from vendor-fix availability, awaiting
-        // rows excluded) — the same basis the hero and severity table now use.
-        openPastSla: openPastSla(actionableView(rem)).overall,
-        // Open findings in this bucket still awaiting a vendor fix — surfaced as a footnote
-        // under the table, not a column.
-        awaiting: awaitingVendorFix(rem).overall,
-        open: (_c = overall.open) != null ? _c : 0,
-        resolved: (_d = overall.resolved) != null ? _d : 0
-      });
-    }
     rows.forEach((r, i) => {
       var _a2;
       r["_domain"] = (_a2 = assigned[i]) != null ? _a2 : UNASSIGNED;
     });
-    const groups = out.filter((r) => r["resolved"] > 0).sort((a, b) => b["resolved"] - a["resolved"]).slice(0, 5).map((r) => String(r["domain"]));
     const scanRows = loadScanRows();
-    const byDomainKey = (r) => {
-      var _a2;
-      return String((_a2 = r["_domain"]) != null ? _a2 : UNASSIGNED);
-    };
-    const points = medianMttrByGroupTrend(scanRows, rows, byDomainKey, groups, { severities: null });
-    const kmPoints = kmMedianByGroupTrend(scanRows, rows, byDomainKey, groups, { severities: null });
+    const { rows: out, trend } = remediationGroups(rows, "_domain", domainNames(items), scanRows);
+    for (const r of out) r["domain"] = r["group"];
     return {
+      dimension: "domain",
       rows: out,
-      trend: { groups, points, kmPoints },
+      trend,
       // Resolved history set aside above for lacking any domain input — the by-domain footnote.
       excluded: { total: excluded.length, resolved: excludedResolved }
+    };
+  }
+  function mttrBySupportGroupData(p) {
+    var _a, _b, _c, _d;
+    const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
+    const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
+    let rows = filterSeverities(
+      loadBaseRows(),
+      readSeverities(p)
+    );
+    rows = filterNoFixBase(rows, getShowNoFix2());
+    attachSupportGroups(rows);
+    const compiled = compileDomains(getDomains2().items);
+    if (domain) rows = rows.filter((r) => assignDomain(r, compiled) === domain);
+    if (supportGroup) rows = rows.filter((r) => {
+      var _a2;
+      return String((_a2 = r["_supportGroup"]) != null ? _a2 : "") === supportGroup;
+    });
+    for (const r of rows) r["_supportGroup"] = String((_c = r["_supportGroup"]) != null ? _c : "") || NONE_SUPPORT_GROUP;
+    const sizes = /* @__PURE__ */ new Map();
+    for (const r of rows) {
+      const g = String(r["_supportGroup"]);
+      sizes.set(g, ((_d = sizes.get(g)) != null ? _d : 0) + 1);
+    }
+    const orderedNames = [...sizes.keys()].sort((a, b) => {
+      var _a2, _b2;
+      if (a === NONE_SUPPORT_GROUP) return 1;
+      if (b === NONE_SUPPORT_GROUP) return -1;
+      return ((_a2 = sizes.get(b)) != null ? _a2 : 0) - ((_b2 = sizes.get(a)) != null ? _b2 : 0);
+    });
+    const scanRows = loadScanRows();
+    const { rows: out, trend } = remediationGroups(rows, "_supportGroup", orderedNames, scanRows);
+    return {
+      dimension: "supportGroup",
+      rows: out,
+      trend,
+      // The domain-input exclusion is a by-domain concern; not applicable to the support-group split.
+      excluded: { total: 0, resolved: 0 }
     };
   }
   var cachedMttrData = (p) => {
@@ -6545,13 +6590,29 @@ var Server = (() => {
       // "mttrByDomain11" → "mttrByDomain12": the colored-group cap dropped from 8 to 5 (matching the
       // new categorical palette), so `trend.groups`/`points`/`kmPoints` now carry fewer groups and a
       // larger pooled "Other"; bump so a stale 8-group entry can't survive the persistent dataVersion.
-      "mttrByDomain12",
+      // "mttrByDomain12" → "mttrByDomain13": rows gained a generic `group` label + the payload a
+      // `dimension` tag (shared with the by-support-group split); bump so no stale entry lacks them.
+      "mttrByDomain13",
       {
         supportGroup: String((_a = p == null ? void 0 : p["supportGroup"]) != null ? _a : ""),
         severities: readSeverities(p),
         showNoFix: getShowNoFix2()
       },
       () => mttrByDomainData(p),
+      3600
+    );
+  };
+  var cachedMttrBySupportGroupData = (p) => {
+    var _a, _b;
+    return cached(
+      "mttrBySupportGroup1",
+      {
+        domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
+        supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
+        severities: readSeverities(p),
+        showNoFix: getShowNoFix2()
+      },
+      () => mttrBySupportGroupData(p),
       3600
     );
   };
@@ -6567,7 +6628,7 @@ var Server = (() => {
     return run(() => ({
       mttr: cachedMttrData(p),
       trends: cachedMttrTrendData(p),
-      byDomain: domain ? null : cachedMttrByDomainData(p)
+      byDomain: domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p)
     }));
   }
   function getExecutivePage(p) {
