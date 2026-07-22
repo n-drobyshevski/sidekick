@@ -462,6 +462,9 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
       else items.push(entry);
       dlg.close();
       renderList();
+      // Callers that persist per-edit (the Attribution page, which has no list Save button)
+      // hook here to save immediately; Settings omits it and keeps the staged-then-Save flow.
+      if (hooks.onCommitted) hooks.onCommitted();
     }
   }
 
@@ -502,5 +505,8 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
     dlg.showModal();
   }
 
-  return { isDirty, openWithPrefill };
+  // openEditor / save are exposed so a host page (Attribution) can drive the editor inline:
+  // openEditor(domainIndex) edits an existing domain, and — with an onCommitted hook wired to
+  // save — persists on Apply. isDirty / openWithPrefill keep the Settings + handoff contracts.
+  return { isDirty, openWithPrefill, openEditor, save };
 }

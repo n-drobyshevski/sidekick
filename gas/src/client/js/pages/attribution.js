@@ -6,8 +6,8 @@
 // "Attribute…" handoff into Settings, per-rule health, and untagged subscriptions —
 // all from one paginated RPC (api_getAttribution).
 
-import { PREFILL_KEY, encodePrefill } from "../attributionPrefill.js";
-import { bootstrap, navigate, setParams, swrCall } from "../store.js";
+import { bootstrap, setParams, swrCall } from "../store.js";
+import { renderDomainsEditor } from "./domainsEditor.js";
 import {
   clear, el, emptyState, fmtDate, helpTip, kpiCard, pager, settingsPanel,
   severityScopeFilter, statusPill,
@@ -154,8 +154,16 @@ export async function renderAttribution(main, params, ctx) {
       return;
     }
 
-    renderUnassigned(unassigned);
-    renderRuleHealth(ruleHealthRows);
+    // Inline domain-rule editing: a hidden editor instance whose dialog opens over the audit
+    // page. onCommitted saves each Apply immediately and ctx.refresh() re-runs the audit, so a
+    // rule gets fixed here without a trip to Settings. (The visible domain-management list —
+    // reorder / add / import — stays in Settings; the "Edit domains in Settings →" link reaches it.)
+    const editorHost = el("div", { style: "display:none" });
+    bodyHost.append(editorHost);
+    const editor = renderDomainsEditor(editorHost, boot, ctx, { onCommitted: () => editor.save() });
+
+    renderUnassigned(unassigned, editor);
+    renderRuleHealth(ruleHealthRows, editor);
     renderUntagged(untagged, sgMap);
   }
 
@@ -324,7 +332,7 @@ export async function renderAttribution(main, params, ctx) {
 
   // ------------------------------------------------------- unassigned resources
 
-  function renderUnassigned(unassigned) {
+  function renderUnassigned(unassigned, editor) {
     const rows = unassigned.rows || [];
     if (!rows.length) {
       bodyHost.append(settingsPanel({
@@ -361,7 +369,11 @@ export async function renderAttribution(main, params, ctx) {
             el("span", { class: "mix-text small muted num" },
               mixText(r.sevCounts || {}) || `${(r.findings || 0).toLocaleString()}`))),
         el("td", {},
-          el("button", { type: "button", onclick: () => attribute(r) }, "Attribute…")),
+          el("button", { type: "button", title: `Attribute ${r.asset || "resource"}`,
+            onclick: () => editor.openWithPrefill({
+              asset: r.asset, subscription: r.subscription,
+              subscriptionExtId: r.subscriptionExtId, supportGroup: r.supportGroup,
+            }) }, "Attribute…")),
       ));
     }
     bodyHost.append(settingsPanel({
@@ -381,25 +393,9 @@ export async function renderAttribution(main, params, ctx) {
     }));
   }
 
-  // Closed-loop handoff: stash the resource for the Settings domain-rule dialog and route
-  // there with the ?attribute flag. sessionStorage is blocked in some GAS iframe sandboxes,
-  // so fall back to a minimal hash-borne prefill (sub/asset) that settings.js also reads.
-  function attribute(r) {
-    const resource = {
-      asset: r.asset, subscription: r.subscription,
-      subscriptionExtId: r.subscriptionExtId, supportGroup: r.supportGroup,
-    };
-    try {
-      sessionStorage.setItem(PREFILL_KEY, encodePrefill(resource));
-      navigate("settings", { attribute: "1" });
-    } catch {
-      navigate("settings", { attribute: "1", sub: r.subscription || "", asset: r.asset || "" });
-    }
-  }
-
   // --------------------------------------------------------------- rule health
 
-  function renderRuleHealth(rows) {
+  function renderRuleHealth(rows, editor) {
     const desc = ["How each mapping rule performs against this scan. ",
       helpTip(el("span", { class: "linklike" }, "status guide"),
         ["Fires — claims findings under first-match priority.",
@@ -427,6 +423,8 @@ export async function renderAttribution(main, params, ctx) {
         el("td", { class: "num" }, (rh.fired || 0).toLocaleString()),
         el("td", { class: "num" }, (rh.matched || 0).toLocaleString()),
         el("td", {}, statusPill(kind, label)),
+        el("td", {}, el("button", { type: "button", title: `Edit ${rh.domain}`,
+          onclick: () => editor.openEditor(rh.domainIndex) }, "Edit")),
       ));
     }
     bodyHost.append(settingsPanel({
@@ -434,7 +432,7 @@ export async function renderAttribution(main, params, ctx) {
       body: el("div", { class: "table-wrap panel-flush" },
         el("table", { class: "data" },
           el("thead", {}, el("tr", {},
-            ...["Value chain", "Rule", "Fired", "Matched", "Status"].map((h) => el("th", { scope: "col" }, h)))),
+            ...["Value chain", "Rule", "Fired", "Matched", "Status", ""].map((h) => el("th", { scope: "col" }, h)))),
           body)),
     }));
   }
