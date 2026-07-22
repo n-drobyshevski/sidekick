@@ -934,3 +934,127 @@ export function mttrContributionBars(canvas, groups, opts = {}) {
       : [medianDayLabels(groups)],
   });
 }
+
+// A solid vertical rule at x = 0 for a diverging bar chart — the origin the bars split around,
+// with an inked chip naming what zero means. Sibling of medianReferenceLine, but solid (an origin,
+// not a threshold) and always at zero. Drawn on top of the bars so the rule and chip stay legible.
+function zeroReferenceLine(labelText) {
+  return {
+    id: "zeroReferenceLine",
+    afterDatasetsDraw(chart) {
+      const xs = chart.scales.x;
+      const area = chart.chartArea;
+      if (!xs || !area) return;
+      const x = xs.getPixelForValue(0);
+      if (!Number.isFinite(x)) return;
+      const { ctx } = chart;
+      ctx.save();
+      ctx.strokeStyle = "#0a0a0a";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(x, area.top);
+      ctx.lineTo(x, area.bottom);
+      ctx.stroke();
+      if (labelText) {
+        ctx.font = `600 10px ${FONT.family}`;
+        const pad = 4;
+        const tw = ctx.measureText(labelText).width;
+        let lx = x + 5;
+        if (lx + tw + pad * 2 > area.right) lx = x - 5 - tw - pad * 2;
+        ctx.fillStyle = "#0a0a0a";
+        ctx.fillRect(lx, area.top + 2, tw + pad * 2, 15);
+        ctx.fillStyle = "#ffffff";
+        ctx.textBaseline = "middle";
+        ctx.textAlign = "left";
+        ctx.fillText(labelText, lx + pad, area.top + 2 + 7.5);
+      }
+      ctx.restore();
+    },
+  };
+}
+
+// Signed magnitude at each diverging bar's *outer* end — right of a positive bar, left of a
+// negative one — so the label never lands on the zero rule. Sibling of medianDayLabels; formats a
+// plain grouped count with an explicit "+" on positives (localeNum already carries the − sign).
+function divergingBarLabels(rows) {
+  return {
+    id: "divergingBarLabels",
+    afterDatasetsDraw(chart) {
+      const { ctx } = chart;
+      const meta = chart.getDatasetMeta(0);
+      ctx.save();
+      ctx.font = `600 11px ${FONT.family}`;
+      ctx.fillStyle = INK2;
+      ctx.textBaseline = "middle";
+      meta.data.forEach((bar, i) => {
+        const v = Number(rows[i].value) || 0;
+        const label = (v > 0 ? "+" : "") + localeNum(v);
+        if (v >= 0) {
+          ctx.textAlign = "left";
+          ctx.fillText(label, bar.x + 6, bar.y);
+        } else {
+          ctx.textAlign = "right";
+          ctx.fillText(label, bar.x - 6, bar.y);
+        }
+      });
+      ctx.restore();
+    },
+  };
+}
+
+/**
+ * Diverging horizontal bars of each group's signed contribution to the overall MTTR: resolved
+ * findings × (that group's KM median − the overall KM median), in finding·days. A bar right of the
+ * zero line (positive) means the group's resolved findings ran slower than the register median and,
+ * weighted by how many it closed, dragged the headline figure UP; a bar left of it (negative) means
+ * it closed faster than the register median and held the figure DOWN. This is the leverage view a
+ * resolved-share pie lacked: a slightly-slow high-volume group outweighs a very-slow tiny one, and a
+ * fast high-volume group reads as the down-driver it is.
+ *
+ * `rows` = [{ label, value (signed finding·days), median (days), resolved, color }] sorted desc by
+ * the caller (most drag-up first). `opts.subject` leads the text alternative. Meaning never rides on
+ * colour alone: the side of the zero line, the signed value labels, the tooltip, and the text
+ * alternative all carry the up/down read, so bars keep their group hue for cross-chart identity.
+ */
+export function mttrImpactBars(canvas, rows, opts = {}) {
+  destroyExisting(canvas);
+  const subject = opts.subject || "Contribution to MTTR by group";
+  const signed = (v) => (v > 0 ? "+" : "") + localeNum(v); // localeNum keeps the − on negatives
+  const dir = (v) => (v > 0 ? "pulls MTTR up" : v < 0 ? "pulls MTTR down" : "at the overall median");
+  describe(canvas, `${subject} (excess finding·days vs the overall median): ` +
+    (rows.map((r) => `${r.label} ${signed(Number(r.value) || 0)} — ${dir(Number(r.value) || 0)}`)
+      .join("; ") || "none") + ".");
+
+  const opt = baseOptions("finding·days");
+  opt.indexAxis = "y";
+  // No beginAtZero on the value (x) axis — bars grow from 0 in both directions, so forcing a
+  // zero floor would clip the negative (held-down) bars. Chart.js includes 0 for a bar chart anyway.
+  opt.scales.x.grace = "12%"; // headroom so the outer value labels aren't clipped on either side
+  opt.scales.x.title = {
+    display: true, text: "excess finding·days vs overall median", font: FONT, color: INK2,
+  };
+  opt.scales.y.grid = { display: false };
+  opt.plugins.tooltip.callbacks.label = (ctx) => {
+    const r = rows[ctx.dataIndex];
+    const v = Number(r.value) || 0;
+    return ` ${signed(v)} finding·days · median ${fmtDuration(Number(r.median))} · `
+      + `${localeNum(r.resolved ?? 0)} resolved — ${dir(v)}`;
+  };
+
+  return new Chart(canvas, {
+    type: "bar",
+    data: {
+      labels: rows.map((r) => r.label),
+      datasets: [
+        {
+          data: rows.map((r) => r.value),
+          backgroundColor: rows.map((r) => r.color),
+          borderRadius: 3,
+          maxBarThickness: 34,
+        },
+      ],
+    },
+    options: opt,
+    plugins: [zeroReferenceLine("at overall median"), divergingBarLabels(rows)],
+  });
+}
