@@ -4096,6 +4096,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
+  var BUILD_ID = true ? "9006fb85bc7b" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -4149,7 +4150,7 @@ var Server = (() => {
   function cached(name, params, compute, ttlSec = DEFAULT_TTL_SEC) {
     let key = null;
     try {
-      key = cacheKey(name, params, dataVersion());
+      key = cacheKey(name, params, `${BUILD_ID}.${dataVersion()}`);
       const hit = cacheGetJson(key);
       if (hit !== void 0) return hit;
     } catch (e) {
