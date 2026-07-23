@@ -8,7 +8,7 @@ import { openResolvedLines, trendLine } from "../charts.js";
 import { bootstrap, swrCall } from "../store.js";
 import {
   clear, confirmDialog, el, emptyState, fmtDays, fmtDateTime,
-  kpiCard, pager, sectionLabel, statusPill, toast,
+  kpiCard, pager, sectionLabel, severityScopeFilter, statusPill, toast,
 } from "../ui.js";
 
 const PAGE_SIZE = 25;
@@ -60,18 +60,32 @@ export async function renderHistory(main, _params, ctx) {
   let page = 0;
   let anySample = false;
 
-  // Progressive paint over two parallel RPCs that reuse the same cache entries getHistoryPage
-  // batched: api_getScanHistory is the KPI band + saved-scans table (the primary content, and
-  // the cheaper slice), api_getMttrTrend is the remediation-trend reconstruction (the heavier
-  // per-point KM slice) that fills the charts when it resolves — it no longer blocks the table.
+  // Page-local, non-persisted severity scope for the trend charts, opening on the app-wide
+  // display setting like Overview and MTTR — so the two trends here read the same severities
+  // the rest of the app does. Resets to the display setting on each visit. It scopes only the
+  // charts; the KPI band and saved-scans table stay the raw ledger (see ariaContext below).
+  const sevScope = boot.settings.displaySeverities?.length
+    ? [...boot.settings.displaySeverities]
+    : [...boot.palette.selectable];
+  // Null when every selectable severity is chosen (no filter → shares the default cache
+  // entry); otherwise the chosen subset, which the server keeps alongside UNKNOWN.
+  const scopeParam = () =>
+    sevScope.length === boot.palette.selectable.length ? null : [...sevScope];
+
+  // KPI band + saved-scans table (the primary content, and the cheaper slice). Unscoped by
+  // severity: the table is the raw scan ledger and its KPIs are all-severity by design.
   const historyPromise = swrCall("api_getScanHistory", {}, (fresh) => {
     paintKpis(fresh.kpis, fresh.scans);
     paintScans(fresh.scans);
   });
-  const trendPromise = swrCall("api_getMttrTrend", {}, paintTrends);
 
   main.append(
-    el("h1", {}, "Scan History"),
+    el("div", { class: "page-head" },
+      el("h1", {}, "Scan History"),
+      severityScopeFilter({
+        selectable: boot.palette.selectable, scope: sevScope,
+        onApply: () => loadTrends(), ariaContext: "the remediation trends",
+      })),
     el("p", { class: "page-sub" },
       "Every saved scan retained in the durable ledger, with remediation trends."),
   );
@@ -80,7 +94,26 @@ export async function renderHistory(main, _params, ctx) {
   const kpiRow = el("div", { class: "kpi-row" });
   const scansHost = el("div", {});
   const chartsHost = el("div", { class: "chart-grid", style: "margin-top:20px" });
-  main.append(freshLine, kpiRow, sectionLabel("Saved scans"), scansHost, chartsHost);
+  main.append(
+    freshLine, kpiRow, sectionLabel("Saved scans"), scansHost,
+    sectionLabel("Remediation trends"),
+    el("p", { class: "section-note" },
+      "Open vs resolved and the Kaplan–Meier MTTR median, scoped to the severity filter above."),
+    chartsHost,
+  );
+
+  // Trend charts: the remediation-trend reconstruction (the heavier per-point KM slice) that
+  // fills the charts when it resolves — it never blocks the table. Both charts read
+  // api_getMttrTrend scoped to the page's severity filter, so re-applying the filter re-fetches
+  // and repaints them. A placeholder stands in until the first reconstruction resolves.
+  chartsHost.append(el("p", { class: "muted", style: "grid-column:1/-1" }, "Computing trends…"));
+  function loadTrends() {
+    swrCall("api_getMttrTrend", { severities: scopeParam() }, paintTrends)
+      .then(paintTrends)
+      // eslint-disable-next-line no-console
+      .catch((e) => console.error("[history] trends failed:", e));
+  }
+  loadTrends();
 
   const data = await historyPromise;
   paintKpis(data.kpis, data.scans);
@@ -248,14 +281,9 @@ export async function renderHistory(main, _params, ctx) {
     }
   }
 
-  // ---- trend charts (filled when the trend reconstruction resolves; see trendPromise above).
-  // Until then a placeholder stands in — paintTrends clears chartsHost when it runs.
-  chartsHost.append(el("p", { class: "muted", style: "grid-column:1/-1" }, "Computing trends…"));
-  trendPromise
-    .then(paintTrends)
-    // eslint-disable-next-line no-console
-    .catch((e) => console.error("[history] trends failed:", e));
-
+  // ---- trend charts (filled when the trend reconstruction resolves; see loadTrends above).
+  // paintTrends clears chartsHost when it runs — the "Computing trends…" placeholder, or the
+  // previously drawn charts on a severity re-apply, are replaced with the fresh scoped pair.
   function paintTrends(trends) {
     clear(chartsHost);
     if (!trends.trend.length) {
@@ -268,20 +296,36 @@ export async function renderHistory(main, _params, ctx) {
       chartsHost.append(el("p", { class: "section-note", style: "grid-column:1/-1" },
         "Includes sample (dry-run) data — these trends aren't all from live scans."));
     }
+    // KM median trend — the same censoring-aware series the MTTR page plots (still-open
+    // findings right-censored, so a wave of fresh open findings can't bias it down), replacing
+    // the old naive closed-only median. Null where the median is unobservable under censoring;
+    // hollow vertices + a shaded band mark the reconstructed pre-first-scan prefix (see trendLine).
+    const kmMedianPoints = trends.trend
+      .map((t) => ({ x: t.date, y: t.km_median_days, reconstructed: t.reconstructed }))
+      .filter((p) => p.y !== null && p.y !== undefined);
+    // A trend needs at least two points; KM can be censored at every point on a young ledger,
+    // so show an honest note there rather than an empty axis.
+    const hasKm = kmMedianPoints.length > 1;
+
     const openResolvedCanvas = el("canvas", { id: "hist-open-resolved" });
     const mttrCanvas = el("canvas", { id: "hist-mttr" });
+    const mttrBody = hasKm
+      ? el("div", {},
+        el("div", { class: "chart-box" }, mttrCanvas),
+        el("p", { class: "chart-caption muted" },
+          "Kaplan–Meier median days to remediation, replayed as of each scan; " +
+          "still-open findings censored."))
+      : el("p", { class: "chart-empty muted" },
+        "Not enough remediation history to estimate a KM median trend yet.");
 
     chartsHost.append(
       el("div", { class: "chart-card" }, el("h3", {}, "Open vs resolved"),
         el("div", { class: "chart-box" }, openResolvedCanvas)),
-      el("div", { class: "chart-card" }, el("h3", {}, "MTTR trend"),
-        el("div", { class: "chart-box" }, mttrCanvas)),
+      el("div", { class: "chart-card" }, el("h3", {}, "MTTR trend (KM median)"), mttrBody),
     );
     requestAnimationFrame(() => {
       openResolvedLines(openResolvedCanvas, trends.trend);
-      trendLine(mttrCanvas,
-        trends.trend.filter((t) => t.median_days !== null)
-          .map((t) => ({ x: t.date, y: t.median_days })), { yLabel: "days" });
+      if (hasKm) trendLine(mttrCanvas, kmMedianPoints, { yLabel: "days" });
     });
   }
 }
