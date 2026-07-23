@@ -22,8 +22,67 @@ const PAGES = {
   settings: { title: "Settings", group: "Preferences", render: renderSettings },
 };
 
+// Inline nav icons (one per page) — the client has no icon system, so these are small
+// stroke SVGs drawn on currentColor, inlined (the GAS/CSP sandbox blocks icon fonts/CDNs).
+// 24-grid, rendered at 18px. Used both expanded (icon + label) and collapsed (icon only).
+const NAV_ICONS = {
+  graph: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5.5" cy="7" r="2.3"/><circle cx="18.5" cy="6" r="2.3"/><circle cx="12" cy="17.5" r="2.3"/><path d="M7.6 8.1l3 7.3"/><path d="M16.6 7.7l-3.3 8"/><path d="M7.7 7.2l8.6-0.7"/></svg>',
+  inventory: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 4-8 4-8-4z"/><path d="M4 11l8 4 8-4"/><path d="M4 15l8 4 8-4"/></svg>',
+  combos: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4.5l8 14H4z"/><path d="M12 10v4.2"/><path d="M12 16.8h.01"/></svg>',
+  scans: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-4.3-7.1"/><path d="M12 12l5.2-3.2"/><circle cx="12" cy="12" r="1"/></svg>',
+  data: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5.5" rx="7.3" ry="2.8"/><path d="M4.7 5.5v6c0 1.55 3.27 2.8 7.3 2.8s7.3-1.25 7.3-2.8v-6"/><path d="M4.7 11.5v6c0 1.55 3.27 2.8 7.3 2.8s7.3-1.25 7.3-2.8v-6"/></svg>',
+  settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7.5h8"/><path d="M16 7.5h4"/><circle cx="14" cy="7.5" r="2"/><path d="M4 16.5h4"/><path d="M12 16.5h8"/><circle cx="10" cy="16.5" r="2"/></svg>',
+};
+// Circular-arrows glyph for the primary "Sync now" button; shrinks to the icon alone when
+// the rail is collapsed (its .btn-label is hidden by the collapsed CSS).
+const SYNC_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11.5a8 8 0 0 0-13.7-5L4 8.5"/><path d="M4 4.5v4h4"/><path d="M4 12.5a8 8 0 0 0 13.7 5L20 15.5"/><path d="M20 19.5v-4h-4"/></svg>';
+const CHEVRON_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 6l-6 6 6 6"/></svg>';
+
+// A span carrying an inline SVG (el() builds HTML nodes, so SVG goes in via innerHTML).
+function iconSpan(svg, cls) {
+  const s = el("span", { class: cls || "nav-icon", "aria-hidden": "true" });
+  s.innerHTML = svg;
+  return s;
+}
+
+// Collapsed-rail preference — persisted like a user setting, with its own try/catch since a
+// GAS iframe sandbox can block web storage. Desktop-only: the <=800px top-bar layout ignores
+// the .collapsed class (see styles.css), so a stored flag is simply inert there.
+const SIDEBAR_COLLAPSED_KEY = "sidebarCollapsed";
+// Collapsed by default: an absent preference reads as collapsed, and only an explicit expand
+// (stored "0" by saveCollapsed) reopens it — so the rail stays out of the way until a user
+// deliberately widens it. A sandbox that blocks storage also lands on collapsed.
+function loadCollapsed() {
+  try { return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) !== "0"; } catch { return true; }
+}
+function saveCollapsed(v) {
+  try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, v ? "1" : "0"); } catch { /* sandboxed */ }
+}
+// Reflect the flag onto the (rebuilt-on-refresh) rail DOM. Width rides the shared --rail-w
+// custom property so the flex main pane and the route overlay's left edge track it for free.
+// Collapsed nav links get a native title = their label (the visible text is hidden).
+function applyCollapsed(collapsed) {
+  const sidebar = document.querySelector(".sidebar");
+  if (!sidebar) return;
+  sidebar.classList.toggle("collapsed", collapsed);
+  if (collapsed) document.documentElement.style.setProperty("--rail-w", "56px");
+  else document.documentElement.style.removeProperty("--rail-w");
+  const toggle = sidebar.querySelector(".rail-toggle");
+  if (toggle) {
+    toggle.setAttribute("aria-expanded", String(!collapsed));
+    toggle.setAttribute("aria-label", collapsed ? "Expand sidebar" : "Collapse sidebar");
+    toggle.setAttribute("title", collapsed ? "Expand sidebar" : "Collapse sidebar");
+  }
+  sidebar.querySelectorAll(".nav-link").forEach((a) => {
+    const label = a.querySelector(".nav-label");
+    if (collapsed && label) a.setAttribute("title", label.textContent);
+    else a.removeAttribute("title");
+  });
+}
+
 const app = document.getElementById("app");
 let mainEl = null;
+let sidebarCollapsed = loadCollapsed();
 
 // Route-reload overlay: veils the content pane (not the sidebar) with a progress bar
 // while the active page refetches. Shown only if the load outlasts a short delay, so
@@ -139,10 +198,20 @@ async function boot() {
 
 function renderSidebar(sidebar, data) {
   clear(sidebar);
+  const railToggle = el("button", {
+    class: "rail-toggle", type: "button",
+    onclick: () => {
+      sidebarCollapsed = !sidebarCollapsed;
+      saveCollapsed(sidebarCollapsed);
+      applyCollapsed(sidebarCollapsed);
+    },
+  });
+  railToggle.innerHTML = CHEVRON_ICON;
   sidebar.append(
     el("div", { class: "wordmark" },
       el("span", { class: "wordmark-dot", "aria-hidden": "true" }),
-      "Wiz SIDEKICK AI"),
+      el("span", { class: "wordmark-label" }, "Wiz SIDEKICK AI"),
+      railToggle),
   );
   const { route: active } = parseHash();
   let lastGroup = null;
@@ -162,14 +231,16 @@ function renderSidebar(sidebar, data) {
           target: "_self",
           "aria-current": key === active ? "page" : null,
         },
-        page.title,
+        iconSpan(NAV_ICONS[key]),
+        el("span", { class: "nav-label" }, page.title),
       ),
     );
   }
 
   // Sync zone
   const zone = el("div", { class: "scan-zone" });
-  const runBtn = el("button", { class: "primary", onclick: () => startSync(runBtn) }, "Sync now");
+  const runBtn = el("button", { class: "primary", onclick: () => startSync(runBtn) },
+    iconSpan(SYNC_ICON), el("span", { class: "btn-label" }, "Sync now"));
   syncButtonsRow = el("div", { class: "scan-buttons" }, runBtn);
   syncCardHost = el("div", {});
   zone.append(syncCardHost, syncButtonsRow);
@@ -180,6 +251,13 @@ function renderSidebar(sidebar, data) {
           ? statusPill("ok", "Credentials loaded")
           : statusPill("neutral", "Dry-run (no credentials)"),
       ),
+      // Compact stand-in for the pill above, shown only while the rail is collapsed (the
+      // captions are hidden then) so the credentials/dry-run state stays glanceable.
+      el("span", {
+        class: `rail-status-dot ${data.hasCredentials ? "ok" : "neutral"}`,
+        "aria-hidden": "true",
+        title: data.hasCredentials ? "Credentials loaded" : "Dry-run (no credentials)",
+      }),
     );
     if (data.latestSync) {
       const ts = data.latestSync.finished_at;
@@ -198,6 +276,9 @@ function renderSidebar(sidebar, data) {
     }
   }
   sidebar.append(zone);
+  // Re-apply the persisted collapsed state — the rail is rebuilt wholesale on every
+  // refresh(), so the class + width + per-link titles must be re-stamped each time.
+  applyCollapsed(sidebarCollapsed);
 }
 
 async function startSync(btn) {
