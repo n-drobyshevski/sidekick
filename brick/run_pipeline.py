@@ -80,6 +80,18 @@ class Tables:
     capacity: str
 
 
+@dataclass(frozen=True)
+class RunResult:
+    """What a run produced. Returned by ``main()`` so a notebook has a handle on the tables it
+    just wrote -- charting is then a follow-on rather than a second round of guessing at
+    names."""
+
+    tables: Tables
+    scan_id: str
+    scan_ts: str
+    scope: str
+
+
 def param(name: str, default: str = "", argv: Optional[list] = None) -> str:
     """A job parameter: ``--name=value``, then a widget, then ``$NAME``, then the default."""
     prefix = f"--{name}="
@@ -174,13 +186,40 @@ def build_metrics(
     )
     capacity.write.mode("append").saveAsTable(tables.capacity)
 
+    summarize(scan_id, scope, rule, mttr, program, capacity)
+    silver.unpersist()
+
+
+def summarize(scan_id, scope, rule, mttr, program, capacity) -> None:
+    """Print all three metric families.
+
+    Previously only the program frame was shown, so MTTR and capacity were computed, written
+    and then never mentioned -- from the notebook it looked like the pipeline did not do MTTR
+    at all. If a number is worth a table, it is worth a line of output.
+    """
     print(f"[{scan_id}] scope: {scope} | risk rule: {rule.sentence()}")
+
+    # km_median leads. mttr_median is the closed-only figure kept beside it: the gap between
+    # the two is the survivorship bias, and seeing them together is the argument for KM.
+    print("\nMTTR and SLA by severity (km_median counts still-open findings as censored)")
+    metrics.order_by_severity(
+        mttr.select(
+            "severity", "resolved", "open", "km_median", "km_median_lower_bound", "km_rmst",
+            "mttr_median", "sla_target", "sla_pct",
+        )
+    ).show(truncate=False)
+
+    print("Remediation coverage and efficiency")
     metrics.order_by_severity(
         program.select(
             "severity", "coverage_pct", "efficiency_pct", "prevalence_pct", "signal_coverage_pct"
         )
     ).show(truncate=False)
-    silver.unpersist()
+
+    print("Capacity — most recent months")
+    capacity.select(
+        "month", "open_at_start", "opened", "closed", "mmcr", "verdict", "partial"
+    ).orderBy(F.col("month").desc()).show(6, truncate=False)
 
 
 def resolve_namespace(argv: Optional[list] = None) -> str:
@@ -254,7 +293,8 @@ def ensure_schema(spark: SparkSession, namespace: str) -> None:
         ) from exc
 
 
-def main(scan_id: Optional[str] = None) -> None:
+def main(scan_id: Optional[str] = None) -> Optional[RunResult]:
+    """Run the pipeline. Returns what it wrote, or ``None`` when Wiz returned nothing."""
     # Resolve parameters before touching Spark: a missing one should fail in milliseconds,
     # not after a cluster has warmed up and an API fetch has run.
     namespace = resolve_namespace()
@@ -269,9 +309,10 @@ def main(scan_id: Optional[str] = None) -> None:
 
     count = ingest_to_bronze(spark, tables.bronze, scan_id, scan_ts, scope)
     if not count:
-        return
+        return None
     print(f"[{scan_id}] ingested {count} {scope} findings at {scan_ts}")
     build_metrics(spark, tables, scan_id, scan_ts, scope)
+    return RunResult(tables=tables, scan_id=scan_id, scan_ts=scan_ts, scope=scope)
 
 
 if __name__ == "__main__":
