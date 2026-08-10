@@ -13,6 +13,21 @@ Change one of those and change this too.
 
 from dataclasses import dataclass
 
+# ---- Deployment version ----
+# The runtime modules are pasted into a flat Workspace folder by hand, one file at a time, and
+# they move in lockstep: v2's silver frame gained columns that only v2's writers know to merge,
+# the ledger is a module that did not exist in v1, and the reconciler reads constants defined
+# below. A folder holding some v1 files and some v2 files therefore imports cleanly and then
+# fails much later with something unrelated-looking -- the first real v2 run died on
+# "A schema mismatch detected when writing to the Delta table" after ingesting 137,870
+# findings, because v2's metrics.py was writing v2 silver through v1's run_pipeline.py.
+#
+# Every runtime module carries MODULE_VERSION, and run_pipeline.check_deployment() compares
+# them before the run touches Spark. Bump this whenever the modules stop being
+# mix-and-matchable with the previous release -- which is nearly always.
+PIPELINE_VERSION = "2.0"
+MODULE_VERSION = PIPELINE_VERSION
+
 # ---- Severity taxonomy ----
 SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"]
 

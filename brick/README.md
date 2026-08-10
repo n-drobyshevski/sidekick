@@ -233,7 +233,7 @@ it; the job then never needs catalog-level rights.
 
 ### 2. Get the code onto the workspace
 
-Only the five `.py` modules are needed at runtime — skip `tests/`, `README.md` and
+**Six** `.py` modules are needed at runtime — skip `tests/`, `README.md` and
 `requirements.txt`, and note `requests` is already on the runtime. Put them all in **one flat
 folder**, created as **Files**, not Notebooks (a notebook is not importable as a module, and
 this is the most common way the setup goes wrong):
@@ -243,19 +243,50 @@ this is the most common way the setup goes wrong):
 ├── config.py
 ├── dbx.py
 ├── ingest.py
+├── ledger.py        ← added in v2; a folder set up for v1 will not have it
 ├── metrics.py
 └── run_pipeline.py
 ```
 
+> **Replace all six together.** The modules move in lockstep — v2's `metrics.py` writes a silver
+> frame that only v2's `run_pipeline.py` knows how to merge — so a half-updated folder imports
+> cleanly and then fails much later at something that looks unrelated. The first real v2 run hit
+> exactly this: 137,870 findings ingested, then *"A schema mismatch detected when writing to the
+> Delta table"*, which names neither the stale file nor the fix. Every module now carries a
+> `MODULE_VERSION` and `run_pipeline` refuses to start when they disagree, but re-pasting the
+> whole set is what avoids the problem rather than merely diagnosing it.
+
 Three ways to get them there, all ending in the same place:
 
+- **UI** — create the folder, then Create → File once per module and paste, all six. Then run
+  the verification cell below; with six hand-pasted files it is the step that catches a miss.
 - **Git folder** — Workspace → Create → Git folder against this repo. Then the path above is
-  `/Workspace/Users/<you>/sidekick/brick`. The only option that tells you when your copy is
-  stale.
-- **CLI** — `databricks workspace import-dir ./brick /Workspace/Users/<you>/wiz-metrics`
-  (add `--overwrite` to refresh). Copies `tests/` too, harmlessly.
-- **UI** — create the folder, then Create → File once per module and paste. Or zip the five
-  files and use Import on the folder.
+  `/Workspace/Users/<you>/sidekick/brick`. The only option that updates every file at once and
+  tells you when your copy is stale.
+- **CLI** — `databricks workspace import-dir ./brick /Workspace/Users/<you>/wiz-metrics
+  --overwrite`. **`--overwrite` is not optional when refreshing:** without it existing files are
+  skipped and only the new `ledger.py` lands, which is the mixed folder described above.
+  Copies `tests/` too, harmlessly.
+
+### Check the upload landed
+
+Cheap, and it catches both a missed file and the `sys.path` shadowing described under
+[Layout](#layout) — the printed path tells you which `config.py` actually won:
+
+```python
+import config, dbx, ingest, ledger, metrics, run_pipeline
+for m in (config, dbx, ingest, ledger, metrics, run_pipeline):
+    print(f"{m.__name__:14} {getattr(m, 'MODULE_VERSION', 'PRE-2.0 — STALE'):16} {m.__file__}")
+```
+
+All six must report the same version, from the folder you just pasted into. Anything else and
+the run will refuse to start.
+
+Run this cell rather than relying on the built-in guard alone. `run_pipeline` can only check the
+modules it imports, so it catches a stale `config.py` or `metrics.py` — but if `run_pipeline.py`
+is itself the stale file, there is no v2 code running to do the checking, and you get the v1
+behaviour with none of the diagnostics. That is precisely what happened on the first v2 run. The
+cell reads the versions directly and has no such blind spot.
 
 ### 3a. From a notebook
 
@@ -274,8 +305,19 @@ from run_pipeline import main
 main()
 ```
 
-Editing a module and re-running the cell changes nothing — Python caches imports. Run
-`dbutils.library.restartPython()` after every edit.
+**After editing or re-pasting any module, restart Python — do not reload.**
+
+```python
+dbutils.library.restartPython()
+```
+
+Re-running the import cell changes nothing on its own, because Python caches imports. The
+tempting fix is `importlib.reload` over the modules you think you changed, and it is worse than
+doing nothing: it re-executes a module while every other module still holds references into the
+old one, so `config`'s constants exist twice and a reload of `config` mid-import surfaces as
+`ImportError: cannot import name 'SEVERITY_COLORS' from partially initialized module 'config'`.
+It is also easy to leave a module out of the list — `ledger` is the one usually forgotten — which
+recreates the mixed-version folder by another route. `restartPython()` has neither failure mode.
 
 `<region>` is the one in your Wiz tenant URL (`us1`, `eu2`, …). Get it wrong and auth succeeds
 but the GraphQL POST 404s.
