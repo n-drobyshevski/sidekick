@@ -8,6 +8,7 @@ does nothing useful.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -25,7 +26,7 @@ sys.path.insert(0, str(BRICK_DIR))
 import dbx  # noqa: E402
 import run_pipeline  # noqa: E402
 from config import SCOPES  # noqa: E402
-from ingest import build_filter  # noqa: E402
+from ingest import build_filter, describe_errors  # noqa: E402
 
 
 def test_param_prefers_command_line(monkeypatch):
@@ -293,3 +294,30 @@ def test_build_filter_does_not_mutate_the_scope_template():
 def test_unknown_scope_is_rejected():
     with pytest.raises(RuntimeError, match="unknown scope"):
         build_filter("nope")
+
+
+# ------------------------------------------------------------------ error legibility
+
+
+def test_graphql_errors_are_surfaced_by_message():
+    """A 400 body names the offending field or filter key. raise_for_status() would report
+    the status and throw that away, leaving nothing to debug from."""
+    body = json.dumps(
+        {
+            "errors": [
+                {
+                    "message": 'Cannot query field "epssProbabilty" on type '
+                    '"VulnerabilityFinding".',
+                    "extensions": {"code": "GRAPHQL_VALIDATION_FAILED"},
+                }
+            ]
+        }
+    )
+    got = describe_errors(body)
+    assert "epssProbabilty" in got
+    assert "GRAPHQL_VALIDATION_FAILED" in got
+
+
+def test_unparseable_error_body_still_says_something():
+    assert "upstream timeout" in describe_errors("<html>upstream timeout</html>")
+    assert describe_errors("") == "(empty response body)"
