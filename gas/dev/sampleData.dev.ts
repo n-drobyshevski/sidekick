@@ -41,6 +41,14 @@ interface CveSpec {
   severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
   score: number;
   path: string;
+  // Exploit intelligence is a property of the VULNERABILITY, not of the host it was found
+  // on, so it is seeded once per CVE here rather than per generated node. Rolling it
+  // per-node made the same CVE exploit-available on one asset and not another, which is
+  // incoherent on its face and makes the Program-performance rule-sensitivity view read as
+  // noise (every combination of signals scores about the same).
+  hasExploit: boolean;
+  hasKev: boolean;
+  epss: number;
 }
 
 const PKGS: Array<[string, string, string, string]> = [
@@ -77,12 +85,21 @@ const CVES: CveSpec[] = Array.from({ length: 56 }, (_, i) => {
   const [pkg, version, fixed, path] = PKGS[i % PKGS.length];
   const severity = SEV_WHEEL[Math.floor(rnd() * SEV_WHEEL.length)];
   const [lo, hi] = SEV_SCORE[severity];
+  const hasExploit = severity === "CRITICAL" ? rnd() < 0.6 : rnd() < 0.12;
   return {
     cve: `CVE-${2024 + (i % 3)}-${10000 + ((i * 977) % 80000)}`,
     pkg, version, fixed, path, severity,
     score: Math.round((lo + rnd() * (hi - lo)) * 10) / 10,
+    hasExploit,
+    hasKev: hasExploit && rnd() < 0.4,
+    epss: Math.round(rnd() * (hasExploit ? 0.9 : 0.2) * 1000) / 1000,
   };
 });
+
+/** Whether a CVE trips the default high-risk rule (KEV or exploit or EPSS >= 0.10). */
+function isHighRisk(spec: CveSpec): boolean {
+  return spec.hasKev || spec.hasExploit || spec.epss >= 0.1;
+}
 
 // -------------------------------------------------------------------- asset pool
 interface AssetSpec {
@@ -135,7 +152,11 @@ function makeNode(spec: CveSpec, asset: AssetSpec, idx: number): Rec {
   const firstMs = awaiting
     ? NOW - rnd() * 9 * DAY
     : NOW - (1 + rnd() * 119) * DAY; // detected 1–120 days ago (spans all age buckets)
-  const resolved = !awaiting && rnd() < 0.32;
+  // Resolution probability tracks risk, so the seeded program looks like one that
+  // prioritizes rather than one picking at random. With it independent of risk, efficiency
+  // lands exactly on prevalence and the Program-performance page renders the null
+  // hypothesis — technically valid, useless for designing against.
+  const resolved = !awaiting && rnd() < (isHighRisk(spec) ? 0.55 : 0.2);
   const resolvedMs = firstMs + (2 + rnd() * 40) * DAY;
 
   node["id"] = `vf_dev-${String(idx).padStart(4, "0")}`;
@@ -167,10 +188,10 @@ function makeNode(spec: CveSpec, asset: AssetSpec, idx: number): Rec {
   node["score"] = spec.score;
   node["cnaScore"] = spec.score;
   node["vendorScore"] = spec.score;
-  node["hasExploit"] = spec.severity === "CRITICAL" ? rnd() < 0.6 : rnd() < 0.12;
-  node["hasCisaKevExploit"] = node["hasExploit"] && rnd() < 0.4;
-  node["epssProbability"] = Math.round(rnd() * (node["hasExploit"] ? 0.9 : 0.2) * 1000) / 1000;
-  node["epssSeverity"] = node["epssProbability"] > 0.5 ? "CRITICAL" : node["epssProbability"] > 0.1 ? "MEDIUM" : "LOW";
+  node["hasExploit"] = spec.hasExploit;
+  node["hasCisaKevExploit"] = spec.hasKev;
+  node["epssProbability"] = spec.epss;
+  node["epssSeverity"] = spec.epss > 0.5 ? "CRITICAL" : spec.epss > 0.1 ? "MEDIUM" : "LOW";
   node["epssPercentile"] = Math.round(rnd() * 1000) / 1000;
   node["publishedDate"] = iso(firstMs - (10 + rnd() * 200) * DAY);
   node["firstDetectedAt"] = iso(firstMs);

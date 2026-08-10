@@ -42,6 +42,14 @@ export interface EpisodeRow {
   // Carried through compaction so a sealed episode keeps its actionable-clock inputs.
   fix_date: string | null;
   fix_observed_at: string | null;
+  // Likewise for the exploit-intelligence inputs behind coverage / efficiency. Not optional:
+  // compaction converts RESOLVED ledger rows into episodes, and resolved high-risk rows are
+  // exactly the coverage numerator — dropping the flag here would make compaction silently
+  // change the metric (and trip the stats-identity gate in maintenance.planCompaction).
+  has_kev: boolean | null;
+  has_exploit: boolean | null;
+  epss: number | null;
+  risk_observed_at: string | null;
 }
 
 export interface LedgerState {
@@ -341,6 +349,10 @@ export function baseRows(state: LedgerState, now?: number): BaseRow[] {
         tags_json: null,
         fix_date: e.fix_date,
         fix_observed_at: e.fix_observed_at,
+        has_kev: e.has_kev,
+        has_exploit: e.has_exploit,
+        epss: e.epss,
+        risk_observed_at: e.risk_observed_at,
       }),
     );
   }

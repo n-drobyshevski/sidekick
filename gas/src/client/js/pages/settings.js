@@ -218,6 +218,161 @@ export async function renderSettings(main, params, ctx) {
     }
   }
 
+  // ------------------------------------------------------- high-risk classifier
+  // The rule behind remediation coverage and efficiency. Editable here rather than baked in,
+  // because a metric whose classifier you cannot inspect or change is a metric you cannot
+  // audit — and the P2P research is explicit that no single exploit signal is sufficient.
+  const rr = (boot.settings.riskRule && boot.settings.riskRule.rule) || {};
+  const riskKev = switchToggle({
+    checked: rr.kev !== false, id: "risk-kev",
+    ariaLabel: "Count a CISA KEV listing as high risk",
+  });
+  const riskExploit = switchToggle({
+    checked: rr.exploit !== false, id: "risk-exploit",
+    ariaLabel: "Count a known public exploit as high risk",
+  });
+  const riskEpss = switchToggle({
+    checked: rr.epss !== false, id: "risk-epss",
+    ariaLabel: "Count an EPSS score above the threshold as high risk",
+  });
+  const riskThreshold = el("input", {
+    type: "number", id: "risk-epss-threshold", min: "0", max: "1", step: "0.01",
+    value: String(rr.epssThreshold ?? 0.1), style: "width:96px",
+  });
+  const saveRiskBtn = el("button", { class: "primary", onclick: saveRiskRule }, "Save risk rule");
+  main.append(settingsPanel({
+    title: "High-risk classifier",
+    description: "Which findings the Program performance page counts as high risk. A finding " +
+      "qualifies when ANY enabled signal fires — the research behind these metrics is clear " +
+      "that no single source catches everything (the CISA KEV catalog alone misses roughly " +
+      "four fifths of what is exploited in the wild). Changing this re-derives every figure " +
+      "on that page, history included; nothing is re-scanned.",
+    body: el("div", {},
+      settingRow({
+        label: "Listed in the CISA KEV catalog",
+        description: "Vulnerabilities CISA has confirmed as exploited in the wild.",
+        control: riskKev.node,
+        htmlFor: "risk-kev",
+      }),
+      settingRow({
+        label: "A public exploit exists",
+        description: "Wiz reports known exploit code for the vulnerability.",
+        control: riskExploit.node,
+        htmlFor: "risk-exploit",
+      }),
+      settingRow({
+        label: "EPSS at or above the threshold",
+        description: "The Exploit Prediction Scoring System estimate of exploitation " +
+          "likelihood in the next 30 days. 0.10 is the conventional operational cut.",
+        control: riskEpss.node,
+        htmlFor: "risk-epss",
+      }),
+      settingRow({
+        label: "EPSS threshold",
+        description: "Between 0 and 1. Raising it flags fewer findings as high risk.",
+        control: riskThreshold,
+        htmlFor: "risk-epss-threshold",
+      })),
+    footer: saveRiskBtn,
+  }));
+
+  async function saveRiskRule() {
+    if (!(await guardUnsavedDrafts())) return;
+    saveRiskBtn.disabled = true;
+    try {
+      await call("api_setRiskRule", {
+        rule: {
+          kev: riskKev.input.checked,
+          exploit: riskExploit.input.checked,
+          epss: riskEpss.input.checked,
+          epssThreshold: Number(riskThreshold.value),
+        },
+      });
+      // Honest state rather than a silent rescue: an all-disabled rule decides nothing, so
+      // every finding becomes unclassified. Say so instead of quietly restoring a default.
+      if (!riskKev.input.checked && !riskExploit.input.checked && !riskEpss.input.checked) {
+        toast("Risk rule saved with no signals enabled — every finding will read as unclassified.");
+      } else {
+        toast("Risk rule saved.");
+      }
+      ctx.refresh();
+    } catch (e) {
+      toast(`Save failed: ${e.message}`, "error");
+      saveRiskBtn.disabled = false;
+    }
+  }
+
+  // --------------------------------------------------- risk-signal backfill
+  // Exploit intelligence only started being written to the ledger with the Program
+  // performance feature, so lifecycles recorded before that read as unclassified. The scan
+  // archives in Drive still hold the records they came from, so most of it is recoverable.
+  const backfillStatusEl = el("span", { class: "muted small" });
+  const backfillBtn = el("button", { onclick: runBackfill }, "Recover exploit signals");
+  main.append(settingsPanel({
+    title: "Risk-signal backfill",
+    description: "Replays the saved scan archives to fill in the CISA KEV / exploit / EPSS " +
+      "signals for findings recorded before those were stored in the ledger. Safe to re-run: " +
+      "signals only ever accumulate, so a repeated or interrupted run converges on the same " +
+      "result. Scans already sealed by compaction had their archives pruned and cannot be " +
+      "recovered.",
+    body: el("div", { style: "display:flex; align-items:center; gap:10px; flex-wrap:wrap" },
+      backfillBtn, backfillStatusEl),
+  }));
+  loadBackfillStatus();
+
+  async function loadBackfillStatus() {
+    try {
+      const res = await call("api_getRiskBackfillStatus", {});
+      renderBackfillStatus(res.backfill);
+    } catch {
+      // A missing status is not worth an error surface — the button still works.
+    }
+  }
+
+  function renderBackfillStatus(b) {
+    if (!b) {
+      backfillStatusEl.textContent = "Never run.";
+      return;
+    }
+    const r = b.result || {};
+    if (b.phase === "BACKFILLING") {
+      backfillStatusEl.textContent =
+        `Running — ${b.scansDone} of ${b.scansTotal} scan(s) replayed.`;
+      backfillBtn.disabled = true;
+      // The job hops on a one-shot trigger, so poll rather than assume it finished.
+      setTimeout(loadBackfillStatus, 4000);
+      return;
+    }
+    backfillBtn.disabled = false;
+    if (b.phase === "FAILED") {
+      backfillStatusEl.textContent = `Last run failed: ${b.error || "unknown error"}`;
+      return;
+    }
+    const parts = [
+      `${r.scansReplayed || 0} scan(s) replayed`,
+      `${(r.ledgerRowsTouched || 0) + (r.episodeRowsTouched || 0)} lifecycle(s) filled`,
+    ];
+    if (r.scansSealed) parts.push(`${r.scansSealed} sealed (archives pruned)`);
+    if (r.scansUnreadable) parts.push(`${r.scansUnreadable} unreadable`);
+    parts.push(`${r.stillUnknown || 0} still unclassified`);
+    backfillStatusEl.textContent = parts.join(" · ") + ".";
+  }
+
+  async function runBackfill() {
+    if (!(await guardUnsavedDrafts())) return;
+    backfillBtn.disabled = true;
+    backfillStatusEl.textContent = "Starting…";
+    try {
+      const res = await call("api_startRiskBackfill", {});
+      renderBackfillStatus(res);
+      toast("Risk-signal backfill started.");
+    } catch (e) {
+      backfillBtn.disabled = false;
+      backfillStatusEl.textContent = "";
+      toast(`Backfill failed to start: ${e.message}`, "error");
+    }
+  }
+
   // -------------------------------------------------------------- support groups
   const sgStatus = el("span", { class: "muted small" });
   const refreshSgBtn = el("button", {

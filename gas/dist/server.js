@@ -22,6 +22,7 @@ var Server = (() => {
   var server_exports = {};
   __export(server_exports, {
     api: () => api_exports,
+    backfill: () => backfillJobs_exports,
     doGet: () => doGet,
     include: () => include,
     jobs: () => scanJobs_exports,
@@ -367,7 +368,11 @@ var Server = (() => {
       "subscription_ext_id",
       "tags_json",
       "fix_date",
-      "fix_observed_at"
+      "fix_observed_at",
+      "has_kev",
+      "has_exploit",
+      "epss",
+      "risk_observed_at"
     ],
     [TABS.episodes]: [
       "vuln_key",
@@ -380,7 +385,11 @@ var Server = (() => {
       "compaction_id",
       "superseded_by_scan",
       "fix_date",
-      "fix_observed_at"
+      "fix_observed_at",
+      "has_kev",
+      "has_exploit",
+      "epss",
+      "risk_observed_at"
     ],
     [TABS.compactions]: [
       "compaction_id",
@@ -449,22 +458,29 @@ var Server = (() => {
         sh.getRange(1, 1, 1, headers.length).setValues([headers]);
         sh.setFrozenRows(1);
       } else {
-        const width = Math.max(sh.getLastColumn(), 1);
-        const existing = sh.getRange(1, 1, 1, width).getValues()[0].map(String).filter((h) => h !== "");
-        const missing = headers.filter((h) => !existing.includes(h));
-        if (missing.length) {
-          sh.getRange(1, existing.length + 1, 1, missing.length).setValues([missing]);
-        }
+        ensureHeaders(sh, headers);
       }
     }
     const dflt = ss.getSheetByName("Sheet1");
     if (dflt && ss.getSheets().length > 1) ss.deleteSheet(dflt);
   }
+  function ensureHeaders(sh, headers) {
+    const width = Math.max(sh.getLastColumn(), 1);
+    const existing = sh.getRange(1, 1, 1, width).getValues()[0].map(String).filter((h) => h !== "");
+    const missing = headers.filter((h) => !existing.includes(h));
+    if (missing.length) {
+      sh.getRange(1, existing.length + 1, 1, missing.length).setValues([missing]);
+    }
+  }
   function ensureTab(tab) {
     const ss = ledgerSpreadsheet();
-    if (ss.getSheetByName(tab)) return;
     const headers = TAB_HEADERS[tab];
     if (!headers) throw new Error(`No headers defined for tab ${tab}.`);
+    const found = ss.getSheetByName(tab);
+    if (found) {
+      ensureHeaders(found, headers);
+      return;
+    }
     const sh = ss.insertSheet(tab);
     sh.getRange(1, 1, sh.getMaxRows(), sh.getMaxColumns()).setNumberFormat("@");
     sh.getRange(1, 1, 1, headers.length).setValues([headers]);
@@ -680,6 +696,551 @@ var Server = (() => {
     return counts;
   }
 
+  // src/domain/insights.ts
+  var EPSS_PRIORITY_THRESHOLD = 0.1;
+  var AGE_BUCKET_EDGES = [7, 30, 90];
+  var WIDE_KEY = "vulnerableAsset.hasWideInternetExposure";
+  var LIMITED_KEY = "vulnerableAsset.hasLimitedInternetExposure";
+  function isOpen(status) {
+    return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
+  }
+  function sev(r) {
+    const s = r["_sev"];
+    return typeof s === "string" && s ? s : normalizeSeverity(r["severity"]);
+  }
+  function epssOf(r) {
+    const v = r["epssProbability"];
+    const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
+    return Number.isFinite(n) ? n : null;
+  }
+  function severityStats(records) {
+    var _a;
+    const out = {};
+    for (const r of records) {
+      const s = sev(r);
+      const stat = (_a = out[s]) != null ? _a : out[s] = { total: 0, open: 0, resolved: 0 };
+      stat.total += 1;
+      if (isOpen(r["status"])) stat.open += 1;
+      else stat.resolved += 1;
+    }
+    return out;
+  }
+  function exploitSummary(records) {
+    const out = {
+      open: 0,
+      kev: 0,
+      exploit: 0,
+      highEpss: 0,
+      internetExposed: 0,
+      exposureKnown: records.some((r) => WIDE_KEY in r && r[WIDE_KEY] !== void 0)
+    };
+    for (const r of records) {
+      if (!isOpen(r["status"])) continue;
+      out.open += 1;
+      if (r["hasCisaKevExploit"] === true) out.kev += 1;
+      if (r["hasExploit"] === true) out.exploit += 1;
+      const epss = epssOf(r);
+      if (epss !== null && epss >= EPSS_PRIORITY_THRESHOLD) out.highEpss += 1;
+      if (r[WIDE_KEY] === true || r[LIMITED_KEY] === true) out.internetExposed += 1;
+    }
+    return out;
+  }
+  function ageBuckets(rows) {
+    const perSev = {};
+    let totalOpen = 0;
+    for (const row of rows) {
+      if (!isOpen(row.status)) continue;
+      const age = row.age_days;
+      if (typeof age !== "number" || !Number.isFinite(age)) continue;
+      const bucket = age <= AGE_BUCKET_EDGES[0] ? 0 : age <= AGE_BUCKET_EDGES[1] ? 1 : age <= AGE_BUCKET_EDGES[2] ? 2 : 3;
+      const s = normalizeSeverity(row.severity);
+      if (!perSev[s]) perSev[s] = [0, 0, 0, 0];
+      perSev[s][bucket] += 1;
+      totalOpen += 1;
+    }
+    return { perSev, totalOpen };
+  }
+  var AGED_OPEN_EDGE = AGE_BUCKET_EDGES[2];
+  function openAge(row) {
+    if (!isOpen(row.status)) return null;
+    const age = row.age_days;
+    return typeof age === "number" && Number.isFinite(age) ? age : null;
+  }
+  function rankGroups(rows, keyFn, topN, meta) {
+    const groups = /* @__PURE__ */ new Map();
+    for (const row of rows) {
+      const age = openAge(row);
+      if (age === null) continue;
+      const raw = keyFn(row);
+      const key = raw && raw.trim() !== "" ? raw : "(none)";
+      let g = groups.get(key);
+      if (!g) groups.set(key, g = { key, agedCount: 0, openCount: 0, oldestDays: 0, ...meta ? meta(row) : {} });
+      g.openCount += 1;
+      if (age > AGED_OPEN_EDGE) g.agedCount += 1;
+      if (age > g.oldestDays) g.oldestDays = age;
+    }
+    return [...groups.values()].sort((a, b) => b.agedCount - a.agedCount || b.oldestDays - a.oldestDays || a.key.localeCompare(b.key)).slice(0, topN);
+  }
+  function oldestOpen(rows, topN = 7) {
+    const findings = rows.map((r) => ({ r, age: openAge(r) })).filter((x) => x.age !== null).sort((a, b) => b.age - a.age).slice(0, topN).map(({ r, age }) => ({
+      cve: r.cve,
+      asset: r.asset_name,
+      subscription: r.subscription_name,
+      severity: normalizeSeverity(r.severity),
+      ageDays: age
+    }));
+    return {
+      findings,
+      byAsset: rankGroups(rows, (r) => {
+        var _a;
+        return String((_a = r.asset_name) != null ? _a : "");
+      }, topN, (r) => {
+        var _a, _b;
+        return {
+          subscription: String((_a = r.subscription_name) != null ? _a : ""),
+          domain: String((_b = r._domain) != null ? _b : "")
+        };
+      }),
+      bySupportGroup: rankGroups(rows, (r) => {
+        var _a;
+        return String((_a = r._supportGroup) != null ? _a : "");
+      }, topN),
+      byDomain: rankGroups(rows, (r) => {
+        var _a;
+        return String((_a = r._domain) != null ? _a : "");
+      }, topN)
+    };
+  }
+  function movement(baseRows2, latestFlatScan, scanCount) {
+    if (!latestFlatScan) {
+      return { newCount: 0, resolvedCount: 0, reopenedCount: 0, persisting: 0, hasPrevious: scanCount > 1 };
+    }
+    let persisting = 0;
+    for (const row of baseRows2) {
+      if (!isOpen(row.status)) continue;
+      if (row.last_scan_id === latestFlatScan.scan_id && row.first_scan_id !== latestFlatScan.scan_id) {
+        persisting += 1;
+      }
+    }
+    return {
+      newCount: latestFlatScan.new_count,
+      resolvedCount: latestFlatScan.resolved_count,
+      reopenedCount: latestFlatScan.reopened_count,
+      persisting,
+      hasPrevious: scanCount > 1
+    };
+  }
+  var GROUP_COLUMNS = {
+    domain: "_domain",
+    supportGroup: "_supportGroup",
+    asset: "vulnerableAsset.name",
+    atype: "vulnerableAsset.type",
+    cloud: "vulnerableAsset.cloudPlatform",
+    os: "vulnerableAsset.operatingSystem",
+    subscription: "vulnerableAsset.subscriptionName",
+    cve: "name"
+  };
+  var GROUP_BASE_FIELDS = {
+    domain: "_domain",
+    supportGroup: "_supportGroup",
+    asset: "asset_name",
+    atype: "asset_type",
+    cloud: "cloud",
+    subscription: "subscription_name",
+    cve: "cve"
+  };
+  function groupTree(records, keys, perLevelCap = 20) {
+    if (!keys.length || !records.length) return [];
+    const [key, ...rest] = keys;
+    const column = GROUP_COLUMNS[key];
+    if (!column) return [];
+    const buckets = /* @__PURE__ */ new Map();
+    for (const r of records) {
+      const raw = r[column];
+      const k = raw === null || raw === void 0 || String(raw).trim() === "" ? "(none)" : String(raw);
+      let arr = buckets.get(k);
+      if (!arr) buckets.set(k, arr = []);
+      arr.push(r);
+    }
+    const rows = [...buckets.entries()].map(([k, recs]) => {
+      var _a, _b;
+      const assets = /* @__PURE__ */ new Set();
+      const sevCounts = {};
+      let open = 0;
+      let kev = false;
+      let exploit = false;
+      for (const r of recs) {
+        if (isOpen(r["status"])) open += 1;
+        const s = sev(r);
+        sevCounts[s] = ((_a = sevCounts[s]) != null ? _a : 0) + 1;
+        const a = String((_b = r["vulnerableAsset.name"]) != null ? _b : "");
+        if (a) assets.add(a);
+        if (r["hasCisaKevExploit"] === true) kev = true;
+        if (r["hasExploit"] === true) exploit = true;
+      }
+      const node = {
+        key: k,
+        dim: key,
+        total: recs.length,
+        open,
+        assets: assets.size,
+        sevCounts,
+        kev,
+        exploit,
+        children: []
+      };
+      return { recs, node };
+    });
+    rows.sort((a, b) => b.node.total - a.node.total || a.node.key.localeCompare(b.node.key));
+    const kept = rows.slice(0, perLevelCap);
+    if (rest.length) {
+      for (const row of kept) row.node.children = groupTree(row.recs, rest, perLevelCap);
+    }
+    return kept.map((row) => row.node);
+  }
+
+  // src/domain/util.ts
+  function present(v) {
+    if (v === null || v === void 0) return false;
+    if (typeof v === "number" && Number.isNaN(v)) return false;
+    if (typeof v === "string" && v.trim() === "") return false;
+    return true;
+  }
+  function clean(v) {
+    return present(v) ? v : null;
+  }
+  function pyStr(v) {
+    if (v === true) return "True";
+    if (v === false) return "False";
+    return String(v);
+  }
+  function parseTs(v) {
+    const c = clean(v);
+    if (c === null) return null;
+    if (c instanceof Date) return isNaN(c.getTime()) ? null : c.getTime();
+    if (typeof c === "number" && Number.isFinite(c)) return c;
+    let s = String(c).trim();
+    if (!s) return null;
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(s)) s = s.replace(" ", "T");
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(s)) s += "Z";
+    const t = Date.parse(s);
+    return Number.isNaN(t) ? null : t;
+  }
+  function toIso(ms) {
+    if (ms === null || !Number.isFinite(ms)) return null;
+    return new Date(Math.floor(ms / 1e3) * 1e3).toISOString().replace(".000Z", "Z");
+  }
+  function minIso(...values) {
+    const parsed = values.map(parseTs).filter((t) => t !== null);
+    return parsed.length ? toIso(minNum(parsed)) : null;
+  }
+  function midpointIso(a, b) {
+    var _a;
+    const da = parseTs(a);
+    const db = parseTs(b);
+    if (da === null || db === null) return (_a = toIso(db)) != null ? _a : toIso(da);
+    return toIso(da + (db - da) / 2);
+  }
+  function nowIso(now) {
+    return toIso(now != null ? now : Date.now());
+  }
+  function mean(values) {
+    if (!values.length) return null;
+    return values.reduce((a, b) => a + b, 0) / values.length;
+  }
+  function maxNum(values) {
+    return values.reduce((m, v) => Math.max(m, v), -Infinity);
+  }
+  function minNum(values) {
+    return values.reduce((m, v) => Math.min(m, v), Infinity);
+  }
+  function pushAll(target, items) {
+    for (const item of items) target.push(item);
+  }
+  function quantile(values, q) {
+    if (!values.length) return null;
+    const sorted = [...values].sort((a, b) => a - b);
+    const idx = q * (sorted.length - 1);
+    const lo = Math.floor(idx);
+    const hi = Math.ceil(idx);
+    if (lo === hi) return sorted[lo];
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+  }
+  function median(values) {
+    return quantile(values, 0.5);
+  }
+
+  // src/domain/program.ts
+  var DAY_MS = 864e5;
+  function isOpen2(status) {
+    return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
+  }
+  var DEFAULT_RISK_RULE = {
+    kev: true,
+    exploit: true,
+    epss: true,
+    epssThreshold: EPSS_PRIORITY_THRESHOLD
+  };
+  function ruleIsEmpty(rule) {
+    return !rule.kev && !rule.exploit && !rule.epss;
+  }
+  function ruleSentence(rule) {
+    const parts = [];
+    if (rule.kev) parts.push("CISA KEV");
+    if (rule.exploit) parts.push("public exploit");
+    if (rule.epss) parts.push("EPSS >= " + rule.epssThreshold.toFixed(2));
+    return parts.length ? parts.join(" or ") : "no signal enabled";
+  }
+  function seen(row, rule) {
+    return {
+      kev: !rule.kev || row.has_kev != null,
+      exploit: !rule.exploit || row.has_exploit != null,
+      epss: !rule.epss || typeof row.epss === "number" && Number.isFinite(row.epss)
+    };
+  }
+  function firedSignals(row, rule) {
+    const out = [];
+    if (rule.kev && row.has_kev === true) out.push("kev");
+    if (rule.exploit && row.has_exploit === true) out.push("exploit");
+    if (rule.epss && typeof row.epss === "number" && Number.isFinite(row.epss) && row.epss >= rule.epssThreshold) {
+      out.push("epss");
+    }
+    return out;
+  }
+  function classifyRisk(row, rule) {
+    if (ruleIsEmpty(rule)) return "unknown";
+    if (firedSignals(row, rule).length) return "high";
+    const s = seen(row, rule);
+    if (!s.kev || !s.exploit || !s.epss) return "unknown";
+    return "low";
+  }
+  var NO_RATE = { point: null, lo: null, hi: null };
+  function pct(num, den) {
+    return den > 0 ? num / den * 100 : null;
+  }
+  function emptyMatrix() {
+    return {
+      tp: 0,
+      fp: 0,
+      fn: 0,
+      tn: 0,
+      unknownRemediated: 0,
+      unknownOpen: 0,
+      classified: 0,
+      unknown: 0,
+      total: 0,
+      remediated: 0,
+      open: 0,
+      highRisk: 0,
+      notHighRisk: 0,
+      coverage: NO_RATE,
+      efficiency: NO_RATE,
+      prevalence: null,
+      signalCoveragePct: null
+    };
+  }
+  function finalize(m) {
+    m.classified = m.tp + m.fp + m.fn + m.tn;
+    m.unknown = m.unknownRemediated + m.unknownOpen;
+    m.total = m.classified + m.unknown;
+    m.remediated = m.tp + m.fp + m.unknownRemediated;
+    m.open = m.fn + m.tn + m.unknownOpen;
+    m.highRisk = m.tp + m.fn;
+    m.notHighRisk = m.fp + m.tn;
+    m.coverage = {
+      point: pct(m.tp, m.tp + m.fn),
+      lo: pct(m.tp, m.tp + m.fn + m.unknownOpen),
+      hi: pct(m.tp + m.unknownRemediated, m.tp + m.unknownRemediated + m.fn)
+    };
+    m.efficiency = {
+      point: pct(m.tp, m.tp + m.fp),
+      lo: pct(m.tp, m.tp + m.fp + m.unknownRemediated),
+      hi: pct(m.tp + m.unknownRemediated, m.tp + m.fp + m.unknownRemediated)
+    };
+    m.prevalence = pct(m.highRisk, m.classified);
+    m.signalCoveragePct = pct(m.classified, m.total);
+    return m;
+  }
+  function tally(m, row, rule) {
+    const open = isOpen2(row.status);
+    switch (classifyRisk(row, rule)) {
+      case "high":
+        if (open) m.fn += 1;
+        else m.tp += 1;
+        break;
+      case "low":
+        if (open) m.tn += 1;
+        else m.fp += 1;
+        break;
+      default:
+        if (open) m.unknownOpen += 1;
+        else m.unknownRemediated += 1;
+    }
+  }
+  function confusionMatrix(rows, rule) {
+    const m = emptyMatrix();
+    for (const row of rows) tally(m, row, rule);
+    return finalize(m);
+  }
+  function confusionBySeverity(rows, rule) {
+    var _a;
+    const bySev = {};
+    const overall = emptyMatrix();
+    for (const row of rows) {
+      const s = normalizeSeverity(row.severity);
+      const m = (_a = bySev[s]) != null ? _a : bySev[s] = emptyMatrix();
+      tally(m, row, rule);
+      tally(overall, row, rule);
+    }
+    const perSev = {};
+    for (const s of SEVERITY_ORDER) if (bySev[s]) perSev[s] = finalize(bySev[s]);
+    return { perSev, overall: finalize(overall) };
+  }
+  function signalBreakdown(rows, rule) {
+    const out = {
+      kev: 0,
+      exploit: 0,
+      epss: 0,
+      anyOf: 0,
+      kevMissing: 0,
+      exploitMissing: 0,
+      epssMissing: 0
+    };
+    for (const row of rows) {
+      const fired = firedSignals(row, rule);
+      if (fired.length) out.anyOf += 1;
+      for (const f of fired) out[f] += 1;
+      if (rule.kev && row.has_kev == null) out.kevMissing += 1;
+      if (rule.exploit && row.has_exploit == null) out.exploitMissing += 1;
+      if (rule.epss && !(typeof row.epss === "number" && Number.isFinite(row.epss))) {
+        out.epssMissing += 1;
+      }
+    }
+    return out;
+  }
+  function ruleSensitivity(rows, active) {
+    const subsets = [
+      { label: "KEV", kev: true, exploit: false, epss: false },
+      { label: "Exploit", kev: false, exploit: true, epss: false },
+      { label: "EPSS", kev: false, exploit: false, epss: true },
+      { label: "KEV or exploit", kev: true, exploit: true, epss: false },
+      { label: "KEV or EPSS", kev: true, exploit: false, epss: true },
+      { label: "Exploit or EPSS", kev: false, exploit: true, epss: true },
+      { label: "All three", kev: true, exploit: true, epss: true }
+    ];
+    return subsets.map((s) => {
+      const rule = { ...s, epssThreshold: active.epssThreshold };
+      const m = confusionMatrix(rows, rule);
+      return {
+        label: s.label,
+        rule,
+        active: rule.kev === active.kev && rule.exploit === active.exploit && rule.epss === active.epss,
+        coverage: m.coverage.point,
+        efficiency: m.efficiency.point,
+        highRisk: m.highRisk,
+        unknown: m.unknown
+      };
+    });
+  }
+  var NET_CAPACITY_BAND_PCT = 2;
+  function monthKey(ms) {
+    const d = new Date(ms);
+    return d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0");
+  }
+  function monthStartMs(key) {
+    const [y, m] = key.split("-").map(Number);
+    return Date.UTC(y, m - 1, 1);
+  }
+  function nextMonthKey(key) {
+    const [y, m] = key.split("-").map(Number);
+    return m === 12 ? y + 1 + "-01" : y + "-" + String(m + 1).padStart(2, "0");
+  }
+  function verdictOf(netPct) {
+    if (netPct === null || Math.abs(netPct) <= NET_CAPACITY_BAND_PCT) return "keeping-up";
+    return netPct > 0 ? "gaining" : "falling-behind";
+  }
+  function capacityByMonth(rows, scans, options) {
+    var _a, _b, _c, _d;
+    const nowMs = (_a = options.now) != null ? _a : Date.now();
+    const rule = options.rule;
+    const parsed = [];
+    for (const row of rows) {
+      if (options.highRiskOnly && classifyRisk(row, rule) !== "high") continue;
+      const first = parseTs(row.first_seen);
+      if (first === null) continue;
+      parsed.push({ first, resolved: parseTs(row.resolved_at) });
+    }
+    const flatScanMs = scans.filter((s) => s["shape"] !== "grouped").map((s) => parseTs(s["ts"])).filter((t) => t !== null);
+    const firstScanMs = flatScanMs.length ? minNum(flatScanMs) : null;
+    const scanClosedByMonth = {};
+    for (const s of scans) {
+      if (s["shape"] === "grouped") continue;
+      const t = parseTs(s["ts"]);
+      if (t === null) continue;
+      if (firstScanMs !== null && t === firstScanMs) continue;
+      const k = monthKey(t);
+      scanClosedByMonth[k] = ((_b = scanClosedByMonth[k]) != null ? _b : 0) + Number((_c = s["resolved_count"]) != null ? _c : 0);
+    }
+    if (!parsed.length) {
+      return { months: [], mmcrMean: null, oneInN: null, netTotal: 0, verdict: null, monthsCounted: 0 };
+    }
+    const earliest = minNum(parsed.map((p) => p.first));
+    const months = [];
+    const lastKey = monthKey(nowMs);
+    for (let key = monthKey(earliest); ; key = nextMonthKey(key)) {
+      const start = monthStartMs(key);
+      const end = monthStartMs(nextMonthKey(key));
+      let openAtStart = 0;
+      let opened = 0;
+      let closed = 0;
+      for (const p of parsed) {
+        if (p.first < start && (p.resolved === null || p.resolved >= start)) openAtStart += 1;
+        if (p.first >= start && p.first < end) opened += 1;
+        if (p.resolved !== null && p.resolved >= start && p.resolved < end) closed += 1;
+      }
+      const netPct = openAtStart > 0 ? (closed - opened) / openAtStart * 100 : null;
+      months.push({
+        month: key,
+        openAtStart,
+        opened,
+        closed,
+        mmcr: openAtStart > 0 ? closed / openAtStart * 100 : null,
+        net: closed - opened,
+        netPct,
+        verdict: verdictOf(netPct),
+        // The first month is partial only in the sense that the register begins mid-month; it
+        // still fully observes its own closures, so only the current month is excluded.
+        partial: key === lastKey,
+        reconstructed: firstScanMs === null || end <= firstScanMs,
+        scanClosed: (_d = scanClosedByMonth[key]) != null ? _d : null
+      });
+      if (key === lastKey) break;
+      if (months.length > 600) break;
+    }
+    const counted = months.filter((m) => !m.partial && !m.reconstructed && m.mmcr !== null);
+    const mmcrMean = counted.length ? counted.reduce((a, m) => a + m.mmcr, 0) / counted.length : null;
+    const netTotal = months.reduce((a, m) => a + m.net, 0);
+    const netPctOverall = counted.length ? counted.reduce((a, m) => {
+      var _a2;
+      return a + ((_a2 = m.netPct) != null ? _a2 : 0);
+    }, 0) / counted.length : null;
+    const trimmed = options.maxMonths !== void 0 && months.length > options.maxMonths ? months.slice(months.length - options.maxMonths) : months;
+    return {
+      months: trimmed,
+      mmcrMean,
+      oneInN: mmcrMean !== null && mmcrMean > 0 ? 100 / mmcrMean : null,
+      netTotal,
+      verdict: counted.length ? verdictOf(netPctOverall) : null,
+      monthsCounted: counted.length
+    };
+  }
+  function observationWindowDays(rows, now) {
+    const nowMs = now != null ? now : Date.now();
+    const firsts = rows.map((r) => parseTs(r.first_seen)).filter((t) => t !== null);
+    if (!firsts.length) return null;
+    return (nowMs - minNum(firsts)) / DAY_MS;
+  }
+
   // src/domain/settingsLogic.ts
   function canonicalSeverities(values, defaults) {
     if (!Array.isArray(values)) return [...defaults];
@@ -747,6 +1308,42 @@ var Server = (() => {
   }
   function withIncludeEol(settings, enabled) {
     return { ...settings, include_eol: Boolean(enabled) };
+  }
+  function getRiskRule(settings) {
+    var _a;
+    const raw = settings["risk_rule"];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      return { version: 0, rule: { ...DEFAULT_RISK_RULE } };
+    }
+    const r = raw;
+    let version = 0;
+    const v = Number((_a = r["version"]) != null ? _a : 0);
+    if (Number.isFinite(v)) version = Math.max(Math.trunc(v), 0);
+    const stored = r["rule"];
+    if (!stored || typeof stored !== "object" || Array.isArray(stored)) {
+      return { version, rule: { ...DEFAULT_RISK_RULE } };
+    }
+    return { version, rule: cleanRiskRule(stored) };
+  }
+  function cleanRiskRule(raw) {
+    const bool = (key) => {
+      const v = raw[key];
+      return typeof v === "boolean" ? v : DEFAULT_RISK_RULE[key];
+    };
+    const t = Number(raw["epssThreshold"]);
+    return {
+      kev: bool("kev"),
+      exploit: bool("exploit"),
+      epss: bool("epss"),
+      epssThreshold: Number.isFinite(t) ? Math.min(1, Math.max(0, t)) : DEFAULT_RISK_RULE.epssThreshold
+    };
+  }
+  function withRiskRule(settings, rule) {
+    const current = getRiskRule(settings);
+    const clean2 = cleanRiskRule(
+      rule && typeof rule === "object" && !Array.isArray(rule) ? rule : {}
+    );
+    return { ...settings, risk_rule: { version: current.version + 1, rule: clean2 } };
   }
   function cleanDomainItems(items) {
     if (!Array.isArray(items)) return [];
@@ -1118,6 +1715,7 @@ var Server = (() => {
     getAttribution: () => getAttribution,
     getDomains: () => getDomains3,
     getExecutivePage: () => getExecutivePage,
+    getExportCoverageCsv: () => getExportCoverageCsv,
     getExportCsv: () => getExportCsv,
     getExportRawUrl: () => getExportRawUrl,
     getFindingDetail: () => getFindingDetail,
@@ -1130,8 +1728,11 @@ var Server = (() => {
     getMttr: () => getMttr,
     getMttrPage: () => getMttrPage,
     getMttrTrend: () => getMttrTrend,
+    getProgramPage: () => getProgramPage,
     getRecentErrors: () => getRecentErrors,
     getReport: () => getReport,
+    getRiskBackfillStatus: () => getRiskBackfillStatus,
+    getRiskCohort: () => getRiskCohort,
     getScanHistory: () => getScanHistory,
     getSettings: () => getSettings,
     getStorageStats: () => getStorageStats,
@@ -1150,81 +1751,12 @@ var Server = (() => {
     setIncludeEol: () => setIncludeEol2,
     setRetention: () => setRetention,
     setRetentionSettings: () => setRetentionSettings,
+    setRiskRule: () => setRiskRule2,
     setSeverities: () => setSeverities,
     setShowNoFix: () => setShowNoFix2,
+    startRiskBackfill: () => startRiskBackfill,
     warmReadModels: () => warmReadModels
   });
-
-  // src/domain/util.ts
-  function present(v) {
-    if (v === null || v === void 0) return false;
-    if (typeof v === "number" && Number.isNaN(v)) return false;
-    if (typeof v === "string" && v.trim() === "") return false;
-    return true;
-  }
-  function clean(v) {
-    return present(v) ? v : null;
-  }
-  function pyStr(v) {
-    if (v === true) return "True";
-    if (v === false) return "False";
-    return String(v);
-  }
-  function parseTs(v) {
-    const c = clean(v);
-    if (c === null) return null;
-    if (c instanceof Date) return isNaN(c.getTime()) ? null : c.getTime();
-    if (typeof c === "number" && Number.isFinite(c)) return c;
-    let s = String(c).trim();
-    if (!s) return null;
-    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(s)) s = s.replace(" ", "T");
-    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(s)) s += "Z";
-    const t = Date.parse(s);
-    return Number.isNaN(t) ? null : t;
-  }
-  function toIso(ms) {
-    if (ms === null || !Number.isFinite(ms)) return null;
-    return new Date(Math.floor(ms / 1e3) * 1e3).toISOString().replace(".000Z", "Z");
-  }
-  function minIso(...values) {
-    const parsed = values.map(parseTs).filter((t) => t !== null);
-    return parsed.length ? toIso(minNum(parsed)) : null;
-  }
-  function midpointIso(a, b) {
-    var _a;
-    const da = parseTs(a);
-    const db = parseTs(b);
-    if (da === null || db === null) return (_a = toIso(db)) != null ? _a : toIso(da);
-    return toIso(da + (db - da) / 2);
-  }
-  function nowIso(now) {
-    return toIso(now != null ? now : Date.now());
-  }
-  function mean(values) {
-    if (!values.length) return null;
-    return values.reduce((a, b) => a + b, 0) / values.length;
-  }
-  function maxNum(values) {
-    return values.reduce((m, v) => Math.max(m, v), -Infinity);
-  }
-  function minNum(values) {
-    return values.reduce((m, v) => Math.min(m, v), Infinity);
-  }
-  function pushAll(target, items) {
-    for (const item of items) target.push(item);
-  }
-  function quantile(values, q) {
-    if (!values.length) return null;
-    const sorted = [...values].sort((a, b) => a - b);
-    const idx = q * (sorted.length - 1);
-    const lo = Math.floor(idx);
-    const hi = Math.ceil(idx);
-    if (lo === hi) return sorted[lo];
-    return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
-  }
-  function median(values) {
-    return quantile(values, 0.5);
-  }
 
   // src/domain/domainRules.ts
   var UNASSIGNED = "Unassigned";
@@ -1327,7 +1859,7 @@ var Server = (() => {
   }
   function validateDomains(items) {
     const errors = [];
-    const seen = /* @__PURE__ */ new Set();
+    const seen2 = /* @__PURE__ */ new Set();
     const list = Array.isArray(items) ? items : [];
     list.forEach((item, idx) => {
       const i = idx + 1;
@@ -1347,8 +1879,8 @@ var Server = (() => {
           errors.push(`${label}: \u201C${UNASSIGNED}\u201D is reserved.`);
         }
         if (name.includes(",")) errors.push(`${label}: names cannot contain commas.`);
-        if (seen.has(name.toLowerCase())) errors.push(`${label}: duplicate name.`);
-        seen.add(name.toLowerCase());
+        if (seen2.has(name.toLowerCase())) errors.push(`${label}: duplicate name.`);
+        seen2.add(name.toLowerCase());
       }
       const rules = it["rules"];
       if (!Array.isArray(rules) || !rules.length) {
@@ -1597,11 +2129,11 @@ var Server = (() => {
     return out;
   }
   function orderedWithUnassignedLast(names) {
-    const seen = /* @__PURE__ */ new Set();
+    const seen2 = /* @__PURE__ */ new Set();
     const out = [];
     for (const n of names) {
-      if (n === UNASSIGNED || seen.has(n)) continue;
-      seen.add(n);
+      if (n === UNASSIGNED || seen2.has(n)) continue;
+      seen2.add(n);
       out.push(n);
     }
     out.push(UNASSIGNED);
@@ -1888,7 +2420,7 @@ var Server = (() => {
   }
 
   // src/domain/metrics.ts
-  var DAY_MS = 864e5;
+  var DAY_MS2 = 864e5;
   function findCol(columns, ...candidates) {
     const lower = columns.map((c) => c.toLowerCase());
     for (const cand of candidates) {
@@ -1901,11 +2433,11 @@ var Server = (() => {
   }
   function recordColumns(records) {
     const cols = [];
-    const seen = /* @__PURE__ */ new Set();
+    const seen2 = /* @__PURE__ */ new Set();
     for (const rec of records) {
       for (const k of Object.keys(rec)) {
-        if (!seen.has(k)) {
-          seen.add(k);
+        if (!seen2.has(k)) {
+          seen2.add(k);
           cols.push(k);
         }
       }
@@ -1929,8 +2461,8 @@ var Server = (() => {
     var _a;
     if (!work.length) return { perSev: {}, overall: {} };
     const nowMs = now != null ? now : Date.now();
-    const mttrDays = (r) => r.resolved !== null && r.firstSeen !== null ? (r.resolved - r.firstSeen) / DAY_MS : null;
-    const ageDays = (r) => r.firstSeen !== null ? (nowMs - r.firstSeen) / DAY_MS : null;
+    const mttrDays = (r) => r.resolved !== null && r.firstSeen !== null ? (r.resolved - r.firstSeen) / DAY_MS2 : null;
+    const ageDays = (r) => r.firstSeen !== null ? (nowMs - r.firstSeen) / DAY_MS2 : null;
     const perSev = {};
     for (const sev2 of SEVERITY_ORDER) {
       const sub = work.filter((r) => r.sev === sev2);
@@ -2096,19 +2628,19 @@ var Server = (() => {
   }
 
   // src/domain/remediation.ts
-  var DAY_MS2 = 864e5;
+  var DAY_MS3 = 864e5;
   var ROLLOUT_MS = parseTs(REMEDIATION_ROLLOUT_ISO);
   var RESOLUTION_BUCKET_EDGES = [1, 7, 30, 90];
   var RESOLUTION_BUCKET_LABELS = ["\u22641d", "2\u20137d", "8\u201330d", "31\u201390d", "90+d"];
-  function isOpen(status) {
+  function isOpen3(status) {
     return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
   }
   function resolvedMttr(row) {
     const m = row.mttr_days;
     return typeof m === "number" && Number.isFinite(m) ? m : null;
   }
-  function openAge(row) {
-    if (!isOpen(row.status)) return null;
+  function openAge2(row) {
+    if (!isOpen3(row.status)) return null;
     const a = row.age_days;
     return typeof a === "number" && Number.isFinite(a) ? a : null;
   }
@@ -2177,7 +2709,7 @@ var Server = (() => {
         events.push(m);
         continue;
       }
-      const c = openAge(row);
+      const c = openAge2(row);
       if (c !== null) censored.push(c);
     }
     const times = events.concat(censored);
@@ -2233,7 +2765,7 @@ var Server = (() => {
     let totalOpen = 0;
     let totalBreached = 0;
     for (const row of rows) {
-      const age = openAge(row);
+      const age = openAge2(row);
       if (age === null) continue;
       const s = normalizeSeverity(row.severity);
       const target = (_a = SLA_TARGETS[s]) != null ? _a : null;
@@ -2264,12 +2796,12 @@ var Server = (() => {
     if (!firstSeenCol) return 0;
     let breached = 0;
     for (const rec of records) {
-      if (!isOpen(rec["status"])) continue;
+      if (!isOpen3(rec["status"])) continue;
       const first = parseTs(rec[firstSeenCol]);
       if (first === null) continue;
       const s = "severity" in rec ? normalizeSeverity(rec["severity"]) : "UNKNOWN";
       const target = SLA_TARGETS[s];
-      if (target !== void 0 && (nowMs - first) / DAY_MS2 > target) breached += 1;
+      if (target !== void 0 && (nowMs - first) / DAY_MS3 > target) breached += 1;
     }
     return breached;
   }
@@ -2287,7 +2819,7 @@ var Server = (() => {
     let overall = 0;
     let openTotal = 0;
     for (const row of rows) {
-      if (!isOpen(row.status)) continue;
+      if (!isOpen3(row.status)) continue;
       openTotal += 1;
       if (!row.awaiting_vendor_fix) continue;
       const s = normalizeSeverity(row.severity);
@@ -2306,7 +2838,7 @@ var Server = (() => {
   }
   function recordNoFix(rec) {
     var _a, _b;
-    if (!isOpen(rec["status"])) return false;
+    if (!isOpen3(rec["status"])) return false;
     const first = parseTs((_b = (_a = rec["firstDetectedAt"]) != null ? _a : rec["firstSeenAt"]) != null ? _b : rec["createdAt"]);
     if (first !== null && ROLLOUT_MS !== null && first < ROLLOUT_MS) return false;
     return !(present(rec["fixedVersion"]) || present(rec["fixDate"]));
@@ -2432,8 +2964,59 @@ var Server = (() => {
       first_scan_id: scanId,
       last_scan_id: scanId,
       fix_date: fixDate,
-      fix_observed_at: fixObservedAt
+      fix_observed_at: fixObservedAt,
+      // Left empty here and filled by mergeRiskSignals() after the branch, which runs for new,
+      // reopened, and persisting rows alike (the merge is identical in all three).
+      ...emptyRiskSignals()
     };
+  }
+  function emptyRiskSignals() {
+    return { has_kev: null, has_exploit: null, epss: null, risk_observed_at: null };
+  }
+  function coerceRiskSignals(r) {
+    var _a;
+    const obs = observeRiskSignals({
+      hasCisaKevExploit: r["has_kev"],
+      hasExploit: r["has_exploit"],
+      epssProbability: r["epss"]
+    });
+    return {
+      has_kev: obs.kev,
+      has_exploit: obs.exploit,
+      epss: obs.epss,
+      risk_observed_at: (_a = clean(r["risk_observed_at"])) != null ? _a : null
+    };
+  }
+  function observeRiskSignals(rec) {
+    const bool = (v) => {
+      if (typeof v === "boolean") return v;
+      if (typeof v === "string") {
+        const s = v.trim().toUpperCase();
+        if (s === "TRUE") return true;
+        if (s === "FALSE") return false;
+      }
+      return null;
+    };
+    const rawEpss = clean(rec["epssProbability"]);
+    const n = typeof rawEpss === "number" ? rawEpss : rawEpss === null ? NaN : Number(rawEpss);
+    return {
+      kev: bool(rec["hasCisaKevExploit"]),
+      exploit: bool(rec["hasExploit"]),
+      epss: Number.isFinite(n) ? n : null
+    };
+  }
+  function mergeRiskSignals(row, rec, scanTsIso) {
+    const obs = observeRiskSignals(rec);
+    if (obs.kev !== null && (row.has_kev == null || obs.kev)) row.has_kev = obs.kev;
+    if (obs.exploit !== null && (row.has_exploit == null || obs.exploit)) {
+      row.has_exploit = obs.exploit;
+    }
+    if (obs.epss !== null && (row.epss == null || obs.epss > row.epss)) row.epss = obs.epss;
+    const witnessed = obs.kev !== null || obs.exploit !== null || obs.epss !== null;
+    if (!witnessed) return;
+    if (row.risk_observed_at == null || scanTsIso < row.risk_observed_at) {
+      row.risk_observed_at = scanTsIso;
+    }
   }
   function reconcile(currentRecords, existingLedger, scanId, scanTs, prevScanId, options = {}) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
@@ -2445,7 +3028,7 @@ var Server = (() => {
     } = options;
     const updated = {};
     for (const [key, row] of Object.entries(existingLedger)) updated[key] = { ...row };
-    const seen = /* @__PURE__ */ new Set();
+    const seen2 = /* @__PURE__ */ new Set();
     const observations = [];
     let newCount = 0;
     let resolvedCount = 0;
@@ -2453,8 +3036,8 @@ var Server = (() => {
     const scanTsIso = (_a = toIso(parseTs(scanTs))) != null ? _a : String(scanTs);
     for (const rec of currentRecords) {
       const key = vulnKey(rec);
-      if (seen.has(key)) continue;
-      seen.add(key);
+      if (seen2.has(key)) continue;
+      seen2.add(key);
       const sev2 = normalizeSeverity(clean(rec["severity"]));
       const apiFirst = (_c = (_b = clean(rec["firstDetectedAt"])) != null ? _b : clean(rec["firstSeenAt"])) != null ? _c : clean(rec["createdAt"]);
       const apiStatus = String((_d = clean(rec["status"])) != null ? _d : "").toUpperCase();
@@ -2492,6 +3075,7 @@ var Server = (() => {
         row.last_scan_id = scanId;
         seedFix(row);
       }
+      mergeRiskSignals(row, rec, scanTsIso);
       row.severity = sev2;
       row.cve = (_k = clean(rec["name"])) != null ? _k : null;
       row.asset_id = field(rec, "vulnerableAsset.id") || row.asset_id;
@@ -2518,7 +3102,7 @@ var Server = (() => {
     if (prevScanId !== null) {
       const scope = scannedSeverities !== null ? new Set(scannedSeverities) : null;
       for (const [key, row] of Object.entries(updated)) {
-        if (seen.has(key) || row.status === "RESOLVED") continue;
+        if (seen2.has(key) || row.status === "RESOLVED") continue;
         const sevRow = row.severity;
         if (scope !== null && (sevRow === null || !scope.has(sevRow))) {
           continue;
@@ -2689,7 +3273,7 @@ var Server = (() => {
   function reinsertScanRow(state, row) {
     state.scans.push({ ...row });
   }
-  var DAY_MS3 = 864e5;
+  var DAY_MS4 = 864e5;
   var COMPACTED_ASSET3 = "(compacted)";
   var ROLLOUT_MS2 = parseTs(REMEDIATION_ROLLOUT_ISO);
   function baseRows(state, now) {
@@ -2706,12 +3290,12 @@ var Server = (() => {
       const actionableFrom = actionableMs === null ? null : toIso(actionableMs);
       return {
         ...row,
-        mttr_days: first !== null && resolved !== null ? (resolved - first) / DAY_MS3 : null,
-        age_days: resolved === null && first !== null ? (nowMs - first) / DAY_MS3 : null,
+        mttr_days: first !== null && resolved !== null ? (resolved - first) / DAY_MS4 : null,
+        age_days: resolved === null && first !== null ? (nowMs - first) / DAY_MS4 : null,
         fix_available_at: fixAvailableAt,
         actionable_from: actionableFrom,
-        mttr_actionable_days: resolved !== null && actionableMs !== null ? (resolved - actionableMs) / DAY_MS3 : null,
-        actionable_age_days: open && actionableMs !== null ? (nowMs - actionableMs) / DAY_MS3 : null,
+        mttr_actionable_days: resolved !== null && actionableMs !== null ? (resolved - actionableMs) / DAY_MS4 : null,
+        actionable_age_days: open && actionableMs !== null ? (nowMs - actionableMs) / DAY_MS4 : null,
         awaiting_vendor_fix: open && fixAvailableAt === null
       };
     };
@@ -2740,7 +3324,11 @@ var Server = (() => {
           subscription_ext_id: null,
           tags_json: null,
           fix_date: e.fix_date,
-          fix_observed_at: e.fix_observed_at
+          fix_observed_at: e.fix_observed_at,
+          has_kev: e.has_kev,
+          has_exploit: e.has_exploit,
+          epss: e.epss,
+          risk_observed_at: e.risk_observed_at
         })
       );
     }
@@ -2758,7 +3346,7 @@ var Server = (() => {
   }
 
   // src/domain/trend.ts
-  var DAY_MS4 = 864e5;
+  var DAY_MS5 = 864e5;
   function awaitingFixAsOf(firstMs, resolvedMs, fixAvailMs, d) {
     const openAsOfD = firstMs !== null && firstMs <= d && (resolvedMs === null || resolvedMs > d);
     return openAsOfD && (fixAvailMs === null || fixAvailMs > d);
@@ -2796,7 +3384,7 @@ var Server = (() => {
       const slaPct = denom ? within / denom * 100 : null;
       const p90s = [];
       for (const sev2 of SEVERITY_ORDER) {
-        const ages = parsed.filter((r, i) => openMask[i] && r.sev === sev2).map((r) => (ts.ms - r.first) / DAY_MS4);
+        const ages = parsed.filter((r, i) => openMask[i] && r.sev === sev2).map((r) => (ts.ms - r.first) / DAY_MS5);
         if (ages.length) {
           const p = quantile(ages, 0.9);
           if (p !== null) p90s.push(p);
@@ -2835,8 +3423,8 @@ var Server = (() => {
       var _a2;
       const bySev = {};
       for (const r of parsed) {
-        const isOpen3 = r.first !== null && r.first <= ts.ms && (r.resolvedAt === null || r.resolvedAt > ts.ms);
-        if (!isOpen3) continue;
+        const isOpen4 = r.first !== null && r.first <= ts.ms && (r.resolvedAt === null || r.resolvedAt > ts.ms);
+        if (!isOpen4) continue;
         if (hideNoFix && awaitingFixAsOf(r.first, r.resolvedAt, r.fixAvail, ts.ms)) continue;
         bySev[r.sev] = ((_a2 = bySev[r.sev]) != null ? _a2 : 0) + 1;
       }
@@ -2875,8 +3463,8 @@ var Server = (() => {
       const byGroup = {};
       for (const r of parsed) {
         if (!r.kept) continue;
-        const isOpen3 = r.first !== null && r.first <= ts.ms && (r.resolvedAt === null || r.resolvedAt > ts.ms);
-        if (!isOpen3) continue;
+        const isOpen4 = r.first !== null && r.first <= ts.ms && (r.resolvedAt === null || r.resolvedAt > ts.ms);
+        if (!isOpen4) continue;
         if (hideNoFix && awaitingFixAsOf(r.first, r.resolvedAt, r.fixAvail, ts.ms)) continue;
         byGroup[r.group] = ((_a2 = byGroup[r.group]) != null ? _a2 : 0) + 1;
       }
@@ -2978,7 +3566,7 @@ var Server = (() => {
           }
         } else if (r.first !== null && r.first <= ts.ms) {
           if (hideNoFix && awaitingFixAsOf(r.first, r.resolvedAt, r.fixAvail, ts.ms)) continue;
-          ((_f = times[_e = r.group]) != null ? _f : times[_e] = []).push((ts.ms - r.first) / DAY_MS4);
+          ((_f = times[_e = r.group]) != null ? _f : times[_e] = []).push((ts.ms - r.first) / DAY_MS5);
         }
       }
       const byGroup = {};
@@ -3004,9 +3592,9 @@ var Server = (() => {
     const synthetic = [];
     const syntheticIso = /* @__PURE__ */ new Set();
     if (realFlatMs.length && firstSeenMs.length) {
-      const firstScanDay = Math.floor(minNum(realFlatMs) / DAY_MS4) * DAY_MS4;
-      const startDay = Math.floor(minNum(firstSeenMs) / DAY_MS4) * DAY_MS4;
-      for (let day = startDay; day < firstScanDay; day += DAY_MS4) {
+      const firstScanDay = Math.floor(minNum(realFlatMs) / DAY_MS5) * DAY_MS5;
+      const startDay = Math.floor(minNum(firstSeenMs) / DAY_MS5) * DAY_MS5;
+      for (let day = startDay; day < firstScanDay; day += DAY_MS5) {
         const iso = toIso(day);
         if (iso === null) continue;
         synthetic.push({ ts: iso, shape: "flat" });
@@ -3064,7 +3652,7 @@ var Server = (() => {
             }
           } else if (r.first !== null && r.first <= d) {
             if (hideNoFix && awaitingFixAsOf(r.first, r.resolvedAt, r.fixAvail, d)) continue;
-            times.push((d - r.first) / DAY_MS4);
+            times.push((d - r.first) / DAY_MS5);
           }
         }
         med = kmMedianFromCurve(kmCurve(events, times));
@@ -3096,7 +3684,7 @@ var Server = (() => {
       const first = parseTs(r["first_seen"]);
       if (first !== null && first <= d) {
         if (hideNoFix && awaitingFixAsOf(first, resolvedAt, parseTs(r["fix_available_at"]), d)) continue;
-        times.push((d - first) / DAY_MS4);
+        times.push((d - first) / DAY_MS5);
       }
     }
     const med = kmMedianFromCurve(kmCurve(events, times));
@@ -3121,7 +3709,7 @@ var Server = (() => {
           const open = r.origin !== null && r.origin <= d && (r.resolvedAt === null || r.resolvedAt > d);
           if (!open) continue;
           const target = SLA_TARGETS[r.sev];
-          if (target !== void 0 && (d - r.origin) / DAY_MS4 > target) breached += 1;
+          if (target !== void 0 && (d - r.origin) / DAY_MS5 > target) breached += 1;
         }
       }
       return { ...p, open_past_sla: breached };
@@ -3138,7 +3726,7 @@ var Server = (() => {
       const actionable = parseTs(r["actionable_from"]);
       const target = SLA_TARGETS[normalizeSeverity(r["severity"])];
       if (actionable === null || target === void 0) continue;
-      out.push({ deadline: actionable + target * DAY_MS4, resolvedAt: parseTs(r["resolved_at"]) });
+      out.push({ deadline: actionable + target * DAY_MS5, resolvedAt: parseTs(r["resolved_at"]) });
     }
     return out;
   }
@@ -3183,8 +3771,56 @@ var Server = (() => {
           if (r.resolvedAt !== null && r.resolvedAt <= r.deadline) met += 1;
         }
       }
-      const pct = cohort ? Math.round(met / cohort * 100 * 10) / 10 : null;
-      return { ...p, sla_attainment_pct: pct };
+      const pct2 = cohort ? Math.round(met / cohort * 100 * 10) / 10 : null;
+      return { ...p, sla_attainment_pct: pct2 };
+    });
+  }
+  function withCoverageEfficiency(points, base, rule, severities = null) {
+    let rows = base;
+    if (severities !== null && base.length) {
+      const keep = /* @__PURE__ */ new Set([...severities, "UNKNOWN"]);
+      rows = rows.filter((r) => keep.has(normalizeSeverity(r["severity"])));
+    }
+    const parsed = rows.map(
+      (r) => ({
+        first: parseTs(r["first_seen"]),
+        resolvedAt: parseTs(r["resolved_at"]),
+        cls: classifyRisk(r, rule)
+      })
+    );
+    const round1 = (v) => v === null ? null : Math.round(v * 10) / 10;
+    return points.map((p) => {
+      const d = parseTs(p.date);
+      let tp = 0;
+      let fp = 0;
+      let fn = 0;
+      let unknown = 0;
+      let counted = 0;
+      if (d !== null) {
+        for (const r of parsed) {
+          if (r.first === null || r.first > d) continue;
+          const remediated = r.resolvedAt !== null && r.resolvedAt <= d;
+          counted += 1;
+          if (r.cls === "unknown") {
+            unknown += 1;
+            continue;
+          }
+          if (r.cls === "high") {
+            if (remediated) tp += 1;
+            else fn += 1;
+          } else if (remediated) {
+            fp += 1;
+          }
+        }
+      }
+      return {
+        ...p,
+        coverage_pct: round1(tp + fn > 0 ? tp / (tp + fn) * 100 : null),
+        efficiency_pct: round1(tp + fp > 0 ? tp / (tp + fp) * 100 : null),
+        high_risk_open: fn,
+        high_risk_remediated: tp,
+        unknown_pct: round1(counted > 0 ? unknown / counted * 100 : null)
+      };
     });
   }
 
@@ -3250,7 +3886,7 @@ var Server = (() => {
     return episodes;
   }
   function toEpisodeRow(live, compactionId) {
-    var _a;
+    var _a, _b, _c, _d, _e;
     return {
       vuln_key: live.vuln_key,
       cve: live.cve,
@@ -3262,7 +3898,13 @@ var Server = (() => {
       compaction_id: compactionId,
       superseded_by_scan: null,
       fix_date: live.fix_date,
-      fix_observed_at: live.fix_observed_at
+      fix_observed_at: live.fix_observed_at,
+      // Exploit intelligence survives compaction — a sealed episode is still a remediated
+      // lifecycle that coverage/efficiency must be able to classify.
+      has_kev: (_b = live.has_kev) != null ? _b : null,
+      has_exploit: (_c = live.has_exploit) != null ? _c : null,
+      epss: (_d = live.epss) != null ? _d : null,
+      risk_observed_at: (_e = live.risk_observed_at) != null ? _e : null
     };
   }
   function deleteScansCore(state, scanIds, readPayload, checkpoint, now) {
@@ -3374,6 +4016,18 @@ var Server = (() => {
     }
     return out;
   }
+  function coverageOf(state, now) {
+    return confusionMatrix(
+      baseRows(state, now).map((r) => ({
+        severity: r.severity,
+        status: r.status,
+        has_kev: r.has_kev,
+        has_exploit: r.has_exploit,
+        epss: r.epss
+      })),
+      DEFAULT_RISK_RULE
+    );
+  }
   function trendOf(state, now) {
     return trendFromFrames(
       state.scans.map((s) => ({ ts: s.ts, shape: s.shape })),
@@ -3443,6 +4097,7 @@ var Server = (() => {
     if (dryRun) return { result, checkpoint, newly, state: null, compactionId: null };
     const beforeMttr = mttrFromLedger(openAndResolved(state), { now: nowMs });
     const beforeTrend = trendOf(state, nowMs);
+    const beforeCoverage = coverageOf(state, nowMs);
     const applied = {
       scans: state.scans.map(
         (r) => newlyIds.includes(r.scan_id) ? { ...r, sealed: 1, raw_ref: null, obs_ref: null } : { ...r }
@@ -3467,6 +4122,11 @@ var Server = (() => {
         "Compaction aborted: MTTR/SLA/trend stats would change \u2014 rolled back."
       );
     }
+    if (!statsEqual(beforeCoverage, coverageOf(applied, nowMs))) {
+      throw new LedgerRebuildError(
+        "Compaction aborted: coverage/efficiency would change \u2014 rolled back."
+      );
+    }
     return { result, checkpoint, newly, state: applied, compactionId: options.compactionId };
   }
   function compactionRow(plan, checkpointRef, now) {
@@ -3482,6 +4142,46 @@ var Server = (() => {
       db_bytes_freed: plan.result.db_bytes_freed,
       checkpoint_ref: checkpointRef
     };
+  }
+  function emptyBackfillResult() {
+    return {
+      scansReplayed: 0,
+      scansSealed: 0,
+      scansUnreadable: 0,
+      ledgerRowsTouched: 0,
+      episodeRowsTouched: 0,
+      stillUnknown: 0
+    };
+  }
+  function backfillRiskFromRecords(state, records, scanTsIso, result) {
+    const episodesByKey = /* @__PURE__ */ new Map();
+    for (const e of state.episodes) episodesByKey.set(e.vuln_key, e);
+    for (const rec of records) {
+      const key = vulnKey(rec);
+      const row = state.ledger[key];
+      if (row) {
+        const before = row.risk_observed_at;
+        mergeRiskSignals(row, rec, scanTsIso);
+        if (before !== row.risk_observed_at) result.ledgerRowsTouched += 1;
+        continue;
+      }
+      const ep = episodesByKey.get(key);
+      if (ep) {
+        const before = ep.risk_observed_at;
+        mergeRiskSignals(ep, rec, scanTsIso);
+        if (before !== ep.risk_observed_at) result.episodeRowsTouched += 1;
+      }
+    }
+  }
+  function countUnknownRisk(state) {
+    let n = 0;
+    for (const row of Object.values(state.ledger)) if (row.risk_observed_at == null) n += 1;
+    for (const e of state.episodes) {
+      if (e.superseded_by_scan !== null) continue;
+      if (e.vuln_key in state.ledger) continue;
+      if (e.risk_observed_at == null) n += 1;
+    }
+    return n;
   }
 
   // src/domain/importMerge.ts
@@ -3611,7 +4311,11 @@ var Server = (() => {
       subscription_ext_id: str(r["subscription_ext_id"]),
       tags_json: str(r["tags_json"]),
       fix_date: str(r["fix_date"]),
-      fix_observed_at: str(r["fix_observed_at"])
+      fix_observed_at: str(r["fix_observed_at"]),
+      // Not str(): these are tri-state (boolean | null) and numeric. A bundle exported before
+      // the risk columns existed simply lacks the keys, and they must stay null — "not
+      // captured", never a fabricated false/0. See reconcile.coerceRiskSignals.
+      ...coerceRiskSignals(r)
     };
   }
   function coerceEpisode(r) {
@@ -3627,7 +4331,8 @@ var Server = (() => {
       compaction_id: String((_b = r["compaction_id"]) != null ? _b : "import"),
       superseded_by_scan: str(r["superseded_by_scan"]),
       fix_date: str(r["fix_date"]),
-      fix_observed_at: str(r["fix_observed_at"])
+      fix_observed_at: str(r["fix_observed_at"]),
+      ...coerceRiskSignals(r)
     };
   }
   function importBundleCore(state, bundle, readPayload, options) {
@@ -3639,16 +4344,16 @@ var Server = (() => {
       );
     }
     const existingIds = new Set(existingRows.map((r) => r.scan_id));
-    const seen = /* @__PURE__ */ new Set();
+    const seen2 = /* @__PURE__ */ new Set();
     const imported = [];
     let skipped = 0;
     for (const raw of bundle.scans) {
       const row = coerceScan(raw);
-      if (seen.has(row.scan_id) || existingIds.has(row.scan_id)) {
+      if (seen2.has(row.scan_id) || existingIds.has(row.scan_id)) {
         skipped += 1;
         continue;
       }
-      seen.add(row.scan_id);
+      seen2.add(row.scan_id);
       imported.push(row);
     }
     const importedAsc = scansAsc(imported);
@@ -3756,209 +4461,6 @@ var Server = (() => {
     return { rows, added, skipped };
   }
 
-  // src/domain/insights.ts
-  var EPSS_PRIORITY_THRESHOLD = 0.1;
-  var AGE_BUCKET_EDGES = [7, 30, 90];
-  var WIDE_KEY = "vulnerableAsset.hasWideInternetExposure";
-  var LIMITED_KEY = "vulnerableAsset.hasLimitedInternetExposure";
-  function isOpen2(status) {
-    return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
-  }
-  function sev(r) {
-    const s = r["_sev"];
-    return typeof s === "string" && s ? s : normalizeSeverity(r["severity"]);
-  }
-  function epssOf(r) {
-    const v = r["epssProbability"];
-    const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
-    return Number.isFinite(n) ? n : null;
-  }
-  function severityStats(records) {
-    var _a;
-    const out = {};
-    for (const r of records) {
-      const s = sev(r);
-      const stat = (_a = out[s]) != null ? _a : out[s] = { total: 0, open: 0, resolved: 0 };
-      stat.total += 1;
-      if (isOpen2(r["status"])) stat.open += 1;
-      else stat.resolved += 1;
-    }
-    return out;
-  }
-  function exploitSummary(records) {
-    const out = {
-      open: 0,
-      kev: 0,
-      exploit: 0,
-      highEpss: 0,
-      internetExposed: 0,
-      exposureKnown: records.some((r) => WIDE_KEY in r && r[WIDE_KEY] !== void 0)
-    };
-    for (const r of records) {
-      if (!isOpen2(r["status"])) continue;
-      out.open += 1;
-      if (r["hasCisaKevExploit"] === true) out.kev += 1;
-      if (r["hasExploit"] === true) out.exploit += 1;
-      const epss = epssOf(r);
-      if (epss !== null && epss >= EPSS_PRIORITY_THRESHOLD) out.highEpss += 1;
-      if (r[WIDE_KEY] === true || r[LIMITED_KEY] === true) out.internetExposed += 1;
-    }
-    return out;
-  }
-  function ageBuckets(rows) {
-    const perSev = {};
-    let totalOpen = 0;
-    for (const row of rows) {
-      if (!isOpen2(row.status)) continue;
-      const age = row.age_days;
-      if (typeof age !== "number" || !Number.isFinite(age)) continue;
-      const bucket = age <= AGE_BUCKET_EDGES[0] ? 0 : age <= AGE_BUCKET_EDGES[1] ? 1 : age <= AGE_BUCKET_EDGES[2] ? 2 : 3;
-      const s = normalizeSeverity(row.severity);
-      if (!perSev[s]) perSev[s] = [0, 0, 0, 0];
-      perSev[s][bucket] += 1;
-      totalOpen += 1;
-    }
-    return { perSev, totalOpen };
-  }
-  var AGED_OPEN_EDGE = AGE_BUCKET_EDGES[2];
-  function openAge2(row) {
-    if (!isOpen2(row.status)) return null;
-    const age = row.age_days;
-    return typeof age === "number" && Number.isFinite(age) ? age : null;
-  }
-  function rankGroups(rows, keyFn, topN, meta) {
-    const groups = /* @__PURE__ */ new Map();
-    for (const row of rows) {
-      const age = openAge2(row);
-      if (age === null) continue;
-      const raw = keyFn(row);
-      const key = raw && raw.trim() !== "" ? raw : "(none)";
-      let g = groups.get(key);
-      if (!g) groups.set(key, g = { key, agedCount: 0, openCount: 0, oldestDays: 0, ...meta ? meta(row) : {} });
-      g.openCount += 1;
-      if (age > AGED_OPEN_EDGE) g.agedCount += 1;
-      if (age > g.oldestDays) g.oldestDays = age;
-    }
-    return [...groups.values()].sort((a, b) => b.agedCount - a.agedCount || b.oldestDays - a.oldestDays || a.key.localeCompare(b.key)).slice(0, topN);
-  }
-  function oldestOpen(rows, topN = 7) {
-    const findings = rows.map((r) => ({ r, age: openAge2(r) })).filter((x) => x.age !== null).sort((a, b) => b.age - a.age).slice(0, topN).map(({ r, age }) => ({
-      cve: r.cve,
-      asset: r.asset_name,
-      subscription: r.subscription_name,
-      severity: normalizeSeverity(r.severity),
-      ageDays: age
-    }));
-    return {
-      findings,
-      byAsset: rankGroups(rows, (r) => {
-        var _a;
-        return String((_a = r.asset_name) != null ? _a : "");
-      }, topN, (r) => {
-        var _a, _b;
-        return {
-          subscription: String((_a = r.subscription_name) != null ? _a : ""),
-          domain: String((_b = r._domain) != null ? _b : "")
-        };
-      }),
-      bySupportGroup: rankGroups(rows, (r) => {
-        var _a;
-        return String((_a = r._supportGroup) != null ? _a : "");
-      }, topN),
-      byDomain: rankGroups(rows, (r) => {
-        var _a;
-        return String((_a = r._domain) != null ? _a : "");
-      }, topN)
-    };
-  }
-  function movement(baseRows2, latestFlatScan, scanCount) {
-    if (!latestFlatScan) {
-      return { newCount: 0, resolvedCount: 0, reopenedCount: 0, persisting: 0, hasPrevious: scanCount > 1 };
-    }
-    let persisting = 0;
-    for (const row of baseRows2) {
-      if (!isOpen2(row.status)) continue;
-      if (row.last_scan_id === latestFlatScan.scan_id && row.first_scan_id !== latestFlatScan.scan_id) {
-        persisting += 1;
-      }
-    }
-    return {
-      newCount: latestFlatScan.new_count,
-      resolvedCount: latestFlatScan.resolved_count,
-      reopenedCount: latestFlatScan.reopened_count,
-      persisting,
-      hasPrevious: scanCount > 1
-    };
-  }
-  var GROUP_COLUMNS = {
-    domain: "_domain",
-    supportGroup: "_supportGroup",
-    asset: "vulnerableAsset.name",
-    atype: "vulnerableAsset.type",
-    cloud: "vulnerableAsset.cloudPlatform",
-    os: "vulnerableAsset.operatingSystem",
-    subscription: "vulnerableAsset.subscriptionName",
-    cve: "name"
-  };
-  var GROUP_BASE_FIELDS = {
-    domain: "_domain",
-    supportGroup: "_supportGroup",
-    asset: "asset_name",
-    atype: "asset_type",
-    cloud: "cloud",
-    subscription: "subscription_name",
-    cve: "cve"
-  };
-  function groupTree(records, keys, perLevelCap = 20) {
-    if (!keys.length || !records.length) return [];
-    const [key, ...rest] = keys;
-    const column = GROUP_COLUMNS[key];
-    if (!column) return [];
-    const buckets = /* @__PURE__ */ new Map();
-    for (const r of records) {
-      const raw = r[column];
-      const k = raw === null || raw === void 0 || String(raw).trim() === "" ? "(none)" : String(raw);
-      let arr = buckets.get(k);
-      if (!arr) buckets.set(k, arr = []);
-      arr.push(r);
-    }
-    const rows = [...buckets.entries()].map(([k, recs]) => {
-      var _a, _b;
-      const assets = /* @__PURE__ */ new Set();
-      const sevCounts = {};
-      let open = 0;
-      let kev = false;
-      let exploit = false;
-      for (const r of recs) {
-        if (isOpen2(r["status"])) open += 1;
-        const s = sev(r);
-        sevCounts[s] = ((_a = sevCounts[s]) != null ? _a : 0) + 1;
-        const a = String((_b = r["vulnerableAsset.name"]) != null ? _b : "");
-        if (a) assets.add(a);
-        if (r["hasCisaKevExploit"] === true) kev = true;
-        if (r["hasExploit"] === true) exploit = true;
-      }
-      const node = {
-        key: k,
-        dim: key,
-        total: recs.length,
-        open,
-        assets: assets.size,
-        sevCounts,
-        kev,
-        exploit,
-        children: []
-      };
-      return { recs, node };
-    });
-    rows.sort((a, b) => b.node.total - a.node.total || a.node.key.localeCompare(b.node.key));
-    const kept = rows.slice(0, perLevelCap);
-    if (rest.length) {
-      for (const row of kept) row.node.children = groupTree(row.recs, rest, perLevelCap);
-    }
-    return kept.map((row) => row.node);
-  }
-
   // src/server/errorLog.ts
   var KEY = "RECENT_ERRORS";
   var MAX_ENTRIES = 25;
@@ -4023,14 +4525,14 @@ var Server = (() => {
     }
     const rawScans = Array.isArray(rec["scans"]) ? rec["scans"] : [];
     const rawHistory = Array.isArray(rec["mttr_history"]) ? rec["mttr_history"] : [];
-    const seen = /* @__PURE__ */ new Set();
+    const seen2 = /* @__PURE__ */ new Set();
     const sealed = [];
     for (const raw of rawScans) {
       if (typeof raw["scan_id"] !== "string" || !raw["scan_id"] || typeof raw["ts"] !== "string" || !raw["ts"]) {
         throw new ImportValidationError("Every manifest scan needs string scan_id and ts.");
       }
-      if (seen.has(raw["scan_id"])) continue;
-      seen.add(raw["scan_id"]);
+      if (seen2.has(raw["scan_id"])) continue;
+      seen2.add(raw["scan_id"]);
       sealed.push(coerceScan(raw));
     }
     const sealedAsc = scansAsc(sealed);
@@ -4096,7 +4598,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "dfbe926aa2ed" : "dev";
+  var BUILD_ID = true ? "8e64acf0b5dc" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -4274,6 +4776,11 @@ var Server = (() => {
     return (_a = listJobs().find((j) => j.job_id === jobId)) != null ? _a : null;
   }
   var TERMINAL = ["DONE", "FAILED", "CANCELLED"];
+  function lastJobOfKind(kind) {
+    const rows = listJobs().filter((j) => j.kind === kind);
+    if (!rows.length) return null;
+    return rows.reduce((a, b) => a.started_at >= b.started_at ? a : b);
+  }
   function activeJob() {
     var _a;
     return (_a = listJobs().find((j) => !TERMINAL.includes(j.phase))) != null ? _a : null;
@@ -4319,7 +4826,8 @@ var Server = (() => {
       subscription_ext_id: (_q = r["subscription_ext_id"]) != null ? _q : null,
       tags_json: (_r = r["tags_json"]) != null ? _r : null,
       fix_date: (_s = r["fix_date"]) != null ? _s : null,
-      fix_observed_at: (_t = r["fix_observed_at"]) != null ? _t : null
+      fix_observed_at: (_t = r["fix_observed_at"]) != null ? _t : null,
+      ...coerceRiskSignals(r)
     };
   }
   var scanRowsMemo;
@@ -4368,13 +4876,16 @@ var Server = (() => {
         compaction_id: String((_h = r["compaction_id"]) != null ? _h : ""),
         superseded_by_scan: (_i = r["superseded_by_scan"]) != null ? _i : null,
         fix_date: (_j = r["fix_date"]) != null ? _j : null,
-        fix_observed_at: (_k = r["fix_observed_at"]) != null ? _k : null
+        fix_observed_at: (_k = r["fix_observed_at"]) != null ? _k : null,
+        ...coerceRiskSignals(r)
       };
     });
     if (useSnapshot) stateMemo = state;
     return state;
   }
   function writeStateTables(state) {
+    ensureTab(TABS.vulnLedger);
+    ensureTab(TABS.episodes);
     overwrite(TABS.vulnLedger, Object.values(state.ledger));
     overwrite(TABS.episodes, state.episodes);
     overwrite(TABS.scans, scansAsc(state.scans));
@@ -4481,6 +4992,26 @@ var Server = (() => {
       hideNoFix,
       maxReconstructed: KM_TREND_MAX_RECONSTRUCTED
     });
+  }
+  function loadProgramTrend(rule, severities = null, baseOverride) {
+    const state = loadState();
+    const base = (baseOverride != null ? baseOverride : baseRows(state)).map((r) => ({
+      severity: r.severity,
+      status: r.status,
+      first_seen: r.first_seen,
+      resolved_at: r.resolved_at,
+      mttr_days: r.mttr_days,
+      has_kev: r.has_kev,
+      has_exploit: r.has_exploit,
+      epss: r.epss
+    }));
+    const points = trendFromBase(
+      state.scans.map((s) => ({ ts: s.ts, shape: s.shape })),
+      base,
+      severities,
+      { backfill: true }
+    );
+    return withCoverageEfficiency(points, base, rule, severities);
   }
   function previousSeverityCounts() {
     const flats = loadScanRows().filter((s) => s.shape === "flat");
@@ -4929,6 +5460,7 @@ var Server = (() => {
   var getAutoCompact2 = () => getAutoCompact(loadSettings());
   var getShowNoFix2 = () => getShowNoFix(loadSettings());
   var getIncludeEol2 = () => getIncludeEol(loadSettings());
+  var getRiskRule2 = () => getRiskRule(loadSettings());
   var getDomains2 = () => getDomains(loadSettings());
   var sgMapMemo;
   function supportGroupRowsToMap(rows) {
@@ -4978,6 +5510,9 @@ var Server = (() => {
   }
   function setIncludeEol(enabled) {
     saveSettings(withIncludeEol(loadSettings(), enabled));
+  }
+  function setRiskRule(rule) {
+    saveSettings(withRiskRule(loadSettings(), rule));
   }
   function setRetentionAndCompact(days, enabled) {
     saveSettings(withAutoCompact(withRetentionDays(loadSettings(), days), enabled));
@@ -5267,12 +5802,12 @@ var Server = (() => {
     return out;
   }
   function distinct(records, column) {
-    const seen = /* @__PURE__ */ new Set();
+    const seen2 = /* @__PURE__ */ new Set();
     for (const r of records) {
       const v = r[column];
-      if (present(v)) seen.add(String(v));
+      if (present(v)) seen2.add(String(v));
     }
-    return [...seen].sort();
+    return [...seen2].sort();
   }
   var TABLE_COLUMNS = [
     "_vuln_key",
@@ -5345,11 +5880,170 @@ var Server = (() => {
     }
   }
 
+  // src/server/backfillJobs.ts
+  var backfillJobs_exports = {};
+  __export(backfillJobs_exports, {
+    backfillStatus: () => backfillStatus,
+    continueBackfill: () => continueBackfill,
+    startBackfill: () => startBackfill
+  });
+  var BUDGET_MS = 27e4;
+  var FIRST_STEP_BUDGET_MS = 45e3;
+  var CONTINUE_DELAY_MS = 1e3;
+  var CONTINUE_HANDLER = "trigger_continueBackfill";
+  function scheduleContinuation() {
+    ScriptApp.newTrigger(CONTINUE_HANDLER).timeBased().after(CONTINUE_DELAY_MS).create();
+  }
+  function clearContinuationTriggers() {
+    for (const t of ScriptApp.getProjectTriggers()) {
+      if (t.getHandlerFunction() === CONTINUE_HANDLER) ScriptApp.deleteTrigger(t);
+    }
+  }
+  function readResult(job) {
+    var _a;
+    try {
+      return { ...emptyBackfillResult(), ...JSON.parse((_a = job.params_json) != null ? _a : "{}") };
+    } catch {
+      return emptyBackfillResult();
+    }
+  }
+  function recordsForScan(row) {
+    const slim = readSlimRecords(row.scan_id);
+    if (slim && slim.length) return slim;
+    const frame = readFrame(row.scan_id);
+    if (frame && frame.length) return frame;
+    const payload = readScanPayload(row.raw_ref);
+    if (payload === null) return null;
+    const nodes = recordsFromPayload(payload);
+    return nodes.length ? nodes : null;
+  }
+  function replayOrder(scans) {
+    return scansAsc(scans).filter((s) => s.shape === "flat").reverse();
+  }
+  function startBackfill() {
+    return withScriptLock(() => {
+      var _a;
+      const existing = activeJob();
+      if (existing) {
+        if (existing.kind !== "backfill") {
+          throw new Error(
+            `Another job (${existing.kind}) is running. Wait for it to finish, then retry.`
+          );
+        }
+        return statusOf(existing);
+      }
+      clearContinuationTriggers();
+      const scans = replayOrder(loadScanRows());
+      const job = createJob({
+        job_id: newJobId("backfill"),
+        kind: "backfill",
+        phase: "BACKFILLING",
+        scan_id: null,
+        cursor: null,
+        page: 0,
+        findings_so_far: 0,
+        page_size: 0,
+        total_count: scans.length,
+        params_json: JSON.stringify(emptyBackfillResult()),
+        journal_ref: null,
+        error: null
+      });
+      step(job, FIRST_STEP_BUDGET_MS);
+      return statusOf((_a = getJob(job.job_id)) != null ? _a : job);
+    }, 12e4);
+  }
+  function step(job, budgetMs = BUDGET_MS) {
+    const t0 = Date.now();
+    const state = loadState();
+    const scans = replayOrder(state.scans);
+    const result = readResult(job);
+    let done = job.page;
+    let dirty = false;
+    const journalRef = writeJournal(job.job_id, state);
+    updateJob(job.job_id, { journal_ref: journalRef });
+    if (done === 0) {
+      try {
+        const scan = currentScan();
+        if (scan) {
+          backfillRiskFromRecords(state, scan.records, scan.ts, result);
+          dirty = true;
+        }
+      } catch (e) {
+        console.warn(`Backfill frame seed failed: ${e}`);
+        recordError("backfillFrame", e);
+      }
+    }
+    while (done < scans.length && Date.now() - t0 < budgetMs) {
+      const row = scans[done];
+      done += 1;
+      if (row.sealed) {
+        result.scansSealed += 1;
+        continue;
+      }
+      let records = null;
+      try {
+        records = recordsForScan(row);
+      } catch (e) {
+        console.warn(`Backfill could not read scan ${row.scan_id}: ${e}`);
+      }
+      if (records === null) {
+        result.scansUnreadable += 1;
+        continue;
+      }
+      backfillRiskFromRecords(state, records, row.ts, result);
+      result.scansReplayed += 1;
+      dirty = true;
+    }
+    if (dirty) writeStateTables(state);
+    trashFile(journalRef);
+    result.stillUnknown = countUnknownRisk(state);
+    updateJob(job.job_id, {
+      page: done,
+      findings_so_far: result.ledgerRowsTouched + result.episodeRowsTouched,
+      params_json: JSON.stringify(result),
+      journal_ref: null,
+      phase: done >= scans.length ? "DONE" : "BACKFILLING"
+    });
+    if (done < scans.length) scheduleContinuation();
+    else clearContinuationTriggers();
+  }
+  function continueBackfill(_e) {
+    withScriptLock(() => {
+      var _a;
+      clearContinuationTriggers();
+      const job = activeJob();
+      if (!job || job.kind !== "backfill" || job.phase !== "BACKFILLING") return;
+      try {
+        step(job);
+      } catch (e) {
+        console.warn(`Backfill hop failed: ${e}`);
+        recordError("backfillHop", e);
+        updateJob(job.job_id, { phase: "FAILED", error: String((_a = e.message) != null ? _a : e) });
+      }
+    }, 12e4);
+  }
+  function statusOf(job) {
+    return {
+      jobId: job.job_id,
+      phase: job.phase,
+      scansTotal: job.total_count,
+      scansDone: job.page,
+      result: readResult(job),
+      error: job.error
+    };
+  }
+  function backfillStatus() {
+    const active = activeJob();
+    if (active && active.kind === "backfill") return statusOf(active);
+    const last = lastJobOfKind("backfill");
+    return last ? statusOf(last) : null;
+  }
+
   // src/server/scanJobs.ts
   var scanJobs_exports = {};
   __export(scanJobs_exports, {
     cancelScan: () => cancelScan,
-    clearContinuationTriggers: () => clearContinuationTriggers,
+    clearContinuationTriggers: () => clearContinuationTriggers2,
     continueJob: () => continueJob,
     dailyScan: () => dailyScan,
     jobStatus: () => jobStatus,
@@ -5381,10 +6075,10 @@ var Server = (() => {
   var SAMPLE_GROUPED = { "data": { "vulnerabilityFindingsGroupedByValues": { "nodes": [{ "id": "CLCh_PAJEgEBIigKJhokYjA2Njk1ZDUtYjI3MS01OGYzLTllMjctYzViOTc2NTgxNDJl", "project": null, "baseContainerImage": null, "vcsOrganization": null, "locationPath": null, "kubernetesCluster": null, "containerService": null, "kubernetesNamespace": null, "computeInstanceGroup": null, "applicationService": null, "environment": null, "cloudPlatform": null, "vulnerableAsset": { "id": "b06695d5-b271-58f3-9e27-c5b97658142e", "type": "VIRTUAL_MACHINE", "name": "gke-inix-gke-eu-pr-n4-shared-19b3-fc6dab19-05ru", "cloudPlatform": "GCP", "externalId": "4787123027339367533", "subscriptionId": "2b2211fb-742f-5566-af67-ab8992b58cfb", "subscriptionName": "inix-tt4k", "subscriptionExternalId": "inix-tt4k", "tags": { "cluster_name": "inix-gke-eu-pr", "gke-inix-eu-pr-nodes-europe-west4": "gke-inix-eu-pr-nodes-europe-west4", "gke-inix-gke-eu-pr": "gke-inix-gke-eu-pr", "gke-inix-gke-eu-pr-b3192bb3-node": "gke-inix-gke-eu-pr-b3192bb3-node", "gke-inix-gke-eu-pr-n4-shared": "gke-inix-gke-eu-pr-n4-shared", "goog-gke-cluster-id-base32": "wmmsxm4ye5fsxldvevyserwhpfnupmogu4ausbma6yys6hfhup2q", "goog-gke-cost-management": "", "goog-gke-node": "", "goog-gke-node-pool-provisioning-model": "on-demand", "goog-k8s-cluster-location": "europe-west4", "goog-k8s-cluster-name": "inix-gke-eu-pr", "goog-k8s-node-pool-name": "n4-shared-19b3", "goog-terraform-provisioned": "true", "project": "inix-tt4k", "tag-inix-gke-eu-pr-ingress": "tag-inix-gke-eu-pr-ingress" } }, "vulnerableAssetType": null, "vulnerableAssetTags": null, "cloudAccount": null, "resourceGroup": null, "containerRegistry": null, "containerRepository": null, "vcsRepository": null, "vcsCodeAuthor": null, "detailedName": null, "fixedVersion": null, "recommendedVersion": null, "artifactType": null, "detectionMethod": null, "analytics": { "vulnerableAssetCount": 1, "totalFindingCount": 63, "criticalSeverityFindingCount": 63, "highSeverityFindingCount": 0, "mediumSeverityFindingCount": 0, "lowSeverityFindingCount": 0, "informationalSeverityFindingCount": 0 }, "virtualMachineImage": null, "operatingSystemDistribution": null, "name": null, "originFinding": null, "originFindingPolicy": null, "origin": null, "sourceMappedCodeFinding": null, "sourceMappedCodeRepository": null, "sourceMappedCodeResource": null }, { "id": "CLCh_PAJEgEBIigKJhokNjY0NTc5MjYtMzUxMy01M2ViLWEwOWYtMGU5MGI2ZjRmZWZm", "project": null, "baseContainerImage": null, "vcsOrganization": null, "locationPath": null, "kubernetesCluster": null, "containerService": null, "kubernetesNamespace": null, "computeInstanceGroup": null, "applicationService": null, "environment": null, "cloudPlatform": null, "vulnerableAsset": { "id": "66457926-3513-53eb-a09f-0e90b6f4feff", "type": "VIRTUAL_MACHINE", "name": "ENMFV0APP02", "cloudPlatform": "Alibaba", "externalId": "i-uf623aepimaj7zev1n25", "subscriptionId": "1fafc3d1-bbe3-5d13-8698-3df1f4514e37", "subscriptionName": "ENMS-PP", "subscriptionExternalId": "1985932850711133", "tags": { "Account": "1985932850711133", "Base_nsg_type": "VMPPD", "Domain": "VMM", "Env": "preprod", "Environment": "PREPROD", "Project": "ENM", "Terraform": "yes", "Vendor": "aliyun" } }, "vulnerableAssetType": null, "vulnerableAssetTags": null, "cloudAccount": null, "resourceGroup": null, "containerRegistry": null, "containerRepository": null, "vcsRepository": null, "vcsCodeAuthor": null, "detailedName": null, "fixedVersion": null, "recommendedVersion": null, "artifactType": null, "detectionMethod": null, "analytics": { "vulnerableAssetCount": 1, "totalFindingCount": 57, "criticalSeverityFindingCount": 57, "highSeverityFindingCount": 0, "mediumSeverityFindingCount": 0, "lowSeverityFindingCount": 0, "informationalSeverityFindingCount": 0 }, "virtualMachineImage": null, "operatingSystemDistribution": null, "name": null, "originFinding": null, "originFindingPolicy": null, "origin": null, "sourceMappedCodeFinding": null, "sourceMappedCodeRepository": null, "sourceMappedCodeResource": null }, { "id": "CLCh_PAJEgEBIigKJhokM2FhYmI4MTAtNWM1ZC01NjAzLTkyMmUtZTIxZmU2MGQ4ZDcz", "project": null, "baseContainerImage": null, "vcsOrganization": null, "locationPath": null, "kubernetesCluster": null, "containerService": null, "kubernetesNamespace": null, "computeInstanceGroup": null, "applicationService": null, "environment": null, "cloudPlatform": null, "vulnerableAsset": { "id": "3aabb810-5c5d-5603-922e-e21fe60d8d73", "type": "VIRTUAL_MACHINE", "name": "ENMFV0APP01", "cloudPlatform": "Alibaba", "externalId": "i-uf6eef938p2fzi1of1en", "subscriptionId": "1fafc3d1-bbe3-5d13-8698-3df1f4514e37", "subscriptionName": "ENMS-PP", "subscriptionExternalId": "1985932850711133", "tags": { "Account": "1985932850711133", "Base_nsg_type": "VMPPD", "Domain": "VMM", "Env": "preprod", "Environment": "PREPROD", "Project": "ENM", "Terraform": "yes", "Vendor": "aliyun" } }, "vulnerableAssetType": null, "vulnerableAssetTags": null, "cloudAccount": null, "resourceGroup": null, "containerRegistry": null, "containerRepository": null, "vcsRepository": null, "vcsCodeAuthor": null, "detailedName": null, "fixedVersion": null, "recommendedVersion": null, "artifactType": null, "detectionMethod": null, "analytics": { "vulnerableAssetCount": 1, "totalFindingCount": 57, "criticalSeverityFindingCount": 57, "highSeverityFindingCount": 0, "mediumSeverityFindingCount": 0, "lowSeverityFindingCount": 0, "informationalSeverityFindingCount": 0 }, "virtualMachineImage": null, "operatingSystemDistribution": null, "name": null, "originFinding": null, "originFindingPolicy": null, "origin": null, "sourceMappedCodeFinding": null, "sourceMappedCodeRepository": null, "sourceMappedCodeResource": null }, { "id": "CLCh_PAJEgEBIigKJhokYzQzM2M5YTktZTYzMS01ZDU2LThiZDgtM2MxY2RkZDkzMTAz", "project": null, "baseContainerImage": null, "vcsOrganization": null, "locationPath": null, "kubernetesCluster": null, "containerService": null, "kubernetesNamespace": null, "computeInstanceGroup": null, "applicationService": null, "environment": null, "cloudPlatform": null, "vulnerableAsset": { "id": "c433c9a9-e631-5d56-8bd8-3c1cddd93103", "type": "VIRTUAL_MACHINE", "name": "gke-vctech-gke-eu-pp-n4-shared-0d05f181-ep29", "cloudPlatform": "GCP", "externalId": "7603203856350539437", "subscriptionId": "86a11580-2086-56a7-88d2-27f405958fcb", "subscriptionName": "INIX-VCTECH", "subscriptionExternalId": "inix-vctech-0alr", "tags": { "cost_center": "50001z0536-001", "gke-vctech-gke-eu-pp": "gke-vctech-gke-eu-pp", "gke-vctech-gke-eu-pp-6830a116-node": "gke-vctech-gke-eu-pp-6830a116-node", "gke-vctech-gke-eu-pp-shared": "gke-vctech-gke-eu-pp-shared", "goog-fleet-project": "464185428346", "goog-gke-cluster-id-base32": "naykcfw275ezfoxzjnzpvvbquab2ieq336dell4s2ntdywfh43gq", "goog-gke-cost-management": "", "goog-gke-node": "", "goog-gke-node-pool-provisioning-model": "on-demand", "goog-k8s-cluster-location": "europe-west4", "goog-k8s-cluster-name": "vctech-gke-eu-pp", "goog-k8s-node-pool-name": "n4-shared", "net-gkenodes-inix-azae-prod-europe-west4": "net-gkenodes-inix-azae-prod-europe-west4", "net-main-gkenodes": "net-main-gkenodes", "owner": "jkrawc50", "project": "vctech-gke-eu-pp", "tag-vctech-gke-eu-pp-client": "tag-vctech-gke-eu-pp-client", "terraform": "true" } }, "vulnerableAssetType": null, "vulnerableAssetTags": null, "cloudAccount": null, "resourceGroup": null, "containerRegistry": null, "containerRepository": null, "vcsRepository": null, "vcsCodeAuthor": null, "detailedName": null, "fixedVersion": null, "recommendedVersion": null, "artifactType": null, "detectionMethod": null, "analytics": { "vulnerableAssetCount": 1, "totalFindingCount": 56, "criticalSeverityFindingCount": 56, "highSeverityFindingCount": 0, "mediumSeverityFindingCount": 0, "lowSeverityFindingCount": 0, "informationalSeverityFindingCount": 0 }, "virtualMachineImage": null, "operatingSystemDistribution": null, "name": null, "originFinding": null, "originFindingPolicy": null, "origin": null, "sourceMappedCodeFinding": null, "sourceMappedCodeRepository": null, "sourceMappedCodeResource": null }, { "id": "CLCh_PAJEgEBIigKJhokY2UwMGQ3ODQtMmE5OC01NjRlLThkM2UtYjZhYzNmNjQ5Mjdk", "project": null, "baseContainerImage": null, "vcsOrganization": null, "locationPath": null, "kubernetesCluster": null, "containerService": null, "kubernetesNamespace": null, "computeInstanceGroup": null, "applicationService": null, "environment": null, "cloudPlatform": null, "vulnerableAsset": { "id": "ce00d784-2a98-564e-8d3e-b6ac3f64927d", "type": "VIRTUAL_MACHINE", "name": "gke-inix-gke-eu-pp-pdk-72ab-941a6f69-fqrw", "cloudPlatform": "GCP", "externalId": "1511864616192343110", "subscriptionId": "f391b2ee-ffdf-58e1-a3af-a59bfeaba3dc", "subscriptionName": "inix-horsprod-n0wq", "subscriptionExternalId": "inix-horsprod-n0wq", "tags": { "cluster_name": "inix-gke-eu-pp", "gke-inix-eu-pp-nodes-europe-west4": "gke-inix-eu-pp-nodes-europe-west4", "gke-inix-gke-eu-pp": "gke-inix-gke-eu-pp", "gke-inix-gke-eu-pp-988606d9-node": "gke-inix-gke-eu-pp-988606d9-node", "gke-inix-gke-eu-pp-pdk": "gke-inix-gke-eu-pp-pdk", "goog-fleet-project": "inix-horsprod-n0wq", "goog-gke-cluster-id-base32": "tcdanwnkgndvzlohnlhmoapayhybvkjeqbfuokve2ufprzvps45q", "goog-gke-cost-management": "", "goog-gke-node": "", "goog-gke-node-pool-provisioning-model": "spot", "goog-k8s-cluster-location": "europe-west4", "goog-k8s-cluster-name": "inix-gke-eu-pp", "goog-k8s-node-pool-name": "pdk-72ab", "goog-terraform-provisioned": "true", "project": "inix-horsprod-n0wq", "tag-inix-gke-eu-pp-ingress": "tag-inix-gke-eu-pp-ingress" } }, "vulnerableAssetType": null, "vulnerableAssetTags": null, "cloudAccount": null, "resourceGroup": null, "containerRegistry": null, "containerRepository": null, "vcsRepository": null, "vcsCodeAuthor": null, "detailedName": null, "fixedVersion": null, "recommendedVersion": null, "artifactType": null, "detectionMethod": null, "analytics": { "vulnerableAssetCount": 1, "totalFindingCount": 49, "criticalSeverityFindingCount": 49, "highSeverityFindingCount": 0, "mediumSeverityFindingCount": 0, "lowSeverityFindingCount": 0, "informationalSeverityFindingCount": 0 }, "virtualMachineImage": null, "operatingSystemDistribution": null, "name": null, "originFinding": null, "originFindingPolicy": null, "origin": null, "sourceMappedCodeFinding": null, "sourceMappedCodeRepository": null, "sourceMappedCodeResource": null }, { "id": "CLCh_PAJEgEBIigKJhokMTRlODJlYTAtOTgwNC01ZDJlLWE2OWUtNjhkNjg4NTU3OGY4", "project": null, "baseContainerImage": null, "vcsOrganization": null, "locationPath": null, "kubernetesCluster": null, "containerService": null, "kubernetesNamespace": null, "computeInstanceGroup": null, "applicationService": null, "environment": null, "cloudPlatform": null, "vulnerableAsset": { "id": "14e82ea0-9804-5d2e-a69e-68d6885578f8", "type": "VIRTUAL_MACHINE", "name": "gke-vctech-gke-eu-pr-n4-shared-c8e798db-duig", "cloudPlatform": "GCP", "externalId": "3799583756770569928", "subscriptionId": "86a11580-2086-56a7-88d2-27f405958fcb", "subscriptionName": "INIX-VCTECH", "subscriptionExternalId": "inix-vctech-0alr", "tags": { "cost_center": "50001z0536-001", "gke-vctech-gke-eu-pr": "gke-vctech-gke-eu-pr", "gke-vctech-gke-eu-pr-860fef39-node": "gke-vctech-gke-eu-pr-860fef39-node", "gke-vctech-gke-eu-pr-shared": "gke-vctech-gke-eu-pr-shared", "goog-gke-cluster-id-base32": "qyh66omu7jhr3bmgaftrfvltkjzc5ifdvowuvqm4dikservhcbua", "goog-gke-cost-management": "", "goog-gke-node": "", "goog-gke-node-pool-provisioning-model": "on-demand", "goog-k8s-cluster-location": "europe-west4", "goog-k8s-cluster-name": "vctech-gke-eu-pr", "goog-k8s-node-pool-name": "n4-shared", "net-gkenodes-inix-azae-prod-europe-west4": "net-gkenodes-inix-azae-prod-europe-west4", "net-main-gkenodes": "net-main-gkenodes", "owner": "jkrawc50", "project": "vctech-gke-eu-pr", "tag-vctech-gke-eu-pr-client": "tag-vctech-gke-eu-pr-client", "terraform": "true" } }, "vulnerableAssetType": null, "vulnerableAssetTags": null, "cloudAccount": null, "resourceGroup": null, "containerRegistry": null, "containerRepository": null, "vcsRepository": null, "vcsCodeAuthor": null, "detailedName": null, "fixedVersion": null, "recommendedVersion": null, "artifactType": null, "detectionMethod": null, "analytics": { "vulnerableAssetCount": 1, "totalFindingCount": 49, "criticalSeverityFindingCount": 49, "highSeverityFindingCount": 0, "mediumSeverityFindingCount": 0, "lowSeverityFindingCount": 0, "informationalSeverityFindingCount": 0 }, "virtualMachineImage": null, "operatingSystemDistribution": null, "name": null, "originFinding": null, "originFindingPolicy": null, "origin": null, "sourceMappedCodeFinding": null, "sourceMappedCodeRepository": null, "sourceMappedCodeResource": null }, { "id": "CLCh_PAJEgEBIigKJhokYjQ2ZWYyZDMtNTEyMS01YTg4LWFkMTEtNzNhNDYwZjI0OWFm", "project": null, "baseContainerImage": null, "vcsOrganization": null, "locationPath": null, "kubernetesCluster": null, "containerService": null, "kubernetesNamespace": null, "computeInstanceGroup": null, "applicationService": null, "environment": null, "cloudPlatform": null, "vulnerableAsset": { "id": "b46ef2d3-5121-5a88-ad11-73a460f249af", "type": "VIRTUAL_MACHINE", "name": "ENMFN0APP01", "cloudPlatform": "Alibaba", "externalId": "i-uf67w5ntp88b10tn592w", "subscriptionId": "d7297fe3-6ae8-59e5-b456-5050a1ca195b", "subscriptionName": "ENMS-pr", "subscriptionExternalId": "1950243589136840", "tags": { "Account": "1950243589136840", "Base_nsg_type": "VMPRD", "Domain": "VMM", "Env": "production", "Environment": "PROD", "Project": "ENM", "Terraform": "yes", "Vendor": "aliyun" } }, "vulnerableAssetType": null, "vulnerableAssetTags": null, "cloudAccount": null, "resourceGroup": null, "containerRegistry": null, "containerRepository": null, "vcsRepository": null, "vcsCodeAuthor": null, "detailedName": null, "fixedVersion": null, "recommendedVersion": null, "artifactType": null, "detectionMethod": null, "analytics": { "vulnerableAssetCount": 1, "totalFindingCount": 43, "criticalSeverityFindingCount": 43, "highSeverityFindingCount": 0, "mediumSeverityFindingCount": 0, "lowSeverityFindingCount": 0, "informationalSeverityFindingCount": 0 }, "virtualMachineImage": null, "operatingSystemDistribution": null, "name": null, "originFinding": null, "originFindingPolicy": null, "origin": null, "sourceMappedCodeFinding": null, "sourceMappedCodeRepository": null, "sourceMappedCodeResource": null }, { "id": "CLCh_PAJEgEBIigKJhokYjM0YTQ1YmEtZTg2MC01NTc5LWE3MzYtNzYzMmQ0NTdlYjIw", "project": null, "baseContainerImage": null, "vcsOrganization": null, "locationPath": null, "kubernetesCluster": null, "containerService": null, "kubernetesNamespace": null, "computeInstanceGroup": null, "applicationService": null, "environment": null, "cloudPlatform": null, "vulnerableAsset": { "id": "b34a45ba-e860-5579-a736-7632d457eb20", "type": "VIRTUAL_MACHINE", "name": "ENMFN0APP02", "cloudPlatform": "Alibaba", "externalId": "i-uf60a6i74bym0d8wjtx0", "subscriptionId": "d7297fe3-6ae8-59e5-b456-5050a1ca195b", "subscriptionName": "ENMS-pr", "subscriptionExternalId": "1950243589136840", "tags": { "Account": "1950243589136840", "Base_nsg_type": "VMPRD", "Domain": "VMM", "Env": "production", "Environment": "PROD", "Project": "ENM", "Terraform": "yes", "Vendor": "aliyun" } }, "vulnerableAssetType": null, "vulnerableAssetTags": null, "cloudAccount": null, "resourceGroup": null, "containerRegistry": null, "containerRepository": null, "vcsRepository": null, "vcsCodeAuthor": null, "detailedName": null, "fixedVersion": null, "recommendedVersion": null, "artifactType": null, "detectionMethod": null, "analytics": { "vulnerableAssetCount": 1, "totalFindingCount": 43, "criticalSeverityFindingCount": 43, "highSeverityFindingCount": 0, "mediumSeverityFindingCount": 0, "lowSeverityFindingCount": 0, "informationalSeverityFindingCount": 0 }, "virtualMachineImage": null, "operatingSystemDistribution": null, "name": null, "originFinding": null, "originFindingPolicy": null, "origin": null, "sourceMappedCodeFinding": null, "sourceMappedCodeRepository": null, "sourceMappedCodeResource": null }, { "id": "CLCh_PAJEgEBIigKJhokYzk4Mjg1MjktODNiZS01YTU4LTlhOGEtYTA5NGY3MGE3MjZh", "project": null, "baseContainerImage": null, "vcsOrganization": null, "locationPath": null, "kubernetesCluster": null, "containerService": null, "kubernetesNamespace": null, "computeInstanceGroup": null, "applicationService": null, "environment": null, "cloudPlatform": null, "vulnerableAsset": { "id": "c9828529-83be-5a58-9a8a-a094f70a726a", "type": "VIRTUAL_MACHINE", "name": "gke-vctech-gke-eu-pr-n4-shared-ada1118f-g9m6", "cloudPlatform": "GCP", "externalId": "8251205178823763465", "subscriptionId": "86a11580-2086-56a7-88d2-27f405958fcb", "subscriptionName": "INIX-VCTECH", "subscriptionExternalId": "inix-vctech-0alr", "tags": { "cost_center": "50001z0536-001", "gke-vctech-gke-eu-pr": "gke-vctech-gke-eu-pr", "gke-vctech-gke-eu-pr-860fef39-node": "gke-vctech-gke-eu-pr-860fef39-node", "gke-vctech-gke-eu-pr-shared": "gke-vctech-gke-eu-pr-shared", "goog-gke-cluster-id-base32": "qyh66omu7jhr3bmgaftrfvltkjzc5ifdvowuvqm4dikservhcbua", "goog-gke-cost-management": "", "goog-gke-node": "", "goog-gke-node-pool-provisioning-model": "on-demand", "goog-k8s-cluster-location": "europe-west4", "goog-k8s-cluster-name": "vctech-gke-eu-pr", "goog-k8s-node-pool-name": "n4-shared", "net-gkenodes-inix-azae-prod-europe-west4": "net-gkenodes-inix-azae-prod-europe-west4", "net-main-gkenodes": "net-main-gkenodes", "owner": "jkrawc50", "project": "vctech-gke-eu-pr", "tag-vctech-gke-eu-pr-client": "tag-vctech-gke-eu-pr-client", "terraform": "true" } }, "vulnerableAssetType": null, "vulnerableAssetTags": null, "cloudAccount": null, "resourceGroup": null, "containerRegistry": null, "containerRepository": null, "vcsRepository": null, "vcsCodeAuthor": null, "detailedName": null, "fixedVersion": null, "recommendedVersion": null, "artifactType": null, "detectionMethod": null, "analytics": { "vulnerableAssetCount": 1, "totalFindingCount": 42, "criticalSeverityFindingCount": 42, "highSeverityFindingCount": 0, "mediumSeverityFindingCount": 0, "lowSeverityFindingCount": 0, "informationalSeverityFindingCount": 0 }, "virtualMachineImage": null, "operatingSystemDistribution": null, "name": null, "originFinding": null, "originFindingPolicy": null, "origin": null, "sourceMappedCodeFinding": null, "sourceMappedCodeRepository": null, "sourceMappedCodeResource": null }, { "id": "CLCh_PAJEgEBIigKJhokOWQzNDg5N2UtNDRjZi01YTU1LThmZjctYjE5NmZhNWU4ZmQ4", "project": null, "baseContainerImage": null, "vcsOrganization": null, "locationPath": null, "kubernetesCluster": null, "containerService": null, "kubernetesNamespace": null, "computeInstanceGroup": null, "applicationService": null, "environment": null, "cloudPlatform": null, "vulnerableAsset": { "id": "9d34897e-44cf-5a55-8ff7-b196fa5e8fd8", "type": "VIRTUAL_MACHINE", "name": "gke-vctech-gke-eu-pp-n4-shared-c95b019b-qhwp", "cloudPlatform": "GCP", "externalId": "5646838182778991520", "subscriptionId": "86a11580-2086-56a7-88d2-27f405958fcb", "subscriptionName": "INIX-VCTECH", "subscriptionExternalId": "inix-vctech-0alr", "tags": { "cost_center": "50001z0536-001", "gke-vctech-gke-eu-pp": "gke-vctech-gke-eu-pp", "gke-vctech-gke-eu-pp-6830a116-node": "gke-vctech-gke-eu-pp-6830a116-node", "gke-vctech-gke-eu-pp-shared": "gke-vctech-gke-eu-pp-shared", "goog-fleet-project": "464185428346", "goog-gke-cluster-id-base32": "naykcfw275ezfoxzjnzpvvbquab2ieq336dell4s2ntdywfh43gq", "goog-gke-cost-management": "", "goog-gke-node": "", "goog-gke-node-pool-provisioning-model": "on-demand", "goog-k8s-cluster-location": "europe-west4", "goog-k8s-cluster-name": "vctech-gke-eu-pp", "goog-k8s-node-pool-name": "n4-shared", "net-gkenodes-inix-azae-prod-europe-west4": "net-gkenodes-inix-azae-prod-europe-west4", "net-main-gkenodes": "net-main-gkenodes", "owner": "jkrawc50", "project": "vctech-gke-eu-pp", "tag-vctech-gke-eu-pp-client": "tag-vctech-gke-eu-pp-client", "terraform": "true" } }, "vulnerableAssetType": null, "vulnerableAssetTags": null, "cloudAccount": null, "resourceGroup": null, "containerRegistry": null, "containerRepository": null, "vcsRepository": null, "vcsCodeAuthor": null, "detailedName": null, "fixedVersion": null, "recommendedVersion": null, "artifactType": null, "detectionMethod": null, "analytics": { "vulnerableAssetCount": 1, "totalFindingCount": 35, "criticalSeverityFindingCount": 35, "highSeverityFindingCount": 0, "mediumSeverityFindingCount": 0, "lowSeverityFindingCount": 0, "informationalSeverityFindingCount": 0 }, "virtualMachineImage": null, "operatingSystemDistribution": null, "name": null, "originFinding": null, "originFindingPolicy": null, "origin": null, "sourceMappedCodeFinding": null, "sourceMappedCodeRepository": null, "sourceMappedCodeResource": null }], "pageInfo": { "hasNextPage": true, "endCursor": "eyJmaWVsZHMiOlt7IkZpZWxkIjoiY3JpdGljYWxTZXZlcml0eUZpbmRpbmdDb3VudCIsIlZhbHVlIjozNX0seyJGaWVsZCI6ImhpZ2hTZXZlcml0eUZpbmRpbmdDb3VudCIsIlZhbHVlIjowfSx7IkZpZWxkIjoibWVkaXVtU2V2ZXJpdHlGaW5kaW5nQ291bnQiLCJWYWx1ZSI6MH0seyJGaWVsZCI6Imxvd1NldmVyaXR5RmluZGluZ0NvdW50IiwiVmFsdWUiOjB9LHsiRmllbGQiOiJpbmZvcm1hdGlvbmFsU2V2ZXJpdHlGaW5kaW5nQ291bnQiLCJWYWx1ZSI6MH0seyJGaWVsZCI6Imdyb3VwQnlLZXkiLCJWYWx1ZSI6IjlkMzQ4OTdlLTQ0Y2YtNWE1NS04ZmY3LWIxOTZmYTVlOGZkOCJ9XX0=" } } } };
 
   // src/server/scanJobs.ts
-  var BUDGET_MS = 27e4;
-  var FIRST_STEP_BUDGET_MS = 45e3;
-  var CONTINUE_DELAY_MS = 3e4;
-  var CONTINUE_HANDLER = "trigger_continueScan";
+  var BUDGET_MS2 = 27e4;
+  var FIRST_STEP_BUDGET_MS2 = 45e3;
+  var CONTINUE_DELAY_MS2 = 3e4;
+  var CONTINUE_HANDLER2 = "trigger_continueScan";
   var DELTA_OVERLAP_MINUTES = 15;
   var STALE_JOB_MS = 30 * 6e4;
   var ScanCancelled = class extends Error {
@@ -5412,7 +6106,7 @@ var Server = (() => {
       const job = getJob(jobId);
       if (!job || job.kind !== "scan") return false;
       if (job.phase !== "FETCHING" && job.phase !== "RECONCILING") return false;
-      clearContinuationTriggers();
+      clearContinuationTriggers2();
       finalizeCancel(job);
       return true;
     } finally {
@@ -5535,14 +6229,14 @@ var Server = (() => {
         journal_ref: null,
         error: null
       });
-      step(job, FIRST_STEP_BUDGET_MS);
+      step2(job, FIRST_STEP_BUDGET_MS2);
       return { jobId: job.job_id, message: "Scan started." };
     });
   }
   function reclaimStaleJob(job) {
     const updated = parseTs(job.updated_at);
     if (updated !== null && Date.now() - updated < STALE_JOB_MS) return false;
-    clearContinuationTriggers();
+    clearContinuationTriggers2();
     clearCancel(job.job_id);
     updateJob(job.job_id, {
       phase: "FAILED",
@@ -5582,7 +6276,7 @@ var Server = (() => {
       journal_ref: null,
       error: null
     });
-    step(job);
+    step2(job);
     return { jobId: job.job_id, message: "Quick refresh started." };
   }
   function dryRunScan(options) {
@@ -5617,7 +6311,7 @@ var Server = (() => {
     afterPersist(slim);
     return { jobId: null, message: "Dry-run scan saved." };
   }
-  function step(job, budgetMs = BUDGET_MS) {
+  function step2(job, budgetMs = BUDGET_MS2) {
     var _a, _b, _c;
     const started = Date.now();
     const params = JSON.parse((_a = job.params_json) != null ? _a : "{}");
@@ -5650,7 +6344,7 @@ var Server = (() => {
         if (Date.now() - started > budgetMs) {
           writeSlimRecords(scanId, slim);
           writePageRuns(scanId, pageRuns);
-          scheduleContinuation();
+          scheduleContinuation2();
           return;
         }
       }
@@ -5778,18 +6472,18 @@ var Server = (() => {
       recordError("supportGroupRefresh", e);
     }
   }
-  function scheduleContinuation() {
-    ScriptApp.newTrigger(CONTINUE_HANDLER).timeBased().after(CONTINUE_DELAY_MS).create();
+  function scheduleContinuation2() {
+    ScriptApp.newTrigger(CONTINUE_HANDLER2).timeBased().after(CONTINUE_DELAY_MS2).create();
   }
-  function clearContinuationTriggers() {
+  function clearContinuationTriggers2() {
     for (const t of ScriptApp.getProjectTriggers()) {
-      if (t.getHandlerFunction() === CONTINUE_HANDLER) ScriptApp.deleteTrigger(t);
+      if (t.getHandlerFunction() === CONTINUE_HANDLER2) ScriptApp.deleteTrigger(t);
     }
   }
   function continueJob(_e) {
     withScriptLock(() => {
       var _a, _b;
-      clearContinuationTriggers();
+      clearContinuationTriggers2();
       const job = activeJob();
       if (!job || job.kind !== "scan") return;
       if (job.phase === "FETCHING") {
@@ -5797,7 +6491,7 @@ var Server = (() => {
           finalizeCancel(job);
           return;
         }
-        step(job);
+        step2(job);
       } else if (job.phase === "RECONCILING") {
         const params = JSON.parse((_a = job.params_json) != null ? _a : "{}");
         const slim = (_b = readSlimRecords(job.scan_id)) != null ? _b : [];
@@ -5873,7 +6567,8 @@ var Server = (() => {
         autoCompact: getAutoCompact2(),
         showNoFix,
         includeEol: getIncludeEol2(),
-        domains: getDomains2()
+        domains: getDomains2(),
+        riskRule: getRiskRule2()
       },
       latestScan: latest ? {
         scanId: latest.scan_id,
@@ -6449,6 +7144,53 @@ var Server = (() => {
     };
     return { perSev, overall, slaPct, oldestDays, rowCount: rows.length, remediation };
   }
+  function programData(p) {
+    var _a, _b;
+    const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
+    const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
+    const rule = getRiskRule2().rule;
+    let rows = scopedBaseRows(domain, supportGroup);
+    rows = filterSeverities(rows, readSeverities(p));
+    rows = visibleBase(rows);
+    const riskRows = rows;
+    const { perSev, overall } = confusionBySeverity(riskRows, rule);
+    const capacityRows = rows;
+    const scans = loadScanRows();
+    return {
+      rule,
+      ruleSentence: ruleSentence(rule),
+      matrix: overall,
+      perSev,
+      signals: signalBreakdown(riskRows, rule),
+      sensitivity: ruleSensitivity(riskRows, rule),
+      // Whole-register capacity and the high-risk-only cut: P2P v3's net remediation capacity
+      // is specifically about the high-risk population, but the overall close rate is the
+      // figure the 1-in-10 benchmark refers to, so the page shows both.
+      capacity: capacityByMonth(capacityRows, scans, { rule, maxMonths: 24 }),
+      capacityHighRisk: capacityByMonth(capacityRows, scans, {
+        rule,
+        highRiskOnly: true,
+        maxMonths: 24
+      }),
+      observationDays: observationWindowDays(rows),
+      rowCount: rows.length,
+      // Named so the methodology block can state what was excluded before any of this counted.
+      toggles: {
+        showNoFix: getShowNoFix2(),
+        includeEol: getIncludeEol2()
+      }
+    };
+  }
+  function programTrendData(p) {
+    var _a, _b;
+    const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
+    const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
+    const rule = getRiskRule2().rule;
+    const rows = visibleBase(
+      filterSeverities(scopedBaseRows(domain, supportGroup), readSeverities(p))
+    );
+    return { trend: loadProgramTrend(rule, readSeverities(p), rows) };
+  }
   function mttrTrendData(p) {
     var _a, _b;
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
@@ -6649,6 +7391,37 @@ var Server = (() => {
       )
     );
   };
+  var cachedProgramData = (p) => {
+    var _a, _b;
+    return cached(
+      "program1",
+      {
+        domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
+        supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
+        severities: readSeverities(p),
+        showNoFix: getShowNoFix2(),
+        includeEol: getIncludeEol2(),
+        riskRuleVersion: getRiskRule2().version
+      },
+      () => programData(p),
+      3600
+    );
+  };
+  var cachedProgramTrendData = (p) => {
+    var _a, _b;
+    return cached(
+      "programTrend1",
+      {
+        domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
+        supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
+        severities: readSeverities(p),
+        showNoFix: getShowNoFix2(),
+        includeEol: getIncludeEol2(),
+        riskRuleVersion: getRiskRule2().version
+      },
+      () => programTrendData(p)
+    );
+  };
   var cachedMttrByDomainData = (p) => {
     var _a;
     return cached(
@@ -6721,6 +7494,101 @@ var Server = (() => {
       trends: cachedMttrTrendData(p),
       byDomain: domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p)
     }));
+  }
+  function startRiskBackfill(_p) {
+    return mutate(() => startBackfill());
+  }
+  function getRiskBackfillStatus(_p) {
+    return run(() => ({ backfill: backfillStatus() }));
+  }
+  function getProgramPage(p) {
+    return run(() => ({
+      program: cachedProgramData(p),
+      trends: cachedProgramTrendData(p)
+    }));
+  }
+  function getRiskCohort(p) {
+    return run(() => {
+      var _a, _b, _c;
+      const params = p != null ? p : {};
+      const quadrant = String((_a = params["quadrant"]) != null ? _a : "");
+      const rows = riskCohortRows(p, quadrant);
+      const page = Math.max(0, Number((_b = params["page"]) != null ? _b : 0));
+      const pageSize = Math.min(500, Math.max(1, Number((_c = params["pageSize"]) != null ? _c : 100)));
+      const start = page * pageSize;
+      return {
+        quadrant,
+        total: rows.length,
+        page,
+        pageCount: Math.ceil(rows.length / pageSize),
+        rows: rows.slice(start, start + pageSize)
+      };
+    });
+  }
+  function getExportCoverageCsv(p) {
+    return run(() => {
+      var _a;
+      const quadrant = String((_a = p == null ? void 0 : p["quadrant"]) != null ? _a : "");
+      const rows = riskCohortRows(p, quadrant);
+      const cols = [
+        "vuln_key",
+        "cve",
+        "severity",
+        "status",
+        "first_seen",
+        "resolved_at",
+        "resolution_src",
+        "has_kev",
+        "has_exploit",
+        "epss",
+        "risk_observed_at",
+        "risk_class",
+        "fired_signals",
+        "matrix_cell"
+      ];
+      const lines = [cols.join(",")];
+      for (const r of rows) lines.push(cols.map((c) => csvCell(r[c])).join(","));
+      return {
+        content: lines.join("\r\n"),
+        filename: "wiz-coverage-" + (quadrant || "all") + "-" + nowIso().slice(0, 10) + ".csv",
+        rows: rows.length
+      };
+    });
+  }
+  function riskCohortRows(p, quadrant) {
+    var _a, _b, _c;
+    const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
+    const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
+    const rule = getRiskRule2().rule;
+    const rows = visibleBase(
+      filterSeverities(scopedBaseRows(domain, supportGroup), readSeverities(p))
+    );
+    const out = [];
+    for (const r of rows) {
+      const riskRow = r;
+      const cls = classifyRisk(riskRow, rule);
+      const open = !RESOLVED_STATUSES.has(String((_c = r["status"]) != null ? _c : "").toUpperCase());
+      const cell = cls === "unknown" ? open ? "unknownOpen" : "unknownRemediated" : cls === "high" ? open ? "fn" : "tp" : open ? "tn" : "fp";
+      if (quadrant && cell !== quadrant) continue;
+      out.push({
+        vuln_key: r["vuln_key"],
+        cve: r["cve"],
+        severity: r["severity"],
+        status: r["status"],
+        first_seen: r["first_seen"],
+        resolved_at: r["resolved_at"],
+        resolution_src: r["resolution_src"],
+        asset_name: r["asset_name"],
+        has_kev: r["has_kev"],
+        has_exploit: r["has_exploit"],
+        epss: r["epss"],
+        risk_observed_at: r["risk_observed_at"],
+        risk_class: cls,
+        fired_signals: firedSignals(riskRow, rule).join(" "),
+        matrix_cell: cell
+      });
+    }
+    return out;
   }
   var WEEK_MS = 7 * 864e5;
   function executiveWeekTrend(p) {
@@ -6899,7 +7767,7 @@ var Server = (() => {
   function resetLedger2() {
     return mutate(() => {
       try {
-        clearContinuationTriggers();
+        clearContinuationTriggers2();
       } catch (e) {
         console.warn(`resetLedger: continuation-trigger cleanup skipped: ${e}`);
       }
@@ -7047,7 +7915,8 @@ var Server = (() => {
       autoCompact: getAutoCompact2(),
       showNoFix: getShowNoFix2(),
       includeEol: getIncludeEol2(),
-      domains: getDomains2()
+      domains: getDomains2(),
+      riskRule: getRiskRule2()
     }));
   }
   function setSeverities(p) {
@@ -7084,6 +7953,12 @@ var Server = (() => {
     return mutate(() => {
       setIncludeEol(Boolean(p == null ? void 0 : p["on"]));
       return { includeEol: getIncludeEol2() };
+    });
+  }
+  function setRiskRule2(p) {
+    return mutate(() => {
+      setRiskRule(p == null ? void 0 : p["rule"]);
+      return { riskRule: getRiskRule2() };
     });
   }
   function setRetentionSettings(p) {

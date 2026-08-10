@@ -38,6 +38,19 @@ export type LedgerRow = {
   // fixDate) was first seen for this episode. Both sticky first-wins; see reconcile().
   fix_date: string | null;
   fix_observed_at: string | null;
+  // Exploit-intelligence capture (remediation coverage / efficiency). The Wiz node carries
+  // these, but only the *current scan frame* does — a finding resolved by disappearance is
+  // gone from the frame entirely, so measuring "was what we remediated actually high-risk?"
+  // is impossible unless the signal is durable. Hence these columns. Sticky-MONOTONE, not
+  // latest-wins like severity/cve: see seedRisk() in reconcile().
+  //
+  // null means NOT CAPTURED, and is emphatically not the same as false — a row whose signal
+  // was never observed is UNCLASSIFIED and leaves both sides of every rate (see
+  // domain/program.ts). Never default these to false.
+  has_kev: boolean | null; // ever observed on the CISA KEV catalog (hasCisaKevExploit)
+  has_exploit: boolean | null; // ever observed with a known exploit (hasExploit)
+  epss: number | null; // PEAK observed epssProbability
+  risk_observed_at: string | null; // scan ts at which any risk signal first arrived
 };
 
 export const LEDGER_COLUMNS: (keyof LedgerRow)[] = [
@@ -46,6 +59,7 @@ export const LEDGER_COLUMNS: (keyof LedgerRow)[] = [
   "reopened_count", "first_scan_id", "last_scan_id",
   "subscription_name", "subscription_ext_id", "tags_json",
   "fix_date", "fix_observed_at",
+  "has_kev", "has_exploit", "epss", "risk_observed_at",
 ];
 
 export interface Observation {
@@ -134,7 +148,117 @@ function makeRow(
     last_scan_id: scanId,
     fix_date: fixDate,
     fix_observed_at: fixObservedAt,
+    // Left empty here and filled by mergeRiskSignals() after the branch, which runs for new,
+    // reopened, and persisting rows alike (the merge is identical in all three).
+    ...emptyRiskSignals(),
   };
+}
+
+/** The mutable slice of a row the risk merge touches — ledger rows and episodes alike. */
+export type RiskSignalFields = Pick<
+  LedgerRow,
+  "has_kev" | "has_exploit" | "epss" | "risk_observed_at"
+>;
+
+export function emptyRiskSignals(): RiskSignalFields {
+  return { has_kev: null, has_exploit: null, epss: null, risk_observed_at: null };
+}
+
+/**
+ * Hydrate the four risk columns off a stored row — a sheet row, a Drive snapshot row, or a
+ * migration-bundle row. Blank/absent stays `null` (never coerced to `false` or `0`, which
+ * would turn "not captured" into "captured, and the answer was no"); the plain-text ledger
+ * grid round-trips booleans as the strings "TRUE"/"FALSE", which `observeRiskSignals`'
+ * coercion already understands.
+ */
+export function coerceRiskSignals(r: Rec): RiskSignalFields {
+  const obs = observeRiskSignals({
+    hasCisaKevExploit: r["has_kev"],
+    hasExploit: r["has_exploit"],
+    epssProbability: r["epss"],
+  });
+  return {
+    has_kev: obs.kev,
+    has_exploit: obs.exploit,
+    epss: obs.epss,
+    risk_observed_at: (clean(r["risk_observed_at"]) as string | null) ?? null,
+  };
+}
+
+/**
+ * One observation's exploit-intelligence signals, each **null when the record does not
+ * carry it at all** — which is emphatically not the same as an observed `false`. A slim
+ * record written before these fields were captured simply lacks the keys; a tenant whose
+ * Wiz plan omits EPSS returns null. Both must stay distinguishable from "observed, and the
+ * answer was no", or coverage/efficiency silently impute a negative (see domain/program.ts).
+ */
+export function observeRiskSignals(
+  rec: Rec,
+): { kev: boolean | null; exploit: boolean | null; epss: number | null } {
+  const bool = (v: unknown): boolean | null => {
+    if (typeof v === "boolean") return v;
+    // Sheets round-trip: the ledger grid is plain-text formatted (sheetsDb.ensureTabs), so a
+    // boolean written with setValues reads back as the string "TRUE"/"FALSE".
+    if (typeof v === "string") {
+      const s = v.trim().toUpperCase();
+      if (s === "TRUE") return true;
+      if (s === "FALSE") return false;
+    }
+    return null;
+  };
+  const rawEpss = clean(rec["epssProbability"]);
+  const n = typeof rawEpss === "number" ? rawEpss : rawEpss === null ? NaN : Number(rawEpss);
+  return {
+    kev: bool(rec["hasCisaKevExploit"]),
+    exploit: bool(rec["hasExploit"]),
+    epss: Number.isFinite(n) ? (n as number) : null,
+  };
+}
+
+/**
+ * Merge one observation's risk signals into a row, in place — **monotone, idempotent, and
+ * order-independent**. Booleans go null → false → true and never back; `epss` keeps the peak
+ * observed; `risk_observed_at` keeps the earliest witnessing scan.
+ *
+ * Deliberately NOT the latest-observation-wins treatment `severity` / `cve` / asset fields
+ * get in reconcile(). Three reasons, all load-bearing:
+ *
+ *   * Exploit knowledge is monotone in reality — a CVE does not become un-exploited, and
+ *     CISA KEV entries are effectively never withdrawn. EPSS genuinely decays, so *peak*
+ *     EPSS is a deliberate choice: the question coverage asks is "was this something you
+ *     should have prioritized", not "is it still scary today".
+ *   * It keeps the high-risk label monotone, so a finding cannot silently leave the coverage
+ *     denominator between scans. Without that, trend.withCoverageEfficiency would rewrite
+ *     its own history on every scan — a point plotted last week would change value this
+ *     week for reasons unrelated to any remediation work, which makes the series
+ *     uninterpretable and the whole page unauditable.
+ *   * A resolved row therefore freezes at its peak known risk, the conservative reading:
+ *     coverage never under-counts what we ought to have fixed.
+ *
+ * Order-independence is what lets the archive backfill (server/backfillJobs.ts) replay saved
+ * scans newest-first, resume after a crash, and be re-run from scratch, all converging on
+ * byte-identical state without any bookkeeping.
+ *
+ * Note the divergence from `seedFix`: risk signals do **not** reset on reopen (the reopen
+ * branch in reconcile() clears the vendor-fix clock, which is per-episode). Exploit
+ * availability is a property of the vulnerability, not of the episode.
+ */
+export function mergeRiskSignals(row: RiskSignalFields, rec: Rec, scanTsIso: string): void {
+  const obs = observeRiskSignals(rec);
+  // `== null` (not `=== null`) also catches undefined on rows read back from a sheet
+  // written before these columns existed.
+  if (obs.kev !== null && (row.has_kev == null || obs.kev)) row.has_kev = obs.kev;
+  if (obs.exploit !== null && (row.has_exploit == null || obs.exploit)) {
+    row.has_exploit = obs.exploit;
+  }
+  if (obs.epss !== null && (row.epss == null || obs.epss > row.epss)) row.epss = obs.epss;
+  const witnessed = obs.kev !== null || obs.exploit !== null || obs.epss !== null;
+  if (!witnessed) return;
+  // Earliest-wins, and genuinely a min rather than a first-wins guard: the backfill replays
+  // scans newest-first, so a later call can legitimately carry an earlier timestamp.
+  if (row.risk_observed_at == null || scanTsIso < row.risk_observed_at) {
+    row.risk_observed_at = scanTsIso;
+  }
 }
 
 export interface ReconcileOptions {
@@ -230,6 +354,11 @@ export function reconcile(
       row.last_scan_id = scanId;
       seedFix(row);
     }
+
+    // Exploit intelligence — one call for all three branches above, because the merge is
+    // monotone and idempotent (unlike seedFix, which has to run per-branch around the reopen
+    // reset). See mergeRiskSignals for why this is sticky rather than latest-wins.
+    mergeRiskSignals(row, rec, scanTsIso);
 
     // Latest observation wins for display attributes.
     row.severity = sev;

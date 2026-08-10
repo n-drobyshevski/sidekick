@@ -10,6 +10,7 @@ import {
   SELECTABLE_SEVERITIES,
   SEVERITY_ORDER,
 } from "./config";
+import { DEFAULT_RISK_RULE, type RiskRule } from "./program";
 import { normalizeSeverity } from "./severity";
 import type { Rec } from "./util";
 
@@ -99,6 +100,60 @@ export function getIncludeEol(settings: Rec): boolean {
 
 export function withIncludeEol(settings: Rec, enabled: boolean): Rec {
   return { ...settings, include_eol: Boolean(enabled) };
+}
+
+/**
+ * The high-risk classifier rule behind coverage/efficiency, as `{version, rule}` — versioned
+ * like getDomains so cached derivations key on the token and a rule edit repaints everything.
+ * A stored blob is validated field by field; anything unusable falls back to the default.
+ */
+export function getRiskRule(settings: Rec): { version: number; rule: RiskRule } {
+  const raw = settings["risk_rule"];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { version: 0, rule: { ...DEFAULT_RISK_RULE } };
+  }
+  const r = raw as Rec;
+  let version = 0;
+  const v = Number(r["version"] ?? 0);
+  if (Number.isFinite(v)) version = Math.max(Math.trunc(v), 0);
+  const stored = r["rule"];
+  if (!stored || typeof stored !== "object" || Array.isArray(stored)) {
+    return { version, rule: { ...DEFAULT_RISK_RULE } };
+  }
+  return { version, rule: cleanRiskRule(stored as Rec) };
+}
+
+/**
+ * Coerce a rule blob: booleans stay booleans (defaulting to the enabled default when absent),
+ * and the EPSS threshold is clamped to [0, 1].
+ *
+ * Deliberately NO "if the operator disabled everything, fall back to the default" rescue. An
+ * all-disabled rule decides nothing, so program.classifyRisk returns `unknown` for every row
+ * and the page reads "no classifier enabled — 100% unclassified". Honest state beats a
+ * silent substitution the operator never asked for and cannot see (PRODUCT.md principle 5).
+ */
+export function cleanRiskRule(raw: Rec): RiskRule {
+  const bool = (key: string): boolean => {
+    const v = raw[key];
+    return typeof v === "boolean" ? v : DEFAULT_RISK_RULE[key as "kev" | "exploit" | "epss"];
+  };
+  const t = Number(raw["epssThreshold"]);
+  return {
+    kev: bool("kev"),
+    exploit: bool("exploit"),
+    epss: bool("epss"),
+    epssThreshold: Number.isFinite(t)
+      ? Math.min(1, Math.max(0, t))
+      : DEFAULT_RISK_RULE.epssThreshold,
+  };
+}
+
+export function withRiskRule(settings: Rec, rule: unknown): Rec {
+  const current = getRiskRule(settings);
+  const clean = cleanRiskRule(
+    rule && typeof rule === "object" && !Array.isArray(rule) ? (rule as Rec) : {},
+  );
+  return { ...settings, risk_rule: { version: current.version + 1, rule: clean } };
 }
 
 /** Structurally valid domain items only (non-dict / blank-name entries dropped). */

@@ -32,9 +32,10 @@ import {
 } from "../domain/remediation";
 import { validateBundle } from "../domain/importMerge";
 import { SealedScanError, LedgerRebuildError } from "../domain/maintenance";
-import { parseTs, present, type Rec } from "../domain/util";
+import { nowIso, parseTs, present, type Rec } from "../domain/util";
 import { kmMedianAsOf, kmMedianByGroupTrend, medianMttrByGroupTrend, openByGroupTrend, openBySeverityTrend } from "../domain/trend";
 import * as insights from "../domain/insights";
+import * as program from "../domain/program";
 import * as archive from "./archiveStore";
 import * as errorLog from "./errorLog";
 import * as findings from "./findings";
@@ -43,6 +44,7 @@ import { activeJob, getJob } from "./jobsStore";
 import * as ledgerStore from "./ledgerStore";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
 import { hasWizCredentials } from "./props";
+import * as backfillJobs from "./backfillJobs";
 import * as scanJobs from "./scanJobs";
 import { cached, dataVersion } from "./serverCache";
 import * as settingsStore from "./settingsStore";
@@ -134,6 +136,7 @@ function bootstrapCore(): Rec {
       showNoFix,
       includeEol: settingsStore.getIncludeEol(),
       domains: settingsStore.getDomains(),
+      riskRule: settingsStore.getRiskRule(),
     },
     latestScan: latest
       ? {
@@ -814,6 +817,68 @@ function mttrData(p?: unknown): Rec {
   return { perSev, overall, slaPct, oldestDays, rowCount: rows.length, remediation };
 }
 
+// ------------------------------------------------------- program performance (P2P)
+
+/**
+ * Remediation coverage / efficiency / capacity over the same scoped population every other
+ * page measures — scopedBaseRows -> filterSeverities -> visibleBase, in that order, so the
+ * Value Chain / Support group / severity scope and both global toggles apply identically.
+ *
+ * The show-no-fix and end-of-life toggles move these denominators materially (a finding with
+ * no vendor fix cannot be remediated, so excluding it changes what "should have been fixed"
+ * means), which is why the payload reports which toggles were in force and the page names
+ * them in its methodology block rather than leaving the reader to guess.
+ */
+function programData(p?: unknown): Rec {
+  const domain = String((p as Rec)?.["domain"] ?? "");
+  const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
+  const rule = settingsStore.getRiskRule().rule;
+  let rows = scopedBaseRows(domain, supportGroup);
+  rows = filterSeverities(rows, readSeverities(p));
+  rows = visibleBase(rows);
+  const riskRows = rows as unknown as program.RiskRow[];
+  const { perSev, overall } = program.confusionBySeverity(riskRows, rule);
+  const capacityRows = rows as unknown as (program.RiskRow & {
+    first_seen: string | null;
+    resolved_at: string | null;
+  })[];
+  const scans = ledgerStore.loadScanRows() as unknown as Rec[];
+  return {
+    rule,
+    ruleSentence: program.ruleSentence(rule),
+    matrix: overall,
+    perSev,
+    signals: program.signalBreakdown(riskRows, rule),
+    sensitivity: program.ruleSensitivity(riskRows, rule),
+    // Whole-register capacity and the high-risk-only cut: P2P v3's net remediation capacity
+    // is specifically about the high-risk population, but the overall close rate is the
+    // figure the 1-in-10 benchmark refers to, so the page shows both.
+    capacity: program.capacityByMonth(capacityRows, scans, { rule, maxMonths: 24 }),
+    capacityHighRisk: program.capacityByMonth(capacityRows, scans, {
+      rule,
+      highRiskOnly: true,
+      maxMonths: 24,
+    }),
+    observationDays: program.observationWindowDays(rows as unknown as BaseRow[]),
+    rowCount: rows.length,
+    // Named so the methodology block can state what was excluded before any of this counted.
+    toggles: {
+      showNoFix: settingsStore.getShowNoFix(),
+      includeEol: settingsStore.getIncludeEol(),
+    },
+  };
+}
+
+function programTrendData(p?: unknown): Rec {
+  const domain = String((p as Rec)?.["domain"] ?? "");
+  const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
+  const rule = settingsStore.getRiskRule().rule;
+  const rows = visibleBase(
+    filterSeverities(scopedBaseRows(domain, supportGroup), readSeverities(p)),
+  ) as unknown as BaseRow[];
+  return { trend: ledgerStore.loadProgramTrend(rule, readSeverities(p), rows) };
+}
+
 function mttrTrendData(p?: unknown): Rec {
   const domain = String((p as Rec)?.["domain"] ?? "");
   const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
@@ -1058,6 +1123,38 @@ const cachedMttrTrendData = (p?: unknown) =>
   );
 // Domain-independent (always all domains); severity-scoped; 1h TTL like the summary
 // (carries open ages).
+// Program performance. Keyed on the risk rule's VERSION token rather than the rule itself:
+// the payload is a pure function of the rule, and the version bumps on every save (see
+// settingsLogic.withRiskRule), so the token is sufficient and keeps the key short — the same
+// trick the domains blob uses. 1h TTL like the MTTR summary: the capacity months are
+// wall-clock relative.
+const cachedProgramData = (p?: unknown) =>
+  cached(
+    "program1",
+    {
+      domain: String((p as Rec)?.["domain"] ?? ""),
+      supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
+      severities: readSeverities(p),
+      showNoFix: settingsStore.getShowNoFix(),
+      includeEol: settingsStore.getIncludeEol(),
+      riskRuleVersion: settingsStore.getRiskRule().version,
+    },
+    () => programData(p),
+    3600,
+  );
+const cachedProgramTrendData = (p?: unknown) =>
+  cached(
+    "programTrend1",
+    {
+      domain: String((p as Rec)?.["domain"] ?? ""),
+      supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
+      severities: readSeverities(p),
+      showNoFix: settingsStore.getShowNoFix(),
+      includeEol: settingsStore.getIncludeEol(),
+      riskRuleVersion: settingsStore.getRiskRule().version,
+    },
+    () => programTrendData(p),
+  );
 const cachedMttrByDomainData = (p?: unknown) =>
   cached(
     // "mttrByDomain" → "mttrByDomain2": payload shape changed (added p90/tailMedian/
@@ -1135,6 +1232,120 @@ export function getMttrPage(p?: unknown): ApiResult {
     trends: cachedMttrTrendData(p),
     byDomain: domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p),
   }));
+}
+
+/** Kick off the risk-signal backfill (recovers exploit intelligence from scan archives). */
+export function startRiskBackfill(_p?: unknown): ApiResult {
+  return mutate(() => backfillJobs.startBackfill());
+}
+
+/** Backfill progress / last report, for the Settings panel and the page's honesty note. */
+export function getRiskBackfillStatus(_p?: unknown): ApiResult {
+  return run(() => ({ backfill: backfillJobs.backfillStatus() }));
+}
+
+/** Program performance page in one round trip (matrix + capacity + the trend series). */
+export function getProgramPage(p?: unknown): ApiResult {
+  return run(() => ({
+    program: cachedProgramData(p),
+    trends: cachedProgramTrendData(p),
+  }));
+}
+
+/**
+ * The findings behind one cell of the confusion matrix — the drill-down that makes the
+ * numbers checkable rather than merely stated.
+ *
+ * Deliberately NOT built on getFindings: that reads the current-scan frame, and the two
+ * cells a reader most wants to interrogate (TP and FP — what we remediated) consist largely
+ * of findings that are no longer in any frame, including everything resolved by
+ * disappearance. So this reads the durable base, the same population the matrix counted.
+ *
+ * `quadrant` is one of tp / fp / fn / tn / unknownRemediated / unknownOpen; anything else
+ * returns the empty cohort rather than silently falling back to "everything".
+ */
+export function getRiskCohort(p?: unknown): ApiResult {
+  return run(() => {
+    const params = (p ?? {}) as Rec;
+    const quadrant = String(params["quadrant"] ?? "");
+    const rows = riskCohortRows(p, quadrant);
+    const page = Math.max(0, Number(params["page"] ?? 0));
+    const pageSize = Math.min(500, Math.max(1, Number(params["pageSize"] ?? 100)));
+    const start = page * pageSize;
+    return {
+      quadrant,
+      total: rows.length,
+      page,
+      pageCount: Math.ceil(rows.length / pageSize),
+      rows: rows.slice(start, start + pageSize),
+    };
+  });
+}
+
+/** CSV of every classified row — the audit artifact. Carries the raw signals AND the derived
+ *  verdict, so a reader can recompute the whole page in a spreadsheet and check it against
+ *  what the UI claims. Optionally scoped to one matrix cell via `quadrant`. */
+export function getExportCoverageCsv(p?: unknown): ApiResult {
+  return run(() => {
+    const quadrant = String((p as Rec)?.["quadrant"] ?? "");
+    const rows = riskCohortRows(p, quadrant);
+    const cols = [
+      "vuln_key", "cve", "severity", "status", "first_seen", "resolved_at", "resolution_src",
+      "has_kev", "has_exploit", "epss", "risk_observed_at", "risk_class", "fired_signals",
+      "matrix_cell",
+    ];
+    const lines = [cols.join(",")];
+    for (const r of rows) lines.push(cols.map((c) => csvCell(r[c])).join(","));
+    // `content` + CRLF matches getExportCsv, so the client's download path is identical.
+    return {
+      content: lines.join("\r\n"),
+      filename:
+        "wiz-coverage-" + (quadrant || "all") + "-" + nowIso().slice(0, 10) + ".csv",
+      rows: rows.length,
+    };
+  });
+}
+
+/** Shared population for the cohort drill-down and the CSV: scoped base rows, each tagged
+ *  with its risk class, the clauses that fired, and its matrix cell. */
+function riskCohortRows(p: unknown, quadrant: string): Rec[] {
+  const domain = String((p as Rec)?.["domain"] ?? "");
+  const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
+  const rule = settingsStore.getRiskRule().rule;
+  const rows = visibleBase(
+    filterSeverities(scopedBaseRows(domain, supportGroup), readSeverities(p)),
+  );
+  const out: Rec[] = [];
+  for (const r of rows) {
+    const riskRow = r as unknown as program.RiskRow;
+    const cls = program.classifyRisk(riskRow, rule);
+    const open = !RESOLVED_STATUSES.has(String(r["status"] ?? "").toUpperCase());
+    const cell =
+      cls === "unknown"
+        ? open ? "unknownOpen" : "unknownRemediated"
+        : cls === "high"
+          ? open ? "fn" : "tp"
+          : open ? "tn" : "fp";
+    if (quadrant && cell !== quadrant) continue;
+    out.push({
+      vuln_key: r["vuln_key"],
+      cve: r["cve"],
+      severity: r["severity"],
+      status: r["status"],
+      first_seen: r["first_seen"],
+      resolved_at: r["resolved_at"],
+      resolution_src: r["resolution_src"],
+      asset_name: r["asset_name"],
+      has_kev: r["has_kev"],
+      has_exploit: r["has_exploit"],
+      epss: r["epss"],
+      risk_observed_at: r["risk_observed_at"],
+      risk_class: cls,
+      fired_signals: program.firedSignals(riskRow, rule).join(" "),
+      matrix_cell: cell,
+    });
+  }
+  return out;
 }
 
 /** Executive landing page in one round trip — the lean sibling of getMttrPage. The exec
@@ -1507,6 +1718,7 @@ export function getSettings(_p?: unknown): ApiResult {
     showNoFix: settingsStore.getShowNoFix(),
     includeEol: settingsStore.getIncludeEol(),
     domains: settingsStore.getDomains(),
+    riskRule: settingsStore.getRiskRule(),
   }));
 }
 
@@ -1548,6 +1760,17 @@ export function setIncludeEol(p?: unknown): ApiResult {
   return mutate(() => {
     settingsStore.setIncludeEol(Boolean((p as Rec)?.["on"]));
     return { includeEol: settingsStore.getIncludeEol() };
+  });
+}
+
+/** Set the high-risk classifier rule behind coverage / efficiency. Saving bumps the rule's
+ *  version, which every program cache entry keys on, so the whole page re-derives — including
+ *  the historical series, since classification happens at read time and nothing is persisted
+ *  per-row except the raw signals. */
+export function setRiskRule(p?: unknown): ApiResult {
+  return mutate(() => {
+    settingsStore.setRiskRule((p as Rec)?.["rule"]);
+    return { riskRule: settingsStore.getRiskRule() };
   });
 }
 

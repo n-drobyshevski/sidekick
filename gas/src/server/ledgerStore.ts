@@ -36,7 +36,8 @@ import {
   type CompactionResult,
   type DeleteResult,
 } from "../domain/maintenance";
-import type { Deltas, LedgerRow } from "../domain/reconcile";
+import type { RiskRule } from "../domain/program";
+import { coerceRiskSignals, type Deltas, type LedgerRow } from "../domain/reconcile";
 import {
   applyShardCore,
   beginImportSession,
@@ -48,6 +49,7 @@ import {
   cohortSlaAttainment,
   trendFromBase,
   withKmMedian,
+  withCoverageEfficiency,
   withOpenPastSla,
   withSlaBurn,
 } from "../domain/trend";
@@ -56,7 +58,15 @@ import * as archive from "./archiveStore";
 import * as history from "./historyStore";
 import { activeJob, createJob, getJob, newJobId, updateJob } from "./jobsStore";
 import { bumpDataVersion } from "./serverCache";
-import { appendRows, dataRowCount, overwrite, readAll, truncateAfter, TABS } from "./sheetsDb";
+import {
+  appendRows,
+  dataRowCount,
+  ensureTab,
+  overwrite,
+  readAll,
+  truncateAfter,
+  TABS,
+} from "./sheetsDb";
 
 // ------------------------------------------------------------------ state load/save
 
@@ -99,6 +109,7 @@ function rowToLedger(r: Rec): LedgerRow {
     tags_json: (r["tags_json"] as string | null) ?? null,
     fix_date: (r["fix_date"] as string | null) ?? null,
     fix_observed_at: (r["fix_observed_at"] as string | null) ?? null,
+    ...coerceRiskSignals(r),
   };
 }
 
@@ -164,6 +175,7 @@ export function loadState(useSnapshot = true): LedgerState {
     superseded_by_scan: (r["superseded_by_scan"] as string | null) ?? null,
     fix_date: (r["fix_date"] as string | null) ?? null,
     fix_observed_at: (r["fix_observed_at"] as string | null) ?? null,
+    ...coerceRiskSignals(r),
   }));
   if (useSnapshot) stateMemo = state;
   return state;
@@ -171,6 +183,11 @@ export function loadState(useSnapshot = true): LedgerState {
 
 /** Wholesale rewrite of vuln_ledger + episodes + scans (used by recovery/replay). */
 export function writeStateTables(state: LedgerState): void {
+  // Self-heal the header row before writing: `overwrite` maps values by the headers read off
+  // the sheet, so a deployment carrying newly-added columns would silently drop them on
+  // every write until someone re-ran setup(). Cheap (one header read per tab) and idempotent.
+  ensureTab(TABS.vulnLedger);
+  ensureTab(TABS.episodes);
   overwrite(TABS.vulnLedger, Object.values(state.ledger) as unknown as Rec[]);
   overwrite(TABS.episodes, state.episodes as unknown as Rec[]);
   overwrite(TABS.scans, scansAsc(state.scans) as unknown as Rec[]);
@@ -351,6 +368,44 @@ export function loadTrend(
     hideNoFix,
     maxReconstructed: KM_TREND_MAX_RECONSTRUCTED,
   });
+}
+
+/**
+ * The coverage / efficiency series for the Program performance page.
+ *
+ * A sibling of loadTrend rather than another decorator on it: the MTTR trend's base
+ * projection deliberately carries only the lifecycle columns its own series need, and this
+ * one needs the risk columns plus `status`. Keeping them apart means the (heavier, cached
+ * separately) MTTR trend doesn't grow a projection it never reads.
+ *
+ * Backfilled like loadTrend, so the series reaches back to the earliest detection rather
+ * than the first saved scan — with the same caveat, surfaced as `reconstructed` on each
+ * point: pre-first-scan resolutions are systematically under-counted, because a
+ * disappearance-resolution is pinned to the scan that observed it.
+ */
+export function loadProgramTrend(
+  rule: RiskRule,
+  severities: string[] | null = null,
+  baseOverride?: BaseRow[],
+): Rec[] {
+  const state = loadState();
+  const base = (baseOverride ?? baseRows(state)).map((r) => ({
+    severity: r.severity,
+    status: r.status,
+    first_seen: r.first_seen,
+    resolved_at: r.resolved_at,
+    mttr_days: r.mttr_days,
+    has_kev: r.has_kev,
+    has_exploit: r.has_exploit,
+    epss: r.epss,
+  }));
+  const points = trendFromBase(
+    state.scans.map((s) => ({ ts: s.ts, shape: s.shape })),
+    base,
+    severities,
+    { backfill: true },
+  );
+  return withCoverageEfficiency(points, base, rule, severities) as unknown as Rec[];
 }
 
 /** Per-severity counts of the second-newest flat scan (change-badge baseline). */

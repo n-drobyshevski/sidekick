@@ -22,9 +22,10 @@ import {
   type LedgerState,
   type ScanRow,
 } from "./ledgerCore";
-import { mttrFromLedger } from "./lifecycle";
-import type { LedgerRow, Observation } from "./reconcile";
+import { mttrFromLedger, vulnKey } from "./lifecycle";
+import { mergeRiskSignals, type LedgerRow, type Observation } from "./reconcile";
 import { extractNodes } from "./transform";
+import { confusionMatrix, DEFAULT_RISK_RULE } from "./program";
 import { trendFromFrames } from "./trend";
 import { nowIso, parseTs, type Rec } from "./util";
 
@@ -144,6 +145,12 @@ export function toEpisodeRow(live: LedgerRow, compactionId: string): EpisodeRow 
     superseded_by_scan: null,
     fix_date: live.fix_date,
     fix_observed_at: live.fix_observed_at,
+    // Exploit intelligence survives compaction — a sealed episode is still a remediated
+    // lifecycle that coverage/efficiency must be able to classify.
+    has_kev: live.has_kev ?? null,
+    has_exploit: live.has_exploit ?? null,
+    epss: live.epss ?? null,
+    risk_observed_at: live.risk_observed_at ?? null,
   };
 }
 
@@ -326,6 +333,25 @@ function openAndResolved(state: LedgerState): Rec[] {
   return out;
 }
 
+/**
+ * The coverage/efficiency matrix over a state — the third leg of the stats-identity gate.
+ * Uses DEFAULT_RISK_RULE rather than the operator's configured rule so the invariant is
+ * deterministic and independent of settings: compaction must not move these numbers under
+ * ANY rule, and the default exercises all three signals.
+ */
+function coverageOf(state: LedgerState, now: number): unknown {
+  return confusionMatrix(
+    baseRows(state, now).map((r) => ({
+      severity: r.severity,
+      status: r.status,
+      has_kev: r.has_kev,
+      has_exploit: r.has_exploit,
+      epss: r.epss,
+    })),
+    DEFAULT_RISK_RULE,
+  );
+}
+
 function trendOf(state: LedgerState, now: number): unknown {
   return trendFromFrames(
     state.scans.map((s) => ({ ts: s.ts, shape: s.shape })),
@@ -420,6 +446,7 @@ export function compactLedgerCore(
   // Apply in memory, then verify the stats identity — abort (throw) on any change.
   const beforeMttr = mttrFromLedger(openAndResolved(state), { now: nowMs });
   const beforeTrend = trendOf(state, nowMs);
+  const beforeCoverage = coverageOf(state, nowMs);
 
   const applied: LedgerState = {
     scans: state.scans.map((r) =>
@@ -449,6 +476,15 @@ export function compactLedgerCore(
   ) {
     throw new LedgerRebuildError(
       "Compaction aborted: MTTR/SLA/trend stats would change — rolled back.",
+    );
+  }
+  // Coverage/efficiency get their own comparison and their own message, so an abort names
+  // the metric that moved. This is a true invariant — episodes carry the risk columns
+  // (toEpisodeRow), so a sealed lifecycle classifies exactly as it did while live — which
+  // makes the check a regression detector for that carry-through rather than a real risk.
+  if (!statsEqual(beforeCoverage, coverageOf(applied, nowMs))) {
+    throw new LedgerRebuildError(
+      "Compaction aborted: coverage/efficiency would change — rolled back.",
     );
   }
 
@@ -483,4 +519,85 @@ export function cutoffMs(nowMs: number, retentionDays: number): number {
 export function isAfter(ts: string | null, ms: number): boolean {
   const t = parseTs(ts);
   return t !== null && t > ms;
+}
+
+// --------------------------------------------------------------------------- #
+//  Risk-signal backfill — recovering exploit intelligence from saved archives
+// --------------------------------------------------------------------------- #
+
+export interface BackfillResult {
+  scansReplayed: number;
+  scansSealed: number;
+  scansUnreadable: number;
+  ledgerRowsTouched: number;
+  episodeRowsTouched: number;
+  stillUnknown: number;
+}
+
+export function emptyBackfillResult(): BackfillResult {
+  return {
+    scansReplayed: 0,
+    scansSealed: 0,
+    scansUnreadable: 0,
+    ledgerRowsTouched: 0,
+    episodeRowsTouched: 0,
+    stillUnknown: 0,
+  };
+}
+
+/**
+ * Merge one saved scan's exploit signals into the ledger, in place.
+ *
+ * The columns behind coverage / efficiency were added after the ledger already held history,
+ * so existing lifecycles carry no signal and classify as `unknown`. The scan archives in
+ * Drive still hold the records those lifecycles came from, and slim records already carried
+ * `hasExploit` / `hasCisaKevExploit` / `epssProbability` before the ledger did — so most of
+ * that history is recoverable by replaying archives through the same merge live scans use.
+ *
+ * **Order-independent and idempotent**, because `mergeRiskSignals` is (booleans OR, EPSS max,
+ * witness date min). Three consequences the caller relies on:
+ *   - scans can be replayed newest-first, so an interrupted run has still done the most
+ *     valuable part;
+ *   - a hop that dies mid-way needs no rollback — re-running converges on the same state;
+ *   - re-running the whole backfill from scratch is a no-op on already-filled rows.
+ *
+ * Episodes (compacted lifecycles) are merged too: a sealed episode is still a remediated
+ * lifecycle that coverage has to classify.
+ */
+export function backfillRiskFromRecords(
+  state: LedgerState,
+  records: Rec[],
+  scanTsIso: string,
+  result: BackfillResult,
+): void {
+  const episodesByKey = new Map<string, EpisodeRow>();
+  for (const e of state.episodes) episodesByKey.set(e.vuln_key, e);
+  for (const rec of records) {
+    const key = vulnKey(rec);
+    const row = state.ledger[key];
+    if (row) {
+      const before = row.risk_observed_at;
+      mergeRiskSignals(row, rec, scanTsIso);
+      if (before !== row.risk_observed_at) result.ledgerRowsTouched += 1;
+      continue;
+    }
+    const ep = episodesByKey.get(key);
+    if (ep) {
+      const before = ep.risk_observed_at;
+      mergeRiskSignals(ep, rec, scanTsIso);
+      if (before !== ep.risk_observed_at) result.episodeRowsTouched += 1;
+    }
+  }
+}
+
+/** Lifecycles still carrying no captured signal at all — the permanent-unknown residue. */
+export function countUnknownRisk(state: LedgerState): number {
+  let n = 0;
+  for (const row of Object.values(state.ledger)) if (row.risk_observed_at == null) n += 1;
+  for (const e of state.episodes) {
+    if (e.superseded_by_scan !== null) continue;
+    if (e.vuln_key in state.ledger) continue;
+    if (e.risk_observed_at == null) n += 1;
+  }
+  return n;
 }
