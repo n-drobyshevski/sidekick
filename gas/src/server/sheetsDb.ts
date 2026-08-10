@@ -31,11 +31,13 @@ export const TAB_HEADERS: Record<string, string[]> = {
     "reopened_count", "first_scan_id", "last_scan_id",
     "subscription_name", "subscription_ext_id", "tags_json",
     "fix_date", "fix_observed_at",
+    "has_kev", "has_exploit", "epss", "risk_observed_at",
   ],
   [TABS.episodes]: [
     "vuln_key", "cve", "severity", "first_seen", "resolved_at", "resolution_src",
     "reopened_count", "compaction_id", "superseded_by_scan",
     "fix_date", "fix_observed_at",
+    "has_kev", "has_exploit", "epss", "risk_observed_at",
   ],
   [TABS.compactions]: [
     "compaction_id", "ts", "floor_scan_id", "floor_ts", "scans_sealed",
@@ -59,7 +61,9 @@ export const TAB_HEADERS: Record<string, string[]> = {
   ],
 };
 
-export const SCHEMA_VERSION = 1;
+// 1 -> 2: vuln_ledger / resolved_episodes gained the exploit-intelligence columns
+// (has_kev, has_exploit, epss, risk_observed_at) behind remediation coverage & efficiency.
+export const SCHEMA_VERSION = 2;
 
 let spreadsheetCache: GoogleAppsScript.Spreadsheet.Spreadsheet | null = null;
 
@@ -91,15 +95,7 @@ export function ensureTabs(ss: GoogleAppsScript.Spreadsheet.Spreadsheet): void {
       sh.getRange(1, 1, 1, headers.length).setValues([headers]);
       sh.setFrozenRows(1);
     } else {
-      // Append any headers a newer schema added (order-safe: appended last).
-      const width = Math.max(sh.getLastColumn(), 1);
-      const existing = sh.getRange(1, 1, 1, width).getValues()[0]
-        .map(String)
-        .filter((h) => h !== "");
-      const missing = headers.filter((h) => !existing.includes(h));
-      if (missing.length) {
-        sh.getRange(1, existing.length + 1, 1, missing.length).setValues([missing]);
-      }
+      ensureHeaders(sh, headers);
     }
   }
   const dflt = ss.getSheetByName("Sheet1");
@@ -107,15 +103,40 @@ export function ensureTabs(ss: GoogleAppsScript.Spreadsheet.Spreadsheet): void {
 }
 
 /**
- * Create one tab with its frozen header row if it's missing (idempotent). Self-healing for
- * deployments that predate a newly-added tab, so a schema addition doesn't require re-running
- * setup() before the new tab can be read or written. Mirrors ensureTabs' per-tab shape.
+ * Append any headers a newer schema added to an existing tab (order-safe: appended last, so
+ * existing column positions never move). No-op when the header row is already complete.
+ */
+export function ensureHeaders(sh: GoogleAppsScript.Spreadsheet.Sheet, headers: string[]): void {
+  const width = Math.max(sh.getLastColumn(), 1);
+  const existing = sh.getRange(1, 1, 1, width).getValues()[0]
+    .map(String)
+    .filter((h) => h !== "");
+  const missing = headers.filter((h) => !existing.includes(h));
+  if (missing.length) {
+    sh.getRange(1, existing.length + 1, 1, missing.length).setValues([missing]);
+  }
+}
+
+/**
+ * Create one tab with its frozen header row if it's missing, and append any headers a newer
+ * schema added if it already exists (idempotent). Self-healing for deployments that predate
+ * a newly-added tab *or column*, so a schema addition doesn't require re-running setup().
+ *
+ * The column half matters more than it looks: `overwrite` / `appendRows` map values by the
+ * headers **read off the sheet**, not by TAB_HEADERS. So a deployment carrying new columns
+ * that writes before setup() is re-run would silently drop them on every write — and the
+ * Drive ledger snapshot (JSON, which does keep them) would mask the loss until something
+ * trashes it and loadState falls back to the tabs. Callers on the write path guard with this.
  */
 export function ensureTab(tab: string): void {
   const ss = ledgerSpreadsheet();
-  if (ss.getSheetByName(tab)) return;
   const headers = TAB_HEADERS[tab];
   if (!headers) throw new Error(`No headers defined for tab ${tab}.`);
+  const found = ss.getSheetByName(tab);
+  if (found) {
+    ensureHeaders(found, headers);
+    return;
+  }
   const sh = ss.insertSheet(tab);
   sh.getRange(1, 1, sh.getMaxRows(), sh.getMaxColumns()).setNumberFormat("@");
   sh.getRange(1, 1, 1, headers.length).setValues([headers]);

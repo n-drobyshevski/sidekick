@@ -6,10 +6,12 @@ import {
   getDomains,
   getRetentionDays,
   getIncludeEol,
+  getRiskRule,
   getShowNoFix,
   getSupportGroupMap,
   withDomains,
   withFetchSeverities,
+  withRiskRule,
   withIncludeEol,
   withShowNoFix,
   withSupportGroupMap,
@@ -109,5 +111,44 @@ describe("settings logic", () => {
   it("apiSeverityFilter maps INFO and elides the full scope", () => {
     expect(apiSeverityFilter(["CRITICAL", "INFO"])).toEqual(["CRITICAL", "INFORMATIONAL"]);
     expect(apiSeverityFilter(["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"])).toBeNull();
+  });
+});
+
+describe("risk rule (coverage/efficiency classifier)", () => {
+  it("defaults to all three signals at the project EPSS cut", () => {
+    const { version, rule } = getRiskRule({});
+    expect(version).toBe(0);
+    expect(rule).toEqual({ kev: true, exploit: true, epss: true, epssThreshold: 0.1 });
+  });
+
+  it("round-trips a stored rule and bumps the version on every save", () => {
+    const s1 = withRiskRule({}, { kev: true, exploit: false, epss: true, epssThreshold: 0.3 });
+    const got = getRiskRule(s1);
+    expect(got.version).toBe(1);
+    expect(got.rule).toEqual({ kev: true, exploit: false, epss: true, epssThreshold: 0.3 });
+    // The version is what cache keys hang off, so it must move even on an identical rule.
+    expect(getRiskRule(withRiskRule(s1, got.rule)).version).toBe(2);
+  });
+
+  it("clamps the EPSS threshold into [0, 1] and rejects junk", () => {
+    expect(getRiskRule(withRiskRule({}, { epssThreshold: 5 })).rule.epssThreshold).toBe(1);
+    expect(getRiskRule(withRiskRule({}, { epssThreshold: -2 })).rule.epssThreshold).toBe(0);
+    expect(getRiskRule(withRiskRule({}, { epssThreshold: "nope" })).rule.epssThreshold).toBe(0.1);
+  });
+
+  it("persists an all-disabled rule as-is, with no silent fallback to the default", () => {
+    // An all-disabled rule decides nothing, so every finding classifies unknown and the page
+    // says so. Quietly restoring the default here would hide that from the operator.
+    const s = withRiskRule({}, { kev: false, exploit: false, epss: false, epssThreshold: 0.1 });
+    const { rule } = getRiskRule(s);
+    expect(rule.kev).toBe(false);
+    expect(rule.exploit).toBe(false);
+    expect(rule.epss).toBe(false);
+  });
+
+  it("falls back to the default for a malformed blob", () => {
+    expect(getRiskRule({ risk_rule: "nope" }).rule.kev).toBe(true);
+    expect(getRiskRule({ risk_rule: { version: 4 } }).rule.epss).toBe(true);
+    expect(getRiskRule({ risk_rule: { version: 4 } }).version).toBe(4);
   });
 });

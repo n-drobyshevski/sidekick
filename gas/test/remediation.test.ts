@@ -18,7 +18,7 @@ import {
 } from "../src/domain/remediation";
 import type { KMPoint } from "../src/domain/remediation";
 import { baseRows, emptyState, type LedgerState } from "../src/domain/ledgerCore";
-import type { LedgerRow } from "../src/domain/reconcile";
+import { emptyRiskSignals, type LedgerRow } from "../src/domain/reconcile";
 import { quantile, type Rec } from "../src/domain/util";
 
 // Base-row projections carrying the actionable-clock fields the new fns read (a superset of
@@ -460,7 +460,7 @@ describe("recordNoFix ↔ baseRow.awaiting_vendor_fix agreement", () => {
     first_seen: null, last_seen: null, status: "OPEN", resolved_at: null,
     resolution_src: null, reopened_count: 0, first_scan_id: null, last_scan_id: null,
     subscription_name: null, subscription_ext_id: null, tags_json: null,
-    fix_date: null, fix_observed_at: null,
+    fix_date: null, fix_observed_at: null, ...emptyRiskSignals(),
     ...over,
   });
 

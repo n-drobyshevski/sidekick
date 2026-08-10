@@ -1,6 +1,7 @@
 // Settings persistence on the `settings` tab (key / value_json rows). The semantics
 // live in domain/settingsLogic.ts; this layer only loads/saves the settings dict.
 
+import type { RiskRule } from "../domain/program";
 import * as logic from "../domain/settingsLogic";
 import type { Rec } from "../domain/util";
 import { bumpDataVersion } from "./serverCache";
@@ -51,6 +52,8 @@ export const getRetentionDays = (): number | null => logic.getRetentionDays(load
 export const getAutoCompact = (): boolean => logic.getAutoCompact(loadSettings());
 export const getShowNoFix = (): boolean => logic.getShowNoFix(loadSettings());
 export const getIncludeEol = (): boolean => logic.getIncludeEol(loadSettings());
+export const getRiskRule = (): { version: number; rule: RiskRule } =>
+  logic.getRiskRule(loadSettings());
 export const getDomains = (): { version: number; items: Rec[] } =>
   logic.getDomains(loadSettings());
 // The subscription-identity → support-group map lives in its own tab (one row per token),
@@ -113,6 +116,9 @@ export function setShowNoFix(enabled: boolean): void {
 }
 export function setIncludeEol(enabled: boolean): void {
   saveSettings(logic.withIncludeEol(loadSettings(), enabled));
+}
+export function setRiskRule(rule: unknown): void {
+  saveSettings(logic.withRiskRule(loadSettings(), rule));
 }
 /** Set both retention-window and auto-compact in a single load+save so the write is atomic
  *  (no partial-commit window if the client changes both at once). */

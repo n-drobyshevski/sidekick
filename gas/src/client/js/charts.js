@@ -1058,3 +1058,192 @@ export function mttrImpactBars(canvas, rows, opts = {}) {
     plugins: [zeroReferenceLine("at overall median"), divergingBarLabels(rows)],
   });
 }
+
+/**
+ * Coverage and efficiency over time — the P2P pair on one axis, both in percent.
+ *
+ * Two series rather than two charts because the whole point of the pair is the trade-off
+ * between them: a coverage line climbing while efficiency falls is the story, and it is only
+ * legible when they share a y axis. Identity is doubled by dash pattern and point style, so
+ * the two read apart without colour (DESIGN.md non-colour-signal rule).
+ *
+ * Nulls are gaps, not zeros: a date where nothing was high risk yet has no coverage, and
+ * drawing that as 0% would invent a failure that did not happen.
+ */
+export function coverageEfficiencyLines(canvas, points, { xRange } = {}) {
+  destroyExisting(canvas);
+  const reconCount = points.filter((p) => p.reconstructed).length;
+  describe(
+    canvas,
+    "Remediation coverage and efficiency over time, in percent." +
+      (reconCount
+        ? ` The first ${reconCount} point(s) are reconstructed from first-detection dates before the first saved scan, where closures are under-counted.`
+        : ""),
+  );
+  const opts = baseOptions("%");
+  opts.scales.y.min = 0;
+  opts.scales.y.max = 100;
+  opts.scales.y.title = { display: true, text: "percent", font: FONT, color: INK2 };
+  opts.plugins.legend = {
+    display: true,
+    labels: { font: FONT, color: INK2, usePointStyle: true, boxWidth: 8 },
+  };
+  opts.interaction = { mode: "index", intersect: false };
+  const days = points.map((p) => dayOf(p.date));
+  dayAxis(opts, xRange);
+  const band = reconstructedBand(points.map((p) => p.reconstructed), days);
+  return new Chart(canvas, {
+    type: "line",
+    data: {
+      datasets: [
+        {
+          label: "Coverage",
+          data: points.map((p, i) => ({ x: days[i], y: p.coverage_pct })),
+          borderColor: CATEGORICAL[0],
+          borderWidth: 2,
+          pointStyle: "circle",
+          pointRadius: 0,
+          pointHoverRadius: 4,
+          tension: 0.25,
+          spanGaps: false,
+        },
+        {
+          label: "Efficiency",
+          data: points.map((p, i) => ({ x: days[i], y: p.efficiency_pct })),
+          borderColor: CATEGORICAL[1],
+          borderDash: [6, 4],
+          borderWidth: 2,
+          pointStyle: "rect",
+          pointRadius: 0,
+          pointHoverRadius: 4,
+          tension: 0.25,
+          spanGaps: false,
+        },
+      ],
+    },
+    options: opts,
+    plugins: band ? [band] : [],
+  });
+}
+
+/**
+ * The coverage-vs-efficiency scatter — the signature P2P figure (v2 Fig. 12/15, vol. 9
+ * Fig. 19/20): coverage on x, efficiency on y, up-and-to-the-right is better.
+ *
+ * Implemented as `type: "line"` with `showLine: false` **on purpose**. charts.js registers
+ * only the controllers it uses, and ScatterController is not among them; a genuine
+ * `type: "scatter"` would fail at runtime in the bundle. LineController + PointElement +
+ * LinearScale are all registered, and a line dataset with no line drawn is exactly a
+ * scatter. Do not "fix" this into type: "scatter" without also registering the controller.
+ *
+ * Colour is rationed (DESIGN.md): the active rule is the one accent point, everything else
+ * is neutral, and every point is direct-labelled so identity never rides on colour.
+ */
+export function coverageEfficiencyScatter(canvas, points) {
+  destroyExisting(canvas);
+  describe(
+    canvas,
+    "Coverage versus efficiency for each combination of risk signals: " +
+      points
+        .map(
+          (p) =>
+            `${p.label}, coverage ${p.coverage === null ? "not measurable" : Math.round(p.coverage) + "%"}, ` +
+            `efficiency ${p.efficiency === null ? "not measurable" : Math.round(p.efficiency) + "%"}` +
+            (p.active ? " (the active rule)" : ""),
+        )
+        .join("; ") + ".",
+  );
+  const plotted = points.filter((p) => p.coverage !== null && p.efficiency !== null);
+  const opts = baseOptions("%");
+  opts.scales.x.type = "linear";
+  opts.scales.x.min = 0;
+  opts.scales.x.max = 100;
+  opts.scales.x.title = { display: true, text: "coverage %", font: FONT, color: INK2 };
+  opts.scales.x.ticks.callback = (v) => v + "%";
+  opts.scales.y.min = 0;
+  opts.scales.y.max = 100;
+  opts.scales.y.title = { display: true, text: "efficiency %", font: FONT, color: INK2 };
+  opts.scales.y.ticks.callback = (v) => v + "%";
+  opts.plugins.tooltip.callbacks.title = (items) =>
+    items.length ? plotted[items[0].dataIndex].label : "";
+  opts.plugins.tooltip.callbacks.label = (ctx) => {
+    const p = plotted[ctx.dataIndex];
+    return [
+      `Coverage ${Math.round(p.coverage)}%`,
+      `Efficiency ${Math.round(p.efficiency)}%`,
+      `${localeNum(p.highRisk)} flagged high risk`,
+    ];
+  };
+  // Direct labels beside each point — the identity cue that survives greyscale and the
+  // colour-blind check, and the reason this chart needs no legend.
+  //
+  // Rules routinely land on identical coordinates (adding a signal that flags nothing new
+  // moves neither rate), so labels are decluttered vertically before drawing: without it the
+  // co-located ones overprint into an unreadable smear. Greedy top-down separation, and the
+  // leader line is drawn whenever a label has been pushed off its point.
+  const LABEL_H = 13;
+  const labels = {
+    id: "scatterLabels",
+    afterDatasetsDraw(chart) {
+      const { ctx } = chart;
+      const meta = chart.getDatasetMeta(0);
+      ctx.save();
+      ctx.font = "600 11px " + FONT.family;
+      ctx.textBaseline = "middle";
+
+      // Place labels in ascending y, nudging each one down until it clears the previous.
+      const placed = meta.data
+        .map((pt, i) => ({ pt, i, y: pt.y }))
+        .sort((a, b) => a.y - b.y);
+      let lastY = -Infinity;
+      for (const item of placed) {
+        item.y = Math.max(item.y, lastY + LABEL_H);
+        lastY = item.y;
+      }
+      // If the stack overflowed the plot, slide the whole run back up.
+      const overflow = lastY - (chart.chartArea.bottom - 4);
+      if (overflow > 0) for (const item of placed) item.y -= overflow;
+
+      for (const item of placed) {
+        const p = plotted[item.i];
+        // Flip the label inside the plot near the right edge so it never clips.
+        const right = item.pt.x > chart.chartArea.right - 100;
+        const x = item.pt.x + (right ? -9 : 9);
+        // Leader line back to the point, so a displaced label still reads as belonging to it.
+        if (Math.abs(item.y - item.pt.y) > 1) {
+          ctx.strokeStyle = HAIRLINE;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(item.pt.x, item.pt.y);
+          ctx.lineTo(x, item.y);
+          ctx.stroke();
+        }
+        ctx.fillStyle = p.active ? "#171717" : INK2;
+        ctx.textAlign = right ? "right" : "left";
+        ctx.fillText(p.label, x, item.y);
+      }
+      ctx.restore();
+    },
+  };
+  return new Chart(canvas, {
+    type: "line", // see the note above — NOT "scatter"
+    data: {
+      datasets: [
+        {
+          data: plotted.map((p) => ({ x: p.coverage, y: p.efficiency })),
+          showLine: false,
+          pointRadius: plotted.map((p) => (p.active ? 7 : 5)),
+          pointHoverRadius: 9,
+          // The active rule is the single accent; the alternatives stay neutral.
+          pointBackgroundColor: plotted.map((p) => (p.active ? CATEGORICAL[0] : "#ffffff")),
+          pointBorderColor: plotted.map((p) => (p.active ? CATEGORICAL[0] : OTHER_COLOR)),
+          pointBorderWidth: 2,
+          // A second, non-colour cue for the active rule.
+          pointStyle: plotted.map((p) => (p.active ? "rectRot" : "circle")),
+        },
+      ],
+    },
+    options: opts,
+    plugins: [labels],
+  });
+}

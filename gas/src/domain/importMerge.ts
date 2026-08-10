@@ -18,7 +18,7 @@ import {
   toEpisodeRow,
   type PayloadReader,
 } from "./maintenance";
-import type { LedgerRow, Observation } from "./reconcile";
+import { coerceRiskSignals, type LedgerRow, type Observation } from "./reconcile";
 import { normalizeSeverity } from "./severity";
 import { parseTs, type Rec } from "./util";
 
@@ -170,6 +170,10 @@ export function coerceLedger(r: Rec): LedgerRow {
     tags_json: str(r["tags_json"]),
     fix_date: str(r["fix_date"]),
     fix_observed_at: str(r["fix_observed_at"]),
+    // Not str(): these are tri-state (boolean | null) and numeric. A bundle exported before
+    // the risk columns existed simply lacks the keys, and they must stay null — "not
+    // captured", never a fabricated false/0. See reconcile.coerceRiskSignals.
+    ...coerceRiskSignals(r),
   };
 }
 
@@ -186,6 +190,7 @@ export function coerceEpisode(r: Rec): EpisodeRow {
     superseded_by_scan: str(r["superseded_by_scan"]),
     fix_date: str(r["fix_date"]),
     fix_observed_at: str(r["fix_observed_at"]),
+    ...coerceRiskSignals(r),
   };
 }
 

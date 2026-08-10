@@ -5,6 +5,12 @@
 // age (max over severities of the p90 open age) — matching the headline KPIs.
 
 import { SEVERITY_ORDER, SLA_TARGETS } from "./config";
+import {
+  classifyRisk,
+  type RiskClass,
+  type RiskRow,
+  type RiskRule,
+} from "./program";
 import { kmCurve, kmMedianFromCurve } from "./remediation";
 import { normalizeSeverity } from "./severity";
 import { maxNum, median, minNum, parseTs, quantile, toIso, type Rec } from "./util";
@@ -894,5 +900,95 @@ export function cohortSlaAttainment<T extends { date: string }>(
     }
     const pct = cohort ? Math.round((met / cohort) * 100 * 10) / 10 : null;
     return { ...p, sla_attainment_pct: pct };
+  });
+}
+
+/**
+ * Augment already-emitted trend points with remediation **coverage** and **efficiency** as
+ * of each point's date — the P2P pair, over the same durable rows every sibling here reads.
+ *
+ * Replays the base at each point's `date` with exactly the as-of predicate `trendFromFrames`
+ * and `withOpenPastSla` use: remediated-as-of-d iff `resolved_at <= d`; open-as-of-d iff
+ * `first_seen <= d` and not resolved by d. Rows that did not exist yet at d contribute to
+ * neither, so an early point measures only the register that existed then.
+ *
+ * The risk **classification is not as-of** — it is each row's sticky label, evaluated once.
+ * That is a deliberate and load-bearing consequence of the monotone capture in
+ * reconcile.mergeRiskSignals: a finding that only landed on the KEV in month six counts as
+ * high risk in month one too. It biases the early series *conservatively* (coverage reads
+ * worse than it looked at the time, never better), and it is the price of a series that does
+ * not silently rewrite last week's plotted value every time a scan lands. The methodology
+ * panel says so in as many words.
+ *
+ * Rows whose signals were never captured are `unknown` and leave both sides of both rates;
+ * `unknown_pct` travels with each point so a reader can see how much of the register the
+ * rate is actually speaking for.
+ *
+ * GAS-first (no Python fixture parity — mirrors withOpenPastSla): a UI-only augmentation of
+ * the same durable rows, kept out of the parity-tested `trendFromFrames`. The generic
+ * passthrough preserves every existing point field.
+ */
+export function withCoverageEfficiency<T extends { date: string }>(
+  points: T[],
+  base: Rec[],
+  rule: RiskRule,
+  severities: string[] | null = null,
+): (T & {
+  coverage_pct: number | null;
+  efficiency_pct: number | null;
+  high_risk_open: number;
+  high_risk_remediated: number;
+  unknown_pct: number | null;
+})[] {
+  let rows = base;
+  if (severities !== null && base.length) {
+    const keep = new Set([...severities, "UNKNOWN"]);
+    rows = rows.filter((r) => keep.has(normalizeSeverity(r["severity"])));
+  }
+  // Classify once up front, not per point: the label is sticky, so it cannot change between
+  // dates, and the register is findings-scale times points-scale if we don't hoist it.
+  const parsed: { first: number | null; resolvedAt: number | null; cls: RiskClass }[] = rows.map(
+    (r) => ({
+      first: parseTs(r["first_seen"]),
+      resolvedAt: parseTs(r["resolved_at"]),
+      cls: classifyRisk(r as unknown as RiskRow, rule),
+    }),
+  );
+
+  const round1 = (v: number | null): number | null =>
+    v === null ? null : Math.round(v * 10) / 10;
+
+  return points.map((p) => {
+    const d = parseTs(p.date);
+    let tp = 0;
+    let fp = 0;
+    let fn = 0;
+    let unknown = 0;
+    let counted = 0;
+    if (d !== null) {
+      for (const r of parsed) {
+        if (r.first === null || r.first > d) continue; // did not exist yet
+        const remediated = r.resolvedAt !== null && r.resolvedAt <= d;
+        counted += 1;
+        if (r.cls === "unknown") {
+          unknown += 1;
+          continue;
+        }
+        if (r.cls === "high") {
+          if (remediated) tp += 1;
+          else fn += 1;
+        } else if (remediated) {
+          fp += 1;
+        }
+      }
+    }
+    return {
+      ...p,
+      coverage_pct: round1(tp + fn > 0 ? (tp / (tp + fn)) * 100 : null),
+      efficiency_pct: round1(tp + fp > 0 ? (tp / (tp + fp)) * 100 : null),
+      high_risk_open: fn,
+      high_risk_remediated: tp,
+      unknown_pct: round1(counted > 0 ? (unknown / counted) * 100 : null),
+    };
   });
 }

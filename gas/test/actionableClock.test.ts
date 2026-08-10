@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 import { baseRows, emptyState, type LedgerState } from "../src/domain/ledgerCore";
-import type { LedgerRow } from "../src/domain/reconcile";
+import { emptyRiskSignals, type LedgerRow } from "../src/domain/reconcile";
 
 const NOW = Date.parse("2026-07-25T00:00:00Z");
 
@@ -17,6 +17,7 @@ function row(over: Partial<LedgerRow>): LedgerRow {
     status: "OPEN", resolved_at: null, resolution_src: null, reopened_count: 0,
     first_scan_id: null, last_scan_id: null, subscription_name: null,
     subscription_ext_id: null, tags_json: null, fix_date: null, fix_observed_at: null,
+    ...emptyRiskSignals(),
     ...over,
   };
 }
@@ -105,7 +106,7 @@ describe("withDerived actionable clock", () => {
       first_seen: "2026-07-04T00:00:00Z", resolved_at: "2026-07-18T00:00:00Z",
       resolution_src: "api", reopened_count: 0, compaction_id: "cmp",
       superseded_by_scan: null, fix_date: "2026-07-10T00:00:00Z",
-      fix_observed_at: "2026-07-08T00:00:00Z",
+      fix_observed_at: "2026-07-08T00:00:00Z", ...emptyRiskSignals(),
     });
     const d = baseRows(state, NOW).find((r) => r.vuln_key === "id:ep")!;
     expect(d.fix_available_at).toBe("2026-07-10T00:00:00Z"); // post-rollout → fix_date

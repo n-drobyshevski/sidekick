@@ -5,8 +5,9 @@ Guidance for agents working in this repository.
 ## What this is
 
 A **product**-register Streamlit dashboard over Wiz vulnerability findings: OS-level CVEs on
-host workloads, severity breakdowns, and MTTR / SLA remediation analytics with a persistent
-scan history. Entry point is `app.py` (`st.navigation` / `st.Page`); pages live in
+host workloads, severity breakdowns, MTTR / SLA remediation analytics with a persistent
+scan history, and — in the GAS rebuild — Prioritization-to-Prediction program metrics
+(remediation coverage, efficiency, capacity). Entry point is `app.py` (`st.navigation` / `st.Page`); pages live in
 `wiz_dashboard/ui/pages/`, shared logic in `wiz_dashboard/{config,data,domain,models}`.
 
 `gas/` holds a full Google Apps Script rebuild of the same product (Google Sheets ledger +

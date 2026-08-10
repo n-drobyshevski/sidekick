@@ -5,7 +5,7 @@
 import { nowIso, type Rec } from "../domain/util";
 import { appendRows, readAll, updateWhere, TABS } from "./sheetsDb";
 
-export type JobKind = "scan" | "delete" | "compact" | "import";
+export type JobKind = "scan" | "delete" | "compact" | "import" | "backfill";
 export type JobPhase =
   | "FETCHING"
   | "RECONCILING"
@@ -17,6 +17,11 @@ export type JobPhase =
   | "STAGING"
   | "APPLYING"
   | "FINALIZING"
+  // Risk-signal backfill. Deliberately its own phase, and deliberately NOT in
+  // locks.recoverIfNeeded's rollback set: the merge it performs is monotone and idempotent,
+  // so a crashed hop leaves valid (merely incomplete) state and re-running converges. Rolling
+  // it back would discard correct work for no reason.
+  | "BACKFILLING"
   | "DONE"
   | "FAILED"
   | "CANCELLED";
@@ -91,6 +96,13 @@ export function getJob(jobId: string): JobRow | null {
 }
 
 const TERMINAL: JobPhase[] = ["DONE", "FAILED", "CANCELLED"];
+
+/** Most recent job of a kind, by started_at — used to show a finished backfill's report. */
+export function lastJobOfKind(kind: JobKind): JobRow | null {
+  const rows = listJobs().filter((j) => j.kind === kind);
+  if (!rows.length) return null;
+  return rows.reduce((a, b) => (a.started_at >= b.started_at ? a : b));
+}
 
 /** The single in-flight job, or null (jobs are single-flight across kinds). */
 export function activeJob(): JobRow | null {

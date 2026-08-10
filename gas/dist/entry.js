@@ -16,6 +16,9 @@ function wizDiagnostic() { return Server.wizDiagnostic(); }
 // Trigger handlers (names referenced by ScriptApp.newTrigger calls).
 function trigger_dailyScan() { Server.jobs.dailyScan(); }
 function trigger_continueScan(e) { Server.jobs.continueJob(e); }
+// Its own handler name, NOT trigger_continueScan: each job clears only its own
+// pending one-shot trigger, so sharing a name would let one strand the other.
+function trigger_continueBackfill(e) { Server.backfill.continueBackfill(e); }
 
 // google.script.run API surface — thin delegators so the client can call api_* by name.
 // Each is timed to the execution log ({"api":name,"ms":n} lines) so server cost can be
@@ -37,6 +40,11 @@ function api_getMttr(p) { return timedApi_("getMttr", p); }
 function api_getMttrTrend(p) { return timedApi_("getMttrTrend", p); }
 function api_getMttrPage(p) { return timedApi_("getMttrPage", p); }
 function api_getExecutivePage(p) { return timedApi_("getExecutivePage", p); }
+function api_getProgramPage(p) { return timedApi_("getProgramPage", p); }
+function api_getRiskCohort(p) { return timedApi_("getRiskCohort", p); }
+function api_getExportCoverageCsv(p) { return timedApi_("getExportCoverageCsv", p); }
+function api_startRiskBackfill(p) { return timedApi_("startRiskBackfill", p); }
+function api_getRiskBackfillStatus(p) { return timedApi_("getRiskBackfillStatus", p); }
 function api_getScanHistory(p) { return timedApi_("getScanHistory", p); }
 function api_getHistoryPage(p) { return timedApi_("getHistoryPage", p); }
 function api_runScan(p) { return timedApi_("runScan", p); }
@@ -52,6 +60,7 @@ function api_setRetention(p) { return timedApi_("setRetention", p); }
 function api_setAutoCompact(p) { return timedApi_("setAutoCompact", p); }
 function api_setShowNoFix(p) { return timedApi_("setShowNoFix", p); }
 function api_setIncludeEol(p) { return timedApi_("setIncludeEol", p); }
+function api_setRiskRule(p) { return timedApi_("setRiskRule", p); }
 function api_setRetentionSettings(p) { return timedApi_("setRetentionSettings", p); }
 function api_getDomains(p) { return timedApi_("getDomains", p); }
 function api_saveDomains(p) { return timedApi_("saveDomains", p); }

@@ -6,7 +6,7 @@ import {
   serializeSeverities,
   statsEqual,
 } from "../src/domain/compaction";
-import type { LedgerRow } from "../src/domain/reconcile";
+import { emptyRiskSignals, type LedgerRow } from "../src/domain/reconcile";
 import { toEpisodeRow } from "../src/domain/maintenance";
 import { fixture } from "./helpers";
 
@@ -53,7 +53,7 @@ describe("episodeEligible", () => {
     last_seen: null, status: "RESOLVED", resolved_at: "2026-02-01T00:00:00Z",
     resolution_src: "api", reopened_count: 0, first_scan_id: null, last_scan_id: null,
     subscription_name: null, subscription_ext_id: null, tags_json: null,
-    fix_date: null, fix_observed_at: null,
+    fix_date: null, fix_observed_at: null, ...emptyRiskSignals(),
   };
   const floor = Date.parse("2026-03-01T00:00:00Z");
   it("resolved before the floor -> eligible", () => {
@@ -73,6 +73,7 @@ describe("toEpisodeRow carries vendor-fix fields", () => {
     resolution_src: "api", reopened_count: 0, first_scan_id: null, last_scan_id: null,
     subscription_name: null, subscription_ext_id: null, tags_json: null,
     fix_date: "2026-07-10T00:00:00Z", fix_observed_at: "2026-07-08T00:00:00Z",
+    ...emptyRiskSignals(),
   };
   it("preserves fix_date and fix_observed_at through episode conversion", () => {
     const ep = toEpisodeRow(live, "cmp-1");
