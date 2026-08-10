@@ -48,12 +48,39 @@ accumulate into a trend instead of clobbering the last one.
 Bronze keeps the finding as a JSON string so a Wiz schema change can never fail ingest;
 silver is just the typed projection of whatever arrived.
 
-## Running it
+## Running it on Databricks
 
-On Databricks, as a Job (Python file task) or pasted into a notebook:
+**Requirements:** DBR 14.3 LTS or newer (Spark 3.5 — `F.percentile` is a 3.5 function), and
+Unity Catalog if you want a three-level `catalog.schema.table` namespace. `requests` is already
+on the runtime. Nothing else to install.
+
+### 1. Store the credentials
+
+Once per workspace, from the Databricks CLI:
+
+```bash
+databricks secrets create-scope wiz
+databricks secrets put-secret wiz wiz-client-id
+databricks secrets put-secret wiz wiz-client-secret
+```
+
+The service account needs the `read:vulnerabilities` scope in Wiz. Credentials are only ever
+read through `dbutils.secrets`; nothing is inlined, and the values never reach a table or a log.
+
+### 2. Get the code onto the workspace
+
+Add the repo as a **Git folder** (Workspace → Create → Git folder) pointing at this repository.
+That gives you `/Workspace/Users/<you>/sidekick/brick/...`.
+
+### 3a. From a notebook
+
+Create a notebook anywhere and point it at the repo root — the repo root, not `brick/`, since
+the package is imported as `brick.*`:
 
 ```python
-%pip install requests
+import sys
+sys.path.append("/Workspace/Users/<you>/sidekick")   # adjust to your Git folder path
+
 dbutils.widgets.text("catalog", "main")
 dbutils.widgets.text("schema", "wiz")
 dbutils.widgets.text("wiz_api_url", "https://api.<region>.app.wiz.io/graphql")
@@ -64,17 +91,83 @@ from brick.run_pipeline import main
 main()
 ```
 
-Credentials come from the secret scope (`wiz-client-id`, `wiz-client-secret`), falling back to
-the `WIZ_CLIENT_ID` / `WIZ_CLIENT_SECRET` environment variables so the same code runs off
-a cluster. Nothing is ever inlined.
+`<region>` is the one in your Wiz tenant URL (`us1`, `eu2`, …). Get it wrong and auth succeeds
+but the GraphQL POST 404s.
 
-Then:
+### 3b. As a scheduled Job
+
+A **Python file** task with the Git repo as its source, `brick/run_pipeline.py` as the path,
+and the parameters passed as `--name=value`:
+
+```json
+{
+  "name": "wiz-vulnerability-metrics",
+  "schedule": { "quartz_cron_expression": "0 0 6 * * ?", "timezone_id": "UTC" },
+  "git_source": {
+    "git_url": "https://github.com/<org>/sidekick",
+    "git_provider": "gitHub",
+    "git_branch": "main"
+  },
+  "tasks": [
+    {
+      "task_key": "metrics",
+      "spark_python_task": {
+        "python_file": "brick/run_pipeline.py",
+        "parameters": [
+          "--catalog=main",
+          "--schema=wiz",
+          "--wiz_api_url=https://api.<region>.app.wiz.io/graphql",
+          "--secret_scope=wiz",
+          "--severities=CRITICAL,HIGH"
+        ]
+      },
+      "new_cluster": { "spark_version": "14.3.x-scala2.12", "num_workers": 2 }
+    }
+  ]
+}
+```
+
+A single-node cluster is plenty — the driver does the API paging and the Spark work is a
+handful of aggregations over one scan.
+
+### Parameters
+
+Resolved in this order: `--name=value` on the command line, then `dbutils.widgets.get(name)`,
+then the `NAME` environment variable, then the default. One code path covers Jobs, notebooks
+and a laptop.
+
+| Name | Default | |
+| --- | --- | --- |
+| `catalog` | `main` | |
+| `schema` | `wiz` | created if missing |
+| `wiz_api_url` | — | **required**, `https://api.<region>.app.wiz.io/graphql` |
+| `wiz_auth_url` | `https://auth.app.wiz.io/oauth/token` | override for a dedicated tenant |
+| `secret_scope` | — | scope holding `wiz-client-id` / `wiz-client-secret` |
+| `severities` | `CRITICAL,HIGH` | comma-separated |
+
+### 4. Read the results
 
 ```sql
 SELECT severity, coverage_pct, efficiency_pct, prevalence_pct, signal_coverage_pct
 FROM   main.wiz.metrics_program
-WHERE  scan_id = '<scan>' ORDER BY severity;
+WHERE  scan_id = (SELECT max_by(scan_id, scan_ts) FROM main.wiz.metrics_program)
+ORDER BY severity;
 ```
+
+Start with `--severities=CRITICAL` on the first run: it is the fastest way to confirm the
+tables land before pulling the whole register.
+
+## Running it locally
+
+```bash
+pip install -r brick/requirements.txt
+export WIZ_CLIENT_ID=... WIZ_CLIENT_SECRET=...
+python brick/run_pipeline.py --wiz_api_url=https://api.<region>.app.wiz.io/graphql
+```
+
+Off Databricks the `dbutils` accessors return empty rather than raising, so credentials come
+from the environment. Note that `saveAsTable` against a three-level `catalog.schema.table`
+name needs Unity Catalog — a local Spark can only write two-level names.
 
 ## Tests
 

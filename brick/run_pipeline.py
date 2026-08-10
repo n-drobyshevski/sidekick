@@ -1,8 +1,11 @@
 """Databricks entry point: Wiz API -> bronze -> silver -> three gold metric tables.
 
-Run it as a Job (Python file task) or paste it into a notebook. Parameters come from
-``dbutils.widgets`` when they exist and environment variables otherwise, so the same file
-runs on a cluster and on a laptop.
+Run it as a Job (Python file task) or call ``main()`` from a notebook. Parameters resolve in
+this order, so the same file works in all three places:
+
+    1. ``--name=value`` on the command line   -- how a Job's Python file task receives them
+    2. ``dbutils.widgets.get(name)``          -- how a notebook receives them
+    3. the ``NAME`` environment variable      -- how a laptop receives them
 
 Tables written (all appended, never overwritten -- each run adds a ``scan_id`` so the gold
 tables accumulate into a trend):
@@ -22,15 +25,22 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import sys
 import uuid
+from pathlib import Path
 from typing import Optional
 
-from pyspark.sql import SparkSession
-from pyspark.sql import functions as F
+# Run as a script (a Job's Python file task), sys.path[0] is brick/, not the repo root, so
+# `import brick` fails before anything else happens. Put the repo root on the path first.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from brick import metrics
-from brick.config import DEFAULT_FETCH_SEVERITIES, DEFAULT_RISK_RULE, RiskRule
-from brick.ingest import DEFAULT_AUTH_URL, fetch_findings, get_token, secret
+from pyspark.sql import SparkSession  # noqa: E402
+from pyspark.sql import functions as F  # noqa: E402
+
+from brick import dbx, metrics  # noqa: E402
+from brick.config import DEFAULT_FETCH_SEVERITIES, DEFAULT_RISK_RULE, RiskRule  # noqa: E402
+from brick.ingest import DEFAULT_AUTH_URL, fetch_findings, get_token, secret  # noqa: E402
 
 BRONZE_TABLE = "findings_raw"
 SILVER_TABLE = "findings"
@@ -39,16 +49,13 @@ GOLD_PROGRAM = "metrics_program"
 GOLD_CAPACITY = "metrics_capacity"
 
 
-def param(name: str, default: str = "") -> str:
-    """A job parameter: widget first, then environment variable, then the default."""
-    try:
-        dbutils = globals()["dbutils"]  # injected into notebook globals
-        value = dbutils.widgets.get(name)
-        if value:
-            return value
-    except Exception:  # noqa: BLE001 -- not on a cluster, or the widget is not defined
-        pass
-    return os.environ.get(name.upper(), default)
+def param(name: str, default: str = "", argv: Optional[list] = None) -> str:
+    """A job parameter: ``--name=value``, then a widget, then ``$NAME``, then the default."""
+    prefix = f"--{name}="
+    for arg in argv if argv is not None else sys.argv[1:]:
+        if arg.startswith(prefix):
+            return arg[len(prefix) :]
+    return dbx.widget(name) or os.environ.get(name.upper(), default)
 
 
 def utc_now_iso() -> str:

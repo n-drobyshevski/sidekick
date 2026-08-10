@@ -16,6 +16,7 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence
 
 import requests
 
+from brick import dbx
 from brick.config import API_SEVERITY_VALUES, DEFAULT_FETCH_SEVERITIES
 
 # Wiz's shared auth endpoint. Tenants on a dedicated region override it via a job parameter.
@@ -80,15 +81,7 @@ def secret(scope: Optional[str], key: str, env_var: str) -> str:
     ``dbutils`` does not exist. Raises rather than returning an empty string -- a blank
     credential fails later with a far less obvious error.
     """
-    if scope:
-        try:  # ``dbutils`` is injected into the notebook globals, not importable.
-            dbutils = globals().get("dbutils") or __import__("IPython").get_ipython().user_ns[
-                "dbutils"
-            ]
-            return dbutils.secrets.get(scope=scope, key=key)
-        except Exception:  # noqa: BLE001 -- any failure here just means "try the env var"
-            pass
-    value = os.environ.get(env_var, "")
+    value = dbx.secret_value(scope, key) or os.environ.get(env_var, "")
     if not value:
         raise RuntimeError(
             f"No credential for {key!r}: set secret {scope or '<scope>'}/{key} "
