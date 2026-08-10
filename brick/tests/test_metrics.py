@@ -22,12 +22,15 @@ pytest.importorskip(
 
 from pyspark.sql import SparkSession  # noqa: E402
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT))
+# The modules are plain top-level files, so their own directory goes on the path -- the same
+# arrangement the Databricks side uses. REPO_ROOT is still needed for the response fixture.
+BRICK_DIR = Path(__file__).resolve().parents[1]
+REPO_ROOT = BRICK_DIR.parent
+sys.path.insert(0, str(BRICK_DIR))
 
-from brick import metrics  # noqa: E402
-from brick.config import DEFAULT_RISK_RULE, RiskRule  # noqa: E402
-from brick.ingest import extract_nodes  # noqa: E402
+import metrics  # noqa: E402
+from config import DEFAULT_RISK_RULE, RiskRule  # noqa: E402
+from ingest import extract_nodes  # noqa: E402
 
 SCAN_ID = "test-scan"
 # Fixed "now", so open-age percentiles and the capacity month grid are deterministic.

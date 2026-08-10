@@ -17,8 +17,8 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence
 
 import requests
 
-from brick import dbx
-from brick.config import (
+import dbx
+from config import (
     API_SEVERITY_VALUES,
     DEFAULT_FETCH_SEVERITIES,
     DEFAULT_SCOPE,

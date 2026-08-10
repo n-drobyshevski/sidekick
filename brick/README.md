@@ -22,12 +22,23 @@ those remain the reference implementations.
 ## Layout
 
 ```
-config.py        constants mirrored from wiz_dashboard/config.py + the risk rule
+config.py        constants mirrored from wiz_dashboard/config.py + the risk rule and scopes
+dbx.py           reaching dbutils from inside a module, and doing without it off-cluster
 ingest.py        Wiz OAuth + paginated GraphQL -> raw finding dicts
 metrics.py       pure PySpark DataFrame -> DataFrame transforms (no I/O)
 run_pipeline.py  the Databricks entry point: bronze -> silver -> three gold tables
 tests/           local-SparkSession tests, oracles ported from the existing suites
 ```
+
+**These are plain top-level modules, not a package.** There is no `__init__.py`, and they
+import each other by bare name (`import metrics`, `from config import …`). Whatever directory
+holds them goes on `sys.path`. That is what lets the Databricks side be a single flat folder of
+files, with no nesting to reproduce by hand and no package prefix to keep in sync.
+
+The consequence to know about: `config`, `metrics` and `ingest` are generic module names. Put
+the directory **first** on `sys.path` (`sys.path.insert(0, …)`, not `append`) so a same-named
+module elsewhere on the path cannot win — that would fail as a confusing `AttributeError`
+rather than an import error.
 
 `brick/` never imports `wiz_dashboard` — a Spark cluster has neither that package nor
 Streamlit. The shared constants are duplicated on purpose; `config.py` names its sources.
@@ -123,17 +134,35 @@ it; the job then never needs catalog-level rights.
 
 ### 2. Get the code onto the workspace
 
-Add the repo as a **Git folder** (Workspace → Create → Git folder) pointing at this repository.
-That gives you `/Workspace/Users/<you>/sidekick/brick/...`.
+Only the five `.py` modules are needed at runtime — skip `tests/`, `README.md` and
+`requirements.txt`, and note `requests` is already on the runtime. Put them all in **one flat
+folder**, created as **Files**, not Notebooks (a notebook is not importable as a module, and
+this is the most common way the setup goes wrong):
+
+```
+/Workspace/Users/<you>/wiz-metrics/       ← this path goes on sys.path
+├── config.py
+├── dbx.py
+├── ingest.py
+├── metrics.py
+└── run_pipeline.py
+```
+
+Three ways to get them there, all ending in the same place:
+
+- **Git folder** — Workspace → Create → Git folder against this repo. Then the path above is
+  `/Workspace/Users/<you>/sidekick/brick`. The only option that tells you when your copy is
+  stale.
+- **CLI** — `databricks workspace import-dir ./brick /Workspace/Users/<you>/wiz-metrics`
+  (add `--overwrite` to refresh). Copies `tests/` too, harmlessly.
+- **UI** — create the folder, then Create → File once per module and paste. Or zip the five
+  files and use Import on the folder.
 
 ### 3a. From a notebook
 
-Create a notebook anywhere and point it at the repo root — the repo root, not `brick/`, since
-the package is imported as `brick.*`:
-
 ```python
 import sys
-sys.path.append("/Workspace/Users/<you>/sidekick")   # adjust to your Git folder path
+sys.path.insert(0, "/Workspace/Users/<you>/wiz-metrics")   # insert, not append -- see Layout
 
 dbutils.widgets.text("catalog", "")            # required -- see "Pick the catalog" above
 dbutils.widgets.text("schema", "wiz")
@@ -142,9 +171,12 @@ dbutils.widgets.text("secret_scope", "wiz")
 dbutils.widgets.text("severities", "CRITICAL,HIGH")
 dbutils.widgets.text("scope", "os")            # "all" for every vulnerability type
 
-from brick.run_pipeline import main
+from run_pipeline import main
 main()
 ```
+
+Editing a module and re-running the cell changes nothing — Python caches imports. Run
+`dbutils.library.restartPython()` after every edit.
 
 `<region>` is the one in your Wiz tenant URL (`us1`, `eu2`, …). Get it wrong and auth succeeds
 but the GraphQL POST 404s.

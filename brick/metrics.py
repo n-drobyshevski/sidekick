@@ -44,7 +44,7 @@ from pyspark.sql.types import (
     StructType,
 )
 
-from brick.config import (
+from config import (
     NET_CAPACITY_BAND_PCT,
     OVERALL,
     RESOLVED_STATUSES,
