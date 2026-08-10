@@ -2,8 +2,8 @@
 // the crash journal pointer used by locks.recoverIfNeeded(). The job row doubles as
 // the UI progress API.
 
-import { nowIso, type Rec } from "../domain/util";
-import { appendRows, readAll, updateWhere, TABS } from "./sheetsDb";
+import { nowIso, parseTs, type Rec } from "../domain/util";
+import { appendRows, ensureTab, readAll, updateWhere, TABS } from "./sheetsDb";
 
 export type JobKind = "scan" | "delete" | "compact" | "import" | "backfill";
 export type JobPhase =
@@ -60,6 +60,12 @@ export function newJobId(kind: JobKind, now?: number): string {
 }
 
 export function createJob(row: Omit<JobRow, "started_at" | "updated_at">, now?: number): JobRow {
+  // Self-heal the header row first. appendRows and updateWhere both map values by the headers
+  // READ OFF THE SHEET, so any field whose column a deployment predates is silently dropped —
+  // which is how `total_count` came back as 0 on tabs created before it was added, leaving the
+  // scan progress bar indeterminate and the backfill panel reporting "N of 0". Idempotent, one
+  // header read per job.
+  ensureTab(TABS.jobs);
   const full: JobRow = { ...row, started_at: nowIso(now), updated_at: nowIso(now) };
   appendRows(TABS.jobs, [full as unknown as Rec]);
   return full;
@@ -96,6 +102,57 @@ export function getJob(jobId: string): JobRow | null {
 }
 
 const TERMINAL: JobPhase[] = ["DONE", "FAILED", "CANCELLED"];
+
+/** No progress for this long with no live continuation = the job died mid-flight. */
+export const STALE_JOB_MS = 30 * 60_000;
+
+/**
+ * Whether a job has gone quiet long enough to be presumed dead. Shared by every job kind so
+ * "stale" means one thing: a scan and a backfill that both stopped updating are equally stuck,
+ * and `activeJob()` is single-flight ACROSS kinds, so a job nobody reclaims blocks everything
+ * else — including the daily scan. A job with no parseable timestamp is treated as live (it
+ * was only just written).
+ */
+export function isStaleJob(job: JobRow, now?: number): boolean {
+  const updated = parseTs(job.updated_at);
+  if (updated === null) return false;
+  return (now ?? Date.now()) - updated >= STALE_JOB_MS;
+}
+
+/**
+ * Delete every one-shot continuation trigger for a given handler. Each job kind owns its own
+ * handler name (`trigger_continueScan` / `trigger_continueBackfill`), so cleanup must be told
+ * which — clearing only the scan handler while reclaiming a backfill would orphan the
+ * backfill's trigger, and vice versa.
+ */
+export function clearTriggers(handlerName: string): void {
+  for (const t of ScriptApp.getProjectTriggers()) {
+    if (t.getHandlerFunction() === handlerName) ScriptApp.deleteTrigger(t);
+  }
+}
+
+/** The continuation handler owned by each job kind (see clearTriggers). */
+export const CONTINUE_HANDLERS: Partial<Record<JobKind, string>> = {
+  scan: "trigger_continueScan",
+  backfill: "trigger_continueBackfill",
+};
+
+/**
+ * Mark a stale job failed so a fresh one can start, clearing the continuation trigger
+ * belonging to ITS kind. Returns false (and touches nothing) when the job is still live.
+ * Callers must hold the script lock: inside it no hop can be executing, so a stale job is
+ * definitively dead and any trigger still listed is dead with it.
+ */
+export function reclaimIfStale(job: JobRow, now?: number): boolean {
+  if (!isStaleJob(job, now)) return false;
+  const handler = CONTINUE_HANDLERS[job.kind];
+  if (handler) clearTriggers(handler);
+  updateJob(job.job_id, {
+    phase: "FAILED",
+    error: "Reclaimed: the job stalled with no progress.",
+  });
+  return true;
+}
 
 /** Most recent job of a kind, by started_at — used to show a finished backfill's report. */
 export function lastJobOfKind(kind: JobKind): JobRow | null {

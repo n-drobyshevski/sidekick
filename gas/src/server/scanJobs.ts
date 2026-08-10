@@ -20,7 +20,15 @@ import * as archive from "./archiveStore";
 import * as errorLog from "./errorLog";
 import { buildFrame, pageOfFromRuns } from "./frameCore";
 import * as history from "./historyStore";
-import { activeJob, createJob, getJob, newJobId, updateJob, type JobRow } from "./jobsStore";
+import {
+  activeJob,
+  createJob,
+  getJob,
+  newJobId,
+  reclaimIfStale,
+  updateJob,
+  type JobRow,
+} from "./jobsStore";
 import * as ledgerStore from "./ledgerStore";
 import { recoverIfNeeded, withScriptLock } from "./locks";
 import { deleteProp, getProp, hasWizCredentials, setProp } from "./props";
@@ -34,7 +42,6 @@ const FIRST_STEP_BUDGET_MS = 45_000; // keep the "Run scan" RPC snappy; rest via
 const CONTINUE_DELAY_MS = 30_000;
 const CONTINUE_HANDLER = "trigger_continueScan";
 const DELTA_OVERLAP_MINUTES = 15;
-const STALE_JOB_MS = 30 * 60_000; // no update + no pending trigger = crashed job
 
 // Cancel is signalled through a Script Property (lock-free) rather than the jobs tab:
 // a running hop holds the mutation lock for its whole duration, so a lock-bound write
@@ -229,21 +236,20 @@ export function startScan(options: { incremental?: boolean; sampleShape?: string
 }
 
 /**
- * A job with no progress for STALE_JOB_MS died mid-flight (e.g. a killed execution). This
+ * A job with no progress for jobsStore.STALE_JOB_MS died mid-flight (e.g. a killed execution). This
  * runs inside startScan's lock, so no hop can be executing — a stale job is definitively
  * dead, and any continuation trigger still listed is dead too (a live one fires within
  * minutes). Delete the stray trigger and fail the job so a fresh scan can start. (Trusting a
  * leftover trigger here used to wedge recovery: a dead trigger blocked both Stop and re-run.)
+ *
+ * Jobs are single-flight ACROSS kinds, so the job being reclaimed here is not necessarily a
+ * scan — a stalled backfill blocks scanning just as effectively. jobsStore.reclaimIfStale
+ * clears the continuation trigger belonging to the job's own kind; clearing only this
+ * module's would orphan the other's.
  */
 function reclaimStaleJob(job: JobRow): boolean {
-  const updated = parseTs(job.updated_at);
-  if (updated !== null && Date.now() - updated < STALE_JOB_MS) return false;
-  clearContinuationTriggers();
+  if (!reclaimIfStale(job)) return false;
   clearCancel(job.job_id);
-  updateJob(job.job_id, {
-    phase: "FAILED",
-    error: "Reclaimed: the job stalled with no progress.",
-  });
   return true;
 }
 

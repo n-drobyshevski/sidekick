@@ -291,6 +291,14 @@ Things node tests cannot cover — verify after the first deployment:
       **Support group** selector + Overview multi-select filter findings, the **Support
       group** breakdown dimension groups them, and a `support_group` domain rule assigns
       them. A scan also refreshes the map automatically.
+- [ ] Jobs-tab schema heal: delete the `total_count` column from the `jobs` tab, start a
+      backfill (or a scan), and confirm `createJob`'s `ensureTab` re-appends the header and the
+      progress count reads a real total instead of `N of 0`.
+- [ ] Stalled-job reclaim: leave a `BACKFILLING` row whose `updated_at` is over 30 minutes old,
+      then press **Recover exploit signals** — it must report "Appears stalled", and pressing it
+      again must reclaim the dead job and start a new one rather than re-adopting it. Confirm a
+      scan can start afterwards (jobs are single-flight across kinds, so a wedged backfill
+      blocks scanning).
 - [ ] Program performance: after `setup()`, run a scan and confirm the `vuln_ledger` tab has
       `has_kev` / `has_exploit` / `epss` / `risk_observed_at` populated. Then
       **Settings → Risk-signal backfill**: it survives the 6-min cap via its own
