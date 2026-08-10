@@ -55,6 +55,10 @@ from config import (
 
 SECONDS_PER_DAY = 86400
 
+# Tolerance for the Kaplan-Meier median crossing. See kaplan_meier() for why a survival
+# probability needs one at all.
+SURVIVAL_TIE_EPS = 1e-9
+
 # The subset of the Wiz finding node this pipeline reads. Extra keys in the payload are
 # ignored by ``from_json``, so widening the ingest query never breaks the parse.
 NODE_SCHEMA = StructType(
@@ -220,6 +224,133 @@ def _mttr_aggs() -> List[Column]:
     ]
 
 
+def kaplan_meier(df: DataFrame) -> DataFrame:
+    """Censoring-aware time-to-remediate, per severity plus OVERALL.
+
+    Port of ``gas/src/domain/remediation.ts::kaplanMeier``.
+
+    The naive median is computed over resolved findings only, which is survivorship bias with a
+    respectable name: the findings that take longest are disproportionately the ones still open,
+    so excluding them makes remediation look faster than it is, and the bias grows exactly when
+    a programme is falling behind. Kaplan-Meier keeps those findings in the risk set as
+    **right-censored** observations -- "not closed *yet*" is evidence, just not the same evidence
+    as "closed at day 40".
+
+    Events are resolved rows at ``mttr_days``; censored rows are open findings at ``age_days``.
+    A row with neither drops out of both. Then, over distinct event times ascending:
+
+        atRisk(t) = #{observations with duration >= t}      (events AND censored)
+        d(t)      = #{events at exactly t}
+        S(t)      = Π (1 - d/atRisk)
+
+    Emits:
+
+    * ``km_median`` -- smallest event time where ``S(t) <= 0.5``. **NULL when survival never
+      falls that far**, which happens whenever more than half the findings are still open. That
+      is not a failure, it is the honest answer, and ``km_median_lower_bound`` then carries the
+      longest observed time so a reader can say "> 90d" instead of inventing a number.
+    * ``km_rmst`` -- restricted mean survival time, the area under the staircase out to
+      τ = the longest observed time. ``km_truncated`` marks S(τ) > 0, meaning the RMST is a
+      lower bound rather than a mean.
+    """
+    work = df.withColumn(
+        "_duration", F.coalesce(F.col("mttr_days"), F.col("age_days"))
+    ).withColumn("_is_event", F.col("mttr_days").isNotNull().cast("int"))
+    work = work.filter(F.col("_duration").isNotNull())
+
+    # Per-severity and OVERALL in one pass: duplicate every row under the OVERALL label.
+    work = work.select("severity", "_duration", "_is_event").unionByName(
+        work.select(F.lit(OVERALL).alias("severity"), "_duration", "_is_event")
+    )
+
+    # τ and the raw counts, before the curve narrows to event times only.
+    totals = work.groupBy("severity").agg(
+        F.max("_duration").alias("km_restriction_time"),
+        F.sum("_is_event").cast("long").alias("km_events"),
+        F.sum(1 - F.col("_is_event")).cast("long").alias("km_censored"),
+    )
+
+    # One row per distinct observed time: how many events landed on it, how many observations
+    # sit exactly there.
+    at_time = work.groupBy("severity", "_duration").agg(
+        F.sum("_is_event").cast("long").alias("_d"),
+        F.count(F.lit(1)).cast("long").alias("_n_here"),
+    )
+
+    # atRisk = everything at or beyond this time, i.e. a reverse cumulative count.
+    descending = (
+        Window.partitionBy("severity")
+        .orderBy(F.col("_duration").desc())
+        .rowsBetween(Window.unboundedPreceding, Window.currentRow)
+    )
+    at_time = at_time.withColumn("_at_risk", F.sum("_n_here").over(descending))
+
+    # The curve is defined at event times only; a time with no event does not step it down.
+    curve = at_time.filter((F.col("_d") > 0) & (F.col("_at_risk") > 0))
+    factor = 1 - (F.col("_d") / F.col("_at_risk"))
+
+    ascending = (
+        Window.partitionBy("severity")
+        .orderBy("_duration")
+        .rowsBetween(Window.unboundedPreceding, Window.currentRow)
+    )
+    # S is a running product, and Spark has no product aggregate. exp(Σ log f) is the standard
+    # substitute, but log(0) is NULL in Spark and sum() skips NULLs -- so a step that wipes out
+    # the whole risk set (d == atRisk) would be silently ignored and survival would stay
+    # positive after everything had been remediated. Carry a sticky zero flag instead.
+    curve = (
+        curve.withColumn("_factor", factor)
+        .withColumn("_zeroed", F.max((F.col("_factor") <= 0).cast("int")).over(ascending))
+        .withColumn(
+            "_s",
+            F.when(F.col("_zeroed") == 1, F.lit(0.0)).otherwise(
+                F.exp(F.sum(F.log(F.col("_factor"))).over(ascending))
+            ),
+        )
+    )
+
+    # RMST rectangles: S_{k-1} · (t_k − t_{k-1}), anchored at t_0 = 0, S_0 = 1.
+    step = Window.partitionBy("severity").orderBy("_duration")
+    prev_s = F.lag("_s", 1, 1.0).over(step)
+    prev_t = F.lag("_duration", 1, 0.0).over(step)
+    curve = curve.withColumn("_area", prev_s * (F.col("_duration") - prev_t))
+
+    summary = curve.groupBy("severity").agg(
+        # `<= 0.5 + eps`, not `<= 0.5`. The reference implementation multiplies the survival
+        # factors directly and relies on an *inclusive* crossing to catch an exact tie -- and a
+        # tie is the common case, e.g. 0.75 x (1 - 1/3) is exactly 0.5 in IEEE. Substituting
+        # exp(Σ log f) for the product yields 0.5000000000000001 for that same curve, which
+        # fails a bare `<= 0.5` and reports "no median" for a register whose median is real.
+        F.min(F.when(F.col("_s") <= 0.5 + SURVIVAL_TIE_EPS, F.col("_duration"))).alias(
+            "km_median"
+        ),
+        F.sum("_area").alias("_area_sum"),
+        F.max_by("_s", "_duration").alias("_s_final"),
+        F.max("_duration").alias("_t_final"),
+    )
+
+    out = totals.join(summary, "severity", "left")
+    # ...plus the final rectangle S_m · (τ − t_m), which is what carries the censored tail.
+    out = out.withColumn(
+        "km_rmst",
+        F.when(
+            F.col("_area_sum").isNotNull(),
+            F.col("_area_sum")
+            + F.col("_s_final") * (F.col("km_restriction_time") - F.col("_t_final")),
+        ),
+    ).withColumn(
+        # Survival never reached zero by τ, so the RMST is a floor, not a mean. Say so.
+        "km_truncated",
+        F.coalesce(F.col("_s_final") > 0, F.lit(False)),
+    ).withColumn(
+        # Only meaningful when the median was never reached; otherwise it is noise.
+        "km_median_lower_bound",
+        F.when(F.col("km_median").isNull(), F.col("km_restriction_time")),
+    )
+
+    return out.drop("_area_sum", "_s_final", "_t_final")
+
+
 def mttr_by_severity(df: DataFrame) -> DataFrame:
     """MTTR, open age and SLA compliance per severity, plus an OVERALL row.
 
@@ -245,10 +376,15 @@ def mttr_by_severity(df: DataFrame) -> DataFrame:
     # "Oldest open" as the headline KPI defines it: the worst per-severity p90, not the p90
     # over everything. Only meaningful on the OVERALL row.
     oldest = per_sev.agg(F.max("open_age_p90").alias("oldest_open_days"))
-    return combined.crossJoin(oldest).withColumn(
+    combined = combined.crossJoin(oldest).withColumn(
         "oldest_open_days",
         F.when(F.col("severity") == OVERALL, F.col("oldest_open_days")),
     )
+
+    # The censoring-aware estimate rides alongside the naive one. `mttr_median` stays because
+    # it is what the Streamlit dashboard shows and dropping it would make the two surfaces
+    # incomparable -- but `km_median` is the one to report, and it is normally larger.
+    return combined.join(kaplan_meier(df), "severity", "left")
 
 
 # ------------------------------------------------- risk classification + confusion matrix

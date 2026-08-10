@@ -35,18 +35,21 @@ def mttr_frame(**overrides) -> pd.DataFrame:
         {
             "severity": "CRITICAL", "resolved": 0, "open": 3,
             "mttr_median": None, "mttr_mean": None,
+            "km_median": None, "km_median_lower_bound": 90.0, "km_rmst": None, "km_events": 0,
             "open_age_p50": 40.0, "open_age_p90": 90.0,
             "sla_target": 7, "sla_compliant": 0, "sla_pct": None, "oldest_open_days": None,
         },
         {
             "severity": "HIGH", "resolved": 4, "open": 2,
-            "mttr_median": 21.0, "mttr_mean": 22.5,
+            "mttr_median": 18.0, "mttr_mean": 19.0,
+            "km_median": 21.0, "km_median_lower_bound": None, "km_rmst": 20.0, "km_events": 4,
             "open_age_p50": 10.0, "open_age_p90": 30.0,
             "sla_target": 14, "sla_compliant": 1, "sla_pct": 25.0, "oldest_open_days": None,
         },
         {
             "severity": "OVERALL", "resolved": 4, "open": 5,
-            "mttr_median": 21.0, "mttr_mean": 22.5,
+            "mttr_median": 18.0, "mttr_mean": 19.0,
+            "km_median": 21.0, "km_median_lower_bound": None, "km_rmst": 20.0, "km_events": 4,
             "open_age_p50": 20.0, "open_age_p90": 60.0,
             "sla_target": None, "sla_compliant": 1, "sla_pct": 25.0, "oldest_open_days": 90.0,
         },
@@ -152,9 +155,37 @@ def test_breach_is_labelled_in_words_not_only_colour():
 
 def test_within_sla_is_not_flagged():
     frame = mttr_frame()
-    frame.loc[frame["severity"] == "HIGH", "mttr_median"] = 9.0
+    frame.loc[frame["severity"] == "HIGH", "km_median"] = 9.0
     ax = charts.mttr_sla_chart(frame).axes[0]
     assert "▲" not in " ".join(t.get_text() for t in ax.texts)
+
+
+def test_bars_plot_the_km_median_not_the_naive_one():
+    """The naive median is closed-only and biased low; the bar must be the censoring-aware
+    figure or the chart quietly argues the opposite of what KM is for."""
+    ax = charts.mttr_sla_chart(mttr_frame()).axes[0]
+    assert bars(ax)[0].get_width() == pytest.approx(21.0)  # km_median, not mttr_median 18.0
+
+
+def test_unreached_median_is_stated_as_a_bound_not_drawn_as_a_bar():
+    """More than half still open means the median does not exist yet. Falling back to the
+    closed-only rows here would reintroduce exactly the bias KM removes."""
+    frame = mttr_frame()
+    frame.loc[frame["severity"] == "HIGH", "km_median"] = None
+    frame.loc[frame["severity"] == "HIGH", "km_median_lower_bound"] = 45.0
+    ax = charts.mttr_sla_chart(frame).axes[0]
+
+    assert not bars(ax), "no bar when the median was never reached"
+    texts = " ".join(t.get_text() for t in ax.texts)
+    assert "over half still open" in texts
+    assert "> 45d" in texts
+
+
+def test_subtitle_shows_km_beside_naive():
+    """The gap between them is the survivorship bias, and it is the argument for KM."""
+    subtitle = " ".join(t.get_text() for t in charts.mttr_sla_chart(mttr_frame()).texts)
+    assert "KM median 21.0d" in subtitle
+    assert "naive (closed-only) 18.0d" in subtitle
 
 
 def test_overall_is_a_subtitle_not_a_bar():
@@ -162,7 +193,7 @@ def test_overall_is_a_subtitle_not_a_bar():
     fig = charts.mttr_sla_chart(mttr_frame())
     ax = fig.axes[0]
     assert [t.get_text() for t in ax.get_yticklabels()] == ["CRITICAL", "HIGH"]
-    assert "overall median 21.0d" in " ".join(t.get_text() for t in fig.texts)
+    assert "overall KM median 21.0d" in " ".join(t.get_text() for t in fig.texts)
 
 
 def test_the_encoding_key_survives_the_headline():
@@ -171,7 +202,7 @@ def test_the_encoding_key_survives_the_headline():
     fig = charts.mttr_sla_chart(mttr_frame())
     subtitle = " ".join(t.get_text() for t in fig.texts)
     assert "SLA target" in subtitle
-    assert "overall median" in subtitle
+    assert "overall KM median" in subtitle
 
 
 def test_severities_are_named_on_the_axis():

@@ -5,7 +5,7 @@ metric families as query-able gold tables:
 
 | Metric | Question it answers | Formula |
 | --- | --- | --- |
-| **MTTR / SLA** | How fast are we closing risk? | `resolved_at − first_detected_at`, in days; in-SLA is `mttr_days <= target` |
+| **MTTR / SLA** | How fast are we closing risk? | Kaplan–Meier median over `resolved_at − first_detected_at`, counting still-open findings as right-censored; in-SLA is `mttr_days <= target` |
 | **Coverage** | Of all high-risk vulnerabilities, what share did we remediate? | `TP / (TP + FN)` |
 | **Efficiency** | Of everything we remediated, what share was actually high-risk? | `TP / (TP + FP)` |
 | **Capacity** | Can we close faster than risk arrives? | monthly `closed / open_at_start`, and `closed − opened` |
@@ -327,6 +327,39 @@ The oracles are ported, not invented:
   100% in SLA against a 14-day HIGH target);
 - one test replays the committed `os_vulns_response_exemple.json` end to end, so the real Wiz
   response shape is covered without a network call.
+
+## MTTR is Kaplan–Meier, not a mean of what closed
+
+Averaging `mttr_days` over resolved findings is survivorship bias with a respectable name. The
+findings that take longest are disproportionately the ones *still open*, so excluding them makes
+remediation look faster than it is — and the gap widens exactly when a programme is falling
+behind, which is when you least want a flattering number.
+
+`metrics.kaplan_meier` (ported from `gas/src/domain/remediation.ts::kaplanMeier`) keeps those
+findings in the risk set as **right-censored** observations: "not closed yet" is evidence, just
+not the same evidence as "closed on day 40". Columns on `…metrics_mttr`:
+
+| Column | |
+| --- | --- |
+| `km_median` | the headline. Smallest time where survival falls to ≤ 50% |
+| `km_median_lower_bound` | set **only** when `km_median` is NULL, i.e. more than half of that severity is still open and the median does not exist yet. Report it as "> N d" rather than inventing a number |
+| `km_rmst` | restricted mean survival time — area under the curve out to the longest observed time |
+| `km_truncated` | survival never reached zero, so `km_rmst` is a floor rather than a mean |
+| `km_events` / `km_censored` | how much of the estimate rests on closures vs. still-open findings |
+| `mttr_mean` / `mttr_median` | the naive closed-only figures, kept for comparison with the Streamlit dashboard — the gap against `km_median` *is* the bias |
+
+On the committed fixture the two differ by about 18%: naive 18.1d against a KM median of 21.3d.
+
+Two implementation notes, both of which cost a wrong answer before they were caught:
+
+- Survival is a running product and Spark has no product aggregate. `exp(Σ log f)` is the usual
+  substitute, but `log(0)` is NULL in Spark and `sum()` skips NULLs, so a step that resolves the
+  entire remaining risk set would be ignored and survival would stay positive after everything
+  had closed. A sticky zero flag handles it.
+- The median crossing is inclusive, and an exact tie is the *common* case — `0.75 × (1 − 1/3)` is
+  exactly 0.5 in IEEE. The `exp(Σ log f)` form returns `0.5000000000000001` for that same curve,
+  which fails a bare `<= 0.5` and reports "no median" for a register whose median is real. Hence
+  the tolerance in `SURVIVAL_TIE_EPS`.
 
 ## Three things that are easy to get wrong
 

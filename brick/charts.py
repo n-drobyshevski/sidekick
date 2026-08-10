@@ -172,14 +172,27 @@ def mttr_sla_chart(mttr: pd.DataFrame, scan_id: str = "") -> Figure:
 
     # The encoding key always survives -- a reader who cannot tell what the tick means cannot
     # read the chart, however good the headline is.
-    subtitle = "bar = median days to remediate · vertical tick = that severity's SLA target"
-    if overall is not None and _present(overall.get("mttr_median")):
+    subtitle = (
+        "bar = Kaplan–Meier median, counting still-open findings as censored"
+        " · vertical tick = SLA target"
+    )
+    if overall is not None:
+        km, naive = overall.get("km_median"), overall.get("mttr_median")
         sla = overall.get("sla_pct")
-        sla_text = f"{sla:.0f}% in SLA" if _present(sla) else "in-SLA unknown"
-        subtitle += (
-            f"\noverall median {overall['mttr_median']:.1f}d · {sla_text} · "
-            f"{int(overall['resolved'])} resolved, {int(overall['open'])} open"
-        )
+        parts = []
+        if _present(km):
+            parts.append(f"overall KM median {km:.1f}d")
+            if _present(naive):
+                # Showing both is the argument for KM: the gap is the survivorship bias.
+                parts.append(f"naive (closed-only) {naive:.1f}d")
+        elif _present(overall.get("km_median_lower_bound")):
+            parts.append(f"overall KM median > {overall['km_median_lower_bound']:.0f}d")
+        if _present(sla):
+            parts.append(f"{sla:.0f}% in SLA")
+        if _present(overall.get("resolved")):
+            parts.append(f"{int(overall['resolved'])} resolved, {int(overall['open'])} open")
+        if parts:
+            subtitle += "\n" + " · ".join(parts)
     if scan_id:
         subtitle += f" · scan {scan_id}"
 
@@ -190,8 +203,26 @@ def mttr_sla_chart(mttr: pd.DataFrame, scan_id: str = "") -> Figure:
     ypos = list(range(len(rows)))[::-1]  # CRITICAL at the top
     for y, (_, row) in zip(ypos, rows.iterrows()):
         sev = row["severity"]
-        median = row.get("mttr_median")
+        median = row.get("km_median")
         target = SLA_TARGETS.get(sev)
+
+        # Survival never fell to 50%, i.e. more than half of this severity is still open. The
+        # median genuinely does not exist yet; a bar drawn from the closed-only rows here would
+        # be the exact bias KM exists to remove.
+        if not _present(median) and _present(row.get("km_median_lower_bound")) and row.get(
+            "km_events", 0
+        ):
+            _no_data(
+                ax, y,
+                f"over half still open — median > {row['km_median_lower_bound']:.0f}d",
+                at_x=target,
+            )
+            if target:
+                ax.plot(
+                    [target, target], [y - 0.3, y + 0.3],
+                    color=INK, linewidth=2, solid_capstyle="butt", zorder=5,
+                )
+            continue
 
         if _present(median):
             ax.barh(

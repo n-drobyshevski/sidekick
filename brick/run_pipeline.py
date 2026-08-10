@@ -199,11 +199,13 @@ def summarize(scan_id, scope, rule, mttr, program, capacity) -> None:
     """
     print(f"[{scan_id}] scope: {scope} | risk rule: {rule.sentence()}")
 
-    print("\nMTTR and SLA by severity")
+    # km_median leads. mttr_median is the closed-only figure kept beside it: the gap between
+    # the two is the survivorship bias, and seeing them together is the argument for KM.
+    print("\nMTTR and SLA by severity (km_median counts still-open findings as censored)")
     metrics.order_by_severity(
         mttr.select(
-            "severity", "resolved", "open", "mttr_median", "sla_target", "sla_pct",
-            "open_age_p90",
+            "severity", "resolved", "open", "km_median", "km_median_lower_bound", "km_rmst",
+            "mttr_median", "sla_target", "sla_pct",
         )
     ).show(truncate=False)
 
