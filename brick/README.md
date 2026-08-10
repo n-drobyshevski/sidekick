@@ -26,6 +26,7 @@ config.py        constants mirrored from wiz_dashboard/config.py + the risk rule
 dbx.py           reaching dbutils from inside a module, and doing without it off-cluster
 ingest.py        Wiz OAuth + paginated GraphQL -> raw finding dicts
 metrics.py       pure PySpark DataFrame -> DataFrame transforms (no I/O)
+charts.py        matplotlib figures over the gold tables (notebook only)
 run_pipeline.py  the Databricks entry point: bronze -> silver -> three gold tables
 tests/           local-SparkSession tests, oracles ported from the existing suites
 ```
@@ -246,6 +247,39 @@ WHERE  scan_id = (
 )
 ORDER BY severity;
 ```
+
+The run itself prints all three families — MTTR and SLA by severity, coverage and efficiency,
+and the most recent capacity months.
+
+### Charts
+
+`main()` returns what it wrote, so charting is a follow-on cell:
+
+```python
+result = main()
+
+import charts
+charts.render_all(spark, result.tables)     # figures display as the cell output
+```
+
+Three figures: median MTTR against each severity's SLA target, the p50–p90 age span of the
+open backlog, and coverage against efficiency with the unclassified-uncertainty bounds drawn
+as error bars and the prevalence baseline marked.
+
+`charts.load(spark, tables, scan_id=...)` reads a specific run; it defaults to the latest,
+because the gold tables are appended and an unfiltered read would blend every run into one
+picture. `run_pipeline` never imports `charts`, so a scheduled Job does not build figures
+nobody will look at.
+
+Two conventions the figures keep, both load-bearing:
+
+- **A NULL is drawn as an annotated gap, never a zero bar.** "No resolved findings yet" and
+  "closed instantly" must not look the same.
+- **Severity is never carried by colour alone.** The shared palette is a heat ramp, and it
+  fails a categorical colourblind check — HIGH `#ea580c` and MEDIUM `#d97706` sit ΔE 1.6 apart
+  under deuteranopia and 6.7 apart with normal vision. Every mark is named by an axis tick or
+  a point label; colour is redundant coding on top. Do not add a chart that needs the reader
+  to tell those two hues apart.
 
 Once both scopes are running, compare them on the `scope` column:
 

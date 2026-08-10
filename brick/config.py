@@ -19,6 +19,24 @@ SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"]
 # Standard VM SLAs, in days.
 SLA_TARGETS = {"CRITICAL": 7, "HIGH": 14, "MEDIUM": 30, "LOW": 90, "INFO": 180}
 
+# Light-theme severity palette, mirrored from wiz_dashboard/config.py so a chart here and a
+# chart in the Streamlit app agree. Each colour clears 3:1 against white as a graphical mark.
+#
+# It is a deliberate heat ramp, not a categorical palette, and it does NOT pass a categorical
+# colourblind check: HIGH and MEDIUM sit ΔE 1.6 apart under deuteranopia and 6.7 apart even
+# with normal vision. That is measured, not guessed. The consequence is a hard rule rather
+# than a caveat -- **severity identity must never rest on colour alone.** Every chart in
+# charts.py names the severity in an axis tick or a point label, and colour is redundant
+# coding on top. A chart that would need the reader to tell #ea580c from #d97706 is wrong.
+SEVERITY_COLORS = {
+    "CRITICAL": "#dc2626",
+    "HIGH": "#ea580c",
+    "MEDIUM": "#d97706",
+    "LOW": "#2563eb",
+    "INFO": "#64748b",
+    "UNKNOWN": "#475569",
+}
+
 # API-side statuses that mean remediated -- the MTTR stop-clock.
 RESOLVED_STATUSES = {"RESOLVED", "REMEDIATED", "FIXED", "CLOSED"}
 
