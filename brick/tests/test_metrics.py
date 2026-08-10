@@ -1,0 +1,494 @@
+"""Tests for the Databricks metric transforms, against a local SparkSession.
+
+The oracles are ported, not invented: the confusion-matrix block is the hand-counted register
+from ``gas/test/program.test.ts``, and the MTTR block is the ``resolved_sample`` case from
+``tests/test_metrics.py``. If these numbers move, the pipeline has stopped agreeing with the
+dashboards.
+
+Run with:  pytest brick/tests -q     (needs `pip install -r brick/requirements.txt`)
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+import pytest
+
+pytest.importorskip(
+    "pyspark", reason="brick tests need pyspark: pip install -r brick/requirements.txt"
+)
+
+from pyspark.sql import SparkSession  # noqa: E402
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT))
+
+from brick import metrics  # noqa: E402
+from brick.config import DEFAULT_RISK_RULE, RiskRule  # noqa: E402
+from brick.ingest import extract_nodes  # noqa: E402
+
+SCAN_ID = "test-scan"
+# Fixed "now", so open-age percentiles and the capacity month grid are deterministic.
+SCAN_TS = "2026-07-01T00:00:00Z"
+
+
+@pytest.fixture(scope="session")
+def spark():
+    session = (
+        SparkSession.builder.master("local[1]")
+        .appName("brick-tests")
+        .config("spark.sql.session.timeZone", "UTC")
+        .config("spark.ui.enabled", "false")
+        .config("spark.sql.shuffle.partitions", "1")
+        .getOrCreate()
+    )
+    yield session
+    session.stop()
+
+
+# ------------------------------------------------------------------ fixture builders
+
+
+def node(**over) -> dict:
+    """A finding with every signal observed-and-negative -- an explicit `low`."""
+    base = {
+        "id": "f-1",
+        "name": "CVE-2026-0001",
+        "severity": "HIGH",
+        "status": "OPEN",
+        "firstDetectedAt": "2026-04-01T00:00:00Z",
+        "resolvedAt": None,
+        "hasCisaKevExploit": False,
+        "hasExploit": False,
+        "epssProbability": 0.01,
+    }
+    base.update(over)
+    return base
+
+
+def unknown_node(**over) -> dict:
+    """A finding nothing was ever captured for -- an explicit `unknown`."""
+    return node(
+        hasCisaKevExploit=None, hasExploit=None, epssProbability=None, **over
+    )
+
+
+def silver(spark, nodes, scan_ts: str = SCAN_TS):
+    """Nodes -> bronze -> silver, exercising the real parse path."""
+    rows = [(SCAN_ID, scan_ts, json.dumps(n)) for n in nodes]
+    bronze = spark.createDataFrame(
+        rows, "scan_id STRING, scan_ts STRING, node_json STRING"
+    ).withColumn("scan_ts", metrics.F.col("scan_ts").cast("timestamp"))
+    return metrics.silver_findings(bronze)
+
+
+def rows_by_severity(df, key: str = "severity") -> dict:
+    return {r[key]: r.asDict() for r in df.collect()}
+
+
+# ------------------------------------------------------------------------- severity
+
+
+def test_normalize_severity(spark):
+    df = spark.createDataFrame(
+        [("informational",), ("INFO",), ("high",), ("weird",), (None,)], "s STRING"
+    )
+    got = [r[0] for r in df.select(metrics.normalize_severity(metrics.F.col("s"))).collect()]
+    assert got == ["INFO", "INFO", "HIGH", "UNKNOWN", "UNKNOWN"]
+
+
+# ------------------------------------------------------------ risk classification
+
+
+def test_classify_risk_three_valued(spark):
+    cases = [
+        ("kev fires", node(hasCisaKevExploit=True), "high"),
+        ("exploit fires", node(hasExploit=True), "high"),
+        ("epss over threshold fires", node(epssProbability=0.42), "high"),
+        ("epss exactly at threshold fires", node(epssProbability=0.1), "high"),
+        ("everything observed, nothing fired", node(), "low"),
+        ("nothing captured", unknown_node(), "unknown"),
+    ]
+    df = silver(spark, [n for _, n, _ in cases])
+    got = [r["risk_class"] for r in metrics.classify_risk(df, DEFAULT_RISK_RULE).collect()]
+    assert got == [expected for _, _, expected in cases]
+
+
+def test_missing_signal_is_unknown_not_low(spark):
+    """The trap, as a regression test.
+
+    KEV and exploit both observed-false, EPSS never captured. Calling this `low` is what
+    silently inflates efficiency and deflates coverage at the same time.
+    """
+    df = silver(spark, [node(epssProbability=None)])
+    assert metrics.classify_risk(df, DEFAULT_RISK_RULE).collect()[0]["risk_class"] == "unknown"
+
+    # ...but with EPSS disabled, the remaining signals fully decide it.
+    rule = RiskRule(kev=True, exploit=True, epss=False)
+    assert metrics.classify_risk(df, rule).collect()[0]["risk_class"] == "low"
+
+
+def test_empty_rule_decides_nothing(spark):
+    df = silver(spark, [node(hasCisaKevExploit=True)])
+    rule = RiskRule(kev=False, exploit=False, epss=False)
+    assert metrics.classify_risk(df, rule).collect()[0]["risk_class"] == "unknown"
+
+
+# ------------------------------------------ coverage & efficiency: the worked example
+
+
+@pytest.fixture(scope="module")
+def worked_example_nodes():
+    """The 12-lifecycle register from gas/test/program.test.ts, hand-counted:
+
+        3  high risk, remediated          -> TP = 3
+        3  not high risk, remediated      -> FP = 3
+        2  high risk, still open          -> FN = 2
+        2  not high risk, still open      -> TN = 2
+        1  no captured signal, remediated -> unknown_remediated = 1
+        1  no captured signal, open       -> unknown_open       = 1
+                                             classified = 10, unknown = 2, total = 12
+    """
+    resolved = {"status": "RESOLVED", "resolvedAt": "2026-05-01T00:00:00Z"}
+    return [
+        # TP -- one per signal, so the OR is exercised.
+        node(hasCisaKevExploit=True, **resolved),
+        node(hasExploit=True, **resolved),
+        node(epssProbability=0.42, **resolved),
+        # FP -- observed low, remediated anyway.
+        node(**resolved),
+        node(**resolved),
+        node(**resolved),
+        # FN -- high risk, still open.
+        node(hasCisaKevExploit=True),
+        node(epssProbability=0.9),
+        # TN -- low risk, still open.
+        node(),
+        node(),
+        # Unclassified, one on each side.
+        unknown_node(**resolved),
+        unknown_node(),
+    ]
+
+
+@pytest.fixture(scope="module")
+def worked_example(spark, worked_example_nodes):
+    df = metrics.classify_risk(silver(spark, worked_example_nodes), DEFAULT_RISK_RULE)
+    return rows_by_severity(metrics.confusion_matrix(df))["OVERALL"]
+
+
+def test_confusion_quadrants(worked_example):
+    m = worked_example
+    assert (m["tp"], m["fp"], m["fn"], m["tn"]) == (3, 3, 2, 2)
+    assert m["unknown_remediated"] == 1
+    assert m["unknown_open"] == 1
+
+
+def test_confusion_totals_reconcile(worked_example):
+    """Nothing is lost or double-counted."""
+    m = worked_example
+    assert m["classified"] == 10
+    assert m["unknown"] == 2
+    assert m["total"] == 12
+    assert m["tp"] + m["fp"] + m["fn"] + m["tn"] + m["unknown"] == 12
+    assert m["remediated"] + m["open"] == 12
+    assert m["remediated"] == 7  # 3 TP + 3 FP + 1 unknown
+    assert m["open"] == 5  # 2 FN + 2 TN + 1 unknown
+
+
+def test_coverage_and_bounds(worked_example):
+    m = worked_example
+    assert m["coverage_pct"] == pytest.approx(60.0)  # 3 / 5
+    assert m["coverage_lo"] == pytest.approx(50.0)  # 3 / 6
+    assert m["coverage_hi"] == pytest.approx(100 * 4 / 6)  # 4 / 6
+
+
+def test_efficiency_and_bounds(worked_example):
+    m = worked_example
+    assert m["efficiency_pct"] == pytest.approx(50.0)  # 3 / 6
+    assert m["efficiency_lo"] == pytest.approx(100 * 3 / 7)
+    assert m["efficiency_hi"] == pytest.approx(100 * 4 / 7)
+
+
+def test_prevalence_and_signal_coverage(worked_example):
+    m = worked_example
+    assert m["prevalence_pct"] == pytest.approx(50.0)  # 5 / 10
+    assert m["signal_coverage_pct"] == pytest.approx(100 * 10 / 12)
+
+
+def test_coverage_and_efficiency_are_not_transposed(worked_example):
+    """They differ by construction here (60 vs 50), so a swapped denominator cannot pass."""
+    assert worked_example["coverage_pct"] != worked_example["efficiency_pct"]
+
+
+def test_confusion_by_severity_splits_and_totals(spark):
+    nodes = [
+        node(severity="CRITICAL", hasCisaKevExploit=True, status="RESOLVED"),
+        node(severity="HIGH", hasCisaKevExploit=True),
+        node(severity="HIGH"),
+    ]
+    df = metrics.classify_risk(silver(spark, nodes), DEFAULT_RISK_RULE)
+    by_sev = rows_by_severity(metrics.confusion_matrix(df))
+    assert by_sev["CRITICAL"]["tp"] == 1
+    assert by_sev["HIGH"]["fn"] == 1
+    assert by_sev["HIGH"]["tn"] == 1
+    assert by_sev["OVERALL"]["total"] == 3
+    assert by_sev["OVERALL"]["coverage_pct"] == pytest.approx(50.0)  # 1 TP / (1 TP + 1 FN)
+
+
+def test_signal_breakdown_counts_overlaps_and_gaps(spark):
+    nodes = [
+        node(hasCisaKevExploit=True, hasExploit=True),  # fires twice, counted once in any_of
+        node(epssProbability=0.5),
+        unknown_node(),
+    ]
+    df = metrics.classify_risk(silver(spark, nodes), DEFAULT_RISK_RULE)
+    got = metrics.signal_breakdown(df, DEFAULT_RISK_RULE).collect()[0].asDict()
+    assert got["kev"] == 1
+    assert got["exploit"] == 1
+    assert got["epss"] == 1
+    assert got["any_of"] == 2  # the first row fires on two signals but is one finding
+    assert got["kev_missing"] == 1
+    assert got["epss_missing"] == 1
+
+
+# --------------------------------------------------------------------- MTTR and SLA
+
+
+def test_mttr_matches_the_dashboard_oracle(spark):
+    """The `resolved_sample` case from tests/test_metrics.py: one HIGH resolved after
+    exactly 7 days, one HIGH still open."""
+    nodes = [
+        node(
+            id="a",
+            severity="HIGH",
+            status="RESOLVED",
+            firstDetectedAt="2026-04-01T00:00:00Z",
+            resolvedAt="2026-04-08T00:00:00Z",
+        ),
+        node(
+            id="b",
+            severity="HIGH",
+            status="OPEN",
+            firstDetectedAt="2026-05-01T00:00:00Z",
+            resolvedAt=None,
+        ),
+    ]
+    by_sev = rows_by_severity(metrics.mttr_by_severity(silver(spark, nodes)))
+    high = by_sev["HIGH"]
+    assert high["open"] == 1
+    assert high["resolved"] == 1
+    assert high["mttr_median"] == pytest.approx(7.0)
+    assert high["mttr_mean"] == pytest.approx(7.0)
+    assert high["sla_target"] == 14
+    assert high["sla_pct"] == pytest.approx(100.0)
+
+    overall = by_sev["OVERALL"]
+    assert overall["resolved"] == 1
+    assert overall["open"] == 1
+    assert overall["sla_pct"] == pytest.approx(100.0)
+
+
+def test_sla_compliance_is_inclusive_of_the_target_day(spark):
+    """Resolved exactly on the target day counts as met -- `<=`, not `<`."""
+    nodes = [
+        node(  # CRITICAL target is 7 days; resolved at exactly 7.0
+            severity="CRITICAL",
+            status="RESOLVED",
+            firstDetectedAt="2026-04-01T00:00:00Z",
+            resolvedAt="2026-04-08T00:00:00Z",
+        ),
+        node(  # ...and one an hour late, which must not count
+            severity="CRITICAL",
+            status="RESOLVED",
+            firstDetectedAt="2026-04-01T00:00:00Z",
+            resolvedAt="2026-04-08T01:00:00Z",
+        ),
+    ]
+    critical = rows_by_severity(metrics.mttr_by_severity(silver(spark, nodes)))["CRITICAL"]
+    assert critical["sla_compliant"] == 1
+    assert critical["sla_pct"] == pytest.approx(50.0)
+
+
+def test_mttr_is_fractional_days_not_calendar_days(spark):
+    nodes = [
+        node(
+            status="RESOLVED",
+            firstDetectedAt="2026-04-01T00:00:00Z",
+            resolvedAt="2026-04-01T08:00:00Z",
+        )
+    ]
+    high = rows_by_severity(metrics.mttr_by_severity(silver(spark, nodes)))["HIGH"]
+    assert high["mttr_median"] == pytest.approx(8 / 24)
+
+
+def test_open_age_percentiles_measured_from_scan_ts(spark):
+    """Ages are as of the scan, so a stored row means the same thing whenever it is read."""
+    nodes = [
+        node(id=str(i), firstDetectedAt=f"2026-06-{day:02d}T00:00:00Z")
+        for i, day in enumerate([1, 11, 21])
+    ]
+    high = rows_by_severity(metrics.mttr_by_severity(silver(spark, nodes, SCAN_TS)))["HIGH"]
+    # 2026-07-01 minus 2026-06-01 / -11 / -21 = 30, 20, 10 days.
+    assert high["open_age_p50"] == pytest.approx(20.0)
+    # Linear interpolation at (n-1)*0.9 = 1.8 between 20 and 30 -> 28.0, matching pandas.
+    assert high["open_age_p90"] == pytest.approx(28.0)
+    assert rows_by_severity(metrics.mttr_by_severity(silver(spark, nodes, SCAN_TS)))["OVERALL"][
+        "oldest_open_days"
+    ] == pytest.approx(28.0)
+
+
+def test_empty_denominator_is_null_not_zero(spark):
+    """A rate over an empty population is unknown. 0% would be indistinguishable from
+    'nothing to remediate', which is the opposite verdict."""
+    high = rows_by_severity(metrics.mttr_by_severity(silver(spark, [node()])))["HIGH"]
+    assert high["resolved"] == 0
+    assert high["sla_pct"] is None
+    assert high["mttr_median"] is None
+
+    df = metrics.classify_risk(silver(spark, [node()]), DEFAULT_RISK_RULE)
+    matrix = rows_by_severity(metrics.confusion_matrix(df))["HIGH"]
+    assert matrix["efficiency_pct"] is None  # nothing remediated at all
+    assert matrix["coverage_pct"] is None  # no high-risk findings at all
+
+
+def test_resolved_status_without_timestamp_is_remediated_but_has_no_mttr(spark):
+    """The two clocks differ on purpose: coverage/efficiency read `status`, MTTR reads
+    `resolvedAt`. Both source implementations behave exactly this way."""
+    nodes = [node(status="RESOLVED", resolvedAt=None, hasCisaKevExploit=True)]
+    df = metrics.classify_risk(silver(spark, nodes), DEFAULT_RISK_RULE)
+    assert rows_by_severity(metrics.confusion_matrix(df))["HIGH"]["tp"] == 1
+    high = rows_by_severity(metrics.mttr_by_severity(df))["HIGH"]
+    assert high["resolved"] == 0
+    assert high["mttr_median"] is None
+
+
+# --------------------------------------------------------------------------- capacity
+
+
+@pytest.fixture(scope="module")
+def capacity_months(spark):
+    """Three months of activity, hand-counted:
+
+        April  : 10 opened,  0 closed.  open_at_start = 0
+        May    :  0 opened,  4 closed.  open_at_start = 10 -> mmcr 40%, net +4  (+40%)
+        June   :  2 opened,  1 closed.  open_at_start = 6  -> mmcr 16.6%, net -1 (-16.6%)
+        July   :  0 opened,  0 closed.  open_at_start = 7  -> the partial current month
+    """
+    nodes = []
+    for i in range(10):
+        resolved = None
+        if i < 4:
+            resolved = "2026-05-15T00:00:00Z"
+        elif i == 4:
+            resolved = "2026-06-20T00:00:00Z"
+        nodes.append(
+            node(id=f"apr-{i}", firstDetectedAt="2026-04-05T00:00:00Z", resolvedAt=resolved)
+        )
+    for i in range(2):
+        nodes.append(node(id=f"jun-{i}", firstDetectedAt="2026-06-10T00:00:00Z"))
+
+    df = metrics.capacity_by_month(silver(spark, nodes), SCAN_TS)
+    return {str(r["month"])[:7]: r.asDict() for r in df.collect()}
+
+
+def test_capacity_backlog_and_close_rate(capacity_months):
+    assert capacity_months["2026-04"]["open_at_start"] == 0
+    assert capacity_months["2026-04"]["opened"] == 10
+    assert capacity_months["2026-05"]["open_at_start"] == 10
+    assert capacity_months["2026-05"]["closed"] == 4
+    assert capacity_months["2026-05"]["mmcr"] == pytest.approx(40.0)
+    assert capacity_months["2026-06"]["open_at_start"] == 6
+    assert capacity_months["2026-06"]["mmcr"] == pytest.approx(100 / 6)
+
+
+def test_capacity_verdicts_use_the_dead_band(capacity_months):
+    assert capacity_months["2026-05"]["net"] == 4
+    assert capacity_months["2026-05"]["verdict"] == "gaining"
+    assert capacity_months["2026-06"]["net"] == -1
+    assert capacity_months["2026-06"]["verdict"] == "falling-behind"
+    # April had nothing open to close, so there is no rate and no verdict to draw.
+    assert capacity_months["2026-04"]["mmcr"] is None
+    assert capacity_months["2026-04"]["verdict"] == "keeping-up"
+
+
+def test_capacity_marks_the_current_month_partial_and_excludes_it(capacity_months):
+    assert capacity_months["2026-07"]["partial"] is True
+    assert capacity_months["2026-05"]["partial"] is False
+    # Counted months are May and June only: April has no rate, July is partial.
+    assert capacity_months["2026-05"]["months_counted"] == 2
+    assert capacity_months["2026-05"]["mmcr_mean"] == pytest.approx((40.0 + 100 / 6) / 2)
+    assert capacity_months["2026-05"]["one_in_n"] == pytest.approx(
+        100 / ((40.0 + 100 / 6) / 2)
+    )
+    # net_total spans every month, partial ones included: 5 closed - 12 opened.
+    assert capacity_months["2026-05"]["net_total"] == -7
+
+
+def test_capacity_small_swing_is_keeping_up(spark):
+    """A net movement inside the +/-2% band must not flip the verdict."""
+    nodes = [node(id=f"o-{i}", firstDetectedAt="2026-04-05T00:00:00Z") for i in range(100)]
+    nodes.append(
+        node(id="c", firstDetectedAt="2026-04-05T00:00:00Z", resolvedAt="2026-05-10T00:00:00Z")
+    )
+    months = {
+        str(r["month"])[:7]: r.asDict()
+        for r in metrics.capacity_by_month(silver(spark, nodes), SCAN_TS).collect()
+    }
+    assert months["2026-05"]["net_pct"] == pytest.approx(100 / 101)
+    assert months["2026-05"]["verdict"] == "keeping-up"
+
+
+def test_capacity_high_risk_only_narrows_the_population(spark):
+    nodes = [
+        node(id="hi", hasCisaKevExploit=True, firstDetectedAt="2026-04-05T00:00:00Z"),
+        node(id="lo", firstDetectedAt="2026-04-05T00:00:00Z"),
+    ]
+    df = metrics.classify_risk(silver(spark, nodes), DEFAULT_RISK_RULE)
+    months = {
+        str(r["month"])[:7]: r.asDict()
+        for r in metrics.capacity_by_month(df, SCAN_TS, high_risk_only=True).collect()
+    }
+    assert months["2026-04"]["opened"] == 1
+
+
+def test_observation_window(spark):
+    df = silver(spark, [node(firstDetectedAt="2026-06-01T00:00:00Z")])
+    got = metrics.observation_window_days(df, SCAN_TS).collect()[0][0]
+    assert got == pytest.approx(30.0)
+
+
+# ------------------------------------------------------------------- the real payload
+
+
+def test_committed_wiz_fixture_parses_end_to_end(spark):
+    """The real response shape, straight from the repo fixture -- no network, no mocks."""
+    payload = json.loads((REPO_ROOT / "os_vulns_response_exemple.json").read_text())
+    nodes = extract_nodes(payload)
+    assert nodes, "fixture should contain findings"
+
+    df = metrics.classify_risk(silver(spark, nodes), DEFAULT_RISK_RULE)
+    parsed = df.collect()
+    assert len(parsed) == len(nodes)
+    # Nothing silently dropped to NULL by the parse.
+    assert all(r["severity"] in {"CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"} for r in parsed)
+    assert all(r["first_detected_at"] is not None for r in parsed)
+    assert any(r["risk_class"] == "high" for r in parsed)
+
+    overall = rows_by_severity(metrics.confusion_matrix(df))["OVERALL"]
+    assert overall["total"] == len(nodes)
+    metrics.mttr_by_severity(df).collect()
+    metrics.capacity_by_month(df, SCAN_TS).collect()
+
+
+def test_severity_ordering_puts_overall_last(spark):
+    nodes = [node(severity="LOW"), node(severity="CRITICAL"), node(severity="HIGH")]
+    ordered = [
+        r["severity"]
+        for r in metrics.order_by_severity(
+            metrics.mttr_by_severity(silver(spark, nodes))
+        ).collect()
+    ]
+    assert ordered == ["CRITICAL", "HIGH", "LOW", "OVERALL"]
