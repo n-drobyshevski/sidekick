@@ -4598,7 +4598,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "8e64acf0b5dc" : "dev";
+  var BUILD_ID = true ? "7864903db262" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -4740,6 +4740,7 @@ var Server = (() => {
     return `${kind}-${nowIso(now).replace(/[:]/g, "")}`;
   }
   function createJob(row, now) {
+    ensureTab(TABS.jobs);
     const full = { ...row, started_at: nowIso(now), updated_at: nowIso(now) };
     appendRows(TABS.jobs, [full]);
     return full;
@@ -4776,6 +4777,31 @@ var Server = (() => {
     return (_a = listJobs().find((j) => j.job_id === jobId)) != null ? _a : null;
   }
   var TERMINAL = ["DONE", "FAILED", "CANCELLED"];
+  var STALE_JOB_MS = 30 * 6e4;
+  function isStaleJob(job, now) {
+    const updated = parseTs(job.updated_at);
+    if (updated === null) return false;
+    return (now != null ? now : Date.now()) - updated >= STALE_JOB_MS;
+  }
+  function clearTriggers(handlerName) {
+    for (const t of ScriptApp.getProjectTriggers()) {
+      if (t.getHandlerFunction() === handlerName) ScriptApp.deleteTrigger(t);
+    }
+  }
+  var CONTINUE_HANDLERS = {
+    scan: "trigger_continueScan",
+    backfill: "trigger_continueBackfill"
+  };
+  function reclaimIfStale(job, now) {
+    if (!isStaleJob(job, now)) return false;
+    const handler = CONTINUE_HANDLERS[job.kind];
+    if (handler) clearTriggers(handler);
+    updateJob(job.job_id, {
+      phase: "FAILED",
+      error: "Reclaimed: the job stalled with no progress."
+    });
+    return true;
+  }
   function lastJobOfKind(kind) {
     const rows = listJobs().filter((j) => j.kind === kind);
     if (!rows.length) return null;
@@ -5895,9 +5921,7 @@ var Server = (() => {
     ScriptApp.newTrigger(CONTINUE_HANDLER).timeBased().after(CONTINUE_DELAY_MS).create();
   }
   function clearContinuationTriggers() {
-    for (const t of ScriptApp.getProjectTriggers()) {
-      if (t.getHandlerFunction() === CONTINUE_HANDLER) ScriptApp.deleteTrigger(t);
-    }
+    clearTriggers(CONTINUE_HANDLER);
   }
   function readResult(job) {
     var _a;
@@ -5925,12 +5949,14 @@ var Server = (() => {
       var _a;
       const existing = activeJob();
       if (existing) {
-        if (existing.kind !== "backfill") {
-          throw new Error(
-            `Another job (${existing.kind}) is running. Wait for it to finish, then retry.`
-          );
+        if (!reclaimIfStale(existing)) {
+          if (existing.kind !== "backfill") {
+            throw new Error(
+              `Another job (${existing.kind}) is running. Wait for it to finish, then retry.`
+            );
+          }
+          return statusOf(existing);
         }
-        return statusOf(existing);
       }
       clearContinuationTriggers();
       const scans = replayOrder(loadScanRows());
@@ -6026,10 +6052,16 @@ var Server = (() => {
     return {
       jobId: job.job_id,
       phase: job.phase,
+      // 0 means "not recorded", not "no scans" — a deployment whose jobs tab predates the
+      // total_count column drops the write (jobsStore.createJob now heals that, but rows
+      // written before the fix keep their blank). The UI must render this as an unknown total
+      // rather than inventing a denominator.
       scansTotal: job.total_count,
       scansDone: job.page,
       result: readResult(job),
-      error: job.error
+      error: job.error,
+      updatedAt: job.updated_at,
+      stale: job.phase === "BACKFILLING" && isStaleJob(job)
     };
   }
   function backfillStatus() {
@@ -6080,7 +6112,6 @@ var Server = (() => {
   var CONTINUE_DELAY_MS2 = 3e4;
   var CONTINUE_HANDLER2 = "trigger_continueScan";
   var DELTA_OVERLAP_MINUTES = 15;
-  var STALE_JOB_MS = 30 * 6e4;
   var ScanCancelled = class extends Error {
   };
   var cancelKey = (jobId) => `CANCEL_${jobId}`;
@@ -6234,14 +6265,8 @@ var Server = (() => {
     });
   }
   function reclaimStaleJob(job) {
-    const updated = parseTs(job.updated_at);
-    if (updated !== null && Date.now() - updated < STALE_JOB_MS) return false;
-    clearContinuationTriggers2();
+    if (!reclaimIfStale(job)) return false;
     clearCancel(job.job_id);
-    updateJob(job.job_id, {
-      phase: "FAILED",
-      error: "Reclaimed: the job stalled with no progress."
-    });
     return true;
   }
   function startIncremental() {

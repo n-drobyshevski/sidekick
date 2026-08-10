@@ -1,6 +1,7 @@
 // Settings — scan scope, display filter, domain rules editor, data retention.
 
 import { call } from "../api.js";
+import { backfillStatusView } from "../backfillStatus.js";
 import { decodePrefill, PREFILL_KEY } from "../attributionPrefill.js";
 import { bootstrap, setParams } from "../store.js";
 import {
@@ -330,32 +331,11 @@ export async function renderSettings(main, params, ctx) {
   }
 
   function renderBackfillStatus(b) {
-    if (!b) {
-      backfillStatusEl.textContent = "Never run.";
-      return;
-    }
-    const r = b.result || {};
-    if (b.phase === "BACKFILLING") {
-      backfillStatusEl.textContent =
-        `Running — ${b.scansDone} of ${b.scansTotal} scan(s) replayed.`;
-      backfillBtn.disabled = true;
-      // The job hops on a one-shot trigger, so poll rather than assume it finished.
-      setTimeout(loadBackfillStatus, 4000);
-      return;
-    }
-    backfillBtn.disabled = false;
-    if (b.phase === "FAILED") {
-      backfillStatusEl.textContent = `Last run failed: ${b.error || "unknown error"}`;
-      return;
-    }
-    const parts = [
-      `${r.scansReplayed || 0} scan(s) replayed`,
-      `${(r.ledgerRowsTouched || 0) + (r.episodeRowsTouched || 0)} lifecycle(s) filled`,
-    ];
-    if (r.scansSealed) parts.push(`${r.scansSealed} sealed (archives pruned)`);
-    if (r.scansUnreadable) parts.push(`${r.scansUnreadable} unreadable`);
-    parts.push(`${r.stillUnknown || 0} still unclassified`);
-    backfillStatusEl.textContent = parts.join(" · ") + ".";
+    const view = backfillStatusView(b);
+    backfillStatusEl.textContent = view.text;
+    backfillBtn.disabled = view.busy;
+    // The job hops on a one-shot trigger, so poll rather than assume it finished.
+    if (view.poll) setTimeout(loadBackfillStatus, 4000);
   }
 
   async function runBackfill() {

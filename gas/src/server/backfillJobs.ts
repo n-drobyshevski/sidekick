@@ -36,10 +36,13 @@ import * as errorLog from "./errorLog";
 import * as findings from "./findings";
 import {
   activeJob,
+  clearTriggers,
   createJob,
   getJob,
+  isStaleJob,
   lastJobOfKind,
   newJobId,
+  reclaimIfStale,
   updateJob,
   type JobRow,
 } from "./jobsStore";
@@ -62,9 +65,7 @@ function scheduleContinuation(): void {
 }
 
 function clearContinuationTriggers(): void {
-  for (const t of ScriptApp.getProjectTriggers()) {
-    if (t.getHandlerFunction() === CONTINUE_HANDLER) ScriptApp.deleteTrigger(t);
-  }
+  clearTriggers(CONTINUE_HANDLER);
 }
 
 function readResult(job: JobRow): BackfillResult {
@@ -100,6 +101,9 @@ export interface BackfillStatus {
   scansDone: number;
   result: BackfillResult;
   error: string | null;
+  updatedAt: string;
+  /** Running, but silent long enough to be presumed dead — see jobsStore.isStaleJob. */
+  stale: boolean;
 }
 
 /** Start (or adopt) the backfill job. Single-flight like every other ledger mutation. */
@@ -107,12 +111,19 @@ export function startBackfill(): BackfillStatus {
   return withScriptLock(() => {
     const existing = activeJob();
     if (existing) {
-      if (existing.kind !== "backfill") {
-        throw new Error(
-          `Another job (${existing.kind}) is running. Wait for it to finish, then retry.`,
-        );
+      // A stalled job must never be adopted. Jobs are single-flight across kinds, so a
+      // backfill whose continuation stopped firing (trigger quota exhausted, execution
+      // killed, a deployment pushed without trigger_continueBackfill) would otherwise sit in
+      // BACKFILLING forever — blocking the daily scan, and turning every press of this button
+      // into a re-report of the same frozen numbers. Reclaim it and start fresh instead.
+      if (!reclaimIfStale(existing)) {
+        if (existing.kind !== "backfill") {
+          throw new Error(
+            `Another job (${existing.kind}) is running. Wait for it to finish, then retry.`,
+          );
+        }
+        return statusOf(existing);
       }
-      return statusOf(existing);
     }
     clearContinuationTriggers();
     const scans = replayOrder(ledgerStore.loadScanRows());
@@ -230,10 +241,16 @@ function statusOf(job: JobRow): BackfillStatus {
   return {
     jobId: job.job_id,
     phase: job.phase,
+    // 0 means "not recorded", not "no scans" — a deployment whose jobs tab predates the
+    // total_count column drops the write (jobsStore.createJob now heals that, but rows
+    // written before the fix keep their blank). The UI must render this as an unknown total
+    // rather than inventing a denominator.
     scansTotal: job.total_count,
     scansDone: job.page,
     result: readResult(job),
     error: job.error,
+    updatedAt: job.updated_at,
+    stale: job.phase === "BACKFILLING" && isStaleJob(job),
   };
 }
 
