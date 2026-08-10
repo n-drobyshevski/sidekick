@@ -25,8 +25,10 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import re
 import sys
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -39,7 +41,13 @@ from pyspark.sql import SparkSession  # noqa: E402
 from pyspark.sql import functions as F  # noqa: E402
 
 from brick import dbx, metrics  # noqa: E402
-from brick.config import DEFAULT_FETCH_SEVERITIES, DEFAULT_RISK_RULE, RiskRule  # noqa: E402
+from brick.config import (  # noqa: E402
+    DEFAULT_FETCH_SEVERITIES,
+    DEFAULT_RISK_RULE,
+    DEFAULT_SCOPE,
+    SCOPES,
+    RiskRule,
+)
 from brick.ingest import DEFAULT_AUTH_URL, fetch_findings, get_token, secret  # noqa: E402
 
 BRONZE_TABLE = "findings_raw"
@@ -47,6 +55,30 @@ SILVER_TABLE = "findings"
 GOLD_MTTR = "metrics_mttr"
 GOLD_PROGRAM = "metrics_program"
 GOLD_CAPACITY = "metrics_capacity"
+
+# These tables usually land in a schema shared with other teams, where bare names like
+# `findings` and `metrics_capacity` are an obvious collision risk. The default prefix also
+# carries the scope -- `wiz_os_findings` -- so an OS run and an all-types run land in separate
+# tables and can never be blended by accident. Pass --table_prefix= (empty) to opt out.
+def default_table_prefix(scope: str) -> str:
+    return f"wiz_{scope}_"
+
+# Catalog, schema and prefix are interpolated straight into SQL, so they are checked rather
+# than trusted. They come from an operator, not an attacker -- but `--schema=wiz;DROP ...`
+# should fail with a clear message instead of doing something surprising.
+IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+PREFIX = re.compile(r"^[A-Za-z0-9_]*$")
+
+
+@dataclass(frozen=True)
+class Tables:
+    """The five fully-qualified table names one run writes to."""
+
+    bronze: str
+    silver: str
+    mttr: str
+    program: str
+    capacity: str
 
 
 def param(name: str, default: str = "", argv: Optional[list] = None) -> str:
@@ -70,7 +102,9 @@ def get_spark() -> SparkSession:
     return spark
 
 
-def ingest_to_bronze(spark: SparkSession, table: str, scan_id: str, scan_ts: str) -> int:
+def ingest_to_bronze(
+    spark: SparkSession, table: str, scan_id: str, scan_ts: str, scope: str
+) -> int:
     """Fetch every finding and append it to bronze. Returns the row count."""
     api_url = param("wiz_api_url")
     if not api_url:
@@ -86,14 +120,22 @@ def ingest_to_bronze(spark: SparkSession, table: str, scan_id: str, scan_ts: str
     )
 
     rows = [
-        (scan_id, scan_ts, json.dumps(node))
-        for node in fetch_findings(api_url, token, severities=severities)
+        (scan_id, scan_ts, scope, json.dumps(node))
+        for node in fetch_findings(
+            api_url,
+            token,
+            scope=scope,
+            severities=severities,
+            project_id=param("project_id") or None,
+        )
     ]
     if not rows:
-        print(f"[{scan_id}] Wiz returned no findings for severities={severities}")
+        print(f"[{scan_id}] Wiz returned no {scope} findings for severities={severities}")
         return 0
 
-    bronze = spark.createDataFrame(rows, "scan_id STRING, scan_ts STRING, node_json STRING")
+    bronze = spark.createDataFrame(
+        rows, "scan_id STRING, scan_ts STRING, scope STRING, node_json STRING"
+    )
     bronze.withColumn("scan_ts", bronze["scan_ts"].cast("timestamp")).write.mode(
         "append"
     ).saveAsTable(table)
@@ -102,30 +144,35 @@ def ingest_to_bronze(spark: SparkSession, table: str, scan_id: str, scan_ts: str
 
 def build_metrics(
     spark: SparkSession,
-    namespace: str,
+    tables: Tables,
     scan_id: str,
     scan_ts: str,
+    scope: str,
     rule: RiskRule = DEFAULT_RISK_RULE,
 ) -> None:
     """Silver + the three gold tables for one scan."""
-    bronze = spark.table(f"{namespace}.{BRONZE_TABLE}").filter(f"scan_id = '{scan_id}'")
+    bronze = spark.table(tables.bronze).filter(f"scan_id = '{scan_id}'")
 
     silver = metrics.classify_risk(metrics.silver_findings(bronze), rule).cache()
-    silver.write.mode("append").saveAsTable(f"{namespace}.{SILVER_TABLE}")
+    silver.write.mode("append").saveAsTable(tables.silver)
 
-    mttr = metrics.with_scan_columns(metrics.mttr_by_severity(silver), scan_id, scan_ts)
-    mttr.write.mode("append").saveAsTable(f"{namespace}.{GOLD_MTTR}")
+    mttr = metrics.with_scan_columns(
+        metrics.mttr_by_severity(silver), scan_id, scan_ts, scope
+    )
+    mttr.write.mode("append").saveAsTable(tables.mttr)
 
-    program = metrics.with_scan_columns(metrics.confusion_matrix(silver), scan_id, scan_ts)
+    program = metrics.with_scan_columns(
+        metrics.confusion_matrix(silver), scan_id, scan_ts, scope
+    )
     program = program.withColumn("risk_rule", F.lit(rule.sentence()))
-    program.write.mode("append").saveAsTable(f"{namespace}.{GOLD_PROGRAM}")
+    program.write.mode("append").saveAsTable(tables.program)
 
     capacity = metrics.with_scan_columns(
-        metrics.capacity_by_month(silver, scan_ts), scan_id, scan_ts
+        metrics.capacity_by_month(silver, scan_ts), scan_id, scan_ts, scope
     )
-    capacity.write.mode("append").saveAsTable(f"{namespace}.{GOLD_CAPACITY}")
+    capacity.write.mode("append").saveAsTable(tables.capacity)
 
-    print(f"[{scan_id}] risk rule: {rule.sentence()}")
+    print(f"[{scan_id}] scope: {scope} | risk rule: {rule.sentence()}")
     metrics.order_by_severity(
         program.select(
             "severity", "coverage_pct", "efficiency_pct", "prevalence_pct", "signal_coverage_pct"
@@ -149,31 +196,80 @@ def resolve_namespace(argv: Optional[list] = None) -> str:
             "Prefer a catalog scoped to security data over a shared one; on a workspace "
             "without Unity Catalog, pass --catalog=hive_metastore."
         )
-    return f"{catalog}.{param('schema', 'wiz', argv=argv)}"
+    schema = param("schema", "wiz", argv=argv)
+    for label, value in (("catalog", catalog), ("schema", schema)):
+        if not IDENTIFIER.match(value):
+            raise RuntimeError(f"{label} {value!r} is not a valid identifier")
+    return f"{catalog}.{schema}"
+
+
+def resolve_scope(argv: Optional[list] = None) -> str:
+    """Which population this run measures. Drives the API filter and the table names alike."""
+    scope = param("scope", DEFAULT_SCOPE, argv=argv)
+    if scope not in SCOPES:
+        raise RuntimeError(f"unknown scope {scope!r} -- expected one of {sorted(SCOPES)}")
+    return scope
+
+
+def resolve_tables(namespace: str, scope: str, argv: Optional[list] = None) -> Tables:
+    """The five table names, prefixed so they can share a schema with other teams' tables."""
+    prefix = param("table_prefix", default_table_prefix(scope), argv=argv)
+    if not PREFIX.match(prefix):
+        raise RuntimeError(f"table_prefix {prefix!r} is not a valid identifier fragment")
+
+    def qualify(name: str) -> str:
+        return f"{namespace}.{prefix}{name}"
+
+    return Tables(
+        bronze=qualify(BRONZE_TABLE),
+        silver=qualify(SILVER_TABLE),
+        mttr=qualify(GOLD_MTTR),
+        program=qualify(GOLD_PROGRAM),
+        capacity=qualify(GOLD_CAPACITY),
+    )
+
+
+def ensure_schema(spark: SparkSession, namespace: str) -> None:
+    """Create the schema, but only when it is actually missing.
+
+    An unconditional ``CREATE SCHEMA IF NOT EXISTS`` looks harmless and is not: in a shared
+    organisation catalog a service principal typically holds CREATE TABLE on one schema and
+    no CREATE SCHEMA on the catalog, so the statement fails with PERMISSION_DENIED against a
+    schema that already exists and is perfectly writable. Checking first means the job needs
+    the privilege only when it genuinely has to create something.
+    """
+    try:
+        if spark.catalog.databaseExists(namespace):
+            return
+    except Exception:  # noqa: BLE001 -- can't tell; fall through and let CREATE decide
+        pass
+    try:
+        spark.sql(f"CREATE SCHEMA IF NOT EXISTS {namespace}")
+    except Exception as exc:  # noqa: BLE001 -- re-raised with the parameter named
+        raise RuntimeError(
+            f"Schema {namespace} does not exist and could not be created. Either create it "
+            f"first, or grant this principal CREATE SCHEMA on the catalog."
+        ) from exc
 
 
 def main(scan_id: Optional[str] = None) -> None:
     # Resolve parameters before touching Spark: a missing one should fail in milliseconds,
     # not after a cluster has warmed up and an API fetch has run.
     namespace = resolve_namespace()
+    scope = resolve_scope()
+    tables = resolve_tables(namespace, scope)
 
     spark = get_spark()
-    try:
-        spark.sql(f"CREATE SCHEMA IF NOT EXISTS {namespace}")
-    except Exception as exc:  # noqa: BLE001 -- re-raised with the parameter named
-        raise RuntimeError(
-            f"Could not create or use schema {namespace}. Check that the catalog exists and "
-            f"that this principal has CREATE SCHEMA on it."
-        ) from exc
+    ensure_schema(spark, namespace)
 
     scan_id = scan_id or f"scan-{uuid.uuid4().hex[:12]}"
     scan_ts = utc_now_iso()
 
-    count = ingest_to_bronze(spark, f"{namespace}.{BRONZE_TABLE}", scan_id, scan_ts)
+    count = ingest_to_bronze(spark, tables.bronze, scan_id, scan_ts, scope)
     if not count:
         return
-    print(f"[{scan_id}] ingested {count} findings at {scan_ts}")
-    build_metrics(spark, namespace, scan_id, scan_ts)
+    print(f"[{scan_id}] ingested {count} {scope} findings at {scan_ts}")
+    build_metrics(spark, tables, scan_id, scan_ts, scope)
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ what to do with them. That keeps the network half testable on its own.
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import time
@@ -17,7 +18,12 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence
 import requests
 
 from brick import dbx
-from brick.config import API_SEVERITY_VALUES, DEFAULT_FETCH_SEVERITIES
+from brick.config import (
+    API_SEVERITY_VALUES,
+    DEFAULT_FETCH_SEVERITIES,
+    DEFAULT_SCOPE,
+    SCOPES,
+)
 
 # Wiz's shared auth endpoint. Tenants on a dedicated region override it via a job parameter.
 DEFAULT_AUTH_URL = "https://auth.app.wiz.io/oauth/token"
@@ -154,11 +160,36 @@ def _post(
     raise RuntimeError(f"Wiz API unreachable after {MAX_RETRIES} attempts") from last_error
 
 
+def build_filter(
+    scope: str = DEFAULT_SCOPE,
+    severities: Sequence[str] = DEFAULT_FETCH_SEVERITIES,
+    project_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """The GraphQL ``filterBy`` for a scope.
+
+    Pure and separately testable, because this dict decides which population every downstream
+    metric is computed over -- a wrong key here is not an error, it is a plausible-looking
+    number about the wrong thing.
+    """
+    if scope not in SCOPES:
+        raise RuntimeError(f"unknown scope {scope!r} -- expected one of {sorted(SCOPES)}")
+    filter_by: Dict[str, Any] = copy.deepcopy(SCOPES[scope])
+
+    api_severities = severity_filter(severities)
+    if api_severities:
+        filter_by["severity"] = api_severities
+    if project_id:
+        filter_by["projectIdV2"] = {"equals": [project_id]}
+    return filter_by
+
+
 def fetch_findings(
     api_url: str,
     token: str,
     *,
+    scope: str = DEFAULT_SCOPE,
     severities: Sequence[str] = DEFAULT_FETCH_SEVERITIES,
+    project_id: Optional[str] = None,
     page_size: int = DEFAULT_PAGE_SIZE,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     max_pages: Optional[int] = None,
@@ -168,10 +199,7 @@ def fetch_findings(
     A generator rather than a list: a full register runs to hundreds of thousands of findings,
     and the caller writes each page to bronze instead of holding them all in the driver.
     """
-    filter_by: Dict[str, Any] = {}
-    api_severities = severity_filter(severities)
-    if api_severities:
-        filter_by["severity"] = api_severities
+    filter_by = build_filter(scope, severities, project_id)
 
     cursor: Optional[str] = None
     pages = 0

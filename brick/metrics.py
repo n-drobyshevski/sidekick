@@ -143,12 +143,13 @@ def order_by_severity(df: DataFrame, column: str = "severity") -> DataFrame:
 def silver_findings(bronze: DataFrame) -> DataFrame:
     """Typed, metric-ready rows from the bronze ``node_json`` payload.
 
-    Expects ``scan_id`` (string), ``scan_ts`` (timestamp) and ``node_json`` (string).
-    ``scan_ts`` doubles as "now" for open-age: ages are measured as of the scan that observed
-    the finding, so a table row means the same thing whenever it is read back.
+    Expects ``scan_id`` (string), ``scan_ts`` (timestamp), ``scope`` (string) and ``node_json``
+    (string). ``scan_ts`` doubles as "now" for open-age: ages are measured as of the scan that
+    observed the finding, so a table row means the same thing whenever it is read back.
+    ``scope`` rides along so a row still says which population it came from after a UNION.
     """
     node = F.from_json(F.col("node_json"), NODE_SCHEMA).alias("node")
-    parsed = bronze.select("scan_id", "scan_ts", node)
+    parsed = bronze.select("scan_id", "scan_ts", "scope", node)
 
     first_detected = F.col("node.firstDetectedAt").cast("timestamp")
     resolved = F.col("node.resolvedAt").cast("timestamp")
@@ -156,6 +157,7 @@ def silver_findings(bronze: DataFrame) -> DataFrame:
     df = parsed.select(
         F.col("scan_id"),
         F.col("scan_ts"),
+        F.col("scope"),
         F.col("node.id").alias("finding_id"),
         F.col("node.name").alias("cve"),
         F.col("node.detailedName").alias("component"),
@@ -530,9 +532,12 @@ def observation_window_days(df: DataFrame, now_ts: str) -> DataFrame:
     )
 
 
-def with_scan_columns(df: DataFrame, scan_id: str, scan_ts: str) -> DataFrame:
+def with_scan_columns(df: DataFrame, scan_id: str, scan_ts: str, scope: str) -> DataFrame:
     """Stamp a gold frame with the scan it came from, so re-runs accumulate into a trend
-    instead of overwriting each other."""
-    return df.withColumn("scan_id", F.lit(scan_id)).withColumn(
-        "scan_ts", F.lit(scan_ts).cast("timestamp")
+    instead of overwriting each other, and with the scope so the row says which population it
+    describes even when read outside its own table."""
+    return (
+        df.withColumn("scan_id", F.lit(scan_id))
+        .withColumn("scan_ts", F.lit(scan_ts).cast("timestamp"))
+        .withColumn("scope", F.lit(scope))
     )

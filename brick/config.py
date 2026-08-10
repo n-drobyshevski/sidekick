@@ -34,6 +34,45 @@ API_SEVERITY_VALUES = {
 # What a scan pulls when nothing else is asked for.
 DEFAULT_FETCH_SEVERITIES = ("CRITICAL", "HIGH")
 
+# ---- Scopes: which population of findings a run measures ----
+# The scope drives BOTH the API filter and the table names, from one parameter, so a table can
+# never disagree with the population inside it. Every row also carries a `scope` column, so a
+# row stays self-describing if the scopes are UNIONed later.
+#
+# What every scope shares, so the scopes stay comparable to each other.
+#
+#   status   Not about scoping at all. Without it the API returns only OPEN findings, and
+#            every remediation metric silently collapses -- coverage 0%, efficiency undefined,
+#            MTTR empty -- while looking like a real result.
+#   hasFix   Restricts both scopes to findings a team could actually have remediated. It is
+#            shared rather than OS-only so that remediation rates mean the same thing in each:
+#            awaiting-vendor-fix findings would otherwise sit in `all`'s coverage denominator
+#            and not in `os`'s, making `all` look worse for a reason that is not performance.
+_BASE = {
+    "status": ["OPEN", "RESOLVED"],
+    "hasFix": True,
+}
+
+SCOPES = {
+    # OS-package CVEs on host workloads: the population the Streamlit dashboard measures.
+    # Mirrors os_vulns.VARIABLES["filterBy"], minus its hardcoded projectIdV2 -- that is one
+    # tenant's project and is exposed here as an opt-in `project_id` parameter instead.
+    "os": {
+        **_BASE,
+        "detectionMethod": ["OS"],
+        "assetType": ["VIRTUAL_MACHINE"],
+        "assetIsRepresentativeResource": False,
+        "detailedNameV2": {"notEquals": ["openssl", "python", "vim"]},
+    },
+    # Every detection method and asset type -- container SBOM, code libraries, OS, the lot.
+    # What still differs from "os" beyond the type/asset restriction: the openssl/python/vim
+    # exclusions and the representative-resource filter are OS-view policy and are not applied
+    # here, so `all` counts a few things `os` deliberately drops.
+    "all": dict(_BASE),
+}
+
+DEFAULT_SCOPE = "os"
+
 # ---- Risk classification (Prioritization to Prediction) ----
 # FIRST's own guidance: 0.1 is the point where EPSS starts to be worth acting on.
 EPSS_PRIORITY_THRESHOLD = 0.1
