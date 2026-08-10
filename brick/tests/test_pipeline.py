@@ -206,7 +206,14 @@ def test_all_scope_does_not_restrict_type_or_asset():
     got = build_filter("all")
     assert "detectionMethod" not in got
     assert "assetType" not in got
-    assert "hasFix" not in got
+
+
+def test_scopes_share_the_actionable_filter():
+    """hasFix is shared so remediation rates mean the same thing in each scope. Without it,
+    awaiting-vendor-fix findings would sit in `all`'s coverage denominator and not in `os`'s,
+    making `all` look worse for a reason that is not performance."""
+    for scope in SCOPES:
+        assert build_filter(scope)["hasFix"] is True
 
 
 def test_project_id_is_opt_in():

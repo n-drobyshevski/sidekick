@@ -39,27 +39,36 @@ DEFAULT_FETCH_SEVERITIES = ("CRITICAL", "HIGH")
 # never disagree with the population inside it. Every row also carries a `scope` column, so a
 # row stays self-describing if the scopes are UNIONed later.
 #
-# `status` is the one entry that is not about scoping. Without it the API returns only OPEN
-# findings, and every remediation metric silently collapses -- coverage 0%, efficiency
-# undefined, MTTR empty -- while looking like a real result. It belongs in every scope.
-_STATUS = {"status": ["OPEN", "RESOLVED"]}
+# What every scope shares, so the scopes stay comparable to each other.
+#
+#   status   Not about scoping at all. Without it the API returns only OPEN findings, and
+#            every remediation metric silently collapses -- coverage 0%, efficiency undefined,
+#            MTTR empty -- while looking like a real result.
+#   hasFix   Restricts both scopes to findings a team could actually have remediated. It is
+#            shared rather than OS-only so that remediation rates mean the same thing in each:
+#            awaiting-vendor-fix findings would otherwise sit in `all`'s coverage denominator
+#            and not in `os`'s, making `all` look worse for a reason that is not performance.
+_BASE = {
+    "status": ["OPEN", "RESOLVED"],
+    "hasFix": True,
+}
 
 SCOPES = {
     # OS-package CVEs on host workloads: the population the Streamlit dashboard measures.
     # Mirrors os_vulns.VARIABLES["filterBy"], minus its hardcoded projectIdV2 -- that is one
     # tenant's project and is exposed here as an opt-in `project_id` parameter instead.
     "os": {
-        **_STATUS,
+        **_BASE,
         "detectionMethod": ["OS"],
         "assetType": ["VIRTUAL_MACHINE"],
-        "hasFix": True,
         "assetIsRepresentativeResource": False,
         "detailedNameV2": {"notEquals": ["openssl", "python", "vim"]},
     },
     # Every detection method and asset type -- container SBOM, code libraries, OS, the lot.
-    # Deliberately not a superset of "os": it drops hasFix and the exclusions too, so the
-    # numbers are "all findings", not "all findings, filtered like the OS view".
-    "all": dict(_STATUS),
+    # What still differs from "os" beyond the type/asset restriction: the openssl/python/vim
+    # exclusions and the representative-resource filter are OS-view policy and are not applied
+    # here, so `all` counts a few things `os` deliberately drops.
+    "all": dict(_BASE),
 }
 
 DEFAULT_SCOPE = "os"

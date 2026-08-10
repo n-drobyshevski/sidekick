@@ -59,12 +59,23 @@ also carries a `scope` column, so it stays self-describing after a `UNION`.
 
 | Scope | Population |
 | --- | --- |
-| `os` (default) | OS-package CVEs on host workloads, with a vendor fix available. Parity with `os_vulns.VARIABLES["filterBy"]` — `detectionMethod: OS`, `assetType: VIRTUAL_MACHINE`, `hasFix`, `assetIsRepresentativeResource: false`, and the `openssl`/`python`/`vim` exclusions — so the numbers are comparable with the Streamlit dashboard's |
-| `all` | Every detection method and asset type. Deliberately *not* a superset of `os`: it also drops `hasFix` and the exclusions, so it means "all findings", not "all findings filtered like the OS view" |
+| `os` (default) | OS-package CVEs on host workloads. Parity with `os_vulns.VARIABLES["filterBy"]` — `detectionMethod: OS`, `assetType: VIRTUAL_MACHINE`, `assetIsRepresentativeResource: false`, and the `openssl`/`python`/`vim` exclusions — so the numbers are comparable with the Streamlit dashboard's |
+| `all` | Every detection method and asset type: container SBOM, code libraries, OS, the lot |
 
-Both scopes request `status: ["OPEN", "RESOLVED"]`. That one is not about scoping — without it
-the API returns only open findings, and every remediation metric collapses (coverage 0%,
-efficiency undefined, MTTR empty) while still looking like a real result.
+Both scopes share `status: ["OPEN", "RESOLVED"]` and `hasFix: true`, and neither is about
+scoping:
+
+- **`status`** — without it the API returns only open findings, and every remediation metric
+  collapses (coverage 0%, efficiency undefined, MTTR empty) while still looking like a real
+  result.
+- **`hasFix`** — restricts both scopes to findings a team could actually have remediated, so
+  remediation rates mean the same thing in each. Otherwise awaiting-vendor-fix findings would
+  sit in `all`'s coverage denominator and not in `os`'s, and `all` would look worse for a
+  reason that is not performance.
+
+What still differs beyond the type and asset restriction: the `openssl`/`python`/`vim`
+exclusions and the representative-resource filter are OS-view policy and are not applied to
+`all`, so `all` counts a few things `os` deliberately drops.
 
 `os_vulns.py` also pins a `projectIdV2`. That is one tenant's project, so it is **not** copied
 into the scope; pass `--project_id=<id>` if you want it.
