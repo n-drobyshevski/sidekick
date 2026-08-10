@@ -22,13 +22,15 @@ those remain the reference implementations.
 ## Layout
 
 ```
-config.py        constants mirrored from wiz_dashboard/config.py + the risk rule and scopes
-dbx.py           reaching dbutils from inside a module, and doing without it off-cluster
-ingest.py        Wiz OAuth + paginated GraphQL -> raw finding dicts
-metrics.py       pure PySpark DataFrame -> DataFrame transforms (no I/O)
-charts.py        matplotlib figures over the gold tables (notebook only)
-run_pipeline.py  the Databricks entry point: bronze -> silver -> three gold tables
-tests/           local-SparkSession tests, oracles ported from the existing suites
+config.py         constants mirrored from wiz_dashboard/config.py + the risk rule and scopes
+dbx.py            reaching dbutils from inside a module, and doing without it off-cluster
+ingest.py         Wiz OAuth + paginated GraphQL -> raw finding dicts
+metrics.py        pure PySpark DataFrame -> DataFrame transforms (no I/O)
+charts.py         matplotlib figures over the gold tables (notebook only)
+dashboard.py      generates the AI/BI dashboard document (no Spark, no I/O)
+dashboard_cli.py  writes that document to a file, or imports it to the workspace
+run_pipeline.py   the Databricks entry point: bronze -> silver -> three gold tables
+tests/            local-SparkSession tests, oracles ported from the existing suites
 ```
 
 **These are plain top-level modules, not a package.** There is no `__init__.py`, and they
@@ -327,6 +329,56 @@ The oracles are ported, not invented:
   100% in SLA against a 14-day HIGH target);
 - one test replays the committed `os_vulns_response_exemple.json` end to end, so the real Wiz
   response shape is covered without a network call.
+
+## Dashboard
+
+For reading the numbers rather than iterating on them — an overview page you scan first, and
+two detail pages you open when something looks wrong. Cross-filtering does the navigation:
+click a severity in any chart and every other widget on the same dataset re-filters.
+
+| Page | |
+| --- | --- |
+| **Overview** | Six counter tiles — KM median MTTR, in-SLA %, coverage, efficiency, prevalence, signal coverage — plus MTTR and coverage by severity, and the MTTR trend across scans. Answers "how are we doing" and nothing else |
+| **Remediation speed** | Severity filter, KM median against SLA target, p90 open age, the full per-severity table, and the same broken down by subscription |
+| **Programme** | Coverage and efficiency by severity with their uncertainty bounds and the prevalence baseline, capacity by month, and where the high-risk findings live by subscription |
+
+**Prerequisite:** AI/BI dashboards run on a SQL warehouse, not on your cluster. The viewer needs
+`SELECT` on the gold tables.
+
+```bash
+python brick/dashboard_cli.py \
+  --catalog=<catalog> --schema=<schema> --scope=os      # writes wiz_os_metrics.lvdash.json
+
+databricks workspace import --format AUTO \
+  --file wiz_os_metrics.lvdash.json "/Users/<you>/Wiz metrics.lvdash.json"
+```
+
+The path **must** end in `.lvdash.json` — with `format=AUTO` that suffix is what makes Databricks
+recognise the upload as a dashboard rather than an inert JSON file. `--workspace_path` will do
+the import over the REST API instead (using `DATABRICKS_HOST` / `DATABRICKS_TOKEN`), but the CLI
+above is the documented route and the one to reach for.
+
+### Why it is generated rather than committed as a file
+
+Partly because the dataset SQL has to name your `catalog.schema.prefix` tables, which are run
+parameters. Mostly because **the `.lvdash.json` format is not publicly documented** — Databricks'
+own guidance is "export one of your own dashboards to learn the serialization". The schema in
+`dashboard.py` was reconstructed from two real exported dashboards, so it is evidence-based, but
+nothing in this repo can import one.
+
+Generating it turns most of that risk into ordinary tests. `tests/test_dashboard.py` checks the
+things that would make an import fail or display wrongly: every widget resolves to a defined
+dataset, every encoded field exists in that widget's query *and* in the SQL's actual output, no
+two widgets overlap, everything fits the six-column grid, ids are unique, generation is
+deterministic, and the document is valid JSON with no NaN. Each dataset query is executed against
+real pipeline output, so a column typo fails locally instead of on the warehouse.
+
+Those guards were mutation-tested — an introduced overlap, a SQL column typo, and a severity
+colour without a severity label each fail the suite.
+
+**What none of it proves is that Databricks accepts the document.** The first import is the test.
+If it is rejected, the error names the offending widget; fix the helper in `dashboard.py` rather
+than hand-editing the JSON, or the next regeneration overwrites you.
 
 ## MTTR is Kaplan–Meier, not a mean of what closed
 
