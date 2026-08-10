@@ -75,11 +75,11 @@ def unknown_node(**over) -> dict:
     )
 
 
-def silver(spark, nodes, scan_ts: str = SCAN_TS):
+def silver(spark, nodes, scan_ts: str = SCAN_TS, scope: str = "os"):
     """Nodes -> bronze -> silver, exercising the real parse path."""
-    rows = [(SCAN_ID, scan_ts, json.dumps(n)) for n in nodes]
+    rows = [(SCAN_ID, scan_ts, scope, json.dumps(n)) for n in nodes]
     bronze = spark.createDataFrame(
-        rows, "scan_id STRING, scan_ts STRING, node_json STRING"
+        rows, "scan_id STRING, scan_ts STRING, scope STRING, node_json STRING"
     ).withColumn("scan_ts", metrics.F.col("scan_ts").cast("timestamp"))
     return metrics.silver_findings(bronze)
 
@@ -481,6 +481,18 @@ def test_committed_wiz_fixture_parses_end_to_end(spark):
     assert overall["total"] == len(nodes)
     metrics.mttr_by_severity(df).collect()
     metrics.capacity_by_month(df, SCAN_TS).collect()
+
+
+def test_scope_travels_from_bronze_into_silver_and_gold(spark):
+    """A row must say which population it describes even when read outside its own table --
+    otherwise an OS row and an all-types row are indistinguishable after a UNION."""
+    df = metrics.classify_risk(silver(spark, [node()], scope="os"), DEFAULT_RISK_RULE)
+    assert df.collect()[0]["scope"] == "os"
+
+    gold = metrics.with_scan_columns(metrics.confusion_matrix(df), SCAN_ID, SCAN_TS, "os")
+    row = rows_by_severity(gold)["OVERALL"]
+    assert row["scope"] == "os"
+    assert row["scan_id"] == SCAN_ID
 
 
 def test_severity_ordering_puts_overall_last(spark):

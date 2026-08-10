@@ -41,7 +41,13 @@ from pyspark.sql import SparkSession  # noqa: E402
 from pyspark.sql import functions as F  # noqa: E402
 
 from brick import dbx, metrics  # noqa: E402
-from brick.config import DEFAULT_FETCH_SEVERITIES, DEFAULT_RISK_RULE, RiskRule  # noqa: E402
+from brick.config import (  # noqa: E402
+    DEFAULT_FETCH_SEVERITIES,
+    DEFAULT_RISK_RULE,
+    DEFAULT_SCOPE,
+    SCOPES,
+    RiskRule,
+)
 from brick.ingest import DEFAULT_AUTH_URL, fetch_findings, get_token, secret  # noqa: E402
 
 BRONZE_TABLE = "findings_raw"
@@ -51,9 +57,11 @@ GOLD_PROGRAM = "metrics_program"
 GOLD_CAPACITY = "metrics_capacity"
 
 # These tables usually land in a schema shared with other teams, where bare names like
-# `findings` and `metrics_capacity` are an obvious collision risk. Prefixed by default;
-# pass --table_prefix= (empty) to opt out.
-DEFAULT_TABLE_PREFIX = "wiz_"
+# `findings` and `metrics_capacity` are an obvious collision risk. The default prefix also
+# carries the scope -- `wiz_os_findings` -- so an OS run and an all-types run land in separate
+# tables and can never be blended by accident. Pass --table_prefix= (empty) to opt out.
+def default_table_prefix(scope: str) -> str:
+    return f"wiz_{scope}_"
 
 # Catalog, schema and prefix are interpolated straight into SQL, so they are checked rather
 # than trusted. They come from an operator, not an attacker -- but `--schema=wiz;DROP ...`
@@ -94,7 +102,9 @@ def get_spark() -> SparkSession:
     return spark
 
 
-def ingest_to_bronze(spark: SparkSession, table: str, scan_id: str, scan_ts: str) -> int:
+def ingest_to_bronze(
+    spark: SparkSession, table: str, scan_id: str, scan_ts: str, scope: str
+) -> int:
     """Fetch every finding and append it to bronze. Returns the row count."""
     api_url = param("wiz_api_url")
     if not api_url:
@@ -110,14 +120,22 @@ def ingest_to_bronze(spark: SparkSession, table: str, scan_id: str, scan_ts: str
     )
 
     rows = [
-        (scan_id, scan_ts, json.dumps(node))
-        for node in fetch_findings(api_url, token, severities=severities)
+        (scan_id, scan_ts, scope, json.dumps(node))
+        for node in fetch_findings(
+            api_url,
+            token,
+            scope=scope,
+            severities=severities,
+            project_id=param("project_id") or None,
+        )
     ]
     if not rows:
-        print(f"[{scan_id}] Wiz returned no findings for severities={severities}")
+        print(f"[{scan_id}] Wiz returned no {scope} findings for severities={severities}")
         return 0
 
-    bronze = spark.createDataFrame(rows, "scan_id STRING, scan_ts STRING, node_json STRING")
+    bronze = spark.createDataFrame(
+        rows, "scan_id STRING, scan_ts STRING, scope STRING, node_json STRING"
+    )
     bronze.withColumn("scan_ts", bronze["scan_ts"].cast("timestamp")).write.mode(
         "append"
     ).saveAsTable(table)
@@ -129,6 +147,7 @@ def build_metrics(
     tables: Tables,
     scan_id: str,
     scan_ts: str,
+    scope: str,
     rule: RiskRule = DEFAULT_RISK_RULE,
 ) -> None:
     """Silver + the three gold tables for one scan."""
@@ -137,19 +156,23 @@ def build_metrics(
     silver = metrics.classify_risk(metrics.silver_findings(bronze), rule).cache()
     silver.write.mode("append").saveAsTable(tables.silver)
 
-    mttr = metrics.with_scan_columns(metrics.mttr_by_severity(silver), scan_id, scan_ts)
+    mttr = metrics.with_scan_columns(
+        metrics.mttr_by_severity(silver), scan_id, scan_ts, scope
+    )
     mttr.write.mode("append").saveAsTable(tables.mttr)
 
-    program = metrics.with_scan_columns(metrics.confusion_matrix(silver), scan_id, scan_ts)
+    program = metrics.with_scan_columns(
+        metrics.confusion_matrix(silver), scan_id, scan_ts, scope
+    )
     program = program.withColumn("risk_rule", F.lit(rule.sentence()))
     program.write.mode("append").saveAsTable(tables.program)
 
     capacity = metrics.with_scan_columns(
-        metrics.capacity_by_month(silver, scan_ts), scan_id, scan_ts
+        metrics.capacity_by_month(silver, scan_ts), scan_id, scan_ts, scope
     )
     capacity.write.mode("append").saveAsTable(tables.capacity)
 
-    print(f"[{scan_id}] risk rule: {rule.sentence()}")
+    print(f"[{scan_id}] scope: {scope} | risk rule: {rule.sentence()}")
     metrics.order_by_severity(
         program.select(
             "severity", "coverage_pct", "efficiency_pct", "prevalence_pct", "signal_coverage_pct"
@@ -180,9 +203,17 @@ def resolve_namespace(argv: Optional[list] = None) -> str:
     return f"{catalog}.{schema}"
 
 
-def resolve_tables(namespace: str, argv: Optional[list] = None) -> Tables:
+def resolve_scope(argv: Optional[list] = None) -> str:
+    """Which population this run measures. Drives the API filter and the table names alike."""
+    scope = param("scope", DEFAULT_SCOPE, argv=argv)
+    if scope not in SCOPES:
+        raise RuntimeError(f"unknown scope {scope!r} -- expected one of {sorted(SCOPES)}")
+    return scope
+
+
+def resolve_tables(namespace: str, scope: str, argv: Optional[list] = None) -> Tables:
     """The five table names, prefixed so they can share a schema with other teams' tables."""
-    prefix = param("table_prefix", DEFAULT_TABLE_PREFIX, argv=argv)
+    prefix = param("table_prefix", default_table_prefix(scope), argv=argv)
     if not PREFIX.match(prefix):
         raise RuntimeError(f"table_prefix {prefix!r} is not a valid identifier fragment")
 
@@ -225,7 +256,8 @@ def main(scan_id: Optional[str] = None) -> None:
     # Resolve parameters before touching Spark: a missing one should fail in milliseconds,
     # not after a cluster has warmed up and an API fetch has run.
     namespace = resolve_namespace()
-    tables = resolve_tables(namespace)
+    scope = resolve_scope()
+    tables = resolve_tables(namespace, scope)
 
     spark = get_spark()
     ensure_schema(spark, namespace)
@@ -233,11 +265,11 @@ def main(scan_id: Optional[str] = None) -> None:
     scan_id = scan_id or f"scan-{uuid.uuid4().hex[:12]}"
     scan_ts = utc_now_iso()
 
-    count = ingest_to_bronze(spark, tables.bronze, scan_id, scan_ts)
+    count = ingest_to_bronze(spark, tables.bronze, scan_id, scan_ts, scope)
     if not count:
         return
-    print(f"[{scan_id}] ingested {count} findings at {scan_ts}")
-    build_metrics(spark, tables, scan_id, scan_ts)
+    print(f"[{scan_id}] ingested {count} {scope} findings at {scan_ts}")
+    build_metrics(spark, tables, scan_id, scan_ts, scope)
 
 
 if __name__ == "__main__":

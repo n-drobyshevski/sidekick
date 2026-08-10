@@ -39,16 +39,38 @@ accumulate into a trend instead of clobbering the last one.
 
 | Table | Grain | Contents |
 | --- | --- | --- |
-| `…wiz_findings_raw` | scan × finding | bronze: `node_json` as a string |
-| `…wiz_findings` | scan × finding | silver: typed columns, `mttr_days`, `age_days`, `risk_class` |
-| `…wiz_metrics_mttr` | scan × severity (+ `OVERALL`) | MTTR mean/median, open counts, open-age p50/p90, SLA target and compliance |
-| `…wiz_metrics_program` | scan × severity (+ `OVERALL`) | the confusion matrix, coverage and efficiency with bounds, prevalence, signal coverage |
-| `…wiz_metrics_capacity` | scan × month | opened, closed, backlog at month start, MMCR, net flow, verdict |
+| `…wiz_os_findings_raw` | scan × finding | bronze: `node_json` as a string |
+| `…wiz_os_findings` | scan × finding | silver: typed columns, `mttr_days`, `age_days`, `risk_class` |
+| `…wiz_os_metrics_mttr` | scan × severity (+ `OVERALL`) | MTTR mean/median, open counts, open-age p50/p90, SLA target and compliance |
+| `…wiz_os_metrics_program` | scan × severity (+ `OVERALL`) | the confusion matrix, coverage and efficiency with bounds, prevalence, signal coverage |
+| `…wiz_os_metrics_capacity` | scan × month | opened, closed, backlog at month start, MMCR, net flow, verdict |
 
-Fully qualified as `<catalog>.<schema>.<prefix><name>`. The `wiz_` prefix is the default
-because these usually land in a schema shared with other teams, where a bare `findings` or
-`metrics_capacity` would be a collision waiting to happen. Override with `--table_prefix=`
+Fully qualified as `<catalog>.<schema>.<prefix><name>`, where the prefix defaults to
+`wiz_<scope>_`. Two reasons: these usually land in a schema shared with other teams, where a
+bare `findings` or `metrics_capacity` would be a collision waiting to happen; and the scope in
+the name keeps an OS run and an all-types run in separate tables. `--table_prefix` overrides it
 (empty opts out entirely).
+
+## Scope
+
+`--scope` decides which population a run measures, and drives **both** the API filter and the
+table names — one parameter, so a table can never disagree with what is inside it. Every row
+also carries a `scope` column, so it stays self-describing after a `UNION`.
+
+| Scope | Population |
+| --- | --- |
+| `os` (default) | OS-package CVEs on host workloads, with a vendor fix available. Parity with `os_vulns.VARIABLES["filterBy"]` — `detectionMethod: OS`, `assetType: VIRTUAL_MACHINE`, `hasFix`, `assetIsRepresentativeResource: false`, and the `openssl`/`python`/`vim` exclusions — so the numbers are comparable with the Streamlit dashboard's |
+| `all` | Every detection method and asset type. Deliberately *not* a superset of `os`: it also drops `hasFix` and the exclusions, so it means "all findings", not "all findings filtered like the OS view" |
+
+Both scopes request `status: ["OPEN", "RESOLVED"]`. That one is not about scoping — without it
+the API returns only open findings, and every remediation metric collapses (coverage 0%,
+efficiency undefined, MTTR empty) while still looking like a real result.
+
+`os_vulns.py` also pins a `projectIdV2`. That is one tenant's project, so it is **not** copied
+into the scope; pass `--project_id=<id>` if you want it.
+
+Moving to all vulnerability types later is `--scope=all`, which writes a parallel
+`wiz_all_*` set. The two never mix, and comparing them is a `UNION` on the `scope` column.
 
 Bronze keeps the finding as a JSON string so a Wiz schema change can never fail ingest;
 silver is just the typed projection of whatever arrived.
@@ -107,6 +129,7 @@ dbutils.widgets.text("schema", "wiz")
 dbutils.widgets.text("wiz_api_url", "https://api.<region>.app.wiz.io/graphql")
 dbutils.widgets.text("secret_scope", "wiz")
 dbutils.widgets.text("severities", "CRITICAL,HIGH")
+dbutils.widgets.text("scope", "os")            # "all" for every vulnerability type
 
 from brick.run_pipeline import main
 main()
@@ -139,7 +162,8 @@ and the parameters passed as `--name=value`:
           "--schema=wiz",
           "--wiz_api_url=https://api.<region>.app.wiz.io/graphql",
           "--secret_scope=wiz",
-          "--severities=CRITICAL,HIGH"
+          "--severities=CRITICAL,HIGH",
+          "--scope=os"
         ]
       },
       "new_cluster": { "spark_version": "14.3.x-scala2.12", "num_workers": 2 }
@@ -161,7 +185,9 @@ and a laptop.
 | --- | --- | --- |
 | `catalog` | — | **required**, no default; `hive_metastore` on a workspace without Unity Catalog |
 | `schema` | `wiz` | created only if it does not already exist |
-| `table_prefix` | `wiz_` | pass empty to use bare table names |
+| `scope` | `os` | `os` or `all` — see [Scope](#scope) |
+| `table_prefix` | `wiz_<scope>_` | pass empty to use bare table names |
+| `project_id` | — | optional `projectIdV2` restriction |
 | `wiz_api_url` | — | **required**, `https://api.<region>.app.wiz.io/graphql` |
 | `wiz_auth_url` | `https://auth.app.wiz.io/oauth/token` | override for a dedicated tenant |
 | `secret_scope` | — | scope holding `wiz-client-id` / `wiz-client-secret` |
@@ -171,9 +197,21 @@ and a laptop.
 
 ```sql
 SELECT severity, coverage_pct, efficiency_pct, prevalence_pct, signal_coverage_pct
-FROM   <your-catalog>.wiz.metrics_program
-WHERE  scan_id = (SELECT max_by(scan_id, scan_ts) FROM <your-catalog>.wiz.metrics_program)
+FROM   <catalog>.<schema>.wiz_os_metrics_program
+WHERE  scan_id = (
+  SELECT max_by(scan_id, scan_ts) FROM <catalog>.<schema>.wiz_os_metrics_program
+)
 ORDER BY severity;
+```
+
+Once both scopes are running, compare them on the `scope` column:
+
+```sql
+SELECT scope, coverage_pct, efficiency_pct
+FROM   <catalog>.<schema>.wiz_os_metrics_program  WHERE severity = 'OVERALL'
+UNION ALL
+SELECT scope, coverage_pct, efficiency_pct
+FROM   <catalog>.<schema>.wiz_all_metrics_program WHERE severity = 'OVERALL';
 ```
 
 Start with `--severities=CRITICAL` on the first run: it is the fastest way to confirm the
