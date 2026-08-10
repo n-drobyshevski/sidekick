@@ -58,6 +58,9 @@ from config import (
     SLA_TARGETS,
 )
 
+# See config.PIPELINE_VERSION: every runtime module must come from the same upload.
+MODULE_VERSION = "2.0"
+
 SECONDS_PER_DAY = 86400
 
 # Tolerance for the Kaplan-Meier median crossing. See kaplan_meier() for why a survival

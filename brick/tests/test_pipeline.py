@@ -9,7 +9,9 @@ does nothing useful.
 from __future__ import annotations
 
 import json
+import re
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -358,3 +360,94 @@ def test_graphql_errors_are_surfaced_by_message():
 def test_unparseable_error_body_still_says_something():
     assert "upstream timeout" in describe_errors("<html>upstream timeout</html>")
     assert describe_errors("") == "(empty response body)"
+
+
+# ------------------------------------------------------------- deployment consistency
+#
+# v2 added a sixth runtime module, ledger.py, and shipped with a README whose deployment tree
+# still listed five. Following it produced a workspace holding v2's metrics.py and v1's
+# run_pipeline.py, which imports cleanly and then dies at the silver write -- 137,870 findings
+# into the first real run, as "A schema mismatch detected when writing to the Delta table".
+# These tests exist so that specific mistake cannot be made silently again.
+
+README = BRICK_DIR / "README.md"
+
+
+def _readme_module_tree() -> set:
+    """The `.py` filenames in the README's deployment file tree."""
+    lines = README.read_text(encoding="utf-8").splitlines()
+    start = next(i for i, line in enumerate(lines) if "this path goes on sys.path" in line)
+    names = set()
+    for line in lines[start + 1:]:
+        if line.startswith("```"):
+            break
+        match = re.search(r"([A-Za-z_][A-Za-z0-9_]*\.py)", line)
+        if match:
+            names.add(match.group(1))
+    return names
+
+
+def test_readme_deployment_tree_matches_the_real_import_graph():
+    """The deployment instructions cannot drift from what the code actually needs.
+
+    This is the test that would have caught the v2 release: adding a module without adding it
+    to the tree now fails here rather than on someone's cluster.
+    """
+    documented = _readme_module_tree()
+    assert documented, "could not find the deployment file tree in README.md"
+    expected = {f"{name}.py" for name in run_pipeline.RUNTIME_MODULES}
+    assert documented == expected, (
+        f"README deployment tree and RUNTIME_MODULES disagree: "
+        f"only in README {sorted(documented - expected)}, "
+        f"only in code {sorted(expected - documented)}"
+    )
+
+
+def test_readme_does_not_still_say_five_modules():
+    """The prose carried the count too, and prose does not fail a schema check."""
+    text = README.read_text(encoding="utf-8")
+    assert "five `.py` modules" not in text
+    assert "ledger.py" in text
+
+
+def test_every_runtime_module_declares_a_version():
+    """A seventh module added later must not be able to opt out of the guard."""
+    import importlib
+
+    for name in run_pipeline.RUNTIME_MODULES:
+        module = importlib.import_module(name)
+        assert getattr(module, "MODULE_VERSION", None) == run_pipeline.PIPELINE_VERSION, (
+            f"{name}.py is missing MODULE_VERSION or disagrees with config.PIPELINE_VERSION"
+        )
+
+
+def test_check_deployment_passes_on_a_matched_set():
+    run_pipeline.check_deployment()  # must not raise
+
+
+def test_check_deployment_rejects_a_stale_module(monkeypatch):
+    """The v1-alongside-v2 case, which imports fine and only fails at the write."""
+    stale = types.SimpleNamespace(MODULE_VERSION="1.0")
+    monkeypatch.setitem(sys.modules, "metrics", stale)
+    with pytest.raises(RuntimeError, match="Mixed brick deployment") as exc:
+        run_pipeline.check_deployment()
+    assert "metrics=1.0" in str(exc.value)
+    assert "restartPython" in str(exc.value)
+
+
+def test_check_deployment_rejects_a_module_with_no_version(monkeypatch):
+    """A genuine v1 file has no MODULE_VERSION at all; getattr must not raise AttributeError."""
+    ancient = types.SimpleNamespace()  # no MODULE_VERSION
+    monkeypatch.setitem(sys.modules, "config", ancient)
+    with pytest.raises(RuntimeError, match="Mixed brick deployment") as exc:
+        run_pipeline.check_deployment()
+    assert "config=pre-2.0" in str(exc.value)
+
+
+def test_check_deployment_names_every_stale_module(monkeypatch):
+    """Reporting one at a time would mean re-running to find the next."""
+    monkeypatch.setitem(sys.modules, "metrics", types.SimpleNamespace(MODULE_VERSION="1.0"))
+    monkeypatch.setitem(sys.modules, "ledger", types.SimpleNamespace())
+    with pytest.raises(RuntimeError) as exc:
+        run_pipeline.check_deployment()
+    assert "ledger" in str(exc.value) and "metrics" in str(exc.value)

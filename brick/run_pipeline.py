@@ -49,21 +49,43 @@ from typing import Optional
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 
-import dbx
-import ledger as ledger_mod
-import metrics
-from config import (
-    DEFAULT_FETCH_SEVERITIES,
-    DEFAULT_RISK_RULE,
-    DEFAULT_SCOPE,
-    DISAPPEARANCE_MODES,
-    DISAPPEARANCE_RESOLUTION,
-    SCANS_COLUMNS,
-    SCOPES,
-    SEVERITY_ORDER,
-    RiskRule,
-)
-from ingest import DEFAULT_AUTH_URL, fetch_findings, get_token, secret
+MODULE_VERSION = "2.0"
+
+# The six runtime modules move in lockstep, and the documented way to deploy them is pasting
+# files into a Workspace folder one at a time -- so a half-updated folder is the likely failure,
+# not a rare one. Import errors here are re-raised naming that cause, because the bare messages
+# point somewhere unhelpful: a folder still on v1 gives "No module named 'ledger'" or "cannot
+# import name 'DISAPPEARANCE_MODES' from 'config'", neither of which says "your upload is
+# incomplete". check_deployment() below catches the subtler case where every import succeeds.
+try:
+    import dbx
+    import ledger as ledger_mod
+    import metrics
+    from config import (
+        DEFAULT_FETCH_SEVERITIES,
+        DEFAULT_RISK_RULE,
+        DEFAULT_SCOPE,
+        DISAPPEARANCE_MODES,
+        DISAPPEARANCE_RESOLUTION,
+        PIPELINE_VERSION,
+        SCANS_COLUMNS,
+        SCOPES,
+        SEVERITY_ORDER,
+        RiskRule,
+    )
+    from ingest import DEFAULT_AUTH_URL, fetch_findings, get_token, secret
+except ImportError as exc:
+    # The message is long on purpose: it is the recovery procedure, and it is read by someone
+    # staring at a stack trace on a cluster with no repo checkout to hand.
+    raise ImportError(
+        f"{exc}\n\n"
+        f"brick's runtime modules must all come from the same version. This error is what a "
+        f"partially updated workspace folder looks like -- most often one still missing "
+        f"ledger.py, which v2 added.\n"
+        f"Fix: copy ALL SIX of config.py, dbx.py, ingest.py, ledger.py, metrics.py and "
+        f"run_pipeline.py into the folder, then run dbutils.library.restartPython(). "
+        f"See brick/README.md section 2."
+    ) from exc
 
 BRONZE_TABLE = "findings_raw"
 SILVER_TABLE = "findings"
@@ -76,6 +98,49 @@ GOLD_CAPACITY = "metrics_capacity"
 # The append-only tables, i.e. everything except the ledger. A retry writes a scan_id that a
 # failed attempt may already have partly written, so these are cleared for that scan_id first.
 APPEND_TABLES = (BRONZE_TABLE, SILVER_TABLE, GOLD_MTTR, GOLD_PROGRAM, GOLD_CAPACITY)
+
+# Every module that has to be deployed for a run, including this one. The README's file tree
+# is checked against this list by the test suite, so the deployment instructions cannot drift
+# away from what the code actually imports -- which is exactly how v2 shipped with a five-file
+# tree after adding a sixth module.
+RUNTIME_MODULES = ("config", "dbx", "ingest", "ledger", "metrics", "run_pipeline")
+
+
+def check_deployment() -> None:
+    """Refuse to run against a folder holding a mix of versions.
+
+    Every import can succeed and the versions still disagree -- v1's run_pipeline.py imports
+    happily alongside v2's metrics.py, and the pair only comes apart at the silver write, after
+    a full API sweep. That is what happened on the first real v2 run: 137,870 findings ingested,
+    then "A schema mismatch detected when writing to the Delta table", which names neither the
+    stale file nor the fix.
+
+    Called at the top of ``main()``, before Spark: a bad folder should cost a second, not a
+    cluster start and an API sweep.
+    """
+    versions = {"run_pipeline": MODULE_VERSION}
+    for name in RUNTIME_MODULES:
+        if name == "run_pipeline":
+            continue
+        module = sys.modules.get(name)
+        # getattr with a default, not attribute access: a v1 module has no MODULE_VERSION at
+        # all, and an AttributeError here would be exactly the confusing shape this exists to
+        # prevent.
+        versions[name] = getattr(module, "MODULE_VERSION", None) if module else None
+
+    stale = sorted(name for name, version in versions.items() if version != PIPELINE_VERSION)
+    if not stale:
+        return
+
+    detail = ", ".join(f"{name}={versions[name] or 'pre-2.0'}" for name in stale)
+    raise RuntimeError(
+        f"Mixed brick deployment: {detail} (expected {PIPELINE_VERSION}). These modules must "
+        f"all come from the same version -- v2's metrics.py writing through v1's "
+        f"run_pipeline.py fails later as an unrelated-looking Delta schema mismatch.\n"
+        f"Fix: copy ALL SIX of {', '.join(n + '.py' for n in RUNTIME_MODULES)} into the "
+        f"workspace folder, then run dbutils.library.restartPython(). "
+        f"See brick/README.md section 2."
+    )
 
 # These tables usually land in a schema shared with other teams, where bare names like
 # `findings` and `metrics_capacity` are an obvious collision risk. The default prefix also
@@ -176,6 +241,16 @@ SCANS_SCHEMA = (
     "scan_id STRING, scan_ts TIMESTAMP, scope STRING, severities STRING, total LONG, "
     "new_count LONG, resolved_count LONG, reopened_count LONG"
 )
+
+
+def write_append(df, table: str) -> None:
+    """Append a frame to one of the scan-stamped tables.
+
+    Always Delta, explicitly: the pipeline needs MERGE and DELETE, so relying on the session's
+    default format would work on Databricks and quietly produce Parquet anywhere else.
+    mergeSchema because v2 adds columns to tables a v1 run already created.
+    """
+    df.write.format("delta").mode("append").option("mergeSchema", "true").saveAsTable(table)
 
 
 def recorded_scan(spark: SparkSession, tables: Tables, scan_id: str) -> Optional[dict]:
@@ -296,9 +371,10 @@ def record_scan(
         )
     ]
     df = spark.createDataFrame(row, SCANS_SCHEMA.replace("scan_ts TIMESTAMP", "scan_ts STRING"))
-    df.withColumn("scan_ts", F.col("scan_ts").cast("timestamp")).select(
-        *SCANS_COLUMNS
-    ).write.format("delta").mode("append").saveAsTable(tables.scans)
+    write_append(
+        df.withColumn("scan_ts", F.col("scan_ts").cast("timestamp")).select(*SCANS_COLUMNS),
+        tables.scans,
+    )
 
 
 def clear_scan(spark: SparkSession, tables: Tables, scan_id: str) -> None:
@@ -441,16 +517,6 @@ def closed_observed(spark: SparkSession, tables: Tables):
         .groupBy(F.date_trunc("month", F.col("scan_ts")).alias("month"))
         .agg(F.sum("resolved_count").cast("long").alias("closed_observed"))
     )
-
-
-def write_append(df, table: str) -> None:
-    """Append a frame to one of the scan-stamped tables.
-
-    Always Delta, explicitly: the pipeline needs MERGE and DELETE, so relying on the session's
-    default format would work on Databricks and quietly produce Parquet anywhere else.
-    mergeSchema because v2 adds columns to tables a v1 run already created.
-    """
-    df.write.format("delta").mode("append").option("mergeSchema", "true").saveAsTable(table)
 
 
 # The snapshot-sourced columns republished beside the ledger-sourced ones. Kept deliberately
@@ -729,6 +795,9 @@ def ensure_schema(spark: SparkSession, namespace: str) -> None:
 
 def main(scan_id: Optional[str] = None) -> Optional[RunResult]:
     """Run the pipeline. Returns what it wrote, or ``None`` when there was nothing to do."""
+    # A half-updated workspace folder is the cheapest failure to detect and the most expensive
+    # to diagnose later, so it goes first -- ahead of even parameter resolution.
+    check_deployment()
     # Resolve parameters before touching Spark: a missing one should fail in milliseconds,
     # not after a cluster has warmed up and an API fetch has run.
     namespace = resolve_namespace()

@@ -69,6 +69,9 @@ from metrics import SECONDS_PER_DAY
 # The ledger's stored schema. Timestamps rather than the ISO strings the SQLite ledger keeps:
 # Delta has a real timestamp type, metrics.py already does its arithmetic in
 # ``unix_timestamp`` seconds, and a stored string would mean re-parsing on every read.
+# See config.PIPELINE_VERSION: every runtime module must come from the same upload.
+MODULE_VERSION = "2.0"
+
 LEDGER_SCHEMA = StructType(
     [
         StructField("vuln_key", StringType(), False),

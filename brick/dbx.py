@@ -15,6 +15,9 @@ from __future__ import annotations
 import functools
 from typing import Any, Optional
 
+# See config.PIPELINE_VERSION: every runtime module must come from the same upload.
+MODULE_VERSION = "2.0"
+
 
 @functools.lru_cache(maxsize=1)
 def get_dbutils() -> Optional[Any]:
