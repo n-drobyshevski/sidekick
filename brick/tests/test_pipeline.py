@@ -74,6 +74,71 @@ def test_schema_defaults_to_wiz_once_the_catalog_is_named(monkeypatch):
     assert run_pipeline.resolve_namespace(argv=["--catalog=sec"]) == "sec.wiz"
 
 
+def test_identifiers_are_validated(monkeypatch):
+    """catalog / schema / prefix are interpolated into SQL, so a typo fails loudly."""
+    monkeypatch.setattr(dbx, "widget", lambda name: "")
+    with pytest.raises(RuntimeError, match="not a valid identifier"):
+        run_pipeline.resolve_namespace(argv=["--catalog=ok", "--schema=wiz;DROP TABLE x"])
+    with pytest.raises(RuntimeError, match="not a valid identifier"):
+        run_pipeline.resolve_tables("cat.sch", argv=["--table_prefix=bad-prefix"])
+
+
+def test_tables_are_prefixed_by_default(monkeypatch):
+    """A shared schema makes bare `findings` / `metrics_capacity` a collision risk."""
+    monkeypatch.delenv("TABLE_PREFIX", raising=False)
+    monkeypatch.setattr(dbx, "widget", lambda name: "")
+    tables = run_pipeline.resolve_tables("datalake_insights_analytics.industry", argv=[])
+    assert tables.bronze == "datalake_insights_analytics.industry.wiz_findings_raw"
+    assert tables.silver == "datalake_insights_analytics.industry.wiz_findings"
+    assert tables.capacity == "datalake_insights_analytics.industry.wiz_metrics_capacity"
+
+
+def test_table_prefix_is_overridable_and_can_be_empty(monkeypatch):
+    monkeypatch.setattr(dbx, "widget", lambda name: "")
+    assert (
+        run_pipeline.resolve_tables("c.s", argv=["--table_prefix=sec_"]).mttr
+        == "c.s.sec_metrics_mttr"
+    )
+    assert run_pipeline.resolve_tables("c.s", argv=["--table_prefix="]).mttr == "c.s.metrics_mttr"
+
+
+def test_existing_schema_is_not_recreated():
+    """A service principal in a shared catalog usually has CREATE TABLE on one schema and no
+    CREATE SCHEMA on the catalog, so an unconditional CREATE would fail on a writable schema."""
+
+    class FakeSpark:
+        def __init__(self):
+            self.catalog = self
+            self.statements = []
+
+        def databaseExists(self, name):  # noqa: N802 -- mirrors the Spark API
+            return True
+
+        def sql(self, statement):
+            self.statements.append(statement)
+
+    spark = FakeSpark()
+    run_pipeline.ensure_schema(spark, "shared.industry")
+    assert spark.statements == []
+
+
+def test_missing_schema_is_created():
+    class FakeSpark:
+        def __init__(self):
+            self.catalog = self
+            self.statements = []
+
+        def databaseExists(self, name):  # noqa: N802 -- mirrors the Spark API
+            return False
+
+        def sql(self, statement):
+            self.statements.append(statement)
+
+    spark = FakeSpark()
+    run_pipeline.ensure_schema(spark, "sec.wiz")
+    assert spark.statements == ["CREATE SCHEMA IF NOT EXISTS sec.wiz"]
+
+
 def test_dbutils_accessors_are_quiet_off_cluster():
     """Off Databricks these must return empty, not raise -- the env-var path depends on it."""
     assert dbx.get_dbutils() is None

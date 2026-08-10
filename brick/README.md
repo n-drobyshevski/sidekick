@@ -39,11 +39,16 @@ accumulate into a trend instead of clobbering the last one.
 
 | Table | Grain | Contents |
 | --- | --- | --- |
-| `<catalog>.<schema>.findings_raw` | scan × finding | bronze: `node_json` as a string |
-| `<catalog>.<schema>.findings` | scan × finding | silver: typed columns, `mttr_days`, `age_days`, `risk_class` |
-| `<catalog>.<schema>.metrics_mttr` | scan × severity (+ `OVERALL`) | MTTR mean/median, open counts, open-age p50/p90, SLA target and compliance |
-| `<catalog>.<schema>.metrics_program` | scan × severity (+ `OVERALL`) | the confusion matrix, coverage and efficiency with bounds, prevalence, signal coverage |
-| `<catalog>.<schema>.metrics_capacity` | scan × month | opened, closed, backlog at month start, MMCR, net flow, verdict |
+| `…wiz_findings_raw` | scan × finding | bronze: `node_json` as a string |
+| `…wiz_findings` | scan × finding | silver: typed columns, `mttr_days`, `age_days`, `risk_class` |
+| `…wiz_metrics_mttr` | scan × severity (+ `OVERALL`) | MTTR mean/median, open counts, open-age p50/p90, SLA target and compliance |
+| `…wiz_metrics_program` | scan × severity (+ `OVERALL`) | the confusion matrix, coverage and efficiency with bounds, prevalence, signal coverage |
+| `…wiz_metrics_capacity` | scan × month | opened, closed, backlog at month start, MMCR, net flow, verdict |
+
+Fully qualified as `<catalog>.<schema>.<prefix><name>`. The `wiz_` prefix is the default
+because these usually land in a schema shared with other teams, where a bare `findings` or
+`metrics_capacity` would be a collision waiting to happen. Override with `--table_prefix=`
+(empty opts out entirely).
 
 Bronze keeps the finding as a JSON string so a Wiz schema change can never fail ingest;
 silver is just the typed projection of whatever arrived.
@@ -68,13 +73,20 @@ The service account needs the `read:vulnerabilities` scope in Wiz. Credentials a
 read through `dbutils.secrets`; nothing is inlined, and the values never reach a table or a log.
 
 **Pick the catalog deliberately.** These tables map unpatched CVEs to named hosts, so they
-belong in a catalog scoped to security data with grants to match — not in a shared or default
-one. `catalog` has no default for exactly this reason: the job fails rather than guessing.
-Restrict the schema once it exists:
+belong somewhere with grants to match. `catalog` has no default for exactly this reason: the
+job fails rather than guessing. Restrict the schema once it exists:
 
 ```sql
-GRANT USE SCHEMA, SELECT ON SCHEMA <your-catalog>.wiz TO `security-analysts`;
+GRANT USE SCHEMA, SELECT ON SCHEMA <your-catalog>.<your-schema> TO `security-analysts`;
 ```
+
+**Privileges the job needs.** `USE CATALOG` on the catalog, `USE SCHEMA` + `CREATE TABLE` on
+the schema, and `MODIFY`/`SELECT` on its own tables. It needs `CREATE SCHEMA` on the catalog
+**only** when the schema does not yet exist — `ensure_schema` checks first rather than issuing
+an unconditional `CREATE SCHEMA IF NOT EXISTS`, which would otherwise fail with
+PERMISSION_DENIED against a schema that already exists and is perfectly writable. In a shared
+organisation catalog, have a platform admin create the schema once and grant `CREATE TABLE` on
+it; the job then never needs catalog-level rights.
 
 ### 2. Get the code onto the workspace
 
@@ -148,7 +160,8 @@ and a laptop.
 | Name | Default | |
 | --- | --- | --- |
 | `catalog` | — | **required**, no default; `hive_metastore` on a workspace without Unity Catalog |
-| `schema` | `wiz` | created if missing |
+| `schema` | `wiz` | created only if it does not already exist |
+| `table_prefix` | `wiz_` | pass empty to use bare table names |
 | `wiz_api_url` | — | **required**, `https://api.<region>.app.wiz.io/graphql` |
 | `wiz_auth_url` | `https://auth.app.wiz.io/oauth/token` | override for a dedicated tenant |
 | `secret_scope` | — | scope holding `wiz-client-id` / `wiz-client-secret` |
