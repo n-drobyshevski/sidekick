@@ -134,12 +134,37 @@ def build_metrics(
     silver.unpersist()
 
 
+def resolve_namespace(argv: Optional[list] = None) -> str:
+    """``<catalog>.<schema>``, with the catalog required -- there is no safe default for it.
+
+    A default that succeeds is worse than none here. `main` exists in most Unity Catalog
+    metastores, is a production catalog in plenty of organisations, and usually carries broad
+    USE CATALOG grants -- so forgetting the parameter would quietly land CVEs-against-named-hosts
+    somewhere permissive rather than failing.
+    """
+    catalog = param("catalog", argv=argv)
+    if not catalog:
+        raise RuntimeError(
+            "catalog is required -- pass --catalog=<name> (or set the widget / $CATALOG). "
+            "Prefer a catalog scoped to security data over a shared one; on a workspace "
+            "without Unity Catalog, pass --catalog=hive_metastore."
+        )
+    return f"{catalog}.{param('schema', 'wiz', argv=argv)}"
+
+
 def main(scan_id: Optional[str] = None) -> None:
+    # Resolve parameters before touching Spark: a missing one should fail in milliseconds,
+    # not after a cluster has warmed up and an API fetch has run.
+    namespace = resolve_namespace()
+
     spark = get_spark()
-    catalog = param("catalog", "main")
-    schema = param("schema", "wiz")
-    namespace = f"{catalog}.{schema}"
-    spark.sql(f"CREATE SCHEMA IF NOT EXISTS {namespace}")
+    try:
+        spark.sql(f"CREATE SCHEMA IF NOT EXISTS {namespace}")
+    except Exception as exc:  # noqa: BLE001 -- re-raised with the parameter named
+        raise RuntimeError(
+            f"Could not create or use schema {namespace}. Check that the catalog exists and "
+            f"that this principal has CREATE SCHEMA on it."
+        ) from exc
 
     scan_id = scan_id or f"scan-{uuid.uuid4().hex[:12]}"
     scan_ts = utc_now_iso()

@@ -47,6 +47,33 @@ def test_param_handles_a_value_containing_equals():
     assert got == "https://x/graphql?a=b"
 
 
+def test_catalog_is_required(monkeypatch):
+    """No default catalog. `main` exists in most UC metastores and is often broadly readable,
+    so a default that quietly succeeds would land security findings in the wrong place."""
+    monkeypatch.delenv("CATALOG", raising=False)
+    monkeypatch.setattr(dbx, "widget", lambda name: "")
+    with pytest.raises(RuntimeError, match="--catalog"):
+        run_pipeline.resolve_namespace(argv=[])
+
+
+def test_empty_catalog_counts_as_missing(monkeypatch):
+    monkeypatch.delenv("CATALOG", raising=False)
+    monkeypatch.setattr(dbx, "widget", lambda name: "")
+    with pytest.raises(RuntimeError, match="--catalog"):
+        run_pipeline.resolve_namespace(argv=["--catalog="])
+
+
+def test_namespace_resolves_from_parameters(monkeypatch):
+    monkeypatch.setattr(dbx, "widget", lambda name: "")
+    assert run_pipeline.resolve_namespace(argv=["--catalog=sec", "--schema=vulns"]) == "sec.vulns"
+
+
+def test_schema_defaults_to_wiz_once_the_catalog_is_named(monkeypatch):
+    monkeypatch.delenv("SCHEMA", raising=False)
+    monkeypatch.setattr(dbx, "widget", lambda name: "")
+    assert run_pipeline.resolve_namespace(argv=["--catalog=sec"]) == "sec.wiz"
+
+
 def test_dbutils_accessors_are_quiet_off_cluster():
     """Off Databricks these must return empty, not raise -- the env-var path depends on it."""
     assert dbx.get_dbutils() is None
