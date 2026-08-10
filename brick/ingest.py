@@ -17,8 +17,8 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence
 
 import requests
 
-from brick import dbx
-from brick.config import (
+import dbx
+from config import (
     API_SEVERITY_VALUES,
     DEFAULT_FETCH_SEVERITIES,
     DEFAULT_SCOPE,
@@ -152,12 +152,47 @@ def _post(
         if response.status_code in RETRY_STATUS:
             last_error = RuntimeError(f"Wiz API returned {response.status_code}")
             continue
-        response.raise_for_status()
+        # Not raise_for_status(): it reports the status and throws the body away, and for a
+        # GraphQL 400 the body IS the diagnosis -- the rejected field or filter key, by name.
+        # An API error you cannot read is a bug in the client.
+        if response.status_code >= 400:
+            raise RuntimeError(
+                f"Wiz API returned {response.status_code} for {api_url}\n"
+                f"{describe_errors(response.text)}"
+            )
         payload = response.json()
+        # A GraphQL 200 can still carry errors -- a partial failure reports here, not in the
+        # status code.
         if payload.get("errors"):
-            raise RuntimeError(f"Wiz GraphQL errors: {json.dumps(payload['errors'])[:500]}")
+            raise RuntimeError(f"Wiz GraphQL errors:\n{describe_errors(response.text)}")
         return payload
     raise RuntimeError(f"Wiz API unreachable after {MAX_RETRIES} attempts") from last_error
+
+
+def describe_errors(body: str, limit: int = 2000) -> str:
+    """Pull the readable part out of a GraphQL error body.
+
+    Wiz replies with ``{"errors": [{"message": ...}]}``; the messages name the offending field
+    or filter key, which is the whole story for a 400. Falls back to the raw text when the body
+    is not the shape we expect, because a truncated raw body still beats "400 Client Error".
+    """
+    try:
+        errors = (json.loads(body) or {}).get("errors")
+    except (ValueError, AttributeError):
+        errors = None
+    if not isinstance(errors, list) or not errors:
+        return body[:limit] if body else "(empty response body)"
+
+    lines = []
+    for error in errors:
+        if not isinstance(error, dict):
+            lines.append(str(error))
+            continue
+        message = error.get("message") or json.dumps(error)
+        extensions = error.get("extensions") or {}
+        code = extensions.get("code") if isinstance(extensions, dict) else None
+        lines.append(f"  - {message}" + (f"  [{code}]" if code else ""))
+    return "\n".join(lines)[:limit]
 
 
 def build_filter(

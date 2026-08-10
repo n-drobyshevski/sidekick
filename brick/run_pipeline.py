@@ -7,14 +7,18 @@ this order, so the same file works in all three places:
     2. ``dbutils.widgets.get(name)``          -- how a notebook receives them
     3. the ``NAME`` environment variable      -- how a laptop receives them
 
-Tables written (all appended, never overwritten -- each run adds a ``scan_id`` so the gold
-tables accumulate into a trend):
+These are plain top-level modules, not a package: the directory holding them goes on
+``sys.path`` and they import each other by bare name. That keeps the Databricks side a flat
+folder of files with no ``__init__.py`` and no nesting to reproduce by hand.
 
-    <catalog>.<schema>.findings_raw       bronze   scan_id, scan_ts, node_json
-    <catalog>.<schema>.findings           silver   typed findings + mttr_days / age_days
-    <catalog>.<schema>.metrics_mttr       gold     scan_id x severity (+ OVERALL)
-    <catalog>.<schema>.metrics_program    gold     scan_id x severity (+ OVERALL)
-    <catalog>.<schema>.metrics_capacity   gold     scan_id x month
+Tables written (all appended, never overwritten -- each run adds a ``scan_id`` so the gold
+tables accumulate into a trend). ``<p>`` is the table prefix, ``wiz_<scope>_`` by default:
+
+    <catalog>.<schema>.<p>findings_raw       bronze   scan_id, scan_ts, scope, node_json
+    <catalog>.<schema>.<p>findings           silver   typed findings + mttr_days / age_days
+    <catalog>.<schema>.<p>metrics_mttr       gold     scan_id x severity (+ OVERALL)
+    <catalog>.<schema>.<p>metrics_program    gold     scan_id x severity (+ OVERALL)
+    <catalog>.<schema>.<p>metrics_capacity   gold     scan_id x month
 
 Bronze keeps the finding as a JSON string: a Wiz schema change can then never fail ingest,
 and silver is just the typed projection of whatever arrived.
@@ -29,26 +33,21 @@ import re
 import sys
 import uuid
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Optional
 
-# Run as a script (a Job's Python file task), sys.path[0] is brick/, not the repo root, so
-# `import brick` fails before anything else happens. Put the repo root on the path first.
-if __package__ in (None, ""):
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
 
-from pyspark.sql import SparkSession  # noqa: E402
-from pyspark.sql import functions as F  # noqa: E402
-
-from brick import dbx, metrics  # noqa: E402
-from brick.config import (  # noqa: E402
+import dbx
+import metrics
+from config import (
     DEFAULT_FETCH_SEVERITIES,
     DEFAULT_RISK_RULE,
     DEFAULT_SCOPE,
     SCOPES,
     RiskRule,
 )
-from brick.ingest import DEFAULT_AUTH_URL, fetch_findings, get_token, secret  # noqa: E402
+from ingest import DEFAULT_AUTH_URL, fetch_findings, get_token, secret
 
 BRONZE_TABLE = "findings_raw"
 SILVER_TABLE = "findings"
@@ -109,13 +108,16 @@ def ingest_to_bronze(
     api_url = param("wiz_api_url")
     if not api_url:
         raise RuntimeError("wiz_api_url is required, e.g. https://api.<region>.app.wiz.io/graphql")
-    scope = param("secret_scope") or None
+    # Named `secret_scope`, not `scope`: this is the Databricks secret scope, and `scope` is
+    # already the vulnerability population. Sharing the name silently overwrote the population
+    # with the secret-scope string.
+    secret_scope = param("secret_scope") or None
     requested = param("severities") or ",".join(DEFAULT_FETCH_SEVERITIES)
     severities = [s for s in requested.split(",") if s.strip()]
 
     token = get_token(
-        secret(scope, "wiz-client-id", "WIZ_CLIENT_ID"),
-        secret(scope, "wiz-client-secret", "WIZ_CLIENT_SECRET"),
+        secret(secret_scope, "wiz-client-id", "WIZ_CLIENT_ID"),
+        secret(secret_scope, "wiz-client-secret", "WIZ_CLIENT_SECRET"),
         auth_url=param("wiz_auth_url") or DEFAULT_AUTH_URL,
     )
 

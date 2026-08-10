@@ -8,6 +8,7 @@ does nothing useful.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -17,12 +18,15 @@ pytest.importorskip(
     "pyspark", reason="brick tests need pyspark: pip install -r brick/requirements.txt"
 )
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT))
+# The modules are plain top-level files, so their own directory goes on the path -- the same
+# arrangement the Databricks side uses.
+BRICK_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(BRICK_DIR))
 
-from brick import dbx, run_pipeline  # noqa: E402
-from brick.config import SCOPES  # noqa: E402
-from brick.ingest import build_filter  # noqa: E402
+import dbx  # noqa: E402
+import run_pipeline  # noqa: E402
+from config import SCOPES  # noqa: E402
+from ingest import build_filter, describe_errors  # noqa: E402
 
 
 def test_param_prefers_command_line(monkeypatch):
@@ -155,6 +159,64 @@ def test_missing_schema_is_created():
     assert spark.statements == ["CREATE SCHEMA IF NOT EXISTS sec.wiz"]
 
 
+def test_ingest_keeps_the_population_scope_separate_from_the_secret_scope(monkeypatch):
+    """Regression: `scope` (which vulnerabilities) and `secret_scope` (where the credentials
+    live) are different things. Sharing a local name overwrote the first with the second, so
+    the population scope reaching the API was the string "wiz"."""
+    monkeypatch.setattr(dbx, "widget", lambda name: "")
+    monkeypatch.setenv("WIZ_API_URL", "https://api.test.app.wiz.io/graphql")
+    monkeypatch.setenv("SECRET_SCOPE", "wiz")
+    monkeypatch.setenv("SEVERITIES", "CRITICAL")
+    monkeypatch.setattr(sys, "argv", ["run_pipeline.py"])
+
+    seen = {}
+    monkeypatch.setattr(run_pipeline, "get_token", lambda *a, **k: "token")
+    monkeypatch.setattr(run_pipeline, "secret", lambda scope, key, env: f"{scope}/{key}")
+
+    def fake_fetch(api_url, token, **kwargs):
+        seen.update(kwargs)
+        return iter([{"id": "f-1", "severity": "CRITICAL"}])
+
+    monkeypatch.setattr(run_pipeline, "fetch_findings", fake_fetch)
+
+    written = {}
+
+    class FakeWriter:
+        def mode(self, _):
+            return self
+
+        def saveAsTable(self, name):  # noqa: N802 -- mirrors the Spark API
+            written["table"] = name
+
+    class FakeDF:
+        def __init__(self, rows):
+            self.rows = rows
+            self.write = FakeWriter()
+
+        def __getitem__(self, _):
+            return self
+
+        def cast(self, _):
+            return self
+
+        def withColumn(self, *_):
+            return self
+
+    class FakeSpark:
+        def createDataFrame(self, rows, schema):  # noqa: N802 -- mirrors the Spark API
+            written["rows"] = rows
+            return FakeDF(rows)
+
+    count = run_pipeline.ingest_to_bronze(
+        FakeSpark(), "cat.sch.wiz_os_findings_raw", "scan-1", "2026-07-01T00:00:00Z", "os"
+    )
+
+    assert count == 1
+    assert seen["scope"] == "os"  # the population, not "wiz"
+    assert written["rows"][0][2] == "os"  # and the same value lands in bronze
+    assert written["table"] == "cat.sch.wiz_os_findings_raw"
+
+
 def test_dbutils_accessors_are_quiet_off_cluster():
     """Off Databricks these must return empty, not raise -- the env-var path depends on it."""
     assert dbx.get_dbutils() is None
@@ -169,7 +231,7 @@ def test_secret_raises_a_useful_message_when_nothing_is_configured(monkeypatch):
 
 
 def test_severity_filter_maps_info_to_the_api_spelling():
-    from brick.ingest import severity_filter
+    from ingest import severity_filter
 
     assert severity_filter(["critical", "high", "info"]) == [
         "CRITICAL",
@@ -232,3 +294,30 @@ def test_build_filter_does_not_mutate_the_scope_template():
 def test_unknown_scope_is_rejected():
     with pytest.raises(RuntimeError, match="unknown scope"):
         build_filter("nope")
+
+
+# ------------------------------------------------------------------ error legibility
+
+
+def test_graphql_errors_are_surfaced_by_message():
+    """A 400 body names the offending field or filter key. raise_for_status() would report
+    the status and throw that away, leaving nothing to debug from."""
+    body = json.dumps(
+        {
+            "errors": [
+                {
+                    "message": 'Cannot query field "epssProbabilty" on type '
+                    '"VulnerabilityFinding".',
+                    "extensions": {"code": "GRAPHQL_VALIDATION_FAILED"},
+                }
+            ]
+        }
+    )
+    got = describe_errors(body)
+    assert "epssProbabilty" in got
+    assert "GRAPHQL_VALIDATION_FAILED" in got
+
+
+def test_unparseable_error_body_still_says_something():
+    assert "upstream timeout" in describe_errors("<html>upstream timeout</html>")
+    assert describe_errors("") == "(empty response body)"
