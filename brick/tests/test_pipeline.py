@@ -26,7 +26,8 @@ sys.path.insert(0, str(BRICK_DIR))
 import dbx  # noqa: E402
 import run_pipeline  # noqa: E402
 from config import SCOPES  # noqa: E402
-from ingest import build_filter, describe_errors  # noqa: E402
+import ingest  # noqa: E402
+from ingest import QUERY, build_filter, describe_errors  # noqa: E402
 
 
 def test_param_prefers_command_line(monkeypatch):
@@ -94,7 +95,9 @@ def test_tables_are_prefixed_with_the_scope_by_default(monkeypatch):
     scope in the name keeps an OS run and an all-types run in separate tables."""
     monkeypatch.delenv("TABLE_PREFIX", raising=False)
     monkeypatch.setattr(dbx, "widget", lambda name: "")
-    ns = "datalake_insights_analytics.industry"
+    # A deliberately generic namespace: the catalog is a runtime parameter, and a real one
+    # here would read like configuration.
+    ns = "some_catalog.some_schema"
     tables = run_pipeline.resolve_tables(ns, "os", argv=[])
     assert tables.bronze == f"{ns}.wiz_os_findings_raw"
     assert tables.silver == f"{ns}.wiz_os_findings"
@@ -294,6 +297,34 @@ def test_build_filter_does_not_mutate_the_scope_template():
 def test_unknown_scope_is_rejected():
     with pytest.raises(RuntimeError, match="unknown scope"):
         build_filter("nope")
+
+
+# ----------------------------------------------------------------------- the query
+
+
+def test_vulnerable_asset_is_selected_through_inline_fragments():
+    """`vulnerableAsset` is a union: selecting its fields directly is a GraphQL validation
+    error and the server answers 400. That is how this first failed against a live tenant."""
+    assert "... on VulnerableAssetVirtualMachine {" in QUERY  # what scope=os returns
+    assert "... on VulnerableAssetBase {" in QUERY
+
+    # No bare field selection between `vulnerableAsset {` and the first fragment.
+    body = QUERY.split("vulnerableAsset {", 1)[1].split("... on", 1)[0]
+    assert not body.strip(), f"bare selection on the union: {body.strip()!r}"
+
+
+def test_query_never_asks_a_member_for_a_field_it_lacks():
+    """Two members genuinely lack some of the fields; asking anyway is another 400."""
+    for member, missing in ingest._ASSET_OMISSIONS.items():
+        block = QUERY.split(f"... on {member} {{", 1)[1].split("}", 1)[0]
+        selected = {line.strip() for line in block.splitlines() if line.strip()}
+        assert not (selected & missing), f"{member} asked for {selected & missing}"
+
+
+def test_every_asset_member_selects_something():
+    for member in ingest._ASSET_MEMBERS:
+        block = QUERY.split(f"... on {member} {{", 1)[1].split("}", 1)[0]
+        assert block.strip(), f"{member} has an empty selection set, which is also invalid"
 
 
 # ------------------------------------------------------------------ error legibility

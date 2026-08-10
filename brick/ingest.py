@@ -35,6 +35,57 @@ MAX_RETRIES = 4
 # Statuses worth another attempt: throttling and the transient 5xx family.
 RETRY_STATUS = {429, 500, 502, 503, 504}
 
+# ``vulnerableAsset`` is a UNION, not an object: its fields can only be reached through inline
+# fragments on each concrete member. Selecting `vulnerableAsset { id name ... }` directly is a
+# GraphQL validation error and the server answers 400 -- which is exactly how this first failed
+# against a live tenant.
+#
+# The member list and the per-member field availability are both taken from the live query in
+# ``os_vulns.py`` (its ``... on VulnerableAsset*`` fragments), so they match a schema that is
+# known to work. Two members genuinely lack some of the fields; asking anyway would 400 again.
+_ASSET_FIELDS = (
+    "id",
+    "type",
+    "name",
+    "cloudPlatform",
+    "subscriptionName",
+    "subscriptionExternalId",
+)
+_ASSET_MEMBERS = (
+    "VulnerableAssetBase",
+    "VulnerableAssetVirtualMachine",  # the one `scope=os` actually returns
+    "VulnerableAssetServerless",
+    "VulnerableAssetContainerImage",
+    "VulnerableAssetContainer",
+    "VulnerableAssetRepositoryBranch",
+    "VulnerableAssetIde",
+    "VulnerableAssetEndpoint",
+    "VulnerableAssetPaaSResource",
+    "VulnerableAssetVirtualMachineImage",
+    "VulnerableAssetNetworkAddress",
+    "VulnerableAssetCommon",
+    "VulnerableAssetDevice",
+)
+_ASSET_OMISSIONS = {
+    "VulnerableAssetRepositoryBranch": {"subscriptionName", "subscriptionExternalId"},
+    "VulnerableAssetNetworkAddress": {"id", "type", "name", "cloudPlatform"},
+}
+
+
+def _asset_selection(indent: str = " " * 6) -> str:
+    """The ``vulnerableAsset`` sub-selection: one inline fragment per union member.
+
+    Generated rather than hand-written so the field list stays in one place and a member that
+    lacks a field cannot silently acquire it.
+    """
+    blocks = []
+    for member in _ASSET_MEMBERS:
+        fields = [f for f in _ASSET_FIELDS if f not in _ASSET_OMISSIONS.get(member, ())]
+        body = "".join(f"{indent}    {f}\n" for f in fields)
+        blocks.append(f"{indent}  ... on {member} {{\n{body}{indent}  }}\n")
+    return f"{indent}vulnerableAsset {{\n" + "".join(blocks) + f"{indent}}}"
+
+
 # A trimmed subset of ``os_vulns.QUERY`` -- only the fields the metrics actually consume.
 # See ``os_vulns.py`` for the full-fidelity query the Streamlit app uses.
 #
@@ -62,14 +113,7 @@ query BrickVulnerabilityFindings(
       hasExploit
       hasCisaKevExploit
       epssProbability
-      vulnerableAsset {
-        id
-        type
-        name
-        cloudPlatform
-        subscriptionName
-        subscriptionExternalId
-      }
+%s
     }
     pageInfo {
       hasNextPage
@@ -77,7 +121,7 @@ query BrickVulnerabilityFindings(
     }
   }
 }
-"""
+""" % _asset_selection()
 
 
 def secret(scope: Optional[str], key: str, env_var: str) -> str:
@@ -115,7 +159,13 @@ def get_token(
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         timeout=timeout,
     )
-    response.raise_for_status()
+    # Same reasoning as _post: an auth rejection explains itself in the body (bad audience,
+    # unknown client, wrong tenant region), and raise_for_status would discard all of it.
+    if response.status_code >= 400:
+        raise RuntimeError(
+            f"Wiz auth returned {response.status_code} for {auth_url}\n"
+            f"{describe_errors(response.text)}"
+        )
     token = response.json().get("access_token")
     if not token:
         raise RuntimeError("Wiz auth returned no access_token")
