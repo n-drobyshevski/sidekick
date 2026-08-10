@@ -30,3 +30,9 @@ gas/dev/server.dev.js
 
 # Local GAS AI dev harness build output (gas_ai/dev/serve.mjs writes it per page load)
 gas_ai/dev/server.dev.js
+
+# Local Spark/Delta test debris: brick/tests spins up a real SparkSession, which writes a
+# metastore and a warehouse directory into the working directory.
+spark-warehouse/
+metastore_db/
+derby.log

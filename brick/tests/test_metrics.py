@@ -20,7 +20,6 @@ pytest.importorskip(
     "pyspark", reason="brick tests need pyspark: pip install -r brick/requirements.txt"
 )
 
-from pyspark.sql import SparkSession  # noqa: E402
 
 # The modules are plain top-level files, so their own directory goes on the path -- the same
 # arrangement the Databricks side uses. REPO_ROOT is still needed for the response fixture.
@@ -35,20 +34,6 @@ from ingest import extract_nodes  # noqa: E402
 SCAN_ID = "test-scan"
 # Fixed "now", so open-age percentiles and the capacity month grid are deterministic.
 SCAN_TS = "2026-07-01T00:00:00Z"
-
-
-@pytest.fixture(scope="session")
-def spark():
-    session = (
-        SparkSession.builder.master("local[1]")
-        .appName("brick-tests")
-        .config("spark.sql.session.timeZone", "UTC")
-        .config("spark.ui.enabled", "false")
-        .config("spark.sql.shuffle.partitions", "1")
-        .getOrCreate()
-    )
-    yield session
-    session.stop()
 
 
 # ------------------------------------------------------------------ fixture builders
@@ -368,11 +353,41 @@ def test_resolved_status_without_timestamp_is_remediated_but_has_no_mttr(spark):
     assert high["mttr_median"] is None
 
 
+# ----------------------------------------------------------------- resolution sources
+
+
+def test_resolution_sources_split_stated_from_inferred(spark):
+    """The audit trail for the inference v2 rests on.
+
+    A `disappeared` resolution was never stated by Wiz -- we concluded it from the finding no
+    longer being returned. That is the right call, but it is still a conclusion, and a reader
+    has to be able to see how much of the number rests on it.
+    """
+    rows = spark.createDataFrame(
+        [
+            ("CRITICAL", "api"),
+            ("CRITICAL", "disappeared"),
+            ("CRITICAL", "disappeared"),
+            ("HIGH", "api"),
+            ("HIGH", None),  # still open: neither
+        ],
+        "severity STRING, resolution_src STRING",
+    )
+    got = {r["severity"]: r.asDict() for r in metrics.resolution_sources(rows).collect()}
+
+    assert got["CRITICAL"]["resolved_api"] == 1
+    assert got["CRITICAL"]["resolved_disappeared"] == 2
+    assert got["HIGH"]["resolved_api"] == 1
+    assert got["HIGH"]["resolved_disappeared"] == 0
+    assert got["OVERALL"]["resolved_api"] == 2
+    assert got["OVERALL"]["resolved_disappeared"] == 2
+
+
 # --------------------------------------------------------------------------- capacity
 
 
 @pytest.fixture(scope="module")
-def capacity_months(spark):
+def capacity_nodes():
     """Three months of activity, hand-counted:
 
         April  : 10 opened,  0 closed.  open_at_start = 0
@@ -392,8 +407,12 @@ def capacity_months(spark):
         )
     for i in range(2):
         nodes.append(node(id=f"jun-{i}", firstDetectedAt="2026-06-10T00:00:00Z"))
+    return nodes
 
-    df = metrics.capacity_by_month(silver(spark, nodes), SCAN_TS)
+
+@pytest.fixture(scope="module")
+def capacity_months(spark, capacity_nodes):
+    df = metrics.capacity_by_month(silver(spark, capacity_nodes), SCAN_TS)
     return {str(r["month"])[:7]: r.asDict() for r in df.collect()}
 
 
@@ -428,6 +447,65 @@ def test_capacity_marks_the_current_month_partial_and_excludes_it(capacity_month
     )
     # net_total spans every month, partial ones included: 5 closed - 12 opened.
     assert capacity_months["2026-05"]["net_total"] == -7
+
+
+def test_capacity_marks_months_before_the_first_scan_reconstructed(spark, capacity_nodes):
+    """Months we never watched are inferred from the API's dates, not measured.
+
+    Without the flag a register three weeks old shows two years of confident monthly
+    throughput, which is the same class of error as drawing a NULL as a zero bar.
+    """
+    df = metrics.capacity_by_month(
+        silver(spark, capacity_nodes), SCAN_TS, observed_from="2026-06-01T00:00:00Z"
+    )
+    months = {str(r["month"])[:7]: r.asDict() for r in df.collect()}
+    assert months["2026-04"]["reconstructed"] is True
+    assert months["2026-05"]["reconstructed"] is True
+    assert months["2026-06"]["reconstructed"] is False
+    assert months["2026-07"]["reconstructed"] is False
+
+
+def test_reconstructed_months_do_not_drive_the_headline_rate(spark, capacity_nodes):
+    """"We close about 1 in N" is a claim about throughput we actually measured."""
+    unobserved = metrics.capacity_by_month(silver(spark, capacity_nodes), SCAN_TS)
+    observed = metrics.capacity_by_month(
+        silver(spark, capacity_nodes), SCAN_TS, observed_from="2026-06-01T00:00:00Z"
+    )
+    # Without a horizon, May and June both count. With one, only June is measured.
+    assert unobserved.collect()[0]["months_counted"] == 2
+    row = observed.collect()[0]
+    assert row["months_counted"] == 1
+    assert row["mmcr_mean"] == pytest.approx(100 / 6)
+
+
+def test_capacity_without_a_horizon_calls_nothing_reconstructed(spark, capacity_nodes):
+    """Before any scan is logged there is no horizon, and claiming one would be invented."""
+    df = metrics.capacity_by_month(silver(spark, capacity_nodes), SCAN_TS)
+    assert all(r["reconstructed"] is False for r in df.collect())
+    assert all(r["closed_observed"] is None for r in df.collect())
+
+
+def test_capacity_joins_the_observed_close_count(spark, capacity_nodes):
+    """The cross-check rides alongside `closed` rather than replacing it.
+
+    They are two routes to the same number -- one from resolved_at, one from what
+    reconciliation actually counted. Publishing both is what lets a reader spot a divergence.
+    """
+    observed = spark.createDataFrame(
+        [("2026-05-01T00:00:00Z", 4), ("2026-06-01T00:00:00Z", 99)],
+        "month STRING, closed_observed LONG",
+    ).withColumn("month", metrics.F.col("month").cast("timestamp"))
+    df = metrics.capacity_by_month(
+        silver(spark, capacity_nodes), SCAN_TS, closed_observed=observed
+    )
+    months = {str(r["month"])[:7]: r.asDict() for r in df.collect()}
+    assert months["2026-05"]["closed"] == 4
+    assert months["2026-05"]["closed_observed"] == 4
+    # A divergence stays visible instead of being reconciled away.
+    assert months["2026-06"]["closed"] == 1
+    assert months["2026-06"]["closed_observed"] == 99
+    # A month reconciliation never saw is NULL, not 0.
+    assert months["2026-04"]["closed_observed"] is None
 
 
 def test_capacity_small_swing_is_keeping_up(spark):

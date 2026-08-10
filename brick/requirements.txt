@@ -1,6 +1,9 @@
 # Local development and test only. A Databricks cluster already provides Spark, Delta, pandas
 # and matplotlib -- do not install pyspark on the cluster, it will shadow the runtime's build.
 pyspark>=3.5
+# The ledger is a Delta table and is MERGEd, so the tests that exercise it need Delta locally.
+# Must match the pyspark minor version: delta-spark 3.2 pairs with Spark 3.5.
+delta-spark>=3.2,<4
 requests>=2.31
 pandas>=2.0
 matplotlib>=3.7

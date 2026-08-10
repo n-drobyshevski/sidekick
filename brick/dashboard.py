@@ -113,9 +113,12 @@ SELECT severity,
        km_median_lower_bound,
        km_rmst,
        mttr_median,
+       snap_km_median,
        sla_target,
        sla_pct,
        resolved,
+       resolved_api,
+       resolved_disappeared,
        open,
        open_age_p50,
        open_age_p90,
@@ -148,9 +151,25 @@ WHERE {_latest_scan(program)} AND severity <> '{OVERALL}'
         _dataset(
             "capacity_months",
             f"""
-SELECT month, opened, closed, open_at_start, mmcr, net, net_pct, verdict, partial
+SELECT month, opened, closed, closed_observed, open_at_start, mmcr, net, net_pct, verdict,
+       partial, reconstructed
 FROM {capacity}
 WHERE {_latest_scan(capacity)}
+ORDER BY month
+""",
+        ),
+        # The same months, minus the ones that predate the first scan. Those are reconstructed
+        # from the API's own dates rather than watched by us, and a bar chart cannot say so --
+        # every bar looks equally measured. Plotting them would show a confident history of
+        # throughput nobody observed, which is the same failure as drawing a NULL as a zero.
+        # The table above keeps every month and flags them instead.
+        _dataset(
+            "capacity_observed_months",
+            f"""
+SELECT month, opened, closed, closed_observed, open_at_start, mmcr, net, net_pct, verdict,
+       partial
+FROM {capacity}
+WHERE {_latest_scan(capacity)} AND NOT reconstructed
 ORDER BY month
 """,
         ),
@@ -417,13 +436,28 @@ def _remediation_page() -> Dict[str, Any]:
             x=3, y=2, width=3, height=7),
         _place(
             _table("rem-table", "mttr_by_severity",
-                   ["severity", "resolved", "open", "km_median", "km_median_lower_bound",
-                    "km_rmst", "mttr_median", "sla_target", "sla_pct", "open_age_p50",
-                    "open_age_p90"],
+                   ["severity", "resolved", "resolved_api", "resolved_disappeared", "open",
+                    "km_median", "km_median_lower_bound", "km_rmst", "mttr_median",
+                    "snap_km_median", "sla_target", "sla_pct", "open_age_p50", "open_age_p90"],
                    "MTTR detail by severity",
                    "km_median_lower_bound is populated only when the median was never reached — "
-                   "read it as '> N days'."),
+                   "read it as '> N days'. resolved_disappeared counts findings Wiz stopped "
+                   "returning without ever setting resolvedAt: real remediation, but inferred "
+                   "by us rather than stated. snap_km_median is the same estimator over a "
+                   "single snapshot — what this number was before cross-scan tracking."),
             x=0, y=9, width=6, height=7),
+        _place(
+            _bar("rem-resolution-source", "mttr_by_severity",
+                 x="severity", x_expr="`severity`",
+                 y="resolved_disappeared", y_expr="`resolved_disappeared`",
+                 title="Resolutions inferred from disappearance",
+                 description="Against resolved_api in the table above. These closures were "
+                             "never stated by Wiz — the finding simply stopped coming back. "
+                             "A register where this dominates is telling you about the data "
+                             "source as much as about the remediation programme.",
+                 color_by_severity=True,
+                 extra_fields={"resolved_api": "`resolved_api`"}),
+            x=0, y=16, width=3, height=7),
         _place(
             _bar("rem-by-sub", "by_subscription",
                  x=BREAKDOWN_COLUMN, x_expr=f"`{BREAKDOWN_COLUMN}`",
@@ -433,13 +467,13 @@ def _remediation_page() -> Dict[str, Any]:
                              "cross-filter the table beside it.",
                  color_by_severity=True,
                  extra_fields={"severity": "`severity`"}),
-            x=0, y=16, width=3, height=7),
+            x=3, y=16, width=3, height=7),
         _place(
             _table("rem-sub-table", "by_subscription",
                    [BREAKDOWN_COLUMN, "severity", "findings", "open_findings",
                     "oldest_open_days"],
                    f"{BREAKDOWN_LABEL} detail"),
-            x=3, y=16, width=3, height=7),
+            x=0, y=23, width=6, height=7),
     ]
     return {"name": _id("page-remediation"), "displayName": "Remediation speed",
             "layout": layout}
@@ -480,22 +514,27 @@ def _programme_page() -> Dict[str, Any]:
                    "Their width is the size of the doubt."),
             x=0, y=9, width=6, height=7),
         _place(
-            _bar("prog-capacity", "capacity_months",
+            _bar("prog-capacity", "capacity_observed_months",
                  x="month", x_expr="`month`",
                  y="closed", y_expr="`closed`",
-                 title="Findings closed per month",
+                 title="Findings closed per month (observed months only)",
                  description="Against opened in the table below. Net negative for several "
-                             "months running means the backlog is growing.",
+                             "months running means the backlog is growing. Months before the "
+                             "first scan are excluded — their activity is reconstructed from "
+                             "the API's dates, not measured; the table lists them.",
                  x_scale="temporal",
                  extra_fields={"opened": "`opened`"}),
             x=0, y=16, width=3, height=7),
         _place(
             _table("prog-capacity-table", "capacity_months",
-                   ["month", "open_at_start", "opened", "closed", "mmcr", "net_pct", "verdict",
-                    "partial"],
+                   ["month", "open_at_start", "opened", "closed", "closed_observed", "mmcr",
+                    "net_pct", "verdict", "partial", "reconstructed"],
                    "Capacity by month",
-                   "mmcr is the share of the open backlog closed that month. Rows flagged "
-                   "partial are the current month and are not complete."),
+                   "mmcr is the share of the open backlog closed that month. partial is the "
+                   "current month, still running. reconstructed means the month predates the "
+                   "first scan, so its counts come from the API's dates rather than from "
+                   "anything we watched — they are not evidence of capacity. closed_observed "
+                   "is reconciliation's own count for cross-checking closed."),
             x=3, y=16, width=3, height=7),
         _place(
             _bar("prog-risk-mix", "by_subscription",
