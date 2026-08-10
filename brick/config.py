@@ -139,3 +139,101 @@ NET_CAPACITY_BAND_PCT = 2
 
 # The row label used for the all-severities aggregate in the gold tables.
 OVERALL = "OVERALL"
+
+# ---- Lifecycle ledger (v2) ----
+# Mirrors the disappearance modes in gas/src/domain/reconcile.ts, which is the reference
+# implementation for the whole lifecycle layer. See ledger.py for what each rule does.
+#
+# When a finding was OPEN in the previous scan and is absent from this one, Wiz has told us
+# nothing -- the finding simply stopped being returned. That is the ordinary shape of
+# remediation, so it counts as resolved; the only question is *when*.
+#
+#   "scan_ts"   the timestamp of the scan that noticed the absence. Conservative: it
+#               overstates MTTR by up to one scan interval, but every timestamp it writes was
+#               actually observed. On a daily job the error is under 24h.
+#   "midpoint"  halfway between the two scans. Halves the systematic bias at the cost of
+#               recording a moment nobody observed.
+#
+# scan_ts is the default because an overstated MTTR is a visible, explainable error and an
+# invented timestamp is not.
+DISAPPEARANCE_RESOLUTION = "scan_ts"
+DISAPPEARANCE_MODES = ("scan_ts", "midpoint")
+
+# Lifecycle statuses stored on the ledger. Deliberately two-valued: a finding is either
+# still costing us something or it is not. "reopened" is a counter, not a status -- a
+# reopened finding IS open, and collapsing that into a third status would force every
+# consumer to remember to include it.
+STATUS_OPEN = "OPEN"
+STATUS_RESOLVED = "RESOLVED"
+
+# How a resolution was learned. The distinction is load-bearing rather than decorative:
+# "api" is Wiz's own resolvedAt, "disappeared" is our inference, and a register whose
+# resolutions are overwhelmingly inferred is telling you something about the data source.
+# The gold MTTR table publishes the split per severity for exactly that reason.
+RESOLUTION_API = "api"
+RESOLUTION_DISAPPEARED = "disappeared"
+
+# The durable ledger's columns, in table order. Mirrors gas/src/domain/reconcile.ts's
+# LEDGER_COLUMNS, which is the reference implementation for the whole lifecycle layer.
+#
+# Two deliberate differences from that list:
+#
+#   component   ADDED. GAS does not persist it; it is cheap here, it is part of the vuln_key
+#               hash basis, and the by-component breakdown reads it.
+#   tags_json   OMITTED. GAS's domain-triage input, but brick's ingest query does not select
+#               asset tags at all (see ingest._ASSET_FIELDS), so there is nothing to store.
+#               Adding it is an ingest change, not a ledger one.
+#
+# has_kev / has_exploit / epss stay NULLABLE the whole way through -- see the correctness
+# trap at the top of metrics.py. A NULL means "never captured", which is not "false".
+LEDGER_COLUMNS = [
+    "vuln_key",
+    "scope",
+    "cve",
+    "component",
+    "severity",
+    "asset_id",
+    "asset_name",
+    "asset_type",
+    "cloud",
+    "subscription_name",
+    "subscription_ext_id",
+    "first_seen",
+    "last_seen",
+    "status",
+    "resolved_at",
+    "resolution_src",
+    "reopened_count",
+    "first_scan_id",
+    "last_scan_id",
+    # Vendor-fix capture. Nothing in v2 reads these yet -- the actionable clock
+    # (mttr_actionable_days, awaiting_vendor_fix) is gas/src/domain/ledgerCore.ts::baseRows'
+    # job and is out of scope here. They are captured anyway because they cannot be
+    # recovered later: a finding resolved by disappearance is gone from the API entirely,
+    # so a signal not written down at observation time is lost for good. Cheap now,
+    # impossible afterwards.
+    "fix_date",
+    "fix_observed_at",
+    # Exploit intelligence. Same durability argument, but these ARE read: coverage and
+    # efficiency classify from the ledger, and the population they classify includes
+    # findings that have since disappeared.
+    "has_kev",
+    "has_exploit",
+    "epss",
+    "risk_observed_at",
+]
+
+# The per-run log. Three jobs: it is the idempotency guard (a run whose scan_id is already
+# here is a no-op), it records each scan's severity scope so reconciliation never
+# resolves-by-disappearance a severity that was not scanned, and its first row dates the
+# start of the observation window -- which is what lets capacity flag reconstructed months.
+SCANS_COLUMNS = [
+    "scan_id",
+    "scan_ts",
+    "scope",
+    "severities",
+    "total",
+    "new_count",
+    "resolved_count",
+    "reopened_count",
+]

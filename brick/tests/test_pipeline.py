@@ -185,7 +185,13 @@ def test_ingest_keeps_the_population_scope_separate_from_the_secret_scope(monkey
     written = {}
 
     class FakeWriter:
+        def format(self, _):  # noqa: A003 -- mirrors the Spark API
+            return self
+
         def mode(self, _):
+            return self
+
+        def option(self, *_):
             return self
 
         def saveAsTable(self, name):  # noqa: N802 -- mirrors the Spark API

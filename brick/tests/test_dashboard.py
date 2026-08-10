@@ -36,7 +36,8 @@ def tables():
         return f"{NAMESPACE}.{PREFIX}{name}"
 
     return Tables(
-        bronze=q("findings_raw"), silver=q("findings"), mttr=q("metrics_mttr"),
+        bronze=q("findings_raw"), silver=q("findings"), ledger=q("vuln_ledger"),
+        scans=q("scans"), mttr=q("metrics_mttr"),
         program=q("metrics_program"), capacity=q("metrics_capacity"),
     )
 
@@ -190,49 +191,50 @@ def test_severity_palette_matches_the_shared_one(doc):
 
 
 @pytest.fixture(scope="module")
-def live_tables(tmp_path_factory):
-    from pyspark.sql import SparkSession
+def live_tables(spark):
+    """Real pipeline output for the dashboard SQL to run against.
+
+    Driven through ``run_pipeline.build_metrics`` rather than by calling the metric transforms
+    directly. The fixture used to do the latter, which quietly made this a test of a *second*
+    implementation: the dashboard could pass here and still reference a column production never
+    writes. Two scans, so the ledger has something to reconcile and the disappearance columns
+    are populated rather than trivially empty.
+    """
+    pytest.importorskip(
+        "delta", reason="dashboard SQL tests need delta-spark for the ledger tables"
+    )
     from pyspark.sql import functions as F
 
-    import metrics
-    from config import DEFAULT_RISK_RULE
+    import run_pipeline
     from ingest import extract_nodes
 
-    warehouse = tmp_path_factory.mktemp("warehouse")
-    spark = (
-        SparkSession.builder.master("local[1]")
-        .appName("brick-dashboard-sql")
-        .config("spark.sql.warehouse.dir", str(warehouse))
-        .config("spark.sql.session.timeZone", "UTC")
-        .config("spark.ui.enabled", "false")
-        .config("spark.sql.shuffle.partitions", "1")
-        .getOrCreate()
-    )
-
     nodes = extract_nodes(json.loads((REPO_ROOT / "os_vulns_response_exemple.json").read_text()))
-    scan_id, scan_ts = "scan-1", "2026-07-01T00:00:00Z"
-    bronze = spark.createDataFrame(
-        [(scan_id, scan_ts, "os", json.dumps(n)) for n in nodes],
-        "scan_id STRING, scan_ts STRING, scope STRING, node_json STRING",
-    ).withColumn("scan_ts", F.col("scan_ts").cast("timestamp"))
+    # Dropped before creating, not only after: the local warehouse is a directory in the working
+    # tree, so a previous run that was interrupted leaves tables behind and this fixture would
+    # append a second scan-1 to them.
+    spark.sql("DROP DATABASE IF EXISTS dash CASCADE")
+    spark.sql("CREATE DATABASE dash")
+    tables = run_pipeline.resolve_tables("dash", "os", argv=[])
+    run_pipeline.ensure_tables(spark, tables)
 
-    silver = metrics.classify_risk(metrics.silver_findings(bronze), DEFAULT_RISK_RULE)
-    spark.sql("CREATE DATABASE IF NOT EXISTS dash")
-    stamp = lambda df: metrics.with_scan_columns(df, scan_id, scan_ts, "os")  # noqa: E731
-    silver.write.mode("overwrite").saveAsTable("dash.wiz_os_findings")
-    stamp(metrics.mttr_by_severity(silver)).write.mode("overwrite").saveAsTable(
-        "dash.wiz_os_metrics_mttr")
-    stamp(metrics.confusion_matrix(silver)).write.mode("overwrite").saveAsTable(
-        "dash.wiz_os_metrics_program")
-    stamp(metrics.capacity_by_month(silver, scan_ts)).write.mode("overwrite").saveAsTable(
-        "dash.wiz_os_metrics_capacity")
+    def scan(scan_id, scan_ts, payload):
+        rows = [(scan_id, scan_ts, "os", i, json.dumps(n)) for i, n in enumerate(payload)]
+        spark.createDataFrame(
+            rows, "scan_id STRING, scan_ts STRING, scope STRING, seq LONG, node_json STRING"
+        ).withColumn("scan_ts", F.col("scan_ts").cast("timestamp")).write.format("delta").mode(
+            "append"
+        ).option("mergeSchema", "true").saveAsTable(tables.bronze)
+        run_pipeline.build_metrics(
+            spark, tables, scan_id, scan_ts, "os", severities=["CRITICAL", "HIGH"]
+        )
 
-    yield spark, Tables(
-        bronze="dash.wiz_os_findings_raw", silver="dash.wiz_os_findings",
-        mttr="dash.wiz_os_metrics_mttr", program="dash.wiz_os_metrics_program",
-        capacity="dash.wiz_os_metrics_capacity",
-    )
-    spark.stop()
+    scan("scan-1", "2026-06-01T00:00:00Z", nodes)
+    # A second scan missing the tail of the register, so findings resolve by disappearance and
+    # `resolved_disappeared` is a real number the widgets have to be able to render.
+    scan("scan-2", "2026-07-01T00:00:00Z", nodes[: max(1, len(nodes) // 2)])
+
+    yield spark, tables
+    spark.sql("DROP DATABASE IF EXISTS dash CASCADE")
 
 
 def test_every_dataset_query_runs(live_tables):

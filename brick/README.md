@@ -1,23 +1,30 @@
 # `brick/` — vulnerability metrics on Databricks
 
-A small Spark pipeline that pulls Wiz vulnerability findings into Delta and computes four
-metric families as query-able gold tables:
+A small Spark pipeline that pulls Wiz vulnerability findings into Delta, tracks each
+vulnerability's lifecycle across scans in a persistent ledger, and computes four metric families
+as query-able gold tables:
 
 | Metric | Question it answers | Formula |
 | --- | --- | --- |
-| **MTTR / SLA** | How fast are we closing risk? | Kaplan–Meier median over `resolved_at − first_detected_at`, counting still-open findings as right-censored; in-SLA is `mttr_days <= target` |
+| **MTTR / SLA** | How fast are we closing risk? | Kaplan–Meier median over `resolved_at − first_seen`, counting still-open findings as right-censored; in-SLA is `mttr_days <= target` |
 | **Coverage** | Of all high-risk vulnerabilities, what share did we remediate? | `TP / (TP + FN)` |
 | **Efficiency** | Of everything we remediated, what share was actually high-risk? | `TP / (TP + FP)` |
 | **Capacity** | Can we close faster than risk arrives? | monthly `closed / open_at_start`, and `closed − opened` |
 
 Coverage and efficiency come from the Cisco Kenna / Cyentia *Prioritization to Prediction*
-series. They are in direct tension — v2's industry baseline is 70% coverage at 18.5%
+series. They are in direct tension — P2P vol. 2's industry baseline is 70% coverage at 18.5%
 efficiency — so the pipeline always emits both, never one alone.
 
+Those lifecycles are the difference between this and the pipeline's first version: metrics come
+from what the register has been observed to do over time, not from whatever the latest snapshot
+happens to say. See [The ledger, and why v2 exists](#the-ledger-and-why-v2-exists).
+
 This is a third surface over the same register as the Streamlit app and the Apps Script
-rebuild, not a replacement for either. The formulas are ported from
-`wiz_dashboard/domain/metrics.py` (MTTR/SLA) and `gas/src/domain/program.ts` (the P2P family);
-those remain the reference implementations.
+rebuild, not a replacement for either. `gas/` is the most complete of the three and is the
+reference implementation: the lifecycle rules are ported from `gas/src/domain/reconcile.ts`, the
+P2P family from `gas/src/domain/program.ts`, and Kaplan–Meier from
+`gas/src/domain/remediation.ts`. Where GAS and the older `wiz_dashboard/domain/` port disagree,
+GAS wins.
 
 ## Layout
 
@@ -25,13 +32,18 @@ those remain the reference implementations.
 config.py         constants mirrored from wiz_dashboard/config.py + the risk rule and scopes
 dbx.py            reaching dbutils from inside a module, and doing without it off-cluster
 ingest.py         Wiz OAuth + paginated GraphQL -> raw finding dicts
+ledger.py         pure PySpark cross-scan lifecycle reconciliation (no I/O)
 metrics.py        pure PySpark DataFrame -> DataFrame transforms (no I/O)
 charts.py         matplotlib figures over the gold tables (notebook only)
 dashboard.py      generates the AI/BI dashboard document (no Spark, no I/O)
 dashboard_cli.py  writes that document to a file, or imports it to the workspace
-run_pipeline.py   the Databricks entry point: bronze -> silver -> three gold tables
+run_pipeline.py   the Databricks entry point: bronze -> silver -> ledger -> three gold tables
 tests/            local-SparkSession tests, oracles ported from the existing suites
 ```
+
+`ledger.py` and `metrics.py` are pure `DataFrame -> DataFrame`; `run_pipeline.py` is the only
+module that does I/O. That is what lets the lifecycle rules — the part most likely to be wrong —
+be tested against a local `SparkSession` with no Delta table, no cluster and no API in the way.
 
 **These are plain top-level modules, not a package.** There is no `__init__.py`, and they
 import each other by bare name (`import metrics`, `from config import …`). Whatever directory
@@ -46,18 +58,102 @@ rather than an import error.
 `brick/` never imports `wiz_dashboard` — a Spark cluster has neither that package nor
 Streamlit. The shared constants are duplicated on purpose; `config.py` names its sources.
 
+## The ledger, and why v2 exists
+
+v1 measured each scan in isolation: a run pulled findings and computed everything from that one
+snapshot's `firstDetectedAt` / `resolvedAt`. Runs accumulated as separate `scan_id`s, but nothing
+reconciled one against the next.
+
+That gets one thing badly wrong. **Wiz stops returning a finding once it is remediated, and often
+never sets `resolvedAt`** — so remediation usually looks like a finding quietly disappearing. v1
+could not see that at all. Those vulnerabilities stayed open forever: MTTR under-reported,
+coverage under-reported, and the capacity table's `closed` column missed every such closure.
+
+v2 gives each finding a durable identity (`vuln_key`) and a row in a **ledger** that survives
+across runs — first seen, still here, gone. Metrics come from those observed lifecycles instead of
+from a snapshot, so a vulnerability that vanishes is counted as resolved on the day it vanished.
+
+The lifecycle rules are ported from `gas/src/domain/reconcile.ts`, which is the reference
+implementation; `brick/tests/test_ledger.py` replays that module's own golden fixture
+(`gas/test/fixtures/reconcile.json`) scenario by scenario, so the port is checked against the
+standard rather than against itself.
+
+| Rule | |
+| --- | --- |
+| First sighting | OPEN, `first_seen = min(firstDetectedAt, scan ts)` |
+| Persisting | advance `last_seen`; `first_seen` stays earliest-known and never drifts later |
+| API-resolved | `resolvedAt` present, or status in `RESOLVED_STATUSES` → `resolution_src = 'api'` |
+| Disappearance | was OPEN, was in the previous scan covering its severity, absent now → `resolution_src = 'disappeared'` |
+| Reopen | a RESOLVED finding is active again → OPEN, `reopened_count++`, a new episode |
+
+A reopen "recomputes" `first_seen` rather than advancing it: it takes `min(firstDetectedAt, scan
+ts)`, the same formula a first sighting uses, and deliberately ignores the value already on the
+row. That breaks the earliest-known chain — the one place `first_seen` can move *later*. Note the
+consequence: if Wiz still reports the original `firstDetectedAt`, the reopened episode inherits
+that date rather than starting from the reopen. That is the reference implementation's behaviour
+(`reconcile.ts:340`), and the surfaces have to agree.
+
+Three different update disciplines coexist on a ledger row, and they are not interchangeable:
+
+- **latest-observation-wins** — severity, CVE, asset attributes.
+- **sticky first-wins, reset by a reopen** — the vendor-fix clock (`fix_date`, `fix_observed_at`).
+- **monotone, never reset** — the exploit signals. `has_kev` / `has_exploit` go null → false →
+  true and never back; `epss` keeps the **peak** ever observed. Exploit knowledge does not decay,
+  and — because the gold tables are appended — a finding that silently left the high-risk
+  population would leave last week's published coverage disagreeing with this week's for reasons
+  unrelated to any remediation.
+
+### Disappearance is an inference, and it is labelled as one
+
+`resolution_src` records how each closure was learned, and `…metrics_mttr` publishes
+`resolved_api` / `resolved_disappeared` per severity. A register whose closures are
+overwhelmingly inferred is telling you something about the data source as much as about the
+security programme — which you can only notice if the split is on the table.
+
+`--disappearance` picks the date: `scan_ts` (default) is the scan that noticed the absence,
+which overstates MTTR by at most one scan interval but never records a moment nobody observed;
+`midpoint` halves that bias by inventing a timestamp between the two scans. On a daily job the
+difference is under 24 hours.
+
 ## Tables
 
-All appended, never overwritten. Every row carries `scan_id` / `scan_ts`, so repeated runs
-accumulate into a trend instead of clobbering the last one.
+Everything except the ledger is appended, never overwritten. Every row carries `scan_id` /
+`scan_ts`, so repeated runs accumulate into a trend instead of clobbering the last one. The
+ledger is the exception: it is `MERGE`d, so a vulnerability keeps one row and one history no
+matter how many times it is scanned.
 
 | Table | Grain | Contents |
 | --- | --- | --- |
-| `…wiz_os_findings_raw` | scan × finding | bronze: `node_json` as a string |
+| `…wiz_os_findings_raw` | scan × finding | bronze: `node_json` as a string, plus `seq` (API order) |
 | `…wiz_os_findings` | scan × finding | silver: typed columns, `mttr_days`, `age_days`, `risk_class` |
-| `…wiz_os_metrics_mttr` | scan × severity (+ `OVERALL`) | MTTR mean/median, open counts, open-age p50/p90, SLA target and compliance |
+| **`…wiz_os_vuln_ledger`** | **one row per `vuln_key`** | **the durable base: `first_seen`, `last_seen`, `status`, `resolved_at`, `resolution_src`, `reopened_count`, the fix clock and the exploit signals** |
+| **`…wiz_os_scans`** | **one row per run** | **the run log: `scope`, `severities`, and the new/resolved/reopened deltas** |
+| `…wiz_os_metrics_mttr` | scan × severity (+ `OVERALL`) | MTTR mean/median, open counts, open-age p50/p90, SLA target and compliance, the resolution-source split, and the `snap_*` snapshot comparison |
 | `…wiz_os_metrics_program` | scan × severity (+ `OVERALL`) | the confusion matrix, coverage and efficiency with bounds, prevalence, signal coverage |
-| `…wiz_os_metrics_capacity` | scan × month | opened, closed, backlog at month start, MMCR, net flow, verdict |
+| `…wiz_os_metrics_capacity` | scan × month | opened, closed, backlog at month start, MMCR, net flow, verdict, `reconstructed`, `closed_observed` |
+
+The gold tables are computed from the ledger. The snapshot figures are still computed and
+published beside them as `snap_km_median`, `snap_mttr_median`, `snap_resolved`, `snap_open` —
+**the gap between `km_median` and `snap_km_median` is the size of what v1 was missing.**
+
+`…metrics_capacity` gains the two columns v1 could not produce, both of which need scan history:
+
+- **`reconstructed`** — the month predates the first scan, so its opens and closes are back-dated
+  from the API's own dates rather than watched by us. Not evidence of capacity, and excluded from
+  the headline `mmcr_mean` for that reason. v1 could not draw the distinction, so a register three
+  weeks old showed two years of confident monthly throughput.
+- **`closed_observed`** — reconciliation's own resolution count, bucketed by the month of the scan
+  that found them. An independent route to `closed`, which is derived from `resolved_at`. Where
+  the two disagree, one of them is wrong, and publishing both is what lets a reader notice.
+
+### The scan log is load-bearing
+
+`…wiz_os_scans` is not bookkeeping. It records which severities each scan covered, and
+**disappearance is only safe because of it**: `--severities` defaults to `CRITICAL,HIGH`, so
+without knowing a scan's scope, every MEDIUM row in the ledger would "vanish" on the first
+scoped run and mass-resolve. Absence of something nobody looked for is not remediation. The same
+table is the idempotency guard, and its earliest row is the observation horizon that
+`reconstructed` is measured against.
 
 Fully qualified as `<catalog>.<schema>.<prefix><name>`, where the prefix defaults to
 `wiz_<scope>_`. Two reasons: these usually land in a schema shared with other teams, where a
@@ -193,6 +289,7 @@ and the parameters passed as `--name=value`:
 {
   "name": "wiz-vulnerability-metrics",
   "schedule": { "quartz_cron_expression": "0 0 6 * * ?", "timezone_id": "UTC" },
+  "max_concurrent_runs": 1,
   "git_source": {
     "git_url": "https://github.com/<org>/sidekick",
     "git_provider": "gitHub",
@@ -209,7 +306,8 @@ and the parameters passed as `--name=value`:
           "--wiz_api_url=https://api.<region>.app.wiz.io/graphql",
           "--secret_scope=wiz",
           "--severities=CRITICAL,HIGH",
-          "--scope=os"
+          "--scope=os",
+          "--scan_id={{job.run_id}}"
         ]
       },
       "new_cluster": { "spark_version": "14.3.x-scala2.12", "num_workers": 2 }
@@ -218,8 +316,21 @@ and the parameters passed as `--name=value`:
 }
 ```
 
+That cron is daily at 06:00 UTC, which is the cadence v2 is built for: the ledger advances once a
+day, so a disappearance is dated to within 24 hours of when it happened. Scan more often and the
+dating gets tighter; scan less often and `scan_ts` resolution gets coarser (or switch to
+`--disappearance=midpoint`).
+
+`--scan_id={{job.run_id}}` and `max_concurrent_runs: 1` are what make a retry safe — see
+[Retries](#retries-are-safe-if-you-pass-scan_id). Both matter more on a schedule than they do
+interactively, because nobody is watching when the retry happens.
+
 A single-node cluster is plenty — the driver does the API paging and the Spark work is a
 handful of aggregations over one scan.
+
+**On the first v2 run** the ledger and scan-log tables are created automatically, and `seq` is
+added to bronze by schema evolution. Run `--rebuild_ledger=true` once first if you have v1
+history worth keeping.
 
 ### Parameters
 
@@ -237,7 +348,47 @@ and a laptop.
 | `wiz_api_url` | — | **required**, `https://api.<region>.app.wiz.io/graphql` |
 | `wiz_auth_url` | `https://auth.app.wiz.io/oauth/token` | override for a dedicated tenant |
 | `secret_scope` | — | scope holding `wiz-client-id` / `wiz-client-secret` |
-| `severities` | `CRITICAL,HIGH` | comma-separated |
+| `severities` | `CRITICAL,HIGH` | comma-separated; also recorded per scan and used by the disappearance guard |
+| `scan_id` | a random id | pass `{{job.run_id}}` on a scheduled Job — see [Retries](#retries-are-safe-if-you-pass-scan_id) |
+| `disappearance` | `scan_ts` | `scan_ts` or `midpoint` |
+| `rebuild_ledger` | `false` | replay bronze and rebuild the ledger from scratch — see [Backfill](#backfilling-from-existing-bronze) |
+
+### Retries are safe, if you pass `scan_id`
+
+Reconciling one scan twice would advance every lifecycle a second time, so a retry must be
+recognisable as a retry. Databricks retries a failed task **within the same run**, so
+`--scan_id={{job.run_id}}` makes the second attempt arrive with the id the first one used. The
+run then finds its own row in `…wiz_os_scans` and does nothing.
+
+Without it, `scan_id` is random and a retry looks like a brand-new scan. Also set
+`"max_concurrent_runs": 1` so two runs cannot reconcile against each other.
+
+If a run dies *between* the ledger MERGE and the scan-log write, the next run detects it — the
+ledger carries the scan id, the log does not — and **refuses rather than double-counting**.
+Recover with `--rebuild_ledger`.
+
+### Backfilling from existing bronze
+
+If you have been running v1, bronze already holds months of scans. `--rebuild_ledger` truncates
+the ledger and the scan log, then replays every bronze scan oldest-first through the same
+reconciler the live path uses:
+
+```bash
+python brick/run_pipeline.py --catalog=<catalog> --rebuild_ledger=true \
+  --severities=CRITICAL,HIGH --wiz_api_url=https://api.<region>.app.wiz.io/graphql
+```
+
+Without it the ledger starts today: every finding's `first_seen` collapses to now and MTTR reads
+as roughly zero until enough history accumulates.
+
+**One caveat, and it matters.** v1 never recorded which severities a scan asked for, so replayed
+scans are assumed to have used the `--severities` you pass. If your history was collected under a
+different scope, pass *that* scope — otherwise the replay will resolve-by-disappearance severities
+the original scans never covered, and invent remediation that never happened. Scans written by v2
+carry their own scope and are unaffected.
+
+The rebuild is idempotent, and `brick/tests/test_ledger_pipeline.py` pins the invariant that
+matters: replaying bronze lands exactly where running those scans live landed.
 
 ### 4. Read the results
 
@@ -320,6 +471,12 @@ They spin up a local `SparkSession`; the module skips cleanly if pyspark isn't i
 root `pyproject.toml` deliberately does **not** collect `brick/tests` — the main suite must not
 start depending on Spark.
 
+`delta-spark` is needed for the ledger tests; without it they skip and the pure-transform tests
+still run. All the tests share one `SparkSession` from `tests/conftest.py`, because Delta's SQL
+extensions can only be installed when a session is built and `getOrCreate()` returns whatever
+already exists — leaving each module to make its own meant the first module alphabetically
+decided whether the suite could use Delta.
+
 The oracles are ported, not invented:
 
 - the confusion-matrix block is the hand-counted 12-lifecycle register from
@@ -327,8 +484,19 @@ The oracles are ported, not invented:
   coverage 60%, efficiency 50%);
 - the MTTR block is the `resolved_sample` case from `tests/test_metrics.py` (7.0 days median,
   100% in SLA against a 14-day HIGH target);
+- **the lifecycle rules replay `gas/test/fixtures/reconcile.json`** — the golden fixture the
+  TypeScript reconciler is tested against — scenario by scenario, comparing the resulting ledger
+  and deltas field by field. Nothing about that fixture was written to suit this implementation,
+  which is what makes it worth having;
+- `vuln_key` is cross-checked against `wiz_dashboard.domain.lifecycle.vuln_key` over the
+  committed Wiz response, so the surfaces provably agree on identity;
 - one test replays the committed `os_vulns_response_exemple.json` end to end, so the real Wiz
   response shape is covered without a network call.
+
+The rules that would be silently wrong rather than loudly broken were mutation-tested: removing
+the disappearance previous-scan guard, the severity-scope guard, the monotone risk merge, the
+peak-EPSS rule, the fix-clock reset on reopen, and `first_seen`'s earliest-wins each fail the
+suite.
 
 ## Dashboard
 
@@ -429,14 +597,30 @@ coverage is indistinguishable from "no high-risk findings" to a reader.
 way pandas' `.median()` / `.quantile(0.9)` do. `percentile_approx` would quietly disagree with
 the dashboard.
 
-## What v1 does not do
+## What v2 does not do
 
-- **No cross-scan lifecycle tracking.** Metrics come from one snapshot's `firstDetectedAt` /
-  `resolvedAt`, exactly like `metrics.calculate_mttr`. So a vulnerability remediated by simply
-  *disappearing* between scans is never counted as resolved, and MTTR is understated wherever
-  Wiz doesn't set `resolvedAt`. This is what `wiz_dashboard/domain/lifecycle.py` and the ledger
-  exist to fix; a Delta `MERGE` on a `vuln_key` is the natural v2.
-- The capacity table has no `reconstructed` flag and no per-scan `resolved_count` cross-check —
-  both need scan history the snapshot path doesn't keep.
-- No actionable clock (`fix_available_at` / `mttr_actionable_days`), no domain triage, no
-  Kaplan–Meier survival curves, no rule-sensitivity sweep. All of those exist on the GAS side.
+The three things v1 was missing — cross-scan lifecycle tracking, the capacity `reconstructed`
+flag, and the per-scan `resolved_count` cross-check — are done. What is still outstanding, all
+of it available on the GAS side:
+
+- **No actionable clock.** The SLA clock should arguably start when a vendor fix becomes
+  available, not at detection (`gas/src/domain/ledgerCore.ts::baseRows` computes
+  `fix_available_at`, `mttr_actionable_days`, `awaiting_vendor_fix`). The *inputs* are already
+  captured — `fix_date` and `fix_observed_at` are on every ledger row — because they cannot be
+  recovered afterwards: once a finding disappears from the API, a fix signal nobody wrote down
+  is gone for good. Nothing reads them yet; the derivations are the remaining work.
+- **No domain triage.** `gas/src/domain/domainRules.ts` assigns findings to owning teams from
+  subscription and tag inputs. `subscription_name` / `subscription_ext_id` are on the ledger;
+  **asset tags are not, because `ingest.py` does not select them** — adding that is an ingest
+  change (a new field on every `vulnerableAsset` inline fragment), not a ledger one.
+- **No retention or compaction.** The ledger grows monotonically. The Streamlit side seals old
+  scans into `resolved_episodes` (`wiz_dashboard/data/ledger.py::compact_ledger`); on Delta the
+  equivalent levers are `OPTIMIZE` and `VACUUM`, plus bronze retention. Nothing here does either
+  yet, and a large register will eventually want it.
+- **No Kaplan–Meier survival curves** (the point estimate is here, the curve is not) and **no
+  rule-sensitivity sweep**.
+
+Two ledger fields also stay deliberately simple relative to GAS: there is no `tags_json`
+(see above), and no `resolved_episodes` table, so a `vuln_key` has exactly one lifecycle row and
+a reopen overwrites the previous episode's dates rather than archiving them. `reopened_count`
+records that it happened; the earlier episode's `resolved_at` is not kept.

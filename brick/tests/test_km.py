@@ -17,26 +17,11 @@ import pytest
 
 pytest.importorskip("pyspark")
 
-from pyspark.sql import SparkSession  # noqa: E402
 
 BRICK_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BRICK_DIR))
 
 import metrics  # noqa: E402
-
-
-@pytest.fixture(scope="session")
-def spark():
-    session = (
-        SparkSession.builder.master("local[1]")
-        .appName("brick-km-tests")
-        .config("spark.sql.session.timeZone", "UTC")
-        .config("spark.ui.enabled", "false")
-        .config("spark.sql.shuffle.partitions", "1")
-        .getOrCreate()
-    )
-    yield session
-    session.stop()
 
 
 SCHEMA = "severity STRING, mttr_days DOUBLE, age_days DOUBLE, resolved_at TIMESTAMP"

@@ -3,9 +3,12 @@
 No I/O, no ``dbutils``, no ``SparkSession`` construction -- everything here is testable against
 a local session, which is the point.
 
-Four families, ported from the two existing implementations rather than reinvented:
+Four families, ported from the existing implementations rather than reinvented. ``gas/`` is the
+most complete surface and the standard; where it and the older ``wiz_dashboard/domain/`` port
+disagree, GAS wins.
 
-  MTTR / SLA   ``wiz_dashboard/domain/metrics.py::_summarize``
+  MTTR / SLA   ``gas/src/domain/metrics.ts::summarize``
+               (= ``wiz_dashboard/domain/metrics.py::_summarize``)
   Coverage     Completeness / recall. Of all HIGH-RISK vulnerabilities, what share did we
                remediate?  TP / (TP + FN).
   Efficiency   Precision. Of everything we remediated, what share was actually high-risk?
@@ -32,7 +35,7 @@ from __future__ import annotations
 
 import functools
 import operator
-from typing import List
+from typing import List, Optional
 
 from pyspark.sql import Column, DataFrame, Window
 from pyspark.sql import functions as F
@@ -47,6 +50,8 @@ from pyspark.sql.types import (
 from config import (
     NET_CAPACITY_BAND_PCT,
     OVERALL,
+    RESOLUTION_API,
+    RESOLUTION_DISAPPEARED,
     RESOLVED_STATUSES,
     RiskRule,
     SEVERITY_ORDER,
@@ -153,7 +158,11 @@ def silver_findings(bronze: DataFrame) -> DataFrame:
     ``scope`` rides along so a row still says which population it came from after a UNION.
     """
     node = F.from_json(F.col("node_json"), NODE_SCHEMA).alias("node")
-    parsed = bronze.select("scan_id", "scan_ts", "scope", node)
+    # `seq` records the order the API returned each finding in, so a duplicate within one scan
+    # can be resolved first-wins the way reconcile.ts does it. Bronze written by v1 has no such
+    # column; NULL then means "order unknown" and ledger.observed falls back accordingly.
+    seq = F.col("seq") if "seq" in bronze.columns else F.lit(None).cast("long")
+    parsed = bronze.select("scan_id", "scan_ts", "scope", seq.alias("seq"), node)
 
     first_detected = F.col("node.firstDetectedAt").cast("timestamp")
     resolved = F.col("node.resolvedAt").cast("timestamp")
@@ -162,6 +171,7 @@ def silver_findings(bronze: DataFrame) -> DataFrame:
         F.col("scan_id"),
         F.col("scan_ts"),
         F.col("scope"),
+        F.col("seq"),
         F.col("node.id").alias("finding_id"),
         F.col("node.name").alias("cve"),
         F.col("node.detailedName").alias("component"),
@@ -178,6 +188,7 @@ def silver_findings(bronze: DataFrame) -> DataFrame:
         F.col("node.vulnerableAsset.type").alias("asset_type"),
         F.col("node.vulnerableAsset.cloudPlatform").alias("cloud"),
         F.col("node.vulnerableAsset.subscriptionName").alias("subscription_name"),
+        F.col("node.vulnerableAsset.subscriptionExternalId").alias("subscription_ext_id"),
         # Nullable on purpose -- see the module header. NULL means never captured.
         F.col("node.hasCisaKevExploit").alias("has_kev"),
         F.col("node.hasExploit").alias("has_exploit"),
@@ -387,6 +398,32 @@ def mttr_by_severity(df: DataFrame) -> DataFrame:
     return combined.join(kaplan_meier(df), "severity", "left")
 
 
+def resolution_sources(df: DataFrame) -> DataFrame:
+    """How each severity's resolutions were learned, per severity plus OVERALL.
+
+    Needs ``resolution_src``, so it only means anything over a ledger frame -- a snapshot has no
+    idea how it came to know a finding was closed.
+
+    This is the audit trail for the inference v2 rests on. ``disappeared`` resolutions were never
+    stated by Wiz; we concluded them from a finding no longer being returned. That is the right
+    call -- the alternative is v1, which counted them as open forever -- but it is still a
+    conclusion, and a register whose closures are overwhelmingly inferred is telling you
+    something about the data source rather than about the security programme. Publishing the
+    split is what lets a reader notice.
+    """
+    counts = [
+        F.sum(F.when(F.col("resolution_src") == RESOLUTION_API, 1).otherwise(0))
+        .cast("long")
+        .alias("resolved_api"),
+        F.sum(F.when(F.col("resolution_src") == RESOLUTION_DISAPPEARED, 1).otherwise(0))
+        .cast("long")
+        .alias("resolved_disappeared"),
+    ]
+    per_sev = df.groupBy("severity").agg(*counts)
+    overall = df.groupBy(F.lit(OVERALL).alias("severity")).agg(*counts)
+    return per_sev.unionByName(overall)
+
+
 # ------------------------------------------------- risk classification + confusion matrix
 
 
@@ -555,7 +592,12 @@ def signal_breakdown(df: DataFrame, rule: RiskRule) -> DataFrame:
 
 
 def capacity_by_month(
-    df: DataFrame, now_ts: str, *, high_risk_only: bool = False
+    df: DataFrame,
+    now_ts: str,
+    *,
+    high_risk_only: bool = False,
+    observed_from=None,
+    closed_observed: Optional[DataFrame] = None,
 ) -> DataFrame:
     """Monthly remediation capacity: how much of the backlog closes per month, and whether
     closures keep up with arrivals.
@@ -567,6 +609,19 @@ def capacity_by_month(
 
     ``high_risk_only`` restricts to high-risk lifecycles, the population P2P v3 defines net
     remediation capacity over. It needs ``risk_class``, so run ``classify_risk`` first.
+
+    ``observed_from`` is the timestamp of the earliest scan on record. Months before it are
+    marked ``reconstructed``: their opens and closes are back-dated from the API's own
+    ``firstDetectedAt`` / ``resolvedAt``, not watched by us. That distinction is the difference
+    between measured capacity and inferred capacity, and v1 could not draw it -- so a register
+    three weeks old showed two years of confident monthly throughput. Pass ``None`` and every
+    month reads as observed, which is only honest before any scan has been logged.
+
+    ``closed_observed`` is an optional ``(month, closed_observed)`` frame counting the
+    resolutions reconciliation itself recorded, bucketed by the month of the scan that found
+    them. It is the independent cross-check on ``closed``, which is derived from ``resolved_at``
+    instead. The two should broadly track each other; where they do not, one of them is wrong,
+    and the only way a reader can notice is if both are on the table.
     """
     rows = df.filter(F.col("first_detected_at").isNotNull())
     if high_risk_only:
@@ -623,9 +678,38 @@ def capacity_by_month(
     )
     months = months.withColumn("verdict", _verdict(F.col("net_pct")))
 
+    # Months that predate the first scan were never watched -- their activity is reconstructed
+    # from the API's dates. Flagged, not dropped: the backlog they describe is real and
+    # open_at_start depends on them, but "we closed 40 in March" is not evidence of capacity
+    # when nobody was looking in March.
+    if observed_from is None:
+        months = months.withColumn("reconstructed", F.lit(False))
+    else:
+        first_observed_month = F.date_trunc("month", F.lit(observed_from).cast("timestamp"))
+        months = months.withColumn("reconstructed", F.col("month") < first_observed_month)
+
+    if closed_observed is None:
+        months = months.withColumn("closed_observed", F.lit(None).cast("long"))
+    else:
+        months = months.join(
+            closed_observed.select(
+                F.col("month"), F.col("closed_observed").cast("long").alias("closed_observed")
+            ),
+            "month",
+            "left",
+        )
+
     # Scan-grain summary attached to every month row, so one table answers both "how did July
     # go" and "are we gaining ground overall" without a second read.
-    counted = months.filter(~F.col("partial") & F.col("mmcr").isNotNull())
+    #
+    # Reconstructed months are excluded alongside partial ones, and for the same reason: the
+    # headline "we close about 1 in N" is a claim about throughput we measured. On a register
+    # whose history was rebuilt from bronze this can leave few months standing, or none --
+    # which is why `months_counted` is published beside it. A small honest sample beats a large
+    # confident one built out of months nobody watched.
+    counted = months.filter(
+        ~F.col("partial") & ~F.col("reconstructed") & F.col("mmcr").isNotNull()
+    )
     summary = counted.agg(
         F.avg("mmcr").alias("mmcr_mean"),
         F.avg("net_pct").alias("mean_net_pct"),

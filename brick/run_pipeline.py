@@ -11,17 +11,28 @@ These are plain top-level modules, not a package: the directory holding them goe
 ``sys.path`` and they import each other by bare name. That keeps the Databricks side a flat
 folder of files with no ``__init__.py`` and no nesting to reproduce by hand.
 
-Tables written (all appended, never overwritten -- each run adds a ``scan_id`` so the gold
-tables accumulate into a trend). ``<p>`` is the table prefix, ``wiz_<scope>_`` by default:
+Tables written. ``<p>`` is the table prefix, ``wiz_<scope>_`` by default:
 
-    <catalog>.<schema>.<p>findings_raw       bronze   scan_id, scan_ts, scope, node_json
+    <catalog>.<schema>.<p>findings_raw       bronze   scan_id, scan_ts, scope, seq, node_json
     <catalog>.<schema>.<p>findings           silver   typed findings + mttr_days / age_days
+    <catalog>.<schema>.<p>vuln_ledger        base     one row per vuln_key -- MERGEd, not appended
+    <catalog>.<schema>.<p>scans              log      one row per run: scope, severities, deltas
     <catalog>.<schema>.<p>metrics_mttr       gold     scan_id x severity (+ OVERALL)
     <catalog>.<schema>.<p>metrics_program    gold     scan_id x severity (+ OVERALL)
     <catalog>.<schema>.<p>metrics_capacity   gold     scan_id x month
 
+Bronze, silver and the three gold tables are appended -- each run adds a ``scan_id``, so they
+accumulate into a trend. The ledger is the exception and the point of v2: it is MERGEd, so a
+vulnerability keeps one row and one history no matter how many times it is scanned.
+
 Bronze keeps the finding as a JSON string: a Wiz schema change can then never fail ingest,
 and silver is just the typed projection of whatever arrived.
+
+**Where the gold numbers come from.** v1 computed them from one snapshot, which meant a finding
+remediated by disappearing from the API was never counted as resolved at all. They now come from
+the ledger's observed lifecycles instead (``ledger.lifecycle_frame``). The snapshot figures are
+still computed and published beside them as ``snap_*`` columns -- the gap between ``km_median``
+and ``snap_km_median`` is the size of what v1 was missing.
 """
 
 from __future__ import annotations
@@ -39,21 +50,32 @@ from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 
 import dbx
+import ledger as ledger_mod
 import metrics
 from config import (
     DEFAULT_FETCH_SEVERITIES,
     DEFAULT_RISK_RULE,
     DEFAULT_SCOPE,
+    DISAPPEARANCE_MODES,
+    DISAPPEARANCE_RESOLUTION,
+    SCANS_COLUMNS,
     SCOPES,
+    SEVERITY_ORDER,
     RiskRule,
 )
 from ingest import DEFAULT_AUTH_URL, fetch_findings, get_token, secret
 
 BRONZE_TABLE = "findings_raw"
 SILVER_TABLE = "findings"
+LEDGER_TABLE = "vuln_ledger"
+SCANS_TABLE = "scans"
 GOLD_MTTR = "metrics_mttr"
 GOLD_PROGRAM = "metrics_program"
 GOLD_CAPACITY = "metrics_capacity"
+
+# The append-only tables, i.e. everything except the ledger. A retry writes a scan_id that a
+# failed attempt may already have partly written, so these are cleared for that scan_id first.
+APPEND_TABLES = (BRONZE_TABLE, SILVER_TABLE, GOLD_MTTR, GOLD_PROGRAM, GOLD_CAPACITY)
 
 # These tables usually land in a schema shared with other teams, where bare names like
 # `findings` and `metrics_capacity` are an obvious collision risk. The default prefix also
@@ -71,10 +93,12 @@ PREFIX = re.compile(r"^[A-Za-z0-9_]*$")
 
 @dataclass(frozen=True)
 class Tables:
-    """The five fully-qualified table names one run writes to."""
+    """The seven fully-qualified table names one run writes to."""
 
     bronze: str
     silver: str
+    ledger: str
+    scans: str
     mttr: str
     program: str
     capacity: str
@@ -113,10 +137,203 @@ def get_spark() -> SparkSession:
     return spark
 
 
+# --------------------------------------------------------------- the scan log + the ledger
+
+
+def serialize_severities(severities) -> Optional[str]:
+    """The severity scope of a scan, as stored on the ``scans`` row.
+
+    ``None`` means unscoped -- the run asked Wiz for every severity, so absence of any severity
+    is meaningful. That is exactly the distinction ``reconcile``'s scope guard needs, and
+    getting it backwards would either freeze every lifecycle or mass-resolve the register.
+    """
+    values = sorted({s.strip().upper() for s in (severities or []) if s and s.strip()})
+    return ",".join(values) if values else None
+
+
+def parse_severities(text) -> Optional[list]:
+    """Inverse of ``serialize_severities``: an ordered list, or ``None`` for unscoped."""
+    if not text or not str(text).strip():
+        return None
+    chosen = {s.strip().upper() for s in str(text).split(",") if s.strip()}
+    return [s for s in SEVERITY_ORDER if s in chosen] or None
+
+
+def ensure_tables(spark: SparkSession, tables: Tables) -> None:
+    """Create the ledger and scan-log tables when they are missing.
+
+    Created from the schema rather than by a first append, because the ledger has to be a Delta
+    table before anything can MERGE into it, and because an empty ledger with the right columns
+    is what makes the very first run's reconcile a normal case rather than a special one.
+    """
+    if not spark.catalog.tableExists(tables.ledger):
+        ledger_mod.empty_ledger(spark).write.format("delta").saveAsTable(tables.ledger)
+    if not spark.catalog.tableExists(tables.scans):
+        spark.createDataFrame([], SCANS_SCHEMA).write.format("delta").saveAsTable(tables.scans)
+
+
+SCANS_SCHEMA = (
+    "scan_id STRING, scan_ts TIMESTAMP, scope STRING, severities STRING, total LONG, "
+    "new_count LONG, resolved_count LONG, reopened_count LONG"
+)
+
+
+def recorded_scan(spark: SparkSession, tables: Tables, scan_id: str) -> Optional[dict]:
+    """The stored deltas if this exact scan is already logged, else ``None``.
+
+    The idempotency guard. A Databricks job retries a failed task in the same run, so passing
+    ``--scan_id={{job.run_id}}`` means a retry arrives with the id its predecessor used -- and
+    reconciling the same scan twice would advance every lifecycle a second time.
+    """
+    rows = spark.table(tables.scans).filter(F.col("scan_id") == scan_id).limit(1).collect()
+    return rows[0].asDict() if rows else None
+
+
+def ledger_already_merged(spark: SparkSession, tables: Tables, scan_id: str) -> bool:
+    """Whether the ledger already carries this scan's effect.
+
+    Torn-write detection. The MERGE and the ``scans`` row are two commits, so a run can die
+    between them and leave the ledger advanced with nothing recording that it happened. A retry
+    would then reconcile the same findings against a ledger that has already moved: every
+    finding would look unchanged, and every finding absent from the retry would be resolved a
+    second time. Asking the ledger directly is cheap and unambiguous.
+    """
+    return (
+        spark.table(tables.ledger)
+        .filter((F.col("last_scan_id") == scan_id) | (F.col("first_scan_id") == scan_id))
+        .limit(1)
+        .count()
+        > 0
+    )
+
+
+def previous_scan(spark: SparkSession, tables: Tables) -> Optional[tuple]:
+    """``(scan_id, scan_ts)`` of the most recent logged scan, or ``None`` for a fresh register."""
+    rows = (
+        spark.table(tables.scans)
+        .orderBy(F.col("scan_ts").desc(), F.col("scan_id").desc())
+        .limit(1)
+        .collect()
+    )
+    return (rows[0]["scan_id"], rows[0]["scan_ts"]) if rows else None
+
+
+def prev_scan_id_by_severity(spark: SparkSession, tables: Tables) -> dict:
+    """``{severity: scan_id}`` of the most recent prior scan whose scope covered each severity.
+
+    Port of ``gas/src/domain/ledgerCore.ts::prevScanIdBySeverity``. Feeds ``reconcile``'s
+    disappearance guard so a finding that vanished while its severity went unscanned still
+    resolves on the first scan that covers it again, instead of being stranded open forever.
+    """
+    remaining = set(SEVERITY_ORDER)
+    mapping = {}
+    rows = (
+        spark.table(tables.scans)
+        .select("scan_id", "severities")
+        .orderBy(F.col("scan_ts").desc(), F.col("scan_id").desc())
+        .collect()
+    )
+    for row in rows:
+        scope = parse_severities(row["severities"])
+        covered = set(remaining) if scope is None else remaining & set(scope)
+        for sev in covered:
+            mapping[sev] = row["scan_id"]
+        remaining -= covered
+        if not remaining:
+            break
+    return mapping
+
+
+def merge_ledger(spark: SparkSession, tables: Tables, touched) -> dict:
+    """MERGE this scan's touched rows into the durable ledger. Returns the scan deltas.
+
+    ``touched`` is a query over the ledger table itself, so it is checkpointed first. That
+    truncates the lineage, which means the MERGE's source is a materialized set of rows rather
+    than a plan that would re-read the table it is writing to -- the one arrangement Delta
+    cannot be asked to reason about. Checkpointing also stops the reconcile join being computed
+    twice, once for the deltas and once for the write.
+    """
+    materialized = touched.localCheckpoint(eager=True)
+    row = materialized.agg(
+        F.sum(F.col("is_new").cast("int")).alias("new_count"),
+        F.sum(F.col("is_resolved_now").cast("int")).alias("resolved_count"),
+        F.sum(F.col("is_reopened").cast("int")).alias("reopened_count"),
+    ).collect()[0]
+    deltas = {k: int(row[k] or 0) for k in ("new_count", "resolved_count", "reopened_count")}
+
+    source = materialized.drop(*ledger_mod.CHANGE_COLUMNS)
+    view = "brick_ledger_updates"
+    source.createOrReplaceTempView(view)
+    spark.sql(
+        f"""
+        MERGE INTO {tables.ledger} AS target
+        USING {view} AS source
+          ON target.vuln_key = source.vuln_key
+        WHEN MATCHED THEN UPDATE SET *
+        WHEN NOT MATCHED THEN INSERT *
+        """
+    )
+    spark.catalog.dropTempView(view)
+    return deltas
+
+
+def record_scan(
+    spark: SparkSession, tables: Tables, *, scan_id, scan_ts, scope, severities, total, deltas
+) -> None:
+    """Append the run log row. Written immediately after the MERGE, so the window in which a
+    crash can leave the two disagreeing is one statement wide -- and ``ledger_already_merged``
+    closes even that."""
+    row = [
+        (
+            scan_id,
+            scan_ts,
+            scope,
+            serialize_severities(severities),
+            int(total),
+            int(deltas["new_count"]),
+            int(deltas["resolved_count"]),
+            int(deltas["reopened_count"]),
+        )
+    ]
+    df = spark.createDataFrame(row, SCANS_SCHEMA.replace("scan_ts TIMESTAMP", "scan_ts STRING"))
+    df.withColumn("scan_ts", F.col("scan_ts").cast("timestamp")).select(
+        *SCANS_COLUMNS
+    ).write.format("delta").mode("append").saveAsTable(tables.scans)
+
+
+def clear_scan(spark: SparkSession, tables: Tables, scan_id: str) -> None:
+    """Delete a scan's rows from the append-only tables.
+
+    Only ever called on the retry path, where a previous attempt may have written some of them
+    before failing. The ledger is deliberately not touched here: it is keyed by ``vuln_key``, so
+    there is nothing scan-shaped to delete, and its correctness comes from
+    ``ledger_already_merged`` instead.
+    """
+    for name in APPEND_TABLES:
+        table = getattr(
+            tables,
+            {
+                BRONZE_TABLE: "bronze",
+                SILVER_TABLE: "silver",
+                GOLD_MTTR: "mttr",
+                GOLD_PROGRAM: "program",
+                GOLD_CAPACITY: "capacity",
+            }[name],
+        )
+        if spark.catalog.tableExists(table):
+            spark.sql(f"DELETE FROM {table} WHERE scan_id = '{scan_id}'")
+
+
 def ingest_to_bronze(
-    spark: SparkSession, table: str, scan_id: str, scan_ts: str, scope: str
+    spark: SparkSession, table: str, scan_id: str, scan_ts: str, scope: str, severities=None
 ) -> int:
-    """Fetch every finding and append it to bronze. Returns the row count."""
+    """Fetch every finding and append it to bronze. Returns the row count.
+
+    ``severities`` comes from the caller rather than being re-read here, so the population this
+    scan fetched and the scope recorded on its ``scans`` row are guaranteed to be the same list.
+    If they could drift, the disappearance guard would be reasoning about a scan that never
+    happened.
+    """
     api_url = param("wiz_api_url")
     if not api_url:
         raise RuntimeError("wiz_api_url is required, e.g. https://api.<region>.app.wiz.io/graphql")
@@ -124,8 +341,7 @@ def ingest_to_bronze(
     # already the vulnerability population. Sharing the name silently overwrote the population
     # with the secret-scope string.
     secret_scope = param("secret_scope") or None
-    requested = param("severities") or ",".join(DEFAULT_FETCH_SEVERITIES)
-    severities = [s for s in requested.split(",") if s.strip()]
+    severities = list(severities) if severities else list(DEFAULT_FETCH_SEVERITIES)
 
     token = get_token(
         secret(secret_scope, "wiz-client-id", "WIZ_CLIENT_ID"),
@@ -133,14 +349,19 @@ def ingest_to_bronze(
         auth_url=param("wiz_auth_url") or DEFAULT_AUTH_URL,
     )
 
+    # `seq` is the order the API returned each finding in. Recorded rather than recomputed so
+    # that first-wins deduplication of a repeated finding stays reproducible -- including years
+    # later, when --rebuild_ledger replays these same rows. See ledger.observed.
     rows = [
-        (scan_id, scan_ts, scope, json.dumps(node))
-        for node in fetch_findings(
-            api_url,
-            token,
-            scope=scope,
-            severities=severities,
-            project_id=param("project_id") or None,
+        (scan_id, scan_ts, scope, index, json.dumps(node))
+        for index, node in enumerate(
+            fetch_findings(
+                api_url,
+                token,
+                scope=scope,
+                severities=severities,
+                project_id=param("project_id") or None,
+            )
         )
     ]
     if not rows:
@@ -148,12 +369,93 @@ def ingest_to_bronze(
         return 0
 
     bronze = spark.createDataFrame(
-        rows, "scan_id STRING, scan_ts STRING, scope STRING, node_json STRING"
+        rows, "scan_id STRING, scan_ts STRING, scope STRING, seq LONG, node_json STRING"
     )
-    bronze.withColumn("scan_ts", bronze["scan_ts"].cast("timestamp")).write.mode(
+    # mergeSchema because `seq` is new in v2: a bronze table written by v1 does not have the
+    # column, and the first v2 run has to be able to add it rather than fail on arrival.
+    bronze.withColumn("scan_ts", bronze["scan_ts"].cast("timestamp")).write.format("delta").mode(
         "append"
-    ).saveAsTable(table)
+    ).option("mergeSchema", "true").saveAsTable(table)
     return len(rows)
+
+
+def reconcile_scan(
+    spark: SparkSession,
+    tables: Tables,
+    silver,
+    *,
+    scan_id: str,
+    scan_ts: str,
+    scope: str,
+    severities,
+    disappearance: str,
+) -> dict:
+    """Advance the ledger by one scan and log the run. Returns the deltas.
+
+    Everything scan-specific is resolved here and handed to the pure reconciler: which scan came
+    before, which severities each of them covered, and how a disappearance should be dated.
+    """
+    prev = previous_scan(spark, tables)
+    prev_scan_id = prev[0] if prev else None
+    prev_scan_ts = prev[1].strftime("%Y-%m-%dT%H:%M:%SZ") if prev and prev[1] else None
+
+    touched = ledger_mod.reconcile(
+        spark.table(tables.ledger),
+        ledger_mod.observed(silver),
+        scan_id=scan_id,
+        scan_ts=scan_ts,
+        scope=scope,
+        prev_scan_id=prev_scan_id,
+        prev_scan_ts=prev_scan_ts,
+        prev_scan_id_by_severity=prev_scan_id_by_severity(spark, tables) if prev else None,
+        scanned_severities=severities,
+        disappearance=disappearance,
+    )
+    deltas = merge_ledger(spark, tables, touched)
+    record_scan(
+        spark, tables, scan_id=scan_id, scan_ts=scan_ts, scope=scope, severities=severities,
+        total=silver.count(), deltas=deltas,
+    )
+    return deltas
+
+
+def observation_start(spark: SparkSession, tables: Tables):
+    """The timestamp of the earliest logged scan, or ``None`` before any has run.
+
+    This is the boundary between months we watched and months we merely inferred from the API's
+    own dates, which is what ``capacity_by_month`` needs to flag reconstructed months honestly.
+    """
+    rows = spark.table(tables.scans).agg(F.min("scan_ts").alias("first")).collect()
+    return rows[0]["first"] if rows and rows[0]["first"] else None
+
+
+def closed_observed(spark: SparkSession, tables: Tables):
+    """Reconciliation's own resolution count per calendar month of scan.
+
+    The cross-check for capacity's ``closed``, which is derived from ``resolved_at`` instead.
+    The two answer the same question by different routes, so a divergence is a real signal --
+    and publishing both is the only way a reader can notice one.
+    """
+    return (
+        spark.table(tables.scans)
+        .groupBy(F.date_trunc("month", F.col("scan_ts")).alias("month"))
+        .agg(F.sum("resolved_count").cast("long").alias("closed_observed"))
+    )
+
+
+def write_append(df, table: str) -> None:
+    """Append a frame to one of the scan-stamped tables.
+
+    Always Delta, explicitly: the pipeline needs MERGE and DELETE, so relying on the session's
+    default format would work on Databricks and quietly produce Parquet anywhere else.
+    mergeSchema because v2 adds columns to tables a v1 run already created.
+    """
+    df.write.format("delta").mode("append").option("mergeSchema", "true").saveAsTable(table)
+
+
+# The snapshot-sourced columns republished beside the ledger-sourced ones. Kept deliberately
+# short: enough to see how far v1 was off, not a second copy of the whole table.
+SNAPSHOT_COLUMNS = ["km_median", "mttr_median", "resolved", "open"]
 
 
 def build_metrics(
@@ -163,34 +465,73 @@ def build_metrics(
     scan_ts: str,
     scope: str,
     rule: RiskRule = DEFAULT_RISK_RULE,
+    *,
+    severities=None,
+    disappearance: str = DISAPPEARANCE_RESOLUTION,
 ) -> None:
-    """Silver + the three gold tables for one scan."""
+    """Silver, the ledger, and the three gold tables for one scan."""
     bronze = spark.table(tables.bronze).filter(f"scan_id = '{scan_id}'")
 
     silver = metrics.classify_risk(metrics.silver_findings(bronze), rule).cache()
-    silver.write.mode("append").saveAsTable(tables.silver)
+    write_append(silver, tables.silver)
+
+    deltas = reconcile_scan(
+        spark, tables, silver, scan_id=scan_id, scan_ts=scan_ts, scope=scope,
+        severities=severities, disappearance=disappearance,
+    )
+
+    # Gold comes from the ledger, not from the snapshot. This is the whole of v2 in one line:
+    # every finding the register has ever seen, with the dates we actually observed, including
+    # the ones the API has long since stopped returning.
+    lifecycles = metrics.classify_risk(
+        ledger_mod.lifecycle_frame(spark.table(tables.ledger), scan_ts), rule
+    ).cache()
 
     mttr = metrics.with_scan_columns(
-        metrics.mttr_by_severity(silver), scan_id, scan_ts, scope
+        with_snapshot_columns(
+            metrics.mttr_by_severity(lifecycles), metrics.mttr_by_severity(silver)
+        ),
+        scan_id, scan_ts, scope,
     )
-    mttr.write.mode("append").saveAsTable(tables.mttr)
+    mttr = mttr.join(metrics.resolution_sources(lifecycles), "severity", "left")
+    write_append(mttr, tables.mttr)
 
     program = metrics.with_scan_columns(
-        metrics.confusion_matrix(silver), scan_id, scan_ts, scope
+        metrics.confusion_matrix(lifecycles), scan_id, scan_ts, scope
     )
     program = program.withColumn("risk_rule", F.lit(rule.sentence()))
-    program.write.mode("append").saveAsTable(tables.program)
+    write_append(program, tables.program)
 
     capacity = metrics.with_scan_columns(
-        metrics.capacity_by_month(silver, scan_ts), scan_id, scan_ts, scope
+        metrics.capacity_by_month(
+            lifecycles,
+            scan_ts,
+            observed_from=observation_start(spark, tables),
+            closed_observed=closed_observed(spark, tables),
+        ),
+        scan_id, scan_ts, scope,
     )
-    capacity.write.mode("append").saveAsTable(tables.capacity)
+    write_append(capacity, tables.capacity)
 
-    summarize(scan_id, scope, rule, mttr, program, capacity)
+    summarize(scan_id, scope, rule, deltas, mttr, program, capacity)
     silver.unpersist()
+    lifecycles.unpersist()
 
 
-def summarize(scan_id, scope, rule, mttr, program, capacity) -> None:
+def with_snapshot_columns(ledger_mttr, snapshot_mttr):
+    """Attach the snapshot figures to the ledger ones as ``snap_*``.
+
+    Both frames are computed the same way by the same code; only the lifecycles underneath them
+    differ. That is what makes the comparison meaningful -- and what makes it worth publishing,
+    because the gap IS the survivorship the snapshot path could not see.
+    """
+    snap = snapshot_mttr.select(
+        "severity", *[F.col(c).alias(f"snap_{c}") for c in SNAPSHOT_COLUMNS]
+    )
+    return ledger_mttr.join(snap, "severity", "left")
+
+
+def summarize(scan_id, scope, rule, deltas, mttr, program, capacity) -> None:
     """Print all three metric families.
 
     Previously only the program frame was shown, so MTTR and capacity were computed, written
@@ -198,15 +539,26 @@ def summarize(scan_id, scope, rule, mttr, program, capacity) -> None:
     at all. If a number is worth a table, it is worth a line of output.
     """
     print(f"[{scan_id}] scope: {scope} | risk rule: {rule.sentence()}")
+    print(
+        f"[{scan_id}] lifecycle: {deltas['new_count']} new, "
+        f"{deltas['resolved_count']} resolved, {deltas['reopened_count']} reopened"
+    )
 
     # km_median leads. mttr_median is the closed-only figure kept beside it: the gap between
     # the two is the survivorship bias, and seeing them together is the argument for KM.
+    # snap_km_median is the same estimator over the snapshot lifecycles v1 used -- the gap
+    # against km_median is what cross-scan tracking added.
     print("\nMTTR and SLA by severity (km_median counts still-open findings as censored)")
     metrics.order_by_severity(
         mttr.select(
             "severity", "resolved", "open", "km_median", "km_median_lower_bound", "km_rmst",
-            "mttr_median", "sla_target", "sla_pct",
+            "mttr_median", "sla_target", "sla_pct", "snap_km_median",
         )
+    ).show(truncate=False)
+
+    print("How resolutions were learned (disappeared = inferred from absence)")
+    metrics.order_by_severity(
+        mttr.select("severity", "resolved", "resolved_api", "resolved_disappeared")
     ).show(truncate=False)
 
     print("Remediation coverage and efficiency")
@@ -218,7 +570,8 @@ def summarize(scan_id, scope, rule, mttr, program, capacity) -> None:
 
     print("Capacity — most recent months")
     capacity.select(
-        "month", "open_at_start", "opened", "closed", "mmcr", "verdict", "partial"
+        "month", "open_at_start", "opened", "closed", "closed_observed", "mmcr", "verdict",
+        "partial", "reconstructed",
     ).orderBy(F.col("month").desc()).show(6, truncate=False)
 
 
@@ -264,10 +617,91 @@ def resolve_tables(namespace: str, scope: str, argv: Optional[list] = None) -> T
     return Tables(
         bronze=qualify(BRONZE_TABLE),
         silver=qualify(SILVER_TABLE),
+        ledger=qualify(LEDGER_TABLE),
+        scans=qualify(SCANS_TABLE),
         mttr=qualify(GOLD_MTTR),
         program=qualify(GOLD_PROGRAM),
         capacity=qualify(GOLD_CAPACITY),
     )
+
+
+def resolve_disappearance(argv: Optional[list] = None) -> str:
+    """How a vanished finding's resolution should be dated. See config.DISAPPEARANCE_RESOLUTION."""
+    mode = param("disappearance", DISAPPEARANCE_RESOLUTION, argv=argv)
+    if mode not in DISAPPEARANCE_MODES:
+        raise RuntimeError(
+            f"unknown disappearance mode {mode!r} -- expected one of {sorted(DISAPPEARANCE_MODES)}"
+        )
+    return mode
+
+
+def resolve_severities(argv: Optional[list] = None) -> list:
+    """The severity scope of this run. Drives the API filter AND the disappearance guard."""
+    requested = param("severities", argv=argv) or ",".join(DEFAULT_FETCH_SEVERITIES)
+    return [s.strip().upper() for s in requested.split(",") if s.strip()]
+
+
+def truthy(value: str) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def rebuild_ledger(
+    spark: SparkSession,
+    tables: Tables,
+    scope: str,
+    severities,
+    disappearance: str,
+    rule: RiskRule = DEFAULT_RISK_RULE,
+) -> int:
+    """Rebuild the ledger from scratch by replaying every bronze scan, oldest first.
+
+    The backfill. Without it a register that has been running v1 for months starts its ledger
+    today: every finding's ``first_seen`` collapses to now, and MTTR reads as roughly zero until
+    enough history accumulates to be worth reading.
+
+    Replay goes through the same ``reconcile`` the live path uses, which is the point -- the
+    rebuilt ledger is faithful by construction rather than by a second implementation that has
+    to be kept in step. This mirrors how ``gas/src/domain/ledgerCore.ts`` and the SQLite ledger
+    rebuild after a scan is deleted.
+
+    **The severity scope is the one thing bronze cannot tell us.** v1 never recorded which
+    severities a scan asked for, so replayed scans are assumed to have used this run's
+    ``--severities``. If the history was collected under a different scope, pass that scope --
+    otherwise the replay will resolve-by-disappearance severities the original scans never
+    covered, and invent remediation that never happened.
+    """
+    if not spark.catalog.tableExists(tables.bronze):
+        raise RuntimeError(f"cannot rebuild: {tables.bronze} does not exist yet")
+
+    scans = [
+        (r["scan_id"], r["scan_ts"])
+        for r in spark.table(tables.bronze)
+        .select("scan_id", "scan_ts")
+        .distinct()
+        .orderBy(F.col("scan_ts").asc(), F.col("scan_id").asc())
+        .collect()
+    ]
+    if not scans:
+        print("[rebuild] bronze holds no scans; nothing to replay")
+        return 0
+
+    print(f"[rebuild] replaying {len(scans)} scans from {tables.bronze}")
+    spark.sql(f"DELETE FROM {tables.ledger}")
+    spark.sql(f"DELETE FROM {tables.scans}")
+
+    for index, (scan_id, scan_ts) in enumerate(scans, start=1):
+        ts_iso = scan_ts.strftime("%Y-%m-%dT%H:%M:%SZ")
+        bronze = spark.table(tables.bronze).filter(F.col("scan_id") == scan_id)
+        silver = metrics.classify_risk(metrics.silver_findings(bronze), rule)
+        deltas = reconcile_scan(
+            spark, tables, silver, scan_id=scan_id, scan_ts=ts_iso, scope=scope,
+            severities=severities, disappearance=disappearance,
+        )
+        print(
+            f"[rebuild] {index}/{len(scans)} {scan_id} -> {deltas['new_count']} new, "
+            f"{deltas['resolved_count']} resolved, {deltas['reopened_count']} reopened"
+        )
+    return len(scans)
 
 
 def ensure_schema(spark: SparkSession, namespace: str) -> None:
@@ -294,24 +728,63 @@ def ensure_schema(spark: SparkSession, namespace: str) -> None:
 
 
 def main(scan_id: Optional[str] = None) -> Optional[RunResult]:
-    """Run the pipeline. Returns what it wrote, or ``None`` when Wiz returned nothing."""
+    """Run the pipeline. Returns what it wrote, or ``None`` when there was nothing to do."""
     # Resolve parameters before touching Spark: a missing one should fail in milliseconds,
     # not after a cluster has warmed up and an API fetch has run.
     namespace = resolve_namespace()
     scope = resolve_scope()
     tables = resolve_tables(namespace, scope)
+    disappearance = resolve_disappearance()
+    severities = resolve_severities()
 
     spark = get_spark()
     ensure_schema(spark, namespace)
+    ensure_tables(spark, tables)
 
-    scan_id = scan_id or f"scan-{uuid.uuid4().hex[:12]}"
+    if truthy(param("rebuild_ledger")):
+        replayed = rebuild_ledger(spark, tables, scope, severities, disappearance)
+        if not replayed:
+            return None
+        latest = previous_scan(spark, tables)
+        return RunResult(
+            tables=tables, scan_id=latest[0],
+            scan_ts=latest[1].strftime("%Y-%m-%dT%H:%M:%SZ"), scope=scope,
+        )
+
+    scan_id = scan_id or param("scan_id") or f"scan-{uuid.uuid4().hex[:12]}"
     scan_ts = utc_now_iso()
 
-    count = ingest_to_bronze(spark, tables.bronze, scan_id, scan_ts, scope)
+    # Idempotency. A Job retry arrives with the same --scan_id={{job.run_id}} as the attempt it
+    # is retrying, and reconciling one scan twice would advance every lifecycle a second time.
+    logged = recorded_scan(spark, tables, scan_id)
+    if logged is not None:
+        print(
+            f"[{scan_id}] already recorded ({logged['new_count']} new, "
+            f"{logged['resolved_count']} resolved) -- nothing to do"
+        )
+        return RunResult(tables=tables, scan_id=scan_id, scan_ts=scan_ts, scope=scope)
+
+    # Torn write: the MERGE committed but the scan log did not. Reconciling again would resolve
+    # by disappearance everything already accounted for, so refuse rather than corrupt.
+    if ledger_already_merged(spark, tables, scan_id):
+        raise RuntimeError(
+            f"scan {scan_id} is already reflected in {tables.ledger} but has no row in "
+            f"{tables.scans}: a previous run committed the ledger MERGE and then failed. "
+            f"Re-running would double-count it. Recover with --rebuild_ledger, or re-run with "
+            f"a fresh --scan_id if that scan's findings were never fully ingested."
+        )
+
+    # A retry may have written part of the append-only tables before dying.
+    clear_scan(spark, tables, scan_id)
+
+    count = ingest_to_bronze(spark, tables.bronze, scan_id, scan_ts, scope, severities)
     if not count:
         return None
     print(f"[{scan_id}] ingested {count} {scope} findings at {scan_ts}")
-    build_metrics(spark, tables, scan_id, scan_ts, scope)
+    build_metrics(
+        spark, tables, scan_id, scan_ts, scope,
+        severities=severities, disappearance=disappearance,
+    )
     return RunResult(tables=tables, scan_id=scan_id, scan_ts=scan_ts, scope=scope)
 
 
