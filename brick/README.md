@@ -67,6 +67,15 @@ databricks secrets put-secret wiz wiz-client-secret
 The service account needs the `read:vulnerabilities` scope in Wiz. Credentials are only ever
 read through `dbutils.secrets`; nothing is inlined, and the values never reach a table or a log.
 
+**Pick the catalog deliberately.** These tables map unpatched CVEs to named hosts, so they
+belong in a catalog scoped to security data with grants to match — not in a shared or default
+one. `catalog` has no default for exactly this reason: the job fails rather than guessing.
+Restrict the schema once it exists:
+
+```sql
+GRANT USE SCHEMA, SELECT ON SCHEMA <your-catalog>.wiz TO `security-analysts`;
+```
+
 ### 2. Get the code onto the workspace
 
 Add the repo as a **Git folder** (Workspace → Create → Git folder) pointing at this repository.
@@ -81,7 +90,7 @@ the package is imported as `brick.*`:
 import sys
 sys.path.append("/Workspace/Users/<you>/sidekick")   # adjust to your Git folder path
 
-dbutils.widgets.text("catalog", "main")
+dbutils.widgets.text("catalog", "")            # required -- see "Pick the catalog" above
 dbutils.widgets.text("schema", "wiz")
 dbutils.widgets.text("wiz_api_url", "https://api.<region>.app.wiz.io/graphql")
 dbutils.widgets.text("secret_scope", "wiz")
@@ -114,7 +123,7 @@ and the parameters passed as `--name=value`:
       "spark_python_task": {
         "python_file": "brick/run_pipeline.py",
         "parameters": [
-          "--catalog=main",
+          "--catalog=<your-catalog>",
           "--schema=wiz",
           "--wiz_api_url=https://api.<region>.app.wiz.io/graphql",
           "--secret_scope=wiz",
@@ -138,7 +147,7 @@ and a laptop.
 
 | Name | Default | |
 | --- | --- | --- |
-| `catalog` | `main` | |
+| `catalog` | — | **required**, no default; `hive_metastore` on a workspace without Unity Catalog |
 | `schema` | `wiz` | created if missing |
 | `wiz_api_url` | — | **required**, `https://api.<region>.app.wiz.io/graphql` |
 | `wiz_auth_url` | `https://auth.app.wiz.io/oauth/token` | override for a dedicated tenant |
@@ -149,8 +158,8 @@ and a laptop.
 
 ```sql
 SELECT severity, coverage_pct, efficiency_pct, prevalence_pct, signal_coverage_pct
-FROM   main.wiz.metrics_program
-WHERE  scan_id = (SELECT max_by(scan_id, scan_ts) FROM main.wiz.metrics_program)
+FROM   <your-catalog>.wiz.metrics_program
+WHERE  scan_id = (SELECT max_by(scan_id, scan_ts) FROM <your-catalog>.wiz.metrics_program)
 ORDER BY severity;
 ```
 
@@ -162,7 +171,8 @@ tables land before pulling the whole register.
 ```bash
 pip install -r brick/requirements.txt
 export WIZ_CLIENT_ID=... WIZ_CLIENT_SECRET=...
-python brick/run_pipeline.py --wiz_api_url=https://api.<region>.app.wiz.io/graphql
+python brick/run_pipeline.py \
+  --catalog=hive_metastore --wiz_api_url=https://api.<region>.app.wiz.io/graphql
 ```
 
 Off Databricks the `dbutils` accessors return empty rather than raising, so credentials come
