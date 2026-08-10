@@ -1,0 +1,5 @@
+# Local development and test only. A Databricks cluster already provides Spark and Delta --
+# do not install pyspark on the cluster, it will shadow the runtime's own build.
+pyspark>=3.5
+requests>=2.31
+pytest>=8.0
