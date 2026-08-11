@@ -160,15 +160,31 @@ def secret(scope: Optional[str], key: str, env_var: str) -> str:
     return value
 
 
+def new_session() -> requests.Session:
+    """One pooled HTTPS connection for a whole run.
+
+    A full register is hundreds of sequential pages -- 137,870 findings at ``DEFAULT_PAGE_SIZE``
+    is ~276 of them -- and a bare ``requests.post`` opens, negotiates TLS with and closes a
+    connection for every single one. A ``Session`` keeps one connection alive across all of
+    them, which is the whole of the saving: the requests themselves are unchanged, so nothing
+    downstream can tell the difference.
+
+    Not shared at module level: a session holds sockets, and a long-lived notebook that imports
+    this module should not be holding one open between runs.
+    """
+    return requests.Session()
+
+
 def get_token(
     client_id: str,
     client_secret: str,
     *,
     auth_url: str = DEFAULT_AUTH_URL,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
+    session: Optional[requests.Session] = None,
 ) -> str:
     """Exchange client credentials for a Wiz API bearer token."""
-    response = requests.post(
+    response = (session or requests).post(
         auth_url,
         data={
             "grant_type": "client_credentials",
@@ -199,15 +215,25 @@ def severity_filter(severities: Sequence[str]) -> List[str]:
 
 
 def _post(
-    api_url: str, token: str, variables: Dict[str, Any], timeout: int
+    api_url: str,
+    token: str,
+    variables: Dict[str, Any],
+    timeout: int,
+    session: Optional[requests.Session] = None,
 ) -> Dict[str, Any]:
-    """One GraphQL POST, retrying the transient failures with exponential backoff."""
+    """One GraphQL POST, retrying the transient failures with exponential backoff.
+
+    ``session`` is an optional pooled connection -- see ``new_session``. Absent, this falls back
+    to ``requests.post``, which is a fresh connection per call and is what the caller gets if it
+    does not care.
+    """
     last_error: Optional[Exception] = None
+    poster = session or requests
     for attempt in range(MAX_RETRIES):
         if attempt:
             time.sleep(2**attempt)
         try:
-            response = requests.post(
+            response = poster.post(
                 api_url,
                 json={"query": QUERY, "variables": variables},
                 headers={
@@ -298,13 +324,23 @@ def fetch_findings(
     page_size: int = DEFAULT_PAGE_SIZE,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     max_pages: Optional[int] = None,
+    session: Optional[requests.Session] = None,
 ) -> Iterator[Dict[str, Any]]:
     """Yield every finding node, walking the cursor-paginated connection.
 
     A generator rather than a list: a full register runs to hundreds of thousands of findings,
     and the caller writes each page to bronze instead of holding them all in the driver.
+
+    ``session`` pools the connection across pages; one is opened here when the caller does not
+    supply one, so the saving is the default rather than something a caller has to remember.
+
+    **The walk is sequential and has to stay that way.** Each request needs the previous page's
+    ``endCursor``, and the order nodes arrive in is recorded as ``seq`` and consumed by
+    ``ledger.observed``'s first-wins de-duplication -- so fetching pages concurrently would not
+    merely be hard, it would change which duplicate wins.
     """
     filter_by = build_filter(scope, severities, project_id)
+    session = session or new_session()
 
     cursor: Optional[str] = None
     pages = 0
@@ -314,6 +350,7 @@ def fetch_findings(
             token,
             {"filterBy": filter_by, "first": page_size, "after": cursor},
             timeout,
+            session,
         )
         connection = (payload.get("data") or {}).get("vulnerabilityFindings") or {}
         yield from connection.get("nodes") or []

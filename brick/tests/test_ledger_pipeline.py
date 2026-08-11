@@ -90,6 +90,13 @@ def node(fid="f-1", severity="HIGH", **over) -> dict:
 
 
 def write_bronze(spark, tables, nodes, scan_id, scan_ts):
+    # This helper stands in for `ingest_to_bronze` -- it is the same rows without the API -- so
+    # it has to create the table the same way. Bronze is the one table whose clustering spec is
+    # declared by the ingest path rather than by `ensure_tables`, and a fixture that appends
+    # straight into a table Delta creates for it would silently test an unclustered bronze.
+    run_pipeline.create_clustered(
+        spark, tables.bronze, run_pipeline.BRONZE_TABLE_SCHEMA, "bronze"
+    )
     rows = [
         (scan_id, scan_ts, "os", i, json.dumps(n)) for i, n in enumerate(nodes)
     ]
@@ -121,6 +128,18 @@ def run_scan(spark, tables, nodes, scan_id, scan_ts, severities=SEVERITIES):
 
 def ledger_rows(spark, tables) -> dict:
     return {r["vuln_key"]: r.asDict() for r in spark.table(tables.ledger).collect()}
+
+
+def detail(spark, table) -> dict:
+    """``DESCRIBE DETAIL`` as a dict. The only window onto a table's physical layout."""
+    return spark.sql(f"DESCRIBE DETAIL {table}").first().asDict()
+
+
+def sorted_rows(spark, table) -> list:
+    """Every row, ordered deterministically, for before/after comparison."""
+    return sorted(
+        (str(r.asDict()) for r in spark.table(table).collect()),
+    )
 
 
 # --------------------------------------------------------------------- persistence
@@ -422,3 +441,85 @@ def test_metrics_run_unchanged_against_the_ledger(spark, tables):
     assert program["OVERALL"]["tp"] == 1
     assert program["OVERALL"]["fn"] == 1
     assert program["OVERALL"]["coverage_pct"] == pytest.approx(50.0)
+
+
+# ------------------------------------------------------------------- the table layout
+
+
+def test_the_clustered_tables_declare_their_clustering(spark, tables):
+    """The ledger clusters on the MERGE key; bronze and silver on what every read filters by.
+
+    `run_scan` goes through the real creation path, so this is also the test that the tables
+    are created at all -- silver and bronze have no entry in `ensure_tables`.
+    """
+    run_scan(spark, tables, [node("f-1"), node("f-2")], "s1", TS["s1"])
+
+    assert detail(spark, tables.ledger)["clusteringColumns"] == ["vuln_key"]
+    assert detail(spark, tables.bronze)["clusteringColumns"] == ["scan_id"]
+    assert detail(spark, tables.silver)["clusteringColumns"] == ["scan_id"]
+
+
+def test_appending_a_scan_does_not_drop_the_clustering(spark, tables):
+    """The one failure mode that would silently undo all of this.
+
+    Every table here is written by `df.write.mode("append").saveAsTable(...)`, and a clustering
+    spec can only be *declared* at creation -- so if an append replaced the table metadata
+    instead of adding to it, the layout would quietly revert to unclustered after the first
+    scan and nothing else in this suite would notice.
+    """
+    run_scan(spark, tables, [node("f-1"), node("f-2")], "s1", TS["s1"])
+    run_scan(spark, tables, [node("f-1")], "s2", TS["s2"])
+    run_scan(spark, tables, [node("f-1"), node("f-3")], "s3", TS["s3"])
+
+    for table, key in (
+        (tables.ledger, "vuln_key"),
+        (tables.bronze, "scan_id"),
+        (tables.silver, "scan_id"),
+    ):
+        assert detail(spark, table)["clusteringColumns"] == [key], table
+
+
+def test_only_the_ledger_carries_deletion_vectors(spark, tables):
+    """Deletion vectors are what stop the MERGE rewriting whole files, so the ledger has them.
+
+    Bronze and silver are append-only and deliberately do not: it buys them nothing, and it
+    keeps them at reader version 1 where any Delta client can still read them. The property is
+    set explicitly on all three because Databricks and open-source Delta default it differently
+    for clustered tables, and a cluster configured unlike the tests is how a number stops
+    being reproducible.
+    """
+    run_scan(spark, tables, [node("f-1")], "s1", TS["s1"])
+
+    assert detail(spark, tables.ledger)["properties"]["delta.enableDeletionVectors"] == "true"
+    for table in (tables.bronze, tables.silver):
+        assert detail(spark, table)["properties"]["delta.enableDeletionVectors"] == "false", table
+
+    # The consequence worth pinning: only the ledger raises the reader requirement.
+    assert detail(spark, tables.ledger)["minReaderVersion"] == 3
+    assert detail(spark, tables.bronze)["minReaderVersion"] == 1
+
+
+def test_maintain_optimizes_every_clustered_table_and_changes_no_number(spark, tables):
+    """OPTIMIZE rewrites the files and must not touch a single value in them.
+
+    It is the only operation here that rewrites data for reasons unrelated to the data, so
+    "the register is byte-identical afterwards" is the whole of its contract.
+    """
+    run_scan(spark, tables, [node("f-1"), node("f-2")], "s1", TS["s1"])
+    run_scan(spark, tables, [node("f-1")], "s2", TS["s2"])
+
+    watched = [tables.ledger, tables.silver, tables.bronze, tables.mttr, tables.program,
+               tables.capacity, tables.sensitivity, tables.scans]
+    before = {t: sorted_rows(spark, t) for t in watched}
+
+    optimized = run_pipeline.maintain(spark, tables)
+
+    assert set(optimized) == {tables.ledger, tables.bronze, tables.silver}
+    assert {t: sorted_rows(spark, t) for t in watched} == before
+    # And the layout survives being optimized, which is the point of running it.
+    assert detail(spark, tables.ledger)["clusteringColumns"] == ["vuln_key"]
+
+
+def test_maintain_skips_tables_that_do_not_exist_yet(spark, tables):
+    """A register created but never scanned has a ledger and nothing else to optimize."""
+    assert run_pipeline.maintain(spark, tables) == [tables.ledger]

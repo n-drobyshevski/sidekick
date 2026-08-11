@@ -28,7 +28,15 @@ BRICK_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = BRICK_DIR.parent
 sys.path.insert(0, str(BRICK_DIR))
 
-DELTA_PACKAGE = "io.delta:delta-spark_2.12:3.2.0"
+# 3.3 rather than 3.2, and the reason is `run_pipeline.maintain`. The open-source OPTIMIZE path
+# clusters with a Hilbert curve, and 3.2 asserts its way out of a table clustered by a single
+# column -- "Cannot do Hilbert clustering by zero or one column!" -- so OPTIMIZE on the ledger
+# (CLUSTER BY vuln_key) is unrunnable there. 3.3 fixes it, and runs on the same Spark 3.5.
+#
+# The alternative was to give every clustered table a second key it does not need, which would
+# have let an open-source implementation detail choose the physical layout of the register. The
+# cluster's Delta comes from DBR, where single-column CLUSTER BY is the documented shape.
+DELTA_PACKAGE = "io.delta:delta-spark_2.12:3.3.2"
 
 # Spark's 1g default is not enough for this suite. In local mode the driver JVM is also the
 # executor, so one heap carries the catalog, the Delta log state of every table the run has
@@ -195,6 +203,11 @@ def live_tables(spark):
     run_pipeline.ensure_tables(spark, tables)
 
     def scan(scan_id, scan_ts, payload):
+        # Stands in for `ingest_to_bronze`, so it creates bronze the way that does -- with its
+        # clustering spec. `ensure_tables` deliberately does not create bronze; see its docstring.
+        run_pipeline.create_clustered(
+            spark, tables.bronze, run_pipeline.BRONZE_TABLE_SCHEMA, "bronze"
+        )
         rows = [(scan_id, scan_ts, LIVE_SCOPE, i, json.dumps(n)) for i, n in enumerate(payload)]
         spark.createDataFrame(
             rows, "scan_id STRING, scan_ts STRING, scope STRING, seq LONG, node_json STRING"

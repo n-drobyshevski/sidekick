@@ -51,7 +51,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Optional
 
-from pyspark.sql import SparkSession
+from pyspark.sql import Row, SparkSession
 from pyspark.sql import functions as F
 
 MODULE_VERSION = "2.2"
@@ -80,7 +80,7 @@ try:
         SEVERITY_ORDER,
         RiskRule,
     )
-    from ingest import DEFAULT_AUTH_URL, fetch_findings, get_token, secret
+    from ingest import DEFAULT_AUTH_URL, fetch_findings, get_token, new_session, secret
 except ImportError as exc:
     # The message is long on purpose: it is the recovery procedure, and it is read by someone
     # staring at a stack trace on a cluster with no repo checkout to hand.
@@ -246,11 +246,40 @@ def utc_now_iso() -> str:
     return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def get_spark() -> SparkSession:
+# 0 means "do not set spark.sql.shuffle.partitions at all".
+#
+# A run is a handful of aggregations over one scan and the README's own deployment note says "a
+# single-node cluster is plenty", so Spark's 200 default does look oversized -- most of the
+# shuffles here schedule 200 tasks to move a few rows. The obvious move is to ship a smaller
+# default, and `brick/bench_pipeline.py` does not support one: over three runs a side at 20,000
+# findings, 64 had the fastest single run and the tightest spread but a *worse* median than 200.
+# That is a measurement saying "it depends on the cluster", so the number is left to whoever has
+# one, and the knob is here to turn.
+DEFAULT_SHUFFLE_PARTITIONS = 0
+
+
+def get_spark(shuffle_partitions: Optional[int] = None) -> SparkSession:
+    """The session, configured.
+
+    None of these change a result. Shuffle partitioning does not affect the value of any
+    aggregation here -- including ``F.percentile``, which is exact and order-independent -- and
+    AQE only re-plans. They are set explicitly rather than left to the runtime because this file
+    also runs on a laptop and under ``python brick/run_pipeline.py``, where the Databricks
+    defaults do not apply.
+    """
     spark = SparkSession.builder.appName("wiz-vulnerability-metrics").getOrCreate()
     # Capacity buckets by UTC calendar month and MTTR is a UTC-to-UTC difference; a cluster
     # left on local time would silently shift findings between months.
     spark.conf.set("spark.sql.session.timeZone", "UTC")
+    # On by default in DBR 14.3, not on by default in open-source Spark 3.5. AQE is what lets
+    # the eight joins here with a 7-row side be broadcast at runtime without a hint, and what
+    # coalesces the oversized shuffles below back down.
+    spark.conf.set("spark.sql.adaptive.enabled", "true")
+    spark.conf.set("spark.sql.adaptive.coalescePartitions.enabled", "true")
+    if shuffle_partitions is None:
+        shuffle_partitions = resolve_shuffle_partitions()
+    if shuffle_partitions:
+        spark.conf.set("spark.sql.shuffle.partitions", str(shuffle_partitions))
     return spark
 
 
@@ -276,15 +305,84 @@ def parse_severities(text) -> Optional[list]:
     return [s for s in SEVERITY_ORDER if s in chosen] or None
 
 
+# The clustering key for each table that has one, and whether it carries deletion vectors.
+#
+# `vuln_key` is the MERGE's ON key and `scan_id` is what every read of bronze and silver filters
+# on. The four gold tables and the scan log are deliberately absent: they are 9-150 rows per
+# scan, orders of magnitude under the size at which a write clusters anything, so clustering
+# them would buy a protocol bump and nothing else.
+#
+# Deletion vectors are the half of this meant to pay. Without them a MERGE that matches a row
+# rewrites the whole file containing it, so the daily reconcile rewrites most of the ledger to
+# advance `last_seen` on findings that have not changed. They are set explicitly rather than
+# left to a default because the two runtimes disagree: Databricks turns DVs on for a clustered
+# table, open-source Delta does not, and a cluster running a different configuration from the
+# tests is how a number becomes unreproducible.
+#
+# **Measured, they cost rather than pay** -- ~5% for the clustering and ~12% more for the DVs,
+# on a ledger of ~25k rows. That is the scale, not the idea: rewriting a few-megabyte file is
+# nearly free, so there is no amplification to avoid and the DV bookkeeping is all cost. The
+# README's "What this measured" section has the numbers and the condition under which it
+# inverts. Turning DVs off here is one word, and on a small register it is the right word.
+#
+# Off for bronze and silver on purpose. Both are append-only -- no MERGE, no UPDATE, one
+# `DELETE ... WHERE scan_id` on the retry path -- so there is nothing for DVs to make cheaper,
+# and leaving them off keeps those two tables at reader version 1. Only DVs push the reader
+# version to 3; clustering alone needs writer 7 and leaves readers alone.
+CLUSTERING = {
+    "ledger": ("vuln_key", True),
+    "bronze": ("scan_id", False),
+    "silver": ("scan_id", False),
+}
+
+
+def create_clustered(spark: SparkSession, table: str, schema, attr: str) -> None:
+    """``CREATE TABLE IF NOT EXISTS`` with this table's clustering spec. No-op if it exists.
+
+    The ``DeltaTable`` builder rather than SQL DDL because it takes a ``StructType`` outright:
+    there is no DDL string to render, and so no hand-rolled type-name mapping to get wrong, and
+    ``vuln_key``'s ``NOT NULL`` survives (a CTAS would drop it).
+
+    ``delta.tables`` is imported here rather than at module scope on purpose. ``run_pipeline``
+    has to stay importable with no delta-spark installed -- that is what lets ``test_figures``,
+    ``test_tiles`` and ``test_pipeline`` run in seconds with no JVM at all.
+
+    **Existing registers are not migrated.** This only fires when the table is absent, so a
+    deployment that already has these tables keeps its unclustered layout until someone runs
+    the ALTER TABLE recipe in the README. Enabling clustering on an existing table is an
+    owner-level operation and not one to perform silently on the next scheduled run.
+    """
+    if spark.catalog.tableExists(table):
+        return
+    from delta.tables import DeltaTable
+
+    if isinstance(schema, str):
+        schema = spark.createDataFrame([], schema).schema
+    cluster_by, deletion_vectors = CLUSTERING[attr]
+    (
+        DeltaTable.createIfNotExists(spark)
+        .tableName(table)
+        .addColumns(schema)
+        .clusterBy(cluster_by)
+        .property("delta.enableDeletionVectors", "true" if deletion_vectors else "false")
+        .execute()
+    )
+
+
 def ensure_tables(spark: SparkSession, tables: Tables) -> None:
     """Create the ledger and scan-log tables when they are missing.
 
     Created from the schema rather than by a first append, because the ledger has to be a Delta
     table before anything can MERGE into it, and because an empty ledger with the right columns
     is what makes the very first run's reconcile a normal case rather than a special one.
+
+    Bronze and silver are **not** created here even though they are clustered too. They are
+    created by whatever first writes them -- see ``ingest_to_bronze`` and ``build_metrics`` --
+    so that a register which has never been scanned does not acquire an empty bronze and start
+    looking as though it has. ``rebuild_ledger`` depends on that distinction: "there is no
+    bronze" is how it knows there is no history to replay.
     """
-    if not spark.catalog.tableExists(tables.ledger):
-        ledger_mod.empty_ledger(spark).write.format("delta").saveAsTable(tables.ledger)
+    create_clustered(spark, tables.ledger, ledger_mod.LEDGER_SCHEMA, "ledger")
     if not spark.catalog.tableExists(tables.scans):
         spark.createDataFrame([], SCANS_SCHEMA).write.format("delta").saveAsTable(tables.scans)
 
@@ -457,15 +555,50 @@ def clear_scan(spark: SparkSession, tables: Tables, scan_id: str) -> None:
             spark.sql(f"DELETE FROM {table} WHERE scan_id = '{scan_id}'")
 
 
+BRONZE_SCHEMA = "scan_id STRING, scan_ts STRING, scope STRING, seq LONG, node_json STRING"
+
+# The same columns as they are *stored*. `scan_ts` arrives as a string and is cast on the way in
+# (see `write_bronze_batch`), so the two differ in exactly one type -- which is why the table
+# cannot simply be created from BRONZE_SCHEMA. `ensure_tables` creates bronze from this so the
+# CLUSTER BY has somewhere to live; without it the table would be created by its first append,
+# and a clustering spec cannot be declared on an append.
+BRONZE_TABLE_SCHEMA = "scan_id STRING, scan_ts TIMESTAMP, scope STRING, seq LONG, node_json STRING"
+
+# How many findings to hold in the driver before flushing a batch to bronze. `fetch_findings`
+# is a generator precisely so the caller need not hold the register in memory, and the caller
+# used to build one list of every row anyway -- 137,870 tuples, each carrying a JSON document,
+# then one `createDataFrame` that pickles the lot in a single hop. This bounds both.
+#
+# 20,000 rather than the API's 500-row page: a Delta append is a commit, and one per page would
+# trade a driver problem for 276 transaction-log entries.
+INGEST_BATCH_ROWS = 20_000
+
+
+def write_bronze_batch(spark: SparkSession, table: str, rows: list) -> None:
+    """Append one batch of raw findings to bronze."""
+    batch = spark.createDataFrame(rows, BRONZE_SCHEMA)
+    # mergeSchema because `seq` is new in v2: a bronze table written by v1 does not have the
+    # column, and the first v2 run has to be able to add it rather than fail on arrival.
+    batch.withColumn("scan_ts", batch["scan_ts"].cast("timestamp")).write.format("delta").mode(
+        "append"
+    ).option("mergeSchema", "true").saveAsTable(table)
+
+
 def ingest_to_bronze(
     spark: SparkSession, table: str, scan_id: str, scan_ts: str, scope: str, severities=None
 ) -> int:
-    """Fetch every finding and append it to bronze. Returns the row count.
+    """Fetch every finding and append it to bronze in batches. Returns the row count.
 
     ``severities`` comes from the caller rather than being re-read here, so the population this
     scan fetched and the scope recorded on its ``scans`` row are guaranteed to be the same list.
     If they could drift, the disappearance guard would be reasoning about a scan that never
     happened.
+
+    **A failed ingest now leaves the batches that completed**, where a single write left nothing.
+    That is a change in what a crash leaves behind, not in what a successful run produces, and
+    it is already handled: a retry arrives with the same ``--scan_id`` and ``main`` runs
+    ``clear_scan`` for it first, so the retry starts from an empty scan. Nothing reads bronze
+    for a ``scan_id`` that has no ``scans`` row.
     """
     api_url = param("wiz_api_url")
     if not api_url:
@@ -476,40 +609,47 @@ def ingest_to_bronze(
     secret_scope = param("secret_scope") or None
     severities = list(severities) if severities else list(DEFAULT_FETCH_SEVERITIES)
 
+    # Bronze's only creation site. It has to exist before the first batch lands, because a
+    # clustering spec can only be declared at creation and an append cannot add one -- and it
+    # is created here rather than in `ensure_tables` so that a register nobody has scanned has
+    # no bronze at all. See `ensure_tables`.
+    create_clustered(spark, table, BRONZE_TABLE_SCHEMA, "bronze")
+
+    session = new_session()
     token = get_token(
         secret(secret_scope, "wiz-client-id", "WIZ_CLIENT_ID"),
         secret(secret_scope, "wiz-client-secret", "WIZ_CLIENT_SECRET"),
         auth_url=param("wiz_auth_url") or DEFAULT_AUTH_URL,
+        session=session,
     )
 
     # `seq` is the order the API returned each finding in. Recorded rather than recomputed so
     # that first-wins deduplication of a repeated finding stays reproducible -- including years
-    # later, when --rebuild_ledger replays these same rows. See ledger.observed.
-    rows = [
-        (scan_id, scan_ts, scope, index, json.dumps(node))
-        for index, node in enumerate(
-            fetch_findings(
-                api_url,
-                token,
-                scope=scope,
-                severities=severities,
-                project_id=param("project_id") or None,
-            )
-        )
-    ]
-    if not rows:
+    # later, when --rebuild_ledger replays these same rows. See ledger.observed. It runs across
+    # the whole scan, not per batch: the batching below is an implementation detail of the
+    # write and must not be visible in the data.
+    total = 0
+    batch: list = []
+    for node in fetch_findings(
+        api_url,
+        token,
+        scope=scope,
+        severities=severities,
+        project_id=param("project_id") or None,
+        session=session,
+    ):
+        batch.append((scan_id, scan_ts, scope, total, json.dumps(node)))
+        total += 1
+        if len(batch) >= INGEST_BATCH_ROWS:
+            write_bronze_batch(spark, table, batch)
+            batch = []
+    if batch:
+        write_bronze_batch(spark, table, batch)
+
+    if not total:
         print(f"[{scan_id}] Wiz returned no {scope} findings for severities={severities}")
         return 0
-
-    bronze = spark.createDataFrame(
-        rows, "scan_id STRING, scan_ts STRING, scope STRING, seq LONG, node_json STRING"
-    )
-    # mergeSchema because `seq` is new in v2: a bronze table written by v1 does not have the
-    # column, and the first v2 run has to be able to add it rather than fail on arrival.
-    bronze.withColumn("scan_ts", bronze["scan_ts"].cast("timestamp")).write.format("delta").mode(
-        "append"
-    ).option("mergeSchema", "true").saveAsTable(table)
-    return len(rows)
+    return total
 
 
 def reconcile_scan(
@@ -522,13 +662,26 @@ def reconcile_scan(
     scope: str,
     severities,
     disappearance: str,
+    scan_log: Optional[list] = None,
+    total: Optional[int] = None,
 ) -> dict:
     """Advance the ledger by one scan and log the run. Returns the deltas.
 
     Everything scan-specific is resolved here and handed to the pure reconciler: which scan came
     before, which severities each of them covered, and how a disappearance should be dated.
+
+    ``scan_log`` is an already-collected ``scan_log_desc`` for a caller that needs the same rows
+    anyway -- ``build_metrics`` for the observation boundary, ``rebuild_ledger`` to stop
+    re-collecting a growing table once per replayed scan.
+
+    ``total`` is this scan's row count when the caller already knows it. ``ingest_to_bronze``
+    returns exactly that number, and bronze holds nothing else under this ``scan_id`` -- the id
+    is either freshly generated, so nothing has ever written under it, or it was supplied and
+    ``main`` cleared it first. Counting the frame again is a Spark job for an answer already in
+    hand. ``None`` means "count it" -- the replay path, which never ingested anything.
     """
-    scan_log = scan_log_desc(spark, tables)
+    if scan_log is None:
+        scan_log = scan_log_desc(spark, tables)
     prev = previous_scan(spark, tables, scan_log)
     prev_scan_id = prev[0] if prev else None
     prev_scan_ts = prev[1].strftime("%Y-%m-%dT%H:%M:%SZ") if prev and prev[1] else None
@@ -549,19 +702,28 @@ def reconcile_scan(
     deltas = merge_ledger(spark, tables, touched)
     record_scan(
         spark, tables, scan_id=scan_id, scan_ts=scan_ts, scope=scope, severities=severities,
-        total=silver.count(), deltas=deltas,
+        total=silver.count() if total is None else total, deltas=deltas,
     )
     return deltas
 
 
-def observation_start(spark: SparkSession, tables: Tables):
-    """The timestamp of the earliest logged scan, or ``None`` before any has run.
+def observation_start(scan_log: list, scan_ts: str):
+    """The timestamp of the earliest scan on record, including the one being written now.
 
     This is the boundary between months we watched and months we merely inferred from the API's
     own dates, which is what ``capacity_by_month`` needs to flag reconstructed months honestly.
+    On the very first scan it is that scan, which is the honest answer: nothing before it was
+    watched by anyone.
+
+    Computed from the scan log the caller has already collected, plus the scan being written
+    right now -- which is what ``MIN(scan_ts)`` over the table would return, because
+    ``record_scan`` has committed this run's row by the time capacity is built. Both are naive
+    UTC datetimes: the session timezone is UTC, and ``scan_ts`` is always ``utc_now_iso``'s
+    format, so parsing it here gives the same value Spark stored.
     """
-    rows = spark.table(tables.scans).agg(F.min("scan_ts").alias("first")).collect()
-    return rows[0]["first"] if rows and rows[0]["first"] else None
+    stamps = [row["scan_ts"] for row in scan_log if row["scan_ts"] is not None]
+    stamps.append(dt.datetime.strptime(scan_ts, "%Y-%m-%dT%H:%M:%SZ"))
+    return min(stamps)
 
 
 def closed_observed(spark: SparkSession, tables: Tables):
@@ -594,6 +756,7 @@ def build_metrics(
     severities=None,
     disappearance: str = DISAPPEARANCE_RESOLUTION,
     summary: bool = True,
+    total: Optional[int] = None,
 ) -> None:
     """Silver, the ledger, and the three gold tables for one scan.
 
@@ -602,15 +765,28 @@ def build_metrics(
     either -- which is why the test suite passes it: nothing there reads stdout, and six
     ``show()`` calls per scan over the widest plans in this file is the single most expensive
     thing the suite used to do.
+
+    ``total`` is this scan's finding count when the caller already has it -- see
+    ``reconcile_scan``. ``None`` counts the frame, which is what a caller that wrote bronze by
+    some other route has to do.
     """
     bronze = spark.table(tables.bronze).filter(f"scan_id = '{scan_id}'")
 
     silver = metrics.classify_risk(metrics.silver_findings(bronze), rule).cache()
+    # Silver is created here rather than in `ensure_tables` because it has no declared schema
+    # anywhere -- it is whatever `metrics.silver_findings` projects, deliberately, so that
+    # widening the projection is a one-line change. Taking the schema off the frame keeps that
+    # property; a constant would be a second copy of the projection to keep in step.
+    create_clustered(spark, tables.silver, silver.schema, "silver")
     write_append(silver, tables.silver)
 
+    # Collected once, here, and used twice: the reconciler needs the previous scan and its
+    # severity coverage, and capacity needs the earliest scan on record. Reading the same small
+    # table twice is two Spark jobs for one answer.
+    scan_log = scan_log_desc(spark, tables)
     deltas = reconcile_scan(
         spark, tables, silver, scan_id=scan_id, scan_ts=scan_ts, scope=scope,
-        severities=severities, disappearance=disappearance,
+        severities=severities, disappearance=disappearance, scan_log=scan_log, total=total,
     )
 
     # Gold comes from the ledger, not from the snapshot. This is the whole of v2 in one line:
@@ -663,7 +839,7 @@ def build_metrics(
         metrics.capacity_populations(
             lifecycles,
             scan_ts,
-            observed_from=observation_start(spark, tables),
+            observed_from=observation_start(scan_log, scan_ts),
             closed_observed=closed_observed(spark, tables),
         ),
         scan_id, scan_ts, scope,
@@ -821,6 +997,25 @@ def resolve_severities(argv: Optional[list] = None) -> list:
     return [s.strip().upper() for s in requested.split(",") if s.strip()]
 
 
+def resolve_shuffle_partitions(argv: Optional[list] = None) -> int:
+    """How many partitions a shuffle produces. ``0`` means "leave the cluster's value alone".
+
+    See ``get_spark``. Exposed as a parameter rather than hard-coded because the right number
+    is a property of the cluster, and the only person who knows the cluster is the operator.
+    """
+    raw = param("shuffle_partitions", str(DEFAULT_SHUFFLE_PARTITIONS), argv=argv).strip()
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"shuffle_partitions must be an integer, got {raw!r} (0 = leave the cluster's "
+            f"setting alone)"
+        ) from exc
+    if value < 0:
+        raise RuntimeError(f"shuffle_partitions must not be negative, got {value}")
+    return value
+
+
 def truthy(value: str) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
@@ -869,19 +1064,71 @@ def rebuild_ledger(
     spark.sql(f"DELETE FROM {tables.ledger}")
     spark.sql(f"DELETE FROM {tables.scans}")
 
+    # The scan log was just emptied, so it starts empty and this loop is the only thing that
+    # adds to it. Collecting it once and extending it here is what stops the replay re-reading
+    # a table it is itself growing -- one collect per scan over n rows is O(n^2) across the
+    # replay, and the replay is the longest-running thing in this file.
+    scan_log: list = []
     for index, (scan_id, scan_ts) in enumerate(scans, start=1):
         ts_iso = scan_ts.strftime("%Y-%m-%dT%H:%M:%SZ")
         bronze = spark.table(tables.bronze).filter(F.col("scan_id") == scan_id)
-        silver = metrics.classify_risk(metrics.silver_findings(bronze), rule)
-        deltas = reconcile_scan(
-            spark, tables, silver, scan_id=scan_id, scan_ts=ts_iso, scope=scope,
-            severities=severities, disappearance=disappearance,
+        # Cached because it has two consumers -- `observed` and the row count in
+        # `reconcile_scan` -- and without this the second one re-reads bronze and re-parses
+        # every node_json. The live path caches for the same reason (see `build_metrics`).
+        silver = metrics.classify_risk(metrics.silver_findings(bronze), rule).cache()
+        try:
+            deltas = reconcile_scan(
+                spark, tables, silver, scan_id=scan_id, scan_ts=ts_iso, scope=scope,
+                severities=severities, disappearance=disappearance, scan_log=scan_log,
+            )
+        finally:
+            silver.unpersist()
+        # Newest first, matching `scan_log_desc`'s ordering: scans are replayed oldest-first, so
+        # each new row belongs at the front. The timestamp is parsed back out of `ts_iso` rather
+        # than reused from bronze, because that is the value `record_scan` just wrote -- second
+        # resolution, sub-seconds dropped -- and this list stands in for reading that table.
+        scan_log.insert(
+            0,
+            Row(
+                scan_id=scan_id,
+                scan_ts=dt.datetime.strptime(ts_iso, "%Y-%m-%dT%H:%M:%SZ"),
+                severities=serialize_severities(severities),
+            ),
         )
         print(
             f"[rebuild] {index}/{len(scans)} {scan_id} -> {deltas['new_count']} new, "
             f"{deltas['resolved_count']} resolved, {deltas['reopened_count']} reopened"
         )
     return len(scans)
+
+
+def maintain(spark: SparkSession, tables: Tables) -> list:
+    """``OPTIMIZE`` the clustered tables. Returns the table names it touched.
+
+    Clustering is declared at creation but only *applied* when data is laid out, and a write
+    lays it out only above a size threshold no table here reaches on a single scan -- so without
+    this the clustering spec is a promise nothing keeps. OPTIMIZE is what redeems it: on a
+    clustered table it clusters incrementally, rewriting only what is not already in place.
+
+    **Deliberately not part of the daily run.** OPTIMIZE is an unbounded rewrite over the whole
+    register, and the job that has to finish before anyone can read this morning's number should
+    not be waiting behind it. Weekly, as its own Job, is the shape this is built for.
+
+    Also deliberately not ``VACUUM``: that deletes files that time travel and any in-flight
+    reader still depend on, and choosing a retention window is a decision nobody has made here.
+    ``OPTIMIZE`` only ever adds files, so the worst a bad run of this can do is cost money.
+    """
+    optimized = []
+    for attr in CLUSTERING:
+        table = getattr(tables, attr)
+        if not spark.catalog.tableExists(table):
+            continue
+        spark.sql(f"OPTIMIZE {table}")
+        optimized.append(table)
+        print(f"[maintain] optimized {table}")
+    if not optimized:
+        print("[maintain] no clustered tables exist yet; nothing to do")
+    return optimized
 
 
 def ensure_schema(spark: SparkSession, namespace: str) -> None:
@@ -924,6 +1171,12 @@ def main(scan_id: Optional[str] = None) -> Optional[RunResult]:
     ensure_schema(spark, namespace)
     ensure_tables(spark, tables)
 
+    # Maintenance is not a scan and returns nothing scan-shaped. It goes first so that a job
+    # scheduled to run it can never also ingest, whatever else its parameters say.
+    if truthy(param("maintain")):
+        maintain(spark, tables)
+        return None
+
     if truthy(param("rebuild_ledger")):
         replayed = rebuild_ledger(spark, tables, scope, severities, disappearance)
         if not replayed:
@@ -934,7 +1187,8 @@ def main(scan_id: Optional[str] = None) -> Optional[RunResult]:
             scan_ts=latest[1].strftime("%Y-%m-%dT%H:%M:%SZ"), scope=scope,
         )
 
-    scan_id = scan_id or param("scan_id") or f"scan-{uuid.uuid4().hex[:12]}"
+    supplied_scan_id = scan_id or param("scan_id")
+    scan_id = supplied_scan_id or f"scan-{uuid.uuid4().hex[:12]}"
     scan_ts = utc_now_iso()
 
     # Idempotency. A Job retry arrives with the same --scan_id={{job.run_id}} as the attempt it
@@ -957,8 +1211,11 @@ def main(scan_id: Optional[str] = None) -> Optional[RunResult]:
             f"a fresh --scan_id if that scan's findings were never fully ingested."
         )
 
-    # A retry may have written part of the append-only tables before dying.
-    clear_scan(spark, tables, scan_id)
+    # A retry may have written part of the append-only tables before dying. Only a scan_id that
+    # came from outside can be a retry: a self-generated one is a fresh uuid nothing has ever
+    # written under, so the six DELETEs would be six Delta statements matching nothing.
+    if supplied_scan_id:
+        clear_scan(spark, tables, scan_id)
 
     count = ingest_to_bronze(spark, tables.bronze, scan_id, scan_ts, scope, severities)
     if not count:
@@ -966,7 +1223,7 @@ def main(scan_id: Optional[str] = None) -> Optional[RunResult]:
     print(f"[{scan_id}] ingested {count} {scope} findings at {scan_ts}")
     build_metrics(
         spark, tables, scan_id, scan_ts, scope,
-        severities=severities, disappearance=disappearance,
+        severities=severities, disappearance=disappearance, total=count,
     )
     return RunResult(tables=tables, scan_id=scan_id, scan_ts=scan_ts, scope=scope)
 
