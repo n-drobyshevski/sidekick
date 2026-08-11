@@ -527,8 +527,33 @@ def test_data_path_refuses_a_backtick(monkeypatch):
 
 def test_data_path_refuses_a_relative_path(monkeypatch):
     monkeypatch.setattr(dbx, "widget", lambda name: "")
-    with pytest.raises(RuntimeError, match="absolute"):
+    with pytest.raises(RuntimeError, match="absolute path or a storage URI"):
         run_pipeline.resolve_data_path(argv=["--data_path=brick-data"])
+
+
+@pytest.mark.parametrize(
+    "uri",
+    ["dbfs:/brick", "s3://bucket/brick", "abfss://c@a.dfs.core.windows.net/brick", "gs://b/brick"],
+)
+def test_data_path_accepts_storage_uris(monkeypatch, uri):
+    """Two of the three places that persist are only addressable as a URI, so requiring a
+    leading slash would have rejected the answers."""
+    monkeypatch.setattr(dbx, "widget", lambda name: "")
+    assert run_pipeline.resolve_data_path(argv=[f"--data_path={uri}"]) == uri
+
+
+def test_data_path_refuses_workspace_files(monkeypatch):
+    """`/Workspace` persists and needs no catalog, which makes it the obvious PoC answer and a
+    wrong one: executors cannot write to workspace files, and every write here is a distributed
+    Delta write. It can appear to work on a single-node cluster and break when one is scaled.
+
+    Refused even off Databricks -- unlike the ephemeral paths, there is no local sense in which
+    /Workspace is a reasonable place for this, so there is nothing to allow.
+    """
+    monkeypatch.setattr(dbx, "widget", lambda name: "")
+    monkeypatch.setattr(dbx, "get_dbutils", lambda: None)
+    with pytest.raises(RuntimeError, match="executors cannot write"):
+        run_pipeline.resolve_data_path(argv=["--data_path=/Workspace/Users/me/brick"])
 
 
 def test_data_path_refuses_ephemeral_cluster_disk(monkeypatch):

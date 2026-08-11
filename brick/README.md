@@ -872,19 +872,33 @@ table that must survive: `--rebuild_ledger` replays it, and everything else foll
 
 ### Where the path must point
 
-| | persists | the catch |
-| --- | --- | --- |
-| `/Volumes/<cat>/<sch>/<vol>/…` | yes | needs a Unity Catalog schema — which may be the thing you don't have |
-| `/dbfs/…` | yes | DBFS root is deprecated and new workspaces are provisioned without it |
-| `/Workspace/…` | yes | **capped at 500 MB** — bronze will exceed it, probably on the first scan |
-| an `s3://` / `abfss://` URI you can already write | yes | needs credentials or an external location, but no catalog |
-| `/tmp`, `/local_disk0`, anything relative | **no** | wiped when the cluster terminates |
+Two things have to be true: it persists, **and Spark executors can write to it**. Every write
+here is a distributed Delta write, which rules out one option that otherwise looks ideal.
 
-That last row is why `--data_path` **refuses** an ephemeral path when it can see a Databricks
-around it. A register written to the driver's disk is gone by the next morning, silently, and
-exactly when somebody first goes looking for the history — so it fails at parameter resolution
-instead. Off Databricks those are ordinary directories and are allowed, which is what lets the
-tests use a temporary one.
+| | works | why |
+| --- | --- | --- |
+| `/Volumes/<cat>/<sch>/<vol>/…` | ✅ | needs a Unity Catalog **volume** — a much smaller ask than a schema you can create tables in, and Databricks' own recommendation for non-tabular data |
+| `dbfs:/…` | ✅ | where DBFS root still exists. Deprecated, and new workspaces are provisioned without it |
+| `s3://…`, `abfss://…`, `gs://…` | ✅ | needs credentials or an external location, but no catalog at all |
+| `/Workspace/…` | ❌ | persists, needs no catalog — and [**executors cannot write to workspace files**](https://docs.databricks.com/aws/en/files/workspace) |
+| `/tmp`, `/local_disk0`, relative | ❌ | wiped when the cluster terminates |
+
+`--data_path` **refuses** the last two rather than warning, because both failures are late and
+land on the data. An ephemeral path loses the register silently, overnight, and is discovered
+exactly when somebody first wants the history. `/Workspace` is subtler and worse: it can appear
+to work on a single-node cluster, where the driver *is* the executor, and then break the moment
+the cluster is scaled — and workspace file permissions expire anyway (36 hours on interactive
+compute, 30 days for jobs), which disqualifies it as somewhere data lives. Its 500 MB cap is
+per file and would probably not have been the binding constraint; the executor rule is.
+
+Off Databricks the ephemeral prefixes are ordinary directories and are allowed, which is what
+lets the tests use a temporary one. `/Workspace` is refused everywhere: there is no local sense
+in which it is a reasonable home for this.
+
+**If none of the ✅ rows is available to you**, run the pipeline off-cluster instead — a laptop
+or a small VM, `python brick/run_pipeline.py --data_path=/some/local/dir`. The driver does the
+API paging and the Spark work is a handful of aggregations over one scan, so nothing is lost by
+not being on a cluster. See [Running it locally](#running-it-locally).
 
 ### Moving it into the lake later
 

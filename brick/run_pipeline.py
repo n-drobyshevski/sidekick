@@ -217,6 +217,21 @@ PATH_REF = re.compile(r"^delta\.`(.+)`$")
 #: about -- the data would be gone by the time anyone noticed.
 EPHEMERAL_PREFIXES = ("/tmp/", "/local_disk0/", "/databricks/driver")
 
+# `dbfs:/`, `s3://`, `abfss://`, `gs://` -- a storage URI is as valid a home for the register as
+# an absolute path, and for two of the three places that persist it is the *only* form Spark
+# takes. Requiring a leading slash would have rejected them.
+URI_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:/")
+
+#: Named once because two different refusals below have to end with the same advice, and advice
+#: that drifts between two error messages is worse than no advice.
+PERSISTENT_PATHS = (
+    "Use somewhere that persists and that executors can write: "
+    "/Volumes/<catalog>/<schema>/<volume>/... (a Unity Catalog volume is a much smaller ask "
+    "than a schema to create tables in), dbfs:/... where DBFS root still exists, or a storage "
+    "URI you already hold credentials for (s3://..., abfss://...). "
+    "See brick/README.md, PoC storage."
+)
+
 
 @dataclass(frozen=True)
 class Tables:
@@ -1028,7 +1043,12 @@ def resolve_data_path(argv: Optional[list] = None) -> str:
     A path-backed run needs no catalog, no schema and no Unity Catalog -- which is the point of
     it: a PoC with nowhere to create tables can still collect a register that survives.
 
-    Two things are refused rather than accepted:
+    An absolute path or a storage URI: ``/Volumes/...``, ``dbfs:/...``, ``s3://...``,
+    ``abfss://...``. A relative path is refused because it resolves against whatever the
+    driver's working directory happens to be.
+
+    Three things are refused rather than accepted, all of them at parameter resolution so they
+    cost seconds rather than surfacing forty minutes into a scan:
 
     A **backtick**, because the path is interpolated into SQL inside one. Same reasoning as
     IDENTIFIER and PREFIX above: the value comes from an operator, not an attacker, and it
@@ -1039,23 +1059,37 @@ def resolve_data_path(argv: Optional[list] = None) -> str:
     register written there is gone by the next morning -- silently, and precisely at the moment
     somebody goes looking for the history. Off Databricks those paths are ordinary local
     directories and are allowed, which is what lets the tests use ``tmp_path``.
+
+    **``/Workspace``**, which looks like the obvious answer and is not one. Workspace files
+    persist and need no catalog, so they are the natural first choice for a PoC -- but
+    *"executors cannot write to workspace files"*, and every write here is a distributed Delta
+    write. It can appear to work on a single-node cluster, where the driver is also the
+    executor, and then fail the moment the cluster is scaled. Workspace file permissions also
+    expire (36 hours interactive, 30 days for jobs), which disqualifies it as somewhere data
+    lives. Refused for the same reason as the ephemeral paths: the failure is late, confusing,
+    and lands on the data. See brick/README.md, PoC storage.
     """
     path = param("data_path", argv=argv).strip().rstrip("/")
     if not path:
         return ""
     if "`" in path:
         raise RuntimeError(f"data_path {path!r} must not contain a backtick")
-    if not path.startswith("/"):
+    if not (path.startswith("/") or URI_SCHEME.match(path)):
         raise RuntimeError(
-            f"data_path {path!r} must be absolute -- a relative path resolves against whatever "
-            f"the driver's working directory happens to be"
+            f"data_path {path!r} must be an absolute path or a storage URI -- a relative path "
+            f"resolves against whatever the driver's working directory happens to be"
         )
     if dbx.get_dbutils() is not None and path.startswith(EPHEMERAL_PREFIXES):
         raise RuntimeError(
             f"data_path {path!r} is on the cluster's ephemeral disk, which is wiped when the "
-            f"cluster terminates -- the register would be lost. Use a path that persists: "
-            f"/Volumes/<catalog>/<schema>/<volume>/..., /dbfs/... or /Workspace/... (the last "
-            f"is capped at 500MB and bronze will exceed it). See brick/README.md, PoC storage."
+            f"cluster terminates -- the register would be lost. {PERSISTENT_PATHS}"
+        )
+    if path.startswith("/Workspace"):
+        raise RuntimeError(
+            f"data_path {path!r} is a workspace file path, and Spark executors cannot write to "
+            f"those -- every write here is a distributed Delta write. It can look like it works "
+            f"on a single-node cluster and break as soon as one is scaled, and workspace file "
+            f"permissions expire (36h interactive, 30 days for jobs) besides. {PERSISTENT_PATHS}"
         )
     return path
 
