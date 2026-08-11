@@ -25,7 +25,7 @@ from dataclasses import dataclass
 # Every runtime module carries MODULE_VERSION, and run_pipeline.check_deployment() compares
 # them before the run touches Spark. Bump this whenever the modules stop being
 # mix-and-matchable with the previous release -- which is nearly always.
-PIPELINE_VERSION = "2.0"
+PIPELINE_VERSION = "2.1"
 MODULE_VERSION = PIPELINE_VERSION
 
 # ---- Severity taxonomy ----

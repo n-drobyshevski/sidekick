@@ -59,7 +59,7 @@ from config import (
 )
 
 # See config.PIPELINE_VERSION: every runtime module must come from the same upload.
-MODULE_VERSION = "2.0"
+MODULE_VERSION = "2.1"
 
 SECONDS_PER_DAY = 86400
 
@@ -133,7 +133,16 @@ def is_open(status: Column) -> Column:
     return ~F.upper(F.coalesce(status, F.lit(""))).isin(*sorted(RESOLVED_STATUSES))
 
 
-def _sla_target_col(severity: Column) -> Column:
+def sla_target_col(severity: Column) -> Column:
+    """The SLA target in days for a severity, or NULL for one that has none.
+
+    Public because the notebook layer needs it: ``ledger.lifecycle_frame`` does not carry
+    ``sla_target``, and a panel that wants "open past SLA" per subscription has to apply each
+    row's *own* severity target rather than the group's.
+
+    ``UNKNOWN`` is deliberately absent from ``SLA_TARGETS`` and so maps to NULL. Every consumer
+    has to keep it NULL rather than letting it collapse to 0 -- see ``safe_pct``.
+    """
     pairs: List[Column] = []
     for sev, days in SLA_TARGETS.items():
         pairs.extend([F.lit(sev), F.lit(days)])
@@ -238,6 +247,88 @@ def _mttr_aggs() -> List[Column]:
     ]
 
 
+def km_curve(df: DataFrame):
+    """The Kaplan-Meier staircase itself, per severity plus OVERALL, and the raw totals.
+
+    Returns ``(curve, totals)``:
+
+    * ``curve`` -- one row per distinct *event* time: ``severity, t, events, at_risk, s``.
+      This is the survival function S(t) as a step function; between two rows it is flat, so a
+      chart draws it with a stepped-after line and nothing else.
+    * ``totals`` -- ``severity, km_restriction_time, km_events, km_censored``, computed before
+      the curve narrows to event times.
+
+    Split out of ``kaplan_meier`` rather than reimplemented for the notebook layer, because the
+    two must not be able to disagree: a staircase whose 50% crossing landed somewhere other than
+    the published ``km_median`` would be worse than no staircase at all. ``kaplan_meier``
+    consumes exactly this.
+
+    Note what ``totals`` can and cannot be recovered from ``curve``: ``km_restriction_time`` is
+    the longest observed duration over *all* observations, and the longest-lived observation is
+    usually still open, so ``max(curve.t) < km_restriction_time`` is the normal case, not a bug.
+    Likewise the censored rows leave no row of their own. That is why both come back together.
+    """
+    work = df.withColumn(
+        "_duration", F.coalesce(F.col("mttr_days"), F.col("age_days"))
+    ).withColumn("_is_event", F.col("mttr_days").isNotNull().cast("int"))
+    work = work.filter(F.col("_duration").isNotNull())
+
+    # Per-severity and OVERALL in one pass: duplicate every row under the OVERALL label.
+    work = work.select("severity", "_duration", "_is_event").unionByName(
+        work.select(F.lit(OVERALL).alias("severity"), "_duration", "_is_event")
+    )
+
+    # τ and the raw counts, before the curve narrows to event times only.
+    totals = work.groupBy("severity").agg(
+        F.max("_duration").alias("km_restriction_time"),
+        F.sum("_is_event").cast("long").alias("km_events"),
+        F.sum(1 - F.col("_is_event")).cast("long").alias("km_censored"),
+    )
+
+    # One row per distinct observed time: how many events landed on it, how many observations
+    # sit exactly there.
+    at_time = work.groupBy("severity", "_duration").agg(
+        F.sum("_is_event").cast("long").alias("events"),
+        F.count(F.lit(1)).cast("long").alias("_n_here"),
+    )
+
+    # atRisk = everything at or beyond this time, i.e. a reverse cumulative count.
+    descending = (
+        Window.partitionBy("severity")
+        .orderBy(F.col("_duration").desc())
+        .rowsBetween(Window.unboundedPreceding, Window.currentRow)
+    )
+    at_time = at_time.withColumn("at_risk", F.sum("_n_here").over(descending))
+
+    # The curve is defined at event times only; a time with no event does not step it down.
+    curve = at_time.filter((F.col("events") > 0) & (F.col("at_risk") > 0))
+    factor = 1 - (F.col("events") / F.col("at_risk"))
+
+    ascending = (
+        Window.partitionBy("severity")
+        .orderBy("_duration")
+        .rowsBetween(Window.unboundedPreceding, Window.currentRow)
+    )
+    # S is a running product, and Spark has no product aggregate. exp(Σ log f) is the standard
+    # substitute, but log(0) is NULL in Spark and sum() skips NULLs -- so a step that wipes out
+    # the whole risk set (d == atRisk) would be silently ignored and survival would stay
+    # positive after everything had been remediated. Carry a sticky zero flag instead.
+    curve = (
+        curve.withColumn("_factor", factor)
+        .withColumn("_zeroed", F.max((F.col("_factor") <= 0).cast("int")).over(ascending))
+        .withColumn(
+            "s",
+            F.when(F.col("_zeroed") == 1, F.lit(0.0)).otherwise(
+                F.exp(F.sum(F.log(F.col("_factor"))).over(ascending))
+            ),
+        )
+    )
+    curve = curve.withColumnRenamed("_duration", "t").select(
+        "severity", "t", "events", "at_risk", "s"
+    )
+    return curve, totals
+
+
 def kaplan_meier(df: DataFrame) -> DataFrame:
     """Censoring-aware time-to-remediate, per severity plus OVERALL.
 
@@ -267,67 +358,13 @@ def kaplan_meier(df: DataFrame) -> DataFrame:
       τ = the longest observed time. ``km_truncated`` marks S(τ) > 0, meaning the RMST is a
       lower bound rather than a mean.
     """
-    work = df.withColumn(
-        "_duration", F.coalesce(F.col("mttr_days"), F.col("age_days"))
-    ).withColumn("_is_event", F.col("mttr_days").isNotNull().cast("int"))
-    work = work.filter(F.col("_duration").isNotNull())
-
-    # Per-severity and OVERALL in one pass: duplicate every row under the OVERALL label.
-    work = work.select("severity", "_duration", "_is_event").unionByName(
-        work.select(F.lit(OVERALL).alias("severity"), "_duration", "_is_event")
-    )
-
-    # τ and the raw counts, before the curve narrows to event times only.
-    totals = work.groupBy("severity").agg(
-        F.max("_duration").alias("km_restriction_time"),
-        F.sum("_is_event").cast("long").alias("km_events"),
-        F.sum(1 - F.col("_is_event")).cast("long").alias("km_censored"),
-    )
-
-    # One row per distinct observed time: how many events landed on it, how many observations
-    # sit exactly there.
-    at_time = work.groupBy("severity", "_duration").agg(
-        F.sum("_is_event").cast("long").alias("_d"),
-        F.count(F.lit(1)).cast("long").alias("_n_here"),
-    )
-
-    # atRisk = everything at or beyond this time, i.e. a reverse cumulative count.
-    descending = (
-        Window.partitionBy("severity")
-        .orderBy(F.col("_duration").desc())
-        .rowsBetween(Window.unboundedPreceding, Window.currentRow)
-    )
-    at_time = at_time.withColumn("_at_risk", F.sum("_n_here").over(descending))
-
-    # The curve is defined at event times only; a time with no event does not step it down.
-    curve = at_time.filter((F.col("_d") > 0) & (F.col("_at_risk") > 0))
-    factor = 1 - (F.col("_d") / F.col("_at_risk"))
-
-    ascending = (
-        Window.partitionBy("severity")
-        .orderBy("_duration")
-        .rowsBetween(Window.unboundedPreceding, Window.currentRow)
-    )
-    # S is a running product, and Spark has no product aggregate. exp(Σ log f) is the standard
-    # substitute, but log(0) is NULL in Spark and sum() skips NULLs -- so a step that wipes out
-    # the whole risk set (d == atRisk) would be silently ignored and survival would stay
-    # positive after everything had been remediated. Carry a sticky zero flag instead.
-    curve = (
-        curve.withColumn("_factor", factor)
-        .withColumn("_zeroed", F.max((F.col("_factor") <= 0).cast("int")).over(ascending))
-        .withColumn(
-            "_s",
-            F.when(F.col("_zeroed") == 1, F.lit(0.0)).otherwise(
-                F.exp(F.sum(F.log(F.col("_factor"))).over(ascending))
-            ),
-        )
-    )
+    curve, totals = km_curve(df)
 
     # RMST rectangles: S_{k-1} · (t_k − t_{k-1}), anchored at t_0 = 0, S_0 = 1.
-    step = Window.partitionBy("severity").orderBy("_duration")
-    prev_s = F.lag("_s", 1, 1.0).over(step)
-    prev_t = F.lag("_duration", 1, 0.0).over(step)
-    curve = curve.withColumn("_area", prev_s * (F.col("_duration") - prev_t))
+    step = Window.partitionBy("severity").orderBy("t")
+    prev_s = F.lag("s", 1, 1.0).over(step)
+    prev_t = F.lag("t", 1, 0.0).over(step)
+    curve = curve.withColumn("_area", prev_s * (F.col("t") - prev_t))
 
     summary = curve.groupBy("severity").agg(
         # `<= 0.5 + eps`, not `<= 0.5`. The reference implementation multiplies the survival
@@ -335,12 +372,10 @@ def kaplan_meier(df: DataFrame) -> DataFrame:
         # tie is the common case, e.g. 0.75 x (1 - 1/3) is exactly 0.5 in IEEE. Substituting
         # exp(Σ log f) for the product yields 0.5000000000000001 for that same curve, which
         # fails a bare `<= 0.5` and reports "no median" for a register whose median is real.
-        F.min(F.when(F.col("_s") <= 0.5 + SURVIVAL_TIE_EPS, F.col("_duration"))).alias(
-            "km_median"
-        ),
+        F.min(F.when(F.col("s") <= 0.5 + SURVIVAL_TIE_EPS, F.col("t"))).alias("km_median"),
         F.sum("_area").alias("_area_sum"),
-        F.max_by("_s", "_duration").alias("_s_final"),
-        F.max("_duration").alias("_t_final"),
+        F.max_by("s", "t").alias("_s_final"),
+        F.max("t").alias("_t_final"),
     )
 
     out = totals.join(summary, "severity", "left")
@@ -370,10 +405,10 @@ def mttr_by_severity(df: DataFrame) -> DataFrame:
 
     Port of ``wiz_dashboard/domain/metrics.py::_summarize`` and ``overall_sla_oldest``.
     """
-    work = df.withColumn("sla_target", _sla_target_col(F.col("severity")))
+    work = df.withColumn("sla_target", sla_target_col(F.col("severity")))
 
     per_sev = work.groupBy("severity").agg(*_mttr_aggs()).withColumn(
-        "sla_target", _sla_target_col(F.col("severity"))
+        "sla_target", sla_target_col(F.col("severity"))
     )
     # The OVERALL SLA percentage is total-compliant over total-resolved, not a mean of the
     # per-severity percentages -- each row carries its own target, so one pass gets it right.
