@@ -209,6 +209,90 @@ bare `findings` or `metrics_capacity` would be a collision waiting to happen; an
 the name keeps an OS run and an all-types run in separate tables. `--table_prefix` overrides it
 (empty opts out entirely).
 
+### Table layout
+
+Three tables carry a physical layout. The rest are left alone.
+
+| Table | `CLUSTER BY` | Deletion vectors | Why |
+| --- | --- | --- | --- |
+| `…vuln_ledger` | `vuln_key` | **on** | `vuln_key` is the MERGE's `ON` key |
+| `…findings_raw` | `scan_id` | off | every read of bronze filters on `scan_id` |
+| `…findings` | `scan_id` | off | same, plus the scan pin every page applies |
+| the four gold tables, `…scans` | — | — | 9–150 rows per scan; nothing to lay out |
+
+**Deletion vectors are the half that pays.** Without them a `MERGE` that matches a row rewrites
+the entire file containing it, so the daily reconcile — which touches every finding the scan
+saw, just to advance `last_seen` — rewrites most of the ledger. With them the matched rows are
+marked and the new versions appended. The win grows with the register: on a young one nearly
+every row is touched daily and there is little to skip; on a mature one, where the bulk is
+long-resolved findings nobody observed today, it is the difference between rewriting the table
+and rewriting the day.
+
+They are set **explicitly**, on all three, because the two runtimes disagree about the default —
+Databricks enables deletion vectors for a clustered table, open-source Delta does not — and a
+cluster configured unlike the test suite is how a number stops being reproducible.
+
+**Clustering `vuln_key` is not what makes the MERGE fast, and it is worth knowing why.** A
+`vuln_key` is `id:<wiz-finding-id>` or `h:<sha>`; both are effectively random. Clustering gives
+files non-overlapping *ranges*, and a source holding every finding this scan saw spans the whole
+range — so almost no file can be pruned. Random keys are the worst case for range-based
+skipping. It is still the right key (it is the only one the MERGE joins on, and point lookups do
+benefit), but the reason the reconcile gets cheaper is the deletion vectors.
+
+`scan_id` on bronze and silver is different: those reads genuinely do prune. Note that they
+already skipped perfectly **by accident** — each run appends only its own scan, so every file
+had `min(scan_id) == max(scan_id)`. The first `OPTIMIZE` that packs two scans into one file
+would have destroyed that. `CLUSTER BY (scan_id)` makes it a property of the table instead of a
+lucky consequence of the write pattern, which is what makes running `--maintain` safe.
+
+**The protocol bump, and its blast radius.** Clustering raises a table to Delta **writer version
+7**; deletion vectors raise the **reader to version 3**. Protocol versions cannot be downgraded.
+So the ledger becomes unreadable to any client that does not speak reader 3 (DBR 12.2+ is fine),
+while bronze and silver stay at reader 1 and can still be read by anything. That split is the
+practical reason deletion vectors are off on the two append-only tables — they would buy nothing
+there and cost every reader. Nothing in this repo reads these tables (`gas/` and
+`wiz_dashboard/` never touch Delta), but an external consumer is worth checking before you
+migrate.
+
+**Layout is declared at creation.** A clustering spec cannot be added by an append, so the
+ledger is created by `ensure_tables` and bronze and silver by whatever first writes them. An
+existing register keeps its unclustered layout until someone migrates it — see
+[Migrating an existing register](#migrating-an-existing-register).
+
+#### What this measured, which is not what it was supposed to measure
+
+`bench_pipeline.py`, eight scans of 8,000 findings with 30% churn — a register whose ledger
+reaches ~24,800 rows with 8,000 touched per scan, so a third of it is rewritten daily and there
+is real copy-on-write to avoid. Three runs a side, medians:
+
+| | median | Spark jobs |
+| --- | --- | --- |
+| unclustered (before) | 176.3 s | 910 |
+| clustered, no deletion vectors | 185.1 s | 910 |
+| clustered + deletion vectors | 206.4 s | 988 |
+
+**Both cost. Neither pays.** Clustering alone is ~5% slower; deletion vectors add another ~12%
+and 78 Spark jobs per run.
+
+The explanation is the scale, and it is worth stating rather than hiding, because it is also the
+condition under which this becomes worth having. Copy-on-write amplification is the cost of
+**rewriting a large file to change a few rows** — the pain starts when files reach the
+100 MB–1 GB range Delta targets. At benchmark scale the ledger's files are a few megabytes, so
+rewriting all of them is nearly free, while writing deletion vectors and applying them on read
+is pure added work. Getting the files large enough to invert that needs a ledger on the order of
+a million rows, which this harness cannot build on one machine in a sensible time.
+
+So the honest position: **the benefit is argued, not measured, and the cost is measured, not
+argued.** If your register is small, or its ledger is mostly still-open findings that get touched
+every scan anyway, this layout is costing you and `delta.enableDeletionVectors` is one word in
+`run_pipeline.CLUSTERING`. If it holds years of resolved history that no scan touches, the
+arithmetic is the other way round — and the way to find out is to run `bench_pipeline.py` against
+numbers that look like yours rather than to trust either of us.
+
+Two things this *does* buy unconditionally: `--maintain` becomes safe to run (see
+[Table layout](#table-layout) on bronze's accidental skipping), and the layout is declared rather
+than emergent.
+
 ## Scope
 
 `--scope` decides which population a run measures, and drives **both** the API filter and the
@@ -246,7 +330,9 @@ silver is just the typed projection of whatever arrived.
 
 ## Running it on Databricks
 
-**Requirements:** DBR 14.3 LTS or newer (Spark 3.5 — `F.percentile` is a 3.5 function), and
+**Requirements:** DBR 14.3 LTS or newer (Spark 3.5 — `F.percentile` is a 3.5 function; liquid
+clustering is supported from DBR 13.3 but only **GA from 15.4 LTS**, so on 14.3 the
+[table layout](#table-layout) works and is pre-GA), and
 Unity Catalog if you want a three-level `catalog.schema.table` namespace. `requests` is already
 on the runtime. Nothing else to install.
 
@@ -487,6 +573,7 @@ and a laptop.
 | `disappearance` | `scan_ts` | `scan_ts` or `midpoint` |
 | `rebuild_ledger` | `false` | replay bronze and rebuild the ledger from scratch — see [Backfill](#backfilling-from-existing-bronze) |
 | `shuffle_partitions` | `0` | `spark.sql.shuffle.partitions` for the run; `0` leaves the cluster's own setting alone |
+| `maintain` | `false` | run `OPTIMIZE` over the clustered tables and exit, ingesting nothing — see [Maintenance](#maintenance) |
 
 `shuffle_partitions` is the one parameter that changes nothing about any published number, and
 it is unset by default on purpose. Spark's 200 is sized for a cluster moving real data, and a
@@ -518,6 +605,67 @@ committed. Nothing reads them: bronze rows are only ever selected by a `scan_id`
 `…wiz_os_scans` row, and a retry passing the same `--scan_id` clears them before re-ingesting.
 A run that dies mid-ingest and is *never* retried leaves orphaned bronze rows, which cost
 storage and nothing else.
+
+### Maintenance
+
+```bash
+python brick/run_pipeline.py --catalog=<catalog> --maintain=true \
+  --wiz_api_url=https://api.<region>.app.wiz.io/graphql
+```
+
+`--maintain` runs `OPTIMIZE` over the three [clustered tables](#table-layout) and exits without
+ingesting anything. It is what actually applies the clustering: a table declares its layout at
+creation, but a write only *lays data out* above a size threshold no single scan here reaches,
+so without this the spec is a promise nothing keeps. On a clustered table `OPTIMIZE` clusters
+incrementally — it rewrites what is not already in place, not the whole table.
+
+**Run it as its own Job, weekly.** It is deliberately not part of the daily scan: `OPTIMIZE` is
+an unbounded rewrite over the whole register, and the job that has to finish before anyone can
+read this morning's number should not be queued behind it. The same Job JSON as
+[the scheduled run](#3b-as-a-scheduled-job) with `--maintain=true` and a weekly cron does it.
+
+It does **not** `VACUUM`. That deletes the files time travel and any in-flight reader still
+depend on, and choosing a retention window is a decision nobody has made here — see
+[What v2 does not do](#what-v2-does-not-do). `OPTIMIZE` only ever adds files, so the worst a bad
+run of this can do is cost money.
+
+On Unity Catalog managed tables you may not need it at all: Databricks **Predictive
+Optimization** runs `OPTIMIZE` for you, and where it is enabled `--maintain` is redundant.
+
+### Migrating an existing register
+
+Everything above applies to tables created from now on. A register that already exists keeps its
+unclustered layout — a clustering spec cannot be added by an append, and this pipeline will not
+silently rewrite the physical layout of a production ledger on the next scheduled run.
+
+Migrating is three statements per table and one decision. Run them once, from a notebook or the
+SQL editor, with the pipeline stopped:
+
+```sql
+ALTER TABLE <catalog>.<schema>.wiz_os_vuln_ledger CLUSTER BY (vuln_key);
+ALTER TABLE <catalog>.<schema>.wiz_os_vuln_ledger
+  SET TBLPROPERTIES ('delta.enableDeletionVectors' = 'true');
+
+ALTER TABLE <catalog>.<schema>.wiz_os_findings_raw CLUSTER BY (scan_id);
+ALTER TABLE <catalog>.<schema>.wiz_os_findings     CLUSTER BY (scan_id);
+
+OPTIMIZE <catalog>.<schema>.wiz_os_vuln_ledger;
+OPTIMIZE <catalog>.<schema>.wiz_os_findings_raw;
+OPTIMIZE <catalog>.<schema>.wiz_os_findings;
+```
+
+Three things to know before you do:
+
+- **Existing data is not reclustered until `OPTIMIZE` runs.** `ALTER TABLE` changes the spec,
+  nothing else. Until then the layout is unchanged.
+- **`ALTER TABLE` needs ownership or `MANAGE`**, which is more than the `MODIFY` the pipeline
+  itself runs on — see the grant list in [Store the credentials](#1-store-the-credentials). This
+  is an operator action, not something the service principal should be able to do.
+- **The reader-version bump on the ledger is one-way** (see
+  [Table layout](#table-layout)). Check what else reads that table first.
+
+The alternative to all of it: `--rebuild_ledger` against a freshly created register replays
+bronze into new, correctly-clustered tables — see below.
 
 ### Backfilling from existing bronze
 
@@ -1100,10 +1248,12 @@ of it available on the GAS side:
   subscription and tag inputs. `subscription_name` / `subscription_ext_id` are on the ledger;
   **asset tags are not, because `ingest.py` does not select them** — adding that is an ingest
   change (a new field on every `vulnerableAsset` inline fragment), not a ledger one.
-- **No retention or compaction.** The ledger grows monotonically. The Streamlit side seals old
-  scans into `resolved_episodes` (`wiz_dashboard/data/ledger.py::compact_ledger`); on Delta the
-  equivalent levers are `OPTIMIZE` and `VACUUM`, plus bronze retention. Nothing here does either
-  yet, and a large register will eventually want it.
+- **No retention.** The ledger grows monotonically. The Streamlit side seals old scans into
+  `resolved_episodes` (`wiz_dashboard/data/ledger.py::compact_ledger`); on Delta the equivalent
+  levers are `VACUUM` and bronze retention, and a large register will eventually want both.
+  Compaction is no longer on this list — [`--maintain`](#maintenance) runs `OPTIMIZE` over the
+  clustered tables — but nothing here deletes anything, ever, and choosing a retention window is
+  the decision that is still outstanding.
 - **No period-scoped confusion matrix.** Coverage and efficiency are cumulative over the whole
   ledger, so the per-scan series is a to-date curve and a good quarter barely moves it.
   `gas/src/domain/trend.ts::withCoverageEfficiency` recomputes the pair as-of each trend point

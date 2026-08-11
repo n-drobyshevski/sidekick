@@ -2,8 +2,10 @@
 # and Plotly -- do not install pyspark on the cluster, it will shadow the runtime's build.
 pyspark>=3.5
 # The ledger is a Delta table and is MERGEd, so the tests that exercise it need Delta locally.
-# Must match the pyspark minor version: delta-spark 3.2 pairs with Spark 3.5.
-delta-spark>=3.2,<4
+# Must match the pyspark minor version: delta-spark 3.2 and 3.3 both pair with Spark 3.5.
+# 3.3 is the floor because OPTIMIZE on a single-column-clustered table is broken in 3.2 -- see
+# the DELTA_PACKAGE comment in tests/conftest.py, which pins the matching jar.
+delta-spark>=3.3,<4
 requests>=2.31
 pandas>=2.0
 # DBR 14.3 LTS ships exactly 5.9.0, so every Plotly API the notebooks use has to exist there.

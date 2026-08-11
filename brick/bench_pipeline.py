@@ -42,7 +42,10 @@ sys.path.insert(0, str(BRICK_DIR))
 
 # Must be set before the JVM starts, exactly as tests/conftest.py explains: --packages is read
 # by spark-submit at launch and jars cannot be added to a running JVM.
-DELTA_PACKAGE = "io.delta:delta-spark_2.12:3.2.0"
+# Tracks DELTA_PACKAGE in tests/conftest.py, and for the same reason -- see the comment there.
+# Duplicated rather than imported because this script must stay runnable against a checkout of
+# an older revision, which is the whole point of --compare.
+DELTA_PACKAGE = "io.delta:delta-spark_2.12:3.3.2"
 os.environ.setdefault(
     "PYSPARK_SUBMIT_ARGS", f"--packages {DELTA_PACKAGE} --driver-memory 4g pyspark-shell"
 )
@@ -210,19 +213,36 @@ def stub_ingest(run_pipeline, payloads: List[List[dict]]) -> None:
     run_pipeline.fetch_findings = fake_fetch
 
 
+#: Significant digits kept when dumping a float. A double carries ~15-17, and the last two or
+#: three of them are not a property of the register -- they are a property of the order Spark
+#: happened to add things up in, which changes whenever the file layout changes. Adding liquid
+#: clustering to the ledger moved `mttr_mean` (the one `avg()` in the published set) by up to
+#: 3 ULP, ~2.7e-15 relative, on every other value being bit-identical. Rounding here is what
+#: makes `diff -r` test "did a number move?" instead of "did the summation order change?".
+#: 12 digits is far beyond anything the product displays and far short of the noise floor.
+DUMP_SIGNIFICANT_DIGITS = 12
+
+
+def _round(value):
+    if isinstance(value, float) and value == value and value not in (float("inf"), float("-inf")):
+        return float(f"%.{DUMP_SIGNIFICANT_DIGITS}g" % value)
+    return value
+
+
 def dump_tables(spark, tables, target: Path) -> None:
     """Every published table as sorted JSON, one file each.
 
     Sorted by every column, so two runs of the same code produce byte-identical files and
     ``diff -r`` is a real answer to "did any number move?". ``scan_id`` and ``scan_ts`` are
     dropped: they are the run's identity, not its output, and they differ by construction.
+    Floats are rounded -- see ``DUMP_SIGNIFICANT_DIGITS``.
     """
     target.mkdir(parents=True, exist_ok=True)
     volatile = {"scan_id", "scan_ts", "first_scan_id", "last_scan_id", "risk_observed_at"}
     for name in ("silver", "ledger", "scans", "mttr", "program", "capacity", "sensitivity"):
         frame = spark.table(getattr(tables, name))
         keep = [c for c in frame.columns if c not in volatile]
-        rows = [r.asDict() for r in frame.select(*keep).collect()]
+        rows = [{k: _round(v) for k, v in r.asDict().items()} for r in frame.select(*keep).collect()]
         rows.sort(key=lambda r: json.dumps(r, sort_keys=True, default=str))
         (target / f"{name}.json").write_text(
             json.dumps(rows, indent=1, sort_keys=True, default=str)

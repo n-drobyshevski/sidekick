@@ -305,15 +305,84 @@ def parse_severities(text) -> Optional[list]:
     return [s for s in SEVERITY_ORDER if s in chosen] or None
 
 
+# The clustering key for each table that has one, and whether it carries deletion vectors.
+#
+# `vuln_key` is the MERGE's ON key and `scan_id` is what every read of bronze and silver filters
+# on. The four gold tables and the scan log are deliberately absent: they are 9-150 rows per
+# scan, orders of magnitude under the size at which a write clusters anything, so clustering
+# them would buy a protocol bump and nothing else.
+#
+# Deletion vectors are the half of this meant to pay. Without them a MERGE that matches a row
+# rewrites the whole file containing it, so the daily reconcile rewrites most of the ledger to
+# advance `last_seen` on findings that have not changed. They are set explicitly rather than
+# left to a default because the two runtimes disagree: Databricks turns DVs on for a clustered
+# table, open-source Delta does not, and a cluster running a different configuration from the
+# tests is how a number becomes unreproducible.
+#
+# **Measured, they cost rather than pay** -- ~5% for the clustering and ~12% more for the DVs,
+# on a ledger of ~25k rows. That is the scale, not the idea: rewriting a few-megabyte file is
+# nearly free, so there is no amplification to avoid and the DV bookkeeping is all cost. The
+# README's "What this measured" section has the numbers and the condition under which it
+# inverts. Turning DVs off here is one word, and on a small register it is the right word.
+#
+# Off for bronze and silver on purpose. Both are append-only -- no MERGE, no UPDATE, one
+# `DELETE ... WHERE scan_id` on the retry path -- so there is nothing for DVs to make cheaper,
+# and leaving them off keeps those two tables at reader version 1. Only DVs push the reader
+# version to 3; clustering alone needs writer 7 and leaves readers alone.
+CLUSTERING = {
+    "ledger": ("vuln_key", True),
+    "bronze": ("scan_id", False),
+    "silver": ("scan_id", False),
+}
+
+
+def create_clustered(spark: SparkSession, table: str, schema, attr: str) -> None:
+    """``CREATE TABLE IF NOT EXISTS`` with this table's clustering spec. No-op if it exists.
+
+    The ``DeltaTable`` builder rather than SQL DDL because it takes a ``StructType`` outright:
+    there is no DDL string to render, and so no hand-rolled type-name mapping to get wrong, and
+    ``vuln_key``'s ``NOT NULL`` survives (a CTAS would drop it).
+
+    ``delta.tables`` is imported here rather than at module scope on purpose. ``run_pipeline``
+    has to stay importable with no delta-spark installed -- that is what lets ``test_figures``,
+    ``test_tiles`` and ``test_pipeline`` run in seconds with no JVM at all.
+
+    **Existing registers are not migrated.** This only fires when the table is absent, so a
+    deployment that already has these tables keeps its unclustered layout until someone runs
+    the ALTER TABLE recipe in the README. Enabling clustering on an existing table is an
+    owner-level operation and not one to perform silently on the next scheduled run.
+    """
+    if spark.catalog.tableExists(table):
+        return
+    from delta.tables import DeltaTable
+
+    if isinstance(schema, str):
+        schema = spark.createDataFrame([], schema).schema
+    cluster_by, deletion_vectors = CLUSTERING[attr]
+    (
+        DeltaTable.createIfNotExists(spark)
+        .tableName(table)
+        .addColumns(schema)
+        .clusterBy(cluster_by)
+        .property("delta.enableDeletionVectors", "true" if deletion_vectors else "false")
+        .execute()
+    )
+
+
 def ensure_tables(spark: SparkSession, tables: Tables) -> None:
     """Create the ledger and scan-log tables when they are missing.
 
     Created from the schema rather than by a first append, because the ledger has to be a Delta
     table before anything can MERGE into it, and because an empty ledger with the right columns
     is what makes the very first run's reconcile a normal case rather than a special one.
+
+    Bronze and silver are **not** created here even though they are clustered too. They are
+    created by whatever first writes them -- see ``ingest_to_bronze`` and ``build_metrics`` --
+    so that a register which has never been scanned does not acquire an empty bronze and start
+    looking as though it has. ``rebuild_ledger`` depends on that distinction: "there is no
+    bronze" is how it knows there is no history to replay.
     """
-    if not spark.catalog.tableExists(tables.ledger):
-        ledger_mod.empty_ledger(spark).write.format("delta").saveAsTable(tables.ledger)
+    create_clustered(spark, tables.ledger, ledger_mod.LEDGER_SCHEMA, "ledger")
     if not spark.catalog.tableExists(tables.scans):
         spark.createDataFrame([], SCANS_SCHEMA).write.format("delta").saveAsTable(tables.scans)
 
@@ -488,6 +557,13 @@ def clear_scan(spark: SparkSession, tables: Tables, scan_id: str) -> None:
 
 BRONZE_SCHEMA = "scan_id STRING, scan_ts STRING, scope STRING, seq LONG, node_json STRING"
 
+# The same columns as they are *stored*. `scan_ts` arrives as a string and is cast on the way in
+# (see `write_bronze_batch`), so the two differ in exactly one type -- which is why the table
+# cannot simply be created from BRONZE_SCHEMA. `ensure_tables` creates bronze from this so the
+# CLUSTER BY has somewhere to live; without it the table would be created by its first append,
+# and a clustering spec cannot be declared on an append.
+BRONZE_TABLE_SCHEMA = "scan_id STRING, scan_ts TIMESTAMP, scope STRING, seq LONG, node_json STRING"
+
 # How many findings to hold in the driver before flushing a batch to bronze. `fetch_findings`
 # is a generator precisely so the caller need not hold the register in memory, and the caller
 # used to build one list of every row anyway -- 137,870 tuples, each carrying a JSON document,
@@ -532,6 +608,12 @@ def ingest_to_bronze(
     # with the secret-scope string.
     secret_scope = param("secret_scope") or None
     severities = list(severities) if severities else list(DEFAULT_FETCH_SEVERITIES)
+
+    # Bronze's only creation site. It has to exist before the first batch lands, because a
+    # clustering spec can only be declared at creation and an append cannot add one -- and it
+    # is created here rather than in `ensure_tables` so that a register nobody has scanned has
+    # no bronze at all. See `ensure_tables`.
+    create_clustered(spark, table, BRONZE_TABLE_SCHEMA, "bronze")
 
     session = new_session()
     token = get_token(
@@ -691,6 +773,11 @@ def build_metrics(
     bronze = spark.table(tables.bronze).filter(f"scan_id = '{scan_id}'")
 
     silver = metrics.classify_risk(metrics.silver_findings(bronze), rule).cache()
+    # Silver is created here rather than in `ensure_tables` because it has no declared schema
+    # anywhere -- it is whatever `metrics.silver_findings` projects, deliberately, so that
+    # widening the projection is a one-line change. Taking the schema off the frame keeps that
+    # property; a constant would be a second copy of the projection to keep in step.
+    create_clustered(spark, tables.silver, silver.schema, "silver")
     write_append(silver, tables.silver)
 
     # Collected once, here, and used twice: the reconciler needs the previous scan and its
@@ -1015,6 +1102,35 @@ def rebuild_ledger(
     return len(scans)
 
 
+def maintain(spark: SparkSession, tables: Tables) -> list:
+    """``OPTIMIZE`` the clustered tables. Returns the table names it touched.
+
+    Clustering is declared at creation but only *applied* when data is laid out, and a write
+    lays it out only above a size threshold no table here reaches on a single scan -- so without
+    this the clustering spec is a promise nothing keeps. OPTIMIZE is what redeems it: on a
+    clustered table it clusters incrementally, rewriting only what is not already in place.
+
+    **Deliberately not part of the daily run.** OPTIMIZE is an unbounded rewrite over the whole
+    register, and the job that has to finish before anyone can read this morning's number should
+    not be waiting behind it. Weekly, as its own Job, is the shape this is built for.
+
+    Also deliberately not ``VACUUM``: that deletes files that time travel and any in-flight
+    reader still depend on, and choosing a retention window is a decision nobody has made here.
+    ``OPTIMIZE`` only ever adds files, so the worst a bad run of this can do is cost money.
+    """
+    optimized = []
+    for attr in CLUSTERING:
+        table = getattr(tables, attr)
+        if not spark.catalog.tableExists(table):
+            continue
+        spark.sql(f"OPTIMIZE {table}")
+        optimized.append(table)
+        print(f"[maintain] optimized {table}")
+    if not optimized:
+        print("[maintain] no clustered tables exist yet; nothing to do")
+    return optimized
+
+
 def ensure_schema(spark: SparkSession, namespace: str) -> None:
     """Create the schema, but only when it is actually missing.
 
@@ -1054,6 +1170,12 @@ def main(scan_id: Optional[str] = None) -> Optional[RunResult]:
     spark = get_spark()
     ensure_schema(spark, namespace)
     ensure_tables(spark, tables)
+
+    # Maintenance is not a scan and returns nothing scan-shaped. It goes first so that a job
+    # scheduled to run it can never also ingest, whatever else its parameters say.
+    if truthy(param("maintain")):
+        maintain(spark, tables)
+        return None
 
     if truthy(param("rebuild_ledger")):
         replayed = rebuild_ledger(spark, tables, scope, severities, disappearance)

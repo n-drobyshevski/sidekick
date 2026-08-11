@@ -178,6 +178,10 @@ def test_ingest_keeps_the_population_scope_separate_from_the_secret_scope(monkey
     seen = {}
     monkeypatch.setattr(run_pipeline, "get_token", lambda *a, **k: "token")
     monkeypatch.setattr(run_pipeline, "secret", lambda scope, key, env: f"{scope}/{key}")
+    # This test is about which `scope` reaches the API, and it drives `ingest_to_bronze` against
+    # a hand-rolled fake session. Creating bronze for real needs a Delta catalog the fake does
+    # not have and this test does not care about -- `test_ledger_pipeline` covers that.
+    monkeypatch.setattr(run_pipeline, "create_clustered", lambda *a, **k: None)
 
     def fake_fetch(api_url, token, **kwargs):
         seen.update(kwargs)
