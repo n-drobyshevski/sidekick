@@ -30,10 +30,22 @@ sys.path.insert(0, str(BRICK_DIR))
 
 DELTA_PACKAGE = "io.delta:delta-spark_2.12:3.2.0"
 
+# Spark's 1g default is not enough for this suite. In local mode the driver JVM is also the
+# executor, so one heap carries the metastore, the Delta log state of every table the run has
+# created, and the aggregation buffers -- and the gold frames are wide: the confusion matrix,
+# seven more of it for rule sensitivity, and capacity over two populations, all unioned before
+# a single write. `test_rebuild_reproduces_the_live_ledger` replays every bronze scan through
+# that, and was dying on "SparkOutOfMemoryError: No enough memory for aggregation".
+#
+# Like --packages, this can only be set before the JVM starts: spark.driver.memory is read by
+# spark-submit at launch and setting it on the builder afterwards is silently ignored.
+DRIVER_MEMORY = "4g"
+
 # Must happen at import, before anything can launch the JVM: --packages is read by spark-submit
 # when the JVM starts, and jars cannot be added to one that is already running.
 os.environ.setdefault(
-    "PYSPARK_SUBMIT_ARGS", f"--packages {DELTA_PACKAGE} pyspark-shell"
+    "PYSPARK_SUBMIT_ARGS",
+    f"--packages {DELTA_PACKAGE} --driver-memory {DRIVER_MEMORY} pyspark-shell",
 )
 
 

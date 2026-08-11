@@ -47,6 +47,8 @@ from config import (
     DEFAULT_RISK_RULE,
     EPSS_PRIORITY_THRESHOLD,
     OVERALL,
+    POPULATION_ALL,
+    POPULATION_HIGH_RISK,
     SEVERITY_ORDER,
     SLA_TARGETS,
     RiskRule,
@@ -330,7 +332,17 @@ def register_views(spark: SparkSession, ctx: Ctx) -> None:
     ranked(program.where(pinned & keeps_overall)).createOrReplaceTempView("v_program")
     ranked(program.where(scoped & keeps_overall)).createOrReplaceTempView("v_program_all")
 
-    spark.table(ctx.tables.capacity).where(pinned).createOrReplaceTempView("v_capacity")
+    # The capacity table carries every month twice, once per `population`, so a view over it
+    # MUST pick one -- an unfiltered `v_capacity` would double every count and turn the
+    # `SELECT DISTINCT` in program_headline into two rows. Split rather than filtered at each
+    # call site, so forgetting the predicate is impossible rather than merely unlikely.
+    capacity_table = spark.table(ctx.tables.capacity).where(pinned)
+    capacity_table.where(F.col("population") == POPULATION_ALL).createOrReplaceTempView(
+        "v_capacity"
+    )
+    capacity_table.where(
+        F.col("population") == POPULATION_HIGH_RISK
+    ).createOrReplaceTempView("v_capacity_high_risk")
 
     silver = spark.table(ctx.tables.silver)
     silver.where(pinned & sev_only).createOrReplaceTempView("v_findings")
@@ -1059,15 +1071,10 @@ def quadrant(spark: SparkSession, ctx: Ctx, which: str = "fn") -> DataFrame:
 
 
 #: The seven non-empty subsets of {KEV, exploit, EPSS}, in a stable order.
-_SWEEP = [
-    ("KEV only", True, False, False),
-    ("Exploit only", False, True, False),
-    ("EPSS only", False, False, True),
-    ("KEV or exploit", True, True, False),
-    ("KEV or EPSS", True, False, True),
-    ("Exploit or EPSS", False, True, True),
-    ("All three", True, True, True),
-]
+# One definition of the seven subsets, shared with the gold table `metrics.rule_sensitivity`
+# writes. Two lists would drift, and the failure would be a page whose sweep disagrees with the
+# published table about what "KEV or EPSS" means.
+_SWEEP = metrics.RULE_SUBSETS
 
 
 def rule_sweep(spark: SparkSession, ctx: Ctx) -> DataFrame:
@@ -1108,36 +1115,30 @@ def rule_sweep(spark: SparkSession, ctx: Ctx) -> DataFrame:
 def capacity(spark: SparkSession, ctx: Ctx, months: int = 12, high_risk_only: bool = False):
     """Monthly close rate, either over everything or over the high-risk population only.
 
-    The high-risk variant is recomputed here: ``metrics.capacity_by_month`` has taken the flag
-    since v2 and ``run_pipeline`` has never passed it, so the published table only holds the
-    all-findings version. The notebook says as much rather than presenting two rows of the same
-    table.
+    Both come straight off the published table now. This function used to recompute the
+    high-risk variant here, because ``metrics.capacity_by_month`` had taken the flag since v2
+    and ``run_pipeline`` never passed it -- so the gold table only ever held the all-findings
+    figure. The pipeline now writes both, tagged by ``population``, which is where the
+    distinction belongs: a number recomputed in the presentation layer is one the SQL surface
+    cannot see and the next reader has to rediscover.
 
-    ``now_ts`` goes in as ISO **text** -- ``capacity_by_month`` casts it itself.
+    ``closed_observed`` is only on the all-findings rows. Reconciliation's resolution count
+    carries no risk label, so against the high-risk population it would cross-check a different
+    set of findings -- the column is selected only where it means something.
     """
-    if not high_risk_only:
-        return spark.sql(
-            f"""
-            SELECT month, open_at_start, opened, closed, closed_observed, mmcr, net, net_pct,
-                   verdict,
-                   CASE WHEN reconstructed THEN 'reconstructed'
-                        WHEN partial THEN 'in progress' ELSE '' END AS tag
-            FROM v_capacity ORDER BY month DESC LIMIT {int(months)}
-            """
-        )
-    frame = spark.table("v_lifecycles")
-    observed = spark.sql("SELECT min(scan_ts) AS t FROM v_scans").collect()
-    observed_from = observed[0]["t"] if observed else None
-    out = metrics.capacity_by_month(
-        frame, ctx.scan_ts, high_risk_only=True, observed_from=observed_from
+    view = "v_capacity" if not high_risk_only else "v_capacity_high_risk"
+    observed = "closed_observed," if not high_risk_only else ""
+    return spark.sql(
+        f"""
+        SELECT month, open_at_start, opened, closed, {observed} mmcr, net, net_pct,
+               verdict,
+               CASE WHEN reconstructed THEN 'reconstructed'
+                    WHEN partial THEN 'in progress' ELSE '' END AS tag
+        FROM {view} ORDER BY month DESC LIMIT {int(months)}
+        """
     )
-    return out.select(
-        "month", "open_at_start", "opened", "closed", "mmcr", "net", "net_pct", "verdict",
-        F.when(F.col("reconstructed"), F.lit("reconstructed"))
-        .when(F.col("partial"), F.lit("in progress"))
-        .otherwise(F.lit(""))
-        .alias("tag"),
-    ).orderBy(F.col("month").desc()).limit(int(months))
+
+
 
 
 # --------------------------------------------------------------------------- run & verify
@@ -1156,6 +1157,7 @@ def table_inventory(spark: SparkSession, ctx: Ctx) -> DataFrame:
         ctx.tables.mttr: "max_by(scan_id, scan_ts)",
         ctx.tables.program: "max_by(scan_id, scan_ts)",
         ctx.tables.capacity: "max_by(scan_id, scan_ts)",
+        ctx.tables.sensitivity: "max_by(scan_id, scan_ts)",
         ctx.tables.scans: "max_by(scan_id, scan_ts)",
         ctx.tables.ledger: "max(last_scan_id)",
     }
@@ -1172,7 +1174,7 @@ def table_inventory(spark: SparkSession, ctx: Ctx) -> DataFrame:
 
 
 def scan_pin_check(spark: SparkSession, ctx: Ctx) -> DataFrame:
-    """Do the three gold tables and the ledger agree on which scan is the latest?
+    """Do the four gold tables and the ledger agree on which scan is the latest?
 
     They disagree when a run died between two writes. The pipeline refuses to start in that
     state; this surfaces it *before* the next run hits it, and before somebody reads a page
@@ -1186,6 +1188,8 @@ def scan_pin_check(spark: SparkSession, ctx: Ctx) -> DataFrame:
                          (SELECT max_by(scan_id, scan_ts) FROM {ctx.tables.program})
         UNION ALL SELECT 'metrics_capacity',
                          (SELECT max_by(scan_id, scan_ts) FROM {ctx.tables.capacity})
+        UNION ALL SELECT 'metrics_sensitivity',
+                         (SELECT max_by(scan_id, scan_ts) FROM {ctx.tables.sensitivity})
         UNION ALL SELECT 'scans', (SELECT max_by(scan_id, scan_ts) FROM {ctx.tables.scans})
         UNION ALL SELECT 'vuln_ledger', (SELECT max(last_scan_id) FROM {ctx.tables.ledger})
         """

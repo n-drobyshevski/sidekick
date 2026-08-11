@@ -32,7 +32,13 @@ sys.path.insert(0, str(BRICK_DIR))
 import ledger as ledger_mod  # noqa: E402
 import metrics  # noqa: E402
 import run_pipeline  # noqa: E402
-from config import DEFAULT_RISK_RULE, STATUS_OPEN, STATUS_RESOLVED  # noqa: E402
+from config import (  # noqa: E402
+    DEFAULT_RISK_RULE,
+    POPULATION_ALL,
+    POPULATION_HIGH_RISK,
+    STATUS_OPEN,
+    STATUS_RESOLVED,
+)
 
 SEVERITIES = ["CRITICAL", "HIGH"]
 TS = {
@@ -168,7 +174,9 @@ def test_capacity_flags_months_nobody_watched(spark, tables):
 
     months = {
         r["month"].strftime("%Y-%m"): r.asDict()
-        for r in spark.table(tables.capacity).filter(F.col("scan_id") == "s1").collect()
+        for r in spark.table(tables.capacity)
+        .filter((F.col("scan_id") == "s1") & (F.col("population") == POPULATION_ALL))
+        .collect()
     }
     # The finding was first detected in April; the first scan is in May.
     assert months["2026-04"]["reconstructed"] is True
@@ -182,12 +190,77 @@ def test_capacity_publishes_the_observed_close_count(spark, tables):
 
     may = (
         spark.table(tables.capacity)
-        .filter((F.col("scan_id") == "s2") & (F.col("month") == "2026-05-01"))
+        .filter(
+            (F.col("scan_id") == "s2")
+            & (F.col("month") == "2026-05-01")
+            & (F.col("population") == POPULATION_ALL)
+        )
         .collect()[0]
     )
     # One finding disappeared in May, and both routes to that number agree.
     assert may["closed"] == 1
     assert may["closed_observed"] == 1
+
+
+def test_capacity_carries_both_populations(spark, tables):
+    """P2P v3's net capacity is over high-risk lifecycles; the backlog figure is over
+    everything. Both are published, and every row says which it is."""
+    high = node("f-1", hasCisaKevExploit=True)
+    low = node("f-2", hasCisaKevExploit=False, hasExploit=False, epssProbability=0.01)
+    run_scan(spark, tables, [high, low], "s1", TS["s1"])
+
+    rows = spark.table(tables.capacity).filter(F.col("scan_id") == "s1")
+    assert {r["population"] for r in rows.collect()} == {POPULATION_ALL, POPULATION_HIGH_RISK}
+
+    def opened(population):
+        return sum(
+            r["opened"] for r in rows.filter(F.col("population") == population).collect()
+        )
+
+    assert opened(POPULATION_ALL) == 2
+    assert opened(POPULATION_HIGH_RISK) == 1
+
+    # closed_observed is reconciliation's count and carries no risk label, so it is deliberately
+    # not attached to the high-risk rows -- it would be a cross-check on a different population.
+    assert all(
+        r["closed_observed"] is None
+        for r in rows.filter(F.col("population") == POPULATION_HIGH_RISK).collect()
+    )
+
+
+def test_rule_sensitivity_is_written_for_every_signal_subset(spark, tables):
+    """Coverage/efficiency are defined by the rule, so the rule's own leverage is published.
+
+    The two findings are chosen so the subsets cannot agree with each other: one fires on KEV
+    alone and on nothing else, the other has no EPSS at all and so is undecidable to any rule
+    that asks for one.
+    """
+    kev_only = node("f-1", hasCisaKevExploit=True, hasExploit=False, epssProbability=0.01)
+    no_epss = node("f-2", hasCisaKevExploit=False, hasExploit=False, epssProbability=None)
+    run_scan(spark, tables, [kev_only, no_epss], "s1", TS["s1"])
+
+    rows = {
+        r["rule_label"]: r.asDict()
+        for r in spark.table(tables.sensitivity).filter(F.col("scan_id") == "s1").collect()
+    }
+    assert set(rows) == {label for label, *_ in metrics.RULE_SUBSETS}
+    # Exactly one row is the configured rule, and by default that is all three signals.
+    assert [label for label, row in rows.items() if row["active"]] == ["All three"]
+
+    # KEV alone finds f-1 and decides f-2 is low -- nothing is unclassified.
+    assert (rows["KEV only"]["high_risk"], rows["KEV only"]["unknown"]) == (1, 0)
+    # Exploit alone fires on neither, and both flags were observed, so both are low.
+    assert (rows["Exploit only"]["high_risk"], rows["Exploit only"]["unknown"]) == (0, 0)
+    # EPSS alone: f-1 scores below the threshold, f-2 was never scored at all.
+    assert (rows["EPSS only"]["high_risk"], rows["EPSS only"]["unknown"]) == (0, 1)
+    # The active rule inherits both: f-1 is high on KEV, f-2 stays undecidable on the missing
+    # EPSS -- which is the whole point of the third value.
+    assert (rows["All three"]["high_risk"], rows["All three"]["unknown"]) == (1, 1)
+
+    # Nothing has been remediated, so every rate is either 0 or an empty denominator -- and an
+    # empty denominator is NULL, never 0.
+    assert rows["All three"]["coverage_pct"] == 0.0  # 0 TP of 1 high-risk
+    assert rows["All three"]["efficiency_pct"] is None  # nothing remediated at all
 
 
 # ------------------------------------------------------------------------- guards

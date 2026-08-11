@@ -242,6 +242,96 @@ def test_signal_breakdown_counts_overlaps_and_gaps(spark):
     assert got["epss_missing"] == 1
 
 
+# ------------------------------------------------------------------ rule sensitivity
+#
+# Coverage and efficiency are scored against the rule, not against observed exploitation, so
+# "how much of the headline is the rule" is part of the headline. The worked example is reused
+# because its twelve lifecycles fire on different signals -- the subsets genuinely disagree,
+# which is what makes the assertions below load-bearing rather than decorative.
+
+
+@pytest.fixture(scope="module")
+def sensitivity(spark, worked_example_nodes):
+    df = metrics.classify_risk(silver(spark, worked_example_nodes), DEFAULT_RISK_RULE)
+    return {
+        r["rule_label"]: r.asDict()
+        for r in metrics.rule_sensitivity(df, DEFAULT_RISK_RULE).collect()
+    }
+
+
+def test_rule_sensitivity_covers_every_non_empty_subset(sensitivity):
+    assert set(sensitivity) == {label for label, *_ in metrics.RULE_SUBSETS}
+    assert len(metrics.RULE_SUBSETS) == 7  # 2^3 - 1: the empty rule decides nothing
+
+
+def test_rule_sensitivity_marks_exactly_the_configured_rule(sensitivity):
+    active = [label for label, row in sensitivity.items() if row["active"]]
+    assert active == ["All three"]
+    assert sensitivity["All three"]["rule_sentence"] == DEFAULT_RISK_RULE.sentence()
+    assert sensitivity["KEV only"]["rule_sentence"] == "CISA KEV"
+    # The threshold is inherited from the active rule, not swept -- only the signals vary.
+    assert all(r["epss_threshold"] == DEFAULT_RISK_RULE.epss_threshold
+               for r in sensitivity.values())
+
+
+def test_rule_sensitivity_agrees_with_the_headline_on_the_active_row(sensitivity):
+    """The `All three` row must reproduce the worked example exactly, or the table is
+    reporting something other than the metric it sits beside."""
+    row = sensitivity["All three"]
+    assert (row["tp"], row["fp"], row["fn"], row["tn"]) == (3, 3, 2, 2)
+    assert row["coverage_pct"] == pytest.approx(60.0)
+    assert row["efficiency_pct"] == pytest.approx(50.0)
+
+
+def test_rule_sensitivity_subsets_genuinely_disagree(sensitivity):
+    """Hand-counted over the same twelve lifecycles.
+
+    KEV alone finds one of the two KEV rows remediated (TP=1) and one still open (FN=1), and
+    calls the other eight classified rows low -- five of which were remediated. EPSS alone
+    lands on the same shape via different findings. Exploit alone fires on one remediated row
+    and nothing open at all, so its coverage is a perfect 100% over a high-risk population of
+    one -- which is exactly the trap the `high_risk` column exists to expose.
+    """
+    assert sensitivity["KEV only"]["coverage_pct"] == pytest.approx(50.0)  # 1 / 2
+    assert sensitivity["KEV only"]["efficiency_pct"] == pytest.approx(100 / 6)  # 1 / 6
+    assert sensitivity["EPSS only"]["coverage_pct"] == pytest.approx(50.0)
+    assert sensitivity["EPSS only"]["efficiency_pct"] == pytest.approx(100 / 6)
+
+    exploit = sensitivity["Exploit only"]
+    assert exploit["coverage_pct"] == pytest.approx(100.0)
+    assert exploit["high_risk"] == 1
+    assert exploit["efficiency_pct"] == pytest.approx(100 / 6)
+    # 100% coverage reads better than the active rule's 60% and is worth less. Efficiency and
+    # the size of the high-risk population are what say so.
+    assert exploit["coverage_pct"] > sensitivity["All three"]["coverage_pct"]
+    assert exploit["efficiency_pct"] < sensitivity["All three"]["efficiency_pct"]
+    assert exploit["high_risk"] < sensitivity["All three"]["high_risk"]
+
+
+def test_rule_sensitivity_never_folds_a_missing_signal_into_low(sensitivity):
+    """The two unclassified lifecycles have no signal at all, so they stay unclassified under
+    every subset -- the correctness trap, applied per row rather than once."""
+    assert all(row["unknown"] == 2 for row in sensitivity.values())
+    assert all(row["classified"] == 10 for row in sensitivity.values())
+
+
+def test_rule_sensitivity_leaves_the_input_frame_alone(spark, worked_example_nodes):
+    """It reclassifies seven times over a frame the caller has already classified, so it must
+    not disturb the caller's `risk_class`."""
+    df = metrics.classify_risk(silver(spark, worked_example_nodes), DEFAULT_RISK_RULE)
+    before = sorted(r["risk_class"] for r in df.collect())
+    metrics.rule_sensitivity(df, DEFAULT_RISK_RULE).collect()
+    assert sorted(r["risk_class"] for r in df.collect()) == before
+
+
+def test_rule_sensitivity_marks_nothing_active_for_an_unmatched_rule(spark):
+    """A rule with no signals classifies nothing, so no subset is it."""
+    df = metrics.classify_risk(silver(spark, [node()]), DEFAULT_RISK_RULE)
+    empty = RiskRule(kev=False, exploit=False, epss=False)
+    rows = metrics.rule_sensitivity(df, empty).collect()
+    assert not any(r["active"] for r in rows)
+
+
 # --------------------------------------------------------------------- MTTR and SLA
 
 
@@ -533,6 +623,63 @@ def test_capacity_high_risk_only_narrows_the_population(spark):
         for r in metrics.capacity_by_month(df, SCAN_TS, high_risk_only=True).collect()
     }
     assert months["2026-04"]["opened"] == 1
+
+
+def test_capacity_populations_stacks_both_and_labels_every_row(spark):
+    """The published table carries the all-findings backlog and the P2P v3 high-risk net flow.
+    An unfiltered read of it would double every count, so every row says which it is."""
+    nodes = [
+        node(id="hi", hasCisaKevExploit=True, firstDetectedAt="2026-04-05T00:00:00Z"),
+        node(id="lo", firstDetectedAt="2026-04-05T00:00:00Z"),
+    ]
+    df = metrics.classify_risk(silver(spark, nodes), DEFAULT_RISK_RULE)
+    rows = metrics.capacity_populations(df, SCAN_TS).collect()
+
+    assert {r["population"] for r in rows} == {"all", "high_risk"}
+    opened = {
+        (r["population"], str(r["month"])[:7]): r["opened"] for r in rows
+    }
+    assert opened[("all", "2026-04")] == 2
+    assert opened[("high_risk", "2026-04")] == 1
+    # Same month grid here because both populations start in April; that is a property of these
+    # nodes, not a guarantee -- each grid is built from its own earliest first_detected_at.
+    assert opened[("all", "2026-07")] == 0
+
+
+def test_capacity_populations_withhold_closed_observed_from_high_risk(spark):
+    """Reconciliation's count carries no risk label, so against the high-risk population it
+    would cross-check a different set of findings. NULL beats a misleading number."""
+    nodes = [
+        node(
+            id="hi",
+            hasCisaKevExploit=True,
+            firstDetectedAt="2026-04-05T00:00:00Z",
+            resolvedAt="2026-05-15T00:00:00Z",
+        ),
+        node(
+            id="lo",
+            firstDetectedAt="2026-04-05T00:00:00Z",
+            resolvedAt="2026-05-20T00:00:00Z",
+        ),
+    ]
+    observed = spark.createDataFrame(
+        [("2026-05-01T00:00:00Z", 2)], "month STRING, closed_observed LONG"
+    ).withColumn("month", metrics.F.col("month").cast("timestamp"))
+    df = metrics.classify_risk(silver(spark, nodes), DEFAULT_RISK_RULE)
+    rows = metrics.capacity_populations(df, SCAN_TS, closed_observed=observed).collect()
+
+    by_key = {(r["population"], str(r["month"])[:7]): r.asDict() for r in rows}
+    assert by_key[("all", "2026-05")]["closed_observed"] == 2
+    assert by_key[("high_risk", "2026-05")]["closed"] == 1
+    assert by_key[("high_risk", "2026-05")]["closed_observed"] is None
+
+
+def test_capacity_populations_says_nothing_when_nothing_is_high_risk(spark, capacity_nodes):
+    """`capacity_nodes` is entirely low risk. An empty high-risk population writes no rows --
+    it does not write a row of zeros, which would read as measured throughput of nothing."""
+    df = metrics.classify_risk(silver(spark, capacity_nodes), DEFAULT_RISK_RULE)
+    rows = metrics.capacity_populations(df, SCAN_TS).collect()
+    assert {r["population"] for r in rows} == {"all"}
 
 
 def test_observation_window(spark):

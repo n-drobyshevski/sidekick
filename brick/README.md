@@ -12,8 +12,10 @@ as query-able gold tables:
 | **Capacity** | Can we close faster than risk arrives? | monthly `closed / open_at_start`, and `closed − opened` |
 
 Coverage and efficiency come from the Cisco Kenna / Cyentia *Prioritization to Prediction*
-series. They are in direct tension — P2P vol. 2's industry baseline is 70% coverage at 18.5%
-efficiency — so the pipeline always emits both, never one alone.
+series. They are in direct tension, so the pipeline always emits both, never one alone — and
+P2P is the source of the **formulas**, not a benchmark these numbers can be read against. See
+[Reading coverage and efficiency](#reading-coverage-and-efficiency), which is the section to
+read before quoting either figure to anyone.
 
 Those lifecycles are the difference between this and the pipeline's first version: metrics come
 from what the register has been observed to do over time, not from whatever the latest snapshot
@@ -141,7 +143,8 @@ matter how many times it is scanned.
 | **`…wiz_os_scans`** | **one row per run** | **the run log: `scope`, `severities`, and the new/resolved/reopened deltas** |
 | `…wiz_os_metrics_mttr` | scan × severity (+ `OVERALL`) | MTTR mean/median, open counts, open-age p50/p90, SLA target and compliance, the resolution-source split, and the `snap_*` snapshot comparison |
 | `…wiz_os_metrics_program` | scan × severity (+ `OVERALL`) | the confusion matrix, coverage and efficiency with bounds, prevalence, signal coverage |
-| `…wiz_os_metrics_capacity` | scan × month | opened, closed, backlog at month start, MMCR, net flow, verdict, `reconstructed`, `closed_observed` |
+| `…wiz_os_metrics_capacity` | scan × month × **`population`** | opened, closed, backlog at month start, MMCR, net flow, verdict, `reconstructed`, `closed_observed` |
+| `…wiz_os_metrics_sensitivity` | scan × signal subset | the same confusion matrix and rates under each of the seven non-empty rules, with the configured one marked `active` |
 
 The gold tables are computed from the ledger. The snapshot figures are still computed and
 published beside them as `snap_km_median`, `snap_mttr_median`, `snap_resolved`, `snap_open` —
@@ -156,6 +159,29 @@ published beside them as `snap_km_median`, `snap_mttr_median`, `snap_resolved`, 
 - **`closed_observed`** — reconciliation's own resolution count, bucketed by the month of the scan
   that found them. An independent route to `closed`, which is derived from `resolved_at`. Where
   the two disagree, one of them is wrong, and publishing both is what lets a reader notice.
+
+### `…metrics_capacity` carries two populations — always filter on `population`
+
+Each month appears twice, once per population, and **an unfiltered read doubles every count.**
+
+| `population` | |
+| --- | --- |
+| `all` | every finding. How much of the backlog moves in a month |
+| `high_risk` | high-risk lifecycles only. The population P2P v3 defines net remediation capacity over, and what `gas/src/server/api.ts:859` passes (`highRiskOnly: true`) |
+
+The two routinely disagree, and which one a number meant is not recoverable after the fact — so
+both are written and every reader has to say which. The `high_risk` rows carry no
+`closed_observed`: reconciliation's count has no risk label, so against that population it would
+be a cross-check on a different set of findings, which is worse than none.
+
+The grid is built per population from that population's own earliest `first_detected_at`, so a
+register whose first high-risk finding arrived late has a shorter `high_risk` series. A register
+with no high-risk lifecycles at all writes no `high_risk` rows.
+
+> **Upgrading from 2.0:** `population` is added by schema evolution, so rows written by 2.0 land
+> with `population = NULL` and are all-findings rows. Backfill them
+> (`UPDATE … SET population = 'all' WHERE population IS NULL`) or filter on
+> `coalesce(population, 'all')`, or the old scans quietly drop out of every filtered query.
 
 ### The scan log is load-bearing
 
@@ -485,8 +511,21 @@ WHERE  scan_id = (
 ORDER BY severity;
 ```
 
-The run itself prints all three families — MTTR and SLA by severity, coverage and efficiency,
-and the most recent capacity months.
+Read that against `prevalence_pct` on the same row, not against the P2P baselines — see
+[Reading coverage and efficiency](#reading-coverage-and-efficiency). How much of it is the rule:
+
+```sql
+SELECT rule_label, active, coverage_pct, efficiency_pct, high_risk, unknown
+FROM   <catalog>.<schema>.wiz_os_metrics_sensitivity
+WHERE  scan_id = (
+  SELECT max_by(scan_id, scan_ts) FROM <catalog>.<schema>.wiz_os_metrics_sensitivity
+)
+ORDER BY active DESC, rule_label;
+```
+
+The run itself prints all three families — MTTR and SLA by severity, coverage and efficiency
+with the rule-sensitivity table beside them, and the most recent capacity months for each
+population.
 
 To read the numbers rather than query them, open the [notebooks](#notebooks).
 
@@ -698,6 +737,67 @@ What was gained is that every number on every page is now covered by a test that
 laptop, and that the chart definitions are code rather than an undocumented JSON schema
 reconstructed from exports.
 
+## Reading coverage and efficiency
+
+The formulas are P2P's. **The positive class is not**, and that is the whole of how to read
+these numbers.
+
+P2P scores a remediation strategy against an *independent* ground truth: exploitation observed
+in the wild, which lands on roughly 2–5% of CVEs. We have no such ground truth — only the
+signals in the risk rule. So `risk_class = high` **is our own prioritization rule**, and the
+confusion matrix measures what the register did against that rule rather than against reality.
+That is the same move the Kenna product makes (it scores against Kenna's own risk band), and it
+is a fair thing to measure. It is just not the thing P2P measures.
+
+| | P2P research | Kenna.VM product | here |
+| --- | --- | --- | --- |
+| Positive label | exploitation observed in the wild | Kenna risk score, high band | `KEV ∨ public exploit ∨ EPSS ≥ 0.1` |
+| Nature | retrospective ground truth | vendor prediction | our own rule |
+| Prevalence | ~2–5% of CVEs | vendor-set | rule-set — read `prevalence_pct` |
+| Unit | CVE (v1–v4), asset-centric from v5 | vulnerability instance | finding-instance (`vuln_key`) |
+| Window | a defined period | rolling period | cumulative over the ledger |
+| Unknown label | none — binary | none | first-class, with `_lo`/`_hi` bounds |
+
+Four consequences, in the order they bite:
+
+- **Do not compare our efficiency to 18.5%.** P2P vol. 2's industry baseline of 70% coverage at
+  18.5% efficiency, and vol. 4's finding that most firms never cross 50%, are computed against a
+  much rarer positive class. Ours will read higher and mean less.
+- **`prevalence_pct` is the baseline that *is* a peer.** It is the share of classified findings
+  that are high risk — exactly the efficiency a program picking findings at random would score.
+  Efficiency at or below prevalence means the programme is not prioritizing at all. It is
+  published beside every rate and on the overview page for this reason.
+- **`hasFix: true` is in the population** (see [Scope](#scope)), so awaiting-vendor-fix findings
+  are not in coverage's denominator. Deliberate, and one more reason the published baselines are
+  not comparable.
+- **The matrix is cumulative and asset-weighted.** Every finding the ledger has ever seen is in
+  it, so the appended per-scan series is a to-date curve, not a monthly one — a good quarter
+  barely moves it. And one CVE on 5,000 hosts contributes 5,000 rows.
+
+One more, from the ledger's [sticky signals](#the-ledger-and-why-v2-exists): classification is
+**not as-of**. Exploit knowledge is monotone by design, so a finding that reached KEV in month
+six is counted high-risk in month one too. The bias is conservative — it can only move findings
+into the high-risk population, never out — but it means the confusion matrix is "classified with
+everything we know now", not "classified with what we knew then".
+
+### Since the rule is the label, its sensitivity is a published metric
+
+`…metrics_sensitivity` recomputes coverage and efficiency under each of the seven non-empty
+signal subsets — KEV alone, EPSS alone, KEV-or-exploit, and so on — with the active rule marked
+`active = true`. Ported from `gas/src/domain/program.ts::ruleSensitivity`.
+
+It answers **"how much does the headline depend on which signals I turned on?"** and nothing
+else. It is deliberately *not* P2P vol. 9's Figure 19, which plots candidate strategies against
+observed exploitation; the subsets here are scored against themselves, so a subset cannot be
+"wrong" — a narrow rule simply reports high efficiency over a small high-risk population.
+Label it *rule sensitivity*, never *strategy comparison*.
+
+What the table is good for is seeing the shape of the trade: each row carries `high_risk` and
+`unknown` alongside the two rates, so a subset that buys efficiency by shrinking the high-risk
+population — or by pushing rows into `unknown` — cannot hide it. The `KEV only` row is usually the
+starkest: P2P vol. 9 pp. 22–24 found CISA KEV alone covers only ~19% of what is exploited in
+the wild, which is why the default rule is an any-of over three signals rather than KEV alone.
+
 ## MTTR is Kaplan–Meier, not a mean of what closed
 
 Averaging `mttr_days` over resolved findings is survivorship bias with a respectable name. The
@@ -767,12 +867,20 @@ of it available on the GAS side:
   scans into `resolved_episodes` (`wiz_dashboard/data/ledger.py::compact_ledger`); on Delta the
   equivalent levers are `OPTIMIZE` and `VACUUM`, plus bronze retention. Nothing here does either
   yet, and a large register will eventually want it.
+- **No period-scoped confusion matrix.** Coverage and efficiency are cumulative over the whole
+  ledger, so the per-scan series is a to-date curve and a good quarter barely moves it.
+  `gas/src/domain/trend.ts::withCoverageEfficiency` recomputes the pair as-of each trend point
+  (using `resolved_at <= d` rather than `status`); there is no `brick` equivalent. See
+  [Reading coverage and efficiency](#reading-coverage-and-efficiency).
+
 Two entries left this list with the notebooks. The **Kaplan–Meier survival curve** is now
 `metrics.km_curve`, which `kaplan_meier` itself consumes — one implementation, so the staircase
-on `01_mttr_sla` and the published `km_median` cannot disagree. The **rule-sensitivity sweep** is
-`panels.rule_sweep`: all seven non-empty subsets of the risk signals through the existing
-`classify_risk` / `confusion_matrix`, in one pass over the ledger, plotted on
-`02_program_performance`.
+on `01_mttr_sla` and the published `km_median` cannot disagree. The **rule-sensitivity sweep**
+exists twice, on purpose: `metrics.rule_sensitivity` writes `…metrics_sensitivity` under the
+configured rule, so the sweep is queryable from SQL and trends across scans; `panels.rule_sweep`
+recomputes it at read time against `ctx.rule`, so changing the rule in a notebook moves the
+filled point without a re-scan. Both walk the same `metrics.RULE_SUBSETS`, so they cannot
+disagree about what a subset is.
 
 Two ledger fields also stay deliberately simple relative to GAS: there is no `tags_json`
 (see above), and no `resolved_episodes` table, so a `vuln_key` has exactly one lifecycle row and

@@ -1,4 +1,4 @@
-"""Databricks entry point: Wiz API -> bronze -> silver -> three gold metric tables.
+"""Databricks entry point: Wiz API -> bronze -> silver -> four gold metric tables.
 
 Run it as a Job (Python file task) or call ``main()`` from a notebook. Parameters resolve in
 this order, so the same file works in all three places:
@@ -19,11 +19,16 @@ Tables written. ``<p>`` is the table prefix, ``wiz_<scope>_`` by default:
     <catalog>.<schema>.<p>scans              log      one row per run: scope, severities, deltas
     <catalog>.<schema>.<p>metrics_mttr       gold     scan_id x severity (+ OVERALL)
     <catalog>.<schema>.<p>metrics_program    gold     scan_id x severity (+ OVERALL)
-    <catalog>.<schema>.<p>metrics_capacity   gold     scan_id x month
+    <catalog>.<schema>.<p>metrics_capacity   gold     scan_id x month x population
+    <catalog>.<schema>.<p>metrics_sensitivity gold    scan_id x signal subset
 
-Bronze, silver and the three gold tables are appended -- each run adds a ``scan_id``, so they
+Bronze, silver and the four gold tables are appended -- each run adds a ``scan_id``, so they
 accumulate into a trend. The ledger is the exception and the point of v2: it is MERGEd, so a
 vulnerability keeps one row and one history no matter how many times it is scanned.
+
+``metrics_capacity`` carries every month **twice**, once per ``population`` -- ``all`` for
+backlog throughput and ``high_risk`` for the net flow P2P v3 actually defines. Any query
+against it that does not filter on ``population`` doubles every count.
 
 Bronze keeps the finding as a JSON string: a Wiz schema change can then never fail ingest,
 and silver is just the typed projection of whatever arrived.
@@ -68,6 +73,8 @@ try:
         DISAPPEARANCE_MODES,
         DISAPPEARANCE_RESOLUTION,
         PIPELINE_VERSION,
+        POPULATION_ALL,
+        POPULATION_HIGH_RISK,
         SCANS_COLUMNS,
         SCOPES,
         SEVERITY_ORDER,
@@ -94,10 +101,30 @@ SCANS_TABLE = "scans"
 GOLD_MTTR = "metrics_mttr"
 GOLD_PROGRAM = "metrics_program"
 GOLD_CAPACITY = "metrics_capacity"
+GOLD_SENSITIVITY = "metrics_sensitivity"
 
 # The append-only tables, i.e. everything except the ledger. A retry writes a scan_id that a
 # failed attempt may already have partly written, so these are cleared for that scan_id first.
-APPEND_TABLES = (BRONZE_TABLE, SILVER_TABLE, GOLD_MTTR, GOLD_PROGRAM, GOLD_CAPACITY)
+APPEND_TABLES = (
+    BRONZE_TABLE,
+    SILVER_TABLE,
+    GOLD_MTTR,
+    GOLD_PROGRAM,
+    GOLD_CAPACITY,
+    GOLD_SENSITIVITY,
+)
+
+# APPEND_TABLES name -> the Tables attribute holding its fully-qualified name. Kept beside the
+# tuple rather than inline in clear_scan: a table added to one and not the other is a KeyError
+# on the retry path only, which is the path nobody exercises until it matters.
+APPEND_TABLE_ATTRS = {
+    BRONZE_TABLE: "bronze",
+    SILVER_TABLE: "silver",
+    GOLD_MTTR: "mttr",
+    GOLD_PROGRAM: "program",
+    GOLD_CAPACITY: "capacity",
+    GOLD_SENSITIVITY: "sensitivity",
+}
 
 # Every module that has to be deployed for a run, including this one. The README's file tree
 # is checked against this list by the test suite, so the deployment instructions cannot drift
@@ -173,7 +200,7 @@ PREFIX = re.compile(r"^[A-Za-z0-9_]*$")
 
 @dataclass(frozen=True)
 class Tables:
-    """The seven fully-qualified table names one run writes to."""
+    """The eight fully-qualified table names one run writes to."""
 
     bronze: str
     silver: str
@@ -182,6 +209,7 @@ class Tables:
     mttr: str
     program: str
     capacity: str
+    sensitivity: str
 
 
 @dataclass(frozen=True)
@@ -401,16 +429,7 @@ def clear_scan(spark: SparkSession, tables: Tables, scan_id: str) -> None:
     ``ledger_already_merged`` instead.
     """
     for name in APPEND_TABLES:
-        table = getattr(
-            tables,
-            {
-                BRONZE_TABLE: "bronze",
-                SILVER_TABLE: "silver",
-                GOLD_MTTR: "mttr",
-                GOLD_PROGRAM: "program",
-                GOLD_CAPACITY: "capacity",
-            }[name],
-        )
+        table = getattr(tables, APPEND_TABLE_ATTRS[name])
         if spark.catalog.tableExists(table):
             spark.sql(f"DELETE FROM {table} WHERE scan_id = '{scan_id}'")
 
@@ -583,8 +602,17 @@ def build_metrics(
     program = program.withColumn("risk_rule", F.lit(rule.sentence()))
     write_append(program, tables.program)
 
+    # Coverage and efficiency are defined by the rule, so how much of them IS the rule is not a
+    # curiosity -- it belongs beside them. Seven aggregations over an already-cached frame.
+    sensitivity = metrics.with_scan_columns(
+        metrics.rule_sensitivity(lifecycles, rule), scan_id, scan_ts, scope
+    )
+    write_append(sensitivity, tables.sensitivity)
+
+    # Both populations, stacked: the all-findings backlog throughput and the high-risk net flow
+    # P2P v3 actually defines. Every reader of this table has to filter on `population`.
     capacity = metrics.with_scan_columns(
-        metrics.capacity_by_month(
+        metrics.capacity_populations(
             lifecycles,
             scan_ts,
             observed_from=observation_start(spark, tables),
@@ -594,7 +622,7 @@ def build_metrics(
     )
     write_append(capacity, tables.capacity)
 
-    summarize(scan_id, scope, rule, deltas, mttr, program, capacity)
+    summarize(scan_id, scope, rule, deltas, mttr, program, capacity, sensitivity)
     silver.unpersist()
     lifecycles.unpersist()
 
@@ -612,7 +640,7 @@ def with_snapshot_columns(ledger_mttr, snapshot_mttr):
     return ledger_mttr.join(snap, "severity", "left")
 
 
-def summarize(scan_id, scope, rule, deltas, mttr, program, capacity) -> None:
+def summarize(scan_id, scope, rule, deltas, mttr, program, capacity, sensitivity) -> None:
     """Print all three metric families.
 
     Previously only the program frame was shown, so MTTR and capacity were computed, written
@@ -649,8 +677,27 @@ def summarize(scan_id, scope, rule, deltas, mttr, program, capacity) -> None:
         )
     ).show(truncate=False)
 
-    print("Capacity — most recent months")
-    capacity.select(
+    # Printed straight after coverage/efficiency, because it is the caveat on them: a headline
+    # that swings wildly across these rows is mostly reporting the rule, not the register.
+    print("How much of that is the rule (coverage/efficiency under each signal subset)")
+    sensitivity.select(
+        "rule_label", "active", "coverage_pct", "efficiency_pct", "prevalence_pct",
+        "high_risk", "unknown",
+    ).orderBy(F.col("active").desc(), "rule_label").show(truncate=False)
+
+    print("Capacity — most recent months, all findings")
+    _show_capacity(capacity, POPULATION_ALL)
+
+    # The P2P v3 reading. Separate rather than a column beside the above, because the two
+    # populations have their own month grids and their own backlogs -- they are not two
+    # measurements of one thing.
+    print("Capacity — most recent months, high risk only (the P2P v3 net-capacity population)")
+    _show_capacity(capacity, POPULATION_HIGH_RISK)
+
+
+def _show_capacity(capacity, population: str) -> None:
+    rows = capacity.filter(F.col("population") == population)
+    rows.select(
         "month", "open_at_start", "opened", "closed", "closed_observed", "mmcr", "verdict",
         "partial", "reconstructed",
     ).orderBy(F.col("month").desc()).show(6, truncate=False)
@@ -687,7 +734,7 @@ def resolve_scope(argv: Optional[list] = None) -> str:
 
 
 def resolve_tables(namespace: str, scope: str, argv: Optional[list] = None) -> Tables:
-    """The five table names, prefixed so they can share a schema with other teams' tables."""
+    """The eight table names, prefixed so they can share a schema with other teams' tables."""
     prefix = param("table_prefix", default_table_prefix(scope), argv=argv)
     if not PREFIX.match(prefix):
         raise RuntimeError(f"table_prefix {prefix!r} is not a valid identifier fragment")
@@ -703,6 +750,7 @@ def resolve_tables(namespace: str, scope: str, argv: Optional[list] = None) -> T
         mttr=qualify(GOLD_MTTR),
         program=qualify(GOLD_PROGRAM),
         capacity=qualify(GOLD_CAPACITY),
+        sensitivity=qualify(GOLD_SENSITIVITY),
     )
 
 

@@ -155,6 +155,19 @@ NET_CAPACITY_BAND_PCT = 2
 # The row label used for the all-severities aggregate in the gold tables.
 OVERALL = "OVERALL"
 
+# Which population a capacity row describes. The gold capacity table carries both, stacked,
+# because they answer different questions and routinely disagree:
+#
+#   "all"        every finding -- how much of the backlog moves in a month.
+#   "high_risk"  high-risk lifecycles only. This is the population P2P v3 defines net
+#                remediation capacity over, and it is what gas/src/server/api.ts:859 passes
+#                (`highRiskOnly: true`) on the production surface.
+#
+# Every query against the capacity table must filter on `population`, or it will read each
+# month twice.
+POPULATION_ALL = "all"
+POPULATION_HIGH_RISK = "high_risk"
+
 # ---- Lifecycle ledger (v2) ----
 # Mirrors the disappearance modes in gas/src/domain/reconcile.ts, which is the reference
 # implementation for the whole lifecycle layer. See ledger.py for what each rule does.
