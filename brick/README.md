@@ -646,7 +646,8 @@ name needs Unity Catalog — a local Spark can only write two-level names.
 
 ```bash
 pip install -r brick/requirements.txt
-pytest brick/tests -q
+pytest brick/tests -n auto --dist loadgroup -q     # the whole suite, in parallel
+pytest brick/tests -q                              # the same tests, one at a time
 ```
 
 They spin up a local `SparkSession`; the module skips cleanly if pyspark isn't installed. The
@@ -658,6 +659,35 @@ still run. All the tests share one `SparkSession` from `tests/conftest.py`, beca
 extensions can only be installed when a session is built and `getOrCreate()` returns whatever
 already exists — leaving each module to make its own meant the first module alphabetically
 decided whether the suite could use Delta.
+
+**On the parallel run.** Each worker gets its own `SparkSession`, its own in-memory catalog and
+its own warehouse directory, so nothing they do can collide — which means how tests are spread
+across them is only ever a question of cost. `--dist loadgroup` is what lets `conftest.py`
+answer it: it pins `test_panels` and `test_notebooks` to one worker, because both read the
+session-scoped `live_tables` and session-scoped means *once per worker*, so splitting them would
+build the whole live register twice. Everything else is left unpinned and handed out per test —
+including the two heaviest modules, `test_ledger_pipeline` and `test_import_bundle`, which build
+a private database per test and so parallelise all the way down.
+
+A worker is a whole JVM, not a thread, and a `local[1]` Spark session still runs a scheduler, a
+listener bus and its own garbage collector — so it wants appreciably more than one core, and
+`-n auto` oversubscribes a small machine. On a four-core box `-n 3` measured faster than
+`-n auto`; on a larger one `auto` is fine. The heap is sized for this too: `conftest.py` asks
+for 4g when it is the only session and 2g per worker when it is not, because four workers at 4g
+want 16g and the swapping costs more than the parallelism returns.
+
+The one thing that does not parallelise is the first-ever run after `DELTA_PACKAGE` in
+`conftest.py` changes: `--packages` resolves the jars through Ivy into a shared `~/.ivy2`, and
+several workers populating a cold cache at once can race. Run the suite serially once after
+bumping that version, then in parallel thereafter.
+
+Three modules — `test_figures.py`, `test_tiles.py` and `test_pipeline.py` — touch no Spark at
+all (Plotly figures, HTML strings, and argument parsing against a fake session). Running just
+those needs no JVM and takes seconds, which is the fast loop while working on that layer:
+
+```bash
+pytest brick/tests/test_figures.py brick/tests/test_tiles.py brick/tests/test_pipeline.py -q
+```
 
 The oracles are ported, not invented:
 

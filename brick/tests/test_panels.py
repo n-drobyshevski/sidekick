@@ -66,6 +66,17 @@ def spark_(live_tables):
     return live_tables[0]
 
 
+def materialized(df):
+    """Cache a frame and force it, for one that several tests share.
+
+    A DataFrame is a plan, so a fixture that merely returns one has shared nothing -- every
+    consumer executes it again. This is what makes hoisting a panel worth doing.
+    """
+    df = df.cache()
+    df.count()
+    return df
+
+
 # ------------------------------------------------------------------ the published contract
 
 #: name -> callable(spark, ctx). Everything with an OUTPUT_COLUMNS entry, so adding a panel
@@ -106,6 +117,19 @@ PANELS = {
 }
 
 
+@pytest.fixture(scope="module")
+def panel_frames(spark_, ctx):
+    """Every panel, executed once.
+
+    Three tests below assert different things about the same 32 panel outputs -- the declared
+    columns, the scan pin, and one-row-ness -- and each was running the panel again to do it.
+    Sharing the executed frames means each panel's query runs once for all three. They are
+    still real ``DataFrame``s, so ``.columns``, ``.select(...)``, ``.count()`` and the rest read
+    exactly as they did; only the plan underneath is now an already-computed relation.
+    """
+    return {name: materialized(fn(spark_, ctx)) for name, fn in PANELS.items()}
+
+
 def test_every_panel_has_a_declared_contract():
     assert set(PANELS) == set(panels.OUTPUT_COLUMNS), (
         "only in PANELS: "
@@ -115,14 +139,13 @@ def test_every_panel_has_a_declared_contract():
 
 
 @pytest.mark.parametrize("name", sorted(PANELS))
-def test_panel_runs_and_returns_what_it_declares(name, spark_, ctx):
+def test_panel_runs_and_returns_what_it_declares(name, panel_frames):
     """A panel's columns are a contract the notebooks and the recipe parser both read."""
-    frame = PANELS[name](spark_, ctx)
+    frame = panel_frames[name]  # building the fixture is what proves it executes
     declared = set(panels.OUTPUT_COLUMNS[name])
     actual = set(frame.columns)
     missing = declared - actual
     assert not missing, f"{name} declares {sorted(missing)} but does not return them"
-    frame.limit(5).collect()  # and it actually executes
 
 
 # --------------------------------------------------------------------- the append-only guard
@@ -137,13 +160,13 @@ _PINNED = sorted(
 
 
 @pytest.mark.parametrize("name", _PINNED)
-def test_pinned_panels_read_exactly_one_scan(name, spark_, ctx):
+def test_pinned_panels_read_exactly_one_scan(name, ctx, panel_frames):
     """The highest-value structural test here.
 
     ``live_tables`` runs two scans. A panel that forgets the pin returns both and draws a chart
     that looks entirely reasonable while blending every run that has ever happened.
     """
-    frame = PANELS[name](spark_, ctx)
+    frame = panel_frames[name]
     if "scan_id" in frame.columns:
         ids = {r["scan_id"] for r in frame.select("scan_id").distinct().collect()}
         assert ids == {ctx.scan_id}, f"{name} returned scans {sorted(ids)}, expected {ctx.scan_id}"
@@ -276,22 +299,26 @@ def test_km_by_overall_matches_the_real_transform(spark_, ctx):
         assert direct[column] == renamed[column], column
 
 
-def test_km_by_drops_the_synthetic_overall_group(spark_, ctx):
+@pytest.fixture(scope="module")
+def km_by_subscription(spark_, ctx):
+    """``km_by`` over the subscription dimension, run once for the three tests that read it."""
+    return panels.km_by(spark_, ctx, "subscription_name").collect()
+
+
+def test_km_by_drops_the_synthetic_overall_group(km_by_subscription):
     """``mttr_by_severity`` unions an OVERALL row of its own, which here is a group nobody has."""
-    values = {r["subscription_name"] for r in panels.km_by(spark_, ctx, "subscription_name").collect()}
-    assert OVERALL not in values
+    assert OVERALL not in {r["subscription_name"] for r in km_by_subscription}
 
 
-def test_km_by_carries_the_register_median_for_the_reference_rule(spark_, ctx):
+def test_km_by_carries_the_register_median_for_the_reference_rule(km_by_subscription):
     """``overall_km_median`` is a metric on the frame, not a field on the frozen context."""
-    rows = panels.km_by(spark_, ctx, "subscription_name").collect()
-    assert rows, "no groups"
-    assert len({r["overall_km_median"] for r in rows}) == 1
+    assert km_by_subscription, "no groups"
+    assert len({r["overall_km_median"] for r in km_by_subscription}) == 1
 
 
-def test_a_group_with_nothing_resolved_has_a_null_median(spark_, ctx):
+def test_a_group_with_nothing_resolved_has_a_null_median(km_by_subscription):
     """NULL, never 0. "Nothing closed yet" and "closed instantly" must not be the same number."""
-    for row in panels.km_by(spark_, ctx, "subscription_name").collect():
+    for row in km_by_subscription:
         if row["resolved"] == 0:
             assert row["km_median"] is None
 
@@ -307,15 +334,21 @@ def test_a_dimension_outside_the_allow_list_raises_before_reaching_sql(spark_, c
 # ---------------------------------------------------------------------- the survival curve
 
 
-def test_the_staircase_crosses_where_the_published_median_says_it_does(spark_, ctx):
+@pytest.fixture(scope="module")
+def overall_curve(spark_, ctx):
+    """``(curve rows, markers)`` for the OVERALL population, computed once for three tests."""
+    curve, markers = panels.km_curve_points(spark_, ctx, OVERALL)
+    return curve.collect(), markers
+
+
+def test_the_staircase_crosses_where_the_published_median_says_it_does(spark_, overall_curve):
     """The staircase and the hero above it come from one implementation, and this proves it.
 
     Note the limit: the equality holds over the population the curve is computed on. With a
     severity subset selected, the published OVERALL row is still over everything that was
     scanned -- which is why the notebook caption says so rather than the code pretending.
     """
-    curve, _ = panels.km_curve_points(spark_, ctx, OVERALL)
-    rows = curve.collect()
+    rows, _ = overall_curve
     published = (
         metrics.mttr_by_severity(spark_.table("v_lifecycles"))
         .where("severity = 'OVERALL'")
@@ -328,16 +361,16 @@ def test_the_staircase_crosses_where_the_published_median_says_it_does(spark_, c
         assert min(crossings) == pytest.approx(published)
 
 
-def test_survival_is_monotone_and_starts_below_one(spark_, ctx):
-    curve, _ = panels.km_curve_points(spark_, ctx, OVERALL)
-    values = [r["s"] for r in curve.collect()]
+def test_survival_is_monotone_and_starts_below_one(overall_curve):
+    rows, _ = overall_curve
+    values = [r["s"] for r in rows]
     assert values == sorted(values, reverse=True)
     assert all(0.0 <= v <= 1.0 for v in values)
 
 
-def test_a_null_marker_is_omitted_rather_than_zeroed(spark_, ctx):
+def test_a_null_marker_is_omitted_rather_than_zeroed(overall_curve):
     """A KM median that was never reached is a fact, not a point at the origin."""
-    _, markers = panels.km_curve_points(spark_, ctx, OVERALL)
+    _, markers = overall_curve
     assert {m["key"] for m in markers} <= {"naive_median", "median", "mean"}
     for marker in markers:
         assert marker["value"] is None or marker["value"] >= 0
@@ -346,7 +379,7 @@ def test_a_null_marker_is_omitted_rather_than_zeroed(spark_, ctx):
 # ---------------------------------------------------------------------------- the buckets
 
 
-def test_bucket_edges_land_where_gas_puts_them(spark_, ctx):
+def test_bucket_edges_land_where_gas_puts_them(spark_):
     """7.0d is ``0-7d`` and 7.01d is ``8-30d`` -- the same inclusive convention as in-SLA."""
     from pyspark.sql import functions as F
 
@@ -396,16 +429,21 @@ def test_the_bucket_frames_are_tidy_with_a_fixed_column_set(spark_, ctx):
 # ------------------------------------------------------------------------- the sweep oracle
 
 
-def test_the_sweep_returns_every_non_empty_subset(spark_, ctx):
-    rows = panels.rule_sweep(spark_, ctx).collect()
-    assert len(rows) == 7
-    assert sum(1 for r in rows if r["active"]) == 1
+@pytest.fixture(scope="module")
+def sweep_rows(spark_, ctx):
+    """The sweep under the context's own rule: seven confusion matrices, computed once."""
+    return panels.rule_sweep(spark_, ctx).collect()
 
 
-def test_the_active_sweep_point_matches_the_published_rates(spark_, ctx):
+def test_the_sweep_returns_every_non_empty_subset(sweep_rows):
+    assert len(sweep_rows) == 7
+    assert sum(1 for r in sweep_rows if r["active"]) == 1
+
+
+def test_the_active_sweep_point_matches_the_published_rates(sweep_rows, panel_frames):
     """Whichever rule is in force must land on the number the page already published."""
-    active = [r for r in panels.rule_sweep(spark_, ctx).collect() if r["active"]][0]
-    published = panels.program_headline(spark_, ctx).collect()[0]
+    active = [r for r in sweep_rows if r["active"]][0]
+    published = panel_frames["program_headline"].collect()[0]
     for column in ("coverage_pct", "efficiency_pct"):
         if published[column] is None:
             assert active[column] is None
@@ -461,10 +499,10 @@ def test_risk_mix_uses_named_categories_not_severity(spark_, ctx):
     "name", ["posture", "mttr_headline", "program_headline", "register_totals", "last_scan",
              "all_time", "movement", "exploit_tiles"]
 )
-def test_the_one_row_panels_return_one_row(name, spark_, ctx):
+def test_the_one_row_panels_return_one_row(name, panel_frames):
     """``capacity_by_month`` cross-joins its summary onto every month, so ``program_headline``
     would otherwise be a one-row frame only for as long as there is one month."""
-    assert PANELS[name](spark_, ctx).count() == 1
+    assert panel_frames[name].count() == 1
 
 
 def test_the_scan_log_caps_after_ordering(spark_, ctx):

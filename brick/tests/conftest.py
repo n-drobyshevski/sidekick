@@ -31,15 +31,23 @@ sys.path.insert(0, str(BRICK_DIR))
 DELTA_PACKAGE = "io.delta:delta-spark_2.12:3.2.0"
 
 # Spark's 1g default is not enough for this suite. In local mode the driver JVM is also the
-# executor, so one heap carries the metastore, the Delta log state of every table the run has
+# executor, so one heap carries the catalog, the Delta log state of every table the run has
 # created, and the aggregation buffers -- and the gold frames are wide: the confusion matrix,
-# seven more of it for rule sensitivity, and capacity over two populations, all unioned before
-# a single write. `test_rebuild_reproduces_the_live_ledger` replays every bronze scan through
-# that, and was dying on "SparkOutOfMemoryError: No enough memory for aggregation".
+# seven more of it for rule sensitivity, and capacity over two populations. Each is computed
+# once and written; `test_rebuild_reproduces_the_live_ledger` replays every bronze scan through
+# all of it, and was dying on "SparkOutOfMemoryError: No enough memory for aggregation".
+#
+# Under xdist the number to size is not the heap but the heaps: a worker is a whole JVM, so
+# four of them at 4g want 16g of a machine that may not have it, and the swapping costs more
+# than the parallelism gains. `test_ledger_pipeline.py` passes whole at 1500m now that the
+# summary is no longer recomputing every gold frame, so 2g has real headroom, and four of
+# those fit where one comfortable one did not.
 #
 # Like --packages, this can only be set before the JVM starts: spark.driver.memory is read by
-# spark-submit at launch and setting it on the builder afterwards is silently ignored.
-DRIVER_MEMORY = "4g"
+# spark-submit at launch and setting it on the builder afterwards is silently ignored. xdist
+# sets PYTEST_XDIST_WORKER_COUNT in each worker's environment before conftest is imported, so
+# it is readable here.
+DRIVER_MEMORY = "4g" if int(os.environ.get("PYTEST_XDIST_WORKER_COUNT", "1")) == 1 else "2g"
 
 # Must happen at import, before anything can launch the JVM: --packages is read by spark-submit
 # when the JVM starts, and jars cannot be added to one that is already running.
@@ -47,6 +55,12 @@ os.environ.setdefault(
     "PYSPARK_SUBMIT_ARGS",
     f"--packages {DELTA_PACKAGE} --driver-memory {DRIVER_MEMORY} pyspark-shell",
 )
+
+# Spark resolves the driver's address by looking the machine's hostname up, and in a container
+# with no matching entry in /etc/hosts that lookup can stall before failing over to the
+# loopback address it was always going to use. Naming it outright skips the wait. Also read at
+# JVM start, hence the placement.
+os.environ.setdefault("SPARK_LOCAL_IP", "127.0.0.1")
 
 
 @pytest.fixture(scope="session")
@@ -57,21 +71,22 @@ def spark(tmp_path_factory):
     )
     from pyspark.sql import SparkSession
 
-    # Warehouse and metastore go to a temp directory, not the working tree. Spark defaults both
-    # to ./spark-warehouse and ./metastore_db, which means a run that is interrupted leaves
-    # table directories behind that the next run's fresh metastore knows nothing about --
-    # DROP DATABASE cannot clean what it cannot see, and creating the table then fails with
+    # The warehouse goes to a temp directory, not the working tree. Spark defaults it to
+    # ./spark-warehouse, which means a run that is interrupted leaves table directories behind
+    # that the next run's fresh catalog knows nothing about -- DROP DATABASE cannot clean what
+    # it cannot see, and creating the table then fails with
     # DELTA_CREATE_TABLE_WITH_NON_EMPTY_LOCATION. Isolating per run makes that impossible
     # rather than merely unlikely, and keeps test debris out of the repo entirely.
+    #
+    # There is no metastore to isolate alongside it. Nothing here calls enableHiveSupport(), so
+    # `spark.sql.catalogImplementation` is `in-memory` and the catalog lives and dies with the
+    # session -- a run leaves no metastore_db and no derby.log behind. (This used to also set
+    # `javax.jdo.option.ConnectionURL` at a temp Derby database. It was never read.)
     root = tmp_path_factory.mktemp("spark")
     builder = (
         SparkSession.builder.master("local[1]")
         .appName("brick-tests")
         .config("spark.sql.warehouse.dir", str(root / "warehouse"))
-        .config(
-            "javax.jdo.option.ConnectionURL",
-            f"jdbc:derby:;databaseName={root / 'metastore_db'};create=true",
-        )
         # Capacity buckets by UTC calendar month and MTTR is a UTC-to-UTC difference, exactly
         # as the pipeline sets it -- a session on local time would shift findings between
         # months and make the fixtures disagree with production for no visible reason.
@@ -83,17 +98,65 @@ def spark(tmp_path_factory):
             "spark.sql.catalog.spark_catalog",
             "org.apache.spark.sql.delta.catalog.DeltaCatalog",
         )
+        # ---------------------------------------------------------------- test-only economics
+        # None of these change a result. Every one of them is about the fact that this suite
+        # runs thousands of queries over a few dozen rows each, so its cost is planning,
+        # scheduling and bookkeeping rather than data.
+        #
+        # AQE re-plans a query between stages using runtime statistics. That is worth real
+        # money on a cluster and is pure overhead on frames this small, where there is nothing
+        # to learn and one partition to learn it about.
+        .config("spark.sql.adaptive.enabled", "false")
+        .config("spark.default.parallelism", "1")
+        .config("spark.rdd.compress", "false")
+        .config("spark.databricks.delta.snapshotPartitions", "1")
+        # The UI is off, but the listeners behind it are not: Spark still accumulates a job,
+        # stage and SQL-execution history in the driver heap for a web page nobody will load.
+        # Over a suite this long that is a steadily growing structure and the GC that comes
+        # with it.
+        .config("spark.ui.showConsoleProgress", "false")
+        .config("spark.ui.retainedJobs", "1")
+        .config("spark.ui.retainedStages", "1")
+        .config("spark.ui.retainedTasks", "1")
+        .config("spark.sql.ui.retainedExecutions", "1")
     )
-    try:
-        from delta import configure_spark_with_delta_pip
-
-        session = configure_spark_with_delta_pip(builder).getOrCreate()
-    except ImportError:
-        # delta-spark absent: the pure-transform tests still run, and the ones that genuinely
-        # need a Delta table skip themselves.
-        session = builder.getOrCreate()
+    # `configure_spark_with_delta_pip` used to wrap the builder here, in a try/except that
+    # tolerated delta-spark being absent. It only sets `spark.jars.packages`, which the two
+    # extension configs above already cover explicitly and which is in any case too late to
+    # matter -- the jars arrive via --packages when spark-submit launches the JVM, long before
+    # a builder config is read. Nothing was lost by dropping it, including the tolerance: the
+    # tests that genuinely need Delta still skip themselves, via the `importorskip("delta")`
+    # in `live_tables` below and at the top of the modules that write Delta tables.
+    session = builder.getOrCreate()
     yield session
     session.stop()
+
+
+#: The modules that read ``live_tables``, pinned to one xdist worker between them.
+LIVE_TABLES_GROUP = frozenset({"test_panels", "test_notebooks"})
+
+
+def pytest_collection_modifyitems(config, items):
+    """Pin the two ``live_tables`` modules to one xdist worker. Leave everything else free.
+
+    Under ``--dist loadgroup`` an item with an ``xdist_group`` marker goes to the worker that
+    owns that group, and an item without one is handed out per test. Which of the two a module
+    wants is a question about cost, never about correctness: a worker gets its own
+    ``SparkSession``, its own in-memory catalog and its own warehouse directory, so splitting a
+    module across workers can only rebuild its module-scoped fixtures, never corrupt them.
+
+    So only the expensive case is pinned. ``live_tables`` is two full pipeline runs and is
+    session-scoped, which under xdist means *once per worker* -- letting its two readers land
+    on different workers would build the whole register twice. Everything else is cheaper to
+    rebuild than to serialise, and that includes the two modules that dominate the wall clock:
+    ``test_ledger_pipeline`` and ``test_import_bundle`` build a private database per test and
+    hold no module-scoped state at all, so their tests spread across every free worker.
+    """
+    if not config.pluginmanager.hasplugin("xdist"):
+        return
+    for item in items:
+        if item.path.stem in LIVE_TABLES_GROUP:
+            item.add_marker(pytest.mark.xdist_group("live_tables"))
 
 
 LIVE_SCHEMA = "dash"
@@ -139,7 +202,8 @@ def live_tables(spark):
             "append"
         ).option("mergeSchema", "true").saveAsTable(tables.bronze)
         run_pipeline.build_metrics(
-            spark, tables, scan_id, scan_ts, LIVE_SCOPE, severities=LIVE_SEVERITIES
+            spark, tables, scan_id, scan_ts, LIVE_SCOPE,
+            severities=LIVE_SEVERITIES, summary=False,
         )
 
     scan("scan-1", "2026-06-01T00:00:00Z", nodes)

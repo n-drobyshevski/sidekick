@@ -334,18 +334,36 @@ def ledger_already_merged(spark: SparkSession, tables: Tables, scan_id: str) -> 
     )
 
 
-def previous_scan(spark: SparkSession, tables: Tables) -> Optional[tuple]:
-    """``(scan_id, scan_ts)`` of the most recent logged scan, or ``None`` for a fresh register."""
-    rows = (
+def scan_log_desc(spark: SparkSession, tables: Tables) -> list:
+    """The whole scan log, most recent first.
+
+    Both readers below want the same rows in the same order, and a reconcile needs both. The
+    log has one row per scan ever run, so collecting it is cheap -- what is not cheap is doing
+    it twice, because each `collect()` is its own Spark job however few rows come back.
+    """
+    return (
         spark.table(tables.scans)
+        .select("scan_id", "scan_ts", "severities")
         .orderBy(F.col("scan_ts").desc(), F.col("scan_id").desc())
-        .limit(1)
         .collect()
     )
+
+
+def previous_scan(
+    spark: SparkSession, tables: Tables, rows: Optional[list] = None
+) -> Optional[tuple]:
+    """``(scan_id, scan_ts)`` of the most recent logged scan, or ``None`` for a fresh register.
+
+    ``rows`` is an already-collected ``scan_log_desc``, for a caller that needs it anyway.
+    """
+    if rows is None:
+        rows = scan_log_desc(spark, tables)
     return (rows[0]["scan_id"], rows[0]["scan_ts"]) if rows else None
 
 
-def prev_scan_id_by_severity(spark: SparkSession, tables: Tables) -> dict:
+def prev_scan_id_by_severity(
+    spark: SparkSession, tables: Tables, rows: Optional[list] = None
+) -> dict:
     """``{severity: scan_id}`` of the most recent prior scan whose scope covered each severity.
 
     Port of ``gas/src/domain/ledgerCore.ts::prevScanIdBySeverity``. Feeds ``reconcile``'s
@@ -354,12 +372,8 @@ def prev_scan_id_by_severity(spark: SparkSession, tables: Tables) -> dict:
     """
     remaining = set(SEVERITY_ORDER)
     mapping = {}
-    rows = (
-        spark.table(tables.scans)
-        .select("scan_id", "severities")
-        .orderBy(F.col("scan_ts").desc(), F.col("scan_id").desc())
-        .collect()
-    )
+    if rows is None:
+        rows = scan_log_desc(spark, tables)
     for row in rows:
         scope = parse_severities(row["severities"])
         covered = set(remaining) if scope is None else remaining & set(scope)
@@ -514,9 +528,11 @@ def reconcile_scan(
     Everything scan-specific is resolved here and handed to the pure reconciler: which scan came
     before, which severities each of them covered, and how a disappearance should be dated.
     """
-    prev = previous_scan(spark, tables)
+    scan_log = scan_log_desc(spark, tables)
+    prev = previous_scan(spark, tables, scan_log)
     prev_scan_id = prev[0] if prev else None
     prev_scan_ts = prev[1].strftime("%Y-%m-%dT%H:%M:%SZ") if prev and prev[1] else None
+    by_severity = prev_scan_id_by_severity(spark, tables, scan_log) if prev else None
 
     touched = ledger_mod.reconcile(
         spark.table(tables.ledger),
@@ -526,7 +542,7 @@ def reconcile_scan(
         scope=scope,
         prev_scan_id=prev_scan_id,
         prev_scan_ts=prev_scan_ts,
-        prev_scan_id_by_severity=prev_scan_id_by_severity(spark, tables) if prev else None,
+        prev_scan_id_by_severity=by_severity,
         scanned_severities=severities,
         disappearance=disappearance,
     )
@@ -577,8 +593,16 @@ def build_metrics(
     *,
     severities=None,
     disappearance: str = DISAPPEARANCE_RESOLUTION,
+    summary: bool = True,
 ) -> None:
-    """Silver, the ledger, and the three gold tables for one scan."""
+    """Silver, the ledger, and the three gold tables for one scan.
+
+    ``summary=False`` skips the printed report. The report is the only reason the gold frames
+    are cached below, so a caller that does not want the printing does not want the caching
+    either -- which is why the test suite passes it: nothing there reads stdout, and six
+    ``show()`` calls per scan over the widest plans in this file is the single most expensive
+    thing the suite used to do.
+    """
     bronze = spark.table(tables.bronze).filter(f"scan_id = '{scan_id}'")
 
     silver = metrics.classify_risk(metrics.silver_findings(bronze), rule).cache()
@@ -596,6 +620,21 @@ def build_metrics(
         ledger_mod.lifecycle_frame(spark.table(tables.ledger), scan_ts), rule
     ).cache()
 
+    # `summarize` reads the four gold frames back. They are lazy, so without this each of its
+    # six `show()` calls is a *second* full execution of the plan behind it -- seven wide
+    # aggregations for sensitivity, two whole populations for capacity -- plus an ordering
+    # shuffle, purely to print rows that were just written. Caching at the write makes the
+    # write populate the cache and the printing read it. The frames are a handful of rows
+    # each; only the plans behind them are large, which is exactly why this is worth doing.
+    published = []
+
+    def publish(frame, table):
+        if summary:
+            frame = frame.cache()
+            published.append(frame)
+        write_append(frame, table)
+        return frame
+
     mttr = metrics.with_scan_columns(
         with_snapshot_columns(
             metrics.mttr_by_severity(lifecycles), metrics.mttr_by_severity(silver)
@@ -603,20 +642,20 @@ def build_metrics(
         scan_id, scan_ts, scope,
     )
     mttr = mttr.join(metrics.resolution_sources(lifecycles), "severity", "left")
-    write_append(mttr, tables.mttr)
+    mttr = publish(mttr, tables.mttr)
 
     program = metrics.with_scan_columns(
         metrics.confusion_matrix(lifecycles), scan_id, scan_ts, scope
     )
     program = program.withColumn("risk_rule", F.lit(rule.sentence()))
-    write_append(program, tables.program)
+    program = publish(program, tables.program)
 
     # Coverage and efficiency are defined by the rule, so how much of them IS the rule is not a
     # curiosity -- it belongs beside them. Seven aggregations over an already-cached frame.
     sensitivity = metrics.with_scan_columns(
         metrics.rule_sensitivity(lifecycles, rule), scan_id, scan_ts, scope
     )
-    write_append(sensitivity, tables.sensitivity)
+    sensitivity = publish(sensitivity, tables.sensitivity)
 
     # Both populations, stacked: the all-findings backlog throughput and the high-risk net flow
     # P2P v3 actually defines. Every reader of this table has to filter on `population`.
@@ -629,9 +668,12 @@ def build_metrics(
         ),
         scan_id, scan_ts, scope,
     )
-    write_append(capacity, tables.capacity)
+    capacity = publish(capacity, tables.capacity)
 
-    summarize(scan_id, scope, rule, deltas, mttr, program, capacity, sensitivity)
+    if summary:
+        summarize(scan_id, scope, rule, deltas, mttr, program, capacity, sensitivity)
+        for frame in published:
+            frame.unpersist()
     silver.unpersist()
     lifecycles.unpersist()
 

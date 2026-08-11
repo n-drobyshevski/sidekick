@@ -76,6 +76,17 @@ def rows_by_severity(df, key: str = "severity") -> dict:
     return {r[key]: r.asDict() for r in df.collect()}
 
 
+def materialized(df):
+    """Cache a frame and force it, for one that several tests share.
+
+    A DataFrame in a module-scoped fixture is still a plan, so without this every consumer
+    recomputes it and hoisting buys nothing.
+    """
+    df = df.cache()
+    df.count()
+    return df
+
+
 # ------------------------------------------------------------------------- severity
 
 
@@ -162,9 +173,22 @@ def worked_example_nodes():
 
 
 @pytest.fixture(scope="module")
-def worked_example(spark, worked_example_nodes):
-    df = metrics.classify_risk(silver(spark, worked_example_nodes), DEFAULT_RISK_RULE)
-    return rows_by_severity(metrics.confusion_matrix(df))["OVERALL"]
+def worked_example_frame(spark, worked_example_nodes):
+    """The 12-lifecycle register, parsed and classified once.
+
+    Three tests below built this identically: the confusion-matrix oracle, the sensitivity
+    oracle, and the frame-is-left-alone guard. Sharing it is safe -- a DataFrame is immutable,
+    and the guard that checks ``rule_sensitivity`` does not disturb ``risk_class`` reads the
+    column before and after within its own body, so it still proves exactly what it did.
+    """
+    return materialized(
+        metrics.classify_risk(silver(spark, worked_example_nodes), DEFAULT_RISK_RULE)
+    )
+
+
+@pytest.fixture(scope="module")
+def worked_example(worked_example_frame):
+    return rows_by_severity(metrics.confusion_matrix(worked_example_frame))["OVERALL"]
 
 
 def test_confusion_quadrants(worked_example):
@@ -251,11 +275,10 @@ def test_signal_breakdown_counts_overlaps_and_gaps(spark):
 
 
 @pytest.fixture(scope="module")
-def sensitivity(spark, worked_example_nodes):
-    df = metrics.classify_risk(silver(spark, worked_example_nodes), DEFAULT_RISK_RULE)
+def sensitivity(worked_example_frame):
     return {
         r["rule_label"]: r.asDict()
-        for r in metrics.rule_sensitivity(df, DEFAULT_RISK_RULE).collect()
+        for r in metrics.rule_sensitivity(worked_example_frame, DEFAULT_RISK_RULE).collect()
     }
 
 
@@ -315,10 +338,10 @@ def test_rule_sensitivity_never_folds_a_missing_signal_into_low(sensitivity):
     assert all(row["classified"] == 10 for row in sensitivity.values())
 
 
-def test_rule_sensitivity_leaves_the_input_frame_alone(spark, worked_example_nodes):
+def test_rule_sensitivity_leaves_the_input_frame_alone(worked_example_frame):
     """It reclassifies seven times over a frame the caller has already classified, so it must
     not disturb the caller's `risk_class`."""
-    df = metrics.classify_risk(silver(spark, worked_example_nodes), DEFAULT_RISK_RULE)
+    df = worked_example_frame
     before = sorted(r["risk_class"] for r in df.collect())
     metrics.rule_sensitivity(df, DEFAULT_RISK_RULE).collect()
     assert sorted(r["risk_class"] for r in df.collect()) == before
@@ -500,10 +523,33 @@ def capacity_nodes():
     return nodes
 
 
+#: The horizon three of the capacity tests share: months before it were never watched.
+OBSERVED_FROM = "2026-06-01T00:00:00Z"
+
+
 @pytest.fixture(scope="module")
-def capacity_months(spark, capacity_nodes):
-    df = metrics.capacity_by_month(silver(spark, capacity_nodes), SCAN_TS)
-    return {str(r["month"])[:7]: r.asDict() for r in df.collect()}
+def capacity_silver(spark, capacity_nodes):
+    """The capacity register's silver frame. Seven tests below want exactly this one."""
+    return materialized(silver(spark, capacity_nodes))
+
+
+@pytest.fixture(scope="module")
+def capacity_frame(capacity_silver):
+    """``capacity_by_month`` with no horizon -- the default reading, computed once."""
+    return materialized(metrics.capacity_by_month(capacity_silver, SCAN_TS))
+
+
+@pytest.fixture(scope="module")
+def capacity_frame_observed(capacity_silver):
+    """The same register seen from ``OBSERVED_FROM``, computed once."""
+    return materialized(
+        metrics.capacity_by_month(capacity_silver, SCAN_TS, observed_from=OBSERVED_FROM)
+    )
+
+
+@pytest.fixture(scope="module")
+def capacity_months(capacity_frame):
+    return {str(r["month"])[:7]: r.asDict() for r in capacity_frame.collect()}
 
 
 def test_capacity_backlog_and_close_rate(capacity_months):
@@ -539,43 +585,38 @@ def test_capacity_marks_the_current_month_partial_and_excludes_it(capacity_month
     assert capacity_months["2026-05"]["net_total"] == -7
 
 
-def test_capacity_marks_months_before_the_first_scan_reconstructed(spark, capacity_nodes):
+def test_capacity_marks_months_before_the_first_scan_reconstructed(capacity_frame_observed):
     """Months we never watched are inferred from the API's dates, not measured.
 
     Without the flag a register three weeks old shows two years of confident monthly
     throughput, which is the same class of error as drawing a NULL as a zero bar.
     """
-    df = metrics.capacity_by_month(
-        silver(spark, capacity_nodes), SCAN_TS, observed_from="2026-06-01T00:00:00Z"
-    )
-    months = {str(r["month"])[:7]: r.asDict() for r in df.collect()}
+    months = {str(r["month"])[:7]: r.asDict() for r in capacity_frame_observed.collect()}
     assert months["2026-04"]["reconstructed"] is True
     assert months["2026-05"]["reconstructed"] is True
     assert months["2026-06"]["reconstructed"] is False
     assert months["2026-07"]["reconstructed"] is False
 
 
-def test_reconstructed_months_do_not_drive_the_headline_rate(spark, capacity_nodes):
+def test_reconstructed_months_do_not_drive_the_headline_rate(
+    capacity_frame, capacity_frame_observed
+):
     """"We close about 1 in N" is a claim about throughput we actually measured."""
-    unobserved = metrics.capacity_by_month(silver(spark, capacity_nodes), SCAN_TS)
-    observed = metrics.capacity_by_month(
-        silver(spark, capacity_nodes), SCAN_TS, observed_from="2026-06-01T00:00:00Z"
-    )
     # Without a horizon, May and June both count. With one, only June is measured.
-    assert unobserved.collect()[0]["months_counted"] == 2
-    row = observed.collect()[0]
+    assert capacity_frame.collect()[0]["months_counted"] == 2
+    row = capacity_frame_observed.collect()[0]
     assert row["months_counted"] == 1
     assert row["mmcr_mean"] == pytest.approx(100 / 6)
 
 
-def test_capacity_without_a_horizon_calls_nothing_reconstructed(spark, capacity_nodes):
+def test_capacity_without_a_horizon_calls_nothing_reconstructed(capacity_frame):
     """Before any scan is logged there is no horizon, and claiming one would be invented."""
-    df = metrics.capacity_by_month(silver(spark, capacity_nodes), SCAN_TS)
-    assert all(r["reconstructed"] is False for r in df.collect())
-    assert all(r["closed_observed"] is None for r in df.collect())
+    rows = capacity_frame.collect()
+    assert all(r["reconstructed"] is False for r in rows)
+    assert all(r["closed_observed"] is None for r in rows)
 
 
-def test_capacity_joins_the_observed_close_count(spark, capacity_nodes):
+def test_capacity_joins_the_observed_close_count(spark, capacity_silver):
     """The cross-check rides alongside `closed` rather than replacing it.
 
     They are two routes to the same number -- one from resolved_at, one from what
@@ -585,9 +626,7 @@ def test_capacity_joins_the_observed_close_count(spark, capacity_nodes):
         [("2026-05-01T00:00:00Z", 4), ("2026-06-01T00:00:00Z", 99)],
         "month STRING, closed_observed LONG",
     ).withColumn("month", metrics.F.col("month").cast("timestamp"))
-    df = metrics.capacity_by_month(
-        silver(spark, capacity_nodes), SCAN_TS, closed_observed=observed
-    )
+    df = metrics.capacity_by_month(capacity_silver, SCAN_TS, closed_observed=observed)
     months = {str(r["month"])[:7]: r.asDict() for r in df.collect()}
     assert months["2026-05"]["closed"] == 4
     assert months["2026-05"]["closed_observed"] == 4
@@ -674,10 +713,10 @@ def test_capacity_populations_withhold_closed_observed_from_high_risk(spark):
     assert by_key[("high_risk", "2026-05")]["closed_observed"] is None
 
 
-def test_capacity_populations_says_nothing_when_nothing_is_high_risk(spark, capacity_nodes):
+def test_capacity_populations_says_nothing_when_nothing_is_high_risk(capacity_silver):
     """`capacity_nodes` is entirely low risk. An empty high-risk population writes no rows --
     it does not write a row of zeros, which would read as measured throughput of nothing."""
-    df = metrics.classify_risk(silver(spark, capacity_nodes), DEFAULT_RISK_RULE)
+    df = metrics.classify_risk(capacity_silver, DEFAULT_RISK_RULE)
     rows = metrics.capacity_populations(df, SCAN_TS).collect()
     assert {r["population"] for r in rows} == {"all"}
 
