@@ -32,7 +32,7 @@ NOTEBOOKS = sorted(NOTEBOOK_DIR.glob("*.ipynb"))
 NAMES = [p.stem for p in NOTEBOOKS]
 
 #: The GAS pages this set mirrors, in sidebar order, plus the runner.
-EXPECTED = [
+PAGES = [
     "00_security_posture",
     "01_mttr_sla",
     "02_program_performance",
@@ -41,6 +41,21 @@ EXPECTED = [
     "05_estate",
     "06_run_and_verify",
 ]
+
+#: One-shot migration tooling. Not a page: it has no scan to pin, draws nothing, and boots
+#: without the chart layer -- so the page-shaped guards below skip it explicitly rather than
+#: being loosened for everything. The artifact guards still apply.
+MIGRATION = ["07_import_gas"]
+
+#: Everything that ships under notebooks/.
+EXPECTED = PAGES + MIGRATION
+
+
+def page_only(name: str) -> None:
+    """Skip a guard that only makes sense for a read page."""
+    if name not in PAGES:
+        pytest.skip(f"{name} is not a read page")
+
 
 #: Append-only tables. A read that names one of these without pinning a scan blends every run.
 APPEND_ONLY = ("findings_raw", "wiz_os_findings", "metrics_mttr", "metrics_program",
@@ -85,7 +100,7 @@ def notebook(request):
 # --------------------------------------------------------------------------- the artifact
 
 
-def test_the_set_is_the_gas_page_set():
+def test_the_set_is_the_gas_page_set_plus_the_importer():
     assert NAMES == EXPECTED
 
 
@@ -149,7 +164,7 @@ def test_every_notebook_boots_the_same_way():
     The only permitted difference is the ``PAGE`` literal -- the page's own widgets.
     """
     bodies = {}
-    for name in EXPECTED:
+    for name in PAGES:
         body = boot_cell(load(NOTEBOOK_DIR / f"{name}.ipynb"))
         bodies[name] = body[body.index("\n\nimport os, sys") :]
     assert len(set(bodies.values())) == 1, (
@@ -171,13 +186,14 @@ def test_the_boot_cell_handles_both_documented_deployments():
 
 def test_the_boot_cell_pins_the_scan_and_says_which(notebook):
     """Cell 1 resolves the scan and prints it. Every figure below is as old as that line."""
-    _, doc = notebook
+    name, doc = notebook
+    page_only(name)
     body = boot_cell(doc)
     assert "panels.context(spark" in body
     assert "tiles.scan_zone" in body
 
 
-@pytest.mark.parametrize("name", EXPECTED)
+@pytest.mark.parametrize("name", PAGES)
 def test_every_widget_read_is_declared_in_that_notebooks_page_literal(name):
     doc = load(NOTEBOOK_DIR / f"{name}.ipynb")
     body = boot_cell(doc)
@@ -380,7 +396,7 @@ def test_every_sql_cell_runs_verbatim(name, live_ctx):
 def test_at_least_one_page_ships_an_editable_sql_cell():
     """A ``%sql`` cell over a pinned view is the most native affordance there is: the reader can
     edit it in place without knowing anything about this repo."""
-    total = sum(len(list(sql_cells(load(NOTEBOOK_DIR / f"{n}.ipynb")))) for n in EXPECTED)
+    total = sum(len(list(sql_cells(load(NOTEBOOK_DIR / f"{n}.ipynb")))) for n in PAGES)
     assert total >= 2
 
 
@@ -402,9 +418,9 @@ def test_the_readme_notebook_tree_matches_what_ships():
         if line.startswith("```"):
             break
         listed |= set(re.findall(r"([\w.]+\.(?:py|ipynb))", line))
-    expected = {f"{m}.py" for m in run_pipeline.NOTEBOOK_MODULES} | {
-        f"{n}.ipynb" for n in EXPECTED
-    }
+    expected = {
+        f"{m}.py" for m in run_pipeline.NOTEBOOK_MODULES + run_pipeline.MIGRATION_MODULES
+    } | {f"{n}.ipynb" for n in EXPECTED}
     assert listed == expected, (
         f"only in README {sorted(listed - expected)}, only shipped {sorted(expected - listed)}"
     )

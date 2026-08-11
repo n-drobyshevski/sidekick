@@ -175,9 +175,17 @@ function renderExportSection(main, boot, domain, supportGroup) {
   const row = el("div", { style: "display:flex; gap:8px; flex-wrap:wrap" });
   const csvBtn = el("button", { onclick: csv }, "Download CSV");
   const rawBtn = el("button", { onclick: raw }, "Raw JSON (Drive)");
-  row.append(csvBtn, rawBtn);
+  const bundleBtn = el("button", { onclick: bundle }, "Migration bundle (Drive)");
+  row.append(csvBtn, rawBtn, bundleBtn);
   const rawHost = el("div", { style: "margin-top:10px" });
-  card.append(row, rawHost);
+  const bundleHost = el("div", { style: "margin-top:10px" });
+  card.append(row, rawHost, bundleHost);
+  // The bundle is the whole register, not the filtered frame — say so, because it sits
+  // under a heading whose other two buttons honor the global filters.
+  card.append(el("p", { class: "muted small" },
+    "The migration bundle carries the entire durable ledger — every scan, lifecycle and " +
+    "resolved episode — ignoring the filters above. It is the file another surface " +
+    "imports, and this app can re-import it too."));
   main.append(card);
 
   async function csv() {
@@ -217,6 +225,29 @@ function renderExportSection(main, boot, domain, supportGroup) {
       toast(`Raw export failed: ${e.message}`, "error");
     } finally {
       rawBtn.disabled = false;
+    }
+  }
+
+  async function bundle() {
+    bundleBtn.disabled = true;
+    clear(bundleHost).append(el("p", { class: "muted small" }, "Assembling the bundle…"));
+    try {
+      const res = await call("api_exportMigrationBundle", {});
+      const c = res.counts;
+      clear(bundleHost).append(
+        el("p", { class: "small" },
+          el("a", { href: res.url, target: "_blank", rel: "noopener" }, `Download ${res.name} ↗`),
+          ` — ${Math.round(res.bytes / 1024).toLocaleString()} KB gzipped`),
+        el("p", { class: "muted small" },
+          `${c.ledger.toLocaleString()} lifecycle(s), ${c.episodes.toLocaleString()} sealed ` +
+          `episode(s), ${c.scans.toLocaleString()} scan(s), ` +
+          `${c.mttr_history.toLocaleString()} history point(s).`),
+      );
+    } catch (e) {
+      clear(bundleHost);
+      toast(`Bundle export failed: ${e.message}`, "error");
+    } finally {
+      bundleBtn.disabled = false;
     }
   }
 }

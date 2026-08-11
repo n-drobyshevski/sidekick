@@ -84,7 +84,7 @@ from config import (
 )
 
 # See config.PIPELINE_VERSION: every runtime module must come from the same upload.
-MODULE_VERSION = "2.1"
+MODULE_VERSION = "2.2"
 
 SECONDS_PER_DAY = 86400
 

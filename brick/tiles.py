@@ -32,7 +32,7 @@ from config import SEVERITY_ORDER
 from figures import SEVERITY_TEXT, STATUS, fmt_duration
 
 # See config.PIPELINE_VERSION: every module in a deployment must come from the same upload.
-MODULE_VERSION = "2.1"
+MODULE_VERSION = "2.2"
 
 FONT = (
     '-apple-system, BlinkMacSystemFont, Inter, "Segoe UI", Roboto, '

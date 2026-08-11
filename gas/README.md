@@ -181,6 +181,36 @@ computing a rate over the slice that happens to have data.
 > The ledger grows by four columns, roughly +22% on its ~18 cells/vulnerability footprint —
 > check **Settings → Storage** at production scale.
 
+## Exporting the register
+
+**Data → Migration bundle (Drive)** writes the whole durable ledger to
+`exports/migration-<iso>.json.gz` in the Drive archive folder and hands back a download
+link. It is the counterpart to the import below, and the same
+`wiz-sidekick-migration` format (`src/domain/exportBundle.ts`), so this app can
+re-import its own export — which makes it a storage-independent backup as well as a
+migration.
+
+Unlike the two buttons beside it, it ignores the global filters: it is the register, not
+a view of it. What rides along:
+
+| | |
+| --- | --- |
+| `scans` | every run, minus `raw_ref` / `obs_ref` — Drive ids, meaningless elsewhere |
+| `vuln_ledger` | every live lifecycle, **all 24 columns** including the vendor-fix clock and the exploit signals |
+| `resolved_episodes` | every sealed lifecycle, all 15 columns |
+| `mttr_history` | the daily KPI series, including `open_past_sla` |
+
+The two wider column lists are deliberate: `wiz_dashboard/data/migrate.py`'s lists predate
+those columns, and a signal not written down at observation time cannot be recovered — once
+a finding stops being returned by the API, it is gone.
+
+The bundle is read back through `loadState()`, which takes the Drive snapshot fast path
+(one gzip read, not a 100k-row `getValues`), and returned as a **download URL rather than
+bytes**, so a month of history does not have to fit inside a `google.script.run` response.
+
+The Databricks rebuild consumes it directly — see `brick/README.md`,
+*Migrating from the Apps Script app*.
+
 ## Setup (one-time)
 
 1. `npm install && npm run check` (typecheck + tests + build).
@@ -304,6 +334,12 @@ Things node tests cannot cover — verify after the first deployment:
       **Settings → Risk-signal backfill**: it survives the 6-min cap via its own
       `trigger_continueBackfill` one-shot trigger, is safe to re-run, and a mid-run Stop
       leaves valid (partial) state that a re-run completes.
+- [ ] Migration export: **Data → Migration bundle (Drive)** on a register with real history
+      writes `exports/migration-<iso>.json.gz` and the link downloads it. The `exports/`
+      folder is created on first use (`archiveStore.subfolder`), so no `setup()` re-run is
+      needed. Check the reported counts against **Settings → Storage**, and confirm the file
+      re-imports here (into a scratch deployment, not this one — the import refuses a ledger
+      that already has history).
 - [ ] Delete of a sealed scan refuses; delete of an unsealed scan rebuilds and the
       MTTR page numbers match the pre-delete values for surviving data.
 - [ ] Compact-now dry run numbers equal the applied run's result.

@@ -54,7 +54,7 @@ from typing import Optional
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 
-MODULE_VERSION = "2.1"
+MODULE_VERSION = "2.2"
 
 # The six runtime modules move in lockstep, and the documented way to deploy them is pasting
 # files into a Workspace folder one at a time -- so a half-updated folder is the likely failure,
@@ -139,6 +139,15 @@ RUNTIME_MODULES = ("config", "dbx", "ingest", "ledger", "metrics", "run_pipeline
 # printed above it, which is the same class of bug with a quieter failure.
 NOTEBOOK_MODULES = ("panels", "figures", "tiles")
 
+# One-shot migration tooling, treated exactly like the notebook layer and for the same
+# reason: `import_bundle` writes the ledger, so a stale copy beside a fresh `ledger.py` is
+# as fatal as a stale metrics.py -- but a scheduled Job must never fail because a module it
+# does not import is missing from the folder. Absent is fine; present and disagreeing is not.
+MIGRATION_MODULES = ("import_bundle",)
+
+# The optional layers share one rule, so they share one loop in check_deployment.
+OPTIONAL_MODULES = NOTEBOOK_MODULES + MIGRATION_MODULES
+
 
 def check_deployment() -> None:
     """Refuse to run against a folder holding a mix of versions.
@@ -162,9 +171,9 @@ def check_deployment() -> None:
         # prevent.
         versions[name] = getattr(module, "MODULE_VERSION", None) if module else None
 
-    # The notebook layer, asymmetrically: a module nobody imported is not a problem, because a
+    # The optional layers, asymmetrically: a module nobody imported is not a problem, because a
     # Job never needs one. One that IS imported and disagrees is the same fatal mix.
-    for name in NOTEBOOK_MODULES:
+    for name in OPTIONAL_MODULES:
         module = sys.modules.get(name)
         if module is not None:
             versions[name] = getattr(module, "MODULE_VERSION", None)

@@ -38,6 +38,8 @@ ledger.py         pure PySpark cross-scan lifecycle reconciliation (no I/O)
 metrics.py        pure PySpark DataFrame -> DataFrame transforms (no I/O)
 run_pipeline.py   the Databricks entry point: bronze -> silver -> ledger -> three gold tables
 
+import_bundle.py  one-shot: seed the ledger from a gas/ migration bundle
+
 panels.py         every number a notebook shows, and the one place that pins the scan
 figures.py        pandas -> Plotly figures, drawn the way the GAS app draws them
 tiles.py          HTML fragments for displayHTML: heroes, KPI bands, the confusion matrix
@@ -310,6 +312,7 @@ To read the [notebooks](#notebooks) as well as run the pipeline, three more file
 ├── panels.py
 ├── figures.py
 ├── tiles.py
+├── import_bundle.py
 └── notebooks/
     ├── 00_security_posture.ipynb
     ├── 01_mttr_sla.ipynb
@@ -317,14 +320,16 @@ To read the [notebooks](#notebooks) as well as run the pipeline, three more file
     ├── 03_os_vulnerabilities.ipynb
     ├── 04_scan_history.ipynb
     ├── 05_estate.ipynb
-    └── 06_run_and_verify.ipynb
+    ├── 06_run_and_verify.ipynb
+    └── 07_import_gas.ipynb
 ```
 
-These three are **not** in the six. A scheduled Job must never fail for want of Plotly, so
-`run_pipeline` neither imports nor requires them — but if they *are* imported and their version
-disagrees, that is fatal for the same reason the six are: a stale `figures.py` beside a fresh
-`metrics.py` draws a chart that contradicts the number printed above it, which is the same class
-of bug with a quieter failure.
+These four are **not** in the six. A scheduled Job must never fail for want of Plotly, and it
+has no business carrying a one-shot migration either, so `run_pipeline` neither imports nor
+requires any of them — but if they *are* imported and their version disagrees, that is fatal for
+the same reason the six are: a stale `figures.py` beside a fresh `metrics.py` draws a chart that
+contradicts the number printed above it, and a stale `import_bundle.py` seeds rows the current
+reconciler cannot continue. Same class of bug, quieter failure.
 
 Three ways to get them there, all ending in the same place:
 
@@ -510,6 +515,78 @@ carry their own scope and are unaffected.
 The rebuild is idempotent, and `brick/tests/test_ledger_pipeline.py` pins the invariant that
 matters: replaying bronze lands exactly where running those scans live landed.
 
+### Migrating from the Apps Script app
+
+`--rebuild_ledger` only helps a deployment that already has bronze. A **new** brick deployment
+beside a `gas/` app that has been scanning for months has none — and starting its ledger today
+is not merely incomplete, it is wrong in the same four ways: `first_seen` collapses to now,
+Kaplan–Meier reads near zero, capacity marks every earlier month `reconstructed`, and the
+confusion matrix is computed over a population one scan deep. None of it looks like an error.
+
+`import_bundle.py` seeds the ledger and the scan log from a **migration bundle** — the
+`wiz-sidekick-migration` JSON that `wiz_dashboard/data/migrate.py` defines, the GAS app already
+imports, and now exports too.
+
+```
+GAS  Data → Migration bundle (Drive)        →  migration-<ts>.json.gz
+     upload to a Unity Catalog volume       →  /Volumes/<cat>/<schema>/<vol>/migration-….json.gz
+brick 07_import_gas  (or the CLI below)     →  <p>vuln_ledger + <p>scans
+     06_run_and_verify, one scan            →  the gold tables, from real lifetimes
+```
+
+```bash
+python brick/import_bundle.py --catalog=<catalog> --schema=<schema> --scope=os \
+  --bundle_path=/Volumes/<catalog>/<schema>/<volume>/migration-20260811T000000Z.json.gz
+```
+
+It seeds an **empty** register and refuses one that already has a ledger or a scan log: merging
+a seed into a register that has already scanned would re-open lifecycles it has since resolved,
+and appending an older scan log beside brick's own would hand the disappearance guard the wrong
+previous scan. `--force_import=true` clears both tables and re-seeds — a replacement, not a
+merge, the same thing `--rebuild_ledger` does and for the same reason.
+
+**The two parameters that must match GAS**, because getting either wrong invents remediation
+that never happened:
+
+| | |
+| --- | --- |
+| `--severities` | the scope GAS was scanning. Absence of a severity nobody looked for is not a fix — the same caveat the bronze rebuild carries |
+| `--project_id` | GAS's `WIZ_PROJECT_ID_V2`. GAS scans one Wiz project; `--scope=os` pins none unless asked. A wider or narrower population resolves-by-disappearance everything outside the overlap on the first run |
+
+Read `resolved_count` in that first run's summary before anything else. A plausible day's
+remediation means the handoff worked; a number close to the whole register means the populations
+disagree, and the fix is to re-import with corrected parameters rather than accept it — after a
+second run the mistake is indistinguishable from a real mass closure.
+
+#### What comes across, and what does not
+
+`config.LEDGER_COLUMNS` was written to mirror `gas/src/domain/reconcile.ts`'s list, so 23 of
+GAS's 24 ledger columns map 1:1 — including the vendor-fix clock and the exploit signals, which
+cannot be recovered afterwards because a finding resolved by disappearance is gone from the API
+entirely. Sealed `resolved_episodes` are folded in as ordinary RESOLVED rows, mirroring
+`ledgerCore.baseRows`, which unions them at read time: that union is the population GAS's own
+coverage and MTTR are computed over, so importing only the live ledger would shrink both.
+
+| Not carried | |
+| --- | --- |
+| `tags_json` | brick's ingest selects no asset tags, so nothing downstream would read it — and domain triage is unavailable here either way |
+| the actionable clock | `fix_date` / `fix_observed_at` arrive, but nothing reads them yet |
+| bronze, and therefore a back-dated gold trend | the bundle holds reconciled lifecycles, not raw findings. `<p>scans` shows the imported runs; the gold tables begin accumulating from the first brick run |
+| `mttr_history` | GAS's precomputed daily KPI series. It rides in the bundle and brick has no table for it |
+| several episodes for one `vuln_key` | brick's ledger is one row per key, so the most recently resolved wins; the import counts the rest |
+
+Two things survive the import but not a **re-scan**, and both are worth knowing before reading a
+severity breakdown. GAS heals a blank severity from `vendorSeverity` / `nvdSeverity`
+(`gas/src/domain/severity.ts::effectiveSeverity`) and brick queries neither field, so such a row
+will read `UNKNOWN` after its next scan — and `UNKNOWN` has no `SLA_TARGETS` entry. GAS likewise
+falls back `firstDetectedAt → firstSeenAt → createdAt` where brick reads only the first.
+
+**The `h:` caveat.** `vuln_key` is `id:<wiz finding id>` when the API gave one and a hash
+otherwise, and the hash basis includes `component`, which GAS never persisted. An imported `h:`
+row is therefore re-keyed by the next brick scan and starts a second lifecycle. Only findings
+with no Wiz id are affected, which is why the import prints the `h:` count — that number is the
+blast radius, and it is usually zero.
+
 ### 4. Read the results
 
 ```sql
@@ -606,8 +683,8 @@ suite.
 ## Notebooks
 
 Seven `.ipynb` pages under `notebooks/`, one per page of the GAS app, in the same order its
-sidebar uses. Each answers one question with a headline, a small set of charts and a table you
-can sort and export. Run a cell, get a metric and its visualisation.
+sidebar uses, plus a one-shot importer. Each answers one question with a headline, a small set
+of charts and a table you can sort and export. Run a cell, get a metric and its visualisation.
 
 | Notebook | The one question it answers |
 | --- | --- |
@@ -618,10 +695,12 @@ can sort and export. Run a cell, get a metric and its visualisation.
 | **`04_scan_history`** | What has actually been measured, when, and how has the register moved across those measurements? |
 | **`05_estate`** | Can this register be attributed to an owner at all, and which parts of the estate carry the backlog? |
 | **`06_run_and_verify`** | Is the deployment sound, can I run a scan, and are the tables consistent? |
+| **`07_import_gas`** | Can this register start from the history the Apps Script app already has, instead of from today? |
 
 `00`–`05` are **read-only about your data**. `06` is the only one that ingests, which is
 deliberate: a page somebody opens to check a number should not be one Run All away from a
-credentialed API sweep.
+credentialed API sweep. `07` is the other writer, and it is meant to be run once, before the
+first scan — see [Migrating from the Apps Script app](#migrating-from-the-apps-script-app).
 
 The one exception, and it is not a data write: `panels.context()` calls
 `run_pipeline.ensure_tables()`, so a deployment where the pipeline has never run creates the two
