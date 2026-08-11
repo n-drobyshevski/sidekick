@@ -162,6 +162,43 @@ def test_register_derived_strings_are_escaped(make):
     assert "&lt;img" in fragment
 
 
+# ------------------------------------------------------------- the never-scanned register
+
+
+def test_scan_zone_from_says_so_when_there_is_no_scan():
+    """``last_scan(...).first()`` is None against an empty scans table, and the obvious cell
+    -- ``scan_zone(**...first().asDict())`` -- dies on AttributeError in the FIRST cell of the
+    page. On a fresh deployment that is indistinguishable from a broken install."""
+    fragment = body(tiles.scan_zone_from(None))
+    assert "No scan data yet" in fragment
+    assert "AttributeError" not in fragment
+
+
+def test_scan_zone_from_renders_the_normal_strip_when_there_is_a_scan():
+    row = {
+        "scan_ts": "2026-07-01T00:00:00Z", "scan_id": "s1", "scope": "os",
+        "severities": "CRITICAL,HIGH", "total": 42, "age_days": 0.5,
+    }
+    fragment = body(tiles.scan_zone_from(row))
+    assert "No scan data yet" not in fragment
+    assert "s1" in fragment and "42" in fragment
+
+
+def test_scan_zone_from_accepts_anything_with_as_dict():
+    """The notebooks hand it a Spark ``Row``, not a dict, so ``_row`` unwraps both. Stubbed
+    rather than imported: this module stays Spark-free on purpose, and ``asDict`` is the whole
+    of the contract being relied on."""
+
+    class Row:
+        def asDict(self):
+            return {
+                "scan_ts": "2026-07-01T00:00:00Z", "scan_id": "scan-xyz", "scope": "os",
+                "severities": "CRITICAL", "total": 7, "age_days": 0.1,
+            }
+
+    assert "scan-xyz" in body(tiles.scan_zone_from(Row()))
+
+
 # --------------------------------------------------------------------- NULL is not zero
 
 

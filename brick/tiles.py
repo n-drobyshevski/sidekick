@@ -350,6 +350,35 @@ def scan_zone(
     )
 
 
+#: What a page says when the register has never been scanned. Named so the wording is in one
+#: place: every notebook opens with this strip, so seven of them would otherwise each invent a
+#: sentence for the same state.
+NO_SCAN_YET = (
+    "No scan data yet. Run the pipeline (the launcher notebook, or run_pipeline.main) to "
+    "populate the scans table."
+)
+
+
+def scan_zone_from(row) -> str:
+    """``scan_zone`` for a row that might not exist -- the form every notebook should call.
+
+    ``panels.last_scan(...).first()`` returns ``None`` against an empty scans table, and the
+    obvious cell -- ``scan_zone(**last_scan(...).first().asDict())`` -- then dies on
+    ``AttributeError: 'NoneType' object has no attribute 'asDict'`` in the *first* cell of the
+    page. A reader who has just deployed the notebooks and not yet run a scan is exactly the
+    person who cannot tell that apart from a broken install, so the empty register gets a
+    sentence rather than a traceback.
+
+    Every page's opening cell goes through here for that reason: the state is normal, it is
+    reachable on any fresh deployment, and it is not the notebook's job to re-say so seven
+    times.
+    """
+    data = _row(row)
+    if not data:
+        return note(NO_SCAN_YET, kind="warn")
+    return scan_zone(**data)
+
+
 # ---------------------------------------------------------------------- program surfaces
 
 

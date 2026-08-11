@@ -44,7 +44,9 @@ import ledger as ledger_mod
 import metrics
 import run_pipeline
 from config import (
+    DEFAULT_CATALOG,
     DEFAULT_RISK_RULE,
+    DEFAULT_SCHEMA,
     EPSS_PRIORITY_THRESHOLD,
     OVERALL,
     POPULATION_ALL,
@@ -160,9 +162,17 @@ class Ctx:
 #: Declared by every notebook. ``table_prefix`` takes ``-`` for "no prefix at all", because
 #: ``run_pipeline.param`` is ``widget or env or default`` and an empty string is falsy -- so a
 #: cleared widget means "use the default", not "use nothing".
+# `catalog` and `schema` default to the deployment's own namespace (config.DEFAULT_CATALOG /
+# DEFAULT_SCHEMA) rather than to nothing. A read-only page should open on the register, not on
+# a blank widget and a stack trace. The write path keeps its no-default rule -- see config.
+#
+# **A widget that already exists keeps its old value.** Databricks does not overwrite a widget
+# on re-declaration, so changing a default here does nothing for a notebook somebody has
+# already run: they have to Remove all widgets and re-run cell 1, or pass `namespace=` to
+# `context()`. That is the "unreliable widget resolution" anyone who hits it will describe.
 BASE_WIDGETS: Dict[str, Tuple[str, Optional[Sequence[str]]]] = {
-    "catalog": ("", None),
-    "schema": ("wiz", None),
+    "catalog": (DEFAULT_CATALOG, None),
+    "schema": (DEFAULT_SCHEMA, None),
     "scope": ("os", ("os", "all")),
     "table_prefix": ("", None),
     "severities": ("CRITICAL,HIGH", None),
@@ -216,6 +226,7 @@ def context(
     *,
     tables: Optional[run_pipeline.Tables] = None,
     namespace: Optional[str] = None,
+    ensure: bool = True,
     **page_defaults: str,
 ) -> Ctx:
     """Resolve the run, register the views, and hand back the frozen context.
@@ -225,9 +236,22 @@ def context(
     half-updated folder once ingested 137,870 findings and then died -- would only ever run for
     someone doing a scan.
 
-    ``tables`` / ``namespace`` are the local-test route and nothing else: ``resolve_namespace``
-    insists on ``<catalog>.<schema>``, and a local SparkSession cannot write a three-level name
-    at all (see the README's "Running it locally"). A notebook never passes either.
+    ``tables`` is the local-test route and nothing else: a local SparkSession cannot write a
+    three-level name at all (see the README's "Running it locally").
+
+    ``namespace`` is the same route, plus one real notebook use: **overriding a stale widget.**
+    Databricks keeps a widget's value once it exists, so a notebook that was run before
+    ``BASE_WIDGETS`` changed still resolves the old ``catalog``/``schema`` and reads a namespace
+    that no longer holds the tables -- with no error, because an empty page is a valid result.
+    Passing ``namespace='<catalog>.<schema>'`` skips widget resolution entirely and is the
+    quickest way to prove that is what happened. Removing and re-adding the widgets is the
+    permanent fix; this is the diagnosis.
+
+    ``ensure`` creates the ledger and scan-log tables when they are missing, so a deployment
+    that has never run a scan opens on an empty page instead of TABLE_OR_VIEW_NOT_FOUND. It is
+    the one write a read-only notebook makes, it touches no data, and it is idempotent. Pass
+    ``ensure=False`` where even that is unwanted -- a viewer holding SELECT and nothing else on
+    a register that has never been scanned.
     """
     run_pipeline.check_deployment()
 
@@ -241,6 +265,15 @@ def context(
         namespace = namespace or run_pipeline.resolve_namespace(argv=argv)
         tables = run_pipeline.resolve_tables(namespace, scope, argv=argv)
     namespace = namespace or ""
+
+    if ensure:
+        # The two lifecycle tables are created by `reconcile_scan`, so on a deployment where the
+        # pipeline has never run they do not exist and every view built below dies with
+        # TABLE_OR_VIEW_NOT_FOUND -- in cell 1, before the page can say "nothing scanned yet".
+        # `ensure_tables` checks existence first, so this is a no-op in the normal case and
+        # needs no privilege beyond SELECT; only a never-run deployment tries to CREATE, and
+        # there a PERMISSION_DENIED naming the grant is the right thing to see.
+        run_pipeline.ensure_tables(spark, tables)
     severities = tuple(
         s for s in run_pipeline.parse_severities(_param("severities")) or SEVERITY_ORDER
     )

@@ -253,8 +253,17 @@ The service account needs the `read:vulnerabilities` scope in Wiz. Credentials a
 read through `dbutils.secrets`; nothing is inlined, and the values never reach a table or a log.
 
 **Pick the catalog deliberately.** These tables map unpatched CVEs to named hosts, so they
-belong somewhere with grants to match. `catalog` has no default for exactly this reason: the
-job fails rather than guessing. Restrict the schema once it exists:
+belong somewhere with grants to match. `catalog` has no default **on the write path** for
+exactly this reason: the job fails rather than guessing. Reading the wrong catalog shows you an
+empty page; writing to it is a disclosure, so only the write path is strict — the read-only
+notebooks open on `config.DEFAULT_CATALOG` / `DEFAULT_SCHEMA`
+(`preprod_datalake_insight_analytics.industry`), which is the deployment they are pointed at.
+
+Note that `datalake_insight_analytics` (no prefix) is **read-only** to the service principal.
+The pipeline writes to the `preprod_` catalog; pointing it at the other one fails at the first
+`saveAsTable` with a permission error that names neither the catalog nor the grant.
+
+Restrict the schema once it exists:
 
 ```sql
 GRANT USE SCHEMA, SELECT ON SCHEMA <your-catalog>.<your-schema> TO `security-analysts`;
@@ -359,9 +368,10 @@ cell reads the versions directly and has no such blind spot.
 import sys
 sys.path.insert(0, "/Workspace/Users/<you>/wiz-metrics")   # insert, not append -- see Layout
 
-dbutils.widgets.text("catalog", "")            # required -- see "Pick the catalog" above
-dbutils.widgets.text("schema", "wiz")
-dbutils.widgets.text("wiz_api_url", "https://api.<region>.app.wiz.io/graphql")
+# The writable catalog -- `datalake_insight_analytics` without the prefix is read-only.
+dbutils.widgets.text("catalog", "preprod_datalake_insight_analytics")
+dbutils.widgets.text("schema", "industry")
+dbutils.widgets.text("wiz_api_url", "https://api.eu15.app.wiz.io/graphql")
 dbutils.widgets.text("secret_scope", "wiz")
 dbutils.widgets.text("severities", "CRITICAL,HIGH")
 dbutils.widgets.text("scope", "os")            # "all" for every vulnerability type
@@ -384,8 +394,8 @@ old one, so `config`'s constants exist twice and a reload of `config` mid-import
 It is also easy to leave a module out of the list — `ledger` is the one usually forgotten — which
 recreates the mixed-version folder by another route. `restartPython()` has neither failure mode.
 
-`<region>` is the one in your Wiz tenant URL (`us1`, `eu2`, …). Get it wrong and auth succeeds
-but the GraphQL POST 404s.
+`<region>` elsewhere in this file is the one in your Wiz tenant URL (`us1`, `eu2`, …) — this
+deployment's is **`eu15`**, as above. Get it wrong and auth succeeds but the GraphQL POST 404s.
 
 `06_run_and_verify` is this cell with the version check, the table inventory and the consistency
 checks around it, so once the notebooks are up there is no reason to paste it by hand.
@@ -609,8 +619,20 @@ can sort and export. Run a cell, get a metric and its visualisation.
 | **`05_estate`** | Can this register be attributed to an owner at all, and which parts of the estate carry the backlog? |
 | **`06_run_and_verify`** | Is the deployment sound, can I run a scan, and are the tables consistent? |
 
-`00`–`05` are **read-only**. `06` is the only one that writes, which is deliberate: a page
-somebody opens to check a number should not be one Run All away from a credentialed API sweep.
+`00`–`05` are **read-only about your data**. `06` is the only one that ingests, which is
+deliberate: a page somebody opens to check a number should not be one Run All away from a
+credentialed API sweep.
+
+The one exception, and it is not a data write: `panels.context()` calls
+`run_pipeline.ensure_tables()`, so a deployment where the pipeline has never run creates the two
+empty lifecycle tables instead of failing every view with `TABLE_OR_VIEW_NOT_FOUND` in cell 1.
+It checks existence first, so in the normal case it needs nothing beyond `SELECT`. Pass
+`ensure=False` to `context()` for a viewer that holds only `SELECT` on a never-scanned register.
+
+A register with no scans then opens on **"No scan data yet"** rather than a traceback
+(`tiles.scan_zone_from`). Every page's first cell goes through that helper: `last_scan(…).first()`
+is `None` on an empty table, and the obvious `…first().asDict()` dies with an `AttributeError`
+that a fresh deployment cannot tell apart from a broken install.
 
 Two GAS pages have no analogue here and are absent rather than approximated. **Settings** — the
 parameters are widgets and Job parameters, and the high-risk rule is `config.DEFAULT_RISK_RULE`,
@@ -622,6 +644,28 @@ value-chain domains through configurable rules over subscriptions and asset tags
 domain rules and `ingest.py` selects no asset tags, so there is nothing to compute a coverage
 gap against. The page says so and answers the nearest question the register can actually
 support. Adding tags to `ingest.py` is the real fix.
+
+> **`05_estate` is currently empty, and that is the honest reading.** See
+> [The asset fields are not fetched](#the-asset-fields-are-not-fetched) — every column it groups
+> on is NULL, so `panels.attributability` reports 0% populated. That is the page working, not
+> the page broken: it exists to answer "can this register be attributed to an owner at all".
+
+### The asset fields are not fetched
+
+`config.FETCH_ASSET_FIELDS` is **False**. The live tenant no longer has the `vulnerableAsset`
+union members this query used, and GraphQL rejects the *whole request* rather than the
+sub-selection — so one unavailable field costs every scan. It is a constant rather than a
+deletion: `ingest._asset_selection` and its member list are intact, so a tenant that still has
+them turns the columns back on by flipping one line.
+
+| | |
+| --- | --- |
+| **NULL while it is off** | `asset_id`, `asset_name`, `asset_type`, `cloud`, `subscription_name`, `subscription_ext_id` — so `05_estate`, the by-subscription breakdowns and `risk_mix` have nothing to group on |
+| **Unaffected** | MTTR, SLA, coverage, efficiency, capacity, and the whole ledger. They read severity, status, timestamps and the exploit signals, none of which live on the asset |
+| **Identity unaffected** | `vuln_key` prefers the Wiz finding id, which is still selected. Only the fallback hash uses asset fields, and it is not reached |
+
+Bronze written before the flag still holds the asset JSON, so `--rebuild_ledger` over that
+history repopulates those columns for the scans that captured them.
 
 ### The scan pin, and why there is a `panels.py`
 
