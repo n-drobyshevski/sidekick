@@ -25,7 +25,7 @@ from dataclasses import dataclass
 # Every runtime module carries MODULE_VERSION, and run_pipeline.check_deployment() compares
 # them before the run touches Spark. Bump this whenever the modules stop being
 # mix-and-matchable with the previous release -- which is nearly always.
-PIPELINE_VERSION = "2.0"
+PIPELINE_VERSION = "2.1"
 MODULE_VERSION = PIPELINE_VERSION
 
 # ---- Severity taxonomy ----
@@ -154,6 +154,19 @@ NET_CAPACITY_BAND_PCT = 2
 
 # The row label used for the all-severities aggregate in the gold tables.
 OVERALL = "OVERALL"
+
+# Which population a capacity row describes. The gold capacity table carries both, stacked,
+# because they answer different questions and routinely disagree:
+#
+#   "all"        every finding -- how much of the backlog moves in a month.
+#   "high_risk"  high-risk lifecycles only. This is the population P2P v3 defines net
+#                remediation capacity over, and it is what gas/src/server/api.ts:859 passes
+#                (`highRiskOnly: true`) on the production surface.
+#
+# Every query against the capacity table must filter on `population`, or it will read each
+# month twice.
+POPULATION_ALL = "all"
+POPULATION_HIGH_RISK = "high_risk"
 
 # ---- Lifecycle ledger (v2) ----
 # Mirrors the disappearance modes in gas/src/domain/reconcile.ts, which is the reference

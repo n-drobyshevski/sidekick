@@ -38,7 +38,12 @@ import hashlib
 import json
 from typing import Any, Dict, List, Optional
 
-from config import SEVERITY_COLORS, SEVERITY_ORDER
+from config import (
+    POPULATION_ALL,
+    POPULATION_HIGH_RISK,
+    SEVERITY_COLORS,
+    SEVERITY_ORDER,
+)
 
 GRID_COLUMNS = 6
 OVERALL = "OVERALL"
@@ -72,10 +77,11 @@ def _latest_scan(table: str) -> str:
 
 
 def datasets(tables) -> List[Dict[str, Any]]:
-    mttr, program, capacity, silver = (
+    mttr, program, capacity, sensitivity, silver = (
         tables.mttr,
         tables.program,
         tables.capacity,
+        tables.sensitivity,
         tables.silver,
     )
     severity_order = ", ".join(f"'{s}'" for s in SEVERITY_ORDER)
@@ -101,7 +107,8 @@ FROM (SELECT * FROM {mttr} WHERE {_latest_scan(mttr)} AND severity = '{OVERALL}'
 JOIN (SELECT * FROM {program} WHERE {_latest_scan(program)} AND severity = '{OVERALL}') p
   ON m.scan_id = p.scan_id
 LEFT JOIN (SELECT DISTINCT scan_id, overall_verdict, mmcr_mean
-           FROM {capacity} WHERE {_latest_scan(capacity)}) c
+           FROM {capacity}
+           WHERE {_latest_scan(capacity)} AND population = '{POPULATION_ALL}') c
   ON m.scan_id = c.scan_id
 """,
         ),
@@ -148,13 +155,16 @@ FROM {program}
 WHERE {_latest_scan(program)} AND severity <> '{OVERALL}'
 """,
         ),
+        # Every capacity dataset filters on `population`. The table carries both the
+        # all-findings backlog and the high-risk net flow P2P v3 defines, stacked -- an
+        # unfiltered read returns each month twice and silently doubles every count.
         _dataset(
             "capacity_months",
             f"""
 SELECT month, opened, closed, closed_observed, open_at_start, mmcr, net, net_pct, verdict,
        partial, reconstructed
 FROM {capacity}
-WHERE {_latest_scan(capacity)}
+WHERE {_latest_scan(capacity)} AND population = '{POPULATION_ALL}'
 ORDER BY month
 """,
         ),
@@ -170,7 +180,42 @@ SELECT month, opened, closed, closed_observed, open_at_start, mmcr, net, net_pct
        partial
 FROM {capacity}
 WHERE {_latest_scan(capacity)} AND NOT reconstructed
+  AND population = '{POPULATION_ALL}'
 ORDER BY month
+""",
+        ),
+        # The same months over the high-risk population only -- the one P2P v3 defines net
+        # remediation capacity over, and the one that answers "are we closing high risk faster
+        # than it arrives" rather than "how much of the backlog moves". Kept as its own dataset
+        # rather than a series on the chart above, because the two populations have their own
+        # backlogs and their own month grids: they are not two measurements of one thing.
+        _dataset(
+            "capacity_high_risk_months",
+            f"""
+SELECT month, opened, closed, open_at_start, mmcr, net, net_pct, verdict, partial
+FROM {capacity}
+WHERE {_latest_scan(capacity)} AND NOT reconstructed
+  AND population = '{POPULATION_HIGH_RISK}'
+ORDER BY month
+""",
+        ),
+        # How much of the headline is the rule rather than the register. Not a strategy
+        # comparison -- every subset is scored against itself, so none of them can be "wrong".
+        _dataset(
+            "rule_sensitivity",
+            f"""
+SELECT rule_label,
+       rule_sentence,
+       active,
+       coverage_pct,
+       efficiency_pct,
+       prevalence_pct,
+       signal_coverage_pct,
+       high_risk,
+       unknown
+FROM {sensitivity}
+WHERE {_latest_scan(sensitivity)}
+ORDER BY active DESC, rule_label
 """,
         ),
         # The second dimension. Kept to counts and rates that survive aggregation -- a mean of
@@ -513,29 +558,59 @@ def _programme_page() -> Dict[str, Any]:
                    "The lo/hi pairs are the extreme re-labellings of the unclassified findings. "
                    "Their width is the size of the doubt."),
             x=0, y=9, width=6, height=7),
+        # The rule IS the label these two rates are computed against, so how much of them is the
+        # rule belongs on the same page as the rates -- not in an appendix nobody opens.
+        _place(
+            _table("prog-sensitivity", "rule_sensitivity",
+                   ["rule_label", "active", "coverage_pct", "efficiency_pct", "prevalence_pct",
+                    "signal_coverage_pct", "high_risk", "unknown"],
+                   "How much of that is the rule",
+                   "The same two rates under each signal subset, with the configured rule marked "
+                   "active. This is rule sensitivity, not a strategy comparison — every subset "
+                   "is scored against itself, so none of them can be 'wrong'. Read high_risk and "
+                   "unknown alongside: a subset that buys efficiency by shrinking the high-risk "
+                   "population, or by pushing findings into unknown, shows it in those columns."),
+            x=0, y=16, width=6, height=7),
         _place(
             _bar("prog-capacity", "capacity_observed_months",
                  x="month", x_expr="`month`",
                  y="closed", y_expr="`closed`",
-                 title="Findings closed per month (observed months only)",
+                 title="Findings closed per month — all findings (observed months only)",
                  description="Against opened in the table below. Net negative for several "
                              "months running means the backlog is growing. Months before the "
                              "first scan are excluded — their activity is reconstructed from "
                              "the API's dates, not measured; the table lists them.",
                  x_scale="temporal",
                  extra_fields={"opened": "`opened`"}),
-            x=0, y=16, width=3, height=7),
+            x=0, y=23, width=3, height=7),
+        # Its own chart rather than a second series on the one beside it: the two populations
+        # have separate backlogs and separate month grids, so a shared axis would imply a
+        # comparability that is not there.
+        _place(
+            _bar("prog-capacity-high-risk", "capacity_high_risk_months",
+                 x="month", x_expr="`month`",
+                 y="closed", y_expr="`closed`",
+                 title="Closed per month — high risk only (observed months)",
+                 description="The P2P v3 net-capacity population: are we closing high risk "
+                             "faster than it arrives? This routinely disagrees with the chart "
+                             "beside it, and when it does, this is the one that matters. "
+                             "closed_observed is absent here on purpose — reconciliation's "
+                             "count carries no risk label, so it would cross-check a different "
+                             "population.",
+                 x_scale="temporal",
+                 extra_fields={"opened": "`opened`", "net_pct": "`net_pct`"}),
+            x=3, y=23, width=3, height=7),
         _place(
             _table("prog-capacity-table", "capacity_months",
                    ["month", "open_at_start", "opened", "closed", "closed_observed", "mmcr",
                     "net_pct", "verdict", "partial", "reconstructed"],
-                   "Capacity by month",
+                   "Capacity by month — all findings",
                    "mmcr is the share of the open backlog closed that month. partial is the "
                    "current month, still running. reconstructed means the month predates the "
                    "first scan, so its counts come from the API's dates rather than from "
                    "anything we watched — they are not evidence of capacity. closed_observed "
                    "is reconciliation's own count for cross-checking closed."),
-            x=3, y=16, width=3, height=7),
+            x=0, y=30, width=6, height=7),
         _place(
             _bar("prog-risk-mix", "by_subscription",
                  x=BREAKDOWN_COLUMN, x_expr=f"`{BREAKDOWN_COLUMN}`",
@@ -545,7 +620,7 @@ def _programme_page() -> Dict[str, Any]:
                              "the remediation page's table is the caveat on this.",
                  color_by_severity=True,
                  extra_fields={"severity": "`severity`", "unclassified": "`unclassified`"}),
-            x=0, y=23, width=6, height=7),
+            x=0, y=37, width=6, height=7),
     ]
     return {"name": _id("page-programme"), "displayName": "Programme", "layout": layout}
 

@@ -39,6 +39,7 @@ def tables():
         bronze=q("findings_raw"), silver=q("findings"), ledger=q("vuln_ledger"),
         scans=q("scans"), mttr=q("metrics_mttr"),
         program=q("metrics_program"), capacity=q("metrics_capacity"),
+        sensitivity=q("metrics_sensitivity"),
     )
 
 
@@ -145,7 +146,9 @@ def test_generation_is_deterministic(tables):
 
 def test_queries_use_the_configured_tables_only(doc, tables):
     blob = json.dumps(doc)
-    for table in (tables.mttr, tables.program, tables.capacity, tables.silver):
+    for table in (
+        tables.mttr, tables.program, tables.capacity, tables.sensitivity, tables.silver
+    ):
         assert table in blob
     # The catalog default that used to exist, and unprefixed names, must not survive anywhere.
     assert "main." not in blob

@@ -16,9 +16,32 @@ disagree, GAS wins.
   Capacity     Mean Monthly Close Rate and net flow -- can we close faster than risk arrives?
 
 Coverage and efficiency come from the Cisco Kenna / Cyentia "Prioritization to Prediction"
-series and are in direct tension: v2's industry baseline is 70% coverage at 18.5% efficiency.
-They are meaningless apart, so both are always emitted together.
-``gas/src/domain/program.ts`` is the reference implementation.
+series, are in direct tension, and are meaningless apart -- so both are always emitted
+together. ``gas/src/domain/program.ts`` is the reference implementation.
+
+-------------------------------------------------------------------------------------------
+P2P IS THE SOURCE OF THE FORMULAS, NOT A BENCHMARK THESE NUMBERS CAN BE READ AGAINST.
+P2P scores a remediation strategy against an *independent* ground truth -- exploitation
+observed in the wild, which lands on roughly 2-5% of CVEs. We have no such ground truth, only
+the signals in ``RiskRule``. So "high risk" here is **our own prioritization rule**, and this
+matrix measures what the register did against that rule rather than against reality. It is
+the same move the Kenna product makes, and it is fine -- as long as nobody quotes the number
+as if it were P2P's. Three things follow:
+
+  * The published industry figures (v2's 70% coverage at 18.5% efficiency, v4's finding that
+    most firms never cross 50% efficiency) are NOT a peer for ours. Their positive class is
+    far rarer than ours, so our efficiency reads higher and means less.
+  * The baseline that IS a peer is computed here and published beside every rate:
+    ``prevalence_pct``, the efficiency a program picking findings at RANDOM would score.
+    Read efficiency against that, never against 18.5%.
+  * ``config.SCOPES`` pins ``hasFix: true``, which keeps awaiting-vendor-fix findings out of
+    coverage's denominator. Deliberate, and one more reason the baselines are not comparable.
+
+Two further departures from how P2P counts, neither of them wrong but both worth knowing:
+rows are **finding-instances** (one per ``vuln_key`` = CVE x component x asset), so a CVE on
+5,000 hosts weighs 5,000; and the matrix is **cumulative over the whole ledger**, not scoped
+to a period, so the appended per-scan series is a to-date curve rather than a monthly one.
+-------------------------------------------------------------------------------------------
 
 -------------------------------------------------------------------------------------------
 THE CORRECTNESS TRAP, stated once because it shapes the whole module:
@@ -50,6 +73,8 @@ from pyspark.sql.types import (
 from config import (
     NET_CAPACITY_BAND_PCT,
     OVERALL,
+    POPULATION_ALL,
+    POPULATION_HIGH_RISK,
     RESOLUTION_API,
     RESOLUTION_DISAPPEARED,
     RESOLVED_STATUSES,
@@ -59,7 +84,7 @@ from config import (
 )
 
 # See config.PIPELINE_VERSION: every runtime module must come from the same upload.
-MODULE_VERSION = "2.0"
+MODULE_VERSION = "2.1"
 
 SECONDS_PER_DAY = 86400
 
@@ -591,6 +616,76 @@ def signal_breakdown(df: DataFrame, rule: RiskRule) -> DataFrame:
     )
 
 
+# The seven non-empty signal subsets, in the order and with the labels
+# ``gas/src/domain/program.ts::ruleSensitivity`` uses -- a reader moving between the two
+# surfaces should see the same words for the same row.
+RULE_SUBSETS = (
+    ("KEV", True, False, False),
+    ("Exploit", False, True, False),
+    ("EPSS", False, False, True),
+    ("KEV or exploit", True, True, False),
+    ("KEV or EPSS", True, False, True),
+    ("Exploit or EPSS", False, True, True),
+    ("All three", True, True, True),
+)
+
+
+def rule_sensitivity(df: DataFrame, active: RiskRule) -> DataFrame:
+    """Coverage and efficiency under each of the seven non-empty signal subsets.
+
+    Port of ``gas/src/domain/program.ts::ruleSensitivity``. One row per subset, carrying the
+    full confusion matrix plus the flags describing the rule that produced it, with the
+    currently-configured rule marked ``active``. The EPSS threshold is inherited from ``active``
+    rather than swept, so the only thing varying across rows is which signals are switched on --
+    same as the reference implementation, which compares the three booleans and nothing else.
+
+    **This is rule sensitivity, not strategy comparison, and the distinction is the reason the
+    table exists.** P2P vol. 9's Figure 19 plots candidate remediation strategies against an
+    independent ground truth -- exploitation observed in the wild. We have no such ground truth,
+    only these same signals, so each subset here is scored against itself and no subset can come
+    out "wrong": a narrow rule simply reports a high rate over a small high-risk population.
+    What it does answer is the question a reader of a rule-defined metric genuinely needs --
+    **how much of the headline is the rule rather than the register?** ``high_risk`` and
+    ``unknown`` ride along on every row precisely so that a subset which buys efficiency by
+    shrinking the positive class, or by pushing rows into ``unknown``, cannot hide it.
+
+    Seven aggregations over a frame the caller has already cached, all of them the same
+    ``_matrix_aggs`` the headline uses -- linear in the register, so it is computed
+    unconditionally rather than behind a flag. The *plan* is correspondingly seven times wider,
+    which costs nothing on a cluster and is very visible in the local test suite; if that ever
+    needs fixing, the shape to reach for is one pass emitting all seven subsets' counts as
+    columns, not a flag that lets the table go missing.
+    """
+    frames: List[DataFrame] = []
+    for label, kev, exploit, epss in RULE_SUBSETS:
+        rule = RiskRule(
+            kev=kev, exploit=exploit, epss=epss, epss_threshold=active.epss_threshold
+        )
+        # classify_risk overwrites `risk_class`, so a frame already classified under the active
+        # rule is a valid input -- which is what the caller has.
+        frames.append(
+            classify_risk(df, rule)
+            .groupBy(F.lit(label).alias("rule_label"))
+            .agg(*_matrix_aggs())
+            .withColumn("rule_kev", F.lit(kev))
+            .withColumn("rule_exploit", F.lit(exploit))
+            .withColumn("rule_epss", F.lit(epss))
+            .withColumn("epss_threshold", F.lit(rule.epss_threshold))
+            .withColumn("rule_sentence", F.lit(rule.sentence()))
+            # The three booleans only, matching program.ts -- the threshold is inherited, so it
+            # cannot be what distinguishes the active row.
+            .withColumn(
+                "active",
+                F.lit(
+                    kev == active.kev
+                    and exploit == active.exploit
+                    and epss == active.epss
+                ),
+            )
+        )
+    return _finalize_matrix(functools.reduce(DataFrame.unionByName, frames))
+
+
 # -------------------------------------------------------------------------- capacity
 
 
@@ -742,6 +837,51 @@ def _verdict(net_pct: Column) -> Column:
         .when(net_pct > 0, F.lit("gaining"))
         .otherwise(F.lit("falling-behind"))
     )
+
+
+def capacity_populations(
+    df: DataFrame,
+    now_ts: str,
+    *,
+    observed_from=None,
+    closed_observed: Optional[DataFrame] = None,
+) -> DataFrame:
+    """``capacity_by_month`` over both populations, stacked and tagged with ``population``.
+
+    P2P v3 defines net remediation capacity over the **high-risk** population, and the
+    reference implementation is called that way on its production surface
+    (``gas/src/server/api.ts:859`` passes ``highRiskOnly: true``). This pipeline published only
+    the all-findings figure, which answers "how much of the backlog moves" but not the question
+    P2P actually asks -- "are we closing high risk faster than it arrives". The two routinely
+    disagree, and which one you meant is not recoverable from a single unlabelled number, so
+    both are emitted and every reader has to say which.
+
+    Needs ``risk_class`` for the high-risk half, so run ``classify_risk`` first.
+
+    Two things that are deliberately not shared between the halves:
+
+    * **``closed_observed`` is attached to the ``all`` rows only.** It is reconciliation's own
+      resolution count, and reconciliation does not label risk -- so against the high-risk rows
+      it would be a cross-check between two different populations, which is worse than no
+      cross-check at all. It stays NULL there rather than inviting the comparison.
+    * **The month grid is built per population**, from that population's own earliest
+      ``first_detected_at``. A register whose first high-risk finding arrived a year after its
+      first finding has a shorter high-risk series, which is the honest shape.
+
+    A register with no high-risk lifecycles at all contributes no ``high_risk`` rows -- the
+    grid is empty, so there is nothing to say and nothing is said.
+    """
+    every = capacity_by_month(
+        df, now_ts, observed_from=observed_from, closed_observed=closed_observed
+    ).withColumn("population", F.lit(POPULATION_ALL))
+    high = capacity_by_month(
+        df,
+        now_ts,
+        high_risk_only=True,
+        observed_from=observed_from,
+        closed_observed=None,
+    ).withColumn("population", F.lit(POPULATION_HIGH_RISK))
+    return every.unionByName(high)
 
 
 def observation_window_days(df: DataFrame, now_ts: str) -> DataFrame:
