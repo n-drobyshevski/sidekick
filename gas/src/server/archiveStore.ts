@@ -8,13 +8,16 @@
 //   checkpoints/checkpoint-<compaction_id>.json.gz
 //   snapshots/ledger-snapshot.json.gz       fast-read state, rewritten on every write
 //   backups/backup-<job_id>.json.gz         journal snapshots, deleted on commit
+//   exports/migration-<iso>.json.gz         migration bundles, kept until deleted by hand
 
 import type { Checkpoint } from "../domain/compaction";
 import type { LedgerState } from "../domain/ledgerCore";
 import type { Observation } from "../domain/reconcile";
 import { PROP_KEYS, requireProp } from "./props";
 
-const SUBFOLDERS = ["scans", "obs", "checkpoints", "snapshots", "backups", "imports"] as const;
+const SUBFOLDERS = [
+  "scans", "obs", "checkpoints", "snapshots", "backups", "imports", "exports",
+] as const;
 export type Subfolder = (typeof SUBFOLDERS)[number];
 
 function rootFolder(): GoogleAppsScript.Drive.Folder {
@@ -293,6 +296,24 @@ export function readJournal(ref: string | null): LedgerState | null {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
   const st = parsed as LedgerState;
   return st.scans && st.ledger && st.episodes ? st : null;
+}
+
+// ----------------------------------------------------------------- migration exports
+/**
+ * Write a migration bundle to Drive and hand back a download URL.
+ *
+ * Deliberately not returned as bytes through google.script.run: a month of history is
+ * tens of MB and the response cap would truncate it. `api_getExportRawUrl` already takes
+ * this route for raw pages, and it means the export needs no sharding however large the
+ * register gets.
+ */
+export function writeMigrationExport(name: string, bundle: unknown): {
+  name: string;
+  url: string;
+  bytes: number;
+} {
+  const file = writeGzJson(subfolder("exports"), name, bundle);
+  return { name, url: file.getDownloadUrl(), bytes: file.getSize() };
 }
 
 export function trashLedgerSnapshot(): void {

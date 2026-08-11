@@ -31,6 +31,7 @@ import {
   resolutionBuckets,
 } from "../domain/remediation";
 import { validateBundle } from "../domain/importMerge";
+import { buildMigrationBundle, bundleCounts } from "../domain/exportBundle";
 import { SealedScanError, LedgerRebuildError } from "../domain/maintenance";
 import { nowIso, parseTs, present, type Rec } from "../domain/util";
 import { kmMedianAsOf, kmMedianByGroupTrend, medianMttrByGroupTrend, openByGroupTrend, openBySeverityTrend } from "../domain/trend";
@@ -48,7 +49,7 @@ import * as backfillJobs from "./backfillJobs";
 import * as scanJobs from "./scanJobs";
 import { cached, dataVersion } from "./serverCache";
 import * as settingsStore from "./settingsStore";
-import { cellCount } from "./sheetsDb";
+import { cellCount, SCHEMA_VERSION } from "./sheetsDb";
 import * as supportGroups from "./supportGroups";
 
 export interface ApiResult<T = unknown> {
@@ -1704,6 +1705,32 @@ export function getExportRawUrl(p?: unknown): ApiResult {
     }
     urls.sort((a, b) => (a.name < b.name ? -1 : 1));
     return { urls, folderUrl: folder.getUrl() };
+  });
+}
+
+/**
+ * Export the whole durable register as a migration bundle and return a Drive download URL.
+ *
+ * The counterpart to `importMigration`. Same `kind`/`version`, so the file this writes is
+ * re-importable here — and it is what carries a deployment's accumulated history to
+ * another surface (see brick/import_bundle.py) instead of stranding it in Sheets.
+ *
+ * Reads through `loadState()`, which takes the Drive snapshot fast path: one gzip read
+ * rather than a 100k-row getValues, which is what keeps a month of history inside the
+ * 6-minute execution cap. No lock: this is a read, and a bundle assembled mid-write would
+ * still be internally consistent because the snapshot is rewritten wholesale.
+ */
+export function exportMigrationBundle(_p?: unknown): ApiResult {
+  return run(() => {
+    const exportedAt = nowIso();
+    const bundle = buildMigrationBundle(ledgerStore.loadState(), history.loadHistory(), {
+      exportedAt,
+      schemaVersion: SCHEMA_VERSION,
+    });
+    // ':' is legal in a Drive filename but awkward in every shell that later touches it.
+    const stamp = exportedAt.replace(/[:]/g, "");
+    const written = archive.writeMigrationExport(`migration-${stamp}.json.gz`, bundle);
+    return { ...written, exported_at: exportedAt, counts: bundleCounts(bundle) };
   });
 }
 

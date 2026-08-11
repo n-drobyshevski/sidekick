@@ -57,7 +57,7 @@ from config import (
 )
 
 # See config.PIPELINE_VERSION: every module in a deployment must come from the same upload.
-MODULE_VERSION = "2.1"
+MODULE_VERSION = "2.2"
 
 SEVERITIES: Tuple[str, ...] = tuple(SEVERITY_ORDER)
 

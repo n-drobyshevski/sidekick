@@ -83,7 +83,15 @@ var Server = (() => {
   }
 
   // src/server/archiveStore.ts
-  var SUBFOLDERS = ["scans", "obs", "checkpoints", "snapshots", "backups", "imports"];
+  var SUBFOLDERS = [
+    "scans",
+    "obs",
+    "checkpoints",
+    "snapshots",
+    "backups",
+    "imports",
+    "exports"
+  ];
   function rootFolder() {
     return DriveApp.getFolderById(requireProp(PROP_KEYS.archiveFolderId));
   }
@@ -284,6 +292,10 @@ var Server = (() => {
     const st = parsed;
     return st.scans && st.ledger && st.episodes ? st : null;
   }
+  function writeMigrationExport(name, bundle) {
+    const file = writeGzJson(subfolder("exports"), name, bundle);
+    return { name, url: file.getDownloadUrl(), bytes: file.getSize() };
+  }
   function trashLedgerSnapshot() {
     const files = subfolder("snapshots").getFilesByName(SNAPSHOT_NAME);
     while (files.hasNext()) files.next().setTrashed(true);
@@ -436,6 +448,7 @@ var Server = (() => {
       "updated_at"
     ]
   };
+  var SCHEMA_VERSION = 2;
   var spreadsheetCache = null;
   function ledgerSpreadsheet() {
     if (spreadsheetCache === null) {
@@ -1712,6 +1725,7 @@ var Server = (() => {
     clearRecentErrors: () => clearRecentErrors,
     compact: () => compact,
     deleteScans: () => deleteScans2,
+    exportMigrationBundle: () => exportMigrationBundle,
     getAttribution: () => getAttribution,
     getDomains: () => getDomains3,
     getExecutivePage: () => getExecutivePage,
@@ -2912,6 +2926,32 @@ var Server = (() => {
   }
 
   // src/domain/reconcile.ts
+  var LEDGER_COLUMNS = [
+    "vuln_key",
+    "cve",
+    "severity",
+    "asset_id",
+    "asset_name",
+    "asset_type",
+    "cloud",
+    "first_seen",
+    "last_seen",
+    "status",
+    "resolved_at",
+    "resolution_src",
+    "reopened_count",
+    "first_scan_id",
+    "last_scan_id",
+    "subscription_name",
+    "subscription_ext_id",
+    "tags_json",
+    "fix_date",
+    "fix_observed_at",
+    "has_kev",
+    "has_exploit",
+    "epss",
+    "risk_observed_at"
+  ];
   var TAGS_PREFIX = "vulnerableAsset.tags.";
   function tagsJson(record) {
     const va = record["vulnerableAsset"];
@@ -4461,6 +4501,84 @@ var Server = (() => {
     return { rows, added, skipped };
   }
 
+  // src/domain/exportBundle.ts
+  var BUNDLE_SCAN_COLUMNS = [
+    "scan_id",
+    "ts",
+    "mode",
+    "shape",
+    "total",
+    "new_count",
+    "resolved_count",
+    "reopened_count",
+    "severities",
+    "sealed"
+  ];
+  var BUNDLE_EPISODE_COLUMNS = [
+    "vuln_key",
+    "cve",
+    "severity",
+    "first_seen",
+    "resolved_at",
+    "resolution_src",
+    "reopened_count",
+    "compaction_id",
+    "superseded_by_scan",
+    "fix_date",
+    "fix_observed_at",
+    "has_kev",
+    "has_exploit",
+    "epss",
+    "risk_observed_at"
+  ];
+  var BUNDLE_HISTORY_COLUMNS = [
+    "date",
+    "median_days",
+    "resolved",
+    "open",
+    "total",
+    "sla_pct",
+    "oldest_open_days",
+    "open_past_sla"
+  ];
+  function project(row, columns) {
+    var _a;
+    const out = {};
+    for (const c of columns) out[String(c)] = (_a = row[c]) != null ? _a : null;
+    return out;
+  }
+  function bundleCounts(bundle) {
+    return {
+      scans: bundle.scans.length,
+      ledger: bundle.ledger.length,
+      episodes: bundle.episodes.length,
+      mttr_history: bundle.mttr_history.length
+    };
+  }
+  function buildMigrationBundle(state, history, opts) {
+    var _a;
+    const ledgerRows = Object.keys(state.ledger).sort().map((k) => state.ledger[k]);
+    const episodes = [...state.episodes].sort(
+      (a, b) => a.vuln_key < b.vuln_key ? -1 : a.vuln_key > b.vuln_key ? 1 : 0
+    );
+    return {
+      kind: MIGRATION_KIND,
+      version: MIGRATION_VERSION,
+      exported_at: opts.exportedAt,
+      schema_version: (_a = opts.schemaVersion) != null ? _a : null,
+      scans: scansAsc(state.scans).map((s) => project(s, BUNDLE_SCAN_COLUMNS)),
+      ledger: ledgerRows.map((r) => project(r, LEDGER_COLUMNS)),
+      episodes: episodes.map((e) => project(e, BUNDLE_EPISODE_COLUMNS)),
+      mttr_history: history.map((h) => {
+        var _a2;
+        const src = h;
+        const out = {};
+        for (const c of BUNDLE_HISTORY_COLUMNS) out[c] = (_a2 = src[c]) != null ? _a2 : null;
+        return out;
+      })
+    };
+  }
+
   // src/server/errorLog.ts
   var KEY = "RECENT_ERRORS";
   var MAX_ENTRIES = 25;
@@ -4598,7 +4716,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "7864903db262" : "dev";
+  var BUILD_ID = true ? "58efb093f0d7" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -7930,6 +8048,18 @@ var Server = (() => {
       }
       urls.sort((a, b) => a.name < b.name ? -1 : 1);
       return { urls, folderUrl: folder.getUrl() };
+    });
+  }
+  function exportMigrationBundle(_p) {
+    return run(() => {
+      const exportedAt = nowIso();
+      const bundle = buildMigrationBundle(loadState(), loadHistory(), {
+        exportedAt,
+        schemaVersion: SCHEMA_VERSION
+      });
+      const stamp = exportedAt.replace(/[:]/g, "");
+      const written = writeMigrationExport(`migration-${stamp}.json.gz`, bundle);
+      return { ...written, exported_at: exportedAt, counts: bundleCounts(bundle) };
     });
   }
   function getSettings(_p) {
