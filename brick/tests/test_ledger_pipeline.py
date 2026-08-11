@@ -96,9 +96,13 @@ def write_bronze(spark, tables, nodes, scan_id, scan_ts):
     df = spark.createDataFrame(
         rows, "scan_id STRING, scan_ts STRING, scope STRING, seq LONG, node_json STRING"
     )
-    df.withColumn("scan_ts", F.col("scan_ts").cast("timestamp")).write.mode("append").option(
-        "mergeSchema", "true"
-    ).saveAsTable(tables.bronze)
+    # format("delta") explicitly, as `run_pipeline.write_append` and `conftest.live_tables` both
+    # do. Without it the session default makes bronze Parquet, which reads back identically and
+    # then cannot be DELETEd from -- so `clear_scan`'s retry path and `import_bundle`'s register
+    # reset would fail here against a table that is Delta in every real deployment.
+    df.withColumn("scan_ts", F.col("scan_ts").cast("timestamp")).write.format("delta").mode(
+        "append"
+    ).option("mergeSchema", "true").saveAsTable(tables.bronze)
 
 
 def run_scan(spark, tables, nodes, scan_id, scan_ts, severities=SEVERITIES):

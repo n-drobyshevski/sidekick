@@ -184,6 +184,14 @@ with no high-risk lifecycles at all writes no `high_risk` rows.
 > with `population = NULL` and are all-findings rows. Backfill them
 > (`UPDATE … SET population = 'all' WHERE population IS NULL`) or filter on
 > `coalesce(population, 'all')`, or the old scans quietly drop out of every filtered query.
+>
+> **Until a 2.1+ run has written to the table, the column is absent rather than NULL** — the
+> evolution happens on the first write, so a register last scanned under 2.0 has the 2.0 schema
+> and `UPDATE … SET population` fails with the same unresolved-column error the query does. The
+> notebooks handle both cases (`panels.context` treats a missing column as all-findings and
+> coalesces a NULL one), so the pages open either way; SQL written by hand against the table
+> needs `coalesce`, and needs the column to exist first:
+> `ALTER TABLE … ADD COLUMN population STRING`.
 
 ### The scan log is load-bearing
 
@@ -539,11 +547,34 @@ python brick/import_bundle.py --catalog=<catalog> --schema=<schema> --scope=os \
   --bundle_path=/Volumes/<catalog>/<schema>/<volume>/migration-20260811T000000Z.json.gz
 ```
 
-It seeds an **empty** register and refuses one that already has a ledger or a scan log: merging
-a seed into a register that has already scanned would re-open lifecycles it has since resolved,
-and appending an older scan log beside brick's own would hand the disappearance guard the wrong
-previous scan. `--force_import=true` clears both tables and re-seeds — a replacement, not a
-merge, the same thing `--rebuild_ledger` does and for the same reason.
+It seeds an **empty** register and refuses one that holds anything — the ledger, the scan log,
+or any of the six appended tables. Merging a seed into a register that has already scanned
+would re-open lifecycles it has since resolved, and appending an older scan log beside brick's
+own would hand the disappearance guard the wrong previous scan.
+
+`--force_import=true` **replaces the register**, not merely the two lifecycle tables. The gold
+tables are why: they are appended per scan and computed from the ledger *as it stood at that
+scan*, so rows written before a seed were derived from a ledger that started empty. Left in
+place they sit in `04_scan_history` as a run whose MTTR reads near zero, beside seeded runs
+where it does not — a contradiction with nothing on the page to explain it. So a forced import
+overwrites the ledger and the scan log and empties bronze, silver and all four gold tables, and
+the register genuinely restarts from the imported history. Re-scan to repopulate them.
+
+They are emptied rather than dropped: `DELETE` needs only `MODIFY` and keeps each table's
+grants, where `DROP` needs ownership and would take the grants with it.
+
+**If the import stops with "No write access"**, that is Unity Catalog, not the bundle. A
+`DELETE … WHERE 1=0` probe runs before the expensive work precisely so the refusal names the
+grant instead of surfacing as a `Py4JJavaError` at `saveAsTable` six Spark jobs later. Note
+that overwriting is not a way around it — UC gives a table's owner `MODIFY` implicitly, so
+being refused it means this principal does not own the table, and replacing or dropping needs
+ownership or `MANAGE`, a strictly higher bar. Grant at the schema, because the first scan after
+the import creates six more tables:
+
+```sql
+GRANT USE CATALOG ON CATALOG <catalog> TO `<principal>`;
+GRANT USE SCHEMA, SELECT, MODIFY, CREATE TABLE ON SCHEMA <catalog>.<schema> TO `<principal>`;
+```
 
 **The two parameters that must match GAS**, because getting either wrong invents remediation
 that never happened:
