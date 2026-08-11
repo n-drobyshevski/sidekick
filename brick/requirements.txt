@@ -1,10 +1,13 @@
 # Local development and test only. A Databricks cluster already provides Spark, Delta, pandas
-# and matplotlib -- do not install pyspark on the cluster, it will shadow the runtime's build.
+# and Plotly -- do not install pyspark on the cluster, it will shadow the runtime's build.
 pyspark>=3.5
 # The ledger is a Delta table and is MERGEd, so the tests that exercise it need Delta locally.
 # Must match the pyspark minor version: delta-spark 3.2 pairs with Spark 3.5.
 delta-spark>=3.2,<4
 requests>=2.31
 pandas>=2.0
-matplotlib>=3.7
+# DBR 14.3 LTS ships exactly 5.9.0, so every Plotly API the notebooks use has to exist there.
+# Not pinned to 5.9.0 here: that is a 2022 build and may not install on a current local Python,
+# and this file is local-only. The constraint that matters is written down in the README.
+plotly>=5.9,<6
 pytest>=8.0

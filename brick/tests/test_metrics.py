@@ -268,7 +268,7 @@ def test_rule_sensitivity_marks_exactly_the_configured_rule(sensitivity):
     active = [label for label, row in sensitivity.items() if row["active"]]
     assert active == ["All three"]
     assert sensitivity["All three"]["rule_sentence"] == DEFAULT_RISK_RULE.sentence()
-    assert sensitivity["KEV"]["rule_sentence"] == "CISA KEV"
+    assert sensitivity["KEV only"]["rule_sentence"] == "CISA KEV"
     # The threshold is inherited from the active rule, not swept -- only the signals vary.
     assert all(r["epss_threshold"] == DEFAULT_RISK_RULE.epss_threshold
                for r in sensitivity.values())
@@ -292,12 +292,12 @@ def test_rule_sensitivity_subsets_genuinely_disagree(sensitivity):
     and nothing open at all, so its coverage is a perfect 100% over a high-risk population of
     one -- which is exactly the trap the `high_risk` column exists to expose.
     """
-    assert sensitivity["KEV"]["coverage_pct"] == pytest.approx(50.0)  # 1 / 2
-    assert sensitivity["KEV"]["efficiency_pct"] == pytest.approx(100 / 6)  # 1 / 6
-    assert sensitivity["EPSS"]["coverage_pct"] == pytest.approx(50.0)
-    assert sensitivity["EPSS"]["efficiency_pct"] == pytest.approx(100 / 6)
+    assert sensitivity["KEV only"]["coverage_pct"] == pytest.approx(50.0)  # 1 / 2
+    assert sensitivity["KEV only"]["efficiency_pct"] == pytest.approx(100 / 6)  # 1 / 6
+    assert sensitivity["EPSS only"]["coverage_pct"] == pytest.approx(50.0)
+    assert sensitivity["EPSS only"]["efficiency_pct"] == pytest.approx(100 / 6)
 
-    exploit = sensitivity["Exploit"]
+    exploit = sensitivity["Exploit only"]
     assert exploit["coverage_pct"] == pytest.approx(100.0)
     assert exploit["high_risk"] == 1
     assert exploit["efficiency_pct"] == pytest.approx(100 / 6)

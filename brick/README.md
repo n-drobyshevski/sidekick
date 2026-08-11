@@ -36,10 +36,13 @@ dbx.py            reaching dbutils from inside a module, and doing without it of
 ingest.py         Wiz OAuth + paginated GraphQL -> raw finding dicts
 ledger.py         pure PySpark cross-scan lifecycle reconciliation (no I/O)
 metrics.py        pure PySpark DataFrame -> DataFrame transforms (no I/O)
-charts.py         matplotlib figures over the gold tables (notebook only)
-dashboard.py      generates the AI/BI dashboard document (no Spark, no I/O)
-dashboard_cli.py  writes that document to a file, or imports it to the workspace
 run_pipeline.py   the Databricks entry point: bronze -> silver -> ledger -> three gold tables
+
+panels.py         every number a notebook shows, and the one place that pins the scan
+figures.py        pandas -> Plotly figures, drawn the way the GAS app draws them
+tiles.py          HTML fragments for displayHTML: heroes, KPI bands, the confusion matrix
+notebooks/        seven .ipynb pages, one per page of the GAS app
+
 tests/            local-SparkSession tests, oracles ported from the existing suites
 ```
 
@@ -47,15 +50,23 @@ tests/            local-SparkSession tests, oracles ported from the existing sui
 module that does I/O. That is what lets the lifecycle rules — the part most likely to be wrong —
 be tested against a local `SparkSession` with no Delta table, no cluster and no API in the way.
 
+The presentation layer keeps the same discipline one level up: `panels.py` is Spark in and a
+small frame out, `figures.py` is pandas in and a `Figure` out, `tiles.py` is a value in and a
+string out. None of them renders anything except through one function each, which is what makes
+the whole UI testable without a workspace. See [Notebooks](#notebooks).
+
 **These are plain top-level modules, not a package.** There is no `__init__.py`, and they
 import each other by bare name (`import metrics`, `from config import …`). Whatever directory
 holds them goes on `sys.path`. That is what lets the Databricks side be a single flat folder of
 files, with no nesting to reproduce by hand and no package prefix to keep in sync.
 
-The consequence to know about: `config`, `metrics` and `ingest` are generic module names. Put
-the directory **first** on `sys.path` (`sys.path.insert(0, …)`, not `append`) so a same-named
-module elsewhere on the path cannot win — that would fail as a confusing `AttributeError`
-rather than an import error.
+The consequence to know about: **all nine are generic module names** — `config`, `metrics` and
+`ingest` obviously so, and `panels`, `figures` and `tiles` even more plausibly, since they are
+exactly what someone else's unrelated workspace file might be called. Put the directory **first**
+on `sys.path` (`sys.path.insert(0, …)`, not `append`) so a same-named module elsewhere cannot
+win — that would fail as a confusing `AttributeError` rather than an import error. Every
+notebook's first cell does this, and `06_run_and_verify` prints the `__file__` each module
+actually came from.
 
 `brick/` never imports `wiz_dashboard` — a Spark cluster has neither that package nor
 Streamlit. The shared constants are duplicated on purpose; `config.py` names its sources.
@@ -282,13 +293,40 @@ this is the most common way the setup goes wrong):
 > `MODULE_VERSION` and `run_pipeline` refuses to start when they disagree, but re-pasting the
 > whole set is what avoids the problem rather than merely diagnosing it.
 
+To read the [notebooks](#notebooks) as well as run the pipeline, three more files go on the same
+`sys.path`, plus the notebooks themselves:
+
+```
+/Workspace/Users/<you>/wiz-metrics/       ← these files go on sys.path too
+├── panels.py
+├── figures.py
+├── tiles.py
+└── notebooks/
+    ├── 00_security_posture.ipynb
+    ├── 01_mttr_sla.ipynb
+    ├── 02_program_performance.ipynb
+    ├── 03_os_vulnerabilities.ipynb
+    ├── 04_scan_history.ipynb
+    ├── 05_estate.ipynb
+    └── 06_run_and_verify.ipynb
+```
+
+These three are **not** in the six. A scheduled Job must never fail for want of Plotly, so
+`run_pipeline` neither imports nor requires them — but if they *are* imported and their version
+disagrees, that is fatal for the same reason the six are: a stale `figures.py` beside a fresh
+`metrics.py` draws a chart that contradicts the number printed above it, which is the same class
+of bug with a quieter failure.
+
 Three ways to get them there, all ending in the same place:
 
 - **UI** — create the folder, then Create → File once per module and paste, all six. Then run
   the verification cell below; with six hand-pasted files it is the step that catches a miss.
+  The notebooks have to be **imported** rather than pasted (File → Import), because a `.ipynb`
+  is a notebook, not a file.
 - **Git folder** — Workspace → Create → Git folder against this repo. Then the path above is
-  `/Workspace/Users/<you>/sidekick/brick`. The only option that updates every file at once and
-  tells you when your copy is stale.
+  `/Workspace/Users/<you>/sidekick/brick`, the notebooks arrive as notebooks, and the boot cell
+  finds the modules one directory up on its own. The only option that updates every file at once
+  and tells you when your copy is stale, and the one to use if you want the notebooks.
 - **CLI** — `databricks workspace import-dir ./brick /Workspace/Users/<you>/wiz-metrics
   --overwrite`. **`--overwrite` is not optional when refreshing:** without it existing files are
   skipped and only the new `ledger.py` lands, which is the mixed folder described above.
@@ -306,7 +344,8 @@ for m in (config, dbx, ingest, ledger, metrics, run_pipeline):
 ```
 
 All six must report the same version, from the folder you just pasted into. Anything else and
-the run will refuse to start.
+the run will refuse to start. `06_run_and_verify` runs this cell for all nine modules and is the
+better place to do it once the notebooks are up.
 
 Run this cell rather than relying on the built-in guard alone. `run_pipeline` can only check the
 modules it imports, so it catches a stale `config.py` or `metrics.py` — but if `run_pipeline.py`
@@ -347,6 +386,9 @@ recreates the mixed-version folder by another route. `restartPython()` has neith
 
 `<region>` is the one in your Wiz tenant URL (`us1`, `eu2`, …). Get it wrong and auth succeeds
 but the GraphQL POST 404s.
+
+`06_run_and_verify` is this cell with the version check, the table inventory and the consistency
+checks around it, so once the notebooks are up there is no reason to paste it by hand.
 
 ### 3b. As a scheduled Job
 
@@ -485,35 +527,7 @@ The run itself prints all three families — MTTR and SLA by severity, coverage 
 with the rule-sensitivity table beside them, and the most recent capacity months for each
 population.
 
-### Charts
-
-`main()` returns what it wrote, so charting is a follow-on cell:
-
-```python
-result = main()
-
-import charts
-charts.render_all(spark, result.tables)     # figures display as the cell output
-```
-
-Three figures: median MTTR against each severity's SLA target, the p50–p90 age span of the
-open backlog, and coverage against efficiency with the unclassified-uncertainty bounds drawn
-as error bars and the prevalence baseline marked.
-
-`charts.load(spark, tables, scan_id=...)` reads a specific run; it defaults to the latest,
-because the gold tables are appended and an unfiltered read would blend every run into one
-picture. `run_pipeline` never imports `charts`, so a scheduled Job does not build figures
-nobody will look at.
-
-Two conventions the figures keep, both load-bearing:
-
-- **A NULL is drawn as an annotated gap, never a zero bar.** "No resolved findings yet" and
-  "closed instantly" must not look the same.
-- **Severity is never carried by colour alone.** The shared palette is a heat ramp, and it
-  fails a categorical colourblind check — HIGH `#ea580c` and MEDIUM `#d97706` sit ΔE 1.6 apart
-  under deuteranopia and 6.7 apart with normal vision. Every mark is named by an axis tick or
-  a point label; colour is redundant coding on top. Do not add a chart that needs the reader
-  to tell those two hues apart.
+To read the numbers rather than query them, open the [notebooks](#notebooks).
 
 Once both scopes are running, compare them on the `scope` column:
 
@@ -579,55 +593,149 @@ the disappearance previous-scan guard, the severity-scope guard, the monotone ri
 peak-EPSS rule, the fix-clock reset on reopen, and `first_seen`'s earliest-wins each fail the
 suite.
 
-## Dashboard
+## Notebooks
 
-For reading the numbers rather than iterating on them — an overview page you scan first, and
-two detail pages you open when something looks wrong. Cross-filtering does the navigation:
-click a severity in any chart and every other widget on the same dataset re-filters.
+Seven `.ipynb` pages under `notebooks/`, one per page of the GAS app, in the same order its
+sidebar uses. Each answers one question with a headline, a small set of charts and a table you
+can sort and export. Run a cell, get a metric and its visualisation.
 
-| Page | |
+| Notebook | The one question it answers |
 | --- | --- |
-| **Overview** | Six counter tiles — KM median MTTR, in-SLA %, coverage, efficiency, prevalence, signal coverage — plus MTTR and coverage by severity, and the MTTR trend across scans. Answers "how are we doing" and nothing else |
-| **Remediation speed** | Severity filter, KM median against SLA target, p90 open age, the full per-severity table, and the same broken down by subscription |
-| **Programme** | Coverage and efficiency by severity with their uncertainty bounds and the prevalence baseline; the same two rates under each signal subset, so a reader can see how much of them is the rule; capacity by month for both populations; and where the high-risk findings live by subscription |
+| **`00_security_posture`** | How fast are we closing risk, how much is open right now, and is it getting worse? |
+| **`01_mttr_sla`** | How long does a vulnerability actually live once you stop excluding what is still open — and where is it slow? |
+| **`02_program_performance`** | Is remediation effort landing on the findings that matter, and can we close faster than risk arrives? |
+| **`03_os_vulnerabilities`** | What is exploitable, where does risk concentrate, and what moved since the last scan? |
+| **`04_scan_history`** | What has actually been measured, when, and how has the register moved across those measurements? |
+| **`05_estate`** | Can this register be attributed to an owner at all, and which parts of the estate carry the backlog? |
+| **`06_run_and_verify`** | Is the deployment sound, can I run a scan, and are the tables consistent? |
 
-**Prerequisite:** AI/BI dashboards run on a SQL warehouse, not on your cluster. The viewer needs
-`SELECT` on the gold tables.
+`00`–`05` are **read-only**. `06` is the only one that writes, which is deliberate: a page
+somebody opens to check a number should not be one Run All away from a credentialed API sweep.
 
-```bash
-python brick/dashboard_cli.py \
-  --catalog=<catalog> --schema=<schema> --scope=os      # writes wiz_os_metrics.lvdash.json
+Two GAS pages have no analogue here and are absent rather than approximated. **Settings** — the
+parameters are widgets and Job parameters, and the high-risk rule is `config.DEFAULT_RISK_RULE`,
+so changing it is a code change. **Data**'s import half — brick ingests from the Wiz API and has
+no CSV import path; the export half is the download button on every result grid.
 
-databricks workspace import --format AUTO \
-  --file wiz_os_metrics.lvdash.json "/Users/<you>/Wiz metrics.lvdash.json"
+`05_estate` is GAS's **Attribution** page renamed rather than faked. GAS maps findings to
+value-chain domains through configurable rules over subscriptions and asset tags. brick has no
+domain rules and `ingest.py` selects no asset tags, so there is nothing to compute a coverage
+gap against. The page says so and answers the nearest question the register can actually
+support. Adding tags to `ingest.py` is the real fix.
+
+### The scan pin, and why there is a `panels.py`
+
+The gold tables are appended, so **every read has to name a scan or it blends every run that has
+ever happened into one entirely plausible chart.** Rather than repeat that predicate in every
+cell and hope, the first cell of every notebook calls `panels.context(spark)`, which registers
+session temp views that are already pinned, scope-filtered and severity-filtered:
+
+```
+v_mttr  v_program  v_capacity  v_findings  v_scans  v_lifecycles     ← one scan
+v_mttr_all  v_program_all  v_findings_all                            ← deliberately not
 ```
 
-The path **must** end in `.lvdash.json` — with `format=AUTO` that suffix is what makes Databricks
-recognise the upload as a dashboard rather than an inert JSON file. `--workspace_path` will do
-the import over the REST API instead (using `DATABRICKS_HOST` / `DATABRICKS_TOKEN`), but the CLI
-above is the documented route and the one to reach for.
+`max_by(scan_id, scan_ts)` is written in exactly one function in the whole repo. The three
+`_all` views are the only unpinned surface and are named so a reader can see it. The consequence
+worth having: no SQL in any notebook interpolates a widget, so `tests/test_notebooks.py`
+executes every shipped `%sql` cell **verbatim** against real pipeline output.
 
-### Why it is generated rather than committed as a file
+Two data facts the views correct on the way past, both of which the published tables carry:
 
-Partly because the dataset SQL has to name your `catalog.schema.prefix` tables, which are run
-parameters. Mostly because **the `.lvdash.json` format is not publicly documented** — Databricks'
-own guidance is "export one of your own dashboards to learn the serialization". The schema in
-`dashboard.py` was reconstructed from two real exported dashboards, so it is evidence-based, but
-nothing in this repo can import one.
+- `OVERALL` is not a member of `SEVERITY_ORDER`, so a bare `severity IN (…)` filter deletes the
+  row every headline reads. The views keep it explicitly — and note it cannot be narrowed by the
+  severity widget, because the pipeline computed it once over everything that was scanned.
+- `SLA_TARGETS` has no `UNKNOWN` key, so `mttr_days <= NULL` is NULL, `sum(when(…).otherwise(0))`
+  turns that into a **0**, and `safe_pct` divides it into a confident `0.0%`. The views null it
+  back out, and anything counting "open past SLA" drops rows with no target from both sides.
 
-Generating it turns most of that risk into ordinary tests. `tests/test_dashboard.py` checks the
-things that would make an import fail or display wrongly: every widget resolves to a defined
-dataset, every encoded field exists in that widget's query *and* in the SQL's actual output, no
-two widgets overlap, everything fits the six-column grid, ids are unique, generation is
-deterministic, and the document is valid JSON with no NaN. Each dataset query is executed against
-real pipeline output, so a column typo fails locally instead of on the warehouse.
+### Which engine draws what, and why
 
-Those guards were mutation-tested — an introduced overlap, a SQL column typo, and a severity
-colour without a severity label each fail the suite.
+**Plotly** draws anything where the *drawing* carries the argument: a NULL that must be a gap, a
+reference rule with a label, a staircase, direct labels, uncertainty bounds, or two series that
+must differ by more than hue. Databricks renders it live in the cell — pan, hover, legend
+toggling — so this is not the old static-PNG surface with a new library. It is also the only
+layer where the two rules below can be *tested*: a `Figure` is an object a test can interrogate.
 
-**What none of it proves is that Databricks accepts the document.** The first import is the test.
-If it is rejected, the error names the offending widget; fix the helper in `dashboard.py` rather
-than hand-editing the JSON, or the next regeneration overwrites you.
+**The native chart editor** draws five things, all of them plain counts where the picker adds
+something code cannot: two stacked bars, a 100% stacked bar, and two pivot tables. **The native
+result grid** shows every table, because it sorts, filters, exports CSV and docks to a dashboard
+better than anything this repo would write — GAS's drawers and pagers are that grid here.
+
+**`displayHTML`** draws the surfaces where the number *is* the product: heroes, KPI bands,
+severity tiles, the confusion matrix. Never tabular data.
+
+Two conventions run through all of it, and both are enforced by tests rather than by review:
+
+- **A NULL is drawn as an annotated gap, never a zero.** "No resolved findings yet" and "closed
+  instantly" must not look the same. A filled line has the same problem in slower motion —
+  Plotly closes the fill polygon down to zero either side of a gap — so a series containing a
+  NULL loses its fill.
+- **Severity is never carried by colour alone.** The palette is a heat ramp and it fails a
+  categorical colourblind check: HIGH `#ea580c` and MEDIUM `#d97706` sit ΔE 1.6 apart under
+  deuteranopia and 6.7 apart with normal vision. Every severity series carries its own marker
+  shape, every mark is named by a tick or a label, and colour is redundant coding on top.
+
+### The five native charts are not committed, and this is why
+
+A Databricks result visualisation lives under an undocumented, version-dependent
+`application/vnd.databricks.v1+*` key, partly in cell metadata and partly in cell output.
+Nothing in this repo can author one correctly, and nothing in it could verify one if it did —
+which is precisely the failure mode the generated `.lvdash.json` dashboard was deleted to
+escape. So no visualisation JSON ships at all.
+
+What ships instead, for each of the five, is:
+
+1. a markdown line above the cell beginning `Chart ▸`, naming the exact fields to set;
+2. the cell itself, whose **default rendering is already a correct, sortable, exportable table**.
+
+**The one-time workspace step.** Open each notebook, *Run all*, then for every `Chart ▸` header
+click **+ → Visualization** and set exactly the fields the recipe names. Then either:
+
+- **(a)** leave the charts in the workspace copy and accept that a `git pull` may drop them —
+  re-creating one is a fifteen-second mechanical act, because the recipe is committed; or
+- **(b)** if a workspace admin has enabled *"Allow Git folders to export IPYNB outputs"*, commit
+  the notebook back and the visualisation travels with it.
+
+**(b) is workspace-configuration dependent and nothing in this repo can test it.** The failure is
+bounded by construction, which is the point: if the visualisation is never created, or is
+stripped on the way through Git, the reader sees a correct sorted table — never an error, never a
+wrong chart. That is a strictly better failure than "the whole document is rejected", and it is
+why only five of the visuals are native. The same *unverified UI guidance* caveat applies to the
+menu paths in this section and to **Run accessed commands** below.
+
+`tests/test_notebooks.py` parses every `Chart ▸` recipe and checks each column it names against
+the producing panel's declared `OUTPUT_COLUMNS`, so the recipe cannot rot even though the chart
+is not committed.
+
+### Widgets
+
+Every notebook declares the same base widgets — `catalog`, `schema`, `scope`, `table_prefix`,
+`severities`, `scan_id`, `module_path` — plus its own page widgets. Set them before running
+anything; `catalog` has no default for the reason given under
+[Store the credentials](#1-store-the-credentials).
+
+Two behaviours to know:
+
+- **Set the notebook to "Run accessed commands"** if you want a widget change to re-run the
+  cells that depend on it. Otherwise you change the filter and read a chart drawn under the old
+  value, which is the notebook form of the honest-state rule.
+- `table_prefix` takes the literal `-` for "no prefix at all". `run_pipeline.param` is
+  `widget or env or default`, and an empty string is falsy — so a cleared widget means "use the
+  default", not "use nothing".
+
+### What was lost with the AI/BI dashboard
+
+Two real capabilities, stated plainly rather than glossed:
+
+- **Cross-filtering.** Clicking a severity in one chart and watching every other widget
+  re-filter is now changing a widget and re-running.
+- **The SQL-warehouse viewer path.** An AI/BI dashboard could be shared with someone who had
+  only `SELECT` on the gold tables. A notebook needs a cluster to attach to.
+
+What was gained is that every number on every page is now covered by a test that runs on a
+laptop, and that the chart definitions are code rather than an undocumented JSON schema
+reconstructed from exports.
 
 ## Reading coverage and efficiency
 
@@ -686,7 +794,7 @@ Label it *rule sensitivity*, never *strategy comparison*.
 
 What the table is good for is seeing the shape of the trade: each row carries `high_risk` and
 `unknown` alongside the two rates, so a subset that buys efficiency by shrinking the high-risk
-population — or by pushing rows into `unknown` — cannot hide it. The `KEV` row is usually the
+population — or by pushing rows into `unknown` — cannot hide it. The `KEV only` row is usually the
 starkest: P2P vol. 9 pp. 22–24 found CISA KEV alone covers only ~19% of what is exploited in
 the wild, which is why the default rule is an any-of over three signals rather than KEV alone.
 
@@ -759,12 +867,20 @@ of it available on the GAS side:
   scans into `resolved_episodes` (`wiz_dashboard/data/ledger.py::compact_ledger`); on Delta the
   equivalent levers are `OPTIMIZE` and `VACUUM`, plus bronze retention. Nothing here does either
   yet, and a large register will eventually want it.
-- **No Kaplan–Meier survival curves** — the point estimate is here, the curve is not.
 - **No period-scoped confusion matrix.** Coverage and efficiency are cumulative over the whole
   ledger, so the per-scan series is a to-date curve and a good quarter barely moves it.
   `gas/src/domain/trend.ts::withCoverageEfficiency` recomputes the pair as-of each trend point
   (using `resolved_at <= d` rather than `status`); there is no `brick` equivalent. See
   [Reading coverage and efficiency](#reading-coverage-and-efficiency).
+
+Two entries left this list with the notebooks. The **Kaplan–Meier survival curve** is now
+`metrics.km_curve`, which `kaplan_meier` itself consumes — one implementation, so the staircase
+on `01_mttr_sla` and the published `km_median` cannot disagree. The **rule-sensitivity sweep**
+exists twice, on purpose: `metrics.rule_sensitivity` writes `…metrics_sensitivity` under the
+configured rule, so the sweep is queryable from SQL and trends across scans; `panels.rule_sweep`
+recomputes it at read time against `ctx.rule`, so changing the rule in a notebook moves the
+filled point without a re-scan. Both walk the same `metrics.RULE_SUBSETS`, so they cannot
+disagree about what a subset is.
 
 Two ledger fields also stay deliberately simple relative to GAS: there is no `tags_json`
 (see above), and no `resolved_episodes` table, so a `vuln_key` has exactly one lifecycle row and

@@ -248,11 +248,11 @@ def test_rule_sensitivity_is_written_for_every_signal_subset(spark, tables):
     assert [label for label, row in rows.items() if row["active"]] == ["All three"]
 
     # KEV alone finds f-1 and decides f-2 is low -- nothing is unclassified.
-    assert (rows["KEV"]["high_risk"], rows["KEV"]["unknown"]) == (1, 0)
+    assert (rows["KEV only"]["high_risk"], rows["KEV only"]["unknown"]) == (1, 0)
     # Exploit alone fires on neither, and both flags were observed, so both are low.
-    assert (rows["Exploit"]["high_risk"], rows["Exploit"]["unknown"]) == (0, 0)
+    assert (rows["Exploit only"]["high_risk"], rows["Exploit only"]["unknown"]) == (0, 0)
     # EPSS alone: f-1 scores below the threshold, f-2 was never scored at all.
-    assert (rows["EPSS"]["high_risk"], rows["EPSS"]["unknown"]) == (0, 1)
+    assert (rows["EPSS only"]["high_risk"], rows["EPSS only"]["unknown"]) == (0, 1)
     # The active rule inherits both: f-1 is high on KEV, f-2 stays undecidable on the missing
     # EPSS -- which is the whole point of the third value.
     assert (rows["All three"]["high_risk"], rows["All three"]["unknown"]) == (1, 1)

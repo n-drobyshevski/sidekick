@@ -132,6 +132,13 @@ APPEND_TABLE_ATTRS = {
 # tree after adding a sixth module.
 RUNTIME_MODULES = ("config", "dbx", "ingest", "ledger", "metrics", "run_pipeline")
 
+# The notebook presentation layer. Deliberately NOT in RUNTIME_MODULES: a scheduled Job must
+# never fail for want of plotly, and `main()` has no business importing a chart library. The
+# guard below treats them asymmetrically -- absent is fine, present and disagreeing is fatal --
+# because a stale figures.py beside a fresh metrics.py draws a chart that contradicts the number
+# printed above it, which is the same class of bug with a quieter failure.
+NOTEBOOK_MODULES = ("panels", "figures", "tiles")
+
 
 def check_deployment() -> None:
     """Refuse to run against a folder holding a mix of versions.
@@ -155,6 +162,13 @@ def check_deployment() -> None:
         # prevent.
         versions[name] = getattr(module, "MODULE_VERSION", None) if module else None
 
+    # The notebook layer, asymmetrically: a module nobody imported is not a problem, because a
+    # Job never needs one. One that IS imported and disagrees is the same fatal mix.
+    for name in NOTEBOOK_MODULES:
+        module = sys.modules.get(name)
+        if module is not None:
+            versions[name] = getattr(module, "MODULE_VERSION", None)
+
     stale = sorted(name for name, version in versions.items() if version != PIPELINE_VERSION)
     if not stale:
         return
@@ -165,7 +179,8 @@ def check_deployment() -> None:
         f"all come from the same version -- v2's metrics.py writing through v1's "
         f"run_pipeline.py fails later as an unrelated-looking Delta schema mismatch.\n"
         f"Fix: copy ALL SIX of {', '.join(n + '.py' for n in RUNTIME_MODULES)} into the "
-        f"workspace folder, then run dbutils.library.restartPython(). "
+        f"workspace folder (plus {', '.join(n + '.py' for n in NOTEBOOK_MODULES)} if you read "
+        f"the notebooks), then run dbutils.library.restartPython(). "
         f"See brick/README.md section 2."
     )
 
