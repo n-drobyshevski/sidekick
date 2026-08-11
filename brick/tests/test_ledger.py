@@ -116,6 +116,27 @@ def deltas(touched) -> dict:
     return {k: int(row[k] or 0) for k in ("new_count", "resolved_count", "reopened_count")}
 
 
+@pytest.fixture(scope="module")
+def first_scan(spark):
+    """Scan 1 of the one-finding register: ``(state, touched)``, built once.
+
+    Fifteen tests below open with exactly this scan and then apply a second one to it. Each was
+    rebuilding it -- bronze, silver, observed, reconcile, collect -- for an answer that cannot
+    differ, which made a shared prologue the most-executed Spark job in the file.
+
+    ``state`` is materialised rather than merely returned, because a DataFrame handed to a
+    fixture is still a plan: without this, every test that chained off it would recompute the
+    scan anyway and the fixture would buy nothing. ``touched`` is already cached and collected
+    inside ``apply``. Both are immutable, so sharing them across tests is safe.
+    """
+    state, touched = apply(
+        spark, ledger.empty_ledger(spark), [node()], scan_id=SCAN_1, scan_ts=TS_1
+    )
+    state = state.cache()
+    state.count()
+    return state, touched
+
+
 # ------------------------------------------------------------------------- identity
 
 
@@ -293,12 +314,15 @@ def _iso(v):
     return v.strftime("%Y-%m-%dT%H:%M:%SZ") if hasattr(v, "strftime") else v
 
 
-@pytest.mark.parametrize(
-    "index", range(len(json.loads(FIXTURE.read_text(encoding="utf-8"))["scenarios"]))
-)
+#: The golden scenarios, read once at import. Both the parametrize range and every case's body
+#: want them, and re-reading the file per case parsed it seven times over.
+SCENARIOS = json.loads(FIXTURE.read_text(encoding="utf-8"))["scenarios"]
+
+
+@pytest.mark.parametrize("index", range(len(SCENARIOS)))
 def test_matches_the_gas_reconcile_fixture(spark, index):
     """Replay one golden scenario and compare the resulting ledger and deltas exactly."""
-    scenario = json.loads(FIXTURE.read_text(encoding="utf-8"))["scenarios"][index]
+    scenario = SCENARIOS[index]
     inp, expected = scenario["input"], scenario["expected"]
     options = inp.get("options") or {}
 
@@ -350,13 +374,13 @@ def test_first_sighting_opens_a_lifecycle(spark):
     assert deltas(touched) == {"new_count": 1, "resolved_count": 0, "reopened_count": 0}
 
 
-def test_a_finding_that_disappears_is_resolved(spark):
+def test_a_finding_that_disappears_is_resolved(spark, first_scan):
     """THE v2 case. v1 could not see this at all.
 
     Wiz stops returning a finding once it is remediated and never sets resolvedAt. In v1 that
     vulnerability stayed open forever; here its absence from the next scan closes it.
     """
-    state, _ = apply(spark, ledger.empty_ledger(spark), [node()], scan_id=SCAN_1, scan_ts=TS_1)
+    state, _ = first_scan
     state, touched = apply(spark, state, [], scan_id=SCAN_2, scan_ts=TS_2,
                            prev_scan_id=SCAN_1, prev_scan_ts=TS_1)
 
@@ -371,8 +395,8 @@ def test_a_finding_that_disappears_is_resolved(spark):
     assert deltas(touched) == {"new_count": 0, "resolved_count": 1, "reopened_count": 0}
 
 
-def test_disappearance_can_be_dated_at_the_midpoint(spark):
-    state, _ = apply(spark, ledger.empty_ledger(spark), [node()], scan_id=SCAN_1, scan_ts=TS_1)
+def test_disappearance_can_be_dated_at_the_midpoint(spark, first_scan):
+    state, _ = first_scan
     state, _ = apply(spark, state, [], scan_id=SCAN_2, scan_ts=TS_2, prev_scan_id=SCAN_1,
                      prev_scan_ts=TS_1, disappearance="midpoint")
     # Halfway through the 7-day gap between 05-01 and 05-08.
@@ -417,12 +441,12 @@ def test_a_severity_resolves_once_its_scope_returns(spark):
     assert deltas(touched)["resolved_count"] == 1
 
 
-def test_a_resolved_row_is_not_re_resolved(spark):
+def test_a_resolved_row_is_not_re_resolved(spark, first_scan):
     """Once closed, a finding's resolved_at is history and must not move.
 
     Guarded by status rather than by the previous-scan check -- see the next test for that one.
     """
-    state, _ = apply(spark, ledger.empty_ledger(spark), [node()], scan_id=SCAN_1, scan_ts=TS_1)
+    state, _ = first_scan
     state, _ = apply(spark, state, [], scan_id=SCAN_2, scan_ts=TS_2, prev_scan_id=SCAN_1)
     resolved_at = by_key(state)["id:f-1"]["resolved_at"]
 
@@ -460,14 +484,14 @@ def test_a_row_that_missed_the_previous_scan_does_not_disappear(spark):
     assert deltas(touched)["resolved_count"] == 0
 
 
-def test_nothing_disappears_on_the_very_first_scan(spark):
+def test_nothing_disappears_on_the_very_first_scan(first_scan):
     """No previous scan means nothing has a "before" to have vanished from."""
-    _, touched = apply(spark, ledger.empty_ledger(spark), [node()], scan_id=SCAN_1, scan_ts=TS_1)
+    _, touched = first_scan
     assert deltas(touched)["resolved_count"] == 0
 
 
-def test_api_resolution_closes_the_row(spark):
-    state, _ = apply(spark, ledger.empty_ledger(spark), [node()], scan_id=SCAN_1, scan_ts=TS_1)
+def test_api_resolution_closes_the_row(spark, first_scan):
+    state, _ = first_scan
     state, touched = apply(
         spark, state,
         [node(status="RESOLVED", resolvedAt="2026-05-05T00:00:00Z")],
@@ -481,10 +505,10 @@ def test_api_resolution_closes_the_row(spark):
     assert deltas(touched)["resolved_count"] == 1
 
 
-def test_a_re_listed_resolution_is_not_counted_twice(spark):
+def test_a_re_listed_resolution_is_not_counted_twice(spark, first_scan):
     """The API repeating itself is not a second remediation."""
     resolved = node(status="RESOLVED", resolvedAt="2026-05-05T00:00:00Z")
-    state, _ = apply(spark, ledger.empty_ledger(spark), [node()], scan_id=SCAN_1, scan_ts=TS_1)
+    state, _ = first_scan
     state, _ = apply(spark, state, [resolved], scan_id=SCAN_2, scan_ts=TS_2, prev_scan_id=SCAN_1)
     state, touched = apply(spark, state, [resolved], scan_id=SCAN_3, scan_ts=TS_3,
                            prev_scan_id=SCAN_2)
@@ -493,7 +517,7 @@ def test_a_re_listed_resolution_is_not_counted_twice(spark):
     assert by_key(state)["id:f-1"]["resolved_at"].strftime("%Y-%m-%d") == "2026-05-05"
 
 
-def test_a_reopen_starts_a_new_episode(spark):
+def test_a_reopen_starts_a_new_episode(spark, first_scan):
     """A resolved finding that is active again reopens, and its clock is recomputed.
 
     ``first_seen`` becomes ``min(API firstDetectedAt, scan ts)`` -- the same formula a first
@@ -502,7 +526,7 @@ def test_a_reopen_starts_a_new_episode(spark):
     starting at the reopen scan. That is the reference implementation's behaviour
     (``reconcile.py:218``), and the two surfaces have to agree.
     """
-    state, _ = apply(spark, ledger.empty_ledger(spark), [node()], scan_id=SCAN_1, scan_ts=TS_1)
+    state, _ = first_scan
     state, _ = apply(spark, state, [], scan_id=SCAN_2, scan_ts=TS_2, prev_scan_id=SCAN_1)
     state, touched = apply(spark, state, [node()], scan_id=SCAN_3, scan_ts=TS_3,
                            prev_scan_id=SCAN_2)
@@ -536,24 +560,24 @@ def test_a_reopen_recomputes_first_seen_rather_than_keeping_it(spark):
     assert by_key(state)["id:f-1"]["first_seen"].strftime("%Y-%m-%d") == "2026-04-01"
 
 
-def test_first_seen_never_drifts_later(spark):
+def test_first_seen_never_drifts_later(spark, first_scan):
     """Wiz revising firstDetectedAt forward must not shorten the finding's measured life."""
-    state, _ = apply(spark, ledger.empty_ledger(spark), [node()], scan_id=SCAN_1, scan_ts=TS_1)
+    state, _ = first_scan
     state, _ = apply(spark, state, [node(firstDetectedAt="2026-04-20T00:00:00Z")],
                      scan_id=SCAN_2, scan_ts=TS_2, prev_scan_id=SCAN_1)
     assert by_key(state)["id:f-1"]["first_seen"].strftime("%Y-%m-%d") == "2026-04-01"
 
 
-def test_first_seen_moves_earlier_when_the_api_learns_more(spark):
+def test_first_seen_moves_earlier_when_the_api_learns_more(spark, first_scan):
     """Earliest-known, in both directions: a genuinely earlier date is new evidence."""
-    state, _ = apply(spark, ledger.empty_ledger(spark), [node()], scan_id=SCAN_1, scan_ts=TS_1)
+    state, _ = first_scan
     state, _ = apply(spark, state, [node(firstDetectedAt="2026-03-01T00:00:00Z")],
                      scan_id=SCAN_2, scan_ts=TS_2, prev_scan_id=SCAN_1)
     assert by_key(state)["id:f-1"]["first_seen"].strftime("%Y-%m-%d") == "2026-03-01"
 
 
-def test_persisting_advances_last_seen_only(spark):
-    state, _ = apply(spark, ledger.empty_ledger(spark), [node()], scan_id=SCAN_1, scan_ts=TS_1)
+def test_persisting_advances_last_seen_only(spark, first_scan):
+    state, _ = first_scan
     state, touched = apply(spark, state, [node()], scan_id=SCAN_2, scan_ts=TS_2,
                            prev_scan_id=SCAN_1)
     row = by_key(state)["id:f-1"]
@@ -686,8 +710,8 @@ def test_risk_signals_are_not_reset_by_a_reopen(spark):
     assert row["has_kev"] is True
 
 
-def test_risk_observed_at_keeps_the_earliest_witnessing_scan(spark):
-    state, _ = apply(spark, ledger.empty_ledger(spark), [node()], scan_id=SCAN_1, scan_ts=TS_1)
+def test_risk_observed_at_keeps_the_earliest_witnessing_scan(spark, first_scan):
+    state, _ = first_scan
     state, _ = apply(spark, state, [node()], scan_id=SCAN_2, scan_ts=TS_2, prev_scan_id=SCAN_1)
     assert by_key(state)["id:f-1"]["risk_observed_at"].strftime("%Y-%m-%dT%H:%M:%SZ") == TS_1
 
@@ -735,8 +759,8 @@ def test_fix_observed_at_records_a_version_with_no_date(spark):
     assert row["fix_observed_at"].strftime("%Y-%m-%dT%H:%M:%SZ") == TS_1
 
 
-def test_a_finding_with_no_fix_signal_records_nothing(spark):
-    state, _ = apply(spark, ledger.empty_ledger(spark), [node()], scan_id=SCAN_1, scan_ts=TS_1)
+def test_a_finding_with_no_fix_signal_records_nothing(first_scan):
+    state, _ = first_scan
     row = by_key(state)["id:f-1"]
     assert row["fix_date"] is None and row["fix_observed_at"] is None
 
@@ -773,9 +797,9 @@ def test_reconcile_emits_exactly_the_ledger_columns(spark):
     assert [f.name for f in ledger.LEDGER_SCHEMA.fields] == LEDGER_COLUMNS
 
 
-def test_lifecycle_frame_matches_the_silver_contract(spark):
+def test_lifecycle_frame_matches_the_silver_contract(first_scan):
     """metrics.py runs unchanged against the ledger only if the columns line up exactly."""
-    state, _ = apply(spark, ledger.empty_ledger(spark), [node()], scan_id=SCAN_1, scan_ts=TS_1)
+    state, _ = first_scan
     frame = set(ledger.lifecycle_frame(state, TS_2).columns)
     silver_contract = {
         "severity", "first_detected_at", "last_detected_at", "resolved_at", "is_open",
@@ -786,13 +810,13 @@ def test_lifecycle_frame_matches_the_silver_contract(spark):
     assert not missing, f"lifecycle_frame is missing {sorted(missing)}"
 
 
-def test_mttr_is_measured_from_the_ledgers_own_dates(spark):
+def test_mttr_is_measured_from_the_ledgers_own_dates(spark, first_scan):
     """The payoff: a disappearance-resolved finding contributes a real MTTR.
 
     Under v1 this finding has no resolvedAt, so it contributes nothing to MTTR and sits in the
     open backlog forever. Here it closes at scan 2 and measures 37 days from 2026-04-01.
     """
-    state, _ = apply(spark, ledger.empty_ledger(spark), [node()], scan_id=SCAN_1, scan_ts=TS_1)
+    state, _ = first_scan
     state, _ = apply(spark, state, [], scan_id=SCAN_2, scan_ts=TS_2, prev_scan_id=SCAN_1)
 
     frame = ledger.lifecycle_frame(state, TS_2)
@@ -802,8 +826,8 @@ def test_mttr_is_measured_from_the_ledgers_own_dates(spark):
     assert row["age_days"] is None
 
 
-def test_open_findings_carry_an_age_and_no_mttr(spark):
-    state, _ = apply(spark, ledger.empty_ledger(spark), [node()], scan_id=SCAN_1, scan_ts=TS_1)
+def test_open_findings_carry_an_age_and_no_mttr(first_scan):
+    state, _ = first_scan
     row = ledger.lifecycle_frame(state, TS_2).collect()[0]
     assert row["mttr_days"] is None
     assert row["age_days"] == pytest.approx(37.0)

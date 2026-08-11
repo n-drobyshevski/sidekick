@@ -11,3 +11,7 @@ pandas>=2.0
 # and this file is local-only. The constraint that matters is written down in the README.
 plotly>=5.9,<6
 pytest>=8.0
+# The suite is dominated by a handful of Delta-writing modules, and one SparkSession can only
+# run them one at a time. `-n auto --dist loadgroup` gives each worker its own session and
+# keeps every module's tests together on one of them, which the module-scoped fixtures need.
+pytest-xdist>=3.6

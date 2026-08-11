@@ -102,10 +102,16 @@ def write_bronze(spark, tables, nodes, scan_id, scan_ts):
 
 
 def run_scan(spark, tables, nodes, scan_id, scan_ts, severities=SEVERITIES):
-    """One full scan: bronze, then everything build_metrics does."""
+    """One full scan: bronze, then everything build_metrics does.
+
+    ``summary=False`` because nothing here reads stdout. The printed report re-reads the four
+    gold frames, and reading a lazy frame means computing it again -- seven wide aggregations
+    for sensitivity, two whole populations for capacity -- so leaving it on made every scan in
+    this file roughly twice the work for output no assertion looks at.
+    """
     write_bronze(spark, tables, nodes, scan_id, scan_ts)
     run_pipeline.build_metrics(
-        spark, tables, scan_id, scan_ts, "os", severities=severities
+        spark, tables, scan_id, scan_ts, "os", severities=severities, summary=False
     )
 
 
@@ -327,8 +333,12 @@ def test_the_scope_guard_survives_a_round_trip_through_the_scan_log(spark, table
     assert run_pipeline.parse_severities(stored["s2"]) == ["CRITICAL", "HIGH"]
 
 
-def test_unscoped_scans_are_stored_as_null(spark, tables):
-    """NULL means "asked for everything", which is what lets absence mean something."""
+def test_unscoped_scans_are_stored_as_null():
+    """NULL means "asked for everything", which is what lets absence mean something.
+
+    Four string round-trips, so no ``tables``: taking it built and dropped a Delta database
+    per run for a test that never opens one.
+    """
     assert run_pipeline.serialize_severities([]) is None
     assert run_pipeline.serialize_severities(None) is None
     assert run_pipeline.parse_severities(None) is None
