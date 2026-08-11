@@ -22,6 +22,7 @@ from config import (
     API_SEVERITY_VALUES,
     DEFAULT_FETCH_SEVERITIES,
     DEFAULT_SCOPE,
+    FETCH_ASSET_FIELDS,
     SCOPES,
 )
 
@@ -42,6 +43,10 @@ RETRY_STATUS = {429, 500, 502, 503, 504}
 # fragments on each concrete member. Selecting `vulnerableAsset { id name ... }` directly is a
 # GraphQL validation error and the server answers 400 -- which is exactly how this first failed
 # against a live tenant.
+#
+# It is not asked for at all by default -- see ``config.FETCH_ASSET_FIELDS``, which is where the
+# reason and the consequences are written down. Everything below is kept so that flipping the
+# constant is the whole job.
 #
 # The member list and the per-member field availability are both taken from the live query in
 # ``os_vulns.py`` (its ``... on VulnerableAsset*`` fragments), so they match a schema that is
@@ -95,7 +100,7 @@ def _asset_selection(indent: str = " " * 6) -> str:
 # The three exploit-intelligence fields are load-bearing and easy to overlook: hasCisaKevExploit,
 # hasExploit and epssProbability are what make coverage and efficiency computable at all. Drop
 # them and every finding classifies as "unknown".
-QUERY = """
+_QUERY_TEMPLATE = """
 query BrickVulnerabilityFindings(
   $filterBy: VulnerabilityFindingFilters
   $first: Int
@@ -124,7 +129,19 @@ query BrickVulnerabilityFindings(
     }
   }
 }
-""" % _asset_selection()
+"""
+
+
+def build_query(with_assets: bool = FETCH_ASSET_FIELDS) -> str:
+    """The findings query, with or without the ``vulnerableAsset`` sub-selection.
+
+    The `%s` slot is filled with the asset fragments or with nothing at all -- an empty string
+    rather than an empty ``vulnerableAsset {}``, which is itself a syntax error.
+    """
+    return _QUERY_TEMPLATE % (_asset_selection() if with_assets else "")
+
+
+QUERY = build_query()
 
 
 def secret(scope: Optional[str], key: str, env_var: str) -> str:

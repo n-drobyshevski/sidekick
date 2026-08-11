@@ -29,6 +29,7 @@ import dbx  # noqa: E402
 import run_pipeline  # noqa: E402
 from config import SCOPES  # noqa: E402
 import ingest  # noqa: E402
+from config import FETCH_ASSET_FIELDS  # noqa: E402
 from ingest import QUERY, build_filter, describe_errors  # noqa: E402
 
 
@@ -310,28 +311,55 @@ def test_unknown_scope_is_rejected():
 # ----------------------------------------------------------------------- the query
 
 
+def test_the_shipped_query_does_not_ask_for_the_asset():
+    """The live tenant no longer has those union members, and it rejects the whole request --
+    not the sub-selection, the request. One unavailable field would cost every scan."""
+    assert "vulnerableAsset" not in QUERY
+    assert ingest.QUERY == ingest.build_query(FETCH_ASSET_FIELDS)
+    assert FETCH_ASSET_FIELDS is False
+
+
+def test_the_query_still_parses_with_the_asset_omitted():
+    """An empty `vulnerableAsset {}` would be a syntax error, so the slot has to collapse
+    entirely rather than render an empty block."""
+    assert "{}" not in QUERY.replace(" ", "")
+    # The fields the metrics actually depend on are all still there.
+    for field in (
+        "severity", "status", "firstDetectedAt", "resolvedAt",
+        "hasExploit", "hasCisaKevExploit", "epssProbability",
+    ):
+        assert field in QUERY
+
+
 def test_vulnerable_asset_is_selected_through_inline_fragments():
     """`vulnerableAsset` is a union: selecting its fields directly is a GraphQL validation
-    error and the server answers 400. That is how this first failed against a live tenant."""
-    assert "... on VulnerableAssetVirtualMachine {" in QUERY  # what scope=os returns
-    assert "... on VulnerableAssetBase {" in QUERY
+    error and the server answers 400. That is how this first failed against a live tenant.
+
+    Asserted against the enabled form, which is what a tenant that still has these members
+    would send -- the fragments have to stay correct for the constant to be worth flipping.
+    """
+    enabled = ingest.build_query(True)
+    assert "... on VulnerableAssetVirtualMachine {" in enabled  # what scope=os returns
+    assert "... on VulnerableAssetBase {" in enabled
 
     # No bare field selection between `vulnerableAsset {` and the first fragment.
-    body = QUERY.split("vulnerableAsset {", 1)[1].split("... on", 1)[0]
+    body = enabled.split("vulnerableAsset {", 1)[1].split("... on", 1)[0]
     assert not body.strip(), f"bare selection on the union: {body.strip()!r}"
 
 
 def test_query_never_asks_a_member_for_a_field_it_lacks():
     """Two members genuinely lack some of the fields; asking anyway is another 400."""
+    enabled = ingest.build_query(True)
     for member, missing in ingest._ASSET_OMISSIONS.items():
-        block = QUERY.split(f"... on {member} {{", 1)[1].split("}", 1)[0]
+        block = enabled.split(f"... on {member} {{", 1)[1].split("}", 1)[0]
         selected = {line.strip() for line in block.splitlines() if line.strip()}
         assert not (selected & missing), f"{member} asked for {selected & missing}"
 
 
 def test_every_asset_member_selects_something():
+    enabled = ingest.build_query(True)
     for member in ingest._ASSET_MEMBERS:
-        block = QUERY.split(f"... on {member} {{", 1)[1].split("}", 1)[0]
+        block = enabled.split(f"... on {member} {{", 1)[1].split("}", 1)[0]
         assert block.strip(), f"{member} has an empty selection set, which is also invalid"
 
 

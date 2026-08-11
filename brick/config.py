@@ -106,6 +106,41 @@ SCOPES = {
 
 DEFAULT_SCOPE = "os"
 
+# ---- Where this deployment's tables live ----
+# Deployment-specific, and the only two constants in this file that are. They are the defaults
+# the **read-only notebooks** open with, so somebody who just wants to read a number does not
+# have to know the namespace by heart.
+#
+# `run_pipeline.resolve_namespace` deliberately does NOT fall back to these: the write path
+# still refuses to run without an explicit `--catalog`, because a default that succeeds is the
+# wrong failure mode when the thing being written maps unpatched CVEs to named hosts. Reading
+# the wrong catalog shows you an empty page; writing to it is a disclosure.
+#
+# `datalake_insight_analytics` is read-only to the service principal -- the writable one is the
+# preprod catalog below, which is where the pipeline actually lands.
+DEFAULT_CATALOG = "preprod_datalake_insight_analytics"
+DEFAULT_SCHEMA = "industry"
+
+# ---- Ingest: whether to ask for the asset behind each finding ----
+# OFF, because the live tenant rejects it: the `vulnerableAsset` union members this query used
+# are no longer in the schema, and the whole request 400s -- not the sub-selection, the request.
+# One unavailable field costs the entire scan, so it is not asked for.
+#
+# A flag rather than a deletion, because this is a *tenant's* schema and not a decision: keeping
+# `ingest._asset_selection` and its member list intact means turning the columns back on is one
+# constant, not an archaeology exercise against `os_vulns.py`.
+#
+# What goes NULL when this is False: asset_id, asset_name, asset_type, cloud, subscription_name,
+# subscription_ext_id -- so the estate breakdowns and every by-subscription panel have nothing
+# to group on. `panels.attributability` is the page that says so out loud, and it will read 0%
+# populated, which is the honest answer rather than a broken one.
+#
+# What is unaffected: MTTR, SLA, coverage, efficiency, capacity and the whole ledger. They read
+# severity, status, timestamps and the exploit signals, none of which live on the asset. Identity
+# is unaffected too -- `vuln_key` prefers the finding id, which is still selected, and only falls
+# back to the asset-bearing hash when that is absent.
+FETCH_ASSET_FIELDS = False
+
 # ---- Risk classification (Prioritization to Prediction) ----
 # FIRST's own guidance: 0.1 is the point where EPSS starts to be worth acting on.
 EPSS_PRIORITY_THRESHOLD = 0.1
