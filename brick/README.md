@@ -46,6 +46,7 @@ tiles.py          HTML fragments for displayHTML: heroes, KPI bands, the confusi
 notebooks/        seven .ipynb pages, one per page of the GAS app
 
 tests/            local-SparkSession tests, oracles ported from the existing suites
+bench_pipeline.py a synthetic register, timed through the real entry points — see Benchmarking
 ```
 
 `ledger.py` and `metrics.py` are pure `DataFrame -> DataFrame`; `run_pipeline.py` is the only
@@ -485,6 +486,15 @@ and a laptop.
 | `scan_id` | a random id | pass `{{job.run_id}}` on a scheduled Job — see [Retries](#retries-are-safe-if-you-pass-scan_id) |
 | `disappearance` | `scan_ts` | `scan_ts` or `midpoint` |
 | `rebuild_ledger` | `false` | replay bronze and rebuild the ledger from scratch — see [Backfill](#backfilling-from-existing-bronze) |
+| `shuffle_partitions` | `0` | `spark.sql.shuffle.partitions` for the run; `0` leaves the cluster's own setting alone |
+
+`shuffle_partitions` is the one parameter that changes nothing about any published number, and
+it is unset by default on purpose. Spark's 200 is sized for a cluster moving real data, and a
+run here is a few dozen aggregations over one scan on the single-node cluster this README
+recommends — so a smaller number looks like free speed. Measured, it is not: over three runs a
+side at 20,000 findings, `64` produced the fastest single run and the tightest spread but a
+*worse* median than 200. Tune it against your own register with
+[`bench_pipeline.py`](#benchmarking) rather than trusting either number.
 
 ### Retries are safe, if you pass `scan_id`
 
@@ -499,6 +509,15 @@ Without it, `scan_id` is random and a retry looks like a brand-new scan. Also se
 If a run dies *between* the ledger MERGE and the scan-log write, the next run detects it — the
 ledger carries the scan id, the log does not — and **refuses rather than double-counting**.
 Recover with `--rebuild_ledger`.
+
+**A failed ingest leaves partial bronze, and that is fine.** Findings are written to bronze in
+batches as they are paged out of the API, rather than held in the driver until the sweep
+finishes — a full register is hundreds of thousands of JSON documents and one list of all of
+them is a driver problem waiting to happen. So a crash mid-sweep leaves the batches that
+committed. Nothing reads them: bronze rows are only ever selected by a `scan_id` that has a
+`…wiz_os_scans` row, and a retry passing the same `--scan_id` clears them before re-ingesting.
+A run that dies mid-ingest and is *never* retried leaves orphaned bronze rows, which cost
+storage and nothing else.
 
 ### Backfilling from existing bronze
 
@@ -740,6 +759,40 @@ The rules that would be silently wrong rather than loudly broken were mutation-t
 the disappearance previous-scan guard, the severity-scope guard, the monotone risk merge, the
 peak-EPSS rule, the fix-clock reset on reopen, and `first_seen`'s earliest-wins each fail the
 suite.
+
+## Benchmarking
+
+`bench_pipeline.py` is the measuring instrument for performance work on the pipeline. It builds
+a synthetic register, drives it through the **real** `ingest_to_bronze` and `build_metrics` — the
+API is stubbed, nothing else is — and reports wall-clock and Spark-job count per stage.
+
+```bash
+python brick/bench_pipeline.py --findings 20000 --scans 3 \
+    --out before.json --dump before/          # on the revision you are measuring against
+python brick/bench_pipeline.py --findings 20000 --scans 3 \
+    --out after.json --dump after/ --compare before.json
+diff -r before/ after/                        # must be empty
+```
+
+`--dump` writes every table as sorted JSON with the run's identity columns removed, so
+`diff -r` answers the only question that matters about a performance change: **did any number
+move?** An optimisation that cannot pass that diff is not an optimisation.
+
+Two things to know before believing a result:
+
+- **The absolute seconds are meaningless.** This is one local JVM; only the ratio between two
+  runs of the same script on the same machine says anything.
+- **Run it more than once.** The variance is large. A single pair of runs on a four-core box
+  showed a 36% improvement for a change that three runs a side put at 8% — the first baseline
+  run was simply slow. Report medians, and report the job counts too: seconds move with whatever
+  else the machine is doing, "this scan submits 125 Spark jobs" does not.
+
+`--attribute` additionally times each gold transform on its own, which is how you find out that
+`rule_sensitivity`'s seven passes are ~1.5s of an ~85s run and therefore not the problem.
+
+The session is built here rather than borrowed from `tests/conftest.py`, deliberately: conftest
+sets `spark.sql.shuffle.partitions=1` and turns AQE off, which is right for thirty-row test
+frames and would measure the wrong machine entirely.
 
 ## Notebooks
 
