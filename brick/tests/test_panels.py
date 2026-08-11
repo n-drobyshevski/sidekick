@@ -562,3 +562,56 @@ def test_scan_pin_check_agrees_across_the_gold_tables(spark_, ctx):
     rows = {r["source"]: r["scan_id"] for r in panels.scan_pin_check(spark_, ctx).collect()}
     gold = {rows[k] for k in ("context", "metrics_mttr", "metrics_program", "metrics_capacity")}
     assert gold == {ctx.scan_id}
+
+
+# ------------------------------------------------------- the 2.0 -> 2.1 capacity upgrade
+
+
+def test_a_capacity_table_from_2_0_still_opens(spark_, ctx):
+    """A register last scanned under 2.0 has no ``population`` column at all.
+
+    Not NULL -- absent, because the column arrives by schema evolution on the first 2.1+ write.
+    Every page's cell 1 builds ``v_capacity`` by filtering on it, so before this was handled the
+    whole notebook set died on ``UNRESOLVED_COLUMN.WITH_SUGGESTION`` naming neither the version
+    that wrote the table nor the scan that would fix it. Those rows are all-findings rows, which
+    is what the README's upgrade note says to assume.
+    """
+    from dataclasses import replace
+
+    # No mode("overwrite") anywhere in this file: Delta's DataSource V2 catalog answers
+    # "does not support truncate in batch mode", so a fresh table plus an explicit DROP is
+    # the only shape that runs both here and on a cluster.
+    legacy = f"{ctx.tables.capacity}_v20"
+    spark_.sql(f"DROP TABLE IF EXISTS {legacy}")
+    spark_.table(ctx.tables.capacity).drop("population").write.format("delta").saveAsTable(
+        legacy
+    )
+    assert "population" not in spark_.table(legacy).columns
+
+    panels.context(spark_, tables=replace(ctx.tables, capacity=legacy))
+    rows = spark_.sql("SELECT * FROM v_capacity").count()
+    assert rows > 0, "a pre-2.1 capacity table must read as all-findings, not as nothing"
+    assert spark_.sql("SELECT * FROM v_capacity_high_risk").count() == 0
+
+    spark_.sql(f"DROP TABLE {legacy}")
+    panels.context(spark_, tables=ctx.tables)  # restore the views for later tests
+
+
+def test_a_null_population_counts_as_all_findings(spark_, ctx):
+    """The other half of the same upgrade: the column exists, but 2.0-written rows are NULL.
+    Left uncoalesced they drop out of both filtered views and the old scans vanish silently."""
+    from dataclasses import replace
+
+    import pyspark.sql.functions as F
+
+    mixed = f"{ctx.tables.capacity}_mixed"
+    spark_.sql(f"DROP TABLE IF EXISTS {mixed}")
+    spark_.table(ctx.tables.capacity).withColumn(
+        "population", F.lit(None).cast("string")
+    ).write.format("delta").saveAsTable(mixed)
+
+    panels.context(spark_, tables=replace(ctx.tables, capacity=mixed))
+    assert spark_.sql("SELECT * FROM v_capacity").count() > 0
+
+    spark_.sql(f"DROP TABLE {mixed}")
+    panels.context(spark_, tables=ctx.tables)

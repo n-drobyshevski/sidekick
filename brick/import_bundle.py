@@ -423,6 +423,69 @@ def scans_frame(spark: SparkSession, bundle: dict, *, scope: str) -> DataFrame:
 
 # --------------------------------------------------------------------------------- the write
 
+#: Every table the pipeline writes, as attributes of ``run_pipeline.Tables``. The lifecycle
+#: pair first, because they are the ones this module replaces outright.
+REGISTER_ATTRS = ("ledger", "scans") + tuple(run_pipeline.APPEND_TABLE_ATTRS.values())
+
+
+def require_write_access(spark: SparkSession, table: str) -> None:
+    """Fail now, with the grant named, rather than six Spark jobs into the import.
+
+    Unity Catalog checks privileges when it *analyses* a statement, not when it runs one, so a
+    DELETE matching nothing still has to clear the MODIFY check -- which makes it the cheapest
+    honest probe available. Without it the refusal surfaces at ``saveAsTable`` after the ledger
+    frame has been built and checkpointed, as a ``Py4JJavaError`` naming neither the fix nor
+    the grant that would be the fix.
+    """
+    try:
+        spark.sql(f"DELETE FROM {table} WHERE 1=0")
+    except Exception as exc:  # noqa: BLE001 -- re-raised either way; only the message changes
+        text = str(exc)
+        if "PERMISSION_DENIED" not in text and "Unauthorized" not in text:
+            raise
+        raise BundleError(
+            f"No write access to {table}.\n\n"
+            f"Unity Catalog gives a table's owner MODIFY implicitly, so being refused it means "
+            f"this principal does not own the table -- and replacing or dropping it needs "
+            f"ownership or MANAGE, a strictly higher bar. Overwriting instead will not get "
+            f"past this.\n\n"
+            f"Ask an owner or metastore admin for the schema-level grant, which is also what "
+            f"the first scan after this import needs (it creates six more tables):\n"
+            f"    GRANT USE SCHEMA, SELECT, MODIFY, CREATE TABLE\n"
+            f"      ON SCHEMA <catalog>.<schema> TO `<principal>`;\n\n"
+            f"Or point --catalog / --schema / --table_prefix somewhere you own and seed there; "
+            f"the bundle is not catalog-specific.\n\n"
+            f"Original error: {text.strip().splitlines()[0]}"
+        ) from exc
+
+
+def _replace(spark: SparkSession, df: DataFrame, table: str) -> None:
+    """Replace a table's contents: empty it, then append.
+
+    Not ``mode("overwrite")``. That resolves through Delta's DataSource V2 catalog, which
+    answers *"Table … does not support truncate in batch mode"* -- so the tidier-looking
+    single-commit version is one this suite cannot run and a cluster might. DELETE-then-append
+    is what ``run_pipeline.rebuild_ledger`` already does to the same two tables, needs the same
+    MODIFY privilege, and is exercised by every test below.
+
+    The cost is a window between the two statements in which the table is empty. Acceptable
+    here and nowhere else: this runs once, before the register has any readers.
+    """
+    spark.sql(f"DELETE FROM {table}")
+    run_pipeline.write_append(df, table)
+
+
+def occupied_tables(spark: SparkSession, tables: run_pipeline.Tables) -> dict:
+    """``{table: rows}`` for every pipeline table that exists and is not empty."""
+    counts = {}
+    for attr in REGISTER_ATTRS:
+        table = getattr(tables, attr)
+        if spark.catalog.tableExists(table):
+            rows = spark.table(table).count()
+            if rows:
+                counts[table] = rows
+    return counts
+
 
 def import_bundle(
     spark: SparkSession,
@@ -434,33 +497,53 @@ def import_bundle(
 ) -> dict:
     """Seed ``tables.ledger`` and ``tables.scans`` from the bundle. Returns a summary.
 
-    Refuses a register that already has history, because the two ways it could go wrong are
+    Refuses a register that already holds anything, because the two ways it could go wrong are
     both silent. Merging a seed into a ledger brick has already advanced would re-open
     lifecycles it has since resolved; appending the seed's scan log beside brick's own would
     put an older scan after a newer one and hand the disappearance guard the wrong previous
-    scan. ``force`` clears both tables and re-seeds -- a replacement, not a merge, which is
-    the same thing ``rebuild_ledger`` does and for the same reason.
+    scan.
+
+    ``force`` means **replace the register**, not merely the two tables. The gold tables are
+    the reason: they are appended per scan and computed from the ledger *as it stood at that
+    scan*, so rows written before the seed were derived from a ledger that started empty. Left
+    in place they would sit in `04_scan_history` as a run whose MTTR reads near zero, beside
+    seeded runs where it does not -- a contradiction with no visible cause. So a forced import
+    empties bronze, silver and all four gold tables too, and the register genuinely restarts
+    from the imported history.
+
+    They are emptied rather than dropped: DELETE needs only MODIFY and keeps the tables' grants,
+    where DROP needs ownership and would silently take the grants with it.
     """
     run_pipeline.ensure_tables(spark, tables)
-    existing_ledger = spark.table(tables.ledger).count()
-    existing_scans = spark.table(tables.scans).count()
-    if (existing_ledger or existing_scans) and not force:
+    # Before the expensive part, and before anything is written.
+    require_write_access(spark, tables.ledger)
+    require_write_access(spark, tables.scans)
+
+    occupied = occupied_tables(spark, tables)
+    if occupied and not force:
+        listed = "\n".join(f"    {t}: {n} row(s)" for t, n in occupied.items())
         raise BundleError(
-            f"{tables.ledger} already has {existing_ledger} row(s) and {tables.scans} has "
-            f"{existing_scans}. An import seeds an empty register; merging it into one that "
-            f"has already scanned would re-open resolved lifecycles and mis-order the scan "
-            f"log. Pass --force_import=true to CLEAR both tables and re-seed from this bundle."
+            f"This register is not empty:\n{listed}\n\n"
+            f"An import seeds an empty register. Merging into one that has already scanned "
+            f"would re-open resolved lifecycles and mis-order the scan log, and any gold rows "
+            f"already written were computed from a ledger that started empty.\n"
+            f"Pass --force_import=true to REPLACE the register -- it overwrites the ledger and "
+            f"the scan log and empties bronze, silver and the four gold tables."
         )
-    if existing_ledger or existing_scans:
-        spark.sql(f"DELETE FROM {tables.ledger}")
-        spark.sql(f"DELETE FROM {tables.scans}")
 
     episodes, collapsed = selectable_episodes(bundle)
     rows = ledger_frame(spark, bundle, scope=scope).localCheckpoint(eager=True)
     scans = scans_frame(spark, bundle, scope=scope)
 
-    run_pipeline.write_append(rows, tables.ledger)
-    run_pipeline.write_append(scans, tables.scans)
+    _replace(spark, rows, tables.ledger)
+    _replace(spark, scans, tables.scans)
+
+    cleared = {}
+    for attr in run_pipeline.APPEND_TABLE_ATTRS.values():
+        table = getattr(tables, attr)
+        if table in occupied:
+            spark.sql(f"DELETE FROM {table}")
+            cleared[table] = occupied[table]
 
     hashed = rows.filter(F.col("vuln_key").startswith("h:")).count()
     span = rows.agg(
@@ -477,6 +560,8 @@ def import_bundle(
         "latest_last_seen": span["last_seen"],
         "last_scan_id": latest[0] if latest else None,
         "exported_at": bundle.get("exported_at"),
+        "replaced": occupied,
+        "cleared": cleared,
     }
 
 
@@ -513,6 +598,16 @@ def summarize(summary: dict, tables: run_pipeline.Tables) -> None:
         )
     )
     print(f"[import] {summary['scans']} scan(s) -> {tables.scans}")
+    if summary["replaced"]:
+        print(
+            f"[import] REPLACED a non-empty register: "
+            + ", ".join(f"{t.split('.')[-1]} ({n})" for t, n in summary["replaced"].items())
+        )
+    if summary["cleared"]:
+        print(
+            f"[import]   emptied {len(summary['cleared'])} derived table(s) -- their rows were "
+            f"computed from a ledger that started empty, so re-scan to repopulate them"
+        )
     print(
         f"[import] observed {summary['earliest_first_seen']} .. {summary['latest_last_seen']}, "
         f"exported {summary['exported_at']}"

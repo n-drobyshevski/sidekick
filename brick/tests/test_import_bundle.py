@@ -385,6 +385,45 @@ class TestImport:
         assert {r["vuln_key"] for r in spark.table(tables.ledger).collect()} == {"id:f-b"}
         assert spark.table(tables.scans).count() == 1
 
+    def test_a_scanned_register_is_refused_even_with_an_empty_ledger(self, spark, tables):
+        """The ledger is not the whole register. Gold rows written before a seed were computed
+        from a ledger that started empty, so leaving them would put a near-zero-MTTR run beside
+        seeded ones in the trend, with nothing on the page to say why."""
+        from test_ledger_pipeline import node
+
+        run_scan(spark, tables, [node("f-x")], "scan-0", "2026-07-20T00:00:00Z")
+        spark.sql(f"DELETE FROM {tables.ledger}")
+        spark.sql(f"DELETE FROM {tables.scans}")
+        with pytest.raises(BundleError, match="not empty"):
+            import_bundle.import_bundle(spark, tables, bundle(), scope=SCOPE)
+
+    def test_force_empties_the_derived_tables_too(self, spark, tables):
+        from test_ledger_pipeline import node
+
+        run_scan(spark, tables, [node("f-x")], "scan-0", "2026-07-20T00:00:00Z")
+        assert spark.table(tables.mttr).count() > 0
+        summary = import_bundle.import_bundle(spark, tables, bundle(), scope=SCOPE, force=True)
+
+        assert summary["replaced"], "the replaced register should be reported, not silent"
+        for attr in run_pipeline.APPEND_TABLE_ATTRS.values():
+            table = getattr(tables, attr)
+            assert spark.table(table).count() == 0, table
+        # ...and the seed itself landed, rather than being caught by the same broom.
+        assert spark.table(tables.ledger).count() == summary["ledger_rows"] > 0
+        assert spark.table(tables.scans).count() == 3
+
+    def test_the_write_probe_lets_a_normal_register_through(self, spark, tables):
+        """The probe is a DELETE matching nothing. It must not be able to delete anything."""
+        import_bundle.import_bundle(spark, tables, bundle(), scope=SCOPE)
+        before = spark.table(tables.ledger).count()
+        import_bundle.require_write_access(spark, tables.ledger)
+        assert spark.table(tables.ledger).count() == before
+
+    def test_an_unrelated_write_error_is_not_dressed_up_as_a_grant_problem(self, spark, tables):
+        with pytest.raises(Exception) as caught:
+            import_bundle.require_write_access(spark, "no_such_catalog.no_such.table")
+        assert not isinstance(caught.value, BundleError)
+
     def test_leaves_bronze_and_silver_alone(self, spark, tables):
         import_bundle.import_bundle(spark, tables, bundle(), scope=SCOPE)
         # The bundle carries reconciled lifecycles, not raw findings. Nothing should have

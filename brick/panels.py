@@ -369,7 +369,22 @@ def register_views(spark: SparkSession, ctx: Ctx) -> None:
     # MUST pick one -- an unfiltered `v_capacity` would double every count and turn the
     # `SELECT DISTINCT` in program_headline into two rows. Split rather than filtered at each
     # call site, so forgetting the predicate is impossible rather than merely unlikely.
-    capacity_table = spark.table(ctx.tables.capacity).where(pinned)
+    #
+    # A table written by 2.0 has no `population` column *at all* -- not NULL, absent -- because
+    # it arrives by schema evolution on the first 2.1+ write, and a register that has not been
+    # re-scanned since has never had one. Every row in such a table is an all-findings row,
+    # which is exactly what the README's upgrade note says to assume; applying it here rather
+    # than leaving it to each reader means the page opens on real numbers instead of dying in
+    # cell 1 with `UNRESOLVED_COLUMN population`, an error naming neither the version that wrote
+    # the table nor the scan that would fix it. The coalesce covers the other half of the same
+    # upgrade: rows that DO have the column but land NULL, mixed in beside 2.1 rows.
+    capacity_raw = spark.table(ctx.tables.capacity)
+    capacity_table = capacity_raw.withColumn(
+        "population",
+        F.lit(POPULATION_ALL)
+        if "population" not in capacity_raw.columns
+        else F.coalesce(F.col("population"), F.lit(POPULATION_ALL)),
+    ).where(pinned)
     capacity_table.where(F.col("population") == POPULATION_ALL).createOrReplaceTempView(
         "v_capacity"
     )
