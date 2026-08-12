@@ -10,6 +10,7 @@ import {
   resolveAssetQuery,
   sortAssetRows,
 } from "../domain/assetTable";
+import { aarsTrendFromHistory, type AarsTrendPoint } from "../domain/aarsTrend";
 import {
   AARS_SEVERITY_ORDER,
   MAX_NODES_CEILING,
@@ -246,6 +247,7 @@ interface AssetsModel {
   rows: Rec[];
   kpis: Rec;
   aarsSeverityCounts: Record<string, number>;
+  aarsTrend: AarsTrendPoint[];
   facets: { kinds: string[]; clouds: string[]; aarsSeverities: string[] };
 }
 
@@ -290,6 +292,8 @@ function assetsModel(): AssetsModel {
       agenticIdentities: assets.filter((a) => a.identityPurpose === "AGENTIC").length,
     },
     aarsSeverityCounts,
+    // Recorded per sync, so the window is short at first and cannot be backfilled.
+    aarsTrend: aarsTrendFromHistory(syncStore.syncHistory()),
     facets: {
       kinds: [...kinds].sort(),
       clouds: [...clouds].sort(),
@@ -311,6 +315,7 @@ export function getAssets(p?: unknown): ApiResult {
       total: model.rows.length,
       kpis: model.kpis,
       aarsSeverityCounts: model.aarsSeverityCounts,
+      aarsTrend: model.aarsTrend,
       facets: model.facets,
       pageSize: query.pageSize,
       sort: query.sort,

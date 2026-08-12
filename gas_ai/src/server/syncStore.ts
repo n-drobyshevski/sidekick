@@ -18,6 +18,7 @@ import type { FindingRow, GEdge, GNode, GraphDoc, IssueRow, NodeKind } from "../
 import { edgeId } from "../domain/graphTypes";
 import { normalizeAarsSeverity } from "../domain/config";
 import type { Severity } from "../domain/config";
+import { countAarsSeverities } from "../domain/aarsTrend";
 import { nowIso, type Rec } from "../domain/util";
 import { readGraphSnapshot, trashGraphSnapshot, writeGraphSnapshot } from "./archiveStore";
 import { bumpDataVersion } from "./serverCache";
@@ -269,6 +270,9 @@ export function persistSync(
     api_calls: meta.apiCalls,
     snapshot_ref: snapshotRef,
     error: null,
+    // The AARS distribution at this sync — the only record of it, since the snapshot
+    // this row points at is overwritten by the next sync. Feeds the inventory trend.
+    aars_severity_json: JSON.stringify(countAarsSeverities(enriched.nodes)),
   }]);
   bumpDataVersion();
   invalidateReadMemos();

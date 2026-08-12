@@ -130,30 +130,44 @@ export function categoryBar(canvas, labels, counts, colors, onClickLabel) {
   });
 }
 
-/** Single line over ISO dates (sync trend), accent-colored. */
-export function trendLine(canvas, points, { yLabel } = {}) {
+/**
+ * Lines over ISO dates (sync trend). `series` is [{ label, color, data }] — one entry
+ * draws the accent-colored single line the sync trend uses; several draw one line per
+ * severity, each in its own severity token, with the legend on (the only way to tell
+ * them apart, so color is never carrying it alone).
+ */
+export function trendLine(canvas, points, { yLabel, series } = {}) {
   destroyExisting(canvas);
   const opts = baseOptions();
   opts.scales.y.beginAtZero = true;
   if (yLabel) {
     opts.scales.y.title = { display: true, text: yLabel, font: FONT, color: INK2 };
   }
+  const multi = Array.isArray(series) && series.length > 1;
+  if (multi) {
+    opts.plugins.legend = {
+      display: true,
+      position: "bottom",
+      labels: { font: FONT, color: INK2, boxWidth: 10, boxHeight: 10, usePointStyle: true },
+    };
+    opts.plugins.tooltip.mode = "index";
+    opts.plugins.tooltip.intersect = false;
+  }
+  const datasets = (series && series.length ? series : [{ color: ACCENT, data: points.map((p) => p.y) }])
+    .map((s) => ({
+      label: s.label,
+      data: s.data,
+      borderColor: s.color || ACCENT,
+      backgroundColor: multi ? s.color || ACCENT : "rgba(190, 18, 60, 0.08)",
+      fill: !multi,
+      tension: 0.25,
+      pointRadius: points.length > 40 ? 0 : 3,
+      pointBackgroundColor: s.color || ACCENT,
+      borderWidth: 2,
+    }));
   return new Chart(canvas, {
     type: "line",
-    data: {
-      labels: points.map((p) => p.x.slice(0, 10)),
-      datasets: [
-        {
-          data: points.map((p) => p.y),
-          borderColor: ACCENT,
-          backgroundColor: "rgba(190, 18, 60, 0.08)",
-          fill: true,
-          tension: 0.25,
-          pointRadius: points.length > 40 ? 0 : 3,
-          borderWidth: 2,
-        },
-      ],
-    },
+    data: { labels: points.map((p) => String(p.x).slice(0, 10)), datasets },
     options: opts,
   });
 }

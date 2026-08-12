@@ -30,7 +30,8 @@ import { readGzJsonFile, syncFolder, writeGzJson, writeSyncPage } from "./archiv
 import { activeJob, createJob, getJob, newJobId, updateJob, type JobRow } from "./jobsStore";
 import { withScriptLock } from "./locks";
 import { getProp, hasWizCredentials, projectScope, setProp, deleteProp } from "./props";
-import { seedGraphDoc, SEED_AARS_HINTS, SEED_FINDINGS, SEED_ISSUES } from "./sampleData";
+import { seedGraphDoc, SEED_AARS_HINTS, SEED_FINDINGS, SEED_ISSUES, SEED_TREND } from "./sampleData";
+import { appendRows, dataRowCount, TABS } from "./sheetsDb";
 import { persistSync } from "./syncStore";
 import {
   fetchCloudResourcesPage,
@@ -180,9 +181,40 @@ export function startSync(): StartResult {
   return startLiveSync();
 }
 
+/**
+ * Backfill the dry-run's trend with the sample history, once, on the first dry-run into
+ * an empty ledger. Only ever runs without credentials, and only when nothing has been
+ * recorded yet, so it can never invent history in front of a real tenant's.
+ */
+function seedTrendHistory(endIso: string): void {
+  if (dataRowCount(TABS.syncHistory) > 0) return;
+  const DAY_MS = 86_400_000;
+  const end = new Date(endIso).getTime();
+  appendRows(TABS.syncHistory, SEED_TREND.map((counts, i) => {
+    // Dated backwards from the sync being run, one day apart, so the sample history
+    // runs continuously into the live point rather than leaving a gap in the line.
+    const at = new Date(end - (SEED_TREND.length - i) * DAY_MS).toISOString();
+    return {
+      sync_id: `sync-sample-${String(i + 1).padStart(2, "0")}`,
+      started_at: at,
+      finished_at: at,
+      status: "SUCCESS",
+      mode: "dry-run",
+      node_count: null,
+      edge_count: null,
+      issue_count: null,
+      api_calls: 0,
+      snapshot_ref: null,
+      error: null,
+      aars_severity_json: JSON.stringify(counts),
+    };
+  }));
+}
+
 /** Seed-data sync: same persist path as live, zero credentials, completes in-line. */
 function dryRunSync(): StartResult {
   const startedAt = nowIso();
+  seedTrendHistory(startedAt);
   const syncId = `sync-${startedAt.replace(/[:]/g, "")}`;
   const doc = persistSync(
     seedGraphDoc(startedAt),

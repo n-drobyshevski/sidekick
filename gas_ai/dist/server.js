@@ -252,7 +252,8 @@ var Server = (() => {
       "issue_count",
       "api_calls",
       "snapshot_ref",
-      "error"
+      "error",
+      "aars_severity_json"
     ],
     [TABS.settings]: ["key", "value_json"],
     [TABS.jobs]: [
@@ -1106,6 +1107,48 @@ var Server = (() => {
       page: clamped,
       pageCount
     };
+  }
+
+  // src/domain/aarsTrend.ts
+  function countAarsSeverities(nodes) {
+    const counts = {};
+    for (const sev of AARS_SEVERITY_ORDER) counts[sev] = 0;
+    for (const n of nodes) {
+      const sev = normalizeAarsSeverity(n.aarsSeverity);
+      if (sev) counts[sev] += 1;
+    }
+    return counts;
+  }
+  function parseCounts(v) {
+    if (typeof v !== "string" || !v) return null;
+    let parsed;
+    try {
+      parsed = JSON.parse(v);
+    } catch {
+      return null;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const raw = parsed;
+    const counts = {};
+    for (const sev of AARS_SEVERITY_ORDER) {
+      const n = Number(raw[sev]);
+      counts[sev] = Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
+    }
+    return counts;
+  }
+  function aarsTrendFromHistory(rows, limit = 90) {
+    var _a4;
+    const points = [];
+    for (const r of rows) {
+      if (String((_a4 = r["status"]) != null ? _a4 : "") !== "SUCCESS") continue;
+      const counts = parseCounts(r["aars_severity_json"]);
+      if (!counts) continue;
+      const at = String(r["finished_at"] || r["started_at"] || "");
+      if (!at) continue;
+      points.push({ at, counts });
+    }
+    points.sort((a, b) => a.at < b.at ? -1 : a.at > b.at ? 1 : 0);
+    return limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
   }
 
   // src/domain/settingsLogic.ts
@@ -3592,6 +3635,16 @@ var Server = (() => {
   function seedGraphDoc(syncedAt) {
     return { nodes: SEED_NODES, edges: SEED_EDGES, syncedAt };
   }
+  var SEED_TREND = [
+    { CRITICAL: 5, HIGH: 12, MEDIUM: 0, LOW: 2, INFO: 11 },
+    { CRITICAL: 5, HIGH: 13, MEDIUM: 0, LOW: 2, INFO: 10 },
+    { CRITICAL: 4, HIGH: 15, MEDIUM: 0, LOW: 3, INFO: 9 },
+    { CRITICAL: 4, HIGH: 16, MEDIUM: 0, LOW: 3, INFO: 9 },
+    { CRITICAL: 3, HIGH: 16, MEDIUM: 0, LOW: 3, INFO: 8 },
+    { CRITICAL: 3, HIGH: 17, MEDIUM: 0, LOW: 3, INFO: 8 },
+    { CRITICAL: 2, HIGH: 17, MEDIUM: 0, LOW: 3, INFO: 8 },
+    { CRITICAL: 2, HIGH: 17, MEDIUM: 0, LOW: 3, INFO: 8 }
+  ];
 
   // src/server/syncStore.ts
   function boolCell(v) {
@@ -3807,7 +3860,10 @@ var Server = (() => {
       issue_count: issues2.length,
       api_calls: meta.apiCalls,
       snapshot_ref: snapshotRef,
-      error: null
+      error: null,
+      // The AARS distribution at this sync — the only record of it, since the snapshot
+      // this row points at is overwritten by the next sync. Feeds the inventory trend.
+      aars_severity_json: JSON.stringify(countAarsSeverities(enriched.nodes))
     }]);
     bumpDataVersion();
     invalidateReadMemos();
@@ -4004,8 +4060,31 @@ var Server = (() => {
     if (!hasWizCredentials()) return dryRunSync();
     return startLiveSync();
   }
+  function seedTrendHistory(endIso) {
+    if (dataRowCount(TABS.syncHistory) > 0) return;
+    const DAY_MS = 864e5;
+    const end = new Date(endIso).getTime();
+    appendRows(TABS.syncHistory, SEED_TREND.map((counts, i) => {
+      const at = new Date(end - (SEED_TREND.length - i) * DAY_MS).toISOString();
+      return {
+        sync_id: `sync-sample-${String(i + 1).padStart(2, "0")}`,
+        started_at: at,
+        finished_at: at,
+        status: "SUCCESS",
+        mode: "dry-run",
+        node_count: null,
+        edge_count: null,
+        issue_count: null,
+        api_calls: 0,
+        snapshot_ref: null,
+        error: null,
+        aars_severity_json: JSON.stringify(counts)
+      };
+    }));
+  }
   function dryRunSync() {
     const startedAt = nowIso();
+    seedTrendHistory(startedAt);
     const syncId = `sync-${startedAt.replace(/[:]/g, "")}`;
     const doc = persistSync(
       seedGraphDoc(startedAt),
@@ -4450,6 +4529,8 @@ var Server = (() => {
         agenticIdentities: assets.filter((a) => a.identityPurpose === "AGENTIC").length
       },
       aarsSeverityCounts,
+      // Recorded per sync, so the window is short at first and cannot be backfilled.
+      aarsTrend: aarsTrendFromHistory(syncHistory()),
       facets: {
         kinds: [...kinds].sort(),
         clouds: [...clouds].sort(),
@@ -4465,6 +4546,7 @@ var Server = (() => {
         total: model.rows.length,
         kpis: model.kpis,
         aarsSeverityCounts: model.aarsSeverityCounts,
+        aarsTrend: model.aarsTrend,
         facets: model.facets,
         pageSize: query.pageSize,
         sort: query.sort

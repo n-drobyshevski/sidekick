@@ -14,7 +14,7 @@
 
 import { bootstrap, navigate, setParams, swrCall } from "../store.js";
 import { openAssetSheet } from "../detailSheets.js";
-import { categoryBar } from "../charts.js";
+import { categoryBar, trendLine } from "../charts.js";
 import { kindLabel } from "../icons.js";
 import {
   aarsChip, clear, el, emptyState, kpiCard, pager, sectionLabel, sevBadge, skeleton,
@@ -62,6 +62,16 @@ function normalizeAarsSeverity(v) {
   const s = String(v || "").trim().toUpperCase();
   if (s === "MINIMAL") return "INFO";
   return AARS_SEVERITIES.indexOf(s) >= 0 ? s : "";
+}
+
+// The AARS levels the charts draw. Mirrors TREND_SEVERITIES in src/domain/aarsTrend.ts
+// (the client bundle can't import the TS module) — INFO is recorded but never charted.
+const CHARTED_SEVERITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
+
+/** How many assets the charts leave out, so the totals never look like they disagree. */
+function infoNote(counts) {
+  const info = Number((counts || {}).INFO || 0);
+  return info ? `${info} INFO asset${info === 1 ? "" : "s"} excluded` : "no INFO assets";
 }
 
 const PAGE_SIZES = [25, 50, 100, 250];
@@ -151,23 +161,60 @@ export async function renderInventory(main, params) {
       ),
     );
 
-    // AARS severity distribution — counted server-side over the full set, so it describes the
-    // whole inventory whatever the table is currently showing.
+    // Both charts describe the WHOLE inventory (counted server-side), whatever the table
+    // below is currently showing, and both plot CHARTED_SEVERITIES only — INFO is "no
+    // action required" and is the biggest bucket in a healthy estate, so charting it
+    // flattens the levels worth watching. The KPI row still counts everything, so the
+    // exclusion is stated on each card rather than left for someone to work out.
     const aarsCounts = payload.aarsSeverityCounts || {};
-    const aarsColors = {};
     // The AARS scale shares the severity values, so it shares their colors directly.
-    for (const sev of boot.palette?.aarsSeverities || []) {
-      aarsColors[sev] = boot.palette.colors[sev];
-    }
-    const canvas = el("canvas", { "aria-label": "Assets by AARS severity", role: "img" });
-    host.append(
-      el("div", { class: "chart-card", style: "margin-bottom:20px" },
-        el("h3", {}, "Assets by AARS severity"),
-        el("div", { class: "chart-box", style: "height:200px" }, canvas),
-      ),
+    const colorOf = (sev) => (boot.palette?.colors || {})[sev];
+    const aarsColors = {};
+    for (const sev of CHARTED_SEVERITIES) aarsColors[sev] = colorOf(sev);
+
+    const distCanvas = el("canvas", {
+      "aria-label": "Assets by AARS severity, excluding INFO", role: "img",
+    });
+    const distCard = el("div", { class: "chart-card" },
+      el("h3", {}, "Assets by AARS severity"),
+      el("p", { class: "chart-note" }, `INFO (score 0–9) not charted · ${infoNote(aarsCounts)}`),
+      el("div", { class: "chart-box", style: "height:200px" }, distCanvas),
     );
+
+    // The trend is recorded one point per sync and cannot be backfilled, so a fresh or
+    // just-upgraded ledger has too few points to draw a line — say that plainly instead
+    // of rendering an empty axis that reads like a loading failure.
+    const trend = payload.aarsTrend || [];
+    const trendCanvas = el("canvas", {
+      "aria-label": "AARS severity over time, one line per level, excluding INFO", role: "img",
+    });
+    const trendCard = el("div", { class: "chart-card" },
+      el("h3", {}, "AARS severity over time"),
+      el("p", { class: "chart-note" },
+        trend.length >= 2
+          ? `${trend.length} sync${trend.length === 1 ? "" : "s"} · INFO not charted`
+          : "One point per sync"),
+      trend.length >= 2
+        ? el("div", { class: "chart-box", style: "height:200px" }, trendCanvas)
+        : el("div", { class: "chart-empty", role: "status" },
+            trend.length === 1
+              ? "One sync recorded so far — the trend draws from the second."
+              : "No history yet. Each sync adds a point; earlier syncs can't be recovered."),
+    );
+
+    host.append(el("div", { class: "chart-row" }, distCard, trendCard));
     requestAnimationFrame(() => {
-      categoryBar(canvas, boot.palette?.aarsSeverities || [], aarsCounts, aarsColors);
+      categoryBar(distCanvas, CHARTED_SEVERITIES, aarsCounts, aarsColors);
+      if (trend.length >= 2) {
+        trendLine(trendCanvas, trend.map((pt) => ({ x: pt.at })), {
+          yLabel: "assets",
+          series: CHARTED_SEVERITIES.map((sev) => ({
+            label: sev,
+            color: colorOf(sev),
+            data: trend.map((pt) => (pt.counts || {})[sev] ?? 0),
+          })),
+        });
+      }
     });
 
     // ---- Filter bar: name search + kind/cloud/AARS-severity selects. The options come from

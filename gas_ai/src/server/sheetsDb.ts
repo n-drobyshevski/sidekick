@@ -42,6 +42,7 @@ export const TAB_HEADERS: Record<string, string[]> = {
   [TABS.syncHistory]: [
     "sync_id", "started_at", "finished_at", "status", "mode",
     "node_count", "edge_count", "issue_count", "api_calls", "snapshot_ref", "error",
+    "aars_severity_json",
   ],
   [TABS.settings]: ["key", "value_json"],
   [TABS.jobs]: [
