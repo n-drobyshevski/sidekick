@@ -296,12 +296,7 @@ var Server = (() => {
         sh.getRange(1, 1, 1, headers.length).setValues([headers]);
         sh.setFrozenRows(1);
       } else {
-        const width = Math.max(sh.getLastColumn(), 1);
-        const existing = sh.getRange(1, 1, 1, width).getValues()[0].map(String).filter((h) => h !== "");
-        const missing = headers.filter((h) => !existing.includes(h));
-        if (missing.length) {
-          sh.getRange(1, existing.length + 1, 1, missing.length).setValues([missing]);
-        }
+        ensureHeaders(sh, tab);
       }
     }
     const dflt = ss.getSheetByName("Sheet1");
@@ -339,12 +334,21 @@ var Server = (() => {
     }
     return out;
   }
+  function ensureHeaders(sh, tab) {
+    var _a4;
+    const width = Math.max(sh.getLastColumn(), 1);
+    const existing = sh.getRange(1, 1, 1, width).getValues()[0].map(String).filter(Boolean);
+    const missing = ((_a4 = TAB_HEADERS[tab]) != null ? _a4 : []).filter((h) => !existing.includes(h));
+    if (missing.length) {
+      sh.getRange(1, existing.length + 1, 1, missing.length).setValues([missing]);
+    }
+    return [...existing, ...missing];
+  }
   function overwrite(tab, rows) {
     const sh = sheet(tab);
-    const lastCol = Math.max(sh.getLastColumn(), 1);
-    const headers = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(String).filter(Boolean);
+    const headers = ensureHeaders(sh, tab);
     const lastRow = sh.getLastRow();
-    if (lastRow > 1) sh.getRange(2, 1, lastRow - 1, lastCol).clearContent();
+    if (lastRow > 1) sh.getRange(2, 1, lastRow - 1, headers.length).clearContent();
     if (!rows.length) return;
     const grid = rows.map((r) => headers.map((h) => toCell(r[h])));
     const range = sh.getRange(2, 1, grid.length, headers.length);
@@ -354,8 +358,7 @@ var Server = (() => {
   function appendRows(tab, rows) {
     if (!rows.length) return;
     const sh = sheet(tab);
-    const lastCol = Math.max(sh.getLastColumn(), 1);
-    const headers = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(String).filter(Boolean);
+    const headers = ensureHeaders(sh, tab);
     const grid = rows.map((r) => headers.map((h) => toCell(r[h])));
     const range = sh.getRange(sh.getLastRow() + 1, 1, grid.length, headers.length);
     range.setNumberFormat("@");
