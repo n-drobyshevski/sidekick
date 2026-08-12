@@ -145,9 +145,12 @@ export async function renderGraphPage(main, params, _ctx) {
 
   // ------------------------------------------------------------------- frame
   const title = el("h1", { class: "workbench-title" }, "Security Graph");
-  const meta = el("div", { class: "workbench-meta", role: "status" });
+  // The counts and "Load more" sit over the canvas, bottom-left, rather than in the
+  // top bar: they describe what is drawn, so they belong beside it. Kept as one
+  // element across repaints and re-attached after each clear(body).
+  const meta = el("div", { class: "workbench-meta overlay", role: "status" });
   const controls = el("div", { class: "workbench-controls" });
-  const bar = el("div", { class: "workbench-bar" }, title, meta, controls);
+  const bar = el("div", { class: "workbench-bar" }, title, controls);
   const chipsRow = el("div", { class: "filter-chips", role: "group", "aria-label": "Applied filters" });
   const body = el("div", { class: "workbench-body" });
   main.append(el("div", { class: "workbench" }, bar, chipsRow, body));
@@ -318,6 +321,7 @@ export async function renderGraphPage(main, params, _ctx) {
       body.append(buildLegend(boot, payload));
       applyHighlight();
     }
+    body.append(meta);
     updateMeta(payload);
   }
 
@@ -757,6 +761,13 @@ function buildLegend(boot, payload) {
       "drag (or Shift+arrows) repositions a node"),
   );
 
-  legend.append(el("summary", { class: "legend-toggle" }, "Legend"), body);
+  // Collapsed, the legend is a "?" in the corner opposite the counts. The glyph alone
+  // names nothing, so the accessible name and the tooltip both still say "Legend".
+  legend.append(
+    el("summary", {
+      class: "legend-toggle", "aria-label": "Legend", title: "Legend",
+    }, el("span", { class: "legend-glyph", "aria-hidden": "true" }, "?")),
+    body,
+  );
   return legend;
 }
