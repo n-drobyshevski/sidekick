@@ -10,7 +10,8 @@ import { bootstrap, listJoin, listSplit, parseHash, setParams, swrCall } from ".
 import { openAssetSheet, openIssueSheet } from "../detailSheets.js";
 import { graphTable, renderGraph } from "../graphView.js";
 import { CATEGORY_LABELS, CATEGORY_ORDER, categoryOf, kindLabel } from "../icons.js";
-import { clear, el, emptyState, openSheet, sevBadge, skeleton } from "../ui.js";
+import { filterUI } from "../filters.js";
+import { clear, closeActiveSheet, el, emptyState, sevBadge, skeleton } from "../ui.js";
 
 const DEPTH_TEXT = {
   1: "Depth 1: seeds and their direct relationships",
@@ -116,6 +117,9 @@ function rpcParams(p) {
 }
 
 export async function renderGraphPage(main, params, _ctx) {
+  // A drawer left open by the previous render belongs to that render's state; the
+  // `panel=filters` check at the end of this function reopens it against the new one.
+  closeActiveSheet();
   // A fresh visit opens on a default view: the Start-from set to all scored
   // assets (AARS > 0) plus the node-type filter set to AI agents — the product's
   // primary lens. Each default is independent and only fills in when its own
@@ -151,9 +155,21 @@ export async function renderGraphPage(main, params, _ctx) {
   const meta = el("div", { class: "workbench-meta overlay", role: "status" });
   const controls = el("div", { class: "workbench-controls" });
   const bar = el("div", { class: "workbench-bar" }, title, controls);
-  const chipsRow = el("div", { class: "filter-chips", role: "group", "aria-label": "Applied filters" });
+  // Trigger, chips row and drawer come from the shared filter surface (filters.js), so the
+  // inventory page gets this same behavior rather than a second, worse copy of it.
+  const panel = filterUI({
+    entries: () => filterEntries(),
+    onPatch: (patch) => update(patch),
+    onClearAll: () => clearAllFilters(),
+    buildBody: (sheetBody) => {
+      const fc = buildFilterControls();
+      sheetBody.append(fc.root);
+      return fc.sync;
+    },
+    onPanelChange: (name) => update({ panel: name }),
+  });
   const body = el("div", { class: "workbench-body" });
-  main.append(el("div", { class: "workbench" }, bar, chipsRow, body));
+  main.append(el("div", { class: "workbench" }, bar, panel.chips, body));
 
   if (!boot.latestSync) {
     body.append(el("div", { class: "workbench-empty" }, emptyState(
@@ -167,8 +183,6 @@ export async function renderGraphPage(main, params, _ctx) {
   let lastData = null;
   let graphApi = null;
   let matchIds = null;
-  let filtersSheet = null;
-  let sheetSync = null;
   let seq = 0;
 
   // Search (client-side highlight; graph view only).
@@ -219,19 +233,12 @@ export async function renderGraphPage(main, params, _ctx) {
   );
   orderSel.addEventListener("change", () => update({ sort: orderSel.value, pos: "" }));
 
-  // Filters drawer trigger, with an applied-count badge (the number is the signal).
-  const filterCount = el("span", { class: "filter-count", "aria-hidden": "true" });
-  const filterBtn = el("button", {
-    "aria-haspopup": "dialog",
-    onclick: () => openFilters(true),
-  }, "Filters", filterCount);
-
   const viewToggle = el("button", {
     "aria-pressed": state.view === "table" ? "true" : "false",
     onclick: () => update({ view: state.view === "table" ? "graph" : "table" }),
   }, state.view === "table" ? "View as graph" : "View as table");
 
-  controls.append(searchField, arrangeSel, orderSel, filterBtn, viewToggle);
+  controls.append(searchField, arrangeSel, orderSel, panel.trigger, viewToggle);
 
   // ------------------------------------------------------------ update cycle
   function update(patch) {
@@ -302,7 +309,7 @@ export async function renderGraphPage(main, params, _ctx) {
       else map.delete(id); // dragged back to its computed spot
       update({ pos: encodeOffsets(map) });
     },
-    onEscape: () => filterBtn.focus(),
+    onEscape: () => panel.trigger.focus(),
   };
 
   function paint(payload) {
@@ -483,36 +490,8 @@ export async function renderGraphPage(main, params, _ctx) {
     viewToggle.textContent = state.view === "table" ? "View as graph" : "View as table";
     viewToggle.setAttribute("aria-pressed", state.view === "table" ? "true" : "false");
 
-    // Chips + count badge.
-    const entries = filterEntries();
-    filterCount.textContent = entries.length ? String(entries.length) : "";
-    filterBtn.setAttribute("aria-label",
-      entries.length ? `Filters, ${entries.length} applied` : "Filters");
-    clear(chipsRow);
-    chipsRow.hidden = !entries.length;
-    for (const e of entries) {
-      chipsRow.append(el("button", {
-        class: "filter-chip" + (e.sev ? " sev-" + e.sev : ""),
-        "aria-label": "Clear filter: " + e.label,
-        onclick: () => {
-          update(e.patch);
-          const next = chipsRow.querySelector(".filter-chip");
-          (next || filterBtn).focus();
-        },
-      },
-        e.sev ? el("span", { class: "sev-dot", "aria-hidden": "true" }) : null,
-        e.label,
-        el("span", { class: "filter-chip-x", "aria-hidden": "true" }, "✕"),
-      ));
-    }
-    if (entries.length) {
-      chipsRow.append(el("button", {
-        class: "link filter-clear-all",
-        onclick: () => clearAllFilters(),
-      }, "Clear all"));
-    }
-
-    if (sheetSync) sheetSync();
+    // Chips, count badge and the open drawer's own controls.
+    panel.sync();
   }
 
   function clearAllFilters() {
@@ -521,28 +500,10 @@ export async function renderGraphPage(main, params, _ctx) {
       severities: "", kinds: "", projects: "", clouds: "",
       depth: String(defaults.defaultDepth || 2),
     });
-    filterBtn.focus();
-  }
-
-  // --------------------------------------------------------- filters drawer
-  function openFilters(takeFocus) {
-    if (filtersSheet) return;
-    update({ panel: "filters" });
-    filtersSheet = openSheet((sheetBody) => {
-      const fc = buildFilterControls();
-      sheetBody.append(fc.root);
-      sheetSync = fc.sync;
-    }, {
-      title: "Filters",
-      subtitle: "Changes apply immediately",
-      width: "min(400px, 92vw)",
-      autoFocus: !!takeFocus,
-      onClose: () => {
-        filtersSheet = null;
-        sheetSync = null;
-        update({ panel: "" });
-      },
-    });
+    // Focus is the caller's business: clearing from the chips row hands it to the trigger
+    // (filters.js does that), while clearing from inside the open drawer must leave it in
+    // the drawer — the app root is inert, so focusing the trigger there would drop focus
+    // onto the document.
   }
 
   function buildFilterControls() {
@@ -713,7 +674,7 @@ export async function renderGraphPage(main, params, _ctx) {
   }, skeleton("chart")));
   syncControls();
   await load();
-  if (params.panel === "filters") openFilters(false);
+  if (params.panel === "filters") panel.open(false);
 }
 
 function field(labelText, control) {

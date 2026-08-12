@@ -224,6 +224,17 @@ let routeHookInstalled = false;
 /** Matches the .sheet transform transition in styles.css. */
 const SHEET_EXIT_MS = 220;
 
+/**
+ * Close whatever sheet is mounted, if any. A page calls this as it remounts: the filters
+ * drawer is deliberately NOT closeOnRouteChange (it rewrites its own query params on every
+ * toggle and would close itself), so a genuine navigation that re-renders the same route
+ * would otherwise leave the old drawer on screen, still wired to the previous render's
+ * state. Focus is not restored — the page that owned it is already gone.
+ */
+export function closeActiveSheet() {
+  if (activeSheet) activeSheet.close({ immediate: true, restoreFocus: false });
+}
+
 function motionOk() {
   return !(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
 }
