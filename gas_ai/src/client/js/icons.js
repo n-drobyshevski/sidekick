@@ -113,6 +113,27 @@ export function kindIcon(kind, size = 16) {
   return g;
 }
 
+/**
+ * The same icon as a standalone <svg>, for HTML surfaces (buttons, chips) rather than
+ * the graph canvas. kindIcon() returns a bare <g>, which renders nothing outside an
+ * <svg> — the Toxic Combinations matrix and its condition chips need the wrapper.
+ *
+ * It strokes in `currentColor`, so an icon inherits whatever colour its label already
+ * has and the two can never disagree about which category they are naming.
+ */
+export function kindIconSvg(kind, size = 16) {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("class", "kind-icon");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("width", String(size));
+  svg.setAttribute("height", String(size));
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  // The <g> is drawn at its native 16x16 and scaled by the viewBox, so no transform.
+  svg.append(kindIcon(kind, 16));
+  return svg;
+}
+
 export function kindLabel(kind) {
   return KIND_LABELS[kind] || kind;
 }

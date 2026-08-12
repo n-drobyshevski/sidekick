@@ -2,7 +2,9 @@
 // four groups; classification works by rule id and by rule-name pattern.
 
 import { describe, expect, it } from "vitest";
-import { classifyIssue, COMBO_GROUPS, comboSummary } from "../src/domain/toxicCombos";
+import {
+  classifyIssue, COMBO_GROUPS, CONDITION_KEYS, comboSummary,
+} from "../src/domain/toxicCombos";
 import { SEED_ISSUES } from "../src/server/sampleData";
 
 describe("classifyIssue", () => {
@@ -34,6 +36,22 @@ describe("classifyIssue", () => {
       if (g.nativeSeverity === "MEDIUM") expect(g.adjustedSeverity).toBe("HIGH");
       if (g.nativeSeverity === "LOW") expect(g.adjustedSeverity).toBe("MEDIUM");
       expect(g.amplifierNote.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("every group names at least one condition, drawn from the shared vocabulary", () => {
+    for (const g of COMBO_GROUPS) {
+      expect(g.conditions.length).toBeGreaterThan(0);
+      for (const key of g.conditions) expect(CONDITION_KEYS).toContain(key);
+    }
+  });
+
+  it("no rule tests internet exposure — the matrix column is amplifier-only", () => {
+    // The condition matrix tells the analyst that every mark in the exposure column is
+    // risk stacked ON TOP of the pattern. If a rule ever starts testing exposure that
+    // caption becomes a lie, so the claim is pinned here rather than in the copy.
+    for (const g of COMBO_GROUPS) {
+      expect(g.conditions).not.toContain("INTERNET_EXPOSURE");
     }
   });
 });

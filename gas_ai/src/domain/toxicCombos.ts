@@ -5,7 +5,17 @@
 // alongside it (severity never changes silently, and never by color alone).
 
 import type { Severity } from "./config";
-import type { IssueRow } from "./graphTypes";
+import type { IssueRow, NodeKind } from "./graphTypes";
+
+/**
+ * The risk conditions a combination is built out of, named as the graph's own risk-node
+ * kinds so the two pages share one vocabulary: the Toxic Combinations matrix labels a
+ * column with the same icon and words the Security Graph hangs off the asset.
+ */
+export const CONDITION_KEYS = [
+  "MISSING_GUARDRAIL", "EXCESSIVE_PRIVILEGE", "SENSITIVE_DATA", "INTERNET_EXPOSURE",
+] as const satisfies readonly NodeKind[];
+export type ConditionKey = (typeof CONDITION_KEYS)[number];
 
 export interface ComboGroup {
   id: string;
@@ -16,6 +26,14 @@ export interface ComboGroup {
   adjustedSeverity: Severity;
   amplifierNote: string;
   namePattern: RegExp; // fallback classifier when live data arrives without rule ids
+  /**
+   * The conditions the source rule TESTS — what makes this pattern this pattern. Several
+   * rules test theirs disjunctively ("high privileges OR sensitive data access"), so a
+   * listed condition is not a promise that every affected asset carries it; that is the
+   * measured half, and the matrix shows the two side by side. INTERNET_EXPOSURE is
+   * deliberately in no rule's list: it is the amplifier that shows up on top.
+   */
+  conditions: ConditionKey[];
   frameworks: {
     owaspLlm: string[];
     owaspAgentic: string[];
@@ -38,6 +56,7 @@ export const COMBO_GROUPS: ComboGroup[] = [
       "Wiz MEDIUM, treated as HIGH: no content filtering or data protection on model " +
       "calls, and the 5Rs data-security score (53%) confirms restriction controls are failing.",
     namePattern: /without\s+guardrail/i,
+    conditions: ["MISSING_GUARDRAIL"],
     frameworks: {
       owaspLlm: ["LLM06", "LLM02"],
       owaspAgentic: ["ASI02", "ASI03"],
@@ -56,6 +75,7 @@ export const COMBO_GROUPS: ComboGroup[] = [
       "Wiz MEDIUM, treated as HIGH: prompt injection on an over-privileged managed agent " +
       "reaches sensitive data, and the 5Rs score (53%) confirms that data is not restricted.",
     namePattern: /managed\s+ai\s+agent\s+with\s+high\s+privileges/i,
+    conditions: ["EXCESSIVE_PRIVILEGE", "SENSITIVE_DATA"],
     frameworks: {
       owaspLlm: ["LLM06", "LLM01"],
       owaspAgentic: ["ASI03", "ASI01"],
@@ -74,6 +94,7 @@ export const COMBO_GROUPS: ComboGroup[] = [
       "Wiz MEDIUM, treated as HIGH: the agent inherits its host's attack surface (VM / " +
       "serverless), holds excessive IAM, and the 5Rs score (53%) confirms weak data restriction.",
     namePattern: /hosted\s+on\s+vm\/?serverless/i,
+    conditions: ["EXCESSIVE_PRIVILEGE", "SENSITIVE_DATA"],
     frameworks: {
       owaspLlm: ["LLM06", "LLM01", "LLM02", "LLM05"],
       owaspAgentic: ["ASI02", "ASI03", "ASI05"],
@@ -92,6 +113,7 @@ export const COMBO_GROUPS: ComboGroup[] = [
       "Wiz LOW, treated as MEDIUM: latent privileges — a compromised agent (prompt " +
       "injection → RCE/SSRF) inherits every permission of its execution identity.",
     namePattern: /overly\s+permissive\s+execution\s+identity/i,
+    conditions: ["EXCESSIVE_PRIVILEGE"],
     frameworks: {
       owaspLlm: [],
       owaspAgentic: ["ASI03"],

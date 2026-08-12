@@ -8,6 +8,7 @@
 import { call } from "./api.js";
 import { bootstrapCached, navigate } from "./store.js";
 import { kindLabel } from "./icons.js";
+import { slaState } from "./pages/comboView.js";
 import {
   aarsChip, clear, el, emptyState, errorState, fmtDate, fmtDateTime,
   openSheet, sevBadge, sheetRow, sheetSection, skeleton,
@@ -79,7 +80,7 @@ const FW_GROUPS = [
  * labelled lines per row buries the rule name it sits under. The issue sheet, where the
  * mappings are the subject, gets the grouped form.
  */
-function fwTags(frameworks, compact) {
+export function fwTags(frameworks, compact) {
   if (!frameworks) return null;
   if (compact) {
     const codes = [];
@@ -103,16 +104,19 @@ function fwTags(frameworks, compact) {
   return groups.length ? el("div", { class: "fw-groups" }, ...groups) : null;
 }
 
-/** The SLA deadline as a verdict, never as a raw ISO string. */
-function dueChip(dueAt) {
-  const t = Date.parse(dueAt || "");
-  if (Number.isNaN(t)) return null;
-  const days = Math.round((t - Date.now()) / 86400000);
-  const kind = days < 0 ? "bad" : days <= 7 ? "warn" : "neutral";
-  const text = days < 0
-    ? `Overdue ${Math.abs(days)}d`
-    : days === 0 ? "Due today" : `Due in ${days}d`;
-  return el("span", { class: `pill ${kind}`, title: `Due ${fmtDateTime(dueAt)}` }, text);
+/**
+ * The SLA deadline as a verdict, never as a raw ISO string. The verdict itself comes
+ * from slaState so the sheet, the combos issue table and the combos KPI row cannot
+ * disagree about when something is overdue or merely due soon.
+ */
+export function dueChip(dueAt) {
+  const sla = slaState(dueAt, Date.now());
+  if (!sla) return null;
+  return el(
+    "span",
+    { class: `pill ${sla.kind}`, title: `Due ${fmtDateTime(dueAt)}` },
+    sla.label,
+  );
 }
 
 function kvRow(dt, dd) {

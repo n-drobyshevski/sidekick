@@ -1458,16 +1458,193 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.28); }
 }
 .scan-card .scan-link { margin-top: auto; font-size: 12px; font-weight: 600; }
 
+/* ------------------------------------------------------ toxic combinations page */
+
+/* The graph's kind icons on an HTML surface (see kindIconSvg in icons.js). Stroked in
+   currentColor so a chip's icon and its label are always the same colour — the graph's
+   .gnode-icon takes its stroke from the node's category instead, which only works
+   inside the canvas. */
+.kind-icon {
+  flex: 0 0 auto; fill: none; stroke: currentColor;
+  stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round;
+}
+
+/* Severity FILL as a background, for marks this page draws itself: the shift-bar
+   segments and the pattern dots. The .sev-<LEVEL> classes above can't do this job —
+   they paint a 14% tint for badge surfaces, which is right for a label and far too
+   pale for a bar segment that has to read as a mark at >=3:1. Text never uses these;
+   any coloured label still takes its --sev-*-text token (the Two-Token rule). */
+.sev-fill-CRITICAL { background: var(--sev-critical); }
+.sev-fill-HIGH { background: var(--sev-high); }
+.sev-fill-MEDIUM { background: var(--sev-medium); }
+.sev-fill-LOW { background: var(--sev-low); }
+.sev-fill-INFO { background: var(--sev-info); }
+.sev-fill-UNKNOWN { background: var(--sev-unknown); }
+
+/* The amplifier, drawn: the same population rated twice on one scale. Both bars are
+   grown from the same total, so the second is the first's mix MOVED — the widths are
+   the comparison, which is the only reason to stack them. */
+.combo-shift { display: flex; flex-direction: column; gap: 10px; }
+.combo-shift-row { display: flex; flex-direction: column; gap: 6px; }
+.combo-shift-head { display: flex; align-items: baseline; gap: 8px; }
+.combo-shift-bar {
+  display: flex; width: 100%; height: 22px; overflow: hidden;
+  border-radius: var(--radius-sm); background: var(--page);
+  border: 1px solid var(--hairline);
+}
+.combo-shift-seg { flex-basis: 0; min-width: 3px; }
+.combo-shift-seg.is-empty { flex: 1; background: repeating-linear-gradient(
+  45deg, transparent, transparent 4px, rgba(0, 0, 0, 0.06) 4px, rgba(0, 0, 0, 0.06) 8px); }
+.combo-shift-keys { display: flex; flex-wrap: wrap; gap: 6px; }
+.combo-shift-key {
+  display: inline-flex; align-items: center; gap: 2px;
+  border-radius: 999px; padding: 1px 8px; font-size: 11px; font-weight: 600;
+}
+.combo-shift-key-num { margin-left: 4px; }
+/* The reason the second bar differs from the first. Not decoration: without it the two
+   bars are a before/after with no stated cause. */
+.combo-shift-rule {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11px; color: var(--text-3);
+}
+.combo-shift-rule-glyph { color: var(--text-2); font-weight: 600; }
+
+/* The condition matrix. A grid, not a table element, because the row heads are buttons
+   and the column heads are filter toggles; role=table/row/cell carries the semantics. */
+.combo-matrix { display: flex; flex-direction: column; margin-top: 4px; }
+.combo-matrix-row {
+  display: grid;
+  grid-template-columns: minmax(130px, 1.5fr) repeat(4, minmax(58px, 1fr));
+  align-items: stretch; gap: 4px;
+  border-bottom: 1px solid var(--hairline);
+}
+.combo-matrix-row:last-child { border-bottom: none; }
+.combo-matrix-corner { display: flex; align-items: flex-end; padding: 0 0 6px; }
+.combo-matrix-colhead { display: flex; align-items: stretch; justify-content: center; }
+/* Column heads carry the graph's category tint, so a column and the risk node it names
+   look like the same thing across the two pages. The tint is on the head only — the
+   cells below stay neutral, which is what keeps this a ledger and not a heat map. */
+.combo-cond-btn {
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
+  gap: 3px; width: 100%; min-height: 0; padding: 5px 4px 6px;
+  font-size: 10px; font-weight: 600; line-height: 1.2; text-align: center;
+  border: 1px solid transparent; border-radius: var(--radius-sm);
+  background: none; box-shadow: none; color: var(--text-2);
+}
+.combo-cond-btn svg { flex: 0 0 auto; }
+.combo-cond-btn:hover { background: rgba(0, 0, 0, 0.03); }
+.combo-cond-btn[data-category="data"] { color: var(--cat-data-text); }
+.combo-cond-btn[data-category="iam"] { color: var(--cat-iam-text); }
+.combo-cond-btn[data-category="vuln"] { color: var(--cat-vuln-text); }
+.combo-cond-btn[data-category="exposure"] { color: var(--cat-exposure-text); }
+.combo-cond-btn[aria-pressed="true"] { border-color: var(--hairline); font-weight: 700; }
+.combo-cond-btn[aria-pressed="true"][data-category="data"] { background: var(--cat-data-tint); }
+.combo-cond-btn[aria-pressed="true"][data-category="iam"] { background: var(--cat-iam-tint); }
+.combo-cond-btn[aria-pressed="true"][data-category="vuln"] { background: var(--cat-vuln-tint); }
+.combo-cond-btn[aria-pressed="true"][data-category="exposure"] { background: var(--cat-exposure-tint); }
+
+.combo-matrix-rowhead { display: flex; align-items: center; }
+.combo-matrix-jump {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  min-height: 0; padding: 7px 6px; text-align: left;
+  font-size: 12px; font-weight: 600; line-height: 1.25;
+  background: none; border: none; box-shadow: none; color: var(--ink);
+  border-radius: var(--radius-sm);
+}
+.combo-matrix-jump:hover { background: rgba(0, 0, 0, 0.03); }
+.combo-matrix-jump .sev-dot { flex: 0 0 auto; margin-right: 0; }
+.combo-matrix-jump-num { margin-left: auto; color: var(--text-3); font-weight: 600; }
+
+.combo-cell {
+  display: flex; align-items: center; justify-content: center; gap: 3px;
+  padding: 7px 2px; font-size: 12px;
+}
+/* Filled = the rule tests it; hollow = the assets carry it anyway; "?" = undetermined;
+   em dash = absent. The glyph is the signal and the count is the quantity — the cell
+   spends no colour at all, so four columns of marks never become a wall of red. */
+.combo-cell-mark { line-height: 1; font-size: 11px; }
+.combo-cell-mark.is-required { color: var(--ink); }
+.combo-cell-mark.is-required-only { color: var(--text-3); }
+.combo-cell-mark.is-extra { color: var(--text-2); }
+.combo-cell-mark.is-unknown { color: var(--text-3); font-weight: 700; }
+.combo-cell-mark.is-none { color: var(--text-3); }
+.combo-cell-num { font-size: 11px; font-weight: 600; color: var(--text-2); }
+
 /* combo group cards */
+.combo-toolbar {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px; margin-bottom: 10px;
+}
+.combo-toolbar > .section-label { margin: 24px 0 0; }
+.combo-toolbar-controls {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-left: auto;
+}
 .combo-card { margin-bottom: 14px; }
+/* The pattern's NAME leads. It used to sit third in this row, after the badge and a
+   "Wiz native MEDIUM" caption, so the one thing you scan a stack of four for was the
+   one thing not at the start of the line. */
 .combo-card .combo-head {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
 }
-.combo-card .combo-count { margin-left: auto; font-weight: 600; font-variant-numeric: tabular-nums; }
+.combo-card .combo-title { flex: 0 1 auto; margin: 0; }
+.combo-card .combo-count {
+  margin-left: auto; font-weight: 600; font-size: 12px; color: var(--text-2);
+}
+/* Native and adjusted as one reading. The arrow IS the amplifier, so the re-rating is a
+   single object with one accessible name rather than a badge and a loose caption. */
+.combo-shift-badge { display: inline-flex; align-items: center; gap: 5px; }
+.combo-shift-arrow { color: var(--text-3); font-weight: 600; }
 .combo-note {
   margin: 8px 0; padding: 8px 10px; font-size: 12px; color: var(--text-2);
   background: rgba(0, 0, 0, 0.03); border-radius: var(--radius-md);
   max-width: var(--measure);
+}
+.combo-conds { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
+.combo-cond {
+  display: inline-flex; align-items: center; gap: 5px;
+  border-radius: var(--radius-sm); padding: 2px 8px;
+  font-size: 11px; font-weight: 600;
+  background: rgba(0, 0, 0, 0.05); color: var(--text-2);
+}
+/* Carried but not tested: the same chip, outlined instead of filled, so "extra risk on
+   top of the pattern" reads without a second colour. */
+.combo-cond.is-extra {
+  background: none; border: 1px dashed var(--hairline); color: var(--text-3);
+}
+.combo-cond[data-category="data"] { color: var(--cat-data-text); }
+.combo-cond[data-category="iam"] { color: var(--cat-iam-text); }
+.combo-cond[data-category="vuln"] { color: var(--cat-vuln-text); }
+.combo-cond[data-category="exposure"] { color: var(--cat-exposure-text); }
+.combo-cond-num { color: var(--text-3); font-variant-numeric: tabular-nums; }
+
+.combo-assets {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px;
+}
+/* Its own chip, not the graph's severity FILTER pill this page used to borrow: an
+   affected asset is a link to a record, not a toggle, and the two should not look alike. */
+.asset-chip, .asset-more {
+  display: inline-flex; align-items: center; gap: 6px;
+  border-radius: 999px; padding: 3px 10px; min-height: 0;
+  font-size: 12px; background: var(--page); border: 1px solid var(--hairline);
+  box-shadow: none; color: var(--ink);
+}
+.asset-chip:hover, .asset-more:hover { background: var(--surface); border-color: #d9d9de; }
+.asset-chip-score { font-size: 11px; font-weight: 600; border-radius: 999px; padding: 0 6px; }
+.asset-more { color: var(--text-2); font-weight: 600; border-style: dashed; }
+
+.combo-actions { display: flex; gap: 8px; margin-top: 14px; }
+.combo-issues:not(:empty) { margin-top: 12px; }
+.combo-issues .filter-bar { margin-bottom: 10px; }
+/* Wide enough for the placeholder that names all four searchable fields — clipped, it
+   advertises two of them and hides the rest. */
+.combo-issues .filter-bar input[type="search"] { min-width: 260px; }
+.combo-issues .pager { margin-top: 10px; }
+.combo-issues-empty { color: var(--text-3); white-space: normal; text-align: center; }
+
+@media (max-width: 720px) {
+  /* Below this the five matrix columns stop being readable; the cells keep their marks
+     but the column heads drop to the icon, whose accessible name the button still has. */
+  .combo-matrix-row { grid-template-columns: minmax(96px, 1.4fr) repeat(4, minmax(40px, 1fr)); }
+  .combo-cond-btn span:not(.sr-only) { display: none; }
 }
 .fw-tags { display: flex; flex-wrap: wrap; gap: 4px; }
 .fw-tag {
