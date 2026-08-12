@@ -3,3 +3,6 @@
 # Rebuild with `npm run build` and commit the result after source changes.
 node_modules/
 .clasprc.json
+# The scriptId points at ONE Apps Script project, so it belongs to whoever is
+# deploying, not to the repo. `clasp create` writes this file — see the README.
+.clasp.json
