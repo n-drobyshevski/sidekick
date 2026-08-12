@@ -5,6 +5,7 @@
 import {
   ASSET_COMPARATORS,
   CLIENT_ALL_MAX,
+  facetCounts,
   filterAssetRows,
   pageOf,
   resolveAssetQuery,
@@ -276,8 +277,8 @@ function assetRow(n: GNode): Rec {
  * the ~25 assetRow carries. The table is the one place that ships every asset at once, so
  * everything the drill-down needs and the list doesn't stays behind getAssetDetail.
  */
-function assetTableRow(n: GNode): Rec {
-  return {
+function assetTableRow(n: GNode, issuesBySeverity?: Record<string, number>): Rec {
+  const row: Rec = {
     id: n.id,
     name: n.name,
     kind: n.kind,
@@ -291,6 +292,28 @@ function assetTableRow(n: GNode): Rec {
     agentic: n.identityPurpose === "AGENTIC",
     projects: (n.projects ?? []).map((p) => p.name),
   };
+  // Only the rows that have open issues carry the breakdown. Most of a healthy estate has
+  // none, and an empty object per row is pure weight in the all-inventory payload.
+  if (issuesBySeverity) row["issuesBySeverity"] = issuesBySeverity;
+  return row;
+}
+
+/**
+ * Open issues rolled up per asset and severity — the breakdown behind the table's
+ * `severity` column, which is only the worst of them. Built from the same issue rows the
+ * KPIs already load, so the badge and the bar can never disagree, and computed inside the
+ * cached model: one pass per sync, not one per request.
+ */
+function issuesBySeverityByAsset(issues: IssueRow[]): Map<string, Record<string, number>> {
+  const out = new Map<string, Record<string, number>>();
+  for (const issue of issues) {
+    if (!issue.assetId) continue;
+    const bucket = out.get(issue.assetId) ?? {};
+    const sev = issue.adjustedSeverity ?? "UNKNOWN";
+    bucket[sev] = (bucket[sev] ?? 0) + 1;
+    out.set(issue.assetId, bucket);
+  }
+  return out;
 }
 
 interface AssetsModel {
@@ -300,12 +323,19 @@ interface AssetsModel {
   aarsTrend: AarsTrendPoint[];
   /** Indices in aarsTrend where the scoring model changed — the chart marks them. */
   aarsTrendRuleChanges: number[];
-  facets: { kinds: string[]; clouds: string[]; aarsSeverities: string[] };
+  facets: {
+    kinds: string[];
+    clouds: string[];
+    regions: string[];
+    aarsSeverities: string[];
+    severities: string[];
+    projects: string[];
+  };
 }
 
 /**
  * Everything about the inventory that doesn't depend on the request: every table row, the
- * KPI totals, the AARS-severity histogram and the filter-bar options. The aggregates are
+ * KPI totals, the AARS-severity histogram and the filter vocabulary. The aggregates are
  * computed over the whole inventory on purpose — the KPI row and the chart describe the
  * estate, never the page or the filtered subset, so they stay honest when the client only
  * ever holds 50 rows.
@@ -316,15 +346,24 @@ function assetsModel(): AssetsModel {
   const issues = openIssues();
   const agents = assets.filter((a) => a.kind === "AI_AGENT");
   const protectedAgents = agents.filter((a) => !a.guardrailMissing).length;
-  const rows = assets.map(assetTableRow).sort(ASSET_COMPARATORS.aars);
+  const issueRollup = issuesBySeverityByAsset(issues);
+  const rows = assets
+    .map((a) => assetTableRow(a, issueRollup.get(a.id)))
+    .sort(ASSET_COMPARATORS.aars);
 
   const aarsSeverityCounts: Record<string, number> = {};
   const kinds = new Set<string>();
   const clouds = new Set<string>();
+  const regions = new Set<string>();
+  const severities = new Set<string>();
+  const projects = new Set<string>();
   for (const a of assets) {
     if (a.aarsSeverity) aarsSeverityCounts[a.aarsSeverity] = (aarsSeverityCounts[a.aarsSeverity] ?? 0) + 1;
     kinds.add(a.kind);
     if (a.cloudPlatform) clouds.add(a.cloudPlatform);
+    if (a.region) regions.add(a.region);
+    if (a.severity) severities.add(a.severity);
+    for (const p of a.projects ?? []) if (p.name) projects.add(p.name);
   }
 
   return {
@@ -351,7 +390,10 @@ function assetsModel(): AssetsModel {
     facets: {
       kinds: [...kinds].sort(),
       clouds: [...clouds].sort(),
+      regions: [...regions].sort(),
       aarsSeverities: AARS_SEVERITY_ORDER.filter((sev) => aarsSeverityCounts[sev]),
+      severities: SEVERITY_ORDER.filter((sev) => severities.has(sev)),
+      projects: [...projects].sort(),
     },
   };
 }
@@ -371,9 +413,11 @@ export function getAssets(p?: unknown): ApiResult {
       aarsSeverityCounts: model.aarsSeverityCounts,
       aarsTrend: model.aarsTrend,
       aarsTrendRuleChanges: model.aarsTrendRuleChanges,
+      aarsDeltas: aarsDeltas(model.aarsTrend, model.aarsSeverityCounts),
       facets: model.facets,
       pageSize: query.pageSize,
       sort: query.sort,
+      dir: query.dir,
     };
 
     // Small inventory: ship it whole and let the browser filter, sort and page with no
@@ -389,7 +433,7 @@ export function getAssets(p?: unknown): ApiResult {
       };
     }
 
-    const filtered = sortAssetRows(filterAssetRows(model.rows, query), query.sort);
+    const filtered = sortAssetRows(filterAssetRows(model.rows, query), query.sort, query.dir);
     const paged = pageOf(filtered, query.page, query.pageSize);
     return {
       ...head,
@@ -398,8 +442,40 @@ export function getAssets(p?: unknown): ApiResult {
       filtered: filtered.length,
       page: paged.page,
       pageCount: paged.pageCount,
+      // Deliberately outside the data-version cache: these depend on the query. Only the
+      // paged path ships them — the all path's client holds every row and counts its own,
+      // because in that mode a filter change never reaches the server at all.
+      facetCounts: facetCounts(model.rows, query),
     };
   });
+}
+
+/**
+ * Change in each AARS severity count since the previous sync, or null when the comparison
+ * would be dishonest. Three things can make it so, and all three are silence rather than a
+ * hedged number:
+ *  - fewer than two points: nothing to compare against;
+ *  - the scoring rule changed between them: the two points aren't on the same scale;
+ *  - the latest point disagrees with the live counts, which means the estate was rescored
+ *    (AARS Rules → Recompute) without a sync — so a delta would explain a figure that
+ *    isn't the one on screen.
+ */
+function aarsDeltas(
+  trend: AarsTrendPoint[],
+  live: Record<string, number>,
+): { counts: Record<string, number>; since: string } | null {
+  if (trend.length < 2) return null;
+  const last = trend[trend.length - 1];
+  const prev = trend[trend.length - 2];
+  if (last.ruleVersion !== prev.ruleVersion) return null;
+  for (const sev of AARS_SEVERITY_ORDER) {
+    if ((last.counts?.[sev] ?? 0) !== (live[sev] ?? 0)) return null;
+  }
+  const counts: Record<string, number> = {};
+  for (const sev of AARS_SEVERITY_ORDER) {
+    counts[sev] = (last.counts?.[sev] ?? 0) - (prev.counts?.[sev] ?? 0);
+  }
+  return { counts, since: prev.at };
 }
 
 /**
