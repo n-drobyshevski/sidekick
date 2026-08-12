@@ -23,12 +23,14 @@ from config import (
     DEFAULT_FETCH_SEVERITIES,
     DEFAULT_SCOPE,
     FETCH_ASSET_FIELDS,
+    SCOPE_ASSET_MEMBERS,
     SCOPES,
+    SOURCES,
 )
 
 # Wiz's shared auth endpoint. Tenants on a dedicated region override it via a job parameter.
 # See config.PIPELINE_VERSION: every runtime module must come from the same upload.
-MODULE_VERSION = "2.2"
+MODULE_VERSION = "2.3"
 
 DEFAULT_AUTH_URL = "https://auth.app.wiz.io/oauth/token"
 AUDIENCE = "wiz-api"
@@ -80,14 +82,28 @@ _ASSET_OMISSIONS = {
 }
 
 
-def _asset_selection(indent: str = " " * 6) -> str:
+def asset_members(scope: str = DEFAULT_SCOPE) -> tuple:
+    """Which ``vulnerableAsset`` union members this scope asks for -- possibly none.
+
+    A union fails as a whole, so one member the tenant no longer has costs the entire request.
+    That is what ``FETCH_ASSET_FIELDS`` is off for, and it is also why the answer is per-scope:
+    a scope that returns exactly one member can ask for exactly that one and be safe.
+    ``config.SCOPE_ASSET_MEMBERS`` holds the overrides and the evidence for each.
+    """
+    override = SCOPE_ASSET_MEMBERS.get(scope)
+    if override:
+        return tuple(override)
+    return tuple(_ASSET_MEMBERS) if FETCH_ASSET_FIELDS else ()
+
+
+def _asset_selection(indent: str = " " * 6, members: Sequence[str] = _ASSET_MEMBERS) -> str:
     """The ``vulnerableAsset`` sub-selection: one inline fragment per union member.
 
     Generated rather than hand-written so the field list stays in one place and a member that
     lacks a field cannot silently acquire it.
     """
     blocks = []
-    for member in _ASSET_MEMBERS:
+    for member in members:
         fields = [f for f in _ASSET_FIELDS if f not in _ASSET_OMISSIONS.get(member, ())]
         body = "".join(f"{indent}    {f}\n" for f in fields)
         blocks.append(f"{indent}  ... on {member} {{\n{body}{indent}  }}\n")
@@ -132,16 +148,111 @@ query BrickVulnerabilityFindings(
 """
 
 
-def build_query(with_assets: bool = FETCH_ASSET_FIELDS) -> str:
-    """The findings query, with or without the ``vulnerableAsset`` sub-selection.
+# `artifactType` carries the ecosystem a finding was detected in, which is P2P v5's asset
+# category for a code register (see config.ASSET_GROUP_UNKNOWN). Asked for ONLY by the scopes
+# that group on it, on exactly the reasoning behind FETCH_ASSET_FIELDS: a field this tenant
+# might not have costs the whole request, so no scope pays for a column it does not read.
+_ARTIFACT_SELECTION = """      artifactType {
+        codeLibraryLanguage
+      }"""
+
+_ARTIFACT_SCOPES = frozenset({"sca"})
+
+
+def build_query(with_assets: bool = FETCH_ASSET_FIELDS, *, scope: str = DEFAULT_SCOPE) -> str:
+    """The vulnerability-findings query for a scope.
 
     The `%s` slot is filled with the asset fragments or with nothing at all -- an empty string
     rather than an empty ``vulnerableAsset {}``, which is itself a syntax error.
+
+    ``with_assets`` is kept as a positional so the existing callers and tests read unchanged; a
+    scope with an entry in ``config.SCOPE_ASSET_MEMBERS`` overrides it, because that entry is a
+    statement about which members exist rather than a preference.
     """
-    return _QUERY_TEMPLATE % (_asset_selection() if with_assets else "")
+    members = asset_members(scope) if scope in SCOPE_ASSET_MEMBERS else (
+        tuple(_ASSET_MEMBERS) if with_assets else ()
+    )
+    blocks = [_asset_selection(members=members)] if members else []
+    if scope in _ARTIFACT_SCOPES:
+        blocks.append(_ARTIFACT_SELECTION)
+    return _QUERY_TEMPLATE % ("\n".join(blocks))
 
 
 QUERY = build_query()
+
+
+# The static-analysis query. Trimmed from ``brick/devsecops/sast_request.py`` to the fields the
+# metrics consume, and otherwise left exactly as that reference script has it -- which matters
+# more here than it does for the query above, because this one is the only evidence available
+# that a given selection actually validates against the tenant.
+#
+# **There are no timestamps in it, and that is not an oversight.** The reference query selects
+# none, so none is known to exist on ``SASTFinding``. The consequence is that every SAST
+# lifetime is dated from observation: `first_seen` is the scan that first returned the finding
+# and `resolved_at` is the scan that stopped returning it. MTTR is therefore meaningless until
+# the register has run for a while, and reads as near-zero before then -- the same failure the
+# README's backfill section describes for a ledger started today.
+#
+# The captured response's `endCursor` decodes to a sort key of
+# `finding_severityOrder = "4_2026-07-02T23:39:17.79412Z"`, so a timestamp does exist server
+# side. If it turns out to be selectable, add it here and to ``SAST_NODE_SCHEMA``; nothing else
+# has to change, because `metrics.silver_sast` already reads the column and the ledger already
+# prefers an API date over an observed one.
+_SAST_QUERY_TEMPLATE = """
+query BrickSastFindings(
+  $filterBy: SASTFindingFilters
+  $first: Int
+  $after: String
+) {
+  sastFindings(filterBy: $filterBy, first: $first, after: $after) {
+    nodes {
+      id
+      name
+      status
+      severity
+      originalSeverity
+      filePath
+      startLine
+      codeLibraryLanguage
+      origin
+      resolutionReason
+      resource {
+        id
+        name
+        type
+      }
+      weaknesses {
+        id
+      }
+      aiAnalysis {
+        verdict
+      }
+    }
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+  }
+}
+"""
+
+SAST_QUERY = _SAST_QUERY_TEMPLATE
+
+#: Scope -> the GraphQL document that scope's source is queried with.
+_QUERIES = {"vulnerability": lambda scope: build_query(scope=scope), "sast": lambda _: SAST_QUERY}
+
+
+def query_for(scope: str = DEFAULT_SCOPE) -> str:
+    """The GraphQL document for a scope, chosen by its source's ``kind``.
+
+    One of exactly two dispatch sites on ``Source.kind``; the other is
+    ``metrics.silver_findings``. Keeping them to two is what stops "which source is this?" from
+    spreading through the pipeline.
+    """
+    source = SOURCES.get(scope)
+    if source is None:
+        raise RuntimeError(f"unknown scope {scope!r} -- expected one of {sorted(SOURCES)}")
+    return _QUERIES[source.kind](scope)
 
 
 def secret(scope: Optional[str], key: str, env_var: str) -> str:
@@ -220,13 +331,18 @@ def _post(
     variables: Dict[str, Any],
     timeout: int,
     session: Optional[requests.Session] = None,
+    query: Optional[str] = None,
 ) -> Dict[str, Any]:
     """One GraphQL POST, retrying the transient failures with exponential backoff.
 
     ``session`` is an optional pooled connection -- see ``new_session``. Absent, this falls back
     to ``requests.post``, which is a fresh connection per call and is what the caller gets if it
     does not care.
+
+    ``query`` defaults to the vulnerability-findings document, so callers that predate a second
+    source read unchanged.
     """
+    document = query or QUERY
     last_error: Optional[Exception] = None
     poster = session or requests
     for attempt in range(MAX_RETRIES):
@@ -235,7 +351,7 @@ def _post(
         try:
             response = poster.post(
                 api_url,
-                json={"query": QUERY, "variables": variables},
+                json={"query": document, "variables": variables},
                 headers={
                     "Authorization": f"Bearer {token}",
                     "Content-Type": "application/json",
@@ -305,13 +421,39 @@ def build_filter(
     if scope not in SCOPES:
         raise RuntimeError(f"unknown scope {scope!r} -- expected one of {sorted(SCOPES)}")
     filter_by: Dict[str, Any] = copy.deepcopy(SCOPES[scope])
+    source = SOURCES[scope]
 
     api_severities = severity_filter(severities)
-    if api_severities:
+    if api_severities and source.severity_filter:
         filter_by["severity"] = api_severities
     if project_id:
-        filter_by["projectIdV2"] = {"equals": [project_id]}
+        # The two filter types spell the project restriction differently, and the reference
+        # scripts are the evidence for each: sca_request.py passes
+        # `projectIdV2: {equals: [...]}` and sast_request.py passes a bare `projectId: [...]`.
+        if source.kind == "sast":
+            filter_by["projectId"] = [project_id]
+        else:
+            filter_by["projectIdV2"] = {"equals": [project_id]}
     return filter_by
+
+
+def _severity_gate(severities: Sequence[str]):
+    """A predicate keeping only the nodes in this run's severity scope, or None for "keep all".
+
+    Reads ``severity`` and falls back to ``originalSeverity``, matching ``metrics.silver_sast``
+    -- a node the projection would call HIGH must not be dropped here for having a blank
+    primary severity. A node with neither is **kept**: it will land as UNKNOWN, which is a row
+    somebody can see, where dropping it is a row nobody can.
+    """
+    wanted = set(severity_filter(severities))
+    if not wanted:
+        return None
+
+    def keep(node: Dict[str, Any]) -> bool:
+        value = node.get("severity") or node.get("originalSeverity")
+        return value is None or str(value).strip().upper() in wanted
+
+    return keep
 
 
 def fetch_findings(
@@ -340,6 +482,15 @@ def fetch_findings(
     merely be hard, it would change which duplicate wins.
     """
     filter_by = build_filter(scope, severities, project_id)
+    query = query_for(scope)
+    source = SOURCES[scope]
+    connection_name = source.connection
+    # A source whose filter type has no `severity` key cannot be asked to narrow, so the scope
+    # is applied here instead. It has to be applied *somewhere*: `--severities` is recorded in
+    # the scan log and drives the disappearance guard, so a run that ingested MEDIUM rows while
+    # claiming to have scanned CRITICAL,HIGH would hand the next reconcile a scope its own data
+    # contradicts. Costs the bandwidth of the rows it discards, and nothing else.
+    keep = _severity_gate(severities) if not source.severity_filter else None
     session = session or new_session()
 
     cursor: Optional[str] = None
@@ -351,9 +502,11 @@ def fetch_findings(
             {"filterBy": filter_by, "first": page_size, "after": cursor},
             timeout,
             session,
+            query=query,
         )
-        connection = (payload.get("data") or {}).get("vulnerabilityFindings") or {}
-        yield from connection.get("nodes") or []
+        connection = (payload.get("data") or {}).get(connection_name) or {}
+        nodes = connection.get("nodes") or []
+        yield from (nodes if keep is None else [n for n in nodes if keep(n)])
 
         pages += 1
         page_info = connection.get("pageInfo") or {}

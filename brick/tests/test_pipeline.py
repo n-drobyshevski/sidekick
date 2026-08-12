@@ -27,7 +27,7 @@ sys.path.insert(0, str(BRICK_DIR))
 
 import dbx  # noqa: E402
 import run_pipeline  # noqa: E402
-from config import SCOPES  # noqa: E402
+from config import SCOPES, SOURCES  # noqa: E402
 import ingest  # noqa: E402
 from config import FETCH_ASSET_FIELDS  # noqa: E402
 from ingest import QUERY, build_filter, describe_errors  # noqa: E402
@@ -273,11 +273,35 @@ def test_os_scope_matches_the_dashboards_population():
     assert got["severity"] == ["CRITICAL"]
 
 
+def _vuln_scopes():
+    """The scopes whose findings come from ``vulnerabilityFindings``.
+
+    ``sast`` reads a different connection with a different filter type, so the two invariants
+    below -- both of which are about VulnerabilityFindingFilters keys -- cannot apply to it.
+    That exception is pinned by its own test rather than left as a silent gap in a loop.
+    """
+    return [scope for scope, source in SOURCES.items() if source.kind == "vulnerability"]
+
+
 def test_every_scope_asks_for_resolved_findings():
     """Without this the API returns only OPEN findings and every remediation metric collapses
     -- coverage 0%, efficiency undefined, MTTR empty -- while looking like a real result."""
-    for scope in SCOPES:
+    for scope in _vuln_scopes():
         assert build_filter(scope)["status"] == ["OPEN", "RESOLVED"]
+
+
+def test_sast_cannot_ask_for_resolved_findings_and_says_so():
+    """SASTFindingFilters has neither `status` nor `hasFix`, so the guarantee above is simply
+    unavailable here -- SAST closures are learned by disappearance instead.
+
+    Pinned so that adding either key becomes a deliberate act: if the schema gains one, this
+    test fails and somebody has to decide, rather than the filter quietly acquiring a key the
+    API rejects for every scan thereafter.
+    """
+    got = build_filter("sast")
+    assert "status" not in got
+    assert "hasFix" not in got
+    assert got["resource"] == {"isDefaultBranch": {"equals": True}}
 
 
 def test_all_scope_does_not_restrict_type_or_asset():
@@ -290,8 +314,19 @@ def test_scopes_share_the_actionable_filter():
     """hasFix is shared so remediation rates mean the same thing in each scope. Without it,
     awaiting-vendor-fix findings would sit in `all`'s coverage denominator and not in `os`'s,
     making `all` look worse for a reason that is not performance."""
-    for scope in SCOPES:
+    for scope in _vuln_scopes():
         assert build_filter(scope)["hasFix"] is True
+
+
+def test_sca_scope_is_the_code_stage_of_the_default_branch():
+    """Both halves earn their place. Without `codeToCloudPipelineStage: CODE` a dependency is
+    counted once in the repo and again in every image built from it; without `isDefaultBranch`
+    the register grows and shrinks with the team's branching habits rather than its code."""
+    got = build_filter("sca")
+    assert got["codeToCloudPipelineStage"] == ["CODE"]
+    assert got["isDefaultBranch"] == {"equals": True}
+    # It is the same connection `os` reads, which is the whole reason it needs no new maths.
+    assert SOURCES["sca"].connection == "vulnerabilityFindings"
 
 
 def test_project_id_is_opt_in():

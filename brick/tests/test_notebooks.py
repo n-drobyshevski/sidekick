@@ -40,6 +40,7 @@ PAGES = [
     "04_scan_history",
     "05_estate",
     "06_run_and_verify",
+    "08_code_assets",
 ]
 
 #: One-shot migration tooling. Not a page: it has no scan to pin, draws nothing, and boots
@@ -47,8 +48,9 @@ PAGES = [
 #: being loosened for everything. The artifact guards still apply.
 MIGRATION = ["07_import_gas"]
 
-#: Everything that ships under notebooks/.
-EXPECTED = PAGES + MIGRATION
+#: Everything that ships under notebooks/, in the order `sorted(glob)` returns them -- the
+#: importer is 07 and the P2P v5 page is 08, so the page list is not contiguous.
+EXPECTED = sorted(PAGES + MIGRATION)
 
 
 def page_only(name: str) -> None:
@@ -195,9 +197,15 @@ def test_the_boot_cell_pins_the_scan_and_says_which(notebook):
 
 @pytest.mark.parametrize("name", PAGES)
 def test_every_widget_read_is_declared_in_that_notebooks_page_literal(name):
+    import panels
+
     doc = load(NOTEBOOK_DIR / f"{name}.ipynb")
     body = boot_cell(doc)
+    # The page's own widgets, plus the base set every notebook declares through
+    # `panels.declare_widgets`. A page may legitimately read `data_path` or `csv_path` -- both
+    # decide where the register is -- and those are declared, just not by the PAGE literal.
     declared = set(re.findall(r'"(\w+)": \(', body.split("\n\nimport os")[0]))
+    declared |= set(panels.BASE_WIDGETS)
     used = set()
     for cell in cells(doc, "code"):
         used |= set(re.findall(r"ctx\.(?:int_)?param\(\s*'(\w+)'", source(cell)))
@@ -312,7 +320,7 @@ def parse(recipe: str) -> dict:
 
 
 def test_the_native_charts_are_all_documented():
-    """Five visualizations are left to the chart editor, and each one ships its recipe.
+    """Six visualizations are left to the chart editor, and each one ships its recipe.
 
     Their metadata format is undocumented and version-dependent, so nothing here can author one
     correctly and nothing here could verify it if it did -- which is the failure mode the AI/BI
@@ -320,7 +328,7 @@ def test_the_native_charts_are_all_documented():
     plus the recipe to rebuild the chart in fifteen seconds. See brick/README.md.
     """
     found = [(name, r) for name in EXPECTED for _, r in recipes(load(NOTEBOOK_DIR / f"{name}.ipynb"))]
-    assert len(found) == 5, [f for f, _ in found]
+    assert len(found) == 6, [f for f, _ in found]
 
 
 def test_every_recipe_parses_under_the_grammar(notebook):

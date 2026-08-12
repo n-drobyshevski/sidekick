@@ -16,7 +16,7 @@ import functools
 from typing import Any, Optional
 
 # See config.PIPELINE_VERSION: every runtime module must come from the same upload.
-MODULE_VERSION = "2.2"
+MODULE_VERSION = "2.3"
 
 
 @functools.lru_cache(maxsize=1)

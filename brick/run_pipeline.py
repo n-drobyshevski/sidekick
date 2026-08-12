@@ -54,7 +54,7 @@ from typing import Optional
 from pyspark.sql import Row, SparkSession
 from pyspark.sql import functions as F
 
-MODULE_VERSION = "2.2"
+MODULE_VERSION = "2.3"
 
 # The six runtime modules move in lockstep, and the documented way to deploy them is pasting
 # files into a Workspace folder one at a time -- so a half-updated folder is the likely failure,
@@ -68,7 +68,7 @@ try:
     import metrics
     from config import (
         DEFAULT_FETCH_SEVERITIES,
-        DEFAULT_RISK_RULE,
+        rule_for_scope,
         DEFAULT_SCOPE,
         DISAPPEARANCE_MODES,
         DISAPPEARANCE_RESOLUTION,
@@ -78,7 +78,6 @@ try:
         SCANS_COLUMNS,
         SCOPES,
         SEVERITY_ORDER,
-        RiskRule,
     )
     from ingest import DEFAULT_AUTH_URL, fetch_findings, get_token, new_session, secret
 except ImportError as exc:
@@ -102,6 +101,8 @@ GOLD_MTTR = "metrics_mttr"
 GOLD_PROGRAM = "metrics_program"
 GOLD_CAPACITY = "metrics_capacity"
 GOLD_SENSITIVITY = "metrics_sensitivity"
+# P2P v5's asset-centric family. See metrics.asset_profile.
+GOLD_ASSETS = "metrics_assets"
 
 # The append-only tables, i.e. everything except the ledger. A retry writes a scan_id that a
 # failed attempt may already have partly written, so these are cleared for that scan_id first.
@@ -112,6 +113,7 @@ APPEND_TABLES = (
     GOLD_PROGRAM,
     GOLD_CAPACITY,
     GOLD_SENSITIVITY,
+    GOLD_ASSETS,
 )
 
 # APPEND_TABLES name -> the Tables attribute holding its fully-qualified name. Kept beside the
@@ -124,7 +126,24 @@ APPEND_TABLE_ATTRS = {
     GOLD_PROGRAM: "program",
     GOLD_CAPACITY: "capacity",
     GOLD_SENSITIVITY: "sensitivity",
+    GOLD_ASSETS: "assets",
 }
+
+# Every `Tables` attribute, in the order a reader wants them. Defined here rather than in
+# `csvstore` -- which is what consumes it -- because it is a statement about the dataclass
+# below, and `csvstore` already imports this module. One list, so a table added to `Tables` and
+# forgotten in an export is a name error at import rather than a gap in a backup.
+TABLE_ATTRS = (
+    "scans",
+    "ledger",
+    "mttr",
+    "program",
+    "capacity",
+    "sensitivity",
+    "assets",
+    "silver",
+    "bronze",
+)
 
 # Every module that has to be deployed for a run, including this one. The README's file tree
 # is checked against this list by the test suite, so the deployment instructions cannot drift
@@ -139,11 +158,15 @@ RUNTIME_MODULES = ("config", "dbx", "ingest", "ledger", "metrics", "run_pipeline
 # printed above it, which is the same class of bug with a quieter failure.
 NOTEBOOK_MODULES = ("panels", "figures", "tiles")
 
-# One-shot migration tooling, treated exactly like the notebook layer and for the same
-# reason: `import_bundle` writes the ledger, so a stale copy beside a fresh `ledger.py` is
+# Tooling that moves the register between shapes, treated exactly like the notebook layer and
+# for the same reason: `import_bundle` writes the ledger and `csvstore` writes both the export
+# and (on restore) the register itself, so a stale copy of either beside a fresh `ledger.py` is
 # as fatal as a stale metrics.py -- but a scheduled Job must never fail because a module it
 # does not import is missing from the folder. Absent is fine; present and disagreeing is not.
-MIGRATION_MODULES = ("import_bundle",)
+#
+# `csvstore` is imported lazily by `export_csv` rather than at module scope, so a Job that never
+# passes `--csv_path` neither needs the file nor pays for it.
+MIGRATION_MODULES = ("import_bundle", "csvstore")
 
 # The optional layers share one rule, so they share one loop in check_deployment.
 OPTIONAL_MODULES = NOTEBOOK_MODULES + MIGRATION_MODULES
@@ -235,7 +258,7 @@ PERSISTENT_PATHS = (
 
 @dataclass(frozen=True)
 class Tables:
-    """The eight table references one run writes to.
+    """The nine table references one run writes to.
 
     Either fully-qualified ``catalog.schema.name`` (the default) or ``delta.`<path>``` when
     ``--data_path`` is set. Both are valid anywhere Spark wants a table, which is what lets one
@@ -250,6 +273,7 @@ class Tables:
     program: str
     capacity: str
     sensitivity: str
+    assets: str
 
 
 def as_path(table: str) -> Optional[str]:
@@ -819,7 +843,7 @@ def build_metrics(
     scan_id: str,
     scan_ts: str,
     scope: str,
-    rule: RiskRule = DEFAULT_RISK_RULE,
+    rule=None,
     *,
     severities=None,
     disappearance: str = DISAPPEARANCE_RESOLUTION,
@@ -838,9 +862,13 @@ def build_metrics(
     ``reconcile_scan``. ``None`` counts the frame, which is what a caller that wrote bronze by
     some other route has to do.
     """
+    # `rule=None` means "whatever this scope is classified under", resolved here rather than as
+    # a default argument: the default would have to name one rule, and naming the wrong one is a
+    # full page of plausible numbers rather than an error. See config.rule_for_scope.
+    rule = rule or rule_for_scope(scope)
     bronze = spark.table(tables.bronze).filter(f"scan_id = '{scan_id}'")
 
-    silver = metrics.classify_risk(metrics.silver_findings(bronze), rule).cache()
+    silver = metrics.classify_risk(metrics.silver_findings(bronze, scope), rule).cache()
     # Silver is not persisted in path mode. It is a pure per-scan projection of bronze -- the
     # snapshot columns below read the frame in memory, and `panels.register_views` rebuilds
     # `v_findings` from bronze the same way -- so storing it would be a second copy of data the
@@ -921,8 +949,21 @@ def build_metrics(
     )
     capacity = publish(capacity, tables.capacity)
 
+    # P2P v5's asset-centric family. Both populations, stacked, for the same reason capacity
+    # stacks them -- so every read has to say which. `observed_from` is shared with capacity
+    # above: without it the rate-per-watched-month columns are NULL rather than reconstructed.
+    assets = metrics.with_scan_columns(
+        metrics.asset_profile_populations(
+            lifecycles, scan_ts, observed_from=observation_start(scan_log, scan_ts)
+        ),
+        scan_id, scan_ts, scope,
+    )
+    assets = publish(assets, tables.assets)
+
     if summary:
-        summarize(scan_id, scope, rule, deltas, mttr, program, capacity, sensitivity)
+        summarize(
+            scan_id, scope, rule, deltas, mttr, program, capacity, sensitivity, assets
+        )
         for frame in published:
             frame.unpersist()
     silver.unpersist()
@@ -942,8 +983,10 @@ def with_snapshot_columns(ledger_mttr, snapshot_mttr):
     return ledger_mttr.join(snap, "severity", "left")
 
 
-def summarize(scan_id, scope, rule, deltas, mttr, program, capacity, sensitivity) -> None:
-    """Print all three metric families.
+def summarize(
+    scan_id, scope, rule, deltas, mttr, program, capacity, sensitivity, assets=None
+) -> None:
+    """Print every metric family.
 
     Previously only the program frame was shown, so MTTR and capacity were computed, written
     and then never mentioned -- from the notebook it looked like the pipeline did not do MTTR
@@ -995,6 +1038,20 @@ def summarize(scan_id, scope, rule, deltas, mttr, program, capacity, sensitivity
     # measurements of one thing.
     print("Capacity — most recent months, high risk only (the P2P v3 net-capacity population)")
     _show_capacity(capacity, POPULATION_HIGH_RISK)
+
+    if assets is not None:
+        # P2P v5, over the population v5 asks about. An `os` register has no asset columns
+        # while config.FETCH_ASSET_FIELDS is off, so this prints one empty frame and says so
+        # rather than being silently skipped -- the absence is the finding.
+        print("Assets at risk (P2P v5) — high risk only, by ecosystem")
+        rows = assets.filter(F.col("population") == POPULATION_HIGH_RISK)
+        if rows.head(1):
+            rows.select(
+                "asset_group", "assets", "density_p50", "assets_with_high_risk_pct",
+                "km_median_days", "mmcr_p50", "falling_behind_pct", "gaining_pct",
+            ).orderBy(F.col("assets").desc()).show(10, truncate=False)
+        else:
+            print("  no assets in this register -- see config.FETCH_ASSET_FIELDS")
 
 
 def _show_capacity(capacity, population: str) -> None:
@@ -1122,6 +1179,7 @@ def resolve_tables(
         program=qualify(GOLD_PROGRAM),
         capacity=qualify(GOLD_CAPACITY),
         sensitivity=qualify(GOLD_SENSITIVITY),
+        assets=qualify(GOLD_ASSETS),
     )
 
 
@@ -1170,7 +1228,7 @@ def rebuild_ledger(
     scope: str,
     severities,
     disappearance: str,
-    rule: RiskRule = DEFAULT_RISK_RULE,
+    rule=None,
 ) -> int:
     """Rebuild the ledger from scratch by replaying every bronze scan, oldest first.
 
@@ -1189,6 +1247,7 @@ def rebuild_ledger(
     otherwise the replay will resolve-by-disappearance severities the original scans never
     covered, and invent remediation that never happened.
     """
+    rule = rule or rule_for_scope(scope)
     if not table_exists(spark, tables.bronze):
         raise RuntimeError(f"cannot rebuild: {tables.bronze} does not exist yet")
 
@@ -1219,7 +1278,7 @@ def rebuild_ledger(
         # Cached because it has two consumers -- `observed` and the row count in
         # `reconcile_scan` -- and without this the second one re-reads bronze and re-parses
         # every node_json. The live path caches for the same reason (see `build_metrics`).
-        silver = metrics.classify_risk(metrics.silver_findings(bronze), rule).cache()
+        silver = metrics.classify_risk(metrics.silver_findings(bronze, scope), rule).cache()
         try:
             deltas = reconcile_scan(
                 spark, tables, silver, scan_id=scan_id, scan_ts=ts_iso, scope=scope,
@@ -1275,45 +1334,31 @@ def maintain(spark: SparkSession, tables: Tables) -> list:
     return optimized
 
 
-def export_csv(spark: SparkSession, tables: Tables, target: str) -> list:
+def export_csv(
+    spark: SparkSession, tables: Tables, target: str, *, include_bronze: bool = False
+) -> list:
     """Write every table that exists to ``target`` as CSV. Returns what it wrote.
 
-    **One-way, on purpose.** This is for reading -- opening in a spreadsheet, mailing to
-    somebody, eyeballing a column -- and it is not what you migrate from. CSV has no types, so
-    every timestamp and boolean comes back as text, and NULL is indistinguishable from an empty
-    string in a way Spark's own behaviour has changed across versions (SPARK-17916). That
-    ambiguity lands exactly on ``has_kev`` / ``has_exploit`` / ``epss``, where a NULL read back
-    as false inflates efficiency and deflates coverage at the same time and says nothing.
+    Delegates to ``csvstore.export``, which writes each table driver-side alongside a schema
+    sidecar. Two things changed when it did, and both were failures rather than preferences:
 
-    What you migrate is the Delta directory: ``CREATE TABLE ... USING DELTA LOCATION``, which
-    keeps the types, the clustering and the history. See the README's PoC storage section.
+    * **It writes where the register cannot live.** The old implementation used Spark's CSV
+      writer, which is a distributed write, and executors cannot write to ``/Workspace`` -- the
+      one destination a deployment with no catalog and no volume actually has.
+    * **It round-trips.** CSV has no types, and a NULL read back as ``false`` inflates
+      efficiency and deflates coverage at once (see the header of ``csvstore``). The sidecar is
+      what fixes that, and ``csvstore.load`` is what reads it.
 
-    ``coalesce(1)`` because a spreadsheet is the point: one file per table, not one per
-    partition. That is a driver-side collect of each table, which is fine for a PoC register
-    and is the reason this is an explicit command rather than something a run does.
+    Still not how you *migrate* between registers: what you migrate is the Delta directory,
+    ``CREATE TABLE ... USING DELTA LOCATION``, which keeps the clustering and the history too.
+    See the README's PoC storage section. ``csvstore.restore`` is for rebuilding a register
+    whose Delta side was lost, which is a different job from moving one that is intact.
+
+    ``include_bronze`` opts into the one table the default skips -- see ``csvstore.DEFAULT_ATTRS``.
     """
-    written = []
-    for attr in ("bronze", "silver", "ledger", "scans", "mttr", "program", "capacity",
-                 "sensitivity"):
-        table = getattr(tables, attr)
-        if not table_exists(spark, table):
-            continue
-        destination = f"{target.rstrip('/')}/{attr}"
-        (
-            spark.table(table)
-            .coalesce(1)
-            .write.mode("overwrite")
-            .option("header", "true")
-            # Explicit rather than defaulted, so the file says what a blank means -- and so the
-            # asymmetry above is at least visible in the output rather than only in this comment.
-            .option("nullValue", "")
-            .csv(destination)
-        )
-        written.append(destination)
-        print(f"[export] {table} -> {destination}")
-    if not written:
-        print("[export] nothing to export; the register is empty")
-    return written
+    import csvstore
+
+    return csvstore.export(spark, tables, target, include_bronze=include_bronze)
 
 
 def ensure_schema(spark: SparkSession, namespace: str) -> None:
@@ -1374,7 +1419,21 @@ def main(scan_id: Optional[str] = None) -> Optional[RunResult]:
     # able to turn into a scan because somebody left the other parameters set.
     export_to = param("export_csv")
     if export_to:
-        export_csv(spark, tables, export_to)
+        export_csv(
+            spark, tables, export_to, include_bronze=truthy(param("csv_include_bronze"))
+        )
+        return None
+
+    # And a restore, which writes the register from a CSV export. First among the three, in
+    # spirit: it is the only one that overwrites data, so it returns rather than continuing
+    # into a scan that would then reconcile against a register it had just replaced.
+    restore_from = param("csv_restore")
+    if restore_from:
+        import csvstore
+
+        csvstore.restore(
+            spark, restore_from, tables, prefix=param("table_prefix", default_table_prefix(scope))
+        )
         return None
 
     if truthy(param("rebuild_ledger")):
@@ -1425,6 +1484,16 @@ def main(scan_id: Optional[str] = None) -> Optional[RunResult]:
         spark, tables, scan_id, scan_ts, scope,
         severities=severities, disappearance=disappearance, total=count,
     )
+
+    # `--csv_path` exports as part of the run rather than as a separate invocation. That is the
+    # difference between it and `--export_csv`, and it exists because in a deployment whose
+    # Delta side is ephemeral the export is not a side errand -- it is where the scan's results
+    # actually come to rest, and a scan that ingested but did not export has lost its output.
+    csv_path = param("csv_path")
+    if csv_path:
+        export_csv(
+            spark, tables, csv_path, include_bronze=truthy(param("csv_include_bronze"))
+        )
     return RunResult(tables=tables, scan_id=scan_id, scan_ts=scan_ts, scope=scope)
 
 
