@@ -2,6 +2,7 @@
 // synthetic issue/summary nodes) and typed edges (the Wiz security-graph relationship
 // vocabulary, from ai/ai_agents_discovery_queries.md and ai/queries/*).
 
+import type { AarsGap, DataExposure } from "./aars";
 import type { AarsSeverity, Severity } from "./config";
 
 export const NODE_KINDS = [
@@ -133,6 +134,14 @@ export interface GNode {
   aars?: number;            // AI Asset Risk Score 0–100 (AI assets only)
   aarsSeverity?: AarsSeverity;
   aarsPillars?: { toxic: number; compliance: number; data: number };
+  /**
+   * What the score was computed FROM, minus the issue severities (those stay in the issues
+   * tab and are read back from it). Persisted because the inputs are not otherwise
+   * recoverable: a dry-run sync scores from hints pinned to ai/custom_score.md, and a live
+   * sync from findings that may since have changed. Re-pricing these under a new rule is
+   * what "recompute" means — re-deriving them would answer a different question.
+   */
+  aarsInput?: { gaps: AarsGap[]; dataExposure: DataExposure };
   comboGroups?: string[];   // toxic-combination group ids this node participates in
   // SUMMARY nodes only:
   summaryOf?: NodeKind;

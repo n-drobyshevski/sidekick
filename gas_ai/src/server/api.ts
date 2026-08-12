@@ -10,7 +10,33 @@ import {
   resolveAssetQuery,
   sortAssetRows,
 } from "../domain/assetTable";
-import { aarsTrendFromHistory, type AarsTrendPoint } from "../domain/aarsTrend";
+import {
+  computeAars,
+  DEFAULT_AARS_RULE,
+  gap,
+  gapBreakdown,
+  type DataExposure,
+} from "../domain/aars";
+import {
+  BAND_MAX,
+  BAND_MIN,
+  bandRanges,
+  cleanAarsRule,
+  cleanGapCode,
+  MAX_GAP_RULES,
+  MULTIPLIER_MAX,
+  MULTIPLIER_MIN,
+  POINTS_MAX,
+  ruleSummary,
+  shadowedGapRules,
+  validateAarsRule,
+} from "../domain/aarsRule";
+import {
+  aarsTrendFromHistory,
+  countAarsSeverities,
+  ruleChangePoints,
+  type AarsTrendPoint,
+} from "../domain/aarsTrend";
 import {
   AARS_SEVERITY_ORDER,
   MAX_NODES_CEILING,
@@ -18,6 +44,7 @@ import {
   SEVERITY_COLORS,
   SEVERITY_GLYPHS,
   SEVERITY_ORDER,
+  type Severity,
 } from "../domain/config";
 import { graphCacheParams, resolveGraphParams, resolveLayoutParams } from "../domain/graphApiParams";
 import { layoutGraph } from "../domain/graphLayout";
@@ -79,6 +106,8 @@ function bootstrapCore(): Rec {
   const assets = syncStore.loadAssets();
   const issues = openIssues();
   const latest = syncStore.latestSync();
+  const aarsRule = settingsStore.getAarsRule();
+  const scoredVersion = settingsStore.getScoredRuleVersion();
 
   const bySeverity: Record<string, number> = {};
   for (const issue of issues) {
@@ -110,6 +139,15 @@ function bootstrapCore(): Rec {
       // exactly what the server will honor instead of hardcoding it twice.
       maxNodesFloor: MAX_NODES_FLOOR,
       maxNodesCeiling: MAX_NODES_CEILING,
+    },
+    // The band ranges every page's AARS copy is written from, so "score 70–100" is read
+    // off the rule in force instead of being retyped wherever a level is named.
+    aarsRule: {
+      version: aarsRule.version,
+      bands: aarsRule.rule.bands,
+      bandRanges: bandRanges(aarsRule.rule.bands),
+      scoredVersion,
+      stale: scoredVersion !== aarsRule.version,
     },
     latestSync: latest,
     counts: {
@@ -248,6 +286,8 @@ interface AssetsModel {
   kpis: Rec;
   aarsSeverityCounts: Record<string, number>;
   aarsTrend: AarsTrendPoint[];
+  /** Indices in aarsTrend where the scoring model changed — the chart marks them. */
+  aarsTrendRuleChanges: number[];
   facets: { kinds: string[]; clouds: string[]; aarsSeverities: string[] };
 }
 
@@ -259,6 +299,7 @@ interface AssetsModel {
  * ever holds 50 rows.
  */
 function assetsModel(): AssetsModel {
+  const trend = aarsTrendFromHistory(syncStore.syncHistory());
   const assets = syncStore.loadAssets();
   const issues = openIssues();
   const agents = assets.filter((a) => a.kind === "AI_AGENT");
@@ -293,7 +334,8 @@ function assetsModel(): AssetsModel {
     },
     aarsSeverityCounts,
     // Recorded per sync, so the window is short at first and cannot be backfilled.
-    aarsTrend: aarsTrendFromHistory(syncStore.syncHistory()),
+    aarsTrend: trend,
+    aarsTrendRuleChanges: ruleChangePoints(trend),
     facets: {
       kinds: [...kinds].sort(),
       clouds: [...clouds].sort(),
@@ -316,6 +358,7 @@ export function getAssets(p?: unknown): ApiResult {
       kpis: model.kpis,
       aarsSeverityCounts: model.aarsSeverityCounts,
       aarsTrend: model.aarsTrend,
+      aarsTrendRuleChanges: model.aarsTrendRuleChanges,
       facets: model.facets,
       pageSize: query.pageSize,
       sort: query.sort,
@@ -506,6 +549,153 @@ export function setSettings(p?: unknown): ApiResult {
       maxNodes: settingsStore.getMaxNodes(),
     };
   });
+}
+
+// ------------------------------------------------------------------------ AARS rule
+
+/** One preview never ships more than this many movers; the true count travels beside it. */
+const PREVIEW_MOVERS_MAX = 50;
+/** Bounds on one sandbox input, so a hand-crafted request can't grow the work unboundedly. */
+const SAMPLE_SEVERITIES_MAX = 50;
+const SAMPLE_GAPS_MAX = 30;
+
+function ruleState(): Rec {
+  const stored = settingsStore.getAarsRule();
+  const scoredVersion = settingsStore.getScoredRuleVersion();
+  return {
+    version: stored.version,
+    rule: stored.rule,
+    defaults: DEFAULT_AARS_RULE,
+    summary: ruleSummary(stored.rule),
+    scoredVersion,
+    // Only the point model can strand the persisted scores; bands re-derive on read, and
+    // setAarsRule carries the marker forward across a band-only edit.
+    stale: scoredVersion !== stored.version,
+    bandRanges: bandRanges(stored.rule.bands),
+    limits: {
+      pointsMax: POINTS_MAX,
+      multiplierMin: MULTIPLIER_MIN,
+      multiplierMax: MULTIPLIER_MAX,
+      bandMin: BAND_MIN,
+      bandMax: BAND_MAX,
+      maxGapRules: MAX_GAP_RULES,
+    },
+  };
+}
+
+export function getAarsRule(_p?: unknown): ApiResult {
+  return run(() => ruleState());
+}
+
+export function setAarsRule(p?: unknown): ApiResult {
+  return mutate(() => {
+    const params = (p ?? {}) as Rec;
+    const proposed = cleanAarsRule(params["rule"]);
+    const errors = validateAarsRule(proposed);
+    if (errors.length) throw new Error(errors.join(" "));
+    settingsStore.setAarsRule(proposed);
+    return ruleState();
+  });
+}
+
+/**
+ * What saving this rule would do to the inventory as it reads right now. The baseline is
+ * deliberately the CURRENT display (persisted scores under the current bands), not a
+ * re-score under the stored rule: the honest answer to "what changes on screen" has to
+ * start from what is on screen, stale scores included — the page flags those separately.
+ */
+export function previewAarsRule(p?: unknown): ApiResult {
+  return run(() => {
+    const params = (p ?? {}) as Rec;
+    const proposed = cleanAarsRule(params["rule"]);
+    const errors = validateAarsRule(proposed);
+    if (errors.length) throw new Error(errors.join(" "));
+
+    const before = syncStore.loadAssets();
+    const after = syncStore.scoreAssetsWith(proposed);
+    const beforeById = new Map(before.map((n) => [n.id, n]));
+
+    const movers: Rec[] = [];
+    for (const a of after) {
+      const b = beforeById.get(a.id);
+      const fromScore = typeof b?.aars === "number" ? b.aars : null;
+      const toScore = typeof a.aars === "number" ? a.aars : null;
+      const fromSeverity = b?.aarsSeverity ?? null;
+      const toSeverity = a.aarsSeverity ?? null;
+      if (fromScore === toScore && fromSeverity === toSeverity) continue;
+      movers.push({
+        id: a.id,
+        name: a.name,
+        kind: a.kind,
+        fromScore,
+        toScore,
+        fromSeverity,
+        toSeverity,
+        levelChanged: fromSeverity !== toSeverity,
+        delta: (toScore ?? 0) - (fromScore ?? 0),
+      });
+    }
+    // Level changes first — they are what the levels and the KPIs actually report — then
+    // the biggest score moves, so a truncated list still shows the consequential rows.
+    movers.sort((x, y) => {
+      const lvl = Number(y["levelChanged"]) - Number(x["levelChanged"]);
+      if (lvl) return lvl;
+      const mag = Math.abs(Number(y["delta"])) - Math.abs(Number(x["delta"]));
+      if (mag) return mag;
+      return Number(y["toScore"] ?? -1) - Number(x["toScore"] ?? -1);
+    });
+
+    return {
+      total: before.length,
+      current: countAarsSeverities(before),
+      proposed: countAarsSeverities(after),
+      // The proposed rule read back in prose, and the rows that can never fire — both
+      // describe the draft, so they travel with the preview rather than the saved state.
+      summary: ruleSummary(proposed),
+      bandRanges: bandRanges(proposed.bands),
+      shadowedGapRules: shadowedGapRules(proposed),
+      movers: movers.slice(0, PREVIEW_MOVERS_MAX),
+      moverCount: movers.length,
+      levelChangeCount: movers.filter((m) => m["levelChanged"]).length,
+      // Counted apart from the level changes: moving a threshold re-labels assets without
+      // touching a single score, and saying "N assets change score" for that would be a lie.
+      scoreChangeCount: movers.filter((m) => m["fromScore"] !== m["toScore"]).length,
+      truncated: movers.length > PREVIEW_MOVERS_MAX,
+    };
+  });
+}
+
+/**
+ * Score one hypothetical asset. The sandbox goes through the server rather than
+ * reimplementing the model in client JS: the score has exactly one implementation, and it
+ * is the tested one.
+ */
+export function scoreAarsSample(p?: unknown): ApiResult {
+  return run(() => {
+    const params = (p ?? {}) as Rec;
+    const rule = cleanAarsRule(params["rule"]);
+    const sample = (params["sample"] ?? {}) as Rec;
+
+    const rawSeverities = Array.isArray(sample["issueSeverities"]) ? sample["issueSeverities"] : [];
+    const issueSeverities = rawSeverities
+      .slice(0, SAMPLE_SEVERITIES_MAX)
+      .map((s) => String(s).trim().toUpperCase() as Severity);
+
+    const rawCodes = Array.isArray(sample["gapCodes"]) ? sample["gapCodes"] : [];
+    const codes = rawCodes.map(cleanGapCode).filter(Boolean).slice(0, SAMPLE_GAPS_MAX);
+
+    const exposure = String(sample["dataExposure"] ?? "NONE").trim().toUpperCase();
+    const dataExposure: DataExposure =
+      exposure === "SENSITIVE" || exposure === "DATA_ACCESS" ? exposure : "NONE";
+
+    const gaps = codes.map((c) => gap(c));
+    const result = computeAars({ issueSeverities, gaps, dataExposure }, rule);
+    return { ...result, gapBreakdown: gapBreakdown(gaps, rule) };
+  });
+}
+
+export function rescoreAars(_p?: unknown): ApiResult {
+  return mutate(() => ({ ...syncStore.rescoreInventory(), ...ruleState() }));
 }
 
 // ----------------------------------------------------------------------------- data

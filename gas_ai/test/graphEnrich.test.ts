@@ -12,7 +12,8 @@ import {
   withMissingGuardrailNodes,
   withSensitiveDataNodes,
 } from "../src/domain/graphEnrich";
-import type { FindingRow, GraphDoc, IssueRow } from "../src/domain/graphTypes";
+import { DEFAULT_AARS_RULE } from "../src/domain/aars";
+import type { FindingRow, GNode, GraphDoc, IssueRow } from "../src/domain/graphTypes";
 import { SEED_AARS_HINTS, SEED_ISSUES, seedGraphDoc } from "../src/server/sampleData";
 
 const T = "2026-06-28T05:00:00Z";
@@ -176,6 +177,61 @@ describe("enrichGraphDoc", () => {
     const before = JSON.stringify(raw);
     enrichGraphDoc(raw, SEED_ISSUES, SEED_AARS_HINTS);
     expect(JSON.stringify(raw)).toBe(before);
+  });
+
+  it("records the inputs beside the score, so a rescore can re-price these exact gaps", () => {
+    const agentA = enriched().nodes.find((n) => n.id === "agent-a")!;
+    expect(agentA.aarsInput).toEqual({
+      gaps: [{ code: "LLM06" }, { code: "NO_GUARDRAIL" }],
+      dataExposure: "SENSITIVE",
+    });
+  });
+
+  it("re-enriching its own asset nodes reproduces the same scores", () => {
+    // What rescoreInventory does: the tabs keep only the real nodes, so the second pass
+    // gets exactly this input. Feeding back the recorded inputs must be a fixed point, or
+    // a recompute under an unchanged rule would silently move the inventory.
+    const once = enriched();
+    const assets = once.nodes.filter((n) => n.kind !== "ISSUE" && n.kind !== "SUMMARY");
+    const hints: Record<string, NonNullable<GNode["aarsInput"]>> = {};
+    for (const n of assets) if (n.aarsInput) hints[n.id] = n.aarsInput;
+
+    const twice = enrichGraphDoc(
+      { nodes: assets, edges: once.edges.filter((e) => e.type !== "HAS_ISSUE"), syncedAt: T },
+      SEED_ISSUES,
+      hints,
+    );
+    const scoreOf = (doc: GraphDoc) =>
+      doc.nodes
+        .filter((n) => n.aars !== undefined)
+        .map((n) => `${n.id}:${n.aars}:${n.aarsSeverity}`)
+        .sort();
+    expect(scoreOf(twice)).toEqual(scoreOf(once));
+  });
+
+  it("re-enriching does not duplicate the ISSUE nodes it materializes", () => {
+    const once = enriched();
+    const assets = once.nodes.filter((n) => n.kind !== "ISSUE" && n.kind !== "SUMMARY");
+    const twice = enrichGraphDoc(
+      { nodes: assets, edges: once.edges.filter((e) => e.type !== "HAS_ISSUE"), syncedAt: T },
+      SEED_ISSUES,
+      SEED_AARS_HINTS,
+    );
+    expect(twice.nodes.filter((n) => n.kind === "ISSUE")).toHaveLength(
+      once.nodes.filter((n) => n.kind === "ISSUE").length,
+    );
+    expect(new Set(twice.nodes.map((n) => n.id)).size).toBe(twice.nodes.length);
+    expect(new Set(twice.edges.map((e) => e.id)).size).toBe(twice.edges.length);
+  });
+
+  it("scores through a supplied rule, not through the defaults", () => {
+    const doc = enrichGraphDoc(seedGraphDoc(T), SEED_ISSUES, SEED_AARS_HINTS, {
+      ...DEFAULT_AARS_RULE,
+      bands: { critical: 60, high: 50, medium: 30, low: 10 },
+    });
+    const agentA = doc.nodes.find((n) => n.id === "agent-a")!;
+    expect(agentA.aars).toBe(62);
+    expect(agentA.aarsSeverity).toBe("CRITICAL"); // HIGH under the default bands
   });
 });
 

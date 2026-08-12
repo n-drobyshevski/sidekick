@@ -2,7 +2,15 @@
 // materializes one ISSUE node + HAS_ISSUE edge per open issue. Runs ONCE per sync
 // (the result is persisted), never per request.
 
-import { computeAars, gap, type AarsGap, type AarsInput, type DataExposure } from "./aars";
+import {
+  computeAars,
+  DEFAULT_AARS_RULE,
+  gap,
+  type AarsGap,
+  type AarsInput,
+  type AarsRule,
+  type DataExposure,
+} from "./aars";
 import { SEVERITY_ORDER, type Severity } from "./config";
 import {
   AI_ASSET_KINDS,
@@ -126,6 +134,7 @@ export function enrichGraphDoc(
   doc: GraphDoc,
   issues: IssueRow[],
   hints?: AarsHints,
+  rule: AarsRule = DEFAULT_AARS_RULE,
 ): GraphDoc {
   const open = issues.filter((i) => i.status === "OPEN");
   const byAsset = new Map<string, IssueRow[]>();
@@ -156,10 +165,13 @@ export function enrichGraphDoc(
       const input = hint
         ? { issueSeverities: nodeIssues.map((i) => i.nativeSeverity), ...hint }
         : deriveAarsInput(node, nodeIssues);
-      const result = computeAars(input);
+      const result = computeAars(input, rule);
       node.aars = result.score;
       node.aarsSeverity = result.severity;
       node.aarsPillars = result.pillars;
+      // Keep the inputs beside the score so a later rule change can re-price exactly
+      // these gaps rather than re-deriving a fresh, possibly different, set of them.
+      node.aarsInput = { gaps: input.gaps, dataExposure: input.dataExposure };
     }
     return node;
   });

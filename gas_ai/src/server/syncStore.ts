@@ -7,6 +7,7 @@
 // missing or unreadable.
 
 import {
+  buildAarsHintsFromFindings,
   enrichGraphDoc,
   withExcessivePrivilegeNodes,
   withInternetExposureNodes,
@@ -16,12 +17,14 @@ import {
 } from "../domain/graphEnrich";
 import type { FindingRow, GEdge, GNode, GraphDoc, IssueRow, NodeKind } from "../domain/graphTypes";
 import { edgeId } from "../domain/graphTypes";
+import { aarsSeverity, type AarsBands, type AarsRule } from "../domain/aars";
 import { normalizeAarsSeverity } from "../domain/config";
 import type { Severity } from "../domain/config";
 import { countAarsSeverities } from "../domain/aarsTrend";
 import { nowIso, type Rec } from "../domain/util";
 import { readGraphSnapshot, trashGraphSnapshot, writeGraphSnapshot } from "./archiveStore";
 import { bumpDataVersion } from "./serverCache";
+import * as settingsStore from "./settingsStore";
 import { appendRows, overwrite, readAll, TABS } from "./sheetsDb";
 
 // ------------------------------------------------------------- row (de)serializers
@@ -76,6 +79,7 @@ export function assetToRow(n: GNode): Rec {
     aars: n.aars ?? null,
     aars_severity: n.aarsSeverity ?? null,
     aars_pillars_json: n.aarsPillars ? JSON.stringify(n.aarsPillars) : null,
+    aars_input_json: n.aarsInput ? JSON.stringify(n.aarsInput) : null,
     combo_groups: (n.comboGroups ?? []).join(","),
     tags_json: n.tags ? JSON.stringify(n.tags) : null,
     identity_purpose: n.identityPurpose ?? null,
@@ -119,6 +123,8 @@ export function rowToAsset(r: Rec): GNode {
   if (aarsSev) node.aarsSeverity = aarsSev;
   const pillars = parseJson<GNode["aarsPillars"] | null>(r["aars_pillars_json"], null);
   if (pillars) node.aarsPillars = pillars;
+  const aarsInput = parseJson<GNode["aarsInput"] | null>(r["aars_input_json"], null);
+  if (aarsInput) node.aarsInput = aarsInput;
   const combos = String(r["combo_groups"] ?? "");
   if (combos) node.comboGroups = combos.split(",").filter(Boolean);
   const tags = parseJson<GNode["tags"] | null>(r["tags_json"], null);
@@ -245,7 +251,8 @@ export function persistSync(
   now?: number,
   findings: FindingRow[] = [],
 ): GraphDoc {
-  const enriched = enrichGraphDoc(rawDoc, issues, hints);
+  const { version: ruleVersion, rule } = settingsStore.getAarsRule();
+  const enriched = enrichGraphDoc(rawDoc, issues, hints, rule);
 
   // Tabs hold the real (non-synthetic) nodes; ISSUE nodes are derivable from ai_issues.
   const assetNodes = enriched.nodes.filter((n) => n.kind !== "ISSUE" && n.kind !== "SUMMARY");
@@ -273,10 +280,105 @@ export function persistSync(
     // The AARS distribution at this sync — the only record of it, since the snapshot
     // this row points at is overwritten by the next sync. Feeds the inventory trend.
     aars_severity_json: JSON.stringify(countAarsSeverities(enriched.nodes)),
+    // Which scoring model produced that distribution: counts from two versions are not
+    // on the same scale, and the trend chart says so rather than drawing a false step.
+    aars_rule_version: ruleVersion,
   }]);
+  settingsStore.setScoredRuleVersion(ruleVersion);
   bumpDataVersion();
   invalidateReadMemos();
   return enriched;
+}
+
+/**
+ * Re-score every persisted asset under the current rule, without touching the Wiz API:
+ * every input the score needs is already on the tabs (issue framework codes, finding
+ * framework codes, and the asset's own CIEM/DSPM flags). Rewrites the assets tab and the
+ * Drive snapshot, and does NOT append a sync_history row — a rescore is not a sync, and
+ * inventing a commit record would put a point on the trend for an estate that never moved.
+ *
+ * Caller holds the script lock.
+ */
+export function rescoreInventory(): {
+  version: number;
+  assetCount: number;
+  counts: Record<string, number>;
+} {
+  const { version, rule } = settingsStore.getAarsRule();
+  const enriched = enrichFromTabs(rule);
+  if (!enriched) {
+    settingsStore.setScoredRuleVersion(version);
+    return { version, assetCount: 0, counts: countAarsSeverities([]) };
+  }
+
+  // Same split as persistSync: the tabs hold the real nodes, ISSUE nodes stay derivable.
+  const assetNodes = enriched.nodes.filter((n) => n.kind !== "ISSUE" && n.kind !== "SUMMARY");
+  overwrite(TABS.assets, assetNodes.map(assetToRow));
+  writeGraphSnapshot(enriched);
+
+  settingsStore.setScoredRuleVersion(version);
+  bumpDataVersion();
+  invalidateReadMemos();
+  return {
+    version,
+    assetCount: assetNodes.length,
+    counts: countAarsSeverities(enriched.nodes),
+  };
+}
+
+/**
+ * Score every persisted asset under an arbitrary rule and return the result WITHOUT
+ * writing anything — what the AARS Rules page previews before you commit to it. Shares
+ * `enrichFromTabs` with the recompute, so the preview is the recompute, minus the writes.
+ */
+export function scoreAssetsWith(rule: AarsRule): GNode[] {
+  const enriched = enrichFromTabs(rule);
+  if (!enriched) return [];
+  return enriched.nodes.filter((n) => n.kind !== "ISSUE" && n.kind !== "SUMMARY");
+}
+
+/**
+ * Re-enrich the persisted graph under `rule`, feeding each asset the SAME AARS inputs its
+ * score was built from. Where a row predates the `aars_input_json` column the inputs are
+ * rebuilt from findings, which is what the sync's live path would have derived anyway.
+ */
+function enrichFromTabs(rule: AarsRule): GraphDoc | null {
+  const base = loadRawGraph();
+  if (!base) return null;
+  const issues = loadIssues();
+  const hints: AarsHints = { ...buildAarsHintsFromFindings(loadFindings(), base, issues) };
+  for (const node of base.nodes) {
+    if (node.aarsInput) hints[node.id] = node.aarsInput;
+  }
+  return enrichGraphDoc(base, issues, hints, rule);
+}
+
+/**
+ * The pre-enrichment graph, rebuilt from the tabs. The tabs are the right source here
+ * (the Drive snapshot is post-enrichment, and re-enriching it would duplicate every
+ * ISSUE node); the previous run's AARS fields are dropped so a rescore is a genuine
+ * recomputation rather than a patch over stale scores — an asset that stops being
+ * scorable must lose its score, not keep the old one.
+ */
+function loadRawGraph(): GraphDoc | null {
+  const nodes = loadAssetsRaw();
+  if (!nodes.length) return null;
+  const edges = readAll(TABS.edges).map(rowToEdge);
+  const latest = latestSync();
+  return {
+    nodes: nodes.map(stripAarsScore),
+    edges,
+    syncedAt: latest ? String(latest["finished_at"] ?? "") : "",
+  };
+}
+
+function stripAarsScore(n: GNode): GNode {
+  if (n.aars === undefined && n.aarsSeverity === undefined && n.aarsPillars === undefined) return n;
+  const next = { ...n };
+  delete next.aars;
+  delete next.aarsSeverity;
+  delete next.aarsPillars;
+  return next;
 }
 
 // -------------------------------------------------------------------- read model
@@ -337,13 +439,41 @@ function withRiskNodes(doc: GraphDoc): GraphDoc {
   );
 }
 
+/**
+ * Re-derive each asset's AARS level from its persisted score under the CURRENT bands.
+ * Levels are cheap to recompute and carry no history of their own, so moving a threshold
+ * applies at once and retroactively — no rescore, no re-sync. The persisted
+ * `aars_severity` survives only as the answer for a node with no score, which is where
+ * the legacy `aars_band` / `MINIMAL` spellings still live.
+ */
+export function withCurrentBands(nodes: GNode[], bands: AarsBands): GNode[] {
+  let touched = false;
+  const out = nodes.map((n) => {
+    if (typeof n.aars !== "number") return n;
+    const sev = aarsSeverity(n.aars, bands);
+    if (sev === n.aarsSeverity) return n;
+    touched = true;
+    return { ...n, aarsSeverity: sev };
+  });
+  return touched ? out : nodes;
+}
+
+function currentBands(): AarsBands {
+  return settingsStore.getAarsRule().rule.bands;
+}
+
+function withBandsApplied(doc: GraphDoc): GraphDoc {
+  const nodes = withCurrentBands(doc.nodes, currentBands());
+  return nodes === doc.nodes ? doc : { ...doc, nodes };
+}
+
 function loadGraphDocUncached(): GraphDoc | null {
   const snap = readGraphSnapshot();
-  if (snap) return withRiskNodes(normalizeLegacyAars(snap));
+  if (snap) return withRiskNodes(withBandsApplied(normalizeLegacyAars(snap)));
 
   const assetRows = readAll(TABS.assets);
   if (!assetRows.length) return null;
-  const nodes = assetRows.map(rowToAsset);
+  const nodes = withCurrentBands(assetRows.map(rowToAsset), currentBands());
   const edges = readAll(TABS.edges).map(rowToEdge);
   const issues = loadIssues().filter((i) => i.status === "OPEN");
   for (const issue of issues) {
@@ -370,9 +500,19 @@ function loadGraphDocUncached(): GraphDoc | null {
   });
 }
 
-export function loadAssets(): GNode[] {
+/** Assets exactly as persisted — the recompute's input, and nobody else's. */
+function loadAssetsRaw(): GNode[] {
   if (assetsMemo === undefined) assetsMemo = readAll(TABS.assets).map(rowToAsset);
   return assetsMemo;
+}
+
+/**
+ * The inventory read model. Reads TABS.assets directly (it never goes through
+ * loadGraphDoc), so the band re-derivation has to happen here too or the table and the
+ * graph would disagree about what "CRITICAL" means.
+ */
+export function loadAssets(): GNode[] {
+  return withCurrentBands(loadAssetsRaw(), currentBands());
 }
 
 export function loadIssues(): IssueRow[] {

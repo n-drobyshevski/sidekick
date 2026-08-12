@@ -206,6 +206,7 @@ var Server = (() => {
       "aars",
       "aars_severity",
       "aars_pillars_json",
+      "aars_input_json",
       "combo_groups",
       "tags_json",
       "technology_categories",
@@ -253,7 +254,8 @@ var Server = (() => {
       "api_calls",
       "snapshot_ref",
       "error",
-      "aars_severity_json"
+      "aars_severity_json",
+      "aars_rule_version"
     ],
     [TABS.settings]: ["key", "value_json"],
     [TABS.jobs]: [
@@ -1002,6 +1004,7 @@ var Server = (() => {
   __export(api_exports, {
     bootstrap: () => bootstrap,
     cancelSync: () => cancelSync2,
+    getAarsRule: () => getAarsRule3,
     getAssetDetail: () => getAssetDetail,
     getAssetOptions: () => getAssetOptions,
     getAssets: () => getAssets,
@@ -1013,8 +1016,12 @@ var Server = (() => {
     getStorageStats: () => getStorageStats,
     getSyncHistory: () => getSyncHistory,
     getToxicCombos: () => getToxicCombos,
+    previewAarsRule: () => previewAarsRule,
+    rescoreAars: () => rescoreAars,
     resetData: () => resetData2,
     runSync: () => runSync,
+    scoreAarsSample: () => scoreAarsSample,
+    setAarsRule: () => setAarsRule2,
     setSettings: () => setSettings
   });
 
@@ -1112,6 +1119,256 @@ var Server = (() => {
     };
   }
 
+  // src/domain/aars.ts
+  var DEFAULT_AARS_RULE = {
+    severityPoints: { CRITICAL: 50, HIGH: 35, MEDIUM: 20, LOW: 8 },
+    multiIssueMultiplier: 1.2,
+    pillarACap: 50,
+    gapPoints: [
+      { match: "exact", code: "NO_GUARDRAIL", points: 10 },
+      { match: "exact", code: "DEPRECATED_MODEL", points: 5 },
+      { match: "exact", code: "LLM04", points: 5 },
+      { match: "exact", code: "LLM05", points: 5 },
+      { match: "prefix", code: "LLM", points: 10 },
+      { match: "prefix", code: "ASI", points: 10 },
+      { match: "prefix", code: "ML", points: 5 },
+      { match: "exact", code: "FIVE_RS", points: 5 },
+      { match: "prefix", code: "5R", points: 5 }
+    ],
+    gapFallbackPoints: 5,
+    pillarBCap: 30,
+    dataExposurePoints: { SENSITIVE: 20, DATA_ACCESS: 10, NONE: 0 },
+    // 5Rs framework at 53% — data-exposure controls are systemically weak, so all
+    // data-related points are amplified (ai/custom_score.md Pillar C).
+    dataAmplifier: 1.1,
+    bands: { critical: 70, high: 50, medium: 30, low: 10 }
+  };
+  var AARS_MAX_SCORE = 100;
+  function gapPointsFor(code, rule = DEFAULT_AARS_RULE) {
+    const c = String(code != null ? code : "").trim().toUpperCase();
+    for (const row of rule.gapPoints) {
+      const hit = row.match === "exact" ? c === row.code : c.startsWith(row.code);
+      if (hit) return row.points;
+    }
+    return rule.gapFallbackPoints;
+  }
+  function gap(code, points) {
+    return points === void 0 ? { code } : { code, points };
+  }
+  function aarsSeverity(score2, bands = DEFAULT_AARS_RULE.bands) {
+    if (score2 >= bands.critical) return "CRITICAL";
+    if (score2 >= bands.high) return "HIGH";
+    if (score2 >= bands.medium) return "MEDIUM";
+    if (score2 >= bands.low) return "LOW";
+    return "INFO";
+  }
+  function worstSeverityPoints(severities, rule) {
+    var _a4;
+    let worst = 0;
+    for (const s of severities) {
+      const p = (_a4 = rule.severityPoints[s]) != null ? _a4 : 0;
+      if (p > worst) worst = p;
+    }
+    return worst;
+  }
+  function computeAars(input, rule = DEFAULT_AARS_RULE) {
+    var _a4;
+    let toxic = worstSeverityPoints(input.issueSeverities, rule);
+    if (input.issueSeverities.length > 1) toxic *= rule.multiIssueMultiplier;
+    toxic = Math.min(rule.pillarACap, Math.round(toxic));
+    const compliance = Math.min(
+      rule.pillarBCap,
+      input.gaps.reduce((acc, g) => {
+        var _a5;
+        return acc + ((_a5 = g.points) != null ? _a5 : gapPointsFor(g.code, rule));
+      }, 0)
+    );
+    const data = Math.round(((_a4 = rule.dataExposurePoints[input.dataExposure]) != null ? _a4 : 0) * rule.dataAmplifier);
+    const score2 = Math.min(AARS_MAX_SCORE, toxic + compliance + data);
+    return {
+      score: score2,
+      severity: aarsSeverity(score2, rule.bands),
+      pillars: { toxic, compliance, data }
+    };
+  }
+  function gapBreakdown(gaps, rule = DEFAULT_AARS_RULE) {
+    return gaps.map((g) => {
+      var _a4;
+      return {
+        code: g.code,
+        points: (_a4 = g.points) != null ? _a4 : gapPointsFor(g.code, rule),
+        overridden: g.points !== void 0
+      };
+    });
+  }
+
+  // src/domain/aarsRule.ts
+  var POINTS_MIN = 0;
+  var POINTS_MAX = 100;
+  var MULTIPLIER_MIN = 1;
+  var MULTIPLIER_MAX = 3;
+  var BAND_MIN = 1;
+  var BAND_MAX = 100;
+  var CODE_MAX_LEN = 64;
+  var MAX_GAP_RULES = 60;
+  var SEVERITY_KEYS = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
+  var EXPOSURE_KEYS = ["SENSITIVE", "DATA_ACCESS", "NONE"];
+  var BAND_KEYS = ["critical", "high", "medium", "low"];
+  var BAND_LABELS = {
+    critical: "CRITICAL",
+    high: "HIGH",
+    medium: "MEDIUM",
+    low: "LOW"
+  };
+  function rec(v) {
+    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+  }
+  function clampInt(v, fallback, min, max) {
+    const n = Math.round(Number(v));
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(max, Math.max(min, n));
+  }
+  function clampMultiplier(v, fallback) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return fallback;
+    const rounded = Math.round(n * 100) / 100;
+    return Math.min(MULTIPLIER_MAX, Math.max(MULTIPLIER_MIN, rounded));
+  }
+  function cleanGapCode(v) {
+    return String(v != null ? v : "").trim().toUpperCase().slice(0, CODE_MAX_LEN);
+  }
+  function cleanGapRule(v) {
+    const raw = rec(v);
+    const code = cleanGapCode(raw["code"]);
+    if (!code) return null;
+    const match = raw["match"] === "prefix" ? "prefix" : "exact";
+    return { match, code, points: clampInt(raw["points"], 0, POINTS_MIN, POINTS_MAX) };
+  }
+  function cleanAarsRule(raw) {
+    const r = rec(raw);
+    const sevRaw = rec(r["severityPoints"]);
+    const severityPoints = {};
+    for (const k of SEVERITY_KEYS) {
+      severityPoints[k] = clampInt(sevRaw[k], DEFAULT_AARS_RULE.severityPoints[k], POINTS_MIN, POINTS_MAX);
+    }
+    const expRaw = rec(r["dataExposurePoints"]);
+    const dataExposurePoints = {};
+    for (const k of EXPOSURE_KEYS) {
+      dataExposurePoints[k] = clampInt(
+        expRaw[k],
+        DEFAULT_AARS_RULE.dataExposurePoints[k],
+        POINTS_MIN,
+        POINTS_MAX
+      );
+    }
+    const bandRaw = rec(r["bands"]);
+    const bands = {};
+    for (const k of BAND_KEYS) {
+      bands[k] = clampInt(bandRaw[k], DEFAULT_AARS_RULE.bands[k], BAND_MIN, BAND_MAX);
+    }
+    const gapsRaw = Array.isArray(r["gapPoints"]) ? r["gapPoints"] : null;
+    const gapPoints = gapsRaw ? gapsRaw.map(cleanGapRule).filter((g) => g !== null).slice(0, MAX_GAP_RULES) : DEFAULT_AARS_RULE.gapPoints.map((g) => ({ ...g }));
+    return {
+      severityPoints,
+      multiIssueMultiplier: clampMultiplier(
+        r["multiIssueMultiplier"],
+        DEFAULT_AARS_RULE.multiIssueMultiplier
+      ),
+      pillarACap: clampInt(r["pillarACap"], DEFAULT_AARS_RULE.pillarACap, POINTS_MIN, POINTS_MAX),
+      gapPoints,
+      gapFallbackPoints: clampInt(
+        r["gapFallbackPoints"],
+        DEFAULT_AARS_RULE.gapFallbackPoints,
+        POINTS_MIN,
+        POINTS_MAX
+      ),
+      pillarBCap: clampInt(r["pillarBCap"], DEFAULT_AARS_RULE.pillarBCap, POINTS_MIN, POINTS_MAX),
+      dataExposurePoints,
+      dataAmplifier: clampMultiplier(r["dataAmplifier"], DEFAULT_AARS_RULE.dataAmplifier),
+      bands
+    };
+  }
+  function validateAarsRule(rule) {
+    const errors = [];
+    for (let i = 1; i < BAND_KEYS.length; i++) {
+      const upper = BAND_KEYS[i - 1];
+      const lower = BAND_KEYS[i];
+      if (rule.bands[upper] <= rule.bands[lower]) {
+        errors.push(
+          `The ${BAND_LABELS[upper]} threshold (${rule.bands[upper]}) must sit above the ${BAND_LABELS[lower]} threshold (${rule.bands[lower]}) \u2014 otherwise no score can land in ${BAND_LABELS[lower]}.`
+        );
+      }
+    }
+    if (!rule.gapPoints.length) {
+      errors.push(
+        "The compliance-gap cascade has no rules; every gap would price at the fallback. Add a rule or set the fallback deliberately."
+      );
+    }
+    if (rule.gapPoints.length > MAX_GAP_RULES) {
+      errors.push(`The compliance-gap cascade is limited to ${MAX_GAP_RULES} rules.`);
+    }
+    const seen = /* @__PURE__ */ new Set();
+    rule.gapPoints.forEach((g, i) => {
+      if (!g.code) {
+        errors.push(`Compliance-gap rule ${i + 1} has no code.`);
+        return;
+      }
+      const key = `${g.match}:${g.code}`;
+      if (seen.has(key)) {
+        errors.push(`Compliance-gap rule ${i + 1} repeats ${g.match} "${g.code}".`);
+      }
+      seen.add(key);
+    });
+    return errors;
+  }
+  function shadowedGapRules(rule) {
+    const dead = [];
+    rule.gapPoints.forEach((row, i) => {
+      for (let j = 0; j < i; j++) {
+        const earlier = rule.gapPoints[j];
+        const shadows = earlier.match === "prefix" ? row.code.startsWith(earlier.code) : row.match === "exact" && row.code === earlier.code;
+        if (shadows) {
+          dead.push(i);
+          return;
+        }
+      }
+    });
+    return dead;
+  }
+  function pointsPhrase(n) {
+    return n === 1 ? "1 point" : `${n} points`;
+  }
+  function ruleSummary(rule) {
+    const sev = SEVERITY_KEYS.map((k) => `${k} ${rule.severityPoints[k]}`).join(", ");
+    const exposure = `sensitive data ${rule.dataExposurePoints.SENSITIVE}, unconfirmed data access ${rule.dataExposurePoints.DATA_ACCESS}, none ${rule.dataExposurePoints.NONE}`;
+    const amplified = EXPOSURE_KEYS.map(
+      (k) => String(Math.round(rule.dataExposurePoints[k] * rule.dataAmplifier))
+    ).join(" / ");
+    return [
+      `Pillar A \u2014 toxic combinations, capped at ${rule.pillarACap}. The asset's worst open issue scores ${sev}; more than one open issue multiplies that by \xD7${rule.multiIssueMultiplier}, however many there are.`,
+      `Pillar B \u2014 compliance gaps, capped at ${rule.pillarBCap}. ${rule.gapPoints.length} pricing rules are tried in order, first match wins; an unmatched code scores ${pointsPhrase(rule.gapFallbackPoints)}.`,
+      `Pillar C \u2014 data exposure: ${exposure}, all amplified by \xD7${rule.dataAmplifier} (\u2192 ${amplified}).`,
+      `Levels \u2014 CRITICAL at ${rule.bands.critical} and above, HIGH from ${rule.bands.high}, MEDIUM from ${rule.bands.medium}, LOW from ${rule.bands.low}, INFO below that. Scores are clamped to 100.`
+    ];
+  }
+  function bandRanges(bands) {
+    return [
+      { severity: "CRITICAL", min: bands.critical, max: 100 },
+      { severity: "HIGH", min: bands.high, max: bands.critical - 1 },
+      { severity: "MEDIUM", min: bands.medium, max: bands.high - 1 },
+      { severity: "LOW", min: bands.low, max: bands.medium - 1 },
+      { severity: "INFO", min: 0, max: bands.low - 1 }
+    ].map((b) => ({ ...b, label: `score ${b.min}\u2013${b.max}` }));
+  }
+  function scoringEqual(a, b) {
+    const withoutBands = (r) => {
+      const c = cleanAarsRule(r);
+      delete c.bands;
+      return JSON.stringify(c);
+    };
+    return withoutBands(a) === withoutBands(b);
+  }
+
   // src/domain/aarsTrend.ts
   function countAarsSeverities(nodes) {
     const counts = {};
@@ -1148,10 +1405,19 @@ var Server = (() => {
       if (!counts) continue;
       const at = String(r["finished_at"] || r["started_at"] || "");
       if (!at) continue;
-      points.push({ at, counts });
+      const v = Number(r["aars_rule_version"]);
+      const ruleVersion = Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
+      points.push({ at, counts, ruleVersion });
     }
     points.sort((a, b) => a.at < b.at ? -1 : a.at > b.at ? 1 : 0);
     return limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
+  }
+  function ruleChangePoints(points) {
+    const marks = [];
+    for (let i = 1; i < points.length; i++) {
+      if (points[i].ruleVersion !== points[i - 1].ruleVersion) marks.push(i);
+    }
+    return marks;
   }
 
   // src/domain/settingsLogic.ts
@@ -1178,6 +1444,36 @@ var Server = (() => {
   }
   function withMaxNodes(settings, maxNodes) {
     return { ...settings, max_nodes: clampMaxNodes(maxNodes) };
+  }
+  function getAarsRule(settings) {
+    const raw = settings["aars_rule"];
+    if (!raw || typeof raw !== "object") {
+      return { version: 0, rule: cleanAarsRule(DEFAULT_AARS_RULE) };
+    }
+    const stored = raw;
+    const version = Number(stored["version"]);
+    return {
+      version: Number.isFinite(version) && version > 0 ? Math.round(version) : 0,
+      rule: cleanAarsRule(stored["rule"])
+    };
+  }
+  function withAarsRule(settings, rule) {
+    const current = getAarsRule(settings);
+    return {
+      ...settings,
+      aars_rule: { version: current.version + 1, rule: cleanAarsRule(rule) }
+    };
+  }
+  function getScoredRuleVersion(settings) {
+    const v = Number(settings["aars_scored_version"]);
+    return Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
+  }
+  function withScoredRuleVersion(settings, version) {
+    const v = Number(version);
+    return {
+      ...settings,
+      aars_scored_version: Number.isFinite(v) && v > 0 ? Math.round(v) : 0
+    };
   }
 
   // src/domain/graphTypes.ts
@@ -2481,6 +2777,26 @@ var Server = (() => {
   function setMaxNodes(maxNodes) {
     saveSettings(withMaxNodes(loadSettings(), maxNodes));
   }
+  var getAarsRule2 = () => getAarsRule(loadSettings());
+  function setAarsRule(rule) {
+    const settings = loadSettings();
+    const before = getAarsRule(settings);
+    const scoresWereCurrent = getScoredRuleVersion(settings) === before.version;
+    let next = withAarsRule(settings, rule);
+    const stored = getAarsRule(next);
+    if (scoresWereCurrent && scoringEqual(before.rule, stored.rule)) {
+      next = withScoredRuleVersion(next, stored.version);
+    }
+    saveSettings(next);
+    return stored;
+  }
+  var getScoredRuleVersion2 = () => getScoredRuleVersion(loadSettings());
+  function setScoredRuleVersion(version) {
+    const settings = loadSettings();
+    const next = withScoredRuleVersion(settings, version);
+    if (getScoredRuleVersion(next) === getScoredRuleVersion(settings)) return;
+    saveSettings(next);
+  }
 
   // src/server/syncJobs.ts
   var syncJobs_exports = {};
@@ -2563,10 +2879,10 @@ var Server = (() => {
     const projects = raw["projects"];
     if (Array.isArray(projects)) {
       node2.projects = projects.map((p) => {
-        const rec = p;
-        const pid = str2(rec["id"]);
-        const name = str2(rec["name"]);
-        const riskProfile = rec["riskProfile"];
+        const rec2 = p;
+        const pid = str2(rec2["id"]);
+        const name = str2(rec2["name"]);
+        const riskProfile = rec2["riskProfile"];
         const businessImpact = riskProfile && typeof riskProfile === "object" ? str2(riskProfile["businessImpact"]) : void 0;
         return pid && name ? { id: pid, name, businessImpact } : null;
       }).filter((p) => p !== null);
@@ -2575,9 +2891,9 @@ var Server = (() => {
     if (Array.isArray(tags)) {
       node2.tags = tags.map((t) => {
         var _a5;
-        const rec = t;
-        const key = str2(rec["key"]);
-        return key ? { key, value: (_a5 = str2(rec["value"])) != null ? _a5 : "" } : null;
+        const rec2 = t;
+        const key = str2(rec2["key"]);
+        return key ? { key, value: (_a5 = str2(rec2["value"])) != null ? _a5 : "" } : null;
       }).filter((t) => t !== null);
     }
     return node2;
@@ -2825,65 +3141,6 @@ var Server = (() => {
     };
   }
 
-  // src/domain/aars.ts
-  var SEVERITY_POINTS = {
-    CRITICAL: 50,
-    HIGH: 35,
-    MEDIUM: 20,
-    LOW: 8
-  };
-  var MULTI_ISSUE_MULTIPLIER = 1.2;
-  var PILLAR_A_CAP = 50;
-  var PILLAR_B_CAP = 30;
-  var DATA_EXPOSURE_POINTS = {
-    SENSITIVE: 20,
-    DATA_ACCESS: 10,
-    NONE: 0
-  };
-  var FIVE_RS_MULTIPLIER = 1.1;
-  function defaultGapPoints(code) {
-    const c = code.toUpperCase();
-    if (c === "NO_GUARDRAIL") return 10;
-    if (c === "DEPRECATED_MODEL") return 5;
-    if (c === "LLM04" || c === "LLM05") return 5;
-    if (c.startsWith("LLM")) return 10;
-    if (c.startsWith("ASI")) return 10;
-    if (c.startsWith("ML")) return 5;
-    if (c === "FIVE_RS" || c.startsWith("5R")) return 5;
-    return 5;
-  }
-  function gap(code, points) {
-    return { code, points: points != null ? points : defaultGapPoints(code) };
-  }
-  function aarsSeverity(score2) {
-    if (score2 >= 70) return "CRITICAL";
-    if (score2 >= 50) return "HIGH";
-    if (score2 >= 30) return "MEDIUM";
-    if (score2 >= 10) return "LOW";
-    return "INFO";
-  }
-  function worstSeverityPoints(severities) {
-    var _a4;
-    let worst = 0;
-    for (const s of severities) {
-      const p = (_a4 = SEVERITY_POINTS[s]) != null ? _a4 : 0;
-      if (p > worst) worst = p;
-    }
-    return worst;
-  }
-  function computeAars(input) {
-    let toxic = worstSeverityPoints(input.issueSeverities);
-    if (input.issueSeverities.length > 1) toxic *= MULTI_ISSUE_MULTIPLIER;
-    toxic = Math.min(PILLAR_A_CAP, Math.round(toxic));
-    const compliance = Math.min(
-      PILLAR_B_CAP,
-      input.gaps.reduce((acc, g) => acc + g.points, 0)
-    );
-    const data = Math.round(DATA_EXPOSURE_POINTS[input.dataExposure] * FIVE_RS_MULTIPLIER);
-    const score2 = Math.min(100, toxic + compliance + data);
-    return { score: score2, severity: aarsSeverity(score2), pillars: { toxic, compliance, data } };
-  }
-
   // src/domain/graphEnrich.ts
   function severityRank3(s) {
     const i = SEVERITY_ORDER.indexOf(s != null ? s : "");
@@ -2953,7 +3210,7 @@ var Server = (() => {
     }
     return hints;
   }
-  function enrichGraphDoc(doc, issues2, hints) {
+  function enrichGraphDoc(doc, issues2, hints, rule = DEFAULT_AARS_RULE) {
     const open = issues2.filter((i) => i.status === "OPEN");
     const byAsset = /* @__PURE__ */ new Map();
     for (const issue2 of open) {
@@ -2976,10 +3233,11 @@ var Server = (() => {
       const scorable = node2.kind !== "ISSUE" && node2.kind !== "SUMMARY" && (AI_ASSET_KINDS.includes(node2.kind) || nodeIssues.length > 0 || hint !== void 0);
       if (scorable) {
         const input = hint ? { issueSeverities: nodeIssues.map((i) => i.nativeSeverity), ...hint } : deriveAarsInput(node2, nodeIssues);
-        const result = computeAars(input);
+        const result = computeAars(input, rule);
         node2.aars = result.score;
         node2.aarsSeverity = result.severity;
         node2.aarsPillars = result.pillars;
+        node2.aarsInput = { gaps: input.gaps, dataExposure: input.dataExposure };
       }
       return node2;
     });
@@ -3698,6 +3956,7 @@ var Server = (() => {
       aars: (_n = n.aars) != null ? _n : null,
       aars_severity: (_o = n.aarsSeverity) != null ? _o : null,
       aars_pillars_json: n.aarsPillars ? JSON.stringify(n.aarsPillars) : null,
+      aars_input_json: n.aarsInput ? JSON.stringify(n.aarsInput) : null,
       combo_groups: ((_p = n.comboGroups) != null ? _p : []).join(","),
       tags_json: n.tags ? JSON.stringify(n.tags) : null,
       identity_purpose: (_q = n.identityPurpose) != null ? _q : null,
@@ -3739,6 +3998,8 @@ var Server = (() => {
     if (aarsSev) node2.aarsSeverity = aarsSev;
     const pillars = parseJson(r["aars_pillars_json"], null);
     if (pillars) node2.aarsPillars = pillars;
+    const aarsInput = parseJson(r["aars_input_json"], null);
+    if (aarsInput) node2.aarsInput = aarsInput;
     const combos = String((_n = r["combo_groups"]) != null ? _n : "");
     if (combos) node2.comboGroups = combos.split(",").filter(Boolean);
     const tags = parseJson(r["tags_json"], null);
@@ -3844,7 +4105,8 @@ var Server = (() => {
     };
   }
   function persistSync(rawDoc, issues2, hints, meta, now, findings = []) {
-    const enriched = enrichGraphDoc(rawDoc, issues2, hints);
+    const { version: ruleVersion, rule } = getAarsRule2();
+    const enriched = enrichGraphDoc(rawDoc, issues2, hints, rule);
     const assetNodes = enriched.nodes.filter((n) => n.kind !== "ISSUE" && n.kind !== "SUMMARY");
     const assetEdges = enriched.edges.filter((e) => e.type !== "HAS_ISSUE");
     overwrite(TABS.assets, assetNodes.map(assetToRow));
@@ -3866,11 +4128,69 @@ var Server = (() => {
       error: null,
       // The AARS distribution at this sync — the only record of it, since the snapshot
       // this row points at is overwritten by the next sync. Feeds the inventory trend.
-      aars_severity_json: JSON.stringify(countAarsSeverities(enriched.nodes))
+      aars_severity_json: JSON.stringify(countAarsSeverities(enriched.nodes)),
+      // Which scoring model produced that distribution: counts from two versions are not
+      // on the same scale, and the trend chart says so rather than drawing a false step.
+      aars_rule_version: ruleVersion
     }]);
+    setScoredRuleVersion(ruleVersion);
     bumpDataVersion();
     invalidateReadMemos();
     return enriched;
+  }
+  function rescoreInventory() {
+    const { version, rule } = getAarsRule2();
+    const enriched = enrichFromTabs(rule);
+    if (!enriched) {
+      setScoredRuleVersion(version);
+      return { version, assetCount: 0, counts: countAarsSeverities([]) };
+    }
+    const assetNodes = enriched.nodes.filter((n) => n.kind !== "ISSUE" && n.kind !== "SUMMARY");
+    overwrite(TABS.assets, assetNodes.map(assetToRow));
+    writeGraphSnapshot(enriched);
+    setScoredRuleVersion(version);
+    bumpDataVersion();
+    invalidateReadMemos();
+    return {
+      version,
+      assetCount: assetNodes.length,
+      counts: countAarsSeverities(enriched.nodes)
+    };
+  }
+  function scoreAssetsWith(rule) {
+    const enriched = enrichFromTabs(rule);
+    if (!enriched) return [];
+    return enriched.nodes.filter((n) => n.kind !== "ISSUE" && n.kind !== "SUMMARY");
+  }
+  function enrichFromTabs(rule) {
+    const base = loadRawGraph();
+    if (!base) return null;
+    const issues2 = loadIssues();
+    const hints = { ...buildAarsHintsFromFindings(loadFindings(), base, issues2) };
+    for (const node2 of base.nodes) {
+      if (node2.aarsInput) hints[node2.id] = node2.aarsInput;
+    }
+    return enrichGraphDoc(base, issues2, hints, rule);
+  }
+  function loadRawGraph() {
+    var _a4;
+    const nodes = loadAssetsRaw();
+    if (!nodes.length) return null;
+    const edges2 = readAll(TABS.edges).map(rowToEdge);
+    const latest = latestSync();
+    return {
+      nodes: nodes.map(stripAarsScore),
+      edges: edges2,
+      syncedAt: latest ? String((_a4 = latest["finished_at"]) != null ? _a4 : "") : ""
+    };
+  }
+  function stripAarsScore(n) {
+    if (n.aars === void 0 && n.aarsSeverity === void 0 && n.aarsPillars === void 0) return n;
+    const next = { ...n };
+    delete next.aars;
+    delete next.aarsSeverity;
+    delete next.aarsPillars;
+    return next;
   }
   var graphDocMemo;
   var assetsMemo;
@@ -3908,13 +4228,31 @@ var Server = (() => {
       withExcessivePrivilegeNodes(withInternetExposureNodes(withSensitiveDataNodes(doc)))
     );
   }
+  function withCurrentBands(nodes, bands) {
+    let touched = false;
+    const out = nodes.map((n) => {
+      if (typeof n.aars !== "number") return n;
+      const sev = aarsSeverity(n.aars, bands);
+      if (sev === n.aarsSeverity) return n;
+      touched = true;
+      return { ...n, aarsSeverity: sev };
+    });
+    return touched ? out : nodes;
+  }
+  function currentBands() {
+    return getAarsRule2().rule.bands;
+  }
+  function withBandsApplied(doc) {
+    const nodes = withCurrentBands(doc.nodes, currentBands());
+    return nodes === doc.nodes ? doc : { ...doc, nodes };
+  }
   function loadGraphDocUncached() {
     var _a4;
     const snap = readGraphSnapshot();
-    if (snap) return withRiskNodes(normalizeLegacyAars(snap));
+    if (snap) return withRiskNodes(withBandsApplied(normalizeLegacyAars(snap)));
     const assetRows = readAll(TABS.assets);
     if (!assetRows.length) return null;
-    const nodes = assetRows.map(rowToAsset);
+    const nodes = withCurrentBands(assetRows.map(rowToAsset), currentBands());
     const edges2 = readAll(TABS.edges).map(rowToEdge);
     const issues2 = loadIssues().filter((i) => i.status === "OPEN");
     for (const issue2 of issues2) {
@@ -3940,9 +4278,12 @@ var Server = (() => {
       syncedAt: latest ? String((_a4 = latest["finished_at"]) != null ? _a4 : "") : ""
     });
   }
-  function loadAssets() {
+  function loadAssetsRaw() {
     if (assetsMemo === void 0) assetsMemo = readAll(TABS.assets).map(rowToAsset);
     return assetsMemo;
+  }
+  function loadAssets() {
+    return withCurrentBands(loadAssetsRaw(), currentBands());
   }
   function loadIssues() {
     if (issuesMemo === void 0) issuesMemo = readAll(TABS.issues).map(rowToIssue);
@@ -4352,6 +4693,8 @@ var Server = (() => {
     const assets = loadAssets();
     const issues2 = openIssues();
     const latest = latestSync();
+    const aarsRule = getAarsRule2();
+    const scoredVersion = getScoredRuleVersion2();
     const bySeverity = {};
     for (const issue2 of issues2) {
       bySeverity[issue2.adjustedSeverity] = ((_a4 = bySeverity[issue2.adjustedSeverity]) != null ? _a4 : 0) + 1;
@@ -4381,6 +4724,15 @@ var Server = (() => {
         // exactly what the server will honor instead of hardcoding it twice.
         maxNodesFloor: MAX_NODES_FLOOR,
         maxNodesCeiling: MAX_NODES_CEILING
+      },
+      // The band ranges every page's AARS copy is written from, so "score 70–100" is read
+      // off the rule in force instead of being retyped wherever a level is named.
+      aarsRule: {
+        version: aarsRule.version,
+        bands: aarsRule.rule.bands,
+        bandRanges: bandRanges(aarsRule.rule.bands),
+        scoredVersion,
+        stale: scoredVersion !== aarsRule.version
       },
       latestSync: latest,
       counts: {
@@ -4503,6 +4855,7 @@ var Server = (() => {
   }
   function assetsModel() {
     var _a4;
+    const trend = aarsTrendFromHistory(syncHistory());
     const assets = loadAssets();
     const issues2 = openIssues();
     const agents = assets.filter((a) => a.kind === "AI_AGENT");
@@ -4533,7 +4886,8 @@ var Server = (() => {
       },
       aarsSeverityCounts,
       // Recorded per sync, so the window is short at first and cannot be backfilled.
-      aarsTrend: aarsTrendFromHistory(syncHistory()),
+      aarsTrend: trend,
+      aarsTrendRuleChanges: ruleChangePoints(trend),
       facets: {
         kinds: [...kinds].sort(),
         clouds: [...clouds].sort(),
@@ -4550,6 +4904,7 @@ var Server = (() => {
         kpis: model.kpis,
         aarsSeverityCounts: model.aarsSeverityCounts,
         aarsTrend: model.aarsTrend,
+        aarsTrendRuleChanges: model.aarsTrendRuleChanges,
         facets: model.facets,
         pageSize: query.pageSize,
         sort: query.sort
@@ -4720,6 +5075,122 @@ var Server = (() => {
         maxNodes: getMaxNodes2()
       };
     });
+  }
+  var PREVIEW_MOVERS_MAX = 50;
+  var SAMPLE_SEVERITIES_MAX = 50;
+  var SAMPLE_GAPS_MAX = 30;
+  function ruleState() {
+    const stored = getAarsRule2();
+    const scoredVersion = getScoredRuleVersion2();
+    return {
+      version: stored.version,
+      rule: stored.rule,
+      defaults: DEFAULT_AARS_RULE,
+      summary: ruleSummary(stored.rule),
+      scoredVersion,
+      // Only the point model can strand the persisted scores; bands re-derive on read, and
+      // setAarsRule carries the marker forward across a band-only edit.
+      stale: scoredVersion !== stored.version,
+      bandRanges: bandRanges(stored.rule.bands),
+      limits: {
+        pointsMax: POINTS_MAX,
+        multiplierMin: MULTIPLIER_MIN,
+        multiplierMax: MULTIPLIER_MAX,
+        bandMin: BAND_MIN,
+        bandMax: BAND_MAX,
+        maxGapRules: MAX_GAP_RULES
+      }
+    };
+  }
+  function getAarsRule3(_p) {
+    return run(() => ruleState());
+  }
+  function setAarsRule2(p) {
+    return mutate(() => {
+      const params = p != null ? p : {};
+      const proposed = cleanAarsRule(params["rule"]);
+      const errors = validateAarsRule(proposed);
+      if (errors.length) throw new Error(errors.join(" "));
+      setAarsRule(proposed);
+      return ruleState();
+    });
+  }
+  function previewAarsRule(p) {
+    return run(() => {
+      var _a4, _b;
+      const params = p != null ? p : {};
+      const proposed = cleanAarsRule(params["rule"]);
+      const errors = validateAarsRule(proposed);
+      if (errors.length) throw new Error(errors.join(" "));
+      const before = loadAssets();
+      const after = scoreAssetsWith(proposed);
+      const beforeById = new Map(before.map((n) => [n.id, n]));
+      const movers = [];
+      for (const a of after) {
+        const b = beforeById.get(a.id);
+        const fromScore = typeof (b == null ? void 0 : b.aars) === "number" ? b.aars : null;
+        const toScore = typeof a.aars === "number" ? a.aars : null;
+        const fromSeverity = (_a4 = b == null ? void 0 : b.aarsSeverity) != null ? _a4 : null;
+        const toSeverity = (_b = a.aarsSeverity) != null ? _b : null;
+        if (fromScore === toScore && fromSeverity === toSeverity) continue;
+        movers.push({
+          id: a.id,
+          name: a.name,
+          kind: a.kind,
+          fromScore,
+          toScore,
+          fromSeverity,
+          toSeverity,
+          levelChanged: fromSeverity !== toSeverity,
+          delta: (toScore != null ? toScore : 0) - (fromScore != null ? fromScore : 0)
+        });
+      }
+      movers.sort((x, y) => {
+        var _a5, _b2;
+        const lvl = Number(y["levelChanged"]) - Number(x["levelChanged"]);
+        if (lvl) return lvl;
+        const mag = Math.abs(Number(y["delta"])) - Math.abs(Number(x["delta"]));
+        if (mag) return mag;
+        return Number((_a5 = y["toScore"]) != null ? _a5 : -1) - Number((_b2 = x["toScore"]) != null ? _b2 : -1);
+      });
+      return {
+        total: before.length,
+        current: countAarsSeverities(before),
+        proposed: countAarsSeverities(after),
+        // The proposed rule read back in prose, and the rows that can never fire — both
+        // describe the draft, so they travel with the preview rather than the saved state.
+        summary: ruleSummary(proposed),
+        bandRanges: bandRanges(proposed.bands),
+        shadowedGapRules: shadowedGapRules(proposed),
+        movers: movers.slice(0, PREVIEW_MOVERS_MAX),
+        moverCount: movers.length,
+        levelChangeCount: movers.filter((m) => m["levelChanged"]).length,
+        // Counted apart from the level changes: moving a threshold re-labels assets without
+        // touching a single score, and saying "N assets change score" for that would be a lie.
+        scoreChangeCount: movers.filter((m) => m["fromScore"] !== m["toScore"]).length,
+        truncated: movers.length > PREVIEW_MOVERS_MAX
+      };
+    });
+  }
+  function scoreAarsSample(p) {
+    return run(() => {
+      var _a4, _b;
+      const params = p != null ? p : {};
+      const rule = cleanAarsRule(params["rule"]);
+      const sample = (_a4 = params["sample"]) != null ? _a4 : {};
+      const rawSeverities = Array.isArray(sample["issueSeverities"]) ? sample["issueSeverities"] : [];
+      const issueSeverities = rawSeverities.slice(0, SAMPLE_SEVERITIES_MAX).map((s) => String(s).trim().toUpperCase());
+      const rawCodes = Array.isArray(sample["gapCodes"]) ? sample["gapCodes"] : [];
+      const codes = rawCodes.map(cleanGapCode).filter(Boolean).slice(0, SAMPLE_GAPS_MAX);
+      const exposure = String((_b = sample["dataExposure"]) != null ? _b : "NONE").trim().toUpperCase();
+      const dataExposure = exposure === "SENSITIVE" || exposure === "DATA_ACCESS" ? exposure : "NONE";
+      const gaps = codes.map((c) => gap(c));
+      const result = computeAars({ issueSeverities, gaps, dataExposure }, rule);
+      return { ...result, gapBreakdown: gapBreakdown(gaps, rule) };
+    });
+  }
+  function rescoreAars(_p) {
+    return mutate(() => ({ ...rescoreInventory(), ...ruleState() }));
   }
   function resetData2(_p) {
     return mutate(() => {

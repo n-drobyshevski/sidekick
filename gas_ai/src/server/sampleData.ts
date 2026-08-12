@@ -501,6 +501,8 @@ for (const assetId of ["agent-j", "agent-k"]) {
 // ------------------------------------------------------ per-asset AARS pillar inputs
 // Transcribed from the applied table in ai/custom_score.md (normative). Live syncs
 // derive these heuristically (graphEnrich.deriveAarsInput); dry-run pins the doc.
+// Only the gap CODES are pinned — their points come from the AARS rule in force, so a
+// tuned deployment sees its own model applied to the sample estate too.
 
 const HINTS: AarsHints = {
   "agent-a": { gaps: [gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },

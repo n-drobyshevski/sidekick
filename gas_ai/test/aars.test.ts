@@ -1,10 +1,26 @@
 // AARS scoring pinned to the normative applied table in ai/custom_score.md.
 // Every named row must reproduce exactly — score, severity, and pillar breakdown.
+//
+// The model is configurable now, so the contract is sharper than it was: DEFAULT_AARS_RULE
+// (which is what these cases score under, implicitly) must reproduce the doc, and each knob
+// must move the score the way the page claims it does.
 
 import { describe, expect, it } from "vitest";
-import { aarsSeverity, computeAars, gap } from "../src/domain/aars";
+import {
+  aarsSeverity,
+  computeAars,
+  DEFAULT_AARS_RULE,
+  gap,
+  gapBreakdown,
+  type AarsRule,
+} from "../src/domain/aars";
+import { cleanAarsRule } from "../src/domain/aarsRule";
 import { AARS_SEVERITY_ORDER, normalizeAarsSeverity } from "../src/domain/config";
 import type { Severity } from "../src/domain/config";
+
+function tuned(over: Partial<AarsRule>): AarsRule {
+  return cleanAarsRule({ ...DEFAULT_AARS_RULE, ...over });
+}
 
 const M = "MEDIUM" as Severity;
 const L = "LOW" as Severity;
@@ -113,6 +129,102 @@ describe("computeAars — applied table rows", () => {
     expect(r.pillars.compliance).toBe(30);
     expect(r.score).toBe(100);
     expect(r.severity).toBe("CRITICAL");
+  });
+});
+
+describe("computeAars — the rule is what makes those numbers", () => {
+  // Agent-A: MEDIUM ×1, LLM06 + NO_GUARDRAIL, sensitive data → 62 under the defaults.
+  const agentA = {
+    issueSeverities: ["MEDIUM"] as Severity[],
+    gaps: [gap("LLM06"), gap("NO_GUARDRAIL")],
+    dataExposure: "SENSITIVE" as const,
+  };
+
+  it("scores the applied table when handed the defaults explicitly", () => {
+    expect(computeAars(agentA, DEFAULT_AARS_RULE).score).toBe(62);
+    expect(computeAars(agentA).score).toBe(computeAars(agentA, DEFAULT_AARS_RULE).score);
+  });
+
+  it("pillar A follows the severity points", () => {
+    const rule = tuned({ severityPoints: { ...DEFAULT_AARS_RULE.severityPoints, MEDIUM: 30 } });
+    expect(computeAars(agentA, rule).pillars.toxic).toBe(30);
+    expect(computeAars(agentA, rule).score).toBe(72);
+  });
+
+  it("pillar A follows the multiplier, and only above one issue", () => {
+    const rule = tuned({ multiIssueMultiplier: 2 });
+    expect(computeAars(agentA, rule).pillars.toxic).toBe(20);
+    expect(computeAars({ ...agentA, issueSeverities: ["MEDIUM", "MEDIUM"] }, rule).pillars.toxic)
+      .toBe(40);
+  });
+
+  it("pillar A follows its cap", () => {
+    const rule = tuned({ pillarACap: 12 });
+    expect(computeAars(agentA, rule).pillars.toxic).toBe(12);
+  });
+
+  it("pillar B prices gaps through the cascade, not through the gap object", () => {
+    const rule = tuned({
+      gapPoints: [{ match: "prefix", code: "LLM", points: 1 }],
+      gapFallbackPoints: 2,
+    });
+    // LLM06 → 1 by the single rule; NO_GUARDRAIL matches nothing → the fallback.
+    expect(computeAars(agentA, rule).pillars.compliance).toBe(3);
+  });
+
+  it("an explicit per-gap price still overrides the cascade", () => {
+    const rule = tuned({ gapFallbackPoints: 0, gapPoints: [] });
+    const input = { ...agentA, gaps: [gap("LLM06", 17), gap("NO_GUARDRAIL")] };
+    expect(computeAars(input, rule).pillars.compliance).toBe(17);
+  });
+
+  it("pillar B follows its cap", () => {
+    expect(computeAars(agentA, tuned({ pillarBCap: 4 })).pillars.compliance).toBe(4);
+  });
+
+  it("pillar C follows the exposure points and the amplifier", () => {
+    const rule = tuned({
+      dataExposurePoints: { SENSITIVE: 30, DATA_ACCESS: 10, NONE: 0 },
+      dataAmplifier: 1.5,
+    });
+    expect(computeAars(agentA, rule).pillars.data).toBe(45);
+  });
+
+  it("clamps to 100 whatever the rule says", () => {
+    const rule = tuned({
+      severityPoints: { CRITICAL: 100, HIGH: 100, MEDIUM: 100, LOW: 100 },
+      pillarACap: 100,
+      pillarBCap: 100,
+      dataExposurePoints: { SENSITIVE: 100, DATA_ACCESS: 100, NONE: 0 },
+    });
+    expect(computeAars(agentA, rule).score).toBe(100);
+  });
+
+  it("names the level through the rule's own bands", () => {
+    const rule = tuned({ bands: { critical: 60, high: 50, medium: 30, low: 10 } });
+    expect(computeAars(agentA, rule).severity).toBe("CRITICAL"); // 62, CRITICAL from 60
+    expect(computeAars(agentA).severity).toBe("HIGH");           // the same 62, HIGH from 50
+  });
+
+  it("scores an unknown issue severity as zero rather than inventing points", () => {
+    expect(computeAars({ ...agentA, issueSeverities: ["UNKNOWN" as Severity] }).pillars.toxic)
+      .toBe(0);
+  });
+});
+
+describe("gapBreakdown", () => {
+  it("reads a pillar-B total back to the rows that produced it, in order", () => {
+    expect(gapBreakdown([gap("LLM06"), gap("LLM04"), gap("SUB-082")])).toEqual([
+      { code: "LLM06", points: 10, overridden: false },
+      { code: "LLM04", points: 5, overridden: false },
+      { code: "SUB-082", points: 5, overridden: false },
+    ]);
+  });
+
+  it("marks a gap that carries its own price", () => {
+    expect(gapBreakdown([gap("LLM06", 3)])).toEqual([
+      { code: "LLM06", points: 3, overridden: true },
+    ]);
   });
 });
 
