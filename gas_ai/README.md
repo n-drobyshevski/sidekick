@@ -63,7 +63,11 @@ npm install
 npm run check          # typecheck + vitest + build (incl. middlebox guard)
 npx clasp login        # once per machine
 npx clasp create --type webapp --title "Wiz SIDEKICK AI" --rootDir dist
-#   → paste the scriptId into .clasp.json
+#   → writes .clasp.json, which is gitignored: the scriptId names ONE Apps Script
+#     project, so it belongs to whoever is deploying. Already have a project? Write
+#     the file yourself instead — {"scriptId": "<Project Settings → IDs>",
+#     "rootDir": "dist"} — `push` fails with "request contains an invalid argument"
+#     until the scriptId is real.
 npm run push
 ```
 
