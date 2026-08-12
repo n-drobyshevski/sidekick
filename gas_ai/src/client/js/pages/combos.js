@@ -7,18 +7,32 @@ import { openAssetSheet, openIssueSheet } from "../detailSheets.js";
 import { aarsChip, clear, el, emptyState, sevBadge, skeleton } from "../ui.js";
 
 // Placeholder combo cards shown until api_getToxicCombos resolves; paint() clears the host.
-function combosSkeleton() {
+// `count` comes from the combo legend, so the placeholder stack is exactly as tall as the
+// real one and the page doesn't grow a card when the data lands.
+function combosSkeleton(count) {
   const wrap = el("div", { role: "status", "aria-label": "Loading toxic combinations" });
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < count; i++) {
     wrap.append(el("div", { class: "card combo-card", style: "margin-bottom:16px" },
       el("div", { style: "display:flex; align-items:center; gap:10px" },
         skeleton("pill", { width: "80px" }),
-        skeleton("line", { width: "40%" })),
-      el("div", { style: "margin-top:12px" }, skeleton("line", { width: "90%" })),
+        skeleton("line", { width: "min(40%, 30rem)" })),
+      // The real .combo-note is capped at --measure, so a percentage bar here would
+      // promise a full-pane slab and then snap back to a third of it.
+      el("div", { style: "margin-top:12px" },
+        skeleton("line", { width: "min(90%, var(--measure))" })),
       el("div", { style: "display:flex; gap:8px; margin-top:12px" },
         skeleton("pill", { width: "90px" }),
         skeleton("pill", { width: "110px" }),
-        skeleton("pill", { width: "70px" }))));
+        skeleton("pill", { width: "70px" })),
+      // The affected-asset chips are the widest, tallest part of a real card — without
+      // them the placeholder is a short block that jumps when the data arrives.
+      el("div", {
+        style: "display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; align-items:center",
+      }, ...["60px", "210px", "180px", "230px", "170px", "200px", "160px", "190px"]
+        .map((w) => skeleton("pill", { width: w }))),
+      el("div", { style: "display:flex; gap:8px; margin-top:14px" },
+        skeleton("pill", { width: "104px" }),
+        skeleton("pill", { width: "118px" }))));
   }
   return wrap;
 }
@@ -43,7 +57,8 @@ export async function renderCombos(main) {
 
   const host = el("div", {});
   main.append(host);
-  host.append(combosSkeleton()); // replaced by paint() once api_getToxicCombos resolves
+  // replaced by paint() once api_getToxicCombos resolves
+  host.append(combosSkeleton((boot.comboLegend || []).length || 4));
 
   let data;
   try {

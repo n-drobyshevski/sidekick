@@ -26,7 +26,10 @@ import {
 // the host and swaps in the real content.
 function inventorySkeleton() {
   const kpis = el("div", { class: "kpi-row" });
-  for (let i = 0; i < 5; i++) {
+  // One placeholder per real KPI (see the kpi-row in paint()). The row is an auto-fit
+  // grid, so the count IS the layout: fewer stubs than cards and each stub stretches,
+  // then the row reflows the moment data lands. Keep the two in step.
+  for (let i = 0; i < 8; i++) {
     kpis.append(el("div", { class: "kpi-card" },
       el("div", { style: "display:flex; flex-direction:column; gap:9px" },
         skeleton("line", { width: "62%" }),
