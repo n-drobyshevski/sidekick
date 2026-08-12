@@ -40,8 +40,19 @@ export const AARS_BAND_SEVERITY_TOKEN: Record<string, string> = {
 
 // Graph projection guardrails (server-side depth control). Depth is user-facing;
 // the caps keep any single getGraph payload bounded regardless of tenant size.
+// Both budgets count everything the payload carries, "+N more" stubs included, so
+// the numbers below are what the browser actually receives and draws.
 export const DEPTH_MIN = 1;
 export const DEPTH_MAX = 3;
 export const DEPTH_DEFAULT = 2;
-export const MAX_NODES_DEFAULT = 120;
+/** Nodes per view, overridable per deployment in Settings (clamped to 30–400). */
+export const MAX_NODES_DEFAULT = 100;
 export const MAX_EDGES_DEFAULT = 250;
+/**
+ * Share of the node budget a single wave of seeds may claim. A bulk start ("every toxic
+ * combination", "every scored asset") can name more seeds than the budget holds, and a
+ * view that is all seeds and no neighbors shows no attack paths at all — the one thing
+ * the graph exists to show. Waves leave room for each seed's surroundings; when the
+ * neighbors run out before the budget does, the next wave takes the remainder.
+ */
+export const SEED_WAVE_RATIO = 0.4;

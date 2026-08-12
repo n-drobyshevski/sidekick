@@ -172,6 +172,7 @@ export function getGraph(p?: unknown): ApiResult {
         layout,
         options: {
           depth: options.depth,
+          maxNodes: options.maxNodes, // the budget in force, so the UI can name it
           seedIds: options.seedIds,
           expandIds: options.expandIds ?? [],
           layout: view.mode,

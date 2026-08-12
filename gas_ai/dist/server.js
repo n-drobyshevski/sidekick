@@ -1101,8 +1101,9 @@ var Server = (() => {
   var DEPTH_MIN = 1;
   var DEPTH_MAX = 3;
   var DEPTH_DEFAULT = 2;
-  var MAX_NODES_DEFAULT = 120;
+  var MAX_NODES_DEFAULT = 100;
   var MAX_EDGES_DEFAULT = 250;
+  var SEED_WAVE_RATIO = 0.4;
 
   // src/domain/settingsLogic.ts
   function clampDepth(v) {
@@ -1271,86 +1272,103 @@ var Server = (() => {
     const summaryNodes = [];
     const summaryEdges = [];
     const queue = [];
-    for (const seedId of opts.seedIds) {
-      const seedNode = byId.get(seedId);
-      if (!seedNode || shown.has(seedId)) continue;
-      if (opts.filterSeeds && !passesFilters(seedNode, opts.filters)) continue;
-      if (shown.size >= maxNodes) {
-        capped = true;
-        break;
-      }
-      shown.add(seedId);
-      queue.push({ id: seedId, depth: 0 });
-    }
-    while (queue.length) {
-      const { id, depth } = queue.shift();
-      if (depth >= opts.depth && !expand.has(id)) continue;
-      const groups = /* @__PURE__ */ new Map();
-      for (const { otherId } of (_d = adjacency.get(id)) != null ? _d : []) {
-        if (shown.has(otherId)) continue;
-        const other = byId.get(otherId);
-        if (!passesFilters(other, opts.filters)) continue;
-        if (!groups.has(other.kind)) groups.set(other.kind, []);
-        const group = groups.get(other.kind);
-        if (!group.some((n) => n.id === otherId)) group.push(other);
-      }
-      for (const kind of [...groups.keys()].sort()) {
-        const members = groups.get(kind).sort(nodeOrder);
-        const cap = expand.has(id) ? Infinity : (_g = (_f = (_e = opts.perKindCap) == null ? void 0 : _e[kind]) != null ? _f : DEFAULT_PER_KIND_CAP[kind]) != null ? _g : DEFAULT_KIND_CAP;
-        const overflow = members.length > cap;
-        const kept = overflow ? members.slice(0, Math.max(1, cap - 1)) : members;
-        for (const member of kept) {
-          if (shown.size >= maxNodes) {
-            capped = true;
-            break;
-          }
-          shown.add(member.id);
-          queue.push({
-            id: member.id,
-            depth: expand.has(id) ? Math.max(depth + 1, opts.depth) : depth + 1
-          });
+    const atNodeBudget = () => shown.size + summaryNodes.length >= maxNodes;
+    const orderedSeeds = opts.seedIds.map((id) => byId.get(id)).filter((n) => !!n && (!opts.filterSeeds || passesFilters(n, opts.filters))).sort(nodeOrder);
+    const seedWave = Math.max(1, Math.floor(maxNodes * SEED_WAVE_RATIO));
+    let seedCursor = 0;
+    function admitSeedWave() {
+      let admitted = 0;
+      while (admitted < seedWave && seedCursor < orderedSeeds.length) {
+        const seed = orderedSeeds[seedCursor];
+        if (shown.has(seed.id)) {
+          seedCursor++;
+          continue;
         }
-        const hidden = members.filter((m) => !shown.has(m.id));
-        if (hidden.length) {
-          if (!overflow) {
-            capped = true;
-            continue;
-          }
-          const sumId = `sum|${id}|${kind}`;
-          summaries.push({
-            id: sumId,
-            of: kind,
-            count: hidden.length,
-            parentId: id,
-            memberIds: hidden.map((m) => m.id)
-          });
-          summaryNodes.push({
-            id: sumId,
-            kind: "SUMMARY",
-            name: `+${hidden.length} more`,
-            summaryOf: kind,
-            summaryCount: hidden.length,
-            memberIds: hidden.map((m) => m.id)
-          });
-          const viaEdge = (_i = ((_h = adjacency.get(id)) != null ? _h : []).find(
-            (a) => a.otherId === hidden[0].id
-          )) == null ? void 0 : _i.edge;
-          summaryEdges.push({
-            id: `${id}|SUMMARY|${sumId}`,
-            src: id,
-            dst: sumId,
-            type: (_j = viaEdge == null ? void 0 : viaEdge.type) != null ? _j : "USES"
-          });
-        }
+        if (atNodeBudget()) return;
+        shown.add(seed.id);
+        queue.push({ id: seed.id, depth: 0 });
+        seedCursor++;
+        admitted++;
       }
     }
+    do {
+      admitSeedWave();
+      while (queue.length) {
+        const { id, depth } = queue.shift();
+        if (depth >= opts.depth && !expand.has(id)) continue;
+        const groups = /* @__PURE__ */ new Map();
+        for (const { otherId } of (_d = adjacency.get(id)) != null ? _d : []) {
+          if (shown.has(otherId)) continue;
+          const other = byId.get(otherId);
+          if (!passesFilters(other, opts.filters)) continue;
+          if (!groups.has(other.kind)) groups.set(other.kind, []);
+          const group = groups.get(other.kind);
+          if (!group.some((n) => n.id === otherId)) group.push(other);
+        }
+        for (const kind of [...groups.keys()].sort()) {
+          const members = groups.get(kind).sort(nodeOrder);
+          const cap = expand.has(id) ? Infinity : (_g = (_f = (_e = opts.perKindCap) == null ? void 0 : _e[kind]) != null ? _f : DEFAULT_PER_KIND_CAP[kind]) != null ? _g : DEFAULT_KIND_CAP;
+          const overflow = members.length > cap;
+          const kept = overflow ? members.slice(0, Math.max(1, cap - 1)) : members;
+          for (const member of kept) {
+            if (atNodeBudget()) {
+              capped = true;
+              break;
+            }
+            shown.add(member.id);
+            queue.push({
+              id: member.id,
+              depth: expand.has(id) ? Math.max(depth + 1, opts.depth) : depth + 1
+            });
+          }
+          const hidden = members.filter((m) => !shown.has(m.id));
+          if (hidden.length) {
+            if (!overflow) {
+              capped = true;
+              continue;
+            }
+            if (atNodeBudget() || summaryEdges.length >= maxEdges) {
+              capped = true;
+              continue;
+            }
+            const sumId = `sum|${id}|${kind}`;
+            summaries.push({
+              id: sumId,
+              of: kind,
+              count: hidden.length,
+              parentId: id,
+              memberIds: hidden.map((m) => m.id)
+            });
+            summaryNodes.push({
+              id: sumId,
+              kind: "SUMMARY",
+              name: `+${hidden.length} more`,
+              summaryOf: kind,
+              summaryCount: hidden.length,
+              memberIds: hidden.map((m) => m.id)
+            });
+            const viaEdge = (_i = ((_h = adjacency.get(id)) != null ? _h : []).find(
+              (a) => a.otherId === hidden[0].id
+            )) == null ? void 0 : _i.edge;
+            summaryEdges.push({
+              id: `${id}|SUMMARY|${sumId}`,
+              src: id,
+              dst: sumId,
+              type: (_j = viaEdge == null ? void 0 : viaEdge.type) != null ? _j : "USES"
+            });
+          }
+        }
+      }
+    } while (seedCursor < orderedSeeds.length && !atNodeBudget());
+    if (seedCursor < orderedSeeds.length) capped = true;
+    const inducedBudget = Math.max(0, maxEdges - summaryEdges.length);
     const edges2 = [];
     const seenEdge = /* @__PURE__ */ new Set();
     for (const edge2 of sortedEdges) {
       if (!shown.has(edge2.src) || !shown.has(edge2.dst)) continue;
       if (seenEdge.has(edge2.id)) continue;
       seenEdge.add(edge2.id);
-      if (edges2.length >= maxEdges) {
+      if (edges2.length >= inducedBudget) {
         capped = true;
         break;
       }
@@ -4088,6 +4106,8 @@ var Server = (() => {
           layout,
           options: {
             depth: options.depth,
+            maxNodes: options.maxNodes,
+            // the budget in force, so the UI can name it
             seedIds: options.seedIds,
             expandIds: (_a4 = options.expandIds) != null ? _a4 : [],
             layout: view.mode,

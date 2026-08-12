@@ -326,7 +326,10 @@ export async function renderGraphPage(main, params, _ctx) {
         `${c.shownNodes} of ${c.totalNodes} nodes · ${c.shownEdges} of ${c.totalEdges} edges`),
       c.capped
         ? el("span", { class: "pill warn", title:
-            "The view is capped to stay light. Raise depth, expand a node, or narrow filters." },
+            `This view is capped at ${payload.options?.maxNodes || "its"} nodes to stay ` +
+            "light, so some neighbors — or, on a whole-estate view, some starting points " +
+            "— are not drawn. Narrow the filters, seed from a single asset or " +
+            "combination, or raise the node budget in Settings." },
             "⚠ capped")
         : null,
       payload.summaries && payload.summaries.length
