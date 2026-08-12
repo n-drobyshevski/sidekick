@@ -1,8 +1,8 @@
 # `brick/` — vulnerability metrics on Databricks
 
-A small Spark pipeline that pulls Wiz vulnerability findings into Delta, tracks each
-vulnerability's lifecycle across scans in a persistent ledger, and computes four metric families
-as query-able gold tables:
+A small Spark pipeline that pulls Wiz findings into Delta, tracks each vulnerability's lifecycle
+across scans in a persistent ledger, and computes five metric families as query-able gold
+tables:
 
 | Metric | Question it answers | Formula |
 | --- | --- | --- |
@@ -10,12 +10,24 @@ as query-able gold tables:
 | **Coverage** | Of all high-risk vulnerabilities, what share did we remediate? | `TP / (TP + FN)` |
 | **Efficiency** | Of everything we remediated, what share was actually high-risk? | `TP / (TP + FP)` |
 | **Capacity** | Can we close faster than risk arrives? | monthly `closed / open_at_start`, and `closed − opened` |
+| **Assets at risk** | Which assets carry the backlog, which offer a foothold, and which are falling behind? | per-asset density percentiles, the share with ≥1 open high-risk finding, per-asset coverage, half-life and net flow |
+
+It runs over four **scopes** — OS-package CVEs on hosts (`os`), everything (`all`), and the two
+code registers, library CVEs (`sca`) and static-analysis weaknesses (`sast`). Each writes its
+own set of tables. See [Scope](#scope).
 
 Coverage and efficiency come from the Cisco Kenna / Cyentia *Prioritization to Prediction*
 series. They are in direct tension, so the pipeline always emits both, never one alone — and
 P2P is the source of the **formulas**, not a benchmark these numbers can be read against. See
 [Reading coverage and efficiency](#reading-coverage-and-efficiency), which is the section to
-read before quoting either figure to anyone.
+read before quoting either figure to anyone. That caution is sharpest for the `sast` register,
+which is one further inferential step from P2P's ground truth than the others — see
+[The code registers](#the-code-registers-sca-and-sast).
+
+The asset family is P2P **volume 5**, whose unit of analysis is the asset rather than the
+vulnerability. For a code register the asset is the repository branch and v5's asset
+*categories* — it compares Windows against Linux against network appliances — become the
+ecosystem. See [Assets at risk](#assets-at-risk-p2p-v5).
 
 Those lifecycles are the difference between this and the pipeline's first version: metrics come
 from what the register has been observed to do over time, not from whatever the latest snapshot
@@ -31,23 +43,30 @@ GAS wins.
 ## Layout
 
 ```
-config.py         constants mirrored from wiz_dashboard/config.py + the risk rule and scopes
+config.py         constants mirrored from wiz_dashboard/config.py + the risk rules and scopes
 dbx.py            reaching dbutils from inside a module, and doing without it off-cluster
-ingest.py         Wiz OAuth + paginated GraphQL -> raw finding dicts
+ingest.py         Wiz OAuth + paginated GraphQL -> raw finding dicts, for both sources
 ledger.py         pure PySpark cross-scan lifecycle reconciliation (no I/O)
 metrics.py        pure PySpark DataFrame -> DataFrame transforms (no I/O)
-run_pipeline.py   the Databricks entry point: bronze -> silver -> ledger -> three gold tables
+run_pipeline.py   the Databricks entry point: bronze -> silver -> ledger -> five gold tables
 
 import_bundle.py  one-shot: seed the ledger from a gas/ migration bundle
+csvstore.py       the register as typed CSV, for a deployment with no catalog — see CSV register
 
 panels.py         every number a notebook shows, and the one place that pins the scan
 figures.py        pandas -> Plotly figures, drawn the way the GAS app draws them
 tiles.py          HTML fragments for displayHTML: heroes, KPI bands, the confusion matrix
-notebooks/        seven .ipynb pages, one per page of the GAS app
+notebooks/        eight .ipynb pages, one per page of the GAS app plus the v5 asset page
 
+devsecops/        the reference request scripts and captured responses for the code scopes
 tests/            local-SparkSession tests, oracles ported from the existing suites
 bench_pipeline.py a synthetic register, timed through the real entry points — see Benchmarking
 ```
+
+`devsecops/` is to the code scopes what `os_vulns.py` is to `os`: a reference query whose
+`filterBy` a scope mirrors, plus a captured response the tests replay. The `*_request.py` files
+are the scripts as Wiz's own console exports them; the `*_response.json` files are this
+tenant's real answers and are the only evidence available that a given selection validates.
 
 `ledger.py` and `metrics.py` are pure `DataFrame -> DataFrame`; `run_pipeline.py` is the only
 module that does I/O. That is what lets the lifecycle rules — the part most likely to be wrong —
@@ -148,6 +167,7 @@ matter how many times it is scanned.
 | `…wiz_os_metrics_program` | scan × severity (+ `OVERALL`) | the confusion matrix, coverage and efficiency with bounds, prevalence, signal coverage |
 | `…wiz_os_metrics_capacity` | scan × month × **`population`** | opened, closed, backlog at month start, MMCR, net flow, verdict, `reconstructed`, `closed_observed` |
 | `…wiz_os_metrics_sensitivity` | scan × signal subset | the same confusion matrix and rates under each of the seven non-empty rules, with the configured one marked `active` |
+| `…wiz_os_metrics_assets` | scan × ecosystem × **`population`** | P2P v5: density percentiles, the foothold rate, per-asset coverage, half-life, MMCR and the falling-behind / maintaining / gaining split |
 
 The gold tables are computed from the ledger. The snapshot figures are still computed and
 published beside them as `snap_km_median`, `snap_mttr_median`, `snap_resolved`, `snap_open` —
@@ -193,6 +213,13 @@ with no high-risk lifecycles at all writes no `high_risk` rows.
 > coalesces a NULL one), so the pages open either way; SQL written by hand against the table
 > needs `coalesce`, and needs the column to exist first:
 > `ALTER TABLE … ADD COLUMN population STRING`.
+
+> **Upgrading from 2.2:** the ledger gains three nullable columns — `cwe`, `language` and
+> `ai_verdict` — by the same schema evolution, and `…metrics_assets` is created by the first
+> 2.3 run. Nothing to backfill: the three are NULL for every CVE-bearing scope by design, and
+> `…metrics_assets` simply starts accumulating. `panels.register_views` skips `v_assets` when
+> the table is absent, so a register last scanned under 2.2 opens `00`–`05` unchanged and only
+> `08_code_assets` needs a scan first.
 
 ### The scan log is load-bearing
 
@@ -299,13 +326,15 @@ than emergent.
 table names — one parameter, so a table can never disagree with what is inside it. Every row
 also carries a `scope` column, so it stays self-describing after a `UNION`.
 
-| Scope | Population |
-| --- | --- |
-| `os` (default) | OS-package CVEs on host workloads. Parity with `os_vulns.VARIABLES["filterBy"]` — `detectionMethod: OS`, `assetType: VIRTUAL_MACHINE`, `assetIsRepresentativeResource: false`, and the `openssl`/`python`/`vim` exclusions — so the numbers are comparable with the Streamlit dashboard's |
-| `all` | Every detection method and asset type: container SBOM, code libraries, OS, the lot |
+| Scope | Population | Source |
+| --- | --- | --- |
+| `os` (default) | OS-package CVEs on host workloads. Parity with `os_vulns.VARIABLES["filterBy"]` — `detectionMethod: OS`, `assetType: VIRTUAL_MACHINE`, `assetIsRepresentativeResource: false`, and the `openssl`/`python`/`vim` exclusions — so the numbers are comparable with the Streamlit dashboard's | `vulnerabilityFindings` |
+| `all` | Every detection method and asset type: container SBOM, code libraries, OS, the lot | `vulnerabilityFindings` |
+| `sca` | CVEs in the libraries a repository depends on, on its default branch | `vulnerabilityFindings` |
+| `sast` | Weaknesses in first-party code, on the default branch | `sastFindings` |
 
-Both scopes share `status: ["OPEN", "RESOLVED"]` and `hasFix: true`, and neither is about
-scoping:
+The three `vulnerabilityFindings` scopes share `status: ["OPEN", "RESOLVED"]` and
+`hasFix: true`, and neither is about scoping:
 
 - **`status`** — without it the API returns only open findings, and every remediation metric
   collapses (coverage 0%, efficiency undefined, MTTR empty) while still looking like a real
@@ -327,6 +356,154 @@ Moving to all vulnerability types later is `--scope=all`, which writes a paralle
 
 Bronze keeps the finding as a JSON string so a Wiz schema change can never fail ingest;
 silver is just the typed projection of whatever arrived.
+
+## The code registers: `sca` and `sast`
+
+The two devsecops scopes look symmetrical and are not. One of them is nearly free; the other
+required a second source, a second risk rule, and a caveat that belongs on every number it
+produces.
+
+### `sca` needs no new maths, and that is the whole story
+
+`sca_request.py` queries the **same GraphQL connection** `os` does — `vulnerabilityFindings`,
+with the same `VulnerabilityFindingFilters` type — restricted to the code stage of the pipeline.
+Its findings carry a CVE and the same three exploit signals, so the ledger, Kaplan–Meier MTTR,
+the confusion matrix, capacity and rule sensitivity all apply unchanged and mean exactly what
+they mean for the OS register. It is a scope, not a subsystem.
+
+Two filter clauses, both of which earn their place:
+
+| | |
+| --- | --- |
+| `codeToCloudPipelineStage: ["CODE"]` | the library as it appears in the repository, not the copy baked into every container image built from it. Without it one dependency is counted once per repo *and* once per image |
+| `isDefaultBranch: {equals: true}` | or every feature branch is its own asset, and the register grows and shrinks with the team's branching habits rather than with its code |
+
+`sca` is also the one scope that gets **asset columns** while `config.FETCH_ASSET_FIELDS` is
+off — see [The asset fields are not fetched](#the-asset-fields-are-not-fetched-except-for-sca). The flag is off
+because a `vulnerableAsset` union member this tenant no longer has fails the whole request, and
+that is an argument for asking for fewer members rather than none: `sca` returns
+`REPOSITORY_BRANCH` and nothing else, `devsecops/sca_response.json` is the evidence, and
+`config.SCOPE_ASSET_MEMBERS` narrows the selection to the two that resolve. That is what makes
+the [v5 asset family](#assets-at-risk-p2p-v5) computable here.
+
+### `sast` is a second source, and a rule of our own
+
+`sastFindings` is a different connection with a different filter type, and a static-analysis
+finding has **no CVE, and therefore no KEV entry, no published exploit and no EPSS score**.
+Under `RiskRule` every one of them classifies `unknown` and every rate is undefined — correctly,
+and uselessly. So `config.SastRiskRule` exists: an any-of over three signals, in the same frozen,
+inspectable shape, swept by the same `metrics_sensitivity` table.
+
+| Signal | Question it answers | What it is |
+| --- | --- | --- |
+| `cwe` | is this a *kind* of weakness that gets exploited? | the finding's CWE, or a documented ancestor of it, is in MITRE's CWE Top 25 |
+| `ai_verdict` | does the scanner's own triage think this instance is real? | `aiAnalysis.verdict` is in `config.AI_VERDICTS_HIGH` |
+| `critical` | did somebody already call this the worst tier? | severity is CRITICAL |
+
+Four things about this register are different, and none of them is a detail:
+
+- **The CWE hierarchy is the weakest joint.** Scanners report leaves and the Top 25 holds
+  interior nodes: the captured response contains CWE-23 (Relative Path Traversal), a child of
+  Top-25 member CWE-22. `config.CWE_ANCESTORS` lifts the children this tenant actually produces
+  and is **deliberately incomplete** — it is not a transcription of the CWE tree. An unmapped
+  child classifies `low`, so the gap costs coverage's numerator silently, and
+  `…metrics_sensitivity`'s producing panel publishes `cwe_unmapped` as the size of it. Read that
+  number before quoting a SAST coverage figure.
+- **Two selections are unverified against the live tenant.** Whether `SASTFindingFilters`
+  accepts `severity`, and what `aiAnalysis.verdict` actually spells. Every node in the captured response
+  has `aiAnalysis: null`, so the AI clause will simply never fire until the enum is confirmed —
+  which is quiet, and is why `ai_verdict_missing` is published beside it. A count equal to the
+  row count means the field is not being returned or the strings are wrong.
+  If the severity filter turns out not to exist, set `severity_filter=False` on
+  `config.SAST_SOURCE` and `ingest._severity_gate` applies `--severities` to the returned nodes
+  instead. It has to be applied somewhere: the scan log records the scope and the disappearance
+  guard trusts it, so a run that ingested MEDIUM while claiming CRITICAL,HIGH would hand the
+  next reconcile a scope its own data contradicts.
+- **There are no timestamps.** `ingest.SAST_QUERY` selects none, because the reference query
+  selects none and nothing else is known to validate. Every SAST lifetime is therefore dated
+  from *observation*: `first_seen` is the scan that first returned the finding, `resolved_at`
+  the scan that stopped returning it. **MTTR is meaningless until the register has run for a
+  while**, and reads near zero before then. The captured `endCursor` decodes to a sort key
+  containing a timestamp, so one does exist server-side; if it turns out to be selectable,
+  adding it to the query and to `metrics.SAST_NODE_SCHEMA` is the whole change.
+- **Every closure is inferred — by choice, not by limitation.** A SAST finding plainly has a
+  status (`sast_request.py` selects it, `resolutionReason` sits beside it), so the API can
+  almost certainly be asked for resolved ones. `config.SAST_FETCH_RESOLVED` declines, and the
+  reason is the timestamps above rather than the filter: an already-resolved finding with no
+  dates is born and closed in the same instant, so `first_seen == resolved_at` and
+  **`mttr_days` is exactly 0**. Every historical resolved finding would land at zero days and
+  drag the Kaplan–Meier median with it — which is worse than the empty result it replaces,
+  because "no MTTR yet" is a state a reader can act on and "MTTR is 0 days" is a confident lie.
+  `test_devsecops.py` measures that zero so nobody flips the flag without meeting it. The CVE
+  scopes take `status: [OPEN, RESOLVED]` safely for one reason only: they carry
+  `firstDetectedAt`, so the subtraction means something.
+
+  **Turn it on in the same change that adds a timestamp to the query, not before.** At that
+  point it is a real improvement — an API resolution is better evidence than an inferred
+  disappearance. Until then `resolution_src` reads `disappeared` for essentially every row and
+  the `snap_*` columns read ~0 resolved, which is the ledger working as designed.
+
+### Two silver projections, one column contract
+
+`metrics.silver_findings` dispatches on the scope's source and `metrics.silver_sast` handles the
+second shape. **Both emit the same columns**, which is what keeps `ledger.py` — the module most
+expensive to get wrong — unaware that a second source exists. Three of those columns mean
+something adjacent for SAST:
+
+| Column | For `sast` |
+| --- | --- |
+| `cve` | the weakness *title* ("SQL Injection"), not an identifier. Reused rather than paralleled: it is the column every existing panel groups on to answer "what kind of thing is this", and the question has the same answer here. The identifier-shaped value is in `cwe` |
+| `component` | the file path — the located artefact, which is what `detailedName` is for a package |
+| `asset_*` | the repository branch, from `resource`. A plain object rather than a union, so none of the `FETCH_ASSET_FIELDS` trouble applies and these are populated unconditionally |
+
+Three columns were added to the ledger for this: `cwe`, `language` and `ai_verdict`, NULL for
+every CVE-bearing scope. They live on the shared ledger rather than a parallel one for the same
+reason `has_kev` does — coverage classifies over findings the API has stopped returning, so a
+signal not written down at observation time is gone for good.
+
+**`ai_verdict` is latest-observation-wins, not monotone**, and the asymmetry against `has_kev`
+sitting three columns away is deliberate. Exploit knowledge does not decay, so letting `has_kev`
+fall back to false would be forgetting something true. An AI triage verdict is an opinion about
+*this call site*, and a re-triage from EXPLOITABLE to NOT_EXPLOITABLE is a correction — freezing
+it would pin the high-risk population full of findings everyone has since agreed are not real,
+which on a SAST register is the common case. The cost, stated rather than hidden: a SAST coverage
+figure **can** move between scans for a reason that is not remediation, so the appended per-scan
+series has to be read with that in mind.
+
+## Assets at risk (P2P v5)
+
+The four original families are vulnerability-centric, which is how P2P volumes 1–4 count.
+Volume 5 changes the unit: *"the fact that we manage vulnerabilities in assets rather than in a
+vacuum requires us to know where risk isn't, where it is now, and where it will eventually be."*
+`…metrics_assets` is that volume, with the repository branch as the asset and the
+language/ecosystem as v5's asset *category* — its analogue of Windows / Linux / Mac / appliances,
+and for the same reason: a category is a group of assets that behave alike because of the
+platform rather than because of the team looking after them.
+
+| Column | v5 |
+| --- | --- |
+| `assets` | asset prevalence — how many assets are in scope at all |
+| `density_p25` / `density_p50` / `density_p75` | vulnerability density, open findings per asset (Fig. 10). Percentiles rather than a mean because the distribution is far too skewed for one — v5's own sample runs from under 10 per asset to over 1,000 |
+| `assets_with_high_risk_pct` | the foothold rate (Fig. 11): *"just one opening is needed"* |
+| `asset_coverage_p50` | remediation coverage per asset rather than per finding, medianed over the assets that have any high-risk finding to cover |
+| `km_median_days` | the half-life (Fig. 15) — the same `metrics.kaplan_meier` the severity table uses, grouped by category instead |
+| `mmcr_p50` | the median share of an asset's backlog closed per month (Fig. 20) |
+| `falling_behind_pct` / `maintaining_pct` / `gaining_pct` | the capacity split (Fig. 21), over the same dead band `NET_CAPACITY_BAND_PCT` gives the monthly table |
+
+Three things to know before reading it:
+
+- **Filter on `population`.** Like `…metrics_capacity`, every asset group appears twice —
+  `all` and `high_risk` — and an unfiltered read doubles every count.
+- **The capacity columns are NULL without a scan log.** `mmcr_p50` and the three verdict shares
+  are rates per *watched* month, and a register that has not recorded when it started watching
+  has none. Reconstructed capacity is the specific thing this pipeline refuses to headline, so
+  they are NULL rather than back-dated from the API's own dates. `window_months` and
+  `assets_flowing` ride along so that a confident-looking split over three assets and one month
+  cannot pass for a trend.
+- **A register with no asset ids writes no rows.** Findings with no asset are dropped rather
+  than folded into a NULL asset, which would be one enormous phantom repository dominating every
+  percentile. On `os`, while [the asset fields are off](#the-asset-fields-are-not-fetched-except-for-sca), that
+  means this table is empty — the honest answer, and the same one `05_estate` gives.
 
 ## Running it on Databricks
 
@@ -376,8 +553,10 @@ it; the job then never needs catalog-level rights.
 
 ### 2. Get the code onto the workspace
 
-**Six** `.py` modules are needed at runtime — skip `tests/`, `README.md` and
-`requirements.txt`, and note `requests` is already on the runtime. Put them all in **one flat
+**Six** `.py` modules are needed at runtime — skip `tests/`, `devsecops/`, `README.md` and
+`requirements.txt`, and note `requests` is already on the runtime. A run that exports to CSV
+needs `csvstore.py` as well; it is in the optional set below because a Job that never passes
+`--csv_path` neither imports it nor needs the file. Put them all in **one flat
 folder**, created as **Files**, not Notebooks (a notebook is not importable as a module, and
 this is the most common way the setup goes wrong):
 
@@ -408,6 +587,7 @@ To read the [notebooks](#notebooks) as well as run the pipeline, three more file
 ├── figures.py
 ├── tiles.py
 ├── import_bundle.py
+├── csvstore.py
 └── notebooks/
     ├── 00_security_posture.ipynb
     ├── 01_mttr_sla.ipynb
@@ -416,10 +596,11 @@ To read the [notebooks](#notebooks) as well as run the pipeline, three more file
     ├── 04_scan_history.ipynb
     ├── 05_estate.ipynb
     ├── 06_run_and_verify.ipynb
-    └── 07_import_gas.ipynb
+    ├── 07_import_gas.ipynb
+    └── 08_code_assets.ipynb
 ```
 
-These four are **not** in the six. A scheduled Job must never fail for want of Plotly, and it
+These five are **not** in the six. A scheduled Job must never fail for want of Plotly, and it
 has no business carrying a one-shot migration either, so `run_pipeline` neither imports nor
 requires any of them — but if they *are* imported and their version disagrees, that is fatal for
 the same reason the six are: a stale `figures.py` beside a fresh `metrics.py` draws a chart that
@@ -474,7 +655,10 @@ dbutils.widgets.text("schema", "industry")
 dbutils.widgets.text("wiz_api_url", "https://api.eu15.app.wiz.io/graphql")
 dbutils.widgets.text("secret_scope", "wiz")
 dbutils.widgets.text("severities", "CRITICAL,HIGH")
-dbutils.widgets.text("scope", "os")            # "all" for every vulnerability type
+dbutils.widgets.text("scope", "os")            # or "all" / "sca" / "sast" -- see Scope
+# Where the register comes to rest when there is no catalog to write tables in.
+dbutils.widgets.text("data_path", "dbfs:/tmp/wiz_pipeline")
+dbutils.widgets.text("csv_path", "/Workspace/Users/<you>/wiz/csv_export")
 
 from run_pipeline import main
 main()
@@ -562,7 +746,7 @@ and a laptop.
 | --- | --- | --- |
 | `catalog` | — | **required**, no default; `hive_metastore` on a workspace without Unity Catalog |
 | `schema` | `wiz` | created only if it does not already exist |
-| `scope` | `os` | `os` or `all` — see [Scope](#scope) |
+| `scope` | `os` | `os`, `all`, `sca` or `sast` — see [Scope](#scope) |
 | `table_prefix` | `wiz_<scope>_` | pass empty to use bare table names |
 | `project_id` | — | optional `projectIdV2` restriction |
 | `wiz_api_url` | — | **required**, `https://api.<region>.app.wiz.io/graphql` |
@@ -575,7 +759,10 @@ and a laptop.
 | `shuffle_partitions` | `0` | `spark.sql.shuffle.partitions` for the run; `0` leaves the cluster's own setting alone |
 | `maintain` | `false` | run `OPTIMIZE` over the clustered tables and exit, ingesting nothing — see [Maintenance](#maintenance) |
 | `data_path` | — | write the register to this directory instead of a catalog — see [PoC storage](#poc-storage-running-with-no-catalog). With it set, `catalog` is not required |
-| `export_csv` | — | write every table to this directory as CSV and exit. One-way; see [PoC storage](#poc-storage-running-with-no-catalog) |
+| `export_csv` | — | write every table to this directory as typed CSV and exit, ingesting nothing — see [The CSV register](#the-csv-register) |
+| `csv_path` | — | the same export, run **after** a normal scan rather than instead of one. The usual shape where the register is read from CSV |
+| `csv_include_bronze` | `false` | include bronze in the export. Large, and nothing reads it back |
+| `csv_restore` | — | write a CSV export back out as the Delta register and exit. Overwrites — see [The CSV register](#the-csv-register) |
 
 `shuffle_partitions` is the one parameter that changes nothing about any published number, and
 it is unset by default on purpose. Spark's 200 is sized for a cluster moving real data, and a
@@ -810,9 +997,23 @@ WHERE  scan_id = (
 ORDER BY active DESC, rule_label;
 ```
 
-The run itself prints all three families — MTTR and SLA by severity, coverage and efficiency
-with the rule-sensitivity table beside them, and the most recent capacity months for each
-population.
+And the code register's assets, which is the v5 family. **Note the `population` predicate** —
+without it every ecosystem is counted twice:
+
+```sql
+SELECT asset_group, assets, density_p50, assets_with_high_risk_pct,
+       km_median_days, falling_behind_pct
+FROM   <catalog>.<schema>.wiz_sca_metrics_assets
+WHERE  population = 'high_risk'
+  AND  scan_id = (
+  SELECT max_by(scan_id, scan_ts) FROM <catalog>.<schema>.wiz_sca_metrics_assets
+)
+ORDER BY assets DESC;
+```
+
+The run itself prints every family — MTTR and SLA by severity, coverage and efficiency with the
+rule-sensitivity table beside them, the most recent capacity months for each population, and the
+asset profile by ecosystem.
 
 To read the numbers rather than query them, open the [notebooks](#notebooks).
 
@@ -923,22 +1124,74 @@ If a path ever has to be rebuilt rather than registered — a directory copied b
 say — `--rebuild_ledger` replays bronze into a fresh register and lands where the live scans
 landed.
 
-### `--export_csv` is for reading, not for migrating
+## The CSV register
+
+A deployment with no catalog it may create tables in **and** no Unity Catalog volume has nowhere
+for the ✅ rows above to point. `csvstore.py` is the answer that deployment actually runs on:
+the register is exported as CSV to a workspace directory, and the notebooks read it back from
+there.
 
 ```bash
+# Export as part of a normal scan -- this is the usual shape.
+python brick/run_pipeline.py --data_path=dbfs:/tmp/wiz_pipeline \
+  --csv_path=/Workspace/Users/<you>/wiz/csv_export \
+  --wiz_api_url=https://api.<region>.app.wiz.io/graphql
+
+# Or export an existing register and exit, ingesting nothing.
 python brick/run_pipeline.py --data_path=<root> --export_csv=<root>/csv
 ```
 
-One CSV per table, for opening in a spreadsheet or mailing to somebody. **It is one-way.** CSV
-has no types, so every timestamp and boolean comes back as text, and NULL is indistinguishable
-from an empty string in a way Spark's own behaviour has changed across releases
-([SPARK-17916](https://issues.apache.org/jira/browse/SPARK-17916)). That ambiguity lands on
-`has_kev` / `has_exploit` / `epss` — where, per
-[Three things that are easy to get wrong](#three-things-that-are-easy-to-get-wrong), a NULL read
-back as `false` inflates efficiency and deflates coverage at once and says nothing about it.
+Then point the read-only notebooks at it by setting the **`csv_path` widget**. That is the
+whole of the reader's side: `csvstore.load` registers each table as a session temp view named
+exactly as the table would be, and a temp view is valid anywhere Spark wants a table — the same
+trick `` delta.`<path>` `` plays — so every view, every panel and every `%sql` cell works
+untouched.
 
-So there is deliberately no CSV import, and no test that the export round-trips: writing one
-would imply it is safe to migrate from. What you migrate is the Delta directory.
+**Why it is not `spark.read.csv`.** Every write Spark does is distributed, and *executors cannot
+write to workspace files* — which is also why `--data_path` refuses `/Workspace` outright. So
+everything in `csvstore` is driver-side: `toPandas`, `open()`, `csv`. That is what makes
+`/Workspace` a legal destination for the *export* even though it is an illegal one for the
+register itself.
+
+### The schema sidecar, which is the whole point
+
+Each table is written as **two** files: `<table>.csv` and `<table>.schema.json`, the Spark schema
+verbatim. Reading goes back through that schema rather than through inference.
+
+CSV has no types. A blank cell is indistinguishable from an empty string, and Spark's own
+behaviour on that has changed across releases
+([SPARK-17916](https://issues.apache.org/jira/browse/SPARK-17916)). That ambiguity lands exactly
+on `has_kev` / `has_exploit` / `epss`, where — per
+[Three things that are easy to get wrong](#three-things-that-are-easy-to-get-wrong) — a NULL read
+back as `false` inflates efficiency and deflates coverage at the same time, silently.
+
+It is not hypothetical. For [the `sast` scope](#the-code-registers-sca-and-sast) those three
+columns are **always** NULL, so a type-blind round-trip would classify every static-analysis
+finding as a confident true negative and publish a confusion matrix that was entirely fiction
+and looked exactly like a result. `tests/test_csvstore.py` is that paragraph as a test: the
+confusion matrix over a reloaded register must be identical to the one over the Delta tables it
+came from.
+
+### What it does and does not carry
+
+| | |
+| --- | --- |
+| **Bronze is excluded by default** | one JSON document per finding: the only table big enough to hit the workspace 500 MB per-file cap, and the only one nothing reads except `--rebuild_ledger`. `--csv_include_bronze=true` opts in |
+| **Arrays and structs are refused** | nothing in this register has one, and inventing a rendering that round-trips is worse than failing. `cwe` is a comma-separated string for exactly this reason |
+| **`--csv_restore=<dir>`** | writes a CSV export back out as Delta, overwriting. The way back, and it matters: this deployment's Delta side sits on `dbfs:/tmp`, so the export is the durable copy — and a copy you cannot restore from is a report, not a backup |
+
+**Still not how you migrate a register that is intact.** What you migrate is the Delta
+directory — `CREATE TABLE … USING DELTA LOCATION` keeps the clustering, the deletion-vector
+property and the full history, none of which a CSV carries. `--csv_restore` is for rebuilding a
+register whose Delta side was *lost*, which is a different job.
+
+### Two things about the workspace path, said once
+
+`/Workspace` file permissions **expire** — 36 hours on interactive compute, 30 days for jobs —
+and `dbfs:/tmp/…` slips past `EPHEMERAL_PREFIXES` (the guard matches a leading `/tmp/`, and that
+string does not start with one). So in the arrangement above neither half is unconditionally
+durable, and the CSV export is nonetheless the copy that has to survive. Re-export on every
+scan, and keep something outside the workspace if the history matters.
 
 ## Tests
 
@@ -1001,7 +1254,21 @@ The oracles are ported, not invented:
 - `vuln_key` is cross-checked against `wiz_dashboard.domain.lifecycle.vuln_key` over the
   committed Wiz response, so the surfaces provably agree on identity;
 - one test replays the committed `os_vulns_response_exemple.json` end to end, so the real Wiz
-  response shape is covered without a network call.
+  response shape is covered without a network call, and `test_devsecops.py` does the same with
+  `devsecops/sast_response.json` and `devsecops/sca_response.json`.
+
+Two of the newer modules are worth naming, because each pins one property that fails as a
+confident number rather than as an exception:
+
+- **`test_csvstore.py`** asserts the confusion matrix over a CSV-reloaded register is identical
+  to the one over the Delta tables it came from. A NULL exploit signal read back as `false`
+  inflates efficiency and deflates coverage at once, and on a `sast` register — where those
+  columns are always NULL — it would make the whole matrix fiction. See
+  [The CSV register](#the-csv-register).
+- **`test_devsecops.py`** pins that both silver projections emit the same columns, which is what
+  keeps `ledger.py` unaware there are two sources, and walks the edges of the static-analysis
+  rule: the CWE ancestor hop, an unmapped weakness, and one missing signal making the whole row
+  unknown.
 
 The rules that would be silently wrong rather than loudly broken were mutation-tested: removing
 the disappearance previous-scan guard, the severity-scope guard, the monotone risk merge, the
@@ -1058,8 +1325,9 @@ of charts and a table you can sort and export. Run a cell, get a metric and its 
 | **`05_estate`** | Can this register be attributed to an owner at all, and which parts of the estate carry the backlog? |
 | **`06_run_and_verify`** | Is the deployment sound, can I run a scan, and are the tables consistent? |
 | **`07_import_gas`** | Can this register start from the history the Apps Script app already has, instead of from today? |
+| **`08_code_assets`** | Which repositories carry the backlog, which offer a foothold, and which are falling behind? |
 
-`00`–`05` are **read-only about your data**. `06` is the only one that ingests, which is
+`00`–`05` and `08` are **read-only about your data**. `06` is the only one that ingests, which is
 deliberate: a page somebody opens to check a number should not be one Run All away from a
 credentialed API sweep. `07` is the other writer, and it is meant to be run once, before the
 first scan — see [Migrating from the Apps Script app](#migrating-from-the-apps-script-app).
@@ -1087,17 +1355,25 @@ gap against. The page says so and answers the nearest question the register can 
 support. Adding tags to `ingest.py` is the real fix.
 
 > **`05_estate` is currently empty, and that is the honest reading.** See
-> [The asset fields are not fetched](#the-asset-fields-are-not-fetched) — every column it groups
+> [The asset fields are not fetched](#the-asset-fields-are-not-fetched-except-for-sca) — every column it groups
 > on is NULL, so `panels.attributability` reports 0% populated. That is the page working, not
 > the page broken: it exists to answer "can this register be attributed to an owner at all".
 
-### The asset fields are not fetched
+### The asset fields are not fetched (except for `sca`)
 
 `config.FETCH_ASSET_FIELDS` is **False**. The live tenant no longer has the `vulnerableAsset`
 union members this query used, and GraphQL rejects the *whole request* rather than the
 sub-selection — so one unavailable field costs every scan. It is a constant rather than a
 deletion: `ingest._asset_selection` and its member list are intact, so a tenant that still has
 them turns the columns back on by flipping one line.
+
+**A union failing as a whole is an argument for asking for fewer members, not none**, and which
+members a scope returns is knowable. `config.SCOPE_ASSET_MEMBERS` narrows `sca` to
+`VulnerableAssetBase` and `VulnerableAssetRepositoryBranch`, which
+`devsecops/sca_response.json` shows resolving in this tenant — so the code register has its
+asset columns, and the [v5 asset family](#assets-at-risk-p2p-v5) is computable there. Everything
+below applies to `os` and `all`, which have no such override. (`sast` never needed one:
+`resource` is a plain object, not a union.)
 
 | | |
 | --- | --- |
@@ -1142,8 +1418,9 @@ must differ by more than hue. Databricks renders it live in the cell — pan, ho
 toggling — so this is not the old static-PNG surface with a new library. It is also the only
 layer where the two rules below can be *tested*: a `Figure` is an object a test can interrogate.
 
-**The native chart editor** draws five things, all of them plain counts where the picker adds
-something code cannot: two stacked bars, a 100% stacked bar, and two pivot tables. **The native
+**The native chart editor** draws six things, all of them plain counts where the picker adds
+something code cannot: two stacked bars, a 100% stacked bar, two pivot tables, and the v5
+foothold bar. **The native
 result grid** shows every table, because it sorts, filters, exports CSV and docks to a dashboard
 better than anything this repo would write — GAS's drawers and pagers are that grid here.
 
@@ -1161,7 +1438,7 @@ Two conventions run through all of it, and both are enforced by tests rather tha
   deuteranopia and 6.7 apart with normal vision. Every severity series carries its own marker
   shape, every mark is named by a tick or a label, and colour is redundant coding on top.
 
-### The five native charts are not committed, and this is why
+### The six native charts are not committed, and this is why
 
 A Databricks result visualisation lives under an undocumented, version-dependent
 `application/vnd.databricks.v1+*` key, partly in cell metadata and partly in cell output.
@@ -1186,7 +1463,7 @@ click **+ → Visualization** and set exactly the fields the recipe names. Then 
 bounded by construction, which is the point: if the visualisation is never created, or is
 stripped on the way through Git, the reader sees a correct sorted table — never an error, never a
 wrong chart. That is a strictly better failure than "the whole document is rejected", and it is
-why only five of the visuals are native. The same *unverified UI guidance* caveat applies to the
+why only six of the visuals are native. The same *unverified UI guidance* caveat applies to the
 menu paths in this section and to **Run accessed commands** below.
 
 `tests/test_notebooks.py` parses every `Chart ▸` recipe and checks each column it names against
@@ -1234,14 +1511,29 @@ confusion matrix measures what the register did against that rule rather than ag
 That is the same move the Kenna product makes (it scores against Kenna's own risk band), and it
 is a fair thing to measure. It is just not the thing P2P measures.
 
-| | P2P research | Kenna.VM product | here |
-| --- | --- | --- | --- |
-| Positive label | exploitation observed in the wild | Kenna risk score, high band | `KEV ∨ public exploit ∨ EPSS ≥ 0.1` |
-| Nature | retrospective ground truth | vendor prediction | our own rule |
-| Prevalence | ~2–5% of CVEs | vendor-set | rule-set — read `prevalence_pct` |
-| Unit | CVE (v1–v4), asset-centric from v5 | vulnerability instance | finding-instance (`vuln_key`) |
-| Window | a defined period | rolling period | cumulative over the ledger |
-| Unknown label | none — binary | none | first-class, with `_lo`/`_hi` bounds |
+| | P2P research | Kenna.VM product | `os` / `all` / `sca` | `sast` |
+| --- | --- | --- | --- | --- |
+| Positive label | exploitation observed in the wild | Kenna risk score, high band | `KEV ∨ public exploit ∨ EPSS ≥ 0.1` | `CWE in Top 25 ∨ AI verdict ∨ CRITICAL` |
+| Nature | retrospective ground truth | vendor prediction | our own rule | our own rule, over a weakness *class* |
+| Prevalence | ~2–5% of CVEs | vendor-set | rule-set — read `prevalence_pct` | rule-set — read `prevalence_pct` |
+| Unit | CVE (v1–v4), asset-centric from v5 | vulnerability instance | finding-instance (`vuln_key`) | weakness instance (file × line) |
+| Window | a defined period | rolling period | cumulative over the ledger | cumulative over the ledger |
+| Unknown label | none — binary | none | first-class, with `_lo`/`_hi` bounds | first-class, with `_lo`/`_hi` bounds |
+
+**`sast` is one inferential step further out than the others, and the numbers look identical.**
+The CVE registers are one step from P2P's ground truth: our rule reads somebody else's
+prediction about exploitation, made per CVE, by people whose job that is. The SAST register is
+two: from *"this weakness is of a kind that has historically been exploited across all
+software"* to *"this instance of it, in this file, is worth fixing first"*. That second step is
+a genuine leap — a weakness class says nothing about whether this call site is reachable,
+whether the input is attacker-controlled, or whether the code ships at all.
+
+P2P offers no help here and says so. Volumes 1, 2 and 3 each state, verbatim: *"We won't be
+discussing CWEs in this study."* So: **do not compare a SAST coverage or efficiency figure to
+the OS register's, to the SCA register's, or to any P2P baseline.** Compare it to
+`prevalence_pct` on the same row, and read
+[`…metrics_sensitivity`](#since-the-rule-is-the-label-its-sensitivity-is-a-published-metric)
+beside it, which matters more for that rule than for the other, not less.
 
 Four consequences, in the order they bite:
 
@@ -1359,6 +1651,29 @@ of it available on the GAS side:
   `gas/src/domain/trend.ts::withCoverageEfficiency` recomputes the pair as-of each trend point
   (using `resolved_at <= d` rather than `status`); there is no `brick` equivalent. See
   [Reading coverage and efficiency](#reading-coverage-and-efficiency).
+
+Four more arrived with the code registers, and every one of them is a *known unknown* rather
+than a design choice — see [The code registers](#the-code-registers-sca-and-sast):
+
+- **Four API facts are unverified against the live tenant**: whether `SASTFinding` exposes a
+  selectable timestamp, whether `SASTFindingFilters` takes `severity` and `status`, what
+  `aiAnalysis.verdict` actually spells, and whether `vulnerabilityFindings` returns
+  `artifactType { codeLibraryLanguage }` as an array. The timestamp is the one that unblocks
+  the others: it is what makes both a SAST MTTR and `SAST_FETCH_RESOLVED` worth having. Each defaults to the safe answer — the
+  query the reference script is known to validate — and each degrades to a NULL column rather
+  than a failed scan. `signal_breakdown`'s `ai_verdict_missing` and the single `UNKNOWN` asset
+  group are what make the degradation visible.
+- **`config.CWE_ANCESTORS` is a stub.** It lifts the child weaknesses this tenant actually
+  produces to their Top-25 ancestors and nothing more, so a weakness class it has not caught up
+  with classifies `low` and costs coverage's numerator. `cwe_unmapped` measures the gap; closing
+  it properly means a real CWE hierarchy, which is a data dependency this repo does not have.
+- **No reachability, and no way to get one.** The static-analysis rule reads a weakness class,
+  not whether the call site is reachable or the input attacker-controlled. That is the second
+  inferential step in the table under
+  [Reading coverage and efficiency](#reading-coverage-and-efficiency), and no amount of tuning
+  the rule closes it — only a different kind of signal would.
+- **No SAST MTTR worth reading yet.** With no API timestamps, every lifetime is dated from
+  observation, so the figure is meaningful only once the register has months of scans behind it.
 
 Two entries left this list with the notebooks. The **Kaplan–Meier survival curve** is now
 `metrics.km_curve`, which `kaplan_meier` itself consumes — one implementation, so the staircase

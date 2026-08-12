@@ -300,13 +300,14 @@ def _prior_from_fixture(spark, rows):
     df = spark.createDataFrame(payload, schema)
     for ts in ("first_seen", "last_seen", "resolved_at"):
         df = df.withColumn(ts, F.col(ts).cast("timestamp"))
-    # Columns the fixture does not carry, at their empty values.
-    for name, typ in (
-        ("scope", "string"), ("component", "string"), ("fix_date", "timestamp"),
-        ("fix_observed_at", "timestamp"), ("has_kev", "boolean"),
-        ("has_exploit", "boolean"), ("epss", "double"), ("risk_observed_at", "timestamp"),
-    ):
-        df = df.withColumn(name, F.lit(None).cast(typ))
+    # Columns the fixture does not carry, at their empty values. Derived from the schema rather
+    # than listed: GAS's fixture covers the lifecycle fields and brick's ledger has always held
+    # a few more (scope, component, the fix clock, the risk signals, and now the
+    # static-analysis inputs). A hand-written list here means every column added to the ledger
+    # breaks the golden-fixture replay with an UNRESOLVED_COLUMN a hundred lines long.
+    for field in ledger.LEDGER_SCHEMA.fields:
+        if field.name not in df.columns:
+            df = df.withColumn(field.name, F.lit(None).cast(field.dataType))
     return df.select(*[f.name for f in ledger.LEDGER_SCHEMA.fields])
 
 

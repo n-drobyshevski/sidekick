@@ -239,7 +239,9 @@ def dump_tables(spark, tables, target: Path) -> None:
     """
     target.mkdir(parents=True, exist_ok=True)
     volatile = {"scan_id", "scan_ts", "first_scan_id", "last_scan_id", "risk_observed_at"}
-    for name in ("silver", "ledger", "scans", "mttr", "program", "capacity", "sensitivity"):
+    for name in (
+        "silver", "ledger", "scans", "mttr", "program", "capacity", "sensitivity", "assets",
+    ):
         frame = spark.table(getattr(tables, name))
         keep = [c for c in frame.columns if c not in volatile]
         rows = [{k: _round(v) for k, v in r.asDict().items()} for r in frame.select(*keep).collect()]
@@ -340,6 +342,10 @@ def attribute_stages(spark, run_pipeline, tables, timings: Timings) -> None:
         (
             "attr:capacity_populations",
             lambda: metrics.capacity_populations(lifecycles, scan_ts),
+        ),
+        (
+            "attr:asset_profile_populations",
+            lambda: metrics.asset_profile_populations(lifecycles, scan_ts),
         ),
     ):
         with timings.stage(name):

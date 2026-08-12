@@ -63,14 +63,21 @@ from typing import List, Optional
 from pyspark.sql import Column, DataFrame, Window
 from pyspark.sql import functions as F
 from pyspark.sql.types import (
+    ArrayType,
     BooleanType,
     DoubleType,
+    LongType,
     StringType,
     StructField,
     StructType,
 )
 
 from config import (
+    AI_VERDICTS_HIGH,
+    ASSET_GROUP_UNKNOWN,
+    CWE_ANCESTORS,
+    DEFAULT_SCOPE,
+    EXPLOITED_CWES,
     NET_CAPACITY_BAND_PCT,
     OVERALL,
     POPULATION_ALL,
@@ -79,12 +86,14 @@ from config import (
     RESOLUTION_DISAPPEARED,
     RESOLVED_STATUSES,
     RiskRule,
+    SastRiskRule,
     SEVERITY_ORDER,
     SLA_TARGETS,
+    SOURCES,
 )
 
 # See config.PIPELINE_VERSION: every runtime module must come from the same upload.
-MODULE_VERSION = "2.2"
+MODULE_VERSION = "2.3"
 
 SECONDS_PER_DAY = 86400
 
@@ -122,6 +131,44 @@ NODE_SCHEMA = StructType(
                 ]
             ),
         ),
+        # Only asked for by the scopes that group on it -- see ingest._ARTIFACT_SCOPES. An
+        # ARRAY because the SAST node proves the sibling field is one (`["JAVA"]`), and because
+        # `from_json` degrades a wrong guess to NULL rather than failing: if this is a scalar
+        # server-side, the column reads NULL and every asset row falls into the single UNKNOWN
+        # group, which is visible on the page rather than silently wrong.
+        StructField(
+            "artifactType",
+            StructType([StructField("codeLibraryLanguage", ArrayType(StringType()))]),
+        ),
+    ]
+)
+
+# The static-analysis node. A different connection, so a different shape -- and notably no
+# timestamps and none of the three exploit signals. See ingest.SAST_QUERY.
+SAST_NODE_SCHEMA = StructType(
+    [
+        StructField("id", StringType()),
+        StructField("name", StringType()),
+        StructField("status", StringType()),
+        StructField("severity", StringType()),
+        StructField("originalSeverity", StringType()),
+        StructField("filePath", StringType()),
+        StructField("startLine", LongType()),
+        StructField("codeLibraryLanguage", ArrayType(StringType())),
+        StructField("origin", StringType()),
+        StructField("resolutionReason", StringType()),
+        StructField(
+            "resource",
+            StructType(
+                [
+                    StructField("id", StringType()),
+                    StructField("name", StringType()),
+                    StructField("type", StringType()),
+                ]
+            ),
+        ),
+        StructField("weaknesses", ArrayType(StructType([StructField("id", StringType())]))),
+        StructField("aiAnalysis", StructType([StructField("verdict", StringType())])),
     ]
 )
 
@@ -186,14 +233,22 @@ def order_by_severity(df: DataFrame, column: str = "severity") -> DataFrame:
 # ---------------------------------------------------------------------------- silver
 
 
-def silver_findings(bronze: DataFrame) -> DataFrame:
+def silver_findings(bronze: DataFrame, scope: str = DEFAULT_SCOPE) -> DataFrame:
     """Typed, metric-ready rows from the bronze ``node_json`` payload.
 
     Expects ``scan_id`` (string), ``scan_ts`` (timestamp), ``scope`` (string) and ``node_json``
     (string). ``scan_ts`` doubles as "now" for open-age: ages are measured as of the scan that
     observed the finding, so a table row means the same thing whenever it is read back.
     ``scope`` rides along so a row still says which population it came from after a UNION.
+
+    ``scope`` also chooses the projection, because two scopes read a different API connection
+    and therefore a different node shape. This is one of exactly two dispatch sites on
+    ``Source.kind``; the other is ``ingest.query_for``. Both projections emit the **same
+    columns**, which is what keeps ``ledger.py`` unaware that a second source exists.
     """
+    if SOURCES.get(scope, SOURCES[DEFAULT_SCOPE]).kind == "sast":
+        return silver_sast(bronze)
+
     node = F.from_json(F.col("node_json"), NODE_SCHEMA).alias("node")
     # `seq` records the order the API returned each finding in, so a duplicate within one scan
     # can be resolved first-wins the way reconcile.ts does it. Bronze written by v1 has no such
@@ -230,10 +285,32 @@ def silver_findings(bronze: DataFrame) -> DataFrame:
         F.col("node.hasCisaKevExploit").alias("has_kev"),
         F.col("node.hasExploit").alias("has_exploit"),
         F.col("node.epssProbability").alias("epss"),
+        # Static-analysis inputs: NULL here, present so both projections emit the same columns.
+        F.lit(None).cast("string").alias("cwe"),
+        _first_language(F.col("node.artifactType.codeLibraryLanguage")).alias("language"),
+        F.lit(None).cast("string").alias("ai_verdict"),
     )
 
-    # Seconds / 86400, never calendar days -- matching metrics._summarize and
-    # ledgerCore.baseRows, so a fix eight hours after detection reads as 0.33 days.
+    return _with_durations(df)
+
+
+def _first_language(column: Column) -> Column:
+    """The ecosystem, as a single value, from a field the API returns as an array.
+
+    First rather than exploded: P2P v5 groups each asset into exactly one category, and a
+    finding that reports two languages would otherwise be counted in both and double every
+    density figure. An empty array is NULL, not an empty string -- ``asset_profile`` coalesces
+    NULL into a single UNKNOWN group, and "" would sit beside it as a second one.
+    """
+    return F.when(F.size(column) > 0, F.element_at(column, 1))
+
+
+def _with_durations(df: DataFrame) -> DataFrame:
+    """``mttr_days`` and ``age_days``, shared by both silver projections.
+
+    Seconds / 86400, never calendar days -- matching metrics._summarize and
+    ledgerCore.baseRows, so a fix eight hours after detection reads as 0.33 days.
+    """
     mttr_days = (
         F.unix_timestamp("resolved_at") - F.unix_timestamp("first_detected_at")
     ) / SECONDS_PER_DAY
@@ -244,6 +321,90 @@ def silver_findings(bronze: DataFrame) -> DataFrame:
     return df.withColumn("mttr_days", mttr_days).withColumn(
         "age_days", F.when(F.col("resolved_at").isNull(), age_days)
     )
+
+
+def silver_sast(bronze: DataFrame) -> DataFrame:
+    """The same silver columns, projected from a ``sastFindings`` node.
+
+    Three of the mappings are worth stating out loud, because the column names were chosen for
+    the CVE register and mean something adjacent here:
+
+    ``cve``        the weakness title ("SQL Injection"), not an identifier. Reused rather than
+                   paralleled: it is the column every existing panel groups on to answer "what
+                   kind of thing is this", and that question has the same answer here. The
+                   identifier-shaped value lives in ``cwe``.
+    ``component``  the file path. The located artefact, which is what ``detailedName`` is for a
+                   package.
+    ``asset_*``    the repository branch, from ``resource``. A plain object rather than the
+                   union ``vulnerableAsset`` is, so none of the FETCH_ASSET_FIELDS trouble
+                   applies and these columns are populated unconditionally.
+
+    **Three columns are unconditionally NULL**: ``has_kev``, ``has_exploit`` and ``epss``. That
+    is the point of ``config.SastRiskRule`` existing at all, and under ``RiskRule`` every row
+    here would classify `unknown` -- correctly, and uselessly.
+
+    ``first_detected_at`` and ``resolved_at`` are NULL too, because ``ingest.SAST_QUERY``
+    selects no timestamps (see its comment). The ledger then dates the lifecycle from
+    observation, which is the honest fallback and not the same as a measured one.
+    """
+    node = F.from_json(F.col("node_json"), SAST_NODE_SCHEMA).alias("node")
+    seq = F.col("seq") if "seq" in bronze.columns else F.lit(None).cast("long")
+    parsed = bronze.select("scan_id", "scan_ts", "scope", seq.alias("seq"), node)
+
+    null_ts = F.lit(None).cast("timestamp")
+    df = parsed.select(
+        F.col("scan_id"),
+        F.col("scan_ts"),
+        F.col("scope"),
+        F.col("seq"),
+        F.col("node.id").alias("finding_id"),
+        F.col("node.name").alias("cve"),
+        F.col("node.filePath").alias("component"),
+        # `originalSeverity` is the scanner's own call before any Wiz policy adjusted it, so it
+        # is the fallback rather than the primary -- the register should read the severity the
+        # programme is actually managing to.
+        normalize_severity(
+            F.coalesce(F.col("node.severity"), F.col("node.originalSeverity"))
+        ).alias("severity"),
+        F.col("node.status").alias("status"),
+        is_open(F.col("node.status")).alias("is_open"),
+        null_ts.alias("first_detected_at"),
+        null_ts.alias("last_detected_at"),
+        null_ts.alias("resolved_at"),
+        null_ts.alias("fix_date"),
+        F.lit(None).cast("string").alias("fixed_version"),
+        F.col("node.resource.id").alias("asset_id"),
+        F.col("node.resource.name").alias("asset_name"),
+        F.col("node.resource.type").alias("asset_type"),
+        F.lit(None).cast("string").alias("cloud"),
+        F.lit(None).cast("string").alias("subscription_name"),
+        F.lit(None).cast("string").alias("subscription_ext_id"),
+        F.lit(None).cast("boolean").alias("has_kev"),
+        F.lit(None).cast("boolean").alias("has_exploit"),
+        F.lit(None).cast("double").alias("epss"),
+        # Comma-separated rather than an array: see config.LEDGER_COLUMNS. Sorted so the same
+        # set of weaknesses always produces the same string, which matters because this value
+        # is merged into the ledger and compared against the previous scan's.
+        _joined_cwes(F.col("node.weaknesses")).alias("cwe"),
+        _first_language(F.col("node.codeLibraryLanguage")).alias("language"),
+        F.upper(F.trim(F.col("node.aiAnalysis.verdict"))).alias("ai_verdict"),
+    )
+
+    return _with_durations(df)
+
+
+def _joined_cwes(weaknesses: Column) -> Column:
+    """``weaknesses[].id`` as a sorted, comma-separated string -- NULL when there are none.
+
+    NULL, not "": the CWE clause treats an absent weakness as *not observed*, which makes the
+    finding unclassified rather than low risk. That is the module header's correctness trap
+    applied to a second rule.
+    """
+    ids = F.array_sort(F.array_distinct(F.filter(
+        F.transform(weaknesses, lambda w: F.trim(w["id"])),
+        lambda x: x.isNotNull() & (F.length(x) > 0),
+    )))
+    return F.when(F.size(ids) > 0, F.array_join(ids, ","))
 
 
 # ------------------------------------------------------------------------ MTTR / SLA
@@ -490,7 +651,101 @@ def resolution_sources(df: DataFrame) -> DataFrame:
 # ------------------------------------------------- risk classification + confusion matrix
 
 
-def classify_risk(df: DataFrame, rule: RiskRule) -> DataFrame:
+def _cve_clauses(rule: RiskRule) -> List[tuple]:
+    """``(name, fired, observed)`` per enabled signal of the CVE rule."""
+    # A NaN EPSS is as good as absent; `isNotNull() & ...` short-circuits so NULL stays FALSE.
+    epss_observed = F.col("epss").isNotNull() & ~F.isnan(F.col("epss"))
+
+    clauses = []
+    if rule.kev:
+        clauses.append(
+            ("kev", F.col("has_kev").eqNullSafe(True), F.col("has_kev").isNotNull())
+        )
+    if rule.exploit:
+        clauses.append(
+            ("exploit", F.col("has_exploit").eqNullSafe(True), F.col("has_exploit").isNotNull())
+        )
+    if rule.epss:
+        clauses.append(
+            (
+                "epss",
+                epss_observed & (F.col("epss") >= F.lit(rule.epss_threshold)),
+                epss_observed,
+            )
+        )
+    return clauses
+
+
+def cwe_matches_exploited(cwe: Column) -> Column:
+    """True when any of a finding's CWEs -- or a documented ancestor of one -- is in the list.
+
+    The ancestor hop is what makes this usable at all: scanners report leaves (CWE-23, Relative
+    Path Traversal) and the Top 25 holds interior nodes (CWE-22, Path Traversal). See
+    ``config.CWE_ANCESTORS`` for why that map is deliberately incomplete and what it costs.
+    """
+    ids = F.split(cwe, ",")
+    lifted = F.transform(
+        ids, lambda c: F.coalesce(F.create_map(*_ancestor_pairs())[c], c)
+    )
+    listed = F.array(*[F.lit(c) for c in sorted(EXPLOITED_CWES)])
+    return F.arrays_overlap(F.array_union(ids, lifted), listed)
+
+
+def _ancestor_pairs() -> List[Column]:
+    pairs: List[Column] = []
+    for child, parent in sorted(CWE_ANCESTORS.items()):
+        pairs.extend([F.lit(child), F.lit(parent)])
+    return pairs
+
+
+def _sast_clauses(rule: SastRiskRule) -> List[tuple]:
+    """``(name, fired, observed)`` per enabled signal of the static-analysis rule.
+
+    Each signal's *observed* test is the one that decides whether a finding can be classified
+    at all, and each is deliberately strict: a blank CWE, a missing AI verdict and an UNKNOWN
+    severity are all "never captured", not "captured as no".
+    """
+    cwe = F.col("cwe")
+    cwe_observed = cwe.isNotNull() & (F.length(F.trim(cwe)) > 0)
+    verdict = F.col("ai_verdict")
+    verdict_observed = verdict.isNotNull() & (F.length(F.trim(verdict)) > 0)
+    severity_observed = F.col("severity").isNotNull() & (F.col("severity") != "UNKNOWN")
+
+    clauses = []
+    if rule.cwe:
+        clauses.append(("cwe", cwe_observed & cwe_matches_exploited(cwe), cwe_observed))
+    if rule.ai_verdict:
+        listed = F.array(*[F.lit(v) for v in sorted(AI_VERDICTS_HIGH)])
+        clauses.append(
+            (
+                "ai_verdict",
+                verdict_observed & F.array_contains(listed, verdict),
+                verdict_observed,
+            )
+        )
+    if rule.critical:
+        clauses.append(
+            (
+                "critical",
+                severity_observed & (F.col("severity") == "CRITICAL"),
+                severity_observed,
+            )
+        )
+    return clauses
+
+
+def rule_clauses(rule) -> List[tuple]:
+    """The enabled signals of either rule, as ``(name, fired, observed)`` triples.
+
+    The two rules differ in what they read and in nothing else, so this is the only place that
+    knows which is which. Everything downstream -- the three-valued classifier, the signal
+    breakdown, the sensitivity sweep -- is written once against these triples, which is what
+    stops the correctness trap in the module header from having to be got right twice.
+    """
+    return _sast_clauses(rule) if isinstance(rule, SastRiskRule) else _cve_clauses(rule)
+
+
+def classify_risk(df: DataFrame, rule) -> DataFrame:
     """Add ``risk_class`` in {high, low, unknown} -- three-valued, and the order matters.
 
       1. any enabled signal FIRES            -> "high"     positive evidence stands on its
@@ -510,22 +765,9 @@ def classify_risk(df: DataFrame, rule: RiskRule) -> DataFrame:
     if rule.is_empty():
         return df.withColumn("risk_class", F.lit("unknown"))
 
-    kev_observed = F.col("has_kev").isNotNull()
-    exploit_observed = F.col("has_exploit").isNotNull()
-    # A NaN EPSS is as good as absent; `isNotNull() & ...` short-circuits so NULL stays FALSE.
-    epss_observed = F.col("epss").isNotNull() & ~F.isnan(F.col("epss"))
-
-    fired: List[Column] = []
-    observed: List[Column] = []
-    if rule.kev:
-        fired.append(F.col("has_kev").eqNullSafe(True))
-        observed.append(kev_observed)
-    if rule.exploit:
-        fired.append(F.col("has_exploit").eqNullSafe(True))
-        observed.append(exploit_observed)
-    if rule.epss:
-        fired.append(epss_observed & (F.col("epss") >= F.lit(rule.epss_threshold)))
-        observed.append(epss_observed)
+    clauses = rule_clauses(rule)
+    fired: List[Column] = [c[1] for c in clauses]
+    observed: List[Column] = [c[2] for c in clauses]
 
     any_fired = functools.reduce(operator.or_, fired)
     any_missing = functools.reduce(operator.or_, [~o for o in observed])
@@ -619,42 +861,60 @@ def confusion_matrix(df: DataFrame) -> DataFrame:
     return _finalize_matrix(per_sev.unionByName(overall))
 
 
-def signal_breakdown(df: DataFrame, rule: RiskRule) -> DataFrame:
+#: Every signal either rule can carry, in the order the breakdown reports them. Fixed rather
+#: than derived from the rule, so a disabled signal is a 0 rather than a missing column -- the
+#: frame's shape must not change when somebody turns a clause off.
+SIGNAL_NAMES = ("kev", "exploit", "epss", "cwe", "ai_verdict", "critical")
+
+
+def signal_breakdown(df: DataFrame, rule) -> DataFrame:
     """How many rows each enabled clause fires on, and how many never captured it.
 
     The clauses are OR'd, so a row can be counted under several: these do NOT sum to
     ``any_of``, and any report showing them must say so rather than presenting a partition.
+
+    ``<signal>_missing`` is the number that decides whether the rate above it is worth reading.
+    Two of them are load-bearing for the static-analysis rule in particular:
+
+      ``ai_verdict_missing`` equal to the row count means the field is not being returned, or
+      ``config.AI_VERDICTS_HIGH`` holds the wrong strings -- both of which silence the clause
+      without any other symptom.
+      ``cwe_unmapped`` counts findings that HAVE a CWE which matched neither the Top 25 nor a
+      documented ancestor of it. Those classify `low`, so this is the size of the gap in
+      ``config.CWE_ANCESTORS`` measured in findings.
     """
-    epss_observed = F.col("epss").isNotNull() & ~F.isnan(F.col("epss"))
+    enabled = {name: (fired, observed) for name, fired, observed in rule_clauses(rule)}
 
     def count_when(condition: Column, alias: str) -> Column:
         return F.sum(F.when(condition, 1).otherwise(0)).cast("long").alias(alias)
 
     false_col = F.lit(False)
-    return df.agg(
-        count_when(F.col("has_kev").eqNullSafe(True) if rule.kev else false_col, "kev"),
+    aggs: List[Column] = []
+    for name in SIGNAL_NAMES:
+        fired = enabled[name][0] if name in enabled else false_col
+        aggs.append(count_when(fired, name))
+    aggs.append(count_when(F.col("risk_class") == "high", "any_of"))
+    for name in SIGNAL_NAMES:
+        missing = ~enabled[name][1] if name in enabled else false_col
+        aggs.append(count_when(missing, f"{name}_missing"))
+
+    cwe_observed = F.col("cwe").isNotNull() & (F.length(F.trim(F.col("cwe"))) > 0)
+    aggs.append(
         count_when(
-            F.col("has_exploit").eqNullSafe(True) if rule.exploit else false_col, "exploit"
-        ),
-        count_when(
-            (epss_observed & (F.col("epss") >= F.lit(rule.epss_threshold)))
-            if rule.epss
+            (cwe_observed & ~cwe_matches_exploited(F.col("cwe")))
+            if "cwe" in enabled
             else false_col,
-            "epss",
-        ),
-        count_when(F.col("risk_class") == "high", "any_of"),
-        count_when(F.col("has_kev").isNull() if rule.kev else false_col, "kev_missing"),
-        count_when(
-            F.col("has_exploit").isNull() if rule.exploit else false_col, "exploit_missing"
-        ),
-        count_when(~epss_observed if rule.epss else false_col, "epss_missing"),
+            "cwe_unmapped",
+        )
     )
+    return df.agg(*aggs)
 
 
 # The seven non-empty signal subsets, in the order ``gas/src/domain/program.ts::ruleSensitivity``
 # uses. The single-signal labels say "only" where GAS says just "KEV" -- brick's notebook layer
-# chose the clearer wording first and `panels._SWEEP` reads this tuple, so the two surfaces here
-# cannot drift apart even though the wording differs slightly from GAS's.
+# chose the clearer wording first and `panels.rule_sweep` walks this tuple through
+# `subsets_for`, so the two surfaces here cannot drift apart even though the wording differs
+# slightly from GAS's.
 RULE_SUBSETS = (
     ("KEV only", True, False, False),
     ("Exploit only", False, True, False),
@@ -665,8 +925,65 @@ RULE_SUBSETS = (
     ("All three", True, True, True),
 )
 
+# The same seven subsets over the static-analysis rule's three signals, in the same order. The
+# table matters more here than it does for the CVE register, not less: that rule at least reads
+# somebody else's prediction about exploitation, where this one reads a weakness class and a
+# severity somebody typed. How much of a SAST coverage figure is the rule is the first question
+# to ask about it.
+SAST_RULE_SUBSETS = (
+    ("CWE only", True, False, False),
+    ("AI verdict only", False, True, False),
+    ("CRITICAL only", False, False, True),
+    ("CWE or AI verdict", True, True, False),
+    ("CWE or CRITICAL", True, False, True),
+    ("AI verdict or CRITICAL", False, True, True),
+    ("All three", True, True, True),
+)
 
-def rule_sensitivity(df: DataFrame, active: RiskRule) -> DataFrame:
+
+def subsets_for(active) -> List[tuple]:
+    """``(label, rule, flag_columns, active)`` for each of the seven non-empty subsets.
+
+    ``flag_columns`` names the booleans that describe the rule on each row, and they differ
+    between the two rules because the signals do -- ``rule_kev``/``rule_exploit``/``rule_epss``
+    against ``rule_cwe``/``rule_ai_verdict``/``rule_critical``. That is fine and deliberate: the
+    sensitivity table is per-scope, so no single table ever holds both shapes.
+    """
+    if isinstance(active, SastRiskRule):
+        rows = []
+        for label, cwe, ai_verdict, critical in SAST_RULE_SUBSETS:
+            rule = SastRiskRule(cwe=cwe, ai_verdict=ai_verdict, critical=critical)
+            rows.append((
+                label,
+                rule,
+                {"rule_cwe": cwe, "rule_ai_verdict": ai_verdict, "rule_critical": critical},
+                (cwe, ai_verdict, critical)
+                == (active.cwe, active.ai_verdict, active.critical),
+            ))
+        return rows
+
+    rows = []
+    for label, kev, exploit, epss in RULE_SUBSETS:
+        rule = RiskRule(
+            kev=kev, exploit=exploit, epss=epss, epss_threshold=active.epss_threshold
+        )
+        rows.append((
+            label,
+            rule,
+            {
+                "rule_kev": kev,
+                "rule_exploit": exploit,
+                "rule_epss": epss,
+                "epss_threshold": rule.epss_threshold,
+            },
+            # The three booleans only, matching program.ts -- the threshold is inherited, so it
+            # cannot be what distinguishes the active row.
+            (kev, exploit, epss) == (active.kev, active.exploit, active.epss),
+        ))
+    return rows
+
+
+def rule_sensitivity(df: DataFrame, active) -> DataFrame:
     """Coverage and efficiency under each of the seven non-empty signal subsets.
 
     Port of ``gas/src/domain/program.ts::ruleSensitivity``. One row per subset, carrying the
@@ -693,30 +1010,19 @@ def rule_sensitivity(df: DataFrame, active: RiskRule) -> DataFrame:
     columns, not a flag that lets the table go missing.
     """
     frames: List[DataFrame] = []
-    for label, kev, exploit, epss in RULE_SUBSETS:
-        rule = RiskRule(
-            kev=kev, exploit=exploit, epss=epss, epss_threshold=active.epss_threshold
-        )
+    for label, rule, flags, is_active in subsets_for(active):
         # classify_risk overwrites `risk_class`, so a frame already classified under the active
         # rule is a valid input -- which is what the caller has.
-        frames.append(
+        frame = (
             classify_risk(df, rule)
             .groupBy(F.lit(label).alias("rule_label"))
             .agg(*_matrix_aggs())
-            .withColumn("rule_kev", F.lit(kev))
-            .withColumn("rule_exploit", F.lit(exploit))
-            .withColumn("rule_epss", F.lit(epss))
-            .withColumn("epss_threshold", F.lit(rule.epss_threshold))
-            .withColumn("rule_sentence", F.lit(rule.sentence()))
-            # The three booleans only, matching program.ts -- the threshold is inherited, so it
-            # cannot be what distinguishes the active row.
-            .withColumn(
-                "active",
-                F.lit(
-                    kev == active.kev
-                    and exploit == active.exploit
-                    and epss == active.epss
-                ),
+        )
+        for column, value in flags.items():
+            frame = frame.withColumn(column, F.lit(value))
+        frames.append(
+            frame.withColumn("rule_sentence", F.lit(rule.sentence())).withColumn(
+                "active", F.lit(is_active)
             )
         )
     return _finalize_matrix(functools.reduce(DataFrame.unionByName, frames))
@@ -917,6 +1223,263 @@ def capacity_populations(
         observed_from=observed_from,
         closed_observed=None,
     ).withColumn("population", F.lit(POPULATION_HIGH_RISK))
+    return every.unionByName(high)
+
+
+# ---------------------------------------------------------- P2P v5: assets at risk
+#
+# The four families above are vulnerability-centric, which is how P2P volumes 1-4 count. Volume
+# 5 changes the unit: "vulnerability management is often asset-centric ... the fact that we
+# manage vulnerabilities in assets rather than in a vacuum requires us to know where risk isn't,
+# where it is now, and where it will eventually be."
+#
+# For a code register the asset is the repository branch, and v5's asset *categories* -- it
+# compares Windows against Linux against network appliances -- become the ecosystem. The
+# analogy holds where it matters: a category is a group of assets that behave alike for reasons
+# that are about the platform rather than about the team looking after them.
+#
+# What v5 measures, and what each column below is:
+#
+#   asset prevalence      how many assets are in scope at all              (v5 p.7)
+#   vulnerability density how many findings live on a typical asset        (v5 Fig 10)
+#   the foothold rate     what share of assets offer at least one          (v5 Fig 11)
+#                         open high-risk finding -- "it's often said that
+#                         just one opening is needed"
+#   remediation coverage  per asset, not per finding                       (v5 Fig 13)
+#   remediation velocity  the half-life of a finding on this kind of asset (v5 Fig 15)
+#   remediation capacity  what share of assets are falling behind /        (v5 Figs 20, 21)
+#                         maintaining / gaining ground
+#
+# The same warning that applies to `metrics_capacity` applies here: rows are written per
+# population, so an unfiltered read counts every asset twice.
+
+
+def _asset_group(column: Column = None) -> Column:
+    """The asset category, with NULL folded into a single named group.
+
+    A NULL language is common and means different things -- an `os` register has none, and a
+    code register has none for a finding whose artifact type was not returned -- but on a page
+    they are all "we do not know", and one named group says so where a NULL silently drops the
+    row out of a `groupBy`.
+    """
+    return F.coalesce(column if column is not None else F.col("language"),
+                      F.lit(ASSET_GROUP_UNKNOWN))
+
+
+def _with_assets(df: DataFrame) -> DataFrame:
+    """Only the findings that belong to an asset.
+
+    Findings with no asset at all are dropped rather than collapsed into a NULL asset: they
+    would otherwise merge into a single enormous phantom asset and dominate every percentile.
+    That is the honest shape for an `os` register while ``config.FETCH_ASSET_FIELDS`` is off --
+    it has no asset ids, so the table comes back empty and says nothing rather than something
+    wrong.
+    """
+    return df.filter(
+        F.col("asset_id").isNotNull() & (F.length(F.trim(F.col("asset_id"))) > 0)
+    )
+
+
+def _per_asset(rows: DataFrame, observed_from=None) -> DataFrame:
+    """One row per asset: its density, its foothold, its coverage and its net flow.
+
+    The whole v5 family is an aggregate over *this* frame, which is why it is computed once.
+    Expects a frame already narrowed by ``_with_assets``.
+    """
+    # The window we actually watched. Before it, opens and closes are back-dated from the API's
+    # own dates rather than observed -- the same distinction `capacity_by_month` draws with
+    # `reconstructed`, and the reason the capacity columns below go NULL without it.
+    window_start = F.lit(observed_from).cast("timestamp") if observed_from else None
+
+    high_open = (F.col("risk_class") == "high") & F.col("is_open")
+    if window_start is None:
+        opened_in_window = F.lit(None).cast("long")
+        closed_in_window = F.lit(None).cast("long")
+        open_at_start = F.lit(None).cast("long")
+    else:
+        opened_in_window = F.sum(
+            F.when(F.col("first_detected_at") >= window_start, 1).otherwise(0)
+        ).cast("long")
+        closed_in_window = F.sum(
+            F.when(F.col("resolved_at") >= window_start, 1).otherwise(0)
+        ).cast("long")
+        open_at_start = F.sum(
+            F.when(
+                (F.col("first_detected_at") < window_start)
+                & (F.col("resolved_at").isNull() | (F.col("resolved_at") >= window_start)),
+                1,
+            ).otherwise(0)
+        ).cast("long")
+
+    per_asset = rows.groupBy(
+        F.col("asset_id"), _asset_group().alias("asset_group")
+    ).agg(
+        F.sum(F.when(F.col("is_open"), 1).otherwise(0)).cast("long").alias("density"),
+        F.max(F.when(high_open, F.lit(True)).otherwise(F.lit(False))).alias("has_foothold"),
+        F.sum(F.when((F.col("risk_class") == "high") & ~F.col("is_open"), 1).otherwise(0))
+        .cast("long")
+        .alias("tp"),
+        F.sum(F.when((F.col("risk_class") == "high") & F.col("is_open"), 1).otherwise(0))
+        .cast("long")
+        .alias("fn"),
+        opened_in_window.alias("opened"),
+        closed_in_window.alias("closed"),
+        open_at_start.alias("open_at_start"),
+    )
+
+    # An asset with no high-risk findings at all has no coverage -- NULL, not 0%, for the same
+    # reason `safe_pct` returns NULL over an empty denominator. Including it as a zero would
+    # drag the median down with assets that had nothing to remediate.
+    return per_asset.withColumn(
+        "asset_coverage_pct", safe_pct(F.col("tp"), F.col("tp") + F.col("fn"))
+    ).withColumn(
+        "net_pct", safe_pct(F.col("closed") - F.col("opened"), F.col("open_at_start"))
+    ).withColumn(
+        "verdict", F.when(F.col("net_pct").isNotNull(), _verdict(F.col("net_pct")))
+    )
+
+
+def _asset_aggs(window_months: Column) -> List[Column]:
+    """The aggregate list, shared by the per-group and OVERALL passes so they cannot drift."""
+    verdict = F.col("verdict")
+
+    def share(condition: Column, alias: str) -> Column:
+        return safe_pct(
+            F.sum(F.when(condition, 1).otherwise(0)).cast("long"),
+            F.sum(F.when(verdict.isNotNull(), 1).otherwise(0)).cast("long"),
+        ).alias(alias)
+
+    return [
+        F.count(F.lit(1)).cast("long").alias("assets"),
+        # v5 Fig 10 reports the 25th, 50th and 75th percentile of findings per asset, because
+        # the distribution is far too skewed for a mean to describe (v5: "many with <10 but
+        # some >1000"). F.percentile interpolates the way pandas does -- see the module header.
+        F.percentile("density", 0.25).alias("density_p25"),
+        F.percentile("density", 0.5).alias("density_p50"),
+        F.percentile("density", 0.75).alias("density_p75"),
+        F.sum("density").cast("long").alias("open_findings"),
+        # v5 Fig 11: "just one opening is needed to successfully compromise a system".
+        safe_pct(
+            F.sum(F.when(F.col("has_foothold"), 1).otherwise(0)).cast("long"),
+            F.count(F.lit(1)).cast("long"),
+        ).alias("assets_with_high_risk_pct"),
+        # The median asset's coverage, over the assets that have any high-risk finding to cover.
+        F.percentile("asset_coverage_pct", 0.5).alias("asset_coverage_p50"),
+        F.sum(F.when(F.col("asset_coverage_pct").isNotNull(), 1).otherwise(0))
+        .cast("long")
+        .alias("assets_with_high_risk"),
+        # v5 Fig 20, "median proportion of vulnerabilities closed per month", per asset and then
+        # medianed across the group. NULL when the observation window is unknown.
+        F.percentile(
+            safe_pct(F.col("closed"), F.col("open_at_start")) / window_months, 0.5
+        ).alias("mmcr_p50"),
+        # v5 Fig 21, as three shares that sum to 100 over the assets with a defined net flow.
+        share(verdict == "falling-behind", "falling_behind_pct"),
+        share(verdict == "keeping-up", "maintaining_pct"),
+        share(verdict == "gaining", "gaining_pct"),
+        F.sum(F.when(verdict.isNotNull(), 1).otherwise(0)).cast("long").alias("assets_flowing"),
+    ]
+
+
+def asset_profile(
+    df: DataFrame,
+    now_ts: str,
+    *,
+    observed_from=None,
+    high_risk_only: bool = False,
+) -> DataFrame:
+    """P2P v5's asset-centric family, one row per asset category plus an OVERALL row.
+
+    Expects the lifecycle frame with ``risk_class`` -- run ``classify_risk`` first.
+
+    ``observed_from`` is the earliest scan on record, exactly as ``capacity_by_month`` takes it.
+    Without it the three capacity columns and ``mmcr_p50`` are **NULL rather than computed**:
+    every one of them is a rate per unit of watched time, and a register that has not recorded
+    when it started watching cannot produce one. Reconstructed capacity is the specific thing
+    the capacity table refuses to headline, and this table refuses it too.
+
+    ``km_median_days`` is deliberately absent from the aggregate list and joined on separately:
+    Kaplan-Meier is a per-group scan over an ordered event table, not something expressible as
+    an aggregate beside a percentile.
+
+    **The cost, since it is the second most expensive thing a run does after rule sensitivity.**
+    ``asset_profile_populations`` calls this twice, and each call runs one ``kaplan_meier`` --
+    which is a windowed survival scan over the ledger -- plus two grouped aggregations. Like the
+    sensitivity sweep it is computed unconditionally rather than behind a flag, for the same
+    reason: a table that can go missing is a table nobody can trend. ``bench_pipeline.py
+    --attribute`` times it separately, which is the way to find out whether it matters on a
+    register the size of yours.
+    """
+    rows = df.filter(F.col("risk_class") == "high") if high_risk_only else df
+    # Both halves read the SAME population. `_per_asset` drops findings with no asset, and the
+    # half-life has to drop them too -- otherwise a group's density is computed over its
+    # repositories while its half-life is computed over those plus every asset-less finding
+    # that happens to share the ecosystem, and the two columns on one row describe two
+    # different sets.
+    rows = _with_assets(rows)
+    per_asset = _per_asset(rows, observed_from)
+
+    if observed_from is None:
+        window_months = F.lit(None).cast("double")
+    else:
+        months = (
+            F.unix_timestamp(F.lit(now_ts).cast("timestamp"))
+            - F.unix_timestamp(F.lit(observed_from).cast("timestamp"))
+        ) / (SECONDS_PER_DAY * 30.4375)
+        # A window shorter than a month would divide a month's throughput by a fraction and
+        # report a rate nobody could have achieved. Floored at one, and `window_months` is
+        # published so a reader can see how little time the number rests on.
+        window_months = F.greatest(months, F.lit(1.0))
+
+    per_group = per_asset.groupBy("asset_group").agg(*_asset_aggs(window_months))
+    overall = per_asset.groupBy(F.lit(OVERALL).alias("asset_group")).agg(
+        *_asset_aggs(window_months)
+    )
+    profile = per_group.unionByName(overall)
+
+    half_life = _asset_half_life(rows)
+    return (
+        profile.join(half_life, "asset_group", "left")
+        .withColumn("window_months", window_months)
+        .withColumn(
+            "population",
+            F.lit(POPULATION_HIGH_RISK if high_risk_only else POPULATION_ALL),
+        )
+    )
+
+
+def _asset_half_life(df: DataFrame) -> DataFrame:
+    """``km_median_days`` per asset category, including the OVERALL row.
+
+    v5 Fig 15 calls this the half-life -- the point at which half the findings on this kind of
+    asset have been closed -- which is exactly the Kaplan-Meier median the MTTR family already
+    publishes, computed per category instead of per severity. Same function, so the two cannot
+    disagree about what a median is.
+
+    **``kaplan_meier`` emits the OVERALL row itself** -- ``km_curve`` duplicates every row under
+    that label before it aggregates -- so there is nothing to union here. Adding one produced
+    two OVERALL rows, which a ``groupBy`` on the way out silently collapsed and a join silently
+    doubled.
+    """
+    return kaplan_meier(df.withColumn("severity", _asset_group())).select(
+        F.col("severity").alias("asset_group"),
+        F.col("km_median").alias("km_median_days"),
+        F.col("km_median_lower_bound").alias("km_median_lower_bound"),
+    )
+
+
+def asset_profile_populations(
+    df: DataFrame, now_ts: str, *, observed_from=None
+) -> DataFrame:
+    """``asset_profile`` over both populations, stacked and tagged with ``population``.
+
+    Same shape and same reasoning as ``capacity_populations``: `all` answers "how much does a
+    typical repository carry", `high_risk` answers the question v5 actually asks about
+    remediation, the two routinely disagree, and which one an unlabelled number meant is not
+    recoverable afterwards. **Every read of this table must filter on ``population``.**
+    """
+    every = asset_profile(df, now_ts, observed_from=observed_from)
+    high = asset_profile(df, now_ts, observed_from=observed_from, high_risk_only=True)
     return every.unionByName(high)
 
 

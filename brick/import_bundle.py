@@ -71,7 +71,7 @@ import run_pipeline
 from config import STATUS_OPEN, STATUS_RESOLVED
 
 # See config.PIPELINE_VERSION: every module in the folder must report the same version.
-MODULE_VERSION = "2.2"
+MODULE_VERSION = "2.3"
 
 # The interchange contract, shared with gas/src/domain/importMerge.ts and
 # wiz_dashboard/data/migrate.py. Bumping either of these is a coordinated change across
@@ -290,6 +290,10 @@ def _ledger_row(row: dict, *, scope: str) -> tuple:
         _bool(row.get("has_exploit")),
         _float(row.get("epss")),
         _str(row.get("risk_observed_at")),
+        # Static-analysis inputs. GAS has no analogue and never will: it scans one Wiz project
+        # for vulnerability findings, not for code weaknesses. NULL is the right value and the
+        # only one -- these are on the shared ledger schema, not in the bundle.
+        None, None, None,
     )
 
 
@@ -327,6 +331,7 @@ def _episode_row(row: dict, *, scope: str) -> tuple:
         _bool(row.get("has_exploit")),
         _float(row.get("epss")),
         _str(row.get("risk_observed_at")),
+        None, None, None,                        # cwe / language / ai_verdict: see above
     )
 
 

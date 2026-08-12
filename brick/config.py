@@ -25,7 +25,7 @@ from dataclasses import dataclass
 # Every runtime module carries MODULE_VERSION, and run_pipeline.check_deployment() compares
 # them before the run touches Spark. Bump this whenever the modules stop being
 # mix-and-matchable with the previous release -- which is nearly always.
-PIPELINE_VERSION = "2.2"
+PIPELINE_VERSION = "2.3"
 MODULE_VERSION = PIPELINE_VERSION
 
 # ---- Severity taxonomy ----
@@ -102,9 +102,108 @@ SCOPES = {
     # exclusions and the representative-resource filter are OS-view policy and are not applied
     # here, so `all` counts a few things `os` deliberately drops.
     "all": dict(_BASE),
+    # Software composition analysis: CVEs in the libraries a repository depends on. Mirrors
+    # brick/devsecops/sca_request.py's filterBy, minus its hardcoded projectIdV2.
+    #
+    # This is the SAME GraphQL connection `os` reads -- `vulnerabilityFindings`, filtered to the
+    # code stage of the pipeline -- which is why it needs no new maths at all: the findings carry
+    # a CVE and the same three exploit signals, so the ledger, Kaplan-Meier MTTR, the confusion
+    # matrix and capacity all apply unchanged and mean the same thing they mean for `os`.
+    #
+    #   codeToCloudPipelineStage  CODE, i.e. the library as it appears in the repository, not
+    #                             the copy of it baked into a container image further down the
+    #                             pipeline. Without it a single dependency is counted once per
+    #                             repo AND once per image built from that repo.
+    #   isDefaultBranch           or every feature branch is its own asset, and the register
+    #                             grows and shrinks with the team's branching habits.
+    "sca": {
+        **_BASE,
+        "codeToCloudPipelineStage": ["CODE"],
+        "isDefaultBranch": {"equals": True},
+    },
+    # Static analysis: weaknesses in first-party code. A different connection, a different
+    # filter type, and -- see SastRiskRule below -- no exploit intelligence of any kind.
+    #
+    # `_BASE` does not apply: `hasFix` is meaningless for a weakness in your own code, and
+    # `status` is deliberately withheld -- see SAST_FETCH_RESOLVED, which is where the reason
+    # lives, because it is a reason and not an absence.
+    "sast": {
+        "resource": {"isDefaultBranch": {"equals": True}},
+    },
 }
 
+# ---- Whether the sast scope asks for resolved findings as well as open ones ----
+# OFF, and **not** because the filter key is unavailable. A SAST finding plainly has a status --
+# `sast_request.py` selects it, `resolutionReason` sits beside it, and the captured response
+# returns "OPEN" -- so RESOLVED is a real state the API can almost certainly be asked for.
+#
+# It is off because asking for it, *while ingest.SAST_QUERY selects no timestamps*, makes MTTR
+# actively wrong rather than merely absent. Trace one already-resolved finding through
+# `ledger.reconcile`:
+#
+#   first sighting  ->  first_seen = least(coalesce(firstDetectedAt, now), now) = now
+#   status RESOLVED ->  api_resolved, so resolved_at = coalesce(resolvedAt, now) = now
+#   therefore           mttr_days = resolved_at - first_seen = 0.0
+#
+# Every historical resolved finding would land at exactly zero days on the scan that first saw
+# it, and the Kaplan-Meier median would collapse toward zero. That is worse than the empty
+# result it replaces: "no MTTR yet" is a state a reader can act on, "MTTR is 0 days" is a
+# confident lie. `test_devsecops.py` pins the zero so nobody flips this without meeting it.
+#
+# The CVE scopes take `status: [OPEN, RESOLVED]` safely for one reason and one only: their
+# findings carry `firstDetectedAt`, so `first_seen` is a real date and the subtraction means
+# something.
+#
+# **Turn this on in the same change that adds a timestamp to ingest.SAST_QUERY, not before.**
+# At that point it is a genuine improvement -- an API resolution is better evidence than an
+# inferred disappearance, and `resolution_src` stops reading `disappeared` for every row.
+SAST_FETCH_RESOLVED = False
+
+if SAST_FETCH_RESOLVED:
+    SCOPES["sast"]["status"] = ["OPEN", "RESOLVED"]
+
 DEFAULT_SCOPE = "os"
+
+# ---- Sources: which API connection a scope reads ----
+# A scope has always chosen a `filterBy`. Two of them now also choose a GraphQL connection and
+# therefore a node shape, so that choice is named rather than left implicit in an `if`.
+#
+# `kind` is the discriminator, and there are exactly two dispatch sites on it: `ingest` picks
+# the query document, `metrics` picks the silver projection. Both projections emit the SAME
+# silver columns, which is what lets `ledger.py` -- the module most expensive to get wrong --
+# stay completely unaware that a second source exists.
+
+
+@dataclass(frozen=True)
+class Source:
+    """The API connection behind a scope.
+
+    ``connection`` is the GraphQL field name, which is also the key the nodes arrive under in
+    the response envelope, which is also what ``ingest.fetch_findings`` pages on. One string,
+    three jobs -- so a scope cannot page one connection and read another.
+    """
+
+    kind: str
+    connection: str
+    #: Whether ``filterBy`` accepts a ``severity`` list. False means ``--severities`` cannot be
+    #: pushed to the API, and ``ingest._severity_gate`` applies it to the returned nodes
+    #: instead -- it has to be applied somewhere, because the scan log records the scope and
+    #: the disappearance guard trusts it.
+    severity_filter: bool = True
+
+
+VULN_SOURCE = Source(kind="vulnerability", connection="vulnerabilityFindings")
+# UNVERIFIED against the live tenant: whether SASTFindingFilters accepts `severity`. If it does
+# not, flip `severity_filter` to False -- the scan still records its severity scope, so nothing
+# about the disappearance guard changes; the only cost is pulling rows the run then discards.
+SAST_SOURCE = Source(kind="sast", connection="sastFindings")
+
+SOURCES = {
+    "os": VULN_SOURCE,
+    "all": VULN_SOURCE,
+    "sca": VULN_SOURCE,
+    "sast": SAST_SOURCE,
+}
 
 # ---- Where this deployment's tables live ----
 # Deployment-specific, and the only two constants in this file that are. They are the defaults
@@ -140,6 +239,36 @@ DEFAULT_SCHEMA = "industry"
 # is unaffected too -- `vuln_key` prefers the finding id, which is still selected, and only falls
 # back to the asset-bearing hash when that is absent.
 FETCH_ASSET_FIELDS = False
+
+# ---- ...except for the scopes where a narrower member list is known to work ----
+# The paragraph above is about a *union*, and a union fails as a whole: one member the tenant no
+# longer has costs the entire request. That is an argument for asking for fewer members, not for
+# asking for none -- and which members a scope actually returns is knowable.
+#
+# `sca` returns REPOSITORY_BRANCH and nothing else, and brick/devsecops/sca_response.json is the
+# evidence: every node in that captured response carries a `vulnerableAsset` with `id`, `type`,
+# `name`, `cloudPlatform`, `repositoryId` and `repositoryName` populated. So the code register
+# asks for exactly the two members it needs and gets its asset columns, while `os` keeps the
+# behaviour above untouched.
+#
+# This is what makes the P2P v5 asset family (metrics.asset_profile) computable for code: v5's
+# unit of analysis is the asset, and for a code register the asset is the repository branch.
+#
+# A scope absent from this map falls back to FETCH_ASSET_FIELDS over the full member list.
+SCOPE_ASSET_MEMBERS = {
+    "sca": ("VulnerableAssetBase", "VulnerableAssetRepositoryBranch"),
+}
+
+# ---- The asset-category column, which is P2P v5's unit of comparison ----
+# v5 compares vulnerability density, velocity and capacity across asset *categories* -- Windows,
+# Linux/Unix, Mac, appliances. A code register has no operating systems, and the nearest thing
+# that carries the same "assets of this kind behave alike" meaning is the language/ecosystem:
+# a Java repo and an npm repo have different dependency counts, different fix cadences and
+# different upgrade friction for reasons that are about the ecosystem, not the team.
+#
+# NULL for `os` and `all`, which have no language, so their asset rows fall into the single
+# UNKNOWN group and the OVERALL row is the only one worth reading there.
+ASSET_GROUP_UNKNOWN = "UNKNOWN"
 
 # ---- Risk classification (Prioritization to Prediction) ----
 # FIRST's own guidance: 0.1 is the point where EPSS starts to be worth acting on.
@@ -180,6 +309,155 @@ class RiskRule:
 
 
 DEFAULT_RISK_RULE = RiskRule()
+
+# ---- Risk classification for static analysis, where none of the above exists ----
+# A SAST finding is a weakness in first-party code. It has no CVE, so it has no KEV entry, no
+# published exploit and no EPSS score -- the three signals RiskRule is made of are all NULL, and
+# under that rule every SAST finding classifies as `unknown` and every rate is undefined.
+#
+# So this rule exists. It is OURS, and the distance from P2P is one step longer here than it is
+# for the CVE registers, which is worth stating in full because the numbers look identical:
+#
+#   P2P    positive class = exploitation observed in the wild, against a CVE.
+#   os/sca positive class = our rule over Wiz's exploit signals. One step: a prediction about
+#          exploitation, made per CVE, by somebody whose job that is.
+#   sast   positive class = our rule over a weakness CLASS. Two steps: from "this weakness is of
+#          a kind that has historically been exploited across all software" to "this instance of
+#          it, in this file, is worth fixing first". That second step is a genuine leap. The
+#          weakness class says nothing about whether this particular call site is reachable,
+#          whether the input is attacker-controlled, or whether the code ships at all.
+#
+# P2P is explicit that it offers no help here: volumes 1, 2 and 3 each say, verbatim, "We won't
+# be discussing CWEs in this study." Nothing below is P2P-sanctioned. What is P2P-sanctioned is
+# publishing the rule's sensitivity beside the rate it produces, which `metrics.rule_sensitivity`
+# does for this rule exactly as it does for the other.
+
+
+@dataclass(frozen=True)
+class SastRiskRule:
+    """The high-risk classifier for static-analysis findings: an **any-of** over three signals.
+
+    Same shape as ``RiskRule`` on purpose -- frozen, inspectable, with a readable ``sentence()``
+    -- because the two are read side by side and a classifier you cannot read is one you cannot
+    audit. Each signal answers a different question, which is why it is an any-of:
+
+      cwe         is this a KIND of weakness that gets exploited?  (external evidence)
+      ai_verdict  does the scanner's own triage think this instance is real?  (vendor opinion)
+      critical    did somebody already say this one is the worst tier?  (existing judgement)
+    """
+
+    cwe: bool = True
+    ai_verdict: bool = True
+    critical: bool = True
+
+    def is_empty(self) -> bool:
+        """True when no signal is enabled -- nothing is decidable, so everything is unknown."""
+        return not (self.cwe or self.ai_verdict or self.critical)
+
+    def sentence(self) -> str:
+        """The rule as a sentence, for a report header."""
+        parts = []
+        if self.cwe:
+            parts.append("CWE in the Top 25")
+        if self.ai_verdict:
+            parts.append("AI triage says exploitable")
+        if self.critical:
+            parts.append("severity CRITICAL")
+        return " or ".join(parts) if parts else "no signal enabled"
+
+
+DEFAULT_SAST_RISK_RULE = SastRiskRule()
+
+# MITRE's CWE Top 25 Most Dangerous Software Weaknesses, 2024 edition.
+#
+# **Provenance, because this is the one input that claims external evidence.** MITRE computes the
+# list annually by scoring CWEs on the frequency and severity of the CVEs mapped to them over a
+# two-year window, with CISA KEV membership weighted in. That makes it the closest thing to
+# "weakness classes that get exploited in the wild" that exists as a citable list -- which is
+# exactly the role CISA KEV plays in `RiskRule`, one level of abstraction up.
+#
+# It is a snapshot and it ages: re-derive it against the current year's publication rather than
+# trusting this tuple indefinitely. The year is in the name of the constant for that reason.
+CWE_TOP_25_2024 = (
+    "CWE-79",   # Cross-site Scripting
+    "CWE-787",  # Out-of-bounds Write
+    "CWE-89",   # SQL Injection
+    "CWE-352",  # Cross-Site Request Forgery
+    "CWE-22",   # Path Traversal
+    "CWE-125",  # Out-of-bounds Read
+    "CWE-78",   # OS Command Injection
+    "CWE-416",  # Use After Free
+    "CWE-862",  # Missing Authorization
+    "CWE-434",  # Unrestricted Upload of File with Dangerous Type
+    "CWE-94",   # Code Injection
+    "CWE-20",   # Improper Input Validation
+    "CWE-77",   # Command Injection
+    "CWE-287",  # Improper Authentication
+    "CWE-269",  # Improper Privilege Management
+    "CWE-502",  # Deserialization of Untrusted Data
+    "CWE-200",  # Exposure of Sensitive Information to an Unauthorized Actor
+    "CWE-863",  # Incorrect Authorization
+    "CWE-918",  # Server-Side Request Forgery
+    "CWE-119",  # Improper Restriction of Operations within the Bounds of a Memory Buffer
+    "CWE-476",  # NULL Pointer Dereference
+    "CWE-798",  # Use of Hard-coded Credentials
+    "CWE-190",  # Integer Overflow or Wraparound
+    "CWE-400",  # Uncontrolled Resource Consumption
+    "CWE-306",  # Missing Authentication for Critical Function
+)
+
+EXPLOITED_CWES = frozenset(CWE_TOP_25_2024)
+
+# **The hierarchy problem, which is the weakest joint in this rule.** CWE is a tree, scanners
+# report leaves, and the Top 25 is mostly interior nodes. brick/devsecops/sast_response.json
+# shows it immediately: it contains CWE-23 (Relative Path Traversal), which is a child of
+# Top-25 member CWE-22 and would not match by id. P2P vol. 9 names this exact difficulty --
+# "the hierarchical nature of CWEs" -- as a reason it does not categorise this way.
+#
+# So a child is matched through its Top-25 ancestor. This map is **deliberately incomplete**: it
+# holds the children actually seen in this tenant's findings, not a transcription of the CWE
+# tree. An unmapped child does not match, which classifies it `low` rather than `high` -- so the
+# gap costs coverage's numerator, silently, and grows with every scanner rule this map has not
+# caught up with. `metrics.signal_breakdown` publishes `cwe_unmapped` for exactly this reason:
+# it is the size of the doubt, and it is the number to watch before quoting a SAST rate.
+CWE_ANCESTORS = {
+    "CWE-23": "CWE-22",    # Relative Path Traversal        -> Path Traversal
+    "CWE-36": "CWE-22",    # Absolute Path Traversal        -> Path Traversal
+    "CWE-80": "CWE-79",    # Basic XSS                      -> Cross-site Scripting
+    "CWE-83": "CWE-79",    # XSS in attributes              -> Cross-site Scripting
+    "CWE-91": "CWE-94",    # XML Injection                  -> Code Injection
+    "CWE-95": "CWE-94",    # Eval Injection                 -> Code Injection
+    "CWE-470": "CWE-94",   # Unsafe Reflection              -> Code Injection
+    "CWE-1321": "CWE-94",  # Prototype Pollution            -> Code Injection
+    "CWE-88": "CWE-77",    # Argument Injection             -> Command Injection
+    "CWE-611": "CWE-20",   # XML External Entity            -> Improper Input Validation
+    "CWE-547": "CWE-798",  # Hard-coded security constants  -> Use of Hard-coded Credentials
+    "CWE-259": "CWE-798",  # Hard-coded Password            -> Use of Hard-coded Credentials
+    "CWE-321": "CWE-798",  # Hard-coded Cryptographic Key   -> Use of Hard-coded Credentials
+    "CWE-1333": "CWE-400",  # Inefficient Regex Complexity  -> Uncontrolled Resource Consumption
+    "CWE-732": "CWE-863",  # Incorrect Permission Assignment -> Incorrect Authorization
+    "CWE-284": "CWE-862",  # Improper Access Control        -> Missing Authorization
+}
+
+# `aiAnalysis.verdict` values that count as the AI triage firing.
+#
+# UNVERIFIED against the live tenant: every node in the captured SAST response has
+# `aiAnalysis: null`, so this enum is a guess at the vocabulary and the clause will simply never
+# fire until it is corrected. That failure is quiet, which is why `signal_breakdown` publishes
+# `ai_verdict_missing` -- a register where that equals the row count means either the field is
+# not being returned or these are the wrong strings, and both are worth knowing.
+AI_VERDICTS_HIGH = frozenset({"EXPLOITABLE", "TRUE_POSITIVE", "CONFIRMED", "VULNERABLE"})
+
+
+def rule_for_scope(scope: str = DEFAULT_SCOPE):
+    """The high-risk rule a scope is classified under.
+
+    One function rather than a lookup at each call site, because getting it wrong is not an
+    error -- it is a full page of plausible numbers. ``RiskRule`` against a SAST register
+    classifies every finding `unknown` and reports 100% unclassified; ``SastRiskRule`` against
+    a CVE register does the same in the other direction. Both look like data.
+    """
+    return DEFAULT_SAST_RISK_RULE if SOURCES.get(scope) is SAST_SOURCE else DEFAULT_RISK_RULE
 
 # ---- Capacity ----
 # The dead band around zero net flow that still counts as "keeping up". P2P v3 Fig. 22 splits
@@ -284,6 +562,21 @@ LEDGER_COLUMNS = [
     "has_exploit",
     "epss",
     "risk_observed_at",
+    # Static-analysis risk inputs. NULL for every CVE-bearing scope (`os`, `all`, `sca`) and
+    # populated only by `sast`, but they live on the shared ledger rather than a parallel one
+    # for the same reason `has_kev` does: coverage and efficiency classify over the whole
+    # ledger, including findings the API has stopped returning, so a signal not written down at
+    # observation time cannot be recovered. One schema also keeps `ledger.py` -- the module
+    # most expensive to get wrong -- unaware that a second source exists.
+    #
+    # `cwe` is a comma-separated list rather than an array. A finding can carry several
+    # weaknesses, and an array survives neither the CSV register (see csvstore.py) nor a
+    # spreadsheet; `metrics` splits it on the way into the classifier.
+    "cwe",
+    # The ecosystem the finding was found in (JAVA, JAVASCRIPT, ...). P2P v5's asset category,
+    # which `metrics.asset_profile` groups on -- see ASSET_GROUP_UNKNOWN above.
+    "language",
+    "ai_verdict",
 ]
 
 # The per-run log. Three jobs: it is the idempotency guard (a run whose scan_id is already

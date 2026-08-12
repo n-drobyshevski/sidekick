@@ -48,7 +48,7 @@ import plotly.graph_objects as go
 from config import SEVERITY_ORDER
 
 # See config.PIPELINE_VERSION: every module in a deployment must come from the same upload.
-MODULE_VERSION = "2.2"
+MODULE_VERSION = "2.3"
 
 # ------------------------------------------------------------------------------- tokens
 #
@@ -883,5 +883,128 @@ def pie(slices, *, label: str = "label", value: str = "value", height: int = 240
     )
     layout = base_layout(height=height, showlegend=True)
     layout["legend"].update({"orientation": "v", "x": 1.02, "y": 0.5, "yanchor": "middle"})
+    fig.update_layout(**layout)
+    return fig
+
+
+# --------------------------------------------------------- P2P v5: assets at risk
+
+
+def density_range(rows, *, label: str = "asset_group", height: int = 260) -> go.Figure:
+    """v5 Fig. 10: the p25–p75 spread of findings per asset, with the median marked.
+
+    A range and a dot, not a bar. v5's own reason for reporting three percentiles is that the
+    distribution is far too skewed for a single number -- its sample runs from under 10 findings
+    per asset to over 1,000 -- and a bar chart of medians would hide exactly the spread that
+    makes the comparison worth drawing.
+
+    The median dot is labelled with its own value, so nothing here depends on reading a position
+    off an axis, and the range line carries a marker at each end rather than relying on the line
+    alone.
+    """
+    labels = list(rows[label])
+    lo = [_clean(v) for v in rows["density_p25"]]
+    mid = [_clean(v) for v in rows["density_p50"]]
+    hi = [_clean(v) for v in rows["density_p75"]]
+
+    fig = go.Figure()
+    for name, low, high in zip(labels, lo, hi):
+        if low is None or high is None:
+            continue
+        fig.add_trace(
+            go.Scatter(
+                x=[low, high],
+                y=[name, name],
+                mode="lines+markers",
+                line={"color": HAIRLINE, "width": 6},
+                marker={"symbol": "line-ns", "size": 12, "color": INK2,
+                        "line": {"color": INK2, "width": 2}},
+                showlegend=False,
+                hovertemplate=f"{name} p25–p75: %{{x:,.0f}}<extra></extra>",
+            )
+        )
+    fig.add_trace(
+        go.Scatter(
+            x=[v for v in mid if v is not None],
+            y=[n for n, v in zip(labels, mid) if v is not None],
+            mode="markers+text",
+            marker={"symbol": "circle", "size": 11, "color": ACCENT},
+            text=[f"{v:,.0f}" for v in mid if v is not None],
+            textposition="top center",
+            textfont={"family": FONT_FAMILY, "size": 11, "color": INK2},
+            name="median",
+            showlegend=True,
+            hovertemplate="%{y} median: %{x:,.0f}<extra></extra>",
+        )
+    )
+    for name, value in zip(labels, mid):
+        if value is None:
+            annotate_null(fig, x=0, y=name, text="no assets", xanchor="left", xshift=6)
+
+    layout = base_layout(
+        height=height, x_title="open findings per asset", showlegend=True, bar_axis="y"
+    )
+    layout["yaxis"]["autorange"] = "reversed"
+    fig.update_layout(**layout)
+    return fig
+
+
+#: Falling behind / keeping up / gaining, in the order a reader scans them and with the
+#: severity-free status palette -- this is a verdict, not a severity, and must not borrow the
+#: heat ramp. Each carries a hatch as well as a hue, because three adjacent bar segments are
+#: exactly where colour-only encoding fails.
+_VERDICT_SPLIT = (
+    ("falling_behind_pct", "falling behind", STATUS["bad"], "/"),
+    ("maintaining_pct", "keeping up", STATUS["warn"], ""),
+    ("gaining_pct", "gaining ground", STATUS["ok"], "\\"),
+)
+
+
+def capacity_split(rows, *, label: str = "asset_group", height: int = 240) -> go.Figure:
+    """v5 Fig. 21: what share of each category's assets is falling behind, keeping up, gaining.
+
+    A 100% stacked bar, and the one chart here where the three segments have to be told apart
+    at a glance -- so each carries a hatch pattern as well as a colour, and each segment is
+    labelled with its own percentage where it is wide enough to hold one.
+
+    A category whose assets have no defined net flow -- which is every category when the
+    register has no scan log, see ``metrics.asset_profile`` -- gets an annotated gap rather than
+    three zero-width segments that would read as a clean three-way split of nothing.
+    """
+    labels = list(rows[label])
+    fig = go.Figure()
+    for column, name, color, hatch in _VERDICT_SPLIT:
+        values = [_clean(v) for v in rows[column]]
+        fig.add_trace(
+            go.Bar(
+                x=[v if v is not None else 0 for v in values],
+                y=labels,
+                orientation="h",
+                name=name,
+                marker={
+                    "color": color,
+                    "pattern": {"shape": hatch, "fgcolor": "#ffffff", "size": 5},
+                    "line": {"color": "#ffffff", "width": 1},
+                },
+                text=[f"{v:.0f}%" if v is not None and v >= 12 else "" for v in values],
+                textposition="inside",
+                insidetextfont={"family": FONT_FAMILY, "size": 11,
+                                "color": on_fill_ink(color)},
+                hovertemplate="%{y} " + name + ": %{x:.1f}%<extra></extra>",
+            )
+        )
+
+    undefined = [
+        name
+        for name, value in zip(labels, [_clean(v) for v in rows[_VERDICT_SPLIT[0][0]]])
+        if value is None
+    ]
+    for name in undefined:
+        annotate_null(fig, x=0, y=name, text="no observation window", xanchor="left", xshift=6)
+
+    layout = base_layout(height=height, x_title="share of assets", showlegend=True, bar_axis="y")
+    layout["yaxis"]["autorange"] = "reversed"
+    layout["barmode"] = "stack"
+    layout["xaxis"]["range"] = [0, 100]
     fig.update_layout(**layout)
     return fig
