@@ -432,6 +432,11 @@ function packLanes(
   }
 
   const ranks = [...slots.keys()].sort((a, b) => a - b);
+  // Nothing to pack. Reachable whenever a filter set admits no nodes at all, which live
+  // filtering hits often — and without this the wrap search below never runs, leaves
+  // `best` null, and the whole request fails with a destructure error instead of an
+  // empty graph.
+  if (!ranks.length) return { pos, shelfOf, extent: 0, shelves: 1 };
   const runLength = ranks.reduce((acc, r) => acc + slots.get(r)! * step + gap, 0) - gap;
 
   // Wrap at every length a shelf could actually end at — a cluster is never split, so the

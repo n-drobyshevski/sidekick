@@ -372,6 +372,11 @@ export function renderGraph(container, data, handlers = {}) {
 
   // ------------------------------------------------------------- zoom & pan
   const view = { x: 0, y: 0, w: width, h: height };
+  // True while the view is exactly what fit() produced — i.e. the user has not zoomed or
+  // panned since. It decides what a container resize should do: an untouched view refits
+  // (docking the filter panel must not slice the picture in half), while a view someone
+  // has framed themselves keeps its scale and centre.
+  let atFit = false;
   function applyView() {
     svg.setAttribute("viewBox", `${view.x} ${view.y} ${view.w} ${view.h}`);
   }
@@ -384,7 +389,9 @@ export function renderGraph(container, data, handlers = {}) {
     view.y = py - ((py - view.y) / view.h) * h;
     view.w = w;
     view.h = h;
+    atFit = false;
     applyView();
+    paintZoom();
   }
   function fit() {
     // Layout bounds, stretched to include manually displaced nodes. With no
@@ -401,7 +408,9 @@ export function renderGraph(container, data, handlers = {}) {
       y1 = Math.max(y1, p.y + NODE_H / 2 + 20);
     }
     view.x = x0; view.y = y0; view.w = x1 - x0; view.h = y1 - y0;
+    atFit = true;
     applyView();
+    paintZoom();
   }
 
   svg.addEventListener("wheel", (e) => {
@@ -424,6 +433,7 @@ export function renderGraph(container, data, handlers = {}) {
     const rect = svg.getBoundingClientRect();
     view.x = panFrom.vx - ((e.clientX - panFrom.x) / rect.width) * view.w;
     view.y = panFrom.vy - ((e.clientY - panFrom.y) / rect.height) * view.h;
+    atFit = false;
     applyView();
   });
   const endPan = () => {
@@ -507,6 +517,14 @@ export function renderGraph(container, data, handlers = {}) {
   }
 
   svg.addEventListener("keydown", (e) => {
+    // Zoom keys sit ABOVE the focusedId guard: the canvas is zoomable whether or not a
+    // node happens to hold the roving tabindex, and `+` needs Shift on most layouts, so
+    // `=` counts too. The graph was walkable and nudgeable by keyboard but not zoomable.
+    if (!e.shiftKey || e.key === "+") {
+      if (e.key === "+" || e.key === "=") { e.preventDefault(); zoom(1 / 1.3); return; }
+      if (e.key === "-" || e.key === "_") { e.preventDefault(); zoom(1.3); return; }
+      if (e.key === "0") { e.preventDefault(); fit(); return; }
+    }
     if (!focusedId) return;
     // Shift+arrows nudge the focused node — the keyboard path for drag.
     const isArrow = e.key === "ArrowRight" || e.key === "ArrowLeft" ||
@@ -569,15 +587,66 @@ export function renderGraph(container, data, handlers = {}) {
   // Make the first node tabbable so Tab enters the graph.
   if (focusedId) nodeEls.get(focusedId).setAttribute("tabindex", "0");
 
-  // Zoom toolbar (HTML overlay, focusable before the SVG).
-  const zoomBar = el("div", { class: "graph-zoom" },
-    el("button", { "aria-label": "Zoom in", onclick: () => zoom(1 / 1.3) }, "+"),
+  // Zoom toolbar (HTML overlay, focusable before the SVG): one capsule for the scale,
+  // Fit beside it as the separate thing it is. The percent is the on-screen scale, not the
+  // viewBox ratio — preserveAspectRatio letterboxes, so the two disagree whenever the
+  // container and the view have different aspects.
+  const zoomPct = el("span", { class: "graph-zoom-pct num" }, "100%");
+  const zoomGroup = el("div", { class: "segmented graph-zoom-scale", role: "group" },
     el("button", { "aria-label": "Zoom out", onclick: () => zoom(1.3) }, "−"),
-    el("button", { "aria-label": "Fit graph to view", onclick: fit }, "Fit"),
+    zoomPct,
+    el("button", { "aria-label": "Zoom in", onclick: () => zoom(1 / 1.3) }, "+"),
   );
+  const zoomBar = el("div", { class: "graph-zoom" },
+    zoomGroup,
+    el("button", { class: "graph-zoom-fit", onclick: fit, title: "Fit graph to view (0)" }, "Fit"),
+  );
+
+  /**
+   * Repaint the readout. Called from zoom() and fit() only — never from applyView(),
+   * which runs on every pointermove during a pan. The value rides the group's accessible
+   * name rather than a live region for the same reason: a polite region on a wheel-zoom
+   * would queue one announcement per tick.
+   */
+  function paintZoom() {
+    const rect = svg.getBoundingClientRect();
+    if (!rect.width || !view.w) return;
+    const scale = Math.min(rect.width / view.w, rect.height / view.h);
+    const pct = Math.round(scale * 100);
+    zoomPct.textContent = `${pct}%`;
+    zoomGroup.setAttribute("aria-label", `Zoom, ${pct} percent`);
+  }
 
   container.append(zoomBar, svg);
   fit();
+
+  // The viewBox is fixed at first paint, so every later geometry change — window resize,
+  // the rail collapsing, the filter panel docking — left it stale and let
+  // preserveAspectRatio letterbox the picture off its framing. Re-derive the view's height
+  // from the container's new aspect around the current centre, which preserves the
+  // on-screen scale rather than snapping back to fit and fighting a user who has zoomed in.
+  let lastW = 0;
+  let lastH = 0;
+  const ro = new ResizeObserver((entries) => {
+    const box = entries[0] && entries[0].contentRect;
+    if (!box || !box.width || !box.height) return;
+    // The observer fires once on observe(), immediately after fit() — nothing to correct.
+    if (!lastW) { lastW = box.width; lastH = box.height; return; }
+    if (Math.abs(box.width - lastW) < 1 && Math.abs(box.height - lastH) < 1) return;
+    const scale = Math.min(lastW / view.w, lastH / view.h);
+    const cx = view.x + view.w / 2;
+    const cy = view.y + view.h / 2;
+    lastW = box.width;
+    lastH = box.height;
+    if (atFit) { fit(); return; }
+    view.w = box.width / scale;
+    view.h = box.height / scale;
+    view.x = cx - view.w / 2;
+    view.y = cy - view.h / 2;
+    applyView();
+    paintZoom();
+  });
+  ro.observe(container);
 
   // Search highlight: dim non-matching nodes (and edges touching them). The
   // dimming of everything else is the signal; matches keep full treatment.
@@ -597,6 +666,12 @@ export function renderGraph(container, data, handlers = {}) {
     },
     focusNode,
     setHighlight,
+    /**
+     * Release the ResizeObserver. The page clears and re-renders the canvas on every
+     * filter change; without this each render leaves an observer attached to a container
+     * that outlives it, holding the whole payload behind it.
+     */
+    destroy() { ro.disconnect(); },
   };
 }
 
