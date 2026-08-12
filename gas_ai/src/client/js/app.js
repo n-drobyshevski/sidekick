@@ -18,7 +18,7 @@ const PAGES = {
   graph: { title: "Security Graph", group: "Security", render: renderGraphPage, fullBleed: true },
   inventory: { title: "AI Inventory", group: "Security", render: renderInventory },
   combos: { title: "Toxic Combinations", group: "Security", render: renderCombos },
-  aars: { title: "AARS Rules", group: "Scoring", render: renderAarsRules },
+  aars: { title: "AARS Rules", group: "Scoring", render: renderAarsRules, fullBleed: true },
   scans: { title: "Wiz Scans", group: "Coverage", render: renderScans },
   data: { title: "Data", group: "Data", render: renderData },
   settings: { title: "Settings", group: "Preferences", render: renderSettings },
