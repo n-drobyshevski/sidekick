@@ -47,7 +47,9 @@ from config import (  # noqa: E402
     rule_for_scope,
 )
 
-DEVSECOPS = BRICK_DIR / "devsecops"
+#: The reference queries and captured responses sit beside the modules in this fork, not in a
+#: subdirectory of them -- this IS the devsecops directory.
+DEVSECOPS = BRICK_DIR
 SCAN_TS = "2026-08-01T00:00:00Z"
 
 
@@ -250,9 +252,11 @@ def test_an_empty_rule_classifies_nothing(spark):
 def test_the_rule_is_chosen_by_scope():
     """Getting this wrong is not an error, it is a full page of plausible numbers: the CVE rule
     over a SAST register reports 100% unclassified and looks like missing data."""
-    assert rule_for_scope("os") is DEFAULT_RISK_RULE
     assert rule_for_scope("sca") is DEFAULT_RISK_RULE
     assert rule_for_scope("sast") is DEFAULT_SAST_RISK_RULE
+    # An unknown scope falls back to the CVE rule rather than raising, which is right: the
+    # caller that would raise is `resolve_scope`, one layer up, and it already has.
+    assert rule_for_scope("nope") is DEFAULT_RISK_RULE
 
 
 def test_the_sensitivity_sweep_follows_the_rule_it_is_given(spark):
@@ -290,14 +294,17 @@ def test_sca_asks_for_the_two_asset_members_it_actually_returns():
     committed SCA capture is the evidence that these two resolve."""
     members = ingest.asset_members("sca")
     assert members == ("VulnerableAssetBase", "VulnerableAssetRepositoryBranch")
-    assert ingest.asset_members("os") == ()
+    # A scope with no override falls back to FETCH_ASSET_FIELDS, which is off -- so the
+    # narrowing is an explicit statement about `sca`, not a default that happens to apply.
+    assert ingest.asset_members("sast") == ()
 
     query = ingest.query_for("sca")
     assert "... on VulnerableAssetRepositoryBranch" in query
+    # The eleven members this register never returns are not asked for, which is the whole
+    # reason the request survives where brick's would not.
     assert "... on VulnerableAssetVirtualMachine" not in query
     # The ecosystem column P2P v5 groups on, asked for only where it is read.
     assert "codeLibraryLanguage" in query
-    assert "codeLibraryLanguage" not in ingest.query_for("os")
 
 
 def test_a_source_that_cannot_filter_severity_filters_it_here_instead():

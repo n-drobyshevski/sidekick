@@ -290,10 +290,6 @@ def _ledger_row(row: dict, *, scope: str) -> tuple:
         _bool(row.get("has_exploit")),
         _float(row.get("epss")),
         _str(row.get("risk_observed_at")),
-        # Static-analysis inputs. GAS has no analogue and never will: it scans one Wiz project
-        # for vulnerability findings, not for code weaknesses. NULL is the right value and the
-        # only one -- these are on the shared ledger schema, not in the bundle.
-        None, None, None,
     )
 
 
@@ -331,7 +327,6 @@ def _episode_row(row: dict, *, scope: str) -> tuple:
         _bool(row.get("has_exploit")),
         _float(row.get("epss")),
         _str(row.get("risk_observed_at")),
-        None, None, None,                        # cwe / language / ai_verdict: see above
     )
 
 
