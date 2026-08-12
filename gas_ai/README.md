@@ -16,7 +16,7 @@ palette is deliberately identical across both tools.
 
 | Page | What it shows |
 |---|---|
-| **Security Graph** | The node graph. Seed it from "all toxic combinations", one combination pattern, or a single asset; a **depth slider (1–3)** bounds the server-side traversal; per-kind caps collapse high-fanout neighbors into "+N more" pills that expand on demand; a count indicator flags capped views. Toxic-combination members get a crimson halo + `TC` badge; missing guardrails render as a dashed amber stub. Keyboard: arrows walk edges/lanes, Enter opens details; a "View as table" fallback carries the same data. |
+| **Security Graph** | The node graph. Seed it from "all toxic combinations", one combination pattern, or a single asset; a **depth slider (1–3)** bounds the server-side traversal; per-kind caps collapse high-fanout neighbors into "+N more" pills that expand on demand; a count indicator flags capped views. Every risk signal is a **node on the attack path**, not a flag on a card: `ISSUE`, `SENSITIVE_DATA`, `INTERNET_EXPOSURE`, `EXCESSIVE_PRIVILEGE`, and `MISSING_GUARDRAIL` (a negated `PROTECTED_BY` edge, drawn dashed) hang off the asset they describe. Because they are evidence rather than inventory, the node-type / severity / cloud / project filters pass them through with their asset, and the grouped layout files them in their asset's block — unless you name a risk kind in the filter, which curates them directly. Toxic-combination members get a crimson halo + `TC` badge. Keyboard: arrows walk edges/lanes, Enter opens details; a "View as table" fallback carries the same data. |
 | **AI Inventory** | Every synced asset with AARS score/band, severity, combo membership, guardrail status; KPI cards (guardrail coverage %, critical/high counts). |
 | **Toxic Combinations** | The 4 combination patterns with adjusted-vs-native severity, the 5Rs amplifier note, framework tags (OWASP LLM / Agentic / ML, 5Rs), affected assets, and the issue drill-down. |
 | **Wiz Scans** | The coverage page: what Wiz scans (AI-SPM, toxic-combination engine, CIEM, DSPM, guardrail coverage, network exposure, identity, supply chain, compliance) and where the results land. |
@@ -39,7 +39,12 @@ palette is deliberately identical across both tools.
 3. **Persist**: wholesale rewrite of the `ai_assets` / `ai_edges` / `ai_issues` tabs,
    a gzipped graph snapshot to Drive (the fast read path), then the `sync_history`
    row LAST — the commit record. No history row = the sync never happened.
-4. **getGraph** resolves seeds/depth/filters server-side, projects a bounded subgraph
+4. **Risk topology** is derived on READ, never persisted: the `with*Nodes` helpers in
+   `src/domain/graphEnrich.ts` turn the sensitive-data, internet-exposure,
+   excessive-rights, and guardrail-gap flags into nodes joined to the asset they
+   describe. Read-time means already-synced graphs gain them without a re-sync, and
+   they never leak into the `ai_assets` tab the inventory reads.
+5. **getGraph** resolves seeds/depth/filters server-side, projects a bounded subgraph
    (BFS + per-kind caps + node/edge budgets), lays it out deterministically
    (layered left-to-right: issues → AI assets → identities → data → compute), and
    caches the payload in CacheService keyed by params + data version — wiggling the

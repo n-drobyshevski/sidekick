@@ -31,6 +31,19 @@ const PATHS = {
   SENSITIVE_DATA: ["M4 7 h8 v6 h-8 z", "M6 7 V5 a2 2 0 0 1 4 0 V7", "M8 9.5 v2"],
   // Globe — reads as "internet / public exposure".
   INTERNET_EXPOSURE: ["M8 2 a6 6 0 1 0 0 12 a6 6 0 0 0 0 -12", "M2 8 h12", "M8 2 a9 6 0 0 0 0 12", "M8 2 a9 6 0 0 1 0 12"],
+  // Key with a struck-through bow — "rights, too many of them". Distinct from the
+  // padlock (sensitive data) and the wrench-key of SERVICE_ACCOUNT.
+  EXCESSIVE_PRIVILEGE: [
+    "M6 6.5 a3 3 0 1 0 0 3 a3 3 0 0 0 0 -3", "M8.5 8 H14", "M11 8 v2.5", "M13 8 v2",
+    "M3 3 L15 13",
+  ],
+  // Broken shield — the guardrail outline of AI_GUARDRAIL with a gap and a crack, so
+  // absence reads at a glance instead of looking like coverage.
+  MISSING_GUARDRAIL: [
+    "M8 2 L13 4 V8 C13 10 12 11.5 10.5 12.7",
+    "M8 2 L3 4 V8 C3 11 5 13 8 14",
+    "M8 5 L6.5 8.5 h3 L8 11.5",
+  ],
 };
 
 // Tenant-vocabulary AI kinds reuse the closest existing glyph (icons are a
@@ -75,6 +88,8 @@ export const KIND_LABELS = {
   SUMMARY: "More",
   SENSITIVE_DATA: "Sensitive Data",
   INTERNET_EXPOSURE: "Internet Exposure",
+  EXCESSIVE_PRIVILEGE: "Excessive Rights",
+  MISSING_GUARDRAIL: "No Guardrail",
 };
 
 // Built without a literal `//` byte sequence: SSL-inspecting middleboxes have been
@@ -119,6 +134,7 @@ export const KIND_CATEGORY = {
   SERVICE_ACCOUNT: "iam", USER_ACCOUNT: "iam", ACCESS_ROLE: "iam", ACCESS_ROLE_BINDING: "iam",
   // vulnerabilities & misconfigurations (red)
   ISSUE: "vuln", EXCESSIVE_ACCESS_FINDING: "vuln", LATERAL_MOVEMENT_FINDING: "vuln",
+  EXCESSIVE_PRIVILEGE: "vuln", MISSING_GUARDRAIL: "vuln",
   // internet exposure (yellow)
   INTERNET_EXPOSURE: "exposure",
   // neutral

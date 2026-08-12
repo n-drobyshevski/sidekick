@@ -7,6 +7,7 @@
 import { SEVERITY_ORDER } from "./config";
 import { MAX_EDGES_DEFAULT, MAX_NODES_DEFAULT } from "./config";
 import type { GEdge, GNode, GraphDoc, NodeKind } from "./graphTypes";
+import { isRiskKind } from "./graphTypes";
 
 export interface ProjectFilters {
   severities?: string[];
@@ -73,6 +74,13 @@ export function nodeOrder(a: GNode, b: GNode): number {
 
 function passesFilters(node: GNode, f: ProjectFilters | undefined): boolean {
   if (!f) return true;
+  // Risk evidence rides along with whatever asset survived the filters. These nodes are
+  // statements ABOUT an admitted asset, not inventory of their own: they carry no cloud
+  // or project, and the derived ones carry no severity, so putting them through the
+  // inventory filters would sever the attack path every filter is meant to narrow.
+  // The one exception is a filter that explicitly names a risk kind — there the user is
+  // curating the evidence itself ("show me only issues"), so it is honored verbatim.
+  if (isRiskKind(node.kind) && !f.kinds?.some(isRiskKind)) return true;
   if (f.severities?.length && !f.severities.includes(node.severity ?? "")) return false;
   if (f.kinds?.length && !f.kinds.includes(node.kind)) return false;
   if (f.clouds?.length && !f.clouds.includes(node.cloudPlatform ?? "")) return false;
@@ -126,7 +134,10 @@ export function projectGraph(doc: GraphDoc, opts: ProjectOptions): Projection {
 
   while (queue.length) {
     const { id, depth } = queue.shift()!;
-    if (depth >= opts.depth) continue;
+    // An explicitly expanded node traverses even at the depth frontier — otherwise
+    // "Expand neighbors" is a silent no-op on exactly the nodes a user clicks, since the
+    // depth check fires before the per-kind caps expandIds was lifting.
+    if (depth >= opts.depth && !expand.has(id)) continue;
 
     // Fresh neighbors, grouped by kind.
     const groups = new Map<string, GNode[]>();
@@ -153,7 +164,12 @@ export function projectGraph(doc: GraphDoc, opts: ProjectOptions): Projection {
           break;
         }
         shown.add(member.id);
-        queue.push({ id: member.id, depth: depth + 1 });
+        // Neighbors pulled in past the frontier stay ON it, so one expand adds exactly
+        // one hop instead of cascading a whole extra level of the graph.
+        queue.push({
+          id: member.id,
+          depth: expand.has(id) ? Math.max(depth + 1, opts.depth) : depth + 1,
+        });
       }
 
       const hidden = members.filter((m) => !shown.has(m.id));

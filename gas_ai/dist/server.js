@@ -1114,9 +1114,25 @@ var Server = (() => {
     // collapse node: "+N more <kind>" emitted by the projection
     "SENSITIVE_DATA",
     // one node per data-exposed asset (AARS pillar C topology)
-    "INTERNET_EXPOSURE"
+    "INTERNET_EXPOSURE",
     // one node per internet-exposed asset (exposure topology)
+    "EXCESSIVE_PRIVILEGE",
+    // one node per over-privileged asset (CIEM rights topology)
+    "MISSING_GUARDRAIL"
+    // one node per unguarded AI asset (guardrail-coverage topology)
   ];
+  var RISK_NODE_KINDS = [
+    "ISSUE",
+    "SENSITIVE_DATA",
+    "INTERNET_EXPOSURE",
+    "EXCESSIVE_PRIVILEGE",
+    "MISSING_GUARDRAIL",
+    "EXCESSIVE_ACCESS_FINDING",
+    "LATERAL_MOVEMENT_FINDING"
+  ];
+  function isRiskKind(kind) {
+    return RISK_NODE_KINDS.includes(kind);
+  }
   var AI_ASSET_KINDS = [
     "AI_AGENT",
     "AI_MODEL",
@@ -1162,13 +1178,14 @@ var Server = (() => {
     return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
   }
   function passesFilters(node2, f) {
-    var _a4, _b, _c, _d, _e, _f, _g;
+    var _a4, _b, _c, _d, _e, _f, _g, _h;
     if (!f) return true;
-    if (((_a4 = f.severities) == null ? void 0 : _a4.length) && !f.severities.includes((_b = node2.severity) != null ? _b : "")) return false;
-    if (((_c = f.kinds) == null ? void 0 : _c.length) && !f.kinds.includes(node2.kind)) return false;
-    if (((_d = f.clouds) == null ? void 0 : _d.length) && !f.clouds.includes((_e = node2.cloudPlatform) != null ? _e : "")) return false;
-    if ((_f = f.projects) == null ? void 0 : _f.length) {
-      const names = ((_g = node2.projects) != null ? _g : []).map((p) => p.name);
+    if (isRiskKind(node2.kind) && !((_a4 = f.kinds) == null ? void 0 : _a4.some(isRiskKind))) return true;
+    if (((_b = f.severities) == null ? void 0 : _b.length) && !f.severities.includes((_c = node2.severity) != null ? _c : "")) return false;
+    if (((_d = f.kinds) == null ? void 0 : _d.length) && !f.kinds.includes(node2.kind)) return false;
+    if (((_e = f.clouds) == null ? void 0 : _e.length) && !f.clouds.includes((_f = node2.cloudPlatform) != null ? _f : "")) return false;
+    if ((_g = f.projects) == null ? void 0 : _g.length) {
+      const names = ((_h = node2.projects) != null ? _h : []).map((p) => p.name);
       if (!names.some((n) => f.projects.includes(n))) return false;
     }
     return true;
@@ -1208,7 +1225,7 @@ var Server = (() => {
     }
     while (queue.length) {
       const { id, depth } = queue.shift();
-      if (depth >= opts.depth) continue;
+      if (depth >= opts.depth && !expand.has(id)) continue;
       const groups = /* @__PURE__ */ new Map();
       for (const { otherId } of (_d = adjacency.get(id)) != null ? _d : []) {
         if (shown.has(otherId)) continue;
@@ -1229,7 +1246,10 @@ var Server = (() => {
             break;
           }
           shown.add(member.id);
-          queue.push({ id: member.id, depth: depth + 1 });
+          queue.push({
+            id: member.id,
+            depth: expand.has(id) ? Math.max(depth + 1, opts.depth) : depth + 1
+          });
         }
         const hidden = members.filter((m) => !shown.has(m.id));
         if (hidden.length) {
@@ -1301,6 +1321,9 @@ var Server = (() => {
     ISSUE: 0,
     EXCESSIVE_ACCESS_FINDING: 0,
     LATERAL_MOVEMENT_FINDING: 0,
+    EXCESSIVE_PRIVILEGE: 0,
+    MISSING_GUARDRAIL: 0,
+    INTERNET_EXPOSURE: 0,
     AI_AGENT: 1,
     AI_MODEL: 1,
     AI_GUARDRAIL: 1,
@@ -1476,12 +1499,17 @@ var Server = (() => {
       mode: "lanes"
     };
   }
-  function groupKeyOf(node2, groupBy, parentOfSummary) {
-    var _a4, _b, _c, _d, _e, _f, _g;
-    if (node2.kind === "SUMMARY" && groupBy !== "kind") {
-      const parent = parentOfSummary.get(node2.id);
-      return parent ? groupKeyOf(parent, groupBy, parentOfSummary) : GROUP_NONE;
+  function groupKeyOf(node2, groupBy, parentOf) {
+    if ((node2.kind === "SUMMARY" || isRiskKind(node2.kind)) && groupBy !== "kind") {
+      const own = ownGroupKey(node2, groupBy);
+      if (own !== GROUP_NONE) return own;
+      const parent = parentOf.get(node2.id);
+      return parent ? groupKeyOf(parent, groupBy, parentOf) : GROUP_NONE;
     }
+    return ownGroupKey(node2, groupBy);
+  }
+  function ownGroupKey(node2, groupBy) {
+    var _a4, _b, _c, _d, _e, _f, _g;
     switch (groupBy) {
       case "combo": {
         const groups = [...(_a4 = node2.comboGroups) != null ? _a4 : []].sort();
@@ -1583,7 +1611,7 @@ var Server = (() => {
     });
     return { key, label, width, height, cells };
   }
-  function assignToHubs(p, parentOfSummary) {
+  function assignToHubs(p, parentOf) {
     var _a4;
     const cmp = (a, b) => nodeOrder(a, b) || cmpId(a, b);
     let hubs = p.nodes.filter((n) => n.kind === "AI_AGENT");
@@ -1613,9 +1641,9 @@ var Server = (() => {
         queue.push(next);
       }
     }
-    for (const [sumId, parent] of parentOfSummary) {
+    for (const [childId, parent] of parentOf) {
       const h = hubOf.get(parent.id);
-      if (h) hubOf.set(sumId, h);
+      if (h) hubOf.set(childId, h);
     }
     return { hubOf, hubs };
   }
@@ -1625,15 +1653,21 @@ var Server = (() => {
     const groupBy = (_b = opts.groupBy) != null ? _b : "combo";
     const sort = (_c = opts.sort) != null ? _c : "smart";
     const byId = new Map(p.nodes.map((n) => [n.id, n]));
-    const parentOfSummary = /* @__PURE__ */ new Map();
+    const parentOf = /* @__PURE__ */ new Map();
+    for (const e of [...p.edges].sort((a, b) => a.id < b.id ? -1 : 1)) {
+      const dst = byId.get(e.dst);
+      const src = byId.get(e.src);
+      if (!dst || !src || !isRiskKind(dst.kind) || parentOf.has(dst.id)) continue;
+      parentOf.set(dst.id, src);
+    }
     for (const s of p.summaries) {
       const parent = byId.get(s.parentId);
-      if (parent) parentOfSummary.set(s.id, parent);
+      if (parent) parentOf.set(s.id, parent);
     }
     const cmp = comparator(sort);
     const specs = [];
     if (groupBy === "asset") {
-      const { hubOf, hubs } = assignToHubs(p, parentOfSummary);
+      const { hubOf, hubs } = assignToHubs(p, parentOf);
       const members = new Map(hubs.map((h) => [h.id, []]));
       const strays = [];
       for (const node2 of p.nodes) {
@@ -1649,7 +1683,7 @@ var Server = (() => {
     } else {
       const members = /* @__PURE__ */ new Map();
       for (const node2 of p.nodes) {
-        const key = groupKeyOf(node2, groupBy, parentOfSummary);
+        const key = groupKeyOf(node2, groupBy, parentOf);
         if (!members.has(key)) members.set(key, []);
         members.get(key).push(node2);
       }
@@ -2659,6 +2693,72 @@ var Server = (() => {
       syncedAt: doc.syncedAt
     };
   }
+  function withExcessivePrivilegeNodes(doc) {
+    const existing = new Set(
+      doc.nodes.filter((n) => n.kind === "EXCESSIVE_PRIVILEGE").map((n) => n.id)
+    );
+    const kindById = new Map(doc.nodes.map((n) => [n.id, n.kind]));
+    const hasRealFinding = /* @__PURE__ */ new Set();
+    for (const e of doc.edges) {
+      if (e.type === "HAS_FINDING" && kindById.get(e.dst) === "EXCESSIVE_ACCESS_FINDING") {
+        hasRealFinding.add(e.src);
+      }
+    }
+    const privNodes = [];
+    const privEdges = [];
+    for (const node2 of doc.nodes) {
+      if (node2.kind === "EXCESSIVE_PRIVILEGE") continue;
+      if (!node2.hasAdminPrivileges && !node2.hasHighPrivileges) continue;
+      if (hasRealFinding.has(node2.id)) continue;
+      const privId = `excessive|${node2.id}`;
+      if (existing.has(privId)) continue;
+      privNodes.push({
+        id: privId,
+        kind: "EXCESSIVE_PRIVILEGE",
+        // ADMIN wins over HIGH when both are set — it is the stronger claim.
+        name: node2.hasAdminPrivileges ? "Admin privileges" : "Excessive rights"
+      });
+      privEdges.push({
+        id: edgeId(node2.id, "HAS_EXCESSIVE_PRIVILEGE", privId),
+        src: node2.id,
+        dst: privId,
+        type: "HAS_EXCESSIVE_PRIVILEGE"
+      });
+    }
+    if (!privNodes.length) return doc;
+    return {
+      nodes: [...doc.nodes, ...privNodes],
+      edges: [...doc.edges, ...privEdges],
+      syncedAt: doc.syncedAt
+    };
+  }
+  function withMissingGuardrailNodes(doc) {
+    const existing = new Set(
+      doc.nodes.filter((n) => n.kind === "MISSING_GUARDRAIL").map((n) => n.id)
+    );
+    const gapNodes = [];
+    const gapEdges = [];
+    for (const node2 of doc.nodes) {
+      if (node2.kind === "MISSING_GUARDRAIL") continue;
+      if (node2.guardrailMissing !== true) continue;
+      const gapId = `noguardrail|${node2.id}`;
+      if (existing.has(gapId)) continue;
+      gapNodes.push({ id: gapId, kind: "MISSING_GUARDRAIL", name: "No guardrail" });
+      gapEdges.push({
+        id: edgeId(node2.id, "PROTECTED_BY", gapId, true),
+        src: node2.id,
+        dst: gapId,
+        type: "PROTECTED_BY",
+        negated: true
+      });
+    }
+    if (!gapNodes.length) return doc;
+    return {
+      nodes: [...doc.nodes, ...gapNodes],
+      edges: [...doc.edges, ...gapEdges],
+      syncedAt: doc.syncedAt
+    };
+  }
 
   // src/server/sampleData.ts
   var T0 = "2026-04-02T08:00:00Z";
@@ -3416,10 +3516,15 @@ var Server = (() => {
     graphDocMemo = loadGraphDocUncached();
     return graphDocMemo;
   }
+  function withRiskNodes(doc) {
+    return withMissingGuardrailNodes(
+      withExcessivePrivilegeNodes(withInternetExposureNodes(withSensitiveDataNodes(doc)))
+    );
+  }
   function loadGraphDocUncached() {
     var _a4;
     const snap = readGraphSnapshot();
-    if (snap) return withInternetExposureNodes(withSensitiveDataNodes(snap));
+    if (snap) return withRiskNodes(snap);
     const assetRows = readAll(TABS.assets);
     if (!assetRows.length) return null;
     const nodes = assetRows.map(rowToAsset);
@@ -3442,13 +3547,11 @@ var Server = (() => {
       });
     }
     const latest = latestSync();
-    return withInternetExposureNodes(
-      withSensitiveDataNodes({
-        nodes,
-        edges: edges2,
-        syncedAt: latest ? String((_a4 = latest["finished_at"]) != null ? _a4 : "") : ""
-      })
-    );
+    return withRiskNodes({
+      nodes,
+      edges: edges2,
+      syncedAt: latest ? String((_a4 = latest["finished_at"]) != null ? _a4 : "") : ""
+    });
   }
   function loadAssets() {
     if (assetsMemo === void 0) assetsMemo = readAll(TABS.assets).map(rowToAsset);
@@ -3886,6 +3989,12 @@ var Server = (() => {
       kinds.add(a.kind);
       if (a.cloudPlatform) clouds.add(a.cloudPlatform);
       for (const p of (_a4 = a.projects) != null ? _a4 : []) projects.add(p.name);
+      if (a.hasSensitiveData || a.hasAccessToSensitiveData) kinds.add("SENSITIVE_DATA");
+      if (a.isAccessibleFromInternet === true || a.isOpenToAllInternet === true) {
+        kinds.add("INTERNET_EXPOSURE");
+      }
+      if (a.hasAdminPrivileges || a.hasHighPrivileges) kinds.add("EXCESSIVE_PRIVILEGE");
+      if (a.guardrailMissing === true) kinds.add("MISSING_GUARDRAIL");
     }
     return {
       kinds: [...kinds].sort(),

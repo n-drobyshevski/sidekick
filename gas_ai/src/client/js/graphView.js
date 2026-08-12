@@ -279,20 +279,10 @@ export function renderGraph(container, data, handlers = {}) {
       g.append(tc);
     }
 
-    // Missing-guardrail stub: dashed tail + open ring + text (never color-only).
-    if (node.guardrailMissing && !isSummary) {
-      g.append(svgEl("path", {
-        class: "gedge negated",
-        d: `M ${NODE_W} ${NODE_H / 2 - 10} h 26`,
-      }));
-      g.append(svgEl("circle", {
-        cx: NODE_W + 32, cy: NODE_H / 2 - 10, r: 5,
-        fill: "none", stroke: "var(--sev-high)", "stroke-dasharray": "2 2",
-      }));
-      const t = svgEl("text", { class: "gnode-noguard-text", x: NODE_W + 4, y: NODE_H / 2 - 16 });
-      t.textContent = "no guardrail";
-      g.append(t);
-    }
+    // (Missing guardrail used to draw a dashed stub here. It is now a real
+    // MISSING_GUARDRAIL node joined by a negated PROTECTED_BY edge, which the edge
+    // renderer already draws dashed and labels "(ABSENT)" — drawing both would show
+    // one gap twice, in two different visual languages.)
 
     const open = () => {
       if (isSummary) handlers.onSummaryExpand && handlers.onSummaryExpand(node);

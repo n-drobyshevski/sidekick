@@ -2,7 +2,13 @@
 // global budgets, expandIds, filters (seeds exempt), and determinism.
 
 import { describe, expect, it } from "vitest";
-import { enrichGraphDoc } from "../src/domain/graphEnrich";
+import {
+  enrichGraphDoc,
+  withExcessivePrivilegeNodes,
+  withInternetExposureNodes,
+  withMissingGuardrailNodes,
+  withSensitiveDataNodes,
+} from "../src/domain/graphEnrich";
 import { projectGraph } from "../src/domain/graphProject";
 import { SEED_AARS_HINTS, SEED_ISSUES, seedGraphDoc } from "../src/server/sampleData";
 
@@ -114,6 +120,24 @@ describe("projectGraph", () => {
     expect(p.counts.shownNodes).toBeGreaterThan(0);
   });
 
+  it("expandIds reaches past the depth frontier, one hop and no further", () => {
+    // sa-agent-a sits AT depth 1, so before this it could never be expanded: the
+    // depth check fired before the caps expandIds was lifting, and the button that
+    // sets expandIds did nothing at all.
+    const plain = ids(projectGraph(DOC, { seedIds: ["agent-a"], depth: 1 }));
+    expect(plain.has("sa-agent-a")).toBe(true);
+    expect(plain.has("bucket-customer-pii")).toBe(false);
+
+    const expanded = ids(
+      projectGraph(DOC, { seedIds: ["agent-a"], depth: 1, expandIds: ["sa-agent-a"] }),
+    );
+    expect(expanded.has("bucket-customer-pii")).toBe(true); // 2 hops, admitted by the expand
+    // The hop does not cascade: the bucket's own neighbors stay out unless it is
+    // expanded in turn.
+    const depth2 = ids(projectGraph(DOC, { seedIds: ["agent-a"], depth: 2 }));
+    for (const id of expanded) expect(depth2.has(id)).toBe(true);
+  });
+
   it("filterSeeds narrows the scored bulk-seed set by the active filters", () => {
     // agent-a is AI_AGENT, role-finance-admin-01 is ACCESS_ROLE; both are seeds.
     const withFilterSeeds = projectGraph(DOC, {
@@ -135,5 +159,58 @@ describe("projectGraph", () => {
     const shownUnfiltered = ids(withoutFilterSeeds);
     expect(shownUnfiltered.has("agent-a")).toBe(true);
     expect(shownUnfiltered.has("role-finance-admin-01")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Risk evidence vs. the inventory filters. This is the defect that made finding
+// nodes invisible on the Security Graph page: the page seeds `kinds=AI_AGENT`
+// into the hash on a fresh visit, and passesFilters applied it to every traversed
+// neighbor — so the default view could only ever contain AI agents, and neither
+// "Expand neighbors" nor a regrouping could bring the attack path back.
+
+const RISK_DOC = withMissingGuardrailNodes(
+  withExcessivePrivilegeNodes(withInternetExposureNodes(withSensitiveDataNodes(DOC))),
+);
+
+describe("projectGraph risk-node filtering", () => {
+  // agent-h-chatbot is flagged for sensitive access, high privilege, and no guardrail.
+  const SEED = "agent-h-chatbot";
+  const evidence = [
+    `sensitive|${SEED}`,
+    `excessive|${SEED}`,
+    `noguardrail|${SEED}`,
+  ];
+
+  it("a kinds filter for AI agents keeps their risk evidence attached", () => {
+    const shown = ids(
+      projectGraph(RISK_DOC, { seedIds: [SEED], depth: 1, filters: { kinds: ["AI_AGENT"] } }),
+    );
+    for (const id of evidence) expect(shown.has(id)).toBe(true);
+    expect(shown.has(`sa-${SEED}`)).toBe(false); // real inventory is still filtered out
+  });
+
+  it("severity, cloud and project filters do not strip risk evidence either", () => {
+    for (const filters of [
+      { severities: ["CRITICAL"] },
+      { clouds: ["AWS"] },
+      { projects: ["PROJECT-NOPE"] },
+    ]) {
+      const shown = ids(projectGraph(RISK_DOC, { seedIds: [SEED], depth: 1, filters }));
+      for (const id of evidence) expect(shown.has(id)).toBe(true);
+    }
+  });
+
+  it("naming a risk kind is curation, and is honored verbatim", () => {
+    const shown = ids(
+      projectGraph(RISK_DOC, {
+        seedIds: [SEED],
+        depth: 1,
+        filters: { kinds: ["AI_AGENT", "SENSITIVE_DATA"] },
+      }),
+    );
+    expect(shown.has(`sensitive|${SEED}`)).toBe(true);
+    expect(shown.has(`excessive|${SEED}`)).toBe(false);
+    expect(shown.has(`noguardrail|${SEED}`)).toBe(false);
   });
 });

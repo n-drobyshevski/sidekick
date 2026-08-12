@@ -3,7 +3,13 @@
 
 import { describe, expect, it } from "vitest";
 import { SEVERITY_ORDER } from "../src/domain/config";
-import { enrichGraphDoc } from "../src/domain/graphEnrich";
+import {
+  enrichGraphDoc,
+  withExcessivePrivilegeNodes,
+  withInternetExposureNodes,
+  withMissingGuardrailNodes,
+  withSensitiveDataNodes,
+} from "../src/domain/graphEnrich";
 import {
   GROUP_NONE,
   layoutGraph,
@@ -302,6 +308,63 @@ describe("layoutGrouped: sort within groups", () => {
     };
     for (let i = 1; i < nodes.length; i++) {
       expect(rank(nodes[i - 1].severity)).toBeLessThanOrEqual(rank(nodes[i].severity));
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Risk evidence follows its asset into the asset's bucket. Without this, the
+// derived nodes (which carry no combo, project, or cloud of their own) all fell
+// into the "Ungrouped" block at the far end of the canvas — so switching the
+// arrangement to "grouped: toxic combo" tore the attack path apart.
+
+const RISK_DOC = withMissingGuardrailNodes(
+  withExcessivePrivilegeNodes(withInternetExposureNodes(withSensitiveDataNodes(DOC))),
+);
+const RISK_PROJECTION = projectGraph(RISK_DOC, { seedIds: ["agent-h-chatbot"], depth: 2 });
+
+describe("layoutGrouped: risk evidence", () => {
+  /** The group block a node was placed inside. */
+  function blockOf(layout: Layout, id: string) {
+    const node = layout.nodes.find((n) => n.id === id);
+    if (!node) return undefined;
+    return (layout.groups ?? []).find(
+      (g) =>
+        node.x >= g.x && node.x <= g.x + g.width && node.y >= g.y && node.y <= g.y + g.height,
+    );
+  }
+
+  const evidence = [
+    "sensitive|agent-h-chatbot",
+    "excessive|agent-h-chatbot",
+    "noguardrail|agent-h-chatbot",
+  ];
+
+  it("keeps the derived nodes in their asset's block, not Ungrouped", () => {
+    for (const key of ["combo", "project", "cloud"] as GroupKey[]) {
+      const layout = grouped(key, "smart", RISK_PROJECTION);
+      const host = blockOf(layout, "agent-h-chatbot");
+      expect(host, `no host block for ${key}`).toBeDefined();
+      expect(host!.key).not.toBe(GROUP_NONE);
+      for (const id of evidence) {
+        expect(blockOf(layout, id)?.key, `${id} under ${key}`).toBe(host!.key);
+      }
+    }
+  });
+
+  it("still groups the derived nodes by their own kind under 'kind'", () => {
+    const layout = grouped("kind", "smart", RISK_PROJECTION);
+    expect(blockOf(layout, "sensitive|agent-h-chatbot")?.key).toBe("SENSITIVE_DATA");
+    expect(blockOf(layout, "excessive|agent-h-chatbot")?.key).toBe("EXCESSIVE_PRIVILEGE");
+    expect(blockOf(layout, "noguardrail|agent-h-chatbot")?.key).toBe("MISSING_GUARDRAIL");
+  });
+
+  it("an ISSUE keeps its OWN combo group rather than inheriting its asset's first", () => {
+    const layout = grouped("combo", "smart", RISK_PROJECTION);
+    const issues = RISK_PROJECTION.nodes.filter((n) => n.kind === "ISSUE" && n.comboGroups?.length);
+    expect(issues.length).toBeGreaterThan(0);
+    for (const issue of issues) {
+      expect(blockOf(layout, issue.id)?.key).toBe(issue.comboGroups![0]);
     }
   });
 });
