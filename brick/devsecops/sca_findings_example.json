@@ -1,0 +1,1544 @@
+{
+  "_comment": [
+    "SYNTHETIC. This is what the UNGROUPED `vulnerabilityFindings` query returns for the `sca`",
+    "scope, and it is generated rather than captured: `sca_response.json` beside it is the",
+    "GROUPED query -- one row per repository with severity counts -- so it has no per-finding",
+    "rows and cannot drive a pipeline.",
+    "",
+    "What is real: the repository branches, their ids and their cloud platforms, all taken from",
+    "that captured response. What is synthesised: the findings themselves -- CVEs, packages,",
+    "timestamps and exploit signals -- chosen so the confusion matrix has all four quadrants and",
+    "an unclassified row, the way brick's own committed response does.",
+    "",
+    "Every finding is CRITICAL or HIGH, matching the `--severities` the tests scan with. A",
+    "MEDIUM row here would be a scan returning something it did not ask for, and it made the",
+    "severity-filtered `v_lifecycles` disagree with the published OVERALL row -- which is a",
+    "real property of the pipeline (OVERALL is computed once over everything scanned) shown",
+    "up by an unrealistic fixture.",
+    "",
+    "Regenerate rather than hand-edit if the shape needs to change; see",
+    "brick/devsecops/README.md, Tests."
+  ],
+  "data": {
+    "vulnerabilityFindings": {
+      "nodes": [
+        {
+          "id": "0ff833b9-259f-5467-a324-8c0326660d24",
+          "name": "CVE-2021-44228",
+          "detailedName": "org.apache.logging.log4j:log4j-core",
+          "severity": "CRITICAL",
+          "status": "RESOLVED",
+          "firstDetectedAt": "2026-01-01T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": "2026-04-05T00:00:00Z",
+          "fixDate": "2026-02-02T00:00:00Z",
+          "fixedVersion": "2.17.1",
+          "hasExploit": true,
+          "hasCisaKevExploit": true,
+          "epssProbability": 0.97,
+          "vulnerableAsset": {
+            "id": "f5941fb2-f758-55e2-bf76-6bca12f833aa",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/relay-point-manager/master",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "JAVA"
+            ]
+          }
+        },
+        {
+          "id": "a4ede437-f188-5555-aeb1-aa9f00bd328c",
+          "name": "CVE-2022-22965",
+          "detailedName": "com.fasterxml.jackson.core:jackson-databind",
+          "severity": "CRITICAL",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-02-02T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-03T00:00:00Z",
+          "fixedVersion": "2.15.3",
+          "hasExploit": true,
+          "hasCisaKevExploit": true,
+          "epssProbability": 0.94,
+          "vulnerableAsset": {
+            "id": "f5941fb2-f758-55e2-bf76-6bca12f833aa",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/relay-point-manager/master",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "JAVA"
+            ]
+          }
+        },
+        {
+          "id": "577dcdfd-25a4-5192-a5ca-9ab7a0faecd3",
+          "name": "CVE-2020-8203",
+          "detailedName": "lodash",
+          "severity": "HIGH",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-02-04T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-05T00:00:00Z",
+          "fixedVersion": "4.17.21",
+          "hasExploit": true,
+          "hasCisaKevExploit": false,
+          "epssProbability": 0.11,
+          "vulnerableAsset": {
+            "id": "f5941fb2-f758-55e2-bf76-6bca12f833aa",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/relay-point-manager/master",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "JAVASCRIPT"
+            ]
+          }
+        },
+        {
+          "id": "736614f1-eea8-5d49-aae2-a1ddf68fdba9",
+          "name": "CVE-2023-45857",
+          "detailedName": "axios",
+          "severity": "HIGH",
+          "status": "RESOLVED",
+          "firstDetectedAt": "2026-01-05T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": "2026-04-13T00:00:00Z",
+          "fixDate": "2026-02-06T00:00:00Z",
+          "fixedVersion": "1.6.2",
+          "hasExploit": false,
+          "hasCisaKevExploit": false,
+          "epssProbability": 0.02,
+          "vulnerableAsset": {
+            "id": "f5941fb2-f758-55e2-bf76-6bca12f833aa",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/relay-point-manager/master",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "JAVASCRIPT"
+            ]
+          }
+        },
+        {
+          "id": "aaeb50f4-e1dd-55e8-aa3c-fe4ef17627fb",
+          "name": "CVE-2024-21503",
+          "detailedName": "pyyaml",
+          "severity": "HIGH",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-01-07T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-08T00:00:00Z",
+          "fixedVersion": "6.0.1",
+          "hasExploit": null,
+          "hasCisaKevExploit": null,
+          "epssProbability": null,
+          "vulnerableAsset": {
+            "id": "f5941fb2-f758-55e2-bf76-6bca12f833aa",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/relay-point-manager/master",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "PYTHON"
+            ]
+          }
+        },
+        {
+          "id": "7dd3e4d6-542b-5d7c-a418-e29f25ec7804",
+          "name": "CVE-2023-39325",
+          "detailedName": "golang.org/x/net",
+          "severity": "HIGH",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-02-08T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-09T00:00:00Z",
+          "fixedVersion": "0.17.0",
+          "hasExploit": true,
+          "hasCisaKevExploit": false,
+          "epssProbability": 0.35,
+          "vulnerableAsset": {
+            "id": "f5941fb2-f758-55e2-bf76-6bca12f833aa",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/relay-point-manager/master",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "GO"
+            ]
+          }
+        },
+        {
+          "id": "494d4b06-8338-505c-a141-6ad25cc81279",
+          "name": "CVE-2021-44228",
+          "detailedName": "com.fasterxml.jackson.core:jackson-databind",
+          "severity": "CRITICAL",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-01-04T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-02T00:00:00Z",
+          "fixedVersion": "2.15.3",
+          "hasExploit": true,
+          "hasCisaKevExploit": true,
+          "epssProbability": 0.97,
+          "vulnerableAsset": {
+            "id": "08aec432-8b57-530d-80df-f2e44aeea1e1",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/mold-workflow/develop",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "JAVA"
+            ]
+          }
+        },
+        {
+          "id": "49b75f11-7c31-5857-ae7b-cc8c17bdbbaa",
+          "name": "CVE-2023-4863",
+          "detailedName": "lodash",
+          "severity": "HIGH",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-01-06T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-04T00:00:00Z",
+          "fixedVersion": "4.17.21",
+          "hasExploit": false,
+          "hasCisaKevExploit": true,
+          "epssProbability": 0.42,
+          "vulnerableAsset": {
+            "id": "08aec432-8b57-530d-80df-f2e44aeea1e1",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/mold-workflow/develop",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "JAVASCRIPT"
+            ]
+          }
+        },
+        {
+          "id": "4d4fbced-098c-5e59-a54d-b5b3aea4beb8",
+          "name": "CVE-2020-8203",
+          "detailedName": "axios",
+          "severity": "HIGH",
+          "status": "RESOLVED",
+          "firstDetectedAt": "2026-02-07T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": "2026-04-11T00:00:00Z",
+          "fixDate": "2026-02-05T00:00:00Z",
+          "fixedVersion": "1.6.2",
+          "hasExploit": true,
+          "hasCisaKevExploit": false,
+          "epssProbability": 0.11,
+          "vulnerableAsset": {
+            "id": "08aec432-8b57-530d-80df-f2e44aeea1e1",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/mold-workflow/develop",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "JAVASCRIPT"
+            ]
+          }
+        },
+        {
+          "id": "ebdeba73-babb-5802-a036-1b867c7d47cb",
+          "name": "CVE-2023-43804",
+          "detailedName": "pyyaml",
+          "severity": "HIGH",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-02-09T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-07T00:00:00Z",
+          "fixedVersion": "6.0.1",
+          "hasExploit": false,
+          "hasCisaKevExploit": false,
+          "epssProbability": 0.01,
+          "vulnerableAsset": {
+            "id": "08aec432-8b57-530d-80df-f2e44aeea1e1",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/mold-workflow/develop",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "PYTHON"
+            ]
+          }
+        },
+        {
+          "id": "95966c57-5cf8-578d-a37f-9c9f1a011db6",
+          "name": "CVE-2024-21503",
+          "detailedName": "golang.org/x/net",
+          "severity": "HIGH",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-01-10T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-08T00:00:00Z",
+          "fixedVersion": "0.17.0",
+          "hasExploit": null,
+          "hasCisaKevExploit": null,
+          "epssProbability": null,
+          "vulnerableAsset": {
+            "id": "08aec432-8b57-530d-80df-f2e44aeea1e1",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/mold-workflow/develop",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "GO"
+            ]
+          }
+        },
+        {
+          "id": "c12f1bad-2fc6-5cca-ad2f-517b4210e6cb",
+          "name": "CVE-2022-22965",
+          "detailedName": "lodash",
+          "severity": "CRITICAL",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-02-08T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-03T00:00:00Z",
+          "fixedVersion": "4.17.21",
+          "hasExploit": true,
+          "hasCisaKevExploit": true,
+          "epssProbability": 0.94,
+          "vulnerableAsset": {
+            "id": "db77a39c-576d-579b-ac0c-ec472dcb219d",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/twist-gwt/main",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "JAVASCRIPT"
+            ]
+          }
+        },
+        {
+          "id": "af5a22ed-1a89-5be1-ac45-3c527f9e06f5",
+          "name": "CVE-2023-4863",
+          "detailedName": "axios",
+          "severity": "HIGH",
+          "status": "RESOLVED",
+          "firstDetectedAt": "2026-01-09T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": "2026-04-09T00:00:00Z",
+          "fixDate": "2026-02-04T00:00:00Z",
+          "fixedVersion": "1.6.2",
+          "hasExploit": false,
+          "hasCisaKevExploit": true,
+          "epssProbability": 0.42,
+          "vulnerableAsset": {
+            "id": "db77a39c-576d-579b-ac0c-ec472dcb219d",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/twist-gwt/main",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "JAVASCRIPT"
+            ]
+          }
+        },
+        {
+          "id": "2bc3b904-ff45-5d58-a3d0-c138d4913dbe",
+          "name": "CVE-2023-45857",
+          "detailedName": "pyyaml",
+          "severity": "HIGH",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-01-11T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-06T00:00:00Z",
+          "fixedVersion": "6.0.1",
+          "hasExploit": false,
+          "hasCisaKevExploit": false,
+          "epssProbability": 0.02,
+          "vulnerableAsset": {
+            "id": "db77a39c-576d-579b-ac0c-ec472dcb219d",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/twist-gwt/main",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "PYTHON"
+            ]
+          }
+        },
+        {
+          "id": "3a8a5a85-df3b-5b1c-a9f8-15726b1ccb70",
+          "name": "CVE-2023-43804",
+          "detailedName": "golang.org/x/net",
+          "severity": "HIGH",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-02-12T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-07T00:00:00Z",
+          "fixedVersion": "0.17.0",
+          "hasExploit": false,
+          "hasCisaKevExploit": false,
+          "epssProbability": 0.01,
+          "vulnerableAsset": {
+            "id": "db77a39c-576d-579b-ac0c-ec472dcb219d",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/twist-gwt/main",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "GO"
+            ]
+          }
+        },
+        {
+          "id": "edaff2b8-739b-5794-a19a-e9ce72bf298a",
+          "name": "CVE-2023-39325",
+          "detailedName": "com.fasterxml.jackson.core:jackson-databind",
+          "severity": "HIGH",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-02-14T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-09T00:00:00Z",
+          "fixedVersion": "2.15.3",
+          "hasExploit": true,
+          "hasCisaKevExploit": false,
+          "epssProbability": 0.35,
+          "vulnerableAsset": {
+            "id": "db77a39c-576d-579b-ac0c-ec472dcb219d",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/twist-gwt/main",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "JAVA"
+            ]
+          }
+        },
+        {
+          "id": "d91c61b8-3d6b-5eb5-a4fa-253e43e12fd2",
+          "name": "CVE-2021-44228",
+          "detailedName": "lodash",
+          "severity": "CRITICAL",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-01-10T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-02T00:00:00Z",
+          "fixedVersion": "4.17.21",
+          "hasExploit": true,
+          "hasCisaKevExploit": true,
+          "epssProbability": 0.97,
+          "vulnerableAsset": {
+            "id": "d79e0d23-8a23-5cde-aeb4-6370c056bccc",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/twist-mobile/develop",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "JAVASCRIPT"
+            ]
+          }
+        },
+        {
+          "id": "8e2cabdf-8048-54de-a0b8-8874eda17f05",
+          "name": "CVE-2022-22965",
+          "detailedName": "axios",
+          "severity": "CRITICAL",
+          "status": "RESOLVED",
+          "firstDetectedAt": "2026-02-11T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": "2026-04-07T00:00:00Z",
+          "fixDate": "2026-02-03T00:00:00Z",
+          "fixedVersion": "1.6.2",
+          "hasExploit": true,
+          "hasCisaKevExploit": true,
+          "epssProbability": 0.94,
+          "vulnerableAsset": {
+            "id": "d79e0d23-8a23-5cde-aeb4-6370c056bccc",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/twist-mobile/develop",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "JAVASCRIPT"
+            ]
+          }
+        },
+        {
+          "id": "f1c64e36-cdc0-5128-a4cc-3fe83dadf002",
+          "name": "CVE-2020-8203",
+          "detailedName": "pyyaml",
+          "severity": "HIGH",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-02-13T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-05T00:00:00Z",
+          "fixedVersion": "6.0.1",
+          "hasExploit": true,
+          "hasCisaKevExploit": false,
+          "epssProbability": 0.11,
+          "vulnerableAsset": {
+            "id": "d79e0d23-8a23-5cde-aeb4-6370c056bccc",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/twist-mobile/develop",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "PYTHON"
+            ]
+          }
+        },
+        {
+          "id": "9f51ab4b-1be8-5ffe-a47a-109f70422f13",
+          "name": "CVE-2023-45857",
+          "detailedName": "golang.org/x/net",
+          "severity": "HIGH",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-01-14T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-06T00:00:00Z",
+          "fixedVersion": "0.17.0",
+          "hasExploit": false,
+          "hasCisaKevExploit": false,
+          "epssProbability": 0.02,
+          "vulnerableAsset": {
+            "id": "d79e0d23-8a23-5cde-aeb4-6370c056bccc",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/twist-mobile/develop",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "GO"
+            ]
+          }
+        },
+        {
+          "id": "d3e9d0f8-b3ff-5f2d-a261-06aeedd0299b",
+          "name": "CVE-2024-21503",
+          "detailedName": "com.fasterxml.jackson.core:jackson-databind",
+          "severity": "HIGH",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-01-16T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-08T00:00:00Z",
+          "fixedVersion": "2.15.3",
+          "hasExploit": null,
+          "hasCisaKevExploit": null,
+          "epssProbability": null,
+          "vulnerableAsset": {
+            "id": "d79e0d23-8a23-5cde-aeb4-6370c056bccc",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/twist-mobile/develop",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "JAVA"
+            ]
+          }
+        },
+        {
+          "id": "36c070ed-448d-54bb-a68c-3ac1ddeada81",
+          "name": "CVE-2023-39325",
+          "detailedName": "org.springframework:spring-web",
+          "severity": "HIGH",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-02-17T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-09T00:00:00Z",
+          "fixedVersion": "5.3.31",
+          "hasExploit": true,
+          "hasCisaKevExploit": false,
+          "epssProbability": 0.35,
+          "vulnerableAsset": {
+            "id": "d79e0d23-8a23-5cde-aeb4-6370c056bccc",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/twist-mobile/develop",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "JAVA"
+            ]
+          }
+        },
+        {
+          "id": "8a05c368-3d8d-51f4-abec-6a223976ee5a",
+          "name": "CVE-2021-44228",
+          "detailedName": "axios",
+          "severity": "CRITICAL",
+          "status": "RESOLVED",
+          "firstDetectedAt": "2026-01-13T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": "2026-04-05T00:00:00Z",
+          "fixDate": "2026-02-02T00:00:00Z",
+          "fixedVersion": "1.6.2",
+          "hasExploit": true,
+          "hasCisaKevExploit": true,
+          "epssProbability": 0.97,
+          "vulnerableAsset": {
+            "id": "be3d456f-8137-5133-b4cd-362b6d529b55",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/warehouse-replenishment/main",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "JAVASCRIPT"
+            ]
+          }
+        },
+        {
+          "id": "c5b17ddc-f0a9-5b96-a737-75dbbb4f847a",
+          "name": "CVE-2023-4863",
+          "detailedName": "pyyaml",
+          "severity": "HIGH",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-01-15T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-04T00:00:00Z",
+          "fixedVersion": "6.0.1",
+          "hasExploit": false,
+          "hasCisaKevExploit": true,
+          "epssProbability": 0.42,
+          "vulnerableAsset": {
+            "id": "be3d456f-8137-5133-b4cd-362b6d529b55",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/warehouse-replenishment/main",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "PYTHON"
+            ]
+          }
+        },
+        {
+          "id": "ad456cf7-35fc-5994-abbd-e46e688b14a2",
+          "name": "CVE-2020-8203",
+          "detailedName": "golang.org/x/net",
+          "severity": "HIGH",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-02-16T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-05T00:00:00Z",
+          "fixedVersion": "0.17.0",
+          "hasExploit": true,
+          "hasCisaKevExploit": false,
+          "epssProbability": 0.11,
+          "vulnerableAsset": {
+            "id": "be3d456f-8137-5133-b4cd-362b6d529b55",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/warehouse-replenishment/main",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "GO"
+            ]
+          }
+        },
+        {
+          "id": "2ecf0dd9-2c4e-5459-a38f-2d1df1745096",
+          "name": "CVE-2023-43804",
+          "detailedName": "com.fasterxml.jackson.core:jackson-databind",
+          "severity": "HIGH",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-02-18T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-07T00:00:00Z",
+          "fixedVersion": "2.15.3",
+          "hasExploit": false,
+          "hasCisaKevExploit": false,
+          "epssProbability": 0.01,
+          "vulnerableAsset": {
+            "id": "be3d456f-8137-5133-b4cd-362b6d529b55",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/warehouse-replenishment/main",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "JAVA"
+            ]
+          }
+        },
+        {
+          "id": "e17a87b3-6de2-5efb-a956-2cacd2f24eb0",
+          "name": "CVE-2024-21503",
+          "detailedName": "org.springframework:spring-web",
+          "severity": "HIGH",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-01-19T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-08T00:00:00Z",
+          "fixedVersion": "5.3.31",
+          "hasExploit": null,
+          "hasCisaKevExploit": null,
+          "epssProbability": null,
+          "vulnerableAsset": {
+            "id": "be3d456f-8137-5133-b4cd-362b6d529b55",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/warehouse-replenishment/main",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "JAVA"
+            ]
+          }
+        },
+        {
+          "id": "f0efcf8d-e1e7-580e-a9a2-4e9d44b72bc6",
+          "name": "CVE-2022-22965",
+          "detailedName": "pyyaml",
+          "severity": "CRITICAL",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-02-17T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-03T00:00:00Z",
+          "fixedVersion": "6.0.1",
+          "hasExploit": true,
+          "hasCisaKevExploit": true,
+          "epssProbability": 0.94,
+          "vulnerableAsset": {
+            "id": "9015049a-08e2-5c89-987d-f6b461819fb8",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/shipment-transport-mastership/stab",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "PYTHON"
+            ]
+          }
+        },
+        {
+          "id": "7ccaa9a8-0f54-5909-a452-b909cb0b85b1",
+          "name": "CVE-2023-4863",
+          "detailedName": "golang.org/x/net",
+          "severity": "HIGH",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-01-18T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-04T00:00:00Z",
+          "fixedVersion": "0.17.0",
+          "hasExploit": false,
+          "hasCisaKevExploit": true,
+          "epssProbability": 0.42,
+          "vulnerableAsset": {
+            "id": "9015049a-08e2-5c89-987d-f6b461819fb8",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/shipment-transport-mastership/stab",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "GO"
+            ]
+          }
+        },
+        {
+          "id": "1604ecfa-3d4c-5fe1-a11f-7c18ffd2b3af",
+          "name": "CVE-2023-45857",
+          "detailedName": "com.fasterxml.jackson.core:jackson-databind",
+          "severity": "HIGH",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-01-20T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-06T00:00:00Z",
+          "fixedVersion": "2.15.3",
+          "hasExploit": false,
+          "hasCisaKevExploit": false,
+          "epssProbability": 0.02,
+          "vulnerableAsset": {
+            "id": "9015049a-08e2-5c89-987d-f6b461819fb8",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/shipment-transport-mastership/stab",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "JAVA"
+            ]
+          }
+        },
+        {
+          "id": "b2240fa8-cc79-5e6b-a24b-521abf26c430",
+          "name": "CVE-2023-43804",
+          "detailedName": "org.springframework:spring-web",
+          "severity": "HIGH",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-02-21T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-07T00:00:00Z",
+          "fixedVersion": "5.3.31",
+          "hasExploit": false,
+          "hasCisaKevExploit": false,
+          "epssProbability": 0.01,
+          "vulnerableAsset": {
+            "id": "9015049a-08e2-5c89-987d-f6b461819fb8",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/shipment-transport-mastership/stab",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "JAVA"
+            ]
+          }
+        },
+        {
+          "id": "606c05ce-afd1-5a3f-a4b2-a9d2677c3fc1",
+          "name": "CVE-2023-39325",
+          "detailedName": "axios",
+          "severity": "HIGH",
+          "status": "RESOLVED",
+          "firstDetectedAt": "2026-02-23T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": "2026-04-19T00:00:00Z",
+          "fixDate": "2026-02-09T00:00:00Z",
+          "fixedVersion": "1.6.2",
+          "hasExploit": true,
+          "hasCisaKevExploit": false,
+          "epssProbability": 0.35,
+          "vulnerableAsset": {
+            "id": "9015049a-08e2-5c89-987d-f6b461819fb8",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/shipment-transport-mastership/stab",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "JAVASCRIPT"
+            ]
+          }
+        },
+        {
+          "id": "d182edfe-8cd5-594a-ae5a-a21e894cabc4",
+          "name": "CVE-2021-44228",
+          "detailedName": "pyyaml",
+          "severity": "CRITICAL",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-01-19T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-02T00:00:00Z",
+          "fixedVersion": "6.0.1",
+          "hasExploit": true,
+          "hasCisaKevExploit": true,
+          "epssProbability": 0.97,
+          "vulnerableAsset": {
+            "id": "e77980f7-e8c8-52a8-8d92-88f73f2ed86e",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/spfc-exchange/main",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "PYTHON"
+            ]
+          }
+        },
+        {
+          "id": "b37e34b9-5107-5458-a0bc-ff4f5b8b9868",
+          "name": "CVE-2022-22965",
+          "detailedName": "golang.org/x/net",
+          "severity": "CRITICAL",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-02-20T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-03T00:00:00Z",
+          "fixedVersion": "0.17.0",
+          "hasExploit": true,
+          "hasCisaKevExploit": true,
+          "epssProbability": 0.94,
+          "vulnerableAsset": {
+            "id": "e77980f7-e8c8-52a8-8d92-88f73f2ed86e",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/spfc-exchange/main",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "GO"
+            ]
+          }
+        },
+        {
+          "id": "1fa3a67a-f623-5e9a-ae95-688e70e0c961",
+          "name": "CVE-2020-8203",
+          "detailedName": "com.fasterxml.jackson.core:jackson-databind",
+          "severity": "HIGH",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-02-22T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-05T00:00:00Z",
+          "fixedVersion": "2.15.3",
+          "hasExploit": true,
+          "hasCisaKevExploit": false,
+          "epssProbability": 0.11,
+          "vulnerableAsset": {
+            "id": "e77980f7-e8c8-52a8-8d92-88f73f2ed86e",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/spfc-exchange/main",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "JAVA"
+            ]
+          }
+        },
+        {
+          "id": "d94e7ae7-92af-585c-afd3-120d6f37c730",
+          "name": "CVE-2023-45857",
+          "detailedName": "org.springframework:spring-web",
+          "severity": "HIGH",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-01-23T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-06T00:00:00Z",
+          "fixedVersion": "5.3.31",
+          "hasExploit": false,
+          "hasCisaKevExploit": false,
+          "epssProbability": 0.02,
+          "vulnerableAsset": {
+            "id": "e77980f7-e8c8-52a8-8d92-88f73f2ed86e",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/spfc-exchange/main",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "JAVA"
+            ]
+          }
+        },
+        {
+          "id": "d1e3ede6-ae00-54b1-af96-24c864ce7ec7",
+          "name": "CVE-2024-21503",
+          "detailedName": "axios",
+          "severity": "HIGH",
+          "status": "RESOLVED",
+          "firstDetectedAt": "2026-01-25T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": "2026-04-17T00:00:00Z",
+          "fixDate": "2026-02-08T00:00:00Z",
+          "fixedVersion": "1.6.2",
+          "hasExploit": null,
+          "hasCisaKevExploit": null,
+          "epssProbability": null,
+          "vulnerableAsset": {
+            "id": "e77980f7-e8c8-52a8-8d92-88f73f2ed86e",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/spfc-exchange/main",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "JAVASCRIPT"
+            ]
+          }
+        },
+        {
+          "id": "f3ac5aef-3ac4-5c92-a486-55dec0d8210b",
+          "name": "CVE-2023-39325",
+          "detailedName": "urllib3",
+          "severity": "HIGH",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-02-26T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-09T00:00:00Z",
+          "fixedVersion": "2.0.7",
+          "hasExploit": true,
+          "hasCisaKevExploit": false,
+          "epssProbability": 0.35,
+          "vulnerableAsset": {
+            "id": "e77980f7-e8c8-52a8-8d92-88f73f2ed86e",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/spfc-exchange/main",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "PYTHON"
+            ]
+          }
+        },
+        {
+          "id": "eeb4fcc6-bc44-56c3-aa18-f14eb7254433",
+          "name": "CVE-2021-44228",
+          "detailedName": "golang.org/x/net",
+          "severity": "CRITICAL",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-01-22T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-02T00:00:00Z",
+          "fixedVersion": "0.17.0",
+          "hasExploit": true,
+          "hasCisaKevExploit": true,
+          "epssProbability": 0.97,
+          "vulnerableAsset": {
+            "id": "567a501e-1c44-5eb4-b74a-8bef7c75a7aa",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/swop-orders/main",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "GO"
+            ]
+          }
+        },
+        {
+          "id": "91af1a42-addb-57e7-ab99-3da2b8ff23b8",
+          "name": "CVE-2023-4863",
+          "detailedName": "com.fasterxml.jackson.core:jackson-databind",
+          "severity": "HIGH",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-01-24T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-04T00:00:00Z",
+          "fixedVersion": "2.15.3",
+          "hasExploit": false,
+          "hasCisaKevExploit": true,
+          "epssProbability": 0.42,
+          "vulnerableAsset": {
+            "id": "567a501e-1c44-5eb4-b74a-8bef7c75a7aa",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/swop-orders/main",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "JAVA"
+            ]
+          }
+        },
+        {
+          "id": "5a4294d4-b79e-5ca8-a29c-3a8ec53c5820",
+          "name": "CVE-2020-8203",
+          "detailedName": "org.springframework:spring-web",
+          "severity": "HIGH",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-02-25T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-05T00:00:00Z",
+          "fixedVersion": "5.3.31",
+          "hasExploit": true,
+          "hasCisaKevExploit": false,
+          "epssProbability": 0.11,
+          "vulnerableAsset": {
+            "id": "567a501e-1c44-5eb4-b74a-8bef7c75a7aa",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/swop-orders/main",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "JAVA"
+            ]
+          }
+        },
+        {
+          "id": "f537ccd1-0bfb-5613-a4d8-af22afa56675",
+          "name": "CVE-2023-43804",
+          "detailedName": "axios",
+          "severity": "HIGH",
+          "status": "RESOLVED",
+          "firstDetectedAt": "2026-02-27T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": "2026-04-15T00:00:00Z",
+          "fixDate": "2026-02-07T00:00:00Z",
+          "fixedVersion": "1.6.2",
+          "hasExploit": false,
+          "hasCisaKevExploit": false,
+          "epssProbability": 0.01,
+          "vulnerableAsset": {
+            "id": "567a501e-1c44-5eb4-b74a-8bef7c75a7aa",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/swop-orders/main",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "JAVASCRIPT"
+            ]
+          }
+        },
+        {
+          "id": "1c39fc43-3144-5f53-a86c-9f870cee53b5",
+          "name": "CVE-2024-21503",
+          "detailedName": "urllib3",
+          "severity": "HIGH",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-01-01T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-08T00:00:00Z",
+          "fixedVersion": "2.0.7",
+          "hasExploit": null,
+          "hasCisaKevExploit": null,
+          "epssProbability": null,
+          "vulnerableAsset": {
+            "id": "567a501e-1c44-5eb4-b74a-8bef7c75a7aa",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/swop-orders/main",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "PYTHON"
+            ]
+          }
+        },
+        {
+          "id": "ea7e743d-7826-5a03-a380-c0440554fbb4",
+          "name": "CVE-2022-22965",
+          "detailedName": "com.fasterxml.jackson.core:jackson-databind",
+          "severity": "CRITICAL",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-02-26T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-03T00:00:00Z",
+          "fixedVersion": "2.15.3",
+          "hasExploit": true,
+          "hasCisaKevExploit": true,
+          "epssProbability": 0.94,
+          "vulnerableAsset": {
+            "id": "01776d37-bdce-50e1-a636-50a045562216",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/dpcp-portal-backend/develop",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "JAVA"
+            ]
+          }
+        },
+        {
+          "id": "430c775a-5cfc-5e1a-a028-11312321acd3",
+          "name": "CVE-2023-4863",
+          "detailedName": "org.springframework:spring-web",
+          "severity": "HIGH",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-01-27T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-04T00:00:00Z",
+          "fixedVersion": "5.3.31",
+          "hasExploit": false,
+          "hasCisaKevExploit": true,
+          "epssProbability": 0.42,
+          "vulnerableAsset": {
+            "id": "01776d37-bdce-50e1-a636-50a045562216",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/dpcp-portal-backend/develop",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "JAVA"
+            ]
+          }
+        },
+        {
+          "id": "1364a3e3-ea27-50d7-af24-667a7af6e4b2",
+          "name": "CVE-2023-45857",
+          "detailedName": "axios",
+          "severity": "HIGH",
+          "status": "RESOLVED",
+          "firstDetectedAt": "2026-01-02T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": "2026-04-13T00:00:00Z",
+          "fixDate": "2026-02-06T00:00:00Z",
+          "fixedVersion": "1.6.2",
+          "hasExploit": false,
+          "hasCisaKevExploit": false,
+          "epssProbability": 0.02,
+          "vulnerableAsset": {
+            "id": "01776d37-bdce-50e1-a636-50a045562216",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/dpcp-portal-backend/develop",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "JAVASCRIPT"
+            ]
+          }
+        },
+        {
+          "id": "b14204c4-1f93-5977-a926-6d112955e2bb",
+          "name": "CVE-2023-43804",
+          "detailedName": "urllib3",
+          "severity": "HIGH",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-02-03T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-07T00:00:00Z",
+          "fixedVersion": "2.0.7",
+          "hasExploit": false,
+          "hasCisaKevExploit": false,
+          "epssProbability": 0.01,
+          "vulnerableAsset": {
+            "id": "01776d37-bdce-50e1-a636-50a045562216",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/dpcp-portal-backend/develop",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "PYTHON"
+            ]
+          }
+        },
+        {
+          "id": "087ec6eb-9bdd-5cfc-a582-bb8925894dda",
+          "name": "CVE-2023-39325",
+          "detailedName": "golang.org/x/net",
+          "severity": "HIGH",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-02-05T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-09T00:00:00Z",
+          "fixedVersion": "0.17.0",
+          "hasExploit": true,
+          "hasCisaKevExploit": false,
+          "epssProbability": 0.35,
+          "vulnerableAsset": {
+            "id": "01776d37-bdce-50e1-a636-50a045562216",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/dpcp-portal-backend/develop",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "GO"
+            ]
+          }
+        },
+        {
+          "id": "bb8e4436-93cf-5394-ab87-d14ebbf729d6",
+          "name": "CVE-2021-44228",
+          "detailedName": "com.fasterxml.jackson.core:jackson-databind",
+          "severity": "CRITICAL",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-01-01T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-02T00:00:00Z",
+          "fixedVersion": "2.15.3",
+          "hasExploit": true,
+          "hasCisaKevExploit": true,
+          "epssProbability": 0.97,
+          "vulnerableAsset": {
+            "id": "a71c7352-e4a5-585d-a2cf-a241d1bfd1a9",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/swop-catalog/main",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "JAVA"
+            ]
+          }
+        },
+        {
+          "id": "60240fc9-1112-5cf7-aff0-a92475ba42f2",
+          "name": "CVE-2022-22965",
+          "detailedName": "org.springframework:spring-web",
+          "severity": "CRITICAL",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-02-02T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-03T00:00:00Z",
+          "fixedVersion": "5.3.31",
+          "hasExploit": true,
+          "hasCisaKevExploit": true,
+          "epssProbability": 0.94,
+          "vulnerableAsset": {
+            "id": "a71c7352-e4a5-585d-a2cf-a241d1bfd1a9",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/swop-catalog/main",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "JAVA"
+            ]
+          }
+        },
+        {
+          "id": "76785fec-9c23-5227-acf1-bc5c4b52bda7",
+          "name": "CVE-2020-8203",
+          "detailedName": "axios",
+          "severity": "HIGH",
+          "status": "RESOLVED",
+          "firstDetectedAt": "2026-02-04T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": "2026-04-11T00:00:00Z",
+          "fixDate": "2026-02-05T00:00:00Z",
+          "fixedVersion": "1.6.2",
+          "hasExploit": true,
+          "hasCisaKevExploit": false,
+          "epssProbability": 0.11,
+          "vulnerableAsset": {
+            "id": "a71c7352-e4a5-585d-a2cf-a241d1bfd1a9",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/swop-catalog/main",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "JAVASCRIPT"
+            ]
+          }
+        },
+        {
+          "id": "86152301-30b2-5b10-a2ea-a3b838462d18",
+          "name": "CVE-2023-45857",
+          "detailedName": "urllib3",
+          "severity": "HIGH",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-01-05T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-06T00:00:00Z",
+          "fixedVersion": "2.0.7",
+          "hasExploit": false,
+          "hasCisaKevExploit": false,
+          "epssProbability": 0.02,
+          "vulnerableAsset": {
+            "id": "a71c7352-e4a5-585d-a2cf-a241d1bfd1a9",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/swop-catalog/main",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "PYTHON"
+            ]
+          }
+        },
+        {
+          "id": "40e3646f-3ce2-580a-a4f2-4a9c61466248",
+          "name": "CVE-2024-21503",
+          "detailedName": "golang.org/x/net",
+          "severity": "HIGH",
+          "status": "OPEN",
+          "firstDetectedAt": "2026-01-07T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": null,
+          "fixDate": "2026-02-08T00:00:00Z",
+          "fixedVersion": "0.17.0",
+          "hasExploit": null,
+          "hasCisaKevExploit": null,
+          "epssProbability": null,
+          "vulnerableAsset": {
+            "id": "a71c7352-e4a5-585d-a2cf-a241d1bfd1a9",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/swop-catalog/main",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "GO"
+            ]
+          }
+        },
+        {
+          "id": "54316b00-2bc3-5aa2-a373-bf57e289e46f",
+          "name": "CVE-2023-39325",
+          "detailedName": "org.apache.logging.log4j:log4j-core",
+          "severity": "HIGH",
+          "status": "RESOLVED",
+          "firstDetectedAt": "2026-02-08T00:00:00Z",
+          "lastDetectedAt": "2026-03-28T00:00:00Z",
+          "resolvedAt": "2026-04-19T00:00:00Z",
+          "fixDate": "2026-02-09T00:00:00Z",
+          "fixedVersion": "2.17.1",
+          "hasExploit": true,
+          "hasCisaKevExploit": false,
+          "epssProbability": 0.35,
+          "vulnerableAsset": {
+            "id": "a71c7352-e4a5-585d-a2cf-a241d1bfd1a9",
+            "type": "REPOSITORY_BRANCH",
+            "name": "dktunited/swop-catalog/main",
+            "cloudPlatform": "GitHub",
+            "subscriptionName": null,
+            "subscriptionExternalId": null
+          },
+          "artifactType": {
+            "codeLibraryLanguage": [
+              "JAVA"
+            ]
+          }
+        }
+      ],
+      "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": null
+      }
+    }
+  }
+}

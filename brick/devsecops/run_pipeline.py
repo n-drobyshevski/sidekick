@@ -54,7 +54,7 @@ from typing import Optional
 from pyspark.sql import Row, SparkSession
 from pyspark.sql import functions as F
 
-MODULE_VERSION = "2.3"
+MODULE_VERSION = "1.0-devsecops"
 
 # The six runtime modules move in lockstep, and the documented way to deploy them is pasting
 # files into a Workspace folder one at a time -- so a half-updated folder is the likely failure,
@@ -68,7 +68,7 @@ try:
     import metrics
     from config import (
         DEFAULT_FETCH_SEVERITIES,
-        DEFAULT_RISK_RULE,
+        rule_for_scope,
         DEFAULT_SCOPE,
         DISAPPEARANCE_MODES,
         DISAPPEARANCE_RESOLUTION,
@@ -78,7 +78,6 @@ try:
         SCANS_COLUMNS,
         SCOPES,
         SEVERITY_ORDER,
-        RiskRule,
     )
     from ingest import DEFAULT_AUTH_URL, fetch_findings, get_token, new_session, secret
 except ImportError as exc:
@@ -102,6 +101,8 @@ GOLD_MTTR = "metrics_mttr"
 GOLD_PROGRAM = "metrics_program"
 GOLD_CAPACITY = "metrics_capacity"
 GOLD_SENSITIVITY = "metrics_sensitivity"
+# P2P v5's asset-centric family. See metrics.asset_profile.
+GOLD_ASSETS = "metrics_assets"
 
 # The append-only tables, i.e. everything except the ledger. A retry writes a scan_id that a
 # failed attempt may already have partly written, so these are cleared for that scan_id first.
@@ -112,6 +113,7 @@ APPEND_TABLES = (
     GOLD_PROGRAM,
     GOLD_CAPACITY,
     GOLD_SENSITIVITY,
+    GOLD_ASSETS,
 )
 
 # APPEND_TABLES name -> the Tables attribute holding its fully-qualified name. Kept beside the
@@ -124,6 +126,7 @@ APPEND_TABLE_ATTRS = {
     GOLD_PROGRAM: "program",
     GOLD_CAPACITY: "capacity",
     GOLD_SENSITIVITY: "sensitivity",
+    GOLD_ASSETS: "assets",
 }
 
 # Every `Tables` attribute, in the order a reader wants them. Defined here rather than in
@@ -137,6 +140,7 @@ TABLE_ATTRS = (
     "program",
     "capacity",
     "sensitivity",
+    "assets",
     "silver",
     "bronze",
 )
@@ -154,15 +158,18 @@ RUNTIME_MODULES = ("config", "dbx", "ingest", "ledger", "metrics", "run_pipeline
 # printed above it, which is the same class of bug with a quieter failure.
 NOTEBOOK_MODULES = ("panels", "figures", "tiles")
 
-# Tooling that moves the register between shapes, treated exactly like the notebook layer and
-# for the same reason: `import_bundle` writes the ledger and `csvstore` writes both the export
-# and (on restore) the register itself, so a stale copy of either beside a fresh `ledger.py` is
-# as fatal as a stale metrics.py -- but a scheduled Job must never fail because a module it
-# does not import is missing from the folder. Absent is fine; present and disagreeing is not.
+# Storage tooling, treated exactly like the notebook layer and for the same reason: `csvstore`
+# writes both the export and (on restore) the register itself, so a stale copy beside a fresh
+# `ledger.py` is as fatal as a stale metrics.py -- but a scheduled Job must never fail because
+# a module it does not import is missing from the folder. Absent is fine; present and
+# disagreeing is not.
+#
+# `brick/import_bundle.py` has no counterpart here on purpose: the GAS app scans one Wiz project
+# for vulnerability findings on hosts, so there is no code-register history to seed from.
 #
 # `csvstore` is imported lazily by `export_csv` rather than at module scope, so a Job that never
 # passes `--csv_path` neither needs the file nor pays for it.
-MIGRATION_MODULES = ("import_bundle", "csvstore")
+MIGRATION_MODULES = ("csvstore",)
 
 # The optional layers share one rule, so they share one loop in check_deployment.
 OPTIONAL_MODULES = NOTEBOOK_MODULES + MIGRATION_MODULES
@@ -177,9 +184,19 @@ def check_deployment() -> None:
     then "A schema mismatch detected when writing to the Delta table", which names neither the
     stale file nor the fix.
 
+    **This fork checks a second thing, and it is the more likely failure here.** Every module
+    in this directory has the same name as one in ``brick/`` -- `config`, `metrics`, `ledger`,
+    all of them -- so a ``sys.path`` holding both directories resolves each import to whichever
+    came first. You get half of one pipeline and half of the other: `brick`'s `config` (whose
+    SCOPES have no `sca`) with this `metrics` (whose silver projection expects one), and the
+    run dies somewhere unrelated-looking. The version strings cannot collide (`1.0-devsecops`
+    against `2.3`), which catches the common case, but two forks that happened to share a
+    version would not -- so the directory each module was actually loaded from is checked too.
+
     Called at the top of ``main()``, before Spark: a bad folder should cost a second, not a
     cluster start and an API sweep.
     """
+    _check_one_directory()
     versions = {"run_pipeline": MODULE_VERSION}
     for name in RUNTIME_MODULES:
         if name == "run_pipeline":
@@ -201,21 +218,50 @@ def check_deployment() -> None:
     if not stale:
         return
 
-    detail = ", ".join(f"{name}={versions[name] or 'pre-2.0'}" for name in stale)
+    detail = ", ".join(f"{name}={versions[name] or 'absent'}" for name in stale)
     raise RuntimeError(
-        f"Mixed brick deployment: {detail} (expected {PIPELINE_VERSION}). These modules must "
-        f"all come from the same version -- v2's metrics.py writing through v1's "
-        f"run_pipeline.py fails later as an unrelated-looking Delta schema mismatch.\n"
-        f"Fix: copy ALL SIX of {', '.join(n + '.py' for n in RUNTIME_MODULES)} into the "
-        f"workspace folder (plus {', '.join(n + '.py' for n in NOTEBOOK_MODULES)} if you read "
-        f"the notebooks), then run dbutils.library.restartPython(). "
-        f"See brick/README.md section 2."
+        f"Mixed devsecops deployment: {detail} (expected {PIPELINE_VERSION}). These modules "
+        f"must all come from the same version, and a mismatch is usually one of two things: a "
+        f"half-updated folder, or `brick/` on sys.path ahead of this directory -- the module "
+        f"names are identical, so the wrong one wins silently.\n"
+        f"Fix: copy ALL SIX of {', '.join(n + '.py' for n in RUNTIME_MODULES)} into ONE folder "
+        f"holding no other brick deployment (plus "
+        f"{', '.join(n + '.py' for n in NOTEBOOK_MODULES)} if you read the notebooks), then run "
+        f"dbutils.library.restartPython(). See brick/devsecops/README.md."
+    )
+
+
+def _check_one_directory() -> None:
+    """Every loaded module must have come from this file's own directory.
+
+    The failure this prevents is specific to a fork: `brick/` and `brick/devsecops/` export the
+    same module names, so a `sys.path` with both on it silently mixes them. That produces a
+    working import and a wrong pipeline, which is the worst of the two available outcomes.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    strangers = {}
+    for name in RUNTIME_MODULES + OPTIONAL_MODULES:
+        module = sys.modules.get(name)
+        origin = getattr(module, "__file__", None) if module else None
+        if origin and os.path.dirname(os.path.abspath(origin)) != here:
+            strangers[name] = origin
+    if not strangers:
+        return
+    detail = "\n  ".join(f"{name}: {path}" for name, path in sorted(strangers.items()))
+    raise RuntimeError(
+        f"These modules were imported from outside {here}:\n  {detail}\n"
+        f"`brick/` and `brick/devsecops/` use the same module names, so whichever directory is "
+        f"first on sys.path wins -- and a mixed pair imports cleanly and then measures the "
+        f"wrong thing. Put exactly one of the two on sys.path, with sys.path.insert(0, ...), "
+        f"and run dbutils.library.restartPython(). See brick/devsecops/README.md."
     )
 
 # These tables usually land in a schema shared with other teams, where bare names like
 # `findings` and `metrics_capacity` are an obvious collision risk. The default prefix also
-# carries the scope -- `wiz_os_findings` -- so an OS run and an all-types run land in separate
-# tables and can never be blended by accident. Pass --table_prefix= (empty) to opt out.
+# carries the scope -- `wiz_sca_findings` -- so the library register and the static-analysis
+# register land in separate tables and can never be blended by accident. They measure
+# populations with different positive classes, so blending them would be meaningless as well as
+# wrong. Pass --table_prefix= (empty) to opt out.
 def default_table_prefix(scope: str) -> str:
     return f"wiz_{scope}_"
 
@@ -254,7 +300,7 @@ PERSISTENT_PATHS = (
 
 @dataclass(frozen=True)
 class Tables:
-    """The eight table references one run writes to.
+    """The nine table references one run writes to.
 
     Either fully-qualified ``catalog.schema.name`` (the default) or ``delta.`<path>``` when
     ``--data_path`` is set. Both are valid anywhere Spark wants a table, which is what lets one
@@ -269,6 +315,7 @@ class Tables:
     program: str
     capacity: str
     sensitivity: str
+    assets: str
 
 
 def as_path(table: str) -> Optional[str]:
@@ -838,7 +885,7 @@ def build_metrics(
     scan_id: str,
     scan_ts: str,
     scope: str,
-    rule: RiskRule = DEFAULT_RISK_RULE,
+    rule=None,
     *,
     severities=None,
     disappearance: str = DISAPPEARANCE_RESOLUTION,
@@ -857,9 +904,13 @@ def build_metrics(
     ``reconcile_scan``. ``None`` counts the frame, which is what a caller that wrote bronze by
     some other route has to do.
     """
+    # `rule=None` means "whatever this scope is classified under", resolved here rather than as
+    # a default argument: the default would have to name one rule, and naming the wrong one is a
+    # full page of plausible numbers rather than an error. See config.rule_for_scope.
+    rule = rule or rule_for_scope(scope)
     bronze = spark.table(tables.bronze).filter(f"scan_id = '{scan_id}'")
 
-    silver = metrics.classify_risk(metrics.silver_findings(bronze), rule).cache()
+    silver = metrics.classify_risk(metrics.silver_findings(bronze, scope), rule).cache()
     # Silver is not persisted in path mode. It is a pure per-scan projection of bronze -- the
     # snapshot columns below read the frame in memory, and `panels.register_views` rebuilds
     # `v_findings` from bronze the same way -- so storing it would be a second copy of data the
@@ -940,8 +991,21 @@ def build_metrics(
     )
     capacity = publish(capacity, tables.capacity)
 
+    # P2P v5's asset-centric family. Both populations, stacked, for the same reason capacity
+    # stacks them -- so every read has to say which. `observed_from` is shared with capacity
+    # above: without it the rate-per-watched-month columns are NULL rather than reconstructed.
+    assets = metrics.with_scan_columns(
+        metrics.asset_profile_populations(
+            lifecycles, scan_ts, observed_from=observation_start(scan_log, scan_ts)
+        ),
+        scan_id, scan_ts, scope,
+    )
+    assets = publish(assets, tables.assets)
+
     if summary:
-        summarize(scan_id, scope, rule, deltas, mttr, program, capacity, sensitivity)
+        summarize(
+            scan_id, scope, rule, deltas, mttr, program, capacity, sensitivity, assets
+        )
         for frame in published:
             frame.unpersist()
     silver.unpersist()
@@ -961,8 +1025,10 @@ def with_snapshot_columns(ledger_mttr, snapshot_mttr):
     return ledger_mttr.join(snap, "severity", "left")
 
 
-def summarize(scan_id, scope, rule, deltas, mttr, program, capacity, sensitivity) -> None:
-    """Print all three metric families.
+def summarize(
+    scan_id, scope, rule, deltas, mttr, program, capacity, sensitivity, assets=None
+) -> None:
+    """Print every metric family.
 
     Previously only the program frame was shown, so MTTR and capacity were computed, written
     and then never mentioned -- from the notebook it looked like the pipeline did not do MTTR
@@ -1014,6 +1080,20 @@ def summarize(scan_id, scope, rule, deltas, mttr, program, capacity, sensitivity
     # measurements of one thing.
     print("Capacity — most recent months, high risk only (the P2P v3 net-capacity population)")
     _show_capacity(capacity, POPULATION_HIGH_RISK)
+
+    if assets is not None:
+        # P2P v5, over the population v5 asks about. An `os` register has no asset columns
+        # while config.FETCH_ASSET_FIELDS is off, so this prints one empty frame and says so
+        # rather than being silently skipped -- the absence is the finding.
+        print("Assets at risk (P2P v5) — high risk only, by ecosystem")
+        rows = assets.filter(F.col("population") == POPULATION_HIGH_RISK)
+        if rows.head(1):
+            rows.select(
+                "asset_group", "assets", "density_p50", "assets_with_high_risk_pct",
+                "km_median_days", "mmcr_p50", "falling_behind_pct", "gaining_pct",
+            ).orderBy(F.col("assets").desc()).show(10, truncate=False)
+        else:
+            print("  no assets in this register -- see config.FETCH_ASSET_FIELDS")
 
 
 def _show_capacity(capacity, population: str) -> None:
@@ -1141,6 +1221,7 @@ def resolve_tables(
         program=qualify(GOLD_PROGRAM),
         capacity=qualify(GOLD_CAPACITY),
         sensitivity=qualify(GOLD_SENSITIVITY),
+        assets=qualify(GOLD_ASSETS),
     )
 
 
@@ -1189,7 +1270,7 @@ def rebuild_ledger(
     scope: str,
     severities,
     disappearance: str,
-    rule: RiskRule = DEFAULT_RISK_RULE,
+    rule=None,
 ) -> int:
     """Rebuild the ledger from scratch by replaying every bronze scan, oldest first.
 
@@ -1208,6 +1289,7 @@ def rebuild_ledger(
     otherwise the replay will resolve-by-disappearance severities the original scans never
     covered, and invent remediation that never happened.
     """
+    rule = rule or rule_for_scope(scope)
     if not table_exists(spark, tables.bronze):
         raise RuntimeError(f"cannot rebuild: {tables.bronze} does not exist yet")
 
@@ -1238,7 +1320,7 @@ def rebuild_ledger(
         # Cached because it has two consumers -- `observed` and the row count in
         # `reconcile_scan` -- and without this the second one re-reads bronze and re-parses
         # every node_json. The live path caches for the same reason (see `build_metrics`).
-        silver = metrics.classify_risk(metrics.silver_findings(bronze), rule).cache()
+        silver = metrics.classify_risk(metrics.silver_findings(bronze, scope), rule).cache()
         try:
             deltas = reconcile_scan(
                 spark, tables, silver, scan_id=scan_id, scan_ts=ts_iso, scope=scope,

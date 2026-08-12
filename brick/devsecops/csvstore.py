@@ -67,7 +67,7 @@ from pyspark.sql.types import (
 import run_pipeline
 
 # See config.PIPELINE_VERSION: every runtime module must come from the same upload.
-MODULE_VERSION = "2.3"
+MODULE_VERSION = "1.0-devsecops"
 
 #: Every table, in the order a reader wants them. Taken from ``run_pipeline`` rather than
 #: restated, so this and the ``Tables`` dataclass cannot drift -- a table added to one and not
@@ -258,6 +258,7 @@ def _table_name(attr: str) -> str:
         "program": run_pipeline.GOLD_PROGRAM,
         "capacity": run_pipeline.GOLD_CAPACITY,
         "sensitivity": run_pipeline.GOLD_SENSITIVITY,
+        "assets": run_pipeline.GOLD_ASSETS,
     }[attr]
 
 
