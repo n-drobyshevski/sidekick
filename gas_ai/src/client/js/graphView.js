@@ -255,17 +255,23 @@ export function renderGraph(container, data, handlers = {}) {
     g.append(kind);
 
     // Severity dot + label (bottom-left) and AARS score (bottom-right).
+    // Two-token severity: the dot keeps the server palette's vivid FILL (a graphical mark,
+    // >=3:1, and a deployment may retint it), while the label takes the darkened TEXT token
+    // via CSS so it clears 4.5:1 on the pale category tint behind it. Painting the label in
+    // the fill — as this did — failed contrast on every tinted card.
     if (node.severity && !isSummary) {
       const sevColor = (data.palette && data.palette.colors && data.palette.colors[node.severity]) || "#475569";
       g.append(svgEl("circle", { cx: 40, cy: 46, r: 3.5, fill: sevColor }));
-      const sevText = svgEl("text", { class: "gnode-chip-text", x: 47, y: 49.5, fill: sevColor });
+      const sevText = svgEl("text", {
+        class: `gnode-chip-text gnode-sev-${node.severity}`, x: 47, y: 49.5,
+      });
       sevText.textContent = node.severity;
       g.append(sevText);
     }
     if (node.aars !== undefined && node.aars !== null && !isSummary) {
       const aars = svgEl("text", {
-        class: "gnode-chip-text",
-        x: NODE_W - 10, y: 49.5, "text-anchor": "end", fill: "rgba(0,0,0,0.6)",
+        class: "gnode-aars",
+        x: NODE_W - 10, y: 49.5, "text-anchor": "end",
       });
       aars.textContent = `AARS ${node.aars}`;
       g.append(aars);

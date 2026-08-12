@@ -39,11 +39,21 @@ const DATA_KEYS = [
   "layout", "groupBy", "sort",
 ];
 
+const MIN_DEPTH = 1;
+const MAX_DEPTH = 3;
+
+function clampDepth(n) {
+  return Math.min(MAX_DEPTH, Math.max(MIN_DEPTH, Math.round(n) || MIN_DEPTH));
+}
+
 function graphParams(params, defaults) {
   return {
     seed: params.seed || "",
     seedKind: params.seedKind || "",
-    depth: Number(params.depth) || defaults.defaultDepth || 2,
+    // Clamped to the range the UI can express. The server clamps its own copy, but the
+    // client's used to run free: a hash carrying depth=7 left the depth control with no
+    // stop selected and DEPTH_TEXT[7] undefined.
+    depth: clampDepth(Number(params.depth) || defaults.defaultDepth || 2),
     depthRaw: params.depth == null ? "" : String(params.depth),
     // This view's node budget: "" means the deployment's configured one. "Load more"
     // writes the next step here, so a widened view is shareable like any other.
@@ -484,7 +494,11 @@ export async function renderGraphPage(main, params, _ctx) {
     filterBtn.setAttribute("aria-label",
       entries.length ? `Filters, ${entries.length} applied` : "Filters");
     clear(chipsRow);
-    chipsRow.hidden = !entries.length;
+    // The band keeps its height either way — it sits between the bar and the canvas, so
+    // showing and hiding it moved the whole picture the first time a filter was applied.
+    if (!entries.length) {
+      chipsRow.append(el("span", { class: "filter-chips-empty" }, "No filters applied"));
+    }
     for (const e of entries) {
       chipsRow.append(el("button", {
         class: "filter-chip" + (e.sev ? " sev-" + e.sev : ""),
