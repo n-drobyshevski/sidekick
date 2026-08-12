@@ -1,8 +1,9 @@
 // AARS scoring pinned to the normative applied table in ai/custom_score.md.
-// Every named row must reproduce exactly — score, band, and pillar breakdown.
+// Every named row must reproduce exactly — score, severity, and pillar breakdown.
 
 import { describe, expect, it } from "vitest";
-import { aarsBand, computeAars, gap } from "../src/domain/aars";
+import { aarsSeverity, computeAars, gap } from "../src/domain/aars";
+import { AARS_SEVERITY_ORDER, normalizeAarsSeverity } from "../src/domain/config";
 import type { Severity } from "../src/domain/config";
 
 const M = "MEDIUM" as Severity;
@@ -17,7 +18,7 @@ describe("computeAars — applied table rows", () => {
     });
     expect(r.pillars).toEqual({ toxic: 20, compliance: 20, data: 22 });
     expect(r.score).toBe(62);
-    expect(r.band).toBe("HIGH");
+    expect(r.severity).toBe("HIGH");
   });
 
   it("Agent-G ×2 issues → 66 HIGH (×1.2 multiplier)", () => {
@@ -28,7 +29,7 @@ describe("computeAars — applied table rows", () => {
     });
     expect(r.pillars.toxic).toBe(24);
     expect(r.score).toBe(66);
-    expect(r.band).toBe("HIGH");
+    expect(r.severity).toBe("HIGH");
   });
 
   it("agent-I ×4 issues → 66 HIGH (multiplier does not stack)", () => {
@@ -38,7 +39,7 @@ describe("computeAars — applied table rows", () => {
       dataExposure: "SENSITIVE",
     });
     expect(r.score).toBe(66);
-    expect(r.band).toBe("HIGH");
+    expect(r.severity).toBe("HIGH");
   });
 
   it("agent-H-chatbot ×2 → 71 CRITICAL (secondary LLM05 gap scores +5)", () => {
@@ -49,7 +50,7 @@ describe("computeAars — applied table rows", () => {
     });
     expect(r.pillars).toEqual({ toxic: 24, compliance: 25, data: 22 });
     expect(r.score).toBe(71);
-    expect(r.band).toBe("CRITICAL");
+    expect(r.severity).toBe("CRITICAL");
   });
 
   it("AGENT_AUTOGEN_DO_NOT_DELETE ×N → 76 CRITICAL (pillar B capped at 30)", () => {
@@ -60,7 +61,7 @@ describe("computeAars — applied table rows", () => {
     });
     expect(r.pillars).toEqual({ toxic: 24, compliance: 30, data: 22 });
     expect(r.score).toBe(76);
-    expect(r.band).toBe("CRITICAL");
+    expect(r.severity).toBe("CRITICAL");
   });
 
   it("dev-agent-D / dev-agent-D-test → 67 HIGH (secondary LLM04 gap +5)", () => {
@@ -71,7 +72,7 @@ describe("computeAars — applied table rows", () => {
     });
     expect(r.pillars).toEqual({ toxic: 20, compliance: 25, data: 22 });
     expect(r.score).toBe(67);
-    expect(r.band).toBe("HIGH");
+    expect(r.severity).toBe("HIGH");
   });
 
   it("AWSReservedSSO_FinanceAdmin ×8 (aggregated) → 65 HIGH (data access ×1.1 = 11)", () => {
@@ -82,7 +83,7 @@ describe("computeAars — applied table rows", () => {
     });
     expect(r.pillars).toEqual({ toxic: 24, compliance: 30, data: 11 });
     expect(r.score).toBe(65);
-    expect(r.band).toBe("HIGH");
+    expect(r.severity).toBe("HIGH");
   });
 
   it("agent-J / agent-K → 29 LOW", () => {
@@ -93,13 +94,13 @@ describe("computeAars — applied table rows", () => {
     });
     expect(r.pillars).toEqual({ toxic: 8, compliance: 10, data: 11 });
     expect(r.score).toBe(29);
-    expect(r.band).toBe("LOW");
+    expect(r.severity).toBe("LOW");
   });
 
-  it("healthy asset (no issues, no gaps, no data) → 0 MINIMAL", () => {
+  it("healthy asset (no issues, no gaps, no data) → 0 INFO", () => {
     const r = computeAars({ issueSeverities: [], gaps: [], dataExposure: "NONE" });
     expect(r.score).toBe(0);
-    expect(r.band).toBe("MINIMAL");
+    expect(r.severity).toBe("INFO");
   });
 
   it("pillar A caps at 50 (CRITICAL ×1.2 → 50, not 60); total clamps at 100", () => {
@@ -111,16 +112,43 @@ describe("computeAars — applied table rows", () => {
     expect(r.pillars.toxic).toBe(50);
     expect(r.pillars.compliance).toBe(30);
     expect(r.score).toBe(100);
-    expect(r.band).toBe("CRITICAL");
+    expect(r.severity).toBe("CRITICAL");
   });
 });
 
-describe("aarsBand — edges", () => {
+describe("aarsSeverity — edges", () => {
   it.each([
-    [0, "MINIMAL"], [9, "MINIMAL"], [10, "LOW"], [29, "LOW"],
+    [0, "INFO"], [9, "INFO"], [10, "LOW"], [29, "LOW"],
     [30, "MEDIUM"], [49, "MEDIUM"], [50, "HIGH"], [69, "HIGH"],
     [70, "CRITICAL"], [100, "CRITICAL"],
   ])("band(%i) = %s", (score, band) => {
-    expect(aarsBand(score as number)).toBe(band);
+    expect(aarsSeverity(score as number)).toBe(band);
+  });
+});
+
+describe("normalizeAarsSeverity", () => {
+  it("reads the pre-rename MINIMAL as today's INFO", () => {
+    expect(normalizeAarsSeverity("MINIMAL")).toBe("INFO");
+    expect(normalizeAarsSeverity("minimal")).toBe("INFO");
+  });
+
+  it("passes the current values through, case- and space-insensitively", () => {
+    for (const sev of AARS_SEVERITY_ORDER) expect(normalizeAarsSeverity(sev)).toBe(sev);
+    expect(normalizeAarsSeverity(" high ")).toBe("HIGH");
+  });
+
+  it("rejects anything else rather than inventing a severity", () => {
+    for (const v of ["", "BOGUS", "UNKNOWN", null, undefined, 7]) {
+      expect(normalizeAarsSeverity(v)).toBeUndefined();
+    }
+  });
+
+  it("scores every threshold onto the renamed scale", () => {
+    expect(aarsSeverity(70)).toBe("CRITICAL");
+    expect(aarsSeverity(50)).toBe("HIGH");
+    expect(aarsSeverity(30)).toBe("MEDIUM");
+    expect(aarsSeverity(10)).toBe("LOW");
+    expect(aarsSeverity(9)).toBe("INFO");
+    expect(aarsSeverity(0)).toBe("INFO");
   });
 });

@@ -33,7 +33,7 @@ function nodeAriaLabel(node) {
   const parts = [kindLabel(node.kind), node.name];
   if (node.severity) parts.push(`severity ${node.severity}`);
   if (node.aars !== undefined && node.aars !== null) {
-    parts.push(`AARS ${node.aars}${node.aarsBand ? " " + node.aarsBand : ""}`);
+    parts.push(`AARS ${node.aars}${node.aarsSeverity ? " " + node.aarsSeverity : ""}`);
   }
   if ((node.comboGroups || []).length) parts.push("toxic combination member");
   if (node.guardrailMissing) parts.push("no guardrail");
@@ -651,7 +651,7 @@ export function graphTable(data, handlers = {}) {
       el("td", {}, kindLabel(node.kind)),
       el("td", {}, node.severity || "—"),
       el("td", { class: "num" }, node.aars !== undefined && node.aars !== null
-        ? `${node.aars} ${node.aarsBand || ""}` : "—"),
+        ? `${node.aars} ${node.aarsSeverity || ""}` : "—"),
       el("td", {}, (node.comboGroups || []).length ? "TC member" : "—"),
       el("td", {}, node.guardrailMissing ? "missing" : "—"),
       el("td", { class: "num" }, String(deg)),

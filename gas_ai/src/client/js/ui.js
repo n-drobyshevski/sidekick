@@ -37,24 +37,24 @@ export function sevBadge(sev) {
 }
 
 /**
- * AARS chip: score + band, styled with the band's severity token (MINIMAL borrows
- * INFO) — dot + number + band label, never color alone.
+ * AARS chip: score + its severity, styled with that severity's token — dot + number +
+ * label, never color alone. The AARS scale carries the same values as the Wiz severity
+ * scale, so the token needs no translation.
  */
-export function aarsChip(score, band, bandSeverity) {
-  if (score === null || score === undefined || !band) {
+export function aarsChip(score, severity) {
+  if (score === null || score === undefined || !severity) {
     return el("span", { class: "muted small" }, "—");
   }
-  const tone = (bandSeverity && bandSeverity[band]) || "INFO";
   return el(
     "span",
     {
-      class: `aars-chip sev-${tone}`,
+      class: `aars-chip sev-${severity}`,
       role: "status",
-      "aria-label": `AARS ${score}, ${band}`,
+      "aria-label": `AARS ${score}, ${severity}`,
     },
     el("span", { class: "sev-dot", "aria-hidden": "true" }),
     String(score),
-    el("span", {}, band),
+    el("span", {}, severity),
   );
 }
 

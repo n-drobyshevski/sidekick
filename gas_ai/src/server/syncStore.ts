@@ -16,7 +16,9 @@ import {
 } from "../domain/graphEnrich";
 import type { FindingRow, GEdge, GNode, GraphDoc, IssueRow, NodeKind } from "../domain/graphTypes";
 import { edgeId } from "../domain/graphTypes";
+import { normalizeAarsSeverity } from "../domain/config";
 import type { Severity } from "../domain/config";
+import { countAarsSeverities } from "../domain/aarsTrend";
 import { nowIso, type Rec } from "../domain/util";
 import { readGraphSnapshot, trashGraphSnapshot, writeGraphSnapshot } from "./archiveStore";
 import { bumpDataVersion } from "./serverCache";
@@ -72,7 +74,7 @@ export function assetToRow(n: GNode): Rec {
     technology_categories: (n.technologyCategories ?? []).join(","),
     severity: n.severity ?? null,
     aars: n.aars ?? null,
-    aars_band: n.aarsBand ?? null,
+    aars_severity: n.aarsSeverity ?? null,
     aars_pillars_json: n.aarsPillars ? JSON.stringify(n.aarsPillars) : null,
     combo_groups: (n.comboGroups ?? []).join(","),
     tags_json: n.tags ? JSON.stringify(n.tags) : null,
@@ -111,8 +113,10 @@ export function rowToAsset(r: Rec): GNode {
   const severity = (r["severity"] as string | null) ?? null;
   if (severity) node.severity = severity as Severity;
   if (r["aars"] !== null && r["aars"] !== undefined) node.aars = Number(r["aars"]);
-  const band = (r["aars_band"] as string | null) ?? null;
-  if (band) node.aarsBand = band as GNode["aarsBand"];
+  // A ledger written before the rename still has an `aars_band` header holding a
+  // `MINIMAL`; normalizeAarsSeverity reads either spelling, so no re-sync is needed.
+  const aarsSev = normalizeAarsSeverity(r["aars_severity"] ?? r["aars_band"]);
+  if (aarsSev) node.aarsSeverity = aarsSev;
   const pillars = parseJson<GNode["aarsPillars"] | null>(r["aars_pillars_json"], null);
   if (pillars) node.aarsPillars = pillars;
   const combos = String(r["combo_groups"] ?? "");
@@ -266,6 +270,9 @@ export function persistSync(
     api_calls: meta.apiCalls,
     snapshot_ref: snapshotRef,
     error: null,
+    // The AARS distribution at this sync — the only record of it, since the snapshot
+    // this row points at is overwritten by the next sync. Feeds the inventory trend.
+    aars_severity_json: JSON.stringify(countAarsSeverities(enriched.nodes)),
   }]);
   bumpDataVersion();
   invalidateReadMemos();
@@ -298,6 +305,27 @@ export function loadGraphDoc(): GraphDoc | null {
 }
 
 /**
+ * A Drive snapshot written before the rename carries `aarsBand`, and its value may be
+ * the old `MINIMAL`. Normalize on read so an existing snapshot keeps scoring the
+ * inventory without a re-sync; the next sync rewrites it in the current shape.
+ */
+export function normalizeLegacyAars(doc: GraphDoc): GraphDoc {
+  let touched = false;
+  const nodes = doc.nodes.map((n) => {
+    const loose = n as GNode & { aarsBand?: unknown };
+    if (loose.aarsBand === undefined && n.aarsSeverity === undefined) return n;
+    touched = true;
+    const next: GNode & { aarsBand?: unknown } = { ...loose };
+    delete next.aarsBand;
+    const sev = normalizeAarsSeverity(n.aarsSeverity ?? loose.aarsBand);
+    if (sev) next.aarsSeverity = sev;
+    else delete next.aarsSeverity;
+    return next;
+  });
+  return touched ? { ...doc, nodes } : doc;
+}
+
+/**
  * Risk topology (sensitive data, internet exposure, excessive rights, missing guardrail)
  * is derived on read, not persisted — so it applies to already-synced graphs and never
  * reaches the asset/inventory tables (which read TABS.assets directly, bypassing this
@@ -311,7 +339,7 @@ function withRiskNodes(doc: GraphDoc): GraphDoc {
 
 function loadGraphDocUncached(): GraphDoc | null {
   const snap = readGraphSnapshot();
-  if (snap) return withRiskNodes(snap);
+  if (snap) return withRiskNodes(normalizeLegacyAars(snap));
 
   const assetRows = readAll(TABS.assets);
   if (!assetRows.length) return null;

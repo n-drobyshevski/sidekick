@@ -574,3 +574,22 @@ export const SEED_AARS_HINTS: AarsHints = HINTS;
 export function seedGraphDoc(syncedAt: string): GraphDoc {
   return { nodes: SEED_NODES, edges: SEED_EDGES, syncedAt };
 }
+
+/**
+ * Prior AARS distributions for the dry-run dataset, oldest first, so the inventory's
+ * trend chart has a line to draw without waiting days for real syncs to accumulate.
+ * Counts only — the caller dates them one day apart ending at the sync it is running,
+ * so the sample trend runs continuously into the live point instead of leaving a gap.
+ * The last entry is the estate the seed itself produces, so the trend lands exactly on
+ * the distribution charted beside it.
+ */
+export const SEED_TREND: Array<Record<string, number>> = [
+  { CRITICAL: 5, HIGH: 12, MEDIUM: 0, LOW: 2, INFO: 11 },
+  { CRITICAL: 5, HIGH: 13, MEDIUM: 0, LOW: 2, INFO: 10 },
+  { CRITICAL: 4, HIGH: 15, MEDIUM: 0, LOW: 3, INFO: 9 },
+  { CRITICAL: 4, HIGH: 16, MEDIUM: 0, LOW: 3, INFO: 9 },
+  { CRITICAL: 3, HIGH: 16, MEDIUM: 0, LOW: 3, INFO: 8 },
+  { CRITICAL: 3, HIGH: 17, MEDIUM: 0, LOW: 3, INFO: 8 },
+  { CRITICAL: 2, HIGH: 17, MEDIUM: 0, LOW: 3, INFO: 8 },
+  { CRITICAL: 2, HIGH: 17, MEDIUM: 0, LOW: 3, INFO: 8 },
+];

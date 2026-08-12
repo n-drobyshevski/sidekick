@@ -16,16 +16,16 @@ import {
 import type { Rec } from "../src/domain/util";
 
 const ROWS: Rec[] = [
-  { id: "a", name: "Agent-A", kind: "AI_AGENT", cloud: "AWS", aars: 62, aarsBand: "HIGH" },
-  { id: "b", name: "agent-b", kind: "AI_AGENT", cloud: "GCP", aars: 71, aarsBand: "CRITICAL" },
-  { id: "c", name: "Model-C", kind: "AI_MODEL", cloud: "AWS", aars: null, aarsBand: null },
-  { id: "d", name: "Bucket-D", kind: "BUCKET", cloud: null, aars: 30, aarsBand: "MEDIUM" },
+  { id: "a", name: "Agent-A", kind: "AI_AGENT", cloud: "AWS", aars: 62, aarsSeverity: "HIGH" },
+  { id: "b", name: "agent-b", kind: "AI_AGENT", cloud: "GCP", aars: 71, aarsSeverity: "CRITICAL" },
+  { id: "c", name: "Model-C", kind: "AI_MODEL", cloud: "AWS", aars: null, aarsSeverity: null },
+  { id: "d", name: "Bucket-D", kind: "BUCKET", cloud: null, aars: 30, aarsSeverity: "MEDIUM" },
 ];
 
 describe("resolveAssetQuery", () => {
   it("defaults an empty param bag to page 0 of the AARS sort", () => {
     expect(resolveAssetQuery({})).toEqual({
-      q: "", kind: "", cloud: "", band: "", sort: "aars", page: 0, pageSize: DEFAULT_PAGE_SIZE,
+      q: "", kind: "", cloud: "", aarsSeverity: "", sort: "aars", page: 0, pageSize: DEFAULT_PAGE_SIZE,
     });
   });
 
@@ -36,6 +36,17 @@ describe("resolveAssetQuery", () => {
   it("falls back to the AARS sort for an unknown sort key", () => {
     expect(resolveAssetQuery({ sort: "region" }).sort).toBe("aars");
     expect(resolveAssetQuery({ sort: "name" }).sort).toBe("name");
+  });
+
+  it("still honors the pre-rename `band` param, MINIMAL included", () => {
+    // Links shared before AARS bands were renamed to AARS severity must keep resolving.
+    expect(resolveAssetQuery({ band: "CRITICAL" }).aarsSeverity).toBe("CRITICAL");
+    expect(resolveAssetQuery({ band: "MINIMAL" }).aarsSeverity).toBe("INFO");
+    expect(resolveAssetQuery({ aarsSeverity: "minimal" }).aarsSeverity).toBe("INFO");
+    // The new spelling wins when a link somehow carries both.
+    expect(resolveAssetQuery({ aarsSeverity: "HIGH", band: "LOW" }).aarsSeverity).toBe("HIGH");
+    // Junk resolves to "no filter" rather than a filter nothing can match.
+    expect(resolveAssetQuery({ band: "BOGUS" }).aarsSeverity).toBe("");
   });
 
   it("clamps hostile paging params instead of trusting them", () => {
@@ -57,10 +68,10 @@ describe("matchesAssetQuery", () => {
     expect(filterAssetRows(ROWS, q({ q: "-c" })).map((r) => r["id"])).toEqual(["c"]);
   });
 
-  it("filters kind, cloud and band exactly", () => {
+  it("filters kind, cloud and AARS severity exactly", () => {
     expect(filterAssetRows(ROWS, q({ kind: "AI_AGENT" })).map((r) => r["id"])).toEqual(["a", "b"]);
     expect(filterAssetRows(ROWS, q({ cloud: "AWS" })).map((r) => r["id"])).toEqual(["a", "c"]);
-    expect(filterAssetRows(ROWS, q({ band: "CRITICAL" })).map((r) => r["id"])).toEqual(["b"]);
+    expect(filterAssetRows(ROWS, q({ aarsSeverity: "CRITICAL" })).map((r) => r["id"])).toEqual(["b"]);
   });
 
   it("treats a missing cloud as empty, never as a match", () => {
@@ -71,7 +82,7 @@ describe("matchesAssetQuery", () => {
   it("ANDs every active filter", () => {
     expect(filterAssetRows(ROWS, q({ q: "agent", cloud: "GCP" })).map((r) => r["id"]))
       .toEqual(["b"]);
-    expect(filterAssetRows(ROWS, q({ kind: "AI_AGENT", band: "MEDIUM" }))).toEqual([]);
+    expect(filterAssetRows(ROWS, q({ kind: "AI_AGENT", aarsSeverity: "MEDIUM" }))).toEqual([]);
   });
 });
 

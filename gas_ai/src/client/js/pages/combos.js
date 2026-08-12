@@ -71,7 +71,6 @@ export async function renderCombos(main) {
 
   async function paint(payload) {
     clear(host);
-    const bandSeverity = boot.palette?.aarsBandSeverity || {};
 
     for (const group of payload.groups) {
       const card = el("div", { class: "card combo-card" });
@@ -104,7 +103,7 @@ export async function renderCombos(main) {
               class: "sev-pill",
               onclick: () => openAssetSheet(a.id, { title: a.name }),
               "aria-label": `${a.name}, AARS ${a.aars ?? "unscored"}`,
-            }, `${a.name} `, aarsChip(a.aars, a.aarsBand, bandSeverity)),
+            }, `${a.name} `, aarsChip(a.aars, a.aarsSeverity)),
           );
         }
         card.append(assetRow);

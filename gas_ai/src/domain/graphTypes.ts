@@ -2,7 +2,7 @@
 // synthetic issue/summary nodes) and typed edges (the Wiz security-graph relationship
 // vocabulary, from ai/ai_agents_discovery_queries.md and ai/queries/*).
 
-import type { AarsBand, Severity } from "./config";
+import type { AarsSeverity, Severity } from "./config";
 
 export const NODE_KINDS = [
   // AI assets (Wiz AI-SPM resource types)
@@ -131,7 +131,7 @@ export interface GNode {
   // Enrichment, computed once at sync time and persisted:
   severity?: Severity;      // worst attached open-issue severity (ISSUE nodes: own severity)
   aars?: number;            // AI Asset Risk Score 0–100 (AI assets only)
-  aarsBand?: AarsBand;
+  aarsSeverity?: AarsSeverity;
   aarsPillars?: { toxic: number; compliance: number; data: number };
   comboGroups?: string[];   // toxic-combination group ids this node participates in
   // SUMMARY nodes only:

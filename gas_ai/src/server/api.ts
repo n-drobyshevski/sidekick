@@ -10,9 +10,9 @@ import {
   resolveAssetQuery,
   sortAssetRows,
 } from "../domain/assetTable";
+import { aarsTrendFromHistory, type AarsTrendPoint } from "../domain/aarsTrend";
 import {
-  AARS_BAND_ORDER,
-  AARS_BAND_SEVERITY_TOKEN,
+  AARS_SEVERITY_ORDER,
   MAX_NODES_CEILING,
   MAX_NODES_FLOOR,
   SEVERITY_COLORS,
@@ -84,9 +84,9 @@ function bootstrapCore(): Rec {
   for (const issue of issues) {
     bySeverity[issue.adjustedSeverity] = (bySeverity[issue.adjustedSeverity] ?? 0) + 1;
   }
-  const byBand: Record<string, number> = {};
+  const byAarsSeverity: Record<string, number> = {};
   for (const a of assets) {
-    if (a.aarsBand) byBand[a.aarsBand] = (byBand[a.aarsBand] ?? 0) + 1;
+    if (a.aarsSeverity) byAarsSeverity[a.aarsSeverity] = (byAarsSeverity[a.aarsSeverity] ?? 0) + 1;
   }
 
   return {
@@ -94,8 +94,7 @@ function bootstrapCore(): Rec {
       order: SEVERITY_ORDER,
       colors: SEVERITY_COLORS,
       glyphs: SEVERITY_GLYPHS,
-      aarsBands: AARS_BAND_ORDER,
-      aarsBandSeverity: AARS_BAND_SEVERITY_TOKEN,
+      aarsSeverities: AARS_SEVERITY_ORDER,
     },
     comboLegend: COMBO_GROUPS.map((g) => ({
       id: g.id,
@@ -118,7 +117,7 @@ function bootstrapCore(): Rec {
       totalAssets: assets.length,
       openIssues: issues.length,
       bySeverity,
-      byBand,
+      byAarsSeverity,
     },
     filterOptions: filterOptions(assets),
   };
@@ -205,7 +204,7 @@ function assetRow(n: GNode): Rec {
     projects: (n.projects ?? []).map((p) => p.name),
     severity: n.severity ?? null,
     aars: n.aars ?? null,
-    aarsBand: n.aarsBand ?? null,
+    aarsSeverity: n.aarsSeverity ?? null,
     comboGroups: n.comboGroups ?? [],
     internet: n.isAccessibleFromInternet ?? null,
     openInternet: n.isOpenToAllInternet ?? null,
@@ -236,7 +235,7 @@ function assetTableRow(n: GNode): Rec {
     region: n.region ?? null,
     severity: n.severity ?? null,
     aars: n.aars ?? null,
-    aarsBand: n.aarsBand ?? null,
+    aarsSeverity: n.aarsSeverity ?? null,
     combos: (n.comboGroups ?? []).length,
     guardrailMissing: n.guardrailMissing ?? false,
     agentic: n.identityPurpose === "AGENTIC",
@@ -247,13 +246,14 @@ function assetTableRow(n: GNode): Rec {
 interface AssetsModel {
   rows: Rec[];
   kpis: Rec;
-  bandCounts: Record<string, number>;
-  facets: { kinds: string[]; clouds: string[]; bands: string[] };
+  aarsSeverityCounts: Record<string, number>;
+  aarsTrend: AarsTrendPoint[];
+  facets: { kinds: string[]; clouds: string[]; aarsSeverities: string[] };
 }
 
 /**
  * Everything about the inventory that doesn't depend on the request: every table row, the
- * KPI totals, the AARS-band histogram and the filter-bar options. The aggregates are
+ * KPI totals, the AARS-severity histogram and the filter-bar options. The aggregates are
  * computed over the whole inventory on purpose — the KPI row and the chart describe the
  * estate, never the page or the filtered subset, so they stay honest when the client only
  * ever holds 50 rows.
@@ -265,11 +265,11 @@ function assetsModel(): AssetsModel {
   const protectedAgents = agents.filter((a) => !a.guardrailMissing).length;
   const rows = assets.map(assetTableRow).sort(ASSET_COMPARATORS.aars);
 
-  const bandCounts: Record<string, number> = {};
+  const aarsSeverityCounts: Record<string, number> = {};
   const kinds = new Set<string>();
   const clouds = new Set<string>();
   for (const a of assets) {
-    if (a.aarsBand) bandCounts[a.aarsBand] = (bandCounts[a.aarsBand] ?? 0) + 1;
+    if (a.aarsSeverity) aarsSeverityCounts[a.aarsSeverity] = (aarsSeverityCounts[a.aarsSeverity] ?? 0) + 1;
     kinds.add(a.kind);
     if (a.cloudPlatform) clouds.add(a.cloudPlatform);
   }
@@ -279,8 +279,8 @@ function assetsModel(): AssetsModel {
     kpis: {
       aiAssets: assets.filter((a) => AI_ASSET_KINDS.includes(a.kind)).length,
       agents: agents.length,
-      criticalBand: assets.filter((a) => a.aarsBand === "CRITICAL").length,
-      highBand: assets.filter((a) => a.aarsBand === "HIGH").length,
+      criticalAars: assets.filter((a) => a.aarsSeverity === "CRITICAL").length,
+      highAars: assets.filter((a) => a.aarsSeverity === "HIGH").length,
       guardrailCoveragePct: agents.length
         ? Math.round((protectedAgents / agents.length) * 100)
         : null,
@@ -291,11 +291,13 @@ function assetsModel(): AssetsModel {
       complianceGaps: syncStore.loadFindings().length,
       agenticIdentities: assets.filter((a) => a.identityPurpose === "AGENTIC").length,
     },
-    bandCounts,
+    aarsSeverityCounts,
+    // Recorded per sync, so the window is short at first and cannot be backfilled.
+    aarsTrend: aarsTrendFromHistory(syncStore.syncHistory()),
     facets: {
       kinds: [...kinds].sort(),
       clouds: [...clouds].sort(),
-      bands: AARS_BAND_ORDER.filter((b) => bandCounts[b]),
+      aarsSeverities: AARS_SEVERITY_ORDER.filter((sev) => aarsSeverityCounts[sev]),
     },
   };
 }
@@ -303,7 +305,7 @@ function assetsModel(): AssetsModel {
 export function getAssets(p?: unknown): ApiResult {
   return run(() => {
     const query = resolveAssetQuery((p ?? {}) as Rec);
-    // The expensive half — reading every asset and deriving the KPIs, the band histogram
+    // The expensive half — reading every asset and deriving the KPIs, the severity histogram
     // and the facet options — is cached once per data version and shared by every page
     // and filter combination; only the filter/sort/slice below runs per request. The
     // cache name deliberately differs from the pre-pagination "getAssets" entry, so a
@@ -312,7 +314,8 @@ export function getAssets(p?: unknown): ApiResult {
     const head = {
       total: model.rows.length,
       kpis: model.kpis,
-      bandCounts: model.bandCounts,
+      aarsSeverityCounts: model.aarsSeverityCounts,
+      aarsTrend: model.aarsTrend,
       facets: model.facets,
       pageSize: query.pageSize,
       sort: query.sort,
@@ -448,8 +451,8 @@ export function getToxicCombos(_p?: unknown): ApiResult {
           assets: s.assetIds.map((id) => {
             const a = assets.get(id);
             return a
-              ? { id, name: a.name, aars: a.aars ?? null, aarsBand: a.aarsBand ?? null }
-              : { id, name: id, aars: null, aarsBand: null };
+              ? { id, name: a.name, aars: a.aars ?? null, aarsSeverity: a.aarsSeverity ?? null }
+              : { id, name: id, aars: null, aarsSeverity: null };
           }),
         })),
         totalOpen: issues.length,

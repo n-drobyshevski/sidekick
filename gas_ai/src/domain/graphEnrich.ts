@@ -158,7 +158,7 @@ export function enrichGraphDoc(
         : deriveAarsInput(node, nodeIssues);
       const result = computeAars(input);
       node.aars = result.score;
-      node.aarsBand = result.band;
+      node.aarsSeverity = result.severity;
       node.aarsPillars = result.pillars;
     }
     return node;

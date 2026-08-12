@@ -7,7 +7,7 @@
 // The applied 14-row table in ai/custom_score.md is normative; aars.test.ts
 // reproduces every row exactly.
 
-import type { AarsBand, Severity } from "./config";
+import type { AarsSeverity, Severity } from "./config";
 
 export type DataExposure = "SENSITIVE" | "DATA_ACCESS" | "NONE";
 
@@ -24,7 +24,7 @@ export interface AarsInput {
 
 export interface AarsResult {
   score: number;                 // 0–100, integer
-  band: AarsBand;
+  severity: AarsSeverity;
   pillars: { toxic: number; compliance: number; data: number };
 }
 
@@ -68,12 +68,12 @@ export function gap(code: string, points?: number): AarsGap {
   return { code, points: points ?? defaultGapPoints(code) };
 }
 
-export function aarsBand(score: number): AarsBand {
+export function aarsSeverity(score: number): AarsSeverity {
   if (score >= 70) return "CRITICAL";
   if (score >= 50) return "HIGH";
   if (score >= 30) return "MEDIUM";
   if (score >= 10) return "LOW";
-  return "MINIMAL";
+  return "INFO";
 }
 
 function worstSeverityPoints(severities: Severity[]): number {
@@ -98,5 +98,5 @@ export function computeAars(input: AarsInput): AarsResult {
   const data = Math.round(DATA_EXPOSURE_POINTS[input.dataExposure] * FIVE_RS_MULTIPLIER);
 
   const score = Math.min(100, toxic + compliance + data);
-  return { score, band: aarsBand(score), pillars: { toxic, compliance, data } };
+  return { score, severity: aarsSeverity(score), pillars: { toxic, compliance, data } };
 }
