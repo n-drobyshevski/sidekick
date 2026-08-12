@@ -41,7 +41,7 @@ def ctx(live_tables, monkeypatch_module):
     channel there is, which is exactly how the notebook behaves under pytest too.
     """
     spark, tables = live_tables
-    monkeypatch_module.setenv("SCOPE", "os")
+    monkeypatch_module.setenv("SCOPE", "sca")
     monkeypatch_module.setenv("SEVERITIES", "CRITICAL,HIGH")
     monkeypatch_module.setenv("SCAN_ID", "")
     # `tables=` rather than a catalog widget: a local SparkSession cannot write a three-level
@@ -114,6 +114,14 @@ PANELS = {
     "table_inventory": lambda s, c: panels.table_inventory(s, c),
     "scan_pin_check": lambda s, c: panels.scan_pin_check(s, c),
     "run_health": lambda s, c: panels.run_health(s, c),
+    # P2P v5. The committed Wiz response carries `vulnerableAsset`, and `NODE_SCHEMA` parses it
+    # whichever way `FETCH_ASSET_FIELDS` is set -- so the live register has asset ids and these
+    # return real rows rather than trivially empty ones.
+    "asset_profile": lambda s, c: panels.asset_profile(s, c),
+    "asset_density": lambda s, c: panels.asset_density(s, c),
+    "asset_footholds": lambda s, c: panels.asset_footholds(s, c),
+    "asset_capacity": lambda s, c: panels.asset_capacity(s, c),
+    "weakness_mix": lambda s, c: panels.weakness_mix(s, c),
 }
 
 

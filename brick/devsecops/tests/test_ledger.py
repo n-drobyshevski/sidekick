@@ -27,7 +27,9 @@ pytest.importorskip(
 from pyspark.sql import functions as F  # noqa: E402
 
 BRICK_DIR = Path(__file__).resolve().parents[1]
-REPO_ROOT = BRICK_DIR.parent
+#: This fork lives one directory deeper than brick/, so the repo root is one hop further up.
+#: Only the GAS golden fixture is read from there -- everything else is beside these tests.
+REPO_ROOT = BRICK_DIR.parents[1]
 sys.path.insert(0, str(BRICK_DIR))
 
 import ledger  # noqa: E402
@@ -69,7 +71,7 @@ def node(**over) -> dict:
     return base
 
 
-def observed(spark, nodes, scan_id=SCAN_1, scan_ts=TS_1, scope="os"):
+def observed(spark, nodes, scan_id=SCAN_1, scan_ts=TS_1, scope="sca"):
     """Nodes -> bronze -> silver -> keyed observations, exercising the real parse path."""
     rows = [(scan_id, scan_ts, scope, json.dumps(n)) for n in nodes]
     bronze = spark.createDataFrame(
@@ -90,7 +92,7 @@ def apply(spark, prior, nodes, *, scan_id, scan_ts, prev_scan_id=None, prev_scan
         observed(spark, nodes, scan_id=scan_id, scan_ts=scan_ts),
         scan_id=scan_id,
         scan_ts=scan_ts,
-        scope="os",
+        scope="sca",
         prev_scan_id=prev_scan_id,
         prev_scan_ts=prev_scan_ts,
         scanned_severities=scanned_severities,
@@ -174,7 +176,7 @@ def test_vuln_key_matches_the_reference_implementation(spark):
         reason="cross-check needs the repo root importable",
     )
     payload = json.loads(
-        (REPO_ROOT / "os_vulns_response_exemple.json").read_text(encoding="utf-8")
+        (BRICK_DIR / "sca_findings_example.json").read_text(encoding="utf-8")
     )
     from ingest import extract_nodes
 
@@ -300,13 +302,14 @@ def _prior_from_fixture(spark, rows):
     df = spark.createDataFrame(payload, schema)
     for ts in ("first_seen", "last_seen", "resolved_at"):
         df = df.withColumn(ts, F.col(ts).cast("timestamp"))
-    # Columns the fixture does not carry, at their empty values.
-    for name, typ in (
-        ("scope", "string"), ("component", "string"), ("fix_date", "timestamp"),
-        ("fix_observed_at", "timestamp"), ("has_kev", "boolean"),
-        ("has_exploit", "boolean"), ("epss", "double"), ("risk_observed_at", "timestamp"),
-    ):
-        df = df.withColumn(name, F.lit(None).cast(typ))
+    # Columns the fixture does not carry, at their empty values. Derived from the schema rather
+    # than listed: GAS's fixture covers the lifecycle fields and brick's ledger has always held
+    # a few more (scope, component, the fix clock, the risk signals, and now the
+    # static-analysis inputs). A hand-written list here means every column added to the ledger
+    # breaks the golden-fixture replay with an UNRESOLVED_COLUMN a hundred lines long.
+    for field in ledger.LEDGER_SCHEMA.fields:
+        if field.name not in df.columns:
+            df = df.withColumn(field.name, F.lit(None).cast(field.dataType))
     return df.select(*[f.name for f in ledger.LEDGER_SCHEMA.fields])
 
 
@@ -331,7 +334,7 @@ def test_matches_the_gas_reconcile_fixture(spark, index):
         _observed_from_records(spark, inp["records"]),
         scan_id=inp["scan_id"],
         scan_ts=inp["scan_ts"],
-        scope="os",
+        scope="sca",
         prev_scan_id=inp.get("prev_scan_id"),
         prev_scan_ts=options.get("prev_scan_ts"),
         prev_scan_id_by_severity=options.get("prev_scan_id_by_severity"),
