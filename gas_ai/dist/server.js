@@ -445,6 +445,12 @@ var Server = (() => {
   }
 
   // src/domain/toxicCombos.ts
+  var CONDITION_KEYS = [
+    "MISSING_GUARDRAIL",
+    "EXCESSIVE_PRIVILEGE",
+    "SENSITIVE_DATA",
+    "INTERNET_EXPOSURE"
+  ];
   var RISK_CATEGORY_ID = "wct-id-1998";
   var COMBO_GROUPS = [
     {
@@ -456,6 +462,7 @@ var Server = (() => {
       adjustedSeverity: "HIGH",
       amplifierNote: "Wiz MEDIUM, treated as HIGH: no content filtering or data protection on model calls, and the 5Rs data-security score (53%) confirms restriction controls are failing.",
       namePattern: /without\s+guardrail/i,
+      conditions: ["MISSING_GUARDRAIL"],
       frameworks: {
         owaspLlm: ["LLM06", "LLM02"],
         owaspAgentic: ["ASI02", "ASI03"],
@@ -472,6 +479,7 @@ var Server = (() => {
       adjustedSeverity: "HIGH",
       amplifierNote: "Wiz MEDIUM, treated as HIGH: prompt injection on an over-privileged managed agent reaches sensitive data, and the 5Rs score (53%) confirms that data is not restricted.",
       namePattern: /managed\s+ai\s+agent\s+with\s+high\s+privileges/i,
+      conditions: ["EXCESSIVE_PRIVILEGE", "SENSITIVE_DATA"],
       frameworks: {
         owaspLlm: ["LLM06", "LLM01"],
         owaspAgentic: ["ASI03", "ASI01"],
@@ -488,6 +496,7 @@ var Server = (() => {
       adjustedSeverity: "HIGH",
       amplifierNote: "Wiz MEDIUM, treated as HIGH: the agent inherits its host's attack surface (VM / serverless), holds excessive IAM, and the 5Rs score (53%) confirms weak data restriction.",
       namePattern: /hosted\s+on\s+vm\/?serverless/i,
+      conditions: ["EXCESSIVE_PRIVILEGE", "SENSITIVE_DATA"],
       frameworks: {
         owaspLlm: ["LLM06", "LLM01", "LLM02", "LLM05"],
         owaspAgentic: ["ASI02", "ASI03", "ASI05"],
@@ -504,6 +513,7 @@ var Server = (() => {
       adjustedSeverity: "MEDIUM",
       amplifierNote: "Wiz LOW, treated as MEDIUM: latent privileges \u2014 a compromised agent (prompt injection \u2192 RCE/SSRF) inherits every permission of its execution identity.",
       namePattern: /overly\s+permissive\s+execution\s+identity/i,
+      conditions: ["EXCESSIVE_PRIVILEGE"],
       frameworks: {
         owaspLlm: [],
         owaspAgentic: ["ASI03"],
@@ -2619,6 +2629,125 @@ var Server = (() => {
     };
   }
 
+  // src/domain/severity.ts
+  function normalizeSeverity(sev) {
+    if (typeof sev !== "string") return "UNKNOWN";
+    const s = sev.toUpperCase().trim();
+    if (s === "INFORMATIONAL" || s === "INFO") return "INFO";
+    return SEVERITY_ORDER.includes(s) ? s : "UNKNOWN";
+  }
+  function countBySeverity(records) {
+    var _a4;
+    if (!records.length || !records.some((r) => "severity" in r)) return {};
+    const counts = {};
+    for (const rec2 of records) {
+      const sev = normalizeSeverity(rec2["severity"]);
+      counts[sev] = ((_a4 = counts[sev]) != null ? _a4 : 0) + 1;
+    }
+    return counts;
+  }
+
+  // src/domain/comboDigest.ts
+  var DUE_SOON_DAYS = 7;
+  var DAY_MS = 864e5;
+  function carriesCondition(asset, key) {
+    if (key === "MISSING_GUARDRAIL") return asset.guardrailMissing === true;
+    if (key === "EXCESSIVE_PRIVILEGE") {
+      return asset.hasAdminPrivileges === true || asset.hasHighPrivileges === true;
+    }
+    if (key === "SENSITIVE_DATA") {
+      return asset.hasSensitiveData === true || asset.hasAccessToSensitiveData === true;
+    }
+    const exposed = asset.isAccessibleFromInternet;
+    return exposed === null || exposed === void 0 ? null : exposed === true;
+  }
+  function mixOf(issues2, field) {
+    return countBySeverity(issues2.map((i) => ({ severity: i[field] })));
+  }
+  function daysUntil(dueAt, nowMs) {
+    const t = Date.parse(dueAt || "");
+    if (Number.isNaN(t)) return null;
+    return Math.round((t - nowMs) / DAY_MS);
+  }
+  function slaTally(issues2, nowMs) {
+    const out = { pastDue: 0, dueSoon: 0, noDueDate: 0 };
+    for (const issue2 of issues2) {
+      const days = daysUntil(issue2.dueAt, nowMs);
+      if (days === null) out.noDueDate += 1;
+      else if (days < 0) out.pastDue += 1;
+      else if (days <= DUE_SOON_DAYS) out.dueSoon += 1;
+    }
+    return out;
+  }
+  function emptyConditions() {
+    const out = {};
+    for (const key of CONDITION_KEYS) {
+      out[key] = { required: false, carried: 0, unknown: 0, total: 0 };
+    }
+    return out;
+  }
+  function reRatedCount(issues2) {
+    return issues2.filter((i) => i.nativeSeverity !== i.adjustedSeverity).length;
+  }
+  function comboDigest(issues2, assets, nowIso2) {
+    const nowMs = Date.parse(nowIso2);
+    const byAsset = new Map(assets.map((a) => [a.id, a]));
+    const open = issues2.filter((i) => i.status === "OPEN");
+    const summaries = comboSummary(issues2);
+    const summaryById = new Map(summaries.map((s) => [s.group.id, s]));
+    const groups = COMBO_GROUPS.map((group) => {
+      const summary = summaryById.get(group.id);
+      const assetIds = summary ? summary.assetIds : [];
+      const rows = open.filter((i) => i.comboGroup === group.id);
+      const conditions = emptyConditions();
+      const declared = new Set(group.conditions);
+      for (const key of CONDITION_KEYS) conditions[key].required = declared.has(key);
+      for (const id of assetIds) {
+        const asset = byAsset.get(id);
+        if (!asset) continue;
+        for (const key of CONDITION_KEYS) {
+          const tally = conditions[key];
+          tally.total += 1;
+          const carried = carriesCondition(asset, key);
+          if (carried === null) tally.unknown += 1;
+          else if (carried) tally.carried += 1;
+        }
+      }
+      const sla2 = slaTally(rows, nowMs);
+      return {
+        id: group.id,
+        count: summary ? summary.count : 0,
+        assetCount: assetIds.length,
+        conditions,
+        nativeMix: mixOf(rows, "nativeSeverity"),
+        adjustedMix: mixOf(rows, "adjustedSeverity"),
+        reRated: reRatedCount(rows),
+        pastDue: sla2.pastDue,
+        dueSoon: sla2.dueSoon,
+        noDueDate: sla2.noDueDate
+      };
+    });
+    const classified = open.filter((i) => summaryById.has(i.comboGroup));
+    const affected = /* @__PURE__ */ new Set();
+    for (const s of summaries) for (const id of s.assetIds) affected.add(id);
+    const sla = slaTally(classified, nowMs);
+    return {
+      totals: {
+        totalOpen: classified.length,
+        assetsAffected: affected.size,
+        patternsActive: groups.filter((g) => g.count > 0).length,
+        patternsTotal: COMBO_GROUPS.length,
+        nativeMix: mixOf(classified, "nativeSeverity"),
+        adjustedMix: mixOf(classified, "adjustedSeverity"),
+        reRated: reRatedCount(classified),
+        pastDue: sla.pastDue,
+        dueSoon: sla.dueSoon,
+        noDueDate: sla.noDueDate
+      },
+      groups
+    };
+  }
+
   // src/domain/util.ts
   function present(v) {
     if (v === null || v === void 0) return false;
@@ -4555,10 +4684,10 @@ var Server = (() => {
   }
   function seedTrendHistory(endIso) {
     if (dataRowCount(TABS.syncHistory) > 0) return;
-    const DAY_MS = 864e5;
+    const DAY_MS2 = 864e5;
     const end = new Date(endIso).getTime();
     appendRows(TABS.syncHistory, SEED_TREND.map((counts, i) => {
-      const at = new Date(end - (SEED_TREND.length - i) * DAY_MS).toISOString();
+      const at = new Date(end - (SEED_TREND.length - i) * DAY_MS2).toISOString();
       return {
         sync_id: `sync-sample-${String(i + 1).padStart(2, "0")}`,
         started_at: at,
@@ -5216,8 +5345,13 @@ var Server = (() => {
     return run(
       () => cached("getToxicCombos", null, () => {
         const issues2 = openIssues();
-        const assets = new Map(loadAssets().map((a) => [a.id, a]));
+        const assetRows = loadAssets();
+        const assets = new Map(assetRows.map((a) => [a.id, a]));
         return {
+          // Every count the page renders, computed once here rather than four times in the
+          // browser. Additive: the `groups` shape below is unchanged, so a payload cached
+          // before this shipped still renders the page (minus the summary sections).
+          digest: comboDigest(issues2, assetRows, (/* @__PURE__ */ new Date()).toISOString()),
           groups: comboSummary(issues2).map((s) => ({
             id: s.group.id,
             ruleId: s.group.ruleId,
@@ -5226,6 +5360,10 @@ var Server = (() => {
             nativeSeverity: s.group.nativeSeverity,
             adjustedSeverity: s.group.adjustedSeverity,
             amplifierNote: s.group.amplifierNote,
+            // The declared half of the condition matrix. It rides on the group rather than
+            // only on the digest so the card's condition strip still says what the rule
+            // tests when an older cached payload arrives with no digest attached.
+            conditions: s.group.conditions,
             frameworks: s.group.frameworks,
             count: s.count,
             assets: s.assetIds.map((id) => {

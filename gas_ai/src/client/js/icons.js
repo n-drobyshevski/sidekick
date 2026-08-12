@@ -114,10 +114,17 @@ export function kindIcon(kind, size = 16) {
 }
 
 /**
- * The same icon as a standalone <svg>, for use outside the graph canvas (cards, lists).
+ * The same icon as a standalone <svg>, for use outside the graph canvas (cards, chips,
+ * lists). kindIcon() alone returns a bare <g>, which renders nothing without this wrapper.
+ *
  * Callers get this rather than building an <svg> themselves: SVG_NS above is assembled at
  * runtime to dodge a middlebox that truncates a bare `//` inside a string literal, and the
  * build guard fails on one — so the namespace must never be spelled out at a call site.
+ *
+ * It carries no class of its own; the caller names it (`asset-card-icon`, `kind-icon`) and
+ * styles the stroke through that name. Note the stroke lives on the inner <g>, which
+ * .gnode-icon paints a fixed grey — a rule on this <svg> is inherited and loses to it, so
+ * a caller that wants its own colour must target `<name> .gnode-icon`.
  */
 export function kindIconSvg(kind, size = 16) {
   const svg = document.createElementNS(SVG_NS, "svg");
@@ -125,6 +132,9 @@ export function kindIconSvg(kind, size = 16) {
   svg.setAttribute("width", String(size));
   svg.setAttribute("height", String(size));
   svg.setAttribute("aria-hidden", "true");
+  // Keeps legacy Edge/IE from putting a tab stop on an SVG that is already aria-hidden.
+  svg.setAttribute("focusable", "false");
+  // The <g> is drawn at its native 16x16 and scaled by the viewBox, so no transform.
   svg.append(kindIcon(kind, 16));
   return svg;
 }

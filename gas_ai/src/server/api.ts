@@ -51,6 +51,7 @@ import { graphCacheParams, resolveGraphParams, resolveLayoutParams } from "../do
 import { layoutGraph } from "../domain/graphLayout";
 import { projectGraph } from "../domain/graphProject";
 import { AI_ASSET_KINDS, type GEdge, type GNode, type IssueRow } from "../domain/graphTypes";
+import { comboDigest } from "../domain/comboDigest";
 import { COMBO_GROUPS, comboGroupById, comboSummary } from "../domain/toxicCombos";
 import type { Rec } from "../domain/util";
 import { archiveBytes } from "./archiveStore";
@@ -567,8 +568,13 @@ export function getToxicCombos(_p?: unknown): ApiResult {
   return run(() =>
     cached("getToxicCombos", null, () => {
       const issues = openIssues();
-      const assets = new Map(syncStore.loadAssets().map((a) => [a.id, a]));
+      const assetRows = syncStore.loadAssets();
+      const assets = new Map(assetRows.map((a) => [a.id, a]));
       return {
+        // Every count the page renders, computed once here rather than four times in the
+        // browser. Additive: the `groups` shape below is unchanged, so a payload cached
+        // before this shipped still renders the page (minus the summary sections).
+        digest: comboDigest(issues, assetRows, new Date().toISOString()),
         groups: comboSummary(issues).map((s) => ({
           id: s.group.id,
           ruleId: s.group.ruleId,
@@ -577,6 +583,10 @@ export function getToxicCombos(_p?: unknown): ApiResult {
           nativeSeverity: s.group.nativeSeverity,
           adjustedSeverity: s.group.adjustedSeverity,
           amplifierNote: s.group.amplifierNote,
+          // The declared half of the condition matrix. It rides on the group rather than
+          // only on the digest so the card's condition strip still says what the rule
+          // tests when an older cached payload arrives with no digest attached.
+          conditions: s.group.conditions,
           frameworks: s.group.frameworks,
           count: s.count,
           assets: s.assetIds.map((id) => {
