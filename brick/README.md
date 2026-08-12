@@ -409,8 +409,8 @@ Four things about this register are different, and none of them is a detail:
   child classifies `low`, so the gap costs coverage's numerator silently, and
   `…metrics_sensitivity`'s producing panel publishes `cwe_unmapped` as the size of it. Read that
   number before quoting a SAST coverage figure.
-- **Two fields are unverified against the live tenant.** Whether `SASTFindingFilters` accepts
-  `severity`, and what `aiAnalysis.verdict` actually spells. Every node in the captured response
+- **Two selections are unverified against the live tenant.** Whether `SASTFindingFilters`
+  accepts `severity`, and what `aiAnalysis.verdict` actually spells. Every node in the captured response
   has `aiAnalysis: null`, so the AI clause will simply never fire until the enum is confirmed —
   which is quiet, and is why `ai_verdict_missing` is published beside it. A count equal to the
   row count means the field is not being returned or the strings are wrong.
@@ -426,11 +426,22 @@ Four things about this register are different, and none of them is a detail:
   while**, and reads near zero before then. The captured `endCursor` decodes to a sort key
   containing a timestamp, so one does exist server-side; if it turns out to be selectable,
   adding it to the query and to `metrics.SAST_NODE_SCHEMA` is the whole change.
-- **Every closure is inferred.** `SASTFindingFilters` has no `status` or `hasFix`, so the API
-  returns only open findings and the scope cannot ask for resolved ones the way the others do.
-  `resolution_src` reads `disappeared` for essentially every row, and the `snap_*` snapshot
-  columns beside every MTTR figure read ~0 resolved. That is the ledger working as designed, and
-  it is the reason v2 exists at all.
+- **Every closure is inferred — by choice, not by limitation.** A SAST finding plainly has a
+  status (`sast_request.py` selects it, `resolutionReason` sits beside it), so the API can
+  almost certainly be asked for resolved ones. `config.SAST_FETCH_RESOLVED` declines, and the
+  reason is the timestamps above rather than the filter: an already-resolved finding with no
+  dates is born and closed in the same instant, so `first_seen == resolved_at` and
+  **`mttr_days` is exactly 0**. Every historical resolved finding would land at zero days and
+  drag the Kaplan–Meier median with it — which is worse than the empty result it replaces,
+  because "no MTTR yet" is a state a reader can act on and "MTTR is 0 days" is a confident lie.
+  `test_devsecops.py` measures that zero so nobody flips the flag without meeting it. The CVE
+  scopes take `status: [OPEN, RESOLVED]` safely for one reason only: they carry
+  `firstDetectedAt`, so the subtraction means something.
+
+  **Turn it on in the same change that adds a timestamp to the query, not before.** At that
+  point it is a real improvement — an API resolution is better evidence than an inferred
+  disappearance. Until then `resolution_src` reads `disappeared` for essentially every row and
+  the `snap_*` columns read ~0 resolved, which is the ledger working as designed.
 
 ### Two silver projections, one column contract
 
@@ -1644,10 +1655,11 @@ of it available on the GAS side:
 Four more arrived with the code registers, and every one of them is a *known unknown* rather
 than a design choice — see [The code registers](#the-code-registers-sca-and-sast):
 
-- **Three API facts are unverified against the live tenant**: whether `SASTFinding` exposes a
-  selectable timestamp, whether `SASTFindingFilters` takes `severity`, what
+- **Four API facts are unverified against the live tenant**: whether `SASTFinding` exposes a
+  selectable timestamp, whether `SASTFindingFilters` takes `severity` and `status`, what
   `aiAnalysis.verdict` actually spells, and whether `vulnerabilityFindings` returns
-  `artifactType { codeLibraryLanguage }` as an array. Each defaults to the safe answer — the
+  `artifactType { codeLibraryLanguage }` as an array. The timestamp is the one that unblocks
+  the others: it is what makes both a SAST MTTR and `SAST_FETCH_RESOLVED` worth having. Each defaults to the safe answer — the
   query the reference script is known to validate — and each degrades to a NULL column rather
   than a failed scan. `signal_breakdown`'s `ai_verdict_missing` and the single `UNKNOWN` asset
   group are what make the degradation visible.

@@ -290,13 +290,17 @@ def test_every_scope_asks_for_resolved_findings():
         assert build_filter(scope)["status"] == ["OPEN", "RESOLVED"]
 
 
-def test_sast_cannot_ask_for_resolved_findings_and_says_so():
-    """SASTFindingFilters has neither `status` nor `hasFix`, so the guarantee above is simply
-    unavailable here -- SAST closures are learned by disappearance instead.
+def test_sast_does_not_ask_for_resolved_findings_yet():
+    """The invariant above is deliberately **declined** here, not unavailable.
 
-    Pinned so that adding either key becomes a deliberate act: if the schema gains one, this
-    test fails and somebody has to decide, rather than the filter quietly acquiring a key the
-    API rejects for every scan thereafter.
+    A SAST finding has a status, so the API can almost certainly be asked for resolved ones.
+    Asking while the query selects no timestamps is what must not happen: an already-resolved
+    finding is born and closed in the same instant and reports MTTR = 0. See
+    `config.SAST_FETCH_RESOLVED` for the trace, and
+    `test_devsecops.test_asking_sast_for_resolved_findings_would_report_zero_day_mttr` for the
+    measurement.
+
+    `hasFix` is a separate matter and simply meaningless for a weakness in first-party code.
     """
     got = build_filter("sast")
     assert "status" not in got

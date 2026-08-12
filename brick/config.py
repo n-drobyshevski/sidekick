@@ -124,16 +124,43 @@ SCOPES = {
     # Static analysis: weaknesses in first-party code. A different connection, a different
     # filter type, and -- see SastRiskRule below -- no exploit intelligence of any kind.
     #
-    # `_BASE` deliberately does NOT apply. `status` and `hasFix` are VulnerabilityFindingFilters
-    # keys and SASTFindingFilters has neither, so this scope cannot ask the API for resolved
-    # findings the way the others do. The consequence is documented rather than hidden: SAST
-    # closures are learned almost entirely by disappearance, `resolution_src` reads
-    # `disappeared` for nearly every row, and the `snap_*` snapshot columns beside every MTTR
-    # figure read ~0 resolved. That is the ledger working as designed, not a fault.
+    # `_BASE` does not apply: `hasFix` is meaningless for a weakness in your own code, and
+    # `status` is deliberately withheld -- see SAST_FETCH_RESOLVED, which is where the reason
+    # lives, because it is a reason and not an absence.
     "sast": {
         "resource": {"isDefaultBranch": {"equals": True}},
     },
 }
+
+# ---- Whether the sast scope asks for resolved findings as well as open ones ----
+# OFF, and **not** because the filter key is unavailable. A SAST finding plainly has a status --
+# `sast_request.py` selects it, `resolutionReason` sits beside it, and the captured response
+# returns "OPEN" -- so RESOLVED is a real state the API can almost certainly be asked for.
+#
+# It is off because asking for it, *while ingest.SAST_QUERY selects no timestamps*, makes MTTR
+# actively wrong rather than merely absent. Trace one already-resolved finding through
+# `ledger.reconcile`:
+#
+#   first sighting  ->  first_seen = least(coalesce(firstDetectedAt, now), now) = now
+#   status RESOLVED ->  api_resolved, so resolved_at = coalesce(resolvedAt, now) = now
+#   therefore           mttr_days = resolved_at - first_seen = 0.0
+#
+# Every historical resolved finding would land at exactly zero days on the scan that first saw
+# it, and the Kaplan-Meier median would collapse toward zero. That is worse than the empty
+# result it replaces: "no MTTR yet" is a state a reader can act on, "MTTR is 0 days" is a
+# confident lie. `test_devsecops.py` pins the zero so nobody flips this without meeting it.
+#
+# The CVE scopes take `status: [OPEN, RESOLVED]` safely for one reason and one only: their
+# findings carry `firstDetectedAt`, so `first_seen` is a real date and the subtraction means
+# something.
+#
+# **Turn this on in the same change that adds a timestamp to ingest.SAST_QUERY, not before.**
+# At that point it is a genuine improvement -- an API resolution is better evidence than an
+# inferred disappearance, and `resolution_src` stops reading `disappeared` for every row.
+SAST_FETCH_RESOLVED = False
+
+if SAST_FETCH_RESOLVED:
+    SCOPES["sast"]["status"] = ["OPEN", "RESOLVED"]
 
 DEFAULT_SCOPE = "os"
 

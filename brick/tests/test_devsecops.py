@@ -317,6 +317,58 @@ def test_a_source_that_cannot_filter_severity_filters_it_here_instead():
     assert ingest._severity_gate([]) is None
 
 
+def test_asking_sast_for_resolved_findings_would_report_zero_day_mttr(spark):
+    """**Why ``config.SAST_FETCH_RESOLVED`` is off, measured rather than asserted.**
+
+    A SAST finding has a status -- `sast_request.py` selects it and `resolutionReason` sits
+    beside it -- so the API can almost certainly be asked for RESOLVED ones. The reason not to
+    is that ``ingest.SAST_QUERY`` selects no timestamps, so an already-resolved finding is born
+    and closed in the same instant:
+
+        first_seen  = least(coalesce(firstDetectedAt, now), now) = now
+        resolved_at = coalesce(resolvedAt, now)                  = now
+
+    Every historical resolved finding would land at exactly zero days and drag the
+    Kaplan-Meier median down with it. "No MTTR yet" is a state a reader can act on; "MTTR is
+    0 days" is a confident lie, and this test is what stands between the two.
+
+    Turn the flag on in the same change that adds a timestamp to the query -- not before.
+    """
+    import ledger as ledger_mod
+    from config import SAST_FETCH_RESOLVED
+
+    node = {
+        "id": "f-resolved",
+        "name": "SQL Injection",
+        "status": "RESOLVED",
+        "severity": "HIGH",
+        "filePath": "a/B.java",
+        "weaknesses": [{"id": "CWE-89"}],
+        "resource": {"id": "r1", "name": "org/repo/main", "type": "REPOSITORY_BRANCH"},
+    }
+    silver = metrics.silver_findings(bronze(spark, [node], "sast"), "sast")
+    touched = ledger_mod.reconcile(
+        ledger_mod.empty_ledger(spark),
+        ledger_mod.observed(silver),
+        scan_id="scan-1",
+        scan_ts=SCAN_TS,
+        scope="sast",
+    )
+    row = touched.first()
+    assert row["status"] == "RESOLVED"
+    # Born and closed at the same instant -- and `api`, so nothing downstream even flags it as
+    # an inference a reader might discount.
+    assert row["first_seen"] == row["resolved_at"]
+    assert row["resolution_src"] == "api"
+
+    ledger_rows = touched.select(*ledger_mod.LEDGER_SCHEMA.fieldNames())
+    assert ledger_mod.lifecycle_frame(ledger_rows, SCAN_TS).first()["mttr_days"] == 0.0
+
+    # ...which is why the register does not ask for these findings in the first place.
+    assert SAST_FETCH_RESOLVED is False
+    assert "status" not in ingest.build_filter("sast")
+
+
 def test_each_scope_queries_its_own_connection():
     assert "vulnerabilityFindings(" in ingest.query_for("sca")
     assert "sastFindings(" in ingest.query_for("sast")
