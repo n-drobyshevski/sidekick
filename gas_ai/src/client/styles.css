@@ -21,6 +21,10 @@
      labels, captions and sub-values it carries. 0.5 resolved to ~3.95:1 and failed — the
      OS-vulns tool found the same and raised it there first. */
   --text-3: rgba(0, 0, 0, 0.6);
+  /* Secondary text INSIDE the SVG canvas (node kind, group and edge labels, the AARS
+     figure). SVG text can't inherit --text-2 through `color`, and these sit on the pale
+     category tints as often as on white, so they carry their own token at ~5.5:1. */
+  --svg-text-2: rgba(0, 0, 0, 0.62);
 
   /* Readable line length for running text. The pane fills the viewport; prose does
      not follow it out to 1800px, where a sentence becomes a scan across the desk. */
@@ -59,8 +63,17 @@
      relationship list is the point. */
   --sheet-w: min(600px, 94vw);
   --sheet-w-wide: min(920px, 96vw);
+
+  /* Semantic z-index, for the layers this app actually stacks. Only the values consumed
+     below are defined; the route overlay (20), the <=800px top bar (45), the boot splash
+     (55) and the toasts (60) stay literals until something needs to reason about them.
+     --z-popover outranks --z-sheet on purpose: the searchable combobox portals its list
+     to <body> (the panel body scrolls and would clip it), and at <=800px the filter panel
+     IS a real .sheet — a popover below it would open behind the panel that owns it. */
+  --z-canvas-chrome: 5;
   --z-scrim: 40;
   --z-sheet: 41;
+  --z-popover: 52;
 
   --shadow-card: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
   --shadow-button: 0 1px 2px 0 rgba(0, 0, 0, 0.04);
@@ -509,7 +522,13 @@ main.full-bleed > .empty { margin: 28px 32px; }
   /* Full-bleed workbench degrades to a tall block inside the scrolling page. */
   main.full-bleed { display: block; overflow: visible; height: auto; padding: 0; }
   .workbench { height: auto; }
+  /* No room to dock beside a 70vh canvas inside a scrolling page — the filter panel is
+     hosted as a modal sheet at this width, so the split is just the canvas. */
+  .workbench-split { display: block; }
   .workbench-body { height: min(70vh, 640px); }
+  .workbench-controls__group + .workbench-controls__group {
+    padding-left: 0; border-left: none;
+  }
   .workbench-table { position: static; height: auto; max-height: 70vh; }
   .workbench-controls { margin-left: 0; width: 100%; }
   .workbench-search input[type="search"] { width: 100%; }
@@ -667,15 +686,114 @@ input[aria-invalid="true"]:focus-visible, select[aria-invalid="true"]:focus-visi
 .sev-pill[aria-pressed="true"].sev-LOW { background: rgba(37,99,235,.14); color: var(--sev-low-text); border-color: rgba(37,99,235,.3); }
 .sev-pill[aria-pressed="true"].sev-INFO { background: rgba(100,116,139,.14); color: var(--sev-info-text); border-color: rgba(100,116,139,.3); }
 
-/* node-type toggle pills: neutral base (shared with .sev-pill), accent when selected */
+/* Node-type toggle pills: neutral base (shared with .sev-pill), brand crimson when
+   selected. This used to be the LOW severity tint + --sev-low-text — byte-identical to a
+   pressed .sev-pill.sev-LOW two rules above, which sits directly above it in the filter
+   panel, so a selected "AI Agent" and a selected "LOW" were indistinguishable. Selection
+   is an interactive state, not a severity; the accent is the token for that. */
 .kind-pill[aria-pressed="true"] {
-  background: rgba(37, 99, 235, .12); color: var(--sev-low-text); border-color: rgba(37, 99, 235, .3);
+  background: rgba(190, 18, 60, .10); color: var(--accent-hover); border-color: rgba(190, 18, 60, .28);
 }
 .kind-filter { display: flex; flex-direction: column; gap: 12px; }
 .pill-group-label {
   font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
   color: var(--text-3); margin-bottom: 5px;
 }
+
+/* -------------------------------------------------------------------- help tip */
+/* Hover/focus definition card (ui.js helpTip) — the neutral popover recipe, and the
+   replacement for `title=` anywhere the explanation actually matters. */
+.helptip { position: relative; cursor: help; }
+.helptip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm); }
+.helptip-bubble {
+  position: absolute; left: 0; top: calc(100% + 8px); z-index: var(--z-popover);
+  width: max-content; max-width: 268px; padding: 10px;
+  display: flex; flex-direction: column; gap: 5px;
+  background: var(--page); color: var(--ink);
+  border: 1px solid var(--hairline); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  font-size: 12px; font-weight: 400; line-height: 1.45;
+  letter-spacing: 0; text-transform: none; text-align: left; white-space: normal;
+  opacity: 0; pointer-events: none; transform: translateY(-2px);
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+.helptip-line { display: block; }
+.helptip:hover > .helptip-bubble,
+.helptip:focus-within > .helptip-bubble { opacity: 1; pointer-events: auto; transform: translateY(0); }
+@media (prefers-reduced-motion: reduce) {
+  .helptip-bubble { transition: none; transform: none; }
+  .helptip:hover > .helptip-bubble, .helptip:focus-within > .helptip-bubble { transform: none; }
+}
+
+/* ------------------------------------------------------------------- combobox */
+/* Searchable dropdown (ui.js filterCombobox). The trigger matches the app's field look;
+   the list is portaled to <body> because the panel it lives in scrolls and would clip it. */
+.combobox { position: relative; }
+.combobox-trigger {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  width: 100%; min-height: 36px; padding: 4px 10px;
+  font-family: var(--font); font-size: 0.875rem; font-weight: 400; text-align: left;
+  background: var(--page); color: var(--ink);
+  border: 1px solid var(--hairline); border-radius: var(--radius-md); box-shadow: none;
+}
+.combobox-trigger:hover { background: #f1f1f4; }
+.combobox-trigger-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.combobox-caret { font-size: 0.7rem; color: var(--text-3); flex: 0 0 auto; }
+.combobox-pop {
+  position: fixed; z-index: var(--z-popover);
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 6px; background: var(--page); color: var(--ink);
+  border: 1px solid var(--hairline); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sheet);
+  font-family: var(--font);
+}
+.combobox-search { width: 100%; margin: 0; }
+/* The list scrolls (max-height set inline by position()) so the search input stays pinned. */
+.combobox-list { list-style: none; margin: 0; padding: 2px; overflow-y: auto; }
+.combobox-option {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 6px 8px; border-radius: var(--radius-sm);
+  font-size: 0.8125rem; line-height: 1.3; color: var(--ink); cursor: pointer;
+}
+.combobox-option:hover, .combobox-option.active { background: var(--surface); }
+/* Selected: weight AND color together, never color alone — aria-selected already carries
+   it for assistive tech. */
+.combobox-option[aria-selected="true"] { font-weight: 600; color: var(--accent); }
+.combobox-option-hint { margin-left: auto; font-size: 11px; color: var(--text-3); flex: 0 0 auto; }
+.combobox-option--last-pinned { border-bottom: 1px solid var(--hairline); margin-bottom: 2px; padding-bottom: 8px; }
+.combobox-group {
+  padding: 8px 8px 3px; font-size: 11px; font-weight: 600;
+  letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-3);
+}
+.combobox-empty { padding: 6px 8px; font-size: 0.8125rem; color: var(--text-3); cursor: default; }
+
+/* ------------------------------------------------------------------- segmented */
+/* One joined group of aria-pressed buttons — the exclusive-choice recipe, shared by the
+   Graph|Table view toggle, the Depth stops, and the zoom capsule. aria-pressed (not
+   role=radiogroup) to match the pill vocabulary above: a conformant radiogroup needs a
+   roving tabindex plus arrow cycling, and running two patterns for one visual recipe on
+   one page is exactly the invented-control problem. Pressed reads as weight + surface +
+   an inset hairline, never color alone. */
+.segmented {
+  display: inline-flex; align-items: stretch;
+  border: 1px solid var(--hairline); border-radius: var(--radius-md);
+  background: var(--page); overflow: hidden;
+}
+.segmented > button {
+  min-height: 34px; padding: 4px 12px;
+  border: none; border-radius: 0; box-shadow: none;
+  background: none; color: var(--text-2); font-weight: 500;
+}
+.segmented > button + button { border-left: 1px solid var(--hairline); }
+.segmented > button:hover { background: rgba(0, 0, 0, 0.035); }
+/* Inset replaces the base button's rest shadow rather than stacking on it — a surface is
+   a whisper or a lift, never both (DESIGN.md, Whisper-Or-Lift). Neutral on purpose: an
+   accent inset would read as the decorative side-stripe the system forbids. */
+.segmented > button[aria-pressed="true"] {
+  background: var(--surface); color: var(--ink); font-weight: 600;
+  box-shadow: inset 0 -2px 0 0 rgba(0, 0, 0, 0.28);
+}
+.segmented > button:focus-visible { outline-offset: -2px; z-index: 1; }
 
 /* ------------------------------------------------------------------ filter bar */
 .filter-bar {
@@ -776,18 +894,47 @@ a { color: var(--accent); }
    legend has, since it sits on top of edges and cards rather than on a bar. Hidden when
    empty so an empty or errored view doesn't leave a bare box floating in the corner. */
 .workbench-meta.overlay {
-  position: absolute; left: 10px; bottom: 10px; z-index: 5;
+  position: absolute; left: 10px; bottom: 10px; z-index: var(--z-canvas-chrome);
   gap: 8px; padding: 7px 10px; font-size: 11px;
   max-width: min(560px, calc(100% - 120px));
   background: var(--surface); border: 1px solid var(--hairline);
   border-radius: var(--radius-lg); box-shadow: var(--shadow-card);
 }
-.workbench-meta.overlay:empty { display: none; }
+/* Two permanent children now (a live-region half and a controls half), so the container
+   is never `:empty` — the hide is a class the page sets instead. */
+.workbench-meta.overlay.is-empty { display: none; }
+.workbench-meta-status,
+.workbench-meta-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.workbench-meta-actions:empty { display: none; }
+/* Three hairline-ruled zones — what to draw, how to narrow it, how to read it — instead
+   of five identical controls in one uniform gap. The rules are dropped below the wrap
+   breakpoint, where the groups stack and a vertical hairline would orphan at a row end. */
 .workbench-controls {
   margin-left: auto;
-  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center;
+}
+.workbench-controls__group { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.workbench-controls__group + .workbench-controls__group {
+  padding-left: 14px; border-left: 1px solid var(--hairline);
 }
 .workbench-search input[type="search"] { width: 170px; }
+
+/* A native select with its dimension named beside it, so "Rows" and "Smart order" stop
+   floating with nothing attached. The label is aria-hidden — the select keeps its own
+   aria-label, and reading the word twice helps nobody. */
+.select-field {
+  display: inline-flex; align-items: center;
+  border: 1px solid var(--hairline); border-radius: var(--radius-md);
+  background: var(--page); overflow: hidden;
+}
+.select-field-label {
+  padding: 0 2px 0 10px; font-size: 12px; color: var(--text-3); white-space: nowrap;
+}
+.select-field select {
+  border: none; border-radius: 0; background: none; padding-left: 4px;
+}
+.select-field:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.select-field select:focus-visible { outline: none; }
 .filter-count {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 18px; padding: 0 5px; margin-left: 7px;
@@ -797,25 +944,70 @@ a { color: var(--accent); }
 }
 .filter-count:empty { display: none; }
 
-/* Applied-filter chips: one per active value, click = clear that value. */
+/* Applied-filter chips: one per active value. The band keeps its height whether or not
+   anything is applied — it sits between the bar and the canvas, so showing/hiding it
+   moved the whole picture the first time a filter was applied. Empty, it says so rather
+   than leaving a bare gap between two hairlines. */
 .filter-chips {
   display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  min-height: 37px;
   padding: 8px 16px; border-bottom: 1px solid var(--hairline);
 }
-.filter-chips[hidden] { display: none; }
+.filter-chips-empty { font-size: 12px; color: var(--text-3); }
+/* Two targets in one pill: the label opens the panel at that filter's section, the ✕
+   clears it. The chip used to be a single delete button, so clicking the thing you wanted
+   to change destroyed it. Both children reset the base button recipe — left alone they
+   would nest two 36px bordered, shadowed surfaces inside a 22px pill. */
 .filter-chip {
-  display: inline-flex; align-items: center; gap: 6px;
-  min-height: 0; padding: 2px 9px; border-radius: 999px;
-  border: 1px solid var(--hairline); background: var(--page);
-  font-size: 12px; font-weight: 600; color: var(--text-2); box-shadow: none;
+  display: inline-flex; align-items: center;
+  padding: 0 4px 0 0; border-radius: 999px;
+  border: 1px solid var(--hairline);
+  font-size: 12px; font-weight: 600;
 }
+/* Neutral chip surface, scoped so it stops overriding the severity tint below. Both are
+   single-class selectors and this rule is the later one, so unscoped it won the cascade
+   and every CRITICAL chip rendered as a gray pill — the tint and the darkened text token
+   were dead code, and the dot was the only severity cue left. */
+.filter-chip:not([class*="sev-"]) { background: var(--page); color: var(--text-2); }
 .filter-chip .sev-dot { margin-right: 0; }
-.filter-chip-x { font-size: 10px; color: var(--text-3); }
-.filter-chip:hover .filter-chip-x { color: var(--ink); }
+.filter-chip-body, .filter-chip-x {
+  min-height: 0; border: none; background: none; box-shadow: none;
+  color: inherit; font: inherit; border-radius: 999px;
+}
+.filter-chip-body { display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 9px; }
+.filter-chip-body:hover, .filter-chip-x:hover { background: rgba(0, 0, 0, 0.05); }
+.filter-chip-key { font-weight: 500; opacity: 0.8; }
+.filter-chip-value { font-weight: 600; }
+.filter-chip-x { padding: 3px 6px; font-size: 10px; color: var(--text-2); }
+.filter-chip-x:hover { color: var(--ink); }
+/* A lens the page seeded itself, not a filter anyone applied — shown and clearable, but
+   visibly quieter, and excluded from the count badge. */
+.filter-chip.is-default { border-style: dashed; }
+.filter-chip.is-default .filter-chip-value { font-weight: 500; }
 .filter-clear-all { font-size: 12px; }
 
+/* Canvas and filter panel as flex siblings. The panel narrows the canvas instead of
+   covering it — these filters apply live, so a scrim over the graph being filtered was the
+   one thing the page could not afford. .workbench-body stays the containing block, so the
+   corner overlays, the table, the empty states and the boot skeleton all follow it in. */
+.workbench-split { display: flex; flex: 1; min-height: 0; }
+.filter-panel-host { display: contents; }
+.filter-panel {
+  flex: 0 0 min(360px, 40%);
+  display: flex; flex-direction: column; min-height: 0;
+  background: var(--page);
+  border-left: 1px solid var(--hairline);
+}
+.filter-panel-header {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 12px 16px; border-bottom: 1px solid var(--hairline);
+  flex: 0 0 auto;
+}
+.filter-panel-title { font-size: 0.9375rem; font-weight: 600; margin: 0; }
+.filter-panel-body { padding: 14px 16px 24px; overflow-y: auto; flex: 1 1 auto; }
+
 .workbench-body {
-  flex: 1; min-height: 0; position: relative;
+  flex: 1; min-width: 0; min-height: 0; position: relative;
   background: var(--page); overflow: hidden;
 }
 .workbench-body svg { display: block; width: 100%; height: 100%; cursor: grab; user-select: none; -webkit-user-select: none; }
@@ -827,12 +1019,22 @@ a { color: var(--accent); }
   position: absolute; inset: 0; overflow-y: auto; padding: 12px 16px 60px;
 }
 .workbench-empty { padding: 32px; max-width: 640px; margin: 0 auto; width: 100%; }
+/* emptyState() is message + hint only, so the way out of a dead end lives beside it. */
+.workbench-empty-action { display: flex; justify-content: center; margin-top: 14px; }
 
+/* Zoom: one capsule for the scale (with a readout — zoom was a state you could change but
+   not read), Fit beside it as the separate action it is. */
 .graph-zoom {
-  position: absolute; top: 10px; right: 10px; display: flex; gap: 6px; z-index: 5;
+  position: absolute; top: 10px; right: 10px; display: flex; gap: 6px; z-index: var(--z-canvas-chrome);
 }
-.graph-zoom button { min-height: 30px; padding: 2px 10px; font-weight: 600; }
-.depth-value { font-weight: 600; font-variant-numeric: tabular-nums; }
+.graph-zoom .segmented, .graph-zoom-fit { background: var(--page); box-shadow: var(--shadow-card); }
+.graph-zoom-scale > button { min-width: 32px; font-weight: 600; }
+.graph-zoom-pct {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 52px; padding: 0 4px; font-size: 12px; color: var(--text-2);
+  border-left: 1px solid var(--hairline); border-right: 1px solid var(--hairline);
+}
+.graph-zoom-fit { font-weight: 600; }
 
 .gedge { stroke: rgba(0, 0, 0, 0.22); stroke-width: 1.25; fill: none; }
 .gedge.negated { stroke: var(--sev-high); stroke-dasharray: 5 4; }
@@ -844,10 +1046,10 @@ a { color: var(--accent); }
 .ggroup-box { fill: rgba(0, 0, 0, 0.015); stroke: var(--hairline); stroke-width: 1; }
 .ggroup-label {
   font-size: 11px; font-weight: 600; letter-spacing: 0.05em;
-  text-transform: uppercase; fill: rgba(0, 0, 0, 0.5);
+  text-transform: uppercase; fill: var(--svg-text-2);
 }
 .gedge-label {
-  font-size: 10px; fill: rgba(0, 0, 0, 0.5);
+  font-size: 10px; fill: var(--svg-text-2);
   paint-order: stroke; stroke: #ffffff; stroke-width: 3; stroke-linejoin: round;
 }
 
@@ -863,9 +1065,22 @@ a { color: var(--accent); }
 .gnode:focus { outline: none; }
 .gnode:focus-visible .gnode-box { stroke: var(--accent); stroke-width: 2; }
 .gnode-name { font-size: 12px; font-weight: 600; fill: var(--ink); }
-.gnode-kind { font-size: 10px; fill: rgba(0, 0, 0, 0.5); letter-spacing: 0.04em; }
+.gnode-kind { font-size: 10px; fill: var(--svg-text-2); letter-spacing: 0.04em; }
 .gnode-icon { fill: none; stroke: rgba(0, 0, 0, 0.6); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-.gnode-chip-text { font-size: 10px; font-weight: 700; }
+/* The AARS figure on a node card: a number in a column of node cards, so tabular. */
+.gnode-aars { font-size: 10px; font-weight: 600; fill: var(--svg-text-2); font-variant-numeric: tabular-nums; }
+/* Severity label on a node card. The Two-Token Severity Rule: the DOT is painted from the
+   server palette (a graphical mark at >=3:1, and a deployment may retint it), the LABEL
+   takes the darkened text token so it clears 4.5:1 on the pale category tints underneath.
+   That is a deliberate divergence — if a deployment customises palette.colors, the dot
+   moves and the label does not. */
+.gnode-chip-text { font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.gnode-sev-CRITICAL { fill: var(--sev-critical-text); }
+.gnode-sev-HIGH { fill: var(--sev-high-text); }
+.gnode-sev-MEDIUM { fill: var(--sev-medium-text); }
+.gnode-sev-LOW { fill: var(--sev-low-text); }
+.gnode-sev-INFO { fill: var(--sev-info-text); }
+.gnode-sev-UNKNOWN { fill: var(--sev-unknown-text); }
 /* Node category color: a pale tinted box + saturated icon + a left accent stripe. Color
    only reinforces the icon + label (never the sole cue). Applied to fill/icon/stripe, NOT
    the box stroke — so hover and the crimson focus-visible ring keep working over the tint. */
@@ -906,7 +1121,7 @@ a { color: var(--accent); }
   border-radius: var(--radius-lg); background: var(--surface); margin-top: 10px;
 }
 .graph-legend.overlay {
-  position: absolute; right: 10px; bottom: 10px; z-index: 5;
+  position: absolute; right: 10px; bottom: 10px; z-index: var(--z-canvas-chrome);
   margin: 0; font-size: 11px;
   max-width: min(640px, calc(100% - 140px));
   box-shadow: var(--shadow-card);
@@ -927,19 +1142,12 @@ a { color: var(--accent); }
   transition: transform 150ms ease-out;
 }
 .graph-legend[open] > .legend-toggle::after { transform: rotate(45deg); }
-/* As an overlay the toggle is just the glyph: a round target the size of the zoom
-   buttons, with the chevron dropped (a 28px circle has no room for both, and <details>
-   already exposes its expanded state to assistive tech). */
+/* Collapsed, the overlay is a compact labelled pill sized like the zoom controls — the
+   word plus its chevron, not a bare glyph. */
 .graph-legend.overlay > .legend-toggle {
-  justify-content: center; gap: 0; padding: 0;
-  width: 28px; height: 28px; margin-left: auto; border-radius: 999px;
+  gap: 8px; padding: 6px 12px; min-height: 34px; margin-left: auto;
 }
-.graph-legend.overlay > .legend-toggle::after { content: none; }
-/* The open panel separates itself; the shared rule would otherwise underline just the
-   28px glyph, leaving a stray dash floating in the corner. */
-.graph-legend.overlay[open] > .legend-toggle { border-bottom: none; }
 .graph-legend.overlay:not([open]) { border-radius: 999px; }
-.legend-glyph { font-weight: 700; line-height: 1; }
 .graph-legend[open] > .legend-toggle { border-bottom: 1px solid var(--hairline); }
 .legend-body {
   display: flex; flex-wrap: wrap; gap: 14px; align-items: center;
@@ -1133,14 +1341,56 @@ h3.sheet-section-title {
   margin: 0 0 6px; padding: 8px 0 5px;
   background: var(--page);
 }
-/* Filters drawer body: stacked fields; every control applies immediately. */
-.sheet-filters { display: flex; flex-direction: column; gap: 14px; }
-.sheet-filters select { width: 100%; }
-.depth-field { display: flex; align-items: center; gap: 8px; }
-.depth-field input[type="range"] { flex: 1; }
-.sheet-filters-footer {
-  margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--hairline);
+/* Filter panel body — the docked panel, or the modal sheet below 800px. Hairline-ruled
+   sections; every control applies immediately. */
+.filter-fields { display: flex; flex-direction: column; }
+.filter-fields select { width: 100%; }
+.filter-section { padding: 16px 0 4px; border-top: 1px solid var(--hairline); }
+.filter-section:first-child { border-top: none; padding-top: 4px; }
+.filter-section-head {
+  display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px;
 }
+/* The section title doubles as the jump target for a filter chip's label, so it is
+   programmatically focusable. Its ring is inset — a section heading has no border of its
+   own to sit outside of, and an outset ring would collide with the rule above it. */
+.filter-section-head .label { margin: 0; }
+.filter-section-focus:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
+.filter-section-count {
+  margin-left: 6px; font-variant-numeric: tabular-nums;
+  font-weight: 600; color: var(--accent-hover);
+}
+.filter-section-count:empty { display: none; }
+.filter-section-head .link { margin-left: auto; font-size: 12px; }
+.filter-section .field-hint { color: var(--text-3); }
+.depth-field { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.filter-fields-footer {
+  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--hairline);
+}
+
+/* Collapsible group inside the panel (the node-type categories). Shares the legend's
+   chevron so the page has one disclosure, not two. */
+.disclosure > .disclosure-toggle {
+  list-style: none; cursor: pointer; user-select: none;
+  display: flex; align-items: center; gap: 8px; padding: 4px 0;
+  border-radius: var(--radius-sm);
+}
+.disclosure > .disclosure-toggle::-webkit-details-marker { display: none; }
+.disclosure > .disclosure-toggle::after {
+  content: ""; margin-left: auto; width: 6px; height: 6px;
+  border-right: 1.5px solid var(--text-3); border-bottom: 1.5px solid var(--text-3);
+  transform: rotate(-45deg); transform-origin: 55% 55%;
+  transition: transform 150ms ease-out;
+}
+.disclosure[open] > .disclosure-toggle::after { transform: rotate(45deg); }
+.disclosure > .disclosure-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.disclosure .pill-group-label { margin-bottom: 0; }
+.pill-group-count {
+  font-size: 11px; font-weight: 600; color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.disclosure > .pill-row { padding: 6px 0 10px; }
+@media (prefers-reduced-motion: reduce) {
+  .disclosure > .disclosure-toggle::after { transition: none; }}
 .kv { display: grid; grid-template-columns: 150px 1fr; gap: 3px 12px; font-size: 13px; }
 .kv dt { color: var(--text-3); margin: 0; }
 .kv dd { margin: 0; overflow-wrap: anywhere; }
