@@ -999,6 +999,7 @@ var Server = (() => {
     bootstrap: () => bootstrap,
     cancelSync: () => cancelSync2,
     getAssetDetail: () => getAssetDetail,
+    getAssetOptions: () => getAssetOptions,
     getAssets: () => getAssets,
     getGraph: () => getGraph,
     getIssueDetail: () => getIssueDetail,
@@ -1012,6 +1013,64 @@ var Server = (() => {
     runSync: () => runSync,
     setSettings: () => setSettings
   });
+
+  // src/domain/assetTable.ts
+  var ASSET_SORTS = ["aars", "name", "kind", "cloud"];
+  var DEFAULT_PAGE_SIZE = 50;
+  var MAX_PAGE_SIZE = 500;
+  var CLIENT_ALL_MAX = 1500;
+  function str(v) {
+    return v === null || v === void 0 ? "" : String(v);
+  }
+  function score(v) {
+    const n = Number(v != null ? v : -1);
+    return Number.isFinite(n) ? n : -1;
+  }
+  function resolveAssetQuery(params) {
+    const sort = str(params["sort"]);
+    const page = Number(params["page"]);
+    const pageSize = Number(params["pageSize"]);
+    return {
+      q: str(params["q"]).trim().toLowerCase(),
+      kind: str(params["kind"]),
+      cloud: str(params["cloud"]),
+      band: str(params["band"]),
+      sort: ASSET_SORTS.indexOf(sort) >= 0 ? sort : "aars",
+      page: Number.isFinite(page) ? Math.max(0, Math.floor(page)) : 0,
+      pageSize: Number.isFinite(pageSize) && pageSize >= 1 ? Math.min(Math.floor(pageSize), MAX_PAGE_SIZE) : DEFAULT_PAGE_SIZE
+    };
+  }
+  function matchesAssetQuery(row, q) {
+    if (q.q && !str(row["name"]).toLowerCase().includes(q.q)) return false;
+    if (q.kind && str(row["kind"]) !== q.kind) return false;
+    if (q.cloud && str(row["cloud"]) !== q.cloud) return false;
+    if (q.band && str(row["aarsBand"]) !== q.band) return false;
+    return true;
+  }
+  function filterAssetRows(rows, q) {
+    return rows.filter((r) => matchesAssetQuery(r, q));
+  }
+  var byScore = (a, b) => score(b["aars"]) - score(a["aars"]);
+  var ASSET_COMPARATORS = {
+    aars: byScore,
+    name: (a, b) => str(a["name"]).localeCompare(str(b["name"])),
+    kind: (a, b) => str(a["kind"]).localeCompare(str(b["kind"])) || byScore(a, b),
+    cloud: (a, b) => str(a["cloud"]).localeCompare(str(b["cloud"])) || byScore(a, b)
+  };
+  function sortAssetRows(rows, sort) {
+    var _a4;
+    return [...rows].sort((_a4 = ASSET_COMPARATORS[sort]) != null ? _a4 : byScore);
+  }
+  function pageOf(rows, page, pageSize) {
+    const size = Math.max(1, Math.floor(pageSize));
+    const pageCount = Math.max(1, Math.ceil(rows.length / size));
+    const clamped = Math.min(Math.max(Math.floor(page) || 0, 0), pageCount - 1);
+    return {
+      rows: rows.slice(clamped * size, (clamped + 1) * size),
+      page: clamped,
+      pageCount
+    };
+  }
 
   // src/domain/config.ts
   var SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
@@ -1042,8 +1101,9 @@ var Server = (() => {
   var DEPTH_MIN = 1;
   var DEPTH_MAX = 3;
   var DEPTH_DEFAULT = 2;
-  var MAX_NODES_DEFAULT = 120;
+  var MAX_NODES_DEFAULT = 100;
   var MAX_EDGES_DEFAULT = 250;
+  var SEED_WAVE_RATIO = 0.4;
 
   // src/domain/settingsLogic.ts
   function clampDepth(v) {
@@ -1212,86 +1272,103 @@ var Server = (() => {
     const summaryNodes = [];
     const summaryEdges = [];
     const queue = [];
-    for (const seedId of opts.seedIds) {
-      const seedNode = byId.get(seedId);
-      if (!seedNode || shown.has(seedId)) continue;
-      if (opts.filterSeeds && !passesFilters(seedNode, opts.filters)) continue;
-      if (shown.size >= maxNodes) {
-        capped = true;
-        break;
-      }
-      shown.add(seedId);
-      queue.push({ id: seedId, depth: 0 });
-    }
-    while (queue.length) {
-      const { id, depth } = queue.shift();
-      if (depth >= opts.depth && !expand.has(id)) continue;
-      const groups = /* @__PURE__ */ new Map();
-      for (const { otherId } of (_d = adjacency.get(id)) != null ? _d : []) {
-        if (shown.has(otherId)) continue;
-        const other = byId.get(otherId);
-        if (!passesFilters(other, opts.filters)) continue;
-        if (!groups.has(other.kind)) groups.set(other.kind, []);
-        const group = groups.get(other.kind);
-        if (!group.some((n) => n.id === otherId)) group.push(other);
-      }
-      for (const kind of [...groups.keys()].sort()) {
-        const members = groups.get(kind).sort(nodeOrder);
-        const cap = expand.has(id) ? Infinity : (_g = (_f = (_e = opts.perKindCap) == null ? void 0 : _e[kind]) != null ? _f : DEFAULT_PER_KIND_CAP[kind]) != null ? _g : DEFAULT_KIND_CAP;
-        const overflow = members.length > cap;
-        const kept = overflow ? members.slice(0, Math.max(1, cap - 1)) : members;
-        for (const member of kept) {
-          if (shown.size >= maxNodes) {
-            capped = true;
-            break;
-          }
-          shown.add(member.id);
-          queue.push({
-            id: member.id,
-            depth: expand.has(id) ? Math.max(depth + 1, opts.depth) : depth + 1
-          });
+    const atNodeBudget = () => shown.size + summaryNodes.length >= maxNodes;
+    const orderedSeeds = opts.seedIds.map((id) => byId.get(id)).filter((n) => !!n && (!opts.filterSeeds || passesFilters(n, opts.filters))).sort(nodeOrder);
+    const seedWave = Math.max(1, Math.floor(maxNodes * SEED_WAVE_RATIO));
+    let seedCursor = 0;
+    function admitSeedWave() {
+      let admitted = 0;
+      while (admitted < seedWave && seedCursor < orderedSeeds.length) {
+        const seed = orderedSeeds[seedCursor];
+        if (shown.has(seed.id)) {
+          seedCursor++;
+          continue;
         }
-        const hidden = members.filter((m) => !shown.has(m.id));
-        if (hidden.length) {
-          if (!overflow) {
-            capped = true;
-            continue;
-          }
-          const sumId = `sum|${id}|${kind}`;
-          summaries.push({
-            id: sumId,
-            of: kind,
-            count: hidden.length,
-            parentId: id,
-            memberIds: hidden.map((m) => m.id)
-          });
-          summaryNodes.push({
-            id: sumId,
-            kind: "SUMMARY",
-            name: `+${hidden.length} more`,
-            summaryOf: kind,
-            summaryCount: hidden.length,
-            memberIds: hidden.map((m) => m.id)
-          });
-          const viaEdge = (_i = ((_h = adjacency.get(id)) != null ? _h : []).find(
-            (a) => a.otherId === hidden[0].id
-          )) == null ? void 0 : _i.edge;
-          summaryEdges.push({
-            id: `${id}|SUMMARY|${sumId}`,
-            src: id,
-            dst: sumId,
-            type: (_j = viaEdge == null ? void 0 : viaEdge.type) != null ? _j : "USES"
-          });
-        }
+        if (atNodeBudget()) return;
+        shown.add(seed.id);
+        queue.push({ id: seed.id, depth: 0 });
+        seedCursor++;
+        admitted++;
       }
     }
+    do {
+      admitSeedWave();
+      while (queue.length) {
+        const { id, depth } = queue.shift();
+        if (depth >= opts.depth && !expand.has(id)) continue;
+        const groups = /* @__PURE__ */ new Map();
+        for (const { otherId } of (_d = adjacency.get(id)) != null ? _d : []) {
+          if (shown.has(otherId)) continue;
+          const other = byId.get(otherId);
+          if (!passesFilters(other, opts.filters)) continue;
+          if (!groups.has(other.kind)) groups.set(other.kind, []);
+          const group = groups.get(other.kind);
+          if (!group.some((n) => n.id === otherId)) group.push(other);
+        }
+        for (const kind of [...groups.keys()].sort()) {
+          const members = groups.get(kind).sort(nodeOrder);
+          const cap = expand.has(id) ? Infinity : (_g = (_f = (_e = opts.perKindCap) == null ? void 0 : _e[kind]) != null ? _f : DEFAULT_PER_KIND_CAP[kind]) != null ? _g : DEFAULT_KIND_CAP;
+          const overflow = members.length > cap;
+          const kept = overflow ? members.slice(0, Math.max(1, cap - 1)) : members;
+          for (const member of kept) {
+            if (atNodeBudget()) {
+              capped = true;
+              break;
+            }
+            shown.add(member.id);
+            queue.push({
+              id: member.id,
+              depth: expand.has(id) ? Math.max(depth + 1, opts.depth) : depth + 1
+            });
+          }
+          const hidden = members.filter((m) => !shown.has(m.id));
+          if (hidden.length) {
+            if (!overflow) {
+              capped = true;
+              continue;
+            }
+            if (atNodeBudget() || summaryEdges.length >= maxEdges) {
+              capped = true;
+              continue;
+            }
+            const sumId = `sum|${id}|${kind}`;
+            summaries.push({
+              id: sumId,
+              of: kind,
+              count: hidden.length,
+              parentId: id,
+              memberIds: hidden.map((m) => m.id)
+            });
+            summaryNodes.push({
+              id: sumId,
+              kind: "SUMMARY",
+              name: `+${hidden.length} more`,
+              summaryOf: kind,
+              summaryCount: hidden.length,
+              memberIds: hidden.map((m) => m.id)
+            });
+            const viaEdge = (_i = ((_h = adjacency.get(id)) != null ? _h : []).find(
+              (a) => a.otherId === hidden[0].id
+            )) == null ? void 0 : _i.edge;
+            summaryEdges.push({
+              id: `${id}|SUMMARY|${sumId}`,
+              src: id,
+              dst: sumId,
+              type: (_j = viaEdge == null ? void 0 : viaEdge.type) != null ? _j : "USES"
+            });
+          }
+        }
+      }
+    } while (seedCursor < orderedSeeds.length && !atNodeBudget());
+    if (seedCursor < orderedSeeds.length) capped = true;
+    const inducedBudget = Math.max(0, maxEdges - summaryEdges.length);
     const edges2 = [];
     const seenEdge = /* @__PURE__ */ new Set();
     for (const edge2 of sortedEdges) {
       if (!shown.has(edge2.src) || !shown.has(edge2.dst)) continue;
       if (seenEdge.has(edge2.id)) continue;
       seenEdge.add(edge2.id);
-      if (edges2.length >= maxEdges) {
+      if (edges2.length >= inducedBudget) {
         capped = true;
         break;
       }
@@ -1426,12 +1503,12 @@ var Server = (() => {
       for (let sweep = 0; sweep < BARYCENTER_SWEEPS; sweep++) {
         for (const lane of lanes) {
           if (lane.length < 2) continue;
-          const score = /* @__PURE__ */ new Map();
+          const score2 = /* @__PURE__ */ new Map();
           for (const id of lane) {
             const others = ((_e = neighbors.get(id)) != null ? _e : []).filter(
               (n) => laneIndex.get(n) !== laneIndex.get(id) && rowOf.has(n)
             );
-            score.set(
+            score2.set(
               id,
               others.length ? others.reduce((acc, n) => {
                 var _a5;
@@ -1441,7 +1518,7 @@ var Server = (() => {
           }
           lane.sort((a, b) => {
             var _a5, _b2, _c2, _d2;
-            const d = ((_a5 = score.get(a)) != null ? _a5 : 0) - ((_b2 = score.get(b)) != null ? _b2 : 0);
+            const d = ((_a5 = score2.get(a)) != null ? _a5 : 0) - ((_b2 = score2.get(b)) != null ? _b2 : 0);
             if (d !== 0) return d;
             return ((_c2 = rowOf.get(a)) != null ? _c2 : 0) - ((_d2 = rowOf.get(b)) != null ? _d2 : 0);
           });
@@ -2137,7 +2214,7 @@ var Server = (() => {
   });
 
   // src/domain/syncNormalize.ts
-  function str(v) {
+  function str2(v) {
     const c = clean(v);
     return c === null ? void 0 : String(c);
   }
@@ -2149,20 +2226,20 @@ var Server = (() => {
   }
   function normalizeCloudResource(raw) {
     var _a4, _b;
-    const id = str(raw["id"]);
+    const id = str2(raw["id"]);
     const kind = kindFromWizType(raw["type"]);
     if (!id || !kind) return null;
     const node2 = {
       id,
       kind,
-      name: (_a4 = str(raw["name"])) != null ? _a4 : id,
-      nativeType: str(raw["nativeType"]),
-      cloudPlatform: str(raw["cloudPlatform"]),
-      region: str(raw["region"]),
-      status: str(raw["status"]),
-      firstSeen: str(raw["firstSeen"]),
-      lastSeen: str(raw["lastSeen"]),
-      externalId: str(raw["externalId"]),
+      name: (_a4 = str2(raw["name"])) != null ? _a4 : id,
+      nativeType: str2(raw["nativeType"]),
+      cloudPlatform: str2(raw["cloudPlatform"]),
+      region: str2(raw["region"]),
+      status: str2(raw["status"]),
+      firstSeen: str2(raw["firstSeen"]),
+      lastSeen: str2(raw["lastSeen"]),
+      externalId: str2(raw["externalId"]),
       isAccessibleFromInternet: triBool(raw["isAccessibleFromInternet"]),
       isOpenToAllInternet: triBool(raw["isOpenToAllInternet"]),
       hasSensitiveData: bool(raw["hasSensitiveData"]),
@@ -2174,7 +2251,7 @@ var Server = (() => {
     if (technology && typeof technology === "object") {
       const cats = technology["categories"];
       if (Array.isArray(cats)) {
-        const names = cats.map((c) => str(c["name"])).filter((n) => Boolean(n));
+        const names = cats.map((c) => str2(c["name"])).filter((n) => Boolean(n));
         if (names.length) node2.technologyCategories = names;
       }
     }
@@ -2192,13 +2269,13 @@ var Server = (() => {
     }
     const account = raw["cloudAccount"];
     if (account && typeof account === "object") {
-      const accId = str(account["id"]);
+      const accId = str2(account["id"]);
       if (accId) {
         node2.cloudAccount = {
           id: accId,
-          name: (_b = str(account["name"])) != null ? _b : accId,
-          externalId: str(account["externalId"]),
-          cloudProvider: str(account["cloudProvider"])
+          name: (_b = str2(account["name"])) != null ? _b : accId,
+          externalId: str2(account["externalId"]),
+          cloudProvider: str2(account["cloudProvider"])
         };
       }
     }
@@ -2206,10 +2283,10 @@ var Server = (() => {
     if (Array.isArray(projects)) {
       node2.projects = projects.map((p) => {
         const rec = p;
-        const pid = str(rec["id"]);
-        const name = str(rec["name"]);
+        const pid = str2(rec["id"]);
+        const name = str2(rec["name"]);
         const riskProfile = rec["riskProfile"];
-        const businessImpact = riskProfile && typeof riskProfile === "object" ? str(riskProfile["businessImpact"]) : void 0;
+        const businessImpact = riskProfile && typeof riskProfile === "object" ? str2(riskProfile["businessImpact"]) : void 0;
         return pid && name ? { id: pid, name, businessImpact } : null;
       }).filter((p) => p !== null);
     }
@@ -2218,8 +2295,8 @@ var Server = (() => {
       node2.tags = tags.map((t) => {
         var _a5;
         const rec = t;
-        const key = str(rec["key"]);
-        return key ? { key, value: (_a5 = str(rec["value"])) != null ? _a5 : "" } : null;
+        const key = str2(rec["key"]);
+        return key ? { key, value: (_a5 = str2(rec["value"])) != null ? _a5 : "" } : null;
       }).filter((t) => t !== null);
     }
     return node2;
@@ -2274,21 +2351,21 @@ var Server = (() => {
     var _a4, _b, _c, _d, _e, _f, _g, _h;
     const part = emptyPart();
     for (const raw of rows) {
-      const issueId = str(raw["id"]);
+      const issueId = str2(raw["id"]);
       const snap = raw["entitySnapshot"];
-      const assetId = snap && typeof snap === "object" ? str(snap["id"]) : void 0;
+      const assetId = snap && typeof snap === "object" ? str2(snap["id"]) : void 0;
       if (!issueId || !assetId) continue;
       const sourceRules = Array.isArray(raw["sourceRules"]) ? raw["sourceRules"] : [];
       const first = (_a4 = sourceRules[0]) != null ? _a4 : {};
-      const ruleId = str(first["id"]);
-      const ruleName = str(first["name"]);
+      const ruleId = str2(first["id"]);
+      const ruleName = str2(first["name"]);
       const group = classifyIssue({ sourceRuleId: ruleId != null ? ruleId : null, ruleName: ruleName != null ? ruleName : null });
-      const nativeSeverity = (_b = str(raw["severity"])) != null ? _b : "UNKNOWN";
+      const nativeSeverity = (_b = str2(raw["severity"])) != null ? _b : "UNKNOWN";
       const adjustedSeverity = group ? group.adjustedSeverity : nativeSeverity;
       const control = first["control"];
-      const resolutionRecommendation = (_c = str(first["resolutionRecommendation"])) != null ? _c : control && typeof control === "object" ? str(control["resolutionRecommendation"]) : void 0;
-      const assetName = (_d = str(snap["name"])) != null ? _d : assetId;
-      const projects = Array.isArray(raw["projects"]) ? raw["projects"].map((p) => str(p["name"])).filter((n) => Boolean(n)) : [];
+      const resolutionRecommendation = (_c = str2(first["resolutionRecommendation"])) != null ? _c : control && typeof control === "object" ? str2(control["resolutionRecommendation"]) : void 0;
+      const assetName = (_d = str2(snap["name"])) != null ? _d : assetId;
+      const projects = Array.isArray(raw["projects"]) ? raw["projects"].map((p) => str2(p["name"])).filter((n) => Boolean(n)) : [];
       part.issues.push({
         id: issueId,
         ruleId: (_e = ruleId != null ? ruleId : group == null ? void 0 : group.ruleId) != null ? _e : "",
@@ -2296,27 +2373,27 @@ var Server = (() => {
         comboGroup: (_g = group == null ? void 0 : group.id) != null ? _g : "",
         nativeSeverity,
         adjustedSeverity,
-        status: (_h = str(raw["status"])) != null ? _h : "OPEN",
+        status: (_h = str2(raw["status"])) != null ? _h : "OPEN",
         assetId,
         assetName,
-        region: str(snap["region"]),
-        account: str(snap["subscriptionName"]),
+        region: str2(snap["region"]),
+        account: str2(snap["subscriptionName"]),
         projects,
         frameworks: group == null ? void 0 : group.frameworks,
-        createdAt: str(raw["createdAt"]),
-        dueAt: str(raw["dueAt"]),
+        createdAt: str2(raw["createdAt"]),
+        dueAt: str2(raw["dueAt"]),
         resolutionRecommendation
       });
       const kind = kindFromWizType(snap["type"]);
       if (kind) {
         const node2 = { id: assetId, kind, name: assetName };
-        const nativeType = str(snap["nativeType"]);
+        const nativeType = str2(snap["nativeType"]);
         if (nativeType) node2.nativeType = nativeType;
-        const cloud = str(snap["cloudPlatform"]);
+        const cloud = str2(snap["cloudPlatform"]);
         if (cloud) node2.cloudPlatform = cloud;
-        const region = str(snap["region"]);
+        const region = str2(snap["region"]);
         if (region) node2.region = region;
-        const externalId = str(snap["externalId"]);
+        const externalId = str2(snap["externalId"]);
         if (externalId) node2.externalId = externalId;
         part.nodes.push(node2);
       }
@@ -2356,22 +2433,22 @@ var Server = (() => {
     var _a4, _b;
     const part = emptyPart();
     for (const raw of rows) {
-      const id = str(raw["id"]);
+      const id = str2(raw["id"]);
       if (!id) continue;
-      if (str(raw["result"]) !== "FAIL") continue;
-      const status = str(raw["status"]);
+      if (str2(raw["result"]) !== "FAIL") continue;
+      const status = str2(raw["status"]);
       if (status && status !== "OPEN") continue;
       const resource = raw["resource"];
-      const resourceId = resource && typeof resource === "object" ? str(resource["id"]) : void 0;
+      const resourceId = resource && typeof resource === "object" ? str2(resource["id"]) : void 0;
       if (!resourceId) continue;
       const rule = raw["rule"];
-      const ruleShortId = rule && typeof rule === "object" ? (_a4 = str(rule["shortId"])) != null ? _a4 : "" : "";
+      const ruleShortId = rule && typeof rule === "object" ? (_a4 = str2(rule["shortId"])) != null ? _a4 : "" : "";
       part.findings.push({
         id,
         resourceId,
         ruleShortId,
-        severity: (_b = str(raw["severity"])) != null ? _b : "UNKNOWN",
-        remediation: str(raw["remediation"]),
+        severity: (_b = str2(raw["severity"])) != null ? _b : "UNKNOWN",
+        remediation: str2(raw["remediation"]),
         frameworkCodes: frameworkCodesFromRule(rule, ruleShortId)
       });
     }
@@ -2497,11 +2574,11 @@ var Server = (() => {
   function gap(code, points) {
     return { code, points: points != null ? points : defaultGapPoints(code) };
   }
-  function aarsBand(score) {
-    if (score >= 70) return "CRITICAL";
-    if (score >= 50) return "HIGH";
-    if (score >= 30) return "MEDIUM";
-    if (score >= 10) return "LOW";
+  function aarsBand(score2) {
+    if (score2 >= 70) return "CRITICAL";
+    if (score2 >= 50) return "HIGH";
+    if (score2 >= 30) return "MEDIUM";
+    if (score2 >= 10) return "LOW";
     return "MINIMAL";
   }
   function worstSeverityPoints(severities) {
@@ -2522,8 +2599,8 @@ var Server = (() => {
       input.gaps.reduce((acc, g) => acc + g.points, 0)
     );
     const data = Math.round(DATA_EXPOSURE_POINTS[input.dataExposure] * FIVE_RS_MULTIPLIER);
-    const score = Math.min(100, toxic + compliance + data);
-    return { score, band: aarsBand(score), pillars: { toxic, compliance, data } };
+    const score2 = Math.min(100, toxic + compliance + data);
+    return { score: score2, band: aarsBand(score2), pillars: { toxic, compliance, data } };
   }
 
   // src/domain/graphEnrich.ts
@@ -4029,6 +4106,8 @@ var Server = (() => {
           layout,
           options: {
             depth: options.depth,
+            maxNodes: options.maxNodes,
+            // the budget in force, so the UI can name it
             seedIds: options.seedIds,
             expandIds: (_a4 = options.expandIds) != null ? _a4 : [],
             layout: view.mode,
@@ -4069,34 +4148,103 @@ var Server = (() => {
       issueAnalytics: (_v = n.issueAnalytics) != null ? _v : null
     };
   }
-  function getAssets(_p) {
-    return run(
-      () => cached("getAssets", null, () => {
-        const assets = loadAssets();
-        const issues2 = openIssues();
-        const agents = assets.filter((a) => a.kind === "AI_AGENT");
-        const protectedAgents = agents.filter((a) => !a.guardrailMissing).length;
-        const rows = assets.map(assetRow).sort((a, b) => {
-          var _a4, _b;
-          return Number((_a4 = b["aars"]) != null ? _a4 : -1) - Number((_b = a["aars"]) != null ? _b : -1);
-        });
+  function assetTableRow(n) {
+    var _a4, _b, _c, _d, _e, _f, _g, _h;
+    return {
+      id: n.id,
+      name: n.name,
+      kind: n.kind,
+      cloud: (_a4 = n.cloudPlatform) != null ? _a4 : null,
+      region: (_b = n.region) != null ? _b : null,
+      severity: (_c = n.severity) != null ? _c : null,
+      aars: (_d = n.aars) != null ? _d : null,
+      aarsBand: (_e = n.aarsBand) != null ? _e : null,
+      combos: ((_f = n.comboGroups) != null ? _f : []).length,
+      guardrailMissing: (_g = n.guardrailMissing) != null ? _g : false,
+      agentic: n.identityPurpose === "AGENTIC",
+      projects: ((_h = n.projects) != null ? _h : []).map((p) => p.name)
+    };
+  }
+  function assetsModel() {
+    var _a4;
+    const assets = loadAssets();
+    const issues2 = openIssues();
+    const agents = assets.filter((a) => a.kind === "AI_AGENT");
+    const protectedAgents = agents.filter((a) => !a.guardrailMissing).length;
+    const rows = assets.map(assetTableRow).sort(ASSET_COMPARATORS.aars);
+    const bandCounts = {};
+    const kinds = /* @__PURE__ */ new Set();
+    const clouds = /* @__PURE__ */ new Set();
+    for (const a of assets) {
+      if (a.aarsBand) bandCounts[a.aarsBand] = ((_a4 = bandCounts[a.aarsBand]) != null ? _a4 : 0) + 1;
+      kinds.add(a.kind);
+      if (a.cloudPlatform) clouds.add(a.cloudPlatform);
+    }
+    return {
+      rows,
+      kpis: {
+        aiAssets: assets.filter((a) => AI_ASSET_KINDS.includes(a.kind)).length,
+        agents: agents.length,
+        criticalBand: assets.filter((a) => a.aarsBand === "CRITICAL").length,
+        highBand: assets.filter((a) => a.aarsBand === "HIGH").length,
+        guardrailCoveragePct: agents.length ? Math.round(protectedAgents / agents.length * 100) : null,
+        sensitiveAccess: assets.filter(
+          (a) => AI_ASSET_KINDS.includes(a.kind) && a.hasAccessToSensitiveData
+        ).length,
+        openIssues: issues2.length,
+        complianceGaps: loadFindings().length,
+        agenticIdentities: assets.filter((a) => a.identityPurpose === "AGENTIC").length
+      },
+      bandCounts,
+      facets: {
+        kinds: [...kinds].sort(),
+        clouds: [...clouds].sort(),
+        bands: AARS_BAND_ORDER.filter((b) => bandCounts[b])
+      }
+    };
+  }
+  function getAssets(p) {
+    return run(() => {
+      const query = resolveAssetQuery(p != null ? p : {});
+      const model = cached("assetsModel", null, assetsModel);
+      const head = {
+        total: model.rows.length,
+        kpis: model.kpis,
+        bandCounts: model.bandCounts,
+        facets: model.facets,
+        pageSize: query.pageSize,
+        sort: query.sort
+      };
+      if (model.rows.length <= CLIENT_ALL_MAX) {
         return {
-          rows,
-          kpis: {
-            aiAssets: assets.filter((a) => AI_ASSET_KINDS.includes(a.kind)).length,
-            agents: agents.length,
-            criticalBand: assets.filter((a) => a.aarsBand === "CRITICAL").length,
-            highBand: assets.filter((a) => a.aarsBand === "HIGH").length,
-            guardrailCoveragePct: agents.length ? Math.round(protectedAgents / agents.length * 100) : null,
-            sensitiveAccess: assets.filter(
-              (a) => AI_ASSET_KINDS.includes(a.kind) && a.hasAccessToSensitiveData
-            ).length,
-            openIssues: issues2.length,
-            complianceGaps: loadFindings().length,
-            agenticIdentities: assets.filter((a) => a.identityPurpose === "AGENTIC").length
-          }
+          ...head,
+          all: true,
+          rows: model.rows,
+          filtered: model.rows.length,
+          page: 0,
+          pageCount: Math.max(1, Math.ceil(model.rows.length / query.pageSize))
         };
-      })
+      }
+      const filtered = sortAssetRows(filterAssetRows(model.rows, query), query.sort);
+      const paged = pageOf(filtered, query.page, query.pageSize);
+      return {
+        ...head,
+        all: false,
+        rows: paged.rows,
+        filtered: filtered.length,
+        page: paged.page,
+        pageCount: paged.pageCount
+      };
+    });
+  }
+  function getAssetOptions(_p) {
+    return run(
+      () => cached("assetOptions", null, () => ({
+        rows: [...loadAssets()].sort((a, b) => {
+          var _a4, _b;
+          return Number((_a4 = b.aars) != null ? _a4 : -1) - Number((_b = a.aars) != null ? _b : -1);
+        }).map((n) => ({ id: n.id, name: n.name, kind: n.kind }))
+      }))
     );
   }
   function getAssetDetail(p) {

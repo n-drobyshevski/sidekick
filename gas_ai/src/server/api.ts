@@ -3,6 +3,14 @@
 // lock; mutations run inside withScriptLock + recoverIfNeeded.
 
 import {
+  ASSET_COMPARATORS,
+  CLIENT_ALL_MAX,
+  filterAssetRows,
+  pageOf,
+  resolveAssetQuery,
+  sortAssetRows,
+} from "../domain/assetTable";
+import {
   AARS_BAND_ORDER,
   AARS_BAND_SEVERITY_TOKEN,
   SEVERITY_COLORS,
@@ -164,6 +172,7 @@ export function getGraph(p?: unknown): ApiResult {
         layout,
         options: {
           depth: options.depth,
+          maxNodes: options.maxNodes, // the budget in force, so the UI can name it
           seedIds: options.seedIds,
           expandIds: options.expandIds ?? [],
           layout: view.mode,
@@ -207,35 +216,140 @@ function assetRow(n: GNode): Rec {
   };
 }
 
-export function getAssets(_p?: unknown): ApiResult {
-  return run(() =>
-    cached("getAssets", null, () => {
-      const assets = syncStore.loadAssets();
-      const issues = openIssues();
-      const agents = assets.filter((a) => a.kind === "AI_AGENT");
-      const protectedAgents = agents.filter((a) => !a.guardrailMissing).length;
-      const rows = assets
-        .map(assetRow)
-        .sort((a, b) => Number(b["aars"] ?? -1) - Number(a["aars"] ?? -1));
+/**
+ * The inventory table's own projection: the dozen fields the row actually renders, out of
+ * the ~25 assetRow carries. The table is the one place that ships every asset at once, so
+ * everything the drill-down needs and the list doesn't stays behind getAssetDetail.
+ */
+function assetTableRow(n: GNode): Rec {
+  return {
+    id: n.id,
+    name: n.name,
+    kind: n.kind,
+    cloud: n.cloudPlatform ?? null,
+    region: n.region ?? null,
+    severity: n.severity ?? null,
+    aars: n.aars ?? null,
+    aarsBand: n.aarsBand ?? null,
+    combos: (n.comboGroups ?? []).length,
+    guardrailMissing: n.guardrailMissing ?? false,
+    agentic: n.identityPurpose === "AGENTIC",
+    projects: (n.projects ?? []).map((p) => p.name),
+  };
+}
+
+interface AssetsModel {
+  rows: Rec[];
+  kpis: Rec;
+  bandCounts: Record<string, number>;
+  facets: { kinds: string[]; clouds: string[]; bands: string[] };
+}
+
+/**
+ * Everything about the inventory that doesn't depend on the request: every table row, the
+ * KPI totals, the AARS-band histogram and the filter-bar options. The aggregates are
+ * computed over the whole inventory on purpose — the KPI row and the chart describe the
+ * estate, never the page or the filtered subset, so they stay honest when the client only
+ * ever holds 50 rows.
+ */
+function assetsModel(): AssetsModel {
+  const assets = syncStore.loadAssets();
+  const issues = openIssues();
+  const agents = assets.filter((a) => a.kind === "AI_AGENT");
+  const protectedAgents = agents.filter((a) => !a.guardrailMissing).length;
+  const rows = assets.map(assetTableRow).sort(ASSET_COMPARATORS.aars);
+
+  const bandCounts: Record<string, number> = {};
+  const kinds = new Set<string>();
+  const clouds = new Set<string>();
+  for (const a of assets) {
+    if (a.aarsBand) bandCounts[a.aarsBand] = (bandCounts[a.aarsBand] ?? 0) + 1;
+    kinds.add(a.kind);
+    if (a.cloudPlatform) clouds.add(a.cloudPlatform);
+  }
+
+  return {
+    rows,
+    kpis: {
+      aiAssets: assets.filter((a) => AI_ASSET_KINDS.includes(a.kind)).length,
+      agents: agents.length,
+      criticalBand: assets.filter((a) => a.aarsBand === "CRITICAL").length,
+      highBand: assets.filter((a) => a.aarsBand === "HIGH").length,
+      guardrailCoveragePct: agents.length
+        ? Math.round((protectedAgents / agents.length) * 100)
+        : null,
+      sensitiveAccess: assets.filter(
+        (a) => AI_ASSET_KINDS.includes(a.kind) && a.hasAccessToSensitiveData,
+      ).length,
+      openIssues: issues.length,
+      complianceGaps: syncStore.loadFindings().length,
+      agenticIdentities: assets.filter((a) => a.identityPurpose === "AGENTIC").length,
+    },
+    bandCounts,
+    facets: {
+      kinds: [...kinds].sort(),
+      clouds: [...clouds].sort(),
+      bands: AARS_BAND_ORDER.filter((b) => bandCounts[b]),
+    },
+  };
+}
+
+export function getAssets(p?: unknown): ApiResult {
+  return run(() => {
+    const query = resolveAssetQuery((p ?? {}) as Rec);
+    // The expensive half — reading every asset and deriving the KPIs, the band histogram
+    // and the facet options — is cached once per data version and shared by every page
+    // and filter combination; only the filter/sort/slice below runs per request. The
+    // cache name deliberately differs from the pre-pagination "getAssets" entry, so a
+    // still-warm cache can't answer a paginating client with the old payload shape.
+    const model = cached("assetsModel", null, assetsModel) as AssetsModel;
+    const head = {
+      total: model.rows.length,
+      kpis: model.kpis,
+      bandCounts: model.bandCounts,
+      facets: model.facets,
+      pageSize: query.pageSize,
+      sort: query.sort,
+    };
+
+    // Small inventory: ship it whole and let the browser filter, sort and page with no
+    // further RPCs — the pre-pagination behavior, kept where it's affordable.
+    if (model.rows.length <= CLIENT_ALL_MAX) {
       return {
-        rows,
-        kpis: {
-          aiAssets: assets.filter((a) => AI_ASSET_KINDS.includes(a.kind)).length,
-          agents: agents.length,
-          criticalBand: assets.filter((a) => a.aarsBand === "CRITICAL").length,
-          highBand: assets.filter((a) => a.aarsBand === "HIGH").length,
-          guardrailCoveragePct: agents.length
-            ? Math.round((protectedAgents / agents.length) * 100)
-            : null,
-          sensitiveAccess: assets.filter(
-            (a) => AI_ASSET_KINDS.includes(a.kind) && a.hasAccessToSensitiveData,
-          ).length,
-          openIssues: issues.length,
-          complianceGaps: syncStore.loadFindings().length,
-          agenticIdentities: assets.filter((a) => a.identityPurpose === "AGENTIC").length,
-        },
+        ...head,
+        all: true,
+        rows: model.rows,
+        filtered: model.rows.length,
+        page: 0,
+        pageCount: Math.max(1, Math.ceil(model.rows.length / query.pageSize)),
       };
-    }),
+    }
+
+    const filtered = sortAssetRows(filterAssetRows(model.rows, query), query.sort);
+    const paged = pageOf(filtered, query.page, query.pageSize);
+    return {
+      ...head,
+      all: false,
+      rows: paged.rows,
+      filtered: filtered.length,
+      page: paged.page,
+      pageCount: paged.pageCount,
+    };
+  });
+}
+
+/**
+ * Every asset as {id, name, kind} for the graph page's seed picker — a dropdown needs the
+ * whole list, but not the table projection's other ten fields (and certainly not one page
+ * of it). Same order as the inventory's default sort: worst AARS first.
+ */
+export function getAssetOptions(_p?: unknown): ApiResult {
+  return run(() =>
+    cached("assetOptions", null, () => ({
+      rows: [...syncStore.loadAssets()]
+        .sort((a, b) => Number(b.aars ?? -1) - Number(a.aars ?? -1))
+        .map((n) => ({ id: n.id, name: n.name, kind: n.kind })),
+    })),
   );
 }
 

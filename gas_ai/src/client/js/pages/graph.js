@@ -326,7 +326,10 @@ export async function renderGraphPage(main, params, _ctx) {
         `${c.shownNodes} of ${c.totalNodes} nodes · ${c.shownEdges} of ${c.totalEdges} edges`),
       c.capped
         ? el("span", { class: "pill warn", title:
-            "The view is capped to stay light. Raise depth, expand a node, or narrow filters." },
+            `This view is capped at ${payload.options?.maxNodes || "its"} nodes to stay ` +
+            "light, so some neighbors — or, on a whole-estate view, some starting points " +
+            "— are not drawn. Narrow the filters, seed from a single asset or " +
+            "combination, or raise the node budget in Settings." },
             "⚠ capped")
         : null,
       payload.summaries && payload.summaries.length
@@ -500,8 +503,10 @@ export async function renderGraphPage(main, params, _ctx) {
     if (state.seed && state.seedKind !== "combo") {
       assetGroup.append(el("option", { value: `asset:${state.seed}` }, state.seed));
     }
-    // Lazily fill the asset list so the drawer opens without waiting on inventory.
-    swrCall("api_getAssets", {}).then((inv) => {
+    // Lazily fill the asset list so the drawer opens without waiting on inventory. The
+    // picker needs every asset but only its id/name/kind, so it asks for the slim option
+    // list rather than the inventory table's rows (which arrive one page at a time).
+    swrCall("api_getAssetOptions", {}).then((inv) => {
       const current = state.seedKind !== "combo" ? state.seed : "";
       assetGroup.textContent = "";
       for (const row of inv.rows) {

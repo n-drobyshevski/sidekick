@@ -16,8 +16,8 @@ palette is deliberately identical across both tools.
 
 | Page | What it shows |
 |---|---|
-| **Security Graph** | The node graph. Seed it from "all toxic combinations", one combination pattern, or a single asset; a **depth slider (1–3)** bounds the server-side traversal; per-kind caps collapse high-fanout neighbors into "+N more" pills that expand on demand; a count indicator flags capped views. Every risk signal is a **node on the attack path**, not a flag on a card: `ISSUE`, `SENSITIVE_DATA`, `INTERNET_EXPOSURE`, `EXCESSIVE_PRIVILEGE`, and `MISSING_GUARDRAIL` (a negated `PROTECTED_BY` edge, drawn dashed) hang off the asset they describe. Because they are evidence rather than inventory, the node-type / severity / cloud / project filters pass them through with their asset, and the grouped layout files them in their asset's block — unless you name a risk kind in the filter, which curates them directly. Toxic-combination members get a crimson halo + `TC` badge. Keyboard: arrows walk edges/lanes, Enter opens details; a "View as table" fallback carries the same data. |
-| **AI Inventory** | Every synced asset with AARS score/band, severity, combo membership, guardrail status; KPI cards (guardrail coverage %, critical/high counts). |
+| **Security Graph** | The node graph. Seed it from "all toxic combinations", one combination pattern, or a single asset; a **depth slider (1–3)** bounds the server-side traversal; a **100-node budget** (Settings, 30–400) is a hard ceiling on the payload, counting the "+N more" stubs it also draws; per-kind caps collapse high-fanout neighbors into those pills, which expand on demand; a whole-estate view admits its seeds worst-first in waves so the budget buys paths rather than a field of disconnected dots; a count indicator flags capped views. Every risk signal is a **node on the attack path**, not a flag on a card: `ISSUE`, `SENSITIVE_DATA`, `INTERNET_EXPOSURE`, `EXCESSIVE_PRIVILEGE`, and `MISSING_GUARDRAIL` (a negated `PROTECTED_BY` edge, drawn dashed) hang off the asset they describe. Because they are evidence rather than inventory, the node-type / severity / cloud / project filters pass them through with their asset, and the grouped layout files them in their asset's block — unless you name a risk kind in the filter, which curates them directly. Toxic-combination members get a crimson halo + `TC` badge. Keyboard: arrows walk edges/lanes, Enter opens details; a "View as table" fallback carries the same data. |
+| **AI Inventory** | Every synced asset with AARS score/band, severity, combo membership, guardrail status; KPI cards (guardrail coverage %, critical/high counts). The table is **paged** (25–250 rows, page and size in the URL); a small estate still ships in one payload and filters in the browser, a large one is filtered and paged server-side — the KPIs, the band chart and the filter options always describe the whole inventory either way. |
 | **Toxic Combinations** | The 4 combination patterns with adjusted-vs-native severity, the 5Rs amplifier note, framework tags (OWASP LLM / Agentic / ML, 5Rs), affected assets, and the issue drill-down. |
 | **Wiz Scans** | The coverage page: what Wiz scans (AI-SPM, toxic-combination engine, CIEM, DSPM, guardrail coverage, network exposure, identity, supply chain, compliance) and where the results land. |
 | **Data / Settings** | Sync history, storage stats, reset; default depth, node budget, credential status. |
@@ -104,6 +104,13 @@ Useful harness flags: `?noseed` (empty state), `?slow=400` (loading states).
   deterministic layout computed in `src/domain/graphLayout.ts` — no Cytoscape/D3;
   the bundle ships inline in every page load, and DOM nodes give native keyboard
   focus. Layout and projection are pure and unit-tested.
+- **No endpoint ships an unbounded list.** `getAssets` answers with the whole
+  inventory only under `CLIENT_ALL_MAX` (`src/domain/assetTable.ts`) and pages past
+  it; its rows carry the dozen fields the table renders, not the ~25 the drill-down
+  needs (those stay behind `getAssetDetail`). A list built for a control, not a
+  table, gets its own slim endpoint — the graph's seed picker uses
+  `getAssetOptions`. When adding a page that lists rows, follow the same shape:
+  aggregates over the full set, rows by the page.
 - **Severity never follows the brand.** Crimson marks identity/interaction and
   toxic-combination membership (always paired with the `TC` glyph); severity is
   always a dot + label with the shared palette; AARS chips reuse severity tokens.

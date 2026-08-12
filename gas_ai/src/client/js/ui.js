@@ -138,16 +138,30 @@ export function toast(message, kind) {
   setTimeout(() => t.remove(), 6000);
 }
 
+/**
+ * Prev/Next controls, or a bare row count when a single page fits. The buttons carry
+ * `data-nav` so a caller that rebuilds the pager on every page change can put keyboard
+ * focus back on the control that was just used.
+ */
 export function pager(page, pageCount, total, onPage) {
   if (pageCount <= 1) {
-    return el("div", { class: "pager" }, `${total.toLocaleString()} rows`);
+    return el("div", { class: "pager" },
+      `${total.toLocaleString()} row${total === 1 ? "" : "s"}`);
   }
   return el(
     "div",
     { class: "pager" },
-    el("button", { onclick: () => onPage(page - 1), disabled: page <= 0 }, "‹ Prev"),
+    el("button", {
+      "data-nav": "prev",
+      onclick: () => onPage(page - 1),
+      disabled: page <= 0,
+    }, "‹ Prev"),
     `Page ${page + 1} of ${pageCount} — ${total.toLocaleString()} rows`,
-    el("button", { onclick: () => onPage(page + 1), disabled: page >= pageCount - 1 }, "Next ›"),
+    el("button", {
+      "data-nav": "next",
+      onclick: () => onPage(page + 1),
+      disabled: page >= pageCount - 1,
+    }, "Next ›"),
   );
 }
 

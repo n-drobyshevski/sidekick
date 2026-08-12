@@ -76,9 +76,10 @@ export async function renderSettings(main, _params, ctx) {
           saveBtn,
         ),
         el("p", { class: "small muted", style: "margin:10px 0 0" },
-          "Depth bounds how far the graph walks from its seeds; the node budget caps " +
-          "any single view. Both keep server payloads light — raise them only if views " +
-          "feel too shallow."),
+          "Depth bounds how far the graph walks from its seeds; the node budget is a " +
+          "hard ceiling on one view — 100 by default, counting the “+N more” stubs. A " +
+          "view that hits it says so with a ⚠ capped pill. Both keep server payloads " +
+          "light; raise them only if views feel too shallow."),
       ),
     );
 

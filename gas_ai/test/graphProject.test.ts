@@ -2,6 +2,7 @@
 // global budgets, expandIds, filters (seeds exempt), and determinism.
 
 import { describe, expect, it } from "vitest";
+import { MAX_NODES_DEFAULT } from "../src/domain/config";
 import {
   enrichGraphDoc,
   withExcessivePrivilegeNodes,
@@ -78,6 +79,48 @@ describe("projectGraph", () => {
     });
     expect(p.counts.shownNodes).toBeLessThanOrEqual(20);
     expect(p.counts.capped).toBe(true);
+  });
+
+  // The budget is a promise about the payload, so the "+N more" stubs — which the browser
+  // draws, focuses and lays out like any other node — have to be inside it.
+  it("the SUMMARY stubs count against maxNodes, not on top of it", () => {
+    for (const maxNodes of [4, 7, 12, 20, 45]) {
+      const p = projectGraph(DOC, {
+        seedIds: ["agent-autogen", "agent-h-chatbot", "agent-i"],
+        depth: 3,
+        maxNodes,
+      });
+      expect(p.nodes.length).toBeLessThanOrEqual(maxNodes);
+      expect(p.counts.shownNodes + p.summaries.length).toBe(p.nodes.length);
+    }
+  });
+
+  it("a budget too small for a stub still flags the view as capped", () => {
+    // Enough room for the seed and its first neighbors, never enough to also stub the
+    // collapsed buckets — the pill is then the only thing that says rows are missing.
+    const p = projectGraph(DOC, { seedIds: ["agent-autogen"], depth: 2, maxNodes: 5 });
+    expect(p.nodes.length).toBeLessThanOrEqual(5);
+    expect(p.counts.capped).toBe(true);
+  });
+
+  it("the stub edges come out of maxEdges too", () => {
+    for (const maxEdges of [1, 3, 8, 30]) {
+      const p = projectGraph(DOC, {
+        seedIds: ["agent-autogen", "agent-h-chatbot"],
+        depth: 3,
+        maxEdges,
+      });
+      expect(p.edges.length).toBeLessThanOrEqual(maxEdges);
+    }
+  });
+
+  it("the default budget holds the whole-estate view to 100 nodes", () => {
+    // The default view (every toxic-combination asset, depth 2) with no explicit budget.
+    const seedIds = [...new Set(SEED_ISSUES.filter((i) => i.status === "OPEN")
+      .map((i) => i.assetId))].filter(Boolean) as string[];
+    const p = projectGraph(DOC, { seedIds, depth: 2 });
+    expect(p.nodes.length).toBeLessThanOrEqual(MAX_NODES_DEFAULT);
+    expect(MAX_NODES_DEFAULT).toBe(100);
   });
 
   it("filters exclude non-matching neighbors but never the seeds", () => {
