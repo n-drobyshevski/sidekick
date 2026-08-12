@@ -1,7 +1,9 @@
 // Generic header-mapped tab access over the SIDEKICK AI spreadsheet.
 //
 // Row 1 of every tab is a frozen header; all reads/writes map columns BY HEADER NAME,
-// never by index, so adding a column is non-breaking. Empty cells read as null; every
+// never by index, so adding a column is non-breaking — writes bring the header row up to
+// the declared schema first (see ensureHeaders), so a tab that predates a column receives
+// it instead of dropping the value. Empty cells read as null; every
 // write is one batched setValues call. Engine copied from the OS-vulns tool; only the
 // tab schema differs — here the durable state is a graph snapshot (assets/edges/issues
 // wholesale-rewritten per sync), not an append-only vulnerability ledger.
@@ -86,15 +88,7 @@ export function ensureTabs(ss: GoogleAppsScript.Spreadsheet.Spreadsheet): void {
       sh.getRange(1, 1, 1, headers.length).setValues([headers]);
       sh.setFrozenRows(1);
     } else {
-      // Append any headers a newer schema added (order-safe: appended last).
-      const width = Math.max(sh.getLastColumn(), 1);
-      const existing = sh.getRange(1, 1, 1, width).getValues()[0]
-        .map(String)
-        .filter((h) => h !== "");
-      const missing = headers.filter((h) => !existing.includes(h));
-      if (missing.length) {
-        sh.getRange(1, existing.length + 1, 1, missing.length).setValues([missing]);
-      }
+      ensureHeaders(sh, tab); // append any headers a newer schema added
     }
   }
   const dflt = ss.getSheetByName("Sheet1");
@@ -141,13 +135,32 @@ export function readAll(tab: string): Rec[] {
   return out;
 }
 
+/**
+ * Bring a tab's header row up to the declared schema, returning the headers to write by.
+ *
+ * Writes map by header NAME, so a column the sheet has never seen is silently dropped —
+ * which is how a renamed column erases itself: the sync writes the new name into a sheet
+ * that only has the old one, and every row loses the value. setup() adds new headers, but
+ * an upgrade that doesn't re-run it would otherwise keep writing into a schema the sheet
+ * no longer has. Only DECLARED columns are added, so a stray key on a row still can't
+ * grow the sheet, and they go on the end, so existing column order is untouched.
+ */
+function ensureHeaders(sh: GoogleAppsScript.Spreadsheet.Sheet, tab: string): string[] {
+  const width = Math.max(sh.getLastColumn(), 1);
+  const existing = sh.getRange(1, 1, 1, width).getValues()[0].map(String).filter(Boolean);
+  const missing = (TAB_HEADERS[tab] ?? []).filter((h) => !existing.includes(h));
+  if (missing.length) {
+    sh.getRange(1, existing.length + 1, 1, missing.length).setValues([missing]);
+  }
+  return [...existing, ...missing];
+}
+
 /** Replace ALL data rows of a tab in one batched write. */
 export function overwrite(tab: string, rows: Rec[]): void {
   const sh = sheet(tab);
-  const lastCol = Math.max(sh.getLastColumn(), 1);
-  const headers = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(String).filter(Boolean);
+  const headers = ensureHeaders(sh, tab);
   const lastRow = sh.getLastRow();
-  if (lastRow > 1) sh.getRange(2, 1, lastRow - 1, lastCol).clearContent();
+  if (lastRow > 1) sh.getRange(2, 1, lastRow - 1, headers.length).clearContent();
   if (!rows.length) return;
   const grid = rows.map((r) => headers.map((h) => toCell(r[h])));
   const range = sh.getRange(2, 1, grid.length, headers.length);
@@ -159,8 +172,7 @@ export function overwrite(tab: string, rows: Rec[]): void {
 export function appendRows(tab: string, rows: Rec[]): void {
   if (!rows.length) return;
   const sh = sheet(tab);
-  const lastCol = Math.max(sh.getLastColumn(), 1);
-  const headers = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(String).filter(Boolean);
+  const headers = ensureHeaders(sh, tab);
   const grid = rows.map((r) => headers.map((h) => toCell(r[h])));
   const range = sh.getRange(sh.getLastRow() + 1, 1, grid.length, headers.length);
   range.setNumberFormat("@");
