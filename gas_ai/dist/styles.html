@@ -609,8 +609,8 @@ input[type="range"] { accent-color: var(--accent); }
 .sev-UNKNOWN { background: rgba(71, 85, 105, 0.14); color: var(--sev-unknown-text); }
 .sev-UNKNOWN .sev-dot { background: var(--sev-unknown); }
 
-/* AARS band chips reuse the severity tokens by band (MINIMAL borrows INFO) — the
-   brand crimson never scores risk. */
+/* AARS chips reuse the severity tokens directly — the AARS scale carries the same
+   values as the Wiz severity scale, and the brand crimson never scores risk. */
 .aars-chip {
   display: inline-flex; align-items: center; gap: 5px;
   border-radius: 999px; padding: 2px 9px;

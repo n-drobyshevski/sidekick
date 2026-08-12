@@ -4,6 +4,7 @@
 // the client mirrors the same predicate and comparators for the small-inventory path (see
 // src/client/js/pages/inventory.js — the client bundle can't import the TS module).
 
+import { normalizeAarsSeverity } from "./config";
 import type { Rec } from "./util";
 
 export type AssetSort = "aars" | "name" | "kind" | "cloud";
@@ -28,7 +29,7 @@ export interface AssetTableQuery {
   q: string;
   kind: string;
   cloud: string;
-  band: string;
+  aarsSeverity: string;
   sort: AssetSort;
   page: number;
   pageSize: number;
@@ -53,7 +54,8 @@ export function resolveAssetQuery(params: Rec): AssetTableQuery {
     q: str(params["q"]).trim().toLowerCase(),
     kind: str(params["kind"]),
     cloud: str(params["cloud"]),
-    band: str(params["band"]),
+    // `band` is the pre-rename spelling, still honored so shared links keep working.
+    aarsSeverity: normalizeAarsSeverity(params["aarsSeverity"] ?? params["band"]) ?? "",
     sort: ASSET_SORTS.indexOf(sort) >= 0 ? sort : "aars",
     page: Number.isFinite(page) ? Math.max(0, Math.floor(page)) : 0,
     pageSize:
@@ -63,12 +65,12 @@ export function resolveAssetQuery(params: Rec): AssetTableQuery {
   };
 }
 
-/** Name substring (case-insensitive) plus exact kind / cloud / AARS-band. */
+/** Name substring (case-insensitive) plus exact kind / cloud / AARS severity. */
 export function matchesAssetQuery(row: Rec, q: AssetTableQuery): boolean {
   if (q.q && !str(row["name"]).toLowerCase().includes(q.q)) return false;
   if (q.kind && str(row["kind"]) !== q.kind) return false;
   if (q.cloud && str(row["cloud"]) !== q.cloud) return false;
-  if (q.band && str(row["aarsBand"]) !== q.band) return false;
+  if (q.aarsSeverity && str(row["aarsSeverity"]) !== q.aarsSeverity) return false;
   return true;
 }
 

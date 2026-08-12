@@ -143,15 +143,15 @@ describe("enrichGraphDoc", () => {
     const doc = enriched();
     const byId = new Map(doc.nodes.map((n) => [n.id, n]));
     expect(byId.get("agent-autogen")?.aars).toBe(76);
-    expect(byId.get("agent-autogen")?.aarsBand).toBe("CRITICAL");
+    expect(byId.get("agent-autogen")?.aarsSeverity).toBe("CRITICAL");
     expect(byId.get("agent-h-chatbot")?.aars).toBe(71);
-    expect(byId.get("agent-h-chatbot")?.aarsBand).toBe("CRITICAL");
+    expect(byId.get("agent-h-chatbot")?.aarsSeverity).toBe("CRITICAL");
     expect(byId.get("agent-d")?.aars).toBe(67);
     expect(byId.get("agent-g")?.aars).toBe(66);
     expect(byId.get("agent-i")?.aars).toBe(66);
     expect(byId.get("agent-a")?.aars).toBe(62);
     expect(byId.get("agent-j")?.aars).toBe(29);
-    expect(byId.get("agent-j")?.aarsBand).toBe("LOW");
+    expect(byId.get("agent-j")?.aarsSeverity).toBe("LOW");
   });
 
   it("asset severity = worst adjusted issue severity; combo membership attached", () => {
@@ -163,10 +163,10 @@ describe("enrichGraphDoc", () => {
     expect(agentJ.severity).toBe("MEDIUM"); // LOW native, adjusted MEDIUM
   });
 
-  it("healthy protected agent gets a MINIMAL score and no combo membership", () => {
+  it("healthy protected agent scores INFO and carries no combo membership", () => {
     const doc = enriched();
     const safe = doc.nodes.find((n) => n.id === "agent-l-support")!;
-    expect(safe.aarsBand).toBe("MINIMAL");
+    expect(safe.aarsSeverity).toBe("INFO");
     expect(safe.severity).toBeUndefined();
     expect(safe.comboGroups).toBeUndefined();
   });

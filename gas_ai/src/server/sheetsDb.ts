@@ -25,7 +25,7 @@ export const TAB_HEADERS: Record<string, string[]> = {
     "id", "kind", "name", "native_type", "cloud", "region", "status",
     "account_id", "account_name", "projects_json", "first_seen", "last_seen",
     "internet", "open_internet", "sensitive_data", "sensitive_access", "high_priv",
-    "admin_priv", "guardrail_missing", "severity", "aars", "aars_band",
+    "admin_priv", "guardrail_missing", "severity", "aars", "aars_severity",
     "aars_pillars_json", "combo_groups", "tags_json", "technology_categories",
     "identity_purpose", "issue_analytics_json",
   ],

@@ -93,7 +93,7 @@ const barEndLabels = {
 };
 
 /**
- * Horizontal categorical bar (AARS bands, severities, …): labels + counts + one
+ * Horizontal categorical bar (AARS severities, issue severities, …): labels + counts + one
  * color per category from `colors`. Clicking a bar fires onClickLabel(label).
  */
 export function categoryBar(canvas, labels, counts, colors, onClickLabel) {

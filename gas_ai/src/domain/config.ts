@@ -25,18 +25,19 @@ export const SEVERITY_GLYPHS: Record<string, string> = {
   UNKNOWN: "⚫",
 };
 
-// AARS (AI Asset Risk Score) bands, worst first. Bands reuse the severity tokens for
-// their visual treatment (MINIMAL borrows INFO) so no new color carries meaning.
-export const AARS_BAND_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "MINIMAL"] as const;
-export type AarsBand = (typeof AARS_BAND_ORDER)[number];
+// AARS (AI Asset Risk Score) severity, worst first — the score's own risk level, as
+// opposed to the Wiz severity of an asset's open issues. The two scales carry the same
+// values (this one simply has no UNKNOWN: every scored asset lands somewhere), so a
+// score's severity reads with the severity tokens directly and introduces no new color.
+export const AARS_SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"] as const;
+export type AarsSeverity = (typeof AARS_SEVERITY_ORDER)[number];
 
-export const AARS_BAND_SEVERITY_TOKEN: Record<string, string> = {
-  CRITICAL: "CRITICAL",
-  HIGH: "HIGH",
-  MEDIUM: "MEDIUM",
-  LOW: "LOW",
-  MINIMAL: "INFO",
-};
+/** A legacy `MINIMAL` — the old name for the bottom band — read as today's INFO. */
+export function normalizeAarsSeverity(v: unknown): AarsSeverity | undefined {
+  const s = typeof v === "string" ? v.trim().toUpperCase() : "";
+  if (s === "MINIMAL") return "INFO";
+  return (AARS_SEVERITY_ORDER as readonly string[]).includes(s) ? (s as AarsSeverity) : undefined;
+}
 
 // Graph projection guardrails (server-side depth control). Depth is user-facing;
 // the caps keep any single getGraph payload bounded regardless of tenant size.

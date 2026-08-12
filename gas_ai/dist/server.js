@@ -204,7 +204,7 @@ var Server = (() => {
       "guardrail_missing",
       "severity",
       "aars",
-      "aars_band",
+      "aars_severity",
       "aars_pillars_json",
       "combo_groups",
       "tags_json",
@@ -1014,6 +1014,40 @@ var Server = (() => {
     setSettings: () => setSettings
   });
 
+  // src/domain/config.ts
+  var SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
+  var SEVERITY_COLORS = {
+    CRITICAL: "#dc2626",
+    HIGH: "#ea580c",
+    MEDIUM: "#d97706",
+    LOW: "#2563eb",
+    INFO: "#64748b",
+    UNKNOWN: "#475569"
+  };
+  var SEVERITY_GLYPHS = {
+    CRITICAL: "\u{1F534}",
+    HIGH: "\u{1F7E0}",
+    MEDIUM: "\u{1F7E1}",
+    LOW: "\u{1F535}",
+    INFO: "\u26AA",
+    UNKNOWN: "\u26AB"
+  };
+  var AARS_SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"];
+  function normalizeAarsSeverity(v) {
+    const s = typeof v === "string" ? v.trim().toUpperCase() : "";
+    if (s === "MINIMAL") return "INFO";
+    return AARS_SEVERITY_ORDER.includes(s) ? s : void 0;
+  }
+  var DEPTH_MIN = 1;
+  var DEPTH_MAX = 3;
+  var DEPTH_DEFAULT = 2;
+  var MAX_NODES_DEFAULT = 100;
+  var MAX_NODES_FLOOR = 30;
+  var MAX_NODES_CEILING = 400;
+  var MAX_EDGES_DEFAULT = 250;
+  var EDGE_BUDGET_RATIO = 2.5;
+  var SEED_WAVE_RATIO = 0.4;
+
   // src/domain/assetTable.ts
   var ASSET_SORTS = ["aars", "name", "kind", "cloud"];
   var DEFAULT_PAGE_SIZE = 50;
@@ -1027,6 +1061,7 @@ var Server = (() => {
     return Number.isFinite(n) ? n : -1;
   }
   function resolveAssetQuery(params) {
+    var _a4, _b;
     const sort = str(params["sort"]);
     const page = Number(params["page"]);
     const pageSize = Number(params["pageSize"]);
@@ -1034,7 +1069,8 @@ var Server = (() => {
       q: str(params["q"]).trim().toLowerCase(),
       kind: str(params["kind"]),
       cloud: str(params["cloud"]),
-      band: str(params["band"]),
+      // `band` is the pre-rename spelling, still honored so shared links keep working.
+      aarsSeverity: (_b = normalizeAarsSeverity((_a4 = params["aarsSeverity"]) != null ? _a4 : params["band"])) != null ? _b : "",
       sort: ASSET_SORTS.indexOf(sort) >= 0 ? sort : "aars",
       page: Number.isFinite(page) ? Math.max(0, Math.floor(page)) : 0,
       pageSize: Number.isFinite(pageSize) && pageSize >= 1 ? Math.min(Math.floor(pageSize), MAX_PAGE_SIZE) : DEFAULT_PAGE_SIZE
@@ -1044,7 +1080,7 @@ var Server = (() => {
     if (q.q && !str(row["name"]).toLowerCase().includes(q.q)) return false;
     if (q.kind && str(row["kind"]) !== q.kind) return false;
     if (q.cloud && str(row["cloud"]) !== q.cloud) return false;
-    if (q.band && str(row["aarsBand"]) !== q.band) return false;
+    if (q.aarsSeverity && str(row["aarsSeverity"]) !== q.aarsSeverity) return false;
     return true;
   }
   function filterAssetRows(rows, q) {
@@ -1071,42 +1107,6 @@ var Server = (() => {
       pageCount
     };
   }
-
-  // src/domain/config.ts
-  var SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
-  var SEVERITY_COLORS = {
-    CRITICAL: "#dc2626",
-    HIGH: "#ea580c",
-    MEDIUM: "#d97706",
-    LOW: "#2563eb",
-    INFO: "#64748b",
-    UNKNOWN: "#475569"
-  };
-  var SEVERITY_GLYPHS = {
-    CRITICAL: "\u{1F534}",
-    HIGH: "\u{1F7E0}",
-    MEDIUM: "\u{1F7E1}",
-    LOW: "\u{1F535}",
-    INFO: "\u26AA",
-    UNKNOWN: "\u26AB"
-  };
-  var AARS_BAND_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "MINIMAL"];
-  var AARS_BAND_SEVERITY_TOKEN = {
-    CRITICAL: "CRITICAL",
-    HIGH: "HIGH",
-    MEDIUM: "MEDIUM",
-    LOW: "LOW",
-    MINIMAL: "INFO"
-  };
-  var DEPTH_MIN = 1;
-  var DEPTH_MAX = 3;
-  var DEPTH_DEFAULT = 2;
-  var MAX_NODES_DEFAULT = 100;
-  var MAX_NODES_FLOOR = 30;
-  var MAX_NODES_CEILING = 400;
-  var MAX_EDGES_DEFAULT = 250;
-  var EDGE_BUDGET_RATIO = 2.5;
-  var SEED_WAVE_RATIO = 0.4;
 
   // src/domain/settingsLogic.ts
   function clampDepth(v) {
@@ -2809,12 +2809,12 @@ var Server = (() => {
   function gap(code, points) {
     return { code, points: points != null ? points : defaultGapPoints(code) };
   }
-  function aarsBand(score2) {
+  function aarsSeverity(score2) {
     if (score2 >= 70) return "CRITICAL";
     if (score2 >= 50) return "HIGH";
     if (score2 >= 30) return "MEDIUM";
     if (score2 >= 10) return "LOW";
-    return "MINIMAL";
+    return "INFO";
   }
   function worstSeverityPoints(severities) {
     var _a4;
@@ -2835,7 +2835,7 @@ var Server = (() => {
     );
     const data = Math.round(DATA_EXPOSURE_POINTS[input.dataExposure] * FIVE_RS_MULTIPLIER);
     const score2 = Math.min(100, toxic + compliance + data);
-    return { score: score2, band: aarsBand(score2), pillars: { toxic, compliance, data } };
+    return { score: score2, severity: aarsSeverity(score2), pillars: { toxic, compliance, data } };
   }
 
   // src/domain/graphEnrich.ts
@@ -2932,7 +2932,7 @@ var Server = (() => {
         const input = hint ? { issueSeverities: nodeIssues.map((i) => i.nativeSeverity), ...hint } : deriveAarsInput(node2, nodeIssues);
         const result = computeAars(input);
         node2.aars = result.score;
-        node2.aarsBand = result.band;
+        node2.aarsSeverity = result.severity;
         node2.aarsPillars = result.pillars;
       }
       return node2;
@@ -3640,7 +3640,7 @@ var Server = (() => {
       technology_categories: ((_l = n.technologyCategories) != null ? _l : []).join(","),
       severity: (_m = n.severity) != null ? _m : null,
       aars: (_n = n.aars) != null ? _n : null,
-      aars_band: (_o = n.aarsBand) != null ? _o : null,
+      aars_severity: (_o = n.aarsSeverity) != null ? _o : null,
       aars_pillars_json: n.aarsPillars ? JSON.stringify(n.aarsPillars) : null,
       combo_groups: ((_p = n.comboGroups) != null ? _p : []).join(","),
       tags_json: n.tags ? JSON.stringify(n.tags) : null,
@@ -3679,8 +3679,8 @@ var Server = (() => {
     const severity = (_l = r["severity"]) != null ? _l : null;
     if (severity) node2.severity = severity;
     if (r["aars"] !== null && r["aars"] !== void 0) node2.aars = Number(r["aars"]);
-    const band = (_m = r["aars_band"]) != null ? _m : null;
-    if (band) node2.aarsBand = band;
+    const aarsSev = normalizeAarsSeverity((_m = r["aars_severity"]) != null ? _m : r["aars_band"]);
+    if (aarsSev) node2.aarsSeverity = aarsSev;
     const pillars = parseJson(r["aars_pillars_json"], null);
     if (pillars) node2.aarsPillars = pillars;
     const combos = String((_n = r["combo_groups"]) != null ? _n : "");
@@ -3828,6 +3828,22 @@ var Server = (() => {
     graphDocMemo = loadGraphDocUncached();
     return graphDocMemo;
   }
+  function normalizeLegacyAars(doc) {
+    let touched = false;
+    const nodes = doc.nodes.map((n) => {
+      var _a4;
+      const loose = n;
+      if (loose.aarsBand === void 0 && n.aarsSeverity === void 0) return n;
+      touched = true;
+      const next = { ...loose };
+      delete next.aarsBand;
+      const sev = normalizeAarsSeverity((_a4 = n.aarsSeverity) != null ? _a4 : loose.aarsBand);
+      if (sev) next.aarsSeverity = sev;
+      else delete next.aarsSeverity;
+      return next;
+    });
+    return touched ? { ...doc, nodes } : doc;
+  }
   function withRiskNodes(doc) {
     return withMissingGuardrailNodes(
       withExcessivePrivilegeNodes(withInternetExposureNodes(withSensitiveDataNodes(doc)))
@@ -3836,7 +3852,7 @@ var Server = (() => {
   function loadGraphDocUncached() {
     var _a4;
     const snap = readGraphSnapshot();
-    if (snap) return withRiskNodes(snap);
+    if (snap) return withRiskNodes(normalizeLegacyAars(snap));
     const assetRows = readAll(TABS.assets);
     if (!assetRows.length) return null;
     const nodes = assetRows.map(rowToAsset);
@@ -4258,17 +4274,16 @@ var Server = (() => {
     for (const issue2 of issues2) {
       bySeverity[issue2.adjustedSeverity] = ((_a4 = bySeverity[issue2.adjustedSeverity]) != null ? _a4 : 0) + 1;
     }
-    const byBand = {};
+    const byAarsSeverity = {};
     for (const a of assets) {
-      if (a.aarsBand) byBand[a.aarsBand] = ((_b = byBand[a.aarsBand]) != null ? _b : 0) + 1;
+      if (a.aarsSeverity) byAarsSeverity[a.aarsSeverity] = ((_b = byAarsSeverity[a.aarsSeverity]) != null ? _b : 0) + 1;
     }
     return {
       palette: {
         order: SEVERITY_ORDER,
         colors: SEVERITY_COLORS,
         glyphs: SEVERITY_GLYPHS,
-        aarsBands: AARS_BAND_ORDER,
-        aarsBandSeverity: AARS_BAND_SEVERITY_TOKEN
+        aarsSeverities: AARS_SEVERITY_ORDER
       },
       comboLegend: COMBO_GROUPS.map((g) => ({
         id: g.id,
@@ -4291,7 +4306,7 @@ var Server = (() => {
         totalAssets: assets.length,
         openIssues: issues2.length,
         bySeverity,
-        byBand
+        byAarsSeverity
       },
       filterOptions: filterOptions(assets)
     };
@@ -4371,7 +4386,7 @@ var Server = (() => {
       projects: ((_e = n.projects) != null ? _e : []).map((p) => p.name),
       severity: (_f = n.severity) != null ? _f : null,
       aars: (_g = n.aars) != null ? _g : null,
-      aarsBand: (_h = n.aarsBand) != null ? _h : null,
+      aarsSeverity: (_h = n.aarsSeverity) != null ? _h : null,
       comboGroups: (_i = n.comboGroups) != null ? _i : [],
       internet: (_j = n.isAccessibleFromInternet) != null ? _j : null,
       openInternet: (_k = n.isOpenToAllInternet) != null ? _k : null,
@@ -4397,7 +4412,7 @@ var Server = (() => {
       region: (_b = n.region) != null ? _b : null,
       severity: (_c = n.severity) != null ? _c : null,
       aars: (_d = n.aars) != null ? _d : null,
-      aarsBand: (_e = n.aarsBand) != null ? _e : null,
+      aarsSeverity: (_e = n.aarsSeverity) != null ? _e : null,
       combos: ((_f = n.comboGroups) != null ? _f : []).length,
       guardrailMissing: (_g = n.guardrailMissing) != null ? _g : false,
       agentic: n.identityPurpose === "AGENTIC",
@@ -4411,11 +4426,11 @@ var Server = (() => {
     const agents = assets.filter((a) => a.kind === "AI_AGENT");
     const protectedAgents = agents.filter((a) => !a.guardrailMissing).length;
     const rows = assets.map(assetTableRow).sort(ASSET_COMPARATORS.aars);
-    const bandCounts = {};
+    const aarsSeverityCounts = {};
     const kinds = /* @__PURE__ */ new Set();
     const clouds = /* @__PURE__ */ new Set();
     for (const a of assets) {
-      if (a.aarsBand) bandCounts[a.aarsBand] = ((_a4 = bandCounts[a.aarsBand]) != null ? _a4 : 0) + 1;
+      if (a.aarsSeverity) aarsSeverityCounts[a.aarsSeverity] = ((_a4 = aarsSeverityCounts[a.aarsSeverity]) != null ? _a4 : 0) + 1;
       kinds.add(a.kind);
       if (a.cloudPlatform) clouds.add(a.cloudPlatform);
     }
@@ -4424,8 +4439,8 @@ var Server = (() => {
       kpis: {
         aiAssets: assets.filter((a) => AI_ASSET_KINDS.includes(a.kind)).length,
         agents: agents.length,
-        criticalBand: assets.filter((a) => a.aarsBand === "CRITICAL").length,
-        highBand: assets.filter((a) => a.aarsBand === "HIGH").length,
+        criticalAars: assets.filter((a) => a.aarsSeverity === "CRITICAL").length,
+        highAars: assets.filter((a) => a.aarsSeverity === "HIGH").length,
         guardrailCoveragePct: agents.length ? Math.round(protectedAgents / agents.length * 100) : null,
         sensitiveAccess: assets.filter(
           (a) => AI_ASSET_KINDS.includes(a.kind) && a.hasAccessToSensitiveData
@@ -4434,11 +4449,11 @@ var Server = (() => {
         complianceGaps: loadFindings().length,
         agenticIdentities: assets.filter((a) => a.identityPurpose === "AGENTIC").length
       },
-      bandCounts,
+      aarsSeverityCounts,
       facets: {
         kinds: [...kinds].sort(),
         clouds: [...clouds].sort(),
-        bands: AARS_BAND_ORDER.filter((b) => bandCounts[b])
+        aarsSeverities: AARS_SEVERITY_ORDER.filter((sev) => aarsSeverityCounts[sev])
       }
     };
   }
@@ -4449,7 +4464,7 @@ var Server = (() => {
       const head = {
         total: model.rows.length,
         kpis: model.kpis,
-        bandCounts: model.bandCounts,
+        aarsSeverityCounts: model.aarsSeverityCounts,
         facets: model.facets,
         pageSize: query.pageSize,
         sort: query.sort
@@ -4571,7 +4586,7 @@ var Server = (() => {
             assets: s.assetIds.map((id) => {
               var _a4, _b;
               const a = assets.get(id);
-              return a ? { id, name: a.name, aars: (_a4 = a.aars) != null ? _a4 : null, aarsBand: (_b = a.aarsBand) != null ? _b : null } : { id, name: id, aars: null, aarsBand: null };
+              return a ? { id, name: a.name, aars: (_a4 = a.aars) != null ? _a4 : null, aarsSeverity: (_b = a.aarsSeverity) != null ? _b : null } : { id, name: id, aars: null, aarsSeverity: null };
             })
           })),
           totalOpen: issues2.length

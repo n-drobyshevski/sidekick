@@ -70,14 +70,13 @@ export function openAssetSheet(assetId, opts = {}) {
       return;
     }
     const boot = bootstrapCached();
-    const bandSeverity = boot?.palette?.aarsBandSeverity || {};
     const { node, issues, neighbors, findings } = detail;
     clear(body);
 
     const head = el("div", { class: "sheet-section" },
       el("div", { style: "display:flex; gap:8px; align-items:center; flex-wrap:wrap" },
         node.severity ? sevBadge(node.severity) : null,
-        aarsChip(node.aars, node.aarsBand, bandSeverity),
+        aarsChip(node.aars, node.aarsSeverity),
         (node.comboGroups || []).length
           ? el("span", { class: "pill bad" }, "Toxic combination")
           : null,

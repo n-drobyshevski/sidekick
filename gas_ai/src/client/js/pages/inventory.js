@@ -1,4 +1,4 @@
-// AI Inventory: KPI cards, AARS-band distribution chart, and the sortable, paged asset
+// AI Inventory: KPI cards, AARS-severity distribution chart, and the sortable, paged asset
 // table. Row click opens the shared asset sheet; "Open in graph" deep-links.
 //
 // The page never holds the whole estate unless it's cheap to. api_getAssets answers with
@@ -8,7 +8,7 @@
 // it answers one page at a time and the same controls become server round trips: search is
 // debounced harder, a filter change resets to page 1, and each page is fetched on demand.
 //
-// Either way the KPI row, the band chart and the filter options describe the WHOLE
+// Either way the KPI row, the severity chart and the filter options describe the WHOLE
 // inventory, not the page and not the filtered subset — the server aggregates them once
 // per sync, so they stay honest when the client is holding 50 rows out of 5,000.
 
@@ -55,6 +55,15 @@ const SORTS = {
   kind: (a, b) => String(a.kind).localeCompare(String(b.kind)) || SORTS.aars(a, b),
   cloud: (a, b) => String(a.cloud ?? "").localeCompare(String(b.cloud ?? "")) || SORTS.aars(a, b),
 };
+// Mirrors normalizeAarsSeverity in src/domain/config.ts — MINIMAL was the old name for
+// the bottom of the AARS scale, so a link saved before the rename still resolves.
+const AARS_SEVERITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"];
+function normalizeAarsSeverity(v) {
+  const s = String(v || "").trim().toUpperCase();
+  if (s === "MINIMAL") return "INFO";
+  return AARS_SEVERITIES.indexOf(s) >= 0 ? s : "";
+}
+
 const PAGE_SIZES = [25, 50, 100, 250];
 const DEFAULT_PAGE_SIZE = 50;
 
@@ -83,7 +92,9 @@ export async function renderInventory(main, params) {
   // it's seeded from the URL so a filtered page is shareable/reloadable.
   const filters = {
     q: params.q || "", kind: params.kind || "",
-    cloud: params.cloud || "", band: params.band || "",
+    // `band` is the pre-rename param, still read so shared links keep working.
+    cloud: params.cloud || "",
+    aarsSeverity: normalizeAarsSeverity(params.aarsSeverity || params.band),
   };
   let sortKey = SORTS[params.sort] ? params.sort : "aars";
   let pageSize = PAGE_SIZES.indexOf(Number(params.size)) >= 0
@@ -98,7 +109,8 @@ export async function renderInventory(main, params) {
   function requestParams() {
     return {
       all: true, // the server downgrades this to one page when the estate is too big
-      q: filters.q, kind: filters.kind, cloud: filters.cloud, band: filters.band,
+      q: filters.q, kind: filters.kind, cloud: filters.cloud,
+      aarsSeverity: filters.aarsSeverity,
       sort: sortKey, page, pageSize,
     };
   }
@@ -123,13 +135,12 @@ export async function renderInventory(main, params) {
     // `all` absent means an old server; treating that as all-mode keeps the page working
     // against a deployment whose client bundle is newer than its server bundle.
     const allMode = payload.all !== false;
-    const bandSeverity = boot.palette?.aarsBandSeverity || {};
 
     host.append(
       el("div", { class: "kpi-row" },
         kpiCard("AI assets", String(kpis.aiAssets), `${kpis.agents} agents`),
-        kpiCard("Critical AARS", String(kpis.criticalBand), "score 70–100"),
-        kpiCard("High AARS", String(kpis.highBand), "score 50–69"),
+        kpiCard("Critical AARS", String(kpis.criticalAars), "score 70–100"),
+        kpiCard("High AARS", String(kpis.highAars), "score 50–69"),
         kpiCard("Guardrail coverage",
           kpis.guardrailCoveragePct === null ? "—" : `${kpis.guardrailCoveragePct}%`,
           "agents protected by a guardrail"),
@@ -140,28 +151,29 @@ export async function renderInventory(main, params) {
       ),
     );
 
-    // AARS band distribution — counted server-side over the full set, so it describes the
+    // AARS severity distribution — counted server-side over the full set, so it describes the
     // whole inventory whatever the table is currently showing.
-    const bandCounts = payload.bandCounts || {};
-    const bandColors = {};
-    for (const band of boot.palette?.aarsBands || []) {
-      bandColors[band] = boot.palette.colors[bandSeverity[band] || "INFO"];
+    const aarsCounts = payload.aarsSeverityCounts || {};
+    const aarsColors = {};
+    // The AARS scale shares the severity values, so it shares their colors directly.
+    for (const sev of boot.palette?.aarsSeverities || []) {
+      aarsColors[sev] = boot.palette.colors[sev];
     }
-    const canvas = el("canvas", { "aria-label": "Assets by AARS band", role: "img" });
+    const canvas = el("canvas", { "aria-label": "Assets by AARS severity", role: "img" });
     host.append(
       el("div", { class: "chart-card", style: "margin-bottom:20px" },
-        el("h3", {}, "Assets by AARS band"),
+        el("h3", {}, "Assets by AARS severity"),
         el("div", { class: "chart-box", style: "height:200px" }, canvas),
       ),
     );
     requestAnimationFrame(() => {
-      categoryBar(canvas, boot.palette?.aarsBands || [], bandCounts, bandColors);
+      categoryBar(canvas, boot.palette?.aarsSeverities || [], aarsCounts, aarsColors);
     });
 
-    // ---- Filter bar: name search + kind/cloud/AARS-band selects. The options come from
+    // ---- Filter bar: name search + kind/cloud/AARS-severity selects. The options come from
     // the server's facets (the full inventory), never from the rows in hand — a select
     // built from one page would hide the values that page happens to miss.
-    const facets = payload.facets || { kinds: [], clouds: [], bands: [] };
+    const facets = payload.facets || { kinds: [], clouds: [], aarsSeverities: [] };
 
     const searchInput = el("input", {
       type: "search",
@@ -207,15 +219,17 @@ export async function renderInventory(main, params) {
       onFilterChange();
     });
 
-    const bands = facets.bands || [];
-    if (filters.band && bands.indexOf(filters.band) < 0) filters.band = "";
-    const bandSel = el("select", { "aria-label": "Filter by AARS band" },
-      el("option", { value: "" }, "All bands"),
-      ...bands.map((b) => el("option", { value: b }, b)),
+    const aarsSeverities = facets.aarsSeverities || [];
+    if (filters.aarsSeverity && aarsSeverities.indexOf(filters.aarsSeverity) < 0) {
+      filters.aarsSeverity = "";
+    }
+    const aarsSel = el("select", { "aria-label": "Filter by AARS severity" },
+      el("option", { value: "" }, "All AARS severities"),
+      ...aarsSeverities.map((sev) => el("option", { value: sev }, sev)),
     );
-    bandSel.value = filters.band;
-    bandSel.addEventListener("change", () => {
-      filters.band = bandSel.value;
+    aarsSel.value = filters.aarsSeverity;
+    aarsSel.addEventListener("change", () => {
+      filters.aarsSeverity = aarsSel.value;
       onFilterChange();
     });
 
@@ -224,18 +238,18 @@ export async function renderInventory(main, params) {
     const clearBtn = el("button", {
       class: "link",
       onclick: () => {
-        filters.q = ""; filters.kind = ""; filters.cloud = ""; filters.band = "";
+        filters.q = ""; filters.kind = ""; filters.cloud = ""; filters.aarsSeverity = "";
         searchInput.value = "";
         kindSel.value = "";
         cloudSel.value = "";
-        bandSel.value = "";
+        aarsSel.value = "";
         onFilterChange();
       },
     }, "Clear");
     const filterMeta = el("div", { class: "filter-meta" }, countText, clearBtn);
 
     host.append(
-      el("div", { class: "filter-bar" }, searchField, kindSel, cloudSel, bandSel, filterMeta),
+      el("div", { class: "filter-bar" }, searchField, kindSel, cloudSel, aarsSel, filterMeta),
     );
 
     const tableHost = el("div", { class: "table-host" });
@@ -244,7 +258,8 @@ export async function renderInventory(main, params) {
     function persistParams() {
       setParams({
         sort: sortKey, q: filters.q, kind: filters.kind, cloud: filters.cloud,
-        band: filters.band,
+        aarsSeverity: filters.aarsSeverity,
+        band: "", // clear the pre-rename param if the link carried one
         page: page ? page + 1 : "",
         size: pageSize === DEFAULT_PAGE_SIZE ? "" : pageSize,
       });
@@ -320,7 +335,7 @@ export async function renderInventory(main, params) {
           (!q || String(r.name).toLowerCase().includes(q)) &&
           (!filters.kind || r.kind === filters.kind) &&
           (!filters.cloud || (r.cloud || "") === filters.cloud) &&
-          (!filters.band || r.aarsBand === filters.band));
+          (!filters.aarsSeverity || r.aarsSeverity === filters.aarsSeverity));
         filtered.sort(SORTS[sortKey]);
         shown = filtered.length;
         pageCount = Math.max(1, Math.ceil(shown / pageSize));
@@ -338,7 +353,7 @@ export async function renderInventory(main, params) {
       if (page !== requested) persistParams();
 
       countText.textContent = `${shown} of ${current.total}`;
-      clearBtn.hidden = !(filters.q || filters.kind || filters.cloud || filters.band);
+      clearBtn.hidden = !(filters.q || filters.kind || filters.cloud || filters.aarsSeverity);
 
       tableHost.append(sectionLabel("Assets"));
 
@@ -369,7 +384,7 @@ export async function renderInventory(main, params) {
           el("td", {}, kindLabel(row.kind)),
           el("td", {}, row.cloud || "—"),
           el("td", {}, row.region || "—"),
-          el("td", {}, aarsChip(row.aars, row.aarsBand, bandSeverity)),
+          el("td", {}, aarsChip(row.aars, row.aarsSeverity)),
           el("td", {}, row.severity ? sevBadge(row.severity) : "—"),
           el("td", {}, row.combos
             ? el("span", { class: "pill bad" }, `TC ×${row.combos}`)

@@ -32,13 +32,13 @@ Asset has confirmed access to sensitive data (PII/PHI/PCI)	+20
 Asset has access to data resources (unconfirmed sensitivity)	+10
 Asset has no data access	0
 Global multiplier: 5Rs = 53% → apply ×1.1 to all data-related scores	×1.1
-AARS Score Bands
+AARS Score Severity
 Score	Risk Level	Action
 70–100	🔴 CRITICAL	Immediate remediation required
 50–69	🟠 HIGH	Remediate within 7 days
 30–49	🟡 MEDIUM	Remediate within 30 days
 10–29	🔵 LOW	Monitor and review quarterly
-0–9	✅ MINIMAL	No action required
+0–9	✅ INFO	No action required
 📊 Applied AARS — Your AI Assets (Top Scored)
 Asset	Toxic Issues	Compliance Gaps	Data Exposure	AARS Score	Risk Level	Parent Project
 Agent-A	MEDIUM ×1 (20)	LLM06 gap +10, No guardrail +10	Sensitive data ×1.1 = +22	62	🟠 HIGH	PROJECT-BETA, PROJECT-ALPHA, gcp-account-01
