@@ -439,14 +439,18 @@ export async function renderInventory(main, params) {
 
       const tbody = el("tbody", {});
       for (const row of pageRows) {
+        // The row already holds everything the sheet's header shows, so pass it as the
+        // seed: identity and verdict paint on the same frame as the slide-in, and only
+        // the body waits for the RPC.
+        const openRow = () => openAssetSheet(row.id, { seed: row });
         tbody.append(el("tr", {
           class: "clickable",
           tabindex: "0",
           role: "button",
           "aria-label": `${row.name}, ${kindLabel(row.kind)}`,
-          onclick: () => openAssetSheet(row.id, { title: row.name }),
+          onclick: openRow,
           onkeydown: (e) => {
-            if (e.key === "Enter") openAssetSheet(row.id, { title: row.name });
+            if (e.key === "Enter") openRow();
           },
         },
           el("td", {}, row.name,
