@@ -13,6 +13,8 @@ import {
 import {
   AARS_BAND_ORDER,
   AARS_BAND_SEVERITY_TOKEN,
+  MAX_NODES_CEILING,
+  MAX_NODES_FLOOR,
   SEVERITY_COLORS,
   SEVERITY_GLYPHS,
   SEVERITY_ORDER,
@@ -105,6 +107,10 @@ function bootstrapCore(): Rec {
     settings: {
       defaultDepth: settingsStore.getDefaultDepth(),
       maxNodes: settingsStore.getMaxNodes(),
+      // The clamp bounds, so the graph's "Load more" and the Settings input can offer
+      // exactly what the server will honor instead of hardcoding it twice.
+      maxNodesFloor: MAX_NODES_FLOOR,
+      maxNodesCeiling: MAX_NODES_CEILING,
     },
     latestSync: latest,
     counts: {
@@ -479,6 +485,8 @@ export function getSettings(_p?: unknown): ApiResult {
   return run(() => ({
     defaultDepth: settingsStore.getDefaultDepth(),
     maxNodes: settingsStore.getMaxNodes(),
+    maxNodesFloor: MAX_NODES_FLOOR,
+    maxNodesCeiling: MAX_NODES_CEILING,
     hasCredentials: hasWizCredentials(),
   }));
 }

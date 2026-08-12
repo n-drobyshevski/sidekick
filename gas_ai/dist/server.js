@@ -1102,7 +1102,10 @@ var Server = (() => {
   var DEPTH_MAX = 3;
   var DEPTH_DEFAULT = 2;
   var MAX_NODES_DEFAULT = 100;
+  var MAX_NODES_FLOOR = 30;
+  var MAX_NODES_CEILING = 400;
   var MAX_EDGES_DEFAULT = 250;
+  var EDGE_BUDGET_RATIO = 2.5;
   var SEED_WAVE_RATIO = 0.4;
 
   // src/domain/settingsLogic.ts
@@ -1121,7 +1124,7 @@ var Server = (() => {
   function clampMaxNodes(v) {
     const n = Math.round(Number(v));
     if (!Number.isFinite(n)) return MAX_NODES_DEFAULT;
-    return Math.min(400, Math.max(30, n));
+    return Math.min(MAX_NODES_CEILING, Math.max(MAX_NODES_FLOOR, n));
   }
   function getMaxNodes(settings) {
     var _a4;
@@ -1846,7 +1849,7 @@ var Server = (() => {
     };
   }
   function resolveGraphParams(p, ctx) {
-    var _a4, _b;
+    var _a4;
     const seed = typeof p["seed"] === "string" ? p["seed"] : "";
     const seedKind = typeof p["seedKind"] === "string" ? p["seedKind"] : "";
     let seedIds;
@@ -1867,13 +1870,17 @@ var Server = (() => {
     };
     const hasFilters = filters.severities.length || filters.kinds.length || filters.projects.length || filters.clouds.length;
     const rawDepth = p["depth"];
+    const rawMaxNodes = p["maxNodes"];
+    const maxNodes = clampMaxNodes(
+      rawMaxNodes == null || rawMaxNodes === "" ? ctx.maxNodes : rawMaxNodes
+    );
     return {
       seedIds,
       depth: clampDepth(rawDepth == null || rawDepth === "" ? ctx.defaultDepth : rawDepth),
       expandIds: toList(p["expand"]),
       filters: hasFilters ? filters : void 0,
-      maxNodes: clampMaxNodes((_b = p["maxNodes"]) != null ? _b : ctx.maxNodes),
-      maxEdges: MAX_EDGES_DEFAULT,
+      maxNodes,
+      maxEdges: Math.round(maxNodes * EDGE_BUDGET_RATIO),
       ...seedKind === "scored" ? { filterSeeds: true } : {}
     };
   }
@@ -4044,7 +4051,11 @@ var Server = (() => {
       })),
       settings: {
         defaultDepth: getDefaultDepth2(),
-        maxNodes: getMaxNodes2()
+        maxNodes: getMaxNodes2(),
+        // The clamp bounds, so the graph's "Load more" and the Settings input can offer
+        // exactly what the server will honor instead of hardcoding it twice.
+        maxNodesFloor: MAX_NODES_FLOOR,
+        maxNodesCeiling: MAX_NODES_CEILING
       },
       latestSync: latest,
       counts: {
@@ -4364,6 +4375,8 @@ var Server = (() => {
     return run(() => ({
       defaultDepth: getDefaultDepth2(),
       maxNodes: getMaxNodes2(),
+      maxNodesFloor: MAX_NODES_FLOOR,
+      maxNodesCeiling: MAX_NODES_CEILING,
       hasCredentials: hasWizCredentials()
     }));
   }

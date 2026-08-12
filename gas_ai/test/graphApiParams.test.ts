@@ -8,6 +8,7 @@ import {
   resolveLayoutParams,
   toList,
 } from "../src/domain/graphApiParams";
+import { MAX_EDGES_DEFAULT, MAX_NODES_DEFAULT } from "../src/domain/config";
 import { SEED_ISSUES } from "../src/server/sampleData";
 
 const CTX = { defaultDepth: 2, maxNodes: 120, issues: SEED_ISSUES };
@@ -84,6 +85,25 @@ describe("resolveGraphParams", () => {
     const opts = resolveGraphParams({ expand: "a,b", maxNodes: 9999 }, CTX);
     expect(opts.expandIds).toEqual(["a", "b"]);
     expect(opts.maxNodes).toBe(400); // clamped ceiling
+  });
+
+  // "Load more" is exactly this: the same request with a bigger budget in the hash.
+  it("a per-view maxNodes overrides the configured budget; blank keeps it", () => {
+    expect(resolveGraphParams({ maxNodes: 200 }, CTX).maxNodes).toBe(200);
+    expect(resolveGraphParams({ maxNodes: "200" }, CTX).maxNodes).toBe(200);
+    expect(resolveGraphParams({ maxNodes: "" }, CTX).maxNodes).toBe(CTX.maxNodes);
+    expect(resolveGraphParams({}, CTX).maxNodes).toBe(CTX.maxNodes);
+    expect(resolveGraphParams({ maxNodes: "junk" }, CTX).maxNodes).toBe(MAX_NODES_DEFAULT);
+    expect(resolveGraphParams({ maxNodes: -50 }, CTX).maxNodes).toBe(30); // clamped floor
+  });
+
+  it("the edge budget follows the node budget instead of standing still", () => {
+    // A widened view that kept a fixed edge cap would draw more nodes with fewer of the
+    // relationships that make them worth drawing.
+    const base = resolveGraphParams({ maxNodes: 100 }, CTX);
+    const wide = resolveGraphParams({ maxNodes: 400 }, CTX);
+    expect(base.maxEdges).toBe(MAX_EDGES_DEFAULT); // the 100-node view is unchanged
+    expect(wide.maxEdges).toBe(MAX_EDGES_DEFAULT * 4);
   });
 });
 
