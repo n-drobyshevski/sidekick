@@ -24,8 +24,26 @@ export const NODE_KINDS = [
   "SUMMARY",  // collapse node: "+N more <kind>" emitted by the projection
   "SENSITIVE_DATA",     // one node per data-exposed asset (AARS pillar C topology)
   "INTERNET_EXPOSURE",  // one node per internet-exposed asset (exposure topology)
+  "EXCESSIVE_PRIVILEGE", // one node per over-privileged asset (CIEM rights topology)
+  "MISSING_GUARDRAIL",   // one node per unguarded AI asset (guardrail-coverage topology)
 ] as const;
 export type NodeKind = (typeof NODE_KINDS)[number];
+
+/**
+ * Risk evidence: nodes that exist only to say something about the asset they hang off,
+ * as opposed to inventory the tenant owns. They carry no cloud, project, or (for the
+ * derived ones) severity of their own, so the graph's inventory filters skip them and
+ * the grouped layout resolves their bucket from their parent — otherwise a node-type or
+ * cloud filter silently severs the attack path it is meant to narrow.
+ */
+export const RISK_NODE_KINDS: readonly NodeKind[] = [
+  "ISSUE", "SENSITIVE_DATA", "INTERNET_EXPOSURE", "EXCESSIVE_PRIVILEGE", "MISSING_GUARDRAIL",
+  "EXCESSIVE_ACCESS_FINDING", "LATERAL_MOVEMENT_FINDING",
+];
+
+export function isRiskKind(kind: string): boolean {
+  return (RISK_NODE_KINDS as readonly string[]).includes(kind);
+}
 
 /** AI-SPM asset kinds — the graph's focal nodes and default seeds. */
 export const AI_ASSET_KINDS: readonly NodeKind[] = [
@@ -67,6 +85,7 @@ export const EDGE_TYPES = [
   "HAS_SENSITIVE_DATA",           // asset → SENSITIVE_DATA (holds sensitive data)
   "HAS_ACCESS_TO_SENSITIVE_DATA", // identity/agent → SENSITIVE_DATA (can reach it)
   "EXPOSED_TO_INTERNET",          // asset → INTERNET_EXPOSURE (reachable from the internet)
+  "HAS_EXCESSIVE_PRIVILEGE",      // asset/identity → EXCESSIVE_PRIVILEGE (admin or high rights)
 ] as const;
 export type EdgeType = (typeof EDGE_TYPES)[number];
 

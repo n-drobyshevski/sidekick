@@ -118,6 +118,15 @@ function filterOptions(assets: GNode[]): Rec {
     kinds.add(a.kind);
     if (a.cloudPlatform) clouds.add(a.cloudPlatform);
     for (const p of a.projects ?? []) projects.add(p.name);
+    // The risk nodes are derived on read and never land in TABS.assets, so the flags they
+    // come from are the only trace of them here. Offer each kind as a pill exactly when
+    // some asset would produce one, so the evidence stays curatable.
+    if (a.hasSensitiveData || a.hasAccessToSensitiveData) kinds.add("SENSITIVE_DATA");
+    if (a.isAccessibleFromInternet === true || a.isOpenToAllInternet === true) {
+      kinds.add("INTERNET_EXPOSURE");
+    }
+    if (a.hasAdminPrivileges || a.hasHighPrivileges) kinds.add("EXCESSIVE_PRIVILEGE");
+    if (a.guardrailMissing === true) kinds.add("MISSING_GUARDRAIL");
   }
   return {
     kinds: [...kinds].sort(),

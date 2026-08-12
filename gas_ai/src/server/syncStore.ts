@@ -8,7 +8,9 @@
 
 import {
   enrichGraphDoc,
+  withExcessivePrivilegeNodes,
   withInternetExposureNodes,
+  withMissingGuardrailNodes,
   withSensitiveDataNodes,
   type AarsHints,
 } from "../domain/graphEnrich";
@@ -295,12 +297,21 @@ export function loadGraphDoc(): GraphDoc | null {
   return graphDocMemo;
 }
 
+/**
+ * Risk topology (sensitive data, internet exposure, excessive rights, missing guardrail)
+ * is derived on read, not persisted — so it applies to already-synced graphs and never
+ * reaches the asset/inventory tables (which read TABS.assets directly, bypassing this
+ * doc). See the with* helpers in graphEnrich.
+ */
+function withRiskNodes(doc: GraphDoc): GraphDoc {
+  return withMissingGuardrailNodes(
+    withExcessivePrivilegeNodes(withInternetExposureNodes(withSensitiveDataNodes(doc))),
+  );
+}
+
 function loadGraphDocUncached(): GraphDoc | null {
-  // Exposure topology (sensitive-data + internet) is derived on read, not persisted — so
-  // it applies to already-synced graphs and never reaches the asset/inventory tables
-  // (which read TABS.assets directly, bypassing this doc). See the with* helpers.
   const snap = readGraphSnapshot();
-  if (snap) return withInternetExposureNodes(withSensitiveDataNodes(snap));
+  if (snap) return withRiskNodes(snap);
 
   const assetRows = readAll(TABS.assets);
   if (!assetRows.length) return null;
@@ -324,13 +335,11 @@ function loadGraphDocUncached(): GraphDoc | null {
     });
   }
   const latest = latestSync();
-  return withInternetExposureNodes(
-    withSensitiveDataNodes({
-      nodes,
-      edges,
-      syncedAt: latest ? String(latest["finished_at"] ?? "") : "",
-    }),
-  );
+  return withRiskNodes({
+    nodes,
+    edges,
+    syncedAt: latest ? String(latest["finished_at"] ?? "") : "",
+  });
 }
 
 export function loadAssets(): GNode[] {

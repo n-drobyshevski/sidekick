@@ -23,7 +23,7 @@
 
 import { SEVERITY_ORDER } from "./config";
 import type { GNode, NodeKind } from "./graphTypes";
-import { AI_ASSET_KINDS, NODE_KINDS } from "./graphTypes";
+import { AI_ASSET_KINDS, NODE_KINDS, isRiskKind } from "./graphTypes";
 import type { Projection } from "./graphProject";
 import { nodeOrder } from "./graphProject";
 import { COMBO_GROUPS, comboGroupById } from "./toxicCombos";
@@ -44,6 +44,9 @@ const LANE_OF: Record<string, number> = {
   ISSUE: 0,
   EXCESSIVE_ACCESS_FINDING: 0,
   LATERAL_MOVEMENT_FINDING: 0,
+  EXCESSIVE_PRIVILEGE: 0,
+  MISSING_GUARDRAIL: 0,
+  INTERNET_EXPOSURE: 0,
   AI_AGENT: 1,
   AI_MODEL: 1,
   AI_GUARDRAIL: 1,
@@ -282,13 +285,24 @@ function layoutLanes(p: Projection, opts: LayoutOptions, horizontal: boolean): L
 // ---------------------------------------------------------------- grouped mode
 
 /** Grouping key for a node. SUMMARY nodes group by the kind they collapse in
- *  kind grouping; for every other key they inherit their parent's bucket.
+ *  kind grouping; for every other key they inherit their parent's bucket. Risk
+ *  evidence follows the same rule — a "Sensitive data" or "Excessive rights" node
+ *  has no combo, project, or cloud of its own, so grouping it on its own fields
+ *  would exile the whole attack path to "Ungrouped".
  *  ("asset" is assigned by hub proximity in assignToHubs, never here.) */
-function groupKeyOf(node: GNode, groupBy: GroupKey, parentOfSummary: Map<string, GNode>): string {
-  if (node.kind === "SUMMARY" && groupBy !== "kind") {
-    const parent = parentOfSummary.get(node.id);
-    return parent ? groupKeyOf(parent, groupBy, parentOfSummary) : GROUP_NONE;
+function groupKeyOf(node: GNode, groupBy: GroupKey, parentOf: Map<string, GNode>): string {
+  if ((node.kind === "SUMMARY" || isRiskKind(node.kind)) && groupBy !== "kind") {
+    // Own key first: an ISSUE knows its own combo group, and an asset carrying two
+    // combos must not drag its issues into whichever one sorts first.
+    const own = ownGroupKey(node, groupBy);
+    if (own !== GROUP_NONE) return own;
+    const parent = parentOf.get(node.id);
+    return parent ? groupKeyOf(parent, groupBy, parentOf) : GROUP_NONE;
   }
+  return ownGroupKey(node, groupBy);
+}
+
+function ownGroupKey(node: GNode, groupBy: GroupKey): string {
   switch (groupBy) {
     case "combo": {
       const groups = [...(node.comboGroups ?? [])].sort();
@@ -424,7 +438,7 @@ function radialBlock(key: string, label: string, hub: GNode, satellites: GNode[]
  *  Hubs are AI agents; if the projection has none, any AI asset qualifies. */
 function assignToHubs(
   p: Projection,
-  parentOfSummary: Map<string, GNode>,
+  parentOf: Map<string, GNode>,
 ): { hubOf: Map<string, string>; hubs: GNode[] } {
   const cmp = (a: GNode, b: GNode) => nodeOrder(a, b) || cmpId(a, b);
   let hubs = p.nodes.filter((n) => n.kind === "AI_AGENT");
@@ -456,10 +470,10 @@ function assignToHubs(
       queue.push(next);
     }
   }
-  // SUMMARY nodes always follow their parent, whatever path BFS took.
-  for (const [sumId, parent] of parentOfSummary) {
+  // SUMMARY and risk nodes always follow their parent, whatever path BFS took.
+  for (const [childId, parent] of parentOf) {
     const h = hubOf.get(parent.id);
-    if (h) hubOf.set(sumId, h);
+    if (h) hubOf.set(childId, h);
   }
   return { hubOf, hubs };
 }
@@ -470,10 +484,19 @@ function layoutGrouped(p: Projection, opts: LayoutOptions): Layout {
   const sort = opts.sort ?? "smart";
 
   const byId = new Map(p.nodes.map((n) => [n.id, n]));
-  const parentOfSummary = new Map<string, GNode>();
+  // Who each derived node hangs off, so it can inherit a bucket it has no fields for.
+  // Risk evidence is always the `dst` of its edge; edges are walked in id order and the
+  // first parent wins, so a node reachable from two assets still lands deterministically.
+  const parentOf = new Map<string, GNode>();
+  for (const e of [...p.edges].sort((a, b) => (a.id < b.id ? -1 : 1))) {
+    const dst = byId.get(e.dst);
+    const src = byId.get(e.src);
+    if (!dst || !src || !isRiskKind(dst.kind) || parentOf.has(dst.id)) continue;
+    parentOf.set(dst.id, src);
+  }
   for (const s of p.summaries) {
     const parent = byId.get(s.parentId);
-    if (parent) parentOfSummary.set(s.id, parent);
+    if (parent) parentOf.set(s.id, parent);
   }
   const cmp = comparator(sort);
 
@@ -481,7 +504,7 @@ function layoutGrouped(p: Projection, opts: LayoutOptions): Layout {
   // buckets by key into grids, in canonical group order.
   const specs: BlockSpec[] = [];
   if (groupBy === "asset") {
-    const { hubOf, hubs } = assignToHubs(p, parentOfSummary);
+    const { hubOf, hubs } = assignToHubs(p, parentOf);
     const members = new Map<string, GNode[]>(hubs.map((h) => [h.id, []]));
     const strays: GNode[] = [];
     for (const node of p.nodes) {
@@ -497,7 +520,7 @@ function layoutGrouped(p: Projection, opts: LayoutOptions): Layout {
   } else {
     const members = new Map<string, GNode[]>();
     for (const node of p.nodes) {
-      const key = groupKeyOf(node, groupBy, parentOfSummary);
+      const key = groupKeyOf(node, groupBy, parentOf);
       if (!members.has(key)) members.set(key, []);
       members.get(key)!.push(node);
     }

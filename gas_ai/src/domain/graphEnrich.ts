@@ -263,3 +263,91 @@ export function withInternetExposureNodes(doc: GraphDoc): GraphDoc {
     syncedAt: doc.syncedAt,
   };
 }
+
+/**
+ * Read-time excessive-rights topology: append one synthetic EXCESSIVE_PRIVILEGE node +
+ * edge per node holding admin or high privileges, so over-permissioning reads as a
+ * neighbor on the attack path instead of a flag on the card. Same contract as
+ * withSensitiveDataNodes — derived on READ, never persisted, idempotent, pure.
+ *
+ * Nodes that already carry a REAL CIEM finding (Wiz's own EXCESSIVE_ACCESS_FINDING,
+ * reached via HAS_FINDING) are skipped: the tenant's finding is the better evidence and
+ * drawing both would show one problem twice.
+ */
+export function withExcessivePrivilegeNodes(doc: GraphDoc): GraphDoc {
+  const existing = new Set(
+    doc.nodes.filter((n) => n.kind === "EXCESSIVE_PRIVILEGE").map((n) => n.id),
+  );
+  const kindById = new Map(doc.nodes.map((n) => [n.id, n.kind]));
+  const hasRealFinding = new Set<string>();
+  for (const e of doc.edges) {
+    if (e.type === "HAS_FINDING" && kindById.get(e.dst) === "EXCESSIVE_ACCESS_FINDING") {
+      hasRealFinding.add(e.src);
+    }
+  }
+  const privNodes: GNode[] = [];
+  const privEdges: GEdge[] = [];
+  for (const node of doc.nodes) {
+    if (node.kind === "EXCESSIVE_PRIVILEGE") continue;
+    if (!node.hasAdminPrivileges && !node.hasHighPrivileges) continue;
+    if (hasRealFinding.has(node.id)) continue;
+    const privId = `excessive|${node.id}`;
+    if (existing.has(privId)) continue;
+    privNodes.push({
+      id: privId,
+      kind: "EXCESSIVE_PRIVILEGE",
+      // ADMIN wins over HIGH when both are set — it is the stronger claim.
+      name: node.hasAdminPrivileges ? "Admin privileges" : "Excessive rights",
+    });
+    privEdges.push({
+      id: edgeId(node.id, "HAS_EXCESSIVE_PRIVILEGE", privId),
+      src: node.id,
+      dst: privId,
+      type: "HAS_EXCESSIVE_PRIVILEGE",
+    });
+  }
+  if (!privNodes.length) return doc;
+  return {
+    nodes: [...doc.nodes, ...privNodes],
+    edges: [...doc.edges, ...privEdges],
+    syncedAt: doc.syncedAt,
+  };
+}
+
+/**
+ * Read-time guardrail-coverage topology: append one synthetic MISSING_GUARDRAIL node +
+ * edge per node the guardrail scan flagged, so an unguarded agent reads like every other
+ * risk on the path. Same contract as withSensitiveDataNodes — derived on READ, never
+ * persisted, idempotent, pure.
+ *
+ * The edge is a NEGATED `PROTECTED_BY` — the vocabulary already says "the protective edge
+ * is absent" (Wiz's own negate:true scan), and the client draws negated edges dashed and
+ * labels them "(ABSENT)", so the absence stays legible rather than reading as coverage.
+ */
+export function withMissingGuardrailNodes(doc: GraphDoc): GraphDoc {
+  const existing = new Set(
+    doc.nodes.filter((n) => n.kind === "MISSING_GUARDRAIL").map((n) => n.id),
+  );
+  const gapNodes: GNode[] = [];
+  const gapEdges: GEdge[] = [];
+  for (const node of doc.nodes) {
+    if (node.kind === "MISSING_GUARDRAIL") continue;
+    if (node.guardrailMissing !== true) continue;
+    const gapId = `noguardrail|${node.id}`;
+    if (existing.has(gapId)) continue;
+    gapNodes.push({ id: gapId, kind: "MISSING_GUARDRAIL", name: "No guardrail" });
+    gapEdges.push({
+      id: edgeId(node.id, "PROTECTED_BY", gapId, true),
+      src: node.id,
+      dst: gapId,
+      type: "PROTECTED_BY",
+      negated: true,
+    });
+  }
+  if (!gapNodes.length) return doc;
+  return {
+    nodes: [...doc.nodes, ...gapNodes],
+    edges: [...doc.edges, ...gapEdges],
+    syncedAt: doc.syncedAt,
+  };
+}

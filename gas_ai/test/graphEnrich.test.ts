@@ -7,7 +7,9 @@ import {
   buildAarsHintsFromFindings,
   dataExposureOf,
   enrichGraphDoc,
+  withExcessivePrivilegeNodes,
   withInternetExposureNodes,
+  withMissingGuardrailNodes,
   withSensitiveDataNodes,
 } from "../src/domain/graphEnrich";
 import type { FindingRow, GraphDoc, IssueRow } from "../src/domain/graphTypes";
@@ -226,5 +228,112 @@ describe("buildAarsHintsFromFindings", () => {
     const hints = buildAarsHintsFromFindings(findings, doc, issues);
     expect(hints["missing"]).toBeUndefined(); // finding f2's resource isn't in the doc
     expect(hints["asset-2"]).toBeUndefined(); // no finding
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Excessive rights + missing guardrail: the same read-time contract as the
+// sensitive-data and internet-exposure topologies above — derived, never
+// persisted, idempotent, pure.
+
+describe("withExcessivePrivilegeNodes", () => {
+  it("adds one node + HAS_EXCESSIVE_PRIVILEGE edge per over-privileged node", () => {
+    const base = enriched();
+    const doc = withExcessivePrivilegeNodes(base);
+    const realFindingSrc = new Set(
+      base.edges
+        .filter(
+          (e) =>
+            e.type === "HAS_FINDING" &&
+            base.nodes.some((n) => n.id === e.dst && n.kind === "EXCESSIVE_ACCESS_FINDING"),
+        )
+        .map((e) => e.src),
+    );
+    const flagged = base.nodes.filter(
+      (n) => (n.hasAdminPrivileges || n.hasHighPrivileges) && !realFindingSrc.has(n.id),
+    );
+    expect(flagged.length).toBeGreaterThan(0);
+
+    const privNodes = doc.nodes.filter((n) => n.kind === "EXCESSIVE_PRIVILEGE");
+    const privEdges = doc.edges.filter((e) => e.type === "HAS_EXCESSIVE_PRIVILEGE");
+    expect(privNodes).toHaveLength(flagged.length);
+    expect(privEdges).toHaveLength(flagged.length);
+
+    const baseIds = new Set(base.nodes.map((n) => n.id));
+    for (const e of privEdges) {
+      expect(baseIds.has(e.src)).toBe(true);
+      expect(e.dst).toBe(`excessive|${e.src}`);
+    }
+  });
+
+  it("does not double up on nodes Wiz already reported an EXCESSIVE_ACCESS_FINDING for", () => {
+    // sa-agent-autogen carries the real CIEM finding in the seed.
+    const doc = withExcessivePrivilegeNodes(enriched());
+    expect(doc.nodes.some((n) => n.id === "excessive|sa-agent-autogen")).toBe(false);
+    expect(doc.nodes.some((n) => n.id === "finding-ea-autogen")).toBe(true);
+  });
+
+  it("names the node for the stronger claim when both privilege flags are set", () => {
+    const doc = withExcessivePrivilegeNodes({
+      nodes: [
+        { id: "a", kind: "AI_AGENT", name: "a", hasAdminPrivileges: true, hasHighPrivileges: true },
+        { id: "b", kind: "AI_AGENT", name: "b", hasHighPrivileges: true },
+      ],
+      edges: [],
+      syncedAt: T,
+    });
+    expect(doc.nodes.find((n) => n.id === "excessive|a")!.name).toBe("Admin privileges");
+    expect(doc.nodes.find((n) => n.id === "excessive|b")!.name).toBe("Excessive rights");
+  });
+
+  it("is idempotent and returns the same doc when nothing is flagged", () => {
+    const once = withExcessivePrivilegeNodes(enriched());
+    const twice = withExcessivePrivilegeNodes(once);
+    expect(twice.nodes).toHaveLength(once.nodes.length);
+    expect(twice.edges).toHaveLength(once.edges.length);
+
+    const clean: GraphDoc = {
+      nodes: [{ id: "a", kind: "AI_AGENT", name: "a" }],
+      edges: [],
+      syncedAt: T,
+    };
+    expect(withExcessivePrivilegeNodes(clean)).toBe(clean);
+  });
+});
+
+describe("withMissingGuardrailNodes", () => {
+  it("adds one node per unguarded asset, joined by a NEGATED PROTECTED_BY edge", () => {
+    const base = enriched();
+    const doc = withMissingGuardrailNodes(base);
+    const flagged = base.nodes.filter((n) => n.guardrailMissing === true);
+    expect(flagged.length).toBeGreaterThan(0);
+
+    const gapNodes = doc.nodes.filter((n) => n.kind === "MISSING_GUARDRAIL");
+    expect(gapNodes).toHaveLength(flagged.length);
+    expect(gapNodes.every((n) => n.name === "No guardrail")).toBe(true);
+
+    const gapEdges = doc.edges.filter((e) => e.dst.startsWith("noguardrail|"));
+    expect(gapEdges).toHaveLength(flagged.length);
+    // The absence must stay marked as an absence, or it reads as coverage.
+    expect(gapEdges.every((e) => e.type === "PROTECTED_BY" && e.negated === true)).toBe(true);
+  });
+
+  it("ignores a merely absent flag — only an explicit true is a finding", () => {
+    const doc = withMissingGuardrailNodes({
+      nodes: [
+        { id: "a", kind: "AI_AGENT", name: "a" },
+        { id: "b", kind: "AI_AGENT", name: "b", guardrailMissing: false },
+      ],
+      edges: [],
+      syncedAt: T,
+    });
+    expect(doc.nodes.some((n) => n.kind === "MISSING_GUARDRAIL")).toBe(false);
+  });
+
+  it("is idempotent", () => {
+    const once = withMissingGuardrailNodes(enriched());
+    const twice = withMissingGuardrailNodes(once);
+    expect(twice.nodes).toHaveLength(once.nodes.length);
+    expect(twice.edges).toHaveLength(once.edges.length);
   });
 });
