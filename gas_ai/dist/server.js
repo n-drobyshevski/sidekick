@@ -1439,6 +1439,8 @@ var Server = (() => {
   var BARYCENTER_SWEEPS = 3;
   var ROW_COL_STEP = 260;
   var ROW_BAND_GAP = 150;
+  var ROW_CLUSTER_GAP = 140;
+  var LANE_CLUSTER_GAP = 48;
   var CELL_W = 240;
   var CELL_H = 84;
   var GROUP_PAD = 24;
@@ -1470,6 +1472,188 @@ var Server = (() => {
       return (a, b) => cmpName(a, b) || cmpId(a, b);
     }
     return (a, b) => nodeOrder(a, b) || cmpId(a, b);
+  }
+  function parentIndex(p) {
+    const byId = new Map(p.nodes.map((n) => [n.id, n]));
+    const parentOf = /* @__PURE__ */ new Map();
+    for (const e of [...p.edges].sort((a, b) => a.id < b.id ? -1 : 1)) {
+      const dst = byId.get(e.dst);
+      const src = byId.get(e.src);
+      if (!dst || !src || !isRiskKind(dst.kind) || parentOf.has(dst.id)) continue;
+      parentOf.set(dst.id, src);
+    }
+    for (const s of p.summaries) {
+      const parent = byId.get(s.parentId);
+      if (parent) parentOf.set(s.id, parent);
+    }
+    return parentOf;
+  }
+  function componentRoots(p) {
+    const parent = /* @__PURE__ */ new Map();
+    for (const n of p.nodes) parent.set(n.id, n.id);
+    const find = (x) => {
+      let root = x;
+      while (parent.get(root) !== root) root = parent.get(root);
+      while (parent.get(x) !== root) {
+        const next = parent.get(x);
+        parent.set(x, root);
+        x = next;
+      }
+      return root;
+    };
+    for (const e of [...p.edges].sort((a, b) => a.id < b.id ? -1 : 1)) {
+      if (!parent.has(e.src) || !parent.has(e.dst)) continue;
+      const a = find(e.src);
+      const b = find(e.dst);
+      if (a !== b) parent.set(a, b);
+    }
+    const roots = /* @__PURE__ */ new Map();
+    for (const n of p.nodes) roots.set(n.id, find(n.id));
+    return roots;
+  }
+  function clusterRanks(p) {
+    var _a4, _b, _c, _d, _e, _f, _g;
+    const { hubOf } = assignToHubs(p, parentIndex(p));
+    const roots = componentRoots(p);
+    const degree = /* @__PURE__ */ new Map();
+    for (const e of p.edges) {
+      degree.set(e.src, ((_a4 = degree.get(e.src)) != null ? _a4 : 0) + 1);
+      degree.set(e.dst, ((_b = degree.get(e.dst)) != null ? _b : 0) + 1);
+    }
+    const keyOf = /* @__PURE__ */ new Map();
+    for (const node2 of p.nodes) {
+      keyOf.set(node2.id, (_c = hubOf.get(node2.id)) != null ? _c : "cc:" + roots.get(node2.id));
+    }
+    const sharedEdges = (key) => {
+      var _a5, _b2;
+      const out = /* @__PURE__ */ new Map();
+      for (const e of [...p.edges].sort((a, b) => a.id < b.id ? -1 : 1)) {
+        const a = key(e.src);
+        const b = key(e.dst);
+        if (!a || !b || a === b) continue;
+        if (!out.has(a)) out.set(a, /* @__PURE__ */ new Map());
+        if (!out.has(b)) out.set(b, /* @__PURE__ */ new Map());
+        out.get(a).set(b, ((_a5 = out.get(a).get(b)) != null ? _a5 : 0) + 1);
+        out.get(b).set(a, ((_b2 = out.get(b).get(a)) != null ? _b2 : 0) + 1);
+      }
+      return out;
+    };
+    const merged = new Map([...keyOf.values()].map((k) => [k, k]));
+    const resolve = (k) => {
+      let root = k;
+      while (merged.get(root) !== root) root = merged.get(root);
+      return root;
+    };
+    const groupBy = (key) => {
+      const out = /* @__PURE__ */ new Map();
+      for (const node2 of p.nodes) {
+        const k = key(node2.id);
+        if (!out.has(k)) out.set(k, []);
+        out.get(k).push(node2);
+      }
+      return out;
+    };
+    const initial = groupBy((id) => keyOf.get(id));
+    const initialShared = sharedEdges((id) => keyOf.get(id));
+    for (const key of [...initial.keys()].sort()) {
+      const list = initial.get(key);
+      if (list.length !== 1 || !((_d = degree.get(list[0].id)) != null ? _d : 0)) continue;
+      let best = 0;
+      let target = "";
+      for (const [other, weight] of [...(_e = initialShared.get(key)) != null ? _e : /* @__PURE__ */ new Map()].sort()) {
+        if (resolve(other) === resolve(key) || weight <= best) continue;
+        best = weight;
+        target = other;
+      }
+      if (target) merged.set(resolve(key), resolve(target));
+    }
+    const finalKey = (id) => resolve(keyOf.get(id));
+    const members = groupBy(finalKey);
+    const shared = sharedEdges(finalKey);
+    const worst = (key) => {
+      var _a5;
+      let rank = SEVERITY_ORDER.length;
+      for (const n of (_a5 = members.get(key)) != null ? _a5 : []) rank = Math.min(rank, severityRank2(n.severity));
+      return rank;
+    };
+    const keys = [...members.keys()].filter((k) => members.get(k).length > 1).sort((a, b) => worst(a) - worst(b) || members.get(b).length - members.get(a).length || (a < b ? -1 : a > b ? 1 : 0));
+    const chain = [];
+    const unplaced = new Set(keys);
+    while (unplaced.size) {
+      let pick2 = "";
+      let anchor = chain.length - 1;
+      let best = 0;
+      for (const k of keys) {
+        if (!unplaced.has(k)) continue;
+        const links = shared.get(k);
+        if (!links) continue;
+        for (let i = 0; i < chain.length; i++) {
+          const weight = (_f = links.get(chain[i])) != null ? _f : 0;
+          if (weight > best) {
+            best = weight;
+            pick2 = k;
+            anchor = i;
+          }
+        }
+      }
+      if (!pick2) {
+        pick2 = keys.find((k) => unplaced.has(k));
+        anchor = chain.length - 1;
+      }
+      chain.splice(anchor + 1, 0, pick2);
+      unplaced.delete(pick2);
+    }
+    const rankOfKey = new Map(chain.map((k, i) => [k, i]));
+    const tail = chain.length;
+    const ranks = /* @__PURE__ */ new Map();
+    for (const node2 of p.nodes) {
+      ranks.set(node2.id, (_g = rankOfKey.get(finalKey(node2.id))) != null ? _g : tail);
+    }
+    return ranks;
+  }
+  function packLanes(lanes, rankOf, step, gap2) {
+    var _a4, _b, _c, _d, _e;
+    const pos = /* @__PURE__ */ new Map();
+    if (!rankOf) {
+      const widest = Math.max(1, ...lanes.map((l) => l.length));
+      for (const lane of lanes) {
+        const offset = (widest - lane.length) * step / 2;
+        lane.forEach((id, i) => pos.set(id, offset + i * step));
+      }
+      return { pos, extent: (widest - 1) * step };
+    }
+    const slots = /* @__PURE__ */ new Map();
+    for (const lane of lanes) {
+      const perRank = /* @__PURE__ */ new Map();
+      for (const id of lane) {
+        const r = (_a4 = rankOf.get(id)) != null ? _a4 : 0;
+        perRank.set(r, ((_b = perRank.get(r)) != null ? _b : 0) + 1);
+      }
+      for (const [r, count] of perRank) slots.set(r, Math.max((_c = slots.get(r)) != null ? _c : 0, count));
+    }
+    const start = /* @__PURE__ */ new Map();
+    let cursor = 0;
+    for (const r of [...slots.keys()].sort((a, b) => a - b)) {
+      start.set(r, cursor);
+      cursor += slots.get(r) * step + gap2;
+    }
+    let extent = 0;
+    for (const lane of lanes) {
+      let i = 0;
+      while (i < lane.length) {
+        const r = (_d = rankOf.get(lane[i])) != null ? _d : 0;
+        let j = i;
+        while (j < lane.length && ((_e = rankOf.get(lane[j])) != null ? _e : 0) === r) j++;
+        const offset = start.get(r) + (slots.get(r) - (j - i)) * step / 2;
+        for (let k = i; k < j; k++) {
+          const at = offset + (k - i) * step;
+          pos.set(lane[k], at);
+          extent = Math.max(extent, at);
+        }
+        i = j;
+      }
+    }
+    return { pos, extent };
   }
   function layoutGraph(p, opts = {}) {
     var _a4;
@@ -1535,45 +1719,56 @@ var Server = (() => {
         lane.sort((a, b) => cmp(byId.get(a), byId.get(b)));
       }
     }
+    const rankOf = sort === "smart" ? clusterRanks(p) : null;
+    if (rankOf) {
+      for (const lane of lanes) {
+        lane.sort((a, b) => {
+          var _a5, _b2;
+          return ((_a5 = rankOf.get(a)) != null ? _a5 : 0) - ((_b2 = rankOf.get(b)) != null ? _b2 : 0);
+        });
+      }
+    }
+    const step = horizontal ? ROW_COL_STEP : rowGap;
+    const gap2 = horizontal ? ROW_CLUSTER_GAP : LANE_CLUSTER_GAP;
+    const { pos, extent } = packLanes(lanes, rankOf, step, rankOf ? gap2 : 0);
+    const clusterOf = (id) => rankOf == null ? void 0 : rankOf.get(id);
     const nodes = [];
     if (horizontal) {
-      const widest = Math.max(1, ...lanes.map((l) => l.length));
       lanes.forEach((lane, laneIdx) => {
-        const offset = (widest - lane.length) * ROW_COL_STEP / 2;
-        lane.forEach((id, col) => {
+        for (const id of lane) {
           nodes.push({
             id,
             lane: laneIdx,
-            x: margin + offset + col * ROW_COL_STEP,
+            cluster: clusterOf(id),
+            x: margin + pos.get(id),
             y: margin + laneIdx * ROW_BAND_GAP
           });
-        });
+        }
       });
       return {
         nodes,
-        width: margin * 2 + (widest - 1) * ROW_COL_STEP,
+        width: margin * 2 + extent,
         height: margin * 2 + (LANE_COUNT - 1) * ROW_BAND_GAP,
         laneGap: ROW_BAND_GAP,
         rowGap: ROW_COL_STEP,
         mode: "rows"
       };
     }
-    const tallest = Math.max(1, ...lanes.map((l) => l.length));
     lanes.forEach((lane, laneIdx) => {
-      const offset = (tallest - lane.length) * rowGap / 2;
-      lane.forEach((id, row) => {
+      for (const id of lane) {
         nodes.push({
           id,
           lane: laneIdx,
+          cluster: clusterOf(id),
           x: margin + laneIdx * laneGap,
-          y: margin + offset + row * rowGap
+          y: margin + pos.get(id)
         });
-      });
+      }
     });
     return {
       nodes,
       width: margin * 2 + (LANE_COUNT - 1) * laneGap,
-      height: margin * 2 + (tallest - 1) * rowGap,
+      height: margin * 2 + extent,
       laneGap,
       rowGap,
       mode: "lanes"
@@ -1732,18 +1927,7 @@ var Server = (() => {
     const margin = (_a4 = opts.margin) != null ? _a4 : 120;
     const groupBy = (_b = opts.groupBy) != null ? _b : "combo";
     const sort = (_c = opts.sort) != null ? _c : "smart";
-    const byId = new Map(p.nodes.map((n) => [n.id, n]));
-    const parentOf = /* @__PURE__ */ new Map();
-    for (const e of [...p.edges].sort((a, b) => a.id < b.id ? -1 : 1)) {
-      const dst = byId.get(e.dst);
-      const src = byId.get(e.src);
-      if (!dst || !src || !isRiskKind(dst.kind) || parentOf.has(dst.id)) continue;
-      parentOf.set(dst.id, src);
-    }
-    for (const s of p.summaries) {
-      const parent = byId.get(s.parentId);
-      if (parent) parentOf.set(s.id, parent);
-    }
+    const parentOf = parentIndex(p);
     const cmp = comparator(sort);
     const specs = [];
     if (groupBy === "asset") {

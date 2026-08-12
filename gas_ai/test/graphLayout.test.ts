@@ -108,8 +108,72 @@ describe("layoutGraph rows mode (horizontal transpose of lanes, the default)", (
     }
   });
 
-  it("nodes within a band share y and differ in x by 260 (ROW_COL_STEP)", () => {
+  it("cards step by 260 (ROW_COL_STEP) inside a cluster and further between clusters", () => {
     const layout = layoutGraph(PROJECTION, { mode: "rows" });
+    const byLane = new Map<number, Array<{ x: number; cluster?: number }>>();
+    for (const n of layout.nodes) {
+      if (!byLane.has(n.lane)) byLane.set(n.lane, []);
+      byLane.get(n.lane)!.push({ x: n.x, cluster: n.cluster });
+    }
+    let sawGutter = false;
+    for (const row of byLane.values()) {
+      row.sort((a, b) => a.x - b.x);
+      for (let i = 1; i < row.length; i++) {
+        const delta = row[i].x - row[i - 1].x;
+        if (row[i].cluster === row[i - 1].cluster) {
+          expect(delta).toBe(260);
+        } else {
+          // Grouping only reads if the gap between clusters beats the step inside one.
+          expect(delta).toBeGreaterThanOrEqual(260 + 140);
+          sawGutter = true;
+        }
+      }
+    }
+    expect(sawGutter).toBe(true); // the fixture must actually exercise the gutter
+  });
+
+  it("a cluster's cards are contiguous in every band — nothing foreign between them", () => {
+    const layout = layoutGraph(PROJECTION, { mode: "rows" });
+    const byLane = new Map<number, Array<{ x: number; cluster?: number }>>();
+    for (const n of layout.nodes) {
+      if (!byLane.has(n.lane)) byLane.set(n.lane, []);
+      byLane.get(n.lane)!.push({ x: n.x, cluster: n.cluster });
+    }
+    for (const row of byLane.values()) {
+      row.sort((a, b) => a.x - b.x);
+      const seen = new Set<number | undefined>();
+      let prev: number | undefined = -1;
+      for (const cell of row) {
+        if (cell.cluster === prev) continue;
+        expect(seen.has(cell.cluster)).toBe(false); // a cluster may not resume later
+        seen.add(cell.cluster);
+        prev = cell.cluster;
+      }
+    }
+  });
+
+  it("clusters claim disjoint stripes of the canvas, worst severity leftmost", () => {
+    const layout = layoutGraph(PROJECTION, { mode: "rows" });
+    const spans = new Map<number, { min: number; max: number }>();
+    for (const n of layout.nodes) {
+      const c = n.cluster!;
+      const span = spans.get(c);
+      if (!span) spans.set(c, { min: n.x, max: n.x });
+      else {
+        span.min = Math.min(span.min, n.x);
+        span.max = Math.max(span.max, n.x);
+      }
+    }
+    const ordered = [...spans.entries()].sort((a, b) => a[0] - b[0]);
+    for (let i = 1; i < ordered.length; i++) {
+      // Rank order is left-to-right, and no stripe reaches into its neighbor.
+      expect(ordered[i][1].min).toBeGreaterThan(ordered[i - 1][1].max);
+    }
+  });
+
+  it("an explicit order turns clustering off and spaces every card evenly", () => {
+    const layout = layoutGraph(PROJECTION, { mode: "rows", sort: "name" });
+    expect(layout.nodes.every((n) => n.cluster === undefined)).toBe(true);
     const byLane = new Map<number, number[]>();
     for (const n of layout.nodes) {
       if (!byLane.has(n.lane)) byLane.set(n.lane, []);
@@ -117,9 +181,7 @@ describe("layoutGraph rows mode (horizontal transpose of lanes, the default)", (
     }
     for (const xs of byLane.values()) {
       xs.sort((a, b) => a - b);
-      for (let i = 1; i < xs.length; i++) {
-        expect(xs[i] - xs[i - 1]).toBe(260);
-      }
+      for (let i = 1; i < xs.length; i++) expect(xs[i] - xs[i - 1]).toBe(260);
     }
   });
 
