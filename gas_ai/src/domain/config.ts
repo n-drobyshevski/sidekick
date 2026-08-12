@@ -45,9 +45,18 @@ export const AARS_BAND_SEVERITY_TOKEN: Record<string, string> = {
 export const DEPTH_MIN = 1;
 export const DEPTH_MAX = 3;
 export const DEPTH_DEFAULT = 2;
-/** Nodes per view, overridable per deployment in Settings (clamped to 30–400). */
+/** Nodes per view, overridable per deployment in Settings and per view by "Load more". */
 export const MAX_NODES_DEFAULT = 100;
+export const MAX_NODES_FLOOR = 30;
+export const MAX_NODES_CEILING = 400;
+/** projectGraph's own fallback: the edge budget that goes with a 100-node view. */
 export const MAX_EDGES_DEFAULT = 250;
+/**
+ * Edges allowed per node of budget. Fixing the edge cap while the node budget moves would
+ * make a raised budget draw more nodes with fewer of their connections; at the default
+ * 100-node view this ratio reproduces MAX_EDGES_DEFAULT exactly.
+ */
+export const EDGE_BUDGET_RATIO = 2.5;
 /**
  * Share of the node budget a single wave of seeds may claim. A bulk start ("every toxic
  * combination", "every scored asset") can name more seeds than the budget holds, and a

@@ -20,6 +20,21 @@
 // All are reduced-motion friendly by construction (nothing animates), and all
 // support explicit row-ordering ("sort") so the same URL always draws the same
 // picture.
+//
+// "rows" and "lanes" additionally CLUSTER under the default "smart" order: connected
+// nodes are packed into a contiguous stripe of slots across every band, and the next
+// cluster starts a wider gutter away than the step between cards inside one. Proximity
+// then does the grouping for free — the eye reads an attack path as one thing without a
+// box drawn around it — which is the same trade layered layouts make when they lay out
+// connected components separately and pack them with a component-to-component spacing.
+// An explicit sort (severity / AARS / name) asks for one global order instead, so it
+// turns clustering off rather than interleaving gutters into the sequence.
+//
+// The run of clusters WRAPS onto shelves — repeats of the whole band set, stacked below
+// (rows) or beside (lanes) each other — chosen so the canvas comes out roughly the shape
+// of the viewport. A tenant laid out in one line is a ribbon thousands of pixels long and
+// a few hundred deep, which "fit to view" can only show by shrinking every card past
+// reading; wrapping trades that length for depth and roughly doubles the zoom.
 
 import { SEVERITY_ORDER } from "./config";
 import type { GNode, NodeKind } from "./graphTypes";
@@ -87,6 +102,13 @@ export interface LayoutNode {
   /** Lane index in "lanes" mode; group index in "grouped" mode (keyboard nav
    *  walks this axis either way). */
   lane: number;
+  /** Cluster rank in lanes/rows mode under the smart order — 0 is the worst-severity
+   *  cluster, the last rank is the pooled bucket of lone nodes. Absent when clustering
+   *  is off (an explicit sort, or grouped mode, which draws its blocks instead). */
+  cluster?: number;
+  /** Which shelf — repeat of the full band set — this node sits on. Absent when the
+   *  clusters all fit on one, which is every unwrapped layout. */
+  shelf?: number;
 }
 
 /** A cluster block in "grouped" mode — the client draws it as a labelled hull. */
@@ -126,6 +148,24 @@ const BARYCENTER_SWEEPS = 3;
 const ROW_COL_STEP = 260; // horizontal distance between node centers within a band (clears the 196px card + right-edge markers)
 const ROW_BAND_GAP = 150; // vertical distance between band centers (clears the 56px card + labels)
 
+// Extra space inserted between clusters, on top of the within-cluster step. Grouping is
+// only perceived when the gap BETWEEN groups clearly beats the gap inside one, so both
+// values put roughly three times as much empty space between neighboring clusters as
+// between two cards of the same cluster (260→400 across, 84→132 down).
+const ROW_CLUSTER_GAP = 140;
+const LANE_CLUSTER_GAP = 48;
+
+// Wrapping: the run of clusters breaks onto a new shelf — a fresh set of bands below (or
+// beside) the last — so the canvas ends up roughly the shape of the viewport rather than a
+// ribbon nothing can be read at. Both gaps are wider than the band spacing inside a shelf,
+// so a shelf boundary never reads as just another band.
+const ROW_SHELF_GAP = 200; // rows mode: vertical space between shelves (bands are 150 apart)
+const LANE_SHELF_GAP = 200; // lanes mode: horizontal space between shelves (lanes are 280 apart)
+// The workbench body's shape (the window minus the sidebar rail and the top bar). Only the
+// aspect is needed: "fit to view" scales by whichever axis binds first, and scaling the
+// viewport scales every candidate wrap alike.
+const VIEWPORT_ASPECT = 1.9;
+
 // Grouped-mode geometry: cells fit the 196×56 node card plus gutters.
 const CELL_W = 240;
 const CELL_H = 84;
@@ -161,6 +201,324 @@ function comparator(sort: SortKey): (a: GNode, b: GNode) => number {
     return (a, b) => cmpName(a, b) || cmpId(a, b);
   }
   return (a, b) => nodeOrder(a, b) || cmpId(a, b);
+}
+
+// ------------------------------------------------------------- cluster packing
+
+/**
+ * Which node each derived node hangs off, so risk evidence and "+N more" stubs can
+ * inherit a bucket they have no fields of their own for. Risk evidence is always the
+ * `dst` of its edge; edges are walked in id order and the first parent wins, so a node
+ * reachable from two assets still lands deterministically.
+ */
+function parentIndex(p: Projection): Map<string, GNode> {
+  const byId = new Map(p.nodes.map((n) => [n.id, n]));
+  const parentOf = new Map<string, GNode>();
+  for (const e of [...p.edges].sort((a, b) => (a.id < b.id ? -1 : 1))) {
+    const dst = byId.get(e.dst);
+    const src = byId.get(e.src);
+    if (!dst || !src || !isRiskKind(dst.kind) || parentOf.has(dst.id)) continue;
+    parentOf.set(dst.id, src);
+  }
+  for (const s of p.summaries) {
+    const parent = byId.get(s.parentId);
+    if (parent) parentOf.set(s.id, parent);
+  }
+  return parentOf;
+}
+
+/** Connected components of the projected subgraph, as a node id → root id map. */
+function componentRoots(p: Projection): Map<string, string> {
+  const parent = new Map<string, string>();
+  for (const n of p.nodes) parent.set(n.id, n.id);
+  const find = (x: string): string => {
+    let root = x;
+    while (parent.get(root) !== root) root = parent.get(root)!;
+    while (parent.get(x) !== root) {
+      const next = parent.get(x)!;
+      parent.set(x, root);
+      x = next;
+    }
+    return root;
+  };
+  for (const e of [...p.edges].sort((a, b) => (a.id < b.id ? -1 : 1))) {
+    if (!parent.has(e.src) || !parent.has(e.dst)) continue;
+    const a = find(e.src);
+    const b = find(e.dst);
+    if (a !== b) parent.set(a, b);
+  }
+  const roots = new Map<string, string>();
+  for (const n of p.nodes) roots.set(n.id, find(n.id));
+  return roots;
+}
+
+/**
+ * Cluster rank per node: 0 is the worst-severity cluster, and the highest rank is the
+ * pool of nodes that have no cluster to belong to.
+ *
+ * A cluster starts as a connected component, then splits by nearest AI agent where one
+ * component holds several — an unfiltered view of this product is usually ONE component,
+ * since shared service accounts and buckets join every agent up, and "the paths around
+ * this agent" is the unit an analyst actually reads. Lone nodes are pooled into a single
+ * trailing bucket instead of each claiming a gutter of their own: a screen of evenly
+ * spread singletons is the layout we already had, and spreading it further would say
+ * "these are all separate groups" about nodes that are simply unconnected.
+ */
+function clusterRanks(p: Projection): Map<string, number> {
+  const { hubOf } = assignToHubs(p, parentIndex(p));
+  const roots = componentRoots(p);
+  const degree = new Map<string, number>();
+  for (const e of p.edges) {
+    degree.set(e.src, (degree.get(e.src) ?? 0) + 1);
+    degree.set(e.dst, (degree.get(e.dst) ?? 0) + 1);
+  }
+
+  const keyOf = new Map<string, string>();
+  for (const node of p.nodes) {
+    keyOf.set(node.id, hubOf.get(node.id) ?? "cc:" + roots.get(node.id));
+  }
+  const sharedEdges = (key: (id: string) => string): Map<string, Map<string, number>> => {
+    const out = new Map<string, Map<string, number>>();
+    for (const e of [...p.edges].sort((a, b) => (a.id < b.id ? -1 : 1))) {
+      const a = key(e.src);
+      const b = key(e.dst);
+      if (!a || !b || a === b) continue;
+      if (!out.has(a)) out.set(a, new Map());
+      if (!out.has(b)) out.set(b, new Map());
+      out.get(a)!.set(b, (out.get(a)!.get(b) ?? 0) + 1);
+      out.get(b)!.set(a, (out.get(b)!.get(a) ?? 0) + 1);
+    }
+    return out;
+  };
+
+  // A cluster of one that still has edges is not a lone node — it is a node whose
+  // neighbors were all claimed by some other agent's path. Fold it into whichever cluster
+  // it shares the most edges with, so it travels with what it is connected to; only nodes
+  // with no edges at all reach the pool.
+  const merged = new Map<string, string>([...keyOf.values()].map((k) => [k, k]));
+  const resolve = (k: string): string => {
+    let root = k;
+    while (merged.get(root) !== root) root = merged.get(root)!;
+    return root;
+  };
+  const groupBy = (key: (id: string) => string): Map<string, GNode[]> => {
+    const out = new Map<string, GNode[]>();
+    for (const node of p.nodes) {
+      const k = key(node.id);
+      if (!out.has(k)) out.set(k, []);
+      out.get(k)!.push(node);
+    }
+    return out;
+  };
+  const initial = groupBy((id) => keyOf.get(id)!);
+  const initialShared = sharedEdges((id) => keyOf.get(id)!);
+  for (const key of [...initial.keys()].sort()) {
+    const list = initial.get(key)!;
+    if (list.length !== 1 || !(degree.get(list[0].id) ?? 0)) continue;
+    let best = 0;
+    let target = "";
+    for (const [other, weight] of [...(initialShared.get(key) ?? new Map())].sort()) {
+      if (resolve(other) === resolve(key) || weight <= best) continue;
+      best = weight;
+      target = other;
+    }
+    if (target) merged.set(resolve(key), resolve(target));
+  }
+
+  const finalKey = (id: string): string => resolve(keyOf.get(id)!);
+  const members = groupBy(finalKey);
+  const shared = sharedEdges(finalKey);
+
+  const worst = (key: string): number => {
+    let rank: number = SEVERITY_ORDER.length;
+    for (const n of members.get(key) ?? []) rank = Math.min(rank, severityRank(n.severity));
+    return rank;
+  };
+  // Worst first, then the bigger path, then id — the same "most alarming leads" rule the
+  // rest of the product sorts by, applied to whole clusters instead of single nodes.
+  const keys = [...members.keys()]
+    .filter((k) => members.get(k)!.length > 1)
+    .sort((a, b) =>
+      worst(a) - worst(b) ||
+      members.get(b)!.length - members.get(a)!.length ||
+      (a < b ? -1 : a > b ? 1 : 0));
+
+  // Splitting a component by agent leaves edges that cross between clusters: the database
+  // three agents all read, the identity two of them run as. Laying the stripes out in
+  // severity order alone would strand those edges across the whole canvas, so each cluster
+  // is instead slotted NEXT TO whichever placed cluster it shares the most edges with —
+  // insertion, not appending, so all three readers of that database end up around it. The
+  // worst cluster still opens the canvas, and severity order fills every opening where
+  // nothing is shared.
+  const chain: string[] = [];
+  const unplaced = new Set(keys);
+  while (unplaced.size) {
+    let pick = "";
+    let anchor = chain.length - 1;
+    let best = 0;
+    for (const k of keys) { // base order first, so equal weights resolve by severity
+      if (!unplaced.has(k)) continue;
+      const links = shared.get(k);
+      if (!links) continue;
+      for (let i = 0; i < chain.length; i++) {
+        const weight = links.get(chain[i]) ?? 0;
+        if (weight > best) {
+          best = weight;
+          pick = k;
+          anchor = i;
+        }
+      }
+    }
+    if (!pick) {
+      pick = keys.find((k) => unplaced.has(k))!;
+      anchor = chain.length - 1;
+    }
+    chain.splice(anchor + 1, 0, pick);
+    unplaced.delete(pick);
+  }
+
+  const rankOfKey = new Map<string, number>(chain.map((k, i) => [k, i]));
+  const tail = chain.length; // the pooled lone nodes always sit last
+  const ranks = new Map<string, number>();
+  for (const node of p.nodes) {
+    ranks.set(node.id, rankOfKey.get(finalKey(node.id)) ?? tail);
+  }
+  return ranks;
+}
+
+/**
+ * Along-axis coordinate for every node, relative to the margin.
+ *
+ * Without clustering this is what it always was: one slot per node in a single shelf,
+ * shorter bands centered against the longest. With it, every cluster claims as many slots
+ * as its busiest band needs and keeps them in EVERY band, so a cluster occupies one
+ * contiguous stripe and its members line up across bands; each band's members are centered
+ * inside that stripe, the next stripe starts a gutter later, and the run of stripes WRAPS
+ * onto a new shelf — a fresh set of bands below (or beside, in lanes mode) the last —
+ * once it has claimed a shelf's worth of length.
+ */
+function packLanes(
+  lanes: string[][],
+  rankOf: Map<string, number> | null,
+  step: number,
+  gap: number,
+  bandSpan: number,
+  shelfGap: number,
+  pad: number,
+  horizontal: boolean,
+): { pos: Map<string, number>; shelfOf: Map<string, number>; extent: number; shelves: number } {
+  const pos = new Map<string, number>();
+  const shelfOf = new Map<string, number>();
+  if (!rankOf) {
+    const widest = Math.max(1, ...lanes.map((l) => l.length));
+    for (const lane of lanes) {
+      const offset = ((widest - lane.length) * step) / 2;
+      lane.forEach((id, i) => {
+        pos.set(id, offset + i * step);
+        shelfOf.set(id, 0);
+      });
+    }
+    return { pos, shelfOf, extent: (widest - 1) * step, shelves: 1 };
+  }
+
+  const slots = new Map<number, number>(); // cluster rank → slots, its busiest band
+  for (const lane of lanes) {
+    const perRank = new Map<number, number>();
+    for (const id of lane) {
+      const r = rankOf.get(id) ?? 0;
+      perRank.set(r, (perRank.get(r) ?? 0) + 1);
+    }
+    for (const [r, count] of perRank) slots.set(r, Math.max(slots.get(r) ?? 0, count));
+  }
+
+  const ranks = [...slots.keys()].sort((a, b) => a - b);
+  const runLength = ranks.reduce((acc, r) => acc + slots.get(r)! * step + gap, 0) - gap;
+
+  // Wrap at every length a shelf could actually end at — a cluster is never split, so the
+  // only meaningful targets are the cumulative lengths of the first m clusters — and keep
+  // whichever the viewport can zoom in on furthest. Scoring by the zoom directly, rather
+  // than by how square the canvas came out, is what picks the right wrap: "fit to view"
+  // scales by whichever axis binds, so a canvas that is too LONG and one that is too DEEP
+  // by the same ratio do not cost the same. Dividing the run by a shelf count would miss
+  // the good wraps as well, since uneven clusters spill past the count aimed for and an
+  // overflow shelf is paid for twice, in breadth gained and length left unused.
+  let best: WrapPlan | null = null;
+  let bestFit = 0;
+  let cumulative = 0;
+  for (let i = 0; i < ranks.length; i++) {
+    cumulative += slots.get(ranks[i])! * step + (i ? gap : 0);
+    const plan = wrapRun(ranks, slots, step, gap, cumulative);
+    const along = plan.longest + pad;
+    const across = (plan.shelves - 1) * (bandSpan + shelfGap) + bandSpan + pad;
+    // Only the viewport's SHAPE matters here: scaling it scales every candidate alike.
+    const fit = horizontal
+      ? Math.min(VIEWPORT_ASPECT / along, 1 / across)
+      : Math.min(VIEWPORT_ASPECT / across, 1 / along);
+    if (fit > bestFit * (1 + 1e-9)) { // strict: ties keep the fewer, shorter shelves
+      bestFit = fit;
+      best = plan;
+    }
+  }
+  const { start, shelfOfRank } = best!;
+  const shelf = best!.shelves - 1;
+
+  let extent = 0;
+  for (const lane of lanes) {
+    // Lanes arrive sorted by rank, so each cluster's members are one contiguous run.
+    let i = 0;
+    while (i < lane.length) {
+      const r = rankOf.get(lane[i]) ?? 0;
+      let j = i;
+      while (j < lane.length && (rankOf.get(lane[j]) ?? 0) === r) j++;
+      const offset = start.get(r)! + ((slots.get(r)! - (j - i)) * step) / 2;
+      for (let k = i; k < j; k++) {
+        const at = offset + (k - i) * step;
+        pos.set(lane[k], at);
+        shelfOf.set(lane[k], shelfOfRank.get(r)!);
+        extent = Math.max(extent, at);
+      }
+      i = j;
+    }
+  }
+  return { pos, shelfOf, extent, shelves: shelf + 1 };
+}
+
+interface WrapPlan {
+  start: Map<number, number>;      // cluster rank → offset along its shelf
+  shelfOfRank: Map<number, number>;
+  shelves: number;
+  longest: number;                 // length of the longest shelf
+}
+
+/**
+ * Greedy wrap of the cluster run at a target shelf length. Clusters are never split, so a
+ * cluster longer than the target simply takes a shelf of its own; the caller decides which
+ * target to keep by measuring what each one produces.
+ */
+function wrapRun(
+  ranks: number[],
+  slots: Map<number, number>,
+  step: number,
+  gap: number,
+  target: number,
+): WrapPlan {
+  const start = new Map<number, number>();
+  const shelfOfRank = new Map<number, number>();
+  let shelf = 0;
+  let cursor = 0;
+  let longest = 0;
+  for (const r of ranks) {
+    const length = slots.get(r)! * step;
+    if (cursor > 0 && cursor + length > target) {
+      shelf++;
+      cursor = 0;
+    }
+    shelfOfRank.set(r, shelf);
+    start.set(r, cursor);
+    cursor += length + gap;
+    longest = Math.max(longest, cursor - gap);
+  }
+  return { start, shelfOfRank, shelves: shelf + 1, longest };
 }
 
 export function layoutGraph(p: Projection, opts: LayoutOptions = {}): Layout {
@@ -235,51 +593,67 @@ function layoutLanes(p: Projection, opts: LayoutOptions, horizontal: boolean): L
     }
   }
 
+  // Cluster the smart order, and only the smart order: an explicit sort is a request for
+  // one global sequence, which gutters cut through. Sorting by rank is stable, so the
+  // barycenter order survives INSIDE each cluster — which is the only place it can
+  // matter, since edges never leave a connected component.
+  const rankOf = sort === "smart" ? clusterRanks(p) : null;
+  if (rankOf) {
+    for (const lane of lanes) {
+      lane.sort((a, b) => (rankOf.get(a) ?? 0) - (rankOf.get(b) ?? 0));
+    }
+  }
+
+  const step = horizontal ? ROW_COL_STEP : rowGap;
+  const gap = horizontal ? ROW_CLUSTER_GAP : LANE_CLUSTER_GAP;
+  const bandGap = horizontal ? ROW_BAND_GAP : laneGap;
+  const bandSpan = (LANE_COUNT - 1) * bandGap;
+  const shelfPitch = bandSpan + (horizontal ? ROW_SHELF_GAP : LANE_SHELF_GAP);
+  const { pos, shelfOf, extent, shelves } = packLanes(
+    lanes, rankOf, step, rankOf ? gap : 0, bandSpan,
+    horizontal ? ROW_SHELF_GAP : LANE_SHELF_GAP, margin * 2, horizontal,
+  );
+
+  // Emitted shelf by shelf, band by band: the reading order of the picture, and the order
+  // arrow-key navigation walks a band in.
   const nodes: LayoutNode[] = [];
-  if (horizontal) {
-    // Bands stacked top-to-bottom; nodes spread left-to-right; shorter bands centered horizontally.
-    const widest = Math.max(1, ...lanes.map((l) => l.length));
+  for (let shelf = 0; shelf < shelves; shelf++) {
     lanes.forEach((lane, laneIdx) => {
-      const offset = ((widest - lane.length) * ROW_COL_STEP) / 2;
-      lane.forEach((id, col) => {
+      for (const id of lane) {
+        if (shelfOf.get(id) !== shelf) continue;
+        const along = margin + pos.get(id)!;
+        const across = margin + shelf * shelfPitch + laneIdx * bandGap;
         nodes.push({
           id,
           lane: laneIdx,
-          x: margin + offset + col * ROW_COL_STEP,
-          y: margin + laneIdx * ROW_BAND_GAP,
+          cluster: rankOf?.get(id),
+          shelf: shelves > 1 ? shelf : undefined,
+          x: horizontal ? along : across,
+          y: horizontal ? across : along,
         });
-      });
+      }
     });
-    return {
-      nodes,
-      width: margin * 2 + (widest - 1) * ROW_COL_STEP,
-      height: margin * 2 + (LANE_COUNT - 1) * ROW_BAND_GAP,
-      laneGap: ROW_BAND_GAP,
-      rowGap: ROW_COL_STEP,
-      mode: "rows",
-    };
   }
-  // Lanes (vertical): columns left-to-right, nodes stacked vertically, shorter lanes centered vertically.
-  const tallest = Math.max(1, ...lanes.map((l) => l.length));
-  lanes.forEach((lane, laneIdx) => {
-    const offset = ((tallest - lane.length) * rowGap) / 2;
-    lane.forEach((id, row) => {
-      nodes.push({
-        id,
-        lane: laneIdx,
-        x: margin + laneIdx * laneGap,
-        y: margin + offset + row * rowGap,
-      });
-    });
-  });
-  return {
-    nodes,
-    width: margin * 2 + (LANE_COUNT - 1) * laneGap,
-    height: margin * 2 + (tallest - 1) * rowGap,
-    laneGap,
-    rowGap,
-    mode: "lanes",
-  };
+
+  const alongSize = margin * 2 + extent;
+  const acrossSize = margin * 2 + (shelves - 1) * shelfPitch + bandSpan;
+  return horizontal
+    ? {
+        nodes,
+        width: alongSize,
+        height: acrossSize,
+        laneGap: ROW_BAND_GAP,
+        rowGap: ROW_COL_STEP,
+        mode: "rows",
+      }
+    : {
+        nodes,
+        width: acrossSize,
+        height: alongSize,
+        laneGap,
+        rowGap,
+        mode: "lanes",
+      };
 }
 
 // ---------------------------------------------------------------- grouped mode
@@ -483,21 +857,7 @@ function layoutGrouped(p: Projection, opts: LayoutOptions): Layout {
   const groupBy = opts.groupBy ?? "combo";
   const sort = opts.sort ?? "smart";
 
-  const byId = new Map(p.nodes.map((n) => [n.id, n]));
-  // Who each derived node hangs off, so it can inherit a bucket it has no fields for.
-  // Risk evidence is always the `dst` of its edge; edges are walked in id order and the
-  // first parent wins, so a node reachable from two assets still lands deterministically.
-  const parentOf = new Map<string, GNode>();
-  for (const e of [...p.edges].sort((a, b) => (a.id < b.id ? -1 : 1))) {
-    const dst = byId.get(e.dst);
-    const src = byId.get(e.src);
-    if (!dst || !src || !isRiskKind(dst.kind) || parentOf.has(dst.id)) continue;
-    parentOf.set(dst.id, src);
-  }
-  for (const s of p.summaries) {
-    const parent = byId.get(s.parentId);
-    if (parent) parentOf.set(s.id, parent);
-  }
+  const parentOf = parentIndex(p);
   const cmp = comparator(sort);
 
   // Build one block spec per group. "asset" is hub-and-spoke; everything else

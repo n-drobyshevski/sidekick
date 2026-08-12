@@ -4,7 +4,7 @@
 // any toxic combination.
 
 import { clampDepth, clampMaxNodes } from "./settingsLogic";
-import { MAX_EDGES_DEFAULT } from "./config";
+import { EDGE_BUDGET_RATIO } from "./config";
 import {
   GROUP_KEYS,
   LAYOUT_MODES,
@@ -93,16 +93,22 @@ export function resolveGraphParams(p: Rec, ctx: GraphParamContext): ProjectOptio
     filters.projects.length || filters.clouds.length;
 
   // "" depth means "use the configured default" (the client sends the raw hash
-  // value); clampDepth alone would coerce "" to the minimum.
+  // value); clampDepth alone would coerce "" to the minimum. `maxNodes` reads the same
+  // way — absent or "" is the configured budget, a number is this view's own budget,
+  // which is how "Load more" asks for the next slice.
   const rawDepth = p["depth"];
+  const rawMaxNodes = p["maxNodes"];
+  const maxNodes = clampMaxNodes(
+    rawMaxNodes == null || rawMaxNodes === "" ? ctx.maxNodes : rawMaxNodes,
+  );
 
   return {
     seedIds,
     depth: clampDepth(rawDepth == null || rawDepth === "" ? ctx.defaultDepth : rawDepth),
     expandIds: toList(p["expand"]),
     filters: hasFilters ? filters : undefined,
-    maxNodes: clampMaxNodes(p["maxNodes"] ?? ctx.maxNodes),
-    maxEdges: MAX_EDGES_DEFAULT,
+    maxNodes,
+    maxEdges: Math.round(maxNodes * EDGE_BUDGET_RATIO),
     ...(seedKind === "scored" ? { filterSeeds: true } : {}),
   };
 }

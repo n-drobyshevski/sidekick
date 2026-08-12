@@ -34,7 +34,7 @@ let legendOpen = false;
 
 // Params that change the server payload (vs. client-only view/q/panel).
 const DATA_KEYS = [
-  "seed", "seedKind", "depth", "expand",
+  "seed", "seedKind", "depth", "expand", "maxNodes",
   "severities", "kinds", "projects", "clouds",
   "layout", "groupBy", "sort",
 ];
@@ -45,6 +45,10 @@ function graphParams(params, defaults) {
     seedKind: params.seedKind || "",
     depth: Number(params.depth) || defaults.defaultDepth || 2,
     depthRaw: params.depth == null ? "" : String(params.depth),
+    // This view's node budget: "" means the deployment's configured one. "Load more"
+    // writes the next step here, so a widened view is shareable like any other.
+    maxNodes: Number(params.maxNodes) || defaults.maxNodes || 0,
+    maxNodesRaw: params.maxNodes == null ? "" : String(params.maxNodes),
     expand: params.expand || "",
     severities: params.severities || "",
     kinds: params.kinds || "",
@@ -99,6 +103,7 @@ function rpcParams(p) {
     // params free of bootstrap-derived values lets the initial graph fetch run
     // in parallel with bootstrap (same cache key either way).
     depth: p.depthRaw,
+    maxNodes: p.maxNodesRaw,
     expand: listSplit(p.expand),
     severities: listSplit(p.severities),
     kinds: listSplit(p.kinds),
@@ -317,6 +322,39 @@ export async function renderGraphPage(main, params, _ctx) {
   }
 
   // -------------------------------------------------------------------- meta
+  /**
+   * "Load more": raise THIS view's node budget by one step and refetch, leaving the
+   * deployment's configured budget alone. Only offered on a capped view — an uncapped one
+   * is already showing everything depth and filters admit, so a bigger budget would change
+   * nothing. The step is one default budget's worth, and the server's clamp is the last
+   * step: at the ceiling the button gives way to a note saying so, since a button that
+   * can't do anything is worse than a sentence explaining why.
+   */
+  function loadMoreControl(payload) {
+    const budget = Number(payload.options?.maxNodes) || Number(defaults.maxNodes) || 0;
+    const ceiling = Number(defaults.maxNodesCeiling) || 400;
+    if (!budget || budget >= ceiling) {
+      return el("span", { class: "muted" }, `at the ${ceiling}-node maximum`);
+    }
+    const step = Math.max(25, Number(defaults.maxNodes) || 100);
+    const next = Math.min(ceiling, budget + step);
+    const more = next - budget;
+    const btn = el("button", {
+      class: "link",
+      "aria-label":
+        `Load ${more} more nodes, raising this view to ${next}. ` +
+        `Showing ${payload.counts.shownNodes} of ${payload.counts.totalNodes}.`,
+      onclick: () => {
+        // The meta bar is rebuilt when the payload lands; until then the button must not
+        // take a second press and skip a step.
+        btn.disabled = true;
+        btn.textContent = "Loading…";
+        update({ maxNodes: String(next) });
+      },
+    }, `Load ${more} more`);
+    return btn;
+  }
+
   function updateMeta(payload) {
     clear(meta);
     if (!payload || payload.empty) return;
@@ -328,10 +366,12 @@ export async function renderGraphPage(main, params, _ctx) {
         ? el("span", { class: "pill warn", title:
             `This view is capped at ${payload.options?.maxNodes || "its"} nodes to stay ` +
             "light, so some neighbors — or, on a whole-estate view, some starting points " +
-            "— are not drawn. Narrow the filters, seed from a single asset or " +
-            "combination, or raise the node budget in Settings." },
+            "— are not drawn. Load more to widen it a step at a time, or narrow the " +
+            "filters, seed from a single asset or combination, or change the node " +
+            "budget in Settings." },
             "⚠ capped")
         : null,
+      c.capped ? loadMoreControl(payload) : null,
       payload.summaries && payload.summaries.length
         ? el("span", { class: "muted" },
             `${payload.summaries.length} collapsed group${payload.summaries.length > 1 ? "s" : ""}`)
@@ -407,6 +447,15 @@ export async function renderGraphPage(main, params, _ctx) {
         patch: { kinds: listJoin(listSplit(state.kinds).filter((x) => x !== k)) },
       });
     }
+    // A widened budget is view state like any other: visible as a chip, clearable back to
+    // the configured one, and carried in a shared link.
+    if (state.maxNodesRaw && state.maxNodes !== (defaults.maxNodes || 0)) {
+      entries.push({
+        key: "maxNodes",
+        label: `Budget: ${state.maxNodes} nodes`,
+        patch: { maxNodes: "" },
+      });
+    }
     if (state.projects) entries.push({ key: "projects", label: "Project: " + state.projects, patch: { projects: "" } });
     if (state.clouds) entries.push({ key: "clouds", label: "Cloud: " + state.clouds, patch: { clouds: "" } });
     return entries;
@@ -459,7 +508,7 @@ export async function renderGraphPage(main, params, _ctx) {
 
   function clearAllFilters() {
     update({
-      seed: "", seedKind: "", expand: "",
+      seed: "", seedKind: "", expand: "", maxNodes: "",
       severities: "", kinds: "", projects: "", clouds: "",
       depth: String(defaults.defaultDepth || 2),
     });
