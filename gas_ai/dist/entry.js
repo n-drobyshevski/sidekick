@@ -12,6 +12,7 @@ function setup() { return Server.setup(); }
 // Wiz connectivity check — run from the GAS editor to validate credentials; it prints
 // which auth/query step fails (secret-safe) to the execution log. Never used by a sync.
 function wizDiagnostic() { return Server.wizDiagnostic(); }
+function aarsDiagnostic() { return Server.aarsDiagnostic(); }
 
 // Trigger handlers (names referenced by ScriptApp.newTrigger calls).
 function trigger_dailySync() { Server.jobs.dailySync(); }

@@ -118,3 +118,43 @@ describe("appendRows against an out-of-date header row", () => {
     expect(rows[0]["aars_severity_json"]).toBeNull();
   });
 });
+
+// The full persistence hop the inventory depends on: a GNode written to a tab that still
+// carries the pre-rename header row, then read back the way loadAssets() does. This is
+// the round trip that was silently losing the severity.
+describe("asset round trip over a pre-rename ledger", () => {
+  it("keeps both the score and its severity through write → read", async () => {
+    const { overwrite, readAll, TABS } = await db();
+    const { assetToRow, rowToAsset } = await import("../src/server/syncStore");
+
+    // Exactly the header row a ledger created before the rename still has.
+    sheets[TABS.assets] = fakeSheet([[
+      "id", "kind", "name", "native_type", "cloud", "region", "status",
+      "account_id", "account_name", "projects_json", "first_seen", "last_seen",
+      "internet", "open_internet", "sensitive_data", "sensitive_access", "high_priv",
+      "admin_priv", "guardrail_missing", "severity", "aars", "aars_band",
+      "aars_pillars_json", "combo_groups", "tags_json", "technology_categories",
+      "identity_purpose", "issue_analytics_json",
+    ], []]);
+
+    overwrite(TABS.assets, [assetToRow({
+      id: "agent-a", kind: "AI_AGENT", name: "Agent-A", aars: 62, aarsSeverity: "HIGH",
+    })]);
+
+    const [node] = readAll(TABS.assets).map(rowToAsset);
+    expect(node.aars).toBe(62);
+    expect(node.aarsSeverity).toBe("HIGH");
+  });
+
+  it("re-reads a row the old code wrote, from the column it wrote it to", async () => {
+    const { readAll, TABS } = await db();
+    const { rowToAsset } = await import("../src/server/syncStore");
+    sheets[TABS.assets] = fakeSheet([
+      ["id", "kind", "name", "aars", "aars_band"],
+      ["agent-a", "AI_AGENT", "Agent-A", 62, "MINIMAL"],
+    ]);
+    const [node] = readAll(TABS.assets).map(rowToAsset);
+    expect(node.aars).toBe(62);
+    expect(node.aarsSeverity).toBe("INFO"); // legacy value, current name
+  });
+});
