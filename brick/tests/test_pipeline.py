@@ -483,3 +483,91 @@ def test_check_deployment_names_every_stale_module(monkeypatch):
     with pytest.raises(RuntimeError) as exc:
         run_pipeline.check_deployment()
     assert "ledger" in str(exc.value) and "metrics" in str(exc.value)
+
+
+# ------------------------------------------------------------------ the path-backed mode
+#
+# `--data_path` is what lets a PoC with no catalog run at all. These are the pure-Python half:
+# resolution, validation and the reference shape. The end-to-end half -- that a path-backed
+# register holds the same rows as a catalog-backed one, and migrates into a catalog without
+# losing any -- lives in test_ledger_pipeline.py, where there is a real Delta session.
+
+
+def test_data_path_produces_delta_path_references(monkeypatch):
+    """A path-backed table is named `delta.`<root>/<prefix><name>`` -- valid anywhere Spark
+    wants a table, which is what lets one `Tables` serve both modes."""
+    monkeypatch.setattr(dbx, "widget", lambda name: "")
+    tables = run_pipeline.resolve_tables("", "os", argv=[], data_path="/Volumes/c/s/v/brick")
+    assert tables.bronze == "delta.`/Volumes/c/s/v/brick/wiz_os_findings_raw`"
+    assert tables.ledger == "delta.`/Volumes/c/s/v/brick/wiz_os_vuln_ledger`"
+    # The directory names match what a catalog run would call the tables, so the README's
+    # CREATE TABLE ... LOCATION recipe is one statement per directory with nothing renamed.
+    assert tables.capacity.endswith("/wiz_os_metrics_capacity`")
+
+
+def test_as_path_recovers_the_path_and_leaves_catalog_names_alone():
+    """The whole storage abstraction: a reference carries its own path."""
+    assert run_pipeline.as_path("delta.`/mnt/brick/wiz_os_scans`") == "/mnt/brick/wiz_os_scans"
+    assert run_pipeline.as_path("cat.sch.wiz_os_scans") is None
+
+
+def test_data_path_is_optional_and_empty_means_catalog_mode(monkeypatch):
+    monkeypatch.setattr(dbx, "widget", lambda name: "")
+    monkeypatch.delenv("DATA_PATH", raising=False)
+    assert run_pipeline.resolve_data_path(argv=[]) == ""
+    assert run_pipeline.resolve_data_path(argv=["--data_path=/mnt/x/"]) == "/mnt/x"
+
+
+def test_data_path_refuses_a_backtick(monkeypatch):
+    """The path is interpolated into SQL inside backticks -- same reasoning as IDENTIFIER."""
+    monkeypatch.setattr(dbx, "widget", lambda name: "")
+    with pytest.raises(RuntimeError, match="backtick"):
+        run_pipeline.resolve_data_path(argv=["--data_path=/mnt/`/x"])
+
+
+def test_data_path_refuses_a_relative_path(monkeypatch):
+    monkeypatch.setattr(dbx, "widget", lambda name: "")
+    with pytest.raises(RuntimeError, match="absolute path or a storage URI"):
+        run_pipeline.resolve_data_path(argv=["--data_path=brick-data"])
+
+
+@pytest.mark.parametrize(
+    "uri",
+    ["dbfs:/brick", "s3://bucket/brick", "abfss://c@a.dfs.core.windows.net/brick", "gs://b/brick"],
+)
+def test_data_path_accepts_storage_uris(monkeypatch, uri):
+    """Two of the three places that persist are only addressable as a URI, so requiring a
+    leading slash would have rejected the answers."""
+    monkeypatch.setattr(dbx, "widget", lambda name: "")
+    assert run_pipeline.resolve_data_path(argv=[f"--data_path={uri}"]) == uri
+
+
+def test_data_path_refuses_workspace_files(monkeypatch):
+    """`/Workspace` persists and needs no catalog, which makes it the obvious PoC answer and a
+    wrong one: executors cannot write to workspace files, and every write here is a distributed
+    Delta write. It can appear to work on a single-node cluster and break when one is scaled.
+
+    Refused even off Databricks -- unlike the ephemeral paths, there is no local sense in which
+    /Workspace is a reasonable place for this, so there is nothing to allow.
+    """
+    monkeypatch.setattr(dbx, "widget", lambda name: "")
+    monkeypatch.setattr(dbx, "get_dbutils", lambda: None)
+    with pytest.raises(RuntimeError, match="executors cannot write"):
+        run_pipeline.resolve_data_path(argv=["--data_path=/Workspace/Users/me/brick"])
+
+
+def test_data_path_refuses_ephemeral_cluster_disk(monkeypatch):
+    """The one failure this mode exists to prevent.
+
+    `/tmp` and `/local_disk0` are wiped when a cluster terminates, so a register written there
+    is gone by morning -- silently, and exactly when somebody goes looking for the history. On
+    Databricks it is refused; off Databricks those are ordinary directories and are allowed,
+    which is what lets these tests and `tmp_path` work at all.
+    """
+    monkeypatch.setattr(dbx, "widget", lambda name: "")
+    monkeypatch.setattr(dbx, "get_dbutils", lambda: object())
+    with pytest.raises(RuntimeError, match="ephemeral"):
+        run_pipeline.resolve_data_path(argv=["--data_path=/tmp/brick"])
+
+    monkeypatch.setattr(dbx, "get_dbutils", lambda: None)
+    assert run_pipeline.resolve_data_path(argv=["--data_path=/tmp/brick"]) == "/tmp/brick"

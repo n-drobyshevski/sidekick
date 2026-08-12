@@ -206,10 +206,41 @@ def default_table_prefix(scope: str) -> str:
 IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 PREFIX = re.compile(r"^[A-Za-z0-9_]*$")
 
+# A table reference of the form delta.`/some/path`, which is how Spark names a Delta table that
+# is not in any catalog. Every read site takes one of these unchanged -- `spark.table()` and
+# every `FROM {table}` accept it -- so path mode is invisible above this line. The three writers
+# below need the path itself, and this is how they get it back out of the reference.
+PATH_REF = re.compile(r"^delta\.`(.+)`$")
+
+#: Prefixes that are wiped when a Databricks cluster terminates. Writing the register to one of
+#: these is the single failure this mode exists to prevent, so it is refused rather than warned
+#: about -- the data would be gone by the time anyone noticed.
+EPHEMERAL_PREFIXES = ("/tmp/", "/local_disk0/", "/databricks/driver")
+
+# `dbfs:/`, `s3://`, `abfss://`, `gs://` -- a storage URI is as valid a home for the register as
+# an absolute path, and for two of the three places that persist it is the *only* form Spark
+# takes. Requiring a leading slash would have rejected them.
+URI_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:/")
+
+#: Named once because two different refusals below have to end with the same advice, and advice
+#: that drifts between two error messages is worse than no advice.
+PERSISTENT_PATHS = (
+    "Use somewhere that persists and that executors can write: "
+    "/Volumes/<catalog>/<schema>/<volume>/... (a Unity Catalog volume is a much smaller ask "
+    "than a schema to create tables in), dbfs:/... where DBFS root still exists, or a storage "
+    "URI you already hold credentials for (s3://..., abfss://...). "
+    "See brick/README.md, PoC storage."
+)
+
 
 @dataclass(frozen=True)
 class Tables:
-    """The eight fully-qualified table names one run writes to."""
+    """The eight table references one run writes to.
+
+    Either fully-qualified ``catalog.schema.name`` (the default) or ``delta.`<path>``` when
+    ``--data_path`` is set. Both are valid anywhere Spark wants a table, which is what lets one
+    dataclass serve both and every reader in the module stay unaware of the difference.
+    """
 
     bronze: str
     silver: str
@@ -219,6 +250,31 @@ class Tables:
     program: str
     capacity: str
     sensitivity: str
+
+
+def as_path(table: str) -> Optional[str]:
+    """The filesystem path behind a ``delta.`...``` reference, or ``None`` for a catalog name.
+
+    The reference carries its own path, so nothing has to be threaded alongside it. That is the
+    whole of the storage abstraction: three writers ask this question, everything else does not
+    need to.
+    """
+    match = PATH_REF.match(table)
+    return match.group(1) if match else None
+
+
+def table_exists(spark: SparkSession, table: str) -> bool:
+    """Whether a table reference resolves to something. Works for both kinds of reference.
+
+    ``spark.catalog.tableExists`` cannot answer for a path -- there is no catalog entry to find
+    -- so a path reference is asked of Delta directly.
+    """
+    path = as_path(table)
+    if path is None:
+        return spark.catalog.tableExists(table)
+    from delta.tables import DeltaTable
+
+    return DeltaTable.isDeltaTable(spark, path)
 
 
 @dataclass(frozen=True)
@@ -352,17 +408,22 @@ def create_clustered(spark: SparkSession, table: str, schema, attr: str) -> None
     the ALTER TABLE recipe in the README. Enabling clustering on an existing table is an
     owner-level operation and not one to perform silently on the next scheduled run.
     """
-    if spark.catalog.tableExists(table):
+    if table_exists(spark, table):
         return
     from delta.tables import DeltaTable
 
     if isinstance(schema, str):
         schema = spark.createDataFrame([], schema).schema
     cluster_by, deletion_vectors = CLUSTERING[attr]
+    builder = DeltaTable.createIfNotExists(spark)
+    # A path-backed table is created at a location instead of under a name. Everything else --
+    # the schema, the clustering spec, the deletion-vector property, the resulting reader and
+    # writer versions -- comes out identical, which is what makes the two modes interchangeable
+    # and the `CREATE TABLE ... USING DELTA LOCATION` migration lossless.
+    path = as_path(table)
+    builder = builder.location(path) if path else builder.tableName(table)
     (
-        DeltaTable.createIfNotExists(spark)
-        .tableName(table)
-        .addColumns(schema)
+        builder.addColumns(schema)
         .clusterBy(cluster_by)
         .property("delta.enableDeletionVectors", "true" if deletion_vectors else "false")
         .execute()
@@ -383,8 +444,10 @@ def ensure_tables(spark: SparkSession, tables: Tables) -> None:
     bronze" is how it knows there is no history to replay.
     """
     create_clustered(spark, tables.ledger, ledger_mod.LEDGER_SCHEMA, "ledger")
-    if not spark.catalog.tableExists(tables.scans):
-        spark.createDataFrame([], SCANS_SCHEMA).write.format("delta").saveAsTable(tables.scans)
+    if not table_exists(spark, tables.scans):
+        empty = spark.createDataFrame([], SCANS_SCHEMA).write.format("delta")
+        path = as_path(tables.scans)
+        empty.save(path) if path else empty.saveAsTable(tables.scans)
 
 
 SCANS_SCHEMA = (
@@ -399,8 +462,13 @@ def write_append(df, table: str) -> None:
     Always Delta, explicitly: the pipeline needs MERGE and DELETE, so relying on the session's
     default format would work on Databricks and quietly produce Parquet anywhere else.
     mergeSchema because v2 adds columns to tables a v1 run already created.
+
+    A path-backed table is saved rather than saved-as-table. That is the only difference; the
+    append itself, including the clustering it preserves, is the same operation.
     """
-    df.write.format("delta").mode("append").option("mergeSchema", "true").saveAsTable(table)
+    writer = df.write.format("delta").mode("append").option("mergeSchema", "true")
+    path = as_path(table)
+    writer.save(path) if path else writer.saveAsTable(table)
 
 
 def recorded_scan(spark: SparkSession, tables: Tables, scan_id: str) -> Optional[dict]:
@@ -551,7 +619,7 @@ def clear_scan(spark: SparkSession, tables: Tables, scan_id: str) -> None:
     """
     for name in APPEND_TABLES:
         table = getattr(tables, APPEND_TABLE_ATTRS[name])
-        if spark.catalog.tableExists(table):
+        if table_exists(spark, table):
             spark.sql(f"DELETE FROM {table} WHERE scan_id = '{scan_id}'")
 
 
@@ -773,12 +841,19 @@ def build_metrics(
     bronze = spark.table(tables.bronze).filter(f"scan_id = '{scan_id}'")
 
     silver = metrics.classify_risk(metrics.silver_findings(bronze), rule).cache()
-    # Silver is created here rather than in `ensure_tables` because it has no declared schema
-    # anywhere -- it is whatever `metrics.silver_findings` projects, deliberately, so that
-    # widening the projection is a one-line change. Taking the schema off the frame keeps that
-    # property; a constant would be a second copy of the projection to keep in step.
-    create_clustered(spark, tables.silver, silver.schema, "silver")
-    write_append(silver, tables.silver)
+    # Silver is not persisted in path mode. It is a pure per-scan projection of bronze -- the
+    # snapshot columns below read the frame in memory, and `panels.register_views` rebuilds
+    # `v_findings` from bronze the same way -- so storing it would be a second copy of data the
+    # register already holds. Bronze is what must survive; see the README's PoC storage section.
+    #
+    # In catalog mode it is still written, because that is what every existing deployment and
+    # every panel expects to find. Silver is created here rather than in `ensure_tables`
+    # because it has no declared schema anywhere -- it is whatever `metrics.silver_findings`
+    # projects, deliberately, so that widening the projection is a one-line change. Taking the
+    # schema off the frame keeps that property; a constant would be a second copy to keep in step.
+    if as_path(tables.silver) is None:
+        create_clustered(spark, tables.silver, silver.schema, "silver")
+        write_append(silver, tables.silver)
 
     # Collected once, here, and used twice: the reconciler needs the previous scan and its
     # severity coverage, and capacity needs the earliest scan on record. Reading the same small
@@ -960,13 +1035,82 @@ def resolve_scope(argv: Optional[list] = None) -> str:
     return scope
 
 
-def resolve_tables(namespace: str, scope: str, argv: Optional[list] = None) -> Tables:
-    """The eight table names, prefixed so they can share a schema with other teams' tables."""
+def resolve_data_path(argv: Optional[list] = None) -> str:
+    """The directory the register lives in, or ``""`` for a catalog-backed run.
+
+    Setting ``--data_path`` is what selects path mode; there is no second flag, because the
+    presence of a path *is* the mode and two flags would have a fourth combination to explain.
+    A path-backed run needs no catalog, no schema and no Unity Catalog -- which is the point of
+    it: a PoC with nowhere to create tables can still collect a register that survives.
+
+    An absolute path or a storage URI: ``/Volumes/...``, ``dbfs:/...``, ``s3://...``,
+    ``abfss://...``. A relative path is refused because it resolves against whatever the
+    driver's working directory happens to be.
+
+    Three things are refused rather than accepted, all of them at parameter resolution so they
+    cost seconds rather than surfacing forty minutes into a scan:
+
+    A **backtick**, because the path is interpolated into SQL inside one. Same reasoning as
+    IDENTIFIER and PREFIX above: the value comes from an operator, not an attacker, and it
+    should still fail with a clear message rather than do something surprising.
+
+    An **ephemeral path**, when there is a Databricks around to be ephemeral on. `/tmp`,
+    `/local_disk0` and the driver's own directories are wiped when a cluster terminates, so a
+    register written there is gone by the next morning -- silently, and precisely at the moment
+    somebody goes looking for the history. Off Databricks those paths are ordinary local
+    directories and are allowed, which is what lets the tests use ``tmp_path``.
+
+    **``/Workspace``**, which looks like the obvious answer and is not one. Workspace files
+    persist and need no catalog, so they are the natural first choice for a PoC -- but
+    *"executors cannot write to workspace files"*, and every write here is a distributed Delta
+    write. It can appear to work on a single-node cluster, where the driver is also the
+    executor, and then fail the moment the cluster is scaled. Workspace file permissions also
+    expire (36 hours interactive, 30 days for jobs), which disqualifies it as somewhere data
+    lives. Refused for the same reason as the ephemeral paths: the failure is late, confusing,
+    and lands on the data. See brick/README.md, PoC storage.
+    """
+    path = param("data_path", argv=argv).strip().rstrip("/")
+    if not path:
+        return ""
+    if "`" in path:
+        raise RuntimeError(f"data_path {path!r} must not contain a backtick")
+    if not (path.startswith("/") or URI_SCHEME.match(path)):
+        raise RuntimeError(
+            f"data_path {path!r} must be an absolute path or a storage URI -- a relative path "
+            f"resolves against whatever the driver's working directory happens to be"
+        )
+    if dbx.get_dbutils() is not None and path.startswith(EPHEMERAL_PREFIXES):
+        raise RuntimeError(
+            f"data_path {path!r} is on the cluster's ephemeral disk, which is wiped when the "
+            f"cluster terminates -- the register would be lost. {PERSISTENT_PATHS}"
+        )
+    if path.startswith("/Workspace"):
+        raise RuntimeError(
+            f"data_path {path!r} is a workspace file path, and Spark executors cannot write to "
+            f"those -- every write here is a distributed Delta write. It can look like it works "
+            f"on a single-node cluster and break as soon as one is scaled, and workspace file "
+            f"permissions expire (36h interactive, 30 days for jobs) besides. {PERSISTENT_PATHS}"
+        )
+    return path
+
+
+def resolve_tables(
+    namespace: str, scope: str, argv: Optional[list] = None, data_path: str = ""
+) -> Tables:
+    """The eight table references, prefixed so they can share a schema with other teams' tables.
+
+    With ``data_path`` set, each is ``delta.`<path>/<prefix><name>``` -- a directory per table
+    under one root, named identically to the tables a catalog-backed run would create, so the
+    migration recipe in the README is a `CREATE TABLE ... LOCATION` per directory and nothing
+    has to be renamed.
+    """
     prefix = param("table_prefix", default_table_prefix(scope), argv=argv)
     if not PREFIX.match(prefix):
         raise RuntimeError(f"table_prefix {prefix!r} is not a valid identifier fragment")
 
     def qualify(name: str) -> str:
+        if data_path:
+            return f"delta.`{data_path}/{prefix}{name}`"
         return f"{namespace}.{prefix}{name}"
 
     return Tables(
@@ -1045,7 +1189,7 @@ def rebuild_ledger(
     otherwise the replay will resolve-by-disappearance severities the original scans never
     covered, and invent remediation that never happened.
     """
-    if not spark.catalog.tableExists(tables.bronze):
+    if not table_exists(spark, tables.bronze):
         raise RuntimeError(f"cannot rebuild: {tables.bronze} does not exist yet")
 
     scans = [
@@ -1121,7 +1265,7 @@ def maintain(spark: SparkSession, tables: Tables) -> list:
     optimized = []
     for attr in CLUSTERING:
         table = getattr(tables, attr)
-        if not spark.catalog.tableExists(table):
+        if not table_exists(spark, table):
             continue
         spark.sql(f"OPTIMIZE {table}")
         optimized.append(table)
@@ -1129,6 +1273,47 @@ def maintain(spark: SparkSession, tables: Tables) -> list:
     if not optimized:
         print("[maintain] no clustered tables exist yet; nothing to do")
     return optimized
+
+
+def export_csv(spark: SparkSession, tables: Tables, target: str) -> list:
+    """Write every table that exists to ``target`` as CSV. Returns what it wrote.
+
+    **One-way, on purpose.** This is for reading -- opening in a spreadsheet, mailing to
+    somebody, eyeballing a column -- and it is not what you migrate from. CSV has no types, so
+    every timestamp and boolean comes back as text, and NULL is indistinguishable from an empty
+    string in a way Spark's own behaviour has changed across versions (SPARK-17916). That
+    ambiguity lands exactly on ``has_kev`` / ``has_exploit`` / ``epss``, where a NULL read back
+    as false inflates efficiency and deflates coverage at the same time and says nothing.
+
+    What you migrate is the Delta directory: ``CREATE TABLE ... USING DELTA LOCATION``, which
+    keeps the types, the clustering and the history. See the README's PoC storage section.
+
+    ``coalesce(1)`` because a spreadsheet is the point: one file per table, not one per
+    partition. That is a driver-side collect of each table, which is fine for a PoC register
+    and is the reason this is an explicit command rather than something a run does.
+    """
+    written = []
+    for attr in ("bronze", "silver", "ledger", "scans", "mttr", "program", "capacity",
+                 "sensitivity"):
+        table = getattr(tables, attr)
+        if not table_exists(spark, table):
+            continue
+        destination = f"{target.rstrip('/')}/{attr}"
+        (
+            spark.table(table)
+            .coalesce(1)
+            .write.mode("overwrite")
+            .option("header", "true")
+            # Explicit rather than defaulted, so the file says what a blank means -- and so the
+            # asymmetry above is at least visible in the output rather than only in this comment.
+            .option("nullValue", "")
+            .csv(destination)
+        )
+        written.append(destination)
+        print(f"[export] {table} -> {destination}")
+    if not written:
+        print("[export] nothing to export; the register is empty")
+    return written
 
 
 def ensure_schema(spark: SparkSession, namespace: str) -> None:
@@ -1139,7 +1324,12 @@ def ensure_schema(spark: SparkSession, namespace: str) -> None:
     no CREATE SCHEMA on the catalog, so the statement fails with PERMISSION_DENIED against a
     schema that already exists and is perfectly writable. Checking first means the job needs
     the privilege only when it genuinely has to create something.
+
+    A path-backed run passes ``""`` and this does nothing: there is no schema, which is the
+    entire reason that mode exists.
     """
+    if not namespace:
+        return
     try:
         if spark.catalog.databaseExists(namespace):
             return
@@ -1161,9 +1351,12 @@ def main(scan_id: Optional[str] = None) -> Optional[RunResult]:
     check_deployment()
     # Resolve parameters before touching Spark: a missing one should fail in milliseconds,
     # not after a cluster has warmed up and an API fetch has run.
-    namespace = resolve_namespace()
+    # `--data_path` selects the storage mode, so it is resolved first: with one set there is no
+    # catalog to require, which is what lets a PoC with nowhere to create tables run at all.
+    data_path = resolve_data_path()
+    namespace = "" if data_path else resolve_namespace()
     scope = resolve_scope()
-    tables = resolve_tables(namespace, scope)
+    tables = resolve_tables(namespace, scope, data_path=data_path)
     disappearance = resolve_disappearance()
     severities = resolve_severities()
 
@@ -1175,6 +1368,13 @@ def main(scan_id: Optional[str] = None) -> Optional[RunResult]:
     # scheduled to run it can never also ingest, whatever else its parameters say.
     if truthy(param("maintain")):
         maintain(spark, tables)
+        return None
+
+    # Likewise an export: it reads the register and writes files beside it, and must not be
+    # able to turn into a scan because somebody left the other parameters set.
+    export_to = param("export_csv")
+    if export_to:
+        export_csv(spark, tables, export_to)
         return None
 
     if truthy(param("rebuild_ledger")):

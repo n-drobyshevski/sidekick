@@ -523,3 +523,106 @@ def test_maintain_optimizes_every_clustered_table_and_changes_no_number(spark, t
 def test_maintain_skips_tables_that_do_not_exist_yet(spark, tables):
     """A register created but never scanned has a ledger and nothing else to optimize."""
     assert run_pipeline.maintain(spark, tables) == [tables.ledger]
+
+
+# ------------------------------------------------------------- the path-backed register
+#
+# `--data_path` exists for a PoC with no catalog to create tables in. The claim it has to earn
+# is that nothing is lost by it: the same register, and a migration into a catalog when one
+# arrives that keeps every row.
+
+
+@pytest.fixture
+def path_tables(spark, tmp_path):
+    """The same eight tables, in a directory instead of a schema."""
+    tbl = run_pipeline.resolve_tables("", "os", argv=[], data_path=str(tmp_path / "register"))
+    run_pipeline.ensure_tables(spark, tbl)
+    return tbl
+
+
+def test_a_path_backed_register_holds_the_same_ledger(spark, tables, path_tables):
+    """Two backends, one register. This is the whole promise of the mode.
+
+    The same two scans through the same `build_metrics`, once into a schema and once into a
+    directory, compared row for row. `first_scan_id`/`last_scan_id` and the scan ids themselves
+    are identical because the scans are, so nothing has to be excluded.
+    """
+    nodes = [node("f-1"), node("f-2"), node("f-3")]
+    for tbl in (tables, path_tables):
+        run_scan(spark, tbl, nodes, "s1", TS["s1"])
+        run_scan(spark, tbl, [node("f-1")], "s2", TS["s2"])
+
+    assert ledger_rows(spark, path_tables) == ledger_rows(spark, tables)
+    assert sorted_rows(spark, path_tables.mttr) == sorted_rows(spark, tables.mttr)
+    assert sorted_rows(spark, path_tables.program) == sorted_rows(spark, tables.program)
+    assert sorted_rows(spark, path_tables.scans) == sorted_rows(spark, tables.scans)
+
+
+def test_a_path_backed_register_does_not_store_silver(spark, path_tables):
+    """Silver is a pure projection of bronze, so a path-backed register does not keep a copy.
+
+    Bronze is what has to survive; `panels._silver_frame` rebuilds the findings views from it
+    with the same function the pipeline would have written silver with.
+    """
+    run_scan(spark, path_tables, [node("f-1")], "s1", TS["s1"])
+
+    assert run_pipeline.table_exists(spark, path_tables.bronze)
+    assert run_pipeline.table_exists(spark, path_tables.ledger)
+    assert not run_pipeline.table_exists(spark, path_tables.silver)
+
+
+def test_a_path_backed_register_is_clustered_the_same_way(spark, path_tables):
+    """`.location()` and `.tableName()` have to produce the same physical table, or the
+    migration below would silently drop the layout shipped in the previous change."""
+    run_scan(spark, path_tables, [node("f-1")], "s1", TS["s1"])
+
+    assert detail(spark, path_tables.ledger)["clusteringColumns"] == ["vuln_key"]
+    assert detail(spark, path_tables.bronze)["clusteringColumns"] == ["scan_id"]
+    assert detail(spark, path_tables.ledger)["properties"]["delta.enableDeletionVectors"] == "true"
+
+
+def test_rebuild_replays_a_path_backed_bronze(spark, path_tables):
+    """The recovery path has to work in this mode too -- it is the reason bronze is the one
+    table that must survive."""
+    run_scan(spark, path_tables, [node("f-1"), node("f-2")], "s1", TS["s1"])
+    run_scan(spark, path_tables, [node("f-1")], "s2", TS["s2"])
+    live = ledger_rows(spark, path_tables)
+
+    run_pipeline.rebuild_ledger(spark, path_tables, "os", SEVERITIES, "scan_ts")
+
+    assert ledger_rows(spark, path_tables) == live
+
+
+def test_the_register_migrates_into_a_catalog_without_losing_anything(spark, path_tables):
+    """The requirement, in one test.
+
+    Collect against a path now; when a real catalog arrives, register the directories as
+    external tables. No copy, no replay, and -- what this asserts -- no loss: the same rows,
+    the same clustering, the same deletion-vector property, and a table that still MERGEs.
+    """
+    run_scan(spark, path_tables, [node("f-1"), node("f-2")], "s1", TS["s1"])
+    run_scan(spark, path_tables, [node("f-1")], "s2", TS["s2"])
+    before = ledger_rows(spark, path_tables)
+    before_detail = detail(spark, path_tables.ledger)
+
+    spark.sql("DROP DATABASE IF EXISTS arrived CASCADE")
+    spark.sql("CREATE DATABASE arrived")
+    location = run_pipeline.as_path(path_tables.ledger)
+    spark.sql(f"CREATE TABLE arrived.vuln_ledger USING DELTA LOCATION '{location}'")
+    try:
+        migrated = {r["vuln_key"]: r.asDict() for r in spark.table("arrived.vuln_ledger").collect()}
+        assert migrated == before
+
+        after_detail = detail(spark, "arrived.vuln_ledger")
+        assert after_detail["clusteringColumns"] == before_detail["clusteringColumns"]
+        assert after_detail["properties"] == before_detail["properties"]
+
+        # And it is a working ledger, not just readable rows: the next scan has to be able to
+        # MERGE into it by name, or the migration would be a one-way trip into a dead table.
+        catalog_tables = run_pipeline.resolve_tables("arrived", "os", argv=["--table_prefix="])
+        assert catalog_tables.ledger == "arrived.vuln_ledger"
+        run_pipeline.ensure_tables(spark, catalog_tables)
+        run_scan(spark, catalog_tables, [node("f-1"), node("f-4")], "s3", TS["s3"])
+        assert "id:f-4" in ledger_rows(spark, catalog_tables)
+    finally:
+        spark.sql("DROP DATABASE IF EXISTS arrived CASCADE")

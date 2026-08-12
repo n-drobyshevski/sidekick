@@ -574,6 +574,8 @@ and a laptop.
 | `rebuild_ledger` | `false` | replay bronze and rebuild the ledger from scratch — see [Backfill](#backfilling-from-existing-bronze) |
 | `shuffle_partitions` | `0` | `spark.sql.shuffle.partitions` for the run; `0` leaves the cluster's own setting alone |
 | `maintain` | `false` | run `OPTIMIZE` over the clustered tables and exit, ingesting nothing — see [Maintenance](#maintenance) |
+| `data_path` | — | write the register to this directory instead of a catalog — see [PoC storage](#poc-storage-running-with-no-catalog). With it set, `catalog` is not required |
+| `export_csv` | — | write every table to this directory as CSV and exit. One-way; see [PoC storage](#poc-storage-running-with-no-catalog) |
 
 `shuffle_partitions` is the one parameter that changes nothing about any published number, and
 it is unset by default on purpose. Spark's 200 is sized for a cluster moving real data, and a
@@ -839,6 +841,104 @@ python brick/run_pipeline.py \
 Off Databricks the `dbutils` accessors return empty rather than raising, so credentials come
 from the environment. Note that `saveAsTable` against a three-level `catalog.schema.table`
 name needs Unity Catalog — a local Spark can only write two-level names.
+
+## PoC storage: running with no catalog
+
+A proof of concept usually has nowhere to put tables — no catalog and schema this principal may
+create in. `--data_path` runs the whole pipeline against a **directory** instead:
+
+```bash
+python brick/run_pipeline.py \
+  --data_path=/Volumes/<catalog>/<schema>/<volume>/brick \
+  --wiz_api_url=https://api.<region>.app.wiz.io/graphql
+```
+
+`--catalog` is not required in this mode; that is the point of it. Each table becomes a
+directory under the root, named exactly as the catalog-backed table would be
+(`brick/wiz_os_vuln_ledger`, `brick/wiz_os_findings_raw`, …), and every reference the code
+passes to Spark becomes ``delta.`<root>/<name>` ``, which is valid anywhere a table name is.
+
+Set the same value in the `data_path` widget and notebooks 00–05 read the register from there.
+
+**It is still Delta.** Types survive, NULL stays distinct from false, the ledger is still
+`MERGE`d, and the clustering and deletion vectors from [Table layout](#table-layout) are
+declared exactly as they would be in a catalog. Nothing about the register is degraded by not
+having a catalog — the catalog was only ever the name.
+
+**Silver is not stored** in this mode. It is a pure per-scan projection of bronze, so keeping it
+would be a second copy of data the register already holds; `panels` rebuilds the findings views
+from bronze with the same function the pipeline would have written silver with. Bronze is the
+table that must survive: `--rebuild_ledger` replays it, and everything else follows.
+
+### Where the path must point
+
+Two things have to be true: it persists, **and Spark executors can write to it**. Every write
+here is a distributed Delta write, which rules out one option that otherwise looks ideal.
+
+| | works | why |
+| --- | --- | --- |
+| `/Volumes/<cat>/<sch>/<vol>/…` | ✅ | needs a Unity Catalog **volume** — a much smaller ask than a schema you can create tables in, and Databricks' own recommendation for non-tabular data |
+| `dbfs:/…` | ✅ | where DBFS root still exists. Deprecated, and new workspaces are provisioned without it |
+| `s3://…`, `abfss://…`, `gs://…` | ✅ | needs credentials or an external location, but no catalog at all |
+| `/Workspace/…` | ❌ | persists, needs no catalog — and [**executors cannot write to workspace files**](https://docs.databricks.com/aws/en/files/workspace) |
+| `/tmp`, `/local_disk0`, relative | ❌ | wiped when the cluster terminates |
+
+`--data_path` **refuses** the last two rather than warning, because both failures are late and
+land on the data. An ephemeral path loses the register silently, overnight, and is discovered
+exactly when somebody first wants the history. `/Workspace` is subtler and worse: it can appear
+to work on a single-node cluster, where the driver *is* the executor, and then break the moment
+the cluster is scaled — and workspace file permissions expire anyway (36 hours on interactive
+compute, 30 days for jobs), which disqualifies it as somewhere data lives. Its 500 MB cap is
+per file and would probably not have been the binding constraint; the executor rule is.
+
+Off Databricks the ephemeral prefixes are ordinary directories and are allowed, which is what
+lets the tests use a temporary one. `/Workspace` is refused everywhere: there is no local sense
+in which it is a reasonable home for this.
+
+**If none of the ✅ rows is available to you**, run the pipeline off-cluster instead — a laptop
+or a small VM, `python brick/run_pipeline.py --data_path=/some/local/dir`. The driver does the
+API paging and the Spark work is a handful of aggregations over one scan, so nothing is lost by
+not being on a cluster. See [Running it locally](#running-it-locally).
+
+### Moving it into the lake later
+
+When a real catalog arrives, register each directory as an external table. No copy, no replay:
+
+```sql
+CREATE TABLE <catalog>.<schema>.wiz_os_vuln_ledger  USING DELTA LOCATION '<root>/wiz_os_vuln_ledger';
+CREATE TABLE <catalog>.<schema>.wiz_os_findings_raw USING DELTA LOCATION '<root>/wiz_os_findings_raw';
+CREATE TABLE <catalog>.<schema>.wiz_os_scans        USING DELTA LOCATION '<root>/wiz_os_scans';
+-- and the four metrics_* directories the same way
+```
+
+Then drop `--data_path`, pass `--catalog` and `--schema`, and the next scan continues the same
+ledger. The rows, the clustering columns, the deletion-vector property and the full history all
+come across, because they live in the Delta log rather than in the metastore —
+`test_the_register_migrates_into_a_catalog_without_losing_anything` is that paragraph as a test,
+including that the migrated ledger still accepts a `MERGE`.
+
+Silver has no directory to register; the first catalog-backed scan creates it.
+
+If a path ever has to be rebuilt rather than registered — a directory copied between accounts,
+say — `--rebuild_ledger` replays bronze into a fresh register and lands where the live scans
+landed.
+
+### `--export_csv` is for reading, not for migrating
+
+```bash
+python brick/run_pipeline.py --data_path=<root> --export_csv=<root>/csv
+```
+
+One CSV per table, for opening in a spreadsheet or mailing to somebody. **It is one-way.** CSV
+has no types, so every timestamp and boolean comes back as text, and NULL is indistinguishable
+from an empty string in a way Spark's own behaviour has changed across releases
+([SPARK-17916](https://issues.apache.org/jira/browse/SPARK-17916)). That ambiguity lands on
+`has_kev` / `has_exploit` / `epss` — where, per
+[Three things that are easy to get wrong](#three-things-that-are-easy-to-get-wrong), a NULL read
+back as `false` inflates efficiency and deflates coverage at once and says nothing about it.
+
+So there is deliberately no CSV import, and no test that the export round-trips: writing one
+would imply it is safe to migrate from. What you migrate is the Delta directory.
 
 ## Tests
 

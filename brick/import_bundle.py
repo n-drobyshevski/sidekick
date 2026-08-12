@@ -480,7 +480,7 @@ def occupied_tables(spark: SparkSession, tables: run_pipeline.Tables) -> dict:
     counts = {}
     for attr in REGISTER_ATTRS:
         table = getattr(tables, attr)
-        if spark.catalog.tableExists(table):
+        if run_pipeline.table_exists(spark, table):
             rows = spark.table(table).count()
             if rows:
                 counts[table] = rows
@@ -628,9 +628,13 @@ def summarize(summary: dict, tables: run_pipeline.Tables) -> None:
 
 def main() -> Optional[dict]:
     run_pipeline.check_deployment()
-    namespace = run_pipeline.resolve_namespace()
+    # The same storage-mode resolution `run_pipeline.main` does: with `--data_path` set there is
+    # no catalog to require, and the seeded ledger lands in a directory. A PoC that has to start
+    # from the Apps Script app's history should not also have to wait for a catalog.
+    data_path = run_pipeline.resolve_data_path()
+    namespace = "" if data_path else run_pipeline.resolve_namespace()
     scope = run_pipeline.resolve_scope()
-    tables = run_pipeline.resolve_tables(namespace, scope)
+    tables = run_pipeline.resolve_tables(namespace, scope, data_path=data_path)
     path = run_pipeline.param("bundle_path")
     if not path:
         raise BundleError(

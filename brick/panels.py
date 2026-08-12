@@ -178,6 +178,9 @@ BASE_WIDGETS: Dict[str, Tuple[str, Optional[Sequence[str]]]] = {
     "severities": ("CRITICAL,HIGH", None),
     "scan_id": ("", None),
     "module_path": ("", None),
+    # Empty means catalog-backed, which is the normal deployment. Set it to the directory a
+    # PoC run wrote with `--data_path` and `catalog`/`schema` stop being read at all.
+    "data_path": ("", None),
 }
 
 _EMPTY_PREFIX_SENTINEL = "-"
@@ -262,8 +265,12 @@ def context(
 
     scope = run_pipeline.resolve_scope(argv=argv)
     if tables is None:
-        namespace = namespace or run_pipeline.resolve_namespace(argv=argv)
-        tables = run_pipeline.resolve_tables(namespace, scope, argv=argv)
+        # `data_path` selects the storage mode for the pages exactly as it does for a run: set,
+        # the register lives in a directory and there is no catalog to resolve. See
+        # `run_pipeline.resolve_data_path` and the README's PoC storage section.
+        data_path = run_pipeline.resolve_data_path(argv=argv)
+        namespace = "" if data_path else (namespace or run_pipeline.resolve_namespace(argv=argv))
+        tables = run_pipeline.resolve_tables(namespace, scope, argv=argv, data_path=data_path)
     namespace = namespace or ""
 
     if ensure:
@@ -392,7 +399,7 @@ def register_views(spark: SparkSession, ctx: Ctx) -> None:
         F.col("population") == POPULATION_HIGH_RISK
     ).createOrReplaceTempView("v_capacity_high_risk")
 
-    silver = spark.table(ctx.tables.silver)
+    silver = _silver_frame(spark, ctx)
     silver.where(pinned & sev_only).createOrReplaceTempView("v_findings")
     silver.where(scoped & sev_only).createOrReplaceTempView("v_findings_all")
 
@@ -409,6 +416,25 @@ def register_views(spark: SparkSession, ctx: Ctx) -> None:
         ),
         ctx.rule,
     ).where(F.col("severity").isin(*ctx.severities)).createOrReplaceTempView("v_lifecycles")
+
+
+def _silver_frame(spark: SparkSession, ctx: Ctx) -> DataFrame:
+    """The per-scan findings snapshot behind ``v_findings`` / ``v_findings_all``.
+
+    Read from the silver table when there is one, and **derived from bronze when there is not**.
+    A path-backed register does not persist silver -- it is a pure projection of bronze, so
+    storing it would be a second copy of data the register already holds -- and this is the one
+    place that has to know. ``metrics.silver_findings`` is the same function the pipeline
+    writes silver with, so the two routes cannot disagree about what a finding is.
+
+    The classification is applied with ``ctx.rule`` rather than the rule the scan ran under,
+    which matches how ``v_lifecycles`` is built two blocks below: changing the rule in a
+    notebook should move both or neither.
+    """
+    if run_pipeline.table_exists(spark, ctx.tables.silver):
+        return spark.table(ctx.tables.silver)
+    bronze = spark.table(ctx.tables.bronze).where(F.col("scope") == ctx.scope)
+    return metrics.classify_risk(metrics.silver_findings(bronze), ctx.rule)
 
 
 def _rank_column(column: str = "severity"):
@@ -1198,6 +1224,11 @@ def table_inventory(spark: SparkSession, ctx: Ctx) -> DataFrame:
     ``scan_id`` is special-cased rather than looped over uniformly: the ledger is MERGEd
     current state and has ``first_scan_id`` / ``last_scan_id`` instead, and the run log has a
     ``scan_id`` but none of the gold columns.
+
+    A table that does not exist is reported as a row with a NULL count rather than skipped or
+    raised on. A path-backed register has no silver by design, and "silver: absent" is the
+    honest thing for an inventory to say -- a page that dies with TABLE_OR_VIEW_NOT_FOUND, or
+    that quietly lists seven tables where there were eight, is worse in both directions.
     """
     latest = {
         ctx.tables.bronze: "max_by(scan_id, scan_ts)",
@@ -1213,10 +1244,16 @@ def table_inventory(spark: SparkSession, ctx: Ctx) -> DataFrame:
     out = None
     for table, scan_expr in latest.items():
         ts_expr = ts.get(table, "max(scan_ts)")
-        row = spark.sql(
-            f"SELECT '{table}' AS table_name, count(*) AS rows, "
-            f"{scan_expr} AS latest_scan_id, {ts_expr} AS latest_ts FROM {table}"
-        )
+        if run_pipeline.table_exists(spark, table):
+            row = spark.sql(
+                f"SELECT '{table}' AS table_name, count(*) AS rows, "
+                f"{scan_expr} AS latest_scan_id, {ts_expr} AS latest_ts FROM {table}"
+            )
+        else:
+            row = spark.sql(
+                f"SELECT '{table}' AS table_name, CAST(NULL AS BIGINT) AS rows, "
+                f"CAST(NULL AS STRING) AS latest_scan_id, CAST(NULL AS TIMESTAMP) AS latest_ts"
+            )
         out = row if out is None else out.unionByName(row)
     return out
 
