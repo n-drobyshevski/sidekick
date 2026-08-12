@@ -238,6 +238,13 @@ To read the notebooks as well, four more files go on the same `sys.path`:
     └── 08_code_assets.ipynb
 ```
 
+**The register is always Delta; CSV is an export of it.** There is no CSV-only run and there
+cannot be one — the ledger is `MERGE`d on every scan and read back to compute the gold tables,
+and a CSV file cannot be merged into. `--data_path` decides where the Delta side lives; without
+it the run creates and writes tables in `catalog`.`schema`, i.e. in the lake. Set the
+`data_path` widget (or the flag) to stay out of it — cell 1 of `06_run_and_verify` and its run
+cell both read that widget, so they cannot disagree about where the register is.
+
 Then run one scope at a time — they write separate tables and must never be blended:
 
 ```bash

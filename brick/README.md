@@ -962,6 +962,25 @@ everything in `csvstore` is driver-side: `toPandas`, `open()`, `csv`. That is wh
 `/Workspace` a legal destination for the *export* even though it is an illegal one for the
 register itself.
 
+### CSV is an export, not a storage mode
+
+**The register is always Delta.** There is no CSV-only run and there cannot be one: the ledger
+is `MERGE`d on every scan and read back to compute the gold tables, and a CSV file cannot be
+merged into. `--csv_path` copies the finished register out; it does not replace it.
+
+So every scan writes Delta somewhere, and `--data_path` / `catalog` decides where:
+
+| you set | the register lives in | the CSV is |
+| --- | --- | --- |
+| `--data_path=dbfs:/tmp/…` | DBFS, outside any catalog | the durable copy — see the caveat below |
+| `--data_path=/Volumes/…` | a Unity Catalog volume | a convenience |
+| `catalog` / `schema`, no `data_path` | **Delta tables in that catalog** | a convenience |
+
+The third row is the one to be deliberate about: with no `data_path`, the run creates and writes
+tables in the catalog — and so does opening a read notebook, because `panels.context` calls
+`ensure_tables()`. If the intention is to stay out of the lake, **set the `data_path` widget**;
+cell 1 and the run cell both read it, so they cannot disagree about where the register is.
+
 ### The schema sidecar, which is the whole point
 
 Each table is written as **two** files: `<table>.csv` and `<table>.schema.json`, the Spark schema
