@@ -29,6 +29,17 @@ import {
   rankGroups, readComboParams, shiftSegments, shiftSummary, sortIssues,
 } from "./comboView.js";
 
+/**
+ * A condition's kind icon, named so the stylesheet can colour it. kindIconSvg carries no
+ * class of its own — the caller names it, as the inventory's asset cards do — and the
+ * stroke has to be reached through that name because it lives on the inner <g>.
+ */
+function condIcon(key, size) {
+  const svg = kindIconSvg(key, size);
+  svg.setAttribute("class", "kind-icon");
+  return svg;
+}
+
 /** Asset chips shown before the list folds into a "+N more" button. */
 const ASSET_PREVIEW = 8;
 const PAGE_SIZE = 25;
@@ -280,7 +291,7 @@ export async function renderCombos(main, params) {
             paint(payload);
           },
         },
-          kindIconSvg(key, 14),
+          condIcon(key, 14),
           el("span", {}, kindLabel(key)))));
     }
     grid.append(headRow);
@@ -496,7 +507,7 @@ export async function renderCombos(main, params) {
           ? "Tested by the Wiz rule for this pattern"
           : "Not tested by the rule — carried by these assets anyway",
       },
-        kindIconSvg(key, 13),
+        condIcon(key, 13),
         el("span", {}, kindLabel(key)),
         // A chip with no figure would read as a flat "present". When the only assets
         // here are the undetermined ones, say so — "?2" is a different claim from "2".
