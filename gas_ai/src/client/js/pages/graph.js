@@ -500,8 +500,10 @@ export async function renderGraphPage(main, params, _ctx) {
     if (state.seed && state.seedKind !== "combo") {
       assetGroup.append(el("option", { value: `asset:${state.seed}` }, state.seed));
     }
-    // Lazily fill the asset list so the drawer opens without waiting on inventory.
-    swrCall("api_getAssets", {}).then((inv) => {
+    // Lazily fill the asset list so the drawer opens without waiting on inventory. The
+    // picker needs every asset but only its id/name/kind, so it asks for the slim option
+    // list rather than the inventory table's rows (which arrive one page at a time).
+    swrCall("api_getAssetOptions", {}).then((inv) => {
       const current = state.seedKind !== "combo" ? state.seed : "";
       assetGroup.textContent = "";
       for (const row of inv.rows) {

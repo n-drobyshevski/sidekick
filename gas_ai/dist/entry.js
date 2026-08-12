@@ -29,6 +29,7 @@ function timedApi_(name, p) {
 function api_bootstrap(p) { return timedApi_("bootstrap", p); }
 function api_getGraph(p) { return timedApi_("getGraph", p); }
 function api_getAssets(p) { return timedApi_("getAssets", p); }
+function api_getAssetOptions(p) { return timedApi_("getAssetOptions", p); }
 function api_getAssetDetail(p) { return timedApi_("getAssetDetail", p); }
 function api_getIssues(p) { return timedApi_("getIssues", p); }
 function api_getIssueDetail(p) { return timedApi_("getIssueDetail", p); }
