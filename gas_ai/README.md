@@ -85,6 +85,9 @@ Then in the Apps Script editor:
    `WIZ_API_TOKEN` or `WIZ_CLIENT_ID` + `WIZ_CLIENT_SECRET` (client-credentials;
    `WIZ_AUTH_URL` defaults to `https://auth.app.wiz.io/oauth/token`).
 3. Run `wizDiagnostic()` — a secret-safe step-by-step check of the auth + query path.
+   `aarsDiagnostic()` answers the other common question — where the AARS scores are —
+   by reporting which columns the assets tab has and how many rows carry a score and
+   a severity.
 4. Deploy as a web app. Verify dry-run first (no credentials), then set credentials
    and press "Sync now"; confirm the tabs populate and the graph renders.
 

@@ -21,6 +21,7 @@ var Server = (() => {
   // src/server/index.ts
   var server_exports = {};
   __export(server_exports, {
+    aarsDiagnostic: () => aarsDiagnostic,
     api: () => api_exports,
     doGet: () => doGet,
     include: () => include,
@@ -1061,6 +1062,54 @@ var Server = (() => {
       }
       return lines.join("\n");
     }
+    return lines.join("\n");
+  }
+  function aarsDiagnostic() {
+    const lines = [];
+    const log = (m) => {
+      lines.push(m);
+      console.log(m);
+    };
+    log("=== AARS ledger diagnostic ===");
+    try {
+      const rows = readAll(TABS.assets);
+      log(`ai_assets rows: ${rows.length}`);
+      if (!rows.length) {
+        log("The assets tab is empty \u2014 run a sync first.");
+      } else {
+        const cols = Object.keys(rows[0]);
+        const has = (c) => cols.indexOf(c) >= 0 ? "present" : "MISSING";
+        log(`column aars:          ${has("aars")}`);
+        log(`column aars_severity: ${has("aars_severity")}`);
+        log(`column aars_band:     ${has("aars_band")} (pre-rename name; harmless if present)`);
+        const scored = rows.filter((r) => r["aars"] !== null && r["aars"] !== void 0).length;
+        const sev = rows.filter((r) => r["aars_severity"] || r["aars_band"]).length;
+        log(`rows with a score:    ${scored} of ${rows.length}`);
+        log(`rows with a severity: ${sev} of ${rows.length}`);
+        if (scored && !sev) {
+          log("\u2192 Scores survived but severities did not: the tab was written by a build whose schema had a column this sheet lacks. Deploy a build that adds missing headers on write, then run one sync.");
+        }
+      }
+    } catch (e) {
+      log(`ai_assets unreadable: ${String(e instanceof Error ? e.message : e)}`);
+    }
+    try {
+      const snap = readGraphSnapshot();
+      if (!snap) log("Drive snapshot: none (the graph falls back to the tabs)");
+      else {
+        const scored = snap.nodes.filter((n) => {
+          var _a4;
+          return ((_a4 = n.aars) != null ? _a4 : null) !== null;
+        }).length;
+        const sev = snap.nodes.filter(
+          (n) => n.aarsSeverity || n.aarsBand
+        ).length;
+        log(`Drive snapshot: ${snap.nodes.length} nodes, ${scored} scored, ${sev} with a severity`);
+      }
+    } catch (e) {
+      log(`Drive snapshot unreadable: ${String(e instanceof Error ? e.message : e)}`);
+    }
+    log("=== end ===");
     return lines.join("\n");
   }
 

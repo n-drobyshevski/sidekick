@@ -16,6 +16,9 @@ import {
   resolveAiResourceTypes,
 } from "./wizClientAi";
 import { aiFlavored, aiInventoryVariables, Q_AI_INVENTORY } from "./wizQueriesAi";
+import { readAll, TABS } from "./sheetsDb";
+import { readGraphSnapshot } from "./archiveStore";
+import type { Rec } from "../domain/util";
 
 /** Length + first4…last4 preview of a non-secret id/token — never the whole value. */
 function preview(value: string | null): string {
@@ -156,5 +159,66 @@ export function wizDiagnostic(): string {
     return lines.join("\n");
   }
 
+  return lines.join("\n");
+}
+
+/**
+ * Where the AARS scores actually are — run from the editor when the inventory shows no
+ * score. Reads only the ledger, prints no asset content beyond counts, and answers the
+ * three questions in order: does the tab have the column, do its rows carry values, and
+ * does the Drive snapshot (which the graph reads instead) agree.
+ *
+ * A tab still headed `aars_band` with no `aars_severity` means this deployment predates
+ * the column and needs a sync on a build that has it; the sync rewrites both the header
+ * and every row.
+ */
+export function aarsDiagnostic(): string {
+  const lines: string[] = [];
+  const log = (m: string) => {
+    lines.push(m);
+    console.log(m);
+  };
+
+  log("=== AARS ledger diagnostic ===");
+  try {
+    const rows = readAll(TABS.assets);
+    log(`ai_assets rows: ${rows.length}`);
+    if (!rows.length) {
+      log("The assets tab is empty — run a sync first.");
+    } else {
+      const cols = Object.keys(rows[0]);
+      const has = (c: string) => (cols.indexOf(c) >= 0 ? "present" : "MISSING");
+      log(`column aars:          ${has("aars")}`);
+      log(`column aars_severity: ${has("aars_severity")}`);
+      log(`column aars_band:     ${has("aars_band")} (pre-rename name; harmless if present)`);
+      const scored = rows.filter((r: Rec) => r["aars"] !== null && r["aars"] !== undefined).length;
+      const sev = rows.filter((r: Rec) => r["aars_severity"] || r["aars_band"]).length;
+      log(`rows with a score:    ${scored} of ${rows.length}`);
+      log(`rows with a severity: ${sev} of ${rows.length}`);
+      if (scored && !sev) {
+        log("→ Scores survived but severities did not: the tab was written by a build " +
+          "whose schema had a column this sheet lacks. Deploy a build that adds missing " +
+          "headers on write, then run one sync.");
+      }
+    }
+  } catch (e) {
+    log(`ai_assets unreadable: ${String(e instanceof Error ? e.message : e)}`);
+  }
+
+  try {
+    const snap = readGraphSnapshot();
+    if (!snap) log("Drive snapshot: none (the graph falls back to the tabs)");
+    else {
+      const scored = snap.nodes.filter((n) => (n.aars ?? null) !== null).length;
+      const sev = snap.nodes.filter(
+        (n) => n.aarsSeverity || (n as { aarsBand?: unknown }).aarsBand,
+      ).length;
+      log(`Drive snapshot: ${snap.nodes.length} nodes, ${scored} scored, ${sev} with a severity`);
+    }
+  } catch (e) {
+    log(`Drive snapshot unreadable: ${String(e instanceof Error ? e.message : e)}`);
+  }
+
+  log("=== end ===");
   return lines.join("\n");
 }
