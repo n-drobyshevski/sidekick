@@ -1441,6 +1441,9 @@ var Server = (() => {
   var ROW_BAND_GAP = 150;
   var ROW_CLUSTER_GAP = 140;
   var LANE_CLUSTER_GAP = 48;
+  var ROW_SHELF_GAP = 200;
+  var LANE_SHELF_GAP = 200;
+  var VIEWPORT_ASPECT = 1.9;
   var CELL_W = 240;
   var CELL_H = 84;
   var GROUP_PAD = 24;
@@ -1611,16 +1614,20 @@ var Server = (() => {
     }
     return ranks;
   }
-  function packLanes(lanes, rankOf, step, gap2) {
+  function packLanes(lanes, rankOf, step, gap2, bandSpan, shelfGap, pad, horizontal) {
     var _a4, _b, _c, _d, _e;
     const pos = /* @__PURE__ */ new Map();
+    const shelfOf = /* @__PURE__ */ new Map();
     if (!rankOf) {
       const widest = Math.max(1, ...lanes.map((l) => l.length));
       for (const lane of lanes) {
         const offset = (widest - lane.length) * step / 2;
-        lane.forEach((id, i) => pos.set(id, offset + i * step));
+        lane.forEach((id, i) => {
+          pos.set(id, offset + i * step);
+          shelfOf.set(id, 0);
+        });
       }
-      return { pos, extent: (widest - 1) * step };
+      return { pos, shelfOf, extent: (widest - 1) * step, shelves: 1 };
     }
     const slots = /* @__PURE__ */ new Map();
     for (const lane of lanes) {
@@ -1631,12 +1638,24 @@ var Server = (() => {
       }
       for (const [r, count] of perRank) slots.set(r, Math.max((_c = slots.get(r)) != null ? _c : 0, count));
     }
-    const start = /* @__PURE__ */ new Map();
-    let cursor = 0;
-    for (const r of [...slots.keys()].sort((a, b) => a - b)) {
-      start.set(r, cursor);
-      cursor += slots.get(r) * step + gap2;
+    const ranks = [...slots.keys()].sort((a, b) => a - b);
+    const runLength = ranks.reduce((acc, r) => acc + slots.get(r) * step + gap2, 0) - gap2;
+    let best = null;
+    let bestFit = 0;
+    let cumulative = 0;
+    for (let i = 0; i < ranks.length; i++) {
+      cumulative += slots.get(ranks[i]) * step + (i ? gap2 : 0);
+      const plan = wrapRun(ranks, slots, step, gap2, cumulative);
+      const along = plan.longest + pad;
+      const across = (plan.shelves - 1) * (bandSpan + shelfGap) + bandSpan + pad;
+      const fit = horizontal ? Math.min(VIEWPORT_ASPECT / along, 1 / across) : Math.min(VIEWPORT_ASPECT / across, 1 / along);
+      if (fit > bestFit * (1 + 1e-9)) {
+        bestFit = fit;
+        best = plan;
+      }
     }
+    const { start, shelfOfRank } = best;
+    const shelf = best.shelves - 1;
     let extent = 0;
     for (const lane of lanes) {
       let i = 0;
@@ -1648,12 +1667,32 @@ var Server = (() => {
         for (let k = i; k < j; k++) {
           const at = offset + (k - i) * step;
           pos.set(lane[k], at);
+          shelfOf.set(lane[k], shelfOfRank.get(r));
           extent = Math.max(extent, at);
         }
         i = j;
       }
     }
-    return { pos, extent };
+    return { pos, shelfOf, extent, shelves: shelf + 1 };
+  }
+  function wrapRun(ranks, slots, step, gap2, target) {
+    const start = /* @__PURE__ */ new Map();
+    const shelfOfRank = /* @__PURE__ */ new Map();
+    let shelf = 0;
+    let cursor = 0;
+    let longest = 0;
+    for (const r of ranks) {
+      const length = slots.get(r) * step;
+      if (cursor > 0 && cursor + length > target) {
+        shelf++;
+        cursor = 0;
+      }
+      shelfOfRank.set(r, shelf);
+      start.set(r, cursor);
+      cursor += length + gap2;
+      longest = Math.max(longest, cursor - gap2);
+    }
+    return { start, shelfOfRank, shelves: shelf + 1, longest };
   }
   function layoutGraph(p, opts = {}) {
     var _a4;
@@ -1730,45 +1769,50 @@ var Server = (() => {
     }
     const step = horizontal ? ROW_COL_STEP : rowGap;
     const gap2 = horizontal ? ROW_CLUSTER_GAP : LANE_CLUSTER_GAP;
-    const { pos, extent } = packLanes(lanes, rankOf, step, rankOf ? gap2 : 0);
-    const clusterOf = (id) => rankOf == null ? void 0 : rankOf.get(id);
+    const bandGap = horizontal ? ROW_BAND_GAP : laneGap;
+    const bandSpan = (LANE_COUNT - 1) * bandGap;
+    const shelfPitch = bandSpan + (horizontal ? ROW_SHELF_GAP : LANE_SHELF_GAP);
+    const { pos, shelfOf, extent, shelves } = packLanes(
+      lanes,
+      rankOf,
+      step,
+      rankOf ? gap2 : 0,
+      bandSpan,
+      horizontal ? ROW_SHELF_GAP : LANE_SHELF_GAP,
+      margin * 2,
+      horizontal
+    );
     const nodes = [];
-    if (horizontal) {
+    for (let shelf = 0; shelf < shelves; shelf++) {
       lanes.forEach((lane, laneIdx) => {
         for (const id of lane) {
+          if (shelfOf.get(id) !== shelf) continue;
+          const along = margin + pos.get(id);
+          const across = margin + shelf * shelfPitch + laneIdx * bandGap;
           nodes.push({
             id,
             lane: laneIdx,
-            cluster: clusterOf(id),
-            x: margin + pos.get(id),
-            y: margin + laneIdx * ROW_BAND_GAP
+            cluster: rankOf == null ? void 0 : rankOf.get(id),
+            shelf: shelves > 1 ? shelf : void 0,
+            x: horizontal ? along : across,
+            y: horizontal ? across : along
           });
         }
       });
-      return {
-        nodes,
-        width: margin * 2 + extent,
-        height: margin * 2 + (LANE_COUNT - 1) * ROW_BAND_GAP,
-        laneGap: ROW_BAND_GAP,
-        rowGap: ROW_COL_STEP,
-        mode: "rows"
-      };
     }
-    lanes.forEach((lane, laneIdx) => {
-      for (const id of lane) {
-        nodes.push({
-          id,
-          lane: laneIdx,
-          cluster: clusterOf(id),
-          x: margin + laneIdx * laneGap,
-          y: margin + pos.get(id)
-        });
-      }
-    });
-    return {
+    const alongSize = margin * 2 + extent;
+    const acrossSize = margin * 2 + (shelves - 1) * shelfPitch + bandSpan;
+    return horizontal ? {
       nodes,
-      width: margin * 2 + (LANE_COUNT - 1) * laneGap,
-      height: margin * 2 + extent,
+      width: alongSize,
+      height: acrossSize,
+      laneGap: ROW_BAND_GAP,
+      rowGap: ROW_COL_STEP,
+      mode: "rows"
+    } : {
+      nodes,
+      width: acrossSize,
+      height: alongSize,
       laneGap,
       rowGap,
       mode: "lanes"
