@@ -4,8 +4,6 @@
 // double the bundle's Chart.js footprint.
 
 import {
-  BarController,
-  BarElement,
   CategoryScale,
   Chart,
   Filler,
@@ -18,7 +16,7 @@ import {
 } from "chart.js";
 
 Chart.register(
-  BarController, BarElement, CategoryScale, Filler, Legend,
+  CategoryScale, Filler, Legend,
   LinearScale, LineController, LineElement, PointElement, Tooltip,
 );
 
@@ -70,64 +68,6 @@ function baseOptions() {
 function destroyExisting(canvas) {
   const existing = Chart.getChart(canvas);
   if (existing) existing.destroy();
-}
-
-/** Draws each bar's value just past its end. */
-const barEndLabels = {
-  id: "barEndLabels",
-  afterDatasetsDraw(chart) {
-    const { ctx } = chart;
-    const meta = chart.getDatasetMeta(0);
-    ctx.save();
-    ctx.font = `600 11px ${FONT.family}`;
-    ctx.fillStyle = INK2;
-    ctx.textBaseline = "middle";
-    ctx.textAlign = "left";
-    meta.data.forEach((bar, i) => {
-      const v = chart.data.datasets[0].data[i];
-      if (v == null) return;
-      ctx.fillText(Number(v).toLocaleString(), bar.x + 6, bar.y);
-    });
-    ctx.restore();
-  },
-};
-
-/**
- * Horizontal categorical bar (AARS severities, issue severities, …): labels + counts + one
- * color per category from `colors`. Clicking a bar fires onClickLabel(label).
- */
-export function categoryBar(canvas, labels, counts, colors, onClickLabel) {
-  destroyExisting(canvas);
-  const shown = labels.filter((l) => counts[l]);
-  const opts = baseOptions();
-  opts.indexAxis = "y";
-  opts.scales.x.beginAtZero = true;
-  opts.scales.x.ticks.precision = 0;
-  // Headroom so the end-of-bar value labels aren't clipped at the axis edge.
-  opts.scales.x.grace = "8%";
-  opts.scales.y.grid = { display: false };
-  opts.onClick = (_evt, elements) => {
-    if (elements.length && onClickLabel) onClickLabel(shown[elements[0].index]);
-  };
-  opts.onHover = (evt, elements) => {
-    evt.native.target.style.cursor = elements.length && onClickLabel ? "pointer" : "default";
-  };
-  return new Chart(canvas, {
-    type: "bar",
-    data: {
-      labels: shown,
-      datasets: [
-        {
-          data: shown.map((l) => counts[l]),
-          backgroundColor: shown.map((l) => colors[l]),
-          borderRadius: 4,
-          barThickness: 22,
-        },
-      ],
-    },
-    options: opts,
-    plugins: [barEndLabels],
-  });
 }
 
 /**

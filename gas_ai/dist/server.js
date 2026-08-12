@@ -1060,53 +1060,201 @@ var Server = (() => {
   var SEED_WAVE_RATIO = 0.4;
 
   // src/domain/assetTable.ts
-  var ASSET_SORTS = ["aars", "name", "kind", "cloud"];
+  var ASSET_SORTS = [
+    "aars",
+    "name",
+    "kind",
+    "cloud",
+    "region",
+    "severity",
+    "combos"
+  ];
+  var DEFAULT_SORT_DIR = {
+    aars: "desc",
+    severity: "desc",
+    combos: "desc",
+    name: "asc",
+    kind: "asc",
+    cloud: "asc",
+    region: "asc"
+  };
   var DEFAULT_PAGE_SIZE = 50;
   var MAX_PAGE_SIZE = 500;
   var CLIENT_ALL_MAX = 1500;
+  var FACET_KEYS = [
+    "aarsSeverities",
+    "severities",
+    "kinds",
+    "clouds",
+    "regions",
+    "projects",
+    "flags"
+  ];
+  var ASSET_FLAGS = ["combo", "guardrail", "agentic"];
   function str(v) {
     return v === null || v === void 0 ? "" : String(v);
+  }
+  function num(v) {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
   }
   function score(v) {
     const n = Number(v != null ? v : -1);
     return Number.isFinite(n) ? n : -1;
   }
+  var SEV_RANK = {};
+  SEVERITY_ORDER.forEach((sev, i) => {
+    SEV_RANK[sev] = SEVERITY_ORDER.length - i;
+  });
+  function sevRank(v) {
+    var _a4;
+    return (_a4 = SEV_RANK[str(v).toUpperCase()]) != null ? _a4 : -1;
+  }
+  function list(v) {
+    const raw = Array.isArray(v) ? v : str(v).split(",");
+    const out = [];
+    for (const item of raw) {
+      const s = str(item).trim();
+      if (s && out.indexOf(s) < 0) out.push(s);
+    }
+    return out;
+  }
+  function listWithLegacy(...sources) {
+    for (const src of sources) {
+      const parsed = list(src);
+      if (parsed.length) return parsed;
+    }
+    return [];
+  }
+  function keepValid(values, allowed) {
+    return values.map((v) => v.toUpperCase()).filter((v) => allowed.indexOf(v) >= 0);
+  }
   function resolveAssetQuery(params) {
-    var _a4, _b;
     const sort = str(params["sort"]);
+    const resolvedSort = ASSET_SORTS.indexOf(sort) >= 0 ? sort : "aars";
+    const dir = str(params["dir"]).toLowerCase();
     const page = Number(params["page"]);
     const pageSize = Number(params["pageSize"]);
+    const aarsSeverities = listWithLegacy(
+      params["aarsSeverities"],
+      params["aarsSeverity"],
+      params["band"]
+    ).map((v) => {
+      var _a4;
+      return (_a4 = normalizeAarsSeverity(v)) != null ? _a4 : "";
+    }).filter((v, i, all) => v !== "" && all.indexOf(v) === i);
     return {
       q: str(params["q"]).trim().toLowerCase(),
-      kind: str(params["kind"]),
-      cloud: str(params["cloud"]),
-      // `band` is the pre-rename spelling, still honored so shared links keep working.
-      aarsSeverity: (_b = normalizeAarsSeverity((_a4 = params["aarsSeverity"]) != null ? _a4 : params["band"])) != null ? _b : "",
-      sort: ASSET_SORTS.indexOf(sort) >= 0 ? sort : "aars",
+      aarsSeverities,
+      severities: keepValid(
+        listWithLegacy(params["severities"], params["severity"]),
+        SEVERITY_ORDER
+      ),
+      kinds: listWithLegacy(params["kinds"], params["kind"]),
+      clouds: listWithLegacy(params["clouds"], params["cloud"]),
+      regions: listWithLegacy(params["regions"], params["region"]),
+      projects: listWithLegacy(params["projects"], params["project"]),
+      flags: list(params["flags"]).map((v) => v.toLowerCase()).filter((v) => ASSET_FLAGS.indexOf(v) >= 0),
+      sort: resolvedSort,
+      dir: dir === "asc" || dir === "desc" ? dir : DEFAULT_SORT_DIR[resolvedSort],
       page: Number.isFinite(page) ? Math.max(0, Math.floor(page)) : 0,
       pageSize: Number.isFinite(pageSize) && pageSize >= 1 ? Math.min(Math.floor(pageSize), MAX_PAGE_SIZE) : DEFAULT_PAGE_SIZE
     };
   }
+  function hasAssetFlag(row, flag) {
+    if (flag === "combo") return num(row["combos"]) > 0;
+    if (flag === "guardrail") return row["guardrailMissing"] === true;
+    if (flag === "agentic") return row["agentic"] === true;
+    return false;
+  }
+  function rowProjects(row) {
+    const v = row["projects"];
+    return Array.isArray(v) ? v.map(str).filter(Boolean) : [];
+  }
   function matchesAssetQuery(row, q) {
     if (q.q && !str(row["name"]).toLowerCase().includes(q.q)) return false;
-    if (q.kind && str(row["kind"]) !== q.kind) return false;
-    if (q.cloud && str(row["cloud"]) !== q.cloud) return false;
-    if (q.aarsSeverity && str(row["aarsSeverity"]) !== q.aarsSeverity) return false;
+    if (q.kinds.length && q.kinds.indexOf(str(row["kind"])) < 0) return false;
+    if (q.clouds.length && q.clouds.indexOf(str(row["cloud"])) < 0) return false;
+    if (q.regions.length && q.regions.indexOf(str(row["region"])) < 0) return false;
+    if (q.aarsSeverities.length && q.aarsSeverities.indexOf(str(row["aarsSeverity"])) < 0) {
+      return false;
+    }
+    if (q.severities.length && q.severities.indexOf(str(row["severity"])) < 0) return false;
+    if (q.projects.length) {
+      const mine = rowProjects(row);
+      if (!q.projects.some((p) => mine.indexOf(p) >= 0)) return false;
+    }
+    if (q.flags.length && !q.flags.every((f) => hasAssetFlag(row, f))) return false;
     return true;
   }
   function filterAssetRows(rows, q) {
     return rows.filter((r) => matchesAssetQuery(r, q));
   }
-  var byScore = (a, b) => score(b["aars"]) - score(a["aars"]);
-  var ASSET_COMPARATORS = {
-    aars: byScore,
+  var PRIMARY = {
+    aars: (a, b) => score(a["aars"]) - score(b["aars"]),
     name: (a, b) => str(a["name"]).localeCompare(str(b["name"])),
-    kind: (a, b) => str(a["kind"]).localeCompare(str(b["kind"])) || byScore(a, b),
-    cloud: (a, b) => str(a["cloud"]).localeCompare(str(b["cloud"])) || byScore(a, b)
+    kind: (a, b) => str(a["kind"]).localeCompare(str(b["kind"])),
+    cloud: (a, b) => str(a["cloud"]).localeCompare(str(b["cloud"])),
+    region: (a, b) => str(a["region"]).localeCompare(str(b["region"])),
+    severity: (a, b) => sevRank(a["severity"]) - sevRank(b["severity"]),
+    combos: (a, b) => num(a["combos"]) - num(b["combos"])
   };
-  function sortAssetRows(rows, sort) {
+  var byScoreDesc = (a, b) => score(b["aars"]) - score(a["aars"]);
+  function assetComparator(sort, dir) {
     var _a4;
-    return [...rows].sort((_a4 = ASSET_COMPARATORS[sort]) != null ? _a4 : byScore);
+    const primary = (_a4 = PRIMARY[sort]) != null ? _a4 : PRIMARY.aars;
+    const sign = dir === "desc" ? -1 : 1;
+    return (a, b) => sign * primary(a, b) || byScoreDesc(a, b);
+  }
+  var ASSET_COMPARATORS = ASSET_SORTS.reduce((acc, s) => {
+    acc[s] = assetComparator(s, DEFAULT_SORT_DIR[s]);
+    return acc;
+  }, {});
+  function sortAssetRows(rows, sort, dir) {
+    const resolved = ASSET_SORTS.indexOf(sort) >= 0 ? sort : "aars";
+    return [...rows].sort(assetComparator(resolved, dir != null ? dir : DEFAULT_SORT_DIR[resolved]));
+  }
+  function facetValues(key, row) {
+    if (key === "kinds") return [str(row["kind"])].filter(Boolean);
+    if (key === "clouds") return [str(row["cloud"])].filter(Boolean);
+    if (key === "regions") return [str(row["region"])].filter(Boolean);
+    if (key === "aarsSeverities") return [str(row["aarsSeverity"])].filter(Boolean);
+    if (key === "severities") return [str(row["severity"])].filter(Boolean);
+    if (key === "projects") return rowProjects(row);
+    return ASSET_FLAGS.filter((f) => hasAssetFlag(row, f));
+  }
+  function facetSorter(key) {
+    if (key === "aarsSeverities") {
+      const order = AARS_SEVERITY_ORDER;
+      return (a, b) => order.indexOf(a.value) - order.indexOf(b.value);
+    }
+    if (key === "severities") {
+      const order = SEVERITY_ORDER;
+      return (a, b) => order.indexOf(a.value) - order.indexOf(b.value);
+    }
+    if (key === "flags") {
+      const order = ASSET_FLAGS;
+      return (a, b) => order.indexOf(a.value) - order.indexOf(b.value);
+    }
+    return (a, b) => a.value.localeCompare(b.value);
+  }
+  function facetCounts(rows, q) {
+    var _a4;
+    const out = { matched: 0 };
+    for (const key of FACET_KEYS) {
+      const scope = key === "flags" ? q : { ...q, [key]: [] };
+      const counts = /* @__PURE__ */ new Map();
+      for (const row of rows) {
+        if (!matchesAssetQuery(row, scope)) continue;
+        for (const value of facetValues(key, row)) {
+          counts.set(value, ((_a4 = counts.get(value)) != null ? _a4 : 0) + 1);
+        }
+      }
+      for (const value of q[key]) if (!counts.has(value)) counts.set(value, 0);
+      out[key] = Array.from(counts, ([value, count]) => ({ value, count })).sort(facetSorter(key));
+    }
+    out.matched = rows.reduce((n, row) => matchesAssetQuery(row, q) ? n + 1 : n, 0);
+    return out;
   }
   function pageOf(rows, page, pageSize) {
     const size = Math.max(1, Math.floor(pageSize));
@@ -1901,8 +2049,8 @@ var Server = (() => {
     const initial = groupBy((id) => keyOf.get(id));
     const initialShared = sharedEdges((id) => keyOf.get(id));
     for (const key of [...initial.keys()].sort()) {
-      const list = initial.get(key);
-      if (list.length !== 1 || !((_d = degree.get(list[0].id)) != null ? _d : 0)) continue;
+      const list2 = initial.get(key);
+      if (list2.length !== 1 || !((_d = degree.get(list2[0].id)) != null ? _d : 0)) continue;
       let best = 0;
       let target = "";
       for (const [other, weight] of [...(_e = initialShared.get(key)) != null ? _e : /* @__PURE__ */ new Map()].sort()) {
@@ -2228,15 +2376,15 @@ var Server = (() => {
   function round2(v) {
     return Math.round(v * 100) / 100;
   }
-  function gridBlock(key, label, list) {
-    const cols = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(list.length))));
-    const rows = Math.ceil(list.length / cols);
+  function gridBlock(key, label, list2) {
+    const cols = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(list2.length))));
+    const rows = Math.ceil(list2.length / cols);
     return {
       key,
       label,
       width: GROUP_PAD * 2 + cols * CELL_W,
       height: HEADER_H + GROUP_PAD * 2 + rows * CELL_H,
-      cells: list.map((node2, i) => ({
+      cells: list2.map((node2, i) => ({
         id: node2.id,
         x: GROUP_PAD + i % cols * CELL_W + CELL_W / 2,
         y: HEADER_H + GROUP_PAD + Math.floor(i / cols) * CELL_H + CELL_H / 2
@@ -2854,14 +3002,14 @@ var Server = (() => {
     }
     const ia = raw["issueAnalytics"];
     if (ia && typeof ia === "object") {
-      const num = (v) => typeof v === "number" ? v : Number(v) || 0;
+      const num2 = (v) => typeof v === "number" ? v : Number(v) || 0;
       node2.issueAnalytics = {
-        total: num(ia["issueCount"]),
-        info: num(ia["informationalSeverityCount"]),
-        low: num(ia["lowSeverityCount"]),
-        medium: num(ia["mediumSeverityCount"]),
-        high: num(ia["highSeverityCount"]),
-        critical: num(ia["criticalSeverityCount"])
+        total: num2(ia["issueCount"]),
+        info: num2(ia["informationalSeverityCount"]),
+        low: num2(ia["lowSeverityCount"]),
+        medium: num2(ia["mediumSeverityCount"]),
+        high: num2(ia["highSeverityCount"]),
+        critical: num2(ia["criticalSeverityCount"])
       };
     }
     const account = raw["cloudAccount"];
@@ -4847,9 +4995,9 @@ var Server = (() => {
       issueAnalytics: (_v = n.issueAnalytics) != null ? _v : null
     };
   }
-  function assetTableRow(n) {
+  function assetTableRow(n, issuesBySeverity) {
     var _a4, _b, _c, _d, _e, _f, _g, _h;
-    return {
+    const row = {
       id: n.id,
       name: n.name,
       kind: n.kind,
@@ -4863,22 +5011,43 @@ var Server = (() => {
       agentic: n.identityPurpose === "AGENTIC",
       projects: ((_h = n.projects) != null ? _h : []).map((p) => p.name)
     };
+    if (issuesBySeverity) row["issuesBySeverity"] = issuesBySeverity;
+    return row;
+  }
+  function issuesBySeverityByAsset(issues2) {
+    var _a4, _b, _c;
+    const out = /* @__PURE__ */ new Map();
+    for (const issue2 of issues2) {
+      if (!issue2.assetId) continue;
+      const bucket = (_a4 = out.get(issue2.assetId)) != null ? _a4 : {};
+      const sev = (_b = issue2.adjustedSeverity) != null ? _b : "UNKNOWN";
+      bucket[sev] = ((_c = bucket[sev]) != null ? _c : 0) + 1;
+      out.set(issue2.assetId, bucket);
+    }
+    return out;
   }
   function assetsModel() {
-    var _a4;
+    var _a4, _b;
     const trend = aarsTrendFromHistory(syncHistory());
     const assets = loadAssets();
     const issues2 = openIssues();
     const agents = assets.filter((a) => a.kind === "AI_AGENT");
     const protectedAgents = agents.filter((a) => !a.guardrailMissing).length;
-    const rows = assets.map(assetTableRow).sort(ASSET_COMPARATORS.aars);
+    const issueRollup = issuesBySeverityByAsset(issues2);
+    const rows = assets.map((a) => assetTableRow(a, issueRollup.get(a.id))).sort(ASSET_COMPARATORS.aars);
     const aarsSeverityCounts = {};
     const kinds = /* @__PURE__ */ new Set();
     const clouds = /* @__PURE__ */ new Set();
+    const regions = /* @__PURE__ */ new Set();
+    const severities = /* @__PURE__ */ new Set();
+    const projects = /* @__PURE__ */ new Set();
     for (const a of assets) {
       if (a.aarsSeverity) aarsSeverityCounts[a.aarsSeverity] = ((_a4 = aarsSeverityCounts[a.aarsSeverity]) != null ? _a4 : 0) + 1;
       kinds.add(a.kind);
       if (a.cloudPlatform) clouds.add(a.cloudPlatform);
+      if (a.region) regions.add(a.region);
+      if (a.severity) severities.add(a.severity);
+      for (const p of (_b = a.projects) != null ? _b : []) if (p.name) projects.add(p.name);
     }
     return {
       rows,
@@ -4902,7 +5071,10 @@ var Server = (() => {
       facets: {
         kinds: [...kinds].sort(),
         clouds: [...clouds].sort(),
-        aarsSeverities: AARS_SEVERITY_ORDER.filter((sev) => aarsSeverityCounts[sev])
+        regions: [...regions].sort(),
+        aarsSeverities: AARS_SEVERITY_ORDER.filter((sev) => aarsSeverityCounts[sev]),
+        severities: SEVERITY_ORDER.filter((sev) => severities.has(sev)),
+        projects: [...projects].sort()
       }
     };
   }
@@ -4916,9 +5088,11 @@ var Server = (() => {
         aarsSeverityCounts: model.aarsSeverityCounts,
         aarsTrend: model.aarsTrend,
         aarsTrendRuleChanges: model.aarsTrendRuleChanges,
+        aarsDeltas: aarsDeltas(model.aarsTrend, model.aarsSeverityCounts),
         facets: model.facets,
         pageSize: query.pageSize,
-        sort: query.sort
+        sort: query.sort,
+        dir: query.dir
       };
       if (model.rows.length <= CLIENT_ALL_MAX) {
         return {
@@ -4930,7 +5104,7 @@ var Server = (() => {
           pageCount: Math.max(1, Math.ceil(model.rows.length / query.pageSize))
         };
       }
-      const filtered = sortAssetRows(filterAssetRows(model.rows, query), query.sort);
+      const filtered = sortAssetRows(filterAssetRows(model.rows, query), query.sort, query.dir);
       const paged = pageOf(filtered, query.page, query.pageSize);
       return {
         ...head,
@@ -4938,9 +5112,28 @@ var Server = (() => {
         rows: paged.rows,
         filtered: filtered.length,
         page: paged.page,
-        pageCount: paged.pageCount
+        pageCount: paged.pageCount,
+        // Deliberately outside the data-version cache: these depend on the query. Only the
+        // paged path ships them — the all path's client holds every row and counts its own,
+        // because in that mode a filter change never reaches the server at all.
+        facetCounts: facetCounts(model.rows, query)
       };
     });
+  }
+  function aarsDeltas(trend, live) {
+    var _a4, _b, _c, _d, _e, _f, _g;
+    if (trend.length < 2) return null;
+    const last = trend[trend.length - 1];
+    const prev = trend[trend.length - 2];
+    if (last.ruleVersion !== prev.ruleVersion) return null;
+    for (const sev of AARS_SEVERITY_ORDER) {
+      if (((_b = (_a4 = last.counts) == null ? void 0 : _a4[sev]) != null ? _b : 0) !== ((_c = live[sev]) != null ? _c : 0)) return null;
+    }
+    const counts = {};
+    for (const sev of AARS_SEVERITY_ORDER) {
+      counts[sev] = ((_e = (_d = last.counts) == null ? void 0 : _d[sev]) != null ? _e : 0) - ((_g = (_f = prev.counts) == null ? void 0 : _f[sev]) != null ? _g : 0);
+    }
+    return { counts, since: prev.at };
   }
   function getAssetOptions(_p) {
     return run(

@@ -113,6 +113,22 @@ export function kindIcon(kind, size = 16) {
   return g;
 }
 
+/**
+ * The same icon as a standalone <svg>, for use outside the graph canvas (cards, lists).
+ * Callers get this rather than building an <svg> themselves: SVG_NS above is assembled at
+ * runtime to dodge a middlebox that truncates a bare `//` inside a string literal, and the
+ * build guard fails on one — so the namespace must never be spelled out at a call site.
+ */
+export function kindIconSvg(kind, size = 16) {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("width", String(size));
+  svg.setAttribute("height", String(size));
+  svg.setAttribute("aria-hidden", "true");
+  svg.append(kindIcon(kind, 16));
+  return svg;
+}
+
 export function kindLabel(kind) {
   return KIND_LABELS[kind] || kind;
 }
