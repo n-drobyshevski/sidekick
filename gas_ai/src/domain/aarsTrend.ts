@@ -20,6 +20,12 @@ export const TREND_SEVERITIES: readonly AarsSeverity[] = ["CRITICAL", "HIGH", "M
 export interface AarsTrendPoint {
   at: string;                        // ISO timestamp of the sync that produced the counts
   counts: Record<string, number>;    // every AARS severity, INFO included
+  /**
+   * The AARS rule version these counts were scored under (0 = the spec defaults). Counts
+   * from different versions are not on the same scale, so the chart marks where the model
+   * changed rather than drawing the step as if the estate had moved.
+   */
+  ruleVersion: number;
 }
 
 /** Count assets per AARS severity. Unscored nodes belong to no level and are dropped. */
@@ -68,8 +74,23 @@ export function aarsTrendFromHistory(rows: Rec[], limit = 90): AarsTrendPoint[] 
     // else, and both mean "no finish time recorded — fall back to the start".
     const at = String(r["finished_at"] || r["started_at"] || "");
     if (!at) continue;
-    points.push({ at, counts });
+    const v = Number(r["aars_rule_version"]);
+    // Rows written before the column existed scored under the defaults, which IS version 0.
+    const ruleVersion = Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
+    points.push({ at, counts, ruleVersion });
   }
   points.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
   return limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
+}
+
+/**
+ * Indices where the scoring model changed relative to the point before. The chart marks
+ * these so a step caused by a rule edit is never read as a step in the estate.
+ */
+export function ruleChangePoints(points: AarsTrendPoint[]): number[] {
+  const marks: number[] = [];
+  for (let i = 1; i < points.length; i++) {
+    if (points[i]!.ruleVersion !== points[i - 1]!.ruleVersion) marks.push(i);
+  }
+  return marks;
 }

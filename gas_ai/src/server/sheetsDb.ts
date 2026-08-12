@@ -26,7 +26,8 @@ export const TAB_HEADERS: Record<string, string[]> = {
     "account_id", "account_name", "projects_json", "first_seen", "last_seen",
     "internet", "open_internet", "sensitive_data", "sensitive_access", "high_priv",
     "admin_priv", "guardrail_missing", "severity", "aars", "aars_severity",
-    "aars_pillars_json", "combo_groups", "tags_json", "technology_categories",
+    "aars_pillars_json", "aars_input_json",
+    "combo_groups", "tags_json", "technology_categories",
     "identity_purpose", "issue_analytics_json",
   ],
   [TABS.edges]: ["id", "src", "dst", "type", "negated", "access_type"],
@@ -42,7 +43,7 @@ export const TAB_HEADERS: Record<string, string[]> = {
   [TABS.syncHistory]: [
     "sync_id", "started_at", "finished_at", "status", "mode",
     "node_count", "edge_count", "issue_count", "api_calls", "snapshot_ref", "error",
-    "aars_severity_json",
+    "aars_severity_json", "aars_rule_version",
   ],
   [TABS.settings]: ["key", "value_json"],
   [TABS.jobs]: [

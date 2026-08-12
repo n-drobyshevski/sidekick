@@ -40,5 +40,10 @@ function api_cancelSync(p) { return timedApi_("cancelSync", p); }
 function api_getSyncHistory(p) { return timedApi_("getSyncHistory", p); }
 function api_getSettings(p) { return timedApi_("getSettings", p); }
 function api_setSettings(p) { return timedApi_("setSettings", p); }
+function api_getAarsRule(p) { return timedApi_("getAarsRule", p); }
+function api_setAarsRule(p) { return timedApi_("setAarsRule", p); }
+function api_previewAarsRule(p) { return timedApi_("previewAarsRule", p); }
+function api_scoreAarsSample(p) { return timedApi_("scoreAarsSample", p); }
+function api_rescoreAars(p) { return timedApi_("rescoreAars", p); }
 function api_resetData(p) { return timedApi_("resetData", p); }
 function api_getStorageStats(p) { return timedApi_("getStorageStats", p); }

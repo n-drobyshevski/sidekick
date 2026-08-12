@@ -7,6 +7,7 @@ import {
   TREND_SEVERITIES,
   aarsTrendFromHistory,
   countAarsSeverities,
+  ruleChangePoints,
 } from "../src/domain/aarsTrend";
 import { AARS_SEVERITY_ORDER } from "../src/domain/config";
 import type { Rec } from "../src/domain/util";
@@ -108,5 +109,36 @@ describe("TREND_SEVERITIES", () => {
     expect([...TREND_SEVERITIES]).toEqual(
       AARS_SEVERITY_ORDER.filter((s) => TREND_SEVERITIES.includes(s)),
     );
+  });
+});
+
+describe("rule version on a trend point", () => {
+  const at = (d: string) => `2026-06-${d}T05:00:00Z`;
+  const pt = (d: string, v?: unknown) =>
+    row({ finished_at: at(d), aars_severity_json: counts({ CRITICAL: 1 }), aars_rule_version: v });
+
+  it("reads a row written before the column existed as version 0 — which it was", () => {
+    expect(aarsTrendFromHistory([pt("20")])[0].ruleVersion).toBe(0);
+  });
+
+  it("carries the recorded version, and rejects a nonsense one rather than trusting it", () => {
+    expect(aarsTrendFromHistory([pt("20", 3)])[0].ruleVersion).toBe(3);
+    expect(aarsTrendFromHistory([pt("20", "x")])[0].ruleVersion).toBe(0);
+    expect(aarsTrendFromHistory([pt("20", -1)])[0].ruleVersion).toBe(0);
+  });
+
+  it("marks each point where the model changed, and never the first", () => {
+    const points = aarsTrendFromHistory([pt("20", 0), pt("21", 0), pt("22", 1), pt("23", 1)]);
+    expect(ruleChangePoints(points)).toEqual([2]);
+  });
+
+  it("marks nothing when one model scored the whole window", () => {
+    expect(ruleChangePoints(aarsTrendFromHistory([pt("20", 2), pt("21", 2)]))).toEqual([]);
+    expect(ruleChangePoints([])).toEqual([]);
+  });
+
+  it("marks every change, including a rule that was reverted", () => {
+    const points = aarsTrendFromHistory([pt("20", 1), pt("21", 2), pt("22", 1)]);
+    expect(ruleChangePoints(points)).toEqual([1, 2]);
   });
 });

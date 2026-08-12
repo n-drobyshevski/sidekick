@@ -1,0 +1,278 @@
+// The AARS rule as a configurable object: pricing cascade, coercion, validation, and the
+// prose the page reads it back in. The defaults must stay bit-identical to the model in
+// ai/custom_score.md — aars.test.ts proves the scores, these prove the rule that makes them.
+
+import { describe, expect, it } from "vitest";
+import { DEFAULT_AARS_RULE, gapPointsFor, type AarsRule } from "../src/domain/aars";
+import {
+  bandRanges,
+  cleanAarsRule,
+  cleanGapCode,
+  MAX_GAP_RULES,
+  ruleSummary,
+  rulesEqual,
+  scoringEqual,
+  shadowedGapRules,
+  validateAarsRule,
+} from "../src/domain/aarsRule";
+
+function withRule(over: Partial<AarsRule>): AarsRule {
+  return cleanAarsRule({ ...DEFAULT_AARS_RULE, ...over });
+}
+
+/**
+ * The pricing cascade as it was written before it became data — the `if` chain from
+ * ai/custom_score.md. The default cascade must agree with it on every code, or the port
+ * quietly changed the model it claims to implement.
+ */
+function legacyDefaultGapPoints(code: string): number {
+  const c = code.toUpperCase();
+  if (c === "NO_GUARDRAIL") return 10;
+  if (c === "DEPRECATED_MODEL") return 5;
+  if (c === "LLM04" || c === "LLM05") return 5;
+  if (c.startsWith("LLM")) return 10;
+  if (c.startsWith("ASI")) return 10;
+  if (c.startsWith("ML")) return 5;
+  if (c === "FIVE_RS" || c.startsWith("5R")) return 5;
+  return 5;
+}
+
+describe("gapPointsFor — the default cascade IS the documented table", () => {
+  const codes = [
+    "NO_GUARDRAIL", "DEPRECATED_MODEL",
+    "LLM01", "LLM02", "LLM04", "LLM05", "LLM06", "LLM10",
+    "ASI01", "ASI02", "ASI03", "ASI10",
+    "ML_DATA_POISONING", "ML01",
+    "FIVE_RS", "5RS", "5R_RESTRICT",
+    "SUB-082", "", "wct-id-1998", "unknown",
+  ];
+  it.each(codes)("prices %s exactly as the pre-config chain did", (code) => {
+    expect(gapPointsFor(code)).toBe(legacyDefaultGapPoints(code));
+  });
+
+  it("matches case- and whitespace-insensitively", () => {
+    expect(gapPointsFor(" llm06 ")).toBe(10);
+    expect(gapPointsFor("no_guardrail")).toBe(10);
+  });
+
+  it("takes the FIRST matching row, so order is the model", () => {
+    // LLM04 above the LLM family scores 5; drop it below and the family claims it at 10.
+    expect(gapPointsFor("LLM04")).toBe(5);
+    const reordered = withRule({
+      gapPoints: DEFAULT_AARS_RULE.gapPoints.filter((g) => g.code !== "LLM04"),
+    });
+    expect(gapPointsFor("LLM04", reordered)).toBe(10);
+  });
+
+  it("falls back for a code no row matches — the tenant-shortId path", () => {
+    expect(gapPointsFor("SUB-082", withRule({ gapFallbackPoints: 15 }))).toBe(15);
+  });
+});
+
+describe("cleanAarsRule", () => {
+  it("leaves the defaults untouched", () => {
+    expect(cleanAarsRule(DEFAULT_AARS_RULE)).toEqual(DEFAULT_AARS_RULE);
+  });
+
+  it("returns the spec model for junk rather than a broken one", () => {
+    for (const junk of [null, undefined, 7, "nope", [], {}]) {
+      expect(cleanAarsRule(junk)).toEqual(DEFAULT_AARS_RULE);
+    }
+  });
+
+  it("clamps points, multipliers and bands into range", () => {
+    const r = cleanAarsRule({
+      ...DEFAULT_AARS_RULE,
+      severityPoints: { CRITICAL: 9999, HIGH: -40, MEDIUM: 20.6, LOW: "x" },
+      multiIssueMultiplier: 12,
+      dataAmplifier: 0.1,
+      bands: { critical: 500, high: 50, medium: 30, low: -3 },
+    });
+    expect(r.severityPoints).toEqual({ CRITICAL: 100, HIGH: 0, MEDIUM: 21, LOW: 8 });
+    expect(r.multiIssueMultiplier).toBe(3);
+    expect(r.dataAmplifier).toBe(1);
+    expect(r.bands).toEqual({ critical: 100, high: 50, medium: 30, low: 1 });
+  });
+
+  it("keeps multipliers at two decimals — the spec's own precision", () => {
+    expect(cleanAarsRule({ ...DEFAULT_AARS_RULE, dataAmplifier: 1.10499 }).dataAmplifier).toBe(1.1);
+  });
+
+  it("normalizes gap codes and drops the empty ones", () => {
+    const r = cleanAarsRule({
+      ...DEFAULT_AARS_RULE,
+      gapPoints: [
+        { match: "prefix", code: " llm ", points: 10 },
+        { match: "bogus", code: "ASI01", points: "7" },
+        { match: "exact", code: "   ", points: 5 },
+      ],
+    });
+    expect(r.gapPoints).toEqual([
+      { match: "prefix", code: "LLM", points: 10 },
+      { match: "exact", code: "ASI01", points: 7 }, // unknown match type reads as exact
+    ]);
+  });
+
+  it("caps the cascade so the rule still fits one settings cell", () => {
+    const many = Array.from({ length: MAX_GAP_RULES + 20 }, (_, i) => ({
+      match: "exact", code: `C${i}`, points: 1,
+    }));
+    expect(cleanAarsRule({ ...DEFAULT_AARS_RULE, gapPoints: many }).gapPoints).toHaveLength(
+      MAX_GAP_RULES,
+    );
+  });
+
+  it("keeps an explicitly empty cascade empty, so validate can report it", () => {
+    expect(cleanAarsRule({ ...DEFAULT_AARS_RULE, gapPoints: [] }).gapPoints).toEqual([]);
+  });
+});
+
+describe("cleanGapCode", () => {
+  it("upper-cases, trims and bounds the length", () => {
+    expect(cleanGapCode(" llm06 ")).toBe("LLM06");
+    expect(cleanGapCode(null)).toBe("");
+    expect(cleanGapCode("x".repeat(200))).toHaveLength(64);
+  });
+});
+
+describe("validateAarsRule", () => {
+  it("passes the defaults", () => {
+    expect(validateAarsRule(DEFAULT_AARS_RULE)).toEqual([]);
+  });
+
+  it("rejects bands that are not strictly descending, and names both levels", () => {
+    const errors = validateAarsRule(withRule({ bands: { critical: 70, high: 80, medium: 30, low: 10 } }));
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("CRITICAL");
+    expect(errors[0]).toContain("HIGH");
+  });
+
+  it("rejects equal thresholds too — a level nothing can reach is not a level", () => {
+    expect(validateAarsRule(withRule({ bands: { critical: 70, high: 70, medium: 30, low: 10 } })))
+      .toHaveLength(1);
+  });
+
+  it("reports every broken boundary, not just the first", () => {
+    expect(validateAarsRule(withRule({ bands: { critical: 10, high: 30, medium: 50, low: 70 } })))
+      .toHaveLength(3);
+  });
+
+  it("rejects a repeated cascade row", () => {
+    const errors = validateAarsRule(
+      withRule({
+        gapPoints: [
+          { match: "exact", code: "LLM06", points: 10 },
+          { match: "exact", code: "LLM06", points: 5 },
+        ],
+      }),
+    );
+    expect(errors.join(" ")).toContain("repeats");
+  });
+
+  it("allows the same code under different match types — they are different rules", () => {
+    expect(
+      validateAarsRule(
+        withRule({
+          gapPoints: [
+            { match: "exact", code: "LLM", points: 10 },
+            { match: "prefix", code: "LLM", points: 5 },
+          ],
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("reports an empty cascade", () => {
+    expect(validateAarsRule(withRule({ gapPoints: [] })).join(" ")).toContain("no rules");
+  });
+});
+
+describe("shadowedGapRules", () => {
+  it("finds none in the defaults — every documented row can fire", () => {
+    expect(shadowedGapRules(DEFAULT_AARS_RULE)).toEqual([]);
+  });
+
+  it("flags an exact row sitting under the prefix that already claims it", () => {
+    const rule = withRule({
+      gapPoints: [...DEFAULT_AARS_RULE.gapPoints, { match: "exact", code: "LLM06", points: 99 }],
+    });
+    expect(shadowedGapRules(rule)).toEqual([DEFAULT_AARS_RULE.gapPoints.length]);
+  });
+
+  it("does not flag the same row moved ABOVE the prefix", () => {
+    const rule = withRule({
+      gapPoints: [{ match: "exact", code: "LLM06", points: 99 }, ...DEFAULT_AARS_RULE.gapPoints],
+    });
+    expect(shadowedGapRules(rule)).toEqual([]);
+  });
+
+  it("does not treat an exact row as shadowing a whole prefix family", () => {
+    const rule = withRule({
+      gapPoints: [
+        { match: "exact", code: "LLM", points: 1 },
+        { match: "prefix", code: "LLM", points: 2 },
+      ],
+    });
+    expect(shadowedGapRules(rule)).toEqual([]);
+  });
+});
+
+describe("bandRanges", () => {
+  it("describes the default scale exactly as the doc's level table does", () => {
+    expect(bandRanges(DEFAULT_AARS_RULE.bands).map((b) => `${b.severity} ${b.min}-${b.max}`)).toEqual([
+      "CRITICAL 70-100", "HIGH 50-69", "MEDIUM 30-49", "LOW 10-29", "INFO 0-9",
+    ]);
+  });
+
+  it("follows a moved threshold into the neighbouring ranges", () => {
+    const ranges = bandRanges({ critical: 60, high: 50, medium: 30, low: 10 });
+    expect(ranges[0].label).toBe("score 60–100");
+    expect(ranges[1].label).toBe("score 50–59");
+  });
+});
+
+describe("ruleSummary", () => {
+  it("states each pillar's cap and the level thresholds", () => {
+    const text = ruleSummary(DEFAULT_AARS_RULE).join(" ");
+    expect(text).toContain("capped at 50");
+    expect(text).toContain("capped at 30");
+    expect(text).toContain("×1.2");
+    expect(text).toContain("×1.1");
+    expect(text).toContain("→ 22 / 11 / 0");
+    expect(text).toContain("CRITICAL at 70 and above");
+  });
+
+  it("reports the amplified exposure points, which is what actually scores", () => {
+    const text = ruleSummary(withRule({ dataAmplifier: 2 })).join(" ");
+    expect(text).toContain("→ 40 / 20 / 0");
+  });
+
+  it("counts the cascade rows and names the fallback", () => {
+    const text = ruleSummary(withRule({ gapFallbackPoints: 1 })).join(" ");
+    expect(text).toContain("9 pricing rules");
+    expect(text).toContain("1 point"); // singular, not "1 points"
+  });
+});
+
+describe("rulesEqual / scoringEqual", () => {
+  it("rulesEqual sees a band move", () => {
+    const moved = withRule({ bands: { critical: 60, high: 50, medium: 30, low: 10 } });
+    expect(rulesEqual(DEFAULT_AARS_RULE, moved)).toBe(false);
+  });
+
+  it("scoringEqual does NOT — bands rename a score, they never change one", () => {
+    const moved = withRule({ bands: { critical: 60, high: 50, medium: 30, low: 10 } });
+    expect(scoringEqual(DEFAULT_AARS_RULE, moved)).toBe(true);
+  });
+
+  it("scoringEqual sees any change to the point model", () => {
+    expect(scoringEqual(DEFAULT_AARS_RULE, withRule({ gapFallbackPoints: 15 }))).toBe(false);
+    expect(scoringEqual(DEFAULT_AARS_RULE, withRule({ dataAmplifier: 1.2 }))).toBe(false);
+    expect(
+      scoringEqual(
+        DEFAULT_AARS_RULE,
+        withRule({ severityPoints: { ...DEFAULT_AARS_RULE.severityPoints, MEDIUM: 30 } }),
+      ),
+    ).toBe(false);
+  });
+});

@@ -17,7 +17,7 @@ import { openAssetSheet } from "../detailSheets.js";
 import { categoryBar, trendLine } from "../charts.js";
 import { kindLabel } from "../icons.js";
 import {
-  aarsChip, clear, el, emptyState, kpiCard, pager, sectionLabel, sevBadge, skeleton,
+  aarsChip, clear, el, emptyState, fmtDate, kpiCard, pager, sectionLabel, sevBadge, skeleton,
 } from "../ui.js";
 
 // Synchronous placeholder shown until api_getAssets resolves — mirrors the KPI row, the
@@ -146,11 +146,26 @@ export async function renderInventory(main, params) {
     // against a deployment whose client bundle is newer than its server bundle.
     const allMode = payload.all !== false;
 
+    // Band captions come from the AARS rule in force, so tuning a threshold on the AARS
+    // Rules page renames these cards instead of leaving them quoting the old model.
+    const bandLabel = (sev) => {
+      const found = (boot.aarsRule?.bandRanges || []).find((b) => b.severity === sev);
+      return found ? found.label : "";
+    };
+
+    if (boot.aarsRule?.stale) {
+      host.append(
+        el("div", { class: "notice warn", role: "status" },
+          el("span", {}, "The AARS rule has changed since these scores were computed. " +
+            "Recompute them on the AARS Rules page."),
+          el("a", { class: "link", href: "#/aars", target: "_self" }, "Open AARS Rules")),
+      );
+    }
     host.append(
       el("div", { class: "kpi-row" },
         kpiCard("AI assets", String(kpis.aiAssets), `${kpis.agents} agents`),
-        kpiCard("Critical AARS", String(kpis.criticalAars), "score 70–100"),
-        kpiCard("High AARS", String(kpis.highAars), "score 50–69"),
+        kpiCard("Critical AARS", String(kpis.criticalAars), bandLabel("CRITICAL")),
+        kpiCard("High AARS", String(kpis.highAars), bandLabel("HIGH")),
         kpiCard("Guardrail coverage",
           kpis.guardrailCoveragePct === null ? "—" : `${kpis.guardrailCoveragePct}%`,
           "agents protected by a guardrail"),
@@ -177,7 +192,7 @@ export async function renderInventory(main, params) {
     });
     const distCard = el("div", { class: "chart-card" },
       el("h3", {}, "Assets by AARS severity"),
-      el("p", { class: "chart-note" }, `INFO (score 0–9) not charted · ${infoNote(aarsCounts)}`),
+      el("p", { class: "chart-note" }, `INFO (${bandLabel("INFO")}) not charted · ${infoNote(aarsCounts)}`),
       el("div", { class: "chart-box", style: "height:200px" }, distCanvas),
     );
 
@@ -188,6 +203,9 @@ export async function renderInventory(main, params) {
     const trendCanvas = el("canvas", {
       "aria-label": "AARS severity over time, one line per level, excluding INFO", role: "img",
     });
+    // Points scored under different AARS rules are not on the same scale. Rather than let
+    // a threshold edit read as the estate moving, the note names the breaks.
+    const ruleChanges = payload.aarsTrendRuleChanges || [];
     const trendCard = el("div", { class: "chart-card" },
       el("h3", {}, "AARS severity over time"),
       el("p", { class: "chart-note" },
@@ -200,6 +218,13 @@ export async function renderInventory(main, params) {
             trend.length === 1
               ? "One sync recorded so far — the trend draws from the second."
               : "No history yet. Each sync adds a point; earlier syncs can't be recovered."),
+      trend.length >= 2 && ruleChanges.length
+        ? el("p", { class: "chart-note warn" },
+            `The scoring rule changed ${ruleChanges.length} time` +
+            `${ruleChanges.length === 1 ? "" : "s"} in this window ` +
+            `(${ruleChanges.map((i) => fmtDate(trend[i].at)).join(", ")}). ` +
+            "Points either side of a change were scored by different models.")
+        : null,
     );
 
     host.append(el("div", { class: "chart-row" }, distCard, trendCard));

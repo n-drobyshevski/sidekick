@@ -1,6 +1,7 @@
 // Settings persistence on the `settings` tab (key / value_json rows). The semantics
 // live in domain/settingsLogic.ts; this layer only loads/saves the settings dict.
 
+import { scoringEqual } from "../domain/aarsRule";
 import * as logic from "../domain/settingsLogic";
 import type { Rec } from "../domain/util";
 import { bumpDataVersion } from "./serverCache";
@@ -53,4 +54,40 @@ export function setDefaultDepth(depth: unknown): void {
 }
 export function setMaxNodes(maxNodes: unknown): void {
   saveSettings(logic.withMaxNodes(loadSettings(), maxNodes));
+}
+
+export const getAarsRule = (): logic.StoredAarsRule => logic.getAarsRule(loadSettings());
+
+/**
+ * Save a rule and return it as stored — clamped, and with its new version. When the edit
+ * touched only the bands, the scored-version marker moves forward with it: levels are
+ * re-derived on read, so every persisted score is still correct and prompting for a
+ * recompute would be asking for work that changes nothing.
+ */
+export function setAarsRule(rule: unknown): logic.StoredAarsRule {
+  const settings = loadSettings();
+  const before = logic.getAarsRule(settings);
+  const scoresWereCurrent = logic.getScoredRuleVersion(settings) === before.version;
+
+  let next = logic.withAarsRule(settings, rule);
+  const stored = logic.getAarsRule(next);
+  if (scoresWereCurrent && scoringEqual(before.rule, stored.rule)) {
+    next = logic.withScoredRuleVersion(next, stored.version);
+  }
+  saveSettings(next);
+  return stored;
+}
+
+export const getScoredRuleVersion = (): number => logic.getScoredRuleVersion(loadSettings());
+
+/**
+ * Mark which rule version the persisted scores were computed under. Every sync calls this,
+ * and almost every call is a no-op — so it skips the whole-tab rewrite (and the cache
+ * invalidation that rides with it) when the marker is already where it should be.
+ */
+export function setScoredRuleVersion(version: unknown): void {
+  const settings = loadSettings();
+  const next = logic.withScoredRuleVersion(settings, version);
+  if (logic.getScoredRuleVersion(next) === logic.getScoredRuleVersion(settings)) return;
+  saveSettings(next);
 }

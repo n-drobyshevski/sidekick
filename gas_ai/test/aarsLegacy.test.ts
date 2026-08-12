@@ -3,8 +3,9 @@
 // existing tenant without a re-sync, values (`MINIMAL`) included.
 
 import { describe, expect, it } from "vitest";
-import type { GraphDoc } from "../src/domain/graphTypes";
-import { normalizeLegacyAars, rowToAsset } from "../src/server/syncStore";
+import { DEFAULT_AARS_RULE } from "../src/domain/aars";
+import type { GNode, GraphDoc } from "../src/domain/graphTypes";
+import { normalizeLegacyAars, rowToAsset, withCurrentBands } from "../src/server/syncStore";
 
 const T = "2026-06-28T05:00:00Z";
 
@@ -77,5 +78,49 @@ describe("rowToAsset (ai_assets tab)", () => {
   it("leaves the field unset for an unscored or unreadable value", () => {
     expect(rowToAsset({ ...base }).aarsSeverity).toBeUndefined();
     expect(rowToAsset({ ...base, aars_severity: "BOGUS" }).aarsSeverity).toBeUndefined();
+  });
+
+  it("reads back the persisted AARS inputs, and tolerates a row written without them", () => {
+    const input = { gaps: [{ code: "LLM06" }], dataExposure: "SENSITIVE" };
+    expect(rowToAsset({ ...base, aars_input_json: JSON.stringify(input) }).aarsInput)
+      .toEqual(input);
+    expect(rowToAsset({ ...base }).aarsInput).toBeUndefined();
+    expect(rowToAsset({ ...base, aars_input_json: "{oops" }).aarsInput).toBeUndefined();
+  });
+});
+
+describe("withCurrentBands (levels re-derived on read)", () => {
+  const bands = { critical: 60, high: 40, medium: 20, low: 5 };
+  const node = (over: Partial<GNode>): GNode =>
+    ({ id: "a", kind: "AI_AGENT", name: "a", ...over }) as GNode;
+
+  it("renames a stored level to whatever the current thresholds say", () => {
+    const out = withCurrentBands([node({ aars: 62, aarsSeverity: "HIGH" })], bands);
+    expect(out[0].aarsSeverity).toBe("CRITICAL");
+  });
+
+  it("scores a row that has a number but no level at all", () => {
+    expect(withCurrentBands([node({ aars: 7 })], bands)[0].aarsSeverity).toBe("LOW");
+    expect(withCurrentBands([node({ aars: 25 })], bands)[0].aarsSeverity).toBe("MEDIUM");
+    expect(withCurrentBands([node({ aars: 0 })], bands)[0].aarsSeverity).toBe("INFO");
+  });
+
+  it("leaves an unscored node to its stored value — that is where MINIMAL still lives", () => {
+    const legacy = node({ aarsSeverity: "INFO" });
+    expect(withCurrentBands([legacy], bands)[0].aarsSeverity).toBe("INFO");
+  });
+
+  it("does not mutate, and returns the same array when nothing needs renaming", () => {
+    const nodes = [node({ aars: 62, aarsSeverity: "CRITICAL" })];
+    expect(withCurrentBands(nodes, bands)).toBe(nodes);
+
+    const changing = [node({ aars: 62, aarsSeverity: "HIGH" })];
+    withCurrentBands(changing, bands);
+    expect(changing[0].aarsSeverity).toBe("HIGH");
+  });
+
+  it("is a no-op under the default bands for a correctly-scored row", () => {
+    const nodes = [node({ aars: 62, aarsSeverity: "HIGH" })];
+    expect(withCurrentBands(nodes, DEFAULT_AARS_RULE.bands)).toBe(nodes);
   });
 });
