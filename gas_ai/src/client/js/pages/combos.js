@@ -101,7 +101,7 @@ export async function renderCombos(main) {
           assetRow.append(
             el("button", {
               class: "sev-pill",
-              onclick: () => openAssetSheet(a.id, { title: a.name }),
+              onclick: () => openAssetSheet(a.id, { seed: a }),
               "aria-label": `${a.name}, AARS ${a.aars ?? "unscored"}`,
             }, `${a.name} `, aarsChip(a.aars, a.aarsSeverity)),
           );

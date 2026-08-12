@@ -11,7 +11,7 @@
 // room to dock, it falls back to the modal sheet.
 
 import { bootstrap, listJoin, listSplit, parseHash, setParams, swrCall } from "../store.js";
-import { openAssetSheet } from "../detailSheets.js";
+import { openAssetSheet, openIssueSheet } from "../detailSheets.js";
 import { graphTable, renderGraph } from "../graphView.js";
 import { CATEGORY_LABELS, CATEGORY_ORDER, categoryOf, kindLabel } from "../icons.js";
 import { appliedCount, filterEntries, isNarrowingSet, sectionOf } from "./graphChips.js";
@@ -336,9 +336,14 @@ export async function renderGraphPage(main, params, _ctx) {
 
   const handlers = {
     onNodeOpen: (node) => {
-      if (node.kind === "ISSUE") return; // issues open from the combos page
+      // An ISSUE node carries the issue's own id (graphEnrich materializes one per open
+      // issue), so it opens its issue sheet rather than doing nothing at all.
+      if (node.kind === "ISSUE") {
+        openIssueSheet(node.id, { title: node.name });
+        return;
+      }
       openAssetSheet(node.id, {
-        title: node.name,
+        seed: node,
         onFocusGraph: (id) => update({ seed: id, seedKind: "asset", expand: "" }),
         onExpand: (id) => {
           const expanded = new Set(listSplit(state.expand));
