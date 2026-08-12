@@ -583,7 +583,7 @@ and a laptop.
 | `maintain` | `false` | run `OPTIMIZE` over the clustered tables and exit, ingesting nothing — see [Maintenance](#maintenance) |
 | `data_path` | — | write the register to this directory instead of a catalog — see [PoC storage](#poc-storage-running-with-no-catalog). With it set, `catalog` is not required |
 | `export_csv` | — | write every table to this directory as typed CSV and exit, ingesting nothing — see [The CSV register](#the-csv-register) |
-| `csv_path` | — | the same export, run **after** a normal scan rather than instead of one. The usual shape where the register is read from CSV |
+| `csv_path` | — | **make this directory the register**: restore it into Delta before the scan, export it back after. Implies no catalog, and a disposable Delta scratch — see [The CSV register](#the-csv-register) |
 | `csv_include_bronze` | `false` | include bronze in the export. Large, and nothing reads it back |
 | `csv_restore` | — | write a CSV export back out as the Delta register and exit. Overwrites — see [The CSV register](#the-csv-register) |
 
@@ -937,51 +937,81 @@ landed.
 
 A deployment with no catalog it may create tables in **and** no Unity Catalog volume has nowhere
 for the ✅ rows above to point. `csvstore.py` is the answer that deployment actually runs on:
-the register is exported as CSV to a workspace directory, and the notebooks read it back from
-there.
+**the register is a directory of CSV files under `/Workspace`**, and nothing durable is written
+to the lake at all.
 
 ```bash
-# Export as part of a normal scan -- this is the usual shape.
-python brick/run_pipeline.py --data_path=dbfs:/tmp/wiz_pipeline \
+# The usual shape: the CSV directory is the register.
+python brick/run_pipeline.py \
   --csv_path=/Workspace/Users/<you>/wiz/csv_export \
   --wiz_api_url=https://api.<region>.app.wiz.io/graphql
-
-# Or export an existing register and exit, ingesting nothing.
-python brick/run_pipeline.py --data_path=<root> --export_csv=<root>/csv
 ```
 
-Then point the read-only notebooks at it by setting the **`csv_path` widget**. That is the
-whole of the reader's side: `csvstore.load` registers each table as a session temp view named
-exactly as the table would be, and a temp view is valid anywhere Spark wants a table — the same
-trick `` delta.`<path>` `` plays — so every view, every panel and every `%sql` cell works
-untouched.
+Then point the read-only notebooks at the same directory by setting the **`csv_path` widget**.
+That is the whole of the reader's side: `csvstore.load` registers each table as a session temp
+view named exactly as the table would be, and a temp view is valid anywhere Spark wants a table
+— the same trick `` delta.`<path>` `` plays — so every view, every panel and every `%sql` cell
+works untouched.
 
 **Why it is not `spark.read.csv`.** Every write Spark does is distributed, and *executors cannot
 write to workspace files* — which is also why `--data_path` refuses `/Workspace` outright. So
 everything in `csvstore` is driver-side: `toPandas`, `open()`, `csv`. That is what makes
-`/Workspace` a legal destination for the *export* even though it is an illegal one for the
-register itself.
+`/Workspace` a legal destination for the CSV even though it is an illegal one for Delta.
 
-### CSV is an export, not a storage mode
+### Restore before, export after
 
-**The register is always Delta.** There is no CSV-only run and there cannot be one: the ledger
-is `MERGE`d on every scan and read back to compute the gold tables, and a CSV file cannot be
-merged into. `--csv_path` copies the finished register out; it does not replace it.
+**The register is CSV; Delta is scratch for the length of one run.** There is no way to make
+Delta optional outright: the ledger is `MERGE`d on every scan and read back to compute the gold
+tables, and a CSV file cannot be merged into. So `--csv_path` brackets the scan —
 
-So every scan writes Delta somewhere, and `--data_path` / `catalog` decides where:
+1. **restore** the CSV export into Delta, before `ensure_tables`, so last run's lifecycles are in
+   the ledger this run's reconcile reads. Without this every scan starts from an empty register
+   and resolves nothing;
+2. run the scan exactly as it always does;
+3. **export** back to the same directory, last thing.
 
-| you set | the register lives in | the CSV is |
+The Delta side is deliberately disposable. With `--csv_path` set and no `--data_path`, it
+defaults to `dbfs:/tmp/wiz_scratch_<scope>` and the ephemeral-path refusal is *waived* — the
+guard exists because a register on ephemeral disk is lost overnight and discovered missing when
+somebody wants the history, and here there is no history in Delta to lose. Losing the scratch
+costs one restore.
+
+**With `--csv_path` set, no catalog is ever consulted.** Not "no catalog by default":
+`resolve_namespace()` is not called at all, because falling through to it is exactly how a run
+meant to write CSV creates empty Delta tables in a production catalog instead.
+
+The first run has nothing to restore from. That is not an error — a missing manifest means an
+empty register, the run prints a note and carries on, and after it the directory exists.
+
+| you set | the register is | Delta is |
 | --- | --- | --- |
-| `--data_path=dbfs:/tmp/…` | DBFS, outside any catalog | the durable copy — see the caveat below |
-| `--data_path=/Volumes/…` | a Unity Catalog volume | a convenience |
-| `catalog` / `schema`, no `data_path` | **Delta tables in that catalog** | a convenience |
+| `--csv_path=/Workspace/…` | **the CSV directory** | per-run scratch on `dbfs:/tmp` |
+| `--csv_path` **and** `--data_path=<durable>` | the CSV directory | a durable mirror, kept between runs |
+| `--data_path=<dir>` alone | that Delta directory | the register |
+| `catalog` / `schema`, neither flag | **Delta tables in that catalog** | the register |
 
-The third row is the one to be deliberate about: with no `data_path`, the run creates and writes
+The last row is the one to be deliberate about: with neither flag set the run creates and writes
 tables in the catalog — and so does opening a read notebook, because `panels.context` calls
-`ensure_tables()`. If the intention is to stay out of the lake, **set the `data_path` widget**;
+`ensure_tables()`. If the intention is to stay out of the lake, **set the `csv_path` widget**;
 cell 1 and the run cell both read it, so they cannot disagree about where the register is.
 
-### The schema sidecar, which is the whole point
+Two other flags remain, and both exit without scanning: `--export_csv=<dir>` copies an existing
+Delta register out once, and `--csv_restore=<dir>` writes a CSV export back out as Delta,
+overwriting. They are the one-shot halves of what `--csv_path` does on every run.
+
+### The manifest, which is how a torn write is caught
+
+A Delta commit is atomic. A directory of CSVs and sidecars, which a notebook may be reading while
+a job rewrites it, is not. `_manifest.json` is written **last** by every export and checked by
+every load: it carries the module version and a row count per table.
+
+It cannot make the write atomic. It can make a torn one *detectable*: a row count that disagrees
+raises rather than quietly restoring a register missing half its ledger. An export with **no**
+manifest is read unverified rather than refused — one written by an older version is not
+automatically torn, and the failure worth catching is silence about a register that is.
+`tests/test_csvstore.py` pins both halves of that.
+
+### The schema sidecar, which is the other whole point
 
 Each table is written as **two** files: `<table>.csv` and `<table>.schema.json`, the Spark schema
 verbatim. Reading goes back through that schema rather than through inference.
@@ -1000,22 +1030,22 @@ register must be identical to the one over the Delta tables it came from.
 
 | | |
 | --- | --- |
-| **Bronze is excluded by default** | one JSON document per finding: the only table big enough to hit the workspace 500 MB per-file cap, and the only one nothing reads except `--rebuild_ledger`. `--csv_include_bronze=true` opts in |
+| **Bronze is excluded by default** | one JSON document per finding: the only table big enough to hit the workspace 500 MB per-file cap, and the only one nothing reads except `--rebuild_ledger`. `--csv_include_bronze=true` opts in — and **without it `--rebuild_ledger` has nothing to replay** in CSV-register mode, because the scratch Delta directory it would read is a fresh one |
 | **Arrays and structs are refused** | nothing in this register has one, and inventing a rendering that round-trips is worse than failing |
-| **`--csv_restore=<dir>`** | writes a CSV export back out as Delta, overwriting. The way back, and it matters where the Delta side sits on `dbfs:/tmp`: the export is then the durable copy, and a copy you cannot restore from is a report, not a backup |
+| **No history, no clustering, no deletion vectors** | those live in the Delta log, and the log is the thing being thrown away each run. What the CSV carries is the current rows, which is what every metric reads |
 
-**Still not how you migrate a register that is intact.** What you migrate is the Delta
-directory — `CREATE TABLE … USING DELTA LOCATION` keeps the clustering, the deletion-vector
-property and the full history, none of which a CSV carries. `--csv_restore` is for rebuilding a
-register whose Delta side was *lost*, which is a different job.
+**Not how you migrate a register that is intact.** If the Delta side *is* the register — the
+`--data_path` / catalog rows above — what you migrate is the Delta directory:
+`CREATE TABLE … USING DELTA LOCATION` keeps the clustering, the deletion-vector property and the
+full history. The CSV round-trip is for the deployment where CSV is the register in the first
+place.
 
-### Two things about the workspace path, said once
+### One thing about the workspace path, said once
 
-`/Workspace` file permissions **expire** — 36 hours on interactive compute, 30 days for jobs —
-and `dbfs:/tmp/…` slips past `EPHEMERAL_PREFIXES` (the guard matches a leading `/tmp/`, and that
-string does not start with one). So in that arrangement neither half is unconditionally durable,
-and the CSV export is nonetheless the copy that has to survive. Re-export on every scan, and
-keep something outside the workspace if the history matters.
+`/Workspace` file permissions **expire** — 36 hours on interactive compute, 30 days for jobs.
+That is a limit on *access*, not on the bytes, and it is the reason to keep a copy of the CSV
+directory somewhere outside the workspace if the history matters. Everything else in this mode
+is designed to be lost and restored; that directory is not.
 
 ## Tests
 
@@ -1082,7 +1112,11 @@ The oracles are ported, not invented:
 - **`test_csvstore.py`** asserts the confusion matrix over a CSV-reloaded register is identical
   to the one over the Delta tables it came from. A NULL exploit signal read back as `false`
   inflates efficiency and deflates coverage at once, so the round-trip is checked over every
-  column rather than over the ones somebody thought to assert. See
+  column rather than over the ones somebody thought to assert. It also scans, exports,
+  **deletes the Delta directory outright** and scans again, asserting that lifecycles continue,
+  `first_seen` does not collapse and a dropped finding still resolves by disappearance — the
+  whole claim of `--csv_path`, and a claim whose failure mode in production is not an error but
+  a register that looks healthy and is measuring nothing. See
   [The CSV register](#the-csv-register).
 
 The rules that would be silently wrong rather than loudly broken were mutation-tested: removing

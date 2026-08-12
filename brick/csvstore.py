@@ -82,6 +82,20 @@ DEFAULT_ATTRS = tuple(a for a in TABLE_ATTRS if a != "bronze")
 
 SCHEMA_SUFFIX = ".schema.json"
 
+#: Written **last** by every export, and checked by every load.
+#:
+#: A Delta commit is atomic; a directory of CSVs and sidecars is not. A run that dies half way
+#: through an export leaves the ledger from this scan beside gold tables from the last one, and
+#: the next run would restore that mixture and reconcile from a state that never existed.
+#:
+#: The manifest cannot make the write atomic, but it can make a torn one **detectable**: it
+#: records the module version and a row count per table, and it is written only after every
+#: file has landed. A register whose manifest disagrees with what is on disk is refused rather
+#: than read -- the same posture ``run_pipeline`` takes when it finds a ledger MERGE with no
+#: matching scan-log row. A register with *no* manifest is read unverified, because one written
+#: by an older version is not thereby torn; what must never be silent is a register that is.
+MANIFEST = "_manifest.json"
+
 
 def table_basename(reference: str) -> str:
     """The bare table name behind either reference form.
@@ -112,11 +126,21 @@ def export(
     Returns the CSV paths written. A table that does not exist is skipped rather than written
     empty: "no rows" and "no table" are different states, and an empty CSV would make a
     never-scanned register look like a scanned one with nothing in it.
+
+    The ``_manifest.json`` goes last, after every file has landed -- see ``MANIFEST``. Any
+    manifest already there is removed **first**, so a run that dies part way through leaves a
+    register that is visibly incomplete rather than one carrying the previous scan's manifest
+    over this scan's half-written files.
     """
     wanted = attrs or (TABLE_ATTRS if include_bronze else DEFAULT_ATTRS)
     os.makedirs(target, exist_ok=True)
 
+    manifest_path = os.path.join(target, MANIFEST)
+    if os.path.exists(manifest_path):
+        os.remove(manifest_path)
+
     written: List[str] = []
+    counts = {}
     for attr in wanted:
         reference = getattr(tables, attr)
         if not run_pipeline.table_exists(spark, reference):
@@ -127,10 +151,55 @@ def export(
         with open(os.path.join(target, f"{name}{SCHEMA_SUFFIX}"), "w", encoding="utf-8") as fh:
             json.dump(frame.schema.jsonValue(), fh, indent=2)
         written.append(os.path.join(target, f"{name}.csv"))
+        counts[name] = rows
         print(f"[csv] {reference} -> {name}.csv ({rows} rows)")
     if not written:
         print("[csv] nothing to export; the register is empty")
+        return written
+
+    with open(manifest_path, "w", encoding="utf-8") as fh:
+        json.dump({"version": MODULE_VERSION, "tables": counts}, fh, indent=2, sort_keys=True)
     return written
+
+
+def read_manifest(target: str) -> Optional[dict]:
+    """The register's manifest, or ``None`` when there is no register here at all.
+
+    ``None`` and "torn" are different answers and only the caller can decide between them: on a
+    first run an absent register is the normal case, and everywhere else it is a problem.
+    """
+    path = os.path.join(target, MANIFEST)
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def _verify(target: str, manifest: dict) -> None:
+    """Every table the manifest names must be present with the row count it recorded.
+
+    This is the whole value of the manifest: it turns "the export died half way" from a state
+    that reads back as plausible data into one that refuses to be read.
+    """
+    problems = []
+    for name, expected in sorted(manifest.get("tables", {}).items()):
+        path = os.path.join(target, f"{name}.csv")
+        if not os.path.exists(path):
+            problems.append(f"{name}.csv is missing (manifest says {expected} rows)")
+            continue
+        with open(path, encoding="utf-8", newline="") as fh:
+            actual = max(sum(1 for _ in csv.reader(fh)) - 1, 0)
+        if actual != expected:
+            problems.append(f"{name}.csv has {actual} rows, manifest says {expected}")
+    if problems:
+        raise RuntimeError(
+            "This CSV register is torn -- the manifest and the files disagree:\n  "
+            + "\n  ".join(problems)
+            + "\nThe manifest is written last, so an export that died part way through leaves "
+            "exactly this. Do not scan against it: reconciling from a half-written ledger "
+            "invents remediation. Restore the previous export, or re-export from the Delta "
+            "register if it still exists."
+        )
 
 
 def _write_csv(frame: DataFrame, path: str) -> int:
@@ -215,7 +284,16 @@ def load(
     ``required`` names the tables whose absence is an error rather than an empty page. Both
     defaults are lifecycle tables: without them there is no register here, and the likeliest
     cause is a wrong ``prefix`` -- a scope typo pointing at an export that does not exist.
+    Pass ``required=()`` where an absent register is a legitimate state, which on a first run
+    it is.
+
+    **The manifest is checked before anything is read.** A torn export -- see ``MANIFEST`` --
+    is refused here rather than reconciled against later.
     """
+    manifest = read_manifest(target)
+    if manifest is not None:
+        _verify(target, manifest)
+
     wanted = attrs or TABLE_ATTRS
     found = {}
     for attr in wanted:
@@ -374,6 +452,17 @@ def _parse_timestamp_factory(date_only: bool):
 # ------------------------------------------------------------------------------ restore
 
 
+def _has_register(target: str, prefix: str) -> bool:
+    """Is there anything at ``target`` worth restoring?
+
+    The ledger's schema sidecar, because that is what ``load`` needs to read a table at all: a
+    directory with a CSV and no sidecar is not a register this module can use, and one with the
+    sidecar is, manifest or no manifest.
+    """
+    name = f"{prefix}{_table_name('ledger')}{SCHEMA_SUFFIX}"
+    return os.path.exists(os.path.join(target, name))
+
+
 def restore(
     spark: SparkSession,
     target: str,
@@ -381,17 +470,31 @@ def restore(
     prefix: str = "",
     *,
     attrs: Optional[Sequence[str]] = None,
+    missing_ok: bool = False,
 ) -> List[str]:
     """Write a CSV export back out as the Delta register ``tables`` names.
 
-    The way back, and the reason it exists: this deployment's Delta side sits on ``dbfs:/tmp``
-    while the export sits in the workspace, so the CSV is the durable copy. A durable copy you
-    cannot restore from is a report.
+    The way back, and the half of the CSV-register mode that makes the CSV authoritative: the
+    Delta side is a scratch copy for the duration of one run, and this is what puts last run's
+    state into it.
 
     Overwrites, and does not merge. A restore is "make the register be this", so a half-restore
     on top of existing rows -- which is what appending would produce -- is the one outcome
-    nobody wants. Restore into a fresh ``--data_path``, then re-point the job at it.
+    nobody wants.
+
+    ``missing_ok`` returns ``[]`` instead of raising when there is no register at ``target``.
+    That is the first run in ``--csv_path`` mode, where having nothing to restore is not merely
+    tolerable but the expected state -- and it is opt-in, because everywhere else an absent
+    register means a wrong path and should say so.
+
+    "No register" is decided on the ledger sidecar, not on the manifest. Gating on the manifest
+    would make an export written before manifests existed look like an empty directory -- which
+    ``missing_ok`` would skip, and the export at the end of the run would then overwrite with a
+    register that had lost its whole history. Silently, which is the part that matters.
     """
+    if missing_ok and not _has_register(target, prefix):
+        print(f"[csv] no register at {target} yet -- starting a new one")
+        return []
     loaded = load(spark, target, prefix, attrs=attrs)
     restored: List[str] = []
     for attr in attrs or TABLE_ATTRS:

@@ -367,3 +367,173 @@ def test_table_basename_reads_both_reference_forms():
 def _one_file(directory: str, name: str) -> str:
     Path(directory).mkdir(parents=True, exist_ok=True)
     return str(Path(directory) / name)
+
+
+# ------------------------------------------------------- the CSV register, end to end
+
+
+def test_two_scans_reconcile_through_csv_alone(spark, tmp_path, monkeypatch):
+    """**The test the CSV-register mode exists for.**
+
+    Scan, export, *destroy the Delta side entirely*, scan again -- and the second scan must
+    continue the first one's lifecycles. That is the whole claim of `--csv_path`: the CSV is
+    the register and the Delta directory is scratch for the length of one run.
+
+    If it fails, the failure mode in production is not an error. Every scan would start from an
+    empty ledger, `first_seen` would collapse to today on every finding, nothing would ever
+    resolve by disappearance, and MTTR would read near zero -- a register that looks like a
+    healthy programme and is measuring nothing.
+    """
+    import shutil
+
+    nodes = extract_nodes(
+        json.loads((BRICK_DIR / "sca_findings_example.json").read_text())
+    )
+    register = str(tmp_path / "csv")
+    scratch = str(tmp_path / "scratch")
+    monkeypatch.setattr(run_pipeline.dbx, "widget", lambda name: "")
+
+    def scan(scan_id, scan_ts, payload):
+        tables = run_pipeline.resolve_tables("", SCOPE, argv=[], data_path=scratch)
+        csvstore.restore(spark, register, tables, "wiz_sca_", missing_ok=True)
+        run_pipeline.ensure_tables(spark, tables)
+        run_pipeline.create_clustered(
+            spark, tables.bronze, run_pipeline.BRONZE_TABLE_SCHEMA, "bronze"
+        )
+        rows = [(scan_id, scan_ts, SCOPE, i, json.dumps(n)) for i, n in enumerate(payload)]
+        (
+            spark.createDataFrame(
+                rows,
+                "scan_id STRING, scan_ts STRING, scope STRING, seq LONG, node_json STRING",
+            )
+            .withColumn("scan_ts", F.col("scan_ts").cast("timestamp"))
+            .write.format("delta").mode("append").option("mergeSchema", "true")
+            .save(run_pipeline.as_path(tables.bronze))
+        )
+        run_pipeline.build_metrics(
+            spark, tables, scan_id, scan_ts, SCOPE, severities=SEVERITIES, summary=False
+        )
+        csvstore.export(spark, tables, register)
+        return tables
+
+    scan("scan-1", "2026-06-01T00:00:00Z", nodes)
+    first = csvstore.load(spark, register, "wiz_sca_")
+    seen_first = {r["vuln_key"]: r for r in spark.table(first.ledger).collect()}
+    assert seen_first, "the first scan exported no lifecycles"
+
+    # The Delta side is gone. Everything the second scan knows, it knows from the CSV.
+    shutil.rmtree(scratch)
+
+    # Drop one finding that is **in the severity scope and still OPEN**, so disappearance is the
+    # only way it can close -- the inference that only works if the previous scan's ledger AND
+    # its scan log both came back. Both conditions matter: an out-of-scope finding was never in
+    # the population, and one the fixture already marks RESOLVED closes through `resolvedAt`
+    # with `resolution_src = "api"`, which would pass this test without the round-trip working.
+    dropped = next(
+        n for n in nodes if n["severity"] in SEVERITIES and n["status"] == "OPEN"
+    )
+    scan("scan-2", "2026-07-01T00:00:00Z", [n for n in nodes if n is not dropped])
+    after = csvstore.load(spark, register, "wiz_sca_")
+    rows = {r["vuln_key"]: r for r in spark.table(after.ledger).collect()}
+
+    # Same lifecycles, not a second set: identity survived the round-trip.
+    assert set(rows) == set(seen_first)
+    # `first_seen` did not collapse to the second scan -- the earliest evidence was carried.
+    for key, row in rows.items():
+        assert row["first_seen"] == seen_first[key]["first_seen"], key
+    # And the tail actually resolved, by the inference that needs the previous scan log. Keyed
+    # on `vuln_key` rather than on the CVE: seven rows in this fixture carry CVE-2021-44228 on
+    # different repositories, so a CVE is not an identity here.
+    disappeared = [key for key, r in rows.items() if r["resolution_src"] == "disappeared"]
+    assert disappeared == [f"id:{dropped['id']}"], (
+        "the dropped finding did not resolve by disappearance -- the previous scan's log or "
+        "its last_scan_id did not survive the round-trip"
+    )
+
+    # Two scans on the log, and the gold tables accumulated rather than being replaced.
+    assert spark.table(after.scans).count() == 2
+    assert (
+        spark.table(after.mttr).select("scan_id").distinct().count() == 2
+    ), "the gold trend did not survive the round-trip"
+
+
+def test_a_torn_export_is_refused_rather_than_read(spark, register):
+    """The manifest is written last, so a run that dies mid-export leaves this shape.
+
+    Reconciling against a half-written ledger invents remediation that never happened, and it
+    does it silently -- so the register refuses to load rather than letting a scan proceed.
+    """
+    tables, target = register
+    csvstore.export(spark, tables, target)
+
+    # A ledger truncated the way a killed process would leave it.
+    path = Path(target) / "wiz_sca_vuln_ledger.csv"
+    lines = path.read_text().splitlines()
+    assert len(lines) > 2
+    path.write_text("\n".join(lines[:2]) + "\n")
+
+    with pytest.raises(RuntimeError, match="torn"):
+        csvstore.load(spark, target, "wiz_sca_")
+
+
+def test_an_export_with_no_manifest_is_read_unverified(spark, register):
+    """An export written by something other than `csvstore.export`, or one whose manifest was
+    removed, cannot be checked -- so it is not read."""
+    tables, target = register
+    csvstore.export(spark, tables, target)
+    (Path(target) / csvstore.MANIFEST).unlink()
+
+    # No manifest means no verification is possible; `load` still reads it, because a register
+    # exported by an older version is not automatically torn. What must not happen is silence
+    # about a register that IS torn, and that is the test above.
+    loaded = csvstore.load(spark, target, "wiz_sca_")
+    assert spark.table(loaded.ledger).count() > 0
+
+
+def test_restore_tolerates_an_absent_register_only_when_asked(spark, tmp_path):
+    """The first run in `--csv_path` mode has nothing to restore, and that is normal. Every
+    other caller passing a path with no register there has a wrong path, and should hear so."""
+    empty = str(tmp_path / "nothing")
+    tables = run_pipeline.resolve_tables("", SCOPE, argv=[], data_path=str(tmp_path / "d"))
+
+    assert csvstore.restore(spark, empty, tables, "wiz_sca_", missing_ok=True) == []
+    with pytest.raises(RuntimeError, match="No CSV register"):
+        csvstore.restore(spark, empty, tables, "wiz_sca_")
+
+
+def test_missing_ok_does_not_mistake_a_manifestless_export_for_an_empty_one(spark, register):
+    """`missing_ok` decides on the ledger sidecar, and this is why it cannot decide on the
+    manifest.
+
+    An export written before manifests existed has every row it always had. If `missing_ok` read
+    it as "nothing here", the run would restore nothing, scan against an empty ledger, and then
+    export over the top -- destroying the history in the one mode where the CSV *is* the
+    history, with no error anywhere.
+    """
+    tables, target = register
+    csvstore.export(spark, tables, target)
+    (Path(target) / csvstore.MANIFEST).unlink()
+
+    restored = csvstore.restore(spark, target, tables, "wiz_sca_", missing_ok=True)
+    assert restored, "a manifest-less export was skipped as though it were empty"
+    assert spark.table(tables.ledger).count() > 0
+
+
+def test_a_rebuild_against_a_bronzeless_csv_register_is_refused(spark, tmp_path, monkeypatch):
+    """`--rebuild_ledger` replays bronze, and bronze is what a CSV export leaves out.
+
+    Without the guard the replay finds an empty bronze, returns, and the run reports nothing --
+    indistinguishable, from the outside, from a register that genuinely has no history. The
+    refusal has to name the flag, because the recovery is to have set it on the earlier scans.
+    """
+    monkeypatch.setattr(run_pipeline.dbx, "widget", lambda name: "")
+    monkeypatch.setattr(sys, "argv", [
+        "run_pipeline.py",
+        f"--csv_path={tmp_path / 'csv'}",
+        f"--data_path={tmp_path / 'scratch'}",
+        f"--scope={SCOPE}",
+        "--rebuild_ledger=true",
+    ])
+
+    with pytest.raises(RuntimeError, match="csv_include_bronze"):
+        run_pipeline.main()

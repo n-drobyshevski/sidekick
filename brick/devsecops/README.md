@@ -238,21 +238,28 @@ To read the notebooks as well, four more files go on the same `sys.path`:
     └── 08_code_assets.ipynb
 ```
 
-**The register is always Delta; CSV is an export of it.** There is no CSV-only run and there
-cannot be one — the ledger is `MERGE`d on every scan and read back to compute the gold tables,
-and a CSV file cannot be merged into. `--data_path` decides where the Delta side lives; without
-it the run creates and writes tables in `catalog`.`schema`, i.e. in the lake. Set the
-`data_path` widget (or the flag) to stay out of it — cell 1 of `06_run_and_verify` and its run
-cell both read that widget, so they cannot disagree about where the register is.
+**`--csv_path` makes a workspace directory the register.** Delta is still involved — the ledger
+is `MERGE`d on every scan and read back to compute the gold tables, and a CSV cannot be merged
+into — but only as scratch for the length of one run: the CSV is restored into Delta before the
+scan and exported back after, and with `--csv_path` set no catalog is consulted at all. Without
+it, and without `--data_path`, the run creates and writes tables in `catalog`.`schema`, i.e. in
+the lake. Set the `csv_path` widget (or the flag) to stay out of it — cell 1 of
+`06_run_and_verify` and its run cell both read that widget, so they cannot disagree about where
+the register is.
 
 Then run one scope at a time — they write separate tables and must never be blended:
 
 ```bash
 python run_pipeline.py --scope=sca --severities=CRITICAL \
-  --data_path=dbfs:/tmp/wiz_devsecops \
   --csv_path=/Workspace/Users/<you>/wiz/devsecops_csv \
   --wiz_api_url=https://api.<region>.app.wiz.io/graphql
 ```
+
+The first run has nothing to restore and says so; after it the directory is the register, and
+each later run reconciles against it. The scratch Delta side defaults to
+`dbfs:/tmp/wiz_scratch_<scope>` and is safe to lose. Because bronze is excluded from the export
+by default, `--rebuild_ledger` has nothing to replay in this mode unless
+`--csv_include_bronze=true` was set on the runs before it.
 
 Read `resolved_count` in the first run's summary before anything else. A plausible day's
 remediation means the scope is right; a number close to the whole register means it is not.

@@ -1134,7 +1134,7 @@ def resolve_scope(argv: Optional[list] = None) -> str:
     return scope
 
 
-def resolve_data_path(argv: Optional[list] = None) -> str:
+def resolve_data_path(argv: Optional[list] = None, csv_register: str = "") -> str:
     """The directory the register lives in, or ``""`` for a catalog-backed run.
 
     Setting ``--data_path`` is what selects path mode; there is no second flag, because the
@@ -1169,6 +1169,16 @@ def resolve_data_path(argv: Optional[list] = None) -> str:
     and lands on the data. See brick/README.md, PoC storage.
     """
     path = param("data_path", argv=argv).strip().rstrip("/")
+    if not path and csv_register:
+        # A CSV register needs somewhere for Delta to live *during a run* -- the ledger is
+        # MERGEd and read back, and a CSV cannot be merged into -- but nowhere for it to live
+        # afterwards. So the default is deliberately disposable, and losing it costs nothing:
+        # the next run restores from the CSV, which is the register.
+        #
+        # `dbfs:/tmp` rather than `/tmp`: the latter is per-node local disk, and every write
+        # here is distributed, so executors would write to whichever machine they landed on.
+        # A workspace with no DBFS root should pass `--data_path` pointing at a volume.
+        return f"dbfs:/tmp/wiz_scratch_{param('scope', DEFAULT_SCOPE, argv=argv) or DEFAULT_SCOPE}"
     if not path:
         return ""
     if "`" in path:
@@ -1178,6 +1188,13 @@ def resolve_data_path(argv: Optional[list] = None) -> str:
             f"data_path {path!r} must be an absolute path or a storage URI -- a relative path "
             f"resolves against whatever the driver's working directory happens to be"
         )
+    if csv_register and path.startswith(EPHEMERAL_PREFIXES):
+        # Deliberately allowed, and the one case where it is right. The refusal below exists
+        # because a register on ephemeral disk is lost overnight and discovered missing when
+        # somebody wants the history -- but with a CSV register there is no history here to
+        # lose. Saying so explicitly beats the alternative, which is that `dbfs:/tmp/...`
+        # happens to slip past a guard matching a leading `/tmp/`.
+        return path
     if dbx.get_dbutils() is not None and path.startswith(EPHEMERAL_PREFIXES):
         raise RuntimeError(
             f"data_path {path!r} is on the cluster's ephemeral disk, which is wiped when the "
@@ -1440,15 +1457,36 @@ def main(scan_id: Optional[str] = None) -> Optional[RunResult]:
     # not after a cluster has warmed up and an API fetch has run.
     # `--data_path` selects the storage mode, so it is resolved first: with one set there is no
     # catalog to require, which is what lets a PoC with nowhere to create tables run at all.
-    data_path = resolve_data_path()
-    namespace = "" if data_path else resolve_namespace()
     scope = resolve_scope()
+    csv_register = param("csv_path")
+    data_path = resolve_data_path(csv_register=csv_register)
+    # **With a CSV register there is no catalog, ever.** Not "no catalog by default" -- the
+    # whole point of the mode is that nothing durable lands in the lake, and falling through to
+    # `resolve_namespace()` here is exactly how a run that was meant to write CSV creates two
+    # empty Delta tables in a production catalog instead. See `resolve_data_path`.
+    namespace = "" if (data_path or csv_register) else resolve_namespace()
     tables = resolve_tables(namespace, scope, data_path=data_path)
     disappearance = resolve_disappearance()
     severities = resolve_severities()
 
     spark = get_spark()
     ensure_schema(spark, namespace)
+
+    # The CSV is the register; the Delta side is a scratch copy for the length of this run.
+    # Restoring first is what makes last run's lifecycles available to this one's reconcile --
+    # without it every scan would start from an empty ledger and resolve nothing.
+    #
+    # Before `ensure_tables`, because a restore overwrites and `ensure_tables` only creates what
+    # is missing: the other order would leave an empty ledger for the restore to replace, which
+    # works but reads as though the order does not matter.
+    if csv_register:
+        import csvstore
+
+        csvstore.restore(
+            spark, csv_register, tables,
+            prefix=param("table_prefix", default_table_prefix(scope)),
+            missing_ok=True,
+        )
     ensure_tables(spark, tables)
 
     # Maintenance is not a scan and returns nothing scan-shaped. It goes first so that a job
@@ -1479,6 +1517,18 @@ def main(scan_id: Optional[str] = None) -> Optional[RunResult]:
         return None
 
     if truthy(param("rebuild_ledger")):
+        # A rebuild replays bronze, and in CSV-register mode bronze is excluded from the export
+        # by default -- so the restore above brought back no bronze and `ensure_tables` made an
+        # empty one. The replay would then find nothing and return, quietly, having done
+        # nothing: the worst outcome, because it looks like a rebuild that found no history
+        # rather than a rebuild that could not have run. Refuse and say which flag is missing.
+        if csv_register and not truthy(param("csv_include_bronze")):
+            raise RuntimeError(
+                f"--rebuild_ledger has nothing to replay: the CSV register at {csv_register!r} "
+                f"excludes bronze, and the Delta side is scratch for this run only. Re-run the "
+                f"scans that built it with --csv_include_bronze=true first, or rebuild against "
+                f"a --data_path register that still has its bronze."
+            )
         replayed = rebuild_ledger(spark, tables, scope, severities, disappearance)
         if not replayed:
             return None
@@ -1527,14 +1577,12 @@ def main(scan_id: Optional[str] = None) -> Optional[RunResult]:
         severities=severities, disappearance=disappearance, total=count,
     )
 
-    # `--csv_path` exports as part of the run rather than as a separate invocation. That is the
-    # difference between it and `--export_csv`, and it exists because in a deployment whose
-    # Delta side is ephemeral the export is not a side errand -- it is where the scan's results
-    # actually come to rest, and a scan that ingested but did not export has lost its output.
-    csv_path = param("csv_path")
-    if csv_path:
+    # The other half of the CSV register: this run's state goes back to where the next run will
+    # look for it. Not a side errand -- the Delta side is scratch, so a scan that ingested and
+    # did not export has lost its output entirely.
+    if csv_register:
         export_csv(
-            spark, tables, csv_path, include_bronze=truthy(param("csv_include_bronze"))
+            spark, tables, csv_register, include_bronze=truthy(param("csv_include_bronze"))
         )
     return RunResult(tables=tables, scan_id=scan_id, scan_ts=scan_ts, scope=scope)
 
