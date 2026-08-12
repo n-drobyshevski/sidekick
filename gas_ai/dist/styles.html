@@ -51,6 +51,15 @@
   --radius-lg: 10px;
   --radius-xl: 14px;
 
+  /* Detail-sheet geometry. The register's asset record carries issues, compliance
+     findings, relationships AND identity, so it runs wider than DESIGN.md's flat
+     per-finding Finding Sheet; the widen step is there for the estates where the
+     relationship list is the point. */
+  --sheet-w: min(600px, 94vw);
+  --sheet-w-wide: min(920px, 96vw);
+  --z-scrim: 40;
+  --z-sheet: 41;
+
   --shadow-card: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
   --shadow-button: 0 1px 2px 0 rgba(0, 0, 0, 0.04);
   --shadow-sheet: -8px 0 24px -8px rgba(0, 0, 0, 0.18), -2px 0 8px -4px rgba(0, 0, 0, 0.1);
@@ -952,38 +961,150 @@ a { color: var(--accent); }
 .pillar-fill { height: 100%; border-radius: 999px; background: var(--graphite); }
 
 /* --------------------------------------------------------------- detail sheet */
+/* Three zones: a pinned header carrying the record's identity, a scrolling body, and a
+   footer created only when a consumer asks for one. The one real elevation in the system
+   (DESIGN.md's Sheet overlay) lifts the drawer; nothing inside it floats. */
 .sheet-scrim {
-  position: fixed; inset: 0; background: rgba(0, 0, 0, 0.28); z-index: 40;
+  position: fixed; inset: 0; background: rgba(0, 0, 0, 0.28); z-index: var(--z-scrim);
   opacity: 0; transition: opacity 180ms ease-out;
 }
 .sheet-scrim.open { opacity: 1; }
 .sheet {
-  position: fixed; top: 0; right: 0; bottom: 0; z-index: 41;
-  width: min(520px, 92vw);
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: var(--z-sheet);
+  width: var(--sheet-w);
   background: var(--page);
   box-shadow: var(--shadow-sheet);
   transform: translateX(100%);
-  transition: transform 220ms ease-out;
+  transition: transform 220ms ease-out, width 160ms ease-out;
   display: flex; flex-direction: column;
 }
+.sheet--wide { width: var(--sheet-w-wide); }
 .sheet.open { transform: translateX(0); }
+/* Severity accent on the header only, absolutely positioned so header and body text keep
+   one left edge. Header-height, not full-height: a floor-to-ceiling red bar is exactly the
+   security-vendor theater PRODUCT.md rejects. */
+.sheet[data-sev] .sheet-header::before {
+  content: ""; position: absolute; top: 0; left: 0; height: 100%; width: 3px;
+  background: var(--sev-unknown);
+}
+.sheet-header { position: relative; }
+.sheet[data-sev="CRITICAL"] .sheet-header::before { background: var(--sev-critical); }
+.sheet[data-sev="HIGH"] .sheet-header::before { background: var(--sev-high); }
+.sheet[data-sev="MEDIUM"] .sheet-header::before { background: var(--sev-medium); }
+.sheet[data-sev="LOW"] .sheet-header::before { background: var(--sev-low); }
+.sheet[data-sev="INFO"] .sheet-header::before { background: var(--sev-info); }
+
 .sheet-header {
-  padding: 16px 20px 12px; border-bottom: 1px solid var(--hairline);
-  display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
+  padding: 14px 18px 12px;
+  border-bottom: 1px solid transparent;
+  transition: border-color 120ms linear;
+  display: flex; flex-direction: column; gap: 8px;
   flex: 0 0 auto;
+}
+/* The affordance for "there is more below" is a hairline, never an ambient shadow. */
+.sheet.is-scrolled .sheet-header { border-bottom-color: var(--hairline); }
+.sheet-headrow {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
 }
 .sheet-heading { min-width: 0; }
 .sheet-title { font-size: 1rem; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+.sheet-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
 .sheet-subtitle { margin-top: 2px; }
-.sheet-close {
-  flex: 0 0 auto; border: none; background: none; cursor: pointer;
-  font-size: 15px; line-height: 1; color: var(--text-3); padding: 4px;
-  border-radius: var(--radius-sm); margin: -4px -4px 0 0;
+.sheet-back {
+  align-self: flex-start; display: inline-flex; align-items: center;
+  min-height: 0; padding: 0;
 }
-.sheet-close:hover { background: rgba(0, 0, 0, 0.045); color: var(--ink); }
-.sheet-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.sheet-body { padding: 14px 20px 24px; overflow-y: auto; flex: 1 1 auto; }
-.sheet-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.sheet-headactions { flex: 0 0 auto; display: flex; align-items: center; gap: 2px; margin: -4px -4px 0 0; }
+.sheet-close, .sheet-widen {
+  flex: 0 0 auto; border: none; background: none; cursor: pointer; box-shadow: none;
+  min-height: 28px; width: 28px; height: 28px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--text-3); border-radius: var(--radius-sm);
+}
+.sheet-close:hover, .sheet-widen:hover { background: rgba(0, 0, 0, 0.045); color: var(--ink); border-color: transparent; }
+.sheet-close:active, .sheet-widen:active { background: rgba(0, 0, 0, 0.075); }
+.sheet-widen[aria-pressed="true"] { color: var(--ink); background: rgba(0, 0, 0, 0.06); }
+.sheet-close:focus-visible, .sheet-widen:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Chips sit in the header so the verdict survives scrolling the evidence. */
+.sheet-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.sheet-chips:empty { display: none; }
+.sheet-chip-label {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--text-3);
+}
+.sheet-chip-label + * { margin-right: 4px; }
+
+.sheet-body {
+  padding: 4px 18px 24px; overflow-y: auto; flex: 1 1 auto;
+  overscroll-behavior: contain;
+}
+.sheet-footer {
+  flex: 0 0 auto; padding: 12px 18px; border-top: 1px solid var(--hairline);
+  background: var(--page);
+  display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px;
+}
+/* Legacy in-body action row (sync-progress drawer): wrap rather than force a
+   horizontal scrollbar inside the drawer at phone widths. */
+.sheet-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+
+/* The record's headline number — the one hero value per sheet, and always a data value. */
+.sheet-verdict { display: flex; align-items: baseline; gap: 10px; margin: 12px 0 2px; }
+.aars-total {
+  font-size: 2rem; font-weight: 600; line-height: 1.1; letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.sheet-caption { color: var(--text-3); font-size: 12px; margin: 2px 0 0; }
+
+/* List rows. `button` where the row leads somewhere, so it is reachable by keyboard. */
+.sheet-list { display: flex; flex-direction: column; }
+.sheet-row {
+  display: block; width: 100%; text-align: left; font: inherit; color: inherit;
+  background: none; border: none; border-bottom: 1px solid var(--hairline);
+  border-radius: 0; box-shadow: none; min-height: 0;
+  padding: 9px 8px 10px; margin: 0 -8px;
+}
+.sheet-row:last-child, .sheet-list > :last-child { border-bottom: none; }
+button.sheet-row { cursor: pointer; }
+button.sheet-row:hover { background: rgba(0, 0, 0, 0.03); border-color: var(--hairline); }
+button.sheet-row:active { background: rgba(0, 0, 0, 0.05); }
+button.sheet-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.sheet-row-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.sheet-row-title { font-size: 13px; margin-top: 4px; }
+.sheet-row-note {
+  font-size: 12px; color: var(--text-2); margin-top: 2px; max-width: var(--measure);
+}
+.sheet-row .fw-tags { margin-top: 6px; }
+.sheet-fix { margin-top: 8px; }
+.sheet-fix-label {
+  display: block; font-size: 11px; font-weight: 600; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--text-3);
+}
+.sheet-fix-body {
+  margin: 3px 0 0; font-size: 12px; color: var(--text-2); white-space: pre-wrap;
+  max-width: var(--measure);
+}
+.sheet-rel-dir { color: var(--text-3); }
+.sheet-rel .sheet-row-head { gap: 6px; }
+.sheet-more { margin-top: 10px; }
+
+/* Skeleton stack: the placeholder is shaped like the record that is coming. */
+.sheet-loading .sheet-section > .skeleton + .skeleton { margin-top: 8px; }
+
+.tag-strip { display: flex; flex-wrap: wrap; gap: 4px; }
+
+/* Error state: a failure reads as a failure, with a way out. */
+.empty--error { border-style: solid; border-color: rgba(185, 28, 28, 0.28); text-align: left; padding: 16px; }
+.empty-actions { margin-top: 12px; }
+.empty-detail { margin-top: 10px; color: var(--text-3); }
+.empty-detail summary { cursor: pointer; font-size: 12px; }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+  border: 0;
+}
+/* The sheet owns the viewport while it is open; ≤800px un-hides #app's overflow. */
+html.sheet-open, html.sheet-open body { overflow: hidden; }
 .scan-stall-note {
   margin: 12px 0 4px; padding: 8px 10px; font-size: 13px;
   color: var(--warn); background: rgba(161, 98, 7, 0.08);
@@ -991,6 +1112,14 @@ a { color: var(--accent); }
 }
 .sheet-section { margin-bottom: 18px; }
 .sheet-section .label { margin-bottom: 6px; display: block; }
+/* One scroll, but you always know which section you are in. Sticks directly under the
+   header (which is outside the scroll container), over the page ground so rows pass
+   behind it rather than through it. */
+h3.sheet-section-title {
+  position: sticky; top: 0; z-index: 1;
+  margin: 0 0 6px; padding: 8px 0 5px;
+  background: var(--page);
+}
 /* Filters drawer body: stacked fields; every control applies immediately. */
 .sheet-filters { display: flex; flex-direction: column; gap: 14px; }
 .sheet-filters select { width: 100%; }
@@ -1002,6 +1131,16 @@ a { color: var(--accent); }
 .kv { display: grid; grid-template-columns: 150px 1fr; gap: 3px 12px; font-size: 13px; }
 .kv dt { color: var(--text-3); margin: 0; }
 .kv dd { margin: 0; overflow-wrap: anywhere; }
+/* Below the phone breakpoint a 150px label column leaves ~129px for the value, which
+   wraps "Unknown (inherited from host)" across four lines. Stack instead. */
+@media (max-width: 640px) {
+  .kv { grid-template-columns: 1fr; gap: 0 0; }
+  .kv dt { margin-top: 8px; }
+  .kv dt:first-child { margin-top: 0; }
+  .pillar-row { flex-wrap: wrap; }
+  .pillar-row .pillar-name { width: auto; flex: 1 1 auto; }
+  .pillar-track { flex: 1 1 100%; order: 3; }
+}
 .raw-json {
   background: var(--surface); border: 1px solid var(--hairline);
   border-radius: var(--radius-lg); padding: 10px; font-size: 12px;
@@ -1071,6 +1210,13 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.28); }
 .fw-tag {
   font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: var(--radius-sm);
   background: rgba(0, 0, 0, 0.06); color: var(--text-2);
+}
+/* Four taxonomies in one strip read as one vocabulary. Name each family instead. */
+.fw-groups { display: flex; flex-direction: column; gap: 6px; }
+.fw-group { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; }
+.fw-group-label {
+  font-size: 11px; font-weight: 600; color: var(--text-3);
+  min-width: 92px;
 }
 
 /* ------------------------------------------------------------------- AARS rules */
@@ -1144,6 +1290,20 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.28); }
 /* --------------------------------------------------------------- reduced motion */
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  /* Zeroing the duration still leaves a 100vw jump-cut across the viewport. The sheet
+     appears where it lives; only the scrim changes, and it changes instantly. */
+  .sheet, .sheet.open { transform: none; }
+}
+
+/* ------------------------------------------------------- detail sheet on phones */
+/* DESIGN.md specifies the sheet full-bleed on phones; min(520px, 92vw) used to leave a
+   ~29px strip of dead scrim at 360px. */
+@media (max-width: 640px) {
+  .sheet { --sheet-w: 100vw; box-shadow: none; border-left: none; }
+  .sheet--wide { width: 100vw; }
+  .sheet-header, .sheet-body, .sheet-footer { padding-left: 14px; padding-right: 14px; }
+  .sheet-footer { padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
+  .sheet-footer > button { flex: 1 1 auto; }
 }
 
 </style>

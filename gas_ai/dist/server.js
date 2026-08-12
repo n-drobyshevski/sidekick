@@ -4731,6 +4731,17 @@ var Server = (() => {
         version: aarsRule.version,
         bands: aarsRule.rule.bands,
         bandRanges: bandRanges(aarsRule.rule.bands),
+        // The three pillar ceilings, so the detail sheet's breakdown bars measure against
+        // the rule in force instead of hardcoding the defaults and lying after an edit.
+        // Pillar C's ceiling is its own top exposure tier through the amplifier — the same
+        // arithmetic `aars.ts` does when it scores.
+        pillarCaps: {
+          toxic: aarsRule.rule.pillarACap,
+          compliance: aarsRule.rule.pillarBCap,
+          data: Math.round(
+            Math.max(...Object.values(aarsRule.rule.dataExposurePoints)) * aarsRule.rule.dataAmplifier
+          )
+        },
         scoredVersion,
         stale: scoredVersion !== aarsRule.version
       },
