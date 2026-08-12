@@ -19,6 +19,10 @@
   --text-2: rgba(0, 0, 0, 0.65);
   --text-3: rgba(0, 0, 0, 0.5);
 
+  /* Readable line length for running text. The pane fills the viewport; prose does
+     not follow it out to 1800px, where a sentence becomes a scan across the desk. */
+  --measure: 84ch;
+
   --sev-critical: #dc2626;  --sev-critical-text: #b91c1c;
   --sev-high: #ea580c;      --sev-high-text: #c2410c;
   --sev-medium: #d97706;    --sev-medium-text: #b45309;
@@ -344,13 +348,17 @@ html, body {
   border-radius: var(--radius-md);
 }
 
+/* The content pane fills whatever the rail leaves. It used to stop at 1200px, which
+   on a wide monitor left a third of the viewport empty AND clipped the inventory
+   table's right-hand columns — dead space and lost data at the same time. Line length
+   is governed where it belongs instead: on the prose itself (--measure), so the
+   layout grids (.kpi-row, .scan-cards) and the tables get the room they can use. */
 main {
   flex: 1;
   min-width: 0;
   height: 100vh;
   overflow-y: auto;
   padding: 28px 32px 48px;
-  max-width: 1200px;
 }
 
 /* Full-bleed routes (the graph workbench): the page owns the whole content pane. */
@@ -498,7 +506,9 @@ main.full-bleed > .empty { margin: 28px 32px; }
 
 /* ------------------------------------------------------------------- typography */
 h1 { font-size: 1.5rem; font-weight: 600; line-height: 1.2; letter-spacing: -0.02em; margin: 0 0 4px; }
-.page-sub { color: var(--text-2); margin: 0 0 20px; }
+.page-sub { color: var(--text-2); margin: 0 0 20px; max-width: var(--measure); }
+/* The explanatory notes under a card's controls (settings, scans) are running text. */
+p.small.muted { max-width: var(--measure); }
 h2.section-label { font-size: 0.9375rem; font-weight: 600; margin: 28px 0 10px; }
 h3 { font-size: 1rem; font-weight: 600; margin: 0 0 8px; }
 .label {
@@ -1012,6 +1022,7 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.28); }
 .combo-note {
   margin: 8px 0; padding: 8px 10px; font-size: 12px; color: var(--text-2);
   background: rgba(0, 0, 0, 0.03); border-radius: var(--radius-md);
+  max-width: var(--measure);
 }
 .fw-tags { display: flex; flex-wrap: wrap; gap: 4px; }
 .fw-tag {
