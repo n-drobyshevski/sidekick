@@ -101,11 +101,6 @@ LEDGER_SCHEMA = StructType(
         StructField("has_exploit", BooleanType()),
         StructField("epss", DoubleType()),
         StructField("risk_observed_at", TimestampType()),
-        # Static-analysis inputs. NULL for every CVE-bearing scope; see config.LEDGER_COLUMNS
-        # for why they live on the shared ledger rather than a parallel one.
-        StructField("cwe", StringType()),
-        StructField("language", StringType()),
-        StructField("ai_verdict", StringType()),
     ]
 )
 
@@ -215,16 +210,6 @@ def _midpoint(prev_ts: Column, scan_ts: Column) -> Column:
     """
     mid = ((F.unix_timestamp(prev_ts) + F.unix_timestamp(scan_ts)) / 2).cast("long")
     return F.coalesce(F.to_timestamp(F.from_unixtime(mid)), scan_ts, prev_ts)
-
-
-def _optional(df: DataFrame, name: str, data_type: str = "string") -> Column:
-    """A column if the frame has it, a typed NULL if it does not.
-
-    Same idea as ``metrics.silver_findings``'s handling of a missing ``seq``: an input that only
-    some producers supply is absent, not wrong, and NULL is what absent means everywhere else
-    in this module.
-    """
-    return F.col(name) if name in df.columns else F.lit(None).cast(data_type)
 
 
 def _keep(new: Column, old: Column) -> Column:
@@ -340,19 +325,6 @@ def reconcile(
         F.col("has_kev").alias("o_has_kev"),
         F.col("has_exploit").alias("o_has_exploit"),
         F.col("epss").alias("o_epss"),
-        # The static-analysis inputs are optional on the way IN, the same way `seq` is in
-        # `observed`: only one scope produces them, and a frame without them means "not
-        # applicable", which is exactly NULL. Being strict here would make every caller that
-        # hand-builds a scan frame -- the golden-fixture replay above all -- break on a column
-        # its scope could never have had.
-        #
-        # This does not weaken the guarantee that matters. That the two silver projections emit
-        # the *same* columns is pinned by `test_both_projections_emit_the_same_columns`, which
-        # is where that invariant belongs; tolerating an absent column here only affects
-        # callers that were never going to have one.
-        _optional(current, "cwe").alias("o_cwe"),
-        _optional(current, "language").alias("o_language"),
-        _optional(current, "ai_verdict").alias("o_ai_verdict"),
     )
     j = p.join(o, p["p_vuln_key"] == o["o_vuln_key"], "full_outer")
 
@@ -527,28 +499,6 @@ def reconcile(
         _merge_bool_signal(F.col("o_has_exploit"), F.col("p_has_exploit")).alias("has_exploit"),
         _merge_peak(obs_epss, F.col("p_epss")).alias("epss"),
         risk_observed_at.alias("risk_observed_at"),
-        # ---- static-analysis inputs: latest-observation-wins, NOT monotone ----
-        # A deliberate departure from the three signals above, and the asymmetry is worth
-        # stating because the two sit side by side on the same row.
-        #
-        # The monotone rule exists because exploit knowledge does not decay: a CVE does not
-        # become un-exploited, so letting `has_kev` fall back to false would be forgetting
-        # something true. An AI triage verdict is not that. It is an opinion about THIS call
-        # site, and a re-triage that flips EXPLOITABLE to NOT_EXPLOITABLE is a correction, not
-        # decay -- freezing it would pin the high-risk population full of findings everyone has
-        # since agreed are not real, which on a SAST register is the common case rather than
-        # the edge one.
-        #
-        # The cost, stated rather than hidden: unlike the CVE registers, a SAST coverage figure
-        # CAN move between scans for a reason that is not remediation. The gold tables are
-        # appended, so two scans' rows may disagree; `07`'s trend and any chart over the series
-        # has to be read with that in mind.
-        #
-        # `_keep` rather than a bare overwrite, so a scan that returns a blank verdict does not
-        # erase a verdict an earlier scan saw. Absence is not a negative here either.
-        _keep(F.col("o_cwe"), F.col("p_cwe")).alias("cwe"),
-        _keep(F.col("o_language"), F.col("p_language")).alias("language"),
-        _keep(F.col("o_ai_verdict"), F.col("p_ai_verdict")).alias("ai_verdict"),
         is_new.alias("is_new"),
         (closes_now | disappeared).alias("is_resolved_now"),
         is_reopened.alias("is_reopened"),
@@ -614,9 +564,6 @@ def lifecycle_frame(ledger: DataFrame, now_ts: str) -> DataFrame:
         F.col("has_kev"),
         F.col("has_exploit"),
         F.col("epss"),
-        F.col("cwe"),
-        F.col("language"),
-        F.col("ai_verdict"),
         mttr_days.alias("mttr_days"),
         F.when(F.col("resolved_at").isNull(), age_days).alias("age_days"),
     )

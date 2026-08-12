@@ -1,0 +1,22 @@
+# A copy of brick/requirements.txt. This directory is a standalone deployment (see
+# README.md), so it carries its own -- but the two must not drift: the pinned Delta and
+# Plotly floors are properties of the Databricks runtime, not of either pipeline.
+# Local development and test only. A Databricks cluster already provides Spark, Delta, pandas
+# and Plotly -- do not install pyspark on the cluster, it will shadow the runtime's build.
+pyspark>=3.5
+# The ledger is a Delta table and is MERGEd, so the tests that exercise it need Delta locally.
+# Must match the pyspark minor version: delta-spark 3.2 and 3.3 both pair with Spark 3.5.
+# 3.3 is the floor because OPTIMIZE on a single-column-clustered table is broken in 3.2 -- see
+# the DELTA_PACKAGE comment in tests/conftest.py, which pins the matching jar.
+delta-spark>=3.3,<4
+requests>=2.31
+pandas>=2.0
+# DBR 14.3 LTS ships exactly 5.9.0, so every Plotly API the notebooks use has to exist there.
+# Not pinned to 5.9.0 here: that is a 2022 build and may not install on a current local Python,
+# and this file is local-only. The constraint that matters is written down in the README.
+plotly>=5.9,<6
+pytest>=8.0
+# The suite is dominated by a handful of Delta-writing modules, and one SparkSession can only
+# run them one at a time. `-n auto --dist loadgroup` gives each worker its own session and
+# keeps every module's tests together on one of them, which the module-scoped fixtures need.
+pytest-xdist>=3.6

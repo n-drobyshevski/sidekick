@@ -45,6 +45,7 @@ import metrics
 import run_pipeline
 from config import (
     DEFAULT_CATALOG,
+    DEFAULT_RISK_RULE,
     DEFAULT_SCHEMA,
     EPSS_PRIORITY_THRESHOLD,
     OVERALL,
@@ -52,7 +53,7 @@ from config import (
     POPULATION_HIGH_RISK,
     SEVERITY_ORDER,
     SLA_TARGETS,
-    rule_for_scope,
+    RiskRule,
 )
 
 # See config.PIPELINE_VERSION: every module in a deployment must come from the same upload.
@@ -71,12 +72,6 @@ GROUP_DIMENSIONS: Tuple[str, ...] = (
     "cve",
     "component",
     "severity",
-    # Code registers only, NULL everywhere else -- `language` is the ecosystem (P2P v5's asset
-    # category) and `cwe` the weakness class. Listed unconditionally rather than per scope: the
-    # allow-list exists to stop SQL injection through a widget, and a dimension that is all
-    # NULL for a scope produces one honest UNKNOWN group rather than an error.
-    "language",
-    "cwe",
 )
 
 #: Dimensions a notebook may ask "can this register be attributed at all" about.
@@ -131,13 +126,6 @@ LEDGER_PANELS = frozenset(
         "signal_clauses",
         "exploit_tiles",
         "all_time",
-        "weakness_mix",
-        # The v5 views select from the pinned gold table but do not carry `scan_id` forward --
-        # the columns a reader wants are the rates, and the pin is a property of the view.
-        "asset_profile",
-        "asset_density",
-        "asset_footholds",
-        "asset_capacity",
     }
 )
 
@@ -156,8 +144,7 @@ class Ctx:
     scan_ts: str
     severities: Tuple[str, ...]
     params: Mapping[str, str]
-    #: `RiskRule` for a CVE register, `SastRiskRule` for `sast`. See config.rule_for_scope.
-    rule: Any
+    rule: RiskRule
 
     def param(self, name: str, default: str = "") -> str:
         """A page widget's value. Page widgets live here rather than as fields, so adding one
@@ -186,7 +173,7 @@ class Ctx:
 BASE_WIDGETS: Dict[str, Tuple[str, Optional[Sequence[str]]]] = {
     "catalog": (DEFAULT_CATALOG, None),
     "schema": (DEFAULT_SCHEMA, None),
-    "scope": ("os", ("os", "all", "sca", "sast")),
+    "scope": ("os", ("os", "all")),
     "table_prefix": ("", None),
     "severities": ("CRITICAL,HIGH", None),
     "scan_id": ("", None),
@@ -328,10 +315,7 @@ def context(
         scan_ts=scan_ts,
         severities=severities,
         params=params,
-        # Not DEFAULT_RISK_RULE: a SAST register classified under it reads 100%
-        # unclassified, which looks like a register with no exploit data rather than
-        # like the wrong rule.
-        rule=rule_for_scope(scope),
+        rule=DEFAULT_RISK_RULE,
     )
     register_views(spark, ctx)
     return ctx
@@ -433,21 +417,6 @@ def register_views(spark: SparkSession, ctx: Ctx) -> None:
         F.col("population") == POPULATION_HIGH_RISK
     ).createOrReplaceTempView("v_capacity_high_risk")
 
-    # P2P v5's asset family, split by population for exactly the same reason capacity is: the
-    # table carries every asset group twice and an unfiltered view would double every count.
-    #
-    # Absent on a register last scanned before 2.3, and absent rather than empty -- so the view
-    # is skipped instead of failing cell 1. A page that reads it then dies naming `v_assets`,
-    # which is a better error than one naming a table nobody has heard of.
-    if run_pipeline.table_exists(spark, ctx.tables.assets):
-        assets_table = spark.table(ctx.tables.assets).where(pinned)
-        assets_table.where(F.col("population") == POPULATION_ALL).createOrReplaceTempView(
-            "v_assets"
-        )
-        assets_table.where(
-            F.col("population") == POPULATION_HIGH_RISK
-        ).createOrReplaceTempView("v_assets_high_risk")
-
     silver = _silver_frame(spark, ctx)
     silver.where(pinned & sev_only).createOrReplaceTempView("v_findings")
     silver.where(scoped & sev_only).createOrReplaceTempView("v_findings_all")
@@ -483,7 +452,7 @@ def _silver_frame(spark: SparkSession, ctx: Ctx) -> DataFrame:
     if run_pipeline.table_exists(spark, ctx.tables.silver):
         return spark.table(ctx.tables.silver)
     bronze = spark.table(ctx.tables.bronze).where(F.col("scope") == ctx.scope)
-    return metrics.classify_risk(metrics.silver_findings(bronze, ctx.scope), ctx.rule)
+    return metrics.classify_risk(metrics.silver_findings(bronze), ctx.rule)
 
 
 def _rank_column(column: str = "severity"):
@@ -1193,10 +1162,11 @@ def quadrant(spark: SparkSession, ctx: Ctx, which: str = "fn") -> DataFrame:
     ).orderBy(F.col("age_days").desc_nulls_last())
 
 
-# The seven non-empty subsets live in `metrics.subsets_for`, which both this page and the gold
-# table `metrics.rule_sensitivity` writes walk. One definition, because two would drift and the
-# failure would be a page whose sweep disagrees with the published table about what
-# "KEV or EPSS" means -- and it now has to answer for two different rules besides.
+#: The seven non-empty subsets of {KEV, exploit, EPSS}, in a stable order.
+# One definition of the seven subsets, shared with the gold table `metrics.rule_sensitivity`
+# writes. Two lists would drift, and the failure would be a page whose sweep disagrees with the
+# published table about what "KEV or EPSS" means.
+_SWEEP = metrics.RULE_SUBSETS
 
 
 def rule_sweep(spark: SparkSession, ctx: Ctx) -> DataFrame:
@@ -1211,16 +1181,20 @@ def rule_sweep(spark: SparkSession, ctx: Ctx) -> DataFrame:
     """
     frame = lifecycles(spark, ctx)
     out = None
-    # `subsets_for` picks the right seven for whichever rule this scope uses, so a SAST page
-    # sweeps {CWE, AI verdict, CRITICAL} and a CVE page sweeps {KEV, exploit, EPSS} through
-    # exactly this code, and it is the same definition the gold table walks.
-    for label, rule, _flags, is_active in metrics.subsets_for(ctx.rule):
+    for label, kev, exploit, epss in _SWEEP:
+        rule = RiskRule(
+            kev=kev, exploit=exploit, epss=epss, epss_threshold=ctx.rule.epss_threshold
+        )
         row = (
             metrics.confusion_matrix(metrics.classify_risk(frame, rule))
             .where(F.col("severity") == OVERALL)
             .select(
                 F.lit(label).alias("label"),
-                F.lit(is_active).alias("active"),
+                F.lit(
+                    kev == ctx.rule.kev
+                    and exploit == ctx.rule.exploit
+                    and epss == ctx.rule.epss
+                ).alias("active"),
                 "coverage_pct", "coverage_lo", "coverage_hi",
                 "efficiency_pct", "efficiency_lo", "efficiency_hi",
                 "high_risk", "unknown",
@@ -1257,122 +1231,6 @@ def capacity(spark: SparkSession, ctx: Ctx, months: int = 12, high_risk_only: bo
     )
 
 
-# ------------------------------------------------------- P2P v5: assets at risk
-
-
-def asset_profile(spark: SparkSession, ctx: Ctx, high_risk_only: bool = True) -> DataFrame:
-    """P2P v5's asset table: density, footholds, half-life and capacity, per ecosystem.
-
-    Straight off the published gold table, like ``capacity`` and for the same reason -- a number
-    recomputed in the presentation layer is one the SQL surface cannot see.
-
-    ``high_risk_only`` defaults to **True**, which is the opposite of ``capacity``'s default and
-    is deliberate: v5's density chart (Fig. 10) counts everything, but every question the page
-    is actually for -- where is the foothold, who is falling behind -- is asked about high-risk
-    findings. The all-findings rows are one argument away for the density comparison.
-    """
-    view = "v_assets_high_risk" if high_risk_only else "v_assets"
-    return spark.sql(
-        f"""
-        SELECT asset_group, assets, open_findings,
-               density_p25, density_p50, density_p75,
-               assets_with_high_risk_pct, assets_with_high_risk,
-               asset_coverage_p50, km_median_days, km_median_lower_bound,
-               mmcr_p50, falling_behind_pct, maintaining_pct, gaining_pct,
-               assets_flowing, window_months
-        FROM {view}
-        ORDER BY CASE WHEN asset_group = '{OVERALL}' THEN 0 ELSE 1 END, assets DESC
-        """
-    )
-
-
-def asset_density(spark: SparkSession, ctx: Ctx) -> DataFrame:
-    """The density distribution alone, both populations side by side (v5 Fig. 10).
-
-    Two populations on one frame because that comparison is the finding: an ecosystem whose
-    total density is high but whose high-risk density is not is a triage problem, and one where
-    the two are close is a supply-chain problem. Reading them off two separate tables is how
-    nobody notices.
-    """
-    return spark.sql(
-        f"""
-        SELECT asset_group, population, assets, density_p25, density_p50, density_p75
-        FROM (
-            SELECT * FROM v_assets
-            UNION ALL
-            SELECT * FROM v_assets_high_risk
-        )
-        ORDER BY CASE WHEN asset_group = '{OVERALL}' THEN 0 ELSE 1 END,
-                 asset_group, population
-        """
-    )
-
-
-def asset_footholds(spark: SparkSession, ctx: Ctx) -> DataFrame:
-    """v5 Fig. 11 as a frame: what share of each ecosystem's repositories offers a way in.
-
-    v5's own framing, and the reason this is a headline rather than a column: "it's often said
-    that just one opening is needed to successfully compromise a system". 70% of Windows
-    systems and 40% of Linux systems cleared that bar in their sample. The number here is not
-    comparable to theirs -- different population, different positive class, see the README --
-    but the question is the same one.
-    """
-    return spark.sql(
-        f"""
-        SELECT asset_group, assets, assets_with_high_risk,
-               assets_with_high_risk_pct, km_median_days
-        FROM v_assets_high_risk
-        WHERE asset_group <> '{OVERALL}'
-        ORDER BY assets_with_high_risk_pct DESC NULLS LAST, assets DESC
-        """
-    )
-
-
-def asset_capacity(spark: SparkSession, ctx: Ctx) -> DataFrame:
-    """v5 Fig. 21: the share of repositories falling behind, keeping up and gaining ground.
-
-    NULL rather than zero for every column here when the register does not know when it started
-    watching -- these are rates per watched month, and a register with no scan log has no such
-    month. ``assets_flowing`` is how many repositories the verdict rests on, and ``window_months``
-    how long a window: both are on the frame so a confident-looking split over three assets and
-    one month cannot pass for a trend.
-    """
-    return spark.sql(
-        f"""
-        SELECT asset_group, assets_flowing, window_months, mmcr_p50,
-               falling_behind_pct, maintaining_pct, gaining_pct
-        FROM v_assets_high_risk
-        ORDER BY CASE WHEN asset_group = '{OVERALL}' THEN 0 ELSE 1 END,
-                 falling_behind_pct DESC NULLS LAST
-        """
-    )
-
-
-def weakness_mix(spark: SparkSession, ctx: Ctx, limit: int = 15) -> DataFrame:
-    """The static-analysis register by weakness class: how many, and how many are high risk.
-
-    ``cwe`` holds a comma-separated list, so this splits and explodes it -- a finding with two
-    weaknesses is counted under both, and the counts therefore do NOT sum to the register. Said
-    here because a table of counts that does not add up is otherwise read as a partition.
-
-    Empty for every scope but ``sast``, which have no CWE at all.
-    """
-    return spark.sql(
-        f"""
-        SELECT weakness,
-               count(*) AS lifecycles,
-               sum(CASE WHEN risk_class = 'high' THEN 1 ELSE 0 END) AS high_risk,
-               sum(CASE WHEN risk_class = 'unknown' THEN 1 ELSE 0 END) AS unclassified,
-               sum(CASE WHEN resolved_at IS NULL THEN 1 ELSE 0 END) AS open
-        FROM (
-            SELECT explode(split(cwe, ',')) AS weakness, risk_class, resolved_at
-            FROM v_lifecycles WHERE cwe IS NOT NULL AND cwe <> ''
-        )
-        GROUP BY weakness
-        ORDER BY high_risk DESC, lifecycles DESC
-        LIMIT {int(limit)}
-        """
-    )
 
 
 # --------------------------------------------------------------------------- run & verify
@@ -1397,7 +1255,6 @@ def table_inventory(spark: SparkSession, ctx: Ctx) -> DataFrame:
         ctx.tables.program: "max_by(scan_id, scan_ts)",
         ctx.tables.capacity: "max_by(scan_id, scan_ts)",
         ctx.tables.sensitivity: "max_by(scan_id, scan_ts)",
-        ctx.tables.assets: "max_by(scan_id, scan_ts)",
         ctx.tables.scans: "max_by(scan_id, scan_ts)",
         ctx.tables.ledger: "max(last_scan_id)",
     }
@@ -1536,25 +1393,4 @@ OUTPUT_COLUMNS: Dict[str, Tuple[str, ...]] = {
         "scan_id", "scan_ts", "total", "mttr_rows", "program_rows", "capacity_rows",
         "ledger_rows",
     ),
-    # P2P v5. `window_months` and `assets_flowing` are on the contract deliberately: they are
-    # what stops a confident-looking capacity split over three assets and one month passing
-    # for a trend, so a page must not be able to drop them.
-    "asset_profile": (
-        "asset_group", "assets", "open_findings", "density_p25", "density_p50", "density_p75",
-        "assets_with_high_risk_pct", "assets_with_high_risk", "asset_coverage_p50",
-        "km_median_days", "km_median_lower_bound", "mmcr_p50", "falling_behind_pct",
-        "maintaining_pct", "gaining_pct", "assets_flowing", "window_months",
-    ),
-    "asset_density": (
-        "asset_group", "population", "assets", "density_p25", "density_p50", "density_p75",
-    ),
-    "asset_footholds": (
-        "asset_group", "assets", "assets_with_high_risk", "assets_with_high_risk_pct",
-        "km_median_days",
-    ),
-    "asset_capacity": (
-        "asset_group", "assets_flowing", "window_months", "mmcr_p50", "falling_behind_pct",
-        "maintaining_pct", "gaining_pct",
-    ),
-    "weakness_mix": ("weakness", "lifecycles", "high_risk", "unclassified", "open"),
 }

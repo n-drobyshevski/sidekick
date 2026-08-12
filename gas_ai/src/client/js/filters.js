@@ -1,7 +1,16 @@
-// The shared filter surface: a trigger button carrying an applied-count badge, a row of
-// dismissible applied-filter chips, and the live-apply drawer the two belong to. Lifted
-// out of the graph page, which had the only good version of this in the app, so the
-// inventory gets the same interaction instead of a second, worse one.
+// The inventory's filter surface: a trigger button carrying an applied-count badge, a row
+// of dismissible applied-filter chips, and the live-apply drawer the two belong to.
+//
+// This began as an extraction of the graph page's drawer, so the inventory would not get a
+// second, worse copy of the best interaction in the app. The graph has since moved on: it
+// docks its filters beside the canvas rather than over it, and keeps its own chip layer in
+// pages/graphChips.js. So this has one consumer today. It stays a module rather than
+// folding back into the page because the two halves it owns — a drawer that syncs in place
+// instead of rebuilding, and chips that hand focus to their neighbour on removal — are the
+// parts that are easy to get wrong and worth keeping named.
+//
+// If the inventory ever earns a docked panel too, the thing to share is graph.js's
+// dock/modal re-hosting, not this.
 //
 // Live-apply throughout: there is no Apply button, every control writes straight through,
 // and the drawer stays open while the results change behind it. That is why the drawer is

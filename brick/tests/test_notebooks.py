@@ -40,7 +40,6 @@ PAGES = [
     "04_scan_history",
     "05_estate",
     "06_run_and_verify",
-    "08_code_assets",
 ]
 
 #: One-shot migration tooling. Not a page: it has no scan to pin, draws nothing, and boots
@@ -48,9 +47,8 @@ PAGES = [
 #: being loosened for everything. The artifact guards still apply.
 MIGRATION = ["07_import_gas"]
 
-#: Everything that ships under notebooks/, in the order `sorted(glob)` returns them -- the
-#: importer is 07 and the P2P v5 page is 08, so the page list is not contiguous.
-EXPECTED = sorted(PAGES + MIGRATION)
+#: Everything that ships under notebooks/.
+EXPECTED = PAGES + MIGRATION
 
 
 def page_only(name: str) -> None:
@@ -320,7 +318,7 @@ def parse(recipe: str) -> dict:
 
 
 def test_the_native_charts_are_all_documented():
-    """Six visualizations are left to the chart editor, and each one ships its recipe.
+    """Five visualizations are left to the chart editor, and each one ships its recipe.
 
     Their metadata format is undocumented and version-dependent, so nothing here can author one
     correctly and nothing here could verify it if it did -- which is the failure mode the AI/BI
@@ -328,7 +326,7 @@ def test_the_native_charts_are_all_documented():
     plus the recipe to rebuild the chart in fifteen seconds. See brick/README.md.
     """
     found = [(name, r) for name in EXPECTED for _, r in recipes(load(NOTEBOOK_DIR / f"{name}.ipynb"))]
-    assert len(found) == 6, [f for f, _ in found]
+    assert len(found) == 5, [f for f, _ in found]
 
 
 def test_every_recipe_parses_under_the_grammar(notebook):

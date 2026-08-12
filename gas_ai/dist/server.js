@@ -2129,6 +2129,7 @@ var Server = (() => {
       for (const [r, count] of perRank) slots.set(r, Math.max((_c = slots.get(r)) != null ? _c : 0, count));
     }
     const ranks = [...slots.keys()].sort((a, b) => a - b);
+    if (!ranks.length) return { pos, shelfOf, extent: 0, shelves: 1 };
     const runLength = ranks.reduce((acc, r) => acc + slots.get(r) * step + gap2, 0) - gap2;
     let best = null;
     let bestFit = 0;
