@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  DUE_SOON_DAYS,
+  CONDITION_KEYS, DUE_SOON_DAYS, SEVERITY_RANK,
   applyIssueFilters, comboParamPatch, conditionPresent, groupMatches, issueFilterOptions,
   rankGroups, readComboParams, shiftSegments, shiftSummary, slaState, sortIssues,
 } from "../src/client/js/pages/comboView.js";
@@ -201,7 +201,6 @@ describe("slaState", () => {
   it("puts the boundary day inside the warning window", () => {
     expect(slaState("2026-08-19T00:00:00Z", NOW).kind).toBe("warn"); // exactly 7 days
     expect(slaState("2026-08-20T00:00:00Z", NOW).kind).toBe("neutral");
-    expect(DUE_SOON_DAYS).toBe(7); // mirrors src/domain/comboDigest.ts
   });
 
   it("returns null for a missing or unreadable date rather than guessing", () => {
@@ -241,5 +240,31 @@ describe("severity-shift bars", () => {
     expect(shiftSummary({ reRated: 0, totalOpen: 4 }))
       .toBe("No issue was re-rated: Wiz severity is carried through as-is.");
     expect(shiftSummary({ reRated: 0, totalOpen: 0 })).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------- mirror guard
+//
+// comboView.js restates three things the domain layer owns, because the client bundle
+// cannot import a TS module. That is fine as long as something notices when they drift —
+// and nothing did: the only sync check here asserted `DUE_SOON_DAYS === 7`, which is a
+// statement about the client alone and stays green when the domain changes. This imports
+// both sides and compares them, the way assetQueryMirror.test.ts guards its mirror.
+
+import { DUE_SOON_DAYS as DOMAIN_DUE_SOON_DAYS } from "../src/domain/comboDigest";
+import { CONDITION_KEYS as DOMAIN_CONDITION_KEYS } from "../src/domain/toxicCombos";
+import { SEVERITY_ORDER } from "../src/domain/config";
+
+describe("mirrors of the domain layer", () => {
+  it("agrees with comboDigest about how soon 'due soon' is", () => {
+    expect(DUE_SOON_DAYS).toBe(DOMAIN_DUE_SOON_DAYS);
+  });
+
+  it("agrees with toxicCombos about which conditions exist, and in what order", () => {
+    expect(CONDITION_KEYS).toEqual([...DOMAIN_CONDITION_KEYS]);
+  });
+
+  it("agrees with config about the severity scale", () => {
+    expect(SEVERITY_RANK).toEqual([...SEVERITY_ORDER]);
   });
 });

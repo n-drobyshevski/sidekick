@@ -1,0 +1,18 @@
+/* --------------------------------------------------------------- reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  /* Zeroing the duration still leaves a 100vw jump-cut across the viewport. The sheet
+     appears where it lives; only the scrim changes, and it changes instantly. */
+  .sheet, .sheet.open { transform: none; }
+}
+
+/* ------------------------------------------------------- detail sheet on phones */
+/* DESIGN.md specifies the sheet full-bleed on phones; min(520px, 92vw) used to leave a
+   ~29px strip of dead scrim at 360px. */
+@media (max-width: 640px) {
+  .sheet { --sheet-w: 100vw; box-shadow: none; border-left: none; }
+  .sheet--wide { width: 100vw; }
+  .sheet-header, .sheet-body, .sheet-footer { padding-left: 14px; padding-right: 14px; }
+  .sheet-footer { padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
+  .sheet-footer > button { flex: 1 1 auto; }
+}

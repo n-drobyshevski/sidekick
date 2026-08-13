@@ -21,7 +21,9 @@ import { bootstrap, navigate, setParams, swrCall } from "../store.js";
 import { dueChip, fwTags, openAssetSheet, openIssueSheet } from "../detailSheets.js";
 import { kindIconSvg, kindLabel, categoryOf } from "../icons.js";
 import {
-  clear, el, emptyState, errorState, kpiCard, pager, sectionLabel, sevBadge, skeleton,
+  clear, dataTable, debounce, el, emptyState, errorState, kpiCard, pager, sectionLabel,
+  select,
+  selectField, sevBadge, sevKeyRow, sevSegmentBar, sevSpoken, skeleton, togglePills,
 } from "../ui.js";
 import {
   CONDITION_KEYS, ISSUE_COMPARATORS, ISSUE_SORT_DESC, SEVERITY_RANK,
@@ -52,7 +54,7 @@ function combosSkeleton(count) {
   const kpis = el("div", { class: "kpi-row" });
   for (let i = 0; i < 4; i++) {
     kpis.append(el("div", { class: "kpi-card" },
-      el("div", { style: "display:flex; flex-direction:column; gap:9px" },
+      el("div", { class: "skeleton-stack", style: "gap:9px" },
         skeleton("line", { width: "62%" }),
         skeleton("stat", { width: "45%" }),
         skeleton("line", { width: "78%" }))));
@@ -60,12 +62,12 @@ function combosSkeleton(count) {
   const summary = el("div", { class: "chart-row" },
     el("div", { class: "chart-card" },
       skeleton("line", { width: "220px" }),
-      el("div", { style: "margin-top:14px; display:flex; flex-direction:column; gap:14px" },
+      el("div", { class: "skeleton-stack", style: "margin-top:14px; gap:14px" },
         skeleton("line", { height: "26px" }),
         skeleton("line", { height: "26px" }))),
     el("div", { class: "chart-card" },
       skeleton("line", { width: "200px" }),
-      el("div", { style: "margin-top:14px; display:flex; flex-direction:column; gap:10px" },
+      el("div", { class: "skeleton-stack", style: "margin-top:14px" },
         ...[0, 1, 2, 3].map(() => skeleton("line", { height: "18px" })))));
 
   const stack = el("div", {});
@@ -222,36 +224,18 @@ export async function renderCombos(main, params) {
   }
 
   function shiftRow(label, mix, total) {
+    // shiftSegments already returns [{sev, count}] worst-first and is unit-tested in
+    // comboView.test.js — it stays the source of truth for what the bar is made of.
     const segments = shiftSegments(mix, total);
-    const spoken = segments.length
-      ? segments.map((s) => s.count + " " + s.sev).join(", ")
-      : "no issues";
-    const bar = el("div", {
-      class: "combo-shift-bar",
-      role: "img",
-      "aria-label": label + " severity: " + spoken,
-    });
-    for (const seg of segments) {
-      const cell = el("div", { class: "combo-shift-seg sev-fill-" + seg.sev });
-      cell.style.flexGrow = String(seg.count);
-      bar.append(cell);
-    }
-    if (!segments.length) bar.append(el("div", { class: "combo-shift-seg is-empty" }));
-
-    const keys = el("div", { class: "combo-shift-keys" });
-    for (const seg of segments) {
-      // `sev-<LEVEL>` gives the key its tint and its darkened text token, and colours the
-      // dot through the existing `.sev-X .sev-dot` rule — the two-token pair, unchanged.
-      keys.append(el("span", { class: "combo-shift-key sev-" + seg.sev },
-        el("span", { class: "sev-dot", "aria-hidden": "true" }),
-        seg.sev,
-        el("span", { class: "combo-shift-key-num num" }, String(seg.count))));
-    }
     return el("div", { class: "combo-shift-row" },
       el("div", { class: "combo-shift-head" },
         el("span", { class: "label" }, label)),
-      bar,
-      keys);
+      sevSegmentBar(segments, {
+        size: "lg",
+        emptyHatch: true,
+        label: `${label} severity: ${segments.length ? sevSpoken(segments) : "no issues"}`,
+      }),
+      sevKeyRow(segments, { variant: "legend" }));
   }
 
   /**
@@ -372,22 +356,21 @@ export async function renderCombos(main, params) {
         ? "Patterns"
         : "Patterns — " + shown.length + " of " + ranked.length));
 
-    const pills = el("div", { class: "pill-row", role: "group", "aria-label": "Filter by adjusted severity" });
     const present = SEVERITY_RANK.filter((sev) =>
       ranked.some((g) => String(g.adjustedSeverity).toUpperCase() === sev));
-    for (const sev of present) {
-      const active = view.sev === sev;
-      pills.append(el("button", {
-        class: "sev-pill sev-" + sev,
-        "aria-pressed": active ? "true" : "false",
-        onclick: () => {
-          view.sev = active ? "" : sev;
-          view.page = 0;
-          persist();
-          paint(payload);
-        },
-      }, sev)); // the level's name is the non-colour signal, as on the graph's filter pills
-    }
+    // Single-select: pressing the chosen level again clears it. The level's NAME is the
+    // non-colour signal, as on the graph's filter pills.
+    const pills = togglePills({
+      options: present,
+      selected: view.sev,
+      ariaLabel: "Filter by adjusted severity",
+      onToggle: (sev) => {
+        view.sev = view.sev === sev ? "" : sev;
+        view.page = 0;
+        persist();
+        paint(payload);
+      },
+    });
 
     const controls = el("div", { class: "combo-toolbar-controls" }, pills);
     if (view.sev || view.cond) {
@@ -617,25 +600,21 @@ export async function renderCombos(main, params) {
       placeholder: "Asset, region, account, project",
       "aria-label": "Search issues in this pattern",
     });
-    let timer = null;
-    search.addEventListener("input", () => {
-      // Debounced because every keystroke re-sorts and re-pages the whole group.
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        view.q = search.value;
-        rerender();
-        const refocus = mount.querySelector("input[type=search]");
-        if (refocus) {
-          refocus.focus();
-          refocus.setSelectionRange(refocus.value.length, refocus.value.length);
-        }
-      }, SEARCH_DEBOUNCE_MS);
-    });
+    // Debounced because every keystroke re-sorts and re-pages the whole group.
+    search.addEventListener("input", debounce(() => {
+      view.q = search.value;
+      rerender();
+      const refocus = mount.querySelector("input[type=search]");
+      if (refocus) {
+        refocus.focus();
+        refocus.setSelectionRange(refocus.value.length, refocus.value.length);
+      }
+    }, SEARCH_DEBOUNCE_MS));
 
     const bar = el("div", { class: "filter-bar" },
       el("div", { class: "field" }, search),
-      selectField("Account", "acct", options.accounts, rerender),
-      selectField("Project", "proj", options.projects, rerender),
+      issueFilterField("Account", "acct", options.accounts, rerender),
+      issueFilterField("Project", "proj", options.projects, rerender),
       el("div", { class: "filter-meta" },
         el("span", { class: "count" },
           shownCount === totalCount
@@ -645,22 +624,17 @@ export async function renderCombos(main, params) {
     return bar;
   }
 
-  function selectField(labelText, key, values, onChange) {
-    const select = el("select", {
-      "aria-label": labelText,
-      onchange: () => {
-        view[key] = select.value;
+  function issueFilterField(labelText, key, values, onChange) {
+    return selectField(labelText, select({
+      options: values,
+      value: view[key],
+      ariaLabel: labelText,
+      placeholder: "All",
+      onChange: (v) => {
+        view[key] = v;
         onChange();
       },
-    });
-    select.append(el("option", { value: "" }, "All"));
-    for (const v of values) {
-      select.append(el("option", { value: v, selected: view[key] === v }, v));
-    }
-    select.value = view[key] || "";
-    return el("div", { class: "select-field" },
-      el("span", { class: "select-field-label", "aria-hidden": "true" }, labelText),
-      select);
+    }));
   }
 
   function issueTable(mount, group, rows) {
@@ -674,49 +648,30 @@ export async function renderCombos(main, params) {
       { key: null, label: "Projects", cell: (i) => (i.projects || []).join(", ") || "—" },
     ];
 
-    const headRow = el("tr", {});
-    for (const col of COLS) {
-      if (!col.key) {
-        headRow.append(el("th", {}, col.label));
-        continue;
-      }
-      const active = view.sort === col.key;
-      const descending = ISSUE_SORT_DESC[col.key] ? view.dir === 1 : view.dir === -1;
-      const th = el("th", {},
-        el("button", {
-          class: "th-sort",
-          onclick: () => {
-            view.dir = view.sort === col.key ? -view.dir : 1;
-            view.sort = col.key;
-            view.page = 0;
-            persist();
-            renderIssues(group, mount, issueRows.get(group.id) || []);
-          },
-        }, col.label, active ? (descending ? " ▼" : " ▲") : ""));
-      if (active) th.setAttribute("aria-sort", descending ? "descending" : "ascending");
-      headRow.append(th);
-    }
+    // `dir` is 1/-1 against each column's natural first-click order (ISSUE_SORT_DESC),
+    // which is this page's convention and is unit-tested in comboView.test.js. The shared
+    // table only needs to know which way the active column currently reads.
+    const descending = view.sort && (ISSUE_SORT_DESC[view.sort] ? view.dir === 1 : view.dir === -1);
 
-    const tbody = el("tbody", {});
-    for (const issue of rows) {
-      tbody.append(el("tr", {
-        class: "clickable",
-        tabindex: "0",
-        role: "button",
-        "aria-label": "Issue on " + issue.assetName,
-        onclick: () => openIssueSheet(issue.id),
-        onkeydown: (e) => {
-          if (e.key === "Enter") openIssueSheet(issue.id);
-        },
-      }, ...COLS.map((col) => el("td", {}, col.cell(issue)))));
-    }
-    if (!rows.length) {
-      tbody.append(el("tr", {},
-        el("td", { colspan: String(COLS.length), class: "combo-issues-empty" },
-          "No issue in this pattern matches the current filters.")));
-    }
-
-    return el("div", { class: "table-wrap" },
-      el("table", { class: "data" }, el("thead", {}, headRow), tbody));
+    return dataTable({
+      columns: COLS.map((col, i) => ({
+        key: col.key || `col-${i}`,
+        label: col.label,
+        sortable: !!col.key,
+        cell: col.cell,
+      })),
+      rows,
+      sort: view.sort ? { key: view.sort, descending } : null,
+      onSort: (key) => {
+        view.dir = view.sort === key ? -view.dir : 1;
+        view.sort = key;
+        view.page = 0;
+        persist();
+        renderIssues(group, mount, issueRows.get(group.id) || []);
+      },
+      onRowOpen: (issue) => openIssueSheet(issue.id),
+      rowLabel: (issue) => "Issue on " + issue.assetName,
+      emptyText: "No issue in this pattern matches the current filters.",
+    });
   }
 }

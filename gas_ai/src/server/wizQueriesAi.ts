@@ -22,51 +22,49 @@ export const MAX_PAGES = 200;
 // Project — a flat `projects { businessImpact }` selection is rejected
 // ("Cannot query field businessImpact on type Project"). Select it nested and
 // the normalizer flattens it back onto the project record.
-const RESOURCE_FIELDS =
-  "      id\n" +
-  "      name\n" +
-  "      type\n" +
-  "      nativeType\n" +
-  "      cloudPlatform\n" +
-  "      region\n" +
-  "      status\n" +
-  "      firstSeen\n" +
-  "      lastSeen\n" +
-  "      externalId\n" +
-  "      isAccessibleFromInternet\n" +
-  "      isOpenToAllInternet\n" +
-  "      hasSensitiveData\n" +
-  "      hasAccessToSensitiveData\n" +
-  "      hasAdminPrivileges\n" +
-  "      hasHighPrivileges\n" +
-  "      technology { id name categories { id name } }\n" +
-  "      cloudAccount { id name externalId cloudProvider }\n" +
-  "      projects { id name riskProfile { businessImpact } }\n" +
-  "      tags { key value }\n";
+// The resource field set, declared once.
+//
+// It is requested two ways: flat, from the cloudResourcesV2 root, and split inside a
+// graphSearch entity, where only the identity fields are on the interface and the rest
+// live behind a `... on CloudResource` inline fragment. Those were two hand-maintained
+// lists of the same ~20 fields differing only in indentation, so a field added to one and
+// forgotten in the other silently degraded half the sync battery.
+//
+// String concatenation rather than template literals, matching the rest of this file.
+const IDENTITY_FIELDS = [
+  "id", "name", "type", "nativeType", "cloudPlatform", "region",
+];
+const CLOUD_RESOURCE_FIELDS = [
+  "status",
+  "firstSeen",
+  "lastSeen",
+  "externalId",
+  "isAccessibleFromInternet",
+  "isOpenToAllInternet",
+  "hasSensitiveData",
+  "hasAccessToSensitiveData",
+  "hasAdminPrivileges",
+  "hasHighPrivileges",
+  "technology { id name categories { id name } }",
+  "cloudAccount { id name externalId cloudProvider }",
+  "projects { id name riskProfile { businessImpact } }",
+  "tags { key value }",
+];
 
-// Same fields inside a graphSearch entity (CloudResource is an inline fragment there).
+function indented(fields: string[], spaces: number): string {
+  const pad = new Array(spaces + 1).join(" ");
+  return fields.map((f) => pad + f + "\n").join("");
+}
+
+/** Flat, for the cloudResourcesV2 root. */
+const RESOURCE_FIELDS =
+  indented(IDENTITY_FIELDS, 6) + indented(CLOUD_RESOURCE_FIELDS, 6);
+
+/** Split, for a graphSearch entity (CloudResource is an inline fragment there). */
 const ENTITY_FIELDS =
-  "        id\n" +
-  "        name\n" +
-  "        type\n" +
-  "        nativeType\n" +
-  "        cloudPlatform\n" +
-  "        region\n" +
+  indented(IDENTITY_FIELDS, 8) +
   "        ... on CloudResource {\n" +
-  "          status\n" +
-  "          firstSeen\n" +
-  "          lastSeen\n" +
-  "          externalId\n" +
-  "          isAccessibleFromInternet\n" +
-  "          isOpenToAllInternet\n" +
-  "          hasSensitiveData\n" +
-  "          hasAccessToSensitiveData\n" +
-  "          hasAdminPrivileges\n" +
-  "          hasHighPrivileges\n" +
-  "          technology { id name categories { id name } }\n" +
-  "          cloudAccount { id name externalId cloudProvider }\n" +
-  "          projects { id name riskProfile { businessImpact } }\n" +
-  "          tags { key value }\n" +
+  indented(CLOUD_RESOURCE_FIELDS, 10) +
   "        }\n";
 
 // (Inline filter literals proved fragile against the tenant's gateway — the
@@ -107,6 +105,21 @@ export const AI_RESOURCE_TYPE_CANDIDATES = [
 ] as const;
 
 /**
+ * Enum members that read as AI vocabulary. A TOKEN match, not a substring one, so EMAIL
+ * does not count as AI.
+ *
+ * diagnostics.ts had a character-identical private copy of this, doc comment included,
+ * while already importing from this module.
+ */
+export function aiFlavored(values: string[]): string[] {
+  return values.filter((v) => {
+    const tokens = v.toUpperCase().split(/[\s_]+/);
+    return tokens.includes("AI") || tokens.includes("MCP") ||
+      tokens.includes("GENAI") || tokens.includes("LLM");
+  });
+}
+
+/**
  * Pick the AI resource types to query, from the tenant's actual enum members.
  * Precedence: explicit override → candidates present in the enum → any
  * AI-flavored enum members (tokens AI/MCP/GENAI/LLM — token match, so EMAIL
@@ -123,11 +136,7 @@ export function chooseAiResourceTypes(
     return { types: [...AI_RESOURCE_TYPE_CANDIDATES], source: "candidates", aiLooking: [] };
   }
   const present = new Set(enumValues);
-  const aiLooking = enumValues.filter((v) => {
-    const tokens = v.toUpperCase().split(/[\s_]+/);
-    return tokens.includes("AI") || tokens.includes("MCP") ||
-      tokens.includes("GENAI") || tokens.includes("LLM");
-  });
+  const aiLooking = aiFlavored(enumValues);
   const intersection = AI_RESOURCE_TYPE_CANDIDATES.filter((t) => present.has(t));
   if (intersection.length) return { types: intersection, source: "intersection", aiLooking };
   if (aiLooking.length) return { types: aiLooking, source: "ai-tokens", aiLooking };

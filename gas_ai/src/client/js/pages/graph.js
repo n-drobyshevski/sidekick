@@ -15,7 +15,10 @@ import { openAssetSheet, openIssueSheet } from "../detailSheets.js";
 import { graphTable, renderGraph } from "../graphView.js";
 import { CATEGORY_LABELS, CATEGORY_ORDER, categoryOf, kindLabel } from "../icons.js";
 import { appliedCount, filterEntries, isNarrowingSet, sectionOf } from "./graphChips.js";
-import { clear, el, emptyState, filterCombobox, helpTip, openSheet, sevBadge, skeleton } from "../ui.js";
+import {
+  clear, debounce, el, emptyState, filterChipRow, filterCombobox, helpTip, openSheet, segmented,
+  selectField, sevBadge, skeleton, togglePills,
+} from "../ui.js";
 
 const DEPTH_TEXT = {
   1: "Depth 1: seeds and their direct relationships",
@@ -187,7 +190,17 @@ export async function renderGraphPage(main, params, _ctx) {
   let lastStatusText = "";
   const controls = el("div", { class: "workbench-controls" });
   const bar = el("div", { class: "workbench-bar" }, title, controls);
-  const chipsRow = el("div", { class: "filter-chips", role: "group", "aria-label": "Applied filters" });
+  // Two hit targets per chip: the label opens the panel at that filter's own section, only
+  // the ✕ clears. `emptyText` keeps the band's height when nothing is applied — it sits
+  // between the bar and the canvas, and showing/hiding it moved the whole picture the
+  // first time a filter was applied.
+  const chipsRow = filterChipRow({
+    onPatch: (patch) => update(patch),
+    onEdit: (e) => openFilters(true, sectionOf(e)),
+    onClearAll: () => clearAllFilters(),
+    emptyText: "No filters applied",
+    fallbackFocus: null, // assigned below, once filterBtn exists
+  });
   const body = el("div", { class: "workbench-body" });
   // The canvas and the filter panel are flex siblings inside the split, so an open panel
   // narrows the canvas rather than covering it — filters apply live, and a scrim over the
@@ -225,11 +238,8 @@ export async function renderGraphPage(main, params, _ctx) {
     "aria-label": "Search nodes by name",
     value: state.q,
   });
-  let searchTimer = null;
-  searchInput.addEventListener("input", () => {
-    clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => update({ q: searchInput.value }), 150);
-  });
+  const onSearch = debounce(() => update({ q: searchInput.value }), 150);
+  searchInput.addEventListener("input", onSearch);
   searchInput.addEventListener("keydown", (e) => {
     if (e.key !== "Enter" || !graphApi || !matchIds || !matchIds.size || !lastData) return;
     e.preventDefault();
@@ -276,16 +286,15 @@ export async function renderGraphPage(main, params, _ctx) {
   // Graph | Table as two always-visible segments rather than one button whose label named
   // the destination while aria-pressed named the origin — and whose width changed on every
   // toggle, shifting the whole right-aligned row.
-  const viewBtns = new Map();
-  const viewToggle = el("div", { class: "segmented", role: "group", "aria-label": "View" });
-  for (const [v, label] of [["graph", "Graph"], ["table", "Table"]]) {
-    const btn = el("button", {
-      "aria-pressed": state.view === v ? "true" : "false",
-      onclick: () => update({ view: v }),
-    }, label);
-    viewBtns.set(v, btn);
-    viewToggle.append(btn);
-  }
+  const viewToggle = segmented({
+    options: [{ value: "graph", label: "Graph" }, { value: "table", label: "Table" }],
+    value: state.view,
+    onChange: (v) => update({ view: v }),
+    ariaLabel: "View",
+  });
+
+  // The chip row is built above the trigger it falls back to, so the reference is set here.
+  chipsRow.fallbackFocus = filterBtn;
 
   // Three zones, hairline-ruled: what to draw, how to narrow it, how to read it. Five
   // identical controls in one uniform gap was density without hierarchy.
@@ -578,9 +587,7 @@ export async function renderGraphPage(main, params, _ctx) {
       searchInput.value = state.q;
     }
     searchField.style.display = state.view === "table" ? "none" : "";
-    for (const [v, btn] of viewBtns) {
-      btn.setAttribute("aria-pressed", state.view === v ? "true" : "false");
-    }
+    viewToggle.set(state.view);
 
     // Chips + count badge. The badge counts what the USER applied — the AI-agent lens the
     // page seeds on a fresh visit is shown as a chip and clearable, but it is not a filter
@@ -589,50 +596,7 @@ export async function renderGraphPage(main, params, _ctx) {
     const applied = appliedCount(entries);
     filterCount.textContent = applied ? String(applied) : "";
     filterBtn.setAttribute("aria-label", applied ? `Filters, ${applied} applied` : "Filters");
-    clear(chipsRow);
-    // The band keeps its height either way — it sits between the bar and the canvas, so
-    // showing and hiding it moved the whole picture the first time a filter was applied.
-    if (!entries.length) {
-      chipsRow.append(el("span", { class: "filter-chips-empty" }, "No filters applied"));
-    }
-    for (const e of entries) {
-      const text = `${e.label} · ${e.value}`;
-      // Two targets, not one. The whole chip used to be a delete button, so the natural
-      // move — click the thing you want to change — destroyed it instead. The label now
-      // opens the panel at that filter's own section; only the ✕ clears.
-      const close = el("button", {
-        class: "filter-chip-x", "aria-label": "Clear filter: " + text,
-        onclick: () => {
-          const others = [...chipsRow.querySelectorAll(".filter-chip-x")];
-          const next = others[others.indexOf(close) + 1] || others[others.indexOf(close) - 1];
-          update(e.patch);
-          // update() rebuilt the row, so the captured node is detached; re-find by
-          // position rather than holding a reference across the rebuild.
-          const fresh = [...chipsRow.querySelectorAll(".filter-chip-x")];
-          const at = next ? Math.min(others.indexOf(next), fresh.length - 1) : -1;
-          (fresh[at] || filterBtn).focus();
-        },
-      }, "✕");
-      chipsRow.append(el("span", {
-        class: "filter-chip" + (e.sev ? " sev-" + e.sev : "") + (e.isDefault ? " is-default" : ""),
-      },
-        el("button", {
-          class: "filter-chip-body",
-          "aria-label": `Edit filter: ${text}`,
-          onclick: () => openFilters(true, sectionOf(e)),
-        },
-          e.sev ? el("span", { class: "sev-dot", "aria-hidden": "true" }) : null,
-          el("span", { class: "filter-chip-key" }, e.isDefault ? `Default · ${e.label}` : e.label),
-          el("span", { class: "filter-chip-value" }, e.value)),
-        close,
-      ));
-    }
-    if (entries.length) {
-      chipsRow.append(el("button", {
-        class: "link filter-clear-all",
-        onclick: () => clearAllFilters(),
-      }, "Clear all"));
-    }
+    chipsRow.sync(entries);
 
     if (panelSync) panelSync();
   }
@@ -835,22 +799,18 @@ export async function renderGraphPage(main, params, _ctx) {
     }
 
     // Severity chips.
-    const sevRow = el("div", { class: "pill-row", role: "group", "aria-label": "Severity filter" });
-    const sevBtns = new Map();
-    for (const s of (boot.palette?.order || []).filter((x) => x !== "UNKNOWN")) {
-      const btn = el("button", {
-        class: `sev-pill sev-${s}`,
-        "aria-pressed": listSplit(state.severities).includes(s) ? "true" : "false",
-        onclick: () => {
-          const active = new Set(listSplit(state.severities));
-          if (active.has(s)) active.delete(s);
-          else active.add(s);
-          update({ severities: listJoin([...active]) });
-        },
-      }, s);
-      sevBtns.set(s, btn);
-      sevRow.append(btn);
-    }
+    const sevRow = togglePills({
+      options: (boot.palette?.order || []).filter((x) => x !== "UNKNOWN"),
+      selected: listSplit(state.severities),
+      ariaLabel: "Severity filter",
+      onToggle: (s) => {
+        const active = new Set(listSplit(state.severities));
+        if (active.has(s)) active.delete(s);
+        else active.add(s);
+        update({ severities: listJoin([...active]) });
+      },
+    });
+    const sevBtns = sevRow.buttons;
 
     // Node type: multi-select toggle pills grouped by semantic category, mirroring
     // the severity pill pattern above (as opposed to project/cloud, which stay
@@ -874,22 +834,21 @@ export async function renderGraphPage(main, params, _ctx) {
       if (!kinds || !kinds.length) continue;
       kinds.sort((a, b) => kindLabel(a).localeCompare(kindLabel(b)));
       const label = CATEGORY_LABELS[cat] || cat;
-      const pillRow = el("div", {
-        class: "pill-row", role: "group", "aria-label": label + " node types",
+      const pillRow = togglePills({
+        options: kinds.map((k) => ({ value: k, label: kindLabel(k) })),
+        selected: listSplit(state.kinds),
+        ariaLabel: label + " node types",
+        // Neutral base, crimson when selected: a chosen "AI Agent" must not look like a
+        // chosen severity level, which is what the shared sev- tint would make it.
+        pillClass: "kind-pill",
+        sevClass: false,
+        onToggle: (k) => {
+          const active = new Set(listSplit(state.kinds));
+          if (active.has(k)) active.delete(k); else active.add(k);
+          update({ kinds: listJoin([...active]) });
+        },
       });
-      for (const k of kinds) {
-        const btn = el("button", {
-          class: "kind-pill",
-          "aria-pressed": listSplit(state.kinds).includes(k) ? "true" : "false",
-          onclick: () => {
-            const active = new Set(listSplit(state.kinds));
-            if (active.has(k)) active.delete(k); else active.add(k);
-            update({ kinds: listJoin([...active]) });
-          },
-        }, kindLabel(k));
-        kindBtns.set(k, btn);
-        pillRow.append(btn);
-      }
+      for (const [k, btn] of pillRow.buttons) kindBtns.set(k, btn);
       const count = el("span", { class: "pill-group-count" });
       const box = el("details", { class: "disclosure pill-group" },
         el("summary", { class: "disclosure-toggle" },
@@ -993,18 +952,6 @@ export async function renderGraphPage(main, params, _ctx) {
   syncControls();
   await load();
   if (params.panel === "filters") openFilters(false);
-}
-
-/**
- * A native select with its dimension named beside it. Arrange and Order were the only
- * OS-chromed controls on a hand-styled page and their only name was an aria-label, so a
- * sighted user saw "Rows" and "Smart order" floating with nothing attached.
- */
-function selectField(labelText, control) {
-  return el("div", { class: "select-field" },
-    el("span", { class: "select-field-label", "aria-hidden": "true" }, labelText),
-    control,
-  );
 }
 
 /**

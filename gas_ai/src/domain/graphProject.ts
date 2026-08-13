@@ -9,10 +9,10 @@
 // else. `nodes.length <= maxNodes` and `edges.length <= maxEdges` hold for every
 // projection, whatever the tenant's size.
 
-import { SEVERITY_ORDER } from "./config";
 import { MAX_EDGES_DEFAULT, MAX_NODES_DEFAULT, SEED_WAVE_RATIO } from "./config";
 import type { GEdge, GNode, GraphDoc, NodeKind } from "./graphTypes";
-import { isRiskKind } from "./graphTypes";
+import { isRiskKind, severityRank } from "./graphTypes";
+import { cmp, cmpBy, indexBy } from "./util";
 
 export interface ProjectFilters {
   severities?: string[];
@@ -63,10 +63,6 @@ export const DEFAULT_PER_KIND_CAP: Partial<Record<string, number>> = {
 };
 export const DEFAULT_KIND_CAP = 12;
 
-function severityRank(s: string | undefined): number {
-  const i = (SEVERITY_ORDER as readonly string[]).indexOf(s ?? "");
-  return i === -1 ? SEVERITY_ORDER.length : i; // lower = worse
-}
 
 /** Deterministic neighbor priority: worse severity, then higher AARS, then name. */
 export function nodeOrder(a: GNode, b: GNode): number {
@@ -74,7 +70,7 @@ export function nodeOrder(a: GNode, b: GNode): number {
   if (sev !== 0) return sev;
   const aars = (b.aars ?? -1) - (a.aars ?? -1);
   if (aars !== 0) return aars;
-  return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+  return cmp(a.name, b.name);
 }
 
 function passesFilters(node: GNode, f: ProjectFilters | undefined): boolean {
@@ -97,12 +93,11 @@ function passesFilters(node: GNode, f: ProjectFilters | undefined): boolean {
 }
 
 export function projectGraph(doc: GraphDoc, opts: ProjectOptions): Projection {
-  const byId = new Map<string, GNode>();
-  for (const n of doc.nodes) byId.set(n.id, n);
+  const byId = indexBy(doc.nodes, (n) => n.id);
 
   // Adjacency (both directions), deterministic by edge id.
   const adjacency = new Map<string, Array<{ edge: GEdge; otherId: string }>>();
-  const sortedEdges = [...doc.edges].sort((a, b) => (a.id < b.id ? -1 : 1));
+  const sortedEdges = [...doc.edges].sort(cmpBy((e) => e.id));
   for (const edge of sortedEdges) {
     if (!byId.has(edge.src) || !byId.has(edge.dst)) continue;
     if (!adjacency.has(edge.src)) adjacency.set(edge.src, []);

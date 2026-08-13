@@ -32,7 +32,7 @@ import { withScriptLock } from "./locks";
 import { getProp, hasWizCredentials, projectScope, setProp, deleteProp } from "./props";
 import { seedGraphDoc, SEED_AARS_HINTS, SEED_FINDINGS, SEED_ISSUES, SEED_TREND } from "./sampleData";
 import { appendRows, dataRowCount, TABS } from "./sheetsDb";
-import { persistSync } from "./syncStore";
+import { parseJson, persistSync } from "./syncStore";
 import {
   fetchCloudResourcesPage,
   fetchConnectionPage,
@@ -238,26 +238,21 @@ interface JobParams {
   skippedSteps: string[];
 }
 
+/** Strings out of a parsed blob — a checkpoint field can be anything after a schema change. */
+function strList(v: unknown): string[] {
+  return Array.isArray(v) ? v.map(String) : [];
+}
+
 function jobParams(job: JobRow): JobParams {
-  try {
-    const parsed = JSON.parse(job.params_json ?? "{}") as Rec;
-    const skipped = parsed["skippedSteps"];
-    return {
-      apiCalls: Number(parsed["apiCalls"] ?? 0),
-      skippedSteps: Array.isArray(skipped) ? skipped.map(String) : [],
-    };
-  } catch {
-    return { apiCalls: 0, skippedSteps: [] };
-  }
+  const parsed = parseJson<Rec>(job.params_json, {});
+  return {
+    apiCalls: Number(parsed["apiCalls"] ?? 0),
+    skippedSteps: strList(parsed["skippedSteps"]),
+  };
 }
 
 function partRefs(job: JobRow): string[] {
-  try {
-    const parsed = JSON.parse(job.part_refs_json ?? "[]");
-    return Array.isArray(parsed) ? parsed.map(String) : [];
-  } catch {
-    return [];
-  }
+  return strList(parseJson<unknown>(job.part_refs_json, []));
 }
 
 function startLiveSync(): StartResult {

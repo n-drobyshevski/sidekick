@@ -16,6 +16,7 @@ import {
   type GapPointRule,
   type IssueSeverityKey,
 } from "./aars";
+import { clampInt } from "./util";
 
 export const POINTS_MIN = 0;
 export const POINTS_MAX = 100;
@@ -41,12 +42,6 @@ type Loose = Record<string, unknown>;
 
 function rec(v: unknown): Loose {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Loose) : {};
-}
-
-function clampInt(v: unknown, fallback: number, min: number, max: number): number {
-  const n = Math.round(Number(v));
-  if (!Number.isFinite(n)) return fallback;
-  return Math.min(max, Math.max(min, n));
 }
 
 /** Multipliers carry two decimals — ×1.2 and ×1.1 are the spec's own precision. */

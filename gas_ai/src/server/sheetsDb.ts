@@ -9,7 +9,7 @@
 // wholesale-rewritten per sync), not an append-only vulnerability ledger.
 
 import { PROP_KEYS, requireProp } from "./props";
-import type { Rec } from "../domain/util";
+import { toIso, type Rec } from "../domain/util";
 
 export const TABS = {
   assets: "ai_assets",
@@ -98,11 +98,9 @@ export function ensureTabs(ss: GoogleAppsScript.Spreadsheet.Spreadsheet): void {
 /** Cell -> JS value: '' -> null; Date -> canonical ISO; numbers/strings verbatim. */
 function fromCell(v: unknown): unknown {
   if (v === "" || v === null || v === undefined) return null;
-  if (v instanceof Date) {
-    return new Date(Math.floor(v.getTime() / 1000) * 1000)
-      .toISOString()
-      .replace(".000Z", "Z");
-  }
+  // toIso, not a second copy of it: the same floor-to-seconds + strip-".000" expression
+  // was written out here and in domain/util.ts.
+  if (v instanceof Date) return toIso(v.getTime());
   return v;
 }
 
@@ -155,28 +153,36 @@ function ensureHeaders(sh: GoogleAppsScript.Spreadsheet.Sheet, tab: string): str
   return [...existing, ...missing];
 }
 
+/**
+ * Project rows onto the tab's headers and write them in ONE batched setValues.
+ *
+ * One call, never a loop: a per-row write is the classic way to blow the 6-minute
+ * execution limit, and every write path in this file goes through here.
+ */
+function writeGrid(
+  sh: GoogleAppsScript.Spreadsheet.Sheet, headers: string[], startRow: number, rows: Rec[],
+): void {
+  if (!rows.length) return;
+  const grid = rows.map((r) => headers.map((h) => toCell(r[h])));
+  const range = sh.getRange(startRow, 1, grid.length, headers.length);
+  range.setNumberFormat("@"); // rows added beyond the original grid stay plain text
+  range.setValues(grid);
+}
+
 /** Replace ALL data rows of a tab in one batched write. */
 export function overwrite(tab: string, rows: Rec[]): void {
   const sh = sheet(tab);
   const headers = ensureHeaders(sh, tab);
   const lastRow = sh.getLastRow();
   if (lastRow > 1) sh.getRange(2, 1, lastRow - 1, headers.length).clearContent();
-  if (!rows.length) return;
-  const grid = rows.map((r) => headers.map((h) => toCell(r[h])));
-  const range = sh.getRange(2, 1, grid.length, headers.length);
-  range.setNumberFormat("@"); // rows added beyond the original grid stay plain text
-  range.setValues(grid);
+  writeGrid(sh, headers, 2, rows);
 }
 
 /** Append rows in one batched write. */
 export function appendRows(tab: string, rows: Rec[]): void {
   if (!rows.length) return;
   const sh = sheet(tab);
-  const headers = ensureHeaders(sh, tab);
-  const grid = rows.map((r) => headers.map((h) => toCell(r[h])));
-  const range = sh.getRange(sh.getLastRow() + 1, 1, grid.length, headers.length);
-  range.setNumberFormat("@");
-  range.setValues(grid);
+  writeGrid(sh, ensureHeaders(sh, tab), sh.getLastRow() + 1, rows);
 }
 
 /** Data-row count of a tab (rows below the frozen header). */
@@ -184,14 +190,24 @@ export function dataRowCount(tab: string): number {
   return Math.max(0, sheet(tab).getLastRow() - 1);
 }
 
-/** Update the first row where keyColumn === keyValue (returns false when absent). */
+/**
+ * Update the first row where keyColumn === keyValue (returns false when absent).
+ *
+ * `patch` is partial: a key the patch omits keeps whatever the row already held, which is
+ * what lets the sync checkpoint only the fields a hop actually advanced.
+ *
+ * Goes through `ensureHeaders` like every other write. It used to read the header row
+ * directly and skip any patch key whose column was missing — the exact failure that
+ * function's own comment describes, on the one write path that wasn't using it. A job
+ * checkpointing into a tab written before a column existed lost that field silently.
+ */
 export function updateWhere(tab: string, keyColumn: string, keyValue: unknown, patch: Rec): boolean {
   const sh = sheet(tab);
+  if (sh.getLastRow() < 2) return false;
+  const headers = ensureHeaders(sh, tab);
   const lastRow = sh.getLastRow();
-  const lastCol = sh.getLastColumn();
-  if (lastRow < 2) return false;
+  const lastCol = headers.length;
   const values = sh.getRange(1, 1, lastRow, lastCol).getValues();
-  const headers = values[0].map(String);
   const keyIdx = headers.indexOf(keyColumn);
   if (keyIdx < 0) return false;
   for (let i = 1; i < values.length; i++) {

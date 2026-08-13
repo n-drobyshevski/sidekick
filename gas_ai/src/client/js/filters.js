@@ -17,7 +17,7 @@
 // deliberately NOT closeOnRouteChange — it rewrites its own query params on every toggle
 // and would otherwise close itself (see the comment on the route hook in ui.js).
 
-import { clear, el, openSheet } from "./ui.js";
+import { clear, el, filterChipRow, meter, openSheet, plural } from "./ui.js";
 
 /**
  * @param opts.entries      () => [{key, label, sev?, patch}] — what is applied right now.
@@ -46,8 +46,15 @@ export function filterUI(opts) {
     onclick: () => open(true),
   }, "Filters", count);
 
-  const chips = el("div", {
-    class: "filter-chips", role: "group", "aria-label": "Applied filters",
+  // The chip row is the shared one (ui/controls.js). It used to be a second, worse copy
+  // of the graph's: the whole chip was one destructive button, so clicking the thing you
+  // wanted to CHANGE deleted it instead. Now the label opens the drawer and only the ✕
+  // clears, as on the graph.
+  const chips = filterChipRow({
+    onPatch,
+    onEdit: () => open(true),
+    onClearAll,
+    fallbackFocus: trigger,
   });
 
   let sheet = null;
@@ -81,34 +88,7 @@ export function filterUI(opts) {
     trigger.setAttribute("aria-label",
       list.length ? `Filters, ${list.length} applied` : "Filters");
 
-    clear(chips);
-    chips.hidden = !list.length;
-    for (const e of list) {
-      chips.append(el("button", {
-        class: "filter-chip" + (e.sev ? " sev-" + e.sev : ""),
-        "aria-label": "Clear filter: " + e.label,
-        onclick: () => {
-          onPatch(e.patch);
-          // The chip that was clicked no longer exists; hand focus to the next one, or
-          // back to the trigger when that was the last filter.
-          const next = chips.querySelector(".filter-chip");
-          (next || trigger).focus();
-        },
-      },
-        e.sev ? el("span", { class: "sev-dot", "aria-hidden": "true" }) : null,
-        e.label,
-        el("span", { class: "filter-chip-x", "aria-hidden": "true" }, "✕"),
-      ));
-    }
-    if (list.length) {
-      chips.append(el("button", {
-        class: "link filter-clear-all",
-        onclick: () => {
-          onClearAll();
-          trigger.focus();
-        },
-      }, "Clear all"));
-    }
+    chips.sync(list);
 
     if (bodySync) bodySync();
   }
@@ -180,8 +160,10 @@ export function facetGroup(spec) {
     const dot = opt.sev ? el("span", { class: "sev-dot", "aria-hidden": "true" }) : null;
     const labelEl = el("span", { class: "facet-label" }, dot, el("span", {}, opt.label));
     const countEl = el("span", { class: "facet-count num" }, String(opt.count));
-    const fillEl = el("span", { class: "facet-bar-fill" });
-    const bar = el("span", { class: "facet-bar", "aria-hidden": "true" }, fillEl);
+    // Decorative: the count sits next to it as text. Neutral on purpose — a facet count is
+    // a quantity, not a severity, and the Rationed Ink Rule spends colour only on risk.
+    const bar = meter(0, { decorative: true, className: "meter--facet" });
+    const fillEl = bar.fill;
     const btn = el("button", {
       class: "facet-row" + (opt.sev ? " sev-" + opt.sev : ""),
       "aria-pressed": "false",
@@ -238,7 +220,7 @@ export function facetGroup(spec) {
       const dead = !on && !opt.count;
       row.btn.setAttribute("aria-disabled", dead ? "true" : "false");
       row.btn.setAttribute("aria-label",
-        `${opt.label}, ${opt.count} asset${opt.count === 1 ? "" : "s"}` +
+        `${opt.label}, ${plural(opt.count, "asset")}` +
         (dead ? ", no matches" : ""));
 
       if (opt.group && opt.group !== lastGroup) {

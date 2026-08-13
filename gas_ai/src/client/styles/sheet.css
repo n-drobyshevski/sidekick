@@ -1,0 +1,279 @@
+/* --------------------------------------------------------------- detail sheet */
+/* Three zones: a pinned header carrying the record's identity, a scrolling body, and a
+   footer created only when a consumer asks for one. The one real elevation in the system
+   (DESIGN.md's Sheet overlay) lifts the drawer; nothing inside it floats. */
+.sheet-scrim {
+  position: fixed; inset: 0; background: rgba(0, 0, 0, 0.28); z-index: var(--z-scrim);
+  opacity: 0; transition: opacity 180ms ease-out;
+}
+.sheet-scrim.open { opacity: 1; }
+.sheet {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: var(--z-sheet);
+  width: var(--sheet-w);
+  background: var(--page);
+  box-shadow: var(--shadow-sheet);
+  transform: translateX(100%);
+  transition: transform 220ms ease-out, width 160ms ease-out;
+  display: flex; flex-direction: column;
+}
+.sheet--wide { width: var(--sheet-w-wide); }
+.sheet.open { transform: translateX(0); }
+/* Severity accent on the header only, absolutely positioned so header and body text keep
+   one left edge. Header-height, not full-height: a floor-to-ceiling red bar is exactly the
+   security-vendor theater PRODUCT.md rejects. */
+.sheet[data-sev] .sheet-header::before {
+  content: ""; position: absolute; top: 0; left: 0; height: 100%; width: 3px;
+  background: var(--sev-unknown);
+}
+.sheet[data-sev="CRITICAL"] .sheet-header::before { background: var(--sev-critical); }
+.sheet[data-sev="HIGH"] .sheet-header::before { background: var(--sev-high); }
+.sheet[data-sev="MEDIUM"] .sheet-header::before { background: var(--sev-medium); }
+.sheet[data-sev="LOW"] .sheet-header::before { background: var(--sev-low); }
+.sheet[data-sev="INFO"] .sheet-header::before { background: var(--sev-info); }
+
+.sheet-header {
+  /* The severity accent stripe above is absolutely positioned against this. */
+  position: relative;
+  padding: 14px 18px 12px;
+  border-bottom: 1px solid transparent;
+  transition: border-color 120ms linear;
+  display: flex; flex-direction: column; gap: 8px;
+  flex: 0 0 auto;
+}
+/* The affordance for "there is more below" is a hairline, never an ambient shadow. */
+.sheet.is-scrolled .sheet-header { border-bottom-color: var(--hairline); }
+.sheet-headrow {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
+}
+.sheet-heading { min-width: 0; }
+.sheet-title { font-size: 1rem; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+.sheet-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
+.sheet-subtitle { margin-top: 2px; }
+.sheet-back {
+  align-self: flex-start; display: inline-flex; align-items: center;
+  min-height: 0; padding: 0;
+}
+.sheet-headactions { flex: 0 0 auto; display: flex; align-items: center; gap: 2px; margin: -4px -4px 0 0; }
+.sheet-close, .sheet-widen {
+  flex: 0 0 auto; border: none; background: none; cursor: pointer; box-shadow: none;
+  min-height: 28px; width: 28px; height: 28px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--text-3); border-radius: var(--radius-sm);
+}
+.sheet-close:hover, .sheet-widen:hover { background: var(--wash-hover); color: var(--ink); border-color: transparent; }
+.sheet-close:active, .sheet-widen:active { background: rgba(0, 0, 0, 0.075); }
+.sheet-widen[aria-pressed="true"] { color: var(--ink); background: rgba(0, 0, 0, 0.06); }
+.sheet-close:focus-visible, .sheet-widen:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Chips sit in the header so the verdict survives scrolling the evidence. */
+.sheet-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.sheet-chips:empty { display: none; }
+.sheet-chip-label {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--text-3);
+}
+.sheet-chip-label + * { margin-right: 4px; }
+
+.sheet-body {
+  padding: 4px 18px 24px; overflow-y: auto; flex: 1 1 auto;
+  overscroll-behavior: contain;
+}
+.sheet-footer {
+  flex: 0 0 auto; padding: 12px 18px; border-top: 1px solid var(--hairline);
+  background: var(--page);
+  display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px;
+}
+/* Legacy in-body action row (sync-progress drawer): wrap rather than force a
+   horizontal scrollbar inside the drawer at phone widths. */
+.sheet-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+
+/* The record's headline number — the one hero value per sheet, and always a data value. */
+.sheet-verdict { display: flex; align-items: baseline; gap: 10px; margin: 12px 0 2px; }
+.aars-total {
+  font-size: 2rem; font-weight: 600; line-height: 1.1; letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.sheet-caption { color: var(--text-3); font-size: 12px; margin: 2px 0 0; }
+
+/* List rows. `button` where the row leads somewhere, so it is reachable by keyboard. */
+.sheet-list { display: flex; flex-direction: column; }
+.sheet-row {
+  display: block; width: 100%; text-align: left; font: inherit; color: inherit;
+  background: none; border: none; border-bottom: 1px solid var(--hairline);
+  border-radius: 0; box-shadow: none; min-height: 0;
+  padding: 9px 8px 10px; margin: 0 -8px;
+}
+.sheet-row:last-child, .sheet-list > :last-child { border-bottom: none; }
+button.sheet-row { cursor: pointer; }
+button.sheet-row:hover { background: var(--wash-hover); border-color: var(--hairline); }
+button.sheet-row:active { background: rgba(0, 0, 0, 0.05); }
+button.sheet-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.sheet-row-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.sheet-row-title { font-size: 13px; margin-top: 4px; }
+.sheet-row-note {
+  font-size: 12px; color: var(--text-2); margin-top: 2px; max-width: var(--measure);
+}
+.sheet-row .fw-tags { margin-top: 6px; }
+.sheet-fix { margin-top: 8px; }
+.sheet-fix-label {
+  display: block; font-size: 11px; font-weight: 600; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--text-3);
+}
+.sheet-fix-body {
+  margin: 3px 0 0; font-size: 12px; color: var(--text-2); white-space: pre-wrap;
+  max-width: var(--measure);
+}
+.sheet-rel-dir { color: var(--text-3); }
+.sheet-rel .sheet-row-head { gap: 6px; }
+.sheet-more { margin-top: 10px; }
+
+/* Skeleton stack: the placeholder is shaped like the record that is coming. */
+.sheet-loading .sheet-section > .skeleton + .skeleton { margin-top: 8px; }
+
+.tag-strip { display: flex; flex-wrap: wrap; gap: 4px; }
+
+/* Error state: a failure reads as a failure, with a way out. */
+.empty--error { border-style: solid; border-color: rgba(185, 28, 28, 0.28); text-align: left; padding: 16px; }
+.empty-actions { margin-top: 12px; }
+.empty-detail { margin-top: 10px; color: var(--text-3); }
+.empty-detail summary { cursor: pointer; font-size: 12px; }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+  border: 0;
+}
+/* The sheet owns the viewport while it is open; ≤800px un-hides #app's overflow. */
+html.sheet-open, html.sheet-open body { overflow: hidden; }
+.scan-stall-note {
+  margin: 12px 0 4px; padding: 8px 10px; font-size: 13px;
+  color: var(--warn); background: rgba(161, 98, 7, 0.08);
+  border: 1px solid rgba(161, 98, 7, 0.18); border-radius: var(--radius-md);
+}
+.sheet-section { margin-bottom: 18px; }
+.sheet-section .label { margin-bottom: 6px; display: block; }
+/* One scroll, but you always know which section you are in. Sticks directly under the
+   header (which is outside the scroll container), over the page ground so rows pass
+   behind it rather than through it. */
+h3.sheet-section-title {
+  position: sticky; top: 0; z-index: 1;
+  margin: 0 0 6px; padding: 8px 0 5px;
+  background: var(--page);
+}
+/* Filter panel body — the docked panel, or the modal sheet below 800px. Hairline-ruled
+   sections; every control applies immediately. */
+.filter-fields { display: flex; flex-direction: column; }
+.filter-fields select { width: 100%; }
+.filter-section { padding: 16px 0 4px; border-top: 1px solid var(--hairline); }
+.filter-section:first-child { border-top: none; padding-top: 4px; }
+.filter-section-head {
+  display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px;
+}
+/* The section title doubles as the jump target for a filter chip's label, so it is
+   programmatically focusable. Its ring is inset — a section heading has no border of its
+   own to sit outside of, and an outset ring would collide with the rule above it. */
+.filter-section-head .label { margin: 0; }
+.filter-section-focus:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
+.filter-section-count {
+  margin-left: 6px; font-variant-numeric: tabular-nums;
+  font-weight: 600; color: var(--accent-hover);
+}
+.filter-section-count:empty { display: none; }
+.filter-section-head .link { margin-left: auto; font-size: 12px; }
+.filter-section .field-hint { color: var(--text-3); }
+.depth-field { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.filter-fields-footer {
+  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--hairline);
+}
+
+/* Collapsible group inside the panel (the node-type categories). Shares the legend's
+   chevron so the page has one disclosure, not two. */
+.disclosure > .disclosure-toggle {
+  list-style: none; cursor: pointer; user-select: none;
+  display: flex; align-items: center; gap: 8px; padding: 4px 0;
+  border-radius: var(--radius-sm);
+}
+.disclosure > .disclosure-toggle::-webkit-details-marker { display: none; }
+.disclosure > .disclosure-toggle::after {
+  content: ""; margin-left: auto; width: 6px; height: 6px;
+  border-right: 1.5px solid var(--text-3); border-bottom: 1.5px solid var(--text-3);
+  transform: rotate(-45deg); transform-origin: 55% 55%;
+  transition: transform 150ms ease-out;
+}
+.disclosure[open] > .disclosure-toggle::after { transform: rotate(45deg); }
+.disclosure > .disclosure-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.disclosure .pill-group-label { margin-bottom: 0; }
+.pill-group-count {
+  font-size: 11px; font-weight: 600; color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.disclosure > .pill-row { padding: 6px 0 10px; }
+@media (prefers-reduced-motion: reduce) {
+  .disclosure > .disclosure-toggle::after { transition: none; }}
+
+/* Facet rows: one filter option, how many rows it would still leave, and a bar for that
+   count. Toggle buttons rather than checkboxes because the stylesheet has exactly one
+   binary vocabulary and it is aria-pressed — a lone checkbox here would read as a
+   different kind of control. The drawn box supplies the checkbox affordance and is the
+   non-colour state cue. */
+.facet-group { display: flex; flex-direction: column; gap: 4px; }
+.facet-group[hidden] { display: none; }
+.facet-group-head { display: flex; align-items: baseline; gap: 8px; }
+.facet-group-label {
+  font-size: 12px; font-weight: 600; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--text-3);
+}
+.facet-group-hint { font-size: 11px; color: var(--text-3); }
+.facet-search-wrap { margin: 2px 0 4px; }
+.facet-search { width: 100%; min-height: 30px; font-size: 12px; }
+.facet-list { display: flex; flex-direction: column; }
+.facet-subhead {
+  font-size: 11px; font-weight: 600; color: var(--text-3);
+  margin: 8px 0 2px; padding-left: 6px;
+}
+.facet-row {
+  display: grid; grid-template-columns: 14px 1fr 44px auto; align-items: center; gap: 9px;
+  width: 100%; text-align: left; padding: 5px 6px; min-height: 30px;
+  border: 1px solid transparent; background: none; box-shadow: none;
+  border-radius: var(--radius-sm); font-size: 13px; font-weight: 400; color: var(--ink);
+}
+.facet-row:hover { background: var(--wash-hover); border-color: transparent; }
+.facet-row[aria-pressed="true"] { background: rgba(0, 0, 0, 0.05); font-weight: 600; }
+.facet-box {
+  width: 14px; height: 14px; border: 1px solid var(--hairline); border-radius: 4px;
+  background: var(--page);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 9px; line-height: 1; color: transparent;
+}
+/* The checkbox affordance without a checkbox's second style vocabulary. The tick is a
+   glyph rather than a CSS gradient — the gradient version reads as a caret at 14px. */
+.facet-box::before { content: "✓"; }
+.facet-row[aria-pressed="true"] .facet-box {
+  background: var(--accent); border-color: var(--accent); color: #ffffff;
+}
+.facet-label {
+  display: flex; align-items: center; gap: 6px; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.facet-label .sev-dot { margin-right: 0; flex: 0 0 8px; }
+.facet-count { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+/* Neutral on purpose: a facet count is a quantity, not a severity, and the Rationed Ink
+   Rule spends colour only on risk. */
+/* Zero yield: dimmed AND carrying a visible 0 — never dimming alone, which reads as
+   "broken" rather than "empty" (the same rule .rule-dead follows). aria-disabled, not
+   disabled, so the option stays focusable and its 0 stays discoverable. */
+.facet-row[aria-disabled="true"] { opacity: 0.45; }
+.facet-row[aria-disabled="true"]:hover { background: none; }
+.facet-empty { margin: 4px 6px; }
+.kv { display: grid; grid-template-columns: 150px 1fr; gap: 3px 12px; font-size: 13px; }
+.kv dt { color: var(--text-3); margin: 0; }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
+/* Below the phone breakpoint a 150px label column leaves ~129px for the value, which
+   wraps "Unknown (inherited from host)" across four lines. Stack instead. */
+@media (max-width: 640px) {
+  .kv { grid-template-columns: 1fr; gap: 0 0; }
+  .kv dt { margin-top: 8px; }
+  .kv dt:first-child { margin-top: 0; }
+  .pillar-row { flex-wrap: wrap; }
+  .pillar-row .pillar-name { width: auto; flex: 1 1 auto; }
+  .meter--flex { flex: 1 1 100%; order: 3; }
+}

@@ -11,6 +11,8 @@
 // They must be changed in both places or the KPI row and the row pills start telling
 // different stories about the same deadline.
 
+import { sevRank as rankSeverity } from "../ui/format.js";
+
 export const CONDITION_KEYS = [
   "MISSING_GUARDRAIL", "EXCESSIVE_PRIVILEGE", "SENSITIVE_DATA", "INTERNET_EXPOSURE",
 ];
@@ -21,10 +23,7 @@ export const DUE_SOON_DAYS = 7;
 
 const DAY_MS = 86400000;
 
-function sevRank(sev) {
-  const i = SEVERITY_RANK.indexOf(String(sev || "").toUpperCase());
-  return i === -1 ? SEVERITY_RANK.length : i;
-}
+const sevRank = (sev) => rankSeverity(sev, SEVERITY_RANK);
 
 // ------------------------------------------------------------------------- ranking
 

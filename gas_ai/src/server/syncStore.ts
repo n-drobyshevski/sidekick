@@ -44,7 +44,7 @@ function parseTri(v: unknown): boolean | null {
   const s = String(v);
   return s === "true" ? true : s === "false" ? false : null;
 }
-function parseJson<T>(v: unknown, fallback: T): T {
+export function parseJson<T>(v: unknown, fallback: T): T {
   if (typeof v !== "string" || v === "") return fallback;
   try {
     return JSON.parse(v) as T;
@@ -255,7 +255,7 @@ export function persistSync(
   const enriched = enrichGraphDoc(rawDoc, issues, hints, rule);
 
   // Tabs hold the real (non-synthetic) nodes; ISSUE nodes are derivable from ai_issues.
-  const assetNodes = enriched.nodes.filter((n) => n.kind !== "ISSUE" && n.kind !== "SUMMARY");
+  const assetNodes = realNodes(enriched.nodes);
   const assetEdges = enriched.edges.filter((e) => e.type !== "HAS_ISSUE");
   overwrite(TABS.assets, assetNodes.map(assetToRow));
   overwrite(TABS.edges, assetEdges.map(edgeToRow));
@@ -285,8 +285,7 @@ export function persistSync(
     aars_rule_version: ruleVersion,
   }]);
   settingsStore.setScoredRuleVersion(ruleVersion);
-  bumpDataVersion();
-  invalidateReadMemos();
+  commit();
   return enriched;
 }
 
@@ -312,13 +311,12 @@ export function rescoreInventory(): {
   }
 
   // Same split as persistSync: the tabs hold the real nodes, ISSUE nodes stay derivable.
-  const assetNodes = enriched.nodes.filter((n) => n.kind !== "ISSUE" && n.kind !== "SUMMARY");
+  const assetNodes = realNodes(enriched.nodes);
   overwrite(TABS.assets, assetNodes.map(assetToRow));
   writeGraphSnapshot(enriched);
 
   settingsStore.setScoredRuleVersion(version);
-  bumpDataVersion();
-  invalidateReadMemos();
+  commit();
   return {
     version,
     assetCount: assetNodes.length,
@@ -334,7 +332,7 @@ export function rescoreInventory(): {
 export function scoreAssetsWith(rule: AarsRule): GNode[] {
   const enriched = enrichFromTabs(rule);
   if (!enriched) return [];
-  return enriched.nodes.filter((n) => n.kind !== "ISSUE" && n.kind !== "SUMMARY");
+  return realNodes(enriched.nodes);
 }
 
 /**
@@ -397,6 +395,27 @@ function invalidateReadMemos(): void {
   assetsMemo = undefined;
   issuesMemo = undefined;
   findingsMemo = undefined;
+}
+
+/**
+ * Close a write: bump the data version so caches miss, and drop this execution's read
+ * memos so a later read in the same request sees what was just written.
+ *
+ * Named because the pair was written out three times and settingsStore called only the
+ * first half — the caches invalidated, the memos did not. Exported so that store can use
+ * it too, rather than keeping its own half-version.
+ */
+export function commit(): void {
+  bumpDataVersion();
+  invalidateReadMemos();
+}
+
+/**
+ * The real estate: the synthetic ISSUE and SUMMARY nodes are graph furniture, not assets,
+ * and every asset-facing read drops them. Byte-identical filter, written three times.
+ */
+function realNodes(nodes: GNode[]): GNode[] {
+  return nodes.filter((n) => n.kind !== "ISSUE" && n.kind !== "SUMMARY");
 }
 
 /** The enriched graph: Drive snapshot fast path, tab rebuild fallback. */
@@ -543,6 +562,5 @@ export function resetData(): void {
   overwrite(TABS.findings, []);
   overwrite(TABS.syncHistory, []);
   trashGraphSnapshot();
-  bumpDataVersion();
-  invalidateReadMemos();
+  commit();
 }

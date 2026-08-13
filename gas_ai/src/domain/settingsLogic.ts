@@ -12,12 +12,11 @@ import {
   MAX_NODES_DEFAULT,
   MAX_NODES_FLOOR,
 } from "./config";
+import { clampInt } from "./util";
 import type { Rec } from "./util";
 
 export function clampDepth(v: unknown): number {
-  const n = Math.round(Number(v));
-  if (!Number.isFinite(n)) return DEPTH_DEFAULT;
-  return Math.min(DEPTH_MAX, Math.max(DEPTH_MIN, n));
+  return clampInt(v, DEPTH_DEFAULT, DEPTH_MIN, DEPTH_MAX);
 }
 
 export function getDefaultDepth(settings: Rec): number {
@@ -34,9 +33,7 @@ export function withDefaultDepth(settings: Rec, depth: unknown): Rec {
  * `maxNodes=99999` in the hash buys the same 400 nodes as the last press of the button.
  */
 export function clampMaxNodes(v: unknown): number {
-  const n = Math.round(Number(v));
-  if (!Number.isFinite(n)) return MAX_NODES_DEFAULT;
-  return Math.min(MAX_NODES_CEILING, Math.max(MAX_NODES_FLOOR, n));
+  return clampInt(v, MAX_NODES_DEFAULT, MAX_NODES_FLOOR, MAX_NODES_CEILING);
 }
 
 export function getMaxNodes(settings: Rec): number {

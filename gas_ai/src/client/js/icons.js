@@ -96,7 +96,21 @@ export const KIND_LABELS = {
 // observed truncating served lines at a bare `//` inside strings. The join (which
 // esbuild cannot constant-fold) yields the standard SVG namespace URL at runtime;
 // the build guard in esbuild.config.mjs enforces the invariant.
-const SVG_NS = ["http:", "", "www.w3.org", "2000", "svg"].join("/");
+export const SVG_NS = ["http:", "", "www.w3.org", "2000", "svg"].join("/");
+
+/**
+ * Namespaced SVG element with attributes. graphView.js had its own copy of this and its
+ * own copy of SVG_NS, directly against the note below that the namespace must never be
+ * spelled out at a call site.
+ */
+export function svgEl(tag, attrs) {
+  const node = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === null || v === undefined || v === false) continue;
+    node.setAttribute(k, String(v));
+  }
+  return node;
+}
 
 /** A 16x16 stroke icon <g> for a node kind (falls back to the summary dots). */
 export function kindIcon(kind, size = 16) {

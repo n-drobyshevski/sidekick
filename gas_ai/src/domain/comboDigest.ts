@@ -18,6 +18,7 @@
 import { SEVERITY_ORDER } from "./config";
 import type { Severity } from "./config";
 import type { GNode, IssueRow } from "./graphTypes";
+import { conditionState } from "./riskConditions";
 import { countBySeverity } from "./severity";
 import { CONDITION_KEYS, COMBO_GROUPS, comboSummary } from "./toxicCombos";
 import type { ConditionKey } from "./toxicCombos";
@@ -80,23 +81,12 @@ export interface ComboDigest {
 }
 
 /**
- * Does this asset carry the condition? `null` means undetermined rather than absent —
- * a hosted agent inherits its exposure from the VM or Cloud Run service underneath it,
- * and Wiz reports that as unknown. Folding it into `false` would quietly under-report
- * exposure, so it gets counted and rendered as its own thing.
+ * Does this asset carry the condition? The predicates live in riskConditions.ts, shared
+ * with the graph's topology builders — this side used to read only
+ * `isAccessibleFromInternet` while the graph also read `isOpenToAllInternet`, so the two
+ * pages disagreed about the same asset.
  */
-function carriesCondition(asset: GNode, key: ConditionKey): boolean | null {
-  if (key === "MISSING_GUARDRAIL") return asset.guardrailMissing === true;
-  if (key === "EXCESSIVE_PRIVILEGE") {
-    return asset.hasAdminPrivileges === true || asset.hasHighPrivileges === true;
-  }
-  if (key === "SENSITIVE_DATA") {
-    return asset.hasSensitiveData === true || asset.hasAccessToSensitiveData === true;
-  }
-  // INTERNET_EXPOSURE
-  const exposed = asset.isAccessibleFromInternet;
-  return exposed === null || exposed === undefined ? null : exposed === true;
-}
+const carriesCondition = conditionState;
 
 /** Severity mixes read off a field that isn't called `severity`. */
 function mixOf(issues: IssueRow[], field: "nativeSeverity" | "adjustedSeverity") {

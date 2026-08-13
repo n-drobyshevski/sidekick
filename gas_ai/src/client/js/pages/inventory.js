@@ -29,8 +29,10 @@ import {
   facetCounts, filterAssetRows, pageOf, resolveAssetQuery, sortAssetRows,
 } from "../assetQuery.js";
 import {
-  aarsChip, clear, closeActiveSheet, confirmDialog, el, emptyState, errorState, fmtDate,
-  pager, sectionLabel, sevBadge, skeleton, toast,
+  aarsChip, clear, closeActiveSheet, confirmDialog, dataTable, debounce, el, emptyState,
+  errorState,
+  fmtDate, meter, pager, plural, sectionLabel, sevBadge, sevEntries, sevKeyRow,
+  sevSegmentBar, sevSpoken, skeleton, skeletonStack, toast,
 } from "../ui.js";
 
 const PAGE_SIZES = [25, 50, 100, 250];
@@ -84,13 +86,11 @@ const VIEW_PARAMS = [
 /**
  * The score as a quantity beside the chip that gives its level. Neutral graphite on
  * purpose: the level is already colored on the chip, and fifty tinted bars down a page is
- * the wall of color PRODUCT.md rejects. aria-hidden because aarsChip already names both
+ * the wall of color PRODUCT.md rejects. Decorative because aarsChip already names both
  * the number and the level — one announcement per cell, not two.
  */
 function aarsMeter(score) {
-  const pct = Math.max(0, Math.min(100, Number(score) || 0));
-  return el("span", { class: "pillar-track score-meter", "aria-hidden": "true" },
-    el("span", { class: "pillar-fill", style: `width:${pct}%` }));
+  return meter(score, { decorative: true, className: "meter--score" });
 }
 
 /**
@@ -99,25 +99,17 @@ function aarsMeter(score) {
  * a pile of them. Both come from the same issue rows, so they cannot disagree.
  */
 function issueBars(counts) {
-  const entries = STRIP_SEVERITIES
-    .concat(["UNKNOWN"])
-    .map((sev) => ({ sev, n: Number((counts || {})[sev] || 0) }))
-    .filter((e) => e.n > 0);
+  const entries = sevEntries(counts, STRIP_SEVERITIES.concat(["UNKNOWN"]));
   if (!entries.length) return null;
-  const total = entries.reduce((n, e) => n + e.n, 0);
-  const label = `${total} open issue${total === 1 ? "" : "s"}: ` +
-    entries.map((e) => `${e.n} ${e.sev.toLowerCase()}`).join(", ");
+  const total = entries.reduce((n, e) => n + e.count, 0);
   // Length carries the volume and the segments carry the mix, so one issue and eight of
   // them don't draw the same bar — a normalized bar would make them identical and say the
   // opposite of what it looks like it says.
-  const width = Math.min(46, 10 + total * 4);
-  return el("span", {
-    class: "issue-bars", role: "img", "aria-label": label, style: `width:${width}px`,
-  },
-    ...entries.map((e) => el("span", {
-      class: "issue-bar sev-" + e.sev,
-      style: `flex-grow:${e.n}`,
-    })));
+  return sevSegmentBar(entries, {
+    size: "xs",
+    width: `${Math.min(46, 10 + total * 4)}px`,
+    label: `${plural(total, "open issue")}: ${sevSpoken(entries, { lower: true })}`,
+  });
 }
 
 /** Saved views live per browser; a sandboxed iframe or private mode may refuse. */
@@ -161,8 +153,7 @@ function inventorySkeleton() {
       ...Array.from({ length: 4 }, () => skeleton("line", { height: "18px" }))),
   );
   const toolbar = el("div", { class: "inv-toolbar" }, skeleton("line", { height: "34px" }));
-  const rows = el("div", { style: "display:flex; flex-direction:column; gap:12px" });
-  for (let i = 0; i < 8; i++) rows.append(skeleton("line", { height: "18px" }));
+  const rows = skeletonStack(8, { height: "18px" });
   return el("div", { role: "status", "aria-label": "Loading inventory" }, header, toolbar, rows);
 }
 
@@ -313,22 +304,26 @@ export async function renderInventory(main, params) {
   });
 
   /** What is applied right now — one chip per selected value, plus the search term. */
+  /**
+   * What is narrowing the view right now. `label` is the dimension and `value` is what was
+   * picked, kept apart so the shared chip row can print "AARS severity · CRITICAL" with
+   * the dimension muted — the same shape graphChips.js emits.
+   */
   function filterEntries() {
     const out = [];
     if (query.q) {
-      out.push({ key: "q", label: `Name: ${query.q}`, patch: { q: "" } });
+      out.push({ key: "q", label: "Name", value: query.q, patch: { q: "" } });
     }
     for (const key of FACET_KEYS) {
       for (const value of query[key]) {
         const sev = (key === "aarsSeverities" || key === "severities") ? value : "";
-        const label = key === "aarsSeverities" ? `AARS ${value}`
-          : key === "severities" ? `Issue ${value}`
-          : key === "kinds" ? kindLabel(value)
+        const shown = key === "kinds" ? kindLabel(value)
           : key === "flags" ? (FLAG_LABELS[value] || value)
           : value;
         out.push({
           key: `${key}-${value}`,
-          label,
+          label: FACET_LABELS[key] || key,
+          value: shown,
           sev,
           patch: { [key]: query[key].filter((v) => v !== value) },
         });
@@ -411,50 +406,38 @@ export async function renderInventory(main, params) {
     );
 
     // The distribution strip: the page's cross-filter, and the keyboard-reachable twin of
-    // clicking a bar. The track is decoration (the keys carry the same numbers as text),
-    // and every key is a real toggle button, so nothing here is mouse-only.
-    const track = el("div", { class: "sev-strip-track", "aria-hidden": "true" });
-    const keys = el("div", {
-      class: "sev-strip-keys", role: "group", "aria-label": "Filter by AARS severity",
+    // clicking a bar. The bar itself is decoration (the keys carry the same numbers as
+    // text), and every key is a real toggle button, so nothing here is mouse-only.
+    const entries = sevEntries(counts, STRIP_SEVERITIES);
+    const selected = () => new Set(query.aarsSeverities);
+    const track = sevSegmentBar(entries, { size: "md", selected: selected() });
+    const keys = sevKeyRow(entries, {
+      variant: "toggle",
+      ariaLabel: "Filter by AARS severity",
+      isOn: (sev) => query.aarsSeverities.indexOf(sev) >= 0,
+      describe: (e) => `${e.sev}, ${plural(e.count, "asset")}` +
+        (bandLabel(e.sev) ? `, ${bandLabel(e.sev)}` : ""),
+      // A delta only appears where history actually supports one: aarsTrend records
+      // per-sync AARS counts, so these two are real. Nothing else on this header has
+      // a recorded history, and nothing else gets a chip.
+      suffix: (e) => {
+        const delta = deltas && deltas.counts ? Number(deltas.counts[e.sev] || 0) : 0;
+        if (!delta || (e.sev !== "CRITICAL" && e.sev !== "HIGH")) return null;
+        return el("span", {
+          class: "chg " + (delta > 0 ? "up" : "down"),
+          title: `since the sync of ${fmtDate(deltas.since)}`,
+        }, (delta > 0 ? "+" : "") + delta);
+      },
+      onToggle: (sev) => toggleFacet("aarsSeverities", sev),
     });
     const segs = new Map();
     const keyBtns = new Map();
-    for (const sev of STRIP_SEVERITIES) {
-      const n = counts[sev] || 0;
-      if (!n) continue;
-      const on = query.aarsSeverities.indexOf(sev) >= 0;
-      const seg = el("span", {
-        class: "sev-strip-seg sev-" + sev,
-        "data-on": on ? "true" : "false",
-        style: `flex-grow:${n}`,
-      });
-      segs.set(sev, seg);
-      track.append(seg);
-      const delta = deltas && deltas.counts ? Number(deltas.counts[sev] || 0) : 0;
-      const btn = el("button", {
-        class: "sev-key",
-        "aria-pressed": on ? "true" : "false",
-        "aria-label": `${sev}, ${n} asset${n === 1 ? "" : "s"}` +
-          (bandLabel(sev) ? `, ${bandLabel(sev)}` : ""),
-        onclick: () => toggleFacet("aarsSeverities", sev),
-      },
-        el("span", { class: "sev-dot", "aria-hidden": "true" }),
-        el("span", {}, sev),
-        el("span", { class: "sev-key-count num" }, String(n)),
-        // A delta only appears where history actually supports one: aarsTrend records
-        // per-sync AARS counts, so these two are real. Nothing else on this header has
-        // a recorded history, and nothing else gets a chip.
-        delta && (sev === "CRITICAL" || sev === "HIGH")
-          ? el("span", {
-              class: "chg " + (delta > 0 ? "up" : "down"),
-              title: `since the sync of ${fmtDate(deltas.since)}`,
-            }, (delta > 0 ? "+" : "") + delta)
-          : null,
-      );
-      keyBtns.set(sev, btn);
-      keys.append(btn);
-    }
-    const strip = el("div", { class: "sev-strip" + (query.aarsSeverities.length ? " is-filtered" : "") },
+    entries.forEach((e, i) => {
+      segs.set(e.sev, track.children[i]);
+      keyBtns.set(e.sev, keys.children[i]);
+    });
+
+    const strip = el("div", { class: "sev-strip" },
       el("div", { class: "kpi-label" }, "AARS severity"),
       track,
       keys,
@@ -480,7 +463,9 @@ export async function renderInventory(main, params) {
     // than rebuilt, so the key you just pressed keeps focus.
     syncStrip = () => {
       const active = query.aarsSeverities;
-      strip.classList.toggle("is-filtered", active.length > 0);
+      // Dimming lives on the bar, not on the strip wrapper: the bar is the thing that
+      // recedes, and the class that does it now belongs to the shared .sevbar component.
+      track.classList.toggle("sevbar--dim", active.length > 0);
       for (const [sev, seg] of segs) {
         seg.setAttribute("data-on", active.indexOf(sev) >= 0 ? "true" : "false");
       }
@@ -497,12 +482,10 @@ export async function renderInventory(main, params) {
       el("div", { class: "stat-name" }, name),
       el("div", { class: "stat-figure" },
         el("div", { class: "mini-value num" }, value),
-        meterPct === null || meterPct === undefined ? null : el("span", {
-          class: "pillar-track stat-meter",
-          role: "progressbar",
-          "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(meterPct),
-          "aria-label": `${name}, ${meterPct} percent`,
-        }, el("span", { class: "pillar-fill", style: `width:${meterPct}%` }))),
+        meterPct === null || meterPct === undefined ? null : meter(meterPct, {
+          className: "meter--stat",
+          label: `${name}, ${meterPct} percent`,
+        })),
       el("div", { class: "stat-sub" }, sub),
     );
   }
@@ -515,15 +498,11 @@ export async function renderInventory(main, params) {
       placeholder: "Search name…",
       value: query.q,
     });
-    let searchTimer = null;
-    searchInput.addEventListener("input", () => {
-      clearTimeout(searchTimer);
-      // Local filtering can keep up with typing; a server round trip per keystroke can't.
-      searchTimer = setTimeout(() => {
-        query.q = searchInput.value.trim().toLowerCase();
-        onFilterChange();
-      }, allMode ? 150 : 400);
-    });
+    // Local filtering can keep up with typing; a server round trip per keystroke can't.
+    searchInput.addEventListener("input", debounce(() => {
+      query.q = searchInput.value.trim().toLowerCase();
+      onFilterChange();
+    }, allMode ? 150 : 400));
 
     const tableBtn = el("button", {
       "aria-pressed": view === "table" ? "true" : "false",
@@ -813,7 +792,7 @@ export async function renderInventory(main, params) {
       return;
     }
 
-    resultsHost.append(view === "cards" ? cardGrid(pageRows) : dataTable(pageRows));
+    resultsHost.append(view === "cards" ? cardGrid(pageRows) : assetTable(pageRows));
 
     const sizeSel = el("select", { "aria-label": "Rows per page" },
       ...PAGE_SIZES.map((n) => el("option", { value: String(n) }, `${n} / page`)));
@@ -846,62 +825,42 @@ export async function renderInventory(main, params) {
     }, "Graph");
   }
 
-  function dataTable(rows) {
-    const headRow = el("tr", {});
-    for (const col of COLUMNS) {
-      if (!col.sort) {
-        headRow.append(el("th", { scope: "col" }, col.label));
-        continue;
-      }
-      const active = query.sort === col.sort;
-      const th = el("th", { scope: "col" },
-        el("button", {
-          class: "th-sort",
-          "data-sort": col.sort,
-          "aria-label": `Sort by ${col.label}`,
-          onclick: () => setSort(col.sort),
-        },
-          col.label,
-          el("span", { class: "th-sort-glyph", "aria-hidden": "true" },
-            active ? (query.dir === "desc" ? "▼" : "▲") : ""),
-        ),
-      );
-      if (active) th.setAttribute("aria-sort", query.dir === "desc" ? "descending" : "ascending");
-      headRow.append(th);
-    }
+  function assetTable(rows) {
+    /** Cell renderers, keyed to COLUMNS above so header and body cannot drift apart. */
+    const CELLS = {
+      name: (row) => [row.name,
+        row.agentic ? el("span", { class: "pill", style: "margin-left:6px" }, "Agentic") : null],
+      kind: (row) => kindLabel(row.kind),
+      cloud: (row) => row.cloud || "—",
+      region: (row) => row.region || "—",
+      aars: (row) => (row.aars === null || row.aars === undefined
+        ? el("span", { class: "muted small" }, "—")
+        : el("span", { class: "aars-cell" },
+            aarsChip(row.aars, row.aarsSeverity), aarsMeter(row.aars))),
+      severity: (row) => (row.severity
+        ? el("span", { class: "issue-cell" }, sevBadge(row.severity), issueBars(row.issuesBySeverity))
+        : "—"),
+      combos: (row) => (row.combos ? el("span", { class: "pill bad" }, `TC ×${row.combos}`) : "—"),
+      guardrail: (row) => (row.guardrailMissing ? el("span", { class: "pill warn" }, "missing") : "—"),
+      projects: (row) => (row.projects || []).join(", ") || "—",
+      actions: (row) => graphButton(row),
+    };
 
-    const tbody = el("tbody", {});
-    for (const row of rows) {
-      tbody.append(el("tr", {
-        class: "clickable",
-        tabindex: "0",
-        role: "button",
-        "aria-label": `${row.name}, ${kindLabel(row.kind)}`,
-        onclick: openRow(row),
-        onkeydown: (e) => {
-          if (e.key === "Enter") openRow(row)();
-        },
-      },
-        el("td", {}, row.name,
-          row.agentic ? el("span", { class: "pill", style: "margin-left:6px" }, "Agentic") : null),
-        el("td", {}, kindLabel(row.kind)),
-        el("td", {}, row.cloud || "—"),
-        el("td", {}, row.region || "—"),
-        el("td", {}, row.aars === null || row.aars === undefined
-          ? el("span", { class: "muted small" }, "—")
-          : el("span", { class: "aars-cell" }, aarsChip(row.aars, row.aarsSeverity), aarsMeter(row.aars))),
-        el("td", {}, row.severity
-          ? el("span", { class: "issue-cell" }, sevBadge(row.severity), issueBars(row.issuesBySeverity))
-          : "—"),
-        el("td", {}, row.combos ? el("span", { class: "pill bad" }, `TC ×${row.combos}`) : "—"),
-        el("td", {}, row.guardrailMissing ? el("span", { class: "pill warn" }, "missing") : "—"),
-        el("td", {}, (row.projects || []).join(", ") || "—"),
-        el("td", {}, graphButton(row)),
-      ));
-    }
-
-    return el("div", { class: "table-wrap" },
-      el("table", { class: "data" }, el("thead", {}, headRow), tbody));
+    return dataTable({
+      columns: COLUMNS.map((col) => ({
+        key: col.sort || col.key,
+        label: col.label,
+        sortable: !!col.sort,
+        cell: CELLS[col.key],
+      })),
+      rows,
+      // `dir` is this page's own convention ("asc"/"desc", seeded from the URL); the shared
+      // table only needs to know which way the active column currently reads.
+      sort: query.sort ? { key: query.sort, descending: query.dir === "desc" } : null,
+      onSort: setSort,
+      onRowOpen: (row) => openRow(row)(),
+      rowLabel: (row) => `${row.name}, ${kindLabel(row.kind)}`,
+    });
   }
 
   function cardGrid(rows) {

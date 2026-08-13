@@ -25,11 +25,23 @@ export interface GraphParamContext {
   scoredAssetIds?: string[]; // node ids with AARS > 0 — seed source for the "scored" start
 }
 
-/** Accepts arrays or comma-joined strings (hash params arrive as strings). */
+/**
+ * Accepts arrays or comma-joined strings (hash params arrive as strings), dropping blanks
+ * and collapsing duplicates.
+ *
+ * This used to skip the trim and the dedupe that assetTable's `list` does, so the two
+ * halves of the app read the same URL differently: `?kinds= AI_AGENT ` filtered correctly
+ * through the inventory and silently matched nothing on the graph, because the untrimmed
+ * value never equals a node kind in `graphProject`'s `f.kinds.includes(node.kind)`.
+ */
 export function toList(v: unknown): string[] {
-  if (Array.isArray(v)) return v.map(String).filter(Boolean);
-  if (typeof v === "string") return v.split(",").filter(Boolean);
-  return [];
+  const raw = Array.isArray(v) ? v : typeof v === "string" ? v.split(",") : [];
+  const out: string[] = [];
+  for (const item of raw) {
+    const s = String(item ?? "").trim();
+    if (s && out.indexOf(s) < 0) out.push(s);
+  }
+  return out;
 }
 
 function comboAssetIds(issues: IssueRow[], groupId?: string): string[] {

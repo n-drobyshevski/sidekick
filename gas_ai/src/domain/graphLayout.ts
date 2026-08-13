@@ -38,7 +38,7 @@
 
 import { SEVERITY_ORDER } from "./config";
 import type { GNode, NodeKind } from "./graphTypes";
-import { AI_ASSET_KINDS, NODE_KINDS, isRiskKind } from "./graphTypes";
+import { AI_ASSET_KINDS, NODE_KINDS, isRiskKind, severityRank } from "./graphTypes";
 import type { Projection } from "./graphProject";
 import { nodeOrder } from "./graphProject";
 import { COMBO_GROUPS, comboGroupById } from "./toxicCombos";
@@ -175,10 +175,6 @@ const BLOCK_GAP_X = 48;
 const BLOCK_GAP_Y = 64;
 const MAX_SHELF_W = 1600;
 
-function severityRank(s: string | undefined): number {
-  const i = (SEVERITY_ORDER as readonly string[]).indexOf(s ?? "");
-  return i === -1 ? SEVERITY_ORDER.length : i; // lower = worse
-}
 
 function cmpName(a: GNode, b: GNode): number {
   return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;

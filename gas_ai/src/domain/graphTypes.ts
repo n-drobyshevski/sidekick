@@ -4,6 +4,23 @@
 
 import type { AarsGap, DataExposure } from "./aars";
 import type { AarsSeverity, Severity } from "./config";
+import { SEVERITY_ORDER } from "./config";
+
+/**
+ * Position on the severity scale, LOWER = WORSE, with anything unrecognised sorting last.
+ *
+ * Graph-local on purpose. It lived as three byte-identical private copies in graphEnrich,
+ * graphProject and graphLayout; it is not in severity.ts because that file is declared the
+ * port of wiz_dashboard/domain/severity.py and this helper has no Python twin.
+ *
+ * Note the sign: assetTable.ts has its own `sevRank` built on an INVERTED scale
+ * (higher = worse) for column sorting. The two look alike and mean opposite things — do
+ * not fold them together.
+ */
+export function severityRank(s: string | undefined): number {
+  const i = (SEVERITY_ORDER as readonly string[]).indexOf(s ?? "");
+  return i === -1 ? SEVERITY_ORDER.length : i;
+}
 
 export const NODE_KINDS = [
   // AI assets (Wiz AI-SPM resource types)

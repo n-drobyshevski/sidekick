@@ -97,6 +97,50 @@ describe("overwrite against an out-of-date header row", () => {
   });
 });
 
+describe("updateWhere against an out-of-date header row", () => {
+  it("adds the missing schema column instead of dropping the patched value", async () => {
+    const { updateWhere, readAll, TABS } = await db();
+    // A jobs tab written before part_refs_json existed. The sync checkpoints into this
+    // tab on every hop; a dropped field here is lost resumption state.
+    sheets[TABS.jobs] = fakeSheet([
+      ["job_id", "kind", "phase", "step_index"],
+      ["job-1", "sync", "FETCHING", 0],
+    ]);
+
+    const hit = updateWhere(TABS.jobs, "job_id", "job-1", {
+      phase: "RECONCILING",
+      part_refs_json: '["part-1"]',
+    });
+
+    expect(hit).toBe(true);
+    const row = readAll(TABS.jobs)[0];
+    expect(row["phase"]).toBe("RECONCILING");
+    expect(row["part_refs_json"]).toBe('["part-1"]');
+  });
+
+  it("leaves omitted keys alone — the patch is partial by design", async () => {
+    const { updateWhere, readAll, TABS } = await db();
+    sheets[TABS.jobs] = fakeSheet([
+      ["job_id", "kind", "phase", "step_index", "page"],
+      ["job-1", "sync", "FETCHING", 3, 7],
+    ]);
+
+    updateWhere(TABS.jobs, "job_id", "job-1", { page: 8 });
+
+    const row = readAll(TABS.jobs)[0];
+    expect(row["page"]).toBe(8);
+    expect(row["step_index"]).toBe(3); // untouched, not reset
+    expect(row["phase"]).toBe("FETCHING");
+  });
+
+  it("still refuses to invent a column the schema never declared", async () => {
+    const { updateWhere, TABS } = await db();
+    sheets[TABS.jobs] = fakeSheet([["job_id", "phase"], ["job-1", "FETCHING"]]);
+    updateWhere(TABS.jobs, "job_id", "job-1", { phase: "DONE", not_a_column: "x" });
+    expect(sheets[TABS.jobs].grid[0]).not.toContain("not_a_column");
+  });
+});
+
 describe("appendRows against an out-of-date header row", () => {
   it("records the new sync_history column rather than losing the trend point", async () => {
     const { appendRows, readAll, TABS } = await db();

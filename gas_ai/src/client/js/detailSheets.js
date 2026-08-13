@@ -10,8 +10,8 @@ import { bootstrapCached, navigate } from "./store.js";
 import { kindLabel } from "./icons.js";
 import { slaState } from "./pages/comboView.js";
 import {
-  aarsChip, clear, el, emptyState, errorState, fmtDate, fmtDateTime,
-  openSheet, sevBadge, sheetRow, sheetSection, skeleton,
+  aarsChip, clear, el, emptyState, errorState, fmtDate, fmtDateTime, meter,
+  openSheet, plural, sevBadge, sheetRow, sheetSection, skeleton,
 } from "./ui.js";
 
 /** Fallback only — the caps in force ride on the bootstrap payload. */
@@ -46,19 +46,14 @@ function pillarBars(pillars, caps) {
   for (const key of ["toxic", "compliance", "data"]) {
     const value = Number(pillars[key] ?? 0);
     const max = Number(caps[key] ?? PILLAR_MAX[key]) || 1;
-    const pct = Math.max(0, Math.min(100, (value / max) * 100));
-    const fill = el("div", { class: "pillar-fill" });
-    fill.style.width = `${pct}%`;
     wrap.append(
       el("div", { class: "pillar-row" },
         el("span", { class: "pillar-name" }, PILLAR_LABEL[key]),
-        // progressbar, not meter: `meter` has uneven NVDA/VoiceOver support. The visible
-        // "x/max" beside it is the label, so the track itself stays unnamed and silent.
-        el("div", {
-          class: "pillar-track", role: "progressbar",
-          "aria-valuemin": "0", "aria-valuemax": String(max), "aria-valuenow": String(value),
-          "aria-label": `${PILLAR_LABEL[key]}, ${value} of ${max} points`,
-        }, fill),
+        meter(value, {
+          max,
+          className: "meter--flex",
+          label: `${PILLAR_LABEL[key]}, ${value} of ${max} points`,
+        }),
         el("span", { class: "pillar-val" }, `${value}/${max}`),
       ),
     );
@@ -134,19 +129,15 @@ function yesNoUnknown(v) {
   return "Unknown (inherited from host)";
 }
 
-function skeletonSection(...kids) {
-  return el("div", { class: "sheet-section" }, ...kids);
-}
-
 /** A placeholder shaped like the record that is coming, not a spinner. */
 function assetSkeleton() {
   return el("div", { class: "sheet-loading" },
-    skeletonSection(skeleton("title", { width: "45%" })),
-    skeletonSection(
+    sheetSection(null, skeleton("title", { width: "45%" })),
+    sheetSection(null, 
       skeleton("line", { width: "34%", height: "10px" }),
       skeleton("line", { height: "58px" }),
       skeleton("line", { height: "58px" })),
-    skeletonSection(
+    sheetSection(null, 
       skeleton("line", { width: "28%", height: "10px" }),
       skeleton("line", { height: "8px", radius: "999px" }),
       skeleton("line", { height: "8px", radius: "999px" }),
@@ -155,19 +146,15 @@ function assetSkeleton() {
 
 function issueSkeleton() {
   return el("div", { class: "sheet-loading" },
-    skeletonSection(
+    sheetSection(null, 
       skeleton("line", { width: "30%", height: "10px" }),
       skeleton("line", { height: "44px" })),
-    skeletonSection(
+    sheetSection(null, 
       skeleton("line", { width: "36%", height: "10px" }),
       skeleton("line", { height: "44px" })),
-    skeletonSection(
+    sheetSection(null, 
       skeleton("line", { width: "24%", height: "10px" }),
       skeleton("line", { height: "80px" })));
-}
-
-function plural(n, word) {
-  return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
 
 // --------------------------------------------------------------------------- asset

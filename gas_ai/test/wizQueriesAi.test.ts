@@ -7,16 +7,18 @@ import { describe, expect, it } from "vitest";
 import { kindFromWizType } from "../src/domain/graphTypes";
 import {
   AI_RESOURCE_TYPE_CANDIDATES,
+  Q_AGENTS_NO_GUARDRAIL,
+  Q_AI_INVENTORY,
+  Q_CONFIG_FINDINGS,
+  Q_ISSUES,
+  Q_PRINCIPALS,
+  Q_RULE_ASSETS,
   aiConfigFindingsVariables,
   aiInventoryVariables,
   aiIssuesVariables,
   aiPrincipalsVariables,
   chooseAiResourceTypes,
   isInvalidEnumValueError,
-  Q_AI_INVENTORY,
-  Q_CONFIG_FINDINGS,
-  Q_ISSUES,
-  Q_PRINCIPALS,
 } from "../src/server/wizQueriesAi";
 import { RISK_CATEGORY_ID } from "../src/domain/toxicCombos";
 
@@ -205,5 +207,44 @@ describe("Q_PRINCIPALS + aiPrincipalsVariables", () => {
     expect(v.filterBy["projectId"]).toBeUndefined();
     const scoped = aiPrincipalsVariables(["proj-1"]) as { filterBy: Record<string, unknown> };
     expect(scoped.filterBy["projectId"]).toEqual(["proj-1"]);
+  });
+});
+
+// ------------------------------------------------------------- query document snapshots
+//
+// The GraphQL documents are never exercised by a dry-run sync (it never reaches the API),
+// so nothing else here would notice if one changed shape. That matters most for the field
+// set: it is requested flat from cloudResourcesV2 and split behind a `... on CloudResource`
+// fragment in graphSearch, and those used to be two hand-maintained lists of the same ~20
+// fields. A field added to one and forgotten in the other silently degrades half the sync
+// battery, and no test would have failed.
+
+describe("query documents", () => {
+  const DOCS: Array<[string, string]> = [
+    ["Q_AI_INVENTORY", Q_AI_INVENTORY],
+    ["Q_RULE_ASSETS", Q_RULE_ASSETS],
+    ["Q_AGENTS_NO_GUARDRAIL", Q_AGENTS_NO_GUARDRAIL],
+    ["Q_ISSUES", Q_ISSUES],
+    ["Q_CONFIG_FINDINGS", Q_CONFIG_FINDINGS],
+    ["Q_PRINCIPALS", Q_PRINCIPALS],
+  ];
+
+  for (const [name, doc] of DOCS) {
+    it(`${name} is unchanged`, () => {
+      expect(doc).toMatchSnapshot();
+    });
+  }
+
+  it("asks graphSearch for every field the flat query asks for", () => {
+    // The invariant the two lists exist to satisfy, asserted rather than trusted.
+    const flatFields = Q_AI_INVENTORY.split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l && !l.includes("{") && !l.includes("}") && !l.startsWith("query")
+        && !l.startsWith("$") && !l.includes("(") && !l.includes(":"));
+    const entity = Q_AGENTS_NO_GUARDRAIL;
+    for (const f of flatFields) {
+      expect(entity, `graphSearch is missing ${f}`).toContain(f);
+    }
+    expect(flatFields.length).toBeGreaterThan(10);
   });
 });

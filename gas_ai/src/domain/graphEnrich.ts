@@ -11,7 +11,9 @@ import {
   type AarsRule,
   type DataExposure,
 } from "./aars";
-import { SEVERITY_ORDER, type Severity } from "./config";
+import type { Severity } from "./config";
+import { conditionHolds } from "./riskConditions";
+import type { ConditionKey } from "./toxicCombos";
 import {
   AI_ASSET_KINDS,
   edgeId,
@@ -20,7 +22,9 @@ import {
   type GNode,
   type GraphDoc,
   type IssueRow,
+  severityRank,
 } from "./graphTypes";
+import { groupBy, indexBy, pushInto } from "./util";
 
 export interface AarsHint {
   gaps: AarsGap[];
@@ -28,10 +32,6 @@ export interface AarsHint {
 }
 export type AarsHints = Record<string, AarsHint>;
 
-function severityRank(s: string | undefined): number {
-  const i = (SEVERITY_ORDER as readonly string[]).indexOf(s ?? "");
-  return i === -1 ? SEVERITY_ORDER.length : i; // lower = worse
-}
 
 function worstSeverity(severities: Severity[]): Severity | undefined {
   let worst: Severity | undefined;
@@ -96,17 +96,12 @@ export function buildAarsHintsFromFindings(
   issues: IssueRow[],
 ): AarsHints {
   const open = issues.filter((i) => i.status === "OPEN");
-  const issuesByAsset = new Map<string, IssueRow[]>();
-  for (const issue of open) {
-    if (!issuesByAsset.has(issue.assetId)) issuesByAsset.set(issue.assetId, []);
-    issuesByAsset.get(issue.assetId)!.push(issue);
-  }
+  const issuesByAsset = groupBy(open, (i) => i.assetId);
   const codesByResource = new Map<string, string[]>();
   for (const f of findings) {
-    if (!codesByResource.has(f.resourceId)) codesByResource.set(f.resourceId, []);
-    codesByResource.get(f.resourceId)!.push(...f.frameworkCodes);
+    pushInto(codesByResource, f.resourceId, ...f.frameworkCodes);
   }
-  const nodeById = new Map(doc.nodes.map((n) => [n.id, n]));
+  const nodeById = indexBy(doc.nodes, (n) => n.id);
   const hints: AarsHints = {};
   for (const [resourceId, codes] of codesByResource) {
     const node = nodeById.get(resourceId);
@@ -137,11 +132,7 @@ export function enrichGraphDoc(
   rule: AarsRule = DEFAULT_AARS_RULE,
 ): GraphDoc {
   const open = issues.filter((i) => i.status === "OPEN");
-  const byAsset = new Map<string, IssueRow[]>();
-  for (const issue of open) {
-    if (!byAsset.has(issue.assetId)) byAsset.set(issue.assetId, []);
-    byAsset.get(issue.assetId)!.push(issue);
-  }
+  const byAsset = groupBy(open, (i) => i.assetId);
 
   const nodes: GNode[] = doc.nodes.map((raw) => {
     const node: GNode = { ...raw };
@@ -200,166 +191,132 @@ export function enrichGraphDoc(
 }
 
 /**
- * Read-time data-exposure topology (AARS pillar C): append one synthetic
- * SENSITIVE_DATA node + edge per node that holds or can reach sensitive data, so the
- * pillar is visible in the graph and relationship views the way ISSUE nodes make the
- * toxic pillar visible. The predicate mirrors the "SENSITIVE" classification in
- * `deriveAarsInput` exactly, so topology and score always agree; HOLDS
- * (`hasSensitiveData`) wins over ACCESS when both flags are set — consistent with the
- * score collapsing both to "SENSITIVE".
+ * Read-time risk topology: append one synthetic risk node + edge per asset that carries a
+ * risk condition, so each AARS pillar reads as a first-class neighbour on the attack path
+ * instead of a flag on a card — the way ISSUE nodes already make the toxic pillar visible.
  *
  * Derived on READ (applied by loadGraphDoc), never persisted: it therefore covers
- * already-synced graphs without a re-sync and never leaks into the asset/inventory
- * tables. Idempotent — skips any node that already has its `sensitive|<id>` stub — and
- * pure (returns a new document, or the same one when nothing is flagged).
+ * already-synced graphs without a re-sync and never leaks into the asset/inventory tables.
+ * Idempotent (skips any node that already has its `<prefix>|<id>` stub) and pure — returns
+ * a new document, or the same one when nothing is flagged.
+ *
+ * The four builders below were the same twenty lines four times over, differing only in
+ * the fields of this spec. Whether an asset carries the condition is not one of those
+ * fields: that question lives in riskConditions.ts, shared with the Toxic Combinations
+ * matrix, because the two used to answer it differently.
+ */
+interface DerivedNodeSpec {
+  /** Doubles as the synthetic node's kind — the condition keys ARE risk node kinds. */
+  kind: ConditionKey;
+  /** Id namespace: the stub is `<prefix>|<asset id>`. */
+  prefix: string;
+  name: string | ((node: GNode) => string);
+  edgeType: GEdge["type"] | ((node: GNode) => GEdge["type"]);
+  /** A NEGATED edge says "the protective relationship is absent", not "no edge". */
+  negated?: true;
+  /** Assets this spec must not draw, computed once per document before the walk. */
+  suppress?: (doc: GraphDoc) => Set<string>;
+}
+
+function withDerivedNodes(doc: GraphDoc, spec: DerivedNodeSpec): GraphDoc {
+  const existing = new Set(doc.nodes.filter((n) => n.kind === spec.kind).map((n) => n.id));
+  const suppressed = spec.suppress ? spec.suppress(doc) : null;
+  const added: GNode[] = [];
+  const addedEdges: GEdge[] = [];
+
+  for (const node of doc.nodes) {
+    if (node.kind === spec.kind) continue;
+    if (!conditionHolds(node, spec.kind)) continue;
+    if (suppressed && suppressed.has(node.id)) continue;
+    const id = `${spec.prefix}|${node.id}`;
+    if (existing.has(id)) continue;
+
+    const type = typeof spec.edgeType === "function" ? spec.edgeType(node) : spec.edgeType;
+    added.push({
+      id,
+      kind: spec.kind,
+      name: typeof spec.name === "function" ? spec.name(node) : spec.name,
+    });
+    const edge: GEdge = { id: edgeId(node.id, type, id, spec.negated), src: node.id, dst: id, type };
+    if (spec.negated) edge.negated = true;
+    addedEdges.push(edge);
+  }
+
+  if (!added.length) return doc;
+  return {
+    nodes: [...doc.nodes, ...added],
+    edges: [...doc.edges, ...addedEdges],
+    syncedAt: doc.syncedAt,
+  };
+}
+
+/**
+ * Data exposure (AARS pillar C). HOLDS (`hasSensitiveData`) wins over ACCESS when both
+ * flags are set — consistent with the score collapsing both to "SENSITIVE".
  */
 export function withSensitiveDataNodes(doc: GraphDoc): GraphDoc {
-  const existing = new Set(
-    doc.nodes.filter((n) => n.kind === "SENSITIVE_DATA").map((n) => n.id),
-  );
-  const sensitiveNodes: GNode[] = [];
-  const sensitiveEdges: GEdge[] = [];
-  for (const node of doc.nodes) {
-    if (node.kind === "SENSITIVE_DATA") continue;
-    if (!node.hasSensitiveData && !node.hasAccessToSensitiveData) continue;
-    const sensId = `sensitive|${node.id}`;
-    if (existing.has(sensId)) continue;
-    const type: GEdge["type"] = node.hasSensitiveData
-      ? "HAS_SENSITIVE_DATA"
-      : "HAS_ACCESS_TO_SENSITIVE_DATA";
-    sensitiveNodes.push({ id: sensId, kind: "SENSITIVE_DATA", name: "Sensitive data" });
-    sensitiveEdges.push({ id: edgeId(node.id, type, sensId), src: node.id, dst: sensId, type });
-  }
-  if (!sensitiveNodes.length) return doc;
-  return {
-    nodes: [...doc.nodes, ...sensitiveNodes],
-    edges: [...doc.edges, ...sensitiveEdges],
-    syncedAt: doc.syncedAt,
-  };
+  return withDerivedNodes(doc, {
+    kind: "SENSITIVE_DATA",
+    prefix: "sensitive",
+    name: "Sensitive data",
+    edgeType: (n) => (n.hasSensitiveData ? "HAS_SENSITIVE_DATA" : "HAS_ACCESS_TO_SENSITIVE_DATA"),
+  });
 }
 
 /**
- * Read-time internet-exposure topology: append one synthetic INTERNET_EXPOSURE node +
- * edge per node that is reachable from the internet, so exposure reads as a first-class
- * neighbor the way SENSITIVE_DATA does for the data pillar. Derived on READ (applied by
- * loadGraphDoc), never persisted — covers already-synced graphs and never leaks into the
- * asset/inventory tables. Idempotent and pure.
- *
- * The predicate is strict `=== true`: `isAccessibleFromInternet` / `isOpenToAllInternet`
- * are tri-state (true / false / null), and null means exposure is inherited from the
- * underlying compute and undetermined — which must NOT be drawn as a definite exposure.
+ * Internet exposure. Strict `=== true` (see riskConditions.ts): the flags are tri-state,
+ * and null means exposure is inherited from the underlying compute and undetermined —
+ * which must NOT be drawn as a definite exposure.
  */
 export function withInternetExposureNodes(doc: GraphDoc): GraphDoc {
-  const existing = new Set(
-    doc.nodes.filter((n) => n.kind === "INTERNET_EXPOSURE").map((n) => n.id),
-  );
-  const exposureNodes: GNode[] = [];
-  const exposureEdges: GEdge[] = [];
-  for (const node of doc.nodes) {
-    if (node.kind === "INTERNET_EXPOSURE") continue;
-    if (node.isAccessibleFromInternet !== true && node.isOpenToAllInternet !== true) continue;
-    const expId = `internet|${node.id}`;
-    if (existing.has(expId)) continue;
-    exposureNodes.push({ id: expId, kind: "INTERNET_EXPOSURE", name: "Internet exposure" });
-    exposureEdges.push({
-      id: edgeId(node.id, "EXPOSED_TO_INTERNET", expId),
-      src: node.id,
-      dst: expId,
-      type: "EXPOSED_TO_INTERNET",
-    });
-  }
-  if (!exposureNodes.length) return doc;
-  return {
-    nodes: [...doc.nodes, ...exposureNodes],
-    edges: [...doc.edges, ...exposureEdges],
-    syncedAt: doc.syncedAt,
-  };
+  return withDerivedNodes(doc, {
+    kind: "INTERNET_EXPOSURE",
+    prefix: "internet",
+    name: "Internet exposure",
+    edgeType: "EXPOSED_TO_INTERNET",
+  });
 }
 
 /**
- * Read-time excessive-rights topology: append one synthetic EXCESSIVE_PRIVILEGE node +
- * edge per node holding admin or high privileges, so over-permissioning reads as a
- * neighbor on the attack path instead of a flag on the card. Same contract as
- * withSensitiveDataNodes — derived on READ, never persisted, idempotent, pure.
+ * Excessive rights, so over-permissioning reads as a neighbour on the attack path.
  *
- * Nodes that already carry a REAL CIEM finding (Wiz's own EXCESSIVE_ACCESS_FINDING,
+ * Assets that already carry a REAL CIEM finding (Wiz's own EXCESSIVE_ACCESS_FINDING,
  * reached via HAS_FINDING) are skipped: the tenant's finding is the better evidence and
  * drawing both would show one problem twice.
  */
 export function withExcessivePrivilegeNodes(doc: GraphDoc): GraphDoc {
-  const existing = new Set(
-    doc.nodes.filter((n) => n.kind === "EXCESSIVE_PRIVILEGE").map((n) => n.id),
-  );
-  const kindById = new Map(doc.nodes.map((n) => [n.id, n.kind]));
-  const hasRealFinding = new Set<string>();
-  for (const e of doc.edges) {
-    if (e.type === "HAS_FINDING" && kindById.get(e.dst) === "EXCESSIVE_ACCESS_FINDING") {
-      hasRealFinding.add(e.src);
-    }
-  }
-  const privNodes: GNode[] = [];
-  const privEdges: GEdge[] = [];
-  for (const node of doc.nodes) {
-    if (node.kind === "EXCESSIVE_PRIVILEGE") continue;
-    if (!node.hasAdminPrivileges && !node.hasHighPrivileges) continue;
-    if (hasRealFinding.has(node.id)) continue;
-    const privId = `excessive|${node.id}`;
-    if (existing.has(privId)) continue;
-    privNodes.push({
-      id: privId,
-      kind: "EXCESSIVE_PRIVILEGE",
-      // ADMIN wins over HIGH when both are set — it is the stronger claim.
-      name: node.hasAdminPrivileges ? "Admin privileges" : "Excessive rights",
-    });
-    privEdges.push({
-      id: edgeId(node.id, "HAS_EXCESSIVE_PRIVILEGE", privId),
-      src: node.id,
-      dst: privId,
-      type: "HAS_EXCESSIVE_PRIVILEGE",
-    });
-  }
-  if (!privNodes.length) return doc;
-  return {
-    nodes: [...doc.nodes, ...privNodes],
-    edges: [...doc.edges, ...privEdges],
-    syncedAt: doc.syncedAt,
-  };
+  return withDerivedNodes(doc, {
+    kind: "EXCESSIVE_PRIVILEGE",
+    prefix: "excessive",
+    // ADMIN wins over HIGH when both are set — it is the stronger claim.
+    name: (n) => (n.hasAdminPrivileges ? "Admin privileges" : "Excessive rights"),
+    edgeType: "HAS_EXCESSIVE_PRIVILEGE",
+    suppress: (d) => {
+      const kindById = new Map(d.nodes.map((n) => [n.id, n.kind]));
+      const withRealFinding = new Set<string>();
+      for (const e of d.edges) {
+        if (e.type === "HAS_FINDING" && kindById.get(e.dst) === "EXCESSIVE_ACCESS_FINDING") {
+          withRealFinding.add(e.src);
+        }
+      }
+      return withRealFinding;
+    },
+  });
 }
 
 /**
- * Read-time guardrail-coverage topology: append one synthetic MISSING_GUARDRAIL node +
- * edge per node the guardrail scan flagged, so an unguarded agent reads like every other
- * risk on the path. Same contract as withSensitiveDataNodes — derived on READ, never
- * persisted, idempotent, pure.
+ * Guardrail coverage.
  *
  * The edge is a NEGATED `PROTECTED_BY` — the vocabulary already says "the protective edge
  * is absent" (Wiz's own negate:true scan), and the client draws negated edges dashed and
  * labels them "(ABSENT)", so the absence stays legible rather than reading as coverage.
  */
 export function withMissingGuardrailNodes(doc: GraphDoc): GraphDoc {
-  const existing = new Set(
-    doc.nodes.filter((n) => n.kind === "MISSING_GUARDRAIL").map((n) => n.id),
-  );
-  const gapNodes: GNode[] = [];
-  const gapEdges: GEdge[] = [];
-  for (const node of doc.nodes) {
-    if (node.kind === "MISSING_GUARDRAIL") continue;
-    if (node.guardrailMissing !== true) continue;
-    const gapId = `noguardrail|${node.id}`;
-    if (existing.has(gapId)) continue;
-    gapNodes.push({ id: gapId, kind: "MISSING_GUARDRAIL", name: "No guardrail" });
-    gapEdges.push({
-      id: edgeId(node.id, "PROTECTED_BY", gapId, true),
-      src: node.id,
-      dst: gapId,
-      type: "PROTECTED_BY",
-      negated: true,
-    });
-  }
-  if (!gapNodes.length) return doc;
-  return {
-    nodes: [...doc.nodes, ...gapNodes],
-    edges: [...doc.edges, ...gapEdges],
-    syncedAt: doc.syncedAt,
-  };
+  return withDerivedNodes(doc, {
+    kind: "MISSING_GUARDRAIL",
+    prefix: "noguardrail",
+    name: "No guardrail",
+    edgeType: "PROTECTED_BY",
+    negated: true,
+  });
 }

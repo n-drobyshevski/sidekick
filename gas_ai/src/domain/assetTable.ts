@@ -6,6 +6,7 @@
 // import the TS module).
 
 import { AARS_SEVERITY_ORDER, SEVERITY_ORDER, normalizeAarsSeverity } from "./config";
+import { toNum as num, toStr as str } from "./util";
 import type { Rec } from "./util";
 
 export type AssetSort = "aars" | "name" | "kind" | "cloud" | "region" | "severity" | "combos";
@@ -75,15 +76,6 @@ export interface AssetTableQuery {
   dir: SortDir;
   page: number;
   pageSize: number;
-}
-
-function str(v: unknown): string {
-  return v === null || v === undefined ? "" : String(v);
-}
-
-function num(v: unknown): number {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : 0;
 }
 
 /** Missing/garbage scores sort last, matching `Number(x ?? -1)` on the client. */
@@ -179,7 +171,7 @@ export function hasAssetFlag(row: Rec, flag: string): boolean {
 
 function rowProjects(row: Rec): string[] {
   const v = row["projects"];
-  return Array.isArray(v) ? v.map(str).filter(Boolean) : [];
+  return Array.isArray(v) ? v.map((v) => str(v)).filter(Boolean) : [];
 }
 
 /** Name substring (case-insensitive), then OR within each dimension and AND across them. */

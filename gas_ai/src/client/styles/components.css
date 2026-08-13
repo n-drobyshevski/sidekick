@@ -1,0 +1,292 @@
+/* ------------------------------------------------------------------------ cards */
+/* The raised-surface recipe. Every card in the app is this plus its own padding and
+   layout; .asset-card (inventory.css) and .chart-card (tables.css) join here rather than
+   restating the four declarations a third and fourth time. */
+.card, .kpi-card, .chart-card, .asset-card {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-card);
+}
+.card { padding: 16px; }
+.kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 0 0 20px; }
+.kpi-card { padding: 14px 16px; }
+.kpi-label { font-size: 12px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-3); }
+.kpi-value { font-size: 1.5rem; font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; margin-top: 2px; }
+.kpi-sub { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+
+/* change chips */
+.chg { font-size: 12px; font-weight: 600; border-radius: var(--radius-sm); padding: 1px 6px; margin-left: 6px; }
+.chg.up { color: var(--bad); background: rgba(185, 28, 28, 0.12); }
+.chg.down { color: var(--ok); background: rgba(21, 128, 61, 0.12); }
+.chg.flat { color: var(--text-3); background: rgba(0, 0, 0, 0.06); }
+
+/* ------------------------------------------------------------------------ chips */
+/* Chip base: the small labelled mark, in all its variants. Nine of these were declared
+   independently across five files, each restating inline-flex + centre + 12px/600. What
+   actually differs — gap, padding, radius, colour — stays with each member, next to the
+   rule that explains it. Members outside this file are listed here on purpose: this is
+   the one place that says they are the same kind of thing. */
+.sev-badge, .aars-chip, .pill, .sev-key,
+.filter-chip, .combo-shift-key, .combo-cond {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* Tag base: the flat neutral code/label, not a status. */
+.domain-chip, .fw-tag {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--text-2);
+}
+
+/* ------------------------------------------------------------------------ meters */
+/* Meter base: a rounded track with a proportional fill (ui/data.js meter()). The AARS
+   score meters, the stat-list meters, the detail sheet's pillar bars and the facet count
+   bars were four hand-built copies of this. The sync progress bar keeps its own class
+   because it also has an indeterminate state and run-state tints, but it shares the body. */
+.meter, .progress-track {
+  border-radius: var(--radius-pill);
+  background: var(--track-bg);
+}
+/* display:block so the fill works as a <span> too — a percentage width on an inline box
+   is ignored, which silently renders every meter as an empty track. */
+.meter-fill, .progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-pill);
+}
+/* Neutral graphite fill: the level is already carried by the chip beside the meter, and
+   fifty tinted bars down a page is the wall of colour PRODUCT.md rejects. */
+.meter { display: block; height: 8px; overflow: hidden; }
+.meter-fill { background: var(--graphite); }
+/* The four jobs it does: fill a sheet row, sit in a stat cell, sit in a table cell, and
+   underline a facet count. */
+.meter--flex { flex: 1; }
+.meter--stat { flex: 0 0 52px; width: 52px; height: 6px; }
+.meter--score { flex: 0 0 40px; width: 40px; height: 5px; }
+.meter--facet { height: 3px; overflow: visible; }
+.meter--facet .meter-fill { background: rgba(0, 0, 0, 0.32); }
+
+/* --------------------------------------------------------------------- severity */
+.sev-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+.sev-badge { border-radius: var(--radius-pill); padding: 2px 9px; }
+
+/* Severity FILL as a background, for the marks the app draws itself: bar segments and
+   pattern dots. The .sev-<LEVEL> tint classes below can't do this job — they paint a 14%
+   wash meant to sit behind a label, far too pale for a mark that has to read at >=3:1.
+   Text never uses these; any coloured label still takes its --sev-*-text token (the
+   Two-Token rule). One set: the strip segments, the issue bars and the combos shift
+   segments each carried their own copy of these six rules. */
+.sev-fill-CRITICAL { background: var(--sev-critical); }
+.sev-fill-HIGH { background: var(--sev-high); }
+.sev-fill-MEDIUM { background: var(--sev-medium); }
+.sev-fill-LOW { background: var(--sev-low); }
+.sev-fill-INFO { background: var(--sev-info); }
+.sev-fill-UNKNOWN { background: var(--sev-unknown); }
+
+/* ------------------------------------------------------------ severity bar + keys */
+/* A distribution as one bar: a segment per level, grown by its count, so eight issues and
+   one issue never draw the same picture. Sizes are the three jobs it does — an in-row
+   micro-viz, a header strip, and the combos amplifier bar. */
+.sevbar {
+  display: flex; width: 100%; overflow: hidden;
+  border-radius: var(--radius-pill); background: var(--track-bg);
+}
+.sevbar-seg { flex-basis: 0; min-width: 3px; transition: opacity 140ms ease-out; }
+.sevbar--xs { display: inline-flex; width: auto; height: 5px; }
+.sevbar--md { height: 10px; }
+.sevbar--lg {
+  height: 22px; border-radius: var(--radius-sm);
+  background: var(--page); border: 1px solid var(--hairline);
+}
+/* While filtered the other bands recede but never vanish: the share you picked has to
+   stay readable against the whole estate, which is the point of showing a distribution. */
+.sevbar--dim .sevbar-seg[data-on="false"] { opacity: 0.22; }
+.sevbar-seg--empty { flex: 1; background: repeating-linear-gradient(
+  45deg, transparent, transparent 4px, rgba(0, 0, 0, 0.06) 4px, rgba(0, 0, 0, 0.06) 8px); }
+
+.sevkey-row { display: flex; flex-wrap: wrap; }
+.sevkey-row--toggle { gap: 2px 12px; }
+.sevkey-row--legend { gap: 6px; }
+.sevkey { display: inline-flex; align-items: center; font-weight: 600; }
+/* Legend keys are tinted by their level (a name for a segment); toggle keys stay neutral,
+   so "selected" reads as an interactive state rather than as a severity. The dot margin
+   and the count offset are deliberately per-variant, not shared: the two rows space their
+   dot/word/number differently, and flattening them to one value moves both. */
+.sevkey-row--legend .sevkey {
+  gap: 2px; padding: 1px 8px; font-size: 11px; border-radius: var(--radius-pill);
+}
+.sevkey-row--legend .sevkey-num { margin-left: 4px; }
+.sevkey-row--toggle .sevkey {
+  gap: 6px; padding: 3px 7px; font-size: 12px; border-radius: var(--radius-sm);
+  background: none; border: 1px solid transparent; box-shadow: none; min-height: 0;
+  color: var(--text-2);
+}
+.sevkey-row--toggle .sevkey .sev-dot { margin-right: 0; vertical-align: 0; }
+.sevkey-row--toggle .sevkey-num { color: var(--ink); }
+.sevkey-row--toggle .sevkey:hover { background: var(--wash-hover); border-color: transparent; }
+/* Selected reads as selected without relying on colour: a tick plus the tint. */
+.sevkey-row--toggle .sevkey[aria-pressed="true"] { background: rgba(0, 0, 0, 0.06); color: var(--ink); }
+.sevkey-row--toggle .sevkey[aria-pressed="true"]::after { content: "✓"; font-size: 10px; color: var(--text-3); }
+.sev-CRITICAL { background: rgba(220, 38, 38, 0.14); color: var(--sev-critical-text); }
+.sev-CRITICAL .sev-dot { background: var(--sev-critical); }
+.sev-HIGH { background: rgba(234, 88, 12, 0.14); color: var(--sev-high-text); }
+.sev-HIGH .sev-dot { background: var(--sev-high); }
+.sev-MEDIUM { background: rgba(217, 119, 6, 0.14); color: var(--sev-medium-text); }
+.sev-MEDIUM .sev-dot { background: var(--sev-medium); }
+.sev-LOW { background: rgba(37, 99, 235, 0.14); color: var(--sev-low-text); }
+.sev-LOW .sev-dot { background: var(--sev-low); }
+.sev-INFO { background: rgba(100, 116, 139, 0.14); color: var(--sev-info-text); }
+.sev-INFO .sev-dot { background: var(--sev-info); }
+.sev-UNKNOWN { background: rgba(71, 85, 105, 0.14); color: var(--sev-unknown-text); }
+.sev-UNKNOWN .sev-dot { background: var(--sev-unknown); }
+
+/* AARS chips reuse the severity tokens directly — the AARS scale carries the same
+   values as the Wiz severity scale, and the brand crimson never scores risk. */
+.aars-chip {
+  gap: 5px; border-radius: var(--radius-pill); padding: 2px 9px;
+  font-variant-numeric: tabular-nums;
+}
+.aars-chip .sev-dot { margin-right: 0; }
+
+/* status pills */
+.pill { gap: 6px; border-radius: var(--radius-pill); padding: 2px 9px; }
+.pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.pill.ok { color: var(--ok); background: rgba(21, 128, 61, 0.12); }
+.pill.warn { color: var(--warn); background: rgba(161, 98, 7, 0.12); }
+.pill.bad { color: var(--bad); background: rgba(185, 28, 28, 0.12); }
+.pill.neutral { color: var(--text-2); background: rgba(0, 0, 0, 0.06); }
+
+.domain-chip { font-size: 12px; }
+
+/* severity filter pills */
+.pill-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.sev-pill, .kind-pill {
+  border-radius: var(--radius-pill); padding: 3px 12px; min-height: 0;
+  font-size: 12px; font-weight: 600;
+  background: var(--page); border: 1px solid var(--hairline); box-shadow: none;
+  color: var(--text-2);
+}
+.sev-pill[aria-pressed="true"].sev-CRITICAL { background: rgba(220,38,38,.14); color: var(--sev-critical-text); border-color: rgba(220,38,38,.3); }
+.sev-pill[aria-pressed="true"].sev-HIGH { background: rgba(234,88,12,.14); color: var(--sev-high-text); border-color: rgba(234,88,12,.3); }
+.sev-pill[aria-pressed="true"].sev-MEDIUM { background: rgba(217,119,6,.14); color: var(--sev-medium-text); border-color: rgba(217,119,6,.3); }
+.sev-pill[aria-pressed="true"].sev-LOW { background: rgba(37,99,235,.14); color: var(--sev-low-text); border-color: rgba(37,99,235,.3); }
+.sev-pill[aria-pressed="true"].sev-INFO { background: rgba(100,116,139,.14); color: var(--sev-info-text); border-color: rgba(100,116,139,.3); }
+
+/* Node-type toggle pills: neutral base (shared with .sev-pill), brand crimson when
+   selected. This used to be the LOW severity tint + --sev-low-text — byte-identical to a
+   pressed .sev-pill.sev-LOW two rules above, which sits directly above it in the filter
+   panel, so a selected "AI Agent" and a selected "LOW" were indistinguishable. Selection
+   is an interactive state, not a severity; the accent is the token for that. */
+.kind-pill[aria-pressed="true"] {
+  background: rgba(190, 18, 60, .10); color: var(--accent-hover); border-color: rgba(190, 18, 60, .28);
+}
+.kind-filter { display: flex; flex-direction: column; gap: 12px; }
+.pill-group-label {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
+  color: var(--text-3); margin-bottom: 5px;
+}
+
+/* -------------------------------------------------------------------- help tip */
+/* Hover/focus definition card (ui.js helpTip) — the neutral popover recipe, and the
+   replacement for `title=` anywhere the explanation actually matters. */
+.helptip { position: relative; cursor: help; }
+.helptip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm); }
+.helptip-bubble {
+  position: absolute; left: 0; top: calc(100% + 8px); z-index: var(--z-popover);
+  width: max-content; max-width: 268px; padding: 10px;
+  display: flex; flex-direction: column; gap: 5px;
+  background: var(--page); color: var(--ink);
+  border: 1px solid var(--hairline); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  font-size: 12px; font-weight: 400; line-height: 1.45;
+  letter-spacing: 0; text-transform: none; text-align: left; white-space: normal;
+  opacity: 0; pointer-events: none; transform: translateY(-2px);
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+.helptip-line { display: block; }
+.helptip:hover > .helptip-bubble,
+.helptip:focus-within > .helptip-bubble { opacity: 1; pointer-events: auto; transform: translateY(0); }
+@media (prefers-reduced-motion: reduce) {
+  .helptip-bubble { transition: none; transform: none; }
+  .helptip:hover > .helptip-bubble, .helptip:focus-within > .helptip-bubble { transform: none; }
+}
+
+/* ------------------------------------------------------------------- combobox */
+/* Searchable dropdown (ui.js filterCombobox). The trigger matches the app's field look;
+   the list is portaled to <body> because the panel it lives in scrolls and would clip it. */
+.combobox { position: relative; }
+.combobox-trigger {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  width: 100%; min-height: 36px; padding: 4px 10px;
+  font-family: var(--font); font-size: 0.875rem; font-weight: 400; text-align: left;
+  background: var(--page); color: var(--ink);
+  border: 1px solid var(--hairline); border-radius: var(--radius-md); box-shadow: none;
+}
+.combobox-trigger:hover { background: #f1f1f4; }
+.combobox-trigger-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.combobox-caret { font-size: 0.7rem; color: var(--text-3); flex: 0 0 auto; }
+.combobox-pop {
+  position: fixed; z-index: var(--z-popover);
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 6px; background: var(--page); color: var(--ink);
+  border: 1px solid var(--hairline); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sheet);
+  font-family: var(--font);
+}
+.combobox-search { width: 100%; margin: 0; }
+/* The list scrolls (max-height set inline by position()) so the search input stays pinned. */
+.combobox-list { list-style: none; margin: 0; padding: 2px; overflow-y: auto; }
+.combobox-option {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 6px 8px; border-radius: var(--radius-sm);
+  font-size: 0.8125rem; line-height: 1.3; color: var(--ink); cursor: pointer;
+}
+.combobox-option:hover, .combobox-option.active { background: var(--surface); }
+/* Selected: weight AND color together, never color alone — aria-selected already carries
+   it for assistive tech. */
+.combobox-option[aria-selected="true"] { font-weight: 600; color: var(--accent); }
+.combobox-option-hint { margin-left: auto; font-size: 11px; color: var(--text-3); flex: 0 0 auto; }
+.combobox-option--last-pinned { border-bottom: 1px solid var(--hairline); margin-bottom: 2px; padding-bottom: 8px; }
+.combobox-group {
+  padding: 8px 8px 3px; font-size: 11px; font-weight: 600;
+  letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-3);
+}
+.combobox-empty { padding: 6px 8px; font-size: 0.8125rem; color: var(--text-3); cursor: default; }
+
+/* ------------------------------------------------------------------- segmented */
+/* One joined group of aria-pressed buttons — the exclusive-choice recipe, shared by the
+   Graph|Table view toggle, the Depth stops, and the zoom capsule. aria-pressed (not
+   role=radiogroup) to match the pill vocabulary above: a conformant radiogroup needs a
+   roving tabindex plus arrow cycling, and running two patterns for one visual recipe on
+   one page is exactly the invented-control problem. Pressed reads as weight + surface +
+   an inset hairline, never color alone. */
+.segmented {
+  display: inline-flex; align-items: stretch;
+  border: 1px solid var(--hairline); border-radius: var(--radius-md);
+  background: var(--page); overflow: hidden;
+}
+.segmented > button {
+  min-height: 34px; padding: 4px 12px;
+  border: none; border-radius: 0; box-shadow: none;
+  background: none; color: var(--text-2); font-weight: 500;
+}
+.segmented > button + button { border-left: 1px solid var(--hairline); }
+.segmented > button:hover { background: var(--wash-hover); }
+/* Inset replaces the base button's rest shadow rather than stacking on it — a surface is
+   a whisper or a lift, never both (DESIGN.md, Whisper-Or-Lift). Neutral on purpose: an
+   accent inset would read as the decorative side-stripe the system forbids. */
+.segmented > button[aria-pressed="true"] {
+  background: var(--surface); color: var(--ink); font-weight: 600;
+  box-shadow: inset 0 -2px 0 0 rgba(0, 0, 0, 0.28);
+}
+.segmented > button:focus-visible { outline-offset: -2px; z-index: 1; }
+
+/* A column of placeholder lines (ui/feedback.js skeletonStack). Every loading stub had
+   written this out as an inline flex-column style. */
+.skeleton-stack { display: flex; flex-direction: column; gap: 10px; }
