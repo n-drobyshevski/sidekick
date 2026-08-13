@@ -188,9 +188,12 @@ describe("enrichGraphDoc", () => {
     expect(agentA.aarsInput).toEqual({
       gaps: [{ code: "LLM06" }, { code: "NO_GUARDRAIL" }],
       dataExposure: "SENSITIVE",
-      // Recorded even though the spec rule prices it at 0: pillar D must be re-priceable
-      // from the persisted input, exactly like the gaps beside it.
+      // Recorded even though the spec rule prices them at 0: every axis must be
+      // re-priceable from the persisted input, exactly like the gaps beside it.
       internetExposure: "NONE",
+      // agent-a carries hasHighPrivileges, and gcp-account-01 matches no environment rule.
+      privilege: "HIGH",
+      environment: "UNCLASSIFIED",
     });
   });
 

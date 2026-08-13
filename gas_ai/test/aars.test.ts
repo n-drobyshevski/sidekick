@@ -11,6 +11,7 @@ import {
   AARS_V2_RULE,
   computeAars,
   DEFAULT_AARS_RULE,
+  environmentFor,
   gap,
   gapBreakdown,
   gapPointsFor,
@@ -34,7 +35,7 @@ describe("computeAars — applied table rows", () => {
       gaps: [gap("LLM06"), gap("NO_GUARDRAIL")],
       dataExposure: "SENSITIVE",
     });
-    expect(r.pillars).toEqual({ toxic: 20, compliance: 20, data: 22, exposure: 0 });
+    expect(r.pillars).toEqual({ toxic: 20, compliance: 20, data: 22, exposure: 0, privilege: 0, environment: 0 });
     expect(r.score).toBe(62);
     expect(r.severity).toBe("HIGH");
   });
@@ -66,7 +67,7 @@ describe("computeAars — applied table rows", () => {
       gaps: [gap("LLM06"), gap("LLM05"), gap("NO_GUARDRAIL")],
       dataExposure: "SENSITIVE",
     });
-    expect(r.pillars).toEqual({ toxic: 24, compliance: 25, data: 22, exposure: 0 });
+    expect(r.pillars).toEqual({ toxic: 24, compliance: 25, data: 22, exposure: 0, privilege: 0, environment: 0 });
     expect(r.score).toBe(71);
     expect(r.severity).toBe("CRITICAL");
   });
@@ -77,7 +78,7 @@ describe("computeAars — applied table rows", () => {
       gaps: [gap("LLM06"), gap("ASI10"), gap("NO_GUARDRAIL")],
       dataExposure: "SENSITIVE",
     });
-    expect(r.pillars).toEqual({ toxic: 24, compliance: 30, data: 22, exposure: 0 });
+    expect(r.pillars).toEqual({ toxic: 24, compliance: 30, data: 22, exposure: 0, privilege: 0, environment: 0 });
     expect(r.score).toBe(76);
     expect(r.severity).toBe("CRITICAL");
   });
@@ -88,7 +89,7 @@ describe("computeAars — applied table rows", () => {
       gaps: [gap("LLM04"), gap("LLM06"), gap("NO_GUARDRAIL")],
       dataExposure: "SENSITIVE",
     });
-    expect(r.pillars).toEqual({ toxic: 20, compliance: 25, data: 22, exposure: 0 });
+    expect(r.pillars).toEqual({ toxic: 20, compliance: 25, data: 22, exposure: 0, privilege: 0, environment: 0 });
     expect(r.score).toBe(67);
     expect(r.severity).toBe("HIGH");
   });
@@ -99,7 +100,7 @@ describe("computeAars — applied table rows", () => {
       gaps: [gap("LLM01"), gap("LLM02"), gap("ASI02")],
       dataExposure: "DATA_ACCESS",
     });
-    expect(r.pillars).toEqual({ toxic: 24, compliance: 30, data: 11, exposure: 0 });
+    expect(r.pillars).toEqual({ toxic: 24, compliance: 30, data: 11, exposure: 0, privilege: 0, environment: 0 });
     expect(r.score).toBe(65);
     expect(r.severity).toBe("HIGH");
   });
@@ -110,7 +111,7 @@ describe("computeAars — applied table rows", () => {
       gaps: [gap("ASI03")],
       dataExposure: "DATA_ACCESS",
     });
-    expect(r.pillars).toEqual({ toxic: 8, compliance: 10, data: 11, exposure: 0 });
+    expect(r.pillars).toEqual({ toxic: 8, compliance: 10, data: 11, exposure: 0, privilege: 0, environment: 0 });
     expect(r.score).toBe(29);
     expect(r.severity).toBe("LOW");
   });
@@ -254,6 +255,110 @@ describe("computeAars — multiIssueScaling", () => {
   it("log2 still obeys pillar A's cap", () => {
     expect(computeAars(many(64), tuned({ multiIssueScaling: "log2", pillarACap: 30 })).pillars.toxic)
       .toBe(30);
+  });
+});
+
+// Two axes the model round-tripped from Wiz and then discarded. Both default to zero
+// points, so the applied table above is untouched; these cases pin the OPT-IN behaviour.
+describe("computeAars — privilege as its own axis", () => {
+  const base = {
+    issueSeverities: ["MEDIUM"] as Severity[],
+    gaps: [gap("LLM06"), gap("NO_GUARDRAIL")],
+    dataExposure: "SENSITIVE" as const,
+  };
+  const priced = tuned({ privilegePoints: { ADMIN: 12, HIGH: 6, NONE: 0 } });
+
+  it("scores nothing under the spec rule, whatever the privilege", () => {
+    for (const p of ["ADMIN", "HIGH", "NONE"] as const) {
+      expect(computeAars({ ...base, privilege: p }).score).toBe(62);
+    }
+  });
+
+  it("separates ADMIN from HIGH — the distinction dataExposureOf throws away", () => {
+    expect(computeAars({ ...base, privilege: "ADMIN" }, priced).pillars.privilege).toBe(12);
+    expect(computeAars({ ...base, privilege: "HIGH" }, priced).pillars.privilege).toBe(6);
+    expect(computeAars({ ...base, privilege: "NONE" }, priced).pillars.privilege).toBe(0);
+  });
+
+  it("is independent of the data axis — an asset can be both", () => {
+    // The whole point: under the spec model a SENSITIVE asset's privilege is discarded.
+    const sens = computeAars({ ...base, privilege: "ADMIN" }, priced);
+    const none = computeAars({ ...base, dataExposure: "NONE", privilege: "ADMIN" }, priced);
+    expect(sens.pillars.privilege).toBe(none.pillars.privilege);
+    expect(sens.pillars.data).toBeGreaterThan(none.pillars.data);
+  });
+
+  it("an input with no privilege recorded scores as NONE", () => {
+    expect(computeAars(base, priced).pillars.privilege).toBe(0);
+  });
+});
+
+describe("environmentFor — the account-name cascade", () => {
+  it("classifies the naming conventions the reference tenant actually uses", () => {
+    // Verbatim from gas_ai/exemples/get_ai_agents_reponse.js.
+    expect(environmentFor("dpcp-production-ck-8ytk")).toBe("PROD");
+    expect(environmentFor("dpcp-preproduction-ck-z8g4")).toBe("PREPROD");
+    expect(environmentFor("ai-industry-pp-4yqw")).toBe("PREPROD");
+    expect(environmentFor("sap-nonprodpartner")).toBe("NONPROD");
+    expect(environmentFor("inix-horsprod-n0wq")).toBe("NONPROD");
+  });
+
+  it("puts every negative form ABOVE prod — order is meaning", () => {
+    // "sap-nonprodpartner" and "inix-horsprod-n0wq" both contain "prod".
+    for (const n of ["sap-nonprodpartner", "inix-horsprod-n0wq", "x-non-prod-y"]) {
+      expect(environmentFor(n)).toBe("NONPROD");
+    }
+    expect(environmentFor("dpcp-preproduction-ck-z8g4")).not.toBe("PROD");
+  });
+
+  it("leaves an unmatched account UNCLASSIFIED rather than guessing", () => {
+    for (const n of ["shipperbox", "aigovernance-gr6d", "", undefined]) {
+      expect(environmentFor(n)).toBe("UNCLASSIFIED");
+    }
+  });
+
+  it("matches case-insensitively", () => {
+    expect(environmentFor("DPCP-PRODUCTION-CK")).toBe("PROD");
+  });
+
+  it("skips an unparseable regex row instead of throwing the whole sync", () => {
+    const rule = tuned({
+      environmentRules: [
+        { match: "regex", pattern: "([unclosed", environment: "DEV" },
+        { match: "contains", pattern: "prod", environment: "PROD" },
+      ],
+    });
+    expect(environmentFor("my-prod-account", rule)).toBe("PROD");
+  });
+});
+
+describe("computeAars — environment", () => {
+  const base = {
+    issueSeverities: ["MEDIUM"] as Severity[],
+    gaps: [gap("LLM06"), gap("NO_GUARDRAIL")],
+    dataExposure: "SENSITIVE" as const,
+  };
+
+  it("scores nothing under the spec rule — agent-F and agent-F-preprod stay equal", () => {
+    expect(computeAars({ ...base, environment: "PROD" }).score).toBe(62);
+    expect(computeAars({ ...base, environment: "PREPROD" }).score).toBe(62);
+  });
+
+  it("separates them once priced", () => {
+    const rule = tuned({
+      environmentPoints: { PROD: 10, PREPROD: 4, NONPROD: 2, DEV: 0, UNCLASSIFIED: 0 },
+    });
+    expect(computeAars({ ...base, environment: "PROD" }, rule).score).toBe(72);
+    expect(computeAars({ ...base, environment: "PREPROD" }, rule).score).toBe(66);
+  });
+
+  it("refuses to price UNCLASSIFIED, however the rule is edited", () => {
+    // Points on "we could not tell" would score ignorance. cleanAarsRule pins it at 0.
+    const rule = tuned({
+      environmentPoints: { PROD: 10, PREPROD: 4, NONPROD: 2, DEV: 1, UNCLASSIFIED: 25 },
+    });
+    expect(rule.environmentPoints.UNCLASSIFIED).toBe(0);
+    expect(computeAars({ ...base, environment: "UNCLASSIFIED" }, rule).score).toBe(62);
   });
 });
 

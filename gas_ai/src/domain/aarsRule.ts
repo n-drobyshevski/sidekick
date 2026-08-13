@@ -16,9 +16,13 @@ import {
   type GapMatch,
   type GapPointRule,
   type GapSources,
+  type EnvMatch,
+  type Environment,
+  type EnvironmentRule,
   type InternetExposure,
   type IssueSeverityKey,
   type MultiIssueScaling,
+  type PrivilegeLevel,
 } from "./aars";
 import { clampInt } from "./util";
 
@@ -33,10 +37,15 @@ export const BAND_MAX = 100;
 export const CODE_MAX_LEN = 64;
 /** Cap on cascade rows: the whole rule lives in ONE `value_json` cell (~50k char limit). */
 export const MAX_GAP_RULES = 60;
+/** Same cell, same reason. Account-naming conventions need far fewer rows than gap codes. */
+export const MAX_ENV_RULES = 30;
+export const ENV_PATTERN_MAX_LEN = 120;
 
 const SEVERITY_KEYS: IssueSeverityKey[] = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
 const EXPOSURE_KEYS: DataExposure[] = ["SENSITIVE", "DATA_ACCESS", "NONE"];
 const INTERNET_EXPOSURE_KEYS: InternetExposure[] = ["CONFIRMED", "UNDETERMINED", "NONE"];
+const PRIVILEGE_KEYS: PrivilegeLevel[] = ["ADMIN", "HIGH", "NONE"];
+const ENVIRONMENT_KEYS: Environment[] = ["PROD", "PREPROD", "NONPROD", "DEV", "UNCLASSIFIED"];
 const BAND_KEYS: Array<keyof AarsBands> = ["critical", "high", "medium", "low"];
 const BAND_LABELS: Record<keyof AarsBands, string> = {
   critical: "CRITICAL",
@@ -69,6 +78,19 @@ function clampWeight(v: unknown, fallback: number): number {
   if (!Number.isFinite(n)) return fallback;
   const rounded = Math.round(n * 100) / 100;
   return Math.min(WEIGHT_MAX, Math.max(WEIGHT_MIN, rounded));
+}
+
+/** One environment row, or null when it carries no usable pattern. */
+function cleanEnvironmentRule(v: unknown): EnvironmentRule | null {
+  const raw = rec(v);
+  const pattern = String(raw["pattern"] ?? "").trim().slice(0, ENV_PATTERN_MAX_LEN);
+  if (!pattern) return null;
+  const match: EnvMatch = raw["match"] === "regex" ? "regex" : "contains";
+  const env = String(raw["environment"] ?? "").trim().toUpperCase();
+  // An unrecognised environment is dropped rather than defaulted: silently filing an
+  // asset under the wrong environment is worse than not classifying it.
+  if (!(ENVIRONMENT_KEYS as string[]).includes(env) || env === "UNCLASSIFIED") return null;
+  return { match, pattern, environment: env as Environment };
 }
 
 export function cleanGapCode(v: unknown): string {
@@ -136,6 +158,37 @@ export function cleanAarsRule(raw: unknown): AarsRule {
     );
   }
 
+  const privRaw = rec(r["privilegePoints"]);
+  const privilegePoints = {} as Record<PrivilegeLevel, number>;
+  for (const k of PRIVILEGE_KEYS) {
+    privilegePoints[k] = clampInt(
+      privRaw[k],
+      DEFAULT_AARS_RULE.privilegePoints[k],
+      POINTS_MIN,
+      POINTS_MAX,
+    );
+  }
+
+  const envRulesRaw = Array.isArray(r["environmentRules"]) ? (r["environmentRules"] as unknown[]) : null;
+  const environmentRules = envRulesRaw
+    ? envRulesRaw.map(cleanEnvironmentRule).filter((e): e is EnvironmentRule => e !== null)
+        .slice(0, MAX_ENV_RULES)
+    : DEFAULT_AARS_RULE.environmentRules.map((e) => ({ ...e }));
+
+  const envPtsRaw = rec(r["environmentPoints"]);
+  const environmentPoints = {} as Record<Environment, number>;
+  for (const k of ENVIRONMENT_KEYS) {
+    environmentPoints[k] = clampInt(
+      envPtsRaw[k],
+      DEFAULT_AARS_RULE.environmentPoints[k],
+      POINTS_MIN,
+      POINTS_MAX,
+    );
+  }
+  // Not an operator choice. An asset no rule matched must score exactly as it would have
+  // before environments existed — pricing "we could not tell" would put points on ignorance.
+  environmentPoints.UNCLASSIFIED = 0;
+
   const bandRaw = rec(r["bands"]);
   const bands = {} as AarsBands;
   for (const k of BAND_KEYS) {
@@ -174,6 +227,9 @@ export function cleanAarsRule(raw: unknown): AarsRule {
     dataExposurePoints,
     dataAmplifier: clampMultiplier(r["dataAmplifier"], DEFAULT_AARS_RULE.dataAmplifier),
     exposurePoints,
+    privilegePoints,
+    environmentRules,
+    environmentPoints,
     bands,
   };
 }

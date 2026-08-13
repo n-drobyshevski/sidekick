@@ -1409,6 +1409,24 @@ var Server = (() => {
     // Pillar D is OFF in the spec rule. The doc reports internet exposure beside the score
     // but never adds it to one, so scoring it here would change every published number.
     exposurePoints: { CONFIRMED: 0, UNDETERMINED: 0, NONE: 0 },
+    privilegePoints: { ADMIN: 0, HIGH: 0, NONE: 0 },
+    // A suggested cascade, not an assertion: these are the conventions the reference tenant
+    // actually uses, and an operator whose accounts are named differently gets UNCLASSIFIED
+    // everywhere until they edit it. Order is load-bearing — every negative form has to sit
+    // above `prod`, or "sap-nonprodpartner" and "inix-horsprod-n0wq" classify as production.
+    environmentRules: [
+      { match: "contains", pattern: "nonprod", environment: "NONPROD" },
+      { match: "contains", pattern: "non-prod", environment: "NONPROD" },
+      { match: "contains", pattern: "horsprod", environment: "NONPROD" },
+      { match: "contains", pattern: "preprod", environment: "PREPROD" },
+      { match: "contains", pattern: "pre-prod", environment: "PREPROD" },
+      { match: "regex", pattern: "(^|[^a-z])pp([^a-z]|$)", environment: "PREPROD" },
+      { match: "regex", pattern: "(^|[^a-z])(dev|test|sandbox|poc|demo)([^a-z]|$)", environment: "DEV" },
+      { match: "contains", pattern: "prod", environment: "PROD" }
+    ],
+    // All zero: the applied table in ai/custom_score.md scores agent-F and agent-F-preprod
+    // identically, and the default rule must keep reproducing it.
+    environmentPoints: { PROD: 0, PREPROD: 0, NONPROD: 0, DEV: 0, UNCLASSIFIED: 0 },
     bands: { critical: 70, high: 50, medium: 30, low: 10 }
   };
   var AARS_V2_RULE = {
@@ -1436,6 +1454,12 @@ var Server = (() => {
     dataExposurePoints: { SENSITIVE: 12, DATA_ACCESS: 6, NONE: 0 },
     dataAmplifier: 1,
     exposurePoints: { CONFIRMED: 18, UNDETERMINED: 7, NONE: 0 },
+    // v2's caps already sum to exactly 100, so it has no budget for the privilege and
+    // environment axes. It stays as published — a calibrated model for the signal set that
+    // existed when it was written. The newer axes are v3's to spend.
+    privilegePoints: { ADMIN: 0, HIGH: 0, NONE: 0 },
+    environmentRules: DEFAULT_AARS_RULE.environmentRules.map((e) => ({ ...e })),
+    environmentPoints: { PROD: 0, PREPROD: 0, NONPROD: 0, DEV: 0, UNCLASSIFIED: 0 },
     bands: { critical: 70, high: 50, medium: 30, low: 10 }
   };
   var AARS_MAX_SCORE = 100;
@@ -1446,6 +1470,27 @@ var Server = (() => {
       if (hit) return row.points;
     }
     return rule.gapFallbackPoints;
+  }
+  function environmentFor(accountName, rule = DEFAULT_AARS_RULE) {
+    var _a4;
+    const name = String(accountName != null ? accountName : "").trim().toLowerCase();
+    if (!name) return "UNCLASSIFIED";
+    for (const row of rule.environmentRules) {
+      const p = String((_a4 = row.pattern) != null ? _a4 : "").trim().toLowerCase();
+      if (!p) continue;
+      if (row.match === "regex") {
+        let re;
+        try {
+          re = new RegExp(p);
+        } catch {
+          continue;
+        }
+        if (re.test(name)) return row.environment;
+      } else if (name.indexOf(p) >= 0) {
+        return row.environment;
+      }
+    }
+    return "UNCLASSIFIED";
   }
   function gap(code, points) {
     return points === void 0 ? { code } : { code, points };
@@ -1480,7 +1525,7 @@ var Server = (() => {
     return points.reduce((acc, p) => acc + p, 0);
   }
   function computeAars(input, rule = DEFAULT_AARS_RULE) {
-    var _a4, _b, _c;
+    var _a4, _b, _c, _d, _e, _f, _g;
     let toxic = worstSeverityPoints(input.issueSeverities, rule);
     toxic *= multiIssueFactor(input.issueSeverities.length, rule);
     toxic = Math.min(rule.pillarACap, Math.round(toxic));
@@ -1496,11 +1541,16 @@ var Server = (() => {
     );
     const data = Math.round(((_a4 = rule.dataExposurePoints[input.dataExposure]) != null ? _a4 : 0) * rule.dataAmplifier);
     const exposure = (_c = rule.exposurePoints[(_b = input.internetExposure) != null ? _b : "NONE"]) != null ? _c : 0;
-    const score2 = Math.min(AARS_MAX_SCORE, toxic + compliance + data + exposure);
+    const privilege = (_e = rule.privilegePoints[(_d = input.privilege) != null ? _d : "NONE"]) != null ? _e : 0;
+    const environment = (_g = rule.environmentPoints[(_f = input.environment) != null ? _f : "UNCLASSIFIED"]) != null ? _g : 0;
+    const score2 = Math.min(
+      AARS_MAX_SCORE,
+      toxic + compliance + data + exposure + privilege + environment
+    );
     return {
       score: score2,
       severity: aarsSeverity(score2, rule.bands),
-      pillars: { toxic, compliance, data, exposure }
+      pillars: { toxic, compliance, data, exposure, privilege, environment }
     };
   }
   function gapBreakdown(gaps, rule = DEFAULT_AARS_RULE) {
@@ -1525,9 +1575,13 @@ var Server = (() => {
   var BAND_MAX = 100;
   var CODE_MAX_LEN = 64;
   var MAX_GAP_RULES = 60;
+  var MAX_ENV_RULES = 30;
+  var ENV_PATTERN_MAX_LEN = 120;
   var SEVERITY_KEYS = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
   var EXPOSURE_KEYS = ["SENSITIVE", "DATA_ACCESS", "NONE"];
   var INTERNET_EXPOSURE_KEYS = ["CONFIRMED", "UNDETERMINED", "NONE"];
+  var PRIVILEGE_KEYS = ["ADMIN", "HIGH", "NONE"];
+  var ENVIRONMENT_KEYS = ["PROD", "PREPROD", "NONPROD", "DEV", "UNCLASSIFIED"];
   var BAND_KEYS = ["critical", "high", "medium", "low"];
   var BAND_LABELS = {
     critical: "CRITICAL",
@@ -1549,6 +1603,16 @@ var Server = (() => {
     if (!Number.isFinite(n)) return fallback;
     const rounded = Math.round(n * 100) / 100;
     return Math.min(WEIGHT_MAX, Math.max(WEIGHT_MIN, rounded));
+  }
+  function cleanEnvironmentRule(v) {
+    var _a4, _b;
+    const raw = rec(v);
+    const pattern = String((_a4 = raw["pattern"]) != null ? _a4 : "").trim().slice(0, ENV_PATTERN_MAX_LEN);
+    if (!pattern) return null;
+    const match = raw["match"] === "regex" ? "regex" : "contains";
+    const env = String((_b = raw["environment"]) != null ? _b : "").trim().toUpperCase();
+    if (!ENVIRONMENT_KEYS.includes(env) || env === "UNCLASSIFIED") return null;
+    return { match, pattern, environment: env };
   }
   function cleanGapCode(v) {
     return String(v != null ? v : "").trim().toUpperCase().slice(0, CODE_MAX_LEN);
@@ -1601,6 +1665,29 @@ var Server = (() => {
         POINTS_MAX
       );
     }
+    const privRaw = rec(r["privilegePoints"]);
+    const privilegePoints = {};
+    for (const k of PRIVILEGE_KEYS) {
+      privilegePoints[k] = clampInt(
+        privRaw[k],
+        DEFAULT_AARS_RULE.privilegePoints[k],
+        POINTS_MIN,
+        POINTS_MAX
+      );
+    }
+    const envRulesRaw = Array.isArray(r["environmentRules"]) ? r["environmentRules"] : null;
+    const environmentRules = envRulesRaw ? envRulesRaw.map(cleanEnvironmentRule).filter((e) => e !== null).slice(0, MAX_ENV_RULES) : DEFAULT_AARS_RULE.environmentRules.map((e) => ({ ...e }));
+    const envPtsRaw = rec(r["environmentPoints"]);
+    const environmentPoints = {};
+    for (const k of ENVIRONMENT_KEYS) {
+      environmentPoints[k] = clampInt(
+        envPtsRaw[k],
+        DEFAULT_AARS_RULE.environmentPoints[k],
+        POINTS_MIN,
+        POINTS_MAX
+      );
+    }
+    environmentPoints.UNCLASSIFIED = 0;
     const bandRaw = rec(r["bands"]);
     const bands = {};
     for (const k of BAND_KEYS) {
@@ -1632,6 +1719,9 @@ var Server = (() => {
       dataExposurePoints,
       dataAmplifier: clampMultiplier(r["dataAmplifier"], DEFAULT_AARS_RULE.dataAmplifier),
       exposurePoints,
+      privilegePoints,
+      environmentRules,
+      environmentPoints,
       bands
     };
   }
@@ -3359,7 +3449,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "26b7de64c11c" : "dev";
+  var BUILD_ID = true ? "e458571bcdbc" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -3956,6 +4046,15 @@ var Server = (() => {
     if (node2.hasHighPrivileges || node2.hasAdminPrivileges) return "DATA_ACCESS";
     return "NONE";
   }
+  function privilegeOf(node2) {
+    if (node2.hasAdminPrivileges === true) return "ADMIN";
+    if (node2.hasHighPrivileges === true) return "HIGH";
+    return "NONE";
+  }
+  function environmentOf(node2, rule = DEFAULT_AARS_RULE) {
+    var _a4;
+    return environmentFor((_a4 = node2.cloudAccount) == null ? void 0 : _a4.name, rule);
+  }
   function internetExposureOf(node2) {
     const state = conditionState(node2, "INTERNET_EXPOSURE");
     if (state === true) return "CONFIRMED";
@@ -3987,7 +4086,9 @@ var Server = (() => {
       issueSeverities: nodeIssues.map((i) => i.nativeSeverity),
       gaps,
       dataExposure,
-      internetExposure: internetExposureOf(node2)
+      internetExposure: internetExposureOf(node2),
+      privilege: privilegeOf(node2),
+      environment: environmentOf(node2, rule)
     };
   }
   function weightedGap(code, severity, rule) {
@@ -4029,7 +4130,9 @@ var Server = (() => {
       hints[resourceId] = {
         gaps,
         dataExposure: base.dataExposure,
-        internetExposure: base.internetExposure
+        internetExposure: base.internetExposure,
+        privilege: base.privilege,
+        environment: base.environment
       };
     }
     return hints;
@@ -4038,7 +4141,7 @@ var Server = (() => {
     const open = issues2.filter((i) => i.status === "OPEN");
     const byAsset = groupBy(open, (i) => i.assetId);
     const nodes = doc.nodes.map((raw) => {
-      var _a4, _b;
+      var _a4, _b, _c, _d;
       const node2 = { ...raw };
       const nodeIssues = (_a4 = byAsset.get(node2.id)) != null ? _a4 : [];
       if (nodeIssues.length) {
@@ -4055,9 +4158,11 @@ var Server = (() => {
         const input = hint ? {
           issueSeverities: nodeIssues.map((i) => i.nativeSeverity),
           ...hint,
-          // A hint written before pillar D existed carries no exposure; re-derive it
-          // rather than let `undefined` read as NONE.
-          internetExposure: (_b = hint.internetExposure) != null ? _b : internetExposureOf(node2)
+          // A hint written before these axes existed carries none of them; re-derive
+          // rather than let `undefined` read as "nothing here".
+          internetExposure: (_b = hint.internetExposure) != null ? _b : internetExposureOf(node2),
+          privilege: (_c = hint.privilege) != null ? _c : privilegeOf(node2),
+          environment: (_d = hint.environment) != null ? _d : environmentOf(node2, rule)
         } : deriveAarsInput(node2, nodeIssues, rule);
         const result = computeAars(input, rule);
         node2.aars = result.score;
@@ -4066,7 +4171,9 @@ var Server = (() => {
         node2.aarsInput = {
           gaps: input.gaps,
           dataExposure: input.dataExposure,
-          internetExposure: input.internetExposure
+          internetExposure: input.internetExposure,
+          privilege: input.privilege,
+          environment: input.environment
         };
       }
       return node2;

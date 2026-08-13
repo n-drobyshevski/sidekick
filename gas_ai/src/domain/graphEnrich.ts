@@ -5,14 +5,17 @@
 import {
   computeAars,
   DEFAULT_AARS_RULE,
+  environmentFor,
   gap,
   gapPointsFor,
   type AarsGap,
   type AarsInput,
   type AarsRule,
   type DataExposure,
+  type Environment,
   type InternetExposure,
   type IssueSeverityKey,
+  type PrivilegeLevel,
 } from "./aars";
 import type { Severity } from "./config";
 import { conditionHolds, conditionState } from "./riskConditions";
@@ -39,6 +42,10 @@ export interface AarsHint {
    * does not silently declare the whole estate unreachable.
    */
   internetExposure?: InternetExposure;
+  /** Same contract as `internetExposure`: absent means "not recorded", not "NONE". */
+  privilege?: PrivilegeLevel;
+  /** Same contract again — absent re-derives rather than reading as UNCLASSIFIED. */
+  environment?: Environment;
 }
 export type AarsHints = Record<string, AarsHint>;
 
@@ -72,6 +79,34 @@ export function dataExposureOf(node: GNode): DataExposure {
  * `null` — reachability inherited from the underlying compute and never evaluated — maps to
  * UNDETERMINED, never to CONFIRMED and never to NONE.
  */
+/**
+ * Effective privilege as its own axis. ADMIN wins over HIGH — the same precedence
+ * withExcessivePrivilegeNodes already uses for its label ("Admin privileges" beats
+ * "Excessive rights"), so the score and the graph agree about which claim is stronger.
+ *
+ * Deliberately NOT folded into dataExposureOf: that function answers "what data can this
+ * reach", this one answers "what can it do", and collapsing them is why `hasAdminPrivileges`
+ * has never changed a score.
+ */
+export function privilegeOf(node: GNode): PrivilegeLevel {
+  if (node.hasAdminPrivileges === true) return "ADMIN";
+  if (node.hasHighPrivileges === true) return "HIGH";
+  return "NONE";
+}
+
+/**
+ * Deployment environment from the asset's cloud-account name, through the rule's cascade.
+ *
+ * The account name is the only environment signal the tenant actually carries — Wiz has no
+ * environment field on a cloud resource — and it is already fetched and persisted
+ * (`ai_assets.account_name`), so this costs nothing. It is a rule rather than a constant
+ * because naming conventions are tenant property: an estate whose accounts are named
+ * differently gets UNCLASSIFIED everywhere, which scores exactly as before.
+ */
+export function environmentOf(node: GNode, rule: AarsRule = DEFAULT_AARS_RULE): Environment {
+  return environmentFor(node.cloudAccount?.name, rule);
+}
+
 export function internetExposureOf(node: GNode): InternetExposure {
   const state = conditionState(node, "INTERNET_EXPOSURE");
   if (state === true) return "CONFIRMED";
@@ -119,6 +154,8 @@ export function deriveAarsInput(
     gaps,
     dataExposure,
     internetExposure: internetExposureOf(node),
+    privilege: privilegeOf(node),
+    environment: environmentOf(node, rule),
   };
 }
 
@@ -189,6 +226,8 @@ export function buildAarsHintsFromFindings(
       gaps,
       dataExposure: base.dataExposure,
       internetExposure: base.internetExposure,
+      privilege: base.privilege,
+      environment: base.environment,
     };
   }
   return hints;
@@ -231,9 +270,11 @@ export function enrichGraphDoc(
         ? {
             issueSeverities: nodeIssues.map((i) => i.nativeSeverity),
             ...hint,
-            // A hint written before pillar D existed carries no exposure; re-derive it
-            // rather than let `undefined` read as NONE.
+            // A hint written before these axes existed carries none of them; re-derive
+            // rather than let `undefined` read as "nothing here".
             internetExposure: hint.internetExposure ?? internetExposureOf(node),
+            privilege: hint.privilege ?? privilegeOf(node),
+            environment: hint.environment ?? environmentOf(node, rule),
           }
         : deriveAarsInput(node, nodeIssues, rule);
       const result = computeAars(input, rule);
@@ -246,6 +287,8 @@ export function enrichGraphDoc(
         gaps: input.gaps,
         dataExposure: input.dataExposure,
         internetExposure: input.internetExposure,
+        privilege: input.privilege,
+        environment: input.environment,
       };
     }
     return node;

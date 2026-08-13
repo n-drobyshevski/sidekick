@@ -197,6 +197,55 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
           "NONE": 0,
           "SENSITIVE": 20,
         },
+        "environmentPoints": {
+          "DEV": 0,
+          "NONPROD": 0,
+          "PREPROD": 0,
+          "PROD": 0,
+          "UNCLASSIFIED": 0,
+        },
+        "environmentRules": [
+          {
+            "environment": "NONPROD",
+            "match": "contains",
+            "pattern": "nonprod",
+          },
+          {
+            "environment": "NONPROD",
+            "match": "contains",
+            "pattern": "non-prod",
+          },
+          {
+            "environment": "NONPROD",
+            "match": "contains",
+            "pattern": "horsprod",
+          },
+          {
+            "environment": "PREPROD",
+            "match": "contains",
+            "pattern": "preprod",
+          },
+          {
+            "environment": "PREPROD",
+            "match": "contains",
+            "pattern": "pre-prod",
+          },
+          {
+            "environment": "PREPROD",
+            "match": "regex",
+            "pattern": "(^|[^a-z])pp([^a-z]|$)",
+          },
+          {
+            "environment": "DEV",
+            "match": "regex",
+            "pattern": "(^|[^a-z])(dev|test|sandbox|poc|demo)([^a-z]|$)",
+          },
+          {
+            "environment": "PROD",
+            "match": "contains",
+            "pattern": "prod",
+          },
+        ],
         "exposurePoints": {
           "CONFIRMED": 0,
           "NONE": 0,
@@ -266,6 +315,11 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
         "multiIssueScaling": "flat",
         "pillarACap": 50,
         "pillarBCap": 30,
+        "privilegePoints": {
+          "ADMIN": 0,
+          "HIGH": 0,
+          "NONE": 0,
+        },
         "severityPoints": {
           "CRITICAL": 50,
           "HIGH": 35,
@@ -295,6 +349,55 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
             "NONE": 0,
             "SENSITIVE": 12,
           },
+          "environmentPoints": {
+            "DEV": 0,
+            "NONPROD": 0,
+            "PREPROD": 0,
+            "PROD": 0,
+            "UNCLASSIFIED": 0,
+          },
+          "environmentRules": [
+            {
+              "environment": "NONPROD",
+              "match": "contains",
+              "pattern": "nonprod",
+            },
+            {
+              "environment": "NONPROD",
+              "match": "contains",
+              "pattern": "non-prod",
+            },
+            {
+              "environment": "NONPROD",
+              "match": "contains",
+              "pattern": "horsprod",
+            },
+            {
+              "environment": "PREPROD",
+              "match": "contains",
+              "pattern": "preprod",
+            },
+            {
+              "environment": "PREPROD",
+              "match": "contains",
+              "pattern": "pre-prod",
+            },
+            {
+              "environment": "PREPROD",
+              "match": "regex",
+              "pattern": "(^|[^a-z])pp([^a-z]|$)",
+            },
+            {
+              "environment": "DEV",
+              "match": "regex",
+              "pattern": "(^|[^a-z])(dev|test|sandbox|poc|demo)([^a-z]|$)",
+            },
+            {
+              "environment": "PROD",
+              "match": "contains",
+              "pattern": "prod",
+            },
+          ],
           "exposurePoints": {
             "CONFIRMED": 18,
             "NONE": 0,
@@ -369,6 +472,11 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
           "multiIssueScaling": "log2",
           "pillarACap": 45,
           "pillarBCap": 25,
+          "privilegePoints": {
+            "ADMIN": 0,
+            "HIGH": 0,
+            "NONE": 0,
+          },
           "severityPoints": {
             "CRITICAL": 40,
             "HIGH": 28,
@@ -390,6 +498,55 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
           "NONE": 0,
           "SENSITIVE": 20,
         },
+        "environmentPoints": {
+          "DEV": 0,
+          "NONPROD": 0,
+          "PREPROD": 0,
+          "PROD": 0,
+          "UNCLASSIFIED": 0,
+        },
+        "environmentRules": [
+          {
+            "environment": "NONPROD",
+            "match": "contains",
+            "pattern": "nonprod",
+          },
+          {
+            "environment": "NONPROD",
+            "match": "contains",
+            "pattern": "non-prod",
+          },
+          {
+            "environment": "NONPROD",
+            "match": "contains",
+            "pattern": "horsprod",
+          },
+          {
+            "environment": "PREPROD",
+            "match": "contains",
+            "pattern": "preprod",
+          },
+          {
+            "environment": "PREPROD",
+            "match": "contains",
+            "pattern": "pre-prod",
+          },
+          {
+            "environment": "PREPROD",
+            "match": "regex",
+            "pattern": "(^|[^a-z])pp([^a-z]|$)",
+          },
+          {
+            "environment": "DEV",
+            "match": "regex",
+            "pattern": "(^|[^a-z])(dev|test|sandbox|poc|demo)([^a-z]|$)",
+          },
+          {
+            "environment": "PROD",
+            "match": "contains",
+            "pattern": "prod",
+          },
+        ],
         "exposurePoints": {
           "CONFIRMED": 0,
           "NONE": 0,
@@ -459,6 +616,11 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
         "multiIssueScaling": "flat",
         "pillarACap": 50,
         "pillarBCap": 30,
+        "privilegePoints": {
+          "ADMIN": 0,
+          "HIGH": 0,
+          "NONE": 0,
+        },
         "severityPoints": {
           "CRITICAL": 50,
           "HIGH": 35,
@@ -1108,6 +1270,55 @@ exports[`read endpoints > getAarsRule answers the same shape 1`] = `
         "NONE": 0,
         "SENSITIVE": 20,
       },
+      "environmentPoints": {
+        "DEV": 0,
+        "NONPROD": 0,
+        "PREPROD": 0,
+        "PROD": 0,
+        "UNCLASSIFIED": 0,
+      },
+      "environmentRules": [
+        {
+          "environment": "NONPROD",
+          "match": "contains",
+          "pattern": "nonprod",
+        },
+        {
+          "environment": "NONPROD",
+          "match": "contains",
+          "pattern": "non-prod",
+        },
+        {
+          "environment": "NONPROD",
+          "match": "contains",
+          "pattern": "horsprod",
+        },
+        {
+          "environment": "PREPROD",
+          "match": "contains",
+          "pattern": "preprod",
+        },
+        {
+          "environment": "PREPROD",
+          "match": "contains",
+          "pattern": "pre-prod",
+        },
+        {
+          "environment": "PREPROD",
+          "match": "regex",
+          "pattern": "(^|[^a-z])pp([^a-z]|$)",
+        },
+        {
+          "environment": "DEV",
+          "match": "regex",
+          "pattern": "(^|[^a-z])(dev|test|sandbox|poc|demo)([^a-z]|$)",
+        },
+        {
+          "environment": "PROD",
+          "match": "contains",
+          "pattern": "prod",
+        },
+      ],
       "exposurePoints": {
         "CONFIRMED": 0,
         "NONE": 0,
@@ -1177,6 +1388,11 @@ exports[`read endpoints > getAarsRule answers the same shape 1`] = `
       "multiIssueScaling": "flat",
       "pillarACap": 50,
       "pillarBCap": 30,
+      "privilegePoints": {
+        "ADMIN": 0,
+        "HIGH": 0,
+        "NONE": 0,
+      },
       "severityPoints": {
         "CRITICAL": 50,
         "HIGH": 35,
@@ -1206,6 +1422,55 @@ exports[`read endpoints > getAarsRule answers the same shape 1`] = `
           "NONE": 0,
           "SENSITIVE": 12,
         },
+        "environmentPoints": {
+          "DEV": 0,
+          "NONPROD": 0,
+          "PREPROD": 0,
+          "PROD": 0,
+          "UNCLASSIFIED": 0,
+        },
+        "environmentRules": [
+          {
+            "environment": "NONPROD",
+            "match": "contains",
+            "pattern": "nonprod",
+          },
+          {
+            "environment": "NONPROD",
+            "match": "contains",
+            "pattern": "non-prod",
+          },
+          {
+            "environment": "NONPROD",
+            "match": "contains",
+            "pattern": "horsprod",
+          },
+          {
+            "environment": "PREPROD",
+            "match": "contains",
+            "pattern": "preprod",
+          },
+          {
+            "environment": "PREPROD",
+            "match": "contains",
+            "pattern": "pre-prod",
+          },
+          {
+            "environment": "PREPROD",
+            "match": "regex",
+            "pattern": "(^|[^a-z])pp([^a-z]|$)",
+          },
+          {
+            "environment": "DEV",
+            "match": "regex",
+            "pattern": "(^|[^a-z])(dev|test|sandbox|poc|demo)([^a-z]|$)",
+          },
+          {
+            "environment": "PROD",
+            "match": "contains",
+            "pattern": "prod",
+          },
+        ],
         "exposurePoints": {
           "CONFIRMED": 18,
           "NONE": 0,
@@ -1280,6 +1545,11 @@ exports[`read endpoints > getAarsRule answers the same shape 1`] = `
         "multiIssueScaling": "log2",
         "pillarACap": 45,
         "pillarBCap": 25,
+        "privilegePoints": {
+          "ADMIN": 0,
+          "HIGH": 0,
+          "NONE": 0,
+        },
         "severityPoints": {
           "CRITICAL": 40,
           "HIGH": 28,
@@ -1301,6 +1571,55 @@ exports[`read endpoints > getAarsRule answers the same shape 1`] = `
         "NONE": 0,
         "SENSITIVE": 20,
       },
+      "environmentPoints": {
+        "DEV": 0,
+        "NONPROD": 0,
+        "PREPROD": 0,
+        "PROD": 0,
+        "UNCLASSIFIED": 0,
+      },
+      "environmentRules": [
+        {
+          "environment": "NONPROD",
+          "match": "contains",
+          "pattern": "nonprod",
+        },
+        {
+          "environment": "NONPROD",
+          "match": "contains",
+          "pattern": "non-prod",
+        },
+        {
+          "environment": "NONPROD",
+          "match": "contains",
+          "pattern": "horsprod",
+        },
+        {
+          "environment": "PREPROD",
+          "match": "contains",
+          "pattern": "preprod",
+        },
+        {
+          "environment": "PREPROD",
+          "match": "contains",
+          "pattern": "pre-prod",
+        },
+        {
+          "environment": "PREPROD",
+          "match": "regex",
+          "pattern": "(^|[^a-z])pp([^a-z]|$)",
+        },
+        {
+          "environment": "DEV",
+          "match": "regex",
+          "pattern": "(^|[^a-z])(dev|test|sandbox|poc|demo)([^a-z]|$)",
+        },
+        {
+          "environment": "PROD",
+          "match": "contains",
+          "pattern": "prod",
+        },
+      ],
       "exposurePoints": {
         "CONFIRMED": 0,
         "NONE": 0,
@@ -1370,6 +1689,11 @@ exports[`read endpoints > getAarsRule answers the same shape 1`] = `
       "multiIssueScaling": "flat",
       "pillarACap": 50,
       "pillarBCap": 30,
+      "privilegePoints": {
+        "ADMIN": 0,
+        "HIGH": 0,
+        "NONE": 0,
+      },
       "severityPoints": {
         "CRITICAL": 50,
         "HIGH": 35,
@@ -4728,6 +5052,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "aars": 62,
         "aarsInput": {
           "dataExposure": "SENSITIVE",
+          "environment": "UNCLASSIFIED",
           "gaps": [
             {
               "code": "LLM06",
@@ -4737,11 +5062,14 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
             },
           ],
           "internetExposure": "NONE",
+          "privilege": "HIGH",
         },
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
+          "environment": 0,
           "exposure": 0,
+          "privilege": 0,
           "toxic": 20,
         },
         "aarsSeverity": "HIGH",
@@ -4787,6 +5115,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "aars": 62,
         "aarsInput": {
           "dataExposure": "SENSITIVE",
+          "environment": "UNCLASSIFIED",
           "gaps": [
             {
               "code": "LLM06",
@@ -4796,11 +5125,14 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
             },
           ],
           "internetExposure": "NONE",
+          "privilege": "HIGH",
         },
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
+          "environment": 0,
           "exposure": 0,
+          "privilege": 0,
           "toxic": 20,
         },
         "aarsSeverity": "HIGH",
@@ -4846,6 +5178,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "aars": 76,
         "aarsInput": {
           "dataExposure": "SENSITIVE",
+          "environment": "UNCLASSIFIED",
           "gaps": [
             {
               "code": "LLM06",
@@ -4858,11 +5191,14 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
             },
           ],
           "internetExposure": "NONE",
+          "privilege": "ADMIN",
         },
         "aarsPillars": {
           "compliance": 30,
           "data": 22,
+          "environment": 0,
           "exposure": 0,
+          "privilege": 0,
           "toxic": 24,
         },
         "aarsSeverity": "CRITICAL",
@@ -4908,6 +5244,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "aars": 67,
         "aarsInput": {
           "dataExposure": "SENSITIVE",
+          "environment": "UNCLASSIFIED",
           "gaps": [
             {
               "code": "LLM04",
@@ -4920,11 +5257,14 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
             },
           ],
           "internetExposure": "NONE",
+          "privilege": "HIGH",
         },
         "aarsPillars": {
           "compliance": 25,
           "data": 22,
+          "environment": 0,
           "exposure": 0,
+          "privilege": 0,
           "toxic": 20,
         },
         "aarsSeverity": "HIGH",
@@ -4970,6 +5310,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "aars": 67,
         "aarsInput": {
           "dataExposure": "SENSITIVE",
+          "environment": "UNCLASSIFIED",
           "gaps": [
             {
               "code": "LLM04",
@@ -4982,11 +5323,14 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
             },
           ],
           "internetExposure": "NONE",
+          "privilege": "HIGH",
         },
         "aarsPillars": {
           "compliance": 25,
           "data": 22,
+          "environment": 0,
           "exposure": 0,
+          "privilege": 0,
           "toxic": 20,
         },
         "aarsSeverity": "HIGH",
@@ -5032,6 +5376,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "aars": 62,
         "aarsInput": {
           "dataExposure": "SENSITIVE",
+          "environment": "UNCLASSIFIED",
           "gaps": [
             {
               "code": "LLM06",
@@ -5041,11 +5386,14 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
             },
           ],
           "internetExposure": "CONFIRMED",
+          "privilege": "HIGH",
         },
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
+          "environment": 0,
           "exposure": 0,
+          "privilege": 0,
           "toxic": 20,
         },
         "aarsSeverity": "HIGH",
@@ -5091,6 +5439,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "aars": 62,
         "aarsInput": {
           "dataExposure": "SENSITIVE",
+          "environment": "UNCLASSIFIED",
           "gaps": [
             {
               "code": "LLM06",
@@ -5100,11 +5449,14 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
             },
           ],
           "internetExposure": "NONE",
+          "privilege": "HIGH",
         },
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
+          "environment": 0,
           "exposure": 0,
+          "privilege": 0,
           "toxic": 20,
         },
         "aarsSeverity": "HIGH",
@@ -5142,6 +5494,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "aars": 62,
         "aarsInput": {
           "dataExposure": "SENSITIVE",
+          "environment": "UNCLASSIFIED",
           "gaps": [
             {
               "code": "LLM06",
@@ -5151,11 +5504,14 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
             },
           ],
           "internetExposure": "NONE",
+          "privilege": "HIGH",
         },
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
+          "environment": 0,
           "exposure": 0,
+          "privilege": 0,
           "toxic": 20,
         },
         "aarsSeverity": "HIGH",
@@ -5193,6 +5549,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "aars": 66,
         "aarsInput": {
           "dataExposure": "SENSITIVE",
+          "environment": "UNCLASSIFIED",
           "gaps": [
             {
               "code": "LLM06",
@@ -5202,11 +5559,14 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
             },
           ],
           "internetExposure": "NONE",
+          "privilege": "HIGH",
         },
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
+          "environment": 0,
           "exposure": 0,
+          "privilege": 0,
           "toxic": 24,
         },
         "aarsSeverity": "HIGH",
@@ -5248,6 +5608,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "aars": 71,
         "aarsInput": {
           "dataExposure": "SENSITIVE",
+          "environment": "UNCLASSIFIED",
           "gaps": [
             {
               "code": "LLM06",
@@ -5260,11 +5621,14 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
             },
           ],
           "internetExposure": "UNDETERMINED",
+          "privilege": "HIGH",
         },
         "aarsPillars": {
           "compliance": 25,
           "data": 22,
+          "environment": 0,
           "exposure": 0,
+          "privilege": 0,
           "toxic": 24,
         },
         "aarsSeverity": "CRITICAL",
@@ -5314,6 +5678,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "aars": 66,
         "aarsInput": {
           "dataExposure": "SENSITIVE",
+          "environment": "UNCLASSIFIED",
           "gaps": [
             {
               "code": "LLM06",
@@ -5323,11 +5688,14 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
             },
           ],
           "internetExposure": "UNDETERMINED",
+          "privilege": "HIGH",
         },
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
+          "environment": 0,
           "exposure": 0,
+          "privilege": 0,
           "toxic": 24,
         },
         "aarsSeverity": "HIGH",
@@ -5373,17 +5741,21 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "aars": 29,
         "aarsInput": {
           "dataExposure": "DATA_ACCESS",
+          "environment": "UNCLASSIFIED",
           "gaps": [
             {
               "code": "ASI03",
             },
           ],
           "internetExposure": "NONE",
+          "privilege": "HIGH",
         },
         "aarsPillars": {
           "compliance": 10,
           "data": 11,
+          "environment": 0,
           "exposure": 0,
+          "privilege": 0,
           "toxic": 8,
         },
         "aarsSeverity": "LOW",
@@ -5429,17 +5801,21 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "aars": 29,
         "aarsInput": {
           "dataExposure": "DATA_ACCESS",
+          "environment": "UNCLASSIFIED",
           "gaps": [
             {
               "code": "ASI03",
             },
           ],
           "internetExposure": "NONE",
+          "privilege": "HIGH",
         },
         "aarsPillars": {
           "compliance": 10,
           "data": 11,
+          "environment": 0,
           "exposure": 0,
+          "privilege": 0,
           "toxic": 8,
         },
         "aarsSeverity": "LOW",
@@ -5485,6 +5861,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "aars": 61,
         "aarsInput": {
           "dataExposure": "DATA_ACCESS",
+          "environment": "PROD",
           "gaps": [
             {
               "code": "LLM01",
@@ -5497,11 +5874,14 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
             },
           ],
           "internetExposure": "NONE",
+          "privilege": "HIGH",
         },
         "aarsPillars": {
           "compliance": 30,
           "data": 11,
+          "environment": 0,
           "exposure": 0,
+          "privilege": 0,
           "toxic": 20,
         },
         "aarsSeverity": "HIGH",
@@ -5539,6 +5919,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "aars": 61,
         "aarsInput": {
           "dataExposure": "DATA_ACCESS",
+          "environment": "PROD",
           "gaps": [
             {
               "code": "LLM01",
@@ -5551,11 +5932,14 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
             },
           ],
           "internetExposure": "NONE",
+          "privilege": "HIGH",
         },
         "aarsPillars": {
           "compliance": 30,
           "data": 11,
+          "environment": 0,
           "exposure": 0,
+          "privilege": 0,
           "toxic": 20,
         },
         "aarsSeverity": "HIGH",
@@ -5593,6 +5977,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "aars": 61,
         "aarsInput": {
           "dataExposure": "DATA_ACCESS",
+          "environment": "PROD",
           "gaps": [
             {
               "code": "LLM01",
@@ -5605,11 +5990,14 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
             },
           ],
           "internetExposure": "NONE",
+          "privilege": "HIGH",
         },
         "aarsPillars": {
           "compliance": 30,
           "data": 11,
+          "environment": 0,
           "exposure": 0,
+          "privilege": 0,
           "toxic": 20,
         },
         "aarsSeverity": "HIGH",
@@ -5647,6 +6035,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "aars": 61,
         "aarsInput": {
           "dataExposure": "DATA_ACCESS",
+          "environment": "PROD",
           "gaps": [
             {
               "code": "LLM01",
@@ -5659,11 +6048,14 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
             },
           ],
           "internetExposure": "NONE",
+          "privilege": "HIGH",
         },
         "aarsPillars": {
           "compliance": 30,
           "data": 11,
+          "environment": 0,
           "exposure": 0,
+          "privilege": 0,
           "toxic": 20,
         },
         "aarsSeverity": "HIGH",
@@ -5701,6 +6093,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "aars": 61,
         "aarsInput": {
           "dataExposure": "DATA_ACCESS",
+          "environment": "PROD",
           "gaps": [
             {
               "code": "LLM01",
@@ -5713,11 +6106,14 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
             },
           ],
           "internetExposure": "NONE",
+          "privilege": "HIGH",
         },
         "aarsPillars": {
           "compliance": 30,
           "data": 11,
+          "environment": 0,
           "exposure": 0,
+          "privilege": 0,
           "toxic": 20,
         },
         "aarsSeverity": "HIGH",
@@ -5755,6 +6151,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "aars": 61,
         "aarsInput": {
           "dataExposure": "DATA_ACCESS",
+          "environment": "PROD",
           "gaps": [
             {
               "code": "LLM01",
@@ -5767,11 +6164,14 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
             },
           ],
           "internetExposure": "NONE",
+          "privilege": "HIGH",
         },
         "aarsPillars": {
           "compliance": 30,
           "data": 11,
+          "environment": 0,
           "exposure": 0,
+          "privilege": 0,
           "toxic": 20,
         },
         "aarsSeverity": "HIGH",
@@ -5809,6 +6209,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "aars": 61,
         "aarsInput": {
           "dataExposure": "DATA_ACCESS",
+          "environment": "PROD",
           "gaps": [
             {
               "code": "LLM01",
@@ -5821,11 +6222,14 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
             },
           ],
           "internetExposure": "NONE",
+          "privilege": "HIGH",
         },
         "aarsPillars": {
           "compliance": 30,
           "data": 11,
+          "environment": 0,
           "exposure": 0,
+          "privilege": 0,
           "toxic": 20,
         },
         "aarsSeverity": "HIGH",
@@ -5863,6 +6267,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "aars": 61,
         "aarsInput": {
           "dataExposure": "DATA_ACCESS",
+          "environment": "PROD",
           "gaps": [
             {
               "code": "LLM01",
@@ -5875,11 +6280,14 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
             },
           ],
           "internetExposure": "NONE",
+          "privilege": "HIGH",
         },
         "aarsPillars": {
           "compliance": 30,
           "data": 11,
+          "environment": 0,
           "exposure": 0,
+          "privilege": 0,
           "toxic": 20,
         },
         "aarsSeverity": "HIGH",
@@ -5917,17 +6325,21 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "aars": 5,
         "aarsInput": {
           "dataExposure": "NONE",
+          "environment": "UNCLASSIFIED",
           "gaps": [
             {
               "code": "DEPRECATED_MODEL",
             },
           ],
           "internetExposure": "NONE",
+          "privilege": "NONE",
         },
         "aarsPillars": {
           "compliance": 5,
           "data": 0,
+          "environment": 0,
           "exposure": 0,
+          "privilege": 0,
           "toxic": 0,
         },
         "aarsSeverity": "INFO",
@@ -5958,13 +6370,17 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "aars": 0,
         "aarsInput": {
           "dataExposure": "NONE",
+          "environment": "UNCLASSIFIED",
           "gaps": [],
           "internetExposure": "NONE",
+          "privilege": "NONE",
         },
         "aarsPillars": {
           "compliance": 0,
           "data": 0,
+          "environment": 0,
           "exposure": 0,
+          "privilege": 0,
           "toxic": 0,
         },
         "aarsSeverity": "INFO",
@@ -5994,13 +6410,17 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "aars": 22,
         "aarsInput": {
           "dataExposure": "SENSITIVE",
+          "environment": "UNCLASSIFIED",
           "gaps": [],
           "internetExposure": "NONE",
+          "privilege": "NONE",
         },
         "aarsPillars": {
           "compliance": 0,
           "data": 22,
+          "environment": 0,
           "exposure": 0,
+          "privilege": 0,
           "toxic": 0,
         },
         "aarsSeverity": "LOW",
@@ -8054,7 +8474,7 @@ exports[`read endpoints > getSettings answers the same shape 1`] = `
 exports[`read endpoints > getStorageStats answers the same shape 1`] = `
 {
   "data": {
-    "archiveBytes": 70052,
+    "archiveBytes": 72321,
     "cellCount": 21100,
     "rows": {
       "assets": 85,
@@ -8673,8 +9093,8 @@ exports[`the persisted ledger > writes the tabs the schema declares 2`] = `
 {
   "ai_assets": {
     "aars": 62,
-    "aars_input_json": "{"gaps":[{"code":"LLM06"},{"code":"NO_GUARDRAIL"}],"dataExposure":"SENSITIVE","internetExposure":"NONE"}",
-    "aars_pillars_json": "{"toxic":20,"compliance":20,"data":22,"exposure":0}",
+    "aars_input_json": "{"gaps":[{"code":"LLM06"},{"code":"NO_GUARDRAIL"}],"dataExposure":"SENSITIVE","internetExposure":"NONE","privilege":"HIGH","environment":"UNCLASSIFIED"}",
+    "aars_pillars_json": "{"toxic":20,"compliance":20,"data":22,"exposure":0,"privilege":0,"environment":0}",
     "aars_severity": "HIGH",
     "account_id": "gcp-account-01",
     "account_name": "gcp-account-01",

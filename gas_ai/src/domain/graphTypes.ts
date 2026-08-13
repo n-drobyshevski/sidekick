@@ -2,7 +2,13 @@
 // synthetic issue/summary nodes) and typed edges (the Wiz security-graph relationship
 // vocabulary, from ai/ai_agents_discovery_queries.md and ai/queries/*).
 
-import type { AarsGap, DataExposure, InternetExposure } from "./aars";
+import type {
+  AarsGap,
+  DataExposure,
+  Environment,
+  InternetExposure,
+  PrivilegeLevel,
+} from "./aars";
 import type { AarsSeverity, Severity } from "./config";
 import { SEVERITY_ORDER } from "./config";
 
@@ -163,6 +169,9 @@ export interface GNode {
     dataExposure: DataExposure;
     /** Absent on rows persisted before pillar D existed; re-derived on the next enrich. */
     internetExposure?: InternetExposure;
+    /** Absent on older rows; re-derived rather than read as "nothing here". */
+    privilege?: PrivilegeLevel;
+    environment?: Environment;
   };
   comboGroups?: string[];   // toxic-combination group ids this node participates in
   // SUMMARY nodes only:

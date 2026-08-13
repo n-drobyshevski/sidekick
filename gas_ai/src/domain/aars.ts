@@ -27,6 +27,49 @@ export type DataExposure = "SENSITIVE" | "DATA_ACCESS" | "NONE";
  */
 export type InternetExposure = "CONFIRMED" | "UNDETERMINED" | "NONE";
 
+/**
+ * Deployment environment, worst first. `UNCLASSIFIED` is the honest default and is NOT the
+ * bottom of a ramp: it means no rule matched, so the asset keeps whatever it would have
+ * scored before environments existed.
+ *
+ * Wiz has no environment field on a cloud resource. What the real tenant does have is an
+ * account naming convention — `dpcp-production-ck-8ytk`, `dpcp-preproduction-ck-z8g4`,
+ * `sap-nonprodpartner`, `inix-horsprod-n0wq`, `ai-industry-pp-4yqw` — which classifies 16 of
+ * the 40 agents in gas_ai/exemples/get_ai_agents_reponse.js. That convention is tenant
+ * property, not product knowledge, which is why the patterns are a rule the operator edits
+ * rather than a constant this file asserts.
+ */
+export type Environment = "PROD" | "PREPROD" | "NONPROD" | "DEV" | "UNCLASSIFIED";
+
+/** Match mode for an environment rule. `regex` is the escape hatch; `contains` covers most. */
+export type EnvMatch = "contains" | "regex";
+
+/**
+ * One row of the environment cascade. Rows are tried in order, FIRST MATCH WINS — the same
+ * contract as the pillar-B gap cascade, so an operator who has read one has read both.
+ * Order is meaning here too: `nonprod` must sit above `prod`, or "sap-nonprodpartner"
+ * classifies as production.
+ */
+export interface EnvironmentRule {
+  match: EnvMatch;
+  /** Matched case-insensitively against the asset's cloud-account name. */
+  pattern: string;
+  environment: Environment;
+}
+
+/**
+ * Effective privilege, as its own axis.
+ *
+ * It needs one because `dataExposureOf` conflates privilege with data reach: it returns
+ * SENSITIVE when the asset touches sensitive data and only falls through to DATA_ACCESS
+ * otherwise, so for any asset with sensitive access the privilege level is DISCARDED —
+ * and even in the fall-through branch ADMIN and HIGH collapse to one value. The result is
+ * that `hasAdminPrivileges` is fetched from Wiz, normalized, persisted in `ai_assets.admin_priv`
+ * and read back, yet changes no score anywhere. ADMIN and HIGH are not the same claim, and
+ * "holds sensitive data" and "can do anything" are not the same axis.
+ */
+export type PrivilegeLevel = "ADMIN" | "HIGH" | "NONE";
+
 export interface AarsGap {
   code: string;    // "LLM06", "ASI10", "ML_DATA_POISONING", "FIVE_RS", "NO_GUARDRAIL", "DEPRECATED_MODEL"
   /**
@@ -46,13 +89,27 @@ export interface AarsInput {
    * NONE, and the spec rule prices all three states at zero anyway.
    */
   internetExposure?: InternetExposure;
+  /** Absent reads as NONE. The spec rule prices every level at zero. */
+  privilege?: PrivilegeLevel;
+  /** Absent reads as UNCLASSIFIED, which the spec rule prices at zero. */
+  environment?: Environment;
 }
 
 export interface AarsResult {
   score: number;                 // 0–100, integer
   severity: AarsSeverity;
-  /** `exposure` is pillar D; it is 0 under the spec rule, which does not price exposure. */
-  pillars: { toxic: number; compliance: number; data: number; exposure: number };
+  /**
+   * The evidence breakdown. Everything after `data` is priced at 0 by the spec rule, so a
+   * default-rule score is still exactly toxic + compliance + data.
+   */
+  pillars: {
+    toxic: number;
+    compliance: number;
+    data: number;
+    exposure: number;
+    privilege: number;
+    environment: number;
+  };
 }
 
 // ------------------------------------------------------------------------- the rule
@@ -164,6 +221,19 @@ export interface AarsRule {
    * (graphEnrich.withInternetExposureNodes) and the doc devoting a section to it.
    */
   exposurePoints: Record<InternetExposure, number>;
+  /**
+   * Effective privilege as its own term. All zero in the spec rule, which reads privilege
+   * only as a fallback bucket of pillar C and throws the ADMIN/HIGH distinction away.
+   */
+  privilegePoints: Record<PrivilegeLevel, number>;
+  /** Ordered environment cascade over the cloud-account name — FIRST MATCH WINS. */
+  environmentRules: EnvironmentRule[];
+  /**
+   * Points per environment. UNCLASSIFIED is pinned at 0 by `cleanAarsRule` and is not an
+   * operator choice: an asset no rule matched must score exactly as it did before
+   * environments existed, never as though it had been classified as safe.
+   */
+  environmentPoints: Record<Environment, number>;
   bands: AarsBands;
 }
 
@@ -204,6 +274,24 @@ export const DEFAULT_AARS_RULE: AarsRule = {
   // Pillar D is OFF in the spec rule. The doc reports internet exposure beside the score
   // but never adds it to one, so scoring it here would change every published number.
   exposurePoints: { CONFIRMED: 0, UNDETERMINED: 0, NONE: 0 },
+  privilegePoints: { ADMIN: 0, HIGH: 0, NONE: 0 },
+  // A suggested cascade, not an assertion: these are the conventions the reference tenant
+  // actually uses, and an operator whose accounts are named differently gets UNCLASSIFIED
+  // everywhere until they edit it. Order is load-bearing — every negative form has to sit
+  // above `prod`, or "sap-nonprodpartner" and "inix-horsprod-n0wq" classify as production.
+  environmentRules: [
+    { match: "contains", pattern: "nonprod", environment: "NONPROD" },
+    { match: "contains", pattern: "non-prod", environment: "NONPROD" },
+    { match: "contains", pattern: "horsprod", environment: "NONPROD" },
+    { match: "contains", pattern: "preprod", environment: "PREPROD" },
+    { match: "contains", pattern: "pre-prod", environment: "PREPROD" },
+    { match: "regex", pattern: "(^|[^a-z])pp([^a-z]|$)", environment: "PREPROD" },
+    { match: "regex", pattern: "(^|[^a-z])(dev|test|sandbox|poc|demo)([^a-z]|$)", environment: "DEV" },
+    { match: "contains", pattern: "prod", environment: "PROD" },
+  ],
+  // All zero: the applied table in ai/custom_score.md scores agent-F and agent-F-preprod
+  // identically, and the default rule must keep reproducing it.
+  environmentPoints: { PROD: 0, PREPROD: 0, NONPROD: 0, DEV: 0, UNCLASSIFIED: 0 },
   bands: { critical: 70, high: 50, medium: 30, low: 10 },
 };
 
@@ -266,6 +354,12 @@ export const AARS_V2_RULE: AarsRule = {
   dataExposurePoints: { SENSITIVE: 12, DATA_ACCESS: 6, NONE: 0 },
   dataAmplifier: 1,
   exposurePoints: { CONFIRMED: 18, UNDETERMINED: 7, NONE: 0 },
+  // v2's caps already sum to exactly 100, so it has no budget for the privilege and
+  // environment axes. It stays as published — a calibrated model for the signal set that
+  // existed when it was written. The newer axes are v3's to spend.
+  privilegePoints: { ADMIN: 0, HIGH: 0, NONE: 0 },
+  environmentRules: DEFAULT_AARS_RULE.environmentRules.map((e) => ({ ...e })),
+  environmentPoints: { PROD: 0, PREPROD: 0, NONPROD: 0, DEV: 0, UNCLASSIFIED: 0 },
   bands: { critical: 70, high: 50, medium: 30, low: 10 },
 };
 
@@ -280,6 +374,35 @@ export function gapPointsFor(code: string, rule: AarsRule = DEFAULT_AARS_RULE): 
     if (hit) return row.points;
   }
   return rule.gapFallbackPoints;
+}
+
+/**
+ * Classify an account name through the rule's cascade. Same first-match-wins contract as
+ * `gapPointsFor`, and the same tolerance for junk: an unreadable regex is skipped rather
+ * than thrown, because a hand-edited pattern must not be able to break a whole sync.
+ */
+export function environmentFor(
+  accountName: string | undefined,
+  rule: AarsRule = DEFAULT_AARS_RULE,
+): Environment {
+  const name = String(accountName ?? "").trim().toLowerCase();
+  if (!name) return "UNCLASSIFIED";
+  for (const row of rule.environmentRules) {
+    const p = String(row.pattern ?? "").trim().toLowerCase();
+    if (!p) continue;
+    if (row.match === "regex") {
+      let re: RegExp;
+      try {
+        re = new RegExp(p);
+      } catch {
+        continue;
+      }
+      if (re.test(name)) return row.environment;
+    } else if (name.indexOf(p) >= 0) {
+      return row.environment;
+    }
+  }
+  return "UNCLASSIFIED";
 }
 
 /** Spec pricing for a gap code. Prefer `gapPointsFor(code, rule)` where a rule is in hand. */
@@ -355,11 +478,17 @@ export function computeAars(input: AarsInput, rule: AarsRule = DEFAULT_AARS_RULE
   // reachability is a network fact that signal says nothing about.
   const exposure = rule.exposurePoints[input.internetExposure ?? "NONE"] ?? 0;
 
-  const score = Math.min(AARS_MAX_SCORE, toxic + compliance + data + exposure);
+  const privilege = rule.privilegePoints[input.privilege ?? "NONE"] ?? 0;
+  const environment = rule.environmentPoints[input.environment ?? "UNCLASSIFIED"] ?? 0;
+
+  const score = Math.min(
+    AARS_MAX_SCORE,
+    toxic + compliance + data + exposure + privilege + environment,
+  );
   return {
     score,
     severity: aarsSeverity(score, rule.bands),
-    pillars: { toxic, compliance, data, exposure },
+    pillars: { toxic, compliance, data, exposure, privilege, environment },
   };
 }
 
