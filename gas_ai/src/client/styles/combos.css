@@ -40,8 +40,7 @@
   45deg, transparent, transparent 4px, rgba(0, 0, 0, 0.06) 4px, rgba(0, 0, 0, 0.06) 8px); }
 .combo-shift-keys { display: flex; flex-wrap: wrap; gap: 6px; }
 .combo-shift-key {
-  display: inline-flex; align-items: center; gap: 2px;
-  border-radius: 999px; padding: 1px 8px; font-size: 11px; font-weight: 600;
+  gap: 2px; border-radius: var(--radius-pill); padding: 1px 8px; font-size: 11px;
 }
 .combo-shift-key-num { margin-left: 4px; }
 /* The reason the second bar differs from the first. Not decoration: without it the two
@@ -75,7 +74,7 @@
   background: none; box-shadow: none; color: var(--text-2);
 }
 .combo-cond-btn svg { flex: 0 0 auto; }
-.combo-cond-btn:hover { background: rgba(0, 0, 0, 0.03); }
+.combo-cond-btn:hover { background: var(--wash-hover); }
 .combo-cond-btn[data-category="data"] { color: var(--cat-data-text); }
 .combo-cond-btn[data-category="iam"] { color: var(--cat-iam-text); }
 .combo-cond-btn[data-category="vuln"] { color: var(--cat-vuln-text); }
@@ -94,7 +93,7 @@
   background: none; border: none; box-shadow: none; color: var(--ink);
   border-radius: var(--radius-sm);
 }
-.combo-matrix-jump:hover { background: rgba(0, 0, 0, 0.03); }
+.combo-matrix-jump:hover { background: var(--wash-hover); }
 .combo-matrix-jump .sev-dot { flex: 0 0 auto; margin-right: 0; }
 .combo-matrix-jump-num { margin-left: auto; color: var(--text-3); font-weight: 600; }
 
@@ -143,9 +142,8 @@
 }
 .combo-conds { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
 .combo-cond {
-  display: inline-flex; align-items: center; gap: 5px;
-  border-radius: var(--radius-sm); padding: 2px 8px;
-  font-size: 11px; font-weight: 600;
+  gap: 5px; border-radius: var(--radius-sm); padding: 2px 8px;
+  font-size: 11px;
   background: rgba(0, 0, 0, 0.05); color: var(--text-2);
 }
 /* Carried but not tested: the same chip, outlined instead of filled, so "extra risk on
@@ -166,12 +164,12 @@
    affected asset is a link to a record, not a toggle, and the two should not look alike. */
 .asset-chip, .asset-more {
   display: inline-flex; align-items: center; gap: 6px;
-  border-radius: 999px; padding: 3px 10px; min-height: 0;
+  border-radius: var(--radius-pill); padding: 3px 10px; min-height: 0;
   font-size: 12px; background: var(--page); border: 1px solid var(--hairline);
   box-shadow: none; color: var(--ink);
 }
 .asset-chip:hover, .asset-more:hover { background: var(--surface); border-color: #d9d9de; }
-.asset-chip-score { font-size: 11px; font-weight: 600; border-radius: 999px; padding: 0 6px; }
+.asset-chip-score { font-size: 11px; font-weight: 600; border-radius: var(--radius-pill); padding: 0 6px; }
 .asset-more { color: var(--text-2); font-weight: 600; border-style: dashed; }
 
 .combo-actions { display: flex; gap: 8px; margin-top: 14px; }
@@ -190,10 +188,7 @@
   .combo-cond-btn span:not(.sr-only) { display: none; }
 }
 .fw-tags { display: flex; flex-wrap: wrap; gap: 4px; }
-.fw-tag {
-  font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: var(--radius-sm);
-  background: rgba(0, 0, 0, 0.06); color: var(--text-2);
-}
+.fw-tag { font-size: 11px; font-weight: 600; }
 /* Four taxonomies in one strip read as one vocabulary. Name each family instead. */
 .fw-groups { display: flex; flex-direction: column; gap: 6px; }
 .fw-group { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; }

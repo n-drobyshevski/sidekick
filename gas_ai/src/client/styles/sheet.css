@@ -60,7 +60,7 @@
   display: inline-flex; align-items: center; justify-content: center;
   color: var(--text-3); border-radius: var(--radius-sm);
 }
-.sheet-close:hover, .sheet-widen:hover { background: rgba(0, 0, 0, 0.045); color: var(--ink); border-color: transparent; }
+.sheet-close:hover, .sheet-widen:hover { background: var(--wash-hover); color: var(--ink); border-color: transparent; }
 .sheet-close:active, .sheet-widen:active { background: rgba(0, 0, 0, 0.075); }
 .sheet-widen[aria-pressed="true"] { color: var(--ink); background: rgba(0, 0, 0, 0.06); }
 .sheet-close:focus-visible, .sheet-widen:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -104,7 +104,7 @@
 }
 .sheet-row:last-child, .sheet-list > :last-child { border-bottom: none; }
 button.sheet-row { cursor: pointer; }
-button.sheet-row:hover { background: rgba(0, 0, 0, 0.03); border-color: var(--hairline); }
+button.sheet-row:hover { background: var(--wash-hover); border-color: var(--hairline); }
 button.sheet-row:active { background: rgba(0, 0, 0, 0.05); }
 button.sheet-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .sheet-row-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -236,7 +236,7 @@ h3.sheet-section-title {
   border: 1px solid transparent; background: none; box-shadow: none;
   border-radius: var(--radius-sm); font-size: 13px; font-weight: 400; color: var(--ink);
 }
-.facet-row:hover { background: rgba(0, 0, 0, 0.04); border-color: transparent; }
+.facet-row:hover { background: var(--wash-hover); border-color: transparent; }
 .facet-row[aria-pressed="true"] { background: rgba(0, 0, 0, 0.05); font-weight: 600; }
 .facet-box {
   width: 14px; height: 14px; border: 1px solid var(--hairline); border-radius: 4px;
@@ -258,8 +258,8 @@ h3.sheet-section-title {
 .facet-count { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
 /* Neutral on purpose: a facet count is a quantity, not a severity, and the Rationed Ink
    Rule spends colour only on risk. */
-.facet-bar { height: 3px; border-radius: 999px; background: rgba(0, 0, 0, 0.07); }
-.facet-bar-fill { display: block; height: 100%; border-radius: 999px; background: rgba(0, 0, 0, 0.32); }
+.facet-bar { height: 3px; }
+.facet-bar-fill { background: rgba(0, 0, 0, 0.32); }
 /* Zero yield: dimmed AND carrying a visible 0 — never dimming alone, which reads as
    "broken" rather than "empty" (the same rule .rule-dead follows). aria-disabled, not
    disabled, so the option stays focusable and its 0 stays discoverable. */

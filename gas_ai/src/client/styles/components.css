@@ -1,13 +1,16 @@
 /* ------------------------------------------------------------------------ cards */
-.card {
+/* The raised-surface recipe. Every card in the app is this plus its own padding and
+   layout; .asset-card (inventory.css) and .chart-card (tables.css) join here rather than
+   restating the four declarations a third and fourth time. */
+.card, .kpi-card, .chart-card, .asset-card {
   background: var(--surface);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-xl);
-  padding: 16px;
   box-shadow: var(--shadow-card);
 }
+.card { padding: 16px; }
 .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 0 0 20px; }
-.kpi-card { background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius-xl); padding: 14px 16px; box-shadow: var(--shadow-card); }
+.kpi-card { padding: 14px 16px; }
 .kpi-label { font-size: 12px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-3); }
 .kpi-value { font-size: 1.5rem; font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; margin-top: 2px; }
 .kpi-sub { font-size: 12px; color: var(--text-3); margin-top: 2px; }
@@ -18,13 +21,49 @@
 .chg.down { color: var(--ok); background: rgba(21, 128, 61, 0.12); }
 .chg.flat { color: var(--text-3); background: rgba(0, 0, 0, 0.06); }
 
+/* ------------------------------------------------------------------------ chips */
+/* Chip base: the small labelled mark, in all its variants. Nine of these were declared
+   independently across five files, each restating inline-flex + centre + 12px/600. What
+   actually differs — gap, padding, radius, colour — stays with each member, next to the
+   rule that explains it. Members outside this file are listed here on purpose: this is
+   the one place that says they are the same kind of thing. */
+.sev-badge, .aars-chip, .pill, .sev-key,
+.filter-chip, .combo-shift-key, .combo-cond {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* Tag base: the flat neutral code/label, not a status. */
+.domain-chip, .fw-tag {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--text-2);
+}
+
+/* ------------------------------------------------------------------------ meters */
+/* Meter base: a rounded track with a proportional fill. Three of these grew separately —
+   the sync progress bar, the AARS/pillar meters, and the facet count bars — each
+   restating the same six declarations. Height, fill colour and clipping are what genuinely
+   differ, and stay with each member below. */
+.progress-track, .pillar-track, .facet-bar {
+  border-radius: var(--radius-pill);
+  background: var(--track-bg);
+}
+/* display:block so a fill works as a <span> too — a percentage width on an inline box is
+   ignored, which silently renders every meter as an empty track. */
+.progress-fill, .pillar-fill, .facet-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-pill);
+}
+
 /* --------------------------------------------------------------------- severity */
 .sev-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
-.sev-badge {
-  display: inline-flex; align-items: center;
-  border-radius: 999px; padding: 2px 9px;
-  font-size: 12px; font-weight: 600;
-}
+.sev-badge { border-radius: var(--radius-pill); padding: 2px 9px; }
 .sev-CRITICAL { background: rgba(220, 38, 38, 0.14); color: var(--sev-critical-text); }
 .sev-CRITICAL .sev-dot { background: var(--sev-critical); }
 .sev-HIGH { background: rgba(234, 88, 12, 0.14); color: var(--sev-high-text); }
@@ -41,29 +80,25 @@
 /* AARS chips reuse the severity tokens directly — the AARS scale carries the same
    values as the Wiz severity scale, and the brand crimson never scores risk. */
 .aars-chip {
-  display: inline-flex; align-items: center; gap: 5px;
-  border-radius: 999px; padding: 2px 9px;
-  font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums;
+  gap: 5px; border-radius: var(--radius-pill); padding: 2px 9px;
+  font-variant-numeric: tabular-nums;
 }
 .aars-chip .sev-dot { margin-right: 0; }
 
 /* status pills */
-.pill { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 2px 9px; font-size: 12px; font-weight: 600; }
+.pill { gap: 6px; border-radius: var(--radius-pill); padding: 2px 9px; }
 .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .pill.ok { color: var(--ok); background: rgba(21, 128, 61, 0.12); }
 .pill.warn { color: var(--warn); background: rgba(161, 98, 7, 0.12); }
 .pill.bad { color: var(--bad); background: rgba(185, 28, 28, 0.12); }
 .pill.neutral { color: var(--text-2); background: rgba(0, 0, 0, 0.06); }
 
-.domain-chip {
-  display: inline-block; border-radius: var(--radius-sm); padding: 1px 7px;
-  font-size: 12px; background: rgba(0, 0, 0, 0.06); color: var(--text-2);
-}
+.domain-chip { font-size: 12px; }
 
 /* severity filter pills */
 .pill-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .sev-pill, .kind-pill {
-  border-radius: 999px; padding: 3px 12px; min-height: 0;
+  border-radius: var(--radius-pill); padding: 3px 12px; min-height: 0;
   font-size: 12px; font-weight: 600;
   background: var(--page); border: 1px solid var(--hairline); box-shadow: none;
   color: var(--text-2);
@@ -173,7 +208,7 @@
   background: none; color: var(--text-2); font-weight: 500;
 }
 .segmented > button + button { border-left: 1px solid var(--hairline); }
-.segmented > button:hover { background: rgba(0, 0, 0, 0.035); }
+.segmented > button:hover { background: var(--wash-hover); }
 /* Inset replaces the base button's rest shadow rather than stacking on it — a surface is
    a whisper or a lift, never both (DESIGN.md, Whisper-Or-Lift). Neutral on purpose: an
    accent inset would read as the decorative side-stripe the system forbids. */

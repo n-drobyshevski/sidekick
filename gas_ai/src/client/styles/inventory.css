@@ -16,8 +16,8 @@
    the cross-filter has a real keyboard path (a canvas would not). */
 .sev-strip { display: flex; flex-direction: column; gap: 8px; }
 .sev-strip-track {
-  display: flex; height: 10px; border-radius: 999px; overflow: hidden;
-  background: rgba(0, 0, 0, 0.07);
+  display: flex; height: 10px; border-radius: var(--radius-pill); overflow: hidden;
+  background: var(--track-bg);
 }
 .sev-strip-seg { min-width: 3px; transition: opacity 140ms ease-out; }
 .sev-strip-seg.sev-CRITICAL { background: var(--sev-critical); }
@@ -30,12 +30,12 @@
 .sev-strip.is-filtered .sev-strip-seg[data-on="false"] { opacity: 0.22; }
 .sev-strip-keys { display: flex; flex-wrap: wrap; gap: 2px 12px; }
 .sev-key {
-  display: inline-flex; align-items: center; gap: 6px;
+  gap: 6px;
   background: none; border: 1px solid transparent; box-shadow: none; min-height: 0;
   padding: 3px 7px; border-radius: var(--radius-sm);
-  font-size: 12px; font-weight: 600; color: var(--text-2);
+  color: var(--text-2);
 }
-.sev-key:hover { background: rgba(0, 0, 0, 0.045); border-color: transparent; }
+.sev-key:hover { background: var(--wash-hover); border-color: transparent; }
 .sev-key .sev-dot { margin-right: 0; vertical-align: 0; }
 .sev-key-count { color: var(--ink); }
 /* Selected reads as selected without relying on colour: a tick plus the tint. */
@@ -100,7 +100,7 @@
 td .pillar-track { background: rgba(0, 0, 0, 0.09); }
 /* Open issues split by severity. Here colour IS the content — the mix of levels is the
    whole point — so it is rationed, not decorative, and the aria-label names the counts. */
-.issue-bars { display: inline-flex; height: 5px; border-radius: 999px; overflow: hidden; }
+.issue-bars { display: inline-flex; height: 5px; border-radius: var(--radius-pill); overflow: hidden; }
 .issue-bar { min-width: 2px; }
 .issue-bar.sev-CRITICAL { background: var(--sev-critical); }
 .issue-bar.sev-HIGH { background: var(--sev-high); }
@@ -116,8 +116,6 @@ td .pillar-track { background: rgba(0, 0, 0, 0.09); }
 .asset-card {
   display: flex; flex-direction: column; align-items: stretch; gap: 8px;
   padding: 12px 14px; min-height: 0; text-align: left; font: inherit; color: inherit;
-  background: var(--surface); border: 1px solid var(--hairline);
-  border-radius: var(--radius-xl); box-shadow: var(--shadow-card);
 }
 .asset-card:hover { background: #f1f1f4; border-color: #d9d9de; }
 .asset-card-head { display: flex; align-items: center; gap: 8px; }

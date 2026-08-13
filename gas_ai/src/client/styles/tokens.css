@@ -50,6 +50,14 @@
   --radius-md: 8px;
   --radius-lg: 10px;
   --radius-xl: 14px;
+  /* Fully rounded: chips, dots and meter tracks. Was a bare 999px in ~30 places. */
+  --radius-pill: 999px;
+
+  /* The neutral wash under a meter/bar track, and the one under a hovered flat control.
+     Both were open-coded per component and had drifted across five alpha values
+     (0.03…0.05 for hover), which is five slightly different answers to one question. */
+  --track-bg: rgba(0, 0, 0, 0.07);
+  --wash-hover: rgba(0, 0, 0, 0.045);
 
   /* Detail-sheet geometry. The register's asset record carries issues, compliance
      findings, relationships AND identity, so it runs wider than DESIGN.md's flat

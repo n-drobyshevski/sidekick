@@ -60,7 +60,7 @@
 .filter-count {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 18px; padding: 0 5px; margin-left: 7px;
-  border-radius: 999px; background: rgba(0, 0, 0, 0.07);
+  border-radius: var(--radius-pill); background: var(--track-bg);
   font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums;
   color: var(--text-2); line-height: 17px;
 }
@@ -81,10 +81,8 @@
    to change destroyed it. Both children reset the base button recipe — left alone they
    would nest two 36px bordered, shadowed surfaces inside a 22px pill. */
 .filter-chip {
-  display: inline-flex; align-items: center;
-  padding: 0 4px 0 0; border-radius: 999px;
+  padding: 0 4px 0 0; border-radius: var(--radius-pill);
   border: 1px solid var(--hairline);
-  font-size: 12px; font-weight: 600;
 }
 /* Neutral chip surface, scoped so it stops overriding the severity tint below. Both are
    single-class selectors and this rule is the later one, so unscoped it won the cascade
@@ -94,10 +92,10 @@
 .filter-chip .sev-dot { margin-right: 0; }
 .filter-chip-body, .filter-chip-x {
   min-height: 0; border: none; background: none; box-shadow: none;
-  color: inherit; font: inherit; border-radius: 999px;
+  color: inherit; font: inherit; border-radius: var(--radius-pill);
 }
 .filter-chip-body { display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 9px; }
-.filter-chip-body:hover, .filter-chip-x:hover { background: rgba(0, 0, 0, 0.05); }
+.filter-chip-body:hover, .filter-chip-x:hover { background: var(--wash-hover); }
 .filter-chip-key { font-weight: 500; opacity: 0.8; }
 .filter-chip-value { font-weight: 600; }
 .filter-chip-x { padding: 3px 6px; font-size: 10px; color: var(--text-2); }
@@ -269,7 +267,7 @@
 .graph-legend.overlay > .legend-toggle {
   gap: 8px; padding: 6px 12px; min-height: 34px; margin-left: auto;
 }
-.graph-legend.overlay:not([open]) { border-radius: 999px; }
+.graph-legend.overlay:not([open]) { border-radius: var(--radius-pill); }
 .graph-legend[open] > .legend-toggle { border-bottom: 1px solid var(--hairline); }
 .legend-body {
   display: flex; flex-wrap: wrap; gap: 14px; align-items: center;
@@ -300,7 +298,5 @@
 .pillar-row { display: flex; align-items: center; gap: 10px; margin: 6px 0; font-size: 12px; }
 .pillar-row .pillar-name { width: 120px; color: var(--text-2); }
 .pillar-row .pillar-val { width: 44px; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
-.pillar-track { flex: 1; height: 8px; border-radius: 999px; background: rgba(0, 0, 0, 0.07); overflow: hidden; }
-/* display:block so the fill works as a <span> too — a percentage width on an inline box
-   is ignored, which silently renders every meter as an empty track. */
-.pillar-fill { display: block; height: 100%; border-radius: 999px; background: var(--graphite); }
+.pillar-track { flex: 1; height: 8px; overflow: hidden; }
+.pillar-fill { background: var(--graphite); }
