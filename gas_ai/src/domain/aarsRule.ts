@@ -23,6 +23,8 @@ import {
   type InternetExposure,
   type IssueSeverityKey,
   type MultiIssueScaling,
+  PILLAR_KEYS,
+  type PillarKey,
   type PrivilegeLevel,
 } from "./aars";
 import { CONDITION_KEYS } from "./toxicCombos";
@@ -45,6 +47,7 @@ export const MAX_COMBINATION_RULES = 20;
 export const COMBINATION_LABEL_MAX_LEN = 80;
 export const ENV_PATTERN_MAX_LEN = 120;
 /** A dormancy window under a week would fire on any asset synced over a long weekend. */
+export const FLOOR_MAX = 0.95;
 export const DORMANT_DAYS_MIN = 7;
 export const DORMANT_DAYS_MAX = 3650;
 
@@ -73,6 +76,17 @@ function clampMultiplier(v: unknown, fallback: number): number {
   if (!Number.isFinite(n)) return fallback;
   const rounded = Math.round(n * 100) / 100;
   return Math.min(MULTIPLIER_MAX, Math.max(MULTIPLIER_MIN, rounded));
+}
+
+/**
+ * A fraction in [0,1], two decimals. The floor is never allowed to reach 1: a likelihood
+ * pinned at certainty would make the multiplicative mode a pure impact score.
+ */
+function clampFraction(v: unknown, fallback: number): number {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return fallback;
+  const rounded = Math.round(n * 100) / 100;
+  return Math.min(FLOOR_MAX, Math.max(0, rounded));
 }
 
 /**
@@ -261,6 +275,16 @@ export function cleanAarsRule(raw: unknown): AarsRule {
     ),
     gapAggregation,
     gapSources,
+    scoringMode: r["scoringMode"] === "multiplicative" ? "multiplicative" : "additive",
+    // Unknown pillar names are dropped rather than defaulted: a typo must not silently
+    // move a whole pillar from the impact half to the likelihood half.
+    likelihoodPillars: (Array.isArray(r["likelihoodPillars"]) ? r["likelihoodPillars"] : null)
+      ? (r["likelihoodPillars"] as unknown[])
+          .map((k) => String(k ?? "").trim())
+          .filter((k, i, a): k is PillarKey =>
+            (PILLAR_KEYS as string[]).includes(k) && a.indexOf(k) === i)
+      : [...DEFAULT_AARS_RULE.likelihoodPillars],
+    likelihoodFloor: clampFraction(r["likelihoodFloor"], DEFAULT_AARS_RULE.likelihoodFloor),
     dormantAfterDays: clampInt(
       r["dormantAfterDays"],
       DEFAULT_AARS_RULE.dormantAfterDays,

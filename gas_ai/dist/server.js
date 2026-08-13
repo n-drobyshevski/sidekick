@@ -1378,6 +1378,15 @@ var Server = (() => {
   }
 
   // src/domain/aars.ts
+  var PILLAR_KEYS = [
+    "toxic",
+    "compliance",
+    "data",
+    "exposure",
+    "privilege",
+    "environment",
+    "combination"
+  ];
   var DEFAULT_AARS_RULE = {
     severityPoints: { CRITICAL: 50, HIGH: 35, MEDIUM: 20, LOW: 8 },
     multiIssueMultiplier: 1.2,
@@ -1400,6 +1409,12 @@ var Server = (() => {
     gapSources: { fiveRs: false, deprecatedModel: false, inactiveAgent: false, dormantAgent: false },
     /** Days without a sighting before `dormantAgent` fires. Only read when that source is on. */
     dormantAfterDays: 90,
+    // The spec sums everything; the split below is declared but unread in this mode.
+    scoringMode: "additive",
+    // Control weakness and reachability are routes IN; issues are evidence that a route has
+    // already been walked. Data, privilege, environment and conjunctions describe the damage.
+    likelihoodPillars: ["compliance", "exposure", "toxic"],
+    likelihoodFloor: 0.15,
     // All 1: the spec reads a failing control as present-or-absent, never as more or less
     // severe. Kept as a knob because ai_findings.severity is already persisted and unused.
     findingSeverityWeights: { CRITICAL: 1, HIGH: 1, MEDIUM: 1, LOW: 1 },
@@ -1455,6 +1470,10 @@ var Server = (() => {
     gapAggregation: "rss",
     gapSources: { fiveRs: true, deprecatedModel: true, inactiveAgent: true, dormantAgent: false },
     dormantAfterDays: 90,
+    // v2 is a recalibration of the additive model, not a restructure of it.
+    scoringMode: "additive",
+    likelihoodPillars: ["compliance", "exposure", "toxic"],
+    likelihoodFloor: 0.15,
     findingSeverityWeights: { CRITICAL: 1.5, HIGH: 1.2, MEDIUM: 1, LOW: 0.6 },
     pillarBCap: 25,
     dataExposurePoints: { SENSITIVE: 12, DATA_ACCESS: 6, NONE: 0 },
@@ -1467,6 +1486,33 @@ var Server = (() => {
     combinationRules: [],
     environmentRules: DEFAULT_AARS_RULE.environmentRules.map((e) => ({ ...e })),
     environmentPoints: { PROD: 0, PREPROD: 0, NONPROD: 0, DEV: 0, UNCLASSIFIED: 0 },
+    bands: { critical: 70, high: 50, medium: 30, low: 10 }
+  };
+  var AARS_V3_RULE = {
+    ...AARS_V2_RULE,
+    scoringMode: "multiplicative",
+    likelihoodPillars: ["compliance", "exposure", "toxic"],
+    likelihoodFloor: 0.2,
+    // Impact terms, weighted against each other rather than against a 100-point budget.
+    dataExposurePoints: { SENSITIVE: 40, DATA_ACCESS: 18, NONE: 0 },
+    dataAmplifier: 1,
+    privilegePoints: { ADMIN: 30, HIGH: 16, NONE: 0 },
+    environmentPoints: { PROD: 20, PREPROD: 8, NONPROD: 4, DEV: 2, UNCLASSIFIED: 0 },
+    combinationRules: [
+      {
+        conditions: ["EXCESSIVE_PRIVILEGE", "SENSITIVE_DATA", "MISSING_GUARDRAIL"],
+        points: 20,
+        label: "Over-privileged, holds sensitive data, and unguarded"
+      },
+      {
+        conditions: ["SENSITIVE_DATA", "INTERNET_EXPOSURE"],
+        points: 15,
+        label: "Sensitive data on an internet-reachable asset"
+      }
+    ],
+    // Reachability is the strongest single likelihood signal, so it gets the widest range.
+    exposurePoints: { CONFIRMED: 30, UNDETERMINED: 10, NONE: 0 },
+    gapSources: { fiveRs: true, deprecatedModel: true, inactiveAgent: true, dormantAgent: true },
     bands: { critical: 70, high: 50, medium: 30, low: 10 }
   };
   var AARS_MAX_SCORE = 100;
@@ -1552,17 +1598,59 @@ var Server = (() => {
     const environment = (_g = rule.environmentPoints[(_f = input.environment) != null ? _f : "UNCLASSIFIED"]) != null ? _g : 0;
     const fired = firedCombinations((_h = input.conditions) != null ? _h : [], rule);
     const combination = fired.reduce((acc, f) => acc + f.points, 0);
-    const score2 = Math.min(
-      AARS_MAX_SCORE,
-      toxic + compliance + data + exposure + privilege + environment + combination
-    );
+    const pillars = { toxic, compliance, data, exposure, privilege, environment, combination };
+    let score2;
+    let composition;
+    if (rule.scoringMode === "multiplicative") {
+      composition = composeRisk(pillars, rule);
+      score2 = Math.min(AARS_MAX_SCORE, Math.round(composition.likelihood * composition.impact));
+    } else {
+      score2 = Math.min(
+        AARS_MAX_SCORE,
+        toxic + compliance + data + exposure + privilege + environment + combination
+      );
+    }
     const result = {
       score: score2,
       severity: aarsSeverity(score2, rule.bands),
-      pillars: { toxic, compliance, data, exposure, privilege, environment, combination }
+      pillars
     };
+    if (composition) result.composition = composition;
     if (fired.length) result.combinations = fired;
     return result;
+  }
+  function composeRisk(pillars, rule) {
+    const ceilings = pillarCeilings(rule);
+    const isLikelihood = new Set(rule.likelihoodPillars);
+    let notCompromised = 1;
+    let impact = 0;
+    let impactCeiling = 0;
+    for (const key of PILLAR_KEYS) {
+      const ceiling = ceilings[key];
+      if (isLikelihood.has(key)) {
+        if (ceiling <= 0) continue;
+        const p = Math.min(1, Math.max(0, pillars[key] / ceiling));
+        notCompromised *= 1 - p;
+      } else {
+        impact += pillars[key];
+        impactCeiling += ceiling;
+      }
+    }
+    const likelihood = Math.max(rule.likelihoodFloor, 1 - notCompromised);
+    const impactScaled = impactCeiling > 0 ? impact / impactCeiling * AARS_MAX_SCORE : AARS_MAX_SCORE;
+    return { likelihood, impact: Math.min(AARS_MAX_SCORE, impactScaled) };
+  }
+  function pillarCeilings(rule) {
+    const maxOf = (r) => Math.max(0, ...Object.values(r));
+    return {
+      toxic: rule.pillarACap,
+      compliance: rule.pillarBCap,
+      data: Math.round(maxOf(rule.dataExposurePoints) * rule.dataAmplifier),
+      exposure: maxOf(rule.exposurePoints),
+      privilege: maxOf(rule.privilegePoints),
+      environment: maxOf(rule.environmentPoints),
+      combination: rule.combinationRules.reduce((acc, c) => acc + c.points, 0)
+    };
   }
   function firedCombinations(conditions, rule = DEFAULT_AARS_RULE) {
     var _a4;
@@ -1602,6 +1690,7 @@ var Server = (() => {
   var MAX_COMBINATION_RULES = 20;
   var COMBINATION_LABEL_MAX_LEN = 80;
   var ENV_PATTERN_MAX_LEN = 120;
+  var FLOOR_MAX = 0.95;
   var DORMANT_DAYS_MIN = 7;
   var DORMANT_DAYS_MAX = 3650;
   var SEVERITY_KEYS = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
@@ -1624,6 +1713,12 @@ var Server = (() => {
     if (!Number.isFinite(n)) return fallback;
     const rounded = Math.round(n * 100) / 100;
     return Math.min(MULTIPLIER_MAX, Math.max(MULTIPLIER_MIN, rounded));
+  }
+  function clampFraction(v, fallback) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return fallback;
+    const rounded = Math.round(n * 100) / 100;
+    return Math.min(FLOOR_MAX, Math.max(0, rounded));
   }
   function clampWeight(v, fallback) {
     const n = Number(v);
@@ -1764,6 +1859,11 @@ var Server = (() => {
       ),
       gapAggregation,
       gapSources,
+      scoringMode: r["scoringMode"] === "multiplicative" ? "multiplicative" : "additive",
+      // Unknown pillar names are dropped rather than defaulted: a typo must not silently
+      // move a whole pillar from the impact half to the likelihood half.
+      likelihoodPillars: (Array.isArray(r["likelihoodPillars"]) ? r["likelihoodPillars"] : null) ? r["likelihoodPillars"].map((k) => String(k != null ? k : "").trim()).filter((k, i, a) => PILLAR_KEYS.includes(k) && a.indexOf(k) === i) : [...DEFAULT_AARS_RULE.likelihoodPillars],
+      likelihoodFloor: clampFraction(r["likelihoodFloor"], DEFAULT_AARS_RULE.likelihoodFloor),
       dormantAfterDays: clampInt(
         r["dormantAfterDays"],
         DEFAULT_AARS_RULE.dormantAfterDays,
@@ -3506,7 +3606,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "948731cd8d4b" : "dev";
+  var BUILD_ID = true ? "fbc6300f88af" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -6300,7 +6400,7 @@ var Server = (() => {
       defaults: DEFAULT_AARS_RULE,
       // Whole rules the page can load into the draft. `defaults` above is the spec model and
       // stays where it is (Reset reads it); presets are alternatives, not a fallback.
-      presets: { v2: AARS_V2_RULE },
+      presets: { v2: AARS_V2_RULE, v3: AARS_V3_RULE },
       summary: ruleSummary(stored.rule),
       scoredVersion,
       // Only the point model can strand the persisted scores; bands re-derive on read, and

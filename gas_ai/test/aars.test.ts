@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   aarsSeverity,
   AARS_V2_RULE,
+  AARS_V3_RULE,
   computeAars,
   DEFAULT_AARS_RULE,
   environmentFor,
@@ -444,6 +445,152 @@ describe("computeAars — combination bonuses", () => {
       combinationRules: [{ conditions: ["SENSITIVE_DATA", "NONSENSE"], points: 5 }],
     });
     expect(rule.combinationRules[0]!.conditions).toEqual(["SENSITIVE_DATA"]);
+  });
+});
+
+describe("computeAars — the likelihood × impact mode", () => {
+  const base = {
+    issueSeverities: [] as Severity[],
+    gaps: [] as ReturnType<typeof gap>[],
+    dataExposure: "NONE" as const,
+  };
+  // A minimal two-pillar rule, so the arithmetic is checkable by hand.
+  const mult = tuned({
+    scoringMode: "multiplicative",
+    likelihoodPillars: ["exposure"],
+    likelihoodFloor: 0,
+    exposurePoints: { CONFIRMED: 10, UNDETERMINED: 5, NONE: 0 },
+    dataExposurePoints: { SENSITIVE: 50, DATA_ACCESS: 25, NONE: 0 },
+    dataAmplifier: 1,
+    severityPoints: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 },
+    gapPoints: [],
+    gapFallbackPoints: 0,
+    // Zeroed so they contribute to neither half. Naming only `exposure` as likelihood
+    // makes toxic and compliance IMPACT pillars, and a pillar with a large ceiling and no
+    // points would otherwise dilute the impact fraction — which is correct behaviour, but
+    // not what these cases are measuring.
+    pillarACap: 0,
+    pillarBCap: 0,
+    privilegePoints: { ADMIN: 0, HIGH: 0, NONE: 0 },
+    environmentPoints: { PROD: 0, PREPROD: 0, NONPROD: 0, DEV: 0, UNCLASSIFIED: 0 },
+  });
+
+  it("is off by default — the spec rule still sums", () => {
+    expect(DEFAULT_AARS_RULE.scoringMode).toBe("additive");
+    expect(computeAars(base).composition).toBeUndefined();
+  });
+
+  it("multiplies the two halves across the 0–100 scale", () => {
+    // exposure 10/10 → likelihood 1.0; data 50/50 → impact 100 → 100
+    const both = computeAars(
+      { ...base, dataExposure: "SENSITIVE", internetExposure: "CONFIRMED" }, mult);
+    expect(both.composition).toEqual({ likelihood: 1, impact: 100 });
+    expect(both.score).toBe(100);
+    // exposure 5/10 → 0.5; data 50/50 → 100 → 50
+    const half = computeAars(
+      { ...base, dataExposure: "SENSITIVE", internetExposure: "UNDETERMINED" }, mult);
+    expect(half.composition!.likelihood).toBe(0.5);
+    expect(half.score).toBe(50);
+  });
+
+  it("separates the two cases the additive model conflates", () => {
+    // The whole point of the restructure: unreachable-with-PII and reachable-with-nothing
+    // are different problems, and a sum cannot say so.
+    const dataNoReach = computeAars(
+      { ...base, dataExposure: "SENSITIVE", internetExposure: "NONE" }, mult);
+    const reachNoData = computeAars(
+      { ...base, dataExposure: "NONE", internetExposure: "CONFIRMED" }, mult);
+    expect(dataNoReach.score).toBe(0);   // floor is 0 in this hand-built rule
+    expect(reachNoData.score).toBe(0);   // nothing to take
+    // ...and under the shipped floor the unreachable asset keeps residual risk.
+    const floored = cleanAarsRule({ ...mult, likelihoodFloor: 0.2 });
+    expect(computeAars({ ...base, dataExposure: "SENSITIVE" }, floored).score).toBe(20);
+  });
+
+  it("floors the likelihood — an unobserved asset is not a safe one", () => {
+    const floored = cleanAarsRule({ ...mult, likelihoodFloor: 0.25 });
+    const r = computeAars({ ...base, dataExposure: "SENSITIVE" }, floored);
+    expect(r.composition!.likelihood).toBe(0.25);
+    expect(r.score).toBe(25);
+  });
+
+  it("combines likelihood evidence by noisy-OR, so routes saturate instead of summing", () => {
+    const rule = cleanAarsRule({
+      ...mult,
+      likelihoodPillars: ["exposure", "compliance"],
+      pillarBCap: 10,
+      gapPoints: [{ match: "prefix", code: "X", points: 5 }],
+    });
+    // exposure 5/10 = 0.5 and compliance 5/10 = 0.5 → 1 − 0.5·0.5 = 0.75, not 1.0.
+    const r = computeAars({
+      ...base,
+      dataExposure: "SENSITIVE",
+      internetExposure: "UNDETERMINED",
+      gaps: [gap("X1")],
+    }, rule);
+    expect(r.composition!.likelihood).toBe(0.75);
+  });
+
+  it("never exceeds the scale, whatever the pillars say", () => {
+    const r = computeAars({
+      ...base,
+      dataExposure: "SENSITIVE",
+      internetExposure: "CONFIRMED",
+      privilege: "ADMIN",
+      environment: "PROD",
+    }, cleanAarsRule({ ...mult, privilegePoints: { ADMIN: 99, HIGH: 9, NONE: 0 } }));
+    expect(r.score).toBeLessThanOrEqual(100);
+  });
+
+  it("treats a switched-off likelihood pillar as absent, not as 0% likely", () => {
+    // exposurePoints all zero = pillar off. Dividing by its ceiling would be a zero
+    // divide; reading it as "0% likely" would zero every asset in the estate.
+    const off = cleanAarsRule({
+      ...mult,
+      exposurePoints: { CONFIRMED: 0, UNDETERMINED: 0, NONE: 0 },
+      likelihoodFloor: 0.3,
+    });
+    const r = computeAars({ ...base, dataExposure: "SENSITIVE" }, off);
+    expect(r.composition!.likelihood).toBe(0.3);
+    expect(Number.isFinite(r.score)).toBe(true);
+  });
+});
+
+describe("AARS_V3_RULE — the likelihood × impact preset", () => {
+  it("is valid, round-trips clean, and is not a default", () => {
+    expect(validateAarsRule(AARS_V3_RULE)).toEqual([]);
+    expect(cleanAarsRule(AARS_V3_RULE)).toEqual(AARS_V3_RULE);
+    expect(DEFAULT_AARS_RULE.scoringMode).toBe("additive");
+    expect(AARS_V2_RULE.scoringMode).toBe("additive");
+    expect(AARS_V3_RULE.scoringMode).toBe("multiplicative");
+  });
+
+  it("floors likelihood above zero, so nothing scores 0 for being unobserved", () => {
+    expect(AARS_V3_RULE.likelihoodFloor).toBeGreaterThan(0);
+    expect(AARS_V3_RULE.likelihoodFloor).toBeLessThan(1);
+  });
+
+  it("puts the routes IN on the likelihood side and the damage on the impact side", () => {
+    expect(AARS_V3_RULE.likelihoodPillars).toContain("exposure");
+    expect(AARS_V3_RULE.likelihoodPillars).toContain("compliance");
+    expect(AARS_V3_RULE.likelihoodPillars).not.toContain("data");
+    expect(AARS_V3_RULE.likelihoodPillars).not.toContain("privilege");
+    expect(AARS_V3_RULE.likelihoodPillars).not.toContain("environment");
+  });
+
+  it("reports both halves, which is what makes the score explainable", () => {
+    const r = computeAars({
+      issueSeverities: ["MEDIUM"] as Severity[],
+      gaps: [gap("LLM06"), gap("NO_GUARDRAIL")],
+      dataExposure: "SENSITIVE",
+      internetExposure: "CONFIRMED",
+      privilege: "ADMIN",
+      environment: "PROD",
+    }, AARS_V3_RULE);
+    expect(r.composition).toBeDefined();
+    expect(r.composition!.likelihood).toBeGreaterThan(0);
+    expect(r.composition!.likelihood).toBeLessThanOrEqual(1);
+    expect(r.score).toBe(Math.min(100, Math.round(r.composition!.likelihood * r.composition!.impact)));
   });
 });
 

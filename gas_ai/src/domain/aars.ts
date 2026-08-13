@@ -142,7 +142,27 @@ export interface AarsResult {
   };
   /** Which combination rules fired, in rule order — the evidence behind that number. */
   combinations?: Array<{ label: string; points: number }>;
+  /**
+   * The two halves, present only in `multiplicative` mode. `likelihood` is 0–1 (after the
+   * floor); `impact` is the 0–100 scale the product runs across. Together they are what
+   * makes "68 = 85% likely × 80 impact" sayable.
+   */
+  composition?: { likelihood: number; impact: number };
 }
+
+/** The pillar names, so a rule can name them without stringly-typing the whole model. */
+export type PillarKey =
+  | "toxic"
+  | "compliance"
+  | "data"
+  | "exposure"
+  | "privilege"
+  | "environment"
+  | "combination";
+
+export const PILLAR_KEYS: PillarKey[] = [
+  "toxic", "compliance", "data", "exposure", "privilege", "environment", "combination",
+];
 
 // ------------------------------------------------------------------------- the rule
 
@@ -185,6 +205,30 @@ export type MultiIssueScaling = "flat" | "log2";
  * (LLM03 / ASI04 / ML_SUPPLY_CHAIN are one supply-chain risk, priced three times).
  */
 export type GapAggregation = "sum" | "rss";
+
+/**
+ * How the pillars compose into a score.
+ *
+ * `additive` is the spec: every pillar is summed and the total clamped to 100. Its defect
+ * is dimensional rather than arithmetic — pillar C (sensitive data) and privilege describe
+ * what happens IF the asset is compromised, while pillar B (control gaps) and pillar D
+ * (reachability) describe how LIKELY that is. Adding them means an unreachable agent
+ * holding PII and a reachable agent holding nothing can land on the same number while
+ * needing opposite responses: one is "hard to reach, terrible if reached", the other is
+ * "trivially reachable, nothing to take".
+ *
+ * `multiplicative` separates them: likelihood evidence combines by noisy-OR (alternative
+ * routes to one outcome, so it saturates toward 1 instead of summing past it), impact
+ * accumulates on its own scale, and the score is their product across 0–100.
+ *
+ * The likelihood FLOOR is what stops this being naive. A pure product scores an
+ * unreachable asset at zero, which is a claim no estate can support — reachability
+ * changes, insiders exist, and the evidence is incomplete anyway. OWASP's AIVSS draft
+ * (v0.8 §3.4.1) reaches the same conclusion from the other side, flooring its mitigation
+ * factor at 0.67 because "no mitigation, however strong, can fully eliminate the residual
+ * risk contributed by agentic amplification factors".
+ */
+export type ScoringMode = "additive" | "multiplicative";
 
 /**
  * Which derivations are allowed to RAISE a gap, as opposed to how gaps are priced.
@@ -250,6 +294,20 @@ export interface AarsRule {
   gapSources: GapSources;
   /** Age threshold for `gapSources.dormantAgent`, in days. */
   dormantAfterDays: number;
+  /** How the pillars compose. `additive` is the spec. */
+  scoringMode: ScoringMode;
+  /**
+   * Which pillars are evidence of LIKELIHOOD in `multiplicative` mode. Everything not
+   * named here is impact. Ignored entirely in `additive` mode, where the split has no
+   * meaning. Declared as a rule rather than hardcoded because "does a compliance gap make
+   * compromise more likely, or is it its own harm" is a judgement, not a fact.
+   */
+  likelihoodPillars: PillarKey[];
+  /**
+   * The floor under the composed likelihood, as a fraction of 1. Never 0: an asset with no
+   * likelihood evidence is under-observed, not safe.
+   */
+  likelihoodFloor: number;
   /**
    * Per-severity weight on a gap contributed by a failing config finding. The spec
    * weights them all at 1, so a CRITICAL failing control prices exactly like a LOW one.
@@ -314,6 +372,12 @@ export const DEFAULT_AARS_RULE: AarsRule = {
   gapSources: { fiveRs: false, deprecatedModel: false, inactiveAgent: false, dormantAgent: false },
   /** Days without a sighting before `dormantAgent` fires. Only read when that source is on. */
   dormantAfterDays: 90,
+  // The spec sums everything; the split below is declared but unread in this mode.
+  scoringMode: "additive",
+  // Control weakness and reachability are routes IN; issues are evidence that a route has
+  // already been walked. Data, privilege, environment and conjunctions describe the damage.
+  likelihoodPillars: ["compliance", "exposure", "toxic"],
+  likelihoodFloor: 0.15,
   // All 1: the spec reads a failing control as present-or-absent, never as more or less
   // severe. Kept as a knob because ai_findings.severity is already persisted and unused.
   findingSeverityWeights: { CRITICAL: 1, HIGH: 1, MEDIUM: 1, LOW: 1 },
@@ -404,6 +468,10 @@ export const AARS_V2_RULE: AarsRule = {
   gapAggregation: "rss",
   gapSources: { fiveRs: true, deprecatedModel: true, inactiveAgent: true, dormantAgent: false },
   dormantAfterDays: 90,
+  // v2 is a recalibration of the additive model, not a restructure of it.
+  scoringMode: "additive",
+  likelihoodPillars: ["compliance", "exposure", "toxic"],
+  likelihoodFloor: 0.15,
   findingSeverityWeights: { CRITICAL: 1.5, HIGH: 1.2, MEDIUM: 1, LOW: 0.6 },
   pillarBCap: 25,
   dataExposurePoints: { SENSITIVE: 12, DATA_ACCESS: 6, NONE: 0 },
@@ -416,6 +484,56 @@ export const AARS_V2_RULE: AarsRule = {
   combinationRules: [],
   environmentRules: DEFAULT_AARS_RULE.environmentRules.map((e) => ({ ...e })),
   environmentPoints: { PROD: 0, PREPROD: 0, NONPROD: 0, DEV: 0, UNCLASSIFIED: 0 },
+  bands: { critical: 70, high: 50, medium: 30, low: 10 },
+};
+
+/**
+ * The likelihood × impact model, calibrated. Loadable from the Rules page; never a default.
+ *
+ * v2 fixed the arithmetic — it took pillar B off its cap and got the estate from 5 distinct
+ * scores to 11. What it could not fix is dimensional: v2 still ADDS "how likely is this
+ * compromised" to "how bad if it is", so an unreachable agent holding PII and a reachable
+ * agent holding nothing can land on the same number while needing opposite work.
+ *
+ * v3 separates them. Likelihood is the union of the routes in — a missing guardrail, a
+ * reachable endpoint, an issue already filed — combined by noisy-OR so alternative routes
+ * saturate rather than sum. Impact is what an attacker would get: the data, the privilege,
+ * the environment, and the conjunctions that make those worse together.
+ *
+ * The two halves are why the caps no longer need to total 100. Impact is normalised against
+ * its own ceiling, so pillar sizes set the *relative weight* of each impact term rather than
+ * a share of the final score, and the likelihood pillars are read as fractions of their own
+ * ceilings. That removes the budget arithmetic v2 had to do by hand.
+ *
+ * `likelihoodFloor` at 0.2: an asset with no likelihood evidence is under-observed rather
+ * than safe — 43% of the reference tenant's agents have UNDETERMINED reachability precisely
+ * because nobody has evaluated it.
+ */
+export const AARS_V3_RULE: AarsRule = {
+  ...AARS_V2_RULE,
+  scoringMode: "multiplicative",
+  likelihoodPillars: ["compliance", "exposure", "toxic"],
+  likelihoodFloor: 0.2,
+  // Impact terms, weighted against each other rather than against a 100-point budget.
+  dataExposurePoints: { SENSITIVE: 40, DATA_ACCESS: 18, NONE: 0 },
+  dataAmplifier: 1,
+  privilegePoints: { ADMIN: 30, HIGH: 16, NONE: 0 },
+  environmentPoints: { PROD: 20, PREPROD: 8, NONPROD: 4, DEV: 2, UNCLASSIFIED: 0 },
+  combinationRules: [
+    {
+      conditions: ["EXCESSIVE_PRIVILEGE", "SENSITIVE_DATA", "MISSING_GUARDRAIL"],
+      points: 20,
+      label: "Over-privileged, holds sensitive data, and unguarded",
+    },
+    {
+      conditions: ["SENSITIVE_DATA", "INTERNET_EXPOSURE"],
+      points: 15,
+      label: "Sensitive data on an internet-reachable asset",
+    },
+  ],
+  // Reachability is the strongest single likelihood signal, so it gets the widest range.
+  exposurePoints: { CONFIRMED: 30, UNDETERMINED: 10, NONE: 0 },
+  gapSources: { fiveRs: true, deprecatedModel: true, inactiveAgent: true, dormantAgent: true },
   bands: { critical: 70, high: 50, medium: 30, low: 10 },
 };
 
@@ -540,19 +658,97 @@ export function computeAars(input: AarsInput, rule: AarsRule = DEFAULT_AARS_RULE
   const fired = firedCombinations(input.conditions ?? [], rule);
   const combination = fired.reduce((acc, f) => acc + f.points, 0);
 
-  const score = Math.min(
-    AARS_MAX_SCORE,
-    toxic + compliance + data + exposure + privilege + environment + combination,
-  );
+  const pillars = { toxic, compliance, data, exposure, privilege, environment, combination };
+
+  let score: number;
+  let composition: { likelihood: number; impact: number } | undefined;
+  if (rule.scoringMode === "multiplicative") {
+    composition = composeRisk(pillars, rule);
+    score = Math.min(AARS_MAX_SCORE, Math.round(composition.likelihood * composition.impact));
+  } else {
+    score = Math.min(
+      AARS_MAX_SCORE,
+      toxic + compliance + data + exposure + privilege + environment + combination,
+    );
+  }
+
   const result: AarsResult = {
     score,
     severity: aarsSeverity(score, rule.bands),
-    pillars: { toxic, compliance, data, exposure, privilege, environment, combination },
+    pillars,
   };
+  if (composition) result.composition = composition;
   // Omitted rather than empty when nothing fired, so the persisted blob does not grow a
   // key for every asset in an estate that uses no conjunctions.
   if (fired.length) result.combinations = fired;
   return result;
+}
+
+/**
+ * Split the pillars into a likelihood in [floor, 1] and an impact on the 0–100 scale.
+ *
+ * Likelihood combines by **noisy-OR**: `1 − Π(1 − pᵢ)`. Each likelihood pillar is read as
+ * its share of that pillar's own ceiling, i.e. an independent route to compromise. The
+ * union of alternative routes is what noisy-OR computes, and it saturates toward 1 rather
+ * than summing past it — which is exactly the cap-saturation failure the additive model
+ * suffers, avoided by construction rather than by clamping.
+ *
+ * Impact is summed, because impact terms are NOT alternative routes to one outcome: an
+ * asset that holds sensitive data *and* has admin rights *and* is production is worse on
+ * three separate counts, and those genuinely add.
+ *
+ * A pillar with a zero ceiling contributes nothing to either half rather than dividing by
+ * zero — a switched-off pillar must not be read as "0% likely" or as free impact.
+ */
+export function composeRisk(
+  pillars: AarsResult["pillars"],
+  rule: AarsRule,
+): { likelihood: number; impact: number } {
+  const ceilings = pillarCeilings(rule);
+  const isLikelihood = new Set(rule.likelihoodPillars);
+
+  let notCompromised = 1;
+  let impact = 0;
+  let impactCeiling = 0;
+  for (const key of PILLAR_KEYS) {
+    const ceiling = ceilings[key];
+    if (isLikelihood.has(key)) {
+      if (ceiling <= 0) continue;
+      const p = Math.min(1, Math.max(0, pillars[key] / ceiling));
+      notCompromised *= 1 - p;
+    } else {
+      impact += pillars[key];
+      impactCeiling += ceiling;
+    }
+  }
+
+  const likelihood = Math.max(rule.likelihoodFloor, 1 - notCompromised);
+  // Impact is expressed on the 0–100 scale so the product is directly a score. With no
+  // impact pillars configured at all the scale is undefined, and treating that as zero
+  // would silently zero the estate — fall back to the full scale, which makes the score
+  // read as pure likelihood rather than as "nothing matters".
+  const impactScaled = impactCeiling > 0
+    ? (impact / impactCeiling) * AARS_MAX_SCORE
+    : AARS_MAX_SCORE;
+  return { likelihood, impact: Math.min(AARS_MAX_SCORE, impactScaled) };
+}
+
+/**
+ * The most each pillar can contribute under this rule — the denominator that turns a
+ * pillar's points into a fraction. Derived from the rule rather than hardcoded, so a
+ * retuned rule cannot leave the composition measuring against stale ceilings.
+ */
+export function pillarCeilings(rule: AarsRule): Record<PillarKey, number> {
+  const maxOf = (r: Record<string, number>) => Math.max(0, ...Object.values(r));
+  return {
+    toxic: rule.pillarACap,
+    compliance: rule.pillarBCap,
+    data: Math.round(maxOf(rule.dataExposurePoints) * rule.dataAmplifier),
+    exposure: maxOf(rule.exposurePoints),
+    privilege: maxOf(rule.privilegePoints),
+    environment: maxOf(rule.environmentPoints),
+    combination: rule.combinationRules.reduce((acc, c) => acc + c.points, 0),
+  };
 }
 
 /**
