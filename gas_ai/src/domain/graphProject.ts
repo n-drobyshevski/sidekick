@@ -59,6 +59,10 @@ export interface Projection {
 export const DEFAULT_PER_KIND_CAP: Partial<Record<string, number>> = {
   USER_ACCOUNT: 8,
   BUCKET: 6,
+  // Same cap as BUCKET: the sensitive-data chain makes databases a real fan-out target for
+  // the first time — before it, no live query produced one at all.
+  DATABASE: 6,
+  DATABASE_SERVER: 6,
   ACCESS_ROLE_BINDING: 5,
 };
 export const DEFAULT_KIND_CAP = 12;

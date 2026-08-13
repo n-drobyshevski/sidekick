@@ -20,8 +20,11 @@ describe("laneOf", () => {
     expect(laneOf("USER_ACCOUNT")).toBe(2);
     expect(laneOf("BUCKET")).toBe(3);
     expect(laneOf("DATABASE")).toBe(3);
-    expect(laneOf("VIRTUAL_MACHINE")).toBe(4);
-    expect(laneOf("REPOSITORY")).toBe(4);
+    // The data-exposure chain reads left to right and ends here, one band past the store it
+    // describes — so the edge from bucket to findings is short, not a run back to band 0.
+    expect(laneOf("DATA_FINDING")).toBe(4);
+    expect(laneOf("VIRTUAL_MACHINE")).toBe(5);
+    expect(laneOf("REPOSITORY")).toBe(5);
   });
 
   it("SUMMARY nodes inherit the lane of the kind they collapse", () => {

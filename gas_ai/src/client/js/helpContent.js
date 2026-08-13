@@ -263,14 +263,41 @@ export const ENTRIES = [
     },
   },
   {
-    id: "sensitive-data",
-    term: "SENSITIVE_DATA",
-    aka: "classified-data reach",
+    id: "data-finding",
+    term: "DATA_FINDING",
+    aka: "what Wiz found in the data",
     family: "signal",
     blurb:
-      "The asset can reach data Wiz classified as PII, PHI or PCI. The REACHABILITY is " +
-      "what the toxic combinations price, not the storage — a bucket full of PII that no " +
-      "agent can read is a different finding from one that three agents can.",
+      "Wiz's DSPM verdict on one bucket or database — what class of sensitive data is in " +
+      "it, and how severe. Drawn as one node per datastore carrying the count, because a " +
+      "store with two hundred findings is one fact about that store, not two hundred " +
+      "nodes. These are what turn “this agent can reach sensitive data” into a path you " +
+      "can walk: agent → execution identity → datastore → findings.",
+    drawnOn: ["graph"],
+    mark: () => kindMark("DATA_FINDING"),
+    count: (ctx) => {
+      const k = ctx.kpis;
+      if (!k || k.dataFindings === undefined) return null;
+      return {
+        n: n(k.dataFindings),
+        value: String(n(k.dataFindings)),
+        unit: pluralize(n(k.dataFindings), "finding") + " on reachable stores",
+        route: "graph",
+        params: { kinds: "DATA_FINDING" },
+      };
+    },
+  },
+  {
+    id: "sensitive-data",
+    term: "SENSITIVE_DATA",
+    aka: "classified-data reach, unresolved",
+    family: "signal",
+    blurb:
+      "The FALLBACK marker: Wiz says this asset can reach data classified as PII, PHI or " +
+      "PCI, but no path to the store could be walked — the tenant rejected the traversal, " +
+      "or the grant is expressed some way it does not follow. Where the path IS walkable " +
+      "the chain is drawn instead and this marker is suppressed, so one asset never tells " +
+      "the same story twice. Its mark is the data-finding gem, left unfinished.",
     drawnOn: ["graph"],
     mark: () => kindMark("SENSITIVE_DATA"),
     count: (ctx) => {

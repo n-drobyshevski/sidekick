@@ -14,7 +14,10 @@ import {
   normalizePrincipalsPage,
   normalizeRuleAssetsPage,
   normalizeRunsAsPage,
+  normalizeSensitiveDataAccessPage,
+  normalizeDataFindingSeverity,
   reconcileIssues,
+  withDataFindingCounts,
 } from "../src/domain/syncNormalize";
 import { COMBO_GROUPS, OTHER_GROUP_ID } from "../src/domain/toxicCombos";
 import type { IssueRow } from "../src/domain/graphTypes";
@@ -127,6 +130,99 @@ describe("page normalizers", () => {
 
   it("malformed graphSearch rows are skipped, never thrown on", () => {
     expect(() => normalizeRunsAsPage([{}, { entities: "junk" } as never, null as never])).not.toThrow();
+  });
+});
+
+describe("normalizeSensitiveDataAccessPage — the data-exposure chain", () => {
+  const STORE_RAW = {
+    id: "wiz-node-bucket-1",
+    name: "shipperbox-sftp",
+    type: "BUCKET",
+    cloudPlatform: "GCP",
+    region: "europe-west1",
+    hasSensitiveData: true,
+  };
+  const df = (id: string, severity: string) => ({
+    id, type: "DATA_FINDING", name: "PII: email addresses", severity,
+  });
+
+  it("implies RUNS_AS + ALLOWS_ACCESS_TO, and files the findings on the store", () => {
+    const part = normalizeSensitiveDataAccessPage([{
+      entities: [AGENT_RAW, SA_RAW, STORE_RAW,
+        df("f1", "DataFindingSeverityCritical"), df("f2", "DataFindingSeverityHigh")],
+    }]);
+
+    expect(part.edges).toEqual([
+      expect.objectContaining({ src: "wiz-node-agent-1", dst: "wiz-node-sa-1", type: "RUNS_AS" }),
+      expect.objectContaining({
+        src: "wiz-node-sa-1", dst: "wiz-node-bucket-1", type: "ALLOWS_ACCESS_TO",
+      }),
+    ]);
+    // No accessType: the query filters on the STORE's classification, not on the grant's
+    // strength, so there is nothing on the wire to read one from.
+    expect(part.edges[1].accessType).toBeUndefined();
+
+    // The findings are rows, never nodes — the graph draws one aggregate per store.
+    expect(part.nodes.map((n) => n.id))
+      .toEqual(["wiz-node-agent-1", "wiz-node-sa-1", "wiz-node-bucket-1"]);
+    expect(part.dataFindings).toEqual([
+      { id: "f1", resourceId: "wiz-node-bucket-1", name: "PII: email addresses", severity: "CRITICAL" },
+      { id: "f2", resourceId: "wiz-node-bucket-1", name: "PII: email addresses", severity: "HIGH" },
+    ]);
+  });
+
+  it("keeps a classified store that carries no findings", () => {
+    // HAS_DATA_FINDING is optional in the document for exactly this row: requiring a
+    // finding would drop the whole path, which is the state the chain exists to end.
+    const part = normalizeSensitiveDataAccessPage([{ entities: [AGENT_RAW, SA_RAW, STORE_RAW] }]);
+    expect(part.edges).toHaveLength(2);
+    expect(part.dataFindings).toEqual([]);
+  });
+
+  it("drops findings it cannot attribute, rather than guessing a store", () => {
+    const second = { ...STORE_RAW, id: "wiz-node-db-1", name: "db-core", type: "DATABASE" };
+    const part = normalizeSensitiveDataAccessPage([{
+      entities: [AGENT_RAW, SA_RAW, STORE_RAW, second, df("f1", "DataFindingSeverityHigh")],
+    }]);
+    // Both access edges are still drawn — the paths are real.
+    expect(part.edges.filter((e) => e.type === "ALLOWS_ACCESS_TO")).toHaveLength(2);
+    // But a flat entity list cannot say WHICH store the finding was in.
+    expect(part.dataFindings).toEqual([]);
+  });
+
+  it("reads Wiz's prefixed severity spelling, and the bare one", () => {
+    expect(normalizeDataFindingSeverity("DataFindingSeverityCritical")).toBe("CRITICAL");
+    expect(normalizeDataFindingSeverity("HIGH")).toBe("HIGH");
+    expect(normalizeDataFindingSeverity("something-else")).toBe("UNKNOWN");
+    expect(normalizeDataFindingSeverity(undefined)).toBe("UNKNOWN");
+  });
+
+  it("folds counts across pages at commit, not per page", () => {
+    // mergeParts overwrites scalars rather than summing them, so a per-page count would
+    // silently become whatever the LAST page saw. The fold reads the deduped rows instead.
+    const doc = {
+      nodes: [{ id: "store", kind: "BUCKET" as const, name: "store", hasSensitiveData: true }],
+      edges: [],
+      syncedAt: "2026-06-28T06:00:00Z",
+    };
+    const counted = withDataFindingCounts(doc, [
+      { id: "a", resourceId: "store", name: "a", severity: "CRITICAL" },
+      { id: "b", resourceId: "store", name: "b", severity: "HIGH" },
+      { id: "c", resourceId: "store", name: "c", severity: "HIGH" },
+    ]);
+    expect(counted.nodes[0].dataFindingCount).toBe(3);
+    expect(counted.nodes[0].dataFindingSeverities).toEqual({ CRITICAL: 1, HIGH: 2 });
+  });
+
+  it("leaves a store the traversal never reached without a count at all", () => {
+    // Not 0: "clean" and "never asked" price differently in pillar C and read differently
+    // on the coverage page.
+    const doc = {
+      nodes: [{ id: "unasked", kind: "BUCKET" as const, name: "unasked", hasSensitiveData: true }],
+      edges: [],
+      syncedAt: "2026-06-28T06:00:00Z",
+    };
+    expect(withDataFindingCounts(doc, []).nodes[0].dataFindingCount).toBeUndefined();
   });
 });
 

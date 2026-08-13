@@ -9,11 +9,12 @@
 // its edges from the entity types present in the row (unit-tested; verify against
 // captured responses when they land in ai/queries/reponse_schemas/).
 
-import type { Severity } from "./config";
+import { SEVERITY_ORDER, type Severity } from "./config";
 import {
   edgeId,
   kindFromWizType,
   severityRank,
+  type DataFindingRow,
   type FindingRow,
   type GEdge,
   type GNode,
@@ -130,14 +131,16 @@ export interface NormalizedPart {
   edges: GEdge[];
   issues: IssueRow[];
   findings: FindingRow[];
+  /** DSPM classification findings, keyed to the datastore they were found in. */
+  dataFindings: DataFindingRow[];
 }
 
 export function emptyPart(): NormalizedPart {
-  return { nodes: [], edges: [], issues: [], findings: [] };
+  return { nodes: [], edges: [], issues: [], findings: [], dataFindings: [] };
 }
 
 /**
- * The four arms, as ONE named operation over the type.
+ * The five arms, as ONE named operation over the type.
  *
  * The sync loop used to write this out by hand and carried three of the four: `findings`
  * was never accumulated, so `CONFIG_FINDINGS` — which emits findings and nothing else — had
@@ -151,12 +154,14 @@ export function appendPart(target: NormalizedPart, part: NormalizedPart): void {
   target.edges.push(...part.edges);
   target.issues.push(...part.issues);
   target.findings.push(...part.findings);
+  target.dataFindings.push(...part.dataFindings);
 }
 
 /** True when a part carries nothing at all — on ANY arm. */
 export function partIsEmpty(part: NormalizedPart): boolean {
   return (
-    !part.nodes.length && !part.edges.length && !part.issues.length && !part.findings.length
+    !part.nodes.length && !part.edges.length && !part.issues.length &&
+    !part.findings.length && !part.dataFindings.length
   );
 }
 
@@ -524,6 +529,128 @@ export function normalizeRunsAsPage(rows: Rec[]): NormalizedPart {
   return part;
 }
 
+/** The datastore kinds the sensitive-data traversal asks for. */
+const DATA_STORE_KINDS: ReadonlySet<string> = new Set(["BUCKET", "DATABASE", "DATABASE_SERVER"]);
+
+/**
+ * Raw entities of a graphSearch row, untouched.
+ *
+ * `entitiesOf` runs each through `normalizeCloudResource`, which knows nothing about
+ * `severity` — that field is on DataFinding, not on the CloudResource fragment. So the
+ * finding rows are read from the raw array instead of from the normalized nodes.
+ */
+function rawEntitiesOf(row: Rec): Rec[] {
+  const entities = row["entities"];
+  return Array.isArray(entities) ? (entities as Rec[]) : [];
+}
+
+/**
+ * graphSearch "agent → service account → classified store → data findings" page.
+ *
+ * Emits the path entities MINUS the findings, the two edges the path implies, and one
+ * `DataFindingRow` per finding. The findings are deliberately not nodes: the graph draws
+ * one aggregate per store (see `withDataFindingNodes`), so a store with two hundred
+ * findings costs one node rather than the whole budget.
+ *
+ * Counts are NOT stamped here. A page is not the step, and `mergeParts` overwrites scalars
+ * rather than summing them, so a per-page count would silently become "whatever the last
+ * page saw". The counts are folded from the accumulated rows once, at commit, by
+ * `withDataFindingCounts`.
+ *
+ * Attribution: a row carries a flat entity list, so when it holds exactly one store the
+ * findings are that store's. When it holds several, nothing in the response says which —
+ * those findings are dropped rather than guessed at. `normalizeRunsAsPage` already accepts
+ * the same limitation for a multi-service-account path.
+ */
+export function normalizeSensitiveDataAccessPage(rows: Rec[]): NormalizedPart {
+  const part = emptyPart();
+  for (const row of rows) {
+    const entities = entitiesOf(row);
+    const agent = entities.find((e) => e.kind === "AI_AGENT");
+    const sa = entities.find((e) => e.kind === "SERVICE_ACCOUNT");
+    const stores = entities.filter((e) => DATA_STORE_KINDS.has(e.kind));
+
+    // Findings are evidence about a store, never inventory — keep them out of ai_assets.
+    part.nodes.push(...entities.filter((e) => e.kind !== "DATA_FINDING"));
+
+    if (agent && sa) {
+      part.edges.push({
+        id: edgeId(agent.id, "RUNS_AS", sa.id), src: agent.id, dst: sa.id, type: "RUNS_AS",
+      });
+    }
+    for (const store of stores) {
+      if (!sa) continue;
+      // No accessType: the query filters on the store's classification, not on the grant's
+      // strength, so claiming HIGH_PRIVILEGE here would assert something never established.
+      part.edges.push({
+        id: edgeId(sa.id, "ALLOWS_ACCESS_TO", store.id),
+        src: sa.id,
+        dst: store.id,
+        type: "ALLOWS_ACCESS_TO",
+      });
+    }
+
+    if (stores.length !== 1) continue;
+    const storeId = stores[0].id;
+    for (const raw of rawEntitiesOf(row)) {
+      if (kindFromWizType(raw["type"]) !== "DATA_FINDING") continue;
+      const id = str(raw["id"]);
+      if (!id) continue;
+      part.dataFindings.push({
+        id,
+        resourceId: storeId,
+        name: str(raw["name"]) ?? id,
+        severity: normalizeDataFindingSeverity(raw["severity"]),
+      });
+    }
+  }
+  return part;
+}
+
+/**
+ * Wiz spells DSPM severities `DataFindingSeverityCritical`, not `CRITICAL` (see the
+ * `EQUALS` list in exemples/toxic_combos_response.js). Strip the prefix and uppercase, so
+ * one severity vocabulary reaches the rest of the app; anything unrecognised becomes
+ * UNKNOWN rather than a value the severity scale cannot rank.
+ */
+export function normalizeDataFindingSeverity(v: unknown): Severity {
+  const raw = str(v);
+  if (!raw) return "UNKNOWN";
+  const bare = raw.replace(/^DataFindingSeverity/i, "").toUpperCase();
+  return (SEVERITY_ORDER as readonly string[]).includes(bare) ? (bare as Severity) : "UNKNOWN";
+}
+
+/**
+ * Fold the accumulated data-finding rows onto the stores they were found in.
+ *
+ * Done once, at commit, over the whole row set rather than per page — see the note on
+ * `normalizeSensitiveDataAccessPage`. Stores the traversal reached but found nothing in
+ * get an explicit `0`; stores it never reached keep `undefined`, because "clean" and
+ * "never asked" are different answers and pillar C prices them differently.
+ */
+export function withDataFindingCounts(doc: GraphDoc, rows: DataFindingRow[]): GraphDoc {
+  if (!rows.length) return doc;
+  const byStore = new Map<string, { count: number; sev: Record<string, number> }>();
+  for (const row of rows) {
+    let acc = byStore.get(row.resourceId);
+    if (!acc) {
+      acc = { count: 0, sev: {} };
+      byStore.set(row.resourceId, acc);
+    }
+    acc.count += 1;
+    acc.sev[row.severity] = (acc.sev[row.severity] ?? 0) + 1;
+  }
+  return {
+    nodes: doc.nodes.map((n) => {
+      const acc = byStore.get(n.id);
+      if (!acc) return n;
+      return { ...n, dataFindingCount: acc.count, dataFindingSeverities: acc.sev };
+    }),
+    edges: doc.edges,
+    syncedAt: doc.syncedAt,
+  };
+}
+
 /**
  * graphSearch "identities with high-privilege access to agents" page → identities +
  * agents + the implied identity → ALLOWS_ACCESS_TO → agent edge.
@@ -556,11 +683,13 @@ export function mergeParts(parts: NormalizedPart[], syncedAt: string): {
   doc: GraphDoc;
   issues: IssueRow[];
   findings: FindingRow[];
+  dataFindings: DataFindingRow[];
 } {
   const nodes = new Map<string, GNode>();
   const edges = new Map<string, GEdge>();
   const issues = new Map<string, IssueRow>();
   const findings = new Map<string, FindingRow>();
+  const dataFindings = new Map<string, DataFindingRow>();
   for (const part of parts) {
     for (const node of part.nodes) {
       const prev = nodes.get(node.id);
@@ -581,11 +710,15 @@ export function mergeParts(parts: NormalizedPart[], syncedAt: string): {
     for (const edge of part.edges) edges.set(edge.id, edge);
     for (const issue of part.issues) issues.set(issue.id, issue);
     for (const finding of part.findings ?? []) findings.set(finding.id, finding);
+    for (const df of part.dataFindings ?? []) dataFindings.set(df.id, df);
   }
   return {
     doc: { nodes: [...nodes.values()], edges: [...edges.values()], syncedAt },
     issues: [...issues.values()],
     findings: [...findings.values()],
+    // De-duped by finding id, so the count folded from these rows is exact however the
+    // battery split its pages.
+    dataFindings: [...dataFindings.values()],
   };
 }
 

@@ -49,6 +49,18 @@ export const NODE_KINDS = [
   "INTERNET_EXPOSURE",  // one node per internet-exposed asset (exposure topology)
   "EXCESSIVE_PRIVILEGE", // one node per over-privileged asset (CIEM rights topology)
   "MISSING_GUARDRAIL",   // one node per unguarded AI asset (guardrail-coverage topology)
+  // Appended, so the kinds above keep their declaration order (the grouped layout orders
+  // its blocks by this list).
+  //
+  // DATABASE_SERVER is inventory, not synthetic: it is in the datastore type list the
+  // sensitive-data traversal asks for (ai/queries/6_IAM.MD). Leaving it out would not
+  // narrow the query — kindFromWizType would return null and the whole ROW would be
+  // skipped, losing the agent and the service account with it.
+  "DATABASE_SERVER",
+  // One node per datastore that carries classified data findings — the aggregate, not the
+  // individual finding. Wiz draws the same collapse ("Data Findings", count badge); a
+  // bucket with 200 findings would otherwise spend the entire node budget by itself.
+  "DATA_FINDING",
 ] as const;
 export type NodeKind = (typeof NODE_KINDS)[number];
 
@@ -62,6 +74,13 @@ export type NodeKind = (typeof NODE_KINDS)[number];
 export const RISK_NODE_KINDS: readonly NodeKind[] = [
   "ISSUE", "SENSITIVE_DATA", "INTERNET_EXPOSURE", "EXCESSIVE_PRIVILEGE", "MISSING_GUARDRAIL",
   "EXCESSIVE_ACCESS_FINDING", "LATERAL_MOVEMENT_FINDING", "IDENTITY_ACCESS_FINDING",
+  // DATA_FINDING is here; BUCKET / DATABASE / DATABASE_SERVER deliberately are NOT. The
+  // finding is evidence about a store and must ride through the filters with it. The store
+  // itself is inventory the tenant owns — it carries a cloud, a region and projects, and
+  // someone filtering to GCP means to exclude an AWS bucket. Filtering the store out still
+  // takes its findings with it, because the projection only admits neighbours of admitted
+  // nodes.
+  "DATA_FINDING",
 ];
 
 export function isRiskKind(kind: string): boolean {
@@ -109,6 +128,10 @@ export const EDGE_TYPES = [
   "HAS_ACCESS_TO_SENSITIVE_DATA", // identity/agent → SENSITIVE_DATA (can reach it)
   "EXPOSED_TO_INTERNET",          // asset → INTERNET_EXPOSURE (reachable from the internet)
   "HAS_EXCESSIVE_PRIVILEGE",      // asset/identity → EXCESSIVE_PRIVILEGE (admin or high rights)
+  // BUCKET/DATABASE → DATA_FINDING. Wiz's own vocabulary, not ours: the tenant capture in
+  // exemples/toxic_combos_response.js echoes control wc-id-3217's query, whose "Sensitive
+  // Data Access" block ends `-HAS_DATA_FINDING→ DATA_FINDING`.
+  "HAS_DATA_FINDING",
 ] as const;
 export type EdgeType = (typeof EDGE_TYPES)[number];
 
@@ -133,6 +156,12 @@ export interface GNode {
   hasAccessToSensitiveData?: boolean;
   hasAdminPrivileges?: boolean;
   hasHighPrivileges?: boolean;
+  // DSPM classification, on a datastore (BUCKET / DATABASE / DATABASE_SERVER) only.
+  // `hasSensitiveData` says Wiz classified something here; these say how much and how bad.
+  // Absent (not 0) when the sensitive-data traversal never ran or the tenant rejected it —
+  // "no findings" and "never asked" must stay distinguishable.
+  dataFindingCount?: number;
+  dataFindingSeverities?: Record<string, number>; // severity → count
   // Guardrail-coverage scan result (PROTECTED_BY with negate:true): the protective
   // edge is ABSENT. A node flag, not a negated edge — there is no real guardrail
   // endpoint to point at; the client renders it as a dashed "no guardrail" stub.
@@ -168,6 +197,12 @@ export interface GNode {
     dataExposure: DataExposure;
     /** Absent on rows persisted before pillar D existed; re-derived on the next enrich. */
     internetExposure?: InternetExposure;
+    /**
+     * The classified findings this asset can actually REACH, summed over every datastore
+     * on its RUNS_AS → ALLOWS_ACCESS_TO path. Absent when the traversal never ran, which
+     * is why the pillar-C knob prices an absent list as zero rather than as "no findings".
+     */
+    dataFindings?: Array<{ severity: string; count: number }>;
   };
   comboGroups?: string[];   // toxic-combination group ids this node participates in
   // SUMMARY nodes only:
@@ -259,4 +294,22 @@ export interface FindingRow {
   severity: Severity;
   remediation?: string;
   frameworkCodes: string[];
+}
+
+/**
+ * One DSPM data finding — Wiz classified something in a datastore — keyed to that store.
+ *
+ * Deliberately NOT a FindingRow and deliberately not in the `ai_findings` tab. That tab
+ * holds failing compliance CONTROLS: it feeds AARS pillar B and `kpis.complianceGaps`, and
+ * a classification finding mixed in would inflate both while claiming a control failed
+ * that never ran. Two kinds of "finding" that price differently need two stores.
+ *
+ * The graph draws the aggregate (`DATA_FINDING`, one per store); these rows exist so the
+ * store's detail sheet can name what is actually in it.
+ */
+export interface DataFindingRow {
+  id: string;
+  resourceId: string;
+  name: string;
+  severity: Severity;
 }

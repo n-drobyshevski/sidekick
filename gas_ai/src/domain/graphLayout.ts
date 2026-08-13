@@ -83,13 +83,19 @@ const LANE_OF: Record<string, number> = {
   ACCESS_ROLE_BINDING: 2,
   BUCKET: 3,
   DATABASE: 3,
+  DATABASE_SERVER: 3,
   SENSITIVE_DATA: 3,
-  VIRTUAL_MACHINE: 4,
-  SERVERLESS: 4,
-  CONTAINER_IMAGE: 4,
-  REPOSITORY: 4,
+  // The bands ARE the path, read left to right, and the data-exposure chain ends here:
+  // agent (1) → identity (2) → classified store (3) → what was found in it (4). Filing data
+  // findings with the other evidence in band 0 would make the graph's most important edge
+  // its longest, running back across the whole canvas from the store it describes.
+  DATA_FINDING: 4,
+  VIRTUAL_MACHINE: 5,
+  SERVERLESS: 5,
+  CONTAINER_IMAGE: 5,
+  REPOSITORY: 5,
 };
-const LANE_COUNT = 5;
+const LANE_COUNT = 6;
 
 export function laneOf(kind: NodeKind, summaryOf?: NodeKind): number {
   if (kind === "SUMMARY" && summaryOf) return LANE_OF[summaryOf] ?? 2;

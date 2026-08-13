@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { MAX_NODES_DEFAULT } from "../src/domain/config";
 import {
   enrichGraphDoc,
+  withDataFindingNodes,
   withExcessivePrivilegeNodes,
   withInternetExposureNodes,
   withMissingGuardrailNodes,
@@ -217,10 +218,12 @@ const RISK_DOC = withMissingGuardrailNodes(
 );
 
 describe("projectGraph risk-node filtering", () => {
-  // agent-h-chatbot is flagged for sensitive access, high privilege, and no guardrail.
+  // agent-h-chatbot is flagged for high privilege and no guardrail. It is flagged for
+  // sensitive access too, but that is now drawn as the real chain to db-customer-core, so
+  // the `sensitive|` stub is suppressed and cannot be the vehicle here — see
+  // graphEnrich.test.ts for the suppression itself.
   const SEED = "agent-h-chatbot";
   const evidence = [
-    `sensitive|${SEED}`,
     `excessive|${SEED}`,
     `noguardrail|${SEED}`,
   ];
@@ -249,11 +252,38 @@ describe("projectGraph risk-node filtering", () => {
       projectGraph(RISK_DOC, {
         seedIds: [SEED],
         depth: 1,
-        filters: { kinds: ["AI_AGENT", "SENSITIVE_DATA"] },
+        filters: { kinds: ["AI_AGENT", "EXCESSIVE_PRIVILEGE"] },
       }),
     );
-    expect(shown.has(`sensitive|${SEED}`)).toBe(true);
-    expect(shown.has(`excessive|${SEED}`)).toBe(false);
+    expect(shown.has(`excessive|${SEED}`)).toBe(true);
     expect(shown.has(`noguardrail|${SEED}`)).toBe(false);
+  });
+
+  it("a data-finding aggregate rides through a cloud filter; its STORE does not", () => {
+    // The line this asserts: DATA_FINDING is risk evidence (no cloud of its own, so a cloud
+    // filter must not sever it from the store it describes), while BUCKET is inventory the
+    // tenant owns (filtering to AWS *should* drop a GCP bucket). Filtering the store out
+    // takes the finding with it, because BFS only reaches neighbours of admitted nodes.
+    const doc = withDataFindingNodes({
+      nodes: [
+        { id: "sa", kind: "SERVICE_ACCOUNT", name: "sa", cloudPlatform: "GCP" },
+        {
+          id: "store", kind: "BUCKET", name: "store", cloudPlatform: "GCP",
+          hasSensitiveData: true, dataFindingCount: 3, dataFindingSeverities: { HIGH: 3 },
+        },
+      ],
+      edges: [{ id: "e1", src: "sa", dst: "store", type: "ALLOWS_ACCESS_TO" }],
+      syncedAt: "2026-06-28T05:00:00Z",
+    });
+
+    const kept = ids(projectGraph(doc, { seedIds: ["sa"], depth: 2, filters: { clouds: ["GCP"] } }));
+    expect(kept.has("store")).toBe(true);
+    expect(kept.has("datafinding|store")).toBe(true);
+
+    const dropped = ids(
+      projectGraph(doc, { seedIds: ["sa"], depth: 2, filters: { clouds: ["AWS"] } }),
+    );
+    expect(dropped.has("store")).toBe(false);
+    expect(dropped.has("datafinding|store")).toBe(false);
   });
 });

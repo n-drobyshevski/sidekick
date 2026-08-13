@@ -240,6 +240,7 @@ var Server = (() => {
     edges: "ai_edges",
     issues: "ai_issues",
     findings: "ai_findings",
+    dataFindings: "ai_data_findings",
     syncHistory: "sync_history",
     settings: "settings",
     jobs: "jobs",
@@ -275,7 +276,11 @@ var Server = (() => {
       "tags_json",
       "technology_categories",
       "identity_purpose",
-      "issue_analytics_json"
+      "issue_analytics_json",
+      // DSPM classification on a datastore row. Appended, so an existing ledger picks them
+      // up on the next sync with no migration (see the note on ai_issues below).
+      "data_finding_count",
+      "data_findings_json"
     ],
     [TABS.edges]: ["id", "src", "dst", "type", "negated", "access_type"],
     [TABS.issues]: [
@@ -326,6 +331,10 @@ var Server = (() => {
       "remediation",
       "framework_codes"
     ],
+    // DSPM findings, kept apart from the compliance findings above on purpose: that tab
+    // prices AARS pillar B and counts as `complianceGaps`, and a classification finding
+    // folded into it would inflate both.
+    [TABS.dataFindings]: ["id", "resource_id", "name", "severity"],
     [TABS.syncHistory]: [
       "sync_id",
       "started_at",
@@ -620,8 +629,20 @@ var Server = (() => {
     // one node per internet-exposed asset (exposure topology)
     "EXCESSIVE_PRIVILEGE",
     // one node per over-privileged asset (CIEM rights topology)
-    "MISSING_GUARDRAIL"
+    "MISSING_GUARDRAIL",
     // one node per unguarded AI asset (guardrail-coverage topology)
+    // Appended, so the kinds above keep their declaration order (the grouped layout orders
+    // its blocks by this list).
+    //
+    // DATABASE_SERVER is inventory, not synthetic: it is in the datastore type list the
+    // sensitive-data traversal asks for (ai/queries/6_IAM.MD). Leaving it out would not
+    // narrow the query — kindFromWizType would return null and the whole ROW would be
+    // skipped, losing the agent and the service account with it.
+    "DATABASE_SERVER",
+    // One node per datastore that carries classified data findings — the aggregate, not the
+    // individual finding. Wiz draws the same collapse ("Data Findings", count badge); a
+    // bucket with 200 findings would otherwise spend the entire node budget by itself.
+    "DATA_FINDING"
   ];
   var RISK_NODE_KINDS = [
     "ISSUE",
@@ -631,7 +652,14 @@ var Server = (() => {
     "MISSING_GUARDRAIL",
     "EXCESSIVE_ACCESS_FINDING",
     "LATERAL_MOVEMENT_FINDING",
-    "IDENTITY_ACCESS_FINDING"
+    "IDENTITY_ACCESS_FINDING",
+    // DATA_FINDING is here; BUCKET / DATABASE / DATABASE_SERVER deliberately are NOT. The
+    // finding is evidence about a store and must ride through the filters with it. The store
+    // itself is inventory the tenant owns — it carries a cloud, a region and projects, and
+    // someone filtering to GCP means to exclude an AWS bucket. Filtering the store out still
+    // takes its findings with it, because the projection only admits neighbours of admitted
+    // nodes.
+    "DATA_FINDING"
   ];
   function isRiskKind(kind) {
     return RISK_NODE_KINDS.includes(kind);
@@ -849,8 +877,12 @@ var Server = (() => {
   }
   var RESOURCE_FIELDS = indented(IDENTITY_FIELDS, 6) + indented(CLOUD_RESOURCE_FIELDS, 6);
   var ENTITY_FIELDS = indented(IDENTITY_FIELDS, 8) + "        ... on CloudResource {\n" + indented(CLOUD_RESOURCE_FIELDS, 10) + "        }\n";
+  var DATA_ENTITY_FIELDS = ENTITY_FIELDS + "        ... on DataFinding {\n          severity\n        }\n";
+  function graphSearchQueryWith(name, queryBody, entityFields) {
+    return "query " + name + "($quick: Boolean, $first: Int, $after: String) {\n  graphSearch(quick: $quick, first: $first, after: $after, query: {\n" + queryBody + "  }) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      entities {\n" + entityFields + "      }\n    }\n  }\n}\n";
+  }
   function graphSearchQuery(name, queryBody) {
-    return "query " + name + "($quick: Boolean, $first: Int, $after: String) {\n  graphSearch(quick: $quick, first: $first, after: $after, query: {\n" + queryBody + "  }) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      entities {\n" + ENTITY_FIELDS + "      }\n    }\n  }\n}\n";
+    return graphSearchQueryWith(name, queryBody, ENTITY_FIELDS);
   }
   var AI_RESOURCE_TYPE_CANDIDATES = [
     "AI_AGENT",
@@ -906,6 +938,11 @@ var Server = (() => {
   var Q_SA_EXCESSIVE_ACCESS = graphSearchQuery(
     "SidekickAiAgentSaExcessiveAccess",
     '    type: "AI_AGENT"\n    select: true\n    relationships: [{\n      type: "RUNS_AS"\n      with: {\n        type: "SERVICE_ACCOUNT"\n        select: true\n        relationships: [{\n          type: "HAS_FINDING"\n          with: { type: "EXCESSIVE_ACCESS_FINDING", select: true }\n        }]\n      }\n    }]\n'
+  );
+  var Q_AGENT_SENSITIVE_DATA_ACCESS = graphSearchQueryWith(
+    "SidekickAiAgentSensitiveDataAccess",
+    '    type: "AI_AGENT"\n    select: true\n    relationships: [{\n      type: "RUNS_AS"\n      with: {\n        type: "SERVICE_ACCOUNT"\n        select: true\n        relationships: [{\n          type: "ALLOWS_ACCESS_TO"\n          with: {\n            type: ["BUCKET", "DATABASE", "DATABASE_SERVER"]\n            select: true\n            where: { hasSensitiveData: { EQUALS: true } }\n            relationships: [{\n              type: "HAS_DATA_FINDING"\n              optional: true\n              with: { type: "DATA_FINDING", select: true }\n            }]\n          }\n        }]\n      }\n    }]\n',
+    DATA_ENTITY_FIELDS
   );
   var Q_IDENTITY_ACCESS = graphSearchQuery(
     "SidekickAiIdentitiesWithAgentAccess",
@@ -1364,7 +1401,7 @@ var Server = (() => {
     "projects",
     "flags"
   ];
-  var ASSET_FLAGS = ["combo", "guardrail", "agentic"];
+  var ASSET_FLAGS = ["combo", "guardrail", "agentic", "datafindings"];
   function score(v) {
     const n = Number(v != null ? v : -1);
     return Number.isFinite(n) ? n : -1;
@@ -1432,6 +1469,7 @@ var Server = (() => {
     if (flag === "combo") return toNum(row["combos"]) > 0;
     if (flag === "guardrail") return row["guardrailMissing"] === true;
     if (flag === "agentic") return row["agentic"] === true;
+    if (flag === "datafindings") return toNum(row["dataFindings"]) > 0;
     return false;
   }
   function rowProjects(row) {
@@ -1563,6 +1601,16 @@ var Server = (() => {
     // 5Rs framework at 53% — data-exposure controls are systemically weak, so all
     // data-related points are amplified (ai/custom_score.md Pillar C).
     dataAmplifier: 1.1,
+    // OFF: every point zero, so the term contributes nothing and pillar C is arithmetically
+    // what it has always been. ai/custom_score.md's applied 14-row table — which pins
+    // test/aars.test.ts — therefore keeps passing untouched. Sixth knob to follow that
+    // convention, after multiIssueScaling, gapAggregation, gapSources, findingSeverityWeights
+    // and exposurePoints.
+    dataFindingPoints: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 },
+    dataFindingScaling: "flat",
+    dataFindingMultiplier: 1,
+    // 22 = the old implicit ceiling (20 × 1.1), so naming it changes no score.
+    pillarCCap: 22,
     // Pillar D is OFF in the spec rule. The doc reports internet exposure beside the score
     // but never adds it to one, so scoring it here would change every published number.
     exposurePoints: { CONFIRMED: 0, UNDETERMINED: 0, NONE: 0 },
@@ -1590,8 +1638,16 @@ var Server = (() => {
     gapSources: { fiveRs: true, deprecatedModel: true, inactiveAgent: true },
     findingSeverityWeights: { CRITICAL: 1.5, HIGH: 1.2, MEDIUM: 1, LOW: 0.6 },
     pillarBCap: 25,
-    dataExposurePoints: { SENSITIVE: 12, DATA_ACCESS: 6, NONE: 0 },
+    // Split, so the pillar takes more than two values. Reaching sensitive data is worth 6 —
+    // half what it was, because it is what most of the estate shares — and what you reach is
+    // worth up to 6 more. An asset with one MEDIUM finding scores 6+2=8; one with three
+    // CRITICALs scores 6+7=13, clamped to the 12 cap. Two values become five.
+    dataExposurePoints: { SENSITIVE: 6, DATA_ACCESS: 3, NONE: 0 },
     dataAmplifier: 1,
+    dataFindingPoints: { CRITICAL: 6, HIGH: 4, MEDIUM: 2, LOW: 1 },
+    dataFindingScaling: "log2",
+    dataFindingMultiplier: 1.2,
+    pillarCCap: 12,
     exposurePoints: { CONFIRMED: 18, UNDETERMINED: 7, NONE: 0 },
     bands: { critical: 70, high: 50, medium: 30, low: 10 }
   };
@@ -1614,21 +1670,31 @@ var Server = (() => {
     if (score2 >= bands.low) return "LOW";
     return "INFO";
   }
-  function worstSeverityPoints(severities, rule) {
+  function worstPoints(severities, points) {
     var _a5;
     let worst = 0;
     for (const s of severities) {
-      const p = (_a5 = rule.severityPoints[s]) != null ? _a5 : 0;
+      const p = (_a5 = points[s]) != null ? _a5 : 0;
       if (p > worst) worst = p;
     }
     return worst;
   }
-  function multiIssueFactor(count, rule) {
+  function worstSeverityPoints(severities, rule) {
+    return worstPoints(severities, rule.severityPoints);
+  }
+  function countFactor(count, scaling, multiplier) {
     if (count <= 1) return 1;
-    if (rule.multiIssueScaling === "log2") {
-      return 1 + (rule.multiIssueMultiplier - 1) * Math.log2(count);
-    }
-    return rule.multiIssueMultiplier;
+    if (scaling === "log2") return 1 + (multiplier - 1) * Math.log2(count);
+    return multiplier;
+  }
+  function multiIssueFactor(count, rule) {
+    return countFactor(count, rule.multiIssueScaling, rule.multiIssueMultiplier);
+  }
+  function dataFindingPointsFor(severities, rule) {
+    if (!severities.length) return 0;
+    return Math.round(
+      worstPoints(severities, rule.dataFindingPoints) * countFactor(severities.length, rule.dataFindingScaling, rule.dataFindingMultiplier)
+    );
   }
   function aggregateGapPoints(points, rule) {
     if (rule.gapAggregation === "rss") {
@@ -1637,7 +1703,7 @@ var Server = (() => {
     return points.reduce((acc, p) => acc + p, 0);
   }
   function computeAars(input, rule = DEFAULT_AARS_RULE) {
-    var _a5, _b, _c;
+    var _a5, _b, _c, _d;
     let toxic = worstSeverityPoints(input.issueSeverities, rule);
     toxic *= multiIssueFactor(input.issueSeverities.length, rule);
     toxic = Math.min(rule.pillarACap, Math.round(toxic));
@@ -1651,8 +1717,10 @@ var Server = (() => {
         rule
       )
     );
-    const data = Math.round(((_a5 = rule.dataExposurePoints[input.dataExposure]) != null ? _a5 : 0) * rule.dataAmplifier);
-    const exposure = (_c = rule.exposurePoints[(_b = input.internetExposure) != null ? _b : "NONE"]) != null ? _c : 0;
+    const dataTier = (_a5 = rule.dataExposurePoints[input.dataExposure]) != null ? _a5 : 0;
+    const dataFound = dataFindingPointsFor((_b = input.dataFindingSeverities) != null ? _b : [], rule);
+    const data = Math.min(rule.pillarCCap, Math.round((dataTier + dataFound) * rule.dataAmplifier));
+    const exposure = (_d = rule.exposurePoints[(_c = input.internetExposure) != null ? _c : "NONE"]) != null ? _d : 0;
     const score2 = Math.min(AARS_MAX_SCORE, toxic + compliance + data + exposure);
     return {
       score: score2,
@@ -1748,6 +1816,16 @@ var Server = (() => {
         DEFAULT_AARS_RULE.findingSeverityWeights[k]
       );
     }
+    const dfpRaw = rec(r["dataFindingPoints"]);
+    const dataFindingPoints = {};
+    for (const k of SEVERITY_KEYS) {
+      dataFindingPoints[k] = clampInt(
+        dfpRaw[k],
+        DEFAULT_AARS_RULE.dataFindingPoints[k],
+        POINTS_MIN,
+        POINTS_MAX
+      );
+    }
     const expoRaw = rec(r["exposurePoints"]);
     const exposurePoints = {};
     for (const k of INTERNET_EXPOSURE_KEYS) {
@@ -1767,6 +1845,7 @@ var Server = (() => {
     const gapPoints = gapsRaw ? gapsRaw.map(cleanGapRule).filter((g) => g !== null).slice(0, MAX_GAP_RULES) : DEFAULT_AARS_RULE.gapPoints.map((g) => ({ ...g }));
     const multiIssueScaling = r["multiIssueScaling"] === "log2" ? "log2" : "flat";
     const gapAggregation = r["gapAggregation"] === "rss" ? "rss" : "sum";
+    const dataFindingScaling = r["dataFindingScaling"] === "log2" ? "log2" : "flat";
     return {
       severityPoints,
       multiIssueMultiplier: clampMultiplier(
@@ -1788,6 +1867,13 @@ var Server = (() => {
       pillarBCap: clampInt(r["pillarBCap"], DEFAULT_AARS_RULE.pillarBCap, POINTS_MIN, POINTS_MAX),
       dataExposurePoints,
       dataAmplifier: clampMultiplier(r["dataAmplifier"], DEFAULT_AARS_RULE.dataAmplifier),
+      dataFindingPoints,
+      dataFindingScaling,
+      dataFindingMultiplier: clampMultiplier(
+        r["dataFindingMultiplier"],
+        DEFAULT_AARS_RULE.dataFindingMultiplier
+      ),
+      pillarCCap: clampInt(r["pillarCCap"], DEFAULT_AARS_RULE.pillarCCap, POINTS_MIN, POINTS_MAX),
       exposurePoints,
       bands
     };
@@ -1813,6 +1899,15 @@ var Server = (() => {
       errors.push(
         `No internet exposure (${NONE}) must not score above undetermined exposure (${UNDETERMINED}).`
       );
+    }
+    for (let i = 1; i < SEVERITY_KEYS.length; i++) {
+      const worse = SEVERITY_KEYS[i - 1];
+      const milder = SEVERITY_KEYS[i];
+      if (rule.dataFindingPoints[milder] > rule.dataFindingPoints[worse]) {
+        errors.push(
+          `A ${milder.toLowerCase()} data finding (${rule.dataFindingPoints[milder]}) must not score above a ${worse.toLowerCase()} one (${rule.dataFindingPoints[worse]}).`
+        );
+      }
     }
     if (!rule.gapPoints.length) {
       errors.push(
@@ -1884,8 +1979,11 @@ var Server = (() => {
     const counts = {};
     for (const b of ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]) counts[b] = 0;
     const saturated = { toxic: 0, compliance: 0, data: 0, exposure: 0, score: 0 };
-    const maxData = Math.round(
-      Math.max(...EXPOSURE_KEYS.map((k) => rule.dataExposurePoints[k])) * rule.dataAmplifier
+    const maxData = Math.min(
+      rule.pillarCCap,
+      Math.round(
+        (Math.max(...EXPOSURE_KEYS.map((k) => rule.dataExposurePoints[k])) + Math.max(...SEVERITY_KEYS.map((k) => rule.dataFindingPoints[k]))) * rule.dataAmplifier
+      )
     );
     const maxExposure = Math.max(...INTERNET_EXPOSURE_KEYS.map((k) => rule.exposurePoints[k]));
     for (const n of nodes) {
@@ -1955,10 +2053,11 @@ var Server = (() => {
     ).join(" / ");
     const countClause = rule.multiIssueScaling === "log2" ? `each doubling of the open-issue count multiplies that by a further \xD7${rule.multiIssueMultiplier} step (two issues \xD7${rule.multiIssueMultiplier}, four \xD7${(1 + (rule.multiIssueMultiplier - 1) * 2).toFixed(2)}, eight \xD7${(1 + (rule.multiIssueMultiplier - 1) * 3).toFixed(2)})` : `more than one open issue multiplies that by \xD7${rule.multiIssueMultiplier}, however many there are`;
     const gapClause = rule.gapAggregation === "rss" ? `matched prices combine as a root-sum-square, so each further gap adds less than the last` : `matched prices are added up`;
+    const findingClause = SEVERITY_KEYS.every((k) => rule.dataFindingPoints[k] === 0) ? `The data findings an asset can reach score nothing; they are drawn on the graph but never added to the score.` : `The worst data finding it can reach adds ` + SEVERITY_KEYS.map((k) => `${k.toLowerCase()} ${rule.dataFindingPoints[k]}`).join(" / ") + (rule.dataFindingScaling === "log2" ? `, and each doubling of the finding count multiplies that by a further \xD7${rule.dataFindingMultiplier} step.` : `, however many it reaches.`);
     return [
       `Pillar A \u2014 toxic combinations, capped at ${rule.pillarACap}. The asset's worst open issue scores ${sev}; ${countClause}.`,
       `Pillar B \u2014 compliance gaps, capped at ${rule.pillarBCap}. ${rule.gapPoints.length} pricing rules are tried in order, first match wins; an unmatched code scores ${pointsPhrase(rule.gapFallbackPoints)}. ${gapClause[0].toUpperCase()}${gapClause.slice(1)}.`,
-      `Pillar C \u2014 data exposure: ${exposure}, all amplified by \xD7${rule.dataAmplifier} (\u2192 ${amplified}).`,
+      `Pillar C \u2014 data exposure, capped at ${rule.pillarCCap}: ${exposure}, all amplified by \xD7${rule.dataAmplifier} (\u2192 ${amplified}). ${findingClause}`,
       rule.exposurePoints.CONFIRMED === 0 && rule.exposurePoints.UNDETERMINED === 0 && rule.exposurePoints.NONE === 0 ? `Pillar D \u2014 internet exposure scores nothing; reachability is reported beside the score but never added to it.` : `Pillar D \u2014 internet exposure: confirmed ${rule.exposurePoints.CONFIRMED}, undetermined ${rule.exposurePoints.UNDETERMINED}, none ${rule.exposurePoints.NONE}. Not amplified \u2014 the 5Rs signal says nothing about reachability.`,
       `Levels \u2014 CRITICAL at ${rule.bands.critical} and above, HIGH from ${rule.bands.high}, MEDIUM from ${rule.bands.medium}, LOW from ${rule.bands.low}, INFO below that. Scores are clamped to 100.`
     ];
@@ -2130,6 +2229,14 @@ var Server = (() => {
       // field back — the flag is a claim about the filter, not about the data. Let the filter
       // widen and every identity in the estate is relabelled agentic, with nothing to catch it.
       locked: "The agentic-purpose filter is fixed: the sync labels what this query returns as agentic, so widening it would mislabel every identity it collected."
+    },
+    {
+      stepId: "SENSITIVE_DATA_ACCESS",
+      // No fields at all, so isEditableStep is false and the panel offers no control. Stated
+      // here rather than left to fall through, because "nothing to edit" and "editing this
+      // would be unsafe" are different facts and only the second one needs saying.
+      fields: [],
+      locked: "This step has no editable filter: normalizeSensitiveDataAccessPage rebuilds the chain's edges from which entity TYPES a row carries, so a changed selection set would yield confidently wrong edges rather than an error."
     }
   ];
   var SPEC_BY_STEP = {};
@@ -2326,6 +2433,10 @@ var Server = (() => {
   var DEFAULT_PER_KIND_CAP = {
     USER_ACCOUNT: 8,
     BUCKET: 6,
+    // Same cap as BUCKET: the sensitive-data chain makes databases a real fan-out target for
+    // the first time — before it, no live query produced one at all.
+    DATABASE: 6,
+    DATABASE_SERVER: 6,
     ACCESS_ROLE_BINDING: 5
   };
   var DEFAULT_KIND_CAP = 12;
@@ -2521,13 +2632,19 @@ var Server = (() => {
     ACCESS_ROLE_BINDING: 2,
     BUCKET: 3,
     DATABASE: 3,
+    DATABASE_SERVER: 3,
     SENSITIVE_DATA: 3,
-    VIRTUAL_MACHINE: 4,
-    SERVERLESS: 4,
-    CONTAINER_IMAGE: 4,
-    REPOSITORY: 4
+    // The bands ARE the path, read left to right, and the data-exposure chain ends here:
+    // agent (1) → identity (2) → classified store (3) → what was found in it (4). Filing data
+    // findings with the other evidence in band 0 would make the graph's most important edge
+    // its longest, running back across the whole canvas from the store it describes.
+    DATA_FINDING: 4,
+    VIRTUAL_MACHINE: 5,
+    SERVERLESS: 5,
+    CONTAINER_IMAGE: 5,
+    REPOSITORY: 5
   };
-  var LANE_COUNT = 5;
+  var LANE_COUNT = 6;
   function laneOf(kind, summaryOf) {
     var _a5, _b;
     if (kind === "SUMMARY" && summaryOf) return (_a5 = LANE_OF[summaryOf]) != null ? _a5 : 2;
@@ -3248,6 +3365,381 @@ var Server = (() => {
     return conditionState(node2, key) === true;
   }
 
+  // src/domain/graphEnrich.ts
+  function worstSeverity(severities) {
+    let worst;
+    for (const s of severities) {
+      if (worst === void 0 || severityRank(s) < severityRank(worst)) worst = s;
+    }
+    return worst;
+  }
+  function dataExposureOf(node2) {
+    if (node2.hasAccessToSensitiveData || node2.hasSensitiveData) return "SENSITIVE";
+    if (node2.hasHighPrivileges || node2.hasAdminPrivileges) return "DATA_ACCESS";
+    return "NONE";
+  }
+  function internetExposureOf(node2) {
+    const state = conditionState(node2, "INTERNET_EXPOSURE");
+    if (state === true) return "CONFIRMED";
+    if (state === null) return "UNDETERMINED";
+    return "NONE";
+  }
+  function deriveAarsInput(node2, nodeIssues, rule = DEFAULT_AARS_RULE) {
+    var _a5, _b, _c, _d, _e, _f;
+    const codes = /* @__PURE__ */ new Set();
+    for (const issue2 of nodeIssues) {
+      const fw = (_a5 = issue2.frameworks) != null ? _a5 : {};
+      for (const c of (_b = fw.owaspLlm) != null ? _b : []) codes.add(c);
+      for (const c of (_c = fw.owaspAgentic) != null ? _c : []) codes.add(c);
+      for (const c of (_d = fw.owaspMl) != null ? _d : []) codes.add(`ML_${c.replace(/\s+/g, "_").toUpperCase()}`);
+      if (rule.gapSources.fiveRs) {
+        for (const c of (_e = fw.fiveRs) != null ? _e : []) codes.add(`5R_${c.replace(/\s+/g, "_").toUpperCase()}`);
+      }
+    }
+    const gaps = [...codes].sort().map((c) => gap(c));
+    if (node2.guardrailMissing) gaps.push(gap("NO_GUARDRAIL"));
+    const status = String((_f = node2.status) != null ? _f : "").trim().toUpperCase();
+    if (rule.gapSources.deprecatedModel && status === "DEPRECATED") gaps.push(gap("DEPRECATED_MODEL"));
+    if (rule.gapSources.inactiveAgent && status === "INACTIVE") gaps.push(gap("INACTIVE_AGENT"));
+    const dataExposure = dataExposureOf(node2);
+    return {
+      // AARS Pillar A scores Wiz-NATIVE severities (the applied table in
+      // ai/custom_score.md: MEDIUM ×1.2 = 24); the adjusted severity is a display
+      // lens, not a scoring input — using it would double-count the 5Rs amplifier.
+      issueSeverities: nodeIssues.map((i) => i.nativeSeverity),
+      gaps,
+      dataExposure,
+      internetExposure: internetExposureOf(node2)
+    };
+  }
+  function weightedGap(code, severity, rule) {
+    var _a5;
+    const w = severity === void 0 ? 1 : (_a5 = rule.findingSeverityWeights[severity]) != null ? _a5 : 1;
+    if (w === 1) return gap(code);
+    return gap(code, Math.max(0, Math.round(gapPointsFor(code, rule) * w)));
+  }
+  function buildAarsHintsFromFindings(findings, doc, issues2, rule = DEFAULT_AARS_RULE) {
+    var _a5;
+    const open = issues2.filter(isUnresolvedIssue);
+    const issuesByAsset = groupBy(open, (i) => i.assetId);
+    const codesByResource = /* @__PURE__ */ new Map();
+    const worstByCode = /* @__PURE__ */ new Map();
+    for (const f of findings) {
+      pushInto(codesByResource, f.resourceId, ...f.frameworkCodes);
+      for (const c of f.frameworkCodes) {
+        const key = `${f.resourceId}|${c}`;
+        const prev = worstByCode.get(key);
+        if (prev === void 0 || severityRank(f.severity) < severityRank(prev)) {
+          worstByCode.set(key, f.severity);
+        }
+      }
+    }
+    const nodeById = indexBy(doc.nodes, (n) => n.id);
+    const hints = {};
+    for (const [resourceId, codes] of codesByResource) {
+      const node2 = nodeById.get(resourceId);
+      if (!node2) continue;
+      const base = deriveAarsInput(node2, (_a5 = issuesByAsset.get(resourceId)) != null ? _a5 : [], rule);
+      const seen = new Set(base.gaps.map((g) => g.code));
+      const gaps = [...base.gaps];
+      for (const c of codes) {
+        if (c && !seen.has(c)) {
+          seen.add(c);
+          gaps.push(weightedGap(c, worstByCode.get(`${resourceId}|${c}`), rule));
+        }
+      }
+      hints[resourceId] = {
+        gaps,
+        dataExposure: base.dataExposure,
+        internetExposure: base.internetExposure
+      };
+    }
+    return hints;
+  }
+  function enrichGraphDoc(doc, issues2, hints, rule = DEFAULT_AARS_RULE) {
+    const open = issues2.filter(isUnresolvedIssue);
+    const byAsset = groupBy(open, (i) => i.assetId);
+    const reach = dataFindingReach(doc);
+    const nodes = doc.nodes.map((raw) => {
+      var _a5, _b;
+      const node2 = { ...raw };
+      const nodeIssues = (_a5 = byAsset.get(node2.id)) != null ? _a5 : [];
+      if (nodeIssues.length) {
+        node2.severity = worstSeverity(nodeIssues.map((i) => i.adjustedSeverity));
+        const groups = [];
+        for (const i of nodeIssues) {
+          if (i.comboGroup && !groups.includes(i.comboGroup)) groups.push(i.comboGroup);
+        }
+        node2.comboGroups = groups;
+      }
+      const hint = hints == null ? void 0 : hints[node2.id];
+      const scorable = node2.kind !== "ISSUE" && node2.kind !== "SUMMARY" && (AI_ASSET_KINDS.includes(node2.kind) || nodeIssues.length > 0 || hint !== void 0);
+      if (scorable) {
+        const base = hint ? {
+          issueSeverities: nodeIssues.map((i) => i.nativeSeverity),
+          ...hint,
+          // A hint written before pillar D existed carries no exposure; re-derive it
+          // rather than let `undefined` read as NONE.
+          internetExposure: (_b = hint.internetExposure) != null ? _b : internetExposureOf(node2)
+        } : deriveAarsInput(node2, nodeIssues, rule);
+        const reached = reach.get(node2.id);
+        const input = reached ? { ...base, dataFindingSeverities: reached } : base;
+        const result = computeAars(input, rule);
+        node2.aars = result.score;
+        node2.aarsSeverity = result.severity;
+        node2.aarsPillars = result.pillars;
+        node2.aarsInput = {
+          gaps: input.gaps,
+          dataExposure: input.dataExposure,
+          internetExposure: input.internetExposure
+        };
+        if (reached) {
+          node2.aarsInput.dataFindings = countBySeverity(reached);
+        }
+      }
+      return node2;
+    });
+    const issueNodes = open.map((issue2) => ({
+      id: issue2.id,
+      kind: "ISSUE",
+      name: issue2.ruleName,
+      severity: issue2.adjustedSeverity,
+      comboGroups: issue2.comboGroup ? [issue2.comboGroup] : [],
+      status: issue2.status
+    }));
+    const issueEdges = open.map((issue2) => ({
+      id: edgeId(issue2.assetId, "HAS_ISSUE", issue2.id),
+      src: issue2.assetId,
+      dst: issue2.id,
+      type: "HAS_ISSUE"
+    }));
+    return {
+      nodes: [...nodes, ...issueNodes],
+      edges: [...doc.edges, ...issueEdges],
+      syncedAt: doc.syncedAt
+    };
+  }
+  function withDerivedNodes(doc, spec) {
+    const existing = new Set(doc.nodes.filter((n) => n.kind === spec.kind).map((n) => n.id));
+    const suppressed = spec.suppress ? spec.suppress(doc) : null;
+    const added = [];
+    const addedEdges = [];
+    for (const node2 of doc.nodes) {
+      if (node2.kind === spec.kind) continue;
+      if (!conditionHolds(node2, spec.kind)) continue;
+      if (suppressed && suppressed.has(node2.id)) continue;
+      const id = `${spec.prefix}|${node2.id}`;
+      if (existing.has(id)) continue;
+      const type = typeof spec.edgeType === "function" ? spec.edgeType(node2) : spec.edgeType;
+      added.push({
+        id,
+        kind: spec.kind,
+        name: typeof spec.name === "function" ? spec.name(node2) : spec.name
+      });
+      const edge2 = { id: edgeId(node2.id, type, id, spec.negated), src: node2.id, dst: id, type };
+      if (spec.negated) edge2.negated = true;
+      addedEdges.push(edge2);
+    }
+    if (!added.length) return doc;
+    return {
+      nodes: [...doc.nodes, ...added],
+      edges: [...doc.edges, ...addedEdges],
+      syncedAt: doc.syncedAt
+    };
+  }
+  var DATASTORE_KINDS = ["BUCKET", "DATABASE", "DATABASE_SERVER"];
+  function countBySeverity(severities) {
+    var _a5;
+    const counts = {};
+    for (const s of severities) counts[s] = ((_a5 = counts[s]) != null ? _a5 : 0) + 1;
+    return Object.keys(counts).sort((a, b) => severityRank(a) - severityRank(b)).map((severity) => ({ severity, count: counts[severity] }));
+  }
+  function dataFindingReach(doc) {
+    const byId = new Map(doc.nodes.map((n) => [n.id, n]));
+    const findingsOf = (store) => {
+      var _a5;
+      const out = [];
+      for (const [severity, count] of Object.entries((_a5 = store.dataFindingSeverities) != null ? _a5 : {})) {
+        for (let i = 0; i < count; i++) out.push(severity);
+      }
+      return out;
+    };
+    const reach = /* @__PURE__ */ new Map();
+    const add = (id, severities) => {
+      if (!severities.length) return;
+      const prev = reach.get(id);
+      if (prev) prev.push(...severities);
+      else reach.set(id, [...severities]);
+    };
+    for (const node2 of doc.nodes) {
+      if (!DATASTORE_KINDS.includes(node2.kind)) continue;
+      add(node2.id, findingsOf(node2));
+    }
+    const identityReach = /* @__PURE__ */ new Map();
+    for (const e of doc.edges) {
+      if (e.type !== "ALLOWS_ACCESS_TO") continue;
+      const store = byId.get(e.dst);
+      if (!store || !DATASTORE_KINDS.includes(store.kind)) continue;
+      const found = findingsOf(store);
+      if (!found.length) continue;
+      const prev = identityReach.get(e.src);
+      if (prev) prev.push(...found);
+      else identityReach.set(e.src, [...found]);
+    }
+    for (const [id, severities] of identityReach) add(id, severities);
+    for (const e of doc.edges) {
+      if (e.type !== "RUNS_AS") continue;
+      const viaIdentity = identityReach.get(e.dst);
+      if (viaIdentity) add(e.src, viaIdentity);
+    }
+    return reach;
+  }
+  function assetsOnDataPath(doc) {
+    const byId = new Map(doc.nodes.map((n) => [n.id, n]));
+    const onPath = /* @__PURE__ */ new Set();
+    const reachers = /* @__PURE__ */ new Set();
+    for (const e of doc.edges) {
+      if (e.type !== "ALLOWS_ACCESS_TO") continue;
+      const store = byId.get(e.dst);
+      if (!store || !DATASTORE_KINDS.includes(store.kind)) continue;
+      if (store.hasSensitiveData !== true) continue;
+      onPath.add(store.id);
+      reachers.add(e.src);
+    }
+    for (const id of reachers) onPath.add(id);
+    for (const e of doc.edges) {
+      if (e.type === "RUNS_AS" && reachers.has(e.dst)) onPath.add(e.src);
+    }
+    return onPath;
+  }
+  function withSensitiveDataNodes(doc) {
+    return withDerivedNodes(doc, {
+      kind: "SENSITIVE_DATA",
+      prefix: "sensitive",
+      name: "Sensitive data",
+      edgeType: (n) => n.hasSensitiveData ? "HAS_SENSITIVE_DATA" : "HAS_ACCESS_TO_SENSITIVE_DATA",
+      suppress: assetsOnDataPath
+    });
+  }
+  function withDataFindingNodes(doc) {
+    var _a5, _b;
+    const existing = new Set(doc.nodes.filter((n) => n.kind === "DATA_FINDING").map((n) => n.id));
+    const added = [];
+    const addedEdges = [];
+    for (const node2 of doc.nodes) {
+      if (!DATASTORE_KINDS.includes(node2.kind)) continue;
+      const count = (_a5 = node2.dataFindingCount) != null ? _a5 : 0;
+      if (count <= 0) continue;
+      const id = `datafinding|${node2.id}`;
+      if (existing.has(id)) continue;
+      const mix = (_b = node2.dataFindingSeverities) != null ? _b : {};
+      const finding = {
+        id,
+        kind: "DATA_FINDING",
+        name: "Data Findings",
+        // summaryCount, not a bespoke field: the client already reads it for the collapse
+        // stubs, so the count badge and its aria text come for free.
+        summaryCount: count,
+        dataFindingSeverities: mix
+      };
+      const worst = Object.keys(mix).sort((a, b) => severityRank(a) - severityRank(b))[0];
+      if (worst && severityRank(worst) < SEVERITY_ORDER.length) finding.severity = worst;
+      added.push(finding);
+      addedEdges.push({
+        id: edgeId(node2.id, "HAS_DATA_FINDING", id),
+        src: node2.id,
+        dst: id,
+        type: "HAS_DATA_FINDING"
+      });
+    }
+    if (!added.length) return doc;
+    return {
+      nodes: [...doc.nodes, ...added],
+      edges: [...doc.edges, ...addedEdges],
+      syncedAt: doc.syncedAt
+    };
+  }
+  function withInternetExposureNodes(doc) {
+    return withDerivedNodes(doc, {
+      kind: "INTERNET_EXPOSURE",
+      prefix: "internet",
+      name: "Internet exposure",
+      edgeType: "EXPOSED_TO_INTERNET"
+    });
+  }
+  function withExcessivePrivilegeNodes(doc) {
+    return withDerivedNodes(doc, {
+      kind: "EXCESSIVE_PRIVILEGE",
+      prefix: "excessive",
+      // ADMIN wins over HIGH when both are set — it is the stronger claim.
+      name: (n) => n.hasAdminPrivileges ? "Admin privileges" : "Excessive rights",
+      edgeType: "HAS_EXCESSIVE_PRIVILEGE",
+      suppress: (d) => {
+        const kindById = new Map(d.nodes.map((n) => [n.id, n.kind]));
+        const withRealFinding = /* @__PURE__ */ new Set();
+        for (const e of d.edges) {
+          if (e.type === "HAS_FINDING" && kindById.get(e.dst) === "EXCESSIVE_ACCESS_FINDING") {
+            withRealFinding.add(e.src);
+          }
+        }
+        return withRealFinding;
+      }
+    });
+  }
+  function withIdentityAccessNodes(doc) {
+    const HUMAN_REACH = /* @__PURE__ */ new Set(["ADMIN", "HIGH_PRIVILEGE"]);
+    const aiAssets = new Set(
+      doc.nodes.filter((n) => AI_ASSET_KINDS.includes(n.kind)).map((n) => n.id)
+    );
+    const humans = new Set(doc.nodes.filter((n) => n.kind === "USER_ACCOUNT").map((n) => n.id));
+    const existing = new Set(
+      doc.nodes.filter((n) => n.kind === "IDENTITY_ACCESS_FINDING").map((n) => n.id)
+    );
+    const kindById = new Map(doc.nodes.map((n) => [n.id, n.kind]));
+    const withRealFinding = /* @__PURE__ */ new Set();
+    for (const e of doc.edges) {
+      if (e.type === "HAS_FINDING" && kindById.get(e.dst) === "EXCESSIVE_ACCESS_FINDING") {
+        withRealFinding.add(e.src);
+      }
+    }
+    const reached = /* @__PURE__ */ new Set();
+    for (const e of doc.edges) {
+      if (e.type !== "ALLOWS_ACCESS_TO") continue;
+      if (!e.accessType || !HUMAN_REACH.has(e.accessType)) continue;
+      if (!humans.has(e.src) || !aiAssets.has(e.dst)) continue;
+      if (withRealFinding.has(e.dst)) continue;
+      reached.add(e.dst);
+    }
+    const added = [];
+    const addedEdges = [];
+    for (const assetId of reached) {
+      const id = `identityaccess|${assetId}`;
+      if (existing.has(id)) continue;
+      added.push({ id, kind: "IDENTITY_ACCESS_FINDING", name: "Human access" });
+      addedEdges.push({
+        id: edgeId(assetId, "HAS_FINDING", id),
+        src: assetId,
+        dst: id,
+        type: "HAS_FINDING"
+      });
+    }
+    if (!added.length) return doc;
+    return {
+      nodes: [...doc.nodes, ...added],
+      edges: [...doc.edges, ...addedEdges],
+      syncedAt: doc.syncedAt
+    };
+  }
+  function withMissingGuardrailNodes(doc) {
+    return withDerivedNodes(doc, {
+      kind: "MISSING_GUARDRAIL",
+      prefix: "noguardrail",
+      name: "No guardrail",
+      edgeType: "PROTECTED_BY",
+      negated: true
+    });
+  }
+
   // src/domain/severity.ts
   function normalizeSeverity(sev) {
     if (typeof sev !== "string") return "UNKNOWN";
@@ -3255,7 +3747,7 @@ var Server = (() => {
     if (s === "INFORMATIONAL" || s === "INFO") return "INFO";
     return SEVERITY_ORDER.includes(s) ? s : "UNKNOWN";
   }
-  function countBySeverity(records) {
+  function countBySeverity2(records) {
     var _a5;
     if (!records.length || !records.some((r) => "severity" in r)) return {};
     const counts = {};
@@ -3271,7 +3763,7 @@ var Server = (() => {
   var DAY_MS = 864e5;
   var carriesCondition = conditionState;
   function mixOf(issues2, field) {
-    return countBySeverity(issues2.map((i) => ({ severity: i[field] })));
+    return countBySeverity2(issues2.map((i) => ({ severity: i[field] })));
   }
   function daysUntil(dueAt, nowMs) {
     const t = Date.parse(dueAt || "");
@@ -3448,7 +3940,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "7f265e6c0b70" : "dev";
+  var BUILD_ID = true ? "57d6f4990cfc" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -3781,16 +4273,17 @@ var Server = (() => {
     return node2;
   }
   function emptyPart() {
-    return { nodes: [], edges: [], issues: [], findings: [] };
+    return { nodes: [], edges: [], issues: [], findings: [], dataFindings: [] };
   }
   function appendPart(target, part) {
     target.nodes.push(...part.nodes);
     target.edges.push(...part.edges);
     target.issues.push(...part.issues);
     target.findings.push(...part.findings);
+    target.dataFindings.push(...part.dataFindings);
   }
   function partIsEmpty(part) {
-    return !part.nodes.length && !part.edges.length && !part.issues.length && !part.findings.length;
+    return !part.nodes.length && !part.edges.length && !part.issues.length && !part.findings.length && !part.dataFindings.length;
   }
   function normalizeInventoryPage(rows) {
     const part = emptyPart();
@@ -4043,6 +4536,82 @@ var Server = (() => {
     }
     return part;
   }
+  var DATA_STORE_KINDS = /* @__PURE__ */ new Set(["BUCKET", "DATABASE", "DATABASE_SERVER"]);
+  function rawEntitiesOf(row) {
+    const entities = row["entities"];
+    return Array.isArray(entities) ? entities : [];
+  }
+  function normalizeSensitiveDataAccessPage(rows) {
+    var _a5;
+    const part = emptyPart();
+    for (const row of rows) {
+      const entities = entitiesOf(row);
+      const agent = entities.find((e) => e.kind === "AI_AGENT");
+      const sa = entities.find((e) => e.kind === "SERVICE_ACCOUNT");
+      const stores = entities.filter((e) => DATA_STORE_KINDS.has(e.kind));
+      part.nodes.push(...entities.filter((e) => e.kind !== "DATA_FINDING"));
+      if (agent && sa) {
+        part.edges.push({
+          id: edgeId(agent.id, "RUNS_AS", sa.id),
+          src: agent.id,
+          dst: sa.id,
+          type: "RUNS_AS"
+        });
+      }
+      for (const store of stores) {
+        if (!sa) continue;
+        part.edges.push({
+          id: edgeId(sa.id, "ALLOWS_ACCESS_TO", store.id),
+          src: sa.id,
+          dst: store.id,
+          type: "ALLOWS_ACCESS_TO"
+        });
+      }
+      if (stores.length !== 1) continue;
+      const storeId = stores[0].id;
+      for (const raw of rawEntitiesOf(row)) {
+        if (kindFromWizType(raw["type"]) !== "DATA_FINDING") continue;
+        const id = str(raw["id"]);
+        if (!id) continue;
+        part.dataFindings.push({
+          id,
+          resourceId: storeId,
+          name: (_a5 = str(raw["name"])) != null ? _a5 : id,
+          severity: normalizeDataFindingSeverity(raw["severity"])
+        });
+      }
+    }
+    return part;
+  }
+  function normalizeDataFindingSeverity(v) {
+    const raw = str(v);
+    if (!raw) return "UNKNOWN";
+    const bare = raw.replace(/^DataFindingSeverity/i, "").toUpperCase();
+    return SEVERITY_ORDER.includes(bare) ? bare : "UNKNOWN";
+  }
+  function withDataFindingCounts(doc, rows) {
+    var _a5;
+    if (!rows.length) return doc;
+    const byStore = /* @__PURE__ */ new Map();
+    for (const row of rows) {
+      let acc = byStore.get(row.resourceId);
+      if (!acc) {
+        acc = { count: 0, sev: {} };
+        byStore.set(row.resourceId, acc);
+      }
+      acc.count += 1;
+      acc.sev[row.severity] = ((_a5 = acc.sev[row.severity]) != null ? _a5 : 0) + 1;
+    }
+    return {
+      nodes: doc.nodes.map((n) => {
+        const acc = byStore.get(n.id);
+        if (!acc) return n;
+        return { ...n, dataFindingCount: acc.count, dataFindingSeverities: acc.sev };
+      }),
+      edges: doc.edges,
+      syncedAt: doc.syncedAt
+    };
+  }
   function normalizeIdentityAccessPage(rows) {
     const part = emptyPart();
     for (const row of rows) {
@@ -4066,11 +4635,12 @@ var Server = (() => {
     return part;
   }
   function mergeParts(parts, syncedAt) {
-    var _a5;
+    var _a5, _b;
     const nodes = /* @__PURE__ */ new Map();
     const edges2 = /* @__PURE__ */ new Map();
     const issues2 = /* @__PURE__ */ new Map();
     const findings = /* @__PURE__ */ new Map();
+    const dataFindings = /* @__PURE__ */ new Map();
     for (const part of parts) {
       for (const node2 of part.nodes) {
         const prev = nodes.get(node2.id);
@@ -4089,277 +4659,16 @@ var Server = (() => {
       for (const edge2 of part.edges) edges2.set(edge2.id, edge2);
       for (const issue2 of part.issues) issues2.set(issue2.id, issue2);
       for (const finding of (_a5 = part.findings) != null ? _a5 : []) findings.set(finding.id, finding);
+      for (const df of (_b = part.dataFindings) != null ? _b : []) dataFindings.set(df.id, df);
     }
     return {
       doc: { nodes: [...nodes.values()], edges: [...edges2.values()], syncedAt },
       issues: [...issues2.values()],
-      findings: [...findings.values()]
+      findings: [...findings.values()],
+      // De-duped by finding id, so the count folded from these rows is exact however the
+      // battery split its pages.
+      dataFindings: [...dataFindings.values()]
     };
-  }
-
-  // src/domain/graphEnrich.ts
-  function worstSeverity(severities) {
-    let worst;
-    for (const s of severities) {
-      if (worst === void 0 || severityRank(s) < severityRank(worst)) worst = s;
-    }
-    return worst;
-  }
-  function dataExposureOf(node2) {
-    if (node2.hasAccessToSensitiveData || node2.hasSensitiveData) return "SENSITIVE";
-    if (node2.hasHighPrivileges || node2.hasAdminPrivileges) return "DATA_ACCESS";
-    return "NONE";
-  }
-  function internetExposureOf(node2) {
-    const state = conditionState(node2, "INTERNET_EXPOSURE");
-    if (state === true) return "CONFIRMED";
-    if (state === null) return "UNDETERMINED";
-    return "NONE";
-  }
-  function deriveAarsInput(node2, nodeIssues, rule = DEFAULT_AARS_RULE) {
-    var _a5, _b, _c, _d, _e, _f;
-    const codes = /* @__PURE__ */ new Set();
-    for (const issue2 of nodeIssues) {
-      const fw = (_a5 = issue2.frameworks) != null ? _a5 : {};
-      for (const c of (_b = fw.owaspLlm) != null ? _b : []) codes.add(c);
-      for (const c of (_c = fw.owaspAgentic) != null ? _c : []) codes.add(c);
-      for (const c of (_d = fw.owaspMl) != null ? _d : []) codes.add(`ML_${c.replace(/\s+/g, "_").toUpperCase()}`);
-      if (rule.gapSources.fiveRs) {
-        for (const c of (_e = fw.fiveRs) != null ? _e : []) codes.add(`5R_${c.replace(/\s+/g, "_").toUpperCase()}`);
-      }
-    }
-    const gaps = [...codes].sort().map((c) => gap(c));
-    if (node2.guardrailMissing) gaps.push(gap("NO_GUARDRAIL"));
-    const status = String((_f = node2.status) != null ? _f : "").trim().toUpperCase();
-    if (rule.gapSources.deprecatedModel && status === "DEPRECATED") gaps.push(gap("DEPRECATED_MODEL"));
-    if (rule.gapSources.inactiveAgent && status === "INACTIVE") gaps.push(gap("INACTIVE_AGENT"));
-    const dataExposure = dataExposureOf(node2);
-    return {
-      // AARS Pillar A scores Wiz-NATIVE severities (the applied table in
-      // ai/custom_score.md: MEDIUM ×1.2 = 24); the adjusted severity is a display
-      // lens, not a scoring input — using it would double-count the 5Rs amplifier.
-      issueSeverities: nodeIssues.map((i) => i.nativeSeverity),
-      gaps,
-      dataExposure,
-      internetExposure: internetExposureOf(node2)
-    };
-  }
-  function weightedGap(code, severity, rule) {
-    var _a5;
-    const w = severity === void 0 ? 1 : (_a5 = rule.findingSeverityWeights[severity]) != null ? _a5 : 1;
-    if (w === 1) return gap(code);
-    return gap(code, Math.max(0, Math.round(gapPointsFor(code, rule) * w)));
-  }
-  function buildAarsHintsFromFindings(findings, doc, issues2, rule = DEFAULT_AARS_RULE) {
-    var _a5;
-    const open = issues2.filter(isUnresolvedIssue);
-    const issuesByAsset = groupBy(open, (i) => i.assetId);
-    const codesByResource = /* @__PURE__ */ new Map();
-    const worstByCode = /* @__PURE__ */ new Map();
-    for (const f of findings) {
-      pushInto(codesByResource, f.resourceId, ...f.frameworkCodes);
-      for (const c of f.frameworkCodes) {
-        const key = `${f.resourceId}|${c}`;
-        const prev = worstByCode.get(key);
-        if (prev === void 0 || severityRank(f.severity) < severityRank(prev)) {
-          worstByCode.set(key, f.severity);
-        }
-      }
-    }
-    const nodeById = indexBy(doc.nodes, (n) => n.id);
-    const hints = {};
-    for (const [resourceId, codes] of codesByResource) {
-      const node2 = nodeById.get(resourceId);
-      if (!node2) continue;
-      const base = deriveAarsInput(node2, (_a5 = issuesByAsset.get(resourceId)) != null ? _a5 : [], rule);
-      const seen = new Set(base.gaps.map((g) => g.code));
-      const gaps = [...base.gaps];
-      for (const c of codes) {
-        if (c && !seen.has(c)) {
-          seen.add(c);
-          gaps.push(weightedGap(c, worstByCode.get(`${resourceId}|${c}`), rule));
-        }
-      }
-      hints[resourceId] = {
-        gaps,
-        dataExposure: base.dataExposure,
-        internetExposure: base.internetExposure
-      };
-    }
-    return hints;
-  }
-  function enrichGraphDoc(doc, issues2, hints, rule = DEFAULT_AARS_RULE) {
-    const open = issues2.filter(isUnresolvedIssue);
-    const byAsset = groupBy(open, (i) => i.assetId);
-    const nodes = doc.nodes.map((raw) => {
-      var _a5, _b;
-      const node2 = { ...raw };
-      const nodeIssues = (_a5 = byAsset.get(node2.id)) != null ? _a5 : [];
-      if (nodeIssues.length) {
-        node2.severity = worstSeverity(nodeIssues.map((i) => i.adjustedSeverity));
-        const groups = [];
-        for (const i of nodeIssues) {
-          if (i.comboGroup && !groups.includes(i.comboGroup)) groups.push(i.comboGroup);
-        }
-        node2.comboGroups = groups;
-      }
-      const hint = hints == null ? void 0 : hints[node2.id];
-      const scorable = node2.kind !== "ISSUE" && node2.kind !== "SUMMARY" && (AI_ASSET_KINDS.includes(node2.kind) || nodeIssues.length > 0 || hint !== void 0);
-      if (scorable) {
-        const input = hint ? {
-          issueSeverities: nodeIssues.map((i) => i.nativeSeverity),
-          ...hint,
-          // A hint written before pillar D existed carries no exposure; re-derive it
-          // rather than let `undefined` read as NONE.
-          internetExposure: (_b = hint.internetExposure) != null ? _b : internetExposureOf(node2)
-        } : deriveAarsInput(node2, nodeIssues, rule);
-        const result = computeAars(input, rule);
-        node2.aars = result.score;
-        node2.aarsSeverity = result.severity;
-        node2.aarsPillars = result.pillars;
-        node2.aarsInput = {
-          gaps: input.gaps,
-          dataExposure: input.dataExposure,
-          internetExposure: input.internetExposure
-        };
-      }
-      return node2;
-    });
-    const issueNodes = open.map((issue2) => ({
-      id: issue2.id,
-      kind: "ISSUE",
-      name: issue2.ruleName,
-      severity: issue2.adjustedSeverity,
-      comboGroups: issue2.comboGroup ? [issue2.comboGroup] : [],
-      status: issue2.status
-    }));
-    const issueEdges = open.map((issue2) => ({
-      id: edgeId(issue2.assetId, "HAS_ISSUE", issue2.id),
-      src: issue2.assetId,
-      dst: issue2.id,
-      type: "HAS_ISSUE"
-    }));
-    return {
-      nodes: [...nodes, ...issueNodes],
-      edges: [...doc.edges, ...issueEdges],
-      syncedAt: doc.syncedAt
-    };
-  }
-  function withDerivedNodes(doc, spec) {
-    const existing = new Set(doc.nodes.filter((n) => n.kind === spec.kind).map((n) => n.id));
-    const suppressed = spec.suppress ? spec.suppress(doc) : null;
-    const added = [];
-    const addedEdges = [];
-    for (const node2 of doc.nodes) {
-      if (node2.kind === spec.kind) continue;
-      if (!conditionHolds(node2, spec.kind)) continue;
-      if (suppressed && suppressed.has(node2.id)) continue;
-      const id = `${spec.prefix}|${node2.id}`;
-      if (existing.has(id)) continue;
-      const type = typeof spec.edgeType === "function" ? spec.edgeType(node2) : spec.edgeType;
-      added.push({
-        id,
-        kind: spec.kind,
-        name: typeof spec.name === "function" ? spec.name(node2) : spec.name
-      });
-      const edge2 = { id: edgeId(node2.id, type, id, spec.negated), src: node2.id, dst: id, type };
-      if (spec.negated) edge2.negated = true;
-      addedEdges.push(edge2);
-    }
-    if (!added.length) return doc;
-    return {
-      nodes: [...doc.nodes, ...added],
-      edges: [...doc.edges, ...addedEdges],
-      syncedAt: doc.syncedAt
-    };
-  }
-  function withSensitiveDataNodes(doc) {
-    return withDerivedNodes(doc, {
-      kind: "SENSITIVE_DATA",
-      prefix: "sensitive",
-      name: "Sensitive data",
-      edgeType: (n) => n.hasSensitiveData ? "HAS_SENSITIVE_DATA" : "HAS_ACCESS_TO_SENSITIVE_DATA"
-    });
-  }
-  function withInternetExposureNodes(doc) {
-    return withDerivedNodes(doc, {
-      kind: "INTERNET_EXPOSURE",
-      prefix: "internet",
-      name: "Internet exposure",
-      edgeType: "EXPOSED_TO_INTERNET"
-    });
-  }
-  function withExcessivePrivilegeNodes(doc) {
-    return withDerivedNodes(doc, {
-      kind: "EXCESSIVE_PRIVILEGE",
-      prefix: "excessive",
-      // ADMIN wins over HIGH when both are set — it is the stronger claim.
-      name: (n) => n.hasAdminPrivileges ? "Admin privileges" : "Excessive rights",
-      edgeType: "HAS_EXCESSIVE_PRIVILEGE",
-      suppress: (d) => {
-        const kindById = new Map(d.nodes.map((n) => [n.id, n.kind]));
-        const withRealFinding = /* @__PURE__ */ new Set();
-        for (const e of d.edges) {
-          if (e.type === "HAS_FINDING" && kindById.get(e.dst) === "EXCESSIVE_ACCESS_FINDING") {
-            withRealFinding.add(e.src);
-          }
-        }
-        return withRealFinding;
-      }
-    });
-  }
-  function withIdentityAccessNodes(doc) {
-    const HUMAN_REACH = /* @__PURE__ */ new Set(["ADMIN", "HIGH_PRIVILEGE"]);
-    const aiAssets = new Set(
-      doc.nodes.filter((n) => AI_ASSET_KINDS.includes(n.kind)).map((n) => n.id)
-    );
-    const humans = new Set(doc.nodes.filter((n) => n.kind === "USER_ACCOUNT").map((n) => n.id));
-    const existing = new Set(
-      doc.nodes.filter((n) => n.kind === "IDENTITY_ACCESS_FINDING").map((n) => n.id)
-    );
-    const kindById = new Map(doc.nodes.map((n) => [n.id, n.kind]));
-    const withRealFinding = /* @__PURE__ */ new Set();
-    for (const e of doc.edges) {
-      if (e.type === "HAS_FINDING" && kindById.get(e.dst) === "EXCESSIVE_ACCESS_FINDING") {
-        withRealFinding.add(e.src);
-      }
-    }
-    const reached = /* @__PURE__ */ new Set();
-    for (const e of doc.edges) {
-      if (e.type !== "ALLOWS_ACCESS_TO") continue;
-      if (!e.accessType || !HUMAN_REACH.has(e.accessType)) continue;
-      if (!humans.has(e.src) || !aiAssets.has(e.dst)) continue;
-      if (withRealFinding.has(e.dst)) continue;
-      reached.add(e.dst);
-    }
-    const added = [];
-    const addedEdges = [];
-    for (const assetId of reached) {
-      const id = `identityaccess|${assetId}`;
-      if (existing.has(id)) continue;
-      added.push({ id, kind: "IDENTITY_ACCESS_FINDING", name: "Human access" });
-      addedEdges.push({
-        id: edgeId(assetId, "HAS_FINDING", id),
-        src: assetId,
-        dst: id,
-        type: "HAS_FINDING"
-      });
-    }
-    if (!added.length) return doc;
-    return {
-      nodes: [...doc.nodes, ...added],
-      edges: [...doc.edges, ...addedEdges],
-      syncedAt: doc.syncedAt
-    };
-  }
-  function withMissingGuardrailNodes(doc) {
-    return withDerivedNodes(doc, {
-      kind: "MISSING_GUARDRAIL",
-      prefix: "noguardrail",
-      name: "No guardrail",
-      edgeType: "PROTECTED_BY",
-      negated: true
-    });
   }
 
   // src/server/sampleData.ts
@@ -4966,6 +5275,14 @@ var Server = (() => {
   var SEED_ISSUES = issues;
   var SEED_FINDINGS = SEED_FINDINGS_DATA;
   var SEED_AARS_HINTS = HINTS;
+  var SEED_DATA_FINDINGS = [
+    { id: "df-pii-01", resourceId: "bucket-customer-pii", name: "PII: email addresses (12,400 rows)", severity: "CRITICAL" },
+    { id: "df-pii-02", resourceId: "bucket-customer-pii", name: "PII: national identification numbers", severity: "HIGH" },
+    { id: "df-pii-03", resourceId: "bucket-customer-pii", name: "PCI: primary account numbers", severity: "HIGH" },
+    { id: "df-core-01", resourceId: "db-customer-core", name: "PII: postal addresses", severity: "CRITICAL" },
+    { id: "df-core-02", resourceId: "db-customer-core", name: "PII: dates of birth", severity: "MEDIUM" },
+    { id: "df-fin-01", resourceId: "bucket-finance-reports", name: "Financial: unpublished results", severity: "HIGH" }
+  ];
   function seedGraphDoc(syncedAt) {
     return { nodes: SEED_NODES, edges: SEED_EDGES, syncedAt };
   }
@@ -5003,7 +5320,7 @@ var Server = (() => {
     }
   }
   function assetToRow(n) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r;
     return {
       id: n.id,
       kind: n.kind,
@@ -5033,7 +5350,12 @@ var Server = (() => {
       combo_groups: ((_p = n.comboGroups) != null ? _p : []).join(","),
       tags_json: n.tags ? JSON.stringify(n.tags) : null,
       identity_purpose: (_q = n.identityPurpose) != null ? _q : null,
-      issue_analytics_json: n.issueAnalytics ? JSON.stringify(n.issueAnalytics) : null
+      issue_analytics_json: n.issueAnalytics ? JSON.stringify(n.issueAnalytics) : null,
+      // `?? null` rather than `?? 0`: a store the traversal never reached must read back as
+      // undefined, not as "zero findings". The graph draws no aggregate for either, but the
+      // pillar-C knob and the DSPM coverage state both need to tell them apart.
+      data_finding_count: (_r = n.dataFindingCount) != null ? _r : null,
+      data_findings_json: n.dataFindingSeverities ? JSON.stringify(n.dataFindingSeverities) : null
     };
   }
   function rowToAsset(r) {
@@ -5083,6 +5405,12 @@ var Server = (() => {
     if (purpose) node2.identityPurpose = purpose;
     const analytics = parseJson(r["issue_analytics_json"], null);
     if (analytics) node2.issueAnalytics = analytics;
+    const findingCount = r["data_finding_count"];
+    if (findingCount !== null && findingCount !== void 0 && String(findingCount) !== "") {
+      node2.dataFindingCount = Number(findingCount);
+    }
+    const findingSevs = parseJson(r["data_findings_json"], null);
+    if (findingSevs) node2.dataFindingSeverities = findingSevs;
     return node2;
   }
   function edgeToRow(e) {
@@ -5217,15 +5545,34 @@ var Server = (() => {
       frameworkCodes: String((_f = r["framework_codes"]) != null ? _f : "").split(",").filter(Boolean)
     };
   }
-  function persistSync(rawDoc, issues2, hints, meta, now, findings = []) {
+  function dataFindingToRow(f) {
+    return {
+      id: f.id,
+      resource_id: f.resourceId,
+      name: f.name,
+      severity: f.severity
+    };
+  }
+  function rowToDataFinding(r) {
+    var _a5, _b, _c, _d;
+    return {
+      id: String((_a5 = r["id"]) != null ? _a5 : ""),
+      resourceId: String((_b = r["resource_id"]) != null ? _b : ""),
+      name: String((_c = r["name"]) != null ? _c : ""),
+      severity: String((_d = r["severity"]) != null ? _d : "UNKNOWN")
+    };
+  }
+  function persistSync(rawDoc, issues2, hints, meta, now, findings = [], dataFindings = []) {
     const { version: ruleVersion, rule } = getAarsRule2();
-    const enriched = enrichGraphDoc(rawDoc, issues2, hints, rule);
+    const counted = withDataFindingCounts(rawDoc, dataFindings);
+    const enriched = enrichGraphDoc(counted, issues2, hints, rule);
     const assetNodes = realNodes(enriched.nodes);
     const assetEdges = enriched.edges.filter((e) => e.type !== "HAS_ISSUE");
     overwrite(TABS.assets, assetNodes.map(assetToRow));
     overwrite(TABS.edges, assetEdges.map(edgeToRow));
     overwrite(TABS.issues, issues2.map(issueToRow));
     overwrite(TABS.findings, findings.map(findingToRow));
+    overwrite(TABS.dataFindings, dataFindings.map(dataFindingToRow));
     const snapshotRef = writeGraphSnapshot(enriched);
     appendRows(TABS.syncHistory, [{
       sync_id: meta.syncId,
@@ -5307,11 +5654,13 @@ var Server = (() => {
   var assetsMemo;
   var issuesMemo;
   var findingsMemo;
+  var dataFindingsMemo;
   function invalidateReadMemos() {
     graphDocMemo = void 0;
     assetsMemo = void 0;
     issuesMemo = void 0;
     findingsMemo = void 0;
+    dataFindingsMemo = void 0;
   }
   function commit() {
     bumpDataVersion();
@@ -5344,7 +5693,9 @@ var Server = (() => {
   function withRiskNodes(doc) {
     return withMissingGuardrailNodes(
       withIdentityAccessNodes(
-        withExcessivePrivilegeNodes(withInternetExposureNodes(withSensitiveDataNodes(doc)))
+        withExcessivePrivilegeNodes(
+          withInternetExposureNodes(withSensitiveDataNodes(withDataFindingNodes(doc)))
+        )
       )
     );
   }
@@ -5413,6 +5764,12 @@ var Server = (() => {
     if (findingsMemo === void 0) findingsMemo = readAll(TABS.findings).map(rowToFinding);
     return findingsMemo;
   }
+  function loadDataFindings() {
+    if (dataFindingsMemo === void 0) {
+      dataFindingsMemo = readAll(TABS.dataFindings).map(rowToDataFinding);
+    }
+    return dataFindingsMemo;
+  }
   function syncHistory() {
     return readAll(TABS.syncHistory);
   }
@@ -5425,6 +5782,7 @@ var Server = (() => {
     overwrite(TABS.edges, []);
     overwrite(TABS.issues, []);
     overwrite(TABS.findings, []);
+    overwrite(TABS.dataFindings, []);
     overwrite(TABS.syncHistory, []);
     trashGraphSnapshot();
     commit();
@@ -5512,6 +5870,22 @@ var Server = (() => {
         run: "graphSearch",
         query: Q_SA_EXCESSIVE_ACCESS,
         normalize: normalizeRunsAsPage,
+        optional: true
+      },
+      // The data-exposure chain. Runs AFTER the two CIEM steps on purpose: it re-emits the
+      // agent and its service account, and mergeParts lets later truthy values win field-wise,
+      // so landing the richer CIEM projections first means this step can only add to them.
+      {
+        id: "SENSITIVE_DATA_ACCESS",
+        area: "dspm",
+        writes: [
+          "ai_edges (RUNS_AS, ALLOWS_ACCESS_TO)",
+          "ai_assets (BUCKET/DATABASE rows, data_finding_count)",
+          "ai_data_findings"
+        ],
+        run: "graphSearch",
+        query: Q_AGENT_SENSITIVE_DATA_ACCESS,
+        normalize: normalizeSensitiveDataAccessPage,
         optional: true
       },
       {
@@ -5673,7 +6047,8 @@ var Server = (() => {
       SEED_AARS_HINTS,
       { syncId, mode: "dry-run", startedAt, apiCalls: 0 },
       void 0,
-      SEED_FINDINGS
+      SEED_FINDINGS,
+      SEED_DATA_FINDINGS
     );
     setSkippedSteps([]);
     return {
@@ -5844,7 +6219,7 @@ var Server = (() => {
           mode: "live",
           startedAt,
           apiCalls: params.apiCalls
-        }, void 0, findings);
+        }, void 0, findings, merged.dataFindings);
         setSkippedSteps(params.skippedSteps);
       };
       if (opts.lockHeld) persist();
@@ -5970,14 +6345,13 @@ var Server = (() => {
         bandRanges: bandRanges(aarsRule.rule.bands),
         // The three pillar ceilings, so the detail sheet's breakdown bars measure against
         // the rule in force instead of hardcoding the defaults and lying after an edit.
-        // Pillar C's ceiling is its own top exposure tier through the amplifier — the same
-        // arithmetic `aars.ts` does when it scores.
+        // Pillar C's ceiling is now the rule's own explicit cap — it used to be re-derived
+        // here from the exposure tier alone, which under a rule that prices data findings
+        // would draw every bar against a ceiling the pillar can exceed.
         pillarCaps: {
           toxic: aarsRule.rule.pillarACap,
           compliance: aarsRule.rule.pillarBCap,
-          data: Math.round(
-            Math.max(...Object.values(aarsRule.rule.dataExposurePoints)) * aarsRule.rule.dataAmplifier
-          )
+          data: aarsRule.rule.pillarCCap
         },
         scoredVersion,
         stale: scoredVersion !== aarsRule.version
@@ -6054,7 +6428,7 @@ var Server = (() => {
     });
   }
   function assetRow(n) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D;
     return {
       id: n.id,
       name: n.name,
@@ -6078,16 +6452,23 @@ var Server = (() => {
       highPriv: (_q = n.hasHighPrivileges) != null ? _q : false,
       adminPriv: (_r = n.hasAdminPrivileges) != null ? _r : false,
       guardrailMissing: (_s = n.guardrailMissing) != null ? _s : false,
-      technologyCategories: (_t = n.technologyCategories) != null ? _t : [],
-      cloudAccount: (_v = (_u = n.cloudAccount) == null ? void 0 : _u.name) != null ? _v : null,
+      // Null, not 0, when the sensitive-data traversal never reached this node: the graph
+      // card and the insight row both key on truthiness, and a 0 would make "we never asked"
+      // render exactly like "we looked and it is clean".
+      dataFindingCount: (_t = n.dataFindingCount) != null ? _t : null,
+      dataFindingSeverities: (_u = n.dataFindingSeverities) != null ? _u : null,
+      // On the aggregate node only — the count it collapses.
+      summaryCount: (_v = n.summaryCount) != null ? _v : null,
+      technologyCategories: (_w = n.technologyCategories) != null ? _w : [],
+      cloudAccount: (_y = (_x = n.cloudAccount) == null ? void 0 : _x.name) != null ? _y : null,
       // Full account object, for the detail sheet — cloudAccount above stays a bare
       // name string since existing client code already reads it as one.
-      cloudAccountRef: (_w = n.cloudAccount) != null ? _w : null,
-      tags: (_x = n.tags) != null ? _x : [],
-      identityPurpose: (_y = n.identityPurpose) != null ? _y : null,
-      issueAnalytics: (_z = n.issueAnalytics) != null ? _z : null,
+      cloudAccountRef: (_z = n.cloudAccount) != null ? _z : null,
+      tags: (_A = n.tags) != null ? _A : [],
+      identityPurpose: (_B = n.identityPurpose) != null ? _B : null,
+      issueAnalytics: (_C = n.issueAnalytics) != null ? _C : null,
       // Full project objects, for the detail sheet — projects above stays name-only.
-      projectRefs: ((_A = n.projects) != null ? _A : []).map((p) => ({
+      projectRefs: ((_D = n.projects) != null ? _D : []).map((p) => ({
         id: p.id,
         name: p.name,
         businessImpact: p.businessImpact
@@ -6095,7 +6476,7 @@ var Server = (() => {
     };
   }
   function assetTableRow(n, issuesBySeverity) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
     const row = {
       id: n.id,
       name: n.name,
@@ -6108,7 +6489,16 @@ var Server = (() => {
       combos: ((_f = n.comboGroups) != null ? _f : []).length,
       guardrailMissing: (_g = n.guardrailMissing) != null ? _g : false,
       agentic: n.identityPurpose === "AGENTIC",
-      projects: ((_h = n.projects) != null ? _h : []).map((p) => p.name)
+      // How many classified findings this asset can REACH — its own if it is a datastore,
+      // whatever its execution identity can read if it is an agent.
+      //
+      // Two sources because the reach walk is persisted through `aarsInput`, which only
+      // scored nodes carry: a BUCKET is never scored (AARS covers AI assets), so a store
+      // holding three findings would otherwise report 0 in the register while the graph drew
+      // them. Identities fall in the same gap and stay uncovered here — service accounts are
+      // unscored for reasons that predate this chain, so nothing persists their reach.
+      dataFindings: ((_i = (_h = n.aarsInput) == null ? void 0 : _h.dataFindings) != null ? _i : []).reduce((sum, f) => sum + f.count, 0) || ((_j = n.dataFindingCount) != null ? _j : 0),
+      projects: ((_k = n.projects) != null ? _k : []).map((p) => p.name)
     };
     if (issuesBySeverity) row["issuesBySeverity"] = issuesBySeverity;
     return row;
@@ -6163,6 +6553,18 @@ var Server = (() => {
         sensitiveAccess: assets.filter(
           (a) => AI_ASSET_KINDS.includes(a.kind) && a.hasAccessToSensitiveData
         ).length,
+        // The DSPM pair. Every datastore in TABS.assets arrived on a path from an AI agent —
+        // INVENTORY_AI filters to AI resource types, so a bucket can only have been returned
+        // by the sensitive-data traversal — which is what makes this an honest reachability
+        // count without reading edges, something loadAssets (a tab-direct read model) cannot
+        // do. The dry run seeds datastores directly, so the invariant is a live-tenant one.
+        sensitiveDatastores: assets.filter(
+          (a) => DATASTORE_KINDS.includes(a.kind) && a.hasSensitiveData
+        ).length,
+        dataFindings: assets.reduce((sum, a) => {
+          var _a6;
+          return sum + ((_a6 = a.dataFindingCount) != null ? _a6 : 0);
+        }, 0),
         openIssues: issues2.length,
         complianceGaps: loadFindings().length,
         agenticIdentities: assets.filter((a) => a.identityPurpose === "AGENTIC").length,
@@ -6281,6 +6683,7 @@ var Server = (() => {
           });
         }
         const findings = loadFindings().filter((f) => f.resourceId === id);
+        const dataFindings = loadDataFindings().filter((f) => f.resourceId === id);
         return {
           node: {
             ...assetRow(node2),
@@ -6289,7 +6692,8 @@ var Server = (() => {
           },
           issues: issues2,
           neighbors,
-          findings
+          findings,
+          dataFindings
         };
       });
     });
@@ -6623,6 +7027,7 @@ var Server = (() => {
           assets: dataRowCount(TABS.assets),
           edges: dataRowCount(TABS.edges),
           issues: dataRowCount(TABS.issues),
+          dataFindings: dataRowCount(TABS.dataFindings),
           syncs: dataRowCount(TABS.syncHistory)
         }
       }), 3600)

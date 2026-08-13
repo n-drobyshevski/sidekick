@@ -9,6 +9,7 @@ import {
   deriveAarsInput,
   enrichGraphDoc,
   internetExposureOf,
+  withDataFindingNodes,
   withExcessivePrivilegeNodes,
   withIdentityAccessNodes,
   withInternetExposureNodes,
@@ -18,6 +19,7 @@ import {
 import { DEFAULT_AARS_RULE, gapPointsFor, type AarsRule } from "../src/domain/aars";
 import { cleanAarsRule } from "../src/domain/aarsRule";
 import type { Severity } from "../src/domain/config";
+import { edgeId } from "../src/domain/graphTypes";
 import type { FindingRow, GNode, GraphDoc, IssueRow } from "../src/domain/graphTypes";
 import { SEED_AARS_HINTS, SEED_ISSUES, seedGraphDoc } from "../src/server/sampleData";
 
@@ -50,7 +52,7 @@ describe("enrichGraphDoc", () => {
     ).toBe(false);
   });
 
-  it("withSensitiveDataNodes adds one node + edge per data-exposed asset (pillar C)", () => {
+  it("withSensitiveDataNodes adds a stub per data-exposed asset NOT on a real chain", () => {
     const base = enriched();
     const doc = withSensitiveDataNodes(base);
     const flagged = base.nodes.filter(
@@ -61,8 +63,12 @@ describe("enrichGraphDoc", () => {
       (e) => e.type === "HAS_SENSITIVE_DATA" || e.type === "HAS_ACCESS_TO_SENSITIVE_DATA",
     );
     expect(flagged.length).toBeGreaterThan(0);
-    expect(sensNodes).toHaveLength(flagged.length);
-    expect(sensEdges).toHaveLength(flagged.length);
+    // Not one per flagged asset any more: the stub is the FALLBACK, drawn only where no
+    // traversable path to a classified store exists. The seed estate has real chains, so a
+    // strict per-flag count here would assert the feature is off.
+    expect(sensNodes.length).toBeLessThan(flagged.length);
+    expect(sensNodes).toHaveLength(sensEdges.length);
+    expect(sensNodes.length).toBeGreaterThan(0);
 
     const baseIds = new Set(base.nodes.map((n) => n.id));
     for (const e of sensEdges) {
@@ -71,13 +77,82 @@ describe("enrichGraphDoc", () => {
       expect(sensNodes.some((n) => n.id === e.dst)).toBe(true);
     }
 
-    // HOLDS assets use HAS_SENSITIVE_DATA; access-only assets use HAS_ACCESS_TO_SENSITIVE_DATA.
-    const sensBySrc = new Map(sensEdges.map((e) => [e.src, e]));
-    expect(sensBySrc.get("bucket-customer-pii")?.type).toBe("HAS_SENSITIVE_DATA");
-    expect(sensBySrc.get("agent-a")?.type).toBe("HAS_ACCESS_TO_SENSITIVE_DATA");
-
     // Synthetic nodes never carry an AARS score.
     for (const n of sensNodes) expect(n.aars).toBeUndefined();
+  });
+
+  it("suppresses the stub for every asset on a real path to a classified store", () => {
+    // agent -RUNS_AS-> sa -ALLOWS_ACCESS_TO-> classified bucket. All three are on the chain,
+    // so all three lose the stub; the fourth asset is flagged with nowhere to walk and keeps
+    // it. That contrast IS the feature — one story per asset, never two.
+    const doc: GraphDoc = {
+      nodes: [
+        { id: "agent", kind: "AI_AGENT", name: "agent", hasAccessToSensitiveData: true },
+        { id: "sa", kind: "SERVICE_ACCOUNT", name: "sa", hasAccessToSensitiveData: true },
+        { id: "store", kind: "BUCKET", name: "store", hasSensitiveData: true },
+        { id: "orphan", kind: "AI_AGENT", name: "orphan", hasAccessToSensitiveData: true },
+      ],
+      edges: [
+        { id: "e1", src: "agent", dst: "sa", type: "RUNS_AS" },
+        { id: "e2", src: "sa", dst: "store", type: "ALLOWS_ACCESS_TO" },
+      ],
+      syncedAt: T,
+    };
+    const stubs = withSensitiveDataNodes(doc).nodes
+      .filter((n) => n.kind === "SENSITIVE_DATA")
+      .map((n) => n.id);
+    expect(stubs).toEqual(["sensitive|orphan"]);
+  });
+
+  it("keeps every stub when the chain was never synced (an older graph)", () => {
+    // No ALLOWS_ACCESS_TO edges at all: the suppression set comes back empty and the
+    // topology is exactly what it was before this existed. This is what lets an
+    // already-synced ledger keep working without a re-sync.
+    const doc: GraphDoc = {
+      nodes: [
+        { id: "agent", kind: "AI_AGENT", name: "agent", hasAccessToSensitiveData: true },
+        { id: "store", kind: "BUCKET", name: "store", hasSensitiveData: true },
+      ],
+      edges: [],
+      syncedAt: T,
+    };
+    const out = withSensitiveDataNodes(doc);
+    const bySrc = new Map(
+      out.edges.map((e) => [e.src, e.type]),
+    );
+    expect(bySrc.get("store")).toBe("HAS_SENSITIVE_DATA");
+    expect(bySrc.get("agent")).toBe("HAS_ACCESS_TO_SENSITIVE_DATA");
+  });
+
+  it("withDataFindingNodes aggregates per store, with a worst severity and a count", () => {
+    const doc: GraphDoc = {
+      nodes: [
+        {
+          id: "store", kind: "BUCKET", name: "store", hasSensitiveData: true,
+          dataFindingCount: 3, dataFindingSeverities: { CRITICAL: 1, HIGH: 2 },
+        },
+        // Reached, nothing found: no aggregate, because there is nothing to aggregate.
+        { id: "clean", kind: "BUCKET", name: "clean", hasSensitiveData: true, dataFindingCount: 0 },
+        // Never reached by the traversal at all — also no aggregate, for a different reason.
+        { id: "unasked", kind: "DATABASE", name: "unasked", hasSensitiveData: true },
+      ],
+      edges: [],
+      syncedAt: T,
+    };
+    const out = withDataFindingNodes(doc);
+    const findings = out.nodes.filter((n) => n.kind === "DATA_FINDING");
+    expect(findings).toHaveLength(1);
+    expect(findings[0].id).toBe("datafinding|store");
+    expect(findings[0].name).toBe("Data Findings");
+    expect(findings[0].summaryCount).toBe(3);
+    expect(findings[0].severity).toBe("CRITICAL");
+    expect(out.edges).toEqual([
+      { id: edgeId("store", "HAS_DATA_FINDING", "datafinding|store"),
+        src: "store", dst: "datafinding|store", type: "HAS_DATA_FINDING" },
+    ]);
+
+    // Idempotent — re-applying must not duplicate the aggregate.
+    expect(withDataFindingNodes(out).nodes.filter((n) => n.kind === "DATA_FINDING")).toHaveLength(1);
   });
 
   it("withSensitiveDataNodes is idempotent and covers isolated (edge-less) assets", () => {

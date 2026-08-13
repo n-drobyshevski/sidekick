@@ -1,5 +1,67 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`query documents > Q_AGENT_SENSITIVE_DATA_ACCESS is unchanged 1`] = `
+"query SidekickAiAgentSensitiveDataAccess($quick: Boolean, $first: Int, $after: String) {
+  graphSearch(quick: $quick, first: $first, after: $after, query: {
+    type: "AI_AGENT"
+    select: true
+    relationships: [{
+      type: "RUNS_AS"
+      with: {
+        type: "SERVICE_ACCOUNT"
+        select: true
+        relationships: [{
+          type: "ALLOWS_ACCESS_TO"
+          with: {
+            type: ["BUCKET", "DATABASE", "DATABASE_SERVER"]
+            select: true
+            where: { hasSensitiveData: { EQUALS: true } }
+            relationships: [{
+              type: "HAS_DATA_FINDING"
+              optional: true
+              with: { type: "DATA_FINDING", select: true }
+            }]
+          }
+        }]
+      }
+    }]
+  }) {
+    totalCount
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      entities {
+        id
+        name
+        type
+        nativeType
+        cloudPlatform
+        region
+        ... on CloudResource {
+          status
+          firstSeen
+          lastSeen
+          externalId
+          isAccessibleFromInternet
+          isOpenToAllInternet
+          hasSensitiveData
+          hasAccessToSensitiveData
+          hasAdminPrivileges
+          hasHighPrivileges
+          technology { id name categories { id name } }
+          cloudAccount { id name externalId cloudProvider }
+          projects { id name riskProfile { businessImpact } }
+          tags { key value }
+        }
+        ... on DataFinding {
+          severity
+        }
+      }
+    }
+  }
+}
+"
+`;
+
 exports[`query documents > Q_AGENTS_NO_GUARDRAIL is unchanged 1`] = `
 "query SidekickAiAgentsWithoutGuardrail($quick: Boolean, $first: Int, $after: String) {
   graphSearch(quick: $quick, first: $first, after: $after, query: {

@@ -603,6 +603,16 @@ export function graphTable(data, handlers = {}) {
       cell: (r) => ((r.node.comboGroups || []).length ? "TC member" : "—") },
     { key: "guardrail", label: "Guardrail", value: (r) => (r.node.guardrailMissing ? 0 : 1),
       cell: (r) => (r.node.guardrailMissing ? "missing" : "—") },
+    // The count lives on the DATASTORE row as well as on the aggregate, which is what makes
+    // it survive here: an aggregate that the projection collapsed, or a store whose
+    // findings the node budget never admitted, still reports its number in the fallback the
+    // keyboard path uses.
+    { key: "datafindings", label: "Data findings", desc: true, className: "num",
+      value: (r) => -(r.node.dataFindingCount ?? r.node.summaryCount ?? -1),
+      cell: (r) => {
+        const n = r.node.kind === "DATA_FINDING" ? r.node.summaryCount : r.node.dataFindingCount;
+        return n ? String(n) : "—";
+      } },
     { key: "degree", label: "Connections", value: (r) => -r.degree, desc: true,
       className: "num", cell: (r) => String(r.degree) },
   ];

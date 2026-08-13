@@ -13,12 +13,16 @@ const sevRank = (sev) => rankSeverity(sev, SEVERITY_RANK);
 
 // ------------------------------------------------------------------------- neighbour pick
 
-// The four synthetic risk-topology kinds, in the order they should draw. These nodes carry
-// no cloud, project or severity of their own (graphTypes.ts) — they exist only to say
-// something is wrong with the asset they hang off, and that IS the security story, so they
-// always outrank an ordinary asset neighbour, and rank against each other in this order.
+// The risk-topology kinds, in the order they should draw. These nodes carry no cloud or
+// project of their own (graphTypes.ts) — they exist only to say something is wrong with the
+// asset they hang off, and that IS the security story, so they always outrank an ordinary
+// asset neighbour, and rank against each other in this order.
+//
+// DATA_FINDING outranks SENSITIVE_DATA: a confirmed classification finding is stronger
+// evidence than the stub that stands in for one where no path could be walked.
 const RISK_KIND_ORDER = [
-  "MISSING_GUARDRAIL", "INTERNET_EXPOSURE", "SENSITIVE_DATA", "EXCESSIVE_PRIVILEGE",
+  "MISSING_GUARDRAIL", "INTERNET_EXPOSURE", "DATA_FINDING", "SENSITIVE_DATA",
+  "EXCESSIVE_PRIVILEGE",
 ];
 
 /** 0..3 for the risk kinds in declared order, 4 for RUNS_AS, 5 for everything else. */

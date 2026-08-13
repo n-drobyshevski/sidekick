@@ -14,7 +14,7 @@ import {
   type InternetExposure,
   type IssueSeverityKey,
 } from "./aars";
-import { isUnresolvedIssue } from "./config";
+import { isUnresolvedIssue, SEVERITY_ORDER } from "./config";
 import type { Severity } from "./config";
 import { conditionHolds, conditionState } from "./riskConditions";
 import type { ConditionKey } from "./toxicCombos";
@@ -26,6 +26,7 @@ import {
   type GNode,
   type GraphDoc,
   type IssueRow,
+  type NodeKind,
   severityRank,
 } from "./graphTypes";
 import { groupBy, indexBy, pushInto } from "./util";
@@ -208,6 +209,7 @@ export function enrichGraphDoc(
 ): GraphDoc {
   const open = issues.filter(isUnresolvedIssue);
   const byAsset = groupBy(open, (i) => i.assetId);
+  const reach = dataFindingReach(doc);
 
   const nodes: GNode[] = doc.nodes.map((raw) => {
     const node: GNode = { ...raw };
@@ -228,7 +230,7 @@ export function enrichGraphDoc(
       node.kind !== "SUMMARY" &&
       (AI_ASSET_KINDS.includes(node.kind) || nodeIssues.length > 0 || hint !== undefined);
     if (scorable) {
-      const input: AarsInput = hint
+      const base: AarsInput = hint
         ? {
             issueSeverities: nodeIssues.map((i) => i.nativeSeverity),
             ...hint,
@@ -237,6 +239,13 @@ export function enrichGraphDoc(
             internetExposure: hint.internetExposure ?? internetExposureOf(node),
           }
         : deriveAarsInput(node, nodeIssues, rule);
+      // Reach comes from the TOPOLOGY, so it is applied after the hint rather than inside
+      // it: the dry-run hints are transcribed from ai/custom_score.md and know nothing about
+      // a tenant's datastores, and a hint that omitted this would silently price the term at
+      // zero for exactly the assets the chain was built to describe. Left absent when the
+      // asset reaches nothing, so "no findings" and "never collected" stay distinguishable.
+      const reached = reach.get(node.id);
+      const input: AarsInput = reached ? { ...base, dataFindingSeverities: reached } : base;
       const result = computeAars(input, rule);
       node.aars = result.score;
       node.aarsSeverity = result.severity;
@@ -248,6 +257,9 @@ export function enrichGraphDoc(
         dataExposure: input.dataExposure,
         internetExposure: input.internetExposure,
       };
+      if (reached) {
+        node.aarsInput.dataFindings = countBySeverity(reached);
+      }
     }
     return node;
   });
@@ -335,9 +347,129 @@ function withDerivedNodes(doc: GraphDoc, spec: DerivedNodeSpec): GraphDoc {
   };
 }
 
+/** Datastore kinds the data-exposure chain terminates on. */
+export const DATASTORE_KINDS: readonly NodeKind[] = ["BUCKET", "DATABASE", "DATABASE_SERVER"];
+
+/** `["HIGH","HIGH","CRITICAL"]` → `[{severity:"CRITICAL",count:1},{severity:"HIGH",count:2}]`. */
+function countBySeverity(severities: Severity[]): Array<{ severity: string; count: number }> {
+  const counts: Record<string, number> = {};
+  for (const s of severities) counts[s] = (counts[s] ?? 0) + 1;
+  return Object.keys(counts)
+    .sort((a, b) => severityRank(a) - severityRank(b))
+    .map((severity) => ({ severity, count: counts[severity] }));
+}
+
+/**
+ * The data findings each asset can REACH, walking the synced chain:
+ *   asset -RUNS_AS-> identity -ALLOWS_ACCESS_TO-> classified store (dataFindingSeverities)
+ *
+ * Both ends are credited. An execution identity that can read a bucket full of PII is
+ * exposed to it, and so is whatever runs as that identity — which is the whole claim the
+ * toxic-combination rules make about an agent, and the reason pillar C exists at all. A
+ * store is credited with its own findings too, so a classified bucket scores for what is
+ * actually in it rather than only for the boolean.
+ *
+ * Returns severities one entry per finding — the shape pillar C's count term wants. An
+ * asset that reaches nothing is simply absent from the map, never present with an empty
+ * array: "reaches no findings" and "was never asked" must not both read as zero.
+ */
+export function dataFindingReach(doc: GraphDoc): Map<string, Severity[]> {
+  const byId = new Map(doc.nodes.map((n) => [n.id, n]));
+
+  /** One store's findings, expanded from its severity mix into one entry per finding. */
+  const findingsOf = (store: GNode): Severity[] => {
+    const out: Severity[] = [];
+    for (const [severity, count] of Object.entries(store.dataFindingSeverities ?? {})) {
+      for (let i = 0; i < count; i++) out.push(severity as Severity);
+    }
+    return out;
+  };
+
+  const reach = new Map<string, Severity[]>();
+  const add = (id: string, severities: Severity[]) => {
+    if (!severities.length) return;
+    const prev = reach.get(id);
+    if (prev) prev.push(...severities);
+    else reach.set(id, [...severities]);
+  };
+
+  // Store → its own findings.
+  for (const node of doc.nodes) {
+    if (!(DATASTORE_KINDS as readonly string[]).includes(node.kind)) continue;
+    add(node.id, findingsOf(node));
+  }
+  // Identity → the stores it can reach.
+  const identityReach = new Map<string, Severity[]>();
+  for (const e of doc.edges) {
+    if (e.type !== "ALLOWS_ACCESS_TO") continue;
+    const store = byId.get(e.dst);
+    if (!store || !(DATASTORE_KINDS as readonly string[]).includes(store.kind)) continue;
+    const found = findingsOf(store);
+    if (!found.length) continue;
+    const prev = identityReach.get(e.src);
+    if (prev) prev.push(...found);
+    else identityReach.set(e.src, [...found]);
+  }
+  for (const [id, severities] of identityReach) add(id, severities);
+  // Whatever RUNS_AS such an identity.
+  for (const e of doc.edges) {
+    if (e.type !== "RUNS_AS") continue;
+    const viaIdentity = identityReach.get(e.dst);
+    if (viaIdentity) add(e.src, viaIdentity);
+  }
+  return reach;
+}
+
+/**
+ * Everything on a real, traversable path to a classified datastore.
+ *
+ * Three populations, walked from the chain the sensitive-data step syncs:
+ *   store   — a classified datastore the graph actually holds
+ *   reacher — an identity with an ALLOWS_ACCESS_TO edge into one
+ *   runner  — whatever RUNS_AS that identity (the head of the chain: the agent)
+ *
+ * Shared by the stub suppression below and, through it, the only definition of "this asset's
+ * data exposure is drawn as a path" the app has. Empty when the step never ran — which is
+ * what makes every fallback in this file degrade to today's behaviour rather than to
+ * silence.
+ */
+function assetsOnDataPath(doc: GraphDoc): Set<string> {
+  const byId = new Map(doc.nodes.map((n) => [n.id, n]));
+  const onPath = new Set<string>();
+  const reachers = new Set<string>();
+
+  for (const e of doc.edges) {
+    if (e.type !== "ALLOWS_ACCESS_TO") continue;
+    const store = byId.get(e.dst);
+    if (!store || !(DATASTORE_KINDS as readonly string[]).includes(store.kind)) continue;
+    if (store.hasSensitiveData !== true) continue;
+    onPath.add(store.id);
+    reachers.add(e.src);
+  }
+  for (const id of reachers) onPath.add(id);
+  for (const e of doc.edges) {
+    if (e.type === "RUNS_AS" && reachers.has(e.dst)) onPath.add(e.src);
+  }
+  return onPath;
+}
+
 /**
  * Data exposure (AARS pillar C). HOLDS (`hasSensitiveData`) wins over ACCESS when both
  * flags are set — consistent with the score collapsing both to "SENSITIVE".
+ *
+ * The stub is now the FALLBACK, not the primary rendering. Where the sensitive-data
+ * traversal produced a real chain — agent → execution identity → classified store — that
+ * chain is the evidence, and hanging a "Sensitive data" stub off the agent as well would
+ * state one fact twice in two visual languages. Same rule withExcessivePrivilegeNodes
+ * already applies when a real CIEM finding beats its synthetic stand-in, over a path rather
+ * than a single edge.
+ *
+ * What deliberately KEEPS its stub:
+ *   - an asset Wiz flags sensitive with no traversable path (the tenant rejected the step,
+ *     or the grant is expressed some way this query does not walk). This is the whole point
+ *     of keeping the stub at all;
+ *   - every asset in a graph synced before the chain existed, which carries none of these
+ *     edges and so reaches the suppression set empty-handed.
  */
 export function withSensitiveDataNodes(doc: GraphDoc): GraphDoc {
   return withDerivedNodes(doc, {
@@ -345,7 +477,65 @@ export function withSensitiveDataNodes(doc: GraphDoc): GraphDoc {
     prefix: "sensitive",
     name: "Sensitive data",
     edgeType: (n) => (n.hasSensitiveData ? "HAS_SENSITIVE_DATA" : "HAS_ACCESS_TO_SENSITIVE_DATA"),
+    suppress: assetsOnDataPath,
   });
+}
+
+/**
+ * The DSPM verdict on a datastore: one aggregate node per store, carrying how many
+ * classified findings it holds and their severity mix.
+ *
+ * An aggregate rather than one node per finding, which is how Wiz's own graph draws it
+ * ("Data Findings", count badge). The individual rows live in `ai_data_findings` and the
+ * store's detail sheet names them; a bucket with two hundred findings must cost one node,
+ * not the whole budget.
+ *
+ * Derived on READ, from two persisted columns. That means changing what the aggregate says
+ * never needs a re-sync, and it cannot use withDerivedNodes: that helper keys off
+ * conditionHolds, a boolean, and this reads a count.
+ */
+export function withDataFindingNodes(doc: GraphDoc): GraphDoc {
+  const existing = new Set(doc.nodes.filter((n) => n.kind === "DATA_FINDING").map((n) => n.id));
+  const added: GNode[] = [];
+  const addedEdges: GEdge[] = [];
+
+  for (const node of doc.nodes) {
+    if (!(DATASTORE_KINDS as readonly string[]).includes(node.kind)) continue;
+    const count = node.dataFindingCount ?? 0;
+    if (count <= 0) continue;
+    const id = `datafinding|${node.id}`;
+    if (existing.has(id)) continue;
+
+    const mix = node.dataFindingSeverities ?? {};
+    const finding: GNode = {
+      id,
+      kind: "DATA_FINDING",
+      name: "Data Findings",
+      // summaryCount, not a bespoke field: the client already reads it for the collapse
+      // stubs, so the count badge and its aria text come for free.
+      summaryCount: count,
+      dataFindingSeverities: mix,
+    };
+    // The worst severity present, so the card carries a dot and a word rather than only a
+    // number — severity must never be a colour alone, and a bare "3" says nothing about how
+    // bad. Absent when nothing in the mix ranks, rather than defaulted to something false.
+    const worst = Object.keys(mix).sort((a, b) => severityRank(a) - severityRank(b))[0];
+    if (worst && severityRank(worst) < SEVERITY_ORDER.length) finding.severity = worst as Severity;
+    added.push(finding);
+    addedEdges.push({
+      id: edgeId(node.id, "HAS_DATA_FINDING", id),
+      src: node.id,
+      dst: id,
+      type: "HAS_DATA_FINDING",
+    });
+  }
+
+  if (!added.length) return doc;
+  return {
+    nodes: [...doc.nodes, ...added],
+    edges: [...doc.edges, ...addedEdges],
+    syncedAt: doc.syncedAt,
+  };
 }
 
 /**

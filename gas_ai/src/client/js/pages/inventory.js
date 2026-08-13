@@ -48,6 +48,7 @@ const FLAG_LABELS = {
   combo: "In a toxic combination",
   guardrail: "Missing a guardrail",
   agentic: "Agentic identity",
+  datafindings: "Reaches classified data",
 };
 
 const FACET_LABELS = {
