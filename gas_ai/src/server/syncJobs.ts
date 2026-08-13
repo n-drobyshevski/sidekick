@@ -45,6 +45,7 @@ import {
   type FetchOptions,
 } from "./wizClientAi";
 import {
+  AI_RESOURCE_TYPE_CANDIDATES,
   aiConfigFindingsVariables,
   aiInventoryVariables,
   aiIssuesVariables,
@@ -100,7 +101,12 @@ interface SyncStepDef {
  * types resolved against this tenant's schema (introspection ∩ candidates,
  * or the WIZ_AI_RESOURCE_TYPES override) — see resolveAiResourceTypes.
  */
-function syncSteps(): SyncStepDef[] {
+function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
+  // Resolved against the tenant by default, which needs credentials and is what a real sync
+  // must do. `aiTypes` is for DESCRIBING the battery without one — never for running it: a
+  // sync that quietly substituted a guessed type list would query the wrong estate and say
+  // nothing about it.
+  const types = aiTypes ?? resolveAiResourceTypes().types;
   // Stored per-step overrides, laid over each builder's variables by path. Read once so a
   // battery of twelve steps costs one settings read, not twelve.
   const overrides = settingsStore.getScanVars();
@@ -114,7 +120,7 @@ function syncSteps(): SyncStepDef[] {
       writes: ["ai_assets"],
       run: "cloudResources",
       query: Q_AI_INVENTORY,
-      extraVariables: vars("INVENTORY_AI", aiInventoryVariables(resolveAiResourceTypes().types)),
+      extraVariables: vars("INVENTORY_AI", aiInventoryVariables(types)),
       normalize: normalizeInventoryPage,
     },
     // One cursor walk per toxic-combination source rule: the assets carrying an OPEN
@@ -223,8 +229,9 @@ function rootFieldOf(step: SyncStepDef): string {
  */
 export function describeSyncSteps(): Rec[] {
   const overrides = settingsStore.getScanVars();
-  return syncSteps().map((step) => {
-    const base = defaultStepVariables(step.id, step.extraVariables ?? {});
+  const resolved = describeAiTypes();
+  return syncSteps(resolved.types).map((step) => {
+    const base = defaultStepVariables(step.id, step.extraVariables ?? {}, resolved.types);
     return {
       id: step.id,
       area: step.area,
@@ -240,8 +247,27 @@ export function describeSyncSteps(): Rec[] {
       defaultVariables: base,
       editable: isEditableStep(step.id),
       overridden: changedPaths(step.id, base, overrides[step.id]),
+      // Only INVENTORY_AI's default depends on resolving types against the tenant, so it is
+      // the only step whose description can be provisional. Said out loud rather than shown
+      // as settled fact — this page's whole job is not doing that.
+      typesResolved: step.id === "INVENTORY_AI" ? resolved.resolved : true,
     };
   });
+}
+
+/**
+ * The AI resource types, for DESCRIBING the battery — with a credential-free fallback.
+ *
+ * A dry-run deployment has no credentials at all, and it is how most people first open this
+ * app. Letting the whole panel fail there because a type list could not be resolved would
+ * hide nine documents that are static strings and need no tenant to read.
+ */
+function describeAiTypes(): { types: readonly string[]; resolved: boolean } {
+  try {
+    return { types: resolveAiResourceTypes().types, resolved: true };
+  } catch (e) {
+    return { types: AI_RESOURCE_TYPE_CANDIDATES, resolved: false };
+  }
 }
 
 /**
@@ -249,10 +275,10 @@ export function describeSyncSteps(): Rec[] {
  * to default" target, computed the same way the sync computes the live ones so the two can
  * never describe different defaults.
  */
-function defaultStepVariables(stepId: string, withOverride: Rec): Rec {
+function defaultStepVariables(stepId: string, withOverride: Rec, aiTypes?: readonly string[]): Rec {
   switch (stepId) {
     case "INVENTORY_AI":
-      return aiInventoryVariables(resolveAiResourceTypes().types) as unknown as Rec;
+      return aiInventoryVariables(aiTypes ?? resolveAiResourceTypes().types) as unknown as Rec;
     case "ISSUES_TOXIC":
       return aiIssuesVariables(projectScope()) as unknown as Rec;
     case "CONFIG_FINDINGS":
@@ -278,7 +304,11 @@ export function testStepVariables(stepId: string, vars: Rec | null): Rec {
   const step = syncSteps().filter((s) => s.id === stepId)[0];
   if (!step) throw new Error(`No sync step called ${stepId}.`);
 
-  const proposed = effectiveStepVars(stepId, defaultStepVariables(stepId, step.extraVariables ?? {}), vars);
+  const proposed = effectiveStepVars(
+    stepId,
+    defaultStepVariables(stepId, step.extraVariables ?? {}),
+    vars,
+  );
   const opts: FetchOptions = { query: step.query, cursor: null, extraVariables: proposed };
 
   let result;
