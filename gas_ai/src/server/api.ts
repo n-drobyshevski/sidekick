@@ -57,6 +57,7 @@ import type { Rec } from "../domain/util";
 import { archiveBytes } from "./archiveStore";
 import { activeJob } from "./jobsStore";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
+import { buildInfo } from "./buildInfo";
 import { hasWizCredentials } from "./props";
 import { cached, dataVersion } from "./serverCache";
 import * as settingsStore from "./settingsStore";
@@ -100,6 +101,9 @@ export function bootstrap(_p?: unknown): ApiResult {
     ...(cached("bootstrapCore", null, bootstrapCore) as Rec),
     dataVersion: dataVersion(),
     hasCredentials: hasWizCredentials(),
+    // Outside the cached core on purpose: a cached build stamp would be the one thing
+    // guaranteed to lie after a deploy.
+    build: buildInfo(),
     activeJob: (activeJob() as unknown as Rec) ?? null,
   }));
 }

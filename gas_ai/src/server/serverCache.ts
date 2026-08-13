@@ -12,10 +12,15 @@
 // chunk reads as a miss. Everything degrades to compute() on any cache failure.
 
 import { sha1Hex } from "../domain/sha1";
+import { BUILD_ID } from "./buildInfo";
 import { getProp, setProp } from "./props";
 
 const VERSION_PROP = "DATA_VERSION";
-const KEY_PREFIX = "wsk";
+// The build stamp is part of every key. DATA_VERSION only bumps on data MUTATIONS, so
+// without this a code deploy would keep serving payloads computed by the old code until
+// the TTL expires (6h) or someone syncs — the "I deployed the fix but still see the bug"
+// trap. Changing code changes the stamp, making prior entries unreachable at once.
+const KEY_PREFIX = `wsk.${BUILD_ID}`;
 const CHUNK_CHARS = 90_000; // base64 chars per entry, safely under the 100 KB cap
 const DEFAULT_TTL_SEC = 21_600; // the CacheService maximum (6 h)
 

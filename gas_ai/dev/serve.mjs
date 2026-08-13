@@ -14,6 +14,7 @@ import { createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
+import { buildStamp } from "../buildStamp.mjs";
 
 const gasRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = Number(process.env.PORT || 8787);
@@ -34,6 +35,9 @@ async function buildDevServer() {
     format: "iife",
     globalName: "Server",
     target: "es2019",
+    // The same stamp the client bundle gets, so the Settings build card compares like
+    // with like. Without it the dev server reports a mismatch that isn't one.
+    define: buildStamp(gasRoot).define,
     outfile: join(gasRoot, "dev/server.dev.js"),
     logLevel: "silent",
     plugins: [{

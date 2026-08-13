@@ -2,6 +2,8 @@
 // secrets are set as Script Properties in the GAS editor, never through the UI).
 
 import { call } from "../api.js";
+import { bootstrap } from "../store.js";
+import { clientBuild, describeBuild } from "../buildInfo.js";
 import { clear, el, emptyState, skeleton, statusPill, toast } from "../ui.js";
 
 export async function renderSettings(main, _params, ctx) {
@@ -24,6 +26,12 @@ export async function renderSettings(main, _params, ctx) {
     skeleton("pill", { width: "120px" })));
 
   let settings;
+  let boot = null;
+  try {
+    boot = await bootstrap();
+  } catch (e) {
+    boot = null; // the build card degrades to client-only rather than failing the page
+  }
   try {
     settings = await call("api_getSettings", {});
   } catch (e) {
@@ -102,6 +110,51 @@ export async function renderSettings(main, _params, ctx) {
           "Project Settings. They are never entered or shown here. Run wizDiagnostic() " +
           "in the editor to validate them."),
       ),
+    );
+
+    host.append(buildCard());
+  }
+
+  /**
+   * Which build is actually running.
+   *
+   * An Apps Script deployment can be stale three ways at once — an old file in the
+   * project, a web app pinned to an old VERSION so `clasp push` changes nothing at
+   * /exec, or a copy-paste deploy that updated some files and not others. None of it is
+   * visible from the running app, so this states it outright.
+   *
+   * Client and server are stamped separately because they ship as separate files:
+   * js_app.html and server.js. A project holding a new client and an old server looks
+   * healthy right up until an RPC answers a shape the client no longer expects.
+   */
+  function buildCard() {
+    const client = clientBuild();
+    const server = (boot && boot.build) || null;
+    // Only compare two REAL stamps. "dev" means "built without the define step" (vitest,
+    // or a dev server that skipped it), not "a different build" — treating it as a
+    // mismatch reported a deployment fault that did not exist.
+    const stamped = (b) => !!b && !!b.id && b.id !== "dev";
+    const mismatch = stamped(client) && stamped(server) && client.id !== server.id;
+
+    return el("div", { class: "card", style: "margin-top:14px" },
+      el("h3", {}, "Build"),
+      el("dl", { class: "kv" },
+        el("dt", {}, "Client"), el("dd", {}, describeBuild(client)),
+        el("dt", {}, "Server"),
+        el("dd", {}, server ? describeBuild(server) : "unavailable"),
+      ),
+      mismatch
+        ? el("p", { class: "small", style: "margin:10px 0 0; color:var(--bad)" },
+            "The client and server bundles came from different builds. The Apps Script " +
+            "project has js_app.html and server.js from different pushes — re-deploy " +
+            "everything in dist/, then create a NEW version so /exec serves it.")
+        : null,
+      el("p", { class: "small muted", style: "margin:10px 0 0" },
+        "The commit this build came from. To check whether a change is live, ask git " +
+        "whether that change is an ancestor of this commit " +
+        "(git merge-base --is-ancestor MERGE_SHA THIS_SHA). Remember that clasp push " +
+        "updates the code but not the deployed version: /exec keeps serving the version " +
+        "it was pinned to until you deploy a new one."),
     );
   }
 }

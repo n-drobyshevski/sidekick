@@ -2,6 +2,7 @@
 // can run, and inlines the client JS/CSS into HtmlService partials. `dist/entry.js` and
 // `dist/appsscript.json` are hand-maintained and never overwritten here.
 import { build } from "esbuild";
+import { buildStamp } from "./buildStamp.mjs";
 import { readFileSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +11,10 @@ const root = dirname(fileURLToPath(import.meta.url));
 const dist = join(root, "dist");
 mkdirSync(dist, { recursive: true });
 
+// Build stamps (see buildStamp.mjs — shared with the dev harness so both bundles agree).
+const STAMP = buildStamp(root);
+const STAMP_DEFINE = STAMP.define;
+
 // --- Server bundle -------------------------------------------------------------------
 await build({
   entryPoints: [join(root, "src/server/index.ts")],
@@ -17,6 +22,7 @@ await build({
   format: "iife",
   globalName: "Server",
   target: "es2019",
+  define: STAMP_DEFINE,
   outfile: join(dist, "server.js"),
   logLevel: "info",
 });
@@ -29,6 +35,7 @@ const clientResult = await build({
   bundle: true,
   format: "iife",
   target: "es2019",
+  define: STAMP_DEFINE,
   // Lower template literals to string concatenation. Corporate SSL-inspection
   // proxies have been observed "stripping comments" from the served bundle with a
   // tokenizer that understands quoted strings but not template literals: a bare
@@ -142,4 +149,5 @@ if (missing.length || stale.length) {
   );
 }
 
-console.log("build ok:", readdirSync(dist).join(", "));
+console.log(`build ok: ${readdirSync(dist).join(", ")}`);
+console.log(`  stamp ${STAMP.id} · commit ${STAMP.commit || "unknown"}`);
