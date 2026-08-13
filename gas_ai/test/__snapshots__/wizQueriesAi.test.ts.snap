@@ -175,6 +175,13 @@ exports[`query documents > Q_ISSUES is unchanged 1`] = `
           threats
           control { resolutionRecommendation severity }
         }
+        ... on CloudEventRule {
+          id
+          name
+          description
+          risks
+          threats
+        }
       }
     }
   }

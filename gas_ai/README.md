@@ -26,9 +26,9 @@ palette is deliberately identical across both tools.
 ## How data flows
 
 1. **Sync** (button or daily 05:00 UTC trigger) walks a battery of Wiz GraphQL queries:
-   AI inventory (`cloudResourcesV2`), the AI risk register (`issuesV2` filtered to
-   framework category `wct-id-1998`, both `TOXIC_COMBINATION` and `CLOUD_CONFIGURATION`
-   issues — the same filter the console's Risk Issues view sends),
+   AI inventory (`cloudResourcesV2`), the AI risk register (`issuesV2` scoped by framework
+   category `wct-id-1998` and by nothing else — **no issue-type filter**, so a kind this
+   register has never modelled is still collected and lands in Other AI risk),
    assets-per-toxic-rule (`relatedIssue` filter),
    guardrail gaps (`graphSearch` with `PROTECTED_BY` + `negate:true`), execution
    identity (`RUNS_AS`), CIEM findings (`HAS_FINDING`), and human/role access

@@ -343,6 +343,19 @@ export const Q_ISSUES =
   "          threats\n" +
   "          control { resolutionRecommendation severity }\n" +
   "        }\n" +
+  // A threat detection's source rule is a CloudEventRule, and without this fragment the
+  // element comes back as an empty object — the issue would still be collected, but with
+  // no rule id and no name to show for it. Deliberately minimal: `severity` is aliased in
+  // the tenant's own document (ruleSeverity: severity), which is what a field-type
+  // conflict against Control.severity looks like, and the normalizer reads the ISSUE's
+  // severity anyway. CloudEventRule carries no resolutionRecommendation.
+  "        ... on CloudEventRule {\n" +
+  "          id\n" +
+  "          name\n" +
+  "          description\n" +
+  "          risks\n" +
+  "          threats\n" +
+  "        }\n" +
   "      }\n" +
   "    }\n" +
   "  }\n" +
@@ -363,16 +376,22 @@ export const Q_ISSUES =
  * are different axes that happen to take the same id — but the console's own Risk Issues
  * view uses frameworkCategory, so the register now matches what an analyst sees.
  *
- * Both issue types. Narrowing to TOXIC_COMBINATION dropped every CLOUD_CONFIGURATION
- * issue in the category, which is a silent under-count of the same register. Issues
- * whose source rule is not one of COMBO_GROUPS now land in the "other" bucket rather
- * than being dropped — see comboSummary.
+ * NO TYPE FILTER, and that is the point. The category is the scope; the issue type is
+ * Wiz's own taxonomy of how an issue was produced, and filtering on it silently narrows
+ * the register to the kinds we happened to think of. It did: pinning
+ * `["CLOUD_CONFIGURATION","TOXIC_COMBINATION"]` matched 91 of the tenant's 98 AI-category
+ * issues, and the 7 it dropped were every threat detection in the category — invisible,
+ * because the console's own count is not type-filtered either.
+ *
+ * A type this register has never seen is still an AI risk. Issues whose source rule is
+ * not one of COMBO_GROUPS land in the "other" bucket carrying Wiz's severity untouched
+ * (see comboSummary), which is exactly the right home for one. Narrowing is available as
+ * an editable step variable for an operator who wants it; it is not the default.
  */
 export function aiIssuesVariables(scope: string[] | null): { filterBy: unknown; orderBy: unknown } {
   const filterBy: Record<string, unknown> = {
     status: ["OPEN", "IN_PROGRESS"],
     frameworkCategory: [RISK_CATEGORY_ID],
-    type: ["CLOUD_CONFIGURATION", "TOXIC_COMBINATION"],
   };
   if (scope && scope.length) filterBy["project"] = scope;
   return { filterBy, orderBy: { field: "SEVERITY_EXPLOITABLE", direction: "DESC" } };
