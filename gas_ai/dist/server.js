@@ -2934,9 +2934,9 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "acc2652ddfd7" : "dev";
-  var BUILD_COMMIT = true ? "58da31d" : "";
-  var BUILD_DATE = true ? "2026-08-13T07:30:10+00:00" : "";
+  var BUILD_ID = true ? "af31b8894bb9" : "dev";
+  var BUILD_COMMIT = true ? "2082904" : "";
+  var BUILD_DATE = true ? "2026-08-13T07:49:07+00:00" : "";
   function buildInfo() {
     return { id: BUILD_ID, commit: BUILD_COMMIT, date: BUILD_DATE };
   }
