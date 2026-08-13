@@ -1,0 +1,206 @@
+/* ------------------------------------------------------------- record sheet (two-pane) */
+/* The asset and issue registers open a wider variant of the sheet in sheet.css: same scrim,
+   same shell, same elevation, but the single scrolling body is split into a persistent
+   section rail and a content pane that scrolls on its own. Everything here is additive —
+   a sheet without `rail` in its options never gets any of these classes. */
+
+.sheet--record { width: var(--sheet-w-record); }
+.sheet--record.sheet--wide { width: var(--sheet-w-record-wide); }
+/* Under the pointer the edge tracks the hand; the 160ms width ease is for the widen
+   preset's single jump, and would read as lag on a drag. */
+.sheet.is-resizing { transition: none; }
+
+/* --------------------------------------------------------------------- header */
+/* Kind tile: the record's own category, at the size the reference gives it. It is
+   decorative — the kind is also spelled out in the subtitle and in Identity — so it is
+   aria-hidden and carries no meaning color alone would have to bear. */
+.sheet--record .sheet-header { padding: 16px 20px 12px; }
+.sheet-icon {
+  flex: 0 0 auto; width: 36px; height: 36px; margin-right: 12px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-lg);
+  background: var(--surface); color: var(--text-2);
+}
+.sheet-icon:empty { display: none; }
+.sheet-icon .gnode-icon { stroke: currentColor; }
+.sheet-icon[data-tone="asset"]    { background: var(--cat-asset-tint);    color: var(--cat-asset-text); }
+.sheet-icon[data-tone="data"]     { background: var(--cat-data-tint);     color: var(--cat-data-text); }
+.sheet-icon[data-tone="iam"]      { background: var(--cat-iam-tint);      color: var(--cat-iam-text); }
+.sheet-icon[data-tone="vuln"]     { background: var(--cat-vuln-tint);     color: var(--cat-vuln-text); }
+.sheet-icon[data-tone="exposure"] { background: var(--cat-exposure-tint); color: var(--cat-exposure-text); }
+/* The heading takes the free space so the name starts beside the tile. Without it the
+   headrow's space-between pushes a short title into the middle of a 960px sheet. */
+.sheet--record .sheet-heading { flex: 1 1 auto; min-width: 0; }
+.sheet--record .sheet-title { font-size: 1.125rem; overflow-wrap: anywhere; }
+
+/* Action toolbar. Small outlined buttons over the base button, not a new species. */
+.sheet-toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.sheet-toolbar:empty { display: none; }
+.sheet-tool {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-height: 30px; padding: 4px 10px; font-size: 12px; font-weight: 500;
+  background: var(--page);
+}
+.sheet-tool svg { flex: 0 0 auto; color: var(--text-3); }
+.sheet-tool:hover svg { color: var(--ink); }
+
+/* ------------------------------------------------------------ panes and rail */
+.sheet-panes { flex: 1 1 auto; display: flex; min-height: 0; }
+.sheet-rail {
+  flex: 0 0 var(--sheet-rail-w); width: var(--sheet-rail-w);
+  padding: 12px 10px 20px; overflow-y: auto; overscroll-behavior: contain;
+  border-right: 1px solid var(--hairline); background: var(--surface);
+}
+.sheet--record .sheet-body {
+  flex: 1 1 auto; min-width: 0; padding: 14px 20px 24px;
+}
+/* The pane owns the scroll, so it is focusable even with no control in it — otherwise a
+   keyboard user cannot read a long section at all. Its ring is inset: an outset one would
+   sit on the rail's border. */
+.sheet--record .sheet-body:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+.sheet-pane[hidden] { display: none; }
+
+.sheet-rail-group { margin-top: 14px; }
+.sheet-rail-label {
+  padding: 0 8px 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--text-3);
+}
+.sheet-rail-item {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  min-height: 30px; padding: 5px 8px; margin: 1px 0;
+  font-size: 13px; text-align: left;
+  background: none; border: none; box-shadow: none; border-radius: var(--radius-md);
+  color: var(--text-2);
+}
+.sheet-rail-item:hover { background: var(--wash-hover); border-color: transparent; color: var(--ink); }
+.sheet-rail-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.sheet-rail-item-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sheet-rail-count {
+  flex: 0 0 auto; font-size: 11px; font-variant-numeric: tabular-nums; color: var(--text-3);
+}
+/* Active section: the app's own rule for a nav rail (accent bar plus weight), not a tint
+   on its own — DESIGN.md forbids leaning on a colored fill to carry state. */
+.sheet-rail-item.is-active {
+  position: relative; color: var(--ink); font-weight: 600;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.sheet-rail-item.is-active::before {
+  content: ""; position: absolute; left: 0; top: 5px; bottom: 5px; width: 2px;
+  border-radius: var(--radius-pill); background: var(--accent);
+}
+.sheet-rail-item.is-active .sheet-rail-count { color: var(--accent-hover); font-weight: 600; }
+/* A section with nothing in it stays in the rail and stays selectable — its pane says so
+   in words. Dimmed AND counted 0: the state never rests on the dimming alone. */
+.sheet-rail-item.is-empty { color: var(--text-3); }
+.sheet-rail-item.is-empty.is-active { color: var(--ink); }
+
+/* ------------------------------------------- the control cluster and resize grip */
+/* Visually on the scrim, structurally inside the dialog: outside `aside.sheet` it would
+   fall out of the focus trap and out of aria-modal's subtree, and Close would be
+   unreachable to a screen reader. */
+.sheet-cluster {
+  position: absolute; top: 16px; left: -52px; z-index: 1;
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+}
+.sheet-cluster-btn {
+  width: 40px; height: 40px; min-height: 40px; padding: 0; border: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-pill);
+  background: rgba(10, 10, 10, 0.82); color: var(--on-graphite);
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.25);
+}
+.sheet-cluster-btn:hover { background: var(--graphite); border-color: transparent; }
+.sheet-cluster-btn:disabled { opacity: 0.35; }
+/* Crimson on near-black clears nothing, so the ring is double: a page-white separator
+   under the accent. Same indicator, made legible against the surface it lands on. */
+.sheet-cluster-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--page), 0 0 0 4px var(--accent);
+}
+/* The scrim is only 28% black over a white page, so white-on-scrim would be unreadable.
+   The counter takes the buttons' own dark chip instead of trying to sit on the ground. */
+.sheet-cluster-pos {
+  font-size: 11px; font-variant-numeric: tabular-nums;
+  padding: 2px 8px; border-radius: var(--radius-pill);
+  background: rgba(10, 10, 10, 0.82); color: var(--on-graphite);
+}
+.sheet-cluster-pos:empty { display: none; }
+
+.sheet-grip {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 10px; z-index: 1;
+  display: flex; align-items: center; justify-content: center;
+  cursor: col-resize; color: transparent;
+  touch-action: none;
+}
+.sheet-grip:hover, .sheet-grip:focus-visible { color: var(--text-3); }
+.sheet-grip:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* ---------------------------------------------------------------- overview pane */
+/* Insight chips: one flag, one tinted glyph tile, one label. Never the tile alone — the
+   label is what carries the meaning. */
+.insights { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 2px 0 4px; }
+.insight { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
+.insight-mark {
+  flex: 0 0 auto; width: 24px; height: 24px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--text-2);
+}
+.insight--warn .insight-mark { background: rgba(161, 98, 7, 0.12); color: var(--warn); }
+.insight--bad .insight-mark  { background: rgba(185, 28, 28, 0.1);  color: var(--bad); }
+
+/* Properties: the reference's two columns, which is four grid tracks of dt/dd. Below the
+   pane's own breakpoint it falls back to the one-column .kv in sheet.css. */
+.kv--cols2 { grid-template-columns: 132px minmax(0, 1fr) 132px minmax(0, 1fr); gap: 8px 20px; }
+.kv--cols2 dd { min-width: 0; }
+/* Provider and external ids are long, opaque and not read left-to-right; clipping them
+   keeps the grid legible and the full value stays in the title and on the clipboard. */
+.kv-trunc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kv-dot { display: inline-block; width: 7px; height: 7px; border-radius: var(--radius-pill); margin-right: 6px; }
+.kv-dot--ok { background: var(--ok); }
+.kv-dot--idle { background: var(--text-3); }
+.kv-copy { margin-left: 6px; }
+
+.prov-strip {
+  display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 14px 0 0;
+  padding-top: 12px; border-top: 1px solid var(--hairline);
+  font-size: 12px; color: var(--text-3);
+}
+
+/* A card inside the overlay gets the one-pixel whisper, never a second real shadow. */
+.sheet-card {
+  margin-top: 16px; border: 1px solid var(--hairline); border-radius: var(--radius-xl);
+  background: var(--page); box-shadow: var(--shadow-card); overflow: hidden;
+}
+.sheet-card-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; border-bottom: 1px solid var(--hairline);
+}
+.sheet-card-title { font-size: 13px; font-weight: 600; margin: 0; flex: 1 1 auto; }
+.sheet-card-body { padding: 4px 14px 10px; }
+.sheet-card-body .empty { border: none; padding: 12px 0; }
+
+/* ------------------------------------------------------------ the connection map */
+/* One hop of the security graph, drawn in the graph page's own node vocabulary — every
+   .gnode / .gedge rule in graph.css dresses it for free, so a node means the same thing
+   here as it does on the canvas the "Open in graph" button leads to.
+   No dotted canvas ground: a dot grid reads as "this pans and zooms", which a static
+   summary does not, and DESIGN.md rules out texture that carries no information. */
+.ego-scroll { overflow-x: auto; margin: 2px 0; }
+.ego-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* No width rules here on purpose, for the reason scans.css states for its own diagram:
+   the layout is measured, not scaled. egoGraph.js draws the viewBox at the container's
+   pixel width and sets a matching width in px, so the render is 1:1 and the labels stay
+   the size the stylesheet asked for. `width: 100%` over a fixed viewBox would put the
+   scaling back and take the height with it. */
+.ego-map { display: block; height: auto; }
+/* The compact card is shorter than the canvas card, so its corner follows. */
+.ego-map .gnode-box { rx: 8; }
+/* You-are-here: the record the sheet is already about reads as the anchor the others hang
+   off, without borrowing severity or category ink to say so. */
+.ego-map .gnode.is-focal .gnode-box { stroke: rgba(0, 0, 0, 0.42); stroke-width: 1.5; }
+.ego-map .gnode.is-focal { cursor: default; }
+/* The compact card has no room for the canvas's dashed TC halo and corner badge — both
+   overhang the card bounds and would clip against a tight viewBox. The stripe carries the
+   membership instead, reinforcing the "· TC" the kind line already prints. */
+.gnode[data-combo] .gnode-accent { fill: var(--accent); }

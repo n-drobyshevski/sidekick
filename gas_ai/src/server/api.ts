@@ -275,6 +275,9 @@ function assetRow(n: GNode): Rec {
     cloud: n.cloudPlatform ?? null,
     region: n.region ?? null,
     status: n.status ?? null,
+    firstSeen: n.firstSeen ?? null,
+    lastSeen: n.lastSeen ?? null,
+    externalId: n.externalId ?? null,
     projects: (n.projects ?? []).map((p) => p.name),
     severity: n.severity ?? null,
     aars: n.aars ?? null,
@@ -289,9 +292,18 @@ function assetRow(n: GNode): Rec {
     guardrailMissing: n.guardrailMissing ?? false,
     technologyCategories: n.technologyCategories ?? [],
     cloudAccount: n.cloudAccount?.name ?? null,
+    // Full account object, for the detail sheet — cloudAccount above stays a bare
+    // name string since existing client code already reads it as one.
+    cloudAccountRef: n.cloudAccount ?? null,
     tags: n.tags ?? [],
     identityPurpose: n.identityPurpose ?? null,
     issueAnalytics: n.issueAnalytics ?? null,
+    // Full project objects, for the detail sheet — projects above stays name-only.
+    projectRefs: (n.projects ?? []).map((p) => ({
+      id: p.id,
+      name: p.name,
+      businessImpact: p.businessImpact,
+    })),
   };
 }
 
@@ -553,7 +565,11 @@ export function getAssetDetail(p?: unknown): ApiResult {
       }
       const findings = syncStore.loadFindings().filter((f) => f.resourceId === id);
       return {
-        node: { ...assetRow(node), aarsPillars: node.aarsPillars ?? null },
+        node: {
+          ...assetRow(node),
+          aarsPillars: node.aarsPillars ?? null,
+          aarsInput: node.aarsInput ?? null,
+        },
         issues,
         neighbors,
         findings,

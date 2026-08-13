@@ -1,0 +1,69 @@
+// Generic UI-chrome icon set: close / chevron / grip / etc. glyphs for controls that
+// aren't a graph node kind. The client had no such API — app.js built its nav glyphs
+// as one-off inline SVG strings (see the comment at app.js:33) and sheet.js grew its own
+// I_SHEET_CLOSE / I_SHEET_WIDEN strings rather than duplicate a pattern that didn't exist
+// yet. This is that pattern: same 16x16 stroke-path construction as icons.js, built with
+// its svgEl() rather than innerHTML, just for chrome instead of node kinds. Unlike
+// icons.js's kindIcon (which leans on the .gnode-icon CSS class for stroke styling), these
+// carry fill/stroke as attributes on the root <svg> so a caller gets a usable icon with no
+// stylesheet dependency — paths below inherit it and only ever specify "d".
+
+import { svgEl } from "../icons.js";
+
+const PATHS = {
+  close: ["M4 4 L12 12 M12 4 L4 12"],
+  "chevron-up": ["M3 6.5 L8 2.5 L13 6.5"],
+  "chevron-down": ["M3 9.5 L8 13.5 L13 9.5"],
+  "chevron-left": ["M6.5 3 L2.5 8 L6.5 13"],
+  "chevron-right": ["M9.5 3 L13.5 8 L9.5 13"],
+  // Both halves at once: the widen toggle points outward in both directions because it
+  // means "more width", not "go left".
+  widen: ["M6.5 3 L2.5 8 L6.5 13", "M9.5 3 L13.5 8 L9.5 13"],
+  grip: ["M6 5 V11", "M10 5 V11"],
+  braces: [
+    "M8 2.5 C6.5 2.5 6 3.2 6 4.5 V6.3 C6 7.3 5.3 7.8 4.3 8 C5.3 8.2 6 8.7 6 9.7 V11.5 " +
+      "C6 12.8 6.5 13.5 8 13.5",
+    "M8 2.5 C9.5 2.5 10 3.2 10 4.5 V6.3 C10 7.3 10.7 7.8 11.7 8 C10.7 8.2 10 8.7 10 9.7 " +
+      "V11.5 C10 12.8 9.5 13.5 8 13.5",
+  ],
+  link: [
+    "M6.5 8.5 a3.5 3.5 0 0 0 5 0.5 l2 -2 a3.5 3.5 0 0 0 -4.5 -4.5 l-1 1",
+    "M9.5 7.5 a3.5 3.5 0 0 0 -5 -0.5 l-2 2 a3.5 3.5 0 0 0 4.5 4.5 l1 -1",
+  ],
+  external: [
+    "M9 3 H4 a1 1 0 0 0 -1 1 v7 a1 1 0 0 0 1 1 h7 a1 1 0 0 0 1 -1 V8",
+    "M8 8 L13.5 2.5",
+    "M9.5 2.5 H13.5 V6.5",
+  ],
+  info: ["M8 1.5 a6.5 6.5 0 1 0 0 13 a6.5 6.5 0 0 0 0 -13", "M8 5.3 h0.01", "M8 7.3 V11"],
+  graph: [
+    "M4 10.7 a1.3 1.3 0 1 0 0 2.6 a1.3 1.3 0 0 0 0 -2.6",
+    "M8 3.7 a1.3 1.3 0 1 0 0 2.6 a1.3 1.3 0 0 0 0 -2.6",
+    "M12 9.7 a1.3 1.3 0 1 0 0 2.6 a1.3 1.3 0 0 0 0 -2.6",
+    "M4.6 10.9 L7.4 6.1",
+    "M8.7 6.1 L11.3 9.9",
+  ],
+};
+
+// Same fallback posture as kindIcon(): an unknown name reads as "more" rather than throwing.
+const FALLBACK = ["M8 8 h0.01"];
+
+/** A standalone 16x16 stroke <svg> for UI chrome (buttons, actions) — decorative only;
+ * the caller supplies the accessible name (button aria-label/title), not this icon. */
+export function uiIcon(name, size = 16) {
+  const svg = svgEl("svg", {
+    viewBox: "0 0 16 16",
+    width: size,
+    height: size,
+    "aria-hidden": "true",
+    focusable: "false",
+    fill: "none",
+    stroke: "currentColor",
+    "stroke-width": "1.5",
+    "stroke-linecap": "round",
+    "stroke-linejoin": "round",
+  });
+  const paths = PATHS[name] || FALLBACK;
+  for (const d of paths) svg.append(svgEl("path", { d }));
+  return svg;
+}

@@ -3441,7 +3441,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "2fac9151fce5" : "dev";
+  var BUILD_ID = true ? "afe26d4e43c7" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -6001,7 +6001,7 @@ var Server = (() => {
     });
   }
   function assetRow(n) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A;
     return {
       id: n.id,
       name: n.name,
@@ -6010,23 +6010,35 @@ var Server = (() => {
       cloud: (_b = n.cloudPlatform) != null ? _b : null,
       region: (_c = n.region) != null ? _c : null,
       status: (_d = n.status) != null ? _d : null,
-      projects: ((_e = n.projects) != null ? _e : []).map((p) => p.name),
-      severity: (_f = n.severity) != null ? _f : null,
-      aars: (_g = n.aars) != null ? _g : null,
-      aarsSeverity: (_h = n.aarsSeverity) != null ? _h : null,
-      comboGroups: (_i = n.comboGroups) != null ? _i : [],
-      internet: (_j = n.isAccessibleFromInternet) != null ? _j : null,
-      openInternet: (_k = n.isOpenToAllInternet) != null ? _k : null,
-      sensitiveAccess: (_l = n.hasAccessToSensitiveData) != null ? _l : false,
-      sensitiveData: (_m = n.hasSensitiveData) != null ? _m : false,
-      highPriv: (_n = n.hasHighPrivileges) != null ? _n : false,
-      adminPriv: (_o = n.hasAdminPrivileges) != null ? _o : false,
-      guardrailMissing: (_p = n.guardrailMissing) != null ? _p : false,
-      technologyCategories: (_q = n.technologyCategories) != null ? _q : [],
-      cloudAccount: (_s = (_r = n.cloudAccount) == null ? void 0 : _r.name) != null ? _s : null,
-      tags: (_t = n.tags) != null ? _t : [],
-      identityPurpose: (_u = n.identityPurpose) != null ? _u : null,
-      issueAnalytics: (_v = n.issueAnalytics) != null ? _v : null
+      firstSeen: (_e = n.firstSeen) != null ? _e : null,
+      lastSeen: (_f = n.lastSeen) != null ? _f : null,
+      externalId: (_g = n.externalId) != null ? _g : null,
+      projects: ((_h = n.projects) != null ? _h : []).map((p) => p.name),
+      severity: (_i = n.severity) != null ? _i : null,
+      aars: (_j = n.aars) != null ? _j : null,
+      aarsSeverity: (_k = n.aarsSeverity) != null ? _k : null,
+      comboGroups: (_l = n.comboGroups) != null ? _l : [],
+      internet: (_m = n.isAccessibleFromInternet) != null ? _m : null,
+      openInternet: (_n = n.isOpenToAllInternet) != null ? _n : null,
+      sensitiveAccess: (_o = n.hasAccessToSensitiveData) != null ? _o : false,
+      sensitiveData: (_p = n.hasSensitiveData) != null ? _p : false,
+      highPriv: (_q = n.hasHighPrivileges) != null ? _q : false,
+      adminPriv: (_r = n.hasAdminPrivileges) != null ? _r : false,
+      guardrailMissing: (_s = n.guardrailMissing) != null ? _s : false,
+      technologyCategories: (_t = n.technologyCategories) != null ? _t : [],
+      cloudAccount: (_v = (_u = n.cloudAccount) == null ? void 0 : _u.name) != null ? _v : null,
+      // Full account object, for the detail sheet — cloudAccount above stays a bare
+      // name string since existing client code already reads it as one.
+      cloudAccountRef: (_w = n.cloudAccount) != null ? _w : null,
+      tags: (_x = n.tags) != null ? _x : [],
+      identityPurpose: (_y = n.identityPurpose) != null ? _y : null,
+      issueAnalytics: (_z = n.issueAnalytics) != null ? _z : null,
+      // Full project objects, for the detail sheet — projects above stays name-only.
+      projectRefs: ((_A = n.projects) != null ? _A : []).map((p) => ({
+        id: p.id,
+        name: p.name,
+        businessImpact: p.businessImpact
+      }))
     };
   }
   function assetTableRow(n, issuesBySeverity) {
@@ -6196,7 +6208,7 @@ var Server = (() => {
       var _a5;
       const id = String((_a5 = (p != null ? p : {})["id"]) != null ? _a5 : "");
       return cached("getAssetDetail", { id }, () => {
-        var _a6;
+        var _a6, _b;
         const doc = loadGraphDoc();
         if (!doc) return null;
         const nodeById = new Map(doc.nodes.map((n) => [n.id, n]));
@@ -6217,7 +6229,11 @@ var Server = (() => {
         }
         const findings = loadFindings().filter((f) => f.resourceId === id);
         return {
-          node: { ...assetRow(node2), aarsPillars: (_a6 = node2.aarsPillars) != null ? _a6 : null },
+          node: {
+            ...assetRow(node2),
+            aarsPillars: (_a6 = node2.aarsPillars) != null ? _a6 : null,
+            aarsInput: (_b = node2.aarsInput) != null ? _b : null
+          },
           issues: issues2,
           neighbors,
           findings
