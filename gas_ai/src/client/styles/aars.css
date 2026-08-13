@@ -136,6 +136,97 @@
 .band-rail__inputs { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
 .band-rail__inputs .field { display: flex; flex-direction: column; }
 
+/* --- pillar rails: the pillars drawn on the SAME 0-100 axis as the hero and band rail --
+   A lane's length therefore means the same thing everywhere on the page: a SENSITIVE 20 in
+   pillar C is exactly as long as a MEDIUM 20 in pillar A, and both sit over 20 on the rail.
+   A bar normalised to its own row's maximum would be decoration; this one is a measurement.
+   Neutral steps, not colour — severity owns the palette here and a pillar is not a severity. */
+.rails { display: grid; gap: 4px; margin: 4px 0 0; }
+.rail {
+  display: grid; grid-template-columns: 132px minmax(0, 1fr) 84px 118px;
+  gap: 12px; align-items: center;
+}
+.rail-name { font-size: 12px; color: var(--text-2); }
+.rail-lane { position: relative; min-width: 0; }
+/* The track carries no overflow of its own: the cap line has to be able to overhang it,
+   and the range below sits outside it entirely. */
+.rail-track {
+  position: relative; height: 20px;
+  background: var(--track-bg);
+  border: 1px solid var(--hairline); border-radius: var(--radius-sm);
+}
+.rail-clip { position: absolute; inset: 0; overflow: hidden; border-radius: 4px; }
+.rail-base { position: absolute; left: 0; top: 0; bottom: 0; background: rgba(0, 0, 0, 0.78); }
+/* The multiplier's gain, hatched so it reads as an extension of the base rather than as a
+   second value — and labelled, because the hatch alone would be a texture, not a fact. */
+.rail-amp {
+  position: absolute; top: 0; bottom: 0; background: rgba(0, 0, 0, 0.46);
+  background-image: repeating-linear-gradient(
+    135deg, rgba(255, 255, 255, 0.42) 0 3px, transparent 3px 6px);
+}
+.rail-amp-txt {
+  position: absolute; top: 0; bottom: 0;
+  display: flex; align-items: center; padding-left: 4px;
+  font-size: 10px; font-weight: 600; color: var(--on-graphite);
+  pointer-events: none; overflow: hidden; white-space: nowrap;
+}
+/* Past the cap. The readout says "scores N" in words too — the hatch is never the only
+   signal that a value is being clamped. */
+.rail-over {
+  position: absolute; top: 0; bottom: 0;
+  background: repeating-linear-gradient(
+    135deg, rgba(0, 0, 0, 0.32) 0 4px, rgba(0, 0, 0, 0.10) 4px 8px);
+}
+.rail-cap {
+  position: absolute; top: -3px; bottom: -3px; width: 0;
+  border-left: 2px dashed var(--ink);
+}
+/* A ceiling the model DERIVES rather than one anybody sets: drawn, but lighter, and it
+   never gets a thumb. Offering a handle for a number nobody chooses would be a lie. */
+.rail-cap--derived { border-left-style: dotted; border-left-color: var(--text-3); }
+.rail-cap[hidden] { display: none; }
+/* Same recipe as the band rail's stops, and for the same reason: a real range means native
+   keyboard and screen-reader support. Height 0 and OUTSIDE the track, so the 26px thumb and
+   its focus ring are not clipped by the 20px lane they cut. */
+.rail-stops { position: relative; height: 0; }
+.rail-stop {
+  position: absolute; left: 0; right: 0; bottom: -3px;
+  width: 100%; height: 22px; margin: 0;
+  -webkit-appearance: none; appearance: none;
+  background: transparent; pointer-events: none;
+}
+.rail-stop::-webkit-slider-runnable-track { height: 22px; background: transparent; }
+.rail-stop::-moz-range-track { height: 22px; background: transparent; }
+.rail-stop::-webkit-slider-thumb {
+  -webkit-appearance: none; pointer-events: auto; cursor: ew-resize;
+  width: 10px; height: 26px; border-radius: 3px;
+  background: var(--page); border: 2px solid var(--ink); box-shadow: var(--shadow-button);
+}
+.rail-stop::-moz-range-thumb {
+  pointer-events: auto; cursor: ew-resize; box-sizing: border-box;
+  width: 10px; height: 26px; border-radius: 3px;
+  background: var(--page); border: 2px solid var(--ink); box-shadow: var(--shadow-button);
+}
+.rail-stop:focus-visible::-webkit-slider-thumb { outline: 2px solid var(--accent); outline-offset: 2px; }
+.rail-stop:focus-visible::-moz-range-thumb { outline: 2px solid var(--accent); outline-offset: 2px; }
+.rail-num { width: 78px; }
+.rail-rd { font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+/* The cap is a control like any other, but it governs the lanes above rather than joining
+   them — a rule above it says so. */
+.rail--cap { margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--hairline); }
+.rail-axis {
+  display: grid; grid-template-columns: 132px minmax(0, 1fr) 84px 118px; gap: 12px;
+  margin-top: 4px; font-size: 10.5px; color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.rail-axis__ticks { display: flex; justify-content: space-between; }
+@media (max-width: 720px) {
+  .rail, .rail-axis { grid-template-columns: 104px minmax(0, 1fr) 74px; }
+  /* The readout is the words, so it drops to its own line rather than disappearing. */
+  .rail-rd { grid-column: 1 / -1; padding-left: 116px; }
+  .rail-axis > :last-child { display: none; }
+}
+
 /* --- editor controls ---------------------------------------------------------------- */
 .rule-row { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; }
 .rule-row .field { display: flex; flex-direction: column; }
@@ -157,15 +248,56 @@
    and inputs sit together as one readable rule rather than drifting apart. */
 .rule-table td, .rule-table th { vertical-align: middle; width: 1%; white-space: nowrap; }
 .rule-table select { min-width: 112px; }
+/* The match type is a two-state operator, not chrome — but it sits in a table cell, so it
+   loses the standalone control's padding. */
+.seg--cell button { padding: 4px 10px; font-size: 12px; min-height: 30px; }
 .rule-rowbtns { white-space: nowrap; text-align: right; }
-.rule-table td.rule-rowmeta, .rule-table th:nth-child(5) { width: auto; white-space: normal; }
+/* By class, not by position: the Prices column sits between Points and Note, and a
+   positional selector silently retargets the moment a column is inserted. */
+.rule-table td.rule-rowmeta, .rule-table th.rule-noteh { width: auto; white-space: normal; }
 /* Reorder/remove: 26px targets, not 20px glyphs squeezed together. */
 .rule-rowbtns button {
   min-width: 26px; min-height: 26px; padding: 2px 6px; margin-left: 2px;
 }
 /* A cascade row an earlier row already covers: dimmed, and labelled in .rule-rowmeta —
-   never dimming alone, which would read as "disabled" rather than "unreachable". */
+   never dimming alone, which would read as "disabled" rather than "unreachable". A row that
+   merely prices nothing in THIS tenant is not dimmed: it is in force and correct, and only
+   its note says so. Two different zeroes, two different treatments. */
 .rule-dead { opacity: 0.55; }
+
+/* The code cell: the field, and under it what the rule actually says. Never a tooltip —
+   the cascade's subject is ORDER, so you have to be able to read the whole ladder at a
+   glance, and a meaning that needs hovering defeats exactly that. */
+/* Specific enough to beat `.rule-table td { width:1%; white-space:nowrap }` above — the
+   gloss is a sentence and has to wrap, and the column has to be wide enough to hold one. */
+.rule-table td.rule-codecell { width: 266px; white-space: normal; }
+.rule-codecell .combobox { display: block; }
+.gap-gloss {
+  display: block; margin-top: 4px;
+  font-size: 11px; line-height: 1.35; color: var(--text-3);
+}
+.gap-gloss__mark {
+  margin-right: 5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+/* A code the codebook does not carry. The mark is a different SHAPE (◇ against ● and ◧)
+   and the sentence says "not in the codebook" outright, so nothing rests on the colour. */
+.gap-gloss--unknown { color: var(--text-2); }
+
+/* Coverage: how many gap instances each rule actually priced. Neutral — this is a volume,
+   not a severity — and the bar only reinforces a number that is already written. */
+.rule-prices { text-align: right; white-space: nowrap; }
+.cover-bar {
+  display: inline-block; vertical-align: middle; margin-right: 6px;
+  width: 44px; height: 6px; border-radius: var(--radius-pill);
+  background: var(--track-bg); overflow: hidden;
+}
+.cover-bar > i { display: block; height: 100%; background: rgba(0, 0, 0, 0.46); }
+.cover-n { font-variant-numeric: tabular-nums; }
+
+/* The fallback rendered as the cascade's last step, which is what it is. */
+.rule-fallback td { border-top: 1px solid var(--hairline); }
+.rule-fallback__name { display: inline; font-size: 12px; color: var(--text-2); }
 
 /* --- impact pane --------------------------------------------------------------------- */
 .impact-strip { display: flex; flex-direction: column; gap: 2px; margin: 10px 0 14px; }
@@ -217,6 +349,64 @@
 .rule-disclosure > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .sandbox-result {
   display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 12px;
+}
+/* Each gap tied back to the cascade row that priced it, so a pillar-B total reads back. */
+.sandbox-gaps { flex: 1 1 100%; display: grid; gap: 2px; margin-top: 4px; }
+.sandbox-gap {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px;
+  align-items: baseline; font-size: 11.5px;
+}
+.sandbox-gap__code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--text-2);
+}
+.sandbox-gap > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sandbox-gap__pts { color: var(--text-2); }
+
+/* The sandbox's chosen gap codes. Neutral, like the framework tags on the detail sheets —
+   a gap code is not a severity and must not borrow that palette. */
+.gap-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.gap-chip {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+  padding: 2px 4px 2px 9px; font-size: 11.5px;
+  background: var(--page); border: 1px solid var(--hairline); border-radius: var(--radius-pill);
+}
+.gap-chip__code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 600;
+}
+.gap-chip__title {
+  color: var(--text-2); max-width: 20ch;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.gap-chip__pts { color: var(--text-3); }
+.chip-x {
+  border: none; background: none; box-shadow: none; cursor: pointer;
+  min-width: 20px; min-height: 20px; padding: 0 3px;
+  font-size: 11px; line-height: 1; color: var(--text-3);
+}
+.chip-x:hover { color: var(--ink); background: var(--wash-hover); border-radius: var(--radius-pill); }
+
+/* --- the code reference sheet -------------------------------------------------------- */
+/* One row per entry: the code, what it means, what THIS draft prices it at, how many live
+   assets carry it, and a way to price it deliberately. */
+.codebook-list { display: grid; gap: 0; }
+.codebook-row {
+  display: grid; gap: 2px 10px; align-items: baseline;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  padding: 8px 0; border-bottom: 1px solid var(--hairline);
+}
+.codebook-row:last-child { border-bottom: none; }
+.codebook-row__code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px; font-weight: 600;
+}
+.codebook-row__title { font-size: 12.5px; color: var(--ink); min-width: 0; }
+.codebook-row__blurb { grid-column: 1 / -1; line-height: 1.35; }
+.codebook-row__price, .codebook-row__seen { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.codebook-row__act { white-space: nowrap; }
+@media (max-width: 560px) {
+  .codebook-row { grid-template-columns: auto minmax(0, 1fr); }
+  .codebook-row__price, .codebook-row__seen, .codebook-row__act { grid-column: 1 / -1; }
 }
 
 /* Banner above a page whose data is out of step with the settings that produced it. */

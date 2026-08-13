@@ -191,6 +191,64 @@ export function shadowedGapRules(rule: AarsRule): number[] {
   return dead;
 }
 
+/** What the cascade actually priced, per row — the evidence behind "order is meaning". */
+export interface GapTally {
+  /** Instances each row priced, index-aligned with `rule.gapPoints`. */
+  perRule: number[];
+  /** Instances no row matched, priced at `gapFallbackPoints`. */
+  fallback: number;
+  /** Every instance counted, so a row's share is readable without re-summing. */
+  total: number;
+  /** Distinct assets carrying each code — the picker's prevalence, and the census. */
+  byCode: Record<string, number>;
+}
+
+/**
+ * Walk the cascade over the gaps the inventory actually carries and count what each row
+ * priced. Same first-match walk `gapPointsFor` performs, so a row's count and a gap's price
+ * can never disagree about which rule won.
+ *
+ * `codeLists` is one entry per asset. Codes are de-duplicated within an asset before
+ * counting, because an asset carrying a code twice is one gap as far as pillar B is
+ * concerned — so an "instance" here is exactly one asset-and-code pair, and `byCode` and
+ * `perRule` are counting the same population rather than two similar ones.
+ *
+ * A row at zero means one of two very different things, and the page must not conflate
+ * them: `shadowedGapRules` says it can never fire, and anything else at zero is simply a
+ * rule in force that this tenant does not exercise.
+ */
+export function gapMatchTally(rule: AarsRule, codeLists: string[][]): GapTally {
+  const perRule = rule.gapPoints.map(() => 0);
+  const byCode: Record<string, number> = {};
+  let fallback = 0;
+  let total = 0;
+
+  for (const list of codeLists ?? []) {
+    if (!Array.isArray(list)) continue;
+    const seen = new Set<string>();
+    for (const raw of list) {
+      const code = cleanGapCode(raw);
+      if (!code || seen.has(code)) continue;
+      seen.add(code);
+      byCode[code] = (byCode[code] ?? 0) + 1;
+      total++;
+      let matched = false;
+      for (let i = 0; i < rule.gapPoints.length; i++) {
+        const row = rule.gapPoints[i]!;
+        const hit = row.match === "exact" ? code === row.code : code.startsWith(row.code);
+        if (hit) {
+          perRule[i] = perRule[i]! + 1;
+          matched = true;
+          break;
+        }
+      }
+      if (!matched) fallback++;
+    }
+  }
+
+  return { perRule, fallback, total, byCode };
+}
+
 function pointsPhrase(n: number): string {
   return n === 1 ? "1 point" : `${n} points`;
 }

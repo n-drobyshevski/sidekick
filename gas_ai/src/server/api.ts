@@ -24,6 +24,7 @@ import {
   bandRanges,
   cleanAarsRule,
   cleanGapCode,
+  gapMatchTally,
   MAX_GAP_RULES,
   MULTIPLIER_MAX,
   MULTIPLIER_MIN,
@@ -673,6 +674,8 @@ const PREVIEW_MOVERS_MAX = 50;
 /** Bounds on one sandbox input, so a hand-crafted request can't grow the work unboundedly. */
 const SAMPLE_SEVERITIES_MAX = 50;
 const SAMPLE_GAPS_MAX = 30;
+/** Codes the census names. Well above the codebook's ~40, so a real tenant's shortIds fit. */
+const GAP_CENSUS_MAX = 200;
 
 function ruleState(): Rec {
   const stored = settingsStore.getAarsRule();
@@ -730,6 +733,19 @@ export function previewAarsRule(p?: unknown): ApiResult {
     const after = syncStore.scoreAssetsWith(proposed);
     const beforeById = new Map(before.map((n) => [n.id, n]));
 
+    // What the cascade actually priced, from the scoring inputs already persisted beside
+    // each asset (`aars_input_json`) — so the coverage numbers cost no extra Sheets read.
+    // They ride on THIS endpoint and never on getAarsRule: loading the rules page must not
+    // trigger an inventory pass, and getAarsRule's shape is pinned by a golden snapshot.
+    const tally = gapMatchTally(
+      proposed,
+      before.map((n) => (n.aarsInput?.gaps ?? []).map((g) => g.code)),
+    );
+    const census = Object.keys(tally.byCode)
+      .map((code) => ({ code, assets: tally.byCode[code]! }))
+      .sort((x, y) => y.assets - x.assets || x.code.localeCompare(y.code))
+      .slice(0, GAP_CENSUS_MAX);
+
     const movers: Rec[] = [];
     for (const a of after) {
       const b = beforeById.get(a.id);
@@ -769,6 +785,14 @@ export function previewAarsRule(p?: unknown): ApiResult {
       summary: ruleSummary(proposed),
       bandRanges: bandRanges(proposed.bands),
       shadowedGapRules: shadowedGapRules(proposed),
+      // Coverage: how many gap instances each cascade row priced, what fell through to the
+      // fallback, and the codes the estate carries. A row at 0 here is NOT the same claim
+      // as shadowedGapRules — one can never fire, the other simply is not exercised — and
+      // the page reads them as two different sentences.
+      gapMatchCounts: tally.perRule,
+      gapFallbackCount: tally.fallback,
+      gapInstanceTotal: tally.total,
+      gapCensus: census,
       movers: movers.slice(0, PREVIEW_MOVERS_MAX),
       moverCount: movers.length,
       levelChangeCount: movers.filter((m) => m["levelChanged"]).length,
