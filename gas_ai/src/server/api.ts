@@ -12,6 +12,7 @@ import {
   sortAssetRows,
 } from "../domain/assetTable";
 import {
+  AARS_V2_RULE,
   computeAars,
   DEFAULT_AARS_RULE,
   gap,
@@ -686,6 +687,9 @@ function ruleState(): Rec {
     version: stored.version,
     rule: stored.rule,
     defaults: DEFAULT_AARS_RULE,
+    // Whole rules the page can load into the draft. `defaults` above is the spec model and
+    // stays where it is (Reset reads it); presets are alternatives, not a fallback.
+    presets: { v2: AARS_V2_RULE },
     summary: ruleSummary(stored.rule),
     scoredVersion,
     // Only the point model can strand the persisted scores; bands re-derive on read, and

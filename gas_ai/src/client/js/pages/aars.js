@@ -674,6 +674,28 @@ export async function renderAarsRules(main, _params, ctx) {
     resetBtn.focus();
   });
 
+  // Loading a preset is the same act as Reset — it replaces the draft wholesale — so it
+  // sits beside it and confirms the same way. It does NOT save: the impact pane is the
+  // whole point, and adopting v2 moves scores.
+  const v2Btn = el("button", {}, "Load AARS v2");
+  v2Btn.addEventListener("click", async () => {
+    const ok = await confirmDialog({
+      title: "Load the AARS v2 model?",
+      body:
+        "v2 is calibrated against live-derived gaps rather than the doc's hand-picked ones: " +
+        "the issue count is read past “more than one”, gap prices combine as a root-sum-square " +
+        "so pillar B stops sitting on its cap, the three dormant gap sources are switched on, " +
+        "and internet exposure is scored. It WILL move scores — the impact panel shows exactly " +
+        "which. Nothing is saved until you press Save rule.",
+      confirmLabel: "Load v2",
+    });
+    if (!ok) return;
+    draft = cloneRule(state.presets && state.presets.v2 ? state.presets.v2 : draft);
+    renderCascade();
+    onEdit();
+    v2Btn.focus();
+  });
+
   const exportBtn = el("button", { class: "link" }, "Export JSON");
   exportBtn.addEventListener("click", () => {
     downloadText(
@@ -710,7 +732,7 @@ export async function renderAarsRules(main, _params, ctx) {
 
   editor.append(
     section("Manage", null, [
-      el("div", { class: "rule-row" }, resetBtn, exportBtn, importBtn, importInput),
+      el("div", { class: "rule-row" }, resetBtn, v2Btn, exportBtn, importBtn, importInput),
     ]),
   );
 
@@ -1444,6 +1466,7 @@ export async function renderAarsRules(main, _params, ctx) {
       clear(moverList);
       clear(moverMore);
       moverSection.hidden = true;
+      paintDiscrimination(null);
       setText(impactHeadline, "");
       impactState.append(emptyState("Fix the highlighted fields to preview.", errs.list[0]));
       return;
@@ -1451,6 +1474,7 @@ export async function renderAarsRules(main, _params, ctx) {
     if (previewError) {
       clear(impactStrip);
       moverSection.hidden = true;
+      paintDiscrimination(null);
       setText(impactHeadline, "");
       const retry = el("button", { style: "margin-top:10px" }, "Try again");
       retry.addEventListener("click", () => {
@@ -1463,6 +1487,7 @@ export async function renderAarsRules(main, _params, ctx) {
     }
     if (!preview) {
       moverSection.hidden = true;
+      paintDiscrimination(null);
       setText(impactHeadline, "");
       clear(impactStrip).append(
         skeleton("line", { width: "80%" }),
@@ -1473,6 +1498,7 @@ export async function renderAarsRules(main, _params, ctx) {
     if (!preview.total) {
       clear(impactStrip);
       moverSection.hidden = true;
+      paintDiscrimination(null);
       setText(impactHeadline, "");
       impactState.append(
         emptyState(

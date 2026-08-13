@@ -8,13 +8,15 @@
 import { describe, expect, it } from "vitest";
 import {
   aarsSeverity,
+  AARS_V2_RULE,
   computeAars,
   DEFAULT_AARS_RULE,
   gap,
   gapBreakdown,
+  gapPointsFor,
   type AarsRule,
 } from "../src/domain/aars";
-import { cleanAarsRule } from "../src/domain/aarsRule";
+import { cleanAarsRule, validateAarsRule } from "../src/domain/aarsRule";
 import { AARS_SEVERITY_ORDER, normalizeAarsSeverity } from "../src/domain/config";
 import type { Severity } from "../src/domain/config";
 
@@ -252,6 +254,64 @@ describe("computeAars — multiIssueScaling", () => {
   it("log2 still obeys pillar A's cap", () => {
     expect(computeAars(many(64), tuned({ multiIssueScaling: "log2", pillarACap: 30 })).pillars.toxic)
       .toBe(30);
+  });
+});
+
+describe("AARS_V2_RULE — the calibrated preset", () => {
+  it("is a valid rule that survives a clean round-trip", () => {
+    expect(validateAarsRule(AARS_V2_RULE)).toEqual([]);
+    expect(cleanAarsRule(AARS_V2_RULE)).toEqual(AARS_V2_RULE);
+  });
+
+  it("is NOT the default — adopting it has to be a deliberate act", () => {
+    expect(AARS_V2_RULE).not.toEqual(DEFAULT_AARS_RULE);
+    expect(DEFAULT_AARS_RULE.gapAggregation).toBe("sum");
+    expect(DEFAULT_AARS_RULE.multiIssueScaling).toBe("flat");
+  });
+
+  it("spends the whole 0–100 scale: the four caps sum to exactly 100", () => {
+    const maxData = Math.round(
+      AARS_V2_RULE.dataExposurePoints.SENSITIVE * AARS_V2_RULE.dataAmplifier);
+    const maxExposure = AARS_V2_RULE.exposurePoints.CONFIRMED;
+    expect(AARS_V2_RULE.pillarACap + AARS_V2_RULE.pillarBCap + maxData + maxExposure).toBe(100);
+  });
+
+  it("folds the 5Rs amplifier into the points rather than carrying it as a constant", () => {
+    // A tenant-wide multiplier cannot change a ranking, only inflate every score — while
+    // still deciding band membership. v2 says what it means instead.
+    expect(AARS_V2_RULE.dataAmplifier).toBe(1);
+  });
+
+  it("prices INACTIVE_AGENT explicitly rather than leaving it to the fallback", () => {
+    expect(gapPointsFor("INACTIVE_AGENT", AARS_V2_RULE)).toBe(10);
+    expect(gapPointsFor("INACTIVE_AGENT", DEFAULT_AARS_RULE))
+      .toBe(DEFAULT_AARS_RULE.gapFallbackPoints);
+  });
+
+  it("keeps undetermined exposure well below confirmed", () => {
+    expect(AARS_V2_RULE.exposurePoints.UNDETERMINED)
+      .toBeLessThan(AARS_V2_RULE.exposurePoints.CONFIRMED);
+    expect(AARS_V2_RULE.exposurePoints.UNDETERMINED)
+      .toBeGreaterThan(AARS_V2_RULE.exposurePoints.NONE);
+  });
+
+  it("takes the six-code live shape off the pillar-B ceiling", () => {
+    const live = ["LLM06", "LLM01", "ASI03", "ASI01", "ML_DATA_POISONING", "NO_GUARDRAIL"];
+    const input = {
+      issueSeverities: ["MEDIUM"] as Severity[],
+      gaps: live.map((c) => gap(c)),
+      dataExposure: "SENSITIVE" as const,
+    };
+    expect(computeAars(input, DEFAULT_AARS_RULE).pillars.compliance)
+      .toBe(DEFAULT_AARS_RULE.pillarBCap); // clamped — the cascade contributes nothing
+    expect(computeAars(input, AARS_V2_RULE).pillars.compliance)
+      .toBeLessThan(AARS_V2_RULE.pillarBCap);
+  });
+
+  it("keeps the doc's level thresholds, so the action table still applies", () => {
+    // The bands are deliberately NOT refitted to one sample estate: they carry the
+    // remediation SLAs from ai/custom_score.md, and the page's rail moves them per tenant.
+    expect(AARS_V2_RULE.bands).toEqual(DEFAULT_AARS_RULE.bands);
   });
 });
 

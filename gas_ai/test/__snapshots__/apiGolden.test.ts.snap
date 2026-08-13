@@ -281,6 +281,102 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
         "multiplierMin": 1,
         "pointsMax": 100,
       },
+      "presets": {
+        "v2": {
+          "bands": {
+            "critical": 70,
+            "high": 50,
+            "low": 10,
+            "medium": 30,
+          },
+          "dataAmplifier": 1,
+          "dataExposurePoints": {
+            "DATA_ACCESS": 6,
+            "NONE": 0,
+            "SENSITIVE": 12,
+          },
+          "exposurePoints": {
+            "CONFIRMED": 18,
+            "NONE": 0,
+            "UNDETERMINED": 7,
+          },
+          "findingSeverityWeights": {
+            "CRITICAL": 1.5,
+            "HIGH": 1.2,
+            "LOW": 0.6,
+            "MEDIUM": 1,
+          },
+          "gapAggregation": "rss",
+          "gapFallbackPoints": 5,
+          "gapPoints": [
+            {
+              "code": "NO_GUARDRAIL",
+              "match": "exact",
+              "points": 10,
+            },
+            {
+              "code": "INACTIVE_AGENT",
+              "match": "exact",
+              "points": 10,
+            },
+            {
+              "code": "DEPRECATED_MODEL",
+              "match": "exact",
+              "points": 5,
+            },
+            {
+              "code": "LLM04",
+              "match": "exact",
+              "points": 5,
+            },
+            {
+              "code": "LLM05",
+              "match": "exact",
+              "points": 5,
+            },
+            {
+              "code": "LLM",
+              "match": "prefix",
+              "points": 10,
+            },
+            {
+              "code": "ASI",
+              "match": "prefix",
+              "points": 10,
+            },
+            {
+              "code": "ML",
+              "match": "prefix",
+              "points": 5,
+            },
+            {
+              "code": "FIVE_RS",
+              "match": "exact",
+              "points": 5,
+            },
+            {
+              "code": "5R",
+              "match": "prefix",
+              "points": 5,
+            },
+          ],
+          "gapSources": {
+            "deprecatedModel": true,
+            "fiveRs": true,
+            "inactiveAgent": true,
+          },
+          "multiIssueMultiplier": 1.2,
+          "multiIssueScaling": "log2",
+          "pillarACap": 45,
+          "pillarBCap": 25,
+          "severityPoints": {
+            "CRITICAL": 40,
+            "HIGH": 28,
+            "LOW": 6,
+            "MEDIUM": 16,
+          },
+        },
+      },
       "rule": {
         "bands": {
           "critical": 70,
@@ -1095,6 +1191,102 @@ exports[`read endpoints > getAarsRule answers the same shape 1`] = `
       "multiplierMax": 3,
       "multiplierMin": 1,
       "pointsMax": 100,
+    },
+    "presets": {
+      "v2": {
+        "bands": {
+          "critical": 70,
+          "high": 50,
+          "low": 10,
+          "medium": 30,
+        },
+        "dataAmplifier": 1,
+        "dataExposurePoints": {
+          "DATA_ACCESS": 6,
+          "NONE": 0,
+          "SENSITIVE": 12,
+        },
+        "exposurePoints": {
+          "CONFIRMED": 18,
+          "NONE": 0,
+          "UNDETERMINED": 7,
+        },
+        "findingSeverityWeights": {
+          "CRITICAL": 1.5,
+          "HIGH": 1.2,
+          "LOW": 0.6,
+          "MEDIUM": 1,
+        },
+        "gapAggregation": "rss",
+        "gapFallbackPoints": 5,
+        "gapPoints": [
+          {
+            "code": "NO_GUARDRAIL",
+            "match": "exact",
+            "points": 10,
+          },
+          {
+            "code": "INACTIVE_AGENT",
+            "match": "exact",
+            "points": 10,
+          },
+          {
+            "code": "DEPRECATED_MODEL",
+            "match": "exact",
+            "points": 5,
+          },
+          {
+            "code": "LLM04",
+            "match": "exact",
+            "points": 5,
+          },
+          {
+            "code": "LLM05",
+            "match": "exact",
+            "points": 5,
+          },
+          {
+            "code": "LLM",
+            "match": "prefix",
+            "points": 10,
+          },
+          {
+            "code": "ASI",
+            "match": "prefix",
+            "points": 10,
+          },
+          {
+            "code": "ML",
+            "match": "prefix",
+            "points": 5,
+          },
+          {
+            "code": "FIVE_RS",
+            "match": "exact",
+            "points": 5,
+          },
+          {
+            "code": "5R",
+            "match": "prefix",
+            "points": 5,
+          },
+        ],
+        "gapSources": {
+          "deprecatedModel": true,
+          "fiveRs": true,
+          "inactiveAgent": true,
+        },
+        "multiIssueMultiplier": 1.2,
+        "multiIssueScaling": "log2",
+        "pillarACap": 45,
+        "pillarBCap": 25,
+        "severityPoints": {
+          "CRITICAL": 40,
+          "HIGH": 28,
+          "LOW": 6,
+          "MEDIUM": 16,
+        },
+      },
     },
     "rule": {
       "bands": {

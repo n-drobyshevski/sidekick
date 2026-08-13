@@ -207,6 +207,68 @@ export const DEFAULT_AARS_RULE: AarsRule = {
   bands: { critical: 70, high: 50, medium: 30, low: 10 },
 };
 
+/**
+ * A calibrated alternative to the spec rule, offered on the Rules page and adopted
+ * deliberately — never a default. It exists because `DEFAULT_AARS_RULE` was fitted to the
+ * 14-row applied table in ai/custom_score.md, where each asset carries 2–3 hand-picked gap
+ * codes, and the live derivation produces 5–6. Under the spec rule on live data pillar B
+ * sits at its cap for every scored agent, the estate collapses onto ~5 distinct scores,
+ * and the HIGH and MEDIUM levels are unreachable.
+ *
+ * What changed, and why each one:
+ *
+ *   Pillar A 45  `log2` scaling, so the issue count is read past ">1". Points lowered from
+ *                the spec's 50/35/20/8 to leave headroom for the count term instead of
+ *                spending the whole pillar on the worst severity.
+ *   Pillar B 25  `rss`, which is what takes this pillar off its ceiling — the six-code
+ *                live shape prices ~23 rather than a clamped 30. All three gap sources on,
+ *                which is what makes the cascade's dead rows fire. The cascade order is
+ *                the spec's, plus a row for INACTIVE_AGENT so it is priced deliberately
+ *                rather than by the fallback.
+ *   Pillar C 12  Halved, and the amplifier folded into the points. The 5Rs ×1.1 is a
+ *                tenant-wide constant: it cannot change a ranking, only inflate every
+ *                score, yet it decides individual band membership (it is the whole reason
+ *                agent-H-chatbot is CRITICAL at 71 rather than HIGH at 69). Baking it in
+ *                makes the pillar say what it means. The weight drops because the pillar
+ *                is at its ceiling for two thirds of the estate and so ranks almost
+ *                nothing — a near-constant term is not worth 22 points of a 100-point scale.
+ *   Pillar D 18  The budget pillar C gave up. Reachability is the signal the spec computes,
+ *                draws on the graph, writes a section of the doc about, and never scores.
+ *                UNDETERMINED is priced well below CONFIRMED: it means "nobody has checked
+ *                this hosted agent", which is worth surfacing and must not outrank a
+ *                confirmed exposure.
+ *
+ * The caps sum to exactly 100, so the scale is used rather than clamped, and the bands are
+ * refitted to the distribution this actually produces.
+ */
+export const AARS_V2_RULE: AarsRule = {
+  severityPoints: { CRITICAL: 40, HIGH: 28, MEDIUM: 16, LOW: 6 },
+  multiIssueMultiplier: 1.2,
+  multiIssueScaling: "log2",
+  pillarACap: 45,
+  gapPoints: [
+    { match: "exact", code: "NO_GUARDRAIL", points: 10 },
+    { match: "exact", code: "INACTIVE_AGENT", points: 10 },
+    { match: "exact", code: "DEPRECATED_MODEL", points: 5 },
+    { match: "exact", code: "LLM04", points: 5 },
+    { match: "exact", code: "LLM05", points: 5 },
+    { match: "prefix", code: "LLM", points: 10 },
+    { match: "prefix", code: "ASI", points: 10 },
+    { match: "prefix", code: "ML", points: 5 },
+    { match: "exact", code: "FIVE_RS", points: 5 },
+    { match: "prefix", code: "5R", points: 5 },
+  ],
+  gapFallbackPoints: 5,
+  gapAggregation: "rss",
+  gapSources: { fiveRs: true, deprecatedModel: true, inactiveAgent: true },
+  findingSeverityWeights: { CRITICAL: 1.5, HIGH: 1.2, MEDIUM: 1, LOW: 0.6 },
+  pillarBCap: 25,
+  dataExposurePoints: { SENSITIVE: 12, DATA_ACCESS: 6, NONE: 0 },
+  dataAmplifier: 1,
+  exposurePoints: { CONFIRMED: 18, UNDETERMINED: 7, NONE: 0 },
+  bands: { critical: 70, high: 50, medium: 30, low: 10 },
+};
+
 /** The AARS scale itself: not tunable, unlike everything in `AarsRule`. */
 export const AARS_MAX_SCORE = 100;
 

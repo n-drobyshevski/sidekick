@@ -1408,6 +1408,33 @@ var Server = (() => {
     exposurePoints: { CONFIRMED: 0, UNDETERMINED: 0, NONE: 0 },
     bands: { critical: 70, high: 50, medium: 30, low: 10 }
   };
+  var AARS_V2_RULE = {
+    severityPoints: { CRITICAL: 40, HIGH: 28, MEDIUM: 16, LOW: 6 },
+    multiIssueMultiplier: 1.2,
+    multiIssueScaling: "log2",
+    pillarACap: 45,
+    gapPoints: [
+      { match: "exact", code: "NO_GUARDRAIL", points: 10 },
+      { match: "exact", code: "INACTIVE_AGENT", points: 10 },
+      { match: "exact", code: "DEPRECATED_MODEL", points: 5 },
+      { match: "exact", code: "LLM04", points: 5 },
+      { match: "exact", code: "LLM05", points: 5 },
+      { match: "prefix", code: "LLM", points: 10 },
+      { match: "prefix", code: "ASI", points: 10 },
+      { match: "prefix", code: "ML", points: 5 },
+      { match: "exact", code: "FIVE_RS", points: 5 },
+      { match: "prefix", code: "5R", points: 5 }
+    ],
+    gapFallbackPoints: 5,
+    gapAggregation: "rss",
+    gapSources: { fiveRs: true, deprecatedModel: true, inactiveAgent: true },
+    findingSeverityWeights: { CRITICAL: 1.5, HIGH: 1.2, MEDIUM: 1, LOW: 0.6 },
+    pillarBCap: 25,
+    dataExposurePoints: { SENSITIVE: 12, DATA_ACCESS: 6, NONE: 0 },
+    dataAmplifier: 1,
+    exposurePoints: { CONFIRMED: 18, UNDETERMINED: 7, NONE: 0 },
+    bands: { critical: 70, high: 50, medium: 30, low: 10 }
+  };
   var AARS_MAX_SCORE = 100;
   function gapPointsFor(code, rule = DEFAULT_AARS_RULE) {
     const c = String(code != null ? code : "").trim().toUpperCase();
@@ -3109,7 +3136,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "0fea050f7392" : "dev";
+  var BUILD_ID = true ? "7deda3dc6dd2" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -5675,6 +5702,9 @@ var Server = (() => {
       version: stored.version,
       rule: stored.rule,
       defaults: DEFAULT_AARS_RULE,
+      // Whole rules the page can load into the draft. `defaults` above is the spec model and
+      // stays where it is (Reset reads it); presets are alternatives, not a fallback.
+      presets: { v2: AARS_V2_RULE },
       summary: ruleSummary(stored.rule),
       scoredVersion,
       // Only the point model can strand the persisted scores; bands re-derive on read, and
