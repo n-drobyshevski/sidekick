@@ -43,6 +43,12 @@ export function saveSettings(settings: Rec): void {
   );
   settingsMemo = settings;
   // Settings feed the cached bootstrap payload and the default graph projection.
+  // bumpDataVersion alone, deliberately — NOT syncStore's commit(). That pairs the
+  // version bump with dropping this execution's read memos, and those memos hold RAW
+  // asset rows; loadAssets re-reads currentBands() on every call and applies them after
+  // the memo, so a rule change is already reflected without invalidating anything. The
+  // asymmetry looks like drift and isn't. (syncStore also imports this module, so the
+  // call would be a cycle.)
   bumpDataVersion();
 }
 
