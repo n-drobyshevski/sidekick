@@ -1,10 +1,33 @@
-// Interactive and labelled chrome: status pills, KPI tiles, toggle groups, labelled
-// fields, and the applied-filter chip row.
+// Interactive and labelled chrome: status pills, KPI tiles, stat rows, toggle groups,
+// labelled fields, and the applied-filter chip row.
 
 import { clear, el } from "./dom.js";
+import { meter } from "./data.js";
 
 export function statusPill(kind, text) {
   return el("span", { class: `pill ${kind}` }, text);
+}
+
+/**
+ * One cell of a `.stat-list` strip: an uppercase name, the figure (optionally with a meter
+ * beside it), and a muted sub-line saying what the figure counts.
+ *
+ * Borderless by design — a stat strip is the third level of a posture header, not a row of
+ * cards, so it takes its emphasis from position and hairlines rather than from surfaces.
+ * `meterPct` is a 0-100 number or null/undefined for no meter.
+ */
+export function statRow(name, value, sub, meterPct) {
+  const hasMeter = meterPct !== null && meterPct !== undefined;
+  return el("div", { class: "stat-row" },
+    el("div", { class: "stat-name" }, name),
+    el("div", { class: "stat-figure" },
+      el("div", { class: "mini-value num" }, value),
+      hasMeter ? meter(meterPct, {
+        className: "meter--stat",
+        label: `${name}, ${meterPct} percent`,
+      }) : null),
+    el("div", { class: "stat-sub" }, sub),
+  );
 }
 
 /**

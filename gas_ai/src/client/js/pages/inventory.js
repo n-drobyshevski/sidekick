@@ -32,7 +32,7 @@ import {
   aarsChip, clear, closeActiveSheet, confirmDialog, dataTable, debounce, el, emptyState,
   errorState,
   fmtDate, meter, pager, plural, sectionLabel, sevBadge, sevEntries, sevKeyRow,
-  sevSegmentBar, sevSpoken, skeleton, skeletonStack, toast,
+  sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow, toast,
 } from "../ui.js";
 
 const PAGE_SIZES = [25, 50, 100, 250];
@@ -475,19 +475,6 @@ export async function renderInventory(main, params) {
     };
 
     return el("div", { class: "inv-header" }, hero, strip, stats);
-  }
-
-  function statRow(name, value, sub, meterPct) {
-    return el("div", { class: "stat-row" },
-      el("div", { class: "stat-name" }, name),
-      el("div", { class: "stat-figure" },
-        el("div", { class: "mini-value num" }, value),
-        meterPct === null || meterPct === undefined ? null : meter(meterPct, {
-          className: "meter--stat",
-          label: `${name}, ${meterPct} percent`,
-        })),
-      el("div", { class: "stat-sub" }, sub),
-    );
   }
 
   // ---- toolbar
