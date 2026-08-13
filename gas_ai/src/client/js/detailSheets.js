@@ -7,7 +7,8 @@
 
 import { call } from "./api.js";
 import { bootstrapCached, navigate } from "./store.js";
-import { categoryOf, kindIconSvg, kindLabel } from "./icons.js";
+import { egoGraph } from "./egoGraph.js";
+import { categoryOf, edgeLabel, kindIconSvg, kindLabel } from "./icons.js";
 import { slaState } from "./pages/comboView.js";
 import { assetSections, issueSections, recordCursor } from "./recordSections.js";
 import {
@@ -23,8 +24,6 @@ const PILLAR_LABEL = {
   data: "Data exposure",
 };
 const NEIGHBOR_PREVIEW = 12;
-/** The Overview card is a glance at the topology, not the topology — the rail holds that. */
-const CONNECTION_PREVIEW = 6;
 
 /**
  * The pillar ceilings the score was actually computed against. They are editable on the
@@ -255,10 +254,14 @@ function relRow(n, onOpen) {
     meta: [
       el("strong", {}, n.node.name),
       el("span", { class: "small muted" }, kindLabel(n.node.kind)),
-      el("span", { class: "domain-chip" },
-        n.edge.type + (n.edge.accessType ? ` [${n.edge.accessType}]` : "")),
+      // Prose on the chip, Wiz's own enum on the tooltip: the register is read here and
+      // cross-referenced against the tenant there, so neither can be the one that goes.
+      el("span", { class: "domain-chip", title: n.edge.type },
+        edgeLabel(n.edge.type) +
+        (n.edge.accessType ? ` [${n.edge.accessType}]` : "") +
+        (n.edge.negated ? " (absent)" : "")),
     ],
-    ariaLabel: `${out ? "Outbound" : "Inbound"} ${n.edge.type} to ${n.node.name}`,
+    ariaLabel: `${out ? "Outbound" : "Inbound"} ${edgeLabel(n.edge.type)} to ${n.node.name}`,
     onOpen: () => onOpen(n),
   });
 }
@@ -412,19 +415,27 @@ export function openAssetSheet(assetId, opts = {}) {
           const insights = insightRow(node);
           if (insights) pane.append(sheetSection("Insights", insights));
           pane.append(sheetSection("Properties", propsGrid(node), provStrip(node)));
+          // The picture, not a shorter copy of the list next door: what an agent is wired to
+          // — the identity it runs as, the data it reaches, the guardrail it hasn't got —
+          // is a shape, and a list makes the reader assemble it. Relationships still holds
+          // every connection, and the map's own "+N more" stub leads there.
+          let map = null;
+          if (rels.length) {
+            const boot = bootstrapCached();
+            map = egoGraph({
+              focal: node,
+              rels,
+              palette: boot && boot.palette,
+              onOpen: openNeighbor,
+              onShowAll: () => ctx.selectSection("relationships"),
+            });
+            ctx.onDispose(map.destroy);
+          }
           pane.append(sheetCard(
             `Connections (${rels.length})`,
             el("button", { class: "sheet-tool", onclick: openGraph },
               uiIcon("graph", 14), "Open in graph"),
-            rels.length
-              ? relList(rels.slice(0, CONNECTION_PREVIEW), openNeighbor)
-              : emptyState("No connections in the last sync."),
-            rels.length > CONNECTION_PREVIEW
-              ? el("button", {
-                  class: "linklike sheet-more",
-                  onclick: () => ctx.selectSection("relationships"),
-                }, `See all ${rels.length} relationships`)
-              : null,
+            map ? map.node : emptyState("No connections in the last sync."),
           ));
           // The record as the server sent it. An analyst who needs a field this sheet does
           // not name should not have to open the browser console to read it.

@@ -179,3 +179,28 @@
 .sheet-card-title { font-size: 13px; font-weight: 600; margin: 0; flex: 1 1 auto; }
 .sheet-card-body { padding: 4px 14px 10px; }
 .sheet-card-body .empty { border: none; padding: 12px 0; }
+
+/* ------------------------------------------------------------ the connection map */
+/* One hop of the security graph, drawn in the graph page's own node vocabulary — every
+   .gnode / .gedge rule in graph.css dresses it for free, so a node means the same thing
+   here as it does on the canvas the "Open in graph" button leads to.
+   No dotted canvas ground: a dot grid reads as "this pans and zooms", which a static
+   summary does not, and DESIGN.md rules out texture that carries no information. */
+.ego-scroll { overflow-x: auto; margin: 2px 0; }
+.ego-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* No width rules here on purpose, for the reason scans.css states for its own diagram:
+   the layout is measured, not scaled. egoGraph.js draws the viewBox at the container's
+   pixel width and sets a matching width in px, so the render is 1:1 and the labels stay
+   the size the stylesheet asked for. `width: 100%` over a fixed viewBox would put the
+   scaling back and take the height with it. */
+.ego-map { display: block; height: auto; }
+/* The compact card is shorter than the canvas card, so its corner follows. */
+.ego-map .gnode-box { rx: 8; }
+/* You-are-here: the record the sheet is already about reads as the anchor the others hang
+   off, without borrowing severity or category ink to say so. */
+.ego-map .gnode.is-focal .gnode-box { stroke: rgba(0, 0, 0, 0.42); stroke-width: 1.5; }
+.ego-map .gnode.is-focal { cursor: default; }
+/* The compact card has no room for the canvas's dashed TC halo and corner badge — both
+   overhang the card bounds and would clip against a tight viewBox. The stripe carries the
+   membership instead, reinforcing the "· TC" the kind line already prints. */
+.gnode[data-combo] .gnode-accent { fill: var(--accent); }

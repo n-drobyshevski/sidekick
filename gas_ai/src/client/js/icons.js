@@ -56,6 +56,10 @@ PATHS.AI_SERVICE = PATHS.AI_MODEL;
 PATHS.AI_SKILL = PATHS.SERVERLESS;
 PATHS.AI_SKILL_TEMPLATE = PATHS.CONTAINER_IMAGE;
 PATHS.AI_TOOL = PATHS.SERVERLESS;
+// A long-standing hole: ACCESS_KEY is in NODE_KINDS but had no glyph, so a key drew as the
+// three-dot collapse stub. SERVICE_ACCOUNT's mark already IS a key, and a key is what a
+// service account carries.
+PATHS.ACCESS_KEY = PATHS.SERVICE_ACCOUNT;
 
 export const KIND_LABELS = {
   AI_AGENT: "AI Agent",
@@ -76,6 +80,9 @@ export const KIND_LABELS = {
   USER_ACCOUNT: "User",
   ACCESS_ROLE: "IAM Role",
   ACCESS_ROLE_BINDING: "Role Binding",
+  // The one NODE_KINDS entry that had no gloss, so it printed as the raw enum wherever a
+  // key turned up as a node's kind.
+  ACCESS_KEY: "Access Key",
   BUCKET: "Bucket",
   DATABASE: "Database",
   VIRTUAL_MACHINE: "VM",
@@ -155,6 +162,39 @@ export function kindIconSvg(kind, size = 16) {
 
 export function kindLabel(kind) {
   return KIND_LABELS[kind] || kind;
+}
+
+// Wiz's edge-type enum is precise and stays one hover away via the edge's title
+// tooltip / domain-chip text; it is not what a reader can scan off a curve between two
+// node cards in a ~500px diagram. EDGE_LABELS is that prose gloss — lowercase,
+// subject-first ("agent runs as account"), short enough to sit on the line unclipped.
+export const EDGE_LABELS = {
+  HAS_ISSUE: "has issue",
+  PROTECTED_BY: "protected by",
+  RUNS_AS: "runs as",
+  ALLOWS_ACCESS_TO: "allows access to",
+  HAS_FINDING: "has finding",
+  USES: "uses",
+  USES_TOOL: "uses tool",
+  INVOKES_TOOL: "invokes tool",
+  USES_MODEL: "uses model",
+  USES_DATASET: "uses dataset",
+  STORED_IN: "stored in",
+  HOSTED_ON: "hosted on",
+  BUILT_FROM: "built from",
+  CAN_INVOKE: "can invoke",
+  ENFORCES: "enforces",
+  BOUND_TO: "bound to",
+  PERMITS_ACCESS_ROLE: "permits access role",
+  HAS_SENSITIVE_DATA: "has sensitive data",
+  HAS_ACCESS_TO_SENSITIVE_DATA: "has access to sensitive data",
+  EXPOSED_TO_INTERNET: "exposed to internet",
+  HAS_EXCESSIVE_PRIVILEGE: "has excessive privilege",
+};
+
+/** Human-readable label for an edge type; unknown types fall back to the raw enum. */
+export function edgeLabel(type) {
+  return EDGE_LABELS[type] || type;
 }
 
 // Semantic category of a node kind — drives the graph's color coding (a redundant cue

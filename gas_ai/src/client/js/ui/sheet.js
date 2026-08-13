@@ -198,6 +198,11 @@ export function openSheet(renderBody, opts = {}) {
   const routeAtOpen = parseHash().route;
   let closed = false;
   let footerEl = null;
+  // Undo work a body started that outlives its DOM — a ResizeObserver, a timer. The page
+  // teardown hook in ui/timing.js only runs on a route change, and a sheet closes without
+  // one, so anything registered there would keep firing at a detached node until the next
+  // navigation.
+  const disposers = [];
 
   const bodyEl = el("div", { class: "sheet-body" });
 
@@ -232,6 +237,14 @@ export function openSheet(renderBody, opts = {}) {
     const finish = () => {
       scrim.remove();
       sheet.remove();
+      for (const fn of disposers.splice(0)) {
+        try {
+          fn();
+        } catch (e) {
+          // One failed cleanup must not strand the others, or the focus restore below it.
+          console.warn("sheet dispose failed:", e);
+        }
+      }
       // A swap already mounted its replacement: it owns the lock and the focus now.
       if (!activeSheet) {
         if (appRoot) appRoot.removeAttribute("inert");
@@ -607,6 +620,10 @@ export function openSheet(renderBody, opts = {}) {
     setBusy(on) {
       if (on) bodyEl.setAttribute("aria-busy", "true");
       else bodyEl.removeAttribute("aria-busy");
+    },
+    /** Run `fn` when this sheet is torn down, however it closed. */
+    onDispose(fn) {
+      if (typeof fn === "function") disposers.push(fn);
     },
     /** One announcement for the whole resolved record, not one per badge. */
     announce(text) {
