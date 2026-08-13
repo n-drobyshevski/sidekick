@@ -1318,6 +1318,21 @@ dialog.domains-dialog .dialog-actions {
 .usage-meter__note.warn { color: var(--warn); }
 .usage-meter__note.bad { color: var(--bad); }
 
+/* Per-tab capacity breakdown (capacity.js renderCapacity). Nine tabs is past the point where
+   hue can carry identity, so this is a table and every bar wears the same accent: the reader's
+   job is comparing magnitude, not telling series apart, and the cell counts beside each bar
+   are the authoritative reading. Bars are scaled against the largest tab, not the 10M ceiling
+   — against the ceiling every row would be an identical hairline. */
+.capacity-table { margin-top: 16px; }
+.capacity-share { white-space: nowrap; }
+.capacity-bar {
+  display: inline-block; vertical-align: middle; margin-right: 8px;
+  width: 64px; height: 6px; border-radius: 999px;
+  background: rgba(0, 0, 0, 0.07); overflow: hidden;
+}
+.capacity-bar > i { display: block; height: 100%; border-radius: 999px; background: var(--accent); }
+@media (max-width: 560px) { .capacity-bar { display: none; } }
+
 /* Domain-row polish: compact inline buttons so the reorder/edit/delete cluster reads tighter
    than page-scale actions (no structural change — see domainsEditor.js renderList). */
 .domain-row button { min-height: 30px; padding: 4px 10px; }

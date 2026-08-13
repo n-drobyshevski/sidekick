@@ -2,6 +2,7 @@
 // import, merged from the former Reports and Exports pages.
 
 import { call } from "../api.js";
+import { renderCapacity } from "../capacity.js";
 import {
   MAX_BUNDLE_BYTES,
   classifyImportFiles,
@@ -62,6 +63,37 @@ export async function renderData(main, params, ctx) {
 
   main.append(sectionLabel("Import"));
   renderImportSection(main, ctx);
+
+  main.append(sectionLabel("Storage"));
+  renderStorageSection(main);
+}
+
+// ------------------------------------------------------------------------ storage
+
+/**
+ * How much of the ledger spreadsheet's 10M-cell ceiling is left, and which tabs are spending
+ * it. It belongs on this page rather than only in Settings because the actions that move the
+ * number — export and archive, import a bundle, keep more history — are the ones directly
+ * above it.
+ *
+ * Mounted synchronously and filled lazily: the stats call walks every sheet, and it must never
+ * delay (or, on error, blank) the sections above, which is why the whole block is best-effort.
+ */
+function renderStorageSection(main) {
+  const card = el("div", { class: "card" });
+  card.append(el("h3", {}, "Ledger spreadsheet"));
+  const host = el("div", {});
+  card.append(host);
+  main.append(card);
+
+  (async () => {
+    try {
+      renderCapacity(host, await call("api_getStorageStats", {}));
+    } catch {
+      clear(host).append(el("p", { class: "muted small" },
+        "Storage usage is unavailable right now."));
+    }
+  })();
 }
 
 // ------------------------------------------------------------------------- report

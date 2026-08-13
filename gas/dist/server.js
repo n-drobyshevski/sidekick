@@ -587,8 +587,13 @@ var Server = (() => {
     }
     return false;
   }
-  function cellCount() {
-    return ledgerSpreadsheet().getSheets().reduce((acc, sh) => acc + sh.getMaxRows() * sh.getMaxColumns(), 0);
+  function cellUsage() {
+    const tabs = ledgerSpreadsheet().getSheets().map((sh) => {
+      const rows = sh.getMaxRows();
+      const cols = sh.getMaxColumns();
+      return { name: sh.getName(), rows, cols, cells: rows * cols };
+    });
+    return { total: tabs.reduce((acc, t) => acc + t.cells, 0), tabs };
   }
 
   // src/server/setup.ts
@@ -4716,7 +4721,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "3d541599c265" : "dev";
+  var BUILD_ID = true ? "b5021b99ad31" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -8265,16 +8270,24 @@ var Server = (() => {
     });
   }
   var cachedStorageStatsData = () => (
-    // "storageStats" → "storageStats2": payload gained the severity data-quality diagnostic
-    // (distinctSeverities, unknownSeverityCount); dataVersion persists across deploys, so
-    // bumping the namespace prevents serving a stale old-shape entry (up to the TTL).
-    cached("storageStats2", null, () => {
+    // "storageStats2" → "storageStats3": payload gained the per-tab capacity breakdown
+    // (cellsByTab, ledgerRowCells); dataVersion persists across deploys, so bumping the
+    // namespace prevents serving a stale old-shape entry (up to the TTL). The prior bump was
+    // for the severity data-quality diagnostic (distinctSeverities, unknownSeverityCount).
+    cached("storageStats3", null, () => {
+      var _a;
       const scans = loadScanRows();
       const scan = currentScan();
       const baseRows2 = loadBaseRows();
+      const usage = cellUsage();
       return {
-        cellCount: cellCount(),
+        cellCount: usage.total,
         cellLimit: 1e7,
+        // What is consuming the ceiling, so "nearly full" comes with somewhere to look.
+        cellsByTab: usage.tabs,
+        // Cells one more tracked vulnerability costs, read off the live header list rather than
+        // hardcoded, so the headroom estimate stays right as ledger columns are added.
+        ledgerRowCells: ((_a = TAB_HEADERS[TABS.vulnLedger]) != null ? _a : []).length,
         scanCount: scans.length,
         sealedCount: scans.filter((s) => s.sealed).length,
         oldestScanTs: scans.length ? scans[0].ts : null,

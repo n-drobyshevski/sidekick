@@ -49,7 +49,7 @@ import * as backfillJobs from "./backfillJobs";
 import * as scanJobs from "./scanJobs";
 import { BUILD_ID, cached, dataVersion } from "./serverCache";
 import * as settingsStore from "./settingsStore";
-import { cellCount, SCHEMA_VERSION } from "./sheetsDb";
+import { cellUsage, SCHEMA_VERSION, TAB_HEADERS, TABS } from "./sheetsDb";
 import * as supportGroups from "./supportGroups";
 
 export interface ApiResult<T = unknown> {
@@ -1912,16 +1912,23 @@ export function clearRecentErrors(_p?: unknown): ApiResult {
 // cellCount() walks every sheet in the spreadsheet — cache it per DATA_VERSION. Extracted so
 // warmReadModels and the endpoint share one entry.
 const cachedStorageStatsData = () =>
-  // "storageStats" → "storageStats2": payload gained the severity data-quality diagnostic
-  // (distinctSeverities, unknownSeverityCount); dataVersion persists across deploys, so
-  // bumping the namespace prevents serving a stale old-shape entry (up to the TTL).
-  cached("storageStats2", null, () => {
+  // "storageStats2" → "storageStats3": payload gained the per-tab capacity breakdown
+  // (cellsByTab, ledgerRowCells); dataVersion persists across deploys, so bumping the
+  // namespace prevents serving a stale old-shape entry (up to the TTL). The prior bump was
+  // for the severity data-quality diagnostic (distinctSeverities, unknownSeverityCount).
+  cached("storageStats3", null, () => {
     const scans = ledgerStore.loadScanRows();
     const scan = findings.currentScan();
     const baseRows = ledgerStore.loadBaseRows() as unknown as Rec[];
+    const usage = cellUsage();
     return {
-      cellCount: cellCount(),
+      cellCount: usage.total,
       cellLimit: 10_000_000,
+      // What is consuming the ceiling, so "nearly full" comes with somewhere to look.
+      cellsByTab: usage.tabs,
+      // Cells one more tracked vulnerability costs, read off the live header list rather than
+      // hardcoded, so the headroom estimate stays right as ledger columns are added.
+      ledgerRowCells: (TAB_HEADERS[TABS.vulnLedger] ?? []).length,
       scanCount: scans.length,
       sealedCount: scans.filter((s) => s.sealed).length,
       oldestScanTs: scans.length ? scans[0].ts : null,

@@ -211,6 +211,24 @@ bytes**, so a month of history does not have to fit inside a `google.script.run`
 The Databricks rebuild consumes it directly — see `brick/README.md`,
 *Migrating from the Apps Script app*.
 
+## Storage headroom
+
+A spreadsheet holds **10M cells**, and the ledger is the one structure that grows without
+bound. **Data → Storage** shows how much of that ceiling is spent, expresses the remainder in
+the unit that matters (*"room for about N more tracked vulnerabilities"*, derived from the live
+`vuln_ledger` header count, not a hardcoded row width), and breaks the usage down per tab so
+"nearly full" arrives with somewhere to look. The same meter — same thresholds, same wording,
+from the same `capacityView` — remains in **Settings → Storage**.
+
+Two things the breakdown makes visible that a single total hides:
+
+- Cells are counted as the **allocated grid** (rows × columns), because that is what the 10M
+  limit enforces. A tab sitting at Sheets' default 1000×26 costs 26k cells while completely
+  empty, so the eight small tabs together have a fixed floor comparable to a mid-size ledger.
+- Past **60%** the meter warns and past **85%** it escalates, both pointing at the two levers
+  that reclaim room: the retention window and compaction. Colour never carries that alone —
+  the percentage and the note say it too.
+
 ## Setup (one-time)
 
 1. `npm install && npm run check` (typecheck + tests + build).

@@ -250,9 +250,31 @@ export function updateWhere(tab: string, keyColumn: string, keyValue: unknown, p
   return false;
 }
 
+export interface TabUsage {
+  name: string;
+  rows: number;
+  cols: number;
+  cells: number;
+}
+
+/**
+ * Per-tab grid size plus the total, for the storage surfaces.
+ *
+ * Google's 10M-cell ceiling counts the **allocated** grid — rows × columns — not the
+ * populated range, so a tab left at the default 1000×26 costs 26k cells while empty. That is
+ * deliberately what this measures (the number the quota actually enforces), and it is why the
+ * surfaces reading it have to say "allocated" rather than implying these are rows of data.
+ */
+export function cellUsage(): { total: number; tabs: TabUsage[] } {
+  const tabs = ledgerSpreadsheet().getSheets().map((sh) => {
+    const rows = sh.getMaxRows();
+    const cols = sh.getMaxColumns();
+    return { name: sh.getName(), rows, cols, cells: rows * cols };
+  });
+  return { total: tabs.reduce((acc, t) => acc + t.cells, 0), tabs };
+}
+
 /** Total cell count across the spreadsheet (storage-stats surface). */
 export function cellCount(): number {
-  return ledgerSpreadsheet()
-    .getSheets()
-    .reduce((acc, sh) => acc + sh.getMaxRows() * sh.getMaxColumns(), 0);
+  return cellUsage().total;
 }
