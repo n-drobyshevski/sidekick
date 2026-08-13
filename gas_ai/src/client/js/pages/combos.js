@@ -21,7 +21,8 @@ import { bootstrap, navigate, setParams, swrCall } from "../store.js";
 import { dueChip, fwTags, openAssetSheet, openIssueSheet } from "../detailSheets.js";
 import { kindIconSvg, kindLabel, categoryOf } from "../icons.js";
 import {
-  clear, el, emptyState, errorState, kpiCard, pager, sectionLabel, sevBadge, skeleton,
+  clear, el, emptyState, errorState, kpiCard, pager, sectionLabel, sevBadge, sevKeyRow,
+  sevSegmentBar, sevSpoken, skeleton,
 } from "../ui.js";
 import {
   CONDITION_KEYS, ISSUE_COMPARATORS, ISSUE_SORT_DESC, SEVERITY_RANK,
@@ -222,36 +223,18 @@ export async function renderCombos(main, params) {
   }
 
   function shiftRow(label, mix, total) {
+    // shiftSegments already returns [{sev, count}] worst-first and is unit-tested in
+    // comboView.test.js — it stays the source of truth for what the bar is made of.
     const segments = shiftSegments(mix, total);
-    const spoken = segments.length
-      ? segments.map((s) => s.count + " " + s.sev).join(", ")
-      : "no issues";
-    const bar = el("div", {
-      class: "combo-shift-bar",
-      role: "img",
-      "aria-label": label + " severity: " + spoken,
-    });
-    for (const seg of segments) {
-      const cell = el("div", { class: "combo-shift-seg sev-fill-" + seg.sev });
-      cell.style.flexGrow = String(seg.count);
-      bar.append(cell);
-    }
-    if (!segments.length) bar.append(el("div", { class: "combo-shift-seg is-empty" }));
-
-    const keys = el("div", { class: "combo-shift-keys" });
-    for (const seg of segments) {
-      // `sev-<LEVEL>` gives the key its tint and its darkened text token, and colours the
-      // dot through the existing `.sev-X .sev-dot` rule — the two-token pair, unchanged.
-      keys.append(el("span", { class: "combo-shift-key sev-" + seg.sev },
-        el("span", { class: "sev-dot", "aria-hidden": "true" }),
-        seg.sev,
-        el("span", { class: "combo-shift-key-num num" }, String(seg.count))));
-    }
     return el("div", { class: "combo-shift-row" },
       el("div", { class: "combo-shift-head" },
         el("span", { class: "label" }, label)),
-      bar,
-      keys);
+      sevSegmentBar(segments, {
+        size: "lg",
+        emptyHatch: true,
+        label: `${label} severity: ${segments.length ? sevSpoken(segments) : "no issues"}`,
+      }),
+      sevKeyRow(segments, { variant: "legend" }));
   }
 
   /**

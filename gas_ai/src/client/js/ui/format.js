@@ -36,3 +36,8 @@ export function fmtDateTime(iso) {
   const d = new Date(t);
   return `${_dateTimeFmt.format(d)} ${parisZone(d)}`;
 }
+
+/** "1 asset" / "2 assets" — the -s rule, written once instead of at each call site. */
+export function plural(n, word) {
+  return `${n} ${word}${n === 1 ? "" : "s"}`;
+}

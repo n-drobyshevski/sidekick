@@ -12,37 +12,13 @@
   stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round;
 }
 
-/* Severity FILL as a background, for marks this page draws itself: the shift-bar
-   segments and the pattern dots. The .sev-<LEVEL> classes above can't do this job —
-   they paint a 14% tint for badge surfaces, which is right for a label and far too
-   pale for a bar segment that has to read as a mark at >=3:1. Text never uses these;
-   any coloured label still takes its --sev-*-text token (the Two-Token rule). */
-.sev-fill-CRITICAL { background: var(--sev-critical); }
-.sev-fill-HIGH { background: var(--sev-high); }
-.sev-fill-MEDIUM { background: var(--sev-medium); }
-.sev-fill-LOW { background: var(--sev-low); }
-.sev-fill-INFO { background: var(--sev-info); }
-.sev-fill-UNKNOWN { background: var(--sev-unknown); }
-
 /* The amplifier, drawn: the same population rated twice on one scale. Both bars are
    grown from the same total, so the second is the first's mix MOVED — the widths are
-   the comparison, which is the only reason to stack them. */
+   the comparison, which is the only reason to stack them. The bars and their keys are
+   the shared .sevbar--lg / .sevkey-row--legend components (components.css). */
 .combo-shift { display: flex; flex-direction: column; gap: 10px; }
 .combo-shift-row { display: flex; flex-direction: column; gap: 6px; }
 .combo-shift-head { display: flex; align-items: baseline; gap: 8px; }
-.combo-shift-bar {
-  display: flex; width: 100%; height: 22px; overflow: hidden;
-  border-radius: var(--radius-sm); background: var(--page);
-  border: 1px solid var(--hairline);
-}
-.combo-shift-seg { flex-basis: 0; min-width: 3px; }
-.combo-shift-seg.is-empty { flex: 1; background: repeating-linear-gradient(
-  45deg, transparent, transparent 4px, rgba(0, 0, 0, 0.06) 4px, rgba(0, 0, 0, 0.06) 8px); }
-.combo-shift-keys { display: flex; flex-wrap: wrap; gap: 6px; }
-.combo-shift-key {
-  gap: 2px; border-radius: var(--radius-pill); padding: 1px 8px; font-size: 11px;
-}
-.combo-shift-key-num { margin-left: 4px; }
 /* The reason the second bar differs from the first. Not decoration: without it the two
    bars are a before/after with no stated cause. */
 .combo-shift-rule {

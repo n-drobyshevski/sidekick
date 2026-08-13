@@ -30,7 +30,8 @@ import {
 } from "../assetQuery.js";
 import {
   aarsChip, clear, closeActiveSheet, confirmDialog, el, emptyState, errorState, fmtDate,
-  pager, sectionLabel, sevBadge, skeleton, toast,
+  pager, plural, sectionLabel, sevBadge, sevEntries, sevKeyRow, sevSegmentBar, sevSpoken,
+  skeleton, toast,
 } from "../ui.js";
 
 const PAGE_SIZES = [25, 50, 100, 250];
@@ -99,25 +100,17 @@ function aarsMeter(score) {
  * a pile of them. Both come from the same issue rows, so they cannot disagree.
  */
 function issueBars(counts) {
-  const entries = STRIP_SEVERITIES
-    .concat(["UNKNOWN"])
-    .map((sev) => ({ sev, n: Number((counts || {})[sev] || 0) }))
-    .filter((e) => e.n > 0);
+  const entries = sevEntries(counts, STRIP_SEVERITIES.concat(["UNKNOWN"]));
   if (!entries.length) return null;
-  const total = entries.reduce((n, e) => n + e.n, 0);
-  const label = `${total} open issue${total === 1 ? "" : "s"}: ` +
-    entries.map((e) => `${e.n} ${e.sev.toLowerCase()}`).join(", ");
+  const total = entries.reduce((n, e) => n + e.count, 0);
   // Length carries the volume and the segments carry the mix, so one issue and eight of
   // them don't draw the same bar — a normalized bar would make them identical and say the
   // opposite of what it looks like it says.
-  const width = Math.min(46, 10 + total * 4);
-  return el("span", {
-    class: "issue-bars", role: "img", "aria-label": label, style: `width:${width}px`,
-  },
-    ...entries.map((e) => el("span", {
-      class: "issue-bar sev-" + e.sev,
-      style: `flex-grow:${e.n}`,
-    })));
+  return sevSegmentBar(entries, {
+    size: "xs",
+    width: `${Math.min(46, 10 + total * 4)}px`,
+    label: `${plural(total, "open issue")}: ${sevSpoken(entries, { lower: true })}`,
+  });
 }
 
 /** Saved views live per browser; a sandboxed iframe or private mode may refuse. */
@@ -411,50 +404,38 @@ export async function renderInventory(main, params) {
     );
 
     // The distribution strip: the page's cross-filter, and the keyboard-reachable twin of
-    // clicking a bar. The track is decoration (the keys carry the same numbers as text),
-    // and every key is a real toggle button, so nothing here is mouse-only.
-    const track = el("div", { class: "sev-strip-track", "aria-hidden": "true" });
-    const keys = el("div", {
-      class: "sev-strip-keys", role: "group", "aria-label": "Filter by AARS severity",
+    // clicking a bar. The bar itself is decoration (the keys carry the same numbers as
+    // text), and every key is a real toggle button, so nothing here is mouse-only.
+    const entries = sevEntries(counts, STRIP_SEVERITIES);
+    const selected = () => new Set(query.aarsSeverities);
+    const track = sevSegmentBar(entries, { size: "md", selected: selected() });
+    const keys = sevKeyRow(entries, {
+      variant: "toggle",
+      ariaLabel: "Filter by AARS severity",
+      isOn: (sev) => query.aarsSeverities.indexOf(sev) >= 0,
+      describe: (e) => `${e.sev}, ${plural(e.count, "asset")}` +
+        (bandLabel(e.sev) ? `, ${bandLabel(e.sev)}` : ""),
+      // A delta only appears where history actually supports one: aarsTrend records
+      // per-sync AARS counts, so these two are real. Nothing else on this header has
+      // a recorded history, and nothing else gets a chip.
+      suffix: (e) => {
+        const delta = deltas && deltas.counts ? Number(deltas.counts[e.sev] || 0) : 0;
+        if (!delta || (e.sev !== "CRITICAL" && e.sev !== "HIGH")) return null;
+        return el("span", {
+          class: "chg " + (delta > 0 ? "up" : "down"),
+          title: `since the sync of ${fmtDate(deltas.since)}`,
+        }, (delta > 0 ? "+" : "") + delta);
+      },
+      onToggle: (sev) => toggleFacet("aarsSeverities", sev),
     });
     const segs = new Map();
     const keyBtns = new Map();
-    for (const sev of STRIP_SEVERITIES) {
-      const n = counts[sev] || 0;
-      if (!n) continue;
-      const on = query.aarsSeverities.indexOf(sev) >= 0;
-      const seg = el("span", {
-        class: "sev-strip-seg sev-" + sev,
-        "data-on": on ? "true" : "false",
-        style: `flex-grow:${n}`,
-      });
-      segs.set(sev, seg);
-      track.append(seg);
-      const delta = deltas && deltas.counts ? Number(deltas.counts[sev] || 0) : 0;
-      const btn = el("button", {
-        class: "sev-key",
-        "aria-pressed": on ? "true" : "false",
-        "aria-label": `${sev}, ${n} asset${n === 1 ? "" : "s"}` +
-          (bandLabel(sev) ? `, ${bandLabel(sev)}` : ""),
-        onclick: () => toggleFacet("aarsSeverities", sev),
-      },
-        el("span", { class: "sev-dot", "aria-hidden": "true" }),
-        el("span", {}, sev),
-        el("span", { class: "sev-key-count num" }, String(n)),
-        // A delta only appears where history actually supports one: aarsTrend records
-        // per-sync AARS counts, so these two are real. Nothing else on this header has
-        // a recorded history, and nothing else gets a chip.
-        delta && (sev === "CRITICAL" || sev === "HIGH")
-          ? el("span", {
-              class: "chg " + (delta > 0 ? "up" : "down"),
-              title: `since the sync of ${fmtDate(deltas.since)}`,
-            }, (delta > 0 ? "+" : "") + delta)
-          : null,
-      );
-      keyBtns.set(sev, btn);
-      keys.append(btn);
-    }
-    const strip = el("div", { class: "sev-strip" + (query.aarsSeverities.length ? " is-filtered" : "") },
+    entries.forEach((e, i) => {
+      segs.set(e.sev, track.children[i]);
+      keyBtns.set(e.sev, keys.children[i]);
+    });
+
+    const strip = el("div", { class: "sev-strip" },
       el("div", { class: "kpi-label" }, "AARS severity"),
       track,
       keys,
@@ -480,7 +461,9 @@ export async function renderInventory(main, params) {
     // than rebuilt, so the key you just pressed keeps focus.
     syncStrip = () => {
       const active = query.aarsSeverities;
-      strip.classList.toggle("is-filtered", active.length > 0);
+      // Dimming lives on the bar, not on the strip wrapper: the bar is the thing that
+      // recedes, and the class that does it now belongs to the shared .sevbar component.
+      track.classList.toggle("sevbar--dim", active.length > 0);
       for (const [sev, seg] of segs) {
         seg.setAttribute("data-on", active.indexOf(sev) >= 0 ? "true" : "false");
       }

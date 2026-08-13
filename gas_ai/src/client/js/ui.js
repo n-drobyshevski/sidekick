@@ -15,8 +15,10 @@
 //   portals.js   the open-portal count the sheet's focus trap defers to
 
 export { clear, downloadText, el, motionOk } from "./ui/dom.js";
-export { DISPLAY_TZ, fmtDate, fmtDateTime } from "./ui/format.js";
-export { aarsChip, sevBadge } from "./ui/severity.js";
+export { DISPLAY_TZ, fmtDate, fmtDateTime, plural } from "./ui/format.js";
+export {
+  aarsChip, sevBadge, sevEntries, sevKeyRow, sevSegmentBar, sevSpoken,
+} from "./ui/severity.js";
 export { pager, progressBar } from "./ui/data.js";
 export { kpiCard, statusPill } from "./ui/controls.js";
 export {

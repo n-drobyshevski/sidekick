@@ -12,35 +12,10 @@
 .inv-hero .hero-value { font-size: 2rem; font-weight: 600; line-height: 1.15; letter-spacing: -0.02em; }
 .inv-hero-sub { font-size: 12px; color: var(--text-3); margin-top: 3px; }
 
-/* The distribution strip. The track is a graphic; the keys under it are the controls, so
-   the cross-filter has a real keyboard path (a canvas would not). */
+/* The distribution strip. The bar is a graphic; the keys under it are the controls, so
+   the cross-filter has a real keyboard path (a canvas would not). Both are the shared
+   .sevbar / .sevkey-row components (components.css) — this page only sizes the stack. */
 .sev-strip { display: flex; flex-direction: column; gap: 8px; }
-.sev-strip-track {
-  display: flex; height: 10px; border-radius: var(--radius-pill); overflow: hidden;
-  background: var(--track-bg);
-}
-.sev-strip-seg { min-width: 3px; transition: opacity 140ms ease-out; }
-.sev-strip-seg.sev-CRITICAL { background: var(--sev-critical); }
-.sev-strip-seg.sev-HIGH { background: var(--sev-high); }
-.sev-strip-seg.sev-MEDIUM { background: var(--sev-medium); }
-.sev-strip-seg.sev-LOW { background: var(--sev-low); }
-.sev-strip-seg.sev-INFO { background: var(--sev-info); }
-/* While filtered the other bands recede but never vanish: the share you picked has to stay
-   readable against the whole estate, which is the point of showing a distribution. */
-.sev-strip.is-filtered .sev-strip-seg[data-on="false"] { opacity: 0.22; }
-.sev-strip-keys { display: flex; flex-wrap: wrap; gap: 2px 12px; }
-.sev-key {
-  gap: 6px;
-  background: none; border: 1px solid transparent; box-shadow: none; min-height: 0;
-  padding: 3px 7px; border-radius: var(--radius-sm);
-  color: var(--text-2);
-}
-.sev-key:hover { background: var(--wash-hover); border-color: transparent; }
-.sev-key .sev-dot { margin-right: 0; vertical-align: 0; }
-.sev-key-count { color: var(--ink); }
-/* Selected reads as selected without relying on colour: a tick plus the tint. */
-.sev-key[aria-pressed="true"] { background: rgba(0, 0, 0, 0.06); color: var(--ink); }
-.sev-key[aria-pressed="true"]::after { content: "✓"; font-size: 10px; color: var(--text-3); }
 .sev-strip-note { font-size: 12px; color: var(--text-3); margin: 0; }
 
 /* The facts that used to be cards, as one full-width strip under the hero: four equal
@@ -98,16 +73,10 @@
 .aars-cell, .issue-cell { display: inline-flex; align-items: center; gap: 8px; }
 .pillar-track.score-meter { flex: 0 0 40px; width: 40px; height: 5px; }
 td .pillar-track { background: rgba(0, 0, 0, 0.09); }
-/* Open issues split by severity. Here colour IS the content — the mix of levels is the
-   whole point — so it is rationed, not decorative, and the aria-label names the counts. */
-.issue-bars { display: inline-flex; height: 5px; border-radius: var(--radius-pill); overflow: hidden; }
-.issue-bar { min-width: 2px; }
-.issue-bar.sev-CRITICAL { background: var(--sev-critical); }
-.issue-bar.sev-HIGH { background: var(--sev-high); }
-.issue-bar.sev-MEDIUM { background: var(--sev-medium); }
-.issue-bar.sev-LOW { background: var(--sev-low); }
-.issue-bar.sev-INFO { background: var(--sev-info); }
-.issue-bar.sev-UNKNOWN { background: var(--sev-unknown); }
+/* Open issues split by severity is a .sevbar--xs (components.css). Here colour IS the
+   content — the mix of levels is the whole point — so it is rationed, not decorative,
+   and the aria-label names the counts. */
+.aars-cell .sevbar-seg, .issue-cell .sevbar-seg { min-width: 2px; }
 
 /* ----------------------------------------------------------- AI Inventory: card view */
 /* The same marks as a table row, laid out for scanning by name instead of by column.

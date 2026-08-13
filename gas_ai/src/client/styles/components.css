@@ -64,6 +64,64 @@
 /* --------------------------------------------------------------------- severity */
 .sev-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
 .sev-badge { border-radius: var(--radius-pill); padding: 2px 9px; }
+
+/* Severity FILL as a background, for the marks the app draws itself: bar segments and
+   pattern dots. The .sev-<LEVEL> tint classes below can't do this job — they paint a 14%
+   wash meant to sit behind a label, far too pale for a mark that has to read at >=3:1.
+   Text never uses these; any coloured label still takes its --sev-*-text token (the
+   Two-Token rule). One set: the strip segments, the issue bars and the combos shift
+   segments each carried their own copy of these six rules. */
+.sev-fill-CRITICAL { background: var(--sev-critical); }
+.sev-fill-HIGH { background: var(--sev-high); }
+.sev-fill-MEDIUM { background: var(--sev-medium); }
+.sev-fill-LOW { background: var(--sev-low); }
+.sev-fill-INFO { background: var(--sev-info); }
+.sev-fill-UNKNOWN { background: var(--sev-unknown); }
+
+/* ------------------------------------------------------------ severity bar + keys */
+/* A distribution as one bar: a segment per level, grown by its count, so eight issues and
+   one issue never draw the same picture. Sizes are the three jobs it does — an in-row
+   micro-viz, a header strip, and the combos amplifier bar. */
+.sevbar {
+  display: flex; width: 100%; overflow: hidden;
+  border-radius: var(--radius-pill); background: var(--track-bg);
+}
+.sevbar-seg { flex-basis: 0; min-width: 3px; transition: opacity 140ms ease-out; }
+.sevbar--xs { display: inline-flex; width: auto; height: 5px; }
+.sevbar--md { height: 10px; }
+.sevbar--lg {
+  height: 22px; border-radius: var(--radius-sm);
+  background: var(--page); border: 1px solid var(--hairline);
+}
+/* While filtered the other bands recede but never vanish: the share you picked has to
+   stay readable against the whole estate, which is the point of showing a distribution. */
+.sevbar--dim .sevbar-seg[data-on="false"] { opacity: 0.22; }
+.sevbar-seg--empty { flex: 1; background: repeating-linear-gradient(
+  45deg, transparent, transparent 4px, rgba(0, 0, 0, 0.06) 4px, rgba(0, 0, 0, 0.06) 8px); }
+
+.sevkey-row { display: flex; flex-wrap: wrap; }
+.sevkey-row--toggle { gap: 2px 12px; }
+.sevkey-row--legend { gap: 6px; }
+.sevkey { display: inline-flex; align-items: center; font-weight: 600; }
+/* Legend keys are tinted by their level (a name for a segment); toggle keys stay neutral,
+   so "selected" reads as an interactive state rather than as a severity. The dot margin
+   and the count offset are deliberately per-variant, not shared: the two rows space their
+   dot/word/number differently, and flattening them to one value moves both. */
+.sevkey-row--legend .sevkey {
+  gap: 2px; padding: 1px 8px; font-size: 11px; border-radius: var(--radius-pill);
+}
+.sevkey-row--legend .sevkey-num { margin-left: 4px; }
+.sevkey-row--toggle .sevkey {
+  gap: 6px; padding: 3px 7px; font-size: 12px; border-radius: var(--radius-sm);
+  background: none; border: 1px solid transparent; box-shadow: none; min-height: 0;
+  color: var(--text-2);
+}
+.sevkey-row--toggle .sevkey .sev-dot { margin-right: 0; vertical-align: 0; }
+.sevkey-row--toggle .sevkey-num { color: var(--ink); }
+.sevkey-row--toggle .sevkey:hover { background: var(--wash-hover); border-color: transparent; }
+/* Selected reads as selected without relying on colour: a tick plus the tint. */
+.sevkey-row--toggle .sevkey[aria-pressed="true"] { background: rgba(0, 0, 0, 0.06); color: var(--ink); }
+.sevkey-row--toggle .sevkey[aria-pressed="true"]::after { content: "✓"; font-size: 10px; color: var(--text-3); }
 .sev-CRITICAL { background: rgba(220, 38, 38, 0.14); color: var(--sev-critical-text); }
 .sev-CRITICAL .sev-dot { background: var(--sev-critical); }
 .sev-HIGH { background: rgba(234, 88, 12, 0.14); color: var(--sev-high-text); }
