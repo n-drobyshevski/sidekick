@@ -150,11 +150,13 @@ export async function renderSettings(main, _params, ctx) {
             "everything in dist/, then create a NEW version so /exec serves it.")
         : null,
       el("p", { class: "small muted", style: "margin:10px 0 0" },
-        "The commit this build came from. To check whether a change is live, ask git " +
-        "whether that change is an ancestor of this commit " +
-        "(git merge-base --is-ancestor MERGE_SHA THIS_SHA). Remember that clasp push " +
-        "updates the code but not the deployed version: /exec keeps serving the version " +
-        "it was pinned to until you deploy a new one."),
+        "A content hash of the source this bundle was built from — the same source always " +
+        "gives the same stamp. To turn it into commits, run npm run which-build with the " +
+        "id above; it replays the hash across history and names every commit that " +
+        "produces this build, and prints the ancestry check for asking whether a " +
+        "particular change is live. Remember that clasp push updates the code but not the " +
+        "deployed version: /exec keeps serving the version it was pinned to until you " +
+        "deploy a new one."),
     );
   }
 }

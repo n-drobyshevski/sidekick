@@ -6,30 +6,22 @@
 // returns a shape the client no longer expects. Stamping both means the mismatch is
 // visible on the Settings page instead of turning into a bug report.
 //
-// esbuild replaces these at build time (esbuild.config.mjs); the `typeof` guards keep the
-// dev server, which has no define step, on a stable "dev" stamp.
+// esbuild replaces the identifier at build time (esbuild.config.mjs); the `typeof` guard
+// keeps vitest, which has no define step, on a stable "dev" stamp.
 
 export const BUILD_ID = typeof __BUILD_ID__ === "string" ? __BUILD_ID__ : "dev";
-export const BUILD_COMMIT = typeof __BUILD_COMMIT__ === "string" ? __BUILD_COMMIT__ : "";
-export const BUILD_DATE = typeof __BUILD_DATE__ === "string" ? __BUILD_DATE__ : "";
 
 export function clientBuild() {
-  return { id: BUILD_ID, commit: BUILD_COMMIT, date: BUILD_DATE };
+  return { id: BUILD_ID };
 }
 
-/** "abc1234 · 12 Aug 2026", or "unknown" outside a git checkout. */
+/**
+ * The stamp as shown to a person: the hash itself, or "unknown".
+ *
+ * "dev" means "built with no define step" — vitest, or a harness that skipped it — which
+ * is the absence of a stamp rather than the name of a build, so it reads as unknown.
+ */
 export function describeBuild(info) {
-  const b = info || {};
-  const parts = [];
-  if (b.commit) parts.push(b.commit);
-  if (b.date) {
-    const t = Date.parse(b.date);
-    if (!Number.isNaN(t)) {
-      parts.push(new Date(t).toLocaleDateString("en-GB", {
-        day: "numeric", month: "short", year: "numeric",
-      }));
-    }
-  }
-  if (!parts.length) return b.id && b.id !== "dev" ? b.id : "unknown";
-  return parts.join(" · ");
+  const id = info && info.id;
+  return id && id !== "dev" ? id : "unknown";
 }

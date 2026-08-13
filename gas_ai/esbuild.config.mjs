@@ -150,4 +150,4 @@ if (missing.length || stale.length) {
 }
 
 console.log(`build ok: ${readdirSync(dist).join(", ")}`);
-console.log(`  stamp ${STAMP.id} · commit ${STAMP.commit || "unknown"}`);
+console.log(`  stamp ${STAMP.id}  (npm run which-build ${STAMP.id})`);
