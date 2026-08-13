@@ -161,9 +161,10 @@ describe("Q_ISSUES + aiIssuesVariables", () => {
     const v = aiIssuesVariables(null) as { filterBy: Record<string, unknown>; orderBy: unknown };
     expect(v.filterBy["status"]).toEqual([...UNRESOLVED_ISSUE_STATUSES]);
     expect(v.filterBy["frameworkCategory"]).toEqual([RISK_CATEGORY_ID]);
-    // Both types. Narrowing to TOXIC_COMBINATION dropped every CLOUD_CONFIGURATION issue
-    // in the category — the same register, silently under-counted.
-    expect(v.filterBy["type"]).toEqual(["CLOUD_CONFIGURATION", "TOXIC_COMBINATION"]);
+    // No type filter at all. The category is the scope; Wiz's issue-type taxonomy is not,
+    // and pinning it to the two kinds we had thought of matched 91 of this tenant's 98
+    // AI-category issues — the 7 it dropped were every threat detection in the category.
+    expect(v.filterBy["type"]).toBeUndefined();
     expect(v.filterBy["riskEqualsAny"]).toBeUndefined();
     expect(v.filterBy["project"]).toBeUndefined();
     expect(v.orderBy).toEqual({ field: "SEVERITY_EXPLOITABLE", direction: "DESC" });
@@ -197,6 +198,15 @@ describe("Q_ISSUES + aiIssuesVariables", () => {
     }
     // entitySnapshot.status is what tells the sheet an issue names an Inactive asset.
     expect(Q_ISSUES).toContain("subscriptionId");
+  });
+
+  it("names every source-rule shape the unfiltered category can return", () => {
+    // With no type filter the register collects threat detections too, and their source
+    // rule is a CloudEventRule. Without its inline fragment that element comes back an
+    // empty object: the issue is still collected, but with no rule id and no name.
+    for (const shape of ["... on Control", "... on CloudConfigurationRule", "... on CloudEventRule"]) {
+      expect(Q_ISSUES).toContain(shape);
+    }
   });
 
   it("adds a project filter only when scope is set", () => {

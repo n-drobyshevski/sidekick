@@ -251,11 +251,11 @@ export function openAssetSheet(assetId, opts = {}) {
               el("span", { class: "small muted" }, `Wiz native ${issue.nativeSeverity}`),
               dueChip(issue.dueAt),
             ],
-            title: issue.ruleName,
+            title: issueTitle(issue),
             note: issue.justification,
             tags: fwTags(issue.frameworks, true),
             fix: issue.remediation || issue.resolutionRecommendation,
-            ariaLabel: `Issue: ${issue.ruleName}, ${issue.adjustedSeverity}`,
+            ariaLabel: `Issue: ${issueTitle(issue)}, ${issue.adjustedSeverity}`,
             onOpen: () => openIssueSheet(issue.id, {
               backTo: { label: node.name, onBack: () => openAssetSheet(assetId, opts) },
             }),
@@ -409,6 +409,18 @@ function issueStatusLabel(status) {
   return status || "";
 }
 
+/**
+ * What to call an issue. Wiz names an issue by its source rule, but a rule shape this
+ * document has no inline fragment for comes back as an empty object — the issue is still
+ * real and still counted, so it needs a heading rather than a blank one. Falls back to the
+ * issue type, then to a plain word; never invents a rule name.
+ */
+function issueTitle(issue) {
+  return (issue && issue.ruleName)
+    || issueTypeLabel(issue && issue.issueType)
+    || "Issue";
+}
+
 export function openIssueSheet(issueId, opts = {}) {
   openSheet((body, close, ctx) => {
     async function render() {
@@ -449,7 +461,7 @@ export function openIssueSheet(issueId, opts = {}) {
       chips.push(dueChip(issue.dueAt));
 
       ctx.setHeading({
-        title: issue.ruleName,
+        title: issueTitle(issue),
         subtitle: issue.assetName,
         sev: issue.adjustedSeverity || "",
         chips,
@@ -544,7 +556,7 @@ export function openIssueSheet(issueId, opts = {}) {
         }, "Open in graph"),
       );
 
-      ctx.announce(`${issue.ruleName} on ${issue.assetName}, ${issue.adjustedSeverity}.`);
+      ctx.announce(`${issueTitle(issue)} on ${issue.assetName}, ${issue.adjustedSeverity}.`);
     }
     render();
   }, {

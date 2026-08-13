@@ -65,12 +65,24 @@ describe("containment — an override moves only what its spec offers", () => {
     expect(varSpecFor(ISS)?.locked).toContain("wct-id-1998");
   });
 
-  it("offers the issue-type filter, and refuses to empty it", () => {
-    const paths = (varSpecFor(ISS)?.fields ?? []).map((f) => f.path);
-    expect(paths).toContain("filterBy.type");
-    expect(validateStepVars(ISS, { filterBy: { type: [] } }).length).toBeGreaterThan(0);
+  it("offers the issue-type filter as an optional narrowing knob", () => {
+    const spec = varSpecFor(ISS);
+    const field = (spec?.fields ?? []).filter((f) => f.path === "filterBy.type")[0];
+    expect(field).toBeTruthy();
+    // NOT required: the sync sends no type filter by default, so an empty list and an
+    // absent one mean the same thing — every type — and rejecting one of them would be
+    // incoherent.
+    expect(field.required).toBeFalsy();
+    expect(validateStepVars(ISS, { filterBy: { type: [] } })).toEqual([]);
+    // Narrowing still works for an operator who wants it.
     const clean = cleanStepVars(ISS, { filterBy: { type: ["TOXIC_COMBINATION"] } });
     expect(readPath(clean ?? {}, "filterBy.type")).toEqual(["TOXIC_COMBINATION"]);
+    const effective = effectiveStepVars(
+      ISS, aiIssuesVariables(null) as Record<string, unknown>,
+      { filterBy: { type: ["TOXIC_COMBINATION"] } },
+    );
+    expect(readPath(effective, "filterBy.type")).toEqual(["TOXIC_COMBINATION"]);
+    expect(readPath(effective, "filterBy.frameworkCategory")).toEqual([RISK_CATEGORY_ID]);
   });
 
   it("refuses a step with no spec, however well-formed the value", () => {
@@ -119,7 +131,7 @@ describe("effectiveStepVars — overlay by path, never replace", () => {
     // The category filter is what scopes this query to AI at all. An override that
     // replaced `filterBy` wholesale would silently drop it and collect the whole tenant.
     expect(out.filterBy.frameworkCategory).toEqual([RISK_CATEGORY_ID]);
-    expect(out.filterBy.type).toEqual(["CLOUD_CONFIGURATION", "TOXIC_COMBINATION"]);
+    expect(out.filterBy.status).toEqual(["OPEN"]);
     expect(out.orderBy.field).toBe("SEVERITY_EXPLOITABLE");
   });
 

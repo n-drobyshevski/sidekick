@@ -81,14 +81,18 @@ export const STEP_VAR_SPECS: StepVarSpec[] = [
       {
         path: "filterBy.type",
         label: "Issue types",
-        help: "Which Wiz issue types to collect. TOXIC_COMBINATION is the four " +
-          "multi-condition patterns this register models; CLOUD_CONFIGURATION is the rest " +
-          "of the AI risk category, which lands in Other AI risk. Dropping either one " +
-          "drops those issues from the register total and from AARS pillar A — narrowing " +
-          "to TOXIC_COMBINATION alone reproduces the pre-2026-08 register.",
+        // Optional, and empty is the default: the sync sends no type filter at all, so
+        // the category decides what is collected and Wiz's taxonomy does not. Marking it
+        // required would be incoherent now — an empty list and an absent one both mean
+        // "every type", and only one of them would be rejected.
+        help: "Empty (the default) collects every issue type in the AI risk category — " +
+          "including kinds this register has never modelled, which land in Other AI risk. " +
+          "Naming types here NARROWS that: each one left out disappears from the register " +
+          "total and from AARS pillar A with nothing on the page to mark its absence. " +
+          "Pinning TOXIC_COMBINATION and CLOUD_CONFIGURATION is what once hid every threat " +
+          "detection in the category.",
         kind: "list",
         options: ["TOXIC_COMBINATION", "CLOUD_CONFIGURATION", "THREAT_DETECTION"],
-        required: true,
       },
       {
         path: "filterBy.project",

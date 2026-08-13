@@ -905,12 +905,11 @@ var Server = (() => {
     "SidekickAiIdentitiesWithAgentAccess",
     '    type: "AI_AGENT"\n    select: true\n    relationships: [{\n      type: "ALLOWS_ACCESS_TO"\n      direction: INBOUND\n      with: {\n        type: "ACCESS_ROLE_BINDING"\n        select: false\n        relationships: [\n          {\n            type: "BOUND_TO"\n            with: { type: ["USER_ACCOUNT", "SERVICE_ACCOUNT"], select: true }\n          }\n          {\n            type: "PERMITS_ACCESS_ROLE"\n            with: {\n              type: "ACCESS_ROLE"\n              select: true\n              where: { accessType: { EQUALS: ["HIGH_PRIVILEGE", "ADMIN"] } }\n            }\n          }\n        ]\n      }\n    }]\n'
   );
-  var Q_ISSUES = "query SidekickAiIssues($first: Int, $after: String, $filterBy: IssueFilters, $orderBy: IssueOrder) {\n  issuesV2(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      type\n      severity\n      status\n      createdAt\n      updatedAt\n      dueAt\n      resolvedAt\n      resolutionReason\n      resolutionNote\n      rejectionExpiredAt\n      validatedAsExploitable\n      environments\n      assignee { id name primaryEmail }\n      resolvedBy { user { id name email } serviceAccount { id name type } }\n      notes { id text }\n      serviceTickets { id externalId name url }\n      applicationServices { id displayName }\n      aiRemediationAnalysis { verdict recommendedSeverity }\n      projects { id name slug riskProfile { businessImpact } }\n      entitySnapshot {\n        id\n        type\n        status\n        name\n        cloudPlatform\n        region\n        subscriptionName\n        subscriptionId\n        subscriptionExternalId\n        nativeType\n        externalId\n        tags\n        kubernetesClusterName\n        kubernetesNamespaceName\n        resourceGroupId\n      }\n      sourceRules {\n        ... on Control {\n          id\n          name\n          description\n          severity\n          risks\n          threats\n          resolutionRecommendation\n        }\n        ... on CloudConfigurationRule {\n          id\n          name\n          description\n          risks\n          threats\n          control { resolutionRecommendation severity }\n        }\n      }\n    }\n  }\n}\n";
+  var Q_ISSUES = "query SidekickAiIssues($first: Int, $after: String, $filterBy: IssueFilters, $orderBy: IssueOrder) {\n  issuesV2(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      type\n      severity\n      status\n      createdAt\n      updatedAt\n      dueAt\n      resolvedAt\n      resolutionReason\n      resolutionNote\n      rejectionExpiredAt\n      validatedAsExploitable\n      environments\n      assignee { id name primaryEmail }\n      resolvedBy { user { id name email } serviceAccount { id name type } }\n      notes { id text }\n      serviceTickets { id externalId name url }\n      applicationServices { id displayName }\n      aiRemediationAnalysis { verdict recommendedSeverity }\n      projects { id name slug riskProfile { businessImpact } }\n      entitySnapshot {\n        id\n        type\n        status\n        name\n        cloudPlatform\n        region\n        subscriptionName\n        subscriptionId\n        subscriptionExternalId\n        nativeType\n        externalId\n        tags\n        kubernetesClusterName\n        kubernetesNamespaceName\n        resourceGroupId\n      }\n      sourceRules {\n        ... on Control {\n          id\n          name\n          description\n          severity\n          risks\n          threats\n          resolutionRecommendation\n        }\n        ... on CloudConfigurationRule {\n          id\n          name\n          description\n          risks\n          threats\n          control { resolutionRecommendation severity }\n        }\n        ... on CloudEventRule {\n          id\n          name\n          description\n          risks\n          threats\n        }\n      }\n    }\n  }\n}\n";
   function aiIssuesVariables(scope) {
     const filterBy = {
       status: ["OPEN", "IN_PROGRESS"],
-      frameworkCategory: [RISK_CATEGORY_ID],
-      type: ["CLOUD_CONFIGURATION", "TOXIC_COMBINATION"]
+      frameworkCategory: [RISK_CATEGORY_ID]
     };
     if (scope && scope.length) filterBy["project"] = scope;
     return { filterBy, orderBy: { field: "SEVERITY_EXPLOITABLE", direction: "DESC" } };
@@ -2059,10 +2058,13 @@ var Server = (() => {
         {
           path: "filterBy.type",
           label: "Issue types",
-          help: "Which Wiz issue types to collect. TOXIC_COMBINATION is the four multi-condition patterns this register models; CLOUD_CONFIGURATION is the rest of the AI risk category, which lands in Other AI risk. Dropping either one drops those issues from the register total and from AARS pillar A \u2014 narrowing to TOXIC_COMBINATION alone reproduces the pre-2026-08 register.",
+          // Optional, and empty is the default: the sync sends no type filter at all, so
+          // the category decides what is collected and Wiz's taxonomy does not. Marking it
+          // required would be incoherent now — an empty list and an absent one both mean
+          // "every type", and only one of them would be rejected.
+          help: "Empty (the default) collects every issue type in the AI risk category \u2014 including kinds this register has never modelled, which land in Other AI risk. Naming types here NARROWS that: each one left out disappears from the register total and from AARS pillar A with nothing on the page to mark its absence. Pinning TOXIC_COMBINATION and CLOUD_CONFIGURATION is what once hid every threat detection in the category.",
           kind: "list",
-          options: ["TOXIC_COMBINATION", "CLOUD_CONFIGURATION", "THREAT_DETECTION"],
-          required: true
+          options: ["TOXIC_COMBINATION", "CLOUD_CONFIGURATION", "THREAT_DETECTION"]
         },
         {
           path: "filterBy.project",
@@ -3439,7 +3441,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "624e096c5730" : "dev";
+  var BUILD_ID = true ? "2fac9151fce5" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }

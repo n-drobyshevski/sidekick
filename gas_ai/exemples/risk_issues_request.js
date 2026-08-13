@@ -4,11 +4,20 @@
  * 0 critical / 0 high / 88 medium / 10 low.
  *
  * This is the ground truth for Q_ISSUES + aiIssuesVariables in
- * src/server/wizQueriesAi.ts. Two differences from the older, project-scoped
- * exemples/toxic_combos_request.js capture, and both are load-bearing:
+ * src/server/wizQueriesAi.ts, with one deliberate departure.
  *
- *   filterBy.frameworkCategory  (not riskEqualsAny) carries wct-id-1998
- *   filterBy.type               carries CLOUD_CONFIGURATION *and* TOXIC_COMBINATION
+ *   filterBy.frameworkCategory  (not riskEqualsAny) carries wct-id-1998 — the fix this
+ *                               capture prompted; the older project-scoped
+ *                               exemples/toxic_combos_request.js used riskEqualsAny.
+ *
+ *   filterBy.type               IS NOT SENT by the register, though it appears below.
+ *                               The console badge above reads 98 while its Type chip is
+ *                               inactive, so 98 is the untyped count; sending the two
+ *                               types here matches only 91, and the 7 it drops are the
+ *                               category's threat detections. The category is the scope;
+ *                               the type is Wiz's taxonomy of how an issue was produced,
+ *                               and filtering on it silently narrows the register to the
+ *                               kinds we happened to think of.
  *
  * The UI exported this as Python; it is transcribed to the fetch form its four
  * sibling captures use. The document is verbatim except for the threat-detection,

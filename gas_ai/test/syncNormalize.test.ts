@@ -299,6 +299,36 @@ describe("normalizeIssuesPage (issuesV2)", () => {
     expect(issue.frameworks).toBeUndefined();
   });
 
+  it("keeps a threat detection, whose source rule is a different shape entirely", () => {
+    // With no type filter the register collects every issue in the AI category, including
+    // threat detections. Their source rule is a CloudEventRule; Q_ISSUES now spreads that
+    // fragment, so the row arrives named and classifies into Other AI risk with Wiz's
+    // severity untouched.
+    const raw = issueRaw("iss-threat");
+    raw["type"] = "THREAT_DETECTION";
+    raw["severity"] = "LOW";
+    raw["sourceRules"] = [{ id: "wcer-id-1", name: "Anomalous model invocation volume" }];
+    const issue = normalizeIssuesPage([raw]).issues[0];
+    expect(issue.issueType).toBe("THREAT_DETECTION");
+    expect(issue.ruleName).toBe("Anomalous model invocation volume");
+    expect(issue.comboGroup).toBe(OTHER_GROUP_ID);
+    expect(issue.nativeSeverity).toBe("LOW");
+    expect(issue.adjustedSeverity).toBe("LOW");
+  });
+
+  it("still collects an issue whose source rule shape has no fragment at all", () => {
+    // A rule kind this document does not spread comes back as an empty object. The issue
+    // is real and still counted — it just has no rule name, and the sheet falls back to
+    // the issue type rather than rendering a blank heading.
+    const raw = issueRaw("iss-unknown-rule");
+    raw["sourceRules"] = [{}];
+    const issue = normalizeIssuesPage([raw]).issues[0];
+    expect(issue.id).toBe("iss-unknown-rule");
+    expect(issue.ruleId).toBe("");
+    expect(issue.ruleName).toBe("");
+    expect(issue.comboGroup).toBe(OTHER_GROUP_ID);
+  });
+
   it("treats absent optional fields as not-captured rather than empty", () => {
     // The per-rule Q_RULE_ASSETS fallback synthesises issues from the inventory API,
     // which carries none of this; undefined must not become [] or false.
