@@ -58,24 +58,22 @@ function drawFullCard(node, palette) {
     class: "gnode-box", x: 0, y: 0, width: NODE_W, height: NODE_H, rx: 10,
   }));
 
-  // Category accent stripe (left edge). Reinforces the kind icon + label; CSS colors it
-  // per data-category and hides it for summary/neutral nodes.
-  if (!isSummary) {
-    g.append(svgEl("rect", {
-      class: "gnode-accent", x: 3, y: 8, width: 3, height: NODE_H - 16, rx: 1.5,
-    }));
-  }
+  // The medallion: a pale category-tinted disc with a saturated ring, carrying the kind
+  // icon. It replaces both the bare 16px glyph and the 3px left accent stripe — the stripe
+  // was a colored side-rule wider than a hairline, which DESIGN.md forbids outright, and
+  // the card ground goes neutral so the tint lives in one place instead of two.
+  g.append(svgEl("circle", { class: "gnode-medallion", cx: 24, cy: 28, r: 14 }));
 
   // Kind icon + labels.
   const icon = kindIcon(node.kind === "SUMMARY" ? "SUMMARY" : node.kind);
-  icon.setAttribute("transform", "translate(10, 12)");
+  icon.setAttribute("transform", "translate(16, 20)");
   g.append(icon);
 
-  const name = svgEl("text", { class: "gnode-name", x: 34, y: 22 });
-  name.textContent = truncate(isSummary ? node.name + " " + kindLabel(node.summaryOf) : node.name, 22);
+  const name = svgEl("text", { class: "gnode-name", x: 46, y: 22 });
+  name.textContent = truncate(isSummary ? node.name + " " + kindLabel(node.summaryOf) : node.name, 20);
   g.append(name);
 
-  const kind = svgEl("text", { class: "gnode-kind", x: 34, y: 36 });
+  const kind = svgEl("text", { class: "gnode-kind", x: 46, y: 36 });
   kind.textContent = isSummary ? "Enter to expand" : kindLabel(node.kind).toUpperCase();
   g.append(kind);
 
@@ -86,9 +84,9 @@ function drawFullCard(node, palette) {
   // the fill — as this did — failed contrast on every tinted card.
   if (node.severity && !isSummary) {
     const sevColor = (palette && palette.colors && palette.colors[node.severity]) || "#475569";
-    g.append(svgEl("circle", { cx: 40, cy: 46, r: 3.5, fill: sevColor }));
+    g.append(svgEl("circle", { cx: 52, cy: 46, r: 3.5, fill: sevColor }));
     const sevText = svgEl("text", {
-      class: "gnode-chip-text gnode-sev-" + node.severity, x: 47, y: 49.5,
+      class: "gnode-chip-text gnode-sev-" + node.severity, x: 59, y: 49.5,
     });
     sevText.textContent = node.severity;
     g.append(sevText);
@@ -122,7 +120,7 @@ function drawFullCard(node, palette) {
  * Compact card: two text rows instead of a stacked card, for views with too many nodes to
  * give each one 56px of height. No TC halo/badge — both overhang the card bounds (halo at
  * -4, badge at y:-10) and would clip against a small viewBox — so toxic-combo membership
- * instead retints the accent stripe via data-combo (CSS rule lives in graph.css).
+ * instead retints the medallion ring via data-combo (CSS rule lives in recordSheet.css).
  */
 function drawCompactCard(node, palette) {
   const isSummary = node.kind === "SUMMARY";
@@ -140,23 +138,19 @@ function drawCompactCard(node, palette) {
     class: "gnode-box", x: 0, y: 0, width: NODE_W_SM, height: NODE_H_SM, rx: 8,
   }));
 
-  if (!isSummary) {
-    g.append(svgEl("rect", {
-      class: "gnode-accent", x: 3, y: 6, width: 3, height: 28, rx: 1.5,
-    }));
-  }
+  g.append(svgEl("circle", { class: "gnode-medallion", cx: 22, cy: 20, r: 12 }));
 
   const icon = kindIcon(node.kind === "SUMMARY" ? "SUMMARY" : node.kind);
-  icon.setAttribute("transform", "translate(10, 12)");
+  icon.setAttribute("transform", "translate(14, 12)");
   g.append(icon);
 
   // Line 1: name, AARS right-aligned against it. The two share the row, so the name's
   // budget depends on whether a score is coming to sit beside it — at a flat 16 the two
   // collided on any scored node.
   const hasAars = node.aars !== undefined && node.aars !== null && !isSummary;
-  const name = svgEl("text", { class: "gnode-name", x: 34, y: 17 });
+  const name = svgEl("text", { class: "gnode-name", x: 42, y: 17 });
   name.textContent = truncate(
-    isSummary ? node.name + " " + kindLabel(node.summaryOf) : node.name, hasAars ? 13 : 21,
+    isSummary ? node.name + " " + kindLabel(node.summaryOf) : node.name, hasAars ? 12 : 19,
   );
   g.append(name);
   if (hasAars) {
@@ -174,18 +168,18 @@ function drawCompactCard(node, palette) {
   // Same row-sharing arithmetic as line 1: the kind gets the whole row when no severity
   // chip follows it, which is the common case for the synthetic risk nodes.
   const hasSev = !!node.severity && !isSummary;
-  let kindRoom = hasSev ? 14 : 24;
+  let kindRoom = hasSev ? 13 : 22;
   if (inCombo) kindRoom -= 3;
-  const kind = svgEl("text", { class: "gnode-kind", x: 34, y: 31 });
+  const kind = svgEl("text", { class: "gnode-kind", x: 42, y: 31 });
   kind.textContent = isSummary
     ? "Enter to expand"
     : truncate(kindLabel(node.kind).toUpperCase(), kindRoom) + (inCombo ? " · TC" : "");
   g.append(kind);
   if (hasSev) {
     const sevColor = (palette && palette.colors && palette.colors[node.severity]) || "#475569";
-    g.append(svgEl("circle", { cx: 120, cy: 27.5, r: 3.5, fill: sevColor }));
+    g.append(svgEl("circle", { cx: 122, cy: 27.5, r: 3.5, fill: sevColor }));
     const sevText = svgEl("text", {
-      class: "gnode-chip-text gnode-sev-" + node.severity, x: 127, y: 31,
+      class: "gnode-chip-text gnode-sev-" + node.severity, x: 129, y: 31,
     });
     sevText.textContent = node.severity;
     g.append(sevText);

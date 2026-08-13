@@ -387,26 +387,25 @@ function anatomySvg() {
   add(tc, "rect", { class: "help-tc-badge", x: 226, y: 6, width: 30, height: 17, rx: 8 });
   add(tc, "text", { class: "help-tc-text", x: 241, y: 18, "text-anchor": "middle" }, "TC");
 
-  // The node itself: pale category tint, saturated left stripe, icon, name, kind.
+  // The node itself: neutral card, category medallion, name, kind.
   const kind = group("kind");
   add(kind, "rect", {
     class: "help-node-box", x: 24, y: 30, width: 220, height: 72, rx: 10,
     "data-category": "asset",
   });
-  add(kind, "rect", {
-    class: "help-node-accent", x: 24, y: 38, width: 3, height: 56, rx: 1.5,
-    "data-category": "asset",
+  add(kind, "circle", {
+    class: "help-node-medallion", cx: 46, cy: 66, r: 18, "data-category": "asset",
   });
-  kind.append(specimenMark("AI_AGENT", "asset", "translate(38,42)"));
-  add(kind, "text", { class: "help-node-name", x: 62, y: 54 }, "checkout-bot");
-  add(kind, "text", { class: "help-node-kind", x: 62, y: 68, "data-category": "asset" }, "AI AGENT");
+  kind.append(specimenMark("AI_AGENT", "asset", "translate(38,58)"));
+  add(kind, "text", { class: "help-node-name", x: 74, y: 60 }, "checkout-bot");
+  add(kind, "text", { class: "help-node-kind", x: 74, y: 76, "data-category": "asset" }, "AI AGENT");
 
   const sev = group("sev");
-  add(sev, "circle", { class: "help-node-dot", cx: 41, cy: 85, r: 4 });
-  add(sev, "text", { class: "help-node-sev", x: 50, y: 89 }, "High");
+  add(sev, "circle", { class: "help-node-dot", cx: 80, cy: 90, r: 4 });
+  add(sev, "text", { class: "help-node-sev", x: 89, y: 94 }, "High");
 
   const aars = group("aars");
-  add(aars, "text", { class: "help-node-aars", x: 230, y: 89, "text-anchor": "end" }, "AARS 78");
+  add(aars, "text", { class: "help-node-aars", x: 230, y: 94, "text-anchor": "end" }, "AARS 78");
 
   // The negated edge, and the node it raises.
   const absent = group("absent");
@@ -420,10 +419,13 @@ function anatomySvg() {
     class: "help-node-box", x: 414, y: 42, width: 208, height: 48, rx: 10,
     "data-category": "vuln",
   });
+  add(signal, "circle", {
+    class: "help-node-medallion", cx: 436, cy: 66, r: 15, "data-category": "vuln",
+  });
   signal.append(specimenMark("MISSING_GUARDRAIL", "vuln", "translate(428,58)"));
-  add(signal, "text", { class: "help-node-name", x: 452, y: 62 }, "No Guardrail");
+  add(signal, "text", { class: "help-node-name", x: 458, y: 62 }, "No Guardrail");
   add(signal, "text", {
-    class: "help-node-kind", x: 452, y: 76, "data-category": "vuln",
+    class: "help-node-kind", x: 458, y: 76, "data-category": "vuln",
   }, "RISK SIGNAL");
 
   return svg;
