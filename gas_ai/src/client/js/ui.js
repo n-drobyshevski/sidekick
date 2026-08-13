@@ -12,6 +12,7 @@
 //   feedback.js  loading / empty / error / toast / dialog / help tip
 //   sheet.js     the drill-down overlay and its section+row vocabulary
 //   combobox.js  the searchable portaled listbox
+//   rail.js      one value drawn on the shared 0–100 axis, and edited on it
 //   portals.js   the open-portal count the sheet's focus trap defers to
 
 export { clear, downloadText, el, motionOk } from "./ui/dom.js";
@@ -30,4 +31,5 @@ export {
   closeActiveSheet, openSheet, sectionLabel, sheetRow, sheetSection,
 } from "./ui/sheet.js";
 export { filterCombobox } from "./ui/combobox.js";
+export { pointRail, railScale } from "./ui/rail.js";
 export { debounce, onPageTeardown, runPageTeardown } from "./ui/timing.js";

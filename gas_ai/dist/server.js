@@ -1585,6 +1585,36 @@ var Server = (() => {
     });
     return dead;
   }
+  function gapMatchTally(rule, codeLists) {
+    var _a4;
+    const perRule = rule.gapPoints.map(() => 0);
+    const byCode = {};
+    let fallback = 0;
+    let total = 0;
+    for (const list2 of codeLists != null ? codeLists : []) {
+      if (!Array.isArray(list2)) continue;
+      const seen = /* @__PURE__ */ new Set();
+      for (const raw of list2) {
+        const code = cleanGapCode(raw);
+        if (!code || seen.has(code)) continue;
+        seen.add(code);
+        byCode[code] = ((_a4 = byCode[code]) != null ? _a4 : 0) + 1;
+        total++;
+        let matched = false;
+        for (let i = 0; i < rule.gapPoints.length; i++) {
+          const row = rule.gapPoints[i];
+          const hit = row.match === "exact" ? code === row.code : code.startsWith(row.code);
+          if (hit) {
+            perRule[i] = perRule[i] + 1;
+            matched = true;
+            break;
+          }
+        }
+        if (!matched) fallback++;
+      }
+    }
+    return { perRule, fallback, total, byCode };
+  }
   function pointsPhrase(n) {
     return n === 1 ? "1 point" : `${n} points`;
   }
@@ -2934,7 +2964,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "566691a700fc" : "dev";
+  var BUILD_ID = true ? "60bd7dba55db" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -5441,6 +5471,7 @@ var Server = (() => {
   var PREVIEW_MOVERS_MAX = 50;
   var SAMPLE_SEVERITIES_MAX = 50;
   var SAMPLE_GAPS_MAX = 30;
+  var GAP_CENSUS_MAX = 200;
   function ruleState() {
     const stored = getAarsRule2();
     const scoredVersion = getScoredRuleVersion2();
@@ -5487,6 +5518,14 @@ var Server = (() => {
       const before = loadAssets();
       const after = scoreAssetsWith(proposed);
       const beforeById = new Map(before.map((n) => [n.id, n]));
+      const tally = gapMatchTally(
+        proposed,
+        before.map((n) => {
+          var _a5, _b2;
+          return ((_b2 = (_a5 = n.aarsInput) == null ? void 0 : _a5.gaps) != null ? _b2 : []).map((g) => g.code);
+        })
+      );
+      const census = Object.keys(tally.byCode).map((code) => ({ code, assets: tally.byCode[code] })).sort((x, y) => y.assets - x.assets || x.code.localeCompare(y.code)).slice(0, GAP_CENSUS_MAX);
       const movers = [];
       for (const a of after) {
         const b = beforeById.get(a.id);
@@ -5524,6 +5563,14 @@ var Server = (() => {
         summary: ruleSummary(proposed),
         bandRanges: bandRanges(proposed.bands),
         shadowedGapRules: shadowedGapRules(proposed),
+        // Coverage: how many gap instances each cascade row priced, what fell through to the
+        // fallback, and the codes the estate carries. A row at 0 here is NOT the same claim
+        // as shadowedGapRules — one can never fire, the other simply is not exercised — and
+        // the page reads them as two different sentences.
+        gapMatchCounts: tally.perRule,
+        gapFallbackCount: tally.fallback,
+        gapInstanceTotal: tally.total,
+        gapCensus: census,
         movers: movers.slice(0, PREVIEW_MOVERS_MAX),
         moverCount: movers.length,
         levelChangeCount: movers.filter((m) => m["levelChanged"]).length,

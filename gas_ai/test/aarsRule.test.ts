@@ -9,6 +9,7 @@ import {
   cleanAarsRule,
   cleanGapCode,
   MAX_GAP_RULES,
+  gapMatchTally,
   ruleSummary,
   rulesEqual,
   scoringEqual,
@@ -274,5 +275,91 @@ describe("rulesEqual / scoringEqual", () => {
         withRule({ severityPoints: { ...DEFAULT_AARS_RULE.severityPoints, MEDIUM: 30 } }),
       ),
     ).toBe(false);
+  });
+});
+
+describe("gapMatchTally", () => {
+  // Two agents from the sample estate's shape: over-privileged, unguardrailed, one of them
+  // also carrying the secondary LLM04 carve-out and a tenant finding shortId.
+  const ESTATE = [
+    ["LLM06", "NO_GUARDRAIL"],
+    ["LLM04", "LLM06", "NO_GUARDRAIL"],
+    ["ASI03", "SUB-082"],
+  ];
+
+  it("credits each gap to the FIRST row that matches it, exactly as pricing does", () => {
+    const t = gapMatchTally(DEFAULT_AARS_RULE, ESTATE);
+    const at = (code: string, match: "exact" | "prefix") =>
+      DEFAULT_AARS_RULE.gapPoints.findIndex((r) => r.match === match && r.code === code);
+
+    expect(t.perRule[at("NO_GUARDRAIL", "exact")]).toBe(2);
+    expect(t.perRule[at("LLM04", "exact")]).toBe(1);
+    // LLM06 twice — LLM04 was taken by its own exact row above the family.
+    expect(t.perRule[at("LLM", "prefix")]).toBe(2);
+    expect(t.perRule[at("ASI", "prefix")]).toBe(1);
+    expect(t.fallback).toBe(1); // SUB-082
+    expect(t.total).toBe(7);
+    expect(t.perRule.reduce((a, b) => a + b, 0) + t.fallback).toBe(t.total);
+  });
+
+  it("moves a carve-out's count to the family when the carve-out drops below it", () => {
+    // The page's central claim — that order is meaning — as a number rather than a lede.
+    const rows = DEFAULT_AARS_RULE.gapPoints.slice();
+    const exactAt = rows.findIndex((r) => r.match === "exact" && r.code === "LLM04");
+    const [carveOut] = rows.splice(exactAt, 1);
+    rows.push(carveOut!);
+    const reordered = cleanAarsRule({ ...DEFAULT_AARS_RULE, gapPoints: rows });
+
+    const t = gapMatchTally(reordered, ESTATE);
+    const famAt = reordered.gapPoints.findIndex((r) => r.match === "prefix" && r.code === "LLM");
+    const nowAt = reordered.gapPoints.findIndex((r) => r.match === "exact" && r.code === "LLM04");
+    expect(t.perRule[nowAt]).toBe(0);
+    expect(t.perRule[famAt]).toBe(3);
+    // And the rule is now provably dead, not merely unexercised.
+    expect(shadowedGapRules(reordered)).toContain(nowAt);
+  });
+
+  it("scores an unexercised row at zero too — the page must tell the two apart", () => {
+    const t = gapMatchTally(DEFAULT_AARS_RULE, ESTATE);
+    const at = DEFAULT_AARS_RULE.gapPoints.findIndex(
+      (r) => r.match === "exact" && r.code === "DEPRECATED_MODEL",
+    );
+    expect(t.perRule[at]).toBe(0);
+    expect(shadowedGapRules(DEFAULT_AARS_RULE)).not.toContain(at);
+  });
+
+  it("counts an asset carrying a code twice once — pillar B prices the gap, not the row", () => {
+    const t = gapMatchTally(DEFAULT_AARS_RULE, [["LLM06", "llm06", " LLM06 "]]);
+    expect(t.total).toBe(1);
+    expect(t.byCode["LLM06"]).toBe(1);
+  });
+
+  it("counts distinct assets per code, which is what the picker's prevalence means", () => {
+    const t = gapMatchTally(DEFAULT_AARS_RULE, ESTATE);
+    expect(t.byCode).toEqual({
+      LLM06: 2, NO_GUARDRAIL: 2, LLM04: 1, ASI03: 1, "SUB-082": 1,
+    });
+  });
+
+  it("normalises codes the way the matcher does, so a lookup cannot disagree", () => {
+    const t = gapMatchTally(DEFAULT_AARS_RULE, [[" llm06 "]]);
+    expect(t.perRule[DEFAULT_AARS_RULE.gapPoints.findIndex((r) => r.code === "LLM")]).toBe(1);
+  });
+
+  it("survives an empty estate, a missing list and a junk row", () => {
+    expect(gapMatchTally(DEFAULT_AARS_RULE, []).total).toBe(0);
+    expect(gapMatchTally(DEFAULT_AARS_RULE, undefined as never).total).toBe(0);
+    expect(gapMatchTally(DEFAULT_AARS_RULE, [null as never, ["", "  "]]).total).toBe(0);
+  });
+
+  it("agrees with gapPointsFor about which row won, for every gap in the estate", () => {
+    const t = gapMatchTally(DEFAULT_AARS_RULE, ESTATE);
+    let priced = 0;
+    DEFAULT_AARS_RULE.gapPoints.forEach((row, i) => {
+      priced += t.perRule[i]! * row.points;
+    });
+    priced += t.fallback * DEFAULT_AARS_RULE.gapFallbackPoints;
+    const direct = ESTATE.flat().reduce((sum, c) => sum + gapPointsFor(c, DEFAULT_AARS_RULE), 0);
+    expect(priced).toBe(direct);
   });
 });
