@@ -13,6 +13,7 @@ import type { Severity } from "./config";
 import {
   edgeId,
   kindFromWizType,
+  severityRank,
   type FindingRow,
   type GEdge,
   type GNode,
@@ -454,10 +455,17 @@ export function mergeParts(parts: NormalizedPart[], syncedAt: string): {
   };
 }
 
-/** Worst → best, for deterministic issue ordering in the merged output. */
+/**
+ * Worst → best, for deterministic issue ordering in the merged output.
+ *
+ * Uses the shared `severityRank`: the inline `indexOf` this used to carry returned -1 for
+ * an unrecognised severity, sorting it BEFORE CRITICAL, where every other ranking in the
+ * codebase sorts it last. A fourth hand-written copy of a helper that had already been
+ * collapsed from three.
+ */
 export function issueOrder(a: IssueRow, b: IssueRow): number {
-  const rank = (s: Severity) => ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"].indexOf(s);
-  return rank(a.adjustedSeverity) - rank(b.adjustedSeverity) || (a.id < b.id ? -1 : 1);
+  return severityRank(a.adjustedSeverity) - severityRank(b.adjustedSeverity)
+    || (a.id < b.id ? -1 : 1);
 }
 
 export { classifyIssue };

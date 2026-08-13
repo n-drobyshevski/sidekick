@@ -50,10 +50,20 @@ export function toIso(ms: number | null): string | null {
   return new Date(Math.floor(ms / 1000) * 1000).toISOString().replace(".000Z", "Z");
 }
 
-/** Earliest of the given timestamps as canonical ISO (null if none parse). */
+/**
+ * Earliest of the given timestamps as canonical ISO (null if none parse).
+ *
+ * Folded rather than `Math.min(...parsed)`: spreading a large array into a call blows the
+ * argument limit and throws RangeError. The sibling OS-vulns tool hit this at scale and
+ * removed the spread from its copy of this file; this one still carried it.
+ */
 export function minIso(...values: unknown[]): string | null {
-  const parsed = values.map(parseTs).filter((t): t is number => t !== null);
-  return parsed.length ? toIso(Math.min(...parsed)) : null;
+  let min: number | null = null;
+  for (const v of values) {
+    const t = parseTs(v);
+    if (t !== null && (min === null || t < min)) min = t;
+  }
+  return min === null ? null : toIso(min);
 }
 
 /** Canonical ISO halfway between two timestamps (falls back to whichever parses). */

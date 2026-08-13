@@ -184,14 +184,24 @@ export function dataRowCount(tab: string): number {
   return Math.max(0, sheet(tab).getLastRow() - 1);
 }
 
-/** Update the first row where keyColumn === keyValue (returns false when absent). */
+/**
+ * Update the first row where keyColumn === keyValue (returns false when absent).
+ *
+ * `patch` is partial: a key the patch omits keeps whatever the row already held, which is
+ * what lets the sync checkpoint only the fields a hop actually advanced.
+ *
+ * Goes through `ensureHeaders` like every other write. It used to read the header row
+ * directly and skip any patch key whose column was missing — the exact failure that
+ * function's own comment describes, on the one write path that wasn't using it. A job
+ * checkpointing into a tab written before a column existed lost that field silently.
+ */
 export function updateWhere(tab: string, keyColumn: string, keyValue: unknown, patch: Rec): boolean {
   const sh = sheet(tab);
+  if (sh.getLastRow() < 2) return false;
+  const headers = ensureHeaders(sh, tab);
   const lastRow = sh.getLastRow();
-  const lastCol = sh.getLastColumn();
-  if (lastRow < 2) return false;
+  const lastCol = headers.length;
   const values = sh.getRange(1, 1, lastRow, lastCol).getValues();
-  const headers = values[0].map(String);
   const keyIdx = headers.indexOf(keyColumn);
   if (keyIdx < 0) return false;
   for (let i = 1; i < values.length; i++) {

@@ -12,6 +12,7 @@ import {
   type DataExposure,
 } from "./aars";
 import type { Severity } from "./config";
+import { conditionHolds } from "./riskConditions";
 import {
   AI_ASSET_KINDS,
   edgeId,
@@ -218,7 +219,7 @@ export function withSensitiveDataNodes(doc: GraphDoc): GraphDoc {
   const sensitiveEdges: GEdge[] = [];
   for (const node of doc.nodes) {
     if (node.kind === "SENSITIVE_DATA") continue;
-    if (!node.hasSensitiveData && !node.hasAccessToSensitiveData) continue;
+    if (!conditionHolds(node, "SENSITIVE_DATA")) continue;
     const sensId = `sensitive|${node.id}`;
     if (existing.has(sensId)) continue;
     const type: GEdge["type"] = node.hasSensitiveData
@@ -254,7 +255,7 @@ export function withInternetExposureNodes(doc: GraphDoc): GraphDoc {
   const exposureEdges: GEdge[] = [];
   for (const node of doc.nodes) {
     if (node.kind === "INTERNET_EXPOSURE") continue;
-    if (node.isAccessibleFromInternet !== true && node.isOpenToAllInternet !== true) continue;
+    if (!conditionHolds(node, "INTERNET_EXPOSURE")) continue;
     const expId = `internet|${node.id}`;
     if (existing.has(expId)) continue;
     exposureNodes.push({ id: expId, kind: "INTERNET_EXPOSURE", name: "Internet exposure" });
@@ -298,7 +299,7 @@ export function withExcessivePrivilegeNodes(doc: GraphDoc): GraphDoc {
   const privEdges: GEdge[] = [];
   for (const node of doc.nodes) {
     if (node.kind === "EXCESSIVE_PRIVILEGE") continue;
-    if (!node.hasAdminPrivileges && !node.hasHighPrivileges) continue;
+    if (!conditionHolds(node, "EXCESSIVE_PRIVILEGE")) continue;
     if (hasRealFinding.has(node.id)) continue;
     const privId = `excessive|${node.id}`;
     if (existing.has(privId)) continue;
@@ -341,7 +342,7 @@ export function withMissingGuardrailNodes(doc: GraphDoc): GraphDoc {
   const gapEdges: GEdge[] = [];
   for (const node of doc.nodes) {
     if (node.kind === "MISSING_GUARDRAIL") continue;
-    if (node.guardrailMissing !== true) continue;
+    if (!conditionHolds(node, "MISSING_GUARDRAIL")) continue;
     const gapId = `noguardrail|${node.id}`;
     if (existing.has(gapId)) continue;
     gapNodes.push({ id: gapId, kind: "MISSING_GUARDRAIL", name: "No guardrail" });
