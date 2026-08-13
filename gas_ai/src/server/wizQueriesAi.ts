@@ -244,6 +244,42 @@ export const Q_SA_EXCESSIVE_ACCESS = graphSearchQuery(
   "    }]\n",
 );
 
+/**
+ * The full privilege chain: agent → its execution identity → the sensitive resources that
+ * identity can actually reach. Transcribed from ai/queries/6_IAM.MD §6.3, which is a
+ * query run against this tenant, so the traversal shape is verified rather than guessed.
+ *
+ * This is the one that turns pillar C from a boolean into a quantity. `hasSensitiveData`
+ * on the agent says only "can reach something sensitive", and it is true for two thirds of
+ * the estate, so it ranks almost nothing; the reachable resources themselves are countable
+ * and nameable, and the count is what separates an agent that can read one bucket from one
+ * that can read thirty.
+ */
+export const Q_SA_SENSITIVE_DATA = graphSearchQuery(
+  "SidekickAiAgentSaSensitiveData",
+  "    type: \"AI_AGENT\"\n" +
+  "    select: true\n" +
+  "    relationships: [{\n" +
+  "      type: \"RUNS_AS\"\n" +
+  "      with: {\n" +
+  "        type: \"SERVICE_ACCOUNT\"\n" +
+  "        select: true\n" +
+  "        where: { OR: [\n" +
+  "          { hasAdminPrivileges: { EQUALS: true } }\n" +
+  "          { hasHighPrivileges: { EQUALS: true } }\n" +
+  "        ] }\n" +
+  "        relationships: [{\n" +
+  "          type: \"ALLOWS_ACCESS_TO\"\n" +
+  "          with: {\n" +
+  "            type: [\"BUCKET\", \"DATABASE\", \"VIRTUAL_MACHINE\"]\n" +
+  "            select: true\n" +
+  "            where: { hasSensitiveData: { EQUALS: true } }\n" +
+  "          }\n" +
+  "        }]\n" +
+  "      }\n" +
+  "    }]\n",
+);
+
 /** Human/role identities with high-privilege or admin access INTO agents. */
 export const Q_IDENTITY_ACCESS = graphSearchQuery(
   "SidekickAiIdentitiesWithAgentAccess",

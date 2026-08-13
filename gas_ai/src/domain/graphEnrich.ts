@@ -74,6 +74,60 @@ export function dataExposureOf(node: GNode): DataExposure {
   return "NONE";
 }
 
+/**
+ * How many DISTINCT sensitive resources each asset can actually reach, following the
+ * identity chain (`agent -RUNS_AS-> SA -ALLOWS_ACCESS_TO-> bucket`).
+ *
+ * This is the first term the score takes from the graph rather than from a flag on a node.
+ * `hasAccessToSensitiveData` says only "can reach something sensitive" and is true for two
+ * thirds of the estate, so it ranks almost nothing; a count separates the agent that can
+ * read one bucket from the one that can read thirty.
+ *
+ * Computed ONCE per sync over the whole document and persisted with the rest of the
+ * enrichment, never per request. Cost is one adjacency build plus one bounded walk per AI
+ * asset: O(V + E) to index and O(V + E) worst case per seed, on a graph the node budget
+ * already caps in the low hundreds. Depth is capped because the useful chain is two hops
+ * and an unbounded walk on a dense identity graph would be the expensive thing here.
+ */
+const REACH_MAX_DEPTH = 3;
+
+export function reachableSensitiveCounts(doc: GraphDoc): Record<string, number> {
+  const nodeById = indexBy(doc.nodes, (n) => n.id);
+  const out: Record<string, number> = {};
+
+  // Only traversal edges — an ISSUE or a synthetic risk stub is not a route to anything.
+  const adjacency = new Map<string, string[]>();
+  for (const e of doc.edges) {
+    if (e.type !== "RUNS_AS" && e.type !== "ALLOWS_ACCESS_TO" && e.type !== "USES") continue;
+    pushInto(adjacency, e.src, e.dst);
+  }
+  if (!adjacency.size) return out;
+
+  const holdsSensitive = (n: GNode | undefined) =>
+    !!n && n.kind !== "ISSUE" && (n.hasSensitiveData === true);
+
+  for (const node of doc.nodes) {
+    if (!AI_ASSET_KINDS.includes(node.kind)) continue;
+    const seen = new Set<string>([node.id]);
+    const reached = new Set<string>();
+    let frontier = [node.id];
+    for (let depth = 0; depth < REACH_MAX_DEPTH && frontier.length; depth++) {
+      const next: string[] = [];
+      for (const id of frontier) {
+        for (const dst of adjacency.get(id) ?? []) {
+          if (seen.has(dst)) continue;
+          seen.add(dst);
+          if (holdsSensitive(nodeById.get(dst))) reached.add(dst);
+          next.push(dst);
+        }
+      }
+      frontier = next;
+    }
+    if (reached.size) out[node.id] = reached.size;
+  }
+  return out;
+}
+
 const DAY_MS = 86_400_000;
 
 /**
@@ -98,15 +152,6 @@ export function isDormant(node: GNode, rule: AarsRule, now: string): boolean {
 }
 
 /**
- * Effective privilege as its own axis. ADMIN wins over HIGH — the same precedence
- * withExcessivePrivilegeNodes already uses for its label ("Admin privileges" beats
- * "Excessive rights"), so the score and the graph agree about which claim is stronger.
- *
- * Deliberately NOT folded into dataExposureOf: that function answers "what data can this
- * reach", this one answers "what can it do", and collapsing them is why `hasAdminPrivileges`
- * has never changed a score.
- */
-/**
  * The WORST business-impact rating across the asset's projects — the same "worst wins"
  * reading pillar A applies to issue severities. An asset in one LBI and one HBI project is
  * an HBI asset: the rating describes what the asset can hurt, and the worst thing it can
@@ -123,6 +168,15 @@ export function businessImpactOf(node: GNode): BusinessImpact {
   return worst;
 }
 
+/**
+ * Effective privilege as its own axis. ADMIN wins over HIGH — the same precedence
+ * withExcessivePrivilegeNodes already uses for its label ("Admin privileges" beats
+ * "Excessive rights"), so the score and the graph agree about which claim is stronger.
+ *
+ * Deliberately NOT folded into dataExposureOf: that function answers "what data can this
+ * reach", this one answers "what can it do", and collapsing them is why `hasAdminPrivileges`
+ * has never changed a score.
+ */
 export function privilegeOf(node: GNode): PrivilegeLevel {
   if (node.hasAdminPrivileges === true) return "ADMIN";
   if (node.hasHighPrivileges === true) return "HIGH";
@@ -308,6 +362,9 @@ export function enrichGraphDoc(
 ): GraphDoc {
   const open = issues.filter((i) => i.status === "OPEN");
   const byAsset = groupBy(open, (i) => i.assetId);
+  // One walk of the whole graph, not one per asset per request: the counts are computed
+  // here and persisted with the score, like every other piece of enrichment.
+  const reachable = reachableSensitiveCounts(doc);
 
   const nodes: GNode[] = doc.nodes.map((raw) => {
     const node: GNode = { ...raw };
@@ -341,8 +398,14 @@ export function enrichGraphDoc(
             // Conditions are always re-derived: they are a measurement of the node as it
             // is now, not a scoring input an operator pinned.
             conditions: conditionsHeldBy(node),
+            // Always re-derived: reach is a measurement of the graph as it is now, not a
+            // scoring input an operator pinned.
+            reachableSensitive: reachable[node.id] ?? 0,
           }
-        : deriveAarsInput(node, nodeIssues, rule, doc.syncedAt);
+        : {
+            ...deriveAarsInput(node, nodeIssues, rule, doc.syncedAt),
+            reachableSensitive: reachable[node.id] ?? 0,
+          };
       const result = computeAars(input, rule);
       node.aars = result.score;
       node.aarsSeverity = result.severity;

@@ -317,6 +317,8 @@ export function cleanAarsRule(raw: unknown): AarsRule {
     environmentRules,
     environmentPoints,
     businessImpactPoints,
+    reachPointsPer: clampInt(r["reachPointsPer"], DEFAULT_AARS_RULE.reachPointsPer, POINTS_MIN, POINTS_MAX),
+    reachCap: clampInt(r["reachCap"], DEFAULT_AARS_RULE.reachCap, POINTS_MIN, POINTS_MAX),
     bands,
   };
 }

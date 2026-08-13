@@ -129,6 +129,12 @@ export interface AarsInput {
   /** Absent reads as UNKNOWN, which the spec rule prices at zero. */
   businessImpact?: BusinessImpact;
   /**
+   * Distinct sensitive resources this asset can reach through the identity chain, counted
+   * from the graph by `reachableSensitiveCounts`. Absent reads as 0 — an estate whose
+   * chain query never ran must score as it did before, not as though nothing were reachable.
+   */
+  reachableSensitive?: number;
+  /**
    * The risk conditions this asset actually carries, as `ConditionKey` strings. Resolved
    * by the caller through `riskConditions.conditionHolds` so this module stays free of the
    * graph model — and so the score reads conditions from the one table the matrix reads.
@@ -154,6 +160,8 @@ export interface AarsResult {
     combination: number;
     /** Wiz's own business-impact rating for the asset's projects. Zero in the spec rule. */
     business: number;
+    /** Graph-derived: what the asset can actually reach. Zero in the spec rule. */
+    reach: number;
   };
   /** Which combination rules fired, in rule order — the evidence behind that number. */
   combinations?: Array<{ label: string; points: number }>;
@@ -174,11 +182,12 @@ export type PillarKey =
   | "privilege"
   | "environment"
   | "combination"
-  | "business";
+  | "business"
+  | "reach";
 
 export const PILLAR_KEYS: PillarKey[] = [
   "toxic", "compliance", "data", "exposure", "privilege", "environment", "combination",
-  "business",
+  "business", "reach",
 ];
 
 // ------------------------------------------------------------------------- the rule
@@ -360,6 +369,13 @@ export interface AarsRule {
   environmentPoints: Record<Environment, number>;
   /** Points per business-impact tier. UNKNOWN is pinned at 0 by `cleanAarsRule`. */
   businessImpactPoints: Record<BusinessImpact, number>;
+  /**
+   * Points per distinct reachable sensitive resource, and the ceiling on that term. Zero
+   * in the spec rule. `per` is deliberately small and `cap` low: reach is a real signal but
+   * a linear count would let one sprawling identity dominate every other consideration.
+   */
+  reachPointsPer: number;
+  reachCap: number;
   bands: AarsBands;
 }
 
@@ -430,6 +446,8 @@ export const DEFAULT_AARS_RULE: AarsRule = {
   // identically, and the default rule must keep reproducing it.
   environmentPoints: { PROD: 0, PREPROD: 0, NONPROD: 0, DEV: 0, UNCLASSIFIED: 0 },
   businessImpactPoints: { HBI: 0, MBI: 0, LBI: 0, UNKNOWN: 0 },
+  reachPointsPer: 0,
+  reachCap: 0,
   bands: { critical: 70, high: 50, medium: 30, low: 10 },
 };
 
@@ -505,6 +523,8 @@ export const AARS_V2_RULE: AarsRule = {
   environmentRules: DEFAULT_AARS_RULE.environmentRules.map((e) => ({ ...e })),
   environmentPoints: { PROD: 0, PREPROD: 0, NONPROD: 0, DEV: 0, UNCLASSIFIED: 0 },
   businessImpactPoints: { HBI: 0, MBI: 0, LBI: 0, UNKNOWN: 0 },
+  reachPointsPer: 0,
+  reachCap: 0,
   bands: { critical: 70, high: 50, medium: 30, low: 10 },
 };
 
@@ -542,6 +562,13 @@ export const AARS_V3_RULE: AarsRule = {
   environmentPoints: { PROD: 20, PREPROD: 8, NONPROD: 4, DEV: 2, UNCLASSIFIED: 0 },
   // Wiz's own rating of what the asset can hurt — the most direct impact signal available.
   businessImpactPoints: { HBI: 25, MBI: 12, LBI: 4, UNKNOWN: 0 },
+  // 4 points a resource, capped at 12. The cap is deliberately low, and not only because
+  // the thirtieth reachable bucket says nothing the third did not: impact is normalised
+  // against the SUM of the impact ceilings, so a term with a ceiling nothing in the estate
+  // reaches drags every other asset's impact fraction down. A cap has to be set to what is
+  // actually achievable, which is a per-tenant judgement the Rules page exists to make.
+  reachPointsPer: 4,
+  reachCap: 12,
   combinationRules: [
     {
       conditions: ["EXCESSIVE_PRIVILEGE", "SENSITIVE_DATA", "MISSING_GUARDRAIL"],
@@ -678,12 +705,16 @@ export function computeAars(input: AarsInput, rule: AarsRule = DEFAULT_AARS_RULE
   const privilege = rule.privilegePoints[input.privilege ?? "NONE"] ?? 0;
   const environment = rule.environmentPoints[input.environment ?? "UNCLASSIFIED"] ?? 0;
   const business = rule.businessImpactPoints[input.businessImpact ?? "UNKNOWN"] ?? 0;
+  const reach = Math.min(
+    rule.reachCap,
+    Math.max(0, Math.round((input.reachableSensitive ?? 0) * rule.reachPointsPer)),
+  );
 
   const fired = firedCombinations(input.conditions ?? [], rule);
   const combination = fired.reduce((acc, f) => acc + f.points, 0);
 
   const pillars = {
-    toxic, compliance, data, exposure, privilege, environment, combination, business,
+    toxic, compliance, data, exposure, privilege, environment, combination, business, reach,
   };
 
   let score: number;
@@ -694,7 +725,8 @@ export function computeAars(input: AarsInput, rule: AarsRule = DEFAULT_AARS_RULE
   } else {
     score = Math.min(
       AARS_MAX_SCORE,
-      toxic + compliance + data + exposure + privilege + environment + combination,
+      toxic + compliance + data + exposure + privilege + environment + combination +
+        business + reach,
     );
   }
 
@@ -775,6 +807,7 @@ export function pillarCeilings(rule: AarsRule): Record<PillarKey, number> {
     environment: maxOf(rule.environmentPoints),
     combination: rule.combinationRules.reduce((acc, c) => acc + c.points, 0),
     business: maxOf(rule.businessImpactPoints),
+    reach: rule.reachCap,
   };
 }
 

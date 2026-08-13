@@ -723,6 +723,10 @@ var Server = (() => {
     "SidekickAiAgentSaExcessiveAccess",
     '    type: "AI_AGENT"\n    select: true\n    relationships: [{\n      type: "RUNS_AS"\n      with: {\n        type: "SERVICE_ACCOUNT"\n        select: true\n        relationships: [{\n          type: "HAS_FINDING"\n          with: { type: ["EXCESSIVE_ACCESS_FINDING", "LATERAL_MOVEMENT_FINDING"], select: true }\n        }]\n      }\n    }]\n'
   );
+  var Q_SA_SENSITIVE_DATA = graphSearchQuery(
+    "SidekickAiAgentSaSensitiveData",
+    '    type: "AI_AGENT"\n    select: true\n    relationships: [{\n      type: "RUNS_AS"\n      with: {\n        type: "SERVICE_ACCOUNT"\n        select: true\n        where: { OR: [\n          { hasAdminPrivileges: { EQUALS: true } }\n          { hasHighPrivileges: { EQUALS: true } }\n        ] }\n        relationships: [{\n          type: "ALLOWS_ACCESS_TO"\n          with: {\n            type: ["BUCKET", "DATABASE", "VIRTUAL_MACHINE"]\n            select: true\n            where: { hasSensitiveData: { EQUALS: true } }\n          }\n        }]\n      }\n    }]\n'
+  );
   var Q_IDENTITY_ACCESS = graphSearchQuery(
     "SidekickAiIdentitiesWithAgentAccess",
     '    type: "AI_AGENT"\n    select: true\n    relationships: [{\n      type: "ALLOWS_ACCESS_TO"\n      direction: INBOUND\n      with: {\n        type: "ACCESS_ROLE_BINDING"\n        select: false\n        relationships: [\n          {\n            type: "BOUND_TO"\n            with: { type: ["USER_ACCOUNT", "SERVICE_ACCOUNT"], select: true }\n          }\n          {\n            type: "PERMITS_ACCESS_ROLE"\n            with: {\n              type: "ACCESS_ROLE"\n              select: true\n              where: { accessType: { EQUALS: ["HIGH_PRIVILEGE", "ADMIN"] } }\n            }\n          }\n        ]\n      }\n    }]\n'
@@ -1394,7 +1398,8 @@ var Server = (() => {
     "privilege",
     "environment",
     "combination",
-    "business"
+    "business",
+    "reach"
   ];
   var DEFAULT_AARS_RULE = {
     severityPoints: { CRITICAL: 50, HIGH: 35, MEDIUM: 20, LOW: 8 },
@@ -1457,6 +1462,8 @@ var Server = (() => {
     // identically, and the default rule must keep reproducing it.
     environmentPoints: { PROD: 0, PREPROD: 0, NONPROD: 0, DEV: 0, UNCLASSIFIED: 0 },
     businessImpactPoints: { HBI: 0, MBI: 0, LBI: 0, UNKNOWN: 0 },
+    reachPointsPer: 0,
+    reachCap: 0,
     bands: { critical: 70, high: 50, medium: 30, low: 10 }
   };
   var AARS_V2_RULE = {
@@ -1497,6 +1504,8 @@ var Server = (() => {
     environmentRules: DEFAULT_AARS_RULE.environmentRules.map((e) => ({ ...e })),
     environmentPoints: { PROD: 0, PREPROD: 0, NONPROD: 0, DEV: 0, UNCLASSIFIED: 0 },
     businessImpactPoints: { HBI: 0, MBI: 0, LBI: 0, UNKNOWN: 0 },
+    reachPointsPer: 0,
+    reachCap: 0,
     bands: { critical: 70, high: 50, medium: 30, low: 10 }
   };
   var AARS_V3_RULE = {
@@ -1511,6 +1520,13 @@ var Server = (() => {
     environmentPoints: { PROD: 20, PREPROD: 8, NONPROD: 4, DEV: 2, UNCLASSIFIED: 0 },
     // Wiz's own rating of what the asset can hurt — the most direct impact signal available.
     businessImpactPoints: { HBI: 25, MBI: 12, LBI: 4, UNKNOWN: 0 },
+    // 4 points a resource, capped at 12. The cap is deliberately low, and not only because
+    // the thirtieth reachable bucket says nothing the third did not: impact is normalised
+    // against the SUM of the impact ceilings, so a term with a ceiling nothing in the estate
+    // reaches drags every other asset's impact fraction down. A cap has to be set to what is
+    // actually achievable, which is a per-tenant judgement the Rules page exists to make.
+    reachPointsPer: 4,
+    reachCap: 12,
     combinationRules: [
       {
         conditions: ["EXCESSIVE_PRIVILEGE", "SENSITIVE_DATA", "MISSING_GUARDRAIL"],
@@ -1591,7 +1607,7 @@ var Server = (() => {
     return points.reduce((acc, p) => acc + p, 0);
   }
   function computeAars(input, rule = DEFAULT_AARS_RULE) {
-    var _a4, _b, _c, _d, _e, _f, _g, _h, _i, _j;
+    var _a4, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
     let toxic = worstSeverityPoints(input.issueSeverities, rule);
     toxic *= multiIssueFactor(input.issueSeverities.length, rule);
     toxic = Math.min(rule.pillarACap, Math.round(toxic));
@@ -1610,7 +1626,11 @@ var Server = (() => {
     const privilege = (_e = rule.privilegePoints[(_d = input.privilege) != null ? _d : "NONE"]) != null ? _e : 0;
     const environment = (_g = rule.environmentPoints[(_f = input.environment) != null ? _f : "UNCLASSIFIED"]) != null ? _g : 0;
     const business = (_i = rule.businessImpactPoints[(_h = input.businessImpact) != null ? _h : "UNKNOWN"]) != null ? _i : 0;
-    const fired = firedCombinations((_j = input.conditions) != null ? _j : [], rule);
+    const reach = Math.min(
+      rule.reachCap,
+      Math.max(0, Math.round(((_j = input.reachableSensitive) != null ? _j : 0) * rule.reachPointsPer))
+    );
+    const fired = firedCombinations((_k = input.conditions) != null ? _k : [], rule);
     const combination = fired.reduce((acc, f) => acc + f.points, 0);
     const pillars = {
       toxic,
@@ -1620,7 +1640,8 @@ var Server = (() => {
       privilege,
       environment,
       combination,
-      business
+      business,
+      reach
     };
     let score2;
     let composition;
@@ -1630,7 +1651,7 @@ var Server = (() => {
     } else {
       score2 = Math.min(
         AARS_MAX_SCORE,
-        toxic + compliance + data + exposure + privilege + environment + combination
+        toxic + compliance + data + exposure + privilege + environment + combination + business + reach
       );
     }
     const result = {
@@ -1673,7 +1694,8 @@ var Server = (() => {
       privilege: maxOf(rule.privilegePoints),
       environment: maxOf(rule.environmentPoints),
       combination: rule.combinationRules.reduce((acc, c) => acc + c.points, 0),
-      business: maxOf(rule.businessImpactPoints)
+      business: maxOf(rule.businessImpactPoints),
+      reach: rule.reachCap
     };
   }
   function firedCombinations(conditions, rule = DEFAULT_AARS_RULE) {
@@ -1916,6 +1938,8 @@ var Server = (() => {
       environmentRules,
       environmentPoints,
       businessImpactPoints,
+      reachPointsPer: clampInt(r["reachPointsPer"], DEFAULT_AARS_RULE.reachPointsPer, POINTS_MIN, POINTS_MAX),
+      reachCap: clampInt(r["reachCap"], DEFAULT_AARS_RULE.reachCap, POINTS_MIN, POINTS_MAX),
       bands
     };
   }
@@ -3643,7 +3667,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "c455084ac0aa" : "dev";
+  var BUILD_ID = true ? "d49c49dd4f19" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -4149,6 +4173,35 @@ var Server = (() => {
     if (!Array.isArray(entities)) return [];
     return entities.map((e) => normalizeCloudResource(e)).filter((n) => n !== null);
   }
+  function normalizeSensitiveChainPage(rows) {
+    const part = emptyPart();
+    for (const row of rows) {
+      const entities = entitiesOf(row);
+      part.nodes.push(...entities);
+      const agent = entities.find((e) => AI_ASSET_KINDS.includes(e.kind));
+      const sa = entities.find((e) => e.kind === "SERVICE_ACCOUNT");
+      const targets = entities.filter(
+        (e) => e.kind === "BUCKET" || e.kind === "DATABASE" || e.kind === "VIRTUAL_MACHINE"
+      );
+      if (!agent || !sa) continue;
+      part.edges.push({
+        id: edgeId(agent.id, "RUNS_AS", sa.id),
+        src: agent.id,
+        dst: sa.id,
+        type: "RUNS_AS"
+      });
+      for (const t of targets) {
+        part.edges.push({
+          id: edgeId(sa.id, "ALLOWS_ACCESS_TO", t.id),
+          src: sa.id,
+          dst: t.id,
+          type: "ALLOWS_ACCESS_TO",
+          accessType: accessTypeOf(row)
+        });
+      }
+    }
+    return part;
+  }
   function accessTypeOf(row) {
     var _a4;
     const entities = row == null ? void 0 : row["entities"];
@@ -4258,6 +4311,39 @@ var Server = (() => {
     if (node2.hasAccessToSensitiveData || node2.hasSensitiveData) return "SENSITIVE";
     if (node2.hasHighPrivileges || node2.hasAdminPrivileges) return "DATA_ACCESS";
     return "NONE";
+  }
+  var REACH_MAX_DEPTH = 3;
+  function reachableSensitiveCounts(doc) {
+    var _a4;
+    const nodeById = indexBy(doc.nodes, (n) => n.id);
+    const out = {};
+    const adjacency = /* @__PURE__ */ new Map();
+    for (const e of doc.edges) {
+      if (e.type !== "RUNS_AS" && e.type !== "ALLOWS_ACCESS_TO" && e.type !== "USES") continue;
+      pushInto(adjacency, e.src, e.dst);
+    }
+    if (!adjacency.size) return out;
+    const holdsSensitive = (n) => !!n && n.kind !== "ISSUE" && n.hasSensitiveData === true;
+    for (const node2 of doc.nodes) {
+      if (!AI_ASSET_KINDS.includes(node2.kind)) continue;
+      const seen = /* @__PURE__ */ new Set([node2.id]);
+      const reached = /* @__PURE__ */ new Set();
+      let frontier = [node2.id];
+      for (let depth = 0; depth < REACH_MAX_DEPTH && frontier.length; depth++) {
+        const next = [];
+        for (const id of frontier) {
+          for (const dst of (_a4 = adjacency.get(id)) != null ? _a4 : []) {
+            if (seen.has(dst)) continue;
+            seen.add(dst);
+            if (holdsSensitive(nodeById.get(dst))) reached.add(dst);
+            next.push(dst);
+          }
+        }
+        frontier = next;
+      }
+      if (reached.size) out[node2.id] = reached.size;
+    }
+    return out;
   }
   var DAY_MS2 = 864e5;
   function isDormant(node2, rule, now) {
@@ -4383,8 +4469,9 @@ var Server = (() => {
   function enrichGraphDoc(doc, issues2, hints, rule = DEFAULT_AARS_RULE) {
     const open = issues2.filter((i) => i.status === "OPEN");
     const byAsset = groupBy(open, (i) => i.assetId);
+    const reachable = reachableSensitiveCounts(doc);
     const nodes = doc.nodes.map((raw) => {
-      var _a4, _b, _c, _d, _e;
+      var _a4, _b, _c, _d, _e, _f, _g;
       const node2 = { ...raw };
       const nodeIssues = (_a4 = byAsset.get(node2.id)) != null ? _a4 : [];
       if (nodeIssues.length) {
@@ -4409,8 +4496,14 @@ var Server = (() => {
           businessImpact: (_e = hint.businessImpact) != null ? _e : businessImpactOf(node2),
           // Conditions are always re-derived: they are a measurement of the node as it
           // is now, not a scoring input an operator pinned.
-          conditions: conditionsHeldBy(node2)
-        } : deriveAarsInput(node2, nodeIssues, rule, doc.syncedAt);
+          conditions: conditionsHeldBy(node2),
+          // Always re-derived: reach is a measurement of the graph as it is now, not a
+          // scoring input an operator pinned.
+          reachableSensitive: (_f = reachable[node2.id]) != null ? _f : 0
+        } : {
+          ...deriveAarsInput(node2, nodeIssues, rule, doc.syncedAt),
+          reachableSensitive: (_g = reachable[node2.id]) != null ? _g : 0
+        };
         const result = computeAars(input, rule);
         node2.aars = result.score;
         node2.aarsSeverity = result.severity;
@@ -5560,6 +5653,19 @@ var Server = (() => {
         run: "graphSearch",
         query: Q_SA_EXCESSIVE_ACCESS,
         normalize: normalizeRunsAsPage,
+        optional: true
+      },
+      // The agent -> identity -> sensitive-resource chain. Optional like every other
+      // relationship step: if this tenant's schema rejects the traversal the sync records a
+      // skipped step rather than failing, which is what makes a query transcribed from a doc
+      // safe to ship without a live tenant to test it against.
+      {
+        id: "SENSITIVE_CHAIN",
+        area: "dspm",
+        writes: ["ai_edges (ALLOWS_ACCESS_TO)", "ai_assets"],
+        run: "graphSearch",
+        query: Q_SA_SENSITIVE_DATA,
+        normalize: normalizeSensitiveChainPage,
         optional: true
       },
       {

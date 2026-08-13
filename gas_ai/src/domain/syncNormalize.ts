@@ -11,6 +11,7 @@
 
 import type { Severity } from "./config";
 import {
+  AI_ASSET_KINDS,
   edgeId,
   kindFromWizType,
   severityRank,
@@ -386,6 +387,46 @@ function entitiesOf(row: Rec): GNode[] {
   return entities
     .map((e) => normalizeCloudResource(e as Rec))
     .filter((n): n is GNode => n !== null);
+}
+
+/**
+ * agent → SERVICE_ACCOUNT → sensitive BUCKET/DATABASE/VIRTUAL_MACHINE page → the two edges
+ * that chain implies.
+ *
+ * The row carries the matched entities of one path, not its edges, so both hops are
+ * reconstructed from the entity kinds present — the same reconstruction every other
+ * graphSearch normalizer here performs. The data resources arrive already filtered to
+ * `hasSensitiveData: true` by the query, and `normalizeCloudResource` reads that flag off
+ * each one anyway, so the reachability walk downstream never has to trust the filter.
+ */
+export function normalizeSensitiveChainPage(rows: Rec[]): NormalizedPart {
+  const part = emptyPart();
+  for (const row of rows) {
+    const entities = entitiesOf(row);
+    part.nodes.push(...entities);
+    const agent = entities.find((e) => AI_ASSET_KINDS.includes(e.kind));
+    const sa = entities.find((e) => e.kind === "SERVICE_ACCOUNT");
+    const targets = entities.filter(
+      (e) => e.kind === "BUCKET" || e.kind === "DATABASE" || e.kind === "VIRTUAL_MACHINE",
+    );
+    if (!agent || !sa) continue;
+    part.edges.push({
+      id: edgeId(agent.id, "RUNS_AS", sa.id),
+      src: agent.id,
+      dst: sa.id,
+      type: "RUNS_AS",
+    });
+    for (const t of targets) {
+      part.edges.push({
+        id: edgeId(sa.id, "ALLOWS_ACCESS_TO", t.id),
+        src: sa.id,
+        dst: t.id,
+        type: "ALLOWS_ACCESS_TO",
+        accessType: accessTypeOf(row),
+      });
+    }
+  }
+  return part;
 }
 
 /**

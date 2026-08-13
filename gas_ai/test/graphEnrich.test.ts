@@ -7,6 +7,7 @@ import {
   buildAarsHintsFromFindings,
   businessImpactOf,
   conditionsHeldBy,
+  reachableSensitiveCounts,
   dataExposureOf,
   deriveAarsInput,
   enrichGraphDoc,
@@ -20,7 +21,7 @@ import {
 import { DEFAULT_AARS_RULE, gapPointsFor, type AarsRule } from "../src/domain/aars";
 import { cleanAarsRule } from "../src/domain/aarsRule";
 import type { Severity } from "../src/domain/config";
-import type { FindingRow, GNode, GraphDoc, IssueRow } from "../src/domain/graphTypes";
+import type { FindingRow, GEdge, GNode, GraphDoc, IssueRow } from "../src/domain/graphTypes";
 import { SEED_AARS_HINTS, SEED_ISSUES, seedGraphDoc } from "../src/server/sampleData";
 
 const T = "2026-06-28T05:00:00Z";
@@ -401,6 +402,69 @@ describe("conditionsHeldBy", () => {
     expect(held).toContain("MISSING_GUARDRAIL");
     // A conjunction naming INTERNET_EXPOSURE must not fire on "we have not checked".
     expect(held).not.toContain("INTERNET_EXPOSURE");
+  });
+});
+
+describe("reachableSensitiveCounts — the first graph-derived term", () => {
+  const doc = (nodes: GNode[], edges: Array<[string, GEdge["type"], string]>): GraphDoc => ({
+    nodes,
+    edges: edges.map(([src, type, dst]) => ({ id: `${src}|${type}|${dst}`, src, dst, type })),
+    syncedAt: T,
+  });
+  const agent = (id: string): GNode => ({ id, kind: "AI_AGENT", name: id }) as GNode;
+  const sa = (id: string): GNode => ({ id, kind: "SERVICE_ACCOUNT", name: id }) as GNode;
+  const bucket = (id: string, sensitive = true): GNode =>
+    ({ id, kind: "BUCKET", name: id, hasSensitiveData: sensitive }) as GNode;
+
+  it("follows agent -> identity -> sensitive resource", () => {
+    const counts = reachableSensitiveCounts(doc(
+      [agent("a"), sa("sa"), bucket("b1"), bucket("b2")],
+      [["a", "RUNS_AS", "sa"], ["sa", "ALLOWS_ACCESS_TO", "b1"], ["sa", "ALLOWS_ACCESS_TO", "b2"]],
+    ));
+    expect(counts["a"]).toBe(2);
+  });
+
+  it("counts DISTINCT resources — two routes to one bucket is one bucket", () => {
+    const counts = reachableSensitiveCounts(doc(
+      [agent("a"), sa("sa1"), sa("sa2"), bucket("b1")],
+      [["a", "RUNS_AS", "sa1"], ["a", "RUNS_AS", "sa2"],
+       ["sa1", "ALLOWS_ACCESS_TO", "b1"], ["sa2", "ALLOWS_ACCESS_TO", "b1"]],
+    ));
+    expect(counts["a"]).toBe(1);
+  });
+
+  it("ignores resources that are not sensitive", () => {
+    const counts = reachableSensitiveCounts(doc(
+      [agent("a"), sa("sa"), bucket("plain", false)],
+      [["a", "RUNS_AS", "sa"], ["sa", "ALLOWS_ACCESS_TO", "plain"]],
+    ));
+    expect(counts["a"]).toBeUndefined();
+  });
+
+  it("terminates on a cycle", () => {
+    const counts = reachableSensitiveCounts(doc(
+      [agent("a"), sa("sa1"), sa("sa2"), bucket("b1")],
+      [["a", "RUNS_AS", "sa1"], ["sa1", "ALLOWS_ACCESS_TO", "sa2"],
+       ["sa2", "ALLOWS_ACCESS_TO", "sa1"], ["sa2", "ALLOWS_ACCESS_TO", "b1"]],
+    ));
+    expect(counts["a"]).toBe(1);
+  });
+
+  it("does not traverse ISSUE or synthetic risk edges", () => {
+    // HAS_ISSUE is evidence hanging off an asset, not a route to anything.
+    const counts = reachableSensitiveCounts(doc(
+      [agent("a"), { id: "i", kind: "ISSUE", name: "i" } as GNode, bucket("b1")],
+      [["a", "HAS_ISSUE", "i"], ["i", "ALLOWS_ACCESS_TO", "b1"]],
+    ));
+    expect(counts["a"]).toBeUndefined();
+  });
+
+  it("scores only AI assets — a bucket is not asked what it can reach", () => {
+    const counts = reachableSensitiveCounts(doc(
+      [sa("sa"), bucket("b1")],
+      [["sa", "ALLOWS_ACCESS_TO", "b1"]],
+    ));
+    expect(counts["sa"]).toBeUndefined();
   });
 });
 

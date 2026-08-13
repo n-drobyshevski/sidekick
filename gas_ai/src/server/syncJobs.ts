@@ -21,6 +21,7 @@ import {
   normalizePrincipalsPage,
   normalizeRuleAssetsPage,
   normalizeRunsAsPage,
+  normalizeSensitiveChainPage,
   partIsEmpty,
   reconcileIssues,
   type NormalizedPart,
@@ -60,6 +61,7 @@ import {
   Q_PRINCIPALS,
   Q_RULE_ASSETS,
   Q_SA_EXCESSIVE_ACCESS,
+  Q_SA_SENSITIVE_DATA,
 } from "./wizQueriesAi";
 
 export interface StartResult {
@@ -185,6 +187,19 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       run: "graphSearch",
       query: Q_SA_EXCESSIVE_ACCESS,
       normalize: normalizeRunsAsPage,
+      optional: true,
+    },
+    // The agent -> identity -> sensitive-resource chain. Optional like every other
+    // relationship step: if this tenant's schema rejects the traversal the sync records a
+    // skipped step rather than failing, which is what makes a query transcribed from a doc
+    // safe to ship without a live tenant to test it against.
+    {
+      id: "SENSITIVE_CHAIN",
+      area: "dspm",
+      writes: ["ai_edges (ALLOWS_ACCESS_TO)", "ai_assets"],
+      run: "graphSearch",
+      query: Q_SA_SENSITIVE_DATA,
+      normalize: normalizeSensitiveChainPage,
       optional: true,
     },
     {
