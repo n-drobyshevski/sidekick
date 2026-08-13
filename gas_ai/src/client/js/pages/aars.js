@@ -12,24 +12,46 @@
 //    recreates an input the user is typing in drops the keystroke and sends focus to
 //    <body>; the previous version of this page did that on four separate controls. sync()
 //    below writes values and text in place, and the only rebuilds left are structural
-//    (adding, removing or reordering a cascade row), which restore focus explicitly.
+//    (adding, removing or reordering a cascade row, adding or dropping a sandbox gap
+//    chip), which restore focus explicitly.
+//
+// 3. A gap code is an opaque key that the codebook ANNOTATES. Nothing the codebook says
+//    reaches the score: the cascade still matches on the literal string, so a title this
+//    page gets wrong is a wrong caption, never a wrong number. That is what lets the page
+//    carry four moving vocabularies without the model inheriting their instability.
 
 import { call } from "../api.js";
 import {
   aarsChip,
   clear,
+  closeActiveSheet,
   confirmDialog,
   debounce,
   downloadText,
   el,
   field,
   emptyState,
+  filterCombobox,
+  helpTip,
   openSheet,
+  pointRail,
+  railScale,
+  segmented,
   sevBadge,
+  sheetSection,
   skeleton,
   statusPill,
   toast,
 } from "../ui.js";
+import {
+  CODEBOOK,
+  gapCodeOptions,
+  lookupGap,
+  normalizeCode,
+  pricedAboveCount,
+  resolveGap,
+  tenantCodeOptions,
+} from "../codebook.js";
 
 const SEVERITY_KEYS = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
 // Worst first — the order the thresholds descend in.
@@ -51,8 +73,13 @@ const EXPOSURE_LABELS = {
   DATA_ACCESS: "Data access",
   NONE: "No data access",
 };
-const COMMON_GAP_CODES = ["LLM06", "LLM05", "LLM04", "ASI10", "NO_GUARDRAIL", "DEPRECATED_MODEL"];
 const MOVERS_INLINE = 8;
+/** Codes offered as one-tap chips in the sandbox, taken from what the estate actually has. */
+const SANDBOX_QUICK_CODES = 6;
+const MATCH_OPTIONS = [
+  { value: "exact", label: "is exactly" },
+  { value: "prefix", label: "starts with" },
+];
 
 // A whole-inventory rescore per keystroke would be unkind to the sheet and the operator;
 // a sandbox score is one pure call and can keep up.
@@ -203,6 +230,9 @@ export async function renderAarsRules(main, _params, ctx) {
   let sampleSeq = 0;
   let sampleResult = null;
   let sandboxResultHost = null;
+  let sandboxCodeBox = null;
+  let sandboxQuick = null;
+  const sandboxChips = el("div", { class: "gap-chips" });
   let saving = false; // held OUT of the DOM, so no repaint can re-enable Save mid-flight
   let leaving = false; // set once the nav guard has been answered, so it fires only once
   let sample = {
@@ -220,6 +250,49 @@ export async function renderAarsRules(main, _params, ctx) {
   const GAP_MAX = limits.maxGapRules ?? 60;
 
   const isDirty = () => JSON.stringify(draft) !== JSON.stringify(saved);
+
+  // ------------------------------------------------------------------ the code vocabulary
+  // The census arrives with the preview, never with the rule: loading this page must not
+  // cost an inventory pass. Until the first preview lands the picker is the codebook alone,
+  // which is already the whole point — the counts are a bonus, not the feature.
+  let censusByCode = {};
+
+  /** Codebook first, then whatever this tenant carries that the codebook never heard of. */
+  function codeOptions() {
+    return gapCodeOptions(censusByCode).concat(tenantCodeOptions(censusByCode));
+  }
+
+  /** Every code-entry control on the page, so a fresh census can reach all of them at once. */
+  const codeControls = [];
+  /** The subset the cascade owns — discarded and rebuilt on every structural change. */
+  const cascadeControls = [];
+  function refreshCodeOptions() {
+    const options = codeOptions();
+    for (const c of codeControls) c.setOptions(options);
+  }
+
+  /**
+   * One code picker: the page's monospace field, with the catalogue filtering under it.
+   * Editable rather than pick-only because tenant-specific Wiz finding shortIds (SUB-082)
+   * are a routine input here — the cascade's fallback price exists to govern them — and a
+   * pick-only control would make the one code nobody can look up the slowest to enter.
+   */
+  function codePicker({ value, ariaLabel, onChange, placeholder }) {
+    const box = filterCombobox({
+      value: value || "",
+      options: codeOptions(),
+      ariaLabel,
+      searchPlaceholder: placeholder || "code or meaning…",
+      editable: true,
+      allowCustom: true,
+      inputClass: "rule-code",
+      popClass: "combobox-pop--rich",
+      transform: normalizeCode,
+      onChange,
+    });
+    codeControls.push(box);
+    return box;
+  }
 
   // ------------------------------------------------------------------------ toolbar
   const versionPill = el("span", { class: "pill neutral" });
@@ -345,19 +418,41 @@ export async function renderAarsRules(main, _params, ctx) {
   );
 
   // ============================================================ section A — pillar A
-  const sevFields = {};
-  const rowA = el("div", { class: "rule-row" });
+  // Four lanes on the SAME 0-100 axis the hero stack and the band rail use, so CRITICAL 50
+  // is visibly five times LOW 8 and both sit over their own value on the rail below. The
+  // multiplier is drawn as the extension it causes and the cap as the line it is — which is
+  // what makes "four MEDIUM issues score the same as two" something you can see rather than
+  // a paragraph you have to take on trust.
+  const sevRails = {};
+  const railsA = el("div", { class: "rails" });
   for (const sev of SEVERITY_KEYS) {
-    const id = nextId("sev");
-    const input = numberInput(id, { value: draft.severityPoints[sev], min: 0, max: P_MAX });
-    input.addEventListener("input", () => {
-      draft.severityPoints[sev] = num(input.value, draft.severityPoints[sev]);
-      onEdit();
+    const rail = pointRail({
+      name: sev,
+      value: draft.severityPoints[sev],
+      max: P_MAX,
+      ariaLabel: `${sev} issue points`,
+      onChange: (v) => {
+        draft.severityPoints[sev] = v;
+        onEdit();
+      },
     });
-    const f = field(id, sev, input);
-    sevFields[sev] = { ...f, input };
-    rowA.append(f.node);
+    sevRails[sev] = rail;
+    railsA.append(rail);
   }
+  const capARail = pointRail({
+    name: "Pillar cap",
+    value: draft.pillarACap,
+    max: P_MAX,
+    ariaLabel: "Pillar A cap",
+    onChange: (v) => {
+      draft.pillarACap = v;
+      onEdit();
+    },
+  });
+  capARail.classList.add("rail--cap");
+  railsA.append(capARail, railScale(P_MAX));
+
+  const rowA = el("div", { class: "rule-row", style: "margin-top:14px" });
   const multId = nextId("mult");
   const multInput = numberInput(multId, {
     value: draft.multiIssueMultiplier, min: M_MIN, max: M_MAX, step: "0.05",
@@ -367,14 +462,9 @@ export async function renderAarsRules(main, _params, ctx) {
     onEdit();
   });
   const multField = { ...field(multId, "More than one issue ×", multInput), input: multInput };
-  const capAId = nextId("capa");
-  const capAInput = numberInput(capAId, { value: draft.pillarACap, min: 0, max: P_MAX });
-  capAInput.addEventListener("input", () => {
-    draft.pillarACap = num(capAInput.value, draft.pillarACap);
-    onEdit();
-  });
-  const capAField = { ...field(capAId, "Pillar cap", capAInput), input: capAInput };
-  rowA.append(multField.node, capAField.node);
+  // The multiplier keeps a plain field: its effect is the extension on EVERY lane above, so
+  // a lane of its own would draw the same fact twice.
+  rowA.append(multField.node);
 
   editor.append(
     section(
@@ -382,12 +472,16 @@ export async function renderAarsRules(main, _params, ctx) {
       "Only the asset's worst open issue scores; the others do not add. A second open issue " +
         "applies the multiplier once, and a ninth applies it no further — which is why an " +
         "asset with four MEDIUM issues scores the same as one with two.",
-      [rowA],
+      [railsA, rowA],
     ),
   );
 
   // ============================================================ section B — pillar B
   const cascadeBody = el("tbody", {});
+  // Hidden until the first preview lands, because the count it carries comes from the
+  // inventory rather than from the rule. A column of empty cells would read as "nothing
+  // matches" rather than "not measured yet".
+  const pricesTh = el("th", { class: "rule-prices", hidden: true }, "Prices");
   const cascadeTable = el(
     "div",
     { class: "table-wrap" },
@@ -406,7 +500,8 @@ export async function renderAarsRules(main, _params, ctx) {
           el("th", {}, "When the code"),
           el("th", {}, "Code"),
           el("th", {}, "Points"),
-          el("th", {}, "Note"),
+          pricesTh,
+          el("th", { class: "rule-noteh" }, "Note"),
           el("th", {}, el("span", { class: "visually-hidden" }, "Actions")),
         ),
       ),
@@ -420,20 +515,35 @@ export async function renderAarsRules(main, _params, ctx) {
     // prefix families would be shadowed the moment it was typed.
     draft.gapPoints.unshift({ match: "exact", code: "", points: 5 });
     renderCascade();
-    const first = cascadeBody.querySelector(".rule-code");
-    if (first) first.focus();
+    focusRow(0);
     onEdit();
   });
 
+  const refBtn = el("button", { class: "link" }, "Code reference");
+  refBtn.addEventListener("click", () => openCodeReference());
+
+  // The fallback IS the cascade's last step, so it is rendered as the table's last row
+  // rather than as a stray field beside the Add button. Built once here and moved into the
+  // row on every structural rebuild, like everything else on this page.
   const fbId = nextId("fb");
   const fbInput = numberInput(fbId, { value: draft.gapFallbackPoints, min: 0, max: P_MAX });
   fbInput.addEventListener("input", () => {
     draft.gapFallbackPoints = num(fbInput.value, draft.gapFallbackPoints);
     onEdit();
   });
+  const fbLabel = el(
+    "label",
+    { class: "field-label rule-fallback__name", for: fbId },
+    "Everything that falls through",
+  );
+  const fbCount = el("td", { class: "rule-prices num", hidden: true });
   const fbField = {
-    ...field(fbId, "Unmatched code scores", fbInput, "Governs tenant-specific finding IDs"),
     input: fbInput,
+    setChanged(changed, savedValue) {
+      fbLabel.classList.toggle("field--changed", !!changed);
+      if (changed) fbLabel.title = `Saved value: ${savedValue}`;
+      else fbLabel.removeAttribute("title");
+    },
   };
   const capBId = nextId("capb");
   const capBInput = numberInput(capBId, { value: draft.pillarBCap, min: 0, max: P_MAX });
@@ -444,24 +554,39 @@ export async function renderAarsRules(main, _params, ctx) {
   const capBField = { ...field(capBId, "Pillar cap", capBInput), input: capBInput };
 
   const testId = nextId("test");
-  const testInput = el("input", { type: "text", id: testId, class: "rule-code", placeholder: "e.g. SUB-082" });
   const testOut = el("span", { class: "small muted" });
-  testInput.addEventListener("input", () => {
-    const code = testInput.value.trim();
-    if (!code) {
-      setText(testOut, "");
-      return;
-    }
-    const hit = priceCode(draft, code);
-    setText(
-      testOut,
-      hit.index === -1
-        ? `No rule matches — priced at the fallback, ${hit.points} points.`
-        : `Rule ${hit.index + 1} matches — ${hit.points} points.`,
-    );
+  const testBox = codePicker({
+    value: "",
+    ariaLabel: "Test a code",
+    placeholder: "e.g. SUB-082",
+    onChange: (code) => {
+      if (!code) {
+        setText(testOut, "");
+        return;
+      }
+      const hit = priceCode(draft, code);
+      const entry = lookupGap(code);
+      setText(
+        testOut,
+        (entry ? `${entry.title} — ` : "") +
+          (hit.index === -1
+            ? `no rule matches, so it prices at the fallback: ${hit.points} points.`
+            : `rule ${hit.index + 1} matches: ${hit.points} points.`),
+      );
+    },
   });
-  const testField = field(testId, "Test a code", testInput);
-  testField.node.append(testOut);
+  // This one has a visible label, so the label IS the accessible name — the aria-label the
+  // picker carries for the unlabelled cascade cells would override it, which is exactly the
+  // voice-control break field() warns about.
+  testBox.focusable().id = testId;
+  testBox.focusable().removeAttribute("aria-label");
+  const testField = el(
+    "div",
+    { class: "field" },
+    el("label", { class: "field-label", for: testId }, "Test a code"),
+    testBox,
+    testOut,
+  );
 
   editor.append(
     section(
@@ -469,28 +594,38 @@ export async function renderAarsRules(main, _params, ctx) {
       "Each gap code is priced by the FIRST rule that matches it, so order is meaning: an " +
         "exact LLM04 must sit above the LLM family, or it prices as a primary gap.",
       [
+        el("div", { class: "rule-row", style: "margin-bottom:10px" }, refBtn),
         cascadeTable,
         el("div", { class: "rule-row", style: "margin-top:12px" },
-          addBtn, fbField.node, capBField.node, testField.node),
+          addBtn, capBField.node, testField),
       ],
     ),
   );
 
   // ============================================================ section C — pillar C
-  const expFields = {};
-  const rowC = el("div", { class: "rule-row" });
+  // The same lanes on the same axis as pillar A, with the amplifier as the same extension.
+  // That upgrades the old `after ×1.1: 22` hint from a footnote into the second segment of
+  // the bar it was describing all along.
+  const expRails = {};
+  const railsC = el("div", { class: "rails" });
   for (const pair of EXPOSURES) {
     const key = pair[0];
-    const id = nextId("exp");
-    const input = numberInput(id, { value: draft.dataExposurePoints[key], min: 0, max: P_MAX });
-    input.addEventListener("input", () => {
-      draft.dataExposurePoints[key] = num(input.value, draft.dataExposurePoints[key]);
-      onEdit();
+    const rail = pointRail({
+      name: EXPOSURE_LABELS[key],
+      value: draft.dataExposurePoints[key],
+      max: P_MAX,
+      ariaLabel: `${EXPOSURE_LABELS[key]} points`,
+      onChange: (v) => {
+        draft.dataExposurePoints[key] = v;
+        onEdit();
+      },
     });
-    const f = field(id, EXPOSURE_LABELS[key], input, " ");
-    expFields[key] = { ...f, input };
-    rowC.append(f.node);
+    expRails[key] = rail;
+    railsC.append(rail);
   }
+  railsC.append(railScale(P_MAX));
+
+  const rowC = el("div", { class: "rule-row", style: "margin-top:14px" });
   const ampId = nextId("amp");
   const ampInput = numberInput(ampId, {
     value: draft.dataAmplifier, min: M_MIN, max: M_MAX, step: "0.05",
@@ -500,14 +635,25 @@ export async function renderAarsRules(main, _params, ctx) {
     onEdit();
   });
   const ampField = { ...field(ampId, "5Rs amplifier ×", ampInput), input: ampInput };
-  rowC.append(ampField.node);
+  rowC.append(
+    ampField.node,
+    helpTip(
+      el("span", { class: "helptip-mark", "aria-hidden": "true" }, "?"),
+      [
+        "The one number on this page that is not a policy choice.",
+        "It is a systemic signal: the 5Rs data-security score sits at 53% across the whole " +
+          "estate, so every data-related point carries the same uplift regardless of asset.",
+      ],
+      { label: "About the 5Rs amplifier" },
+    ),
+  );
 
   editor.append(
     section(
       "Pillar C — data exposure",
       "The amplifier is a systemic signal, not a per-asset one: the 5Rs framework sits at " +
         "53% across the estate, so every data-related point carries the same uplift.",
-      [rowC],
+      [railsC, rowC],
     ),
   );
 
@@ -615,29 +761,103 @@ export async function renderAarsRules(main, _params, ctx) {
     );
   }
 
-  // ------------------------------------------------------------- cascade (structural)
-  function renderCascade() {
-    clear(cascadeBody);
-    draft.gapPoints.forEach((row, i) => {
-      const matchSel = el(
-        "select",
-        { "aria-label": `Match type, rule ${i + 1}` },
-        el("option", { value: "exact", selected: row.match === "exact" || null }, "is exactly"),
-        el("option", { value: "prefix", selected: row.match === "prefix" || null }, "starts with"),
+  // ----------------------------------------------------------------- cascade painters
+  /**
+   * The resolved meaning of a code, under the field that holds it. The mark is a SHAPE and
+   * the sentence says the same thing in words — this page has no colour to spend on a
+   * gloss, and the reader who most needs "not in the codebook" is the one who cannot see a
+   * mark at all.
+   */
+  function paintGloss(node, g) {
+    setText(node.firstChild, g.shape);
+    setText(node.lastChild, g.text);
+    node.classList.toggle("gap-gloss--unknown", !g.known);
+  }
+
+  /**
+   * How many gap instances in the live inventory this rule actually priced. Absent until
+   * the first preview lands, and hidden rather than zeroed — "not measured yet" and
+   * "matches nothing" are different statements.
+   */
+  function paintPrices(td, count, total) {
+    if (!td) return;
+    if (count === null || count === undefined) {
+      td.hidden = true;
+      return;
+    }
+    if (!td.firstChild) {
+      td.append(
+        el("span", { class: "cover-bar" }, el("i", {})),
+        el("span", { class: "cover-n" }),
       );
-      matchSel.addEventListener("change", () => {
-        row.match = matchSel.value;
-        onEdit();
+    }
+    td.hidden = false;
+    const share = total ? Math.round((count / total) * 100) : 0;
+    td.firstChild.firstChild.style.width = `${share}%`;
+    setText(td.lastChild, String(count));
+    setAttr(td, "aria-label", total
+      ? `prices ${count} of ${total} gap instances`
+      : `prices ${count} gap instances`);
+  }
+
+  // ------------------------------------------------------------- cascade (structural)
+  /** Put the caret in a row's code field — where every structural change should land. */
+  function focusRow(i) {
+    const tr = cascadeBody.querySelector(`tr[data-idx="${i}"]`);
+    const input = tr && tr.querySelector(".rule-code");
+    if (input) input.focus();
+  }
+
+  function renderCascade() {
+    // Close any open popover before the row holding it is discarded, or its portal count
+    // never comes back down and the sheet's focus trap stays deferred to a list that is gone.
+    for (const c of cascadeControls) {
+      c.closePopover();
+      const at = codeControls.indexOf(c);
+      if (at >= 0) codeControls.splice(at, 1);
+    }
+    cascadeControls.length = 0;
+    clear(cascadeBody);
+    const options = codeOptions();
+    draft.gapPoints.forEach((row, i) => {
+      const matchSel = segmented({
+        options: MATCH_OPTIONS,
+        value: row.match,
+        ariaLabel: `Match type, rule ${i + 1}`,
+        className: "seg--cell",
+        onChange: (v) => {
+          row.match = v;
+          onEdit();
+        },
       });
 
-      const codeInput = el("input", {
-        type: "text", value: row.code, class: "rule-code",
-        "aria-label": `Code, rule ${i + 1}`,
+      // The gloss under the field, wired as a DESCRIPTION rather than left as a sibling:
+      // in a table cell, DOM adjacency buys a screen reader nothing.
+      const glossId = nextId("gloss");
+      const gloss = el(
+        "span",
+        { class: "gap-gloss", id: glossId },
+        el("span", { class: "gap-gloss__mark", "aria-hidden": "true" }),
+        el("span", { class: "gap-gloss__text" }),
+      );
+      const codeBox = filterCombobox({
+        value: row.code,
+        options,
+        ariaLabel: `Code, rule ${i + 1}`,
+        searchPlaceholder: "code or meaning…",
+        editable: true,
+        allowCustom: true,
+        inputClass: "rule-code",
+        popClass: "combobox-pop--rich",
+        transform: normalizeCode,
+        onChange: (v) => {
+          row.code = v;
+          onEdit();
+        },
       });
-      codeInput.addEventListener("input", () => {
-        row.code = codeInput.value.toUpperCase();
-        onEdit();
-      });
+      codeControls.push(codeBox);
+      cascadeControls.push(codeBox);
+      codeBox.focusable().setAttribute("aria-describedby", glossId);
 
       const pointsInput = el("input", {
         type: "number", min: "0", max: String(P_MAX), value: String(row.points),
@@ -678,20 +898,120 @@ export async function renderAarsRules(main, _params, ctx) {
       });
 
       const meta = el("td", { class: "rule-rowmeta small muted" });
+      const prices = el("td", { class: "rule-prices num", hidden: true });
       const tr = el(
         "tr",
         { "data-idx": String(i) },
         el("td", { class: "num muted small" }, String(i + 1)),
         el("td", {}, matchSel),
-        el("td", {}, codeInput),
+        el("td", { class: "rule-codecell" }, codeBox, gloss),
         el("td", {}, pointsInput),
+        prices,
         meta,
         el("td", { class: "rule-rowbtns" }, up, down, del),
       );
       cascadeBody.append(tr);
     });
+
+    // The last step of a first-match cascade, drawn as the last step. It used to sit in a
+    // row of fields below the table, where nothing said it was part of the ladder at all.
+    cascadeBody.append(
+      el(
+        "tr",
+        { class: "rule-fallback" },
+        el("td", { class: "num muted small", "aria-hidden": "true" }, "↳"),
+        el("td", { colspan: "2" }, fbLabel),
+        el("td", {}, fbInput),
+        fbCount,
+        el("td", { class: "rule-rowmeta small muted" }, "governs tenant-specific finding IDs"),
+        el("td", {}),
+      ),
+    );
+
     addBtn.disabled = draft.gapPoints.length >= GAP_MAX;
     addBtn.title = addBtn.disabled ? `The cascade is limited to ${GAP_MAX} rules.` : "";
+  }
+
+  /**
+   * Insert a rule for a code ABOVE whatever would otherwise claim it, priced at what it
+   * costs today. Correctness by construction: someone who has never heard of LLM06 cannot
+   * produce a dead rule this way, and adding one does not silently move a score.
+   */
+  function addRuleForCode(code) {
+    const c = normalizeCode(code);
+    if (!c) return;
+    const hit = priceCode(draft, c);
+    const at = hit.index === -1 ? draft.gapPoints.length : hit.index;
+    draft.gapPoints.splice(at, 0, { match: "exact", code: c, points: hit.points });
+    renderCascade();
+    focusRow(at);
+    onEdit();
+  }
+
+  // -------------------------------------------------------------- the code reference
+  /**
+   * The whole vocabulary, browsable. Grouped by family, each group stating its edition and
+   * its standing — three of the four are moving, and one is a vendor page, so presenting
+   * them as equally authoritative would claim a confidence none of them supports.
+   */
+  function openCodeReference() {
+    openSheet(
+      (sheetBody) => {
+        for (const family of CODEBOOK) {
+          const rows = el("div", { class: "codebook-list" });
+          for (const [code, title, blurb] of family.entries) {
+            const hit = priceCode(draft, code);
+            const seen = censusByCode[code] || 0;
+            const add = el("button", { class: "link" }, "Add a rule");
+            add.setAttribute("aria-label", `Add a pricing rule for ${code}`);
+            add.addEventListener("click", () => {
+              addRuleForCode(code);
+              closeActiveSheet();
+              toast(`Added a rule for ${code}, above the rule that was pricing it.`);
+            });
+            rows.append(
+              el(
+                "div",
+                { class: "codebook-row" },
+                el("span", { class: "codebook-row__code" }, code),
+                el("span", { class: "codebook-row__title" }, title),
+                el("span", { class: "codebook-row__blurb small muted" }, blurb),
+                el(
+                  "span",
+                  { class: "codebook-row__price small muted" },
+                  hit.index === -1
+                    ? `fallback — ${hit.points} pts`
+                    : `rule ${hit.index + 1} — ${hit.points} pts`,
+                ),
+                el("span", { class: "codebook-row__seen small muted" },
+                  seen ? `${seen} ${seen === 1 ? "asset" : "assets"}` : "—"),
+                el("span", { class: "codebook-row__act" }, add),
+              ),
+            );
+          }
+          sheetBody.append(
+            sheetSection(
+              `${family.group} · ${family.vintage}`,
+              el("p", { class: "small muted", style: "margin:0 0 8px" }, family.standing),
+              rows,
+            ),
+          );
+        }
+        sheetBody.append(
+          el(
+            "p",
+            { class: "small muted", style: "margin-top:14px" },
+            "Titles are annotation. The score matches on the code itself, exactly as it " +
+              "always has, so a title this page gets wrong can never produce a wrong score.",
+          ),
+        );
+      },
+      {
+        title: "Compliance-gap codes",
+        subtitle: "What each code means, what this draft prices it at, and how many assets carry it",
+        ariaLabel: "The compliance-gap code reference",
+      },
+    );
   }
 
   // -------------------------------------------------------------------------- sandbox
@@ -709,17 +1029,6 @@ export async function renderAarsRules(main, _params, ctx) {
       countsRow.append(field(id, `${sev} issues`, input).node);
     }
 
-    const codesId = nextId("codes");
-    const codesInput = el("input", {
-      type: "text", id: codesId, class: "rule-code", style: "min-width:220px",
-      value: sample.gapCodes.join(", "),
-    });
-    codesInput.addEventListener("input", () => {
-      sample.gapCodes = codesInput.value.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
-      syncQuickAdd();
-      scheduleSample();
-    });
-
     const expId = nextId("sexp");
     const exposureSel = el(
       "select",
@@ -732,28 +1041,29 @@ export async function renderAarsRules(main, _params, ctx) {
       scheduleSample();
     });
 
-    const quickAdd = el("div", { class: "pill-row", style: "margin-top:10px" });
-    const quickBtns = {};
-    for (const code of COMMON_GAP_CODES) {
-      const btn = el("button", { class: "kind-pill" }, code);
-      btn.addEventListener("click", () => {
-        const at = sample.gapCodes.indexOf(code);
-        if (at >= 0) sample.gapCodes.splice(at, 1);
-        else sample.gapCodes.push(code);
-        setValue(codesInput, sample.gapCodes.join(", "));
-        syncQuickAdd();
+    // The gaps as chips rather than a comma-separated string, each one saying what the
+    // DRAFT rule prices it at — so the sandbox's own input explains the rule being edited.
+    const addId = nextId("addgap");
+    sandboxCodeBox = codePicker({
+      value: "",
+      ariaLabel: "Add a gap code",
+      placeholder: "code or meaning…",
+      onChange: (code) => {
+        const c = normalizeCode(code);
+        if (!c) return;
+        if (sample.gapCodes.indexOf(c) < 0) sample.gapCodes.push(c);
+        sandboxCodeBox.setValue("");
+        paintSandboxCodes();
         scheduleSample();
-        btn.focus();
-      });
-      quickBtns[code] = btn;
-      quickAdd.append(btn);
-    }
-    function syncQuickAdd() {
-      for (const code of COMMON_GAP_CODES) {
-        setAttr(quickBtns[code], "aria-pressed", sample.gapCodes.indexOf(code) >= 0 ? "true" : "false");
-      }
-    }
-    syncQuickAdd();
+      },
+    });
+    sandboxCodeBox.focusable().id = addId;
+    sandboxCodeBox.focusable().removeAttribute("aria-label");
+
+    // Quick-add reflects what the estate actually carries, not a constant somebody typed
+    // once. Empty until the first preview lands, which is honest: before then the page has
+    // no idea what is common here.
+    sandboxQuick = el("div", { class: "pill-row", style: "margin-top:10px" });
 
     sandboxResultHost = el("div", { class: "sandbox-result" });
     sandboxBody.append(
@@ -761,12 +1071,95 @@ export async function renderAarsRules(main, _params, ctx) {
         "Scored by the server with your draft rule — the same code that scores the real " +
           "inventory, so what you see here is what a matching asset would get."),
       countsRow,
-      el("div", { class: "rule-row" },
-        field(codesId, "Compliance gap codes", codesInput).node,
+      el(
+        "div",
+        { class: "field", style: "margin-top:12px" },
+        el("label", { class: "field-label", for: addId }, "Compliance gap codes"),
+        sandboxChips,
+        sandboxCodeBox,
+      ),
+      sandboxQuick,
+      el("div", { class: "rule-row", style: "margin-top:12px" },
         field(expId, "Data exposure", exposureSel).node),
-      quickAdd,
       sandboxResultHost,
     );
+    paintSandboxCodes();
+  }
+
+  /**
+   * The chosen gap codes, and the quick-add row beneath them. Structural — a chip appearing
+   * or leaving IS a change of shape — so focus is handed on explicitly, by position, the
+   * same recovery the cascade's remove button performs.
+   */
+  function paintSandboxCodes() {
+    clear(sandboxChips);
+    sample.gapCodes.forEach((code, i) => {
+      const entry = lookupGap(code);
+      const pts = priceCode(draft, code).points;
+      const drop = el("button", {
+        class: "chip-x", "aria-label": `Remove ${code}${entry ? ` — ${entry.title}` : ""}`,
+      }, "✕");
+      drop.addEventListener("click", () => {
+        sample.gapCodes.splice(i, 1);
+        paintSandboxCodes();
+        scheduleSample();
+        const next = sandboxChips.querySelectorAll(".chip-x");
+        const target = next[Math.min(i, next.length - 1)];
+        (target || sandboxCodeBox.focusable()).focus();
+      });
+      sandboxChips.append(
+        el(
+          "div",
+          { class: "gap-chip", title: entry ? `${code} — ${entry.title}` : `${code} — not in the codebook` },
+          el("span", { class: "gap-chip__code" }, code),
+          entry ? el("span", { class: "gap-chip__title" }, entry.title) : null,
+          el("span", { class: "gap-chip__pts num" }, `${pts} pts`),
+          drop,
+        ),
+      );
+    });
+    if (!sample.gapCodes.length) {
+      sandboxChips.append(el("span", { class: "small muted" }, "No gaps — pillar B scores 0."));
+    }
+    paintSandboxQuick();
+  }
+
+  /**
+   * Reprice the chips in place. Editing the cascade changes what each chip costs, but a
+   * chip appearing or leaving is the only thing that changes the chip ROW — so a keystroke
+   * mutates text here and never rebuilds a list that might hold the focus.
+   */
+  function syncSandboxPrices() {
+    const chips = sandboxChips.querySelectorAll(".gap-chip");
+    chips.forEach((chip, i) => {
+      const code = sample.gapCodes[i];
+      if (!code) return;
+      setText(chip.querySelector(".gap-chip__pts"), `${priceCode(draft, code).points} pts`);
+    });
+  }
+
+  function paintSandboxQuick() {
+    if (!sandboxQuick) return;
+    clear(sandboxQuick);
+    const common = (preview && preview.gapCensus ? preview.gapCensus : [])
+      .filter((c) => sample.gapCodes.indexOf(c.code) < 0)
+      .slice(0, SANDBOX_QUICK_CODES);
+    if (!common.length) return;
+    sandboxQuick.append(el("span", { class: "small muted" }, "Common here:"));
+    for (const { code, assets } of common) {
+      const entry = lookupGap(code);
+      const btn = el("button", {
+        class: "kind-pill",
+        title: `${entry ? entry.title + " — " : ""}on ${assets} ${assets === 1 ? "asset" : "assets"}`,
+      }, code);
+      btn.addEventListener("click", () => {
+        sample.gapCodes.push(code);
+        paintSandboxCodes();
+        scheduleSample();
+        sandboxCodeBox.focusable().focus();
+      });
+      sandboxQuick.append(btn);
+    }
   }
 
   // ============================================================================ sync
@@ -850,48 +1243,81 @@ export async function renderAarsRules(main, _params, ctx) {
       f.setChanged(saved.bands[band.key] !== v, saved.bands[band.key]);
     });
 
-    // --- pillar fields
+    // --- pillar A: the lanes carry the value, the multiplier's extension and the cap line
     for (const sev of SEVERITY_KEYS) {
-      const f = sevFields[sev];
-      setValue(f.input, draft.severityPoints[sev]);
-      f.setChanged(saved.severityPoints[sev] !== draft.severityPoints[sev], saved.severityPoints[sev]);
+      const rail = sevRails[sev];
+      rail.setValue(draft.severityPoints[sev]);
+      rail.setJump(draft.multiIssueMultiplier);
+      rail.setCap(draft.pillarACap);
+      rail.setChanged(
+        saved.severityPoints[sev] !== draft.severityPoints[sev], saved.severityPoints[sev]);
     }
+    capARail.setValue(draft.pillarACap);
+    capARail.setChanged(saved.pillarACap !== draft.pillarACap, saved.pillarACap);
     setValue(multField.input, draft.multiIssueMultiplier);
     multField.setChanged(saved.multiIssueMultiplier !== draft.multiIssueMultiplier, saved.multiIssueMultiplier);
-    setValue(capAField.input, draft.pillarACap);
-    capAField.setChanged(saved.pillarACap !== draft.pillarACap, saved.pillarACap);
 
     setValue(fbField.input, draft.gapFallbackPoints);
     fbField.setChanged(saved.gapFallbackPoints !== draft.gapFallbackPoints, saved.gapFallbackPoints);
     setValue(capBField.input, draft.pillarBCap);
     capBField.setChanged(saved.pillarBCap !== draft.pillarBCap, saved.pillarBCap);
 
+    // --- pillar C: same lanes, same axis. Its ceiling is DERIVED (top tier through the
+    // amplifier), never set, so the line carries no thumb — offering a handle for a number
+    // nobody chooses would be a lie about what this model lets you do.
     for (const pair of EXPOSURES) {
       const key = pair[0];
-      const f = expFields[key];
-      setValue(f.input, draft.dataExposurePoints[key]);
-      f.setChanged(saved.dataExposurePoints[key] !== draft.dataExposurePoints[key], saved.dataExposurePoints[key]);
-      const amplified = Math.round(draft.dataExposurePoints[key] * draft.dataAmplifier);
-      const hint = f.node.querySelector(".field-hint");
-      if (hint) setText(hint, `after ×${draft.dataAmplifier}: ${amplified}`);
+      const rail = expRails[key];
+      rail.setValue(draft.dataExposurePoints[key]);
+      rail.setJump(draft.dataAmplifier);
+      rail.setCap(capC, { derived: true, label: `derived ceiling ${capC}` });
+      rail.setChanged(
+        saved.dataExposurePoints[key] !== draft.dataExposurePoints[key],
+        saved.dataExposurePoints[key]);
     }
     setValue(ampField.input, draft.dataAmplifier);
     ampField.setChanged(saved.dataAmplifier !== draft.dataAmplifier, saved.dataAmplifier);
 
-    // --- cascade row notes (shadowed / duplicate), mutated in place
+    // --- cascade rows: the gloss, the shadow / unexercised note, and the coverage count
     const shadowed = (preview && preview.shadowedGapRules) || [];
+    const matchCounts = (preview && preview.gapMatchCounts) || null;
+    const instanceTotal = (preview && preview.gapInstanceTotal) || 0;
     const rows = cascadeBody.querySelectorAll("tr[data-idx]");
     rows.forEach((tr, i) => {
+      const row = draft.gapPoints[i];
       const meta = tr.querySelector(".rule-rowmeta");
       const err = errs.gaps[i];
       const dead = !err && shadowed.indexOf(i) >= 0;
-      setText(meta, err || (dead ? "never fires — an earlier rule already matches this" : ""));
+      const priced = matchCounts ? matchCounts[i] ?? 0 : null;
+
+      // Two ways to price nothing, and they are NOT the same claim. A shadowed row can
+      // never fire — that is a mistake. A live row at zero is simply a rule this tenant
+      // does not exercise, which is fine, so it keeps its full weight on the page.
+      let note = "";
+      if (err) note = err;
+      else if (dead) note = "never fires — an earlier rule already matches this";
+      else if (priced === 0 && instanceTotal) note = "in force — nothing in this tenant carries it";
+      setText(meta, note);
       meta.classList.toggle("field-error", !!err);
       tr.classList.toggle("rule-dead", dead);
+
       const code = tr.querySelector(".rule-code");
       if (err) code.setAttribute("aria-invalid", "true");
       else code.removeAttribute("aria-invalid");
+
+      const gloss = tr.querySelector(".gap-gloss");
+      if (gloss) {
+        const g = resolveGap(row.code, row.match, {
+          pricedAbove: pricedAboveCount(draft.gapPoints, i),
+          fallbackPoints: draft.gapFallbackPoints,
+        });
+        paintGloss(gloss, g);
+      }
+      paintPrices(tr.querySelector(".rule-prices"), priced, instanceTotal);
     });
+    paintPrices(fbCount, matchCounts ? preview.gapFallbackCount ?? 0 : null, instanceTotal);
+    pricesTh.hidden = !matchCounts;
+    syncSandboxPrices();
 
     // --- toolbar
     setText(versionPill, state.version === 0 ? "Spec defaults" : `Model v${state.version}`);
@@ -966,6 +1392,16 @@ export async function renderAarsRules(main, _params, ctx) {
       if (seq !== previewSeq) return; // superseded by a later edit
       preview = data;
       previewError = "";
+      // The census travels with the preview, so this is where the pickers learn what the
+      // estate actually carries — and where codes the codebook never heard of (tenant
+      // finding shortIds) become pickable at all.
+      const nextCensus = {};
+      for (const row of data.gapCensus || []) nextCensus[row.code] = row.assets;
+      if (JSON.stringify(nextCensus) !== JSON.stringify(censusByCode)) {
+        censusByCode = nextCensus;
+        refreshCodeOptions();
+      }
+      paintSandboxQuick();
     } catch (e) {
       if (seq !== previewSeq) return;
       preview = null;
@@ -1153,9 +1589,24 @@ export async function renderAarsRules(main, _params, ctx) {
       el("span", { class: "small muted" },
         `A ${p.toxic} + B ${p.compliance} + C ${p.data}` +
           (p.toxic + p.compliance + p.data > sampleResult.score ? " (clamped to 100)" : "")),
+      // Each gap tied back to the rule that priced it, and named — so a pillar-B total can
+      // be read back to the cascade rows that produced it without a second lookup.
       ...(breakdown.length
-        ? [el("span", { class: "small muted" },
-            "Gaps: " + breakdown.map((g) => `${g.code} ${g.points}`).join(", "))]
+        ? [el("div", { class: "sandbox-gaps small muted" },
+            ...breakdown.map((g) => {
+              const entry = lookupGap(g.code);
+              const hit = priceCode(draft, g.code);
+              const via = g.overridden
+                ? "overridden"
+                : hit.index === -1 ? "fallback" : `rule ${hit.index + 1}`;
+              return el(
+                "div",
+                { class: "sandbox-gap" },
+                el("span", { class: "sandbox-gap__code" }, g.code),
+                entry ? el("span", {}, entry.title) : el("span", {}, "not in the codebook"),
+                el("span", { class: "sandbox-gap__pts num" }, `${g.points} (${via})`),
+              );
+            }))]
         : []),
     );
   }

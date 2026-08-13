@@ -1,4 +1,4 @@
-// The searchable combobox: a trigger button plus a listbox popover portaled to <body>.
+// The searchable combobox: a trigger plus a listbox popover portaled to <body>.
 
 import { clear, el } from "./dom.js";
 import { portalClosed, portalOpened } from "./portals.js";
@@ -18,8 +18,12 @@ function comboNormalize(list) {
     : { value: o.value, label: o.label == null ? o.value : o.label, hint: o.hint || "", group: o.group || "" }));
 }
 
+function comboMatches(o, q) {
+  return o.label.toLowerCase().includes(q) || (o.hint && o.hint.toLowerCase().includes(q));
+}
+
 /**
- * Searchable combobox: a trigger button plus a listbox popover, portaled to `<body>`.
+ * Searchable combobox: a trigger plus a listbox popover, portaled to `<body>`.
  *
  * Forked from the OS-vulns tool's `filterCombobox` (gas/src/client/js/ui.js), which
  * fronts ~20 sidebar options where the value IS the label. This one fronts the whole
@@ -41,16 +45,33 @@ function comboNormalize(list) {
  * `onChange(value)` fires on selection. The returned wrapper carries `setValue(v)` and
  * `setOptions(list)`, neither of which fires `onChange` — that is what lets a caller
  * reflect external state onto the control without looping.
+ *
+ * ## Editable mode
+ *
+ * `editable: true` swaps the trigger button for a real text input carrying
+ * `role="combobox"`, per the ARIA editable-combobox pattern: DOM focus never leaves the
+ * input, the caret is a `tabindex="-1"` sibling, and the active row travels as
+ * `aria-activedescendant`. It exists for the AARS pricing cascade, where the value is a
+ * compliance-gap code: most are drawn from a known catalogue, but tenant-specific Wiz
+ * finding shortIds (`SUB-082`) are a routine input the catalogue can never carry. A
+ * pick-only control would make the one value nobody can look up the slowest to enter.
+ *
+ * So in editable mode: `allowCustom` synthesises a "use what you typed" row, Escape
+ * dismisses the list WITHOUT reverting what was typed, and `onChange` fires on Enter, on
+ * a click, and on blur — the three ways a person finishes typing.
  */
 export function filterCombobox({
   value, options, pinnedRows, defaultLabel, ariaLabel, searchPlaceholder = "Search…",
   fallbackLabel = "", searchThreshold = 7, onChange, id,
+  editable = false, allowCustom = false, inputClass = "", popClass = "", transform,
 }) {
   const seq = ++_comboboxSeq;
   const listboxId = `combobox-list-${seq}`;
   let current = value || "";
   let opts = comboNormalize(options);
   const pinned = comboNormalize(pinnedRows);
+  /** What the caller stores. Editable mode uppercases codes; everything else is identity. */
+  const clean = typeof transform === "function" ? transform : (v) => v;
 
   function labelFor(v) {
     const hit = [...pinned, ...opts].find((o) => o.value === v);
@@ -61,20 +82,60 @@ export function filterCombobox({
     return v ? (fallbackLabel || v) : defaultLabel;
   }
 
-  const triggerText = el("span", { class: "combobox-trigger-text" });
-  const trigger = el(
-    "button",
-    {
-      type: "button", class: "combobox-trigger",
-      "aria-haspopup": "listbox", "aria-expanded": "false", "aria-label": ariaLabel,
-      onclick: (e) => { e.stopPropagation(); open ? close() : openPop(); },
-    },
-    triggerText,
-    el("span", { class: "combobox-caret", "aria-hidden": "true" }, "▾"),
-  );
-  const wrap = el("div", { class: "combobox", id: id || null }, trigger);
+  let trigger;      // what the popover is positioned against, and what re-takes focus
+  let triggerText;  // pick-only: the span printing the resolved label
+  let editInput;    // editable: the input that IS the combobox
+
+  if (editable) {
+    editInput = el("input", {
+      type: "text",
+      class: `combobox-input${inputClass ? " " + inputClass : ""}`,
+      role: "combobox",
+      "aria-expanded": "false",
+      "aria-controls": listboxId,
+      "aria-autocomplete": "list",
+      "aria-label": ariaLabel,
+      autocomplete: "off",
+      spellcheck: "false",
+      placeholder: searchPlaceholder,
+      value: current,
+    });
+    const caret = el("button", {
+      type: "button", class: "combobox-caret-btn", tabindex: "-1", "aria-hidden": "true",
+      onclick: (e) => {
+        e.stopPropagation();
+        // The caret browses: it opens on the WHOLE list, not on what is already typed,
+        // because "show me everything" is the only thing it can mean.
+        if (open) close();
+        else openPop("");
+        editInput.focus();
+      },
+    }, "▾");
+    trigger = el("div", { class: "combobox-edit" }, editInput, caret);
+  } else {
+    triggerText = el("span", { class: "combobox-trigger-text" });
+    trigger = el(
+      "button",
+      {
+        type: "button", class: "combobox-trigger",
+        "aria-haspopup": "listbox", "aria-expanded": "false", "aria-label": ariaLabel,
+        onclick: (e) => { e.stopPropagation(); open ? close() : openPop(); },
+      },
+      triggerText,
+      el("span", { class: "combobox-caret", "aria-hidden": "true" }, "▾"),
+    );
+  }
+  const wrap = el("div", { class: `combobox${editable ? " combobox--editable" : ""}`, id: id || null }, trigger);
 
   function paintTrigger() {
+    if (editable) {
+      // Never fight the cursor: an external setValue while someone is typing is ignored,
+      // exactly as the AARS page's own setValue guard does.
+      if (document.activeElement !== editInput && editInput.value !== current) {
+        editInput.value = current;
+      }
+      return;
+    }
     const text = labelFor(current);
     triggerText.textContent = text;
     trigger.title = text;
@@ -89,23 +150,29 @@ export function filterCombobox({
   let rows = [];      // selectable rows only, in DOM order — the roving-index array
   let activeIndex = 0;
 
+  /** Whichever element owns the query, and therefore aria-activedescendant. */
+  function queryOwner() {
+    return editable ? editInput : (searchEl || listEl);
+  }
+
   function matching() {
     const q = query.trim().toLowerCase();
     if (!q) return opts;
-    return opts.filter((o) => o.label.toLowerCase().includes(q)
-      || (o.hint && o.hint.toLowerCase().includes(q)));
+    return opts.filter((o) => comboMatches(o, q));
   }
 
   function optionRow(o, idx) {
     const optId = `${listboxId}-opt-${idx}`;
     const row = el(
       "li",
-      { id: optId, role: "option", class: "combobox-option",
+      { id: optId, role: "option", class: `combobox-option${o.custom ? " combobox-option--custom" : ""}`,
         "aria-selected": current === o.value ? "true" : "false" },
       o.label,
       o.hint ? el("span", { class: "combobox-option-hint" }, o.hint) : null,
     );
-    row.addEventListener("click", () => select(o.value));
+    // mousedown, not click: in editable mode a click would blur the input first, and the
+    // blur handler would commit the half-typed text before the pick landed.
+    row.addEventListener("mousedown", (e) => { e.preventDefault(); select(o.value); });
     listEl.append(row);
     rows.push({ value: o.value, id: optId, node: row });
   }
@@ -122,9 +189,10 @@ export function filterCombobox({
     let idx = 0;
     // Pinned presets sit above the list, but they are searchable text like anything else:
     // holding an unmatched "All toxic combinations" at the top while someone types an
-    // asset name puts a wrong row under the first ArrowDown.
+    // asset name puts a wrong row under the first ArrowDown. Matched on hint as well as
+    // label, or the pinned rows would be the only ones not findable by meaning.
     const q = query.trim().toLowerCase();
-    const shownPinned = q ? pinned.filter((o) => o.label.toLowerCase().includes(q)) : pinned;
+    const shownPinned = q ? pinned.filter((o) => comboMatches(o, q)) : pinned;
     for (const p of shownPinned) optionRow(p, idx++);
     if (shownPinned.length) rows[rows.length - 1].node.classList.add("combobox-option--last-pinned");
 
@@ -142,7 +210,17 @@ export function filterCombobox({
       }
       optionRow(o, idx++);
     }
-    if (!matches.length && !shownPinned.length) {
+
+    // A value the catalogue does not carry is a normal input here, so it gets a row of its
+    // own rather than an empty list. Visible state beats absence: "not in the catalogue" is
+    // something the operator should see, not infer.
+    const typed = clean(query.trim());
+    const known = typed && [...pinned, ...opts].some((o) => o.value === typed);
+    if (allowCustom && typed && !known) {
+      optionRow({ value: typed, label: `Use “${typed}” as typed`, hint: "not in the catalogue", custom: true }, idx++);
+    }
+
+    if (!rows.length) {
       listEl.append(el("li", { role: "presentation", class: "combobox-empty" },
         query.trim() ? "No matches" : "Nothing to choose from"));
     } else if (matches.length > shown.length) {
@@ -159,8 +237,8 @@ export function filterCombobox({
   function highlightActive() {
     rows.forEach((r, i) => r.node.classList.toggle("active", i === activeIndex));
     const activeId = rows[activeIndex] ? rows[activeIndex].id : "";
-    if (searchEl) searchEl.setAttribute("aria-activedescendant", activeId);
-    else if (listEl) listEl.setAttribute("aria-activedescendant", activeId);
+    const owner = queryOwner();
+    if (owner) owner.setAttribute("aria-activedescendant", activeId);
   }
 
   function scrollActiveIntoView() {
@@ -169,10 +247,31 @@ export function filterCombobox({
   }
 
   function select(v) {
-    current = v;
-    paintTrigger();
+    current = clean(v);
     close();
-    trigger.focus();
+    if (editable) {
+      editInput.value = current;
+      editInput.focus();
+      // Caret to the end: the value was replaced wholesale, and leaving the caret mid-word
+      // makes the next keystroke edit somewhere nobody chose.
+      const n = editInput.value.length;
+      editInput.setSelectionRange(n, n);
+    } else {
+      paintTrigger();
+      trigger.focus();
+    }
+    if (onChange) onChange(current);
+  }
+
+  /** Editable only: finish what was typed, without a pick. Fires only on a real change. */
+  function commitTyped() {
+    const v = clean(editInput.value.trim());
+    if (v === current) {
+      if (editInput.value !== current) editInput.value = current;
+      return;
+    }
+    current = v;
+    editInput.value = current;
     if (onChange) onChange(current);
   }
 
@@ -205,34 +304,54 @@ export function filterCombobox({
     buildRows({ keepActive: null });
   }, COMBOBOX_DEBOUNCE_MS, { pageScoped: false });
 
-  function openPop() {
+  // Editable mode types into the trigger itself, so its rebuild is debounced separately —
+  // and cancelled by close(), like the pick-only one, so a closed popover can never be
+  // rebuilt by a keystroke that landed just before it shut.
+  const onTypeInput = debounce(() => {
+    if (!open) return;
+    query = editInput.value;
+    buildRows({ keepActive: null });
+    position();
+  }, COMBOBOX_DEBOUNCE_MS, { pageScoped: false });
+
+  function popClasses() {
+    return `combobox-pop${popClass ? " " + popClass : ""}`;
+  }
+
+  function openPop(initialQuery) {
     open = true;
-    query = "";
-    const showSearch = opts.length > searchThreshold;
+    query = editable ? (initialQuery === undefined ? editInput.value : initialQuery) : "";
     listEl = el("ul", { role: "listbox", class: "combobox-list", id: listboxId, "aria-label": ariaLabel });
-    if (showSearch) {
-      searchEl = el("input", {
-        type: "text", class: "combobox-search", placeholder: searchPlaceholder,
-        role: "combobox", "aria-expanded": "true", "aria-controls": listboxId,
-        "aria-autocomplete": "list", autocomplete: "off", spellcheck: "false",
-        // Debounced: each rebuild is one <li> per match, synchronously, and this list can
-        // be the whole estate. Not page-scoped — close() below cancels it, and this
-        // control outlives no page.
-        oninput: onSearchInput,
-        onkeydown: onListKey,
-      });
-      pop = el("div", { class: "combobox-pop" }, searchEl, listEl);
-    } else {
+    if (editable) {
       searchEl = null;
-      listEl.setAttribute("tabindex", "-1");
-      listEl.addEventListener("keydown", onListKey);
-      pop = el("div", { class: "combobox-pop" }, listEl);
+      pop = el("div", { class: popClasses() }, listEl);
+      editInput.setAttribute("aria-expanded", "true");
+    } else {
+      const showSearch = opts.length > searchThreshold;
+      if (showSearch) {
+        searchEl = el("input", {
+          type: "text", class: "combobox-search", placeholder: searchPlaceholder,
+          role: "combobox", "aria-expanded": "true", "aria-controls": listboxId,
+          "aria-autocomplete": "list", autocomplete: "off", spellcheck: "false",
+          // Debounced: each rebuild is one <li> per match, synchronously, and this list can
+          // be the whole estate. Not page-scoped — close() below cancels it, and this
+          // control outlives no page.
+          oninput: onSearchInput,
+          onkeydown: onListKey,
+        });
+        pop = el("div", { class: popClasses() }, searchEl, listEl);
+      } else {
+        searchEl = null;
+        listEl.setAttribute("tabindex", "-1");
+        listEl.addEventListener("keydown", onListKey);
+        pop = el("div", { class: popClasses() }, listEl);
+      }
+      trigger.setAttribute("aria-expanded", "true");
     }
     document.body.append(pop);
     portalOpened();
     buildRows();
     position();
-    trigger.setAttribute("aria-expanded", "true");
 
     // pointerdown as well as click: the graph canvas takes a pointer capture to pan
     // (graphView.js), so a pan that ends outside the window never delivers the click that
@@ -245,7 +364,8 @@ export function filterCombobox({
     wrap.addEventListener("focusout", onFocusOut);
     pop.addEventListener("focusout", onFocusOut);
 
-    if (searchEl) searchEl.focus();
+    if (editable) editInput.focus();
+    else if (searchEl) searchEl.focus();
     else listEl.focus();
   }
 
@@ -253,7 +373,9 @@ export function filterCombobox({
     if (!open) return;
     open = false;
     onSearchInput.cancel();
-    trigger.setAttribute("aria-expanded", "false");
+    onTypeInput.cancel();
+    (editable ? editInput : trigger).setAttribute("aria-expanded", "false");
+    if (editable) editInput.removeAttribute("aria-activedescendant");
     document.removeEventListener("pointerdown", onDocPointer, true);
     document.removeEventListener("click", onDocClick, true);
     document.removeEventListener("keydown", onKey, true);
@@ -268,8 +390,22 @@ export function filterCombobox({
   function isInside(node) { return node && (wrap.contains(node) || (pop && pop.contains(node))); }
   function onDocPointer(e) { if (!isInside(e.target)) close(); }
   function onDocClick(e) { if (!isInside(e.target)) close(); }
-  function onFocusOut(e) { if (!isInside(e.relatedTarget)) close(); }
-  function onKey(e) { if (e.key === "Escape") { e.stopPropagation(); close(); trigger.focus(); } }
+  function onFocusOut(e) {
+    if (isInside(e.relatedTarget)) return;
+    close();
+    // Leaving the field IS a way of finishing what you typed. Committing here is what
+    // makes tabbing out of a half-entered code do the obvious thing rather than lose it.
+    if (editable) commitTyped();
+  }
+  function onKey(e) {
+    if (e.key !== "Escape") return;
+    e.stopPropagation();
+    close();
+    // Escape dismisses the LIST. It deliberately does not revert the field: someone who
+    // typed SUB-082 and pressed Escape to get the popover out of the way has not asked to
+    // lose what they typed.
+    (editable ? editInput : trigger).focus();
+  }
 
   // Reposition rather than close. The panel this lives in scrolls, so closing on scroll
   // would dismiss the popover the moment someone scrolled down to reach its list. Only a
@@ -290,9 +426,53 @@ export function filterCombobox({
     else if (e.key === "Enter") { e.preventDefault(); const row = rows[activeIndex]; if (row) select(row.value); }
   }
 
+  if (editable) {
+    editInput.addEventListener("input", () => {
+      if (!open) openPop(editInput.value);
+      else onTypeInput();
+    });
+    // Focus opens the list only when the field is EMPTY — the "I do not know what to type"
+    // case, which here is a freshly added rule, and the one moment the whole catalogue is
+    // the most useful thing to show. Opening on every focus would drop a popover over the
+    // row below each time someone tabbed past, and would re-open the list select() had just
+    // closed, since select() hands focus back to the input. A non-empty field opens on the
+    // caret, on ArrowDown, or on the next keystroke.
+    editInput.addEventListener("focus", () => {
+      if (!open && editInput.value === "") openPop("");
+    });
+    /**
+     * Rebuild now if the debounce has not caught up. Without this, typing a code faster
+     * than the debounce and pressing Enter commits whatever was highlighted for the
+     * PREVIOUS query — which for a field pre-filled with a known code means quietly
+     * replacing a freshly typed tenant ID with the code that was already there.
+     */
+    function flushQuery() {
+      if (!open || query === editInput.value) return;
+      onTypeInput.cancel();
+      query = editInput.value;
+      buildRows({ keepActive: null });
+    }
+    editInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === "ArrowDown" || e.key === "ArrowUp") flushQuery();
+      if (e.key === "Enter") {
+        e.preventDefault();
+        // The list wins when a row is highlighted; otherwise Enter finishes what was typed.
+        const row = open && rows[activeIndex];
+        if (row) select(row.value);
+        else { close(); commitTyped(); }
+        return;
+      }
+      if (e.key === "ArrowDown" && !open) { e.preventDefault(); openPop(editInput.value); return; }
+      // Home and End belong to the text caret while you are typing into it, so only the
+      // two arrows are handed to the list — this is the one place the editable pattern
+      // cannot reuse the pick-only keyboard contract wholesale.
+      if (open && (e.key === "ArrowDown" || e.key === "ArrowUp")) onListKey(e);
+    });
+  }
+
   /** Reflect an external state change onto the control — no onChange, no focus move. */
   wrap.setValue = (v) => {
-    current = v || "";
+    current = clean(v || "");
     paintTrigger();
     if (open) buildRows({ keepActive: rows[activeIndex] ? rows[activeIndex].value : current });
   };
@@ -304,5 +484,7 @@ export function filterCombobox({
   };
   wrap.isOpen = () => open;
   wrap.closePopover = close;
+  /** The focusable element, for callers that move focus to a row's field. */
+  wrap.focusable = () => (editable ? editInput : trigger);
   return wrap;
 }
