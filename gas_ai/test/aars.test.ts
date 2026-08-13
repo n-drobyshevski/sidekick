@@ -36,7 +36,7 @@ describe("computeAars — applied table rows", () => {
       gaps: [gap("LLM06"), gap("NO_GUARDRAIL")],
       dataExposure: "SENSITIVE",
     });
-    expect(r.pillars).toEqual({ toxic: 20, compliance: 20, data: 22, exposure: 0, privilege: 0, environment: 0, combination: 0 });
+    expect(r.pillars).toEqual({ toxic: 20, compliance: 20, data: 22, exposure: 0, privilege: 0, environment: 0, combination: 0, business: 0 });
     expect(r.score).toBe(62);
     expect(r.severity).toBe("HIGH");
   });
@@ -68,7 +68,7 @@ describe("computeAars — applied table rows", () => {
       gaps: [gap("LLM06"), gap("LLM05"), gap("NO_GUARDRAIL")],
       dataExposure: "SENSITIVE",
     });
-    expect(r.pillars).toEqual({ toxic: 24, compliance: 25, data: 22, exposure: 0, privilege: 0, environment: 0, combination: 0 });
+    expect(r.pillars).toEqual({ toxic: 24, compliance: 25, data: 22, exposure: 0, privilege: 0, environment: 0, combination: 0, business: 0 });
     expect(r.score).toBe(71);
     expect(r.severity).toBe("CRITICAL");
   });
@@ -79,7 +79,7 @@ describe("computeAars — applied table rows", () => {
       gaps: [gap("LLM06"), gap("ASI10"), gap("NO_GUARDRAIL")],
       dataExposure: "SENSITIVE",
     });
-    expect(r.pillars).toEqual({ toxic: 24, compliance: 30, data: 22, exposure: 0, privilege: 0, environment: 0, combination: 0 });
+    expect(r.pillars).toEqual({ toxic: 24, compliance: 30, data: 22, exposure: 0, privilege: 0, environment: 0, combination: 0, business: 0 });
     expect(r.score).toBe(76);
     expect(r.severity).toBe("CRITICAL");
   });
@@ -90,7 +90,7 @@ describe("computeAars — applied table rows", () => {
       gaps: [gap("LLM04"), gap("LLM06"), gap("NO_GUARDRAIL")],
       dataExposure: "SENSITIVE",
     });
-    expect(r.pillars).toEqual({ toxic: 20, compliance: 25, data: 22, exposure: 0, privilege: 0, environment: 0, combination: 0 });
+    expect(r.pillars).toEqual({ toxic: 20, compliance: 25, data: 22, exposure: 0, privilege: 0, environment: 0, combination: 0, business: 0 });
     expect(r.score).toBe(67);
     expect(r.severity).toBe("HIGH");
   });
@@ -101,7 +101,7 @@ describe("computeAars — applied table rows", () => {
       gaps: [gap("LLM01"), gap("LLM02"), gap("ASI02")],
       dataExposure: "DATA_ACCESS",
     });
-    expect(r.pillars).toEqual({ toxic: 24, compliance: 30, data: 11, exposure: 0, privilege: 0, environment: 0, combination: 0 });
+    expect(r.pillars).toEqual({ toxic: 24, compliance: 30, data: 11, exposure: 0, privilege: 0, environment: 0, combination: 0, business: 0 });
     expect(r.score).toBe(65);
     expect(r.severity).toBe("HIGH");
   });
@@ -112,7 +112,7 @@ describe("computeAars — applied table rows", () => {
       gaps: [gap("ASI03")],
       dataExposure: "DATA_ACCESS",
     });
-    expect(r.pillars).toEqual({ toxic: 8, compliance: 10, data: 11, exposure: 0, privilege: 0, environment: 0, combination: 0 });
+    expect(r.pillars).toEqual({ toxic: 8, compliance: 10, data: 11, exposure: 0, privilege: 0, environment: 0, combination: 0, business: 0 });
     expect(r.score).toBe(29);
     expect(r.severity).toBe("LOW");
   });

@@ -71,6 +71,17 @@ export interface EnvironmentRule {
 export type PrivilegeLevel = "ADMIN" | "HIGH" | "NONE";
 
 /**
+ * Wiz's per-project business-impact rating, worst first. `UNKNOWN` is the honest default
+ * for an asset in no rated project, and — like `UNCLASSIFIED` for environments — is pinned
+ * at zero points: not knowing an asset's importance is not evidence that it has none.
+ *
+ * Confirmed present and varying in the reference tenant: `projects[].riskProfile.businessImpact`
+ * comes back `LBI` and `MBI` in gas_ai/exemples/toxic_combos_response.js. It is queried and
+ * normalized today and then dropped, because assetToRow serialized only project NAMES.
+ */
+export type BusinessImpact = "HBI" | "MBI" | "LBI" | "UNKNOWN";
+
+/**
  * A conjunction that is worth more than the sum of its parts.
  *
  * Additive pillars cannot express one. This product is *named* after toxic combinations,
@@ -115,6 +126,8 @@ export interface AarsInput {
   privilege?: PrivilegeLevel;
   /** Absent reads as UNCLASSIFIED, which the spec rule prices at zero. */
   environment?: Environment;
+  /** Absent reads as UNKNOWN, which the spec rule prices at zero. */
+  businessImpact?: BusinessImpact;
   /**
    * The risk conditions this asset actually carries, as `ConditionKey` strings. Resolved
    * by the caller through `riskConditions.conditionHolds` so this module stays free of the
@@ -139,6 +152,8 @@ export interface AarsResult {
     environment: number;
     /** Points from conjunctions that fired. Zero under the spec rule, which has none. */
     combination: number;
+    /** Wiz's own business-impact rating for the asset's projects. Zero in the spec rule. */
+    business: number;
   };
   /** Which combination rules fired, in rule order — the evidence behind that number. */
   combinations?: Array<{ label: string; points: number }>;
@@ -158,10 +173,12 @@ export type PillarKey =
   | "exposure"
   | "privilege"
   | "environment"
-  | "combination";
+  | "combination"
+  | "business";
 
 export const PILLAR_KEYS: PillarKey[] = [
   "toxic", "compliance", "data", "exposure", "privilege", "environment", "combination",
+  "business",
 ];
 
 // ------------------------------------------------------------------------- the rule
@@ -341,6 +358,8 @@ export interface AarsRule {
    * environments existed, never as though it had been classified as safe.
    */
   environmentPoints: Record<Environment, number>;
+  /** Points per business-impact tier. UNKNOWN is pinned at 0 by `cleanAarsRule`. */
+  businessImpactPoints: Record<BusinessImpact, number>;
   bands: AarsBands;
 }
 
@@ -410,6 +429,7 @@ export const DEFAULT_AARS_RULE: AarsRule = {
   // All zero: the applied table in ai/custom_score.md scores agent-F and agent-F-preprod
   // identically, and the default rule must keep reproducing it.
   environmentPoints: { PROD: 0, PREPROD: 0, NONPROD: 0, DEV: 0, UNCLASSIFIED: 0 },
+  businessImpactPoints: { HBI: 0, MBI: 0, LBI: 0, UNKNOWN: 0 },
   bands: { critical: 70, high: 50, medium: 30, low: 10 },
 };
 
@@ -484,6 +504,7 @@ export const AARS_V2_RULE: AarsRule = {
   combinationRules: [],
   environmentRules: DEFAULT_AARS_RULE.environmentRules.map((e) => ({ ...e })),
   environmentPoints: { PROD: 0, PREPROD: 0, NONPROD: 0, DEV: 0, UNCLASSIFIED: 0 },
+  businessImpactPoints: { HBI: 0, MBI: 0, LBI: 0, UNKNOWN: 0 },
   bands: { critical: 70, high: 50, medium: 30, low: 10 },
 };
 
@@ -519,6 +540,8 @@ export const AARS_V3_RULE: AarsRule = {
   dataAmplifier: 1,
   privilegePoints: { ADMIN: 30, HIGH: 16, NONE: 0 },
   environmentPoints: { PROD: 20, PREPROD: 8, NONPROD: 4, DEV: 2, UNCLASSIFIED: 0 },
+  // Wiz's own rating of what the asset can hurt — the most direct impact signal available.
+  businessImpactPoints: { HBI: 25, MBI: 12, LBI: 4, UNKNOWN: 0 },
   combinationRules: [
     {
       conditions: ["EXCESSIVE_PRIVILEGE", "SENSITIVE_DATA", "MISSING_GUARDRAIL"],
@@ -654,11 +677,14 @@ export function computeAars(input: AarsInput, rule: AarsRule = DEFAULT_AARS_RULE
 
   const privilege = rule.privilegePoints[input.privilege ?? "NONE"] ?? 0;
   const environment = rule.environmentPoints[input.environment ?? "UNCLASSIFIED"] ?? 0;
+  const business = rule.businessImpactPoints[input.businessImpact ?? "UNKNOWN"] ?? 0;
 
   const fired = firedCombinations(input.conditions ?? [], rule);
   const combination = fired.reduce((acc, f) => acc + f.points, 0);
 
-  const pillars = { toxic, compliance, data, exposure, privilege, environment, combination };
+  const pillars = {
+    toxic, compliance, data, exposure, privilege, environment, combination, business,
+  };
 
   let score: number;
   let composition: { likelihood: number; impact: number } | undefined;
@@ -748,6 +774,7 @@ export function pillarCeilings(rule: AarsRule): Record<PillarKey, number> {
     privilege: maxOf(rule.privilegePoints),
     environment: maxOf(rule.environmentPoints),
     combination: rule.combinationRules.reduce((acc, c) => acc + c.points, 0),
+    business: maxOf(rule.businessImpactPoints),
   };
 }
 

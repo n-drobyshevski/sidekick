@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_AARS_RULE } from "../src/domain/aars";
 import type { GNode, GraphDoc } from "../src/domain/graphTypes";
-import { normalizeLegacyAars, rowToAsset, withCurrentBands } from "../src/server/syncStore";
+import { assetToRow, normalizeLegacyAars, rowToAsset, withCurrentBands } from "../src/server/syncStore";
 
 const T = "2026-06-28T05:00:00Z";
 
@@ -122,5 +122,37 @@ describe("withCurrentBands (levels re-derived on read)", () => {
   it("is a no-op under the default bands for a correctly-scored row", () => {
     const nodes = [node({ aars: 62, aarsSeverity: "HIGH" })];
     expect(withCurrentBands(nodes, DEFAULT_AARS_RULE.bands)).toBe(nodes);
+  });
+});
+
+// businessImpact was queried, normalized and typed, then discarded at assetToRow, which
+// serialized project NAMES only. It round-trips now — and without a schema migration,
+// because rowToAsset still reads the old bare-string shape.
+describe("projects_json — businessImpact round-trip", () => {
+  it("keeps the rating when a project carries one", () => {
+    const row = assetToRow({
+      id: "a", kind: "AI_AGENT", name: "a",
+      projects: [{ id: "p1", name: "PROJECT-ALPHA", businessImpact: "MBI" }],
+    } as GNode);
+    expect(rowToAsset(row).projects).toEqual([
+      { id: "proj-project-alpha", name: "PROJECT-ALPHA", businessImpact: "MBI" },
+    ]);
+  });
+
+  it("still reads a ledger written before the rating was kept", () => {
+    const back = rowToAsset({ id: "a", kind: "AI_AGENT", name: "a",
+      projects_json: JSON.stringify(["PROJECT-BETA"]) });
+    expect(back.projects).toEqual([{ id: "proj-project-beta", name: "PROJECT-BETA" }]);
+  });
+
+  it("writes the compact shape only where there is a rating to keep", () => {
+    const row = assetToRow({
+      id: "a", kind: "AI_AGENT", name: "a",
+      projects: [
+        { id: "p1", name: "RATED", businessImpact: "HBI" },
+        { id: "p2", name: "UNRATED" },
+      ],
+    } as GNode);
+    expect(row["projects_json"]).toBe(JSON.stringify([{ n: "RATED", b: "HBI" }, "UNRATED"]));
   });
 });

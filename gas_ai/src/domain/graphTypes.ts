@@ -4,6 +4,7 @@
 
 import type {
   AarsGap,
+  BusinessImpact,
   DataExposure,
   Environment,
   InternetExposure,
@@ -156,7 +157,11 @@ export interface GNode {
   severity?: Severity;      // worst attached open-issue severity (ISSUE nodes: own severity)
   aars?: number;            // AI Asset Risk Score 0–100 (AI assets only)
   aarsSeverity?: AarsSeverity;
-  aarsPillars?: { toxic: number; compliance: number; data: number; exposure?: number };
+  aarsPillars?: {
+    toxic: number; compliance: number; data: number;
+    exposure?: number; privilege?: number; environment?: number;
+    combination?: number; business?: number;
+  };
   /**
    * What the score was computed FROM, minus the issue severities (those stay in the issues
    * tab and are read back from it). Persisted because the inputs are not otherwise
@@ -172,6 +177,7 @@ export interface GNode {
     /** Absent on older rows; re-derived rather than read as "nothing here". */
     privilege?: PrivilegeLevel;
     environment?: Environment;
+    businessImpact?: BusinessImpact;
   };
   comboGroups?: string[];   // toxic-combination group ids this node participates in
   // SUMMARY nodes only:

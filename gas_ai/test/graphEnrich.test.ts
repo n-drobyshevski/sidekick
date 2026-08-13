@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildAarsHintsFromFindings,
+  businessImpactOf,
   conditionsHeldBy,
   dataExposureOf,
   deriveAarsInput,
@@ -196,6 +197,8 @@ describe("enrichGraphDoc", () => {
       // agent-a carries hasHighPrivileges, and gcp-account-01 matches no environment rule.
       privilege: "HIGH",
       environment: "UNCLASSIFIED",
+      // The seed's projects carry no riskProfile, so this is UNKNOWN rather than a rating.
+      businessImpact: "UNKNOWN",
     });
   });
 
@@ -398,6 +401,36 @@ describe("conditionsHeldBy", () => {
     expect(held).toContain("MISSING_GUARDRAIL");
     // A conjunction naming INTERNET_EXPOSURE must not fire on "we have not checked".
     expect(held).not.toContain("INTERNET_EXPOSURE");
+  });
+});
+
+describe("businessImpactOf", () => {
+  const withProjects = (bi: Array<string | undefined>): GNode =>
+    ({ id: "n", kind: "AI_AGENT", name: "n",
+       projects: bi.map((b, i) => ({ id: `p${i}`, name: `P${i}`, businessImpact: b })) }) as GNode;
+
+  it("takes the WORST rating across the asset's projects", () => {
+    // The rating describes what the asset can hurt; the worst thing it can hurt is what
+    // matters. Same "worst wins" reading pillar A applies to issue severities.
+    expect(businessImpactOf(withProjects(["LBI", "HBI", "MBI"]))).toBe("HBI");
+    expect(businessImpactOf(withProjects(["LBI", "MBI"]))).toBe("MBI");
+    expect(businessImpactOf(withProjects(["LBI", "LBI"]))).toBe("LBI");
+  });
+
+  it("is UNKNOWN when nothing is rated — not a rating of harmless", () => {
+    expect(businessImpactOf(withProjects([undefined, undefined]))).toBe("UNKNOWN");
+    expect(businessImpactOf({ id: "n", kind: "AI_AGENT", name: "n" } as GNode)).toBe("UNKNOWN");
+  });
+
+  it("ignores an unrecognised rating rather than ranking it", () => {
+    expect(businessImpactOf(withProjects(["NONSENSE"]))).toBe("UNKNOWN");
+    expect(businessImpactOf(withProjects(["NONSENSE", "MBI"]))).toBe("MBI");
+  });
+
+  it("reads the values the real tenant actually returns", () => {
+    // gas_ai/exemples/toxic_combos_response.js: LBI x9, MBI x2 — lowercase-tolerant.
+    expect(businessImpactOf(withProjects(["lbi"]))).toBe("LBI");
+    expect(businessImpactOf(withProjects(["mbi"]))).toBe("MBI");
   });
 });
 

@@ -191,6 +191,12 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
           "low": 10,
           "medium": 30,
         },
+        "businessImpactPoints": {
+          "HBI": 0,
+          "LBI": 0,
+          "MBI": 0,
+          "UNKNOWN": 0,
+        },
         "combinationRules": [],
         "dataAmplifier": 1.1,
         "dataExposurePoints": {
@@ -353,6 +359,12 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
             "low": 10,
             "medium": 30,
           },
+          "businessImpactPoints": {
+            "HBI": 0,
+            "LBI": 0,
+            "MBI": 0,
+            "UNKNOWN": 0,
+          },
           "combinationRules": [],
           "dataAmplifier": 1,
           "dataExposurePoints": {
@@ -510,6 +522,12 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
             "high": 50,
             "low": 10,
             "medium": 30,
+          },
+          "businessImpactPoints": {
+            "HBI": 25,
+            "LBI": 4,
+            "MBI": 12,
+            "UNKNOWN": 0,
           },
           "combinationRules": [
             {
@@ -687,6 +705,12 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
           "high": 50,
           "low": 10,
           "medium": 30,
+        },
+        "businessImpactPoints": {
+          "HBI": 0,
+          "LBI": 0,
+          "MBI": 0,
+          "UNKNOWN": 0,
         },
         "combinationRules": [],
         "dataAmplifier": 1.1,
@@ -1470,6 +1494,12 @@ exports[`read endpoints > getAarsRule answers the same shape 1`] = `
         "low": 10,
         "medium": 30,
       },
+      "businessImpactPoints": {
+        "HBI": 0,
+        "LBI": 0,
+        "MBI": 0,
+        "UNKNOWN": 0,
+      },
       "combinationRules": [],
       "dataAmplifier": 1.1,
       "dataExposurePoints": {
@@ -1632,6 +1662,12 @@ exports[`read endpoints > getAarsRule answers the same shape 1`] = `
           "low": 10,
           "medium": 30,
         },
+        "businessImpactPoints": {
+          "HBI": 0,
+          "LBI": 0,
+          "MBI": 0,
+          "UNKNOWN": 0,
+        },
         "combinationRules": [],
         "dataAmplifier": 1,
         "dataExposurePoints": {
@@ -1789,6 +1825,12 @@ exports[`read endpoints > getAarsRule answers the same shape 1`] = `
           "high": 50,
           "low": 10,
           "medium": 30,
+        },
+        "businessImpactPoints": {
+          "HBI": 25,
+          "LBI": 4,
+          "MBI": 12,
+          "UNKNOWN": 0,
         },
         "combinationRules": [
           {
@@ -1966,6 +2008,12 @@ exports[`read endpoints > getAarsRule answers the same shape 1`] = `
         "high": 50,
         "low": 10,
         "medium": 30,
+      },
+      "businessImpactPoints": {
+        "HBI": 0,
+        "LBI": 0,
+        "MBI": 0,
+        "UNKNOWN": 0,
       },
       "combinationRules": [],
       "dataAmplifier": 1.1,
@@ -5463,6 +5511,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       {
         "aars": 62,
         "aarsInput": {
+          "businessImpact": "UNKNOWN",
           "dataExposure": "SENSITIVE",
           "environment": "UNCLASSIFIED",
           "gaps": [
@@ -5477,6 +5526,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "business": 0,
           "combination": 0,
           "compliance": 20,
           "data": 22,
@@ -5527,6 +5577,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       {
         "aars": 62,
         "aarsInput": {
+          "businessImpact": "UNKNOWN",
           "dataExposure": "SENSITIVE",
           "environment": "UNCLASSIFIED",
           "gaps": [
@@ -5541,6 +5592,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "business": 0,
           "combination": 0,
           "compliance": 20,
           "data": 22,
@@ -5591,6 +5643,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       {
         "aars": 76,
         "aarsInput": {
+          "businessImpact": "UNKNOWN",
           "dataExposure": "SENSITIVE",
           "environment": "UNCLASSIFIED",
           "gaps": [
@@ -5608,6 +5661,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "ADMIN",
         },
         "aarsPillars": {
+          "business": 0,
           "combination": 0,
           "compliance": 30,
           "data": 22,
@@ -5658,6 +5712,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       {
         "aars": 67,
         "aarsInput": {
+          "businessImpact": "UNKNOWN",
           "dataExposure": "SENSITIVE",
           "environment": "UNCLASSIFIED",
           "gaps": [
@@ -5675,6 +5730,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "business": 0,
           "combination": 0,
           "compliance": 25,
           "data": 22,
@@ -5725,6 +5781,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       {
         "aars": 67,
         "aarsInput": {
+          "businessImpact": "UNKNOWN",
           "dataExposure": "SENSITIVE",
           "environment": "UNCLASSIFIED",
           "gaps": [
@@ -5742,6 +5799,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "business": 0,
           "combination": 0,
           "compliance": 25,
           "data": 22,
@@ -5792,6 +5850,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       {
         "aars": 62,
         "aarsInput": {
+          "businessImpact": "UNKNOWN",
           "dataExposure": "SENSITIVE",
           "environment": "UNCLASSIFIED",
           "gaps": [
@@ -5806,6 +5865,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "business": 0,
           "combination": 0,
           "compliance": 20,
           "data": 22,
@@ -5856,6 +5916,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       {
         "aars": 62,
         "aarsInput": {
+          "businessImpact": "UNKNOWN",
           "dataExposure": "SENSITIVE",
           "environment": "UNCLASSIFIED",
           "gaps": [
@@ -5870,6 +5931,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "business": 0,
           "combination": 0,
           "compliance": 20,
           "data": 22,
@@ -5912,6 +5974,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       {
         "aars": 62,
         "aarsInput": {
+          "businessImpact": "UNKNOWN",
           "dataExposure": "SENSITIVE",
           "environment": "UNCLASSIFIED",
           "gaps": [
@@ -5926,6 +5989,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "business": 0,
           "combination": 0,
           "compliance": 20,
           "data": 22,
@@ -5968,6 +6032,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       {
         "aars": 66,
         "aarsInput": {
+          "businessImpact": "UNKNOWN",
           "dataExposure": "SENSITIVE",
           "environment": "UNCLASSIFIED",
           "gaps": [
@@ -5982,6 +6047,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "business": 0,
           "combination": 0,
           "compliance": 20,
           "data": 22,
@@ -6028,6 +6094,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       {
         "aars": 71,
         "aarsInput": {
+          "businessImpact": "UNKNOWN",
           "dataExposure": "SENSITIVE",
           "environment": "UNCLASSIFIED",
           "gaps": [
@@ -6045,6 +6112,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "business": 0,
           "combination": 0,
           "compliance": 25,
           "data": 22,
@@ -6099,6 +6167,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       {
         "aars": 66,
         "aarsInput": {
+          "businessImpact": "UNKNOWN",
           "dataExposure": "SENSITIVE",
           "environment": "UNCLASSIFIED",
           "gaps": [
@@ -6113,6 +6182,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "business": 0,
           "combination": 0,
           "compliance": 20,
           "data": 22,
@@ -6163,6 +6233,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       {
         "aars": 29,
         "aarsInput": {
+          "businessImpact": "UNKNOWN",
           "dataExposure": "DATA_ACCESS",
           "environment": "UNCLASSIFIED",
           "gaps": [
@@ -6174,6 +6245,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "business": 0,
           "combination": 0,
           "compliance": 10,
           "data": 11,
@@ -6224,6 +6296,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       {
         "aars": 29,
         "aarsInput": {
+          "businessImpact": "UNKNOWN",
           "dataExposure": "DATA_ACCESS",
           "environment": "UNCLASSIFIED",
           "gaps": [
@@ -6235,6 +6308,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "business": 0,
           "combination": 0,
           "compliance": 10,
           "data": 11,
@@ -6285,6 +6359,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       {
         "aars": 61,
         "aarsInput": {
+          "businessImpact": "UNKNOWN",
           "dataExposure": "DATA_ACCESS",
           "environment": "PROD",
           "gaps": [
@@ -6302,6 +6377,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "business": 0,
           "combination": 0,
           "compliance": 30,
           "data": 11,
@@ -6344,6 +6420,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       {
         "aars": 61,
         "aarsInput": {
+          "businessImpact": "UNKNOWN",
           "dataExposure": "DATA_ACCESS",
           "environment": "PROD",
           "gaps": [
@@ -6361,6 +6438,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "business": 0,
           "combination": 0,
           "compliance": 30,
           "data": 11,
@@ -6403,6 +6481,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       {
         "aars": 61,
         "aarsInput": {
+          "businessImpact": "UNKNOWN",
           "dataExposure": "DATA_ACCESS",
           "environment": "PROD",
           "gaps": [
@@ -6420,6 +6499,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "business": 0,
           "combination": 0,
           "compliance": 30,
           "data": 11,
@@ -6462,6 +6542,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       {
         "aars": 61,
         "aarsInput": {
+          "businessImpact": "UNKNOWN",
           "dataExposure": "DATA_ACCESS",
           "environment": "PROD",
           "gaps": [
@@ -6479,6 +6560,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "business": 0,
           "combination": 0,
           "compliance": 30,
           "data": 11,
@@ -6521,6 +6603,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       {
         "aars": 61,
         "aarsInput": {
+          "businessImpact": "UNKNOWN",
           "dataExposure": "DATA_ACCESS",
           "environment": "PROD",
           "gaps": [
@@ -6538,6 +6621,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "business": 0,
           "combination": 0,
           "compliance": 30,
           "data": 11,
@@ -6580,6 +6664,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       {
         "aars": 61,
         "aarsInput": {
+          "businessImpact": "UNKNOWN",
           "dataExposure": "DATA_ACCESS",
           "environment": "PROD",
           "gaps": [
@@ -6597,6 +6682,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "business": 0,
           "combination": 0,
           "compliance": 30,
           "data": 11,
@@ -6639,6 +6725,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       {
         "aars": 61,
         "aarsInput": {
+          "businessImpact": "UNKNOWN",
           "dataExposure": "DATA_ACCESS",
           "environment": "PROD",
           "gaps": [
@@ -6656,6 +6743,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "business": 0,
           "combination": 0,
           "compliance": 30,
           "data": 11,
@@ -6698,6 +6786,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       {
         "aars": 61,
         "aarsInput": {
+          "businessImpact": "UNKNOWN",
           "dataExposure": "DATA_ACCESS",
           "environment": "PROD",
           "gaps": [
@@ -6715,6 +6804,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "business": 0,
           "combination": 0,
           "compliance": 30,
           "data": 11,
@@ -6757,6 +6847,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       {
         "aars": 5,
         "aarsInput": {
+          "businessImpact": "UNKNOWN",
           "dataExposure": "NONE",
           "environment": "UNCLASSIFIED",
           "gaps": [
@@ -6768,6 +6859,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "NONE",
         },
         "aarsPillars": {
+          "business": 0,
           "combination": 0,
           "compliance": 5,
           "data": 0,
@@ -6803,6 +6895,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       {
         "aars": 0,
         "aarsInput": {
+          "businessImpact": "UNKNOWN",
           "dataExposure": "NONE",
           "environment": "UNCLASSIFIED",
           "gaps": [],
@@ -6810,6 +6903,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "NONE",
         },
         "aarsPillars": {
+          "business": 0,
           "combination": 0,
           "compliance": 0,
           "data": 0,
@@ -6844,6 +6938,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       {
         "aars": 22,
         "aarsInput": {
+          "businessImpact": "UNKNOWN",
           "dataExposure": "SENSITIVE",
           "environment": "UNCLASSIFIED",
           "gaps": [],
@@ -6851,6 +6946,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "NONE",
         },
         "aarsPillars": {
+          "business": 0,
           "combination": 0,
           "compliance": 0,
           "data": 22,
@@ -8910,7 +9006,7 @@ exports[`read endpoints > getSettings answers the same shape 1`] = `
 exports[`read endpoints > getStorageStats answers the same shape 1`] = `
 {
   "data": {
-    "archiveBytes": 72801,
+    "archiveBytes": 74001,
     "cellCount": 21100,
     "rows": {
       "assets": 85,
@@ -9529,8 +9625,8 @@ exports[`the persisted ledger > writes the tabs the schema declares 2`] = `
 {
   "ai_assets": {
     "aars": 62,
-    "aars_input_json": "{"gaps":[{"code":"LLM06"},{"code":"NO_GUARDRAIL"}],"dataExposure":"SENSITIVE","internetExposure":"NONE","privilege":"HIGH","environment":"UNCLASSIFIED"}",
-    "aars_pillars_json": "{"toxic":20,"compliance":20,"data":22,"exposure":0,"privilege":0,"environment":0,"combination":0}",
+    "aars_input_json": "{"gaps":[{"code":"LLM06"},{"code":"NO_GUARDRAIL"}],"dataExposure":"SENSITIVE","internetExposure":"NONE","privilege":"HIGH","environment":"UNCLASSIFIED","businessImpact":"UNKNOWN"}",
+    "aars_pillars_json": "{"toxic":20,"compliance":20,"data":22,"exposure":0,"privilege":0,"environment":0,"combination":0,"business":0}",
     "aars_severity": "HIGH",
     "account_id": "gcp-account-01",
     "account_name": "gcp-account-01",

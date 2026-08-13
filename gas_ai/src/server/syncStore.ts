@@ -64,7 +64,13 @@ export function assetToRow(n: GNode): Rec {
     status: n.status ?? null,
     account_id: n.cloudAccount?.id ?? null,
     account_name: n.cloudAccount?.name ?? null,
-    projects_json: JSON.stringify((n.projects ?? []).map((p) => p.name)),
+    // {name, businessImpact} rather than bare names: riskProfile.businessImpact is
+    // queried and normalized today and was being discarded right here. rowToAsset reads
+    // BOTH shapes, so an existing ledger of plain strings keeps loading unchanged and
+    // upgrades itself on the next sync — no migration, no new column.
+    projects_json: JSON.stringify(
+      (n.projects ?? []).map((p) => (p.businessImpact ? { n: p.name, b: p.businessImpact } : p.name)),
+    ),
     first_seen: n.firstSeen ?? null,
     last_seen: n.lastSeen ?? null,
     internet: triCell(n.isAccessibleFromInternet),
@@ -105,10 +111,20 @@ export function rowToAsset(r: Rec): GNode {
     hasHighPrivileges: parseBool(r["high_priv"]),
     hasAdminPrivileges: parseBool(r["admin_priv"]),
     guardrailMissing: parseBool(r["guardrail_missing"]),
-    projects: parseJson<string[]>(r["projects_json"], []).map((name) => ({
-      id: `proj-${String(name).toLowerCase()}`,
-      name: String(name),
-    })),
+    // Tolerant of both persisted shapes: a bare string (pre-businessImpact ledgers) and
+    // {n, b}. Keys are short because this is one JSON blob per asset per row.
+    projects: parseJson<Array<string | { n?: string; b?: string }>>(r["projects_json"], []).map(
+      (p) => {
+        const name = typeof p === "string" ? p : String(p?.n ?? "");
+        const node: { id: string; name: string; businessImpact?: string } = {
+          id: `proj-${name.toLowerCase()}`,
+          name,
+        };
+        const bi = typeof p === "string" ? "" : String(p?.b ?? "");
+        if (bi) node.businessImpact = bi;
+        return node;
+      },
+    ),
   };
   const account = (r["account_id"] as string | null) ?? null;
   if (account) {

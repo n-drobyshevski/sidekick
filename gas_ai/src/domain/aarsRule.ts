@@ -11,6 +11,7 @@ import {
   DEFAULT_AARS_RULE,
   type AarsBands,
   type AarsRule,
+  type BusinessImpact,
   type DataExposure,
   type GapAggregation,
   type GapMatch,
@@ -56,6 +57,7 @@ const EXPOSURE_KEYS: DataExposure[] = ["SENSITIVE", "DATA_ACCESS", "NONE"];
 const INTERNET_EXPOSURE_KEYS: InternetExposure[] = ["CONFIRMED", "UNDETERMINED", "NONE"];
 const PRIVILEGE_KEYS: PrivilegeLevel[] = ["ADMIN", "HIGH", "NONE"];
 const ENVIRONMENT_KEYS: Environment[] = ["PROD", "PREPROD", "NONPROD", "DEV", "UNCLASSIFIED"];
+const BUSINESS_IMPACT_KEYS: BusinessImpact[] = ["HBI", "MBI", "LBI", "UNKNOWN"];
 const BAND_KEYS: Array<keyof AarsBands> = ["critical", "high", "medium", "low"];
 const BAND_LABELS: Record<keyof AarsBands, string> = {
   critical: "CRITICAL",
@@ -242,6 +244,20 @@ export function cleanAarsRule(raw: unknown): AarsRule {
   // before environments existed — pricing "we could not tell" would put points on ignorance.
   environmentPoints.UNCLASSIFIED = 0;
 
+  const biRaw = rec(r["businessImpactPoints"]);
+  const businessImpactPoints = {} as Record<BusinessImpact, number>;
+  for (const k of BUSINESS_IMPACT_KEYS) {
+    businessImpactPoints[k] = clampInt(
+      biRaw[k],
+      DEFAULT_AARS_RULE.businessImpactPoints[k],
+      POINTS_MIN,
+      POINTS_MAX,
+    );
+  }
+  // Same reasoning as environmentPoints.UNCLASSIFIED: an asset in no rated project must
+  // score as it did before this axis existed, never as though it had been rated harmless.
+  businessImpactPoints.UNKNOWN = 0;
+
   const bandRaw = rec(r["bands"]);
   const bands = {} as AarsBands;
   for (const k of BAND_KEYS) {
@@ -300,6 +316,7 @@ export function cleanAarsRule(raw: unknown): AarsRule {
     combinationRules,
     environmentRules,
     environmentPoints,
+    businessImpactPoints,
     bands,
   };
 }

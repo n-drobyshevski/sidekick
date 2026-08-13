@@ -1385,7 +1385,8 @@ var Server = (() => {
     "exposure",
     "privilege",
     "environment",
-    "combination"
+    "combination",
+    "business"
   ];
   var DEFAULT_AARS_RULE = {
     severityPoints: { CRITICAL: 50, HIGH: 35, MEDIUM: 20, LOW: 8 },
@@ -1447,6 +1448,7 @@ var Server = (() => {
     // All zero: the applied table in ai/custom_score.md scores agent-F and agent-F-preprod
     // identically, and the default rule must keep reproducing it.
     environmentPoints: { PROD: 0, PREPROD: 0, NONPROD: 0, DEV: 0, UNCLASSIFIED: 0 },
+    businessImpactPoints: { HBI: 0, MBI: 0, LBI: 0, UNKNOWN: 0 },
     bands: { critical: 70, high: 50, medium: 30, low: 10 }
   };
   var AARS_V2_RULE = {
@@ -1486,6 +1488,7 @@ var Server = (() => {
     combinationRules: [],
     environmentRules: DEFAULT_AARS_RULE.environmentRules.map((e) => ({ ...e })),
     environmentPoints: { PROD: 0, PREPROD: 0, NONPROD: 0, DEV: 0, UNCLASSIFIED: 0 },
+    businessImpactPoints: { HBI: 0, MBI: 0, LBI: 0, UNKNOWN: 0 },
     bands: { critical: 70, high: 50, medium: 30, low: 10 }
   };
   var AARS_V3_RULE = {
@@ -1498,6 +1501,8 @@ var Server = (() => {
     dataAmplifier: 1,
     privilegePoints: { ADMIN: 30, HIGH: 16, NONE: 0 },
     environmentPoints: { PROD: 20, PREPROD: 8, NONPROD: 4, DEV: 2, UNCLASSIFIED: 0 },
+    // Wiz's own rating of what the asset can hurt — the most direct impact signal available.
+    businessImpactPoints: { HBI: 25, MBI: 12, LBI: 4, UNKNOWN: 0 },
     combinationRules: [
       {
         conditions: ["EXCESSIVE_PRIVILEGE", "SENSITIVE_DATA", "MISSING_GUARDRAIL"],
@@ -1578,7 +1583,7 @@ var Server = (() => {
     return points.reduce((acc, p) => acc + p, 0);
   }
   function computeAars(input, rule = DEFAULT_AARS_RULE) {
-    var _a4, _b, _c, _d, _e, _f, _g, _h;
+    var _a4, _b, _c, _d, _e, _f, _g, _h, _i, _j;
     let toxic = worstSeverityPoints(input.issueSeverities, rule);
     toxic *= multiIssueFactor(input.issueSeverities.length, rule);
     toxic = Math.min(rule.pillarACap, Math.round(toxic));
@@ -1596,9 +1601,19 @@ var Server = (() => {
     const exposure = (_c = rule.exposurePoints[(_b = input.internetExposure) != null ? _b : "NONE"]) != null ? _c : 0;
     const privilege = (_e = rule.privilegePoints[(_d = input.privilege) != null ? _d : "NONE"]) != null ? _e : 0;
     const environment = (_g = rule.environmentPoints[(_f = input.environment) != null ? _f : "UNCLASSIFIED"]) != null ? _g : 0;
-    const fired = firedCombinations((_h = input.conditions) != null ? _h : [], rule);
+    const business = (_i = rule.businessImpactPoints[(_h = input.businessImpact) != null ? _h : "UNKNOWN"]) != null ? _i : 0;
+    const fired = firedCombinations((_j = input.conditions) != null ? _j : [], rule);
     const combination = fired.reduce((acc, f) => acc + f.points, 0);
-    const pillars = { toxic, compliance, data, exposure, privilege, environment, combination };
+    const pillars = {
+      toxic,
+      compliance,
+      data,
+      exposure,
+      privilege,
+      environment,
+      combination,
+      business
+    };
     let score2;
     let composition;
     if (rule.scoringMode === "multiplicative") {
@@ -1649,7 +1664,8 @@ var Server = (() => {
       exposure: maxOf(rule.exposurePoints),
       privilege: maxOf(rule.privilegePoints),
       environment: maxOf(rule.environmentPoints),
-      combination: rule.combinationRules.reduce((acc, c) => acc + c.points, 0)
+      combination: rule.combinationRules.reduce((acc, c) => acc + c.points, 0),
+      business: maxOf(rule.businessImpactPoints)
     };
   }
   function firedCombinations(conditions, rule = DEFAULT_AARS_RULE) {
@@ -1698,6 +1714,7 @@ var Server = (() => {
   var INTERNET_EXPOSURE_KEYS = ["CONFIRMED", "UNDETERMINED", "NONE"];
   var PRIVILEGE_KEYS = ["ADMIN", "HIGH", "NONE"];
   var ENVIRONMENT_KEYS = ["PROD", "PREPROD", "NONPROD", "DEV", "UNCLASSIFIED"];
+  var BUSINESS_IMPACT_KEYS = ["HBI", "MBI", "LBI", "UNKNOWN"];
   var BAND_KEYS = ["critical", "high", "medium", "low"];
   var BAND_LABELS = {
     critical: "CRITICAL",
@@ -1833,6 +1850,17 @@ var Server = (() => {
       );
     }
     environmentPoints.UNCLASSIFIED = 0;
+    const biRaw = rec(r["businessImpactPoints"]);
+    const businessImpactPoints = {};
+    for (const k of BUSINESS_IMPACT_KEYS) {
+      businessImpactPoints[k] = clampInt(
+        biRaw[k],
+        DEFAULT_AARS_RULE.businessImpactPoints[k],
+        POINTS_MIN,
+        POINTS_MAX
+      );
+    }
+    businessImpactPoints.UNKNOWN = 0;
     const bandRaw = rec(r["bands"]);
     const bands = {};
     for (const k of BAND_KEYS) {
@@ -1879,6 +1907,7 @@ var Server = (() => {
       combinationRules,
       environmentRules,
       environmentPoints,
+      businessImpactPoints,
       bands
     };
   }
@@ -3606,7 +3635,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "fbc6300f88af" : "dev";
+  var BUILD_ID = true ? "a9ab79114288" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -4215,6 +4244,17 @@ var Server = (() => {
     if (!Number.isFinite(seen) || !Number.isFinite(at)) return false;
     return at - seen >= rule.dormantAfterDays * DAY_MS2;
   }
+  function businessImpactOf(node2) {
+    var _a4, _b;
+    let worst = "UNKNOWN";
+    for (const p of (_a4 = node2.projects) != null ? _a4 : []) {
+      const raw = String((_b = p.businessImpact) != null ? _b : "").trim().toUpperCase();
+      if (raw === "HBI") return "HBI";
+      if (raw === "MBI") worst = "MBI";
+      else if (raw === "LBI" && worst === "UNKNOWN") worst = "LBI";
+    }
+    return worst;
+  }
   function privilegeOf(node2) {
     if (node2.hasAdminPrivileges === true) return "ADMIN";
     if (node2.hasHighPrivileges === true) return "HIGH";
@@ -4259,6 +4299,7 @@ var Server = (() => {
       internetExposure: internetExposureOf(node2),
       privilege: privilegeOf(node2),
       environment: environmentOf(node2, rule),
+      businessImpact: businessImpactOf(node2),
       conditions: conditionsHeldBy(node2)
     };
   }
@@ -4306,7 +4347,8 @@ var Server = (() => {
         dataExposure: base.dataExposure,
         internetExposure: base.internetExposure,
         privilege: base.privilege,
-        environment: base.environment
+        environment: base.environment,
+        businessImpact: base.businessImpact
       };
     }
     return hints;
@@ -4315,7 +4357,7 @@ var Server = (() => {
     const open = issues2.filter((i) => i.status === "OPEN");
     const byAsset = groupBy(open, (i) => i.assetId);
     const nodes = doc.nodes.map((raw) => {
-      var _a4, _b, _c, _d;
+      var _a4, _b, _c, _d, _e;
       const node2 = { ...raw };
       const nodeIssues = (_a4 = byAsset.get(node2.id)) != null ? _a4 : [];
       if (nodeIssues.length) {
@@ -4337,6 +4379,7 @@ var Server = (() => {
           internetExposure: (_b = hint.internetExposure) != null ? _b : internetExposureOf(node2),
           privilege: (_c = hint.privilege) != null ? _c : privilegeOf(node2),
           environment: (_d = hint.environment) != null ? _d : environmentOf(node2, rule),
+          businessImpact: (_e = hint.businessImpact) != null ? _e : businessImpactOf(node2),
           // Conditions are always re-derived: they are a measurement of the node as it
           // is now, not a scoring input an operator pinned.
           conditions: conditionsHeldBy(node2)
@@ -4350,7 +4393,8 @@ var Server = (() => {
           dataExposure: input.dataExposure,
           internetExposure: input.internetExposure,
           privilege: input.privilege,
-          environment: input.environment
+          environment: input.environment,
+          businessImpact: input.businessImpact
         };
       }
       return node2;
@@ -5013,7 +5057,13 @@ var Server = (() => {
       status: (_d = n.status) != null ? _d : null,
       account_id: (_f = (_e = n.cloudAccount) == null ? void 0 : _e.id) != null ? _f : null,
       account_name: (_h = (_g = n.cloudAccount) == null ? void 0 : _g.name) != null ? _h : null,
-      projects_json: JSON.stringify(((_i = n.projects) != null ? _i : []).map((p) => p.name)),
+      // {name, businessImpact} rather than bare names: riskProfile.businessImpact is
+      // queried and normalized today and was being discarded right here. rowToAsset reads
+      // BOTH shapes, so an existing ledger of plain strings keeps loading unchanged and
+      // upgrades itself on the next sync — no migration, no new column.
+      projects_json: JSON.stringify(
+        ((_i = n.projects) != null ? _i : []).map((p) => p.businessImpact ? { n: p.name, b: p.businessImpact } : p.name)
+      ),
       first_seen: (_j = n.firstSeen) != null ? _j : null,
       last_seen: (_k = n.lastSeen) != null ? _k : null,
       internet: triCell(n.isAccessibleFromInternet),
@@ -5054,10 +5104,21 @@ var Server = (() => {
       hasHighPrivileges: parseBool(r["high_priv"]),
       hasAdminPrivileges: parseBool(r["admin_priv"]),
       guardrailMissing: parseBool(r["guardrail_missing"]),
-      projects: parseJson(r["projects_json"], []).map((name) => ({
-        id: `proj-${String(name).toLowerCase()}`,
-        name: String(name)
-      }))
+      // Tolerant of both persisted shapes: a bare string (pre-businessImpact ledgers) and
+      // {n, b}. Keys are short because this is one JSON blob per asset per row.
+      projects: parseJson(r["projects_json"], []).map(
+        (p) => {
+          var _a5, _b2;
+          const name = typeof p === "string" ? p : String((_a5 = p == null ? void 0 : p.n) != null ? _a5 : "");
+          const node3 = {
+            id: `proj-${name.toLowerCase()}`,
+            name
+          };
+          const bi = typeof p === "string" ? "" : String((_b2 = p == null ? void 0 : p.b) != null ? _b2 : "");
+          if (bi) node3.businessImpact = bi;
+          return node3;
+        }
+      )
     };
     const account = (_j = r["account_id"]) != null ? _j : null;
     if (account) {

@@ -11,6 +11,7 @@ import {
   type AarsGap,
   type AarsInput,
   type AarsRule,
+  type BusinessImpact,
   type DataExposure,
   type Environment,
   type InternetExposure,
@@ -47,6 +48,8 @@ export interface AarsHint {
   privilege?: PrivilegeLevel;
   /** Same contract again — absent re-derives rather than reading as UNCLASSIFIED. */
   environment?: Environment;
+  /** Absent re-derives rather than reading as UNKNOWN. */
+  businessImpact?: BusinessImpact;
 }
 export type AarsHints = Record<string, AarsHint>;
 
@@ -103,6 +106,23 @@ export function isDormant(node: GNode, rule: AarsRule, now: string): boolean {
  * reach", this one answers "what can it do", and collapsing them is why `hasAdminPrivileges`
  * has never changed a score.
  */
+/**
+ * The WORST business-impact rating across the asset's projects — the same "worst wins"
+ * reading pillar A applies to issue severities. An asset in one LBI and one HBI project is
+ * an HBI asset: the rating describes what the asset can hurt, and the worst thing it can
+ * hurt is what matters.
+ */
+export function businessImpactOf(node: GNode): BusinessImpact {
+  let worst: BusinessImpact = "UNKNOWN";
+  for (const p of node.projects ?? []) {
+    const raw = String(p.businessImpact ?? "").trim().toUpperCase();
+    if (raw === "HBI") return "HBI";
+    if (raw === "MBI") worst = "MBI";
+    else if (raw === "LBI" && worst === "UNKNOWN") worst = "LBI";
+  }
+  return worst;
+}
+
 export function privilegeOf(node: GNode): PrivilegeLevel {
   if (node.hasAdminPrivileges === true) return "ADMIN";
   if (node.hasHighPrivileges === true) return "HIGH";
@@ -186,6 +206,7 @@ export function deriveAarsInput(
     internetExposure: internetExposureOf(node),
     privilege: privilegeOf(node),
     environment: environmentOf(node, rule),
+    businessImpact: businessImpactOf(node),
     conditions: conditionsHeldBy(node),
   };
 }
@@ -268,6 +289,7 @@ export function buildAarsHintsFromFindings(
       internetExposure: base.internetExposure,
       privilege: base.privilege,
       environment: base.environment,
+      businessImpact: base.businessImpact,
     };
   }
   return hints;
@@ -315,6 +337,7 @@ export function enrichGraphDoc(
             internetExposure: hint.internetExposure ?? internetExposureOf(node),
             privilege: hint.privilege ?? privilegeOf(node),
             environment: hint.environment ?? environmentOf(node, rule),
+            businessImpact: hint.businessImpact ?? businessImpactOf(node),
             // Conditions are always re-derived: they are a measurement of the node as it
             // is now, not a scoring input an operator pinned.
             conditions: conditionsHeldBy(node),
@@ -332,6 +355,7 @@ export function enrichGraphDoc(
         internetExposure: input.internetExposure,
         privilege: input.privilege,
         environment: input.environment,
+        businessImpact: input.businessImpact,
       };
     }
     return node;
