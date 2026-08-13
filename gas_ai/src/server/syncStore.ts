@@ -344,7 +344,7 @@ function enrichFromTabs(rule: AarsRule): GraphDoc | null {
   const base = loadRawGraph();
   if (!base) return null;
   const issues = loadIssues();
-  const hints: AarsHints = { ...buildAarsHintsFromFindings(loadFindings(), base, issues) };
+  const hints: AarsHints = { ...buildAarsHintsFromFindings(loadFindings(), base, issues, rule) };
   for (const node of base.nodes) {
     if (node.aarsInput) hints[node.id] = node.aarsInput;
   }

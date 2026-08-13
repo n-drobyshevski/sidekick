@@ -97,6 +97,35 @@ export type MultiIssueScaling = "flat" | "log2";
  */
 export type GapAggregation = "sum" | "rss";
 
+/**
+ * Which derivations are allowed to RAISE a gap, as opposed to how gaps are priced.
+ *
+ * Coverage belongs on the rule for the same reason pricing does: it is a judgement the
+ * operator owns and must be able to read back. Every source is off by default, because
+ * switching one on re-prices assets and the applied table in ai/custom_score.md is
+ * normative for the default rule.
+ *
+ * All three exist to fix the same defect: three rows of the DEFAULT cascade
+ * (`FIVE_RS`, the `5R` family, `DEPRECATED_MODEL`) price codes that NOTHING in the live
+ * pipeline emits. They are not shadowed — `shadowedGapRules` cannot see them — they are
+ * unreachable, and the signal each one needs is already sitting in the sheets.
+ */
+export interface GapSources {
+  /**
+   * `5R_<VALUE>` from `IssueRow.frameworks.fiveRs`. The values are literally "Restrict",
+   * "Reduce", "Reconfigure", so they land on the codebook's existing 5R_ entries.
+   */
+  fiveRs?: boolean;
+  /** `DEPRECATED_MODEL` from `node.status === "Deprecated"`. */
+  deprecatedModel?: boolean;
+  /**
+   * `INACTIVE_AGENT` from `node.status === "Inactive"`. A dormant agent that still holds
+   * its privileges and data reach is the ASI10 "Rogue Agents" shape — it is not watched,
+   * not maintained, and not missed if abused.
+   */
+  inactiveAgent?: boolean;
+}
+
 /** Score thresholds, worst first. Each must sit strictly above the next. */
 export interface AarsBands {
   critical: number;
@@ -119,6 +148,13 @@ export interface AarsRule {
   gapFallbackPoints: number;
   /** How the matched prices combine. Defaults to the spec's `sum`. */
   gapAggregation: GapAggregation;
+  /** Which derivations may raise a gap. All off in the spec rule. */
+  gapSources: GapSources;
+  /**
+   * Per-severity weight on a gap contributed by a failing config finding. The spec
+   * weights them all at 1, so a CRITICAL failing control prices exactly like a LOW one.
+   */
+  findingSeverityWeights: Record<IssueSeverityKey, number>;
   pillarBCap: number;
   dataExposurePoints: Record<DataExposure, number>;
   dataAmplifier: number;
@@ -155,6 +191,11 @@ export const DEFAULT_AARS_RULE: AarsRule = {
   ],
   gapFallbackPoints: 5,
   gapAggregation: "sum",
+  // Off: switching any of these on adds gaps the doc's applied table never priced.
+  gapSources: { fiveRs: false, deprecatedModel: false, inactiveAgent: false },
+  // All 1: the spec reads a failing control as present-or-absent, never as more or less
+  // severe. Kept as a knob because ai_findings.severity is already persisted and unused.
+  findingSeverityWeights: { CRITICAL: 1, HIGH: 1, MEDIUM: 1, LOW: 1 },
   pillarBCap: 30,
   dataExposurePoints: { SENSITIVE: 20, DATA_ACCESS: 10, NONE: 0 },
   // 5Rs framework at 53% — data-exposure controls are systemically weak, so all

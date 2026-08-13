@@ -6,11 +6,13 @@ import {
   computeAars,
   DEFAULT_AARS_RULE,
   gap,
+  gapPointsFor,
   type AarsGap,
   type AarsInput,
   type AarsRule,
   type DataExposure,
   type InternetExposure,
+  type IssueSeverityKey,
 } from "./aars";
 import type { Severity } from "./config";
 import { conditionHolds, conditionState } from "./riskConditions";
@@ -83,16 +85,31 @@ export function internetExposureOf(node: GNode): InternetExposure {
  * the asset's open issues plus NO_GUARDRAIL when guardrail coverage flagged the node;
  * data exposure from the CIEM/DSPM flags.
  */
-export function deriveAarsInput(node: GNode, nodeIssues: IssueRow[]): AarsInput {
+export function deriveAarsInput(
+  node: GNode,
+  nodeIssues: IssueRow[],
+  rule: AarsRule = DEFAULT_AARS_RULE,
+): AarsInput {
   const codes = new Set<string>();
   for (const issue of nodeIssues) {
     const fw = issue.frameworks ?? {};
     for (const c of fw.owaspLlm ?? []) codes.add(c);
     for (const c of fw.owaspAgentic ?? []) codes.add(c);
     for (const c of fw.owaspMl ?? []) codes.add(`ML_${c.replace(/\s+/g, "_").toUpperCase()}`);
+    // The 5Rs mappings ride on every issue and have never reached the score, which is why
+    // the default cascade's FIVE_RS and 5R rows can never fire. Same shape as the ML
+    // branch above: a prose label, normalized into the codebook's 5R_ vocabulary.
+    if (rule.gapSources.fiveRs) {
+      for (const c of fw.fiveRs ?? []) codes.add(`5R_${c.replace(/\s+/g, "_").toUpperCase()}`);
+    }
   }
   const gaps: AarsGap[] = [...codes].sort().map((c) => gap(c));
   if (node.guardrailMissing) gaps.push(gap("NO_GUARDRAIL"));
+  // Status-derived gaps. `status` is persisted on every asset and read by nothing but the
+  // detail sheet; these two conditions are the ones the cascade already knows how to price.
+  const status = String(node.status ?? "").trim().toUpperCase();
+  if (rule.gapSources.deprecatedModel && status === "DEPRECATED") gaps.push(gap("DEPRECATED_MODEL"));
+  if (rule.gapSources.inactiveAgent && status === "INACTIVE") gaps.push(gap("INACTIVE_AGENT"));
   const dataExposure = dataExposureOf(node);
   return {
     // AARS Pillar A scores Wiz-NATIVE severities (the applied table in
@@ -103,6 +120,22 @@ export function deriveAarsInput(node: GNode, nodeIssues: IssueRow[]): AarsInput 
     dataExposure,
     internetExposure: internetExposureOf(node),
   };
+}
+
+/**
+ * A finding-contributed gap, weighted by how severe the failing control was.
+ *
+ * At the spec weights (all 1) this returns a bare `gap(code)` — no `points` override, so
+ * the cascade prices it exactly as before and the persisted input is byte-identical. Only
+ * a tuned weight materializes an override, and it rounds to a whole point because every
+ * other price in the model is an integer.
+ */
+function weightedGap(code: string, severity: Severity | undefined, rule: AarsRule): AarsGap {
+  const w = severity === undefined
+    ? 1
+    : (rule.findingSeverityWeights[severity as IssueSeverityKey] ?? 1);
+  if (w === 1) return gap(code);
+  return gap(code, Math.max(0, Math.round(gapPointsFor(code, rule) * w)));
 }
 
 /**
@@ -119,25 +152,37 @@ export function buildAarsHintsFromFindings(
   findings: FindingRow[],
   doc: GraphDoc,
   issues: IssueRow[],
+  rule: AarsRule = DEFAULT_AARS_RULE,
 ): AarsHints {
   const open = issues.filter((i) => i.status === "OPEN");
   const issuesByAsset = groupBy(open, (i) => i.assetId);
   const codesByResource = new Map<string, string[]>();
+  // The worst severity any finding contributing this code carried, so a code reached by
+  // both a CRITICAL and a LOW control is weighted by the CRITICAL — the same "worst wins"
+  // reading pillar A applies to issues.
+  const worstByCode = new Map<string, Severity>();
   for (const f of findings) {
     pushInto(codesByResource, f.resourceId, ...f.frameworkCodes);
+    for (const c of f.frameworkCodes) {
+      const key = `${f.resourceId}|${c}`;
+      const prev = worstByCode.get(key);
+      if (prev === undefined || severityRank(f.severity) < severityRank(prev)) {
+        worstByCode.set(key, f.severity);
+      }
+    }
   }
   const nodeById = indexBy(doc.nodes, (n) => n.id);
   const hints: AarsHints = {};
   for (const [resourceId, codes] of codesByResource) {
     const node = nodeById.get(resourceId);
     if (!node) continue;
-    const base = deriveAarsInput(node, issuesByAsset.get(resourceId) ?? []);
+    const base = deriveAarsInput(node, issuesByAsset.get(resourceId) ?? [], rule);
     const seen = new Set(base.gaps.map((g) => g.code));
     const gaps = [...base.gaps];
     for (const c of codes) {
       if (c && !seen.has(c)) {
         seen.add(c);
-        gaps.push(gap(c));
+        gaps.push(weightedGap(c, worstByCode.get(`${resourceId}|${c}`), rule));
       }
     }
     hints[resourceId] = {
@@ -190,7 +235,7 @@ export function enrichGraphDoc(
             // rather than let `undefined` read as NONE.
             internetExposure: hint.internetExposure ?? internetExposureOf(node),
           }
-        : deriveAarsInput(node, nodeIssues);
+        : deriveAarsInput(node, nodeIssues, rule);
       const result = computeAars(input, rule);
       node.aars = result.score;
       node.aarsSeverity = result.severity;

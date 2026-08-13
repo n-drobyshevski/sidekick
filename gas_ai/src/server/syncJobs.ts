@@ -30,6 +30,7 @@ import { readGzJsonFile, syncFolder, writeGzJson, writeSyncPage } from "./archiv
 import { activeJob, createJob, getJob, newJobId, updateJob, type JobRow } from "./jobsStore";
 import { withScriptLock } from "./locks";
 import { getProp, hasWizCredentials, projectScope, setProp, deleteProp } from "./props";
+import * as settingsStore from "./settingsStore";
 import { seedGraphDoc, SEED_AARS_HINTS, SEED_FINDINGS, SEED_ISSUES, SEED_TREND } from "./sampleData";
 import { appendRows, dataRowCount, TABS } from "./sheetsDb";
 import { parseJson, persistSync } from "./syncStore";
@@ -442,7 +443,9 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
     // hints (union with the issue-framework heuristic), so persistSync enriches with
     // them instead of undefined.
     updateJob(job.job_id, { phase: "PERSISTING" });
-    const hints = buildAarsHintsFromFindings(findings, doc, issues);
+    // The same rule persistSync will score under — resolved here too, so the hints and the
+    // enrichment can never be built under two different models.
+    const hints = buildAarsHintsFromFindings(findings, doc, issues, settingsStore.getAarsRule().rule);
     const persist = () =>
       persistSync(doc, issues, hints, {
         syncId,

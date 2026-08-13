@@ -15,6 +15,7 @@ import {
   type GapAggregation,
   type GapMatch,
   type GapPointRule,
+  type GapSources,
   type InternetExposure,
   type IssueSeverityKey,
   type MultiIssueScaling,
@@ -25,6 +26,8 @@ export const POINTS_MIN = 0;
 export const POINTS_MAX = 100;
 export const MULTIPLIER_MIN = 1;
 export const MULTIPLIER_MAX = 3;
+export const WEIGHT_MIN = 0;
+export const WEIGHT_MAX = 3;
 export const BAND_MIN = 1;
 export const BAND_MAX = 100;
 export const CODE_MAX_LEN = 64;
@@ -54,6 +57,18 @@ function clampMultiplier(v: unknown, fallback: number): number {
   if (!Number.isFinite(n)) return fallback;
   const rounded = Math.round(n * 100) / 100;
   return Math.min(MULTIPLIER_MAX, Math.max(MULTIPLIER_MIN, rounded));
+}
+
+/**
+ * A finding-severity weight. Unlike `clampMultiplier` this floor is 0, not 1: weighting a
+ * LOW failing control down to nothing is a legitimate model, whereas a multiplier below 1
+ * would mean "more issues, less risk".
+ */
+function clampWeight(v: unknown, fallback: number): number {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return fallback;
+  const rounded = Math.round(n * 100) / 100;
+  return Math.min(WEIGHT_MAX, Math.max(WEIGHT_MIN, rounded));
 }
 
 export function cleanGapCode(v: unknown): string {
@@ -89,6 +104,24 @@ export function cleanAarsRule(raw: unknown): AarsRule {
       DEFAULT_AARS_RULE.dataExposurePoints[k],
       POINTS_MIN,
       POINTS_MAX,
+    );
+  }
+
+  // A source is on ONLY when it says so: anything unreadable reads as off, so a
+  // hand-edited cell can never silently widen what counts as a gap.
+  const srcRaw = rec(r["gapSources"]);
+  const gapSources: GapSources = {
+    fiveRs: srcRaw["fiveRs"] === true,
+    deprecatedModel: srcRaw["deprecatedModel"] === true,
+    inactiveAgent: srcRaw["inactiveAgent"] === true,
+  };
+
+  const fswRaw = rec(r["findingSeverityWeights"]);
+  const findingSeverityWeights = {} as Record<IssueSeverityKey, number>;
+  for (const k of SEVERITY_KEYS) {
+    findingSeverityWeights[k] = clampWeight(
+      fswRaw[k],
+      DEFAULT_AARS_RULE.findingSeverityWeights[k],
     );
   }
 
@@ -135,6 +168,8 @@ export function cleanAarsRule(raw: unknown): AarsRule {
       POINTS_MAX,
     ),
     gapAggregation,
+    gapSources,
+    findingSeverityWeights,
     pillarBCap: clampInt(r["pillarBCap"], DEFAULT_AARS_RULE.pillarBCap, POINTS_MIN, POINTS_MAX),
     dataExposurePoints,
     dataAmplifier: clampMultiplier(r["dataAmplifier"], DEFAULT_AARS_RULE.dataAmplifier),

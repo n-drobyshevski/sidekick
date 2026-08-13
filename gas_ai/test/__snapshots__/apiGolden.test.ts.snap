@@ -202,6 +202,12 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
           "NONE": 0,
           "UNDETERMINED": 0,
         },
+        "findingSeverityWeights": {
+          "CRITICAL": 1,
+          "HIGH": 1,
+          "LOW": 1,
+          "MEDIUM": 1,
+        },
         "gapAggregation": "sum",
         "gapFallbackPoints": 5,
         "gapPoints": [
@@ -251,6 +257,11 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
             "points": 5,
           },
         ],
+        "gapSources": {
+          "deprecatedModel": false,
+          "fiveRs": false,
+          "inactiveAgent": false,
+        },
         "multiIssueMultiplier": 1.2,
         "multiIssueScaling": "flat",
         "pillarACap": 50,
@@ -288,6 +299,12 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
           "NONE": 0,
           "UNDETERMINED": 0,
         },
+        "findingSeverityWeights": {
+          "CRITICAL": 1,
+          "HIGH": 1,
+          "LOW": 1,
+          "MEDIUM": 1,
+        },
         "gapAggregation": "sum",
         "gapFallbackPoints": 5,
         "gapPoints": [
@@ -337,6 +354,11 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
             "points": 5,
           },
         ],
+        "gapSources": {
+          "deprecatedModel": false,
+          "fiveRs": false,
+          "inactiveAgent": false,
+        },
         "multiIssueMultiplier": 1.2,
         "multiIssueScaling": "flat",
         "pillarACap": 50,
@@ -995,6 +1017,12 @@ exports[`read endpoints > getAarsRule answers the same shape 1`] = `
         "NONE": 0,
         "UNDETERMINED": 0,
       },
+      "findingSeverityWeights": {
+        "CRITICAL": 1,
+        "HIGH": 1,
+        "LOW": 1,
+        "MEDIUM": 1,
+      },
       "gapAggregation": "sum",
       "gapFallbackPoints": 5,
       "gapPoints": [
@@ -1044,6 +1072,11 @@ exports[`read endpoints > getAarsRule answers the same shape 1`] = `
           "points": 5,
         },
       ],
+      "gapSources": {
+        "deprecatedModel": false,
+        "fiveRs": false,
+        "inactiveAgent": false,
+      },
       "multiIssueMultiplier": 1.2,
       "multiIssueScaling": "flat",
       "pillarACap": 50,
@@ -1081,6 +1114,12 @@ exports[`read endpoints > getAarsRule answers the same shape 1`] = `
         "NONE": 0,
         "UNDETERMINED": 0,
       },
+      "findingSeverityWeights": {
+        "CRITICAL": 1,
+        "HIGH": 1,
+        "LOW": 1,
+        "MEDIUM": 1,
+      },
       "gapAggregation": "sum",
       "gapFallbackPoints": 5,
       "gapPoints": [
@@ -1130,6 +1169,11 @@ exports[`read endpoints > getAarsRule answers the same shape 1`] = `
           "points": 5,
         },
       ],
+      "gapSources": {
+        "deprecatedModel": false,
+        "fiveRs": false,
+        "inactiveAgent": false,
+      },
       "multiIssueMultiplier": 1.2,
       "multiIssueScaling": "flat",
       "pillarACap": 50,
