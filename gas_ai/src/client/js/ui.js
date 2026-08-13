@@ -20,7 +20,9 @@ export {
   aarsChip, sevBadge, sevEntries, sevKeyRow, sevSegmentBar, sevSpoken,
 } from "./ui/severity.js";
 export { dataTable, meter, pager, progressBar } from "./ui/data.js";
-export { kpiCard, statusPill } from "./ui/controls.js";
+export {
+  field, filterChipRow, kpiCard, segmented, select, selectField, statusPill, togglePills,
+} from "./ui/controls.js";
 export {
   confirmDialog, emptyState, errorState, helpTip, skeleton, toast,
 } from "./ui/feedback.js";

@@ -21,8 +21,8 @@ import { bootstrap, navigate, setParams, swrCall } from "../store.js";
 import { dueChip, fwTags, openAssetSheet, openIssueSheet } from "../detailSheets.js";
 import { kindIconSvg, kindLabel, categoryOf } from "../icons.js";
 import {
-  clear, dataTable, el, emptyState, errorState, kpiCard, pager, sectionLabel, sevBadge, sevKeyRow,
-  sevSegmentBar, sevSpoken, skeleton,
+  clear, dataTable, el, emptyState, errorState, kpiCard, pager, sectionLabel, select,
+  selectField, sevBadge, sevKeyRow, sevSegmentBar, sevSpoken, skeleton, togglePills,
 } from "../ui.js";
 import {
   CONDITION_KEYS, ISSUE_COMPARATORS, ISSUE_SORT_DESC, SEVERITY_RANK,
@@ -355,22 +355,21 @@ export async function renderCombos(main, params) {
         ? "Patterns"
         : "Patterns — " + shown.length + " of " + ranked.length));
 
-    const pills = el("div", { class: "pill-row", role: "group", "aria-label": "Filter by adjusted severity" });
     const present = SEVERITY_RANK.filter((sev) =>
       ranked.some((g) => String(g.adjustedSeverity).toUpperCase() === sev));
-    for (const sev of present) {
-      const active = view.sev === sev;
-      pills.append(el("button", {
-        class: "sev-pill sev-" + sev,
-        "aria-pressed": active ? "true" : "false",
-        onclick: () => {
-          view.sev = active ? "" : sev;
-          view.page = 0;
-          persist();
-          paint(payload);
-        },
-      }, sev)); // the level's name is the non-colour signal, as on the graph's filter pills
-    }
+    // Single-select: pressing the chosen level again clears it. The level's NAME is the
+    // non-colour signal, as on the graph's filter pills.
+    const pills = togglePills({
+      options: present,
+      selected: view.sev,
+      ariaLabel: "Filter by adjusted severity",
+      onToggle: (sev) => {
+        view.sev = view.sev === sev ? "" : sev;
+        view.page = 0;
+        persist();
+        paint(payload);
+      },
+    });
 
     const controls = el("div", { class: "combo-toolbar-controls" }, pills);
     if (view.sev || view.cond) {
@@ -617,8 +616,8 @@ export async function renderCombos(main, params) {
 
     const bar = el("div", { class: "filter-bar" },
       el("div", { class: "field" }, search),
-      selectField("Account", "acct", options.accounts, rerender),
-      selectField("Project", "proj", options.projects, rerender),
+      issueFilterField("Account", "acct", options.accounts, rerender),
+      issueFilterField("Project", "proj", options.projects, rerender),
       el("div", { class: "filter-meta" },
         el("span", { class: "count" },
           shownCount === totalCount
@@ -628,22 +627,17 @@ export async function renderCombos(main, params) {
     return bar;
   }
 
-  function selectField(labelText, key, values, onChange) {
-    const select = el("select", {
-      "aria-label": labelText,
-      onchange: () => {
-        view[key] = select.value;
+  function issueFilterField(labelText, key, values, onChange) {
+    return selectField(labelText, select({
+      options: values,
+      value: view[key],
+      ariaLabel: labelText,
+      placeholder: "All",
+      onChange: (v) => {
+        view[key] = v;
         onChange();
       },
-    });
-    select.append(el("option", { value: "" }, "All"));
-    for (const v of values) {
-      select.append(el("option", { value: v, selected: view[key] === v }, v));
-    }
-    select.value = view[key] || "";
-    return el("div", { class: "select-field" },
-      el("span", { class: "select-field-label", "aria-hidden": "true" }, labelText),
-      select);
+    }));
   }
 
   function issueTable(mount, group, rows) {

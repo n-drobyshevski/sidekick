@@ -304,22 +304,26 @@ export async function renderInventory(main, params) {
   });
 
   /** What is applied right now — one chip per selected value, plus the search term. */
+  /**
+   * What is narrowing the view right now. `label` is the dimension and `value` is what was
+   * picked, kept apart so the shared chip row can print "AARS severity · CRITICAL" with
+   * the dimension muted — the same shape graphChips.js emits.
+   */
   function filterEntries() {
     const out = [];
     if (query.q) {
-      out.push({ key: "q", label: `Name: ${query.q}`, patch: { q: "" } });
+      out.push({ key: "q", label: "Name", value: query.q, patch: { q: "" } });
     }
     for (const key of FACET_KEYS) {
       for (const value of query[key]) {
         const sev = (key === "aarsSeverities" || key === "severities") ? value : "";
-        const label = key === "aarsSeverities" ? `AARS ${value}`
-          : key === "severities" ? `Issue ${value}`
-          : key === "kinds" ? kindLabel(value)
+        const shown = key === "kinds" ? kindLabel(value)
           : key === "flags" ? (FLAG_LABELS[value] || value)
           : value;
         out.push({
           key: `${key}-${value}`,
-          label,
+          label: FACET_LABELS[key] || key,
+          value: shown,
           sev,
           patch: { [key]: query[key].filter((v) => v !== value) },
         });
