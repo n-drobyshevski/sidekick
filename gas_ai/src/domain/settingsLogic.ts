@@ -4,6 +4,7 @@
 
 import { DEFAULT_AARS_RULE, type AarsRule } from "./aars";
 import { cleanAarsRule } from "./aarsRule";
+import { cleanStepVars } from "./scanVars";
 import {
   DEPTH_DEFAULT,
   DEPTH_MAX,
@@ -93,4 +94,54 @@ export function withScoredRuleVersion(settings: Rec, version: unknown): Rec {
     ...settings,
     aars_scored_version: Number.isFinite(v) && v > 0 ? Math.round(v) : 0,
   };
+}
+
+/**
+ * Per-step Wiz query variable overrides, keyed by sync-step id. Absent or unreadable means
+ * every step uses its builder's own variables — the shape a deployment that has never
+ * touched them has, and the shape a corrupted cell degrades to.
+ */
+export function getScanVars(settings: Rec): Rec {
+  const raw = settings["scan_vars"];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Rec = {};
+  for (const [stepId, value] of Object.entries(raw as Rec)) {
+    // Cleaned per step against its own spec, so a key for a step that no longer exists —
+    // or a value carrying paths the spec never offered — is dropped on read rather than
+    // being carried forward forever.
+    const clean = cleanStepVars(stepId, value);
+    if (clean) out[stepId] = clean;
+  }
+  return out;
+}
+
+/**
+ * Step ids the last live sync skipped because the tenant rejected their query with an
+ * HTTP 400. Recorded because it is otherwise unreachable: it lives on the job row, and the
+ * job is gone the moment it reaches a terminal phase.
+ *
+ * This is what makes a bad variable override visible. Optional steps swallow a 400 by
+ * design, so without this an edit that Wiz rejects looks identical to a tenant that simply
+ * has nothing to report — the area quietly stops reporting and says nothing about why.
+ */
+export function getSkippedSteps(settings: Rec): string[] {
+  const raw = settings["last_skipped_steps"];
+  if (!Array.isArray(raw)) return [];
+  return raw.map((v) => String(v ?? "")).filter(Boolean);
+}
+
+export function withSkippedSteps(settings: Rec, steps: unknown): Rec {
+  const list = Array.isArray(steps) ? steps.map((v) => String(v ?? "")).filter(Boolean) : [];
+  return { ...settings, last_skipped_steps: list };
+}
+
+export function withScanVars(settings: Rec, stepId: string, vars: unknown): Rec {
+  const current = getScanVars(settings);
+  const clean = cleanStepVars(stepId, vars);
+  const next: Rec = { ...current };
+  // An override that matches nothing the spec offers is a removal, which is how "reset this
+  // step" is expressed: there is no separate delete path to keep in step with the save one.
+  if (clean) next[stepId] = clean;
+  else delete next[stepId];
+  return { ...settings, scan_vars: next };
 }

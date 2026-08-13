@@ -26,6 +26,7 @@ import {
   type NormalizedPart,
 } from "../domain/syncNormalize";
 import { buildAarsHintsFromFindings } from "../domain/graphEnrich";
+import { changedPaths, effectiveStepVars, isEditableStep } from "../domain/scanVars";
 import { COMBO_GROUPS } from "../domain/toxicCombos";
 import { nowIso, type Rec } from "../domain/util";
 import { readGzJsonFile, syncFolder, writeGzJson, writeSyncPage } from "./archiveStore";
@@ -33,6 +34,7 @@ import { activeJob, createJob, getJob, newJobId, updateJob, type JobRow } from "
 import { withScriptLock } from "./locks";
 import { getProp, hasWizCredentials, projectScope, setProp, deleteProp } from "./props";
 import { seedGraphDoc, SEED_AARS_HINTS, SEED_FINDINGS, SEED_ISSUES, SEED_TREND } from "./sampleData";
+import * as settingsStore from "./settingsStore";
 import { appendRows, dataRowCount, TABS } from "./sheetsDb";
 import { parseJson, persistSync } from "./syncStore";
 import {
@@ -74,6 +76,11 @@ const BUDGET_MS = 270_000;
 
 interface SyncStepDef {
   id: string;
+  // The Wiz Scans area this step feeds, and the ledger it writes. Metadata rather than a
+  // parallel table elsewhere: a step and its provenance drift apart the moment they are
+  // two lists, and the Scans page states this provenance to the operator as fact.
+  area: string;
+  writes: string[];
   run: "cloudResources" | "graphSearch" | "connection";
   // For run:"connection" — the top-level connection field to read (issuesV2,
   // configurationFindings). Ignored for the other run modes.
@@ -94,18 +101,28 @@ interface SyncStepDef {
  * or the WIZ_AI_RESOURCE_TYPES override) — see resolveAiResourceTypes.
  */
 function syncSteps(): SyncStepDef[] {
+  // Stored per-step overrides, laid over each builder's variables by path. Read once so a
+  // battery of twelve steps costs one settings read, not twelve.
+  const overrides = settingsStore.getScanVars();
+  const vars = (stepId: string, base: Rec): Rec =>
+    effectiveStepVars(stepId, base, overrides[stepId]);
+
   return [
     {
       id: "INVENTORY_AI",
+      area: "aispm",
+      writes: ["ai_assets"],
       run: "cloudResources",
       query: Q_AI_INVENTORY,
-      extraVariables: aiInventoryVariables(resolveAiResourceTypes().types),
+      extraVariables: vars("INVENTORY_AI", aiInventoryVariables(resolveAiResourceTypes().types)),
       normalize: normalizeInventoryPage,
     },
     // One cursor walk per toxic-combination source rule: the assets carrying an OPEN
     // issue for that rule (issue rows are reconstructed one-per-asset).
     ...COMBO_GROUPS.map((group): SyncStepDef => ({
       id: `ISSUES_${group.ruleId}`,
+      area: "toxic",
+      writes: ["ai_assets", "ai_issues"],
       run: "cloudResources",
       query: Q_RULE_ASSETS,
       extraVariables: { ruleIds: [group.ruleId] },
@@ -116,25 +133,31 @@ function syncSteps(): SyncStepDef[] {
     // above; reconcileIssues drops the synthetic per-rule rows these supersede.
     {
       id: "ISSUES_TOXIC",
+      area: "toxic",
+      writes: ["ai_issues", "ai_assets"],
       run: "connection",
       connectionField: "issuesV2",
       query: Q_ISSUES,
-      extraVariables: aiIssuesVariables(projectScope()) as Rec,
+      extraVariables: vars("ISSUES_TOXIC", aiIssuesVariables(projectScope()) as Rec),
       normalize: normalizeIssuesPage,
       optional: true,
     },
     // Real compliance findings (configurationFindings) — feeds AARS pillar B.
     {
       id: "CONFIG_FINDINGS",
+      area: "compliance",
+      writes: ["ai_findings"],
       run: "connection",
       connectionField: "configurationFindings",
       query: Q_CONFIG_FINDINGS,
-      extraVariables: aiConfigFindingsVariables(projectScope()) as Rec,
+      extraVariables: vars("CONFIG_FINDINGS", aiConfigFindingsVariables(projectScope()) as Rec),
       normalize: normalizeConfigFindingsPage,
       optional: true,
     },
     {
       id: "GUARDRAIL_GAPS",
+      area: "guardrails",
+      writes: ["ai_assets.guardrail_missing"],
       run: "graphSearch",
       query: Q_AGENTS_NO_GUARDRAIL,
       normalize: normalizeNoGuardrailPage,
@@ -142,6 +165,8 @@ function syncSteps(): SyncStepDef[] {
     },
     {
       id: "RUNS_AS",
+      area: "ciem",
+      writes: ["ai_edges (RUNS_AS)", "ai_assets"],
       run: "graphSearch",
       query: Q_AGENT_RUNS_AS,
       normalize: normalizeRunsAsPage,
@@ -149,6 +174,8 @@ function syncSteps(): SyncStepDef[] {
     },
     {
       id: "SA_FINDINGS",
+      area: "ciem",
+      writes: ["ai_edges (HAS_FINDING)", "ai_assets"],
       run: "graphSearch",
       query: Q_SA_EXCESSIVE_ACCESS,
       normalize: normalizeRunsAsPage,
@@ -156,6 +183,8 @@ function syncSteps(): SyncStepDef[] {
     },
     {
       id: "IDENTITY_ACCESS",
+      area: "identity",
+      writes: ["ai_edges (ALLOWS_ACCESS_TO)", "ai_assets"],
       run: "graphSearch",
       query: Q_IDENTITY_ACCESS,
       normalize: normalizeIdentityAccessPage,
@@ -164,13 +193,128 @@ function syncSteps(): SyncStepDef[] {
     // Agentic execution identities (cloudResourcesV2 + identityPurpose:AGENTIC).
     {
       id: "AGENTIC_IDENTITIES",
+      area: "ciem",
+      writes: ["ai_assets.identity_purpose"],
       run: "cloudResources",
       query: Q_PRINCIPALS,
-      extraVariables: aiPrincipalsVariables(projectScope()) as Rec,
+      extraVariables: vars("AGENTIC_IDENTITIES", aiPrincipalsVariables(projectScope()) as Rec),
       normalize: normalizePrincipalsPage,
       optional: true,
     },
   ];
+}
+
+/** The connection field a step reads its rows from — the one the response must carry. */
+function rootFieldOf(step: SyncStepDef): string {
+  if (step.run === "cloudResources") return "cloudResourcesV2";
+  if (step.run === "graphSearch") return "graphSearch";
+  return step.connectionField ?? "";
+}
+
+/**
+ * Every step as data: the document it sends, the variables it sends with it, where the
+ * answer lands, and whether its variables can be edited. Everything except `normalize`,
+ * which is a function and is exactly the thing that cannot cross the wire — and the reason
+ * a user-defined step is a much harder problem than a user-edited one.
+ *
+ * This is what lets the Wiz Scans panel show the EFFECTIVE query rather than a hand-typed
+ * label. The label it replaced was prose describing a query, free to drift from it; this
+ * cannot drift, because it is the query.
+ */
+export function describeSyncSteps(): Rec[] {
+  const overrides = settingsStore.getScanVars();
+  return syncSteps().map((step) => {
+    const base = defaultStepVariables(step.id, step.extraVariables ?? {});
+    return {
+      id: step.id,
+      area: step.area,
+      writes: step.writes,
+      rootField: rootFieldOf(step),
+      run: step.run,
+      optional: !!step.optional,
+      document: step.query,
+      // What this step will actually send, overrides included. `first`, `after` and (for
+      // graphSearch) `quick` are added by the transport on every request and are named in
+      // the panel rather than folded in here, so what is shown is what is configured.
+      variables: step.extraVariables ?? {},
+      defaultVariables: base,
+      editable: isEditableStep(step.id),
+      overridden: changedPaths(step.id, base, overrides[step.id]),
+    };
+  });
+}
+
+/**
+ * A step's variables as the builders produce them, with no override applied — the "reset
+ * to default" target, computed the same way the sync computes the live ones so the two can
+ * never describe different defaults.
+ */
+function defaultStepVariables(stepId: string, withOverride: Rec): Rec {
+  switch (stepId) {
+    case "INVENTORY_AI":
+      return aiInventoryVariables(resolveAiResourceTypes().types) as unknown as Rec;
+    case "ISSUES_TOXIC":
+      return aiIssuesVariables(projectScope()) as unknown as Rec;
+    case "CONFIG_FINDINGS":
+      return aiConfigFindingsVariables(projectScope()) as unknown as Rec;
+    case "AGENTIC_IDENTITIES":
+      return aiPrincipalsVariables(projectScope()) as unknown as Rec;
+    default:
+      // Steps with no builder take no overrides either, so what they send IS their default.
+      return withOverride;
+  }
+}
+
+/**
+ * Fetch ONE page for a step with proposed variables, normalize it, and throw it away.
+ *
+ * Nothing is persisted and no job is created, so this cannot disturb a sync or the ledger.
+ * It reports the raw row count AND what the step's own normalizer made of those rows,
+ * because those are different questions: a filter can return a hundred rows the normalizer
+ * discards for want of a field, and only the second number says the step would actually
+ * report anything.
+ */
+export function testStepVariables(stepId: string, vars: Rec | null): Rec {
+  const step = syncSteps().filter((s) => s.id === stepId)[0];
+  if (!step) throw new Error(`No sync step called ${stepId}.`);
+
+  const proposed = effectiveStepVars(stepId, defaultStepVariables(stepId, step.extraVariables ?? {}), vars);
+  const opts: FetchOptions = { query: step.query, cursor: null, extraVariables: proposed };
+
+  let result;
+  try {
+    if (step.run === "cloudResources") result = fetchCloudResourcesPage(opts);
+    else if (step.run === "graphSearch") result = fetchGraphSearchPage(opts);
+    else result = fetchConnectionPage(step.connectionField ?? "", opts);
+  } catch (e) {
+    // Surfaced as a value, not a throw: "the tenant rejected this filter" is the answer the
+    // operator asked for, and it belongs beside the row counts rather than in a toast.
+    return {
+      ok: false,
+      stepId,
+      variables: proposed,
+      error: String(e instanceof Error ? e.message : e),
+    };
+  }
+
+  const part = step.normalize(result.rows);
+  return {
+    ok: true,
+    stepId,
+    variables: proposed,
+    rows: result.rows.length,
+    totalCount: result.totalCount,
+    hasNextPage: result.hasNextPage,
+    normalized: {
+      nodes: part.nodes.length,
+      edges: part.edges.length,
+      issues: part.issues.length,
+      findings: part.findings.length,
+    },
+    // One row, so the operator can see the shape came back as expected. Stringified and
+    // capped: a raw Wiz row can be large, and this rides a google.script.run response.
+    sample: result.rows.length ? JSON.stringify(result.rows[0]).slice(0, 1200) : "",
+  };
 }
 
 /** Entry point for the Sync button and the daily trigger (caller holds the lock). */
@@ -226,6 +370,10 @@ function dryRunSync(): StartResult {
     undefined,
     SEED_FINDINGS,
   );
+  // A dry-run issues no queries, so nothing can have been rejected. Clearing rather than
+  // leaving the previous live run's list behind, which would attribute a stale skip to a
+  // sync that never called Wiz at all.
+  settingsStore.setSkippedSteps([]);
   return {
     jobId: null,
     message: `Dry-run sync complete: ${doc.nodes.length} nodes, ` +
@@ -444,13 +592,18 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
     // them instead of undefined.
     updateJob(job.job_id, { phase: "PERSISTING" });
     const hints = buildAarsHintsFromFindings(findings, doc, issues);
-    const persist = () =>
+    const persist = () => {
       persistSync(doc, issues, hints, {
         syncId,
         mode: "live",
         startedAt,
         apiCalls: params.apiCalls,
       }, undefined, findings);
+      // Written with the commit, so what the Scans page reports as skipped always describes
+      // the sync whose numbers it is showing. The job row carrying this is discarded the
+      // moment the job goes terminal, which is why it could not be read back before.
+      settingsStore.setSkippedSteps(params.skippedSteps);
+    };
     if (opts.lockHeld) persist();
     else withScriptLock(persist);
     updateJob(job.job_id, { phase: "DONE" });

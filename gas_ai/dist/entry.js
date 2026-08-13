@@ -39,6 +39,9 @@ function api_runSync(p) { return timedApi_("runSync", p); }
 function api_getJobStatus(p) { return timedApi_("getJobStatus", p); }
 function api_cancelSync(p) { return timedApi_("cancelSync", p); }
 function api_getSyncHistory(p) { return timedApi_("getSyncHistory", p); }
+function api_getScanQueries(p) { return timedApi_("getScanQueries", p); }
+function api_setScanVars(p) { return timedApi_("setScanVars", p); }
+function api_testScanVars(p) { return timedApi_("testScanVars", p); }
 function api_getSettings(p) { return timedApi_("getSettings", p); }
 function api_setSettings(p) { return timedApi_("setSettings", p); }
 function api_getAarsRule(p) { return timedApi_("getAarsRule", p); }
