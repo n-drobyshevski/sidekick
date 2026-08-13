@@ -3187,7 +3187,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "0827ca94434f" : "dev";
+  var BUILD_ID = true ? "3516330518fe" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -3400,8 +3400,8 @@ var Server = (() => {
   function setSkippedSteps(steps) {
     const settings = loadSettings();
     const next = withSkippedSteps(settings, steps);
-    const before = getSkippedSteps(settings).join("\0");
-    if (getSkippedSteps(next).join("\0") === before) return;
+    const before = getSkippedSteps(settings).join(" ");
+    if (getSkippedSteps(next).join(" ") === before) return;
     saveSettings(next);
   }
   var getScanVars2 = () => getScanVars(loadSettings());
