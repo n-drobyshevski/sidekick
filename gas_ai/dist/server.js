@@ -3439,7 +3439,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "ddca8a0d650e" : "dev";
+  var BUILD_ID = true ? "624e096c5730" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -4712,7 +4712,10 @@ var Server = (() => {
       justification: "No content filtering, data protection, or compliance enforcement on AI model calls.",
       frameworks: { owaspLlm: ["LLM06", "LLM02"], owaspAgentic: ["ASI02", "ASI03"], fiveRs: ["Restrict"] },
       createdAt: "2026-05-14T09:12:00Z",
-      issueType: "CLOUD_CONFIGURATION",
+      // TOXIC_COMBINATION (the default), because that is what the tenant returns for
+      // wc-id-2742 — every node in exemples/risk_issues_response.js carries that type,
+      // guardrail rule included. Wiz's issue TYPE and this register's pattern grouping are
+      // independent axes, and the seed must not imply they line up.
       updatedAt: "2026-08-13T10:29:28Z",
       environments: ["PRODUCTION"],
       entityStatus: "Active",
@@ -4832,7 +4835,10 @@ var Server = (() => {
         id: nextIssueId(),
         ruleId: seed.ruleId,
         ruleName: seed.ruleName,
-        // CLOUD_CONFIGURATION: the type the register used to filter out entirely.
+        // CLOUD_CONFIGURATION: the type the register used to filter out entirely, so the
+        // demo shows the Type column carrying something other than the tenant's default.
+        // Illustrative rather than transcribed — these rule ids are invented, and the Other
+        // bucket is defined by its rule not being modelled, never by its Wiz issue type.
         issueType: "CLOUD_CONFIGURATION",
         assetId: asset.id,
         assetName: asset.name,
