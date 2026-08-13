@@ -1,0 +1,184 @@
+/* ------------------------------------------------------------------------ cards */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-xl);
+  padding: 16px;
+  box-shadow: var(--shadow-card);
+}
+.kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 0 0 20px; }
+.kpi-card { background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius-xl); padding: 14px 16px; box-shadow: var(--shadow-card); }
+.kpi-label { font-size: 12px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-3); }
+.kpi-value { font-size: 1.5rem; font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; margin-top: 2px; }
+.kpi-sub { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+
+/* change chips */
+.chg { font-size: 12px; font-weight: 600; border-radius: var(--radius-sm); padding: 1px 6px; margin-left: 6px; }
+.chg.up { color: var(--bad); background: rgba(185, 28, 28, 0.12); }
+.chg.down { color: var(--ok); background: rgba(21, 128, 61, 0.12); }
+.chg.flat { color: var(--text-3); background: rgba(0, 0, 0, 0.06); }
+
+/* --------------------------------------------------------------------- severity */
+.sev-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+.sev-badge {
+  display: inline-flex; align-items: center;
+  border-radius: 999px; padding: 2px 9px;
+  font-size: 12px; font-weight: 600;
+}
+.sev-CRITICAL { background: rgba(220, 38, 38, 0.14); color: var(--sev-critical-text); }
+.sev-CRITICAL .sev-dot { background: var(--sev-critical); }
+.sev-HIGH { background: rgba(234, 88, 12, 0.14); color: var(--sev-high-text); }
+.sev-HIGH .sev-dot { background: var(--sev-high); }
+.sev-MEDIUM { background: rgba(217, 119, 6, 0.14); color: var(--sev-medium-text); }
+.sev-MEDIUM .sev-dot { background: var(--sev-medium); }
+.sev-LOW { background: rgba(37, 99, 235, 0.14); color: var(--sev-low-text); }
+.sev-LOW .sev-dot { background: var(--sev-low); }
+.sev-INFO { background: rgba(100, 116, 139, 0.14); color: var(--sev-info-text); }
+.sev-INFO .sev-dot { background: var(--sev-info); }
+.sev-UNKNOWN { background: rgba(71, 85, 105, 0.14); color: var(--sev-unknown-text); }
+.sev-UNKNOWN .sev-dot { background: var(--sev-unknown); }
+
+/* AARS chips reuse the severity tokens directly — the AARS scale carries the same
+   values as the Wiz severity scale, and the brand crimson never scores risk. */
+.aars-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  border-radius: 999px; padding: 2px 9px;
+  font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.aars-chip .sev-dot { margin-right: 0; }
+
+/* status pills */
+.pill { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 2px 9px; font-size: 12px; font-weight: 600; }
+.pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.pill.ok { color: var(--ok); background: rgba(21, 128, 61, 0.12); }
+.pill.warn { color: var(--warn); background: rgba(161, 98, 7, 0.12); }
+.pill.bad { color: var(--bad); background: rgba(185, 28, 28, 0.12); }
+.pill.neutral { color: var(--text-2); background: rgba(0, 0, 0, 0.06); }
+
+.domain-chip {
+  display: inline-block; border-radius: var(--radius-sm); padding: 1px 7px;
+  font-size: 12px; background: rgba(0, 0, 0, 0.06); color: var(--text-2);
+}
+
+/* severity filter pills */
+.pill-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.sev-pill, .kind-pill {
+  border-radius: 999px; padding: 3px 12px; min-height: 0;
+  font-size: 12px; font-weight: 600;
+  background: var(--page); border: 1px solid var(--hairline); box-shadow: none;
+  color: var(--text-2);
+}
+.sev-pill[aria-pressed="true"].sev-CRITICAL { background: rgba(220,38,38,.14); color: var(--sev-critical-text); border-color: rgba(220,38,38,.3); }
+.sev-pill[aria-pressed="true"].sev-HIGH { background: rgba(234,88,12,.14); color: var(--sev-high-text); border-color: rgba(234,88,12,.3); }
+.sev-pill[aria-pressed="true"].sev-MEDIUM { background: rgba(217,119,6,.14); color: var(--sev-medium-text); border-color: rgba(217,119,6,.3); }
+.sev-pill[aria-pressed="true"].sev-LOW { background: rgba(37,99,235,.14); color: var(--sev-low-text); border-color: rgba(37,99,235,.3); }
+.sev-pill[aria-pressed="true"].sev-INFO { background: rgba(100,116,139,.14); color: var(--sev-info-text); border-color: rgba(100,116,139,.3); }
+
+/* Node-type toggle pills: neutral base (shared with .sev-pill), brand crimson when
+   selected. This used to be the LOW severity tint + --sev-low-text — byte-identical to a
+   pressed .sev-pill.sev-LOW two rules above, which sits directly above it in the filter
+   panel, so a selected "AI Agent" and a selected "LOW" were indistinguishable. Selection
+   is an interactive state, not a severity; the accent is the token for that. */
+.kind-pill[aria-pressed="true"] {
+  background: rgba(190, 18, 60, .10); color: var(--accent-hover); border-color: rgba(190, 18, 60, .28);
+}
+.kind-filter { display: flex; flex-direction: column; gap: 12px; }
+.pill-group-label {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
+  color: var(--text-3); margin-bottom: 5px;
+}
+
+/* -------------------------------------------------------------------- help tip */
+/* Hover/focus definition card (ui.js helpTip) — the neutral popover recipe, and the
+   replacement for `title=` anywhere the explanation actually matters. */
+.helptip { position: relative; cursor: help; }
+.helptip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm); }
+.helptip-bubble {
+  position: absolute; left: 0; top: calc(100% + 8px); z-index: var(--z-popover);
+  width: max-content; max-width: 268px; padding: 10px;
+  display: flex; flex-direction: column; gap: 5px;
+  background: var(--page); color: var(--ink);
+  border: 1px solid var(--hairline); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  font-size: 12px; font-weight: 400; line-height: 1.45;
+  letter-spacing: 0; text-transform: none; text-align: left; white-space: normal;
+  opacity: 0; pointer-events: none; transform: translateY(-2px);
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+.helptip-line { display: block; }
+.helptip:hover > .helptip-bubble,
+.helptip:focus-within > .helptip-bubble { opacity: 1; pointer-events: auto; transform: translateY(0); }
+@media (prefers-reduced-motion: reduce) {
+  .helptip-bubble { transition: none; transform: none; }
+  .helptip:hover > .helptip-bubble, .helptip:focus-within > .helptip-bubble { transform: none; }
+}
+
+/* ------------------------------------------------------------------- combobox */
+/* Searchable dropdown (ui.js filterCombobox). The trigger matches the app's field look;
+   the list is portaled to <body> because the panel it lives in scrolls and would clip it. */
+.combobox { position: relative; }
+.combobox-trigger {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  width: 100%; min-height: 36px; padding: 4px 10px;
+  font-family: var(--font); font-size: 0.875rem; font-weight: 400; text-align: left;
+  background: var(--page); color: var(--ink);
+  border: 1px solid var(--hairline); border-radius: var(--radius-md); box-shadow: none;
+}
+.combobox-trigger:hover { background: #f1f1f4; }
+.combobox-trigger-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.combobox-caret { font-size: 0.7rem; color: var(--text-3); flex: 0 0 auto; }
+.combobox-pop {
+  position: fixed; z-index: var(--z-popover);
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 6px; background: var(--page); color: var(--ink);
+  border: 1px solid var(--hairline); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sheet);
+  font-family: var(--font);
+}
+.combobox-search { width: 100%; margin: 0; }
+/* The list scrolls (max-height set inline by position()) so the search input stays pinned. */
+.combobox-list { list-style: none; margin: 0; padding: 2px; overflow-y: auto; }
+.combobox-option {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 6px 8px; border-radius: var(--radius-sm);
+  font-size: 0.8125rem; line-height: 1.3; color: var(--ink); cursor: pointer;
+}
+.combobox-option:hover, .combobox-option.active { background: var(--surface); }
+/* Selected: weight AND color together, never color alone — aria-selected already carries
+   it for assistive tech. */
+.combobox-option[aria-selected="true"] { font-weight: 600; color: var(--accent); }
+.combobox-option-hint { margin-left: auto; font-size: 11px; color: var(--text-3); flex: 0 0 auto; }
+.combobox-option--last-pinned { border-bottom: 1px solid var(--hairline); margin-bottom: 2px; padding-bottom: 8px; }
+.combobox-group {
+  padding: 8px 8px 3px; font-size: 11px; font-weight: 600;
+  letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-3);
+}
+.combobox-empty { padding: 6px 8px; font-size: 0.8125rem; color: var(--text-3); cursor: default; }
+
+/* ------------------------------------------------------------------- segmented */
+/* One joined group of aria-pressed buttons — the exclusive-choice recipe, shared by the
+   Graph|Table view toggle, the Depth stops, and the zoom capsule. aria-pressed (not
+   role=radiogroup) to match the pill vocabulary above: a conformant radiogroup needs a
+   roving tabindex plus arrow cycling, and running two patterns for one visual recipe on
+   one page is exactly the invented-control problem. Pressed reads as weight + surface +
+   an inset hairline, never color alone. */
+.segmented {
+  display: inline-flex; align-items: stretch;
+  border: 1px solid var(--hairline); border-radius: var(--radius-md);
+  background: var(--page); overflow: hidden;
+}
+.segmented > button {
+  min-height: 34px; padding: 4px 12px;
+  border: none; border-radius: 0; box-shadow: none;
+  background: none; color: var(--text-2); font-weight: 500;
+}
+.segmented > button + button { border-left: 1px solid var(--hairline); }
+.segmented > button:hover { background: rgba(0, 0, 0, 0.035); }
+/* Inset replaces the base button's rest shadow rather than stacking on it — a surface is
+   a whisper or a lift, never both (DESIGN.md, Whisper-Or-Lift). Neutral on purpose: an
+   accent inset would read as the decorative side-stripe the system forbids. */
+.segmented > button[aria-pressed="true"] {
+  background: var(--surface); color: var(--ink); font-weight: 600;
+  box-shadow: inset 0 -2px 0 0 rgba(0, 0, 0, 0.28);
+}
+.segmented > button:focus-visible { outline-offset: -2px; z-index: 1; }

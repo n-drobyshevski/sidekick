@@ -1,0 +1,136 @@
+/* ------------------------------------------------------- AI Inventory: posture header */
+/* Three levels rather than eight peers: the hero says what the estate IS, the strip says
+   what shape its risk has, the stat list carries the supporting facts. Hero and strip are
+   deliberately borderless — DESIGN.md's Hero Stat takes its dominance from size and
+   position, never from a card, a gradient or an accent stripe. */
+.inv-header {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.45fr) minmax(320px, 2fr);
+  gap: 20px 36px; align-items: start;
+  margin: 0 0 18px; padding-bottom: 4px; border-bottom: 1px solid var(--hairline);
+}
+.inv-hero .hero-value { font-size: 2rem; font-weight: 600; line-height: 1.15; letter-spacing: -0.02em; }
+.inv-hero-sub { font-size: 12px; color: var(--text-3); margin-top: 3px; }
+
+/* The distribution strip. The track is a graphic; the keys under it are the controls, so
+   the cross-filter has a real keyboard path (a canvas would not). */
+.sev-strip { display: flex; flex-direction: column; gap: 8px; }
+.sev-strip-track {
+  display: flex; height: 10px; border-radius: 999px; overflow: hidden;
+  background: rgba(0, 0, 0, 0.07);
+}
+.sev-strip-seg { min-width: 3px; transition: opacity 140ms ease-out; }
+.sev-strip-seg.sev-CRITICAL { background: var(--sev-critical); }
+.sev-strip-seg.sev-HIGH { background: var(--sev-high); }
+.sev-strip-seg.sev-MEDIUM { background: var(--sev-medium); }
+.sev-strip-seg.sev-LOW { background: var(--sev-low); }
+.sev-strip-seg.sev-INFO { background: var(--sev-info); }
+/* While filtered the other bands recede but never vanish: the share you picked has to stay
+   readable against the whole estate, which is the point of showing a distribution. */
+.sev-strip.is-filtered .sev-strip-seg[data-on="false"] { opacity: 0.22; }
+.sev-strip-keys { display: flex; flex-wrap: wrap; gap: 2px 12px; }
+.sev-key {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: none; border: 1px solid transparent; box-shadow: none; min-height: 0;
+  padding: 3px 7px; border-radius: var(--radius-sm);
+  font-size: 12px; font-weight: 600; color: var(--text-2);
+}
+.sev-key:hover { background: rgba(0, 0, 0, 0.045); border-color: transparent; }
+.sev-key .sev-dot { margin-right: 0; vertical-align: 0; }
+.sev-key-count { color: var(--ink); }
+/* Selected reads as selected without relying on colour: a tick plus the tint. */
+.sev-key[aria-pressed="true"] { background: rgba(0, 0, 0, 0.06); color: var(--ink); }
+.sev-key[aria-pressed="true"]::after { content: "✓"; font-size: 10px; color: var(--text-3); }
+.sev-strip-note { font-size: 12px; color: var(--text-3); margin: 0; }
+
+/* The facts that used to be cards, as one full-width strip under the hero: four equal
+   cells divided by hairlines. Borderless like the hero — the header is one surface with
+   three levels of emphasis, not a row of competing boxes. */
+.stat-list {
+  grid-column: 1 / -1;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  gap: 0; padding: 14px 0 16px; margin-top: 2px;
+  background: none; border: none; border-top: 1px solid var(--hairline);
+  border-radius: 0; box-shadow: none;
+}
+.stat-row { display: flex; flex-direction: column; gap: 2px; padding: 0 18px; }
+.stat-row + .stat-row { border-left: 1px solid var(--hairline); }
+.stat-row .stat-name {
+  font-size: 12px; font-weight: 600; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--text-3);
+}
+.stat-row .stat-figure { display: flex; align-items: center; gap: 9px; }
+.stat-row .stat-sub { font-size: 11px; color: var(--text-3); }
+.stat-row .mini-value { font-size: 1.125rem; font-weight: 600; letter-spacing: -0.01em; }
+.pillar-track.stat-meter { flex: 0 0 52px; width: 52px; height: 6px; }
+@media (max-width: 620px) {
+  .stat-row { padding: 10px 0; }
+  .stat-row + .stat-row { border-left: none; border-top: 1px solid var(--hairline); }
+}
+
+/* ------------------------------------------------------------- AI Inventory: toolbar */
+.inv-toolbar {
+  display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center;
+  padding: 10px 12px; border: 1px solid var(--hairline); border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.inv-toolbar-end { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+.inv-toolbar .count { font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+/* The graph's chips row is a full-bleed bar under a sticky top bar; in the page flow it
+   needs neither the 16px inset nor the bottom rule. */
+.filter-chips.inv-chips { padding: 10px 0 0; border-bottom: none; }
+.saved-views { display: inline-flex; align-items: center; gap: 6px; }
+.saved-views select { max-width: 180px; }
+
+/* Segmented view-mode control: two aria-pressed buttons sharing one border. */
+.viewmode { display: inline-flex; }
+.viewmode button { border-radius: 0; box-shadow: none; }
+.viewmode button:first-child { border-radius: var(--radius-md) 0 0 var(--radius-md); }
+.viewmode button:last-child { border-radius: 0 var(--radius-md) var(--radius-md) 0; margin-left: -1px; }
+.viewmode button[aria-pressed="true"] {
+  background: rgba(0, 0, 0, 0.07); border-color: #d9d9de; font-weight: 600;
+}
+
+/* --------------------------------------------------- AI Inventory: in-row micro-viz */
+/* The score as a quantity beside the chip that gives its level. Neutral graphite fill on
+   purpose: the level is already coloured on the chip, and fifty tinted bars down a page is
+   the wall of colour PRODUCT.md rejects. */
+.aars-cell, .issue-cell { display: inline-flex; align-items: center; gap: 8px; }
+.pillar-track.score-meter { flex: 0 0 40px; width: 40px; height: 5px; }
+td .pillar-track { background: rgba(0, 0, 0, 0.09); }
+/* Open issues split by severity. Here colour IS the content — the mix of levels is the
+   whole point — so it is rationed, not decorative, and the aria-label names the counts. */
+.issue-bars { display: inline-flex; height: 5px; border-radius: 999px; overflow: hidden; }
+.issue-bar { min-width: 2px; }
+.issue-bar.sev-CRITICAL { background: var(--sev-critical); }
+.issue-bar.sev-HIGH { background: var(--sev-high); }
+.issue-bar.sev-MEDIUM { background: var(--sev-medium); }
+.issue-bar.sev-LOW { background: var(--sev-low); }
+.issue-bar.sev-INFO { background: var(--sev-info); }
+.issue-bar.sev-UNKNOWN { background: var(--sev-unknown); }
+
+/* ----------------------------------------------------------- AI Inventory: card view */
+/* The same marks as a table row, laid out for scanning by name instead of by column.
+   Card whisper only, never a float (the Whisper-Or-Lift Rule). */
+.asset-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); gap: 12px; }
+.asset-card {
+  display: flex; flex-direction: column; align-items: stretch; gap: 8px;
+  padding: 12px 14px; min-height: 0; text-align: left; font: inherit; color: inherit;
+  background: var(--surface); border: 1px solid var(--hairline);
+  border-radius: var(--radius-xl); box-shadow: var(--shadow-card);
+}
+.asset-card:hover { background: #f1f1f4; border-color: #d9d9de; }
+.asset-card-head { display: flex; align-items: center; gap: 8px; }
+.asset-card-icon { flex: 0 0 16px; color: var(--text-3); }
+.asset-card-icon .gnode-icon { stroke: currentColor; fill: none; stroke-width: 1.4; }
+.asset-card-name {
+  flex: 1; min-width: 0; font-weight: 600; font-size: 13px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.asset-card .pillar-track.score-meter { width: auto; flex: 1 1 auto; }
+.asset-card-marks { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.asset-card-marks:empty { display: none; }
+.asset-card-meta { display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 12px; color: var(--text-3); }
+
+@media (max-width: 1180px) { .inv-header { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 760px) { .inv-header { grid-template-columns: 1fr; gap: 18px; } }

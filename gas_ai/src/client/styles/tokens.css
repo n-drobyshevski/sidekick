@@ -1,0 +1,91 @@
+
+:root {
+  --rail-w: 232px;
+  --accent: #be123c;
+  --accent-hover: #9f1239;
+  --ink: #171717;
+  --graphite: #0a0a0a;
+  --graphite-hover: #27272a;
+  --on-graphite: #fafafa;
+  --page: #ffffff;
+  --surface: #f8f8fa;
+  --hairline: #e6e6e9;
+  --text-2: rgba(0, 0, 0, 0.65);
+  /* Tertiary text: 0.6 alpha clears WCAG AA (~5.4:1 on the surface tint) for the 11-13px
+     labels, captions and sub-values it carries. 0.5 resolved to ~3.95:1 and failed — the
+     OS-vulns tool found the same and raised it there first. */
+  --text-3: rgba(0, 0, 0, 0.6);
+  /* Secondary text INSIDE the SVG canvas (node kind, group and edge labels, the AARS
+     figure). SVG text can't inherit --text-2 through `color`, and these sit on the pale
+     category tints as often as on white, so they carry their own token at ~5.5:1. */
+  --svg-text-2: rgba(0, 0, 0, 0.62);
+
+  /* Readable line length for running text. The pane fills the viewport; prose does
+     not follow it out to 1800px, where a sentence becomes a scan across the desk. */
+  --measure: 84ch;
+
+  --sev-critical: #dc2626;  --sev-critical-text: #b91c1c;
+  --sev-high: #ea580c;      --sev-high-text: #c2410c;
+  --sev-medium: #d97706;    --sev-medium-text: #b45309;
+  --sev-low: #2563eb;       --sev-low-text: #1d4ed8;
+  --sev-info: #64748b;      --sev-info-text: #475569;
+  --sev-unknown: #475569;   --sev-unknown-text: #334155;
+
+  --ok: #15803d;
+  --warn: #a16207;
+  --bad: #b91c1c;
+
+  /* Graph node categories — reinforce the kind icon + label, never the only cue. Chosen
+     OFF the severity channel (indigo not #2563eb, gold not #d97706) so the severity dot
+     reads true; vuln reuses the brand crimson (already the risk/toxic color). Each has a
+     saturated `ink` (icon + accent stripe, ≥3:1 graphical), a darker `text`, and a pale
+     `tint` fill that keeps --ink node text ≥4.5:1. */
+  --cat-asset-ink: #4f46e5;    --cat-asset-text: #4338ca;    --cat-asset-tint: #eef2ff;
+  --cat-data-ink: #059669;     --cat-data-text: #047857;     --cat-data-tint: #ecfdf5;
+  --cat-iam-ink: #7c3aed;      --cat-iam-text: #6d28d9;      --cat-iam-tint: #f5f3ff;
+  --cat-vuln-ink: #be123c;     --cat-vuln-text: #9f1239;     --cat-vuln-tint: #fff1f2;
+  --cat-exposure-ink: #ca8a04; --cat-exposure-text: #854d0e; --cat-exposure-tint: #fefce8;
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+
+  /* Detail-sheet geometry. The register's asset record carries issues, compliance
+     findings, relationships AND identity, so it runs wider than DESIGN.md's flat
+     per-finding Finding Sheet; the widen step is there for the estates where the
+     relationship list is the point. */
+  --sheet-w: min(600px, 94vw);
+  --sheet-w-wide: min(920px, 96vw);
+
+  /* Semantic z-index, for the layers this app actually stacks. Only the values consumed
+     below are defined; the route overlay (20), the <=800px top bar (45), the boot splash
+     (55) and the toasts (60) stay literals until something needs to reason about them.
+     --z-popover outranks --z-sheet on purpose: the searchable combobox portals its list
+     to <body> (the panel body scrolls and would clip it), and at <=800px the filter panel
+     IS a real .sheet — a popover below it would open behind the panel that owns it. */
+  --z-canvas-chrome: 5;
+  --z-scrim: 40;
+  --z-sheet: 41;
+  --z-popover: 52;
+
+  --shadow-card: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-button: 0 1px 2px 0 rgba(0, 0, 0, 0.04);
+  --shadow-sheet: -8px 0 24px -8px rgba(0, 0, 0, 0.18), -2px 0 8px -4px rgba(0, 0, 0, 0.1);
+
+  --font: -apple-system, BlinkMacSystemFont, Inter, "Segoe UI", Roboto, "Helvetica Neue",
+    sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--page);
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
