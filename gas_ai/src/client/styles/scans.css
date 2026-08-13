@@ -53,10 +53,15 @@
 .cov-diagram-scroll {
   overflow-x: auto;
   border: 1px solid var(--hairline); border-radius: var(--radius-xl);
-  background: var(--page); padding: 4px 10px 8px;
+  background: var(--page); padding: 6px 12px 8px;
 }
 .cov-diagram-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.cov-diagram { display: block; width: 100%; min-width: 720px; height: auto; }
+/* No width rules here on purpose. The layout is measured, not scaled: scans.js draws the
+   viewBox at the container's own pixel width and sets a matching width in px, so the SVG
+   always renders 1:1 — full width, labels at the size the stylesheet asked for, and a
+   height that depends only on how many scan areas there are. Anything like `width: 100%`
+   with a fixed viewBox would put the scaling back and take the height with it. */
+.cov-diagram { display: block; height: auto; }
 .cov-diagram-note { margin: 8px 0 0; max-width: var(--measure); }
 
 .cov-node-box { fill: var(--surface); stroke: var(--hairline); stroke-width: 1; }

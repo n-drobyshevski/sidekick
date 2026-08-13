@@ -29,6 +29,9 @@ export const COVERAGE = {
     rank: 0,
     pill: "ok",
     blurb: "a figure from the last sync",
+    // What a diagram node says when it has no figure to print. The blurbs are sentences;
+    // these have to fit on one line beside a title.
+    short: "",
   },
   partial: {
     glyph: "◐",
@@ -36,6 +39,7 @@ export const COVERAGE = {
     rank: 1,
     pill: "warn",
     blurb: "queried and stored, but not totalled here",
+    short: "not totalled",
   },
   unscanned: {
     glyph: "○",
@@ -43,6 +47,7 @@ export const COVERAGE = {
     rank: 2,
     pill: "neutral",
     blurb: "no query runs in this deployment",
+    short: "not scanned",
   },
 };
 
@@ -79,6 +84,10 @@ export const SCAN_AREAS = [
       return {
         value: String(n(ctx.kpis.aiAssets)),
         unit: "AI assets · " + n(ctx.kpis.agents) + " agents · " + projects.length + " projects",
+        // `short` is the headline for the one-line diagram node; `value` + `unit` is the
+        // full reading, and the register prints that. A node that carried the full unit
+        // string would set the width of the whole picture.
+        short: n(ctx.kpis.aiAssets) + " assets",
       };
     },
   },
@@ -97,6 +106,7 @@ export const SCAN_AREAS = [
         value: String(n(totals.totalOpen)),
         unit: "open · " + n(totals.patternsActive) + " of " + n(totals.patternsTotal) +
           " patterns firing",
+        short: n(totals.totalOpen) + " open",
       };
     },
   },
@@ -117,6 +127,7 @@ export const SCAN_AREAS = [
         value: n(ctx.kpis.protectedAgents) + " of " + n(ctx.kpis.agents),
         unit: "agents protected (" + n(ctx.kpis.guardrailCoveragePct) + "%)",
         pct: n(ctx.kpis.guardrailCoveragePct),
+        short: n(ctx.kpis.guardrailCoveragePct) + "% of agents",
       };
     },
   },
@@ -128,7 +139,11 @@ export const SCAN_AREAS = [
       "reach it. The reachability is what the toxic combinations price, not the storage.",
     lands: "graph",
     figure: (ctx) => (ctx.kpis
-      ? { value: String(n(ctx.kpis.sensitiveAccess)), unit: "AI assets reach classified data" }
+      ? {
+        value: String(n(ctx.kpis.sensitiveAccess)),
+        unit: "AI assets reach classified data",
+        short: n(ctx.kpis.sensitiveAccess) + " assets reach it",
+      }
       : null),
   },
   {
@@ -151,6 +166,7 @@ export const SCAN_AREAS = [
       return {
         value: String(n(ctx.kpis.highPrivilege)),
         unit: "privileged · " + n(ctx.kpis.agenticIdentities) + " agentic identities",
+        short: n(ctx.kpis.highPrivilege) + " privileged",
       };
     },
   },
@@ -170,6 +186,7 @@ export const SCAN_AREAS = [
       return {
         value: String(n(ctx.kpis.internetExposed)),
         unit: "reachable" + (unknown ? " · " + unknown + " undetermined" : ""),
+        short: n(ctx.kpis.internetExposed) + " reachable",
       };
     },
   },
@@ -189,7 +206,11 @@ export const SCAN_AREAS = [
       "5Rs — are not queried, not stored and not shown here. The framework tags on the " +
       "Toxic Combinations page are the static taxonomy, not a measured score.",
     figure: (ctx) => (ctx.kpis
-      ? { value: String(n(ctx.kpis.complianceGaps)), unit: "failing findings" }
+      ? {
+        value: String(n(ctx.kpis.complianceGaps)),
+        unit: "failing findings",
+        short: n(ctx.kpis.complianceGaps) + " failing",
+      }
       : null),
   },
   {
