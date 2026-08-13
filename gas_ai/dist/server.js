@@ -1397,7 +1397,9 @@ var Server = (() => {
     gapFallbackPoints: 5,
     gapAggregation: "sum",
     // Off: switching any of these on adds gaps the doc's applied table never priced.
-    gapSources: { fiveRs: false, deprecatedModel: false, inactiveAgent: false },
+    gapSources: { fiveRs: false, deprecatedModel: false, inactiveAgent: false, dormantAgent: false },
+    /** Days without a sighting before `dormantAgent` fires. Only read when that source is on. */
+    dormantAfterDays: 90,
     // All 1: the spec reads a failing control as present-or-absent, never as more or less
     // severe. Kept as a knob because ai_findings.severity is already persisted and unused.
     findingSeverityWeights: { CRITICAL: 1, HIGH: 1, MEDIUM: 1, LOW: 1 },
@@ -1410,6 +1412,9 @@ var Server = (() => {
     // but never adds it to one, so scoring it here would change every published number.
     exposurePoints: { CONFIRMED: 0, UNDETERMINED: 0, NONE: 0 },
     privilegePoints: { ADMIN: 0, HIGH: 0, NONE: 0 },
+    // Empty: the doc's applied table is a pure sum of three pillars, and a conjunction bonus
+    // would break every row of it.
+    combinationRules: [],
     // A suggested cascade, not an assertion: these are the conventions the reference tenant
     // actually uses, and an operator whose accounts are named differently gets UNCLASSIFIED
     // everywhere until they edit it. Order is load-bearing — every negative form has to sit
@@ -1448,7 +1453,8 @@ var Server = (() => {
     ],
     gapFallbackPoints: 5,
     gapAggregation: "rss",
-    gapSources: { fiveRs: true, deprecatedModel: true, inactiveAgent: true },
+    gapSources: { fiveRs: true, deprecatedModel: true, inactiveAgent: true, dormantAgent: false },
+    dormantAfterDays: 90,
     findingSeverityWeights: { CRITICAL: 1.5, HIGH: 1.2, MEDIUM: 1, LOW: 0.6 },
     pillarBCap: 25,
     dataExposurePoints: { SENSITIVE: 12, DATA_ACCESS: 6, NONE: 0 },
@@ -1458,6 +1464,7 @@ var Server = (() => {
     // environment axes. It stays as published — a calibrated model for the signal set that
     // existed when it was written. The newer axes are v3's to spend.
     privilegePoints: { ADMIN: 0, HIGH: 0, NONE: 0 },
+    combinationRules: [],
     environmentRules: DEFAULT_AARS_RULE.environmentRules.map((e) => ({ ...e })),
     environmentPoints: { PROD: 0, PREPROD: 0, NONPROD: 0, DEV: 0, UNCLASSIFIED: 0 },
     bands: { critical: 70, high: 50, medium: 30, low: 10 }
@@ -1525,7 +1532,7 @@ var Server = (() => {
     return points.reduce((acc, p) => acc + p, 0);
   }
   function computeAars(input, rule = DEFAULT_AARS_RULE) {
-    var _a4, _b, _c, _d, _e, _f, _g;
+    var _a4, _b, _c, _d, _e, _f, _g, _h;
     let toxic = worstSeverityPoints(input.issueSeverities, rule);
     toxic *= multiIssueFactor(input.issueSeverities.length, rule);
     toxic = Math.min(rule.pillarACap, Math.round(toxic));
@@ -1543,15 +1550,31 @@ var Server = (() => {
     const exposure = (_c = rule.exposurePoints[(_b = input.internetExposure) != null ? _b : "NONE"]) != null ? _c : 0;
     const privilege = (_e = rule.privilegePoints[(_d = input.privilege) != null ? _d : "NONE"]) != null ? _e : 0;
     const environment = (_g = rule.environmentPoints[(_f = input.environment) != null ? _f : "UNCLASSIFIED"]) != null ? _g : 0;
+    const fired = firedCombinations((_h = input.conditions) != null ? _h : [], rule);
+    const combination = fired.reduce((acc, f) => acc + f.points, 0);
     const score2 = Math.min(
       AARS_MAX_SCORE,
-      toxic + compliance + data + exposure + privilege + environment
+      toxic + compliance + data + exposure + privilege + environment + combination
     );
-    return {
+    const result = {
       score: score2,
       severity: aarsSeverity(score2, rule.bands),
-      pillars: { toxic, compliance, data, exposure, privilege, environment }
+      pillars: { toxic, compliance, data, exposure, privilege, environment, combination }
     };
+    if (fired.length) result.combinations = fired;
+    return result;
+  }
+  function firedCombinations(conditions, rule = DEFAULT_AARS_RULE) {
+    var _a4;
+    const held = new Set((conditions != null ? conditions : []).map((c) => String(c).trim().toUpperCase()));
+    const out = [];
+    for (const row of rule.combinationRules) {
+      const keys = ((_a4 = row.conditions) != null ? _a4 : []).map((c) => String(c).trim().toUpperCase());
+      if (!keys.length) continue;
+      if (!keys.every((k) => held.has(k))) continue;
+      out.push({ label: row.label || keys.join(" + "), points: row.points });
+    }
+    return out;
   }
   function gapBreakdown(gaps, rule = DEFAULT_AARS_RULE) {
     return gaps.map((g) => {
@@ -1576,7 +1599,11 @@ var Server = (() => {
   var CODE_MAX_LEN = 64;
   var MAX_GAP_RULES = 60;
   var MAX_ENV_RULES = 30;
+  var MAX_COMBINATION_RULES = 20;
+  var COMBINATION_LABEL_MAX_LEN = 80;
   var ENV_PATTERN_MAX_LEN = 120;
+  var DORMANT_DAYS_MIN = 7;
+  var DORMANT_DAYS_MAX = 3650;
   var SEVERITY_KEYS = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
   var EXPOSURE_KEYS = ["SENSITIVE", "DATA_ACCESS", "NONE"];
   var INTERNET_EXPOSURE_KEYS = ["CONFIRMED", "UNDETERMINED", "NONE"];
@@ -1603,6 +1630,26 @@ var Server = (() => {
     if (!Number.isFinite(n)) return fallback;
     const rounded = Math.round(n * 100) / 100;
     return Math.min(WEIGHT_MAX, Math.max(WEIGHT_MIN, rounded));
+  }
+  function cleanCombinationRule(v) {
+    var _a4;
+    const raw = rec(v);
+    const list2 = Array.isArray(raw["conditions"]) ? raw["conditions"] : [];
+    const conditions = [];
+    for (const c of list2) {
+      const key = String(c != null ? c : "").trim().toUpperCase();
+      if (CONDITION_KEYS.includes(key) && !conditions.includes(key)) {
+        conditions.push(key);
+      }
+    }
+    if (!conditions.length) return null;
+    const rule = {
+      conditions,
+      points: clampInt(raw["points"], 0, POINTS_MIN, POINTS_MAX)
+    };
+    const label = String((_a4 = raw["label"]) != null ? _a4 : "").trim().slice(0, COMBINATION_LABEL_MAX_LEN);
+    if (label) rule.label = label;
+    return rule;
   }
   function cleanEnvironmentRule(v) {
     var _a4, _b;
@@ -1645,7 +1692,8 @@ var Server = (() => {
     const gapSources = {
       fiveRs: srcRaw["fiveRs"] === true,
       deprecatedModel: srcRaw["deprecatedModel"] === true,
-      inactiveAgent: srcRaw["inactiveAgent"] === true
+      inactiveAgent: srcRaw["inactiveAgent"] === true,
+      dormantAgent: srcRaw["dormantAgent"] === true
     };
     const fswRaw = rec(r["findingSeverityWeights"]);
     const findingSeverityWeights = {};
@@ -1675,6 +1723,8 @@ var Server = (() => {
         POINTS_MAX
       );
     }
+    const comboRaw = Array.isArray(r["combinationRules"]) ? r["combinationRules"] : null;
+    const combinationRules = comboRaw ? comboRaw.map(cleanCombinationRule).filter((c) => c !== null).slice(0, MAX_COMBINATION_RULES) : DEFAULT_AARS_RULE.combinationRules.map((c) => ({ ...c, conditions: [...c.conditions] }));
     const envRulesRaw = Array.isArray(r["environmentRules"]) ? r["environmentRules"] : null;
     const environmentRules = envRulesRaw ? envRulesRaw.map(cleanEnvironmentRule).filter((e) => e !== null).slice(0, MAX_ENV_RULES) : DEFAULT_AARS_RULE.environmentRules.map((e) => ({ ...e }));
     const envPtsRaw = rec(r["environmentPoints"]);
@@ -1714,12 +1764,19 @@ var Server = (() => {
       ),
       gapAggregation,
       gapSources,
+      dormantAfterDays: clampInt(
+        r["dormantAfterDays"],
+        DEFAULT_AARS_RULE.dormantAfterDays,
+        DORMANT_DAYS_MIN,
+        DORMANT_DAYS_MAX
+      ),
       findingSeverityWeights,
       pillarBCap: clampInt(r["pillarBCap"], DEFAULT_AARS_RULE.pillarBCap, POINTS_MIN, POINTS_MAX),
       dataExposurePoints,
       dataAmplifier: clampMultiplier(r["dataAmplifier"], DEFAULT_AARS_RULE.dataAmplifier),
       exposurePoints,
       privilegePoints,
+      combinationRules,
       environmentRules,
       environmentPoints,
       bands
@@ -3449,7 +3506,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "e458571bcdbc" : "dev";
+  var BUILD_ID = true ? "948731cd8d4b" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -4046,6 +4103,18 @@ var Server = (() => {
     if (node2.hasHighPrivileges || node2.hasAdminPrivileges) return "DATA_ACCESS";
     return "NONE";
   }
+  var DAY_MS2 = 864e5;
+  function isDormant(node2, rule, now) {
+    var _a4, _b;
+    if (String((_a4 = node2.status) != null ? _a4 : "").trim().toUpperCase() !== "ACTIVE") return false;
+    if (privilegeOf(node2) === "NONE" && !node2.hasAccessToSensitiveData && !node2.hasSensitiveData) {
+      return false;
+    }
+    const seen = Date.parse(String((_b = node2.lastSeen) != null ? _b : ""));
+    const at = Date.parse(String(now != null ? now : ""));
+    if (!Number.isFinite(seen) || !Number.isFinite(at)) return false;
+    return at - seen >= rule.dormantAfterDays * DAY_MS2;
+  }
   function privilegeOf(node2) {
     if (node2.hasAdminPrivileges === true) return "ADMIN";
     if (node2.hasHighPrivileges === true) return "HIGH";
@@ -4061,7 +4130,7 @@ var Server = (() => {
     if (state === null) return "UNDETERMINED";
     return "NONE";
   }
-  function deriveAarsInput(node2, nodeIssues, rule = DEFAULT_AARS_RULE) {
+  function deriveAarsInput(node2, nodeIssues, rule = DEFAULT_AARS_RULE, now = "") {
     var _a4, _b, _c, _d, _e, _f;
     const codes = /* @__PURE__ */ new Set();
     for (const issue2 of nodeIssues) {
@@ -4078,6 +4147,7 @@ var Server = (() => {
     const status = String((_f = node2.status) != null ? _f : "").trim().toUpperCase();
     if (rule.gapSources.deprecatedModel && status === "DEPRECATED") gaps.push(gap("DEPRECATED_MODEL"));
     if (rule.gapSources.inactiveAgent && status === "INACTIVE") gaps.push(gap("INACTIVE_AGENT"));
+    if (rule.gapSources.dormantAgent && isDormant(node2, rule, now)) gaps.push(gap("DORMANT_AGENT"));
     const dataExposure = dataExposureOf(node2);
     return {
       // AARS Pillar A scores Wiz-NATIVE severities (the applied table in
@@ -4088,8 +4158,12 @@ var Server = (() => {
       dataExposure,
       internetExposure: internetExposureOf(node2),
       privilege: privilegeOf(node2),
-      environment: environmentOf(node2, rule)
+      environment: environmentOf(node2, rule),
+      conditions: conditionsHeldBy(node2)
     };
+  }
+  function conditionsHeldBy(node2) {
+    return CONDITION_KEYS.filter((k) => conditionHolds(node2, k));
   }
   function weightedGap(code, severity, rule) {
     var _a4;
@@ -4118,7 +4192,7 @@ var Server = (() => {
     for (const [resourceId, codes] of codesByResource) {
       const node2 = nodeById.get(resourceId);
       if (!node2) continue;
-      const base = deriveAarsInput(node2, (_a4 = issuesByAsset.get(resourceId)) != null ? _a4 : [], rule);
+      const base = deriveAarsInput(node2, (_a4 = issuesByAsset.get(resourceId)) != null ? _a4 : [], rule, doc.syncedAt);
       const seen = new Set(base.gaps.map((g) => g.code));
       const gaps = [...base.gaps];
       for (const c of codes) {
@@ -4162,8 +4236,11 @@ var Server = (() => {
           // rather than let `undefined` read as "nothing here".
           internetExposure: (_b = hint.internetExposure) != null ? _b : internetExposureOf(node2),
           privilege: (_c = hint.privilege) != null ? _c : privilegeOf(node2),
-          environment: (_d = hint.environment) != null ? _d : environmentOf(node2, rule)
-        } : deriveAarsInput(node2, nodeIssues, rule);
+          environment: (_d = hint.environment) != null ? _d : environmentOf(node2, rule),
+          // Conditions are always re-derived: they are a measurement of the node as it
+          // is now, not a scoring input an operator pinned.
+          conditions: conditionsHeldBy(node2)
+        } : deriveAarsInput(node2, nodeIssues, rule, doc.syncedAt);
         const result = computeAars(input, rule);
         node2.aars = result.score;
         node2.aarsSeverity = result.severity;
@@ -5423,10 +5500,10 @@ var Server = (() => {
   }
   function seedTrendHistory(endIso) {
     if (dataRowCount(TABS.syncHistory) > 0) return;
-    const DAY_MS2 = 864e5;
+    const DAY_MS3 = 864e5;
     const end = new Date(endIso).getTime();
     appendRows(TABS.syncHistory, SEED_TREND.map((counts, i) => {
-      const at = new Date(end - (SEED_TREND.length - i) * DAY_MS2).toISOString();
+      const at = new Date(end - (SEED_TREND.length - i) * DAY_MS3).toISOString();
       return {
         sync_id: `sync-sample-${String(i + 1).padStart(2, "0")}`,
         started_at: at,

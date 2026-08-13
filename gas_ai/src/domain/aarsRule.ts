@@ -16,6 +16,7 @@ import {
   type GapMatch,
   type GapPointRule,
   type GapSources,
+  type CombinationRule,
   type EnvMatch,
   type Environment,
   type EnvironmentRule,
@@ -24,6 +25,7 @@ import {
   type MultiIssueScaling,
   type PrivilegeLevel,
 } from "./aars";
+import { CONDITION_KEYS } from "./toxicCombos";
 import { clampInt } from "./util";
 
 export const POINTS_MIN = 0;
@@ -39,7 +41,12 @@ export const CODE_MAX_LEN = 64;
 export const MAX_GAP_RULES = 60;
 /** Same cell, same reason. Account-naming conventions need far fewer rows than gap codes. */
 export const MAX_ENV_RULES = 30;
+export const MAX_COMBINATION_RULES = 20;
+export const COMBINATION_LABEL_MAX_LEN = 80;
 export const ENV_PATTERN_MAX_LEN = 120;
+/** A dormancy window under a week would fire on any asset synced over a long weekend. */
+export const DORMANT_DAYS_MIN = 7;
+export const DORMANT_DAYS_MAX = 3650;
 
 const SEVERITY_KEYS: IssueSeverityKey[] = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
 const EXPOSURE_KEYS: DataExposure[] = ["SENSITIVE", "DATA_ACCESS", "NONE"];
@@ -78,6 +85,31 @@ function clampWeight(v: unknown, fallback: number): number {
   if (!Number.isFinite(n)) return fallback;
   const rounded = Math.round(n * 100) / 100;
   return Math.min(WEIGHT_MAX, Math.max(WEIGHT_MIN, rounded));
+}
+
+/**
+ * One conjunction, or null when it names no recognisable condition. Unknown condition keys
+ * are dropped, and a rule left with none is dropped entirely rather than kept as a rule
+ * that fires on everything — the same reasoning as `firedCombinations`' empty-list guard.
+ */
+function cleanCombinationRule(v: unknown): CombinationRule | null {
+  const raw = rec(v);
+  const list = Array.isArray(raw["conditions"]) ? (raw["conditions"] as unknown[]) : [];
+  const conditions: string[] = [];
+  for (const c of list) {
+    const key = String(c ?? "").trim().toUpperCase();
+    if ((CONDITION_KEYS as readonly string[]).includes(key) && !conditions.includes(key)) {
+      conditions.push(key);
+    }
+  }
+  if (!conditions.length) return null;
+  const rule: CombinationRule = {
+    conditions,
+    points: clampInt(raw["points"], 0, POINTS_MIN, POINTS_MAX),
+  };
+  const label = String(raw["label"] ?? "").trim().slice(0, COMBINATION_LABEL_MAX_LEN);
+  if (label) rule.label = label;
+  return rule;
 }
 
 /** One environment row, or null when it carries no usable pattern. */
@@ -136,6 +168,7 @@ export function cleanAarsRule(raw: unknown): AarsRule {
     fiveRs: srcRaw["fiveRs"] === true,
     deprecatedModel: srcRaw["deprecatedModel"] === true,
     inactiveAgent: srcRaw["inactiveAgent"] === true,
+    dormantAgent: srcRaw["dormantAgent"] === true,
   };
 
   const fswRaw = rec(r["findingSeverityWeights"]);
@@ -168,6 +201,12 @@ export function cleanAarsRule(raw: unknown): AarsRule {
       POINTS_MAX,
     );
   }
+
+  const comboRaw = Array.isArray(r["combinationRules"]) ? (r["combinationRules"] as unknown[]) : null;
+  const combinationRules = comboRaw
+    ? comboRaw.map(cleanCombinationRule).filter((c): c is CombinationRule => c !== null)
+        .slice(0, MAX_COMBINATION_RULES)
+    : DEFAULT_AARS_RULE.combinationRules.map((c) => ({ ...c, conditions: [...c.conditions] }));
 
   const envRulesRaw = Array.isArray(r["environmentRules"]) ? (r["environmentRules"] as unknown[]) : null;
   const environmentRules = envRulesRaw
@@ -222,12 +261,19 @@ export function cleanAarsRule(raw: unknown): AarsRule {
     ),
     gapAggregation,
     gapSources,
+    dormantAfterDays: clampInt(
+      r["dormantAfterDays"],
+      DEFAULT_AARS_RULE.dormantAfterDays,
+      DORMANT_DAYS_MIN,
+      DORMANT_DAYS_MAX,
+    ),
     findingSeverityWeights,
     pillarBCap: clampInt(r["pillarBCap"], DEFAULT_AARS_RULE.pillarBCap, POINTS_MIN, POINTS_MAX),
     dataExposurePoints,
     dataAmplifier: clampMultiplier(r["dataAmplifier"], DEFAULT_AARS_RULE.dataAmplifier),
     exposurePoints,
     privilegePoints,
+    combinationRules,
     environmentRules,
     environmentPoints,
     bands,

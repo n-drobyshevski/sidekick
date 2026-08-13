@@ -35,7 +35,7 @@ describe("computeAars — applied table rows", () => {
       gaps: [gap("LLM06"), gap("NO_GUARDRAIL")],
       dataExposure: "SENSITIVE",
     });
-    expect(r.pillars).toEqual({ toxic: 20, compliance: 20, data: 22, exposure: 0, privilege: 0, environment: 0 });
+    expect(r.pillars).toEqual({ toxic: 20, compliance: 20, data: 22, exposure: 0, privilege: 0, environment: 0, combination: 0 });
     expect(r.score).toBe(62);
     expect(r.severity).toBe("HIGH");
   });
@@ -67,7 +67,7 @@ describe("computeAars — applied table rows", () => {
       gaps: [gap("LLM06"), gap("LLM05"), gap("NO_GUARDRAIL")],
       dataExposure: "SENSITIVE",
     });
-    expect(r.pillars).toEqual({ toxic: 24, compliance: 25, data: 22, exposure: 0, privilege: 0, environment: 0 });
+    expect(r.pillars).toEqual({ toxic: 24, compliance: 25, data: 22, exposure: 0, privilege: 0, environment: 0, combination: 0 });
     expect(r.score).toBe(71);
     expect(r.severity).toBe("CRITICAL");
   });
@@ -78,7 +78,7 @@ describe("computeAars — applied table rows", () => {
       gaps: [gap("LLM06"), gap("ASI10"), gap("NO_GUARDRAIL")],
       dataExposure: "SENSITIVE",
     });
-    expect(r.pillars).toEqual({ toxic: 24, compliance: 30, data: 22, exposure: 0, privilege: 0, environment: 0 });
+    expect(r.pillars).toEqual({ toxic: 24, compliance: 30, data: 22, exposure: 0, privilege: 0, environment: 0, combination: 0 });
     expect(r.score).toBe(76);
     expect(r.severity).toBe("CRITICAL");
   });
@@ -89,7 +89,7 @@ describe("computeAars — applied table rows", () => {
       gaps: [gap("LLM04"), gap("LLM06"), gap("NO_GUARDRAIL")],
       dataExposure: "SENSITIVE",
     });
-    expect(r.pillars).toEqual({ toxic: 20, compliance: 25, data: 22, exposure: 0, privilege: 0, environment: 0 });
+    expect(r.pillars).toEqual({ toxic: 20, compliance: 25, data: 22, exposure: 0, privilege: 0, environment: 0, combination: 0 });
     expect(r.score).toBe(67);
     expect(r.severity).toBe("HIGH");
   });
@@ -100,7 +100,7 @@ describe("computeAars — applied table rows", () => {
       gaps: [gap("LLM01"), gap("LLM02"), gap("ASI02")],
       dataExposure: "DATA_ACCESS",
     });
-    expect(r.pillars).toEqual({ toxic: 24, compliance: 30, data: 11, exposure: 0, privilege: 0, environment: 0 });
+    expect(r.pillars).toEqual({ toxic: 24, compliance: 30, data: 11, exposure: 0, privilege: 0, environment: 0, combination: 0 });
     expect(r.score).toBe(65);
     expect(r.severity).toBe("HIGH");
   });
@@ -111,7 +111,7 @@ describe("computeAars — applied table rows", () => {
       gaps: [gap("ASI03")],
       dataExposure: "DATA_ACCESS",
     });
-    expect(r.pillars).toEqual({ toxic: 8, compliance: 10, data: 11, exposure: 0, privilege: 0, environment: 0 });
+    expect(r.pillars).toEqual({ toxic: 8, compliance: 10, data: 11, exposure: 0, privilege: 0, environment: 0, combination: 0 });
     expect(r.score).toBe(29);
     expect(r.severity).toBe("LOW");
   });
@@ -359,6 +359,91 @@ describe("computeAars — environment", () => {
     });
     expect(rule.environmentPoints.UNCLASSIFIED).toBe(0);
     expect(computeAars({ ...base, environment: "UNCLASSIFIED" }, rule).score).toBe(62);
+  });
+});
+
+// The one thing additive pillars cannot say: that three conditions together are worse than
+// the three apart. Empty in the spec rule, so the applied table is a pure sum as before.
+describe("computeAars — combination bonuses", () => {
+  const base = {
+    issueSeverities: ["MEDIUM"] as Severity[],
+    gaps: [gap("LLM06"), gap("NO_GUARDRAIL")],
+    dataExposure: "SENSITIVE" as const,
+  };
+  const triple = tuned({
+    combinationRules: [
+      {
+        conditions: ["EXCESSIVE_PRIVILEGE", "SENSITIVE_DATA", "MISSING_GUARDRAIL"],
+        points: 15,
+        label: "Over-privileged, holds sensitive data, unguarded",
+      },
+    ],
+  });
+
+  it("fires nothing under the spec rule, which has no conjunctions", () => {
+    const r = computeAars({
+      ...base,
+      conditions: ["EXCESSIVE_PRIVILEGE", "SENSITIVE_DATA", "MISSING_GUARDRAIL"],
+    });
+    expect(r.pillars.combination).toBe(0);
+    expect(r.combinations).toBeUndefined();
+    expect(r.score).toBe(62);
+  });
+
+  it("needs EVERY condition — two of three is not the conjunction", () => {
+    const two = computeAars({ ...base, conditions: ["EXCESSIVE_PRIVILEGE", "SENSITIVE_DATA"] }, triple);
+    expect(two.pillars.combination).toBe(0);
+    const all = computeAars({
+      ...base,
+      conditions: ["EXCESSIVE_PRIVILEGE", "SENSITIVE_DATA", "MISSING_GUARDRAIL"],
+    }, triple);
+    expect(all.pillars.combination).toBe(15);
+    expect(all.score).toBe(77);
+  });
+
+  it("carries its label, so the number explains itself", () => {
+    const r = computeAars({
+      ...base,
+      conditions: ["EXCESSIVE_PRIVILEGE", "SENSITIVE_DATA", "MISSING_GUARDRAIL"],
+    }, triple);
+    expect(r.combinations).toEqual([
+      { label: "Over-privileged, holds sensitive data, unguarded", points: 15 },
+    ]);
+  });
+
+  it("is not a first-match cascade — two conjunctions holding at once both count", () => {
+    const rule = tuned({
+      combinationRules: [
+        { conditions: ["EXCESSIVE_PRIVILEGE", "SENSITIVE_DATA"], points: 6 },
+        { conditions: ["SENSITIVE_DATA", "INTERNET_EXPOSURE"], points: 9 },
+      ],
+    });
+    const r = computeAars({
+      ...base,
+      conditions: ["EXCESSIVE_PRIVILEGE", "SENSITIVE_DATA", "INTERNET_EXPOSURE"],
+    }, rule);
+    expect(r.pillars.combination).toBe(15);
+    expect(r.combinations).toHaveLength(2);
+  });
+
+  it("drops a rule naming no known condition rather than firing it on everything", () => {
+    // A rule that matches every asset moves the whole estate equally and so carries no
+    // ranking information at all — the exact mistake the 5Rs amplifier makes.
+    const rule = tuned({
+      combinationRules: [
+        { conditions: [], points: 40 },
+        { conditions: ["NOT_A_CONDITION"], points: 40 },
+      ],
+    });
+    expect(rule.combinationRules).toEqual([]);
+    expect(computeAars({ ...base, conditions: [] }, rule).pillars.combination).toBe(0);
+  });
+
+  it("keeps only the recognised conditions of a partly-bad rule", () => {
+    const rule = tuned({
+      combinationRules: [{ conditions: ["SENSITIVE_DATA", "NONSENSE"], points: 5 }],
+    });
+    expect(rule.combinationRules[0]!.conditions).toEqual(["SENSITIVE_DATA"]);
   });
 });
 

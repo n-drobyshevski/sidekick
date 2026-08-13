@@ -70,6 +70,28 @@ export interface EnvironmentRule {
  */
 export type PrivilegeLevel = "ADMIN" | "HIGH" | "NONE";
 
+/**
+ * A conjunction that is worth more than the sum of its parts.
+ *
+ * Additive pillars cannot express one. This product is *named* after toxic combinations,
+ * and ai/queries/6_IAM.MD rates "high privilege AND sensitive data AND no guardrail" at
+ * +50 precisely because the three together are a different claim from any two of them:
+ * the privilege is what makes the data reachable, and the missing guardrail is what makes
+ * the reach unmonitored. A sum prices that identically to three unrelated findings.
+ *
+ * `conditions` are `ConditionKey`s evaluated through `riskConditions.conditionHolds` — the
+ * same strict predicate the graph topology and the Toxic Combinations matrix already
+ * share, so a bonus can never disagree with the matrix about whether an asset carries a
+ * condition. ALL must hold; an empty list never fires.
+ */
+export interface CombinationRule {
+  /** ConditionKey values: MISSING_GUARDRAIL, EXCESSIVE_PRIVILEGE, SENSITIVE_DATA, INTERNET_EXPOSURE. */
+  conditions: string[];
+  points: number;
+  /** Shown verbatim in the drill-down, so a bonus explains itself. */
+  label?: string;
+}
+
 export interface AarsGap {
   code: string;    // "LLM06", "ASI10", "ML_DATA_POISONING", "FIVE_RS", "NO_GUARDRAIL", "DEPRECATED_MODEL"
   /**
@@ -93,6 +115,12 @@ export interface AarsInput {
   privilege?: PrivilegeLevel;
   /** Absent reads as UNCLASSIFIED, which the spec rule prices at zero. */
   environment?: Environment;
+  /**
+   * The risk conditions this asset actually carries, as `ConditionKey` strings. Resolved
+   * by the caller through `riskConditions.conditionHolds` so this module stays free of the
+   * graph model — and so the score reads conditions from the one table the matrix reads.
+   */
+  conditions?: string[];
 }
 
 export interface AarsResult {
@@ -109,7 +137,11 @@ export interface AarsResult {
     exposure: number;
     privilege: number;
     environment: number;
+    /** Points from conjunctions that fired. Zero under the spec rule, which has none. */
+    combination: number;
   };
+  /** Which combination rules fired, in rule order — the evidence behind that number. */
+  combinations?: Array<{ label: string; points: number }>;
 }
 
 // ------------------------------------------------------------------------- the rule
@@ -181,6 +213,15 @@ export interface GapSources {
    * not maintained, and not missed if abused.
    */
   inactiveAgent?: boolean;
+  /**
+   * `DORMANT_AGENT` for an asset that is still `Active` and still privileged, but has not
+   * been seen for `dormantAfterDays`. This is the shadow/orphaned-asset test that
+   * ai/ai_agents_discovery_queries.md §11 defines and motivates with
+   * AGENT_AUTOGEN_DO_NOT_DELETE — an agent nobody owns, nobody watches, and nobody would
+   * miss if it were abused. Distinct from `inactiveAgent`, which reads a status Wiz set;
+   * this one is measured from `lastSeen`, so it catches the agent that still *looks* live.
+   */
+  dormantAgent?: boolean;
 }
 
 /** Score thresholds, worst first. Each must sit strictly above the next. */
@@ -207,6 +248,8 @@ export interface AarsRule {
   gapAggregation: GapAggregation;
   /** Which derivations may raise a gap. All off in the spec rule. */
   gapSources: GapSources;
+  /** Age threshold for `gapSources.dormantAgent`, in days. */
+  dormantAfterDays: number;
   /**
    * Per-severity weight on a gap contributed by a failing config finding. The spec
    * weights them all at 1, so a CRITICAL failing control prices exactly like a LOW one.
@@ -226,6 +269,12 @@ export interface AarsRule {
    * only as a fallback bucket of pillar C and throws the ADMIN/HIGH distinction away.
    */
   privilegePoints: Record<PrivilegeLevel, number>;
+  /**
+   * Conjunction bonuses. Unlike the gap cascade this is NOT first-match-wins: every rule
+   * whose conditions all hold contributes, because two different conjunctions holding at
+   * once really is worse than either alone. Empty in the spec rule.
+   */
+  combinationRules: CombinationRule[];
   /** Ordered environment cascade over the cloud-account name — FIRST MATCH WINS. */
   environmentRules: EnvironmentRule[];
   /**
@@ -262,7 +311,9 @@ export const DEFAULT_AARS_RULE: AarsRule = {
   gapFallbackPoints: 5,
   gapAggregation: "sum",
   // Off: switching any of these on adds gaps the doc's applied table never priced.
-  gapSources: { fiveRs: false, deprecatedModel: false, inactiveAgent: false },
+  gapSources: { fiveRs: false, deprecatedModel: false, inactiveAgent: false, dormantAgent: false },
+  /** Days without a sighting before `dormantAgent` fires. Only read when that source is on. */
+  dormantAfterDays: 90,
   // All 1: the spec reads a failing control as present-or-absent, never as more or less
   // severe. Kept as a knob because ai_findings.severity is already persisted and unused.
   findingSeverityWeights: { CRITICAL: 1, HIGH: 1, MEDIUM: 1, LOW: 1 },
@@ -275,6 +326,9 @@ export const DEFAULT_AARS_RULE: AarsRule = {
   // but never adds it to one, so scoring it here would change every published number.
   exposurePoints: { CONFIRMED: 0, UNDETERMINED: 0, NONE: 0 },
   privilegePoints: { ADMIN: 0, HIGH: 0, NONE: 0 },
+  // Empty: the doc's applied table is a pure sum of three pillars, and a conjunction bonus
+  // would break every row of it.
+  combinationRules: [],
   // A suggested cascade, not an assertion: these are the conventions the reference tenant
   // actually uses, and an operator whose accounts are named differently gets UNCLASSIFIED
   // everywhere until they edit it. Order is load-bearing — every negative form has to sit
@@ -348,7 +402,8 @@ export const AARS_V2_RULE: AarsRule = {
   ],
   gapFallbackPoints: 5,
   gapAggregation: "rss",
-  gapSources: { fiveRs: true, deprecatedModel: true, inactiveAgent: true },
+  gapSources: { fiveRs: true, deprecatedModel: true, inactiveAgent: true, dormantAgent: false },
+  dormantAfterDays: 90,
   findingSeverityWeights: { CRITICAL: 1.5, HIGH: 1.2, MEDIUM: 1, LOW: 0.6 },
   pillarBCap: 25,
   dataExposurePoints: { SENSITIVE: 12, DATA_ACCESS: 6, NONE: 0 },
@@ -358,6 +413,7 @@ export const AARS_V2_RULE: AarsRule = {
   // environment axes. It stays as published — a calibrated model for the signal set that
   // existed when it was written. The newer axes are v3's to spend.
   privilegePoints: { ADMIN: 0, HIGH: 0, NONE: 0 },
+  combinationRules: [],
   environmentRules: DEFAULT_AARS_RULE.environmentRules.map((e) => ({ ...e })),
   environmentPoints: { PROD: 0, PREPROD: 0, NONPROD: 0, DEV: 0, UNCLASSIFIED: 0 },
   bands: { critical: 70, high: 50, medium: 30, low: 10 },
@@ -481,15 +537,43 @@ export function computeAars(input: AarsInput, rule: AarsRule = DEFAULT_AARS_RULE
   const privilege = rule.privilegePoints[input.privilege ?? "NONE"] ?? 0;
   const environment = rule.environmentPoints[input.environment ?? "UNCLASSIFIED"] ?? 0;
 
+  const fired = firedCombinations(input.conditions ?? [], rule);
+  const combination = fired.reduce((acc, f) => acc + f.points, 0);
+
   const score = Math.min(
     AARS_MAX_SCORE,
-    toxic + compliance + data + exposure + privilege + environment,
+    toxic + compliance + data + exposure + privilege + environment + combination,
   );
-  return {
+  const result: AarsResult = {
     score,
     severity: aarsSeverity(score, rule.bands),
-    pillars: { toxic, compliance, data, exposure, privilege, environment },
+    pillars: { toxic, compliance, data, exposure, privilege, environment, combination },
   };
+  // Omitted rather than empty when nothing fired, so the persisted blob does not grow a
+  // key for every asset in an estate that uses no conjunctions.
+  if (fired.length) result.combinations = fired;
+  return result;
+}
+
+/**
+ * The conjunctions this asset satisfies, in rule order. Every matching rule contributes —
+ * see `combinationRules` on why this is not a first-match cascade.
+ */
+export function firedCombinations(
+  conditions: string[],
+  rule: AarsRule = DEFAULT_AARS_RULE,
+): Array<{ label: string; points: number }> {
+  const held = new Set((conditions ?? []).map((c) => String(c).trim().toUpperCase()));
+  const out: Array<{ label: string; points: number }> = [];
+  for (const row of rule.combinationRules) {
+    const keys = (row.conditions ?? []).map((c) => String(c).trim().toUpperCase());
+    // An empty rule would otherwise fire on every asset — a term that moves everything
+    // equally carries no ranking information at all.
+    if (!keys.length) continue;
+    if (!keys.every((k) => held.has(k))) continue;
+    out.push({ label: row.label || keys.join(" + "), points: row.points });
+  }
+  return out;
 }
 
 /**

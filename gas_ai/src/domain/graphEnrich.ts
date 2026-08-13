@@ -19,6 +19,7 @@ import {
 } from "./aars";
 import type { Severity } from "./config";
 import { conditionHolds, conditionState } from "./riskConditions";
+import { CONDITION_KEYS } from "./toxicCombos";
 import type { ConditionKey } from "./toxicCombos";
 import {
   AI_ASSET_KINDS,
@@ -70,15 +71,29 @@ export function dataExposureOf(node: GNode): DataExposure {
   return "NONE";
 }
 
+const DAY_MS = 86_400_000;
+
 /**
- * Internet reachability (AARS pillar D) through the SAME predicate the graph topology and
- * the Toxic Combinations matrix read (riskConditions.conditionState). Going through that
- * table rather than reading the flags here is the point: those two consumers used to
- * disagree about exposure, and a third private reading would re-open exactly that bug.
+ * The shadow/orphaned asset: still `Active`, still privileged, and not seen for a long time.
+ * ai/ai_agents_discovery_queries.md §11 defines this test and motivates it with
+ * AGENT_AUTOGEN_DO_NOT_DELETE — an agent nobody owns and nobody would miss if it were abused.
  *
- * `null` — reachability inherited from the underlying compute and never evaluated — maps to
- * UNDETERMINED, never to CONFIRMED and never to NONE.
+ * All three inputs are already persisted, so this costs nothing to compute. `now` is passed
+ * in rather than read from the clock so a sync is reproducible and the test is not
+ * time-dependent. An unreadable or absent `lastSeen` is NOT dormant: the honest reading of
+ * "we have no sighting record" is silence, not an accusation.
  */
+export function isDormant(node: GNode, rule: AarsRule, now: string): boolean {
+  if (String(node.status ?? "").trim().toUpperCase() !== "ACTIVE") return false;
+  if (privilegeOf(node) === "NONE" && !node.hasAccessToSensitiveData && !node.hasSensitiveData) {
+    return false;
+  }
+  const seen = Date.parse(String(node.lastSeen ?? ""));
+  const at = Date.parse(String(now ?? ""));
+  if (!Number.isFinite(seen) || !Number.isFinite(at)) return false;
+  return at - seen >= rule.dormantAfterDays * DAY_MS;
+}
+
 /**
  * Effective privilege as its own axis. ADMIN wins over HIGH — the same precedence
  * withExcessivePrivilegeNodes already uses for its label ("Admin privileges" beats
@@ -107,6 +122,15 @@ export function environmentOf(node: GNode, rule: AarsRule = DEFAULT_AARS_RULE): 
   return environmentFor(node.cloudAccount?.name, rule);
 }
 
+/**
+ * Internet reachability (AARS pillar D) through the SAME predicate the graph topology and
+ * the Toxic Combinations matrix read (riskConditions.conditionState). Going through that
+ * table rather than reading the flags here is the point: those two consumers used to
+ * disagree about exposure, and a third private reading would re-open exactly that bug.
+ *
+ * `null` — reachability inherited from the underlying compute and never evaluated — maps to
+ * UNDETERMINED, never to CONFIRMED and never to NONE.
+ */
 export function internetExposureOf(node: GNode): InternetExposure {
   const state = conditionState(node, "INTERNET_EXPOSURE");
   if (state === true) return "CONFIRMED";
@@ -124,6 +148,11 @@ export function deriveAarsInput(
   node: GNode,
   nodeIssues: IssueRow[],
   rule: AarsRule = DEFAULT_AARS_RULE,
+  /**
+   * The sync's own timestamp, for the dormancy window. Empty means "no clock supplied",
+   * which makes `isDormant` false — a missing clock must not accuse an asset.
+   */
+  now = "",
 ): AarsInput {
   const codes = new Set<string>();
   for (const issue of nodeIssues) {
@@ -145,6 +174,7 @@ export function deriveAarsInput(
   const status = String(node.status ?? "").trim().toUpperCase();
   if (rule.gapSources.deprecatedModel && status === "DEPRECATED") gaps.push(gap("DEPRECATED_MODEL"));
   if (rule.gapSources.inactiveAgent && status === "INACTIVE") gaps.push(gap("INACTIVE_AGENT"));
+  if (rule.gapSources.dormantAgent && isDormant(node, rule, now)) gaps.push(gap("DORMANT_AGENT"));
   const dataExposure = dataExposureOf(node);
   return {
     // AARS Pillar A scores Wiz-NATIVE severities (the applied table in
@@ -156,7 +186,17 @@ export function deriveAarsInput(
     internetExposure: internetExposureOf(node),
     privilege: privilegeOf(node),
     environment: environmentOf(node, rule),
+    conditions: conditionsHeldBy(node),
   };
+}
+
+/**
+ * The risk conditions an asset carries, through the shared predicate table. Strict
+ * (`conditionHolds`), so an UNDETERMINED internet exposure does not satisfy a conjunction
+ * that names INTERNET_EXPOSURE — a bonus must rest on what is known, not on what might be.
+ */
+export function conditionsHeldBy(node: GNode): string[] {
+  return CONDITION_KEYS.filter((k) => conditionHolds(node, k));
 }
 
 /**
@@ -213,7 +253,7 @@ export function buildAarsHintsFromFindings(
   for (const [resourceId, codes] of codesByResource) {
     const node = nodeById.get(resourceId);
     if (!node) continue;
-    const base = deriveAarsInput(node, issuesByAsset.get(resourceId) ?? [], rule);
+    const base = deriveAarsInput(node, issuesByAsset.get(resourceId) ?? [], rule, doc.syncedAt);
     const seen = new Set(base.gaps.map((g) => g.code));
     const gaps = [...base.gaps];
     for (const c of codes) {
@@ -275,8 +315,11 @@ export function enrichGraphDoc(
             internetExposure: hint.internetExposure ?? internetExposureOf(node),
             privilege: hint.privilege ?? privilegeOf(node),
             environment: hint.environment ?? environmentOf(node, rule),
+            // Conditions are always re-derived: they are a measurement of the node as it
+            // is now, not a scoring input an operator pinned.
+            conditions: conditionsHeldBy(node),
           }
-        : deriveAarsInput(node, nodeIssues, rule);
+        : deriveAarsInput(node, nodeIssues, rule, doc.syncedAt);
       const result = computeAars(input, rule);
       node.aars = result.score;
       node.aarsSeverity = result.severity;

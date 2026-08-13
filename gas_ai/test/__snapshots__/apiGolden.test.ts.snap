@@ -191,12 +191,14 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
           "low": 10,
           "medium": 30,
         },
+        "combinationRules": [],
         "dataAmplifier": 1.1,
         "dataExposurePoints": {
           "DATA_ACCESS": 10,
           "NONE": 0,
           "SENSITIVE": 20,
         },
+        "dormantAfterDays": 90,
         "environmentPoints": {
           "DEV": 0,
           "NONPROD": 0,
@@ -308,6 +310,7 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
         ],
         "gapSources": {
           "deprecatedModel": false,
+          "dormantAgent": false,
           "fiveRs": false,
           "inactiveAgent": false,
         },
@@ -343,12 +346,14 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
             "low": 10,
             "medium": 30,
           },
+          "combinationRules": [],
           "dataAmplifier": 1,
           "dataExposurePoints": {
             "DATA_ACCESS": 6,
             "NONE": 0,
             "SENSITIVE": 12,
           },
+          "dormantAfterDays": 90,
           "environmentPoints": {
             "DEV": 0,
             "NONPROD": 0,
@@ -465,6 +470,7 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
           ],
           "gapSources": {
             "deprecatedModel": true,
+            "dormantAgent": false,
             "fiveRs": true,
             "inactiveAgent": true,
           },
@@ -492,12 +498,14 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
           "low": 10,
           "medium": 30,
         },
+        "combinationRules": [],
         "dataAmplifier": 1.1,
         "dataExposurePoints": {
           "DATA_ACCESS": 10,
           "NONE": 0,
           "SENSITIVE": 20,
         },
+        "dormantAfterDays": 90,
         "environmentPoints": {
           "DEV": 0,
           "NONPROD": 0,
@@ -609,6 +617,7 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
         ],
         "gapSources": {
           "deprecatedModel": false,
+          "dormantAgent": false,
           "fiveRs": false,
           "inactiveAgent": false,
         },
@@ -1264,12 +1273,14 @@ exports[`read endpoints > getAarsRule answers the same shape 1`] = `
         "low": 10,
         "medium": 30,
       },
+      "combinationRules": [],
       "dataAmplifier": 1.1,
       "dataExposurePoints": {
         "DATA_ACCESS": 10,
         "NONE": 0,
         "SENSITIVE": 20,
       },
+      "dormantAfterDays": 90,
       "environmentPoints": {
         "DEV": 0,
         "NONPROD": 0,
@@ -1381,6 +1392,7 @@ exports[`read endpoints > getAarsRule answers the same shape 1`] = `
       ],
       "gapSources": {
         "deprecatedModel": false,
+        "dormantAgent": false,
         "fiveRs": false,
         "inactiveAgent": false,
       },
@@ -1416,12 +1428,14 @@ exports[`read endpoints > getAarsRule answers the same shape 1`] = `
           "low": 10,
           "medium": 30,
         },
+        "combinationRules": [],
         "dataAmplifier": 1,
         "dataExposurePoints": {
           "DATA_ACCESS": 6,
           "NONE": 0,
           "SENSITIVE": 12,
         },
+        "dormantAfterDays": 90,
         "environmentPoints": {
           "DEV": 0,
           "NONPROD": 0,
@@ -1538,6 +1552,7 @@ exports[`read endpoints > getAarsRule answers the same shape 1`] = `
         ],
         "gapSources": {
           "deprecatedModel": true,
+          "dormantAgent": false,
           "fiveRs": true,
           "inactiveAgent": true,
         },
@@ -1565,12 +1580,14 @@ exports[`read endpoints > getAarsRule answers the same shape 1`] = `
         "low": 10,
         "medium": 30,
       },
+      "combinationRules": [],
       "dataAmplifier": 1.1,
       "dataExposurePoints": {
         "DATA_ACCESS": 10,
         "NONE": 0,
         "SENSITIVE": 20,
       },
+      "dormantAfterDays": 90,
       "environmentPoints": {
         "DEV": 0,
         "NONPROD": 0,
@@ -1682,6 +1699,7 @@ exports[`read endpoints > getAarsRule answers the same shape 1`] = `
       ],
       "gapSources": {
         "deprecatedModel": false,
+        "dormantAgent": false,
         "fiveRs": false,
         "inactiveAgent": false,
       },
@@ -5065,6 +5083,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "combination": 0,
           "compliance": 20,
           "data": 22,
           "environment": 0,
@@ -5128,6 +5147,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "combination": 0,
           "compliance": 20,
           "data": 22,
           "environment": 0,
@@ -5194,6 +5214,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "ADMIN",
         },
         "aarsPillars": {
+          "combination": 0,
           "compliance": 30,
           "data": 22,
           "environment": 0,
@@ -5260,6 +5281,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "combination": 0,
           "compliance": 25,
           "data": 22,
           "environment": 0,
@@ -5326,6 +5348,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "combination": 0,
           "compliance": 25,
           "data": 22,
           "environment": 0,
@@ -5389,6 +5412,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "combination": 0,
           "compliance": 20,
           "data": 22,
           "environment": 0,
@@ -5452,6 +5476,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "combination": 0,
           "compliance": 20,
           "data": 22,
           "environment": 0,
@@ -5507,6 +5532,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "combination": 0,
           "compliance": 20,
           "data": 22,
           "environment": 0,
@@ -5562,6 +5588,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "combination": 0,
           "compliance": 20,
           "data": 22,
           "environment": 0,
@@ -5624,6 +5651,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "combination": 0,
           "compliance": 25,
           "data": 22,
           "environment": 0,
@@ -5691,6 +5719,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "combination": 0,
           "compliance": 20,
           "data": 22,
           "environment": 0,
@@ -5751,6 +5780,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "combination": 0,
           "compliance": 10,
           "data": 11,
           "environment": 0,
@@ -5811,6 +5841,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "combination": 0,
           "compliance": 10,
           "data": 11,
           "environment": 0,
@@ -5877,6 +5908,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "combination": 0,
           "compliance": 30,
           "data": 11,
           "environment": 0,
@@ -5935,6 +5967,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "combination": 0,
           "compliance": 30,
           "data": 11,
           "environment": 0,
@@ -5993,6 +6026,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "combination": 0,
           "compliance": 30,
           "data": 11,
           "environment": 0,
@@ -6051,6 +6085,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "combination": 0,
           "compliance": 30,
           "data": 11,
           "environment": 0,
@@ -6109,6 +6144,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "combination": 0,
           "compliance": 30,
           "data": 11,
           "environment": 0,
@@ -6167,6 +6203,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "combination": 0,
           "compliance": 30,
           "data": 11,
           "environment": 0,
@@ -6225,6 +6262,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "combination": 0,
           "compliance": 30,
           "data": 11,
           "environment": 0,
@@ -6283,6 +6321,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "HIGH",
         },
         "aarsPillars": {
+          "combination": 0,
           "compliance": 30,
           "data": 11,
           "environment": 0,
@@ -6335,6 +6374,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "NONE",
         },
         "aarsPillars": {
+          "combination": 0,
           "compliance": 5,
           "data": 0,
           "environment": 0,
@@ -6376,6 +6416,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "NONE",
         },
         "aarsPillars": {
+          "combination": 0,
           "compliance": 0,
           "data": 0,
           "environment": 0,
@@ -6416,6 +6457,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "privilege": "NONE",
         },
         "aarsPillars": {
+          "combination": 0,
           "compliance": 0,
           "data": 22,
           "environment": 0,
@@ -8474,7 +8516,7 @@ exports[`read endpoints > getSettings answers the same shape 1`] = `
 exports[`read endpoints > getStorageStats answers the same shape 1`] = `
 {
   "data": {
-    "archiveBytes": 72321,
+    "archiveBytes": 72801,
     "cellCount": 21100,
     "rows": {
       "assets": 85,
@@ -9094,7 +9136,7 @@ exports[`the persisted ledger > writes the tabs the schema declares 2`] = `
   "ai_assets": {
     "aars": 62,
     "aars_input_json": "{"gaps":[{"code":"LLM06"},{"code":"NO_GUARDRAIL"}],"dataExposure":"SENSITIVE","internetExposure":"NONE","privilege":"HIGH","environment":"UNCLASSIFIED"}",
-    "aars_pillars_json": "{"toxic":20,"compliance":20,"data":22,"exposure":0,"privilege":0,"environment":0}",
+    "aars_pillars_json": "{"toxic":20,"compliance":20,"data":22,"exposure":0,"privilege":0,"environment":0,"combination":0}",
     "aars_severity": "HIGH",
     "account_id": "gcp-account-01",
     "account_name": "gcp-account-01",

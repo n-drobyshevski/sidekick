@@ -5,10 +5,12 @@
 import { describe, expect, it } from "vitest";
 import {
   buildAarsHintsFromFindings,
+  conditionsHeldBy,
   dataExposureOf,
   deriveAarsInput,
   enrichGraphDoc,
   internetExposureOf,
+  isDormant,
   withExcessivePrivilegeNodes,
   withInternetExposureNodes,
   withMissingGuardrailNodes,
@@ -337,6 +339,65 @@ describe("buildAarsHintsFromFindings — findingSeverityWeights", () => {
       rule,
     );
     expect(hints["n"]!.gaps).toEqual([{ code: "SUB-082", points: 10 }]);
+  });
+});
+
+describe("isDormant — the shadow/orphaned asset", () => {
+  const T0 = "2026-06-28T05:00:00Z";
+  const node = (over: Partial<GNode>): GNode =>
+    ({ id: "n", kind: "AI_AGENT", name: "n", status: "Active", hasHighPrivileges: true, ...over }) as GNode;
+  const rule = DEFAULT_AARS_RULE; // dormantAfterDays: 90
+
+  const daysBefore = (n: number) =>
+    new Date(Date.parse(T0) - n * 86_400_000).toISOString();
+
+  it("flags an Active, privileged agent nobody has seen for the window", () => {
+    expect(isDormant(node({ lastSeen: daysBefore(120) }), rule, T0)).toBe(true);
+  });
+
+  it("does not flag one seen recently", () => {
+    expect(isDormant(node({ lastSeen: daysBefore(10) }), rule, T0)).toBe(false);
+  });
+
+  it("does not flag an already-Inactive agent — that is the other gap source's job", () => {
+    expect(isDormant(node({ status: "Inactive", lastSeen: daysBefore(400) }), rule, T0)).toBe(false);
+  });
+
+  it("does not flag an unprivileged agent with no data reach — dormancy alone is not risk", () => {
+    expect(isDormant(
+      node({ hasHighPrivileges: false, lastSeen: daysBefore(400) }), rule, T0)).toBe(false);
+    // ...but sensitive-data reach is enough on its own.
+    expect(isDormant(
+      node({ hasHighPrivileges: false, hasAccessToSensitiveData: true, lastSeen: daysBefore(400) }),
+      rule, T0)).toBe(true);
+  });
+
+  it("treats a missing or unreadable sighting as silence, not as an accusation", () => {
+    expect(isDormant(node({}), rule, T0)).toBe(false);
+    expect(isDormant(node({ lastSeen: "not a date" }), rule, T0)).toBe(false);
+    expect(isDormant(node({ lastSeen: daysBefore(400) }), rule, "")).toBe(false);
+  });
+
+  it("follows the rule's window", () => {
+    const short = cleanAarsRule({ ...DEFAULT_AARS_RULE, dormantAfterDays: 7 });
+    expect(isDormant(node({ lastSeen: daysBefore(10) }), short, T0)).toBe(true);
+  });
+});
+
+describe("conditionsHeldBy", () => {
+  it("reports only what strictly holds — an undetermined exposure is not a condition", () => {
+    const held = conditionsHeldBy({
+      id: "n", kind: "AI_AGENT", name: "n",
+      hasAccessToSensitiveData: true,
+      hasHighPrivileges: true,
+      guardrailMissing: true,
+      isAccessibleFromInternet: null,   // hosted: inherited, never evaluated
+    } as GNode);
+    expect(held).toContain("SENSITIVE_DATA");
+    expect(held).toContain("EXCESSIVE_PRIVILEGE");
+    expect(held).toContain("MISSING_GUARDRAIL");
+    // A conjunction naming INTERNET_EXPOSURE must not fire on "we have not checked".
+    expect(held).not.toContain("INTERNET_EXPOSURE");
   });
 });
 
