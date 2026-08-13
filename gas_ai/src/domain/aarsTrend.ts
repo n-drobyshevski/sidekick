@@ -8,6 +8,7 @@
 
 import { AARS_SEVERITY_ORDER, normalizeAarsSeverity, type AarsSeverity } from "./config";
 import type { Rec } from "./util";
+import { cmpBy } from "./util";
 
 /**
  * The levels the chart draws. INFO (score 0–9, "no action required") is recorded but not
@@ -79,7 +80,7 @@ export function aarsTrendFromHistory(rows: Rec[], limit = 90): AarsTrendPoint[] 
     const ruleVersion = Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
     points.push({ at, counts, ruleVersion });
   }
-  points.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+  points.sort(cmpBy((p) => p.at));
   return limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
 }
 

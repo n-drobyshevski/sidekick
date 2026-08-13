@@ -1,8 +1,84 @@
 // Shared value/time helpers used across the domain port. The Python side leans on
 // pandas NaN/NaT semantics; here "missing" is null/undefined/NaN/blank-string, gated
 // through present()/clean() exactly like lifecycle._present / reconcile._clean.
+//
+// Two populations live here and it matters which is which:
+//
+//   PARITY — present, clean, pyStr, parseTs, toIso, minIso, midpointIso, nowIso, mean,
+//   quantile, median. These mirror named functions in wiz_dashboard/domain/, and several
+//   have no caller in this tree. They are carried so the port stays complete and legible
+//   against its Python twin; do not delete them for being unused, and do not change their
+//   behaviour without changing the Python side.
+//
+//   LOCAL — everything under "collection and value helpers" below. These have no Python
+//   twin and exist because the domain layer was re-deriving them: the same comparator
+//   ternary written out six times, the same index-building expression eight times, the
+//   same clamp under three different names.
 
 export type Rec = Record<string, unknown>;
+
+// ------------------------------------------------- collection and value helpers (LOCAL)
+
+/** "" for missing, else String(v). The miss value is the whole point — pick one. */
+export function toStr(v: unknown, fallback = ""): string {
+  return v === null || v === undefined ? fallback : String(v);
+}
+
+/** `fallback` for anything that isn't a finite number. */
+export function toNum(v: unknown, fallback = 0): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/**
+ * Round, then clamp into [min, max], falling back for anything unparseable.
+ *
+ * clampDepth and clampMaxNodes in settingsLogic.ts were literal instances of this, and
+ * aarsRule.ts had it under this name — three names for one function.
+ */
+export function clampInt(v: unknown, fallback: number, min: number, max: number): number {
+  const n = Math.round(Number(v));
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+/** Three-way compare for sortables — the `a < b ? -1 : a > b ? 1 : 0` written once. */
+export function cmp<T>(a: T, b: T): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/** Compare two values by a derived key. Chain with `||` for tie-breaks. */
+export function cmpBy<T, K>(key: (v: T) => K): (a: T, b: T) => number {
+  return (a, b) => cmp(key(a), key(b));
+}
+
+/** `new Map(xs.map(x => [key(x), x]))`, which the layer wrote out eight times. */
+export function indexBy<T, K>(xs: readonly T[], key: (v: T) => K): Map<K, T> {
+  const out = new Map<K, T>();
+  for (const x of xs) out.set(key(x), x);
+  return out;
+}
+
+/** Append to a map of arrays, creating the bucket on first use. */
+export function pushInto<K, V>(map: Map<K, V[]>, key: K, ...values: V[]): void {
+  const bucket = map.get(key);
+  if (bucket) bucket.push(...values);
+  else map.set(key, [...values]);
+}
+
+/** Group by a derived key, preserving input order within each bucket. */
+export function groupBy<T, K>(xs: readonly T[], key: (v: T) => K): Map<K, T[]> {
+  const out = new Map<K, T[]>();
+  for (const x of xs) pushInto(out, key(x), x);
+  return out;
+}
+
+/** Increment a counter in a Map — `counts.set(k, (counts.get(k) ?? 0) + 1)`. */
+export function tally<K>(counts: Map<K, number>, key: K, by = 1): void {
+  counts.set(key, (counts.get(key) ?? 0) + by);
+}
+
+// ------------------------------------------------------------ Python-port helpers (PARITY)
 
 /** True when a value is a real, non-empty scalar (null/undefined/NaN/'' are missing). */
 export function present(v: unknown): boolean {

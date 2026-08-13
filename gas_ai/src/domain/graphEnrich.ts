@@ -24,6 +24,7 @@ import {
   type IssueRow,
   severityRank,
 } from "./graphTypes";
+import { groupBy, indexBy, pushInto } from "./util";
 
 export interface AarsHint {
   gaps: AarsGap[];
@@ -95,17 +96,12 @@ export function buildAarsHintsFromFindings(
   issues: IssueRow[],
 ): AarsHints {
   const open = issues.filter((i) => i.status === "OPEN");
-  const issuesByAsset = new Map<string, IssueRow[]>();
-  for (const issue of open) {
-    if (!issuesByAsset.has(issue.assetId)) issuesByAsset.set(issue.assetId, []);
-    issuesByAsset.get(issue.assetId)!.push(issue);
-  }
+  const issuesByAsset = groupBy(open, (i) => i.assetId);
   const codesByResource = new Map<string, string[]>();
   for (const f of findings) {
-    if (!codesByResource.has(f.resourceId)) codesByResource.set(f.resourceId, []);
-    codesByResource.get(f.resourceId)!.push(...f.frameworkCodes);
+    pushInto(codesByResource, f.resourceId, ...f.frameworkCodes);
   }
-  const nodeById = new Map(doc.nodes.map((n) => [n.id, n]));
+  const nodeById = indexBy(doc.nodes, (n) => n.id);
   const hints: AarsHints = {};
   for (const [resourceId, codes] of codesByResource) {
     const node = nodeById.get(resourceId);
@@ -136,11 +132,7 @@ export function enrichGraphDoc(
   rule: AarsRule = DEFAULT_AARS_RULE,
 ): GraphDoc {
   const open = issues.filter((i) => i.status === "OPEN");
-  const byAsset = new Map<string, IssueRow[]>();
-  for (const issue of open) {
-    if (!byAsset.has(issue.assetId)) byAsset.set(issue.assetId, []);
-    byAsset.get(issue.assetId)!.push(issue);
-  }
+  const byAsset = groupBy(open, (i) => i.assetId);
 
   const nodes: GNode[] = doc.nodes.map((raw) => {
     const node: GNode = { ...raw };
