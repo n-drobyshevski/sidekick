@@ -88,6 +88,7 @@ export const SCAN_AREAS = [
         // full reading, and the register prints that. A node that carried the full unit
         // string would set the width of the whole picture.
         short: n(ctx.kpis.aiAssets) + " assets",
+        source: "kpis.aiAssets",
       };
     },
   },
@@ -107,6 +108,7 @@ export const SCAN_AREAS = [
         unit: "open · " + n(totals.patternsActive) + " of " + n(totals.patternsTotal) +
           " patterns firing",
         short: n(totals.totalOpen) + " open",
+        source: "digest.totals.totalOpen",
       };
     },
   },
@@ -128,6 +130,7 @@ export const SCAN_AREAS = [
         unit: "agents protected (" + n(ctx.kpis.guardrailCoveragePct) + "%)",
         pct: n(ctx.kpis.guardrailCoveragePct),
         short: n(ctx.kpis.guardrailCoveragePct) + "% of agents",
+        source: "kpis.protectedAgents / kpis.agents",
       };
     },
   },
@@ -138,11 +141,13 @@ export const SCAN_AREAS = [
     what: "Classifies PII/PHI/PCI in buckets and databases, then flags which AI assets can " +
       "reach it. The reachability is what the toxic combinations price, not the storage.",
     lands: "graph",
+    carriedBy: "INVENTORY_AI",
     figure: (ctx) => (ctx.kpis
       ? {
         value: String(n(ctx.kpis.sensitiveAccess)),
         unit: "AI assets reach classified data",
         short: n(ctx.kpis.sensitiveAccess) + " assets reach it",
+        source: "kpis.sensitiveAccess",
       }
       : null),
   },
@@ -167,6 +172,7 @@ export const SCAN_AREAS = [
         value: String(n(ctx.kpis.highPrivilege)),
         unit: "privileged · " + n(ctx.kpis.agenticIdentities) + " agentic identities",
         short: n(ctx.kpis.highPrivilege) + " privileged",
+        source: "kpis.highPrivilege",
       };
     },
   },
@@ -178,6 +184,7 @@ export const SCAN_AREAS = [
       "directly; hosted agents inherit it from the VM or Cloud Run service underneath, " +
       "which Wiz reports as undetermined until that host is checked.",
     lands: "graph",
+    carriedBy: "INVENTORY_AI",
     figure: (ctx) => {
       if (!ctx.kpis || ctx.kpis.internetExposed === undefined) return null;
       // The undetermined count rides along rather than folding into "not exposed" — the
@@ -187,6 +194,7 @@ export const SCAN_AREAS = [
         value: String(n(ctx.kpis.internetExposed)),
         unit: "reachable" + (unknown ? " · " + unknown + " undetermined" : ""),
         short: n(ctx.kpis.internetExposed) + " reachable",
+        source: "kpis.internetExposed",
       };
     },
   },
@@ -210,6 +218,7 @@ export const SCAN_AREAS = [
         value: String(n(ctx.kpis.complianceGaps)),
         unit: "failing findings",
         short: n(ctx.kpis.complianceGaps) + " failing",
+        source: "kpis.complianceGaps",
       }
       : null),
   },

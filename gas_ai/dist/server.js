@@ -1126,6 +1126,7 @@ var Server = (() => {
     getIssueDetail: () => getIssueDetail,
     getIssues: () => getIssues,
     getJobStatus: () => getJobStatus,
+    getScanQueries: () => getScanQueries,
     getSettings: () => getSettings,
     getStorageStats: () => getStorageStats,
     getSyncHistory: () => getSyncHistory,
@@ -1136,7 +1137,9 @@ var Server = (() => {
     runSync: () => runSync,
     scoreAarsSample: () => scoreAarsSample,
     setAarsRule: () => setAarsRule2,
-    setSettings: () => setSettings
+    setScanVars: () => setScanVars2,
+    setSettings: () => setSettings,
+    testScanVars: () => testScanVars
   });
 
   // src/domain/config.ts
@@ -1872,6 +1875,199 @@ var Server = (() => {
     return marks;
   }
 
+  // src/domain/scanVars.ts
+  var MAX_LIST_VALUES = 40;
+  var MAX_VALUE_LEN = 120;
+  var ISSUE_STATUSES = ["OPEN", "IN_PROGRESS", "RESOLVED", "REJECTED"];
+  var ORDER_DIRECTIONS = ["ASC", "DESC"];
+  var STEP_VAR_SPECS = [
+    {
+      stepId: "INVENTORY_AI",
+      fields: [
+        {
+          path: "filterBy.type.equals",
+          label: "Resource types",
+          help: "The Wiz resource types treated as AI assets. Resolved against this tenant's schema by default; setting them here pins the list instead.",
+          kind: "list",
+          required: true
+        }
+      ]
+    },
+    {
+      stepId: "ISSUES_TOXIC",
+      fields: [
+        {
+          path: "filterBy.status",
+          label: "Issue status",
+          help: "Which issue states to collect. Narrowing to OPEN drops in-progress work from the register and from AARS pillar A.",
+          kind: "list",
+          options: ISSUE_STATUSES,
+          required: true
+        },
+        {
+          path: "filterBy.project",
+          label: "Project scope",
+          help: "Wiz project ids to restrict to. Empty means the whole tenant.",
+          kind: "list"
+        },
+        {
+          path: "orderBy.direction",
+          label: "Order direction",
+          help: "Which end of the severity order the paging walks first.",
+          kind: "enum",
+          options: ORDER_DIRECTIONS
+        }
+      ]
+    },
+    {
+      stepId: "CONFIG_FINDINGS",
+      fields: [
+        {
+          path: "filterBy.status",
+          label: "Finding status",
+          help: "Compliance findings are additionally filtered to result FAIL after they arrive, so widening this collects more rows but stores only failures.",
+          kind: "list",
+          options: ["OPEN", "RESOLVED", "REJECTED"],
+          required: true
+        },
+        {
+          path: "orderBy.direction",
+          label: "Order direction",
+          help: "Which end of the severity order the paging walks first.",
+          kind: "enum",
+          options: ORDER_DIRECTIONS
+        }
+      ]
+    },
+    {
+      stepId: "AGENTIC_IDENTITIES",
+      fields: [
+        {
+          path: "filterBy.type.equals",
+          label: "Identity types",
+          help: "Which principal types to collect.",
+          kind: "list",
+          required: true
+        }
+      ],
+      // Deliberately NOT offering filterBy.identityPurpose. normalizePrincipalsPage stamps
+      // identityPurpose = "AGENTIC" on every row it returns, because the API does not send the
+      // field back — the flag is a claim about the filter, not about the data. Let the filter
+      // widen and every identity in the estate is relabelled agentic, with nothing to catch it.
+      locked: "The agentic-purpose filter is fixed: the sync labels what this query returns as agentic, so widening it would mislabel every identity it collected."
+    }
+  ];
+  var SPEC_BY_STEP = {};
+  for (const spec of STEP_VAR_SPECS) SPEC_BY_STEP[spec.stepId] = spec;
+  function varSpecFor(stepId) {
+    var _a4;
+    return (_a4 = SPEC_BY_STEP[stepId]) != null ? _a4 : null;
+  }
+  function isEditableStep(stepId) {
+    const spec = varSpecFor(stepId);
+    return !!spec && spec.fields.length > 0;
+  }
+  function readPath(obj, path) {
+    let cur = obj;
+    for (const key of path.split(".")) {
+      if (!cur || typeof cur !== "object") return void 0;
+      cur = cur[key];
+    }
+    return cur;
+  }
+  function writePath(obj, path, value) {
+    const keys = path.split(".");
+    let cur = obj;
+    for (let i = 0; i < keys.length - 1; i++) {
+      const key = keys[i];
+      const next = cur[key];
+      if (!next || typeof next !== "object" || Array.isArray(next)) cur[key] = {};
+      cur = cur[keys[i]];
+    }
+    cur[keys[keys.length - 1]] = value;
+  }
+  function cleanValue(v) {
+    return String(v != null ? v : "").trim().slice(0, MAX_VALUE_LEN);
+  }
+  function cleanList(v) {
+    if (!Array.isArray(v)) return [];
+    const out = [];
+    for (const raw of v) {
+      const s = cleanValue(raw);
+      if (s && out.indexOf(s) < 0) out.push(s);
+      if (out.length >= MAX_LIST_VALUES) break;
+    }
+    return out;
+  }
+  function cleanStepVars(stepId, raw) {
+    const spec = varSpecFor(stepId);
+    if (!spec || !raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    const out = {};
+    let touched = false;
+    for (const field of spec.fields) {
+      const value = readPath(raw, field.path);
+      if (value === void 0 || value === null) continue;
+      if (field.kind === "list") {
+        const list2 = cleanList(value);
+        writePath(out, field.path, list2);
+        touched = true;
+      } else {
+        const s = cleanValue(value).toUpperCase();
+        if (!s) continue;
+        if (field.options && field.options.indexOf(s) < 0) continue;
+        writePath(out, field.path, s);
+        touched = true;
+      }
+    }
+    return touched ? out : null;
+  }
+  function validateStepVars(stepId, vars) {
+    const spec = varSpecFor(stepId);
+    if (!spec) return [`${stepId} does not take editable variables.`];
+    if (!vars) return [];
+    const errors = [];
+    for (const field of spec.fields) {
+      const value = readPath(vars, field.path);
+      if (value === void 0) continue;
+      if (field.kind === "list") {
+        const list2 = Array.isArray(value) ? value : [];
+        if (field.required && !list2.length) {
+          errors.push(
+            `${field.label} cannot be empty \u2014 an empty filter asks Wiz for everything, which is not what this step normalizes.`
+          );
+        }
+        if (list2.length >= MAX_LIST_VALUES) {
+          errors.push(`${field.label} is capped at ${MAX_LIST_VALUES} values.`);
+        }
+      }
+    }
+    return errors;
+  }
+  function effectiveStepVars(stepId, base, override) {
+    const clean2 = cleanStepVars(stepId, override);
+    if (!clean2) return base;
+    const spec = varSpecFor(stepId);
+    const merged = JSON.parse(JSON.stringify(base != null ? base : {}));
+    for (const field of spec ? spec.fields : []) {
+      const value = readPath(clean2, field.path);
+      if (value === void 0) continue;
+      writePath(merged, field.path, value);
+    }
+    return merged;
+  }
+  function changedPaths(stepId, base, override) {
+    const clean2 = cleanStepVars(stepId, override);
+    if (!clean2) return [];
+    const spec = varSpecFor(stepId);
+    const out = [];
+    for (const field of spec ? spec.fields : []) {
+      const next = readPath(clean2, field.path);
+      if (next === void 0) continue;
+      if (JSON.stringify(next) !== JSON.stringify(readPath(base, field.path))) out.push(field.path);
+    }
+    return out;
+  }
+
   // src/domain/settingsLogic.ts
   function clampDepth(v) {
     return clampInt(v, DEPTH_DEFAULT, DEPTH_MIN, DEPTH_MAX);
@@ -1922,6 +2118,33 @@ var Server = (() => {
       ...settings,
       aars_scored_version: Number.isFinite(v) && v > 0 ? Math.round(v) : 0
     };
+  }
+  function getScanVars(settings) {
+    const raw = settings["scan_vars"];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+    const out = {};
+    for (const [stepId, value] of Object.entries(raw)) {
+      const clean2 = cleanStepVars(stepId, value);
+      if (clean2) out[stepId] = clean2;
+    }
+    return out;
+  }
+  function getSkippedSteps(settings) {
+    const raw = settings["last_skipped_steps"];
+    if (!Array.isArray(raw)) return [];
+    return raw.map((v) => String(v != null ? v : "")).filter(Boolean);
+  }
+  function withSkippedSteps(settings, steps) {
+    const list2 = Array.isArray(steps) ? steps.map((v) => String(v != null ? v : "")).filter(Boolean) : [];
+    return { ...settings, last_skipped_steps: list2 };
+  }
+  function withScanVars(settings, stepId, vars) {
+    const current = getScanVars(settings);
+    const clean2 = cleanStepVars(stepId, vars);
+    const next = { ...current };
+    if (clean2) next[stepId] = clean2;
+    else delete next[stepId];
+    return { ...settings, scan_vars: next };
   }
 
   // src/domain/graphTypes.ts
@@ -3136,7 +3359,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "7deda3dc6dd2" : "dev";
+  var BUILD_ID = true ? "26b7de64c11c" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -3345,6 +3568,19 @@ var Server = (() => {
     saveSettings(next);
     return stored;
   }
+  var getSkippedSteps2 = () => getSkippedSteps(loadSettings());
+  function setSkippedSteps(steps) {
+    const settings = loadSettings();
+    const next = withSkippedSteps(settings, steps);
+    const before = getSkippedSteps(settings).join(" ");
+    if (getSkippedSteps(next).join(" ") === before) return;
+    saveSettings(next);
+  }
+  var getScanVars2 = () => getScanVars(loadSettings());
+  function setScanVars(stepId, vars) {
+    saveSettings(withScanVars(loadSettings(), stepId, vars));
+    return getScanVars2();
+  }
   var getScoredRuleVersion2 = () => getScoredRuleVersion(loadSettings());
   function setScoredRuleVersion(version) {
     const settings = loadSettings();
@@ -3361,8 +3597,10 @@ var Server = (() => {
     clearCancelFlag: () => clearCancelFlag,
     continueJob: () => continueJob,
     dailySync: () => dailySync,
+    describeSyncSteps: () => describeSyncSteps,
     jobStatus: () => jobStatus,
-    startSync: () => startSync
+    startSync: () => startSync,
+    testStepVariables: () => testStepVariables
   });
 
   // src/domain/syncNormalize.ts
@@ -3455,6 +3693,15 @@ var Server = (() => {
   }
   function emptyPart() {
     return { nodes: [], edges: [], issues: [], findings: [] };
+  }
+  function appendPart(target, part) {
+    target.nodes.push(...part.nodes);
+    target.edges.push(...part.edges);
+    target.issues.push(...part.issues);
+    target.findings.push(...part.findings);
+  }
+  function partIsEmpty(part) {
+    return !part.nodes.length && !part.edges.length && !part.issues.length && !part.findings.length;
   }
   function normalizeInventoryPage(rows) {
     const part = emptyPart();
@@ -4862,19 +5109,26 @@ var Server = (() => {
   var CONTINUE_DELAY_MS = 3e4;
   var FIRST_STEP_BUDGET_MS = 45e3;
   var BUDGET_MS = 27e4;
-  function syncSteps() {
+  function syncSteps(aiTypes) {
+    const types = aiTypes != null ? aiTypes : resolveAiResourceTypes().types;
+    const overrides = getScanVars2();
+    const vars = (stepId, base) => effectiveStepVars(stepId, base, overrides[stepId]);
     return [
       {
         id: "INVENTORY_AI",
+        area: "aispm",
+        writes: ["ai_assets"],
         run: "cloudResources",
         query: Q_AI_INVENTORY,
-        extraVariables: aiInventoryVariables(resolveAiResourceTypes().types),
+        extraVariables: vars("INVENTORY_AI", aiInventoryVariables(types)),
         normalize: normalizeInventoryPage
       },
       // One cursor walk per toxic-combination source rule: the assets carrying an OPEN
       // issue for that rule (issue rows are reconstructed one-per-asset).
       ...COMBO_GROUPS.map((group) => ({
         id: `ISSUES_${group.ruleId}`,
+        area: "toxic",
+        writes: ["ai_assets", "ai_issues"],
         run: "cloudResources",
         query: Q_RULE_ASSETS,
         extraVariables: { ruleIds: [group.ruleId] },
@@ -4885,25 +5139,31 @@ var Server = (() => {
       // above; reconcileIssues drops the synthetic per-rule rows these supersede.
       {
         id: "ISSUES_TOXIC",
+        area: "toxic",
+        writes: ["ai_issues", "ai_assets"],
         run: "connection",
         connectionField: "issuesV2",
         query: Q_ISSUES,
-        extraVariables: aiIssuesVariables(projectScope()),
+        extraVariables: vars("ISSUES_TOXIC", aiIssuesVariables(projectScope())),
         normalize: normalizeIssuesPage,
         optional: true
       },
       // Real compliance findings (configurationFindings) — feeds AARS pillar B.
       {
         id: "CONFIG_FINDINGS",
+        area: "compliance",
+        writes: ["ai_findings"],
         run: "connection",
         connectionField: "configurationFindings",
         query: Q_CONFIG_FINDINGS,
-        extraVariables: aiConfigFindingsVariables(projectScope()),
+        extraVariables: vars("CONFIG_FINDINGS", aiConfigFindingsVariables(projectScope())),
         normalize: normalizeConfigFindingsPage,
         optional: true
       },
       {
         id: "GUARDRAIL_GAPS",
+        area: "guardrails",
+        writes: ["ai_assets.guardrail_missing"],
         run: "graphSearch",
         query: Q_AGENTS_NO_GUARDRAIL,
         normalize: normalizeNoGuardrailPage,
@@ -4911,6 +5171,8 @@ var Server = (() => {
       },
       {
         id: "RUNS_AS",
+        area: "ciem",
+        writes: ["ai_edges (RUNS_AS)", "ai_assets"],
         run: "graphSearch",
         query: Q_AGENT_RUNS_AS,
         normalize: normalizeRunsAsPage,
@@ -4918,6 +5180,8 @@ var Server = (() => {
       },
       {
         id: "SA_FINDINGS",
+        area: "ciem",
+        writes: ["ai_edges (HAS_FINDING)", "ai_assets"],
         run: "graphSearch",
         query: Q_SA_EXCESSIVE_ACCESS,
         normalize: normalizeRunsAsPage,
@@ -4925,6 +5189,8 @@ var Server = (() => {
       },
       {
         id: "IDENTITY_ACCESS",
+        area: "identity",
+        writes: ["ai_edges (ALLOWS_ACCESS_TO)", "ai_assets"],
         run: "graphSearch",
         query: Q_IDENTITY_ACCESS,
         normalize: normalizeIdentityAccessPage,
@@ -4933,13 +5199,112 @@ var Server = (() => {
       // Agentic execution identities (cloudResourcesV2 + identityPurpose:AGENTIC).
       {
         id: "AGENTIC_IDENTITIES",
+        area: "ciem",
+        writes: ["ai_assets.identity_purpose"],
         run: "cloudResources",
         query: Q_PRINCIPALS,
-        extraVariables: aiPrincipalsVariables(projectScope()),
+        extraVariables: vars("AGENTIC_IDENTITIES", aiPrincipalsVariables(projectScope())),
         normalize: normalizePrincipalsPage,
         optional: true
       }
     ];
+  }
+  function rootFieldOf(step) {
+    var _a4;
+    if (step.run === "cloudResources") return "cloudResourcesV2";
+    if (step.run === "graphSearch") return "graphSearch";
+    return (_a4 = step.connectionField) != null ? _a4 : "";
+  }
+  function describeSyncSteps() {
+    const overrides = getScanVars2();
+    const resolved = describeAiTypes();
+    return syncSteps(resolved.types).map((step) => {
+      var _a4, _b;
+      const base = defaultStepVariables(step.id, (_a4 = step.extraVariables) != null ? _a4 : {}, resolved.types);
+      return {
+        id: step.id,
+        area: step.area,
+        writes: step.writes,
+        rootField: rootFieldOf(step),
+        run: step.run,
+        optional: !!step.optional,
+        document: step.query,
+        // What this step will actually send, overrides included. `first`, `after` and (for
+        // graphSearch) `quick` are added by the transport on every request and are named in
+        // the panel rather than folded in here, so what is shown is what is configured.
+        variables: (_b = step.extraVariables) != null ? _b : {},
+        defaultVariables: base,
+        editable: isEditableStep(step.id),
+        overridden: changedPaths(step.id, base, overrides[step.id]),
+        // Only INVENTORY_AI's default depends on resolving types against the tenant, so it is
+        // the only step whose description can be provisional. Said out loud rather than shown
+        // as settled fact — this page's whole job is not doing that.
+        typesResolved: step.id === "INVENTORY_AI" ? resolved.resolved : true
+      };
+    });
+  }
+  function describeAiTypes() {
+    try {
+      return { types: resolveAiResourceTypes().types, resolved: true };
+    } catch (e) {
+      return { types: AI_RESOURCE_TYPE_CANDIDATES, resolved: false };
+    }
+  }
+  function defaultStepVariables(stepId, withOverride, aiTypes) {
+    switch (stepId) {
+      case "INVENTORY_AI":
+        return aiInventoryVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types);
+      case "ISSUES_TOXIC":
+        return aiIssuesVariables(projectScope());
+      case "CONFIG_FINDINGS":
+        return aiConfigFindingsVariables(projectScope());
+      case "AGENTIC_IDENTITIES":
+        return aiPrincipalsVariables(projectScope());
+      default:
+        return withOverride;
+    }
+  }
+  function testStepVariables(stepId, vars) {
+    var _a4, _b;
+    const step = syncSteps().filter((s) => s.id === stepId)[0];
+    if (!step) throw new Error(`No sync step called ${stepId}.`);
+    const proposed = effectiveStepVars(
+      stepId,
+      defaultStepVariables(stepId, (_a4 = step.extraVariables) != null ? _a4 : {}),
+      vars
+    );
+    const opts = { query: step.query, cursor: null, extraVariables: proposed };
+    let result;
+    try {
+      if (step.run === "cloudResources") result = fetchCloudResourcesPage(opts);
+      else if (step.run === "graphSearch") result = fetchGraphSearchPage(opts);
+      else result = fetchConnectionPage((_b = step.connectionField) != null ? _b : "", opts);
+    } catch (e) {
+      return {
+        ok: false,
+        stepId,
+        variables: proposed,
+        error: String(e instanceof Error ? e.message : e)
+      };
+    }
+    const part = step.normalize(result.rows);
+    return {
+      ok: true,
+      stepId,
+      variables: proposed,
+      rows: result.rows.length,
+      totalCount: result.totalCount,
+      hasNextPage: result.hasNextPage,
+      normalized: {
+        nodes: part.nodes.length,
+        edges: part.edges.length,
+        issues: part.issues.length,
+        findings: part.findings.length
+      },
+      // One row, so the operator can see the shape came back as expected. Stringified and
+      // capped: a raw Wiz row can be large, and this rides a google.script.run response.
+      sample: result.rows.length ? JSON.stringify(result.rows[0]).slice(0, 1200) : ""
+    };
   }
   function startSync() {
     const existing = activeJob();
@@ -4983,6 +5348,7 @@ var Server = (() => {
       void 0,
       SEED_FINDINGS
     );
+    setSkippedSteps([]);
     return {
       jobId: null,
       message: `Dry-run sync complete: ${doc.nodes.length} nodes, ${doc.edges.length} edges, ${SEED_ISSUES.length} issues (sample data).`
@@ -5051,7 +5417,7 @@ var Server = (() => {
     let nodesSoFar = job.nodes_so_far;
     let hopPart = emptyPart();
     const spillHopPart = () => {
-      if (!hopPart.nodes.length && !hopPart.edges.length && !hopPart.issues.length) return;
+      if (partIsEmpty(hopPart)) return;
       const name = `normalized-part-${String(refs.length + 1).padStart(3, "0")}.json.gz`;
       refs.push(writeGzJson(syncFolder(syncId), name, hopPart).getId());
       hopPart = emptyPart();
@@ -5101,10 +5467,7 @@ var Server = (() => {
           page += 1;
           nodesSoFar += result.rows.length;
           writeSyncPage(syncId, stepIndex, page, result.rows);
-          const normalized = step.normalize(result.rows);
-          hopPart.nodes.push(...normalized.nodes);
-          hopPart.edges.push(...normalized.edges);
-          hopPart.issues.push(...normalized.issues);
+          appendPart(hopPart, step.normalize(result.rows));
           updateJob(job.job_id, {
             step_index: stepIndex,
             cursor: result.endCursor,
@@ -5148,12 +5511,15 @@ var Server = (() => {
       }
       updateJob(job.job_id, { phase: "PERSISTING" });
       const hints = buildAarsHintsFromFindings(findings, doc, issues2, getAarsRule2().rule);
-      const persist = () => persistSync(doc, issues2, hints, {
-        syncId,
-        mode: "live",
-        startedAt,
-        apiCalls: params.apiCalls
-      }, void 0, findings);
+      const persist = () => {
+        persistSync(doc, issues2, hints, {
+          syncId,
+          mode: "live",
+          startedAt,
+          apiCalls: params.apiCalls
+        }, void 0, findings);
+        setSkippedSteps(params.skippedSteps);
+      };
       if (opts.lockHeld) persist();
       else withScriptLock(persist);
       updateJob(job.job_id, { phase: "DONE" });
@@ -5668,6 +6034,52 @@ var Server = (() => {
     return run(() => cached("getSyncHistory", null, () => ({
       rows: syncHistory().reverse()
     })));
+  }
+  function getScanQueries(_p) {
+    return run(() => ({
+      steps: describeSyncSteps(),
+      specs: STEP_VAR_SPECS,
+      skippedSteps: getSkippedSteps2(),
+      hasCredentials: hasWizCredentials(),
+      limits: { maxListValues: MAX_LIST_VALUES, maxValueLen: MAX_VALUE_LEN },
+      // Named rather than folded into `variables`: the transport adds these to every request,
+      // so showing them as if they were configuration would invite someone to edit them.
+      transportVariables: ["first", "after", "quick"]
+    }));
+  }
+  function setScanVars2(p) {
+    return mutate(() => {
+      var _a4;
+      const params = p != null ? p : {};
+      const stepId = String((_a4 = params["stepId"]) != null ? _a4 : "");
+      if (!isEditableStep(stepId)) {
+        throw new Error(`${stepId || "That step"} does not take editable variables.`);
+      }
+      const proposed = cleanStepVars(stepId, params["vars"]);
+      const errors = validateStepVars(stepId, proposed);
+      if (errors.length) throw new Error(errors.join(" "));
+      setScanVars(stepId, proposed);
+      return { steps: describeSyncSteps() };
+    });
+  }
+  function testScanVars(p) {
+    return run(() => {
+      var _a4;
+      const params = p != null ? p : {};
+      const stepId = String((_a4 = params["stepId"]) != null ? _a4 : "");
+      if (!isEditableStep(stepId)) {
+        throw new Error(`${stepId || "That step"} does not take editable variables.`);
+      }
+      const proposed = cleanStepVars(stepId, params["vars"]);
+      const errors = validateStepVars(stepId, proposed);
+      if (errors.length) throw new Error(errors.join(" "));
+      if (!hasWizCredentials()) {
+        throw new Error(
+          "A test run calls Wiz, and no credentials are configured \u2014 this deployment is in dry-run. Add credentials in Settings to test a filter against the tenant."
+        );
+      }
+      return testStepVariables(stepId, proposed);
+    });
   }
   function getSettings(_p) {
     return run(() => ({
