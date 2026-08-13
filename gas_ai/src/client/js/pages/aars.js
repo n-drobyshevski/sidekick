@@ -696,6 +696,29 @@ export async function renderAarsRules(main, _params, ctx) {
     v2Btn.focus();
   });
 
+  // v3 sits beside v2 rather than replacing it: a deployment that has already adopted and
+  // tuned v2 should not find its preset gone.
+  const v3Btn = el("button", {}, "Load AARS v3");
+  v3Btn.addEventListener("click", async () => {
+    const ok = await confirmDialog({
+      title: "Load the AARS v3 model?",
+      body:
+        "v3 stops ADDING likelihood to impact and multiplies them instead. Control gaps and " +
+        "reachability say how likely a compromise is; data, privilege, environment and what " +
+        "the asset can actually reach say how bad it would be — so an unreachable agent " +
+        "holding sensitive data and a reachable one holding nothing stop scoring alike. " +
+        "Likelihood is floored, because an unobserved asset is under-observed rather than " +
+        "safe. It WILL move scores — the impact panel shows exactly which. Nothing is saved " +
+        "until you press Save rule.",
+      confirmLabel: "Load v3",
+    });
+    if (!ok) return;
+    draft = cloneRule(state.presets && state.presets.v3 ? state.presets.v3 : draft);
+    renderCascade();
+    onEdit();
+    v3Btn.focus();
+  });
+
   const exportBtn = el("button", { class: "link" }, "Export JSON");
   exportBtn.addEventListener("click", () => {
     downloadText(
@@ -732,7 +755,7 @@ export async function renderAarsRules(main, _params, ctx) {
 
   editor.append(
     section("Manage", null, [
-      el("div", { class: "rule-row" }, resetBtn, v2Btn, exportBtn, importBtn, importInput),
+      el("div", { class: "rule-row" }, resetBtn, v2Btn, v3Btn, exportBtn, importBtn, importInput),
     ]),
   );
 
