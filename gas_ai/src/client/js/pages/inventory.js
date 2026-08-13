@@ -29,7 +29,8 @@ import {
   facetCounts, filterAssetRows, pageOf, resolveAssetQuery, sortAssetRows,
 } from "../assetQuery.js";
 import {
-  aarsChip, clear, closeActiveSheet, confirmDialog, dataTable, el, emptyState, errorState,
+  aarsChip, clear, closeActiveSheet, confirmDialog, dataTable, debounce, el, emptyState,
+  errorState,
   fmtDate, meter, pager, plural, sectionLabel, sevBadge, sevEntries, sevKeyRow,
   sevSegmentBar, sevSpoken, skeleton, skeletonStack, toast,
 } from "../ui.js";
@@ -497,15 +498,11 @@ export async function renderInventory(main, params) {
       placeholder: "Search name…",
       value: query.q,
     });
-    let searchTimer = null;
-    searchInput.addEventListener("input", () => {
-      clearTimeout(searchTimer);
-      // Local filtering can keep up with typing; a server round trip per keystroke can't.
-      searchTimer = setTimeout(() => {
-        query.q = searchInput.value.trim().toLowerCase();
-        onFilterChange();
-      }, allMode ? 150 : 400);
-    });
+    // Local filtering can keep up with typing; a server round trip per keystroke can't.
+    searchInput.addEventListener("input", debounce(() => {
+      query.q = searchInput.value.trim().toLowerCase();
+      onFilterChange();
+    }, allMode ? 150 : 400));
 
     const tableBtn = el("button", {
       "aria-pressed": view === "table" ? "true" : "false",

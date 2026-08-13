@@ -19,6 +19,7 @@ import {
   aarsChip,
   clear,
   confirmDialog,
+  debounce,
   downloadText,
   el,
   field,
@@ -198,9 +199,7 @@ export async function renderAarsRules(main, _params, ctx) {
   let preview = null;
   let previewError = "";
   let previewing = false;
-  let previewTimer = null;
   let previewSeq = 0;
-  let sampleTimer = null;
   let sampleSeq = 0;
   let sampleResult = null;
   let sandboxResultHost = null;
@@ -944,8 +943,9 @@ export async function renderAarsRules(main, _params, ctx) {
   }
 
   // ========================================================================= preview
+  const schedulePreviewRun = debounce(() => runPreview(), PREVIEW_DEBOUNCE_MS);
   function schedulePreview() {
-    if (previewTimer) clearTimeout(previewTimer);
+    schedulePreviewRun.cancel();
     if (draftErrors(draft).list.length) {
       preview = null;
       previewError = "";
@@ -956,7 +956,7 @@ export async function renderAarsRules(main, _params, ctx) {
     }
     previewing = true;
     impact.classList.add("updating");
-    previewTimer = setTimeout(runPreview, PREVIEW_DEBOUNCE_MS);
+    schedulePreviewRun();
   }
 
   async function runPreview() {
@@ -1109,10 +1109,10 @@ export async function renderAarsRules(main, _params, ctx) {
   }
 
   // ========================================================================== sandbox
+  const scheduleSampleRun = debounce(() => runSample(), SAMPLE_DEBOUNCE_MS);
   function scheduleSample() {
     if (!sandboxDetails.open) return; // closed: don't spend a round trip on it
-    if (sampleTimer) clearTimeout(sampleTimer);
-    sampleTimer = setTimeout(runSample, SAMPLE_DEBOUNCE_MS);
+    scheduleSampleRun();
   }
 
   async function runSample() {

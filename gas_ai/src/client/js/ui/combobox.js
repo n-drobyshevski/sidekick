@@ -2,6 +2,7 @@
 
 import { clear, el } from "./dom.js";
 import { portalClosed, portalOpened } from "./portals.js";
+import { debounce } from "./timing.js";
 
 
 let _comboboxSeq = 0;
@@ -85,7 +86,6 @@ export function filterCombobox({
   let searchEl = null;
   let listEl = null;
   let query = "";
-  let debounce = null;
   let rows = [];      // selectable rows only, in DOM order — the roving-index array
   let activeIndex = 0;
 
@@ -200,6 +200,11 @@ export function filterCombobox({
     }
   }
 
+  const onSearchInput = debounce(() => {
+    query = searchEl.value;
+    buildRows({ keepActive: null });
+  }, COMBOBOX_DEBOUNCE_MS, { pageScoped: false });
+
   function openPop() {
     open = true;
     query = "";
@@ -211,14 +216,9 @@ export function filterCombobox({
         role: "combobox", "aria-expanded": "true", "aria-controls": listboxId,
         "aria-autocomplete": "list", autocomplete: "off", spellcheck: "false",
         // Debounced: each rebuild is one <li> per match, synchronously, and this list can
-        // be the whole estate.
-        oninput: () => {
-          clearTimeout(debounce);
-          debounce = setTimeout(() => {
-            query = searchEl.value;
-            buildRows({ keepActive: null });
-          }, COMBOBOX_DEBOUNCE_MS);
-        },
+        // be the whole estate. Not page-scoped — close() below cancels it, and this
+        // control outlives no page.
+        oninput: onSearchInput,
         onkeydown: onListKey,
       });
       pop = el("div", { class: "combobox-pop" }, searchEl, listEl);
@@ -252,7 +252,7 @@ export function filterCombobox({
   function close() {
     if (!open) return;
     open = false;
-    clearTimeout(debounce);
+    onSearchInput.cancel();
     trigger.setAttribute("aria-expanded", "false");
     document.removeEventListener("pointerdown", onDocPointer, true);
     document.removeEventListener("click", onDocClick, true);

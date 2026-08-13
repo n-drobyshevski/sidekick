@@ -1,6 +1,7 @@
 // Quantity display: meters, the sortable data table, and the table pager.
 
 import { clear, el } from "./dom.js";
+import { pluralize } from "./format.js";
 
 /**
  * A proportional fill in a rounded track — the AARS score meter, the stat-list meters, the
@@ -163,7 +164,7 @@ export function dataTable(spec) {
 export function pager(page, pageCount, total, onPage) {
   if (pageCount <= 1) {
     return el("div", { class: "pager" },
-      `${total.toLocaleString()} row${total === 1 ? "" : "s"}`);
+      `${total.toLocaleString()} ${pluralize(total, "row")}`);
   }
   return el(
     "div",

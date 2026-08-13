@@ -6,23 +6,11 @@
 // aria-label suffix; missing guardrail = dashed amber stub + text label; severity =
 // dot + label chip. Kind = icon + text label.
 
-import { categoryOf, kindIcon, kindLabel } from "./icons.js";
+import { categoryOf, kindIcon, kindLabel, svgEl } from "./icons.js";
 import { dataTable, el, sevRank } from "./ui.js";
-
-// No literal `//` (middlebox guard) — see icons.js for the full note.
-const SVG_NS = ["http:", "", "www.w3.org", "2000", "svg"].join("/");
 
 const NODE_W = 196;
 const NODE_H = 56;
-
-function svgEl(tag, attrs) {
-  const node = document.createElementNS(SVG_NS, tag);
-  for (const [k, v] of Object.entries(attrs || {})) {
-    if (v === null || v === undefined || v === false) continue;
-    node.setAttribute(k, String(v));
-  }
-  return node;
-}
 
 function truncate(s, n) {
   const str = String(s || "");

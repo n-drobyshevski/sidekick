@@ -16,7 +16,7 @@ import { graphTable, renderGraph } from "../graphView.js";
 import { CATEGORY_LABELS, CATEGORY_ORDER, categoryOf, kindLabel } from "../icons.js";
 import { appliedCount, filterEntries, isNarrowingSet, sectionOf } from "./graphChips.js";
 import {
-  clear, el, emptyState, filterChipRow, filterCombobox, helpTip, openSheet, segmented,
+  clear, debounce, el, emptyState, filterChipRow, filterCombobox, helpTip, openSheet, segmented,
   selectField, sevBadge, skeleton, togglePills,
 } from "../ui.js";
 
@@ -238,11 +238,8 @@ export async function renderGraphPage(main, params, _ctx) {
     "aria-label": "Search nodes by name",
     value: state.q,
   });
-  let searchTimer = null;
-  searchInput.addEventListener("input", () => {
-    clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => update({ q: searchInput.value }), 150);
-  });
+  const onSearch = debounce(() => update({ q: searchInput.value }), 150);
+  searchInput.addEventListener("input", onSearch);
   searchInput.addEventListener("keydown", (e) => {
     if (e.key !== "Enter" || !graphApi || !matchIds || !matchIds.size || !lastData) return;
     e.preventDefault();

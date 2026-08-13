@@ -37,9 +37,14 @@ export function fmtDateTime(iso) {
   return `${_dateTimeFmt.format(d)} ${parisZone(d)}`;
 }
 
+/** The noun alone, for callers that format the count themselves (a localised figure). */
+export function pluralize(n, word) {
+  return n === 1 ? word : `${word}s`;
+}
+
 /** "1 asset" / "2 assets" — the -s rule, written once instead of at each call site. */
 export function plural(n, word) {
-  return `${n} ${word}${n === 1 ? "" : "s"}`;
+  return `${n} ${pluralize(n, word)}`;
 }
 
 /**

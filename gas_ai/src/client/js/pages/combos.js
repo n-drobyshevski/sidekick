@@ -21,7 +21,8 @@ import { bootstrap, navigate, setParams, swrCall } from "../store.js";
 import { dueChip, fwTags, openAssetSheet, openIssueSheet } from "../detailSheets.js";
 import { kindIconSvg, kindLabel, categoryOf } from "../icons.js";
 import {
-  clear, dataTable, el, emptyState, errorState, kpiCard, pager, sectionLabel, select,
+  clear, dataTable, debounce, el, emptyState, errorState, kpiCard, pager, sectionLabel,
+  select,
   selectField, sevBadge, sevKeyRow, sevSegmentBar, sevSpoken, skeleton, togglePills,
 } from "../ui.js";
 import {
@@ -599,20 +600,16 @@ export async function renderCombos(main, params) {
       placeholder: "Asset, region, account, project",
       "aria-label": "Search issues in this pattern",
     });
-    let timer = null;
-    search.addEventListener("input", () => {
-      // Debounced because every keystroke re-sorts and re-pages the whole group.
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        view.q = search.value;
-        rerender();
-        const refocus = mount.querySelector("input[type=search]");
-        if (refocus) {
-          refocus.focus();
-          refocus.setSelectionRange(refocus.value.length, refocus.value.length);
-        }
-      }, SEARCH_DEBOUNCE_MS);
-    });
+    // Debounced because every keystroke re-sorts and re-pages the whole group.
+    search.addEventListener("input", debounce(() => {
+      view.q = search.value;
+      rerender();
+      const refocus = mount.querySelector("input[type=search]");
+      if (refocus) {
+        refocus.focus();
+        refocus.setSelectionRange(refocus.value.length, refocus.value.length);
+      }
+    }, SEARCH_DEBOUNCE_MS));
 
     const bar = el("div", { class: "filter-bar" },
       el("div", { class: "field" }, search),

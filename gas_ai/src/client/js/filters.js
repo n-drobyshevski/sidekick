@@ -17,7 +17,7 @@
 // deliberately NOT closeOnRouteChange — it rewrites its own query params on every toggle
 // and would otherwise close itself (see the comment on the route hook in ui.js).
 
-import { clear, el, filterChipRow, meter, openSheet } from "./ui.js";
+import { clear, el, filterChipRow, meter, openSheet, plural } from "./ui.js";
 
 /**
  * @param opts.entries      () => [{key, label, sev?, patch}] — what is applied right now.
@@ -220,7 +220,7 @@ export function facetGroup(spec) {
       const dead = !on && !opt.count;
       row.btn.setAttribute("aria-disabled", dead ? "true" : "false");
       row.btn.setAttribute("aria-label",
-        `${opt.label}, ${opt.count} asset${opt.count === 1 ? "" : "s"}` +
+        `${opt.label}, ${plural(opt.count, "asset")}` +
         (dead ? ", no matches" : ""));
 
       if (opt.group && opt.group !== lastGroup) {

@@ -3,7 +3,7 @@
 import { call } from "./api.js";
 import { renderSyncCard, openSyncDetails } from "./syncProgress.js";
 import { bootstrap, invalidateBootstrap, invalidateRpcCache, parseHash } from "./store.js";
-import { clear, el, fmtDateTime, progressBar, statusPill } from "./ui.js";
+import { clear, el, fmtDateTime, progressBar, runPageTeardown, statusPill } from "./ui.js";
 import { toast } from "./ui.js";
 import { renderGraphPage } from "./pages/graph.js";
 import { renderInventory } from "./pages/inventory.js";
@@ -396,6 +396,9 @@ async function route() {
     if (isActive) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
   });
+  // Before the DOM goes: cancel the outgoing page's pending work, so a debounced
+  // callback cannot fire into a page that no longer exists.
+  runPageTeardown();
   clear(mainEl);
   mainEl.classList.toggle("full-bleed", !!page.fullBleed);
   // The first render after a boot is covered by the boot splash → page skeleton, so it skips
