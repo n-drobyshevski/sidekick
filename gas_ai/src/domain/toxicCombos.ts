@@ -4,8 +4,8 @@
 // "adjusted severity" carries that amplifier and the UI must always render the note
 // alongside it (severity never changes silently, and never by color alone).
 
-import type { Severity } from "./config";
-import type { IssueRow, NodeKind } from "./graphTypes";
+import { isUnresolvedIssue, type Severity } from "./config";
+import { severityRank, type IssueRow, type NodeKind } from "./graphTypes";
 
 /**
  * The risk conditions a combination is built out of, named as the graph's own risk-node
@@ -34,6 +34,14 @@ export interface ComboGroup {
    * deliberately in no rule's list: it is the amplifier that shows up on top.
    */
   conditions: ConditionKey[];
+  /**
+   * Whether this group re-rates its issues above their Wiz severity. True for every
+   * modelled pattern; false only for the Other bucket, which carries Wiz's severity
+   * through untouched. Declared rather than inferred from the id, so the UI branches on
+   * a property (and renders the amplifier note beside adjusted severity exactly when
+   * there is a claim to justify) instead of sniffing for a magic string.
+   */
+  amplified: boolean;
   frameworks: {
     owaspLlm: string[];
     owaspAgentic: string[];
@@ -57,6 +65,7 @@ export const COMBO_GROUPS: ComboGroup[] = [
       "calls, and the 5Rs data-security score (53%) confirms restriction controls are failing.",
     namePattern: /without\s+guardrail/i,
     conditions: ["MISSING_GUARDRAIL"],
+    amplified: true,
     frameworks: {
       owaspLlm: ["LLM06", "LLM02"],
       owaspAgentic: ["ASI02", "ASI03"],
@@ -76,6 +85,7 @@ export const COMBO_GROUPS: ComboGroup[] = [
       "reaches sensitive data, and the 5Rs score (53%) confirms that data is not restricted.",
     namePattern: /managed\s+ai\s+agent\s+with\s+high\s+privileges/i,
     conditions: ["EXCESSIVE_PRIVILEGE", "SENSITIVE_DATA"],
+    amplified: true,
     frameworks: {
       owaspLlm: ["LLM06", "LLM01"],
       owaspAgentic: ["ASI03", "ASI01"],
@@ -95,6 +105,7 @@ export const COMBO_GROUPS: ComboGroup[] = [
       "serverless), holds excessive IAM, and the 5Rs score (53%) confirms weak data restriction.",
     namePattern: /hosted\s+on\s+vm\/?serverless/i,
     conditions: ["EXCESSIVE_PRIVILEGE", "SENSITIVE_DATA"],
+    amplified: true,
     frameworks: {
       owaspLlm: ["LLM06", "LLM01", "LLM02", "LLM05"],
       owaspAgentic: ["ASI02", "ASI03", "ASI05"],
@@ -114,6 +125,7 @@ export const COMBO_GROUPS: ComboGroup[] = [
       "injection → RCE/SSRF) inherits every permission of its execution identity.",
     namePattern: /overly\s+permissive\s+execution\s+identity/i,
     conditions: ["EXCESSIVE_PRIVILEGE"],
+    amplified: true,
     frameworks: {
       owaspLlm: [],
       owaspAgentic: ["ASI03"],
@@ -123,8 +135,44 @@ export const COMBO_GROUPS: ComboGroup[] = [
   },
 ];
 
+export const OTHER_GROUP_ID = "other-ai-risk";
+
+/**
+ * The residue: an issue in the AI risk category whose source rule is none of the four
+ * modelled patterns. The register collects the whole category, so these are real rows —
+ * before this bucket existed comboSummary dropped them on the floor and the page total
+ * silently disagreed with the Wiz console.
+ *
+ * It lives OUTSIDE COMBO_GROUPS, and that is not tidiness. COMBO_GROUPS is what
+ * syncJobs.syncSteps() iterates to generate one per-rule `ISSUES_<ruleId>` fallback step
+ * via Q_RULE_ASSETS; a member here would generate a step querying `ruleIds: [""]`. It is
+ * also what the combo legend, the graph's grouping order and the "N patterns" tally are
+ * made of, and this is a bucket, not a pattern: it has no source rule to query and no
+ * amplifier to justify.
+ *
+ * Its declared severity is UNKNOWN because the bucket holds a mix; comboSummary replaces
+ * it with the worst severity actually present, so the card ranks on measured content
+ * rather than on a claim.
+ */
+export const OTHER_AI_RISK: ComboGroup = {
+  id: OTHER_GROUP_ID,
+  ruleId: "",
+  title: "Other AI risk",
+  shortLabel: "Other AI risk",
+  nativeSeverity: "UNKNOWN",
+  adjustedSeverity: "UNKNOWN",
+  amplifierNote: "",
+  namePattern: /(?!)/, // matches nothing: classifyIssue must never return this
+  conditions: [],
+  amplified: false,
+  frameworks: { owaspLlm: [], owaspAgentic: [], owaspMl: [], fiveRs: [] },
+};
+
+/** Every bucket the register counts into, in display order. */
+export const REGISTER_GROUPS: ComboGroup[] = [...COMBO_GROUPS, OTHER_AI_RISK];
+
 const BY_RULE_ID = new Map(COMBO_GROUPS.map((g) => [g.ruleId, g]));
-const BY_GROUP_ID = new Map(COMBO_GROUPS.map((g) => [g.id, g]));
+const BY_GROUP_ID = new Map(REGISTER_GROUPS.map((g) => [g.id, g]));
 
 export function comboGroupById(id: string): ComboGroup | null {
   return BY_GROUP_ID.get(id) ?? null;
@@ -149,29 +197,71 @@ export function classifyIssue(issue: { sourceRuleId?: string | null; ruleName?: 
   return null;
 }
 
+/**
+ * Which register bucket an issue counts into: its own group when that group is one the
+ * register knows, Other otherwise. The fallback is what makes "nothing vanishes" true —
+ * an unrecognised id (a rule outside the four patterns, or a group renamed in a later
+ * release) lands in Other instead of being skipped.
+ *
+ * Exported because comboSummary and comboDigest must bucket identically; they used to
+ * disagree, one counting by lookup and the other by strict id equality.
+ */
+export function registerBucketId(issue: { comboGroup?: string }): string {
+  const id = issue.comboGroup ?? "";
+  return BY_GROUP_ID.has(id) ? id : OTHER_GROUP_ID;
+}
+
 export interface ComboSummary {
   group: ComboGroup;
   count: number;
   assetIds: string[]; // distinct, insertion order
 }
 
-/** Per-group rollup over OPEN issues (the Toxic Combinations page payload). */
+/**
+ * Per-group rollup over UNRESOLVED issues (the Toxic Combinations page payload).
+ *
+ * Two properties this function now guarantees, both of which it used to break:
+ *
+ * Nothing vanishes. An issue whose comboGroup names no known bucket falls into Other
+ * rather than being skipped, so `sum(counts) === issues.filter(isUnresolvedIssue).length`
+ * is an invariant. The old `if (!bucket) continue` is exactly how a renamed group id
+ * would silently empty the register.
+ *
+ * IN_PROGRESS counts. The Wiz filter asks for it, so the rollup counts it; otherwise
+ * remediation in flight disappears from the page that exists to track remediation.
+ */
 export function comboSummary(issues: IssueRow[]): ComboSummary[] {
-  const acc = new Map<string, { count: number; assetIds: string[]; seen: Set<string> }>();
-  for (const g of COMBO_GROUPS) acc.set(g.id, { count: 0, assetIds: [], seen: new Set() });
+  const acc = new Map<
+    string,
+    { count: number; assetIds: string[]; seen: Set<string>; worst: Severity }
+  >();
+  for (const g of REGISTER_GROUPS) {
+    acc.set(g.id, { count: 0, assetIds: [], seen: new Set(), worst: "UNKNOWN" });
+  }
   for (const issue of issues) {
-    if (issue.status !== "OPEN") continue;
-    const bucket = acc.get(issue.comboGroup);
-    if (!bucket) continue;
+    if (!isUnresolvedIssue(issue)) continue;
+    const bucket = acc.get(registerBucketId(issue))!;
     bucket.count += 1;
+    if (severityRank(issue.adjustedSeverity) < severityRank(bucket.worst)) {
+      bucket.worst = issue.adjustedSeverity;
+    }
     if (issue.assetId && !bucket.seen.has(issue.assetId)) {
       bucket.seen.add(issue.assetId);
       bucket.assetIds.push(issue.assetId);
     }
   }
-  return COMBO_GROUPS.map((group) => ({
-    group,
-    count: acc.get(group.id)!.count,
-    assetIds: acc.get(group.id)!.assetIds,
-  }));
+  return REGISTER_GROUPS.map((group) => {
+    const bucket = acc.get(group.id)!;
+    return {
+      // A modelled pattern declares its severities and stands by them. The Other bucket
+      // has no claim to make, so it reports the worst severity it actually holds —
+      // otherwise a genuinely CRITICAL unclassified issue would sort to the bottom of a
+      // triage page behind four MEDIUMs.
+      group: group.amplified
+        ? group
+        : { ...group, nativeSeverity: bucket.worst, adjustedSeverity: bucket.worst },
+      count: bucket.count,
+      assetIds: bucket.assetIds,
+    };
+  });
 }

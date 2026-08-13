@@ -38,6 +38,14 @@ export const TAB_HEADERS: Record<string, string[]> = {
     "status", "asset_id", "asset_name", "region", "account", "projects_json",
     "frameworks_json", "justification", "created_at",
     "due_at", "resolution_recommendation", "remediation",
+    // issuesV2 lifecycle and context. Appended, never inserted: ensureHeaders adds
+    // declared-but-missing headers to the right of whatever a tab already has and every
+    // read maps by header NAME, so a ledger written before this change picks these up on
+    // the next sync with no migration and no re-run of setup().
+    "issue_type", "updated_at", "resolved_at", "resolution_reason", "resolved_by",
+    "assignee", "environments", "validated_exploitable", "business_impact",
+    "entity_status", "subscription_id", "ignore_note", "ignore_expired_at",
+    "ticket_urls", "ai_verdict", "ai_recommended_severity",
   ],
   [TABS.findings]: [
     "id", "resource_id", "rule_short_id", "severity", "remediation", "framework_codes",

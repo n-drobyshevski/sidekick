@@ -21,6 +21,7 @@ import {
   isInvalidEnumValueError,
 } from "../src/server/wizQueriesAi";
 import { RISK_CATEGORY_ID } from "../src/domain/toxicCombos";
+import { isUnresolvedIssue, UNRESOLVED_ISSUE_STATUSES } from "../src/domain/config";
 
 describe("chooseAiResourceTypes", () => {
   it("an explicit override always wins", () => {
@@ -156,13 +157,46 @@ describe("Q_ISSUES + aiIssuesVariables", () => {
     expect(Q_ISSUES).toContain("sourceRules");
   });
 
-  it("filters toxic combinations under the AI risk category, no project scope by default", () => {
+  it("filters the whole AI risk category, no project scope by default", () => {
     const v = aiIssuesVariables(null) as { filterBy: Record<string, unknown>; orderBy: unknown };
-    expect(v.filterBy["status"]).toEqual(["OPEN", "IN_PROGRESS"]);
-    expect(v.filterBy["riskEqualsAny"]).toEqual([RISK_CATEGORY_ID]);
-    expect(v.filterBy["type"]).toEqual(["TOXIC_COMBINATION"]);
+    expect(v.filterBy["status"]).toEqual([...UNRESOLVED_ISSUE_STATUSES]);
+    expect(v.filterBy["frameworkCategory"]).toEqual([RISK_CATEGORY_ID]);
+    // Both types. Narrowing to TOXIC_COMBINATION dropped every CLOUD_CONFIGURATION issue
+    // in the category — the same register, silently under-counted.
+    expect(v.filterBy["type"]).toEqual(["CLOUD_CONFIGURATION", "TOXIC_COMBINATION"]);
+    expect(v.filterBy["riskEqualsAny"]).toBeUndefined();
     expect(v.filterBy["project"]).toBeUndefined();
     expect(v.orderBy).toEqual({ field: "SEVERITY_EXPLOITABLE", direction: "DESC" });
+  });
+
+  it("names the AI category the same way the config-findings filter does", () => {
+    // wct-id-1998 is a framework-category id. The issues filter used to pass it to
+    // riskEqualsAny while its sibling passed it to frameworkCategory; both work against
+    // this tenant, but only one of them matches the console's own Risk Issues view.
+    const issues = aiIssuesVariables(null) as { filterBy: Record<string, unknown> };
+    const findings = aiConfigFindingsVariables(null) as { filterBy: Record<string, unknown> };
+    expect(issues.filterBy["frameworkCategory"]).toEqual(findings.filterBy["frameworkCategory"]);
+  });
+
+  it("asks for exactly the statuses the register counts", () => {
+    // The query and every rollup read one list, so they cannot drift apart again: the
+    // filter used to request IN_PROGRESS and seven readers then discarded it.
+    const v = aiIssuesVariables(null) as { filterBy: Record<string, unknown> };
+    expect(v.filterBy["status"]).toEqual([...UNRESOLVED_ISSUE_STATUSES]);
+    expect(isUnresolvedIssue({ status: "IN_PROGRESS" })).toBe(true);
+    expect(isUnresolvedIssue({ status: "RESOLVED" })).toBe(false);
+  });
+
+  it("selects the lifecycle fields the register needs to talk about remediation", () => {
+    for (const field of [
+      "resolvedAt", "resolutionReason", "resolvedBy", "notes", "serviceTickets",
+      "assignee", "environments", "rejectionExpiredAt", "validatedAsExploitable",
+      "aiRemediationAnalysis",
+    ]) {
+      expect(Q_ISSUES).toContain(field);
+    }
+    // entitySnapshot.status is what tells the sheet an issue names an Inactive asset.
+    expect(Q_ISSUES).toContain("subscriptionId");
   });
 
   it("adds a project filter only when scope is set", () => {

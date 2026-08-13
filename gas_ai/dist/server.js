@@ -296,7 +296,27 @@ var Server = (() => {
       "created_at",
       "due_at",
       "resolution_recommendation",
-      "remediation"
+      "remediation",
+      // issuesV2 lifecycle and context. Appended, never inserted: ensureHeaders adds
+      // declared-but-missing headers to the right of whatever a tab already has and every
+      // read maps by header NAME, so a ledger written before this change picks these up on
+      // the next sync with no migration and no re-run of setup().
+      "issue_type",
+      "updated_at",
+      "resolved_at",
+      "resolution_reason",
+      "resolved_by",
+      "assignee",
+      "environments",
+      "validated_exploitable",
+      "business_impact",
+      "entity_status",
+      "subscription_id",
+      "ignore_note",
+      "ignore_expired_at",
+      "ticket_urls",
+      "ai_verdict",
+      "ai_recommended_severity"
     ],
     [TABS.findings]: [
       "id",
@@ -399,10 +419,10 @@ var Server = (() => {
     return out;
   }
   function ensureHeaders(sh, tab) {
-    var _a4;
+    var _a5;
     const width = Math.max(sh.getLastColumn(), 1);
     const existing = sh.getRange(1, 1, 1, width).getValues()[0].map(String).filter(Boolean);
-    const missing = ((_a4 = TAB_HEADERS[tab]) != null ? _a4 : []).filter((h) => !existing.includes(h));
+    const missing = ((_a5 = TAB_HEADERS[tab]) != null ? _a5 : []).filter((h) => !existing.includes(h));
     if (missing.length) {
       sh.getRange(1, existing.length + 1, 1, missing.length).setValues([missing]);
     }
@@ -505,6 +525,136 @@ var Server = (() => {
     return notes.join("\n");
   }
 
+  // src/domain/config.ts
+  var SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
+  var UNRESOLVED_ISSUE_STATUSES = ["OPEN", "IN_PROGRESS"];
+  function isUnresolvedIssue(issue2) {
+    var _a5;
+    return UNRESOLVED_ISSUE_STATUSES.includes(String((_a5 = issue2.status) != null ? _a5 : ""));
+  }
+  var SEVERITY_COLORS = {
+    CRITICAL: "#dc2626",
+    HIGH: "#ea580c",
+    MEDIUM: "#d97706",
+    LOW: "#2563eb",
+    INFO: "#64748b",
+    UNKNOWN: "#475569"
+  };
+  var SEVERITY_GLYPHS = {
+    CRITICAL: "\u{1F534}",
+    HIGH: "\u{1F7E0}",
+    MEDIUM: "\u{1F7E1}",
+    LOW: "\u{1F535}",
+    INFO: "\u26AA",
+    UNKNOWN: "\u26AB"
+  };
+  var AARS_SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"];
+  function normalizeAarsSeverity(v) {
+    const s = typeof v === "string" ? v.trim().toUpperCase() : "";
+    if (s === "MINIMAL") return "INFO";
+    return AARS_SEVERITY_ORDER.includes(s) ? s : void 0;
+  }
+  var DEPTH_MIN = 1;
+  var DEPTH_MAX = 3;
+  var DEPTH_DEFAULT = 2;
+  var MAX_NODES_DEFAULT = 100;
+  var MAX_NODES_FLOOR = 30;
+  var MAX_NODES_CEILING = 400;
+  var MAX_EDGES_DEFAULT = 250;
+  var EDGE_BUDGET_RATIO = 2.5;
+  var SEED_WAVE_RATIO = 0.4;
+
+  // src/domain/graphTypes.ts
+  function severityRank(s) {
+    const i = SEVERITY_ORDER.indexOf(s != null ? s : "");
+    return i === -1 ? SEVERITY_ORDER.length : i;
+  }
+  var NODE_KINDS = [
+    // AI assets (Wiz AI-SPM resource types)
+    "AI_AGENT",
+    "AI_MODEL",
+    "AI_GUARDRAIL",
+    "AI_PIPELINE",
+    "AI_DATASET",
+    "MCP_SERVER",
+    // AI assets seen in real tenants (Wiz inventory display names, normalized) —
+    // appended so the original kinds keep their declaration order.
+    "AI_AGENT_REGISTRY",
+    "AI_DEPLOYMENT",
+    "AI_EXTENSION",
+    "AI_GATEWAY",
+    "AI_SERVICE",
+    "AI_SKILL",
+    "AI_SKILL_TEMPLATE",
+    "AI_TOOL",
+    // identities
+    "SERVICE_ACCOUNT",
+    "USER_ACCOUNT",
+    "ACCESS_ROLE",
+    "ACCESS_ROLE_BINDING",
+    "ACCESS_KEY",
+    // data
+    "BUCKET",
+    "DATABASE",
+    // compute / supply chain
+    "VIRTUAL_MACHINE",
+    "SERVERLESS",
+    "CONTAINER_IMAGE",
+    "REPOSITORY",
+    // CIEM finding entities
+    "EXCESSIVE_ACCESS_FINDING",
+    "LATERAL_MOVEMENT_FINDING",
+    // synthetic
+    "ISSUE",
+    // one node per open risk issue (toxic-combination instance)
+    "SUMMARY",
+    // collapse node: "+N more <kind>" emitted by the projection
+    "SENSITIVE_DATA",
+    // one node per data-exposed asset (AARS pillar C topology)
+    "INTERNET_EXPOSURE",
+    // one node per internet-exposed asset (exposure topology)
+    "EXCESSIVE_PRIVILEGE",
+    // one node per over-privileged asset (CIEM rights topology)
+    "MISSING_GUARDRAIL"
+    // one node per unguarded AI asset (guardrail-coverage topology)
+  ];
+  var RISK_NODE_KINDS = [
+    "ISSUE",
+    "SENSITIVE_DATA",
+    "INTERNET_EXPOSURE",
+    "EXCESSIVE_PRIVILEGE",
+    "MISSING_GUARDRAIL",
+    "EXCESSIVE_ACCESS_FINDING",
+    "LATERAL_MOVEMENT_FINDING"
+  ];
+  function isRiskKind(kind) {
+    return RISK_NODE_KINDS.includes(kind);
+  }
+  var AI_ASSET_KINDS = [
+    "AI_AGENT",
+    "AI_MODEL",
+    "AI_GUARDRAIL",
+    "AI_PIPELINE",
+    "AI_DATASET",
+    "MCP_SERVER",
+    "AI_AGENT_REGISTRY",
+    "AI_DEPLOYMENT",
+    "AI_EXTENSION",
+    "AI_GATEWAY",
+    "AI_SERVICE",
+    "AI_SKILL",
+    "AI_SKILL_TEMPLATE",
+    "AI_TOOL"
+  ];
+  function kindFromWizType(t) {
+    if (typeof t !== "string" || !t.trim()) return null;
+    const norm = t.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_");
+    return NODE_KINDS.includes(norm) ? norm : null;
+  }
+  function edgeId(src, type, dst, negated) {
+    return `${src}|${type}|${dst}${negated ? "|neg" : ""}`;
+  }
+
   // src/domain/toxicCombos.ts
   var CONDITION_KEYS = [
     "MISSING_GUARDRAIL",
@@ -524,6 +674,7 @@ var Server = (() => {
       amplifierNote: "Wiz MEDIUM, treated as HIGH: no content filtering or data protection on model calls, and the 5Rs data-security score (53%) confirms restriction controls are failing.",
       namePattern: /without\s+guardrail/i,
       conditions: ["MISSING_GUARDRAIL"],
+      amplified: true,
       frameworks: {
         owaspLlm: ["LLM06", "LLM02"],
         owaspAgentic: ["ASI02", "ASI03"],
@@ -541,6 +692,7 @@ var Server = (() => {
       amplifierNote: "Wiz MEDIUM, treated as HIGH: prompt injection on an over-privileged managed agent reaches sensitive data, and the 5Rs score (53%) confirms that data is not restricted.",
       namePattern: /managed\s+ai\s+agent\s+with\s+high\s+privileges/i,
       conditions: ["EXCESSIVE_PRIVILEGE", "SENSITIVE_DATA"],
+      amplified: true,
       frameworks: {
         owaspLlm: ["LLM06", "LLM01"],
         owaspAgentic: ["ASI03", "ASI01"],
@@ -558,6 +710,7 @@ var Server = (() => {
       amplifierNote: "Wiz MEDIUM, treated as HIGH: the agent inherits its host's attack surface (VM / serverless), holds excessive IAM, and the 5Rs score (53%) confirms weak data restriction.",
       namePattern: /hosted\s+on\s+vm\/?serverless/i,
       conditions: ["EXCESSIVE_PRIVILEGE", "SENSITIVE_DATA"],
+      amplified: true,
       frameworks: {
         owaspLlm: ["LLM06", "LLM01", "LLM02", "LLM05"],
         owaspAgentic: ["ASI02", "ASI03", "ASI05"],
@@ -575,6 +728,7 @@ var Server = (() => {
       amplifierNote: "Wiz LOW, treated as MEDIUM: latent privileges \u2014 a compromised agent (prompt injection \u2192 RCE/SSRF) inherits every permission of its execution identity.",
       namePattern: /overly\s+permissive\s+execution\s+identity/i,
       conditions: ["EXCESSIVE_PRIVILEGE"],
+      amplified: true,
       frameworks: {
         owaspLlm: [],
         owaspAgentic: ["ASI03"],
@@ -583,19 +737,35 @@ var Server = (() => {
       }
     }
   ];
+  var OTHER_GROUP_ID = "other-ai-risk";
+  var OTHER_AI_RISK = {
+    id: OTHER_GROUP_ID,
+    ruleId: "",
+    title: "Other AI risk",
+    shortLabel: "Other AI risk",
+    nativeSeverity: "UNKNOWN",
+    adjustedSeverity: "UNKNOWN",
+    amplifierNote: "",
+    namePattern: /(?!)/,
+    // matches nothing: classifyIssue must never return this
+    conditions: [],
+    amplified: false,
+    frameworks: { owaspLlm: [], owaspAgentic: [], owaspMl: [], fiveRs: [] }
+  };
+  var REGISTER_GROUPS = [...COMBO_GROUPS, OTHER_AI_RISK];
   var BY_RULE_ID = new Map(COMBO_GROUPS.map((g) => [g.ruleId, g]));
-  var BY_GROUP_ID = new Map(COMBO_GROUPS.map((g) => [g.id, g]));
+  var BY_GROUP_ID = new Map(REGISTER_GROUPS.map((g) => [g.id, g]));
   function comboGroupById(id) {
-    var _a4;
-    return (_a4 = BY_GROUP_ID.get(id)) != null ? _a4 : null;
+    var _a5;
+    return (_a5 = BY_GROUP_ID.get(id)) != null ? _a5 : null;
   }
   function classifyIssue(issue2) {
-    var _a4;
+    var _a5;
     if (issue2.sourceRuleId) {
       const byId = BY_RULE_ID.get(issue2.sourceRuleId);
       if (byId) return byId;
     }
-    const name = (_a4 = issue2.ruleName) != null ? _a4 : "";
+    const name = (_a5 = issue2.ruleName) != null ? _a5 : "";
     if (name) {
       for (const g of COMBO_GROUPS) {
         if (g.namePattern.test(name)) return g;
@@ -603,24 +773,40 @@ var Server = (() => {
     }
     return null;
   }
+  function registerBucketId(issue2) {
+    var _a5;
+    const id = (_a5 = issue2.comboGroup) != null ? _a5 : "";
+    return BY_GROUP_ID.has(id) ? id : OTHER_GROUP_ID;
+  }
   function comboSummary(issues2) {
     const acc = /* @__PURE__ */ new Map();
-    for (const g of COMBO_GROUPS) acc.set(g.id, { count: 0, assetIds: [], seen: /* @__PURE__ */ new Set() });
+    for (const g of REGISTER_GROUPS) {
+      acc.set(g.id, { count: 0, assetIds: [], seen: /* @__PURE__ */ new Set(), worst: "UNKNOWN" });
+    }
     for (const issue2 of issues2) {
-      if (issue2.status !== "OPEN") continue;
-      const bucket = acc.get(issue2.comboGroup);
-      if (!bucket) continue;
+      if (!isUnresolvedIssue(issue2)) continue;
+      const bucket = acc.get(registerBucketId(issue2));
       bucket.count += 1;
+      if (severityRank(issue2.adjustedSeverity) < severityRank(bucket.worst)) {
+        bucket.worst = issue2.adjustedSeverity;
+      }
       if (issue2.assetId && !bucket.seen.has(issue2.assetId)) {
         bucket.seen.add(issue2.assetId);
         bucket.assetIds.push(issue2.assetId);
       }
     }
-    return COMBO_GROUPS.map((group) => ({
-      group,
-      count: acc.get(group.id).count,
-      assetIds: acc.get(group.id).assetIds
-    }));
+    return REGISTER_GROUPS.map((group) => {
+      const bucket = acc.get(group.id);
+      return {
+        // A modelled pattern declares its severities and stands by them. The Other bucket
+        // has no claim to make, so it reports the worst severity it actually holds —
+        // otherwise a genuinely CRITICAL unclassified issue would sort to the bottom of a
+        // triage page behind four MEDIUMs.
+        group: group.amplified ? group : { ...group, nativeSeverity: bucket.worst, adjustedSeverity: bucket.worst },
+        count: bucket.count,
+        assetIds: bucket.assetIds
+      };
+    });
   }
 
   // src/server/wizQueriesAi.ts
@@ -719,12 +905,12 @@ var Server = (() => {
     "SidekickAiIdentitiesWithAgentAccess",
     '    type: "AI_AGENT"\n    select: true\n    relationships: [{\n      type: "ALLOWS_ACCESS_TO"\n      direction: INBOUND\n      with: {\n        type: "ACCESS_ROLE_BINDING"\n        select: false\n        relationships: [\n          {\n            type: "BOUND_TO"\n            with: { type: ["USER_ACCOUNT", "SERVICE_ACCOUNT"], select: true }\n          }\n          {\n            type: "PERMITS_ACCESS_ROLE"\n            with: {\n              type: "ACCESS_ROLE"\n              select: true\n              where: { accessType: { EQUALS: ["HIGH_PRIVILEGE", "ADMIN"] } }\n            }\n          }\n        ]\n      }\n    }]\n'
   );
-  var Q_ISSUES = "query SidekickAiIssues($first: Int, $after: String, $filterBy: IssueFilters, $orderBy: IssueOrder) {\n  issuesV2(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      type\n      severity\n      status\n      createdAt\n      updatedAt\n      dueAt\n      projects { id name riskProfile { businessImpact } }\n      entitySnapshot {\n        id\n        type\n        name\n        cloudPlatform\n        region\n        subscriptionName\n        nativeType\n        externalId\n      }\n      sourceRules {\n        ... on Control {\n          id\n          name\n          description\n          severity\n          risks\n          threats\n          resolutionRecommendation\n        }\n        ... on CloudConfigurationRule {\n          id\n          name\n          description\n          risks\n          threats\n          control { resolutionRecommendation severity }\n        }\n      }\n    }\n  }\n}\n";
+  var Q_ISSUES = "query SidekickAiIssues($first: Int, $after: String, $filterBy: IssueFilters, $orderBy: IssueOrder) {\n  issuesV2(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      type\n      severity\n      status\n      createdAt\n      updatedAt\n      dueAt\n      resolvedAt\n      resolutionReason\n      resolutionNote\n      rejectionExpiredAt\n      validatedAsExploitable\n      environments\n      assignee { id name primaryEmail }\n      resolvedBy { user { id name email } serviceAccount { id name type } }\n      notes { id text }\n      serviceTickets { id externalId name url }\n      applicationServices { id displayName }\n      aiRemediationAnalysis { verdict recommendedSeverity }\n      projects { id name slug riskProfile { businessImpact } }\n      entitySnapshot {\n        id\n        type\n        status\n        name\n        cloudPlatform\n        region\n        subscriptionName\n        subscriptionId\n        subscriptionExternalId\n        nativeType\n        externalId\n        tags\n        kubernetesClusterName\n        kubernetesNamespaceName\n        resourceGroupId\n      }\n      sourceRules {\n        ... on Control {\n          id\n          name\n          description\n          severity\n          risks\n          threats\n          resolutionRecommendation\n        }\n        ... on CloudConfigurationRule {\n          id\n          name\n          description\n          risks\n          threats\n          control { resolutionRecommendation severity }\n        }\n      }\n    }\n  }\n}\n";
   function aiIssuesVariables(scope) {
     const filterBy = {
       status: ["OPEN", "IN_PROGRESS"],
-      riskEqualsAny: [RISK_CATEGORY_ID],
-      type: ["TOXIC_COMBINATION"]
+      frameworkCategory: [RISK_CATEGORY_ID],
+      type: ["CLOUD_CONFIGURATION", "TOXIC_COMBINATION"]
     };
     if (scope && scope.length) filterBy["project"] = scope;
     return { filterBy, orderBy: { field: "SEVERITY_EXPLOITABLE", direction: "DESC" } };
@@ -753,7 +939,7 @@ var Server = (() => {
   };
   var TOKEN_CACHE_KEY = "wiz_ai_token";
   function getToken(forceRefresh = false) {
-    var _a4, _b;
+    var _a5, _b;
     const staticToken = getProp(PROP_KEYS.wizApiToken);
     if (staticToken && staticToken.trim()) return staticToken.trim();
     const cache = CacheService.getScriptCache();
@@ -761,7 +947,7 @@ var Server = (() => {
       const cached2 = cache.get(TOKEN_CACHE_KEY);
       if (cached2) return cached2;
     }
-    const authUrl = (_a4 = getProp(PROP_KEYS.wizAuthUrl)) != null ? _a4 : DEFAULT_WIZ_AUTH_URL;
+    const authUrl = (_a5 = getProp(PROP_KEYS.wizAuthUrl)) != null ? _a5 : DEFAULT_WIZ_AUTH_URL;
     const response = UrlFetchApp.fetch(authUrl, {
       method: "post",
       contentType: "application/x-www-form-urlencoded",
@@ -789,7 +975,7 @@ var Server = (() => {
     return token;
   }
   function gqlPost(query, variables) {
-    var _a4;
+    var _a5;
     const apiUrl = requireProp(PROP_KEYS.wizApiUrl);
     let token = getToken();
     let lastError = "";
@@ -821,7 +1007,7 @@ var Server = (() => {
       const body = JSON.parse(response.getContentText());
       const data = body["data"];
       if (!data) {
-        const errors = JSON.stringify((_a4 = body["errors"]) != null ? _a4 : body).slice(0, 500);
+        const errors = JSON.stringify((_a5 = body["errors"]) != null ? _a5 : body).slice(0, 500);
         throw new WizQueryError(`Wiz response carried no data: ${errors}`);
       }
       return data;
@@ -914,11 +1100,11 @@ var Server = (() => {
     return chosen;
   }
   function readConnection(connection, field) {
-    var _a4, _b, _c;
+    var _a5, _b, _c;
     if (!connection || typeof connection !== "object") {
       throw new WizQueryError(`Wiz response carried no ${field} connection.`);
     }
-    const pageInfo = (_a4 = connection["pageInfo"]) != null ? _a4 : {};
+    const pageInfo = (_a5 = connection["pageInfo"]) != null ? _a5 : {};
     const rawTotal = connection["totalCount"];
     return {
       rows: (_b = connection["nodes"]) != null ? _b : [],
@@ -928,21 +1114,21 @@ var Server = (() => {
     };
   }
   function fetchPage(field, o, extra) {
-    var _a4;
+    var _a5;
     const run2 = (first) => {
-      var _a5, _b;
+      var _a6, _b;
       return readConnection(
         gqlPost(o.query, {
           ...extra != null ? extra : {},
           first,
-          after: (_a5 = o.cursor) != null ? _a5 : null,
+          after: (_a6 = o.cursor) != null ? _a6 : null,
           ...(_b = o.extraVariables) != null ? _b : {}
         })[field],
         field
       );
     };
     try {
-      return run2((_a4 = o.first) != null ? _a4 : PAGE_SIZE);
+      return run2((_a5 = o.first) != null ? _a5 : PAGE_SIZE);
     } catch (e) {
       if (e instanceof WizQueryError && /HTTP 4\d\d/.test(e.message)) throw e;
       return run2(PAGE_SIZE_FALLBACK);
@@ -969,14 +1155,14 @@ var Server = (() => {
     return value && value.trim() ? `(set, ${value.trim().length} chars)` : "(unset)";
   }
   function wizDiagnostic() {
-    var _a4;
+    var _a5;
     const lines = [];
     const log = (m) => {
       lines.push(m);
       console.log(m);
     };
     const apiUrl = getProp(PROP_KEYS.wizApiUrl);
-    const authUrl = (_a4 = getProp(PROP_KEYS.wizAuthUrl)) != null ? _a4 : DEFAULT_WIZ_AUTH_URL;
+    const authUrl = (_a5 = getProp(PROP_KEYS.wizAuthUrl)) != null ? _a5 : DEFAULT_WIZ_AUTH_URL;
     const token = getProp(PROP_KEYS.wizApiToken);
     const clientId = getProp(PROP_KEYS.wizClientId);
     const clientSecret = getProp(PROP_KEYS.wizClientSecret);
@@ -1098,8 +1284,8 @@ var Server = (() => {
       if (!snap) log("Drive snapshot: none (the graph falls back to the tabs)");
       else {
         const scored = snap.nodes.filter((n) => {
-          var _a4;
-          return ((_a4 = n.aars) != null ? _a4 : null) !== null;
+          var _a5;
+          return ((_a5 = n.aars) != null ? _a5 : null) !== null;
         }).length;
         const sev = snap.nodes.filter(
           (n) => n.aarsSeverity || n.aarsBand
@@ -1142,40 +1328,6 @@ var Server = (() => {
     testScanVars: () => testScanVars
   });
 
-  // src/domain/config.ts
-  var SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
-  var SEVERITY_COLORS = {
-    CRITICAL: "#dc2626",
-    HIGH: "#ea580c",
-    MEDIUM: "#d97706",
-    LOW: "#2563eb",
-    INFO: "#64748b",
-    UNKNOWN: "#475569"
-  };
-  var SEVERITY_GLYPHS = {
-    CRITICAL: "\u{1F534}",
-    HIGH: "\u{1F7E0}",
-    MEDIUM: "\u{1F7E1}",
-    LOW: "\u{1F535}",
-    INFO: "\u26AA",
-    UNKNOWN: "\u26AB"
-  };
-  var AARS_SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"];
-  function normalizeAarsSeverity(v) {
-    const s = typeof v === "string" ? v.trim().toUpperCase() : "";
-    if (s === "MINIMAL") return "INFO";
-    return AARS_SEVERITY_ORDER.includes(s) ? s : void 0;
-  }
-  var DEPTH_MIN = 1;
-  var DEPTH_MAX = 3;
-  var DEPTH_DEFAULT = 2;
-  var MAX_NODES_DEFAULT = 100;
-  var MAX_NODES_FLOOR = 30;
-  var MAX_NODES_CEILING = 400;
-  var MAX_EDGES_DEFAULT = 250;
-  var EDGE_BUDGET_RATIO = 2.5;
-  var SEED_WAVE_RATIO = 0.4;
-
   // src/domain/assetTable.ts
   var ASSET_SORTS = [
     "aars",
@@ -1217,8 +1369,8 @@ var Server = (() => {
     SEV_RANK[sev] = SEVERITY_ORDER.length - i;
   });
   function sevRank(v) {
-    var _a4;
-    return (_a4 = SEV_RANK[toStr(v).toUpperCase()]) != null ? _a4 : -1;
+    var _a5;
+    return (_a5 = SEV_RANK[toStr(v).toUpperCase()]) != null ? _a5 : -1;
   }
   function list(v) {
     const raw = Array.isArray(v) ? v : toStr(v).split(",");
@@ -1250,8 +1402,8 @@ var Server = (() => {
       params["aarsSeverity"],
       params["band"]
     ).map((v) => {
-      var _a4;
-      return (_a4 = normalizeAarsSeverity(v)) != null ? _a4 : "";
+      var _a5;
+      return (_a5 = normalizeAarsSeverity(v)) != null ? _a5 : "";
     }).filter((v, i, all) => v !== "" && all.indexOf(v) === i);
     return {
       q: toStr(params["q"]).trim().toLowerCase(),
@@ -1311,8 +1463,8 @@ var Server = (() => {
   };
   var byScoreDesc = (a, b) => score(b["aars"]) - score(a["aars"]);
   function assetComparator(sort, dir) {
-    var _a4;
-    const primary = (_a4 = PRIMARY[sort]) != null ? _a4 : PRIMARY.aars;
+    var _a5;
+    const primary = (_a5 = PRIMARY[sort]) != null ? _a5 : PRIMARY.aars;
     const sign = dir === "desc" ? -1 : 1;
     return (a, b) => sign * primary(a, b) || byScoreDesc(a, b);
   }
@@ -1349,7 +1501,7 @@ var Server = (() => {
     return (a, b) => a.value.localeCompare(b.value);
   }
   function facetCounts(rows, q) {
-    var _a4;
+    var _a5;
     const out = { matched: 0 };
     for (const key of FACET_KEYS) {
       const scope = key === "flags" ? q : { ...q, [key]: [] };
@@ -1357,7 +1509,7 @@ var Server = (() => {
       for (const row of rows) {
         if (!matchesAssetQuery(row, scope)) continue;
         for (const value of facetValues(key, row)) {
-          counts.set(value, ((_a4 = counts.get(value)) != null ? _a4 : 0) + 1);
+          counts.set(value, ((_a5 = counts.get(value)) != null ? _a5 : 0) + 1);
         }
       }
       for (const value of q[key]) if (!counts.has(value)) counts.set(value, 0);
@@ -1458,10 +1610,10 @@ var Server = (() => {
     return "INFO";
   }
   function worstSeverityPoints(severities, rule) {
-    var _a4;
+    var _a5;
     let worst = 0;
     for (const s of severities) {
-      const p = (_a4 = rule.severityPoints[s]) != null ? _a4 : 0;
+      const p = (_a5 = rule.severityPoints[s]) != null ? _a5 : 0;
       if (p > worst) worst = p;
     }
     return worst;
@@ -1480,7 +1632,7 @@ var Server = (() => {
     return points.reduce((acc, p) => acc + p, 0);
   }
   function computeAars(input, rule = DEFAULT_AARS_RULE) {
-    var _a4, _b, _c;
+    var _a5, _b, _c;
     let toxic = worstSeverityPoints(input.issueSeverities, rule);
     toxic *= multiIssueFactor(input.issueSeverities.length, rule);
     toxic = Math.min(rule.pillarACap, Math.round(toxic));
@@ -1488,13 +1640,13 @@ var Server = (() => {
       rule.pillarBCap,
       aggregateGapPoints(
         input.gaps.map((g) => {
-          var _a5;
-          return (_a5 = g.points) != null ? _a5 : gapPointsFor(g.code, rule);
+          var _a6;
+          return (_a6 = g.points) != null ? _a6 : gapPointsFor(g.code, rule);
         }),
         rule
       )
     );
-    const data = Math.round(((_a4 = rule.dataExposurePoints[input.dataExposure]) != null ? _a4 : 0) * rule.dataAmplifier);
+    const data = Math.round(((_a5 = rule.dataExposurePoints[input.dataExposure]) != null ? _a5 : 0) * rule.dataAmplifier);
     const exposure = (_c = rule.exposurePoints[(_b = input.internetExposure) != null ? _b : "NONE"]) != null ? _c : 0;
     const score2 = Math.min(AARS_MAX_SCORE, toxic + compliance + data + exposure);
     return {
@@ -1505,10 +1657,10 @@ var Server = (() => {
   }
   function gapBreakdown(gaps, rule = DEFAULT_AARS_RULE) {
     return gaps.map((g) => {
-      var _a4;
+      var _a5;
       return {
         code: g.code,
-        points: (_a4 = g.points) != null ? _a4 : gapPointsFor(g.code, rule),
+        points: (_a5 = g.points) != null ? _a5 : gapPointsFor(g.code, rule),
         overridden: g.points !== void 0
       };
     });
@@ -1722,7 +1874,7 @@ var Server = (() => {
     saturated: { toxic: 0, compliance: 0, data: 0, exposure: 0, score: 0 }
   };
   function ruleDiscrimination(nodes, rule) {
-    var _a4, _b, _c;
+    var _a5, _b, _c;
     const scores = [];
     const counts = {};
     for (const b of ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]) counts[b] = 0;
@@ -1734,7 +1886,7 @@ var Server = (() => {
     for (const n of nodes) {
       if (typeof n.aars !== "number") continue;
       scores.push(n.aars);
-      const band = String((_a4 = n.aarsSeverity) != null ? _a4 : "");
+      const band = String((_a5 = n.aarsSeverity) != null ? _a5 : "");
       if (band in counts) counts[band] = counts[band] + 1;
       const p = n.aarsPillars;
       if (p) {
@@ -1758,7 +1910,7 @@ var Server = (() => {
     };
   }
   function gapMatchTally(rule, codeLists) {
-    var _a4;
+    var _a5;
     const perRule = rule.gapPoints.map(() => 0);
     const byCode = {};
     let fallback = 0;
@@ -1770,7 +1922,7 @@ var Server = (() => {
         const code = cleanGapCode(raw);
         if (!code || seen.has(code)) continue;
         seen.add(code);
-        byCode[code] = ((_a4 = byCode[code]) != null ? _a4 : 0) + 1;
+        byCode[code] = ((_a5 = byCode[code]) != null ? _a5 : 0) + 1;
         total++;
         let matched = false;
         for (let i = 0; i < rule.gapPoints.length; i++) {
@@ -1852,10 +2004,10 @@ var Server = (() => {
     return counts;
   }
   function aarsTrendFromHistory(rows, limit = 90) {
-    var _a4;
+    var _a5;
     const points = [];
     for (const r of rows) {
-      if (String((_a4 = r["status"]) != null ? _a4 : "") !== "SUCCESS") continue;
+      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
       const counts = parseCounts(r["aars_severity_json"]);
       if (!counts) continue;
       const at = String(r["finished_at"] || r["started_at"] || "");
@@ -1905,6 +2057,14 @@ var Server = (() => {
           required: true
         },
         {
+          path: "filterBy.type",
+          label: "Issue types",
+          help: "Which Wiz issue types to collect. TOXIC_COMBINATION is the four multi-condition patterns this register models; CLOUD_CONFIGURATION is the rest of the AI risk category, which lands in Other AI risk. Dropping either one drops those issues from the register total and from AARS pillar A \u2014 narrowing to TOXIC_COMBINATION alone reproduces the pre-2026-08 register.",
+          kind: "list",
+          options: ["TOXIC_COMBINATION", "CLOUD_CONFIGURATION", "THREAT_DETECTION"],
+          required: true
+        },
+        {
           path: "filterBy.project",
           label: "Project scope",
           help: "Wiz project ids to restrict to. Empty means the whole tenant.",
@@ -1917,7 +2077,14 @@ var Server = (() => {
           kind: "enum",
           options: ORDER_DIRECTIONS
         }
-      ]
+      ],
+      // Deliberately NOT offering filterBy.frameworkCategory. Every figure this app
+      // publishes — the issue count, AARS pillar A, the Toxic Combinations page, the tab
+      // literally called ai_issues — is scoped to wct-id-1998 and labelled AI. Nothing in
+      // the response says "this is an AI issue"; the category filter IS the claim. Widen it
+      // and "AI issues" silently means "all issues", with no field to catch it. Same reason
+      // AGENTIC_IDENTITIES locks its purpose filter.
+      locked: "The AI risk category (wct-id-1998) is fixed: it is what makes these issues AI issues, so widening it would relabel the whole register rather than extend it."
     },
     {
       stepId: "CONFIG_FINDINGS",
@@ -1960,8 +2127,8 @@ var Server = (() => {
   var SPEC_BY_STEP = {};
   for (const spec of STEP_VAR_SPECS) SPEC_BY_STEP[spec.stepId] = spec;
   function varSpecFor(stepId) {
-    var _a4;
-    return (_a4 = SPEC_BY_STEP[stepId]) != null ? _a4 : null;
+    var _a5;
+    return (_a5 = SPEC_BY_STEP[stepId]) != null ? _a5 : null;
   }
   function isEditableStep(stepId) {
     const spec = varSpecFor(stepId);
@@ -2073,8 +2240,8 @@ var Server = (() => {
     return clampInt(v, DEPTH_DEFAULT, DEPTH_MIN, DEPTH_MAX);
   }
   function getDefaultDepth(settings) {
-    var _a4;
-    return clampDepth((_a4 = settings["default_depth"]) != null ? _a4 : DEPTH_DEFAULT);
+    var _a5;
+    return clampDepth((_a5 = settings["default_depth"]) != null ? _a5 : DEPTH_DEFAULT);
   }
   function withDefaultDepth(settings, depth) {
     return { ...settings, default_depth: clampDepth(depth) };
@@ -2083,8 +2250,8 @@ var Server = (() => {
     return clampInt(v, MAX_NODES_DEFAULT, MAX_NODES_FLOOR, MAX_NODES_CEILING);
   }
   function getMaxNodes(settings) {
-    var _a4;
-    return clampMaxNodes((_a4 = settings["max_nodes"]) != null ? _a4 : MAX_NODES_DEFAULT);
+    var _a5;
+    return clampMaxNodes((_a5 = settings["max_nodes"]) != null ? _a5 : MAX_NODES_DEFAULT);
   }
   function withMaxNodes(settings, maxNodes) {
     return { ...settings, max_nodes: clampMaxNodes(maxNodes) };
@@ -2147,97 +2314,6 @@ var Server = (() => {
     return { ...settings, scan_vars: next };
   }
 
-  // src/domain/graphTypes.ts
-  function severityRank(s) {
-    const i = SEVERITY_ORDER.indexOf(s != null ? s : "");
-    return i === -1 ? SEVERITY_ORDER.length : i;
-  }
-  var NODE_KINDS = [
-    // AI assets (Wiz AI-SPM resource types)
-    "AI_AGENT",
-    "AI_MODEL",
-    "AI_GUARDRAIL",
-    "AI_PIPELINE",
-    "AI_DATASET",
-    "MCP_SERVER",
-    // AI assets seen in real tenants (Wiz inventory display names, normalized) —
-    // appended so the original kinds keep their declaration order.
-    "AI_AGENT_REGISTRY",
-    "AI_DEPLOYMENT",
-    "AI_EXTENSION",
-    "AI_GATEWAY",
-    "AI_SERVICE",
-    "AI_SKILL",
-    "AI_SKILL_TEMPLATE",
-    "AI_TOOL",
-    // identities
-    "SERVICE_ACCOUNT",
-    "USER_ACCOUNT",
-    "ACCESS_ROLE",
-    "ACCESS_ROLE_BINDING",
-    "ACCESS_KEY",
-    // data
-    "BUCKET",
-    "DATABASE",
-    // compute / supply chain
-    "VIRTUAL_MACHINE",
-    "SERVERLESS",
-    "CONTAINER_IMAGE",
-    "REPOSITORY",
-    // CIEM finding entities
-    "EXCESSIVE_ACCESS_FINDING",
-    "LATERAL_MOVEMENT_FINDING",
-    // synthetic
-    "ISSUE",
-    // one node per open risk issue (toxic-combination instance)
-    "SUMMARY",
-    // collapse node: "+N more <kind>" emitted by the projection
-    "SENSITIVE_DATA",
-    // one node per data-exposed asset (AARS pillar C topology)
-    "INTERNET_EXPOSURE",
-    // one node per internet-exposed asset (exposure topology)
-    "EXCESSIVE_PRIVILEGE",
-    // one node per over-privileged asset (CIEM rights topology)
-    "MISSING_GUARDRAIL"
-    // one node per unguarded AI asset (guardrail-coverage topology)
-  ];
-  var RISK_NODE_KINDS = [
-    "ISSUE",
-    "SENSITIVE_DATA",
-    "INTERNET_EXPOSURE",
-    "EXCESSIVE_PRIVILEGE",
-    "MISSING_GUARDRAIL",
-    "EXCESSIVE_ACCESS_FINDING",
-    "LATERAL_MOVEMENT_FINDING"
-  ];
-  function isRiskKind(kind) {
-    return RISK_NODE_KINDS.includes(kind);
-  }
-  var AI_ASSET_KINDS = [
-    "AI_AGENT",
-    "AI_MODEL",
-    "AI_GUARDRAIL",
-    "AI_PIPELINE",
-    "AI_DATASET",
-    "MCP_SERVER",
-    "AI_AGENT_REGISTRY",
-    "AI_DEPLOYMENT",
-    "AI_EXTENSION",
-    "AI_GATEWAY",
-    "AI_SERVICE",
-    "AI_SKILL",
-    "AI_SKILL_TEMPLATE",
-    "AI_TOOL"
-  ];
-  function kindFromWizType(t) {
-    if (typeof t !== "string" || !t.trim()) return null;
-    const norm = t.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_");
-    return NODE_KINDS.includes(norm) ? norm : null;
-  }
-  function edgeId(src, type, dst, negated) {
-    return `${src}|${type}|${dst}${negated ? "|neg" : ""}`;
-  }
-
   // src/domain/graphProject.ts
   var DEFAULT_PER_KIND_CAP = {
     USER_ACCOUNT: 8,
@@ -2246,17 +2322,17 @@ var Server = (() => {
   };
   var DEFAULT_KIND_CAP = 12;
   function nodeOrder(a, b) {
-    var _a4, _b;
+    var _a5, _b;
     const sev = severityRank(a.severity) - severityRank(b.severity);
     if (sev !== 0) return sev;
-    const aars = ((_a4 = b.aars) != null ? _a4 : -1) - ((_b = a.aars) != null ? _b : -1);
+    const aars = ((_a5 = b.aars) != null ? _a5 : -1) - ((_b = a.aars) != null ? _b : -1);
     if (aars !== 0) return aars;
     return cmp(a.name, b.name);
   }
   function passesFilters(node2, f) {
-    var _a4, _b, _c, _d, _e, _f, _g, _h;
+    var _a5, _b, _c, _d, _e, _f, _g, _h;
     if (!f) return true;
-    if (isRiskKind(node2.kind) && !((_a4 = f.kinds) == null ? void 0 : _a4.some(isRiskKind))) return true;
+    if (isRiskKind(node2.kind) && !((_a5 = f.kinds) == null ? void 0 : _a5.some(isRiskKind))) return true;
     if (((_b = f.severities) == null ? void 0 : _b.length) && !f.severities.includes((_c = node2.severity) != null ? _c : "")) return false;
     if (((_d = f.kinds) == null ? void 0 : _d.length) && !f.kinds.includes(node2.kind)) return false;
     if (((_e = f.clouds) == null ? void 0 : _e.length) && !f.clouds.includes((_f = node2.cloudPlatform) != null ? _f : "")) return false;
@@ -2267,7 +2343,7 @@ var Server = (() => {
     return true;
   }
   function projectGraph(doc, opts) {
-    var _a4, _b, _c, _d, _e, _f, _g, _h, _i, _j;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j;
     const byId = indexBy(doc.nodes, (n) => n.id);
     const adjacency = /* @__PURE__ */ new Map();
     const sortedEdges = [...doc.edges].sort(cmpBy((e) => e.id));
@@ -2278,7 +2354,7 @@ var Server = (() => {
       adjacency.get(edge2.src).push({ edge: edge2, otherId: edge2.dst });
       adjacency.get(edge2.dst).push({ edge: edge2, otherId: edge2.src });
     }
-    const maxNodes = (_a4 = opts.maxNodes) != null ? _a4 : MAX_NODES_DEFAULT;
+    const maxNodes = (_a5 = opts.maxNodes) != null ? _a5 : MAX_NODES_DEFAULT;
     const maxEdges = (_b = opts.maxEdges) != null ? _b : MAX_EDGES_DEFAULT;
     const expand = new Set((_c = opts.expandIds) != null ? _c : []);
     let capped = false;
@@ -2444,8 +2520,8 @@ var Server = (() => {
   };
   var LANE_COUNT = 5;
   function laneOf(kind, summaryOf) {
-    var _a4, _b;
-    if (kind === "SUMMARY" && summaryOf) return (_a4 = LANE_OF[summaryOf]) != null ? _a4 : 2;
+    var _a5, _b;
+    if (kind === "SUMMARY" && summaryOf) return (_a5 = LANE_OF[summaryOf]) != null ? _a5 : 2;
     return (_b = LANE_OF[kind]) != null ? _b : 2;
   }
   var BARYCENTER_SWEEPS = 3;
@@ -2475,8 +2551,8 @@ var Server = (() => {
     }
     if (sort === "aars") {
       return (a, b) => {
-        var _a4, _b;
-        return ((_a4 = b.aars) != null ? _a4 : -1) - ((_b = a.aars) != null ? _b : -1) || cmpName(a, b) || cmpId(a, b);
+        var _a5, _b;
+        return ((_a5 = b.aars) != null ? _a5 : -1) - ((_b = a.aars) != null ? _b : -1) || cmpName(a, b) || cmpId(a, b);
       };
     }
     if (sort === "name") {
@@ -2523,12 +2599,12 @@ var Server = (() => {
     return roots;
   }
   function clusterRanks(p) {
-    var _a4, _b, _c, _d, _e, _f, _g;
+    var _a5, _b, _c, _d, _e, _f, _g;
     const { hubOf } = assignToHubs(p, parentIndex(p));
     const roots = componentRoots(p);
     const degree = /* @__PURE__ */ new Map();
     for (const e of p.edges) {
-      degree.set(e.src, ((_a4 = degree.get(e.src)) != null ? _a4 : 0) + 1);
+      degree.set(e.src, ((_a5 = degree.get(e.src)) != null ? _a5 : 0) + 1);
       degree.set(e.dst, ((_b = degree.get(e.dst)) != null ? _b : 0) + 1);
     }
     const keyOf = /* @__PURE__ */ new Map();
@@ -2536,7 +2612,7 @@ var Server = (() => {
       keyOf.set(node2.id, (_c = hubOf.get(node2.id)) != null ? _c : "cc:" + roots.get(node2.id));
     }
     const sharedEdges = (key) => {
-      var _a5, _b2;
+      var _a6, _b2;
       const out = /* @__PURE__ */ new Map();
       for (const e of [...p.edges].sort((a, b) => a.id < b.id ? -1 : 1)) {
         const a = key(e.src);
@@ -2544,7 +2620,7 @@ var Server = (() => {
         if (!a || !b || a === b) continue;
         if (!out.has(a)) out.set(a, /* @__PURE__ */ new Map());
         if (!out.has(b)) out.set(b, /* @__PURE__ */ new Map());
-        out.get(a).set(b, ((_a5 = out.get(a).get(b)) != null ? _a5 : 0) + 1);
+        out.get(a).set(b, ((_a6 = out.get(a).get(b)) != null ? _a6 : 0) + 1);
         out.get(b).set(a, ((_b2 = out.get(b).get(a)) != null ? _b2 : 0) + 1);
       }
       return out;
@@ -2582,9 +2658,9 @@ var Server = (() => {
     const members = groupBy2(finalKey);
     const shared = sharedEdges(finalKey);
     const worst = (key) => {
-      var _a5;
+      var _a6;
       let rank = SEVERITY_ORDER.length;
-      for (const n of (_a5 = members.get(key)) != null ? _a5 : []) rank = Math.min(rank, severityRank(n.severity));
+      for (const n of (_a6 = members.get(key)) != null ? _a6 : []) rank = Math.min(rank, severityRank(n.severity));
       return rank;
     };
     const keys = [...members.keys()].filter((k) => members.get(k).length > 1).sort((a, b) => worst(a) - worst(b) || members.get(b).length - members.get(a).length || (a < b ? -1 : a > b ? 1 : 0));
@@ -2623,7 +2699,7 @@ var Server = (() => {
     return ranks;
   }
   function packLanes(lanes, rankOf, step, gap2, bandSpan, shelfGap, pad, horizontal) {
-    var _a4, _b, _c, _d, _e;
+    var _a5, _b, _c, _d, _e;
     const pos = /* @__PURE__ */ new Map();
     const shelfOf = /* @__PURE__ */ new Map();
     if (!rankOf) {
@@ -2641,7 +2717,7 @@ var Server = (() => {
     for (const lane of lanes) {
       const perRank = /* @__PURE__ */ new Map();
       for (const id of lane) {
-        const r = (_a4 = rankOf.get(id)) != null ? _a4 : 0;
+        const r = (_a5 = rankOf.get(id)) != null ? _a5 : 0;
         perRank.set(r, ((_b = perRank.get(r)) != null ? _b : 0) + 1);
       }
       for (const [r, count] of perRank) slots.set(r, Math.max((_c = slots.get(r)) != null ? _c : 0, count));
@@ -2704,14 +2780,14 @@ var Server = (() => {
     return { start, shelfOfRank, shelves: shelf + 1, longest };
   }
   function layoutGraph(p, opts = {}) {
-    var _a4;
-    const mode = (_a4 = opts.mode) != null ? _a4 : "rows";
+    var _a5;
+    const mode = (_a5 = opts.mode) != null ? _a5 : "rows";
     if (mode === "grouped") return layoutGrouped(p, opts);
     return layoutLanes(p, opts, mode !== "lanes");
   }
   function layoutLanes(p, opts, horizontal) {
-    var _a4, _b, _c, _d, _e, _f;
-    const laneGap = (_a4 = opts.laneGap) != null ? _a4 : 280;
+    var _a5, _b, _c, _d, _e, _f;
+    const laneGap = (_a5 = opts.laneGap) != null ? _a5 : 280;
     const rowGap = (_b = opts.rowGap) != null ? _b : 84;
     const margin = (_c = opts.margin) != null ? _c : 120;
     const sort = (_d = opts.sort) != null ? _d : "smart";
@@ -2746,14 +2822,14 @@ var Server = (() => {
             score2.set(
               id,
               others.length ? others.reduce((acc, n) => {
-                var _a5;
-                return acc + ((_a5 = rowOf.get(n)) != null ? _a5 : 0);
+                var _a6;
+                return acc + ((_a6 = rowOf.get(n)) != null ? _a6 : 0);
               }, 0) / others.length : (_f = rowOf.get(id)) != null ? _f : 0
             );
           }
           lane.sort((a, b) => {
-            var _a5, _b2, _c2, _d2;
-            const d = ((_a5 = score2.get(a)) != null ? _a5 : 0) - ((_b2 = score2.get(b)) != null ? _b2 : 0);
+            var _a6, _b2, _c2, _d2;
+            const d = ((_a6 = score2.get(a)) != null ? _a6 : 0) - ((_b2 = score2.get(b)) != null ? _b2 : 0);
             if (d !== 0) return d;
             return ((_c2 = rowOf.get(a)) != null ? _c2 : 0) - ((_d2 = rowOf.get(b)) != null ? _d2 : 0);
           });
@@ -2771,8 +2847,8 @@ var Server = (() => {
     if (rankOf) {
       for (const lane of lanes) {
         lane.sort((a, b) => {
-          var _a5, _b2;
-          return ((_a5 = rankOf.get(a)) != null ? _a5 : 0) - ((_b2 = rankOf.get(b)) != null ? _b2 : 0);
+          var _a6, _b2;
+          return ((_a6 = rankOf.get(a)) != null ? _a6 : 0) - ((_b2 = rankOf.get(b)) != null ? _b2 : 0);
         });
       }
     }
@@ -2837,10 +2913,10 @@ var Server = (() => {
     return ownGroupKey(node2, groupBy2);
   }
   function ownGroupKey(node2, groupBy2) {
-    var _a4, _b, _c, _d, _e, _f, _g;
+    var _a5, _b, _c, _d, _e, _f, _g;
     switch (groupBy2) {
       case "combo": {
-        const groups = [...(_a4 = node2.comboGroups) != null ? _a4 : []].sort();
+        const groups = [...(_a5 = node2.comboGroups) != null ? _a5 : []].sort();
         return (_b = groups[0]) != null ? _b : GROUP_NONE;
       }
       case "project": {
@@ -2858,22 +2934,22 @@ var Server = (() => {
     }
   }
   function groupLabel(key, groupBy2) {
-    var _a4, _b;
+    var _a5, _b;
     if (key === GROUP_NONE) return "Ungrouped";
-    if (groupBy2 === "combo") return (_b = (_a4 = comboGroupById(key)) == null ? void 0 : _a4.shortLabel) != null ? _b : key;
+    if (groupBy2 === "combo") return (_b = (_a5 = comboGroupById(key)) == null ? void 0 : _a5.shortLabel) != null ? _b : key;
     return key;
   }
   function orderGroups(keys, groupBy2, members) {
     const canonical = (key) => {
       if (groupBy2 === "severity") return SEVERITY_ORDER.indexOf(key);
       if (groupBy2 === "kind") return NODE_KINDS.indexOf(key);
-      if (groupBy2 === "combo") return COMBO_GROUPS.findIndex((g) => g.id === key);
+      if (groupBy2 === "combo") return REGISTER_GROUPS.findIndex((g) => g.id === key);
       return -1;
     };
     const worstSeverity2 = (key) => {
-      var _a4;
+      var _a5;
       let worst = SEVERITY_ORDER.length;
-      for (const n of (_a4 = members.get(key)) != null ? _a4 : []) worst = Math.min(worst, severityRank(n.severity));
+      for (const n of (_a5 = members.get(key)) != null ? _a5 : []) worst = Math.min(worst, severityRank(n.severity));
       return worst;
     };
     return [...keys].sort((a, b) => {
@@ -2940,7 +3016,7 @@ var Server = (() => {
     return { key, label, width, height, cells };
   }
   function assignToHubs(p, parentOf) {
-    var _a4;
+    var _a5;
     const cmp2 = (a, b) => nodeOrder(a, b) || cmpId(a, b);
     let hubs = p.nodes.filter((n) => n.kind === "AI_AGENT");
     if (!hubs.length) {
@@ -2963,7 +3039,7 @@ var Server = (() => {
     }
     while (queue.length) {
       const id = queue.shift();
-      for (const next of (_a4 = adj.get(id)) != null ? _a4 : []) {
+      for (const next of (_a5 = adj.get(id)) != null ? _a5 : []) {
         if (hubOf.has(next)) continue;
         hubOf.set(next, hubOf.get(id));
         queue.push(next);
@@ -2976,8 +3052,8 @@ var Server = (() => {
     return { hubOf, hubs };
   }
   function layoutGrouped(p, opts) {
-    var _a4, _b, _c;
-    const margin = (_a4 = opts.margin) != null ? _a4 : 120;
+    var _a5, _b, _c;
+    const margin = (_a5 = opts.margin) != null ? _a5 : 120;
     const groupBy2 = (_b = opts.groupBy) != null ? _b : "combo";
     const sort = (_c = opts.sort) != null ? _c : "smart";
     const parentOf = parentIndex(p);
@@ -3069,7 +3145,7 @@ var Server = (() => {
     const out = [];
     const seen = /* @__PURE__ */ new Set();
     for (const issue2 of issues2) {
-      if (issue2.status !== "OPEN" || !issue2.comboGroup) continue;
+      if (!isUnresolvedIssue(issue2) || !issue2.comboGroup) continue;
       if (groupId && issue2.comboGroup !== groupId) continue;
       if (issue2.assetId && !seen.has(issue2.assetId)) {
         seen.add(issue2.assetId);
@@ -3090,12 +3166,12 @@ var Server = (() => {
     };
   }
   function resolveGraphParams(p, ctx) {
-    var _a4;
+    var _a5;
     const seed = typeof p["seed"] === "string" ? p["seed"] : "";
     const seedKind = typeof p["seedKind"] === "string" ? p["seedKind"] : "";
     let seedIds;
     if (seedKind === "scored") {
-      seedIds = (_a4 = ctx.scoredAssetIds) != null ? _a4 : [];
+      seedIds = (_a5 = ctx.scoredAssetIds) != null ? _a5 : [];
     } else if (seed && (seedKind === "combo" || comboGroupById(seed))) {
       seedIds = comboAssetIds(ctx.issues, seed);
     } else if (seed) {
@@ -3171,12 +3247,12 @@ var Server = (() => {
     return SEVERITY_ORDER.includes(s) ? s : "UNKNOWN";
   }
   function countBySeverity(records) {
-    var _a4;
+    var _a5;
     if (!records.length || !records.some((r) => "severity" in r)) return {};
     const counts = {};
     for (const rec2 of records) {
       const sev = normalizeSeverity(rec2["severity"]);
-      counts[sev] = ((_a4 = counts[sev]) != null ? _a4 : 0) + 1;
+      counts[sev] = ((_a5 = counts[sev]) != null ? _a5 : 0) + 1;
     }
     return counts;
   }
@@ -3216,13 +3292,12 @@ var Server = (() => {
   function comboDigest(issues2, assets, nowIso2) {
     const nowMs = Date.parse(nowIso2);
     const byAsset = new Map(assets.map((a) => [a.id, a]));
-    const open = issues2.filter((i) => i.status === "OPEN");
+    const open = issues2.filter(isUnresolvedIssue);
     const summaries = comboSummary(issues2);
-    const summaryById = new Map(summaries.map((s) => [s.group.id, s]));
-    const groups = COMBO_GROUPS.map((group) => {
-      const summary = summaryById.get(group.id);
-      const assetIds = summary ? summary.assetIds : [];
-      const rows = open.filter((i) => i.comboGroup === group.id);
+    const groups = summaries.map((summary) => {
+      const group = summary.group;
+      const assetIds = summary.assetIds;
+      const rows = open.filter((i) => registerBucketId(i) === group.id);
       const conditions = emptyConditions();
       const declared = new Set(group.conditions);
       for (const key of CONDITION_KEYS) conditions[key].required = declared.has(key);
@@ -3240,7 +3315,7 @@ var Server = (() => {
       const sla2 = slaTally(rows, nowMs);
       return {
         id: group.id,
-        count: summary ? summary.count : 0,
+        count: summary.count,
         assetCount: assetIds.length,
         conditions,
         nativeMix: mixOf(rows, "nativeSeverity"),
@@ -3251,19 +3326,24 @@ var Server = (() => {
         noDueDate: sla2.noDueDate
       };
     });
-    const classified = open.filter((i) => summaryById.has(i.comboGroup));
     const affected = /* @__PURE__ */ new Set();
     for (const s of summaries) for (const id of s.assetIds) affected.add(id);
-    const sla = slaTally(classified, nowMs);
+    const sla = slaTally(open, nowMs);
+    const modelled = new Set(COMBO_GROUPS.map((g) => g.id));
     return {
       totals: {
-        totalOpen: classified.length,
+        totalOpen: open.length,
         assetsAffected: affected.size,
-        patternsActive: groups.filter((g) => g.count > 0).length,
+        // Four modelled patterns is still four: Other is a residual bucket, not a pattern,
+        // so counting it would render "5 of 5 patterns active" — a claim the rule set
+        // does not make.
+        patternsActive: groups.filter((g) => g.count > 0 && modelled.has(g.id)).length,
         patternsTotal: COMBO_GROUPS.length,
-        nativeMix: mixOf(classified, "nativeSeverity"),
-        adjustedMix: mixOf(classified, "adjustedSeverity"),
-        reRated: reRatedCount(classified),
+        unclassified: groups.filter((g) => !modelled.has(g.id)).reduce((n, g) => n + g.count, 0),
+        inProgress: open.filter((i) => i.status === "IN_PROGRESS").length,
+        nativeMix: mixOf(open, "nativeSeverity"),
+        adjustedMix: mixOf(open, "adjustedSeverity"),
+        reRated: reRatedCount(open),
         pastDue: sla.pastDue,
         dueSoon: sla.dueSoon,
         noDueDate: sla.noDueDate
@@ -3296,9 +3376,9 @@ var Server = (() => {
   }
   function listJobs() {
     return readAll(TABS.jobs).map((r) => {
-      var _a4, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
+      var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
       return {
-        job_id: String((_a4 = r["job_id"]) != null ? _a4 : ""),
+        job_id: String((_a5 = r["job_id"]) != null ? _a5 : ""),
         kind: (_b = r["kind"]) != null ? _b : "sync",
         phase: (_c = r["phase"]) != null ? _c : "FAILED",
         sync_id: (_d = r["sync_id"]) != null ? _d : null,
@@ -3316,14 +3396,14 @@ var Server = (() => {
     });
   }
   function getJob(jobId) {
-    var _a4;
-    return (_a4 = listJobs().find((j) => j.job_id === jobId)) != null ? _a4 : null;
+    var _a5;
+    return (_a5 = listJobs().find((j) => j.job_id === jobId)) != null ? _a5 : null;
   }
   var TERMINAL = ["DONE", "FAILED", "CANCELLED"];
   function activeJob() {
-    var _a4;
+    var _a5;
     if (!getProp(ACTIVE_JOB_PROP)) return null;
-    const job = (_a4 = listJobs().find((j) => !TERMINAL.includes(j.phase))) != null ? _a4 : null;
+    const job = (_a5 = listJobs().find((j) => !TERMINAL.includes(j.phase))) != null ? _a5 : null;
     if (!job) deleteProp(ACTIVE_JOB_PROP);
     return job;
   }
@@ -3359,7 +3439,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "e5399643a271" : "dev";
+  var BUILD_ID = true ? "ddca8a0d650e" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -3446,8 +3526,8 @@ var Server = (() => {
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
-    var _a4;
-    return (_a4 = getProp(VERSION_PROP)) != null ? _a4 : "0";
+    var _a5;
+    return (_a5 = getProp(VERSION_PROP)) != null ? _a5 : "0";
   }
   function bumpDataVersion() {
     setProp(VERSION_PROP, String(Date.now()));
@@ -3615,14 +3695,14 @@ var Server = (() => {
     return v === true ? true : v === false ? false : null;
   }
   function normalizeCloudResource(raw) {
-    var _a4, _b;
+    var _a5, _b;
     const id = str(raw["id"]);
     const kind = kindFromWizType(raw["type"]);
     if (!id || !kind) return null;
     const node2 = {
       id,
       kind,
-      name: (_a4 = str(raw["name"])) != null ? _a4 : id,
+      name: (_a5 = str(raw["name"])) != null ? _a5 : id,
       nativeType: str(raw["nativeType"]),
       cloudPlatform: str(raw["cloudPlatform"]),
       region: str(raw["region"]),
@@ -3683,10 +3763,10 @@ var Server = (() => {
     const tags = raw["tags"];
     if (Array.isArray(tags)) {
       node2.tags = tags.map((t) => {
-        var _a5;
+        var _a6;
         const rec2 = t;
         const key = str(rec2["key"]);
-        return key ? { key, value: (_a5 = str(rec2["value"])) != null ? _a5 : "" } : null;
+        return key ? { key, value: (_a6 = str(rec2["value"])) != null ? _a6 : "" } : null;
       }).filter((t) => t !== null);
     }
     return node2;
@@ -3722,7 +3802,7 @@ var Server = (() => {
     return part;
   }
   function normalizeRuleAssetsPage(rows, group) {
-    var _a4, _b;
+    var _a5, _b;
     const part = emptyPart();
     for (const raw of rows) {
       const node2 = normalizeCloudResource(raw);
@@ -3739,15 +3819,58 @@ var Server = (() => {
         assetId: node2.id,
         assetName: node2.name,
         region: node2.region,
-        account: (_a4 = node2.cloudAccount) == null ? void 0 : _a4.name,
+        account: (_a5 = node2.cloudAccount) == null ? void 0 : _a5.name,
         projects: ((_b = node2.projects) != null ? _b : []).map((p) => p.name),
         frameworks: group.frameworks
       });
     }
     return part;
   }
+  function resolvedByName(raw) {
+    var _a5;
+    if (!raw || typeof raw !== "object") return void 0;
+    const by = raw;
+    const user = by["user"];
+    if (user && typeof user === "object") {
+      const name = (_a5 = str(user["name"])) != null ? _a5 : str(user["email"]);
+      if (name) return name;
+    }
+    const sa = by["serviceAccount"];
+    if (sa && typeof sa === "object") return str(sa["name"]);
+    return void 0;
+  }
+  function ignoreRationale(raw) {
+    if (!Array.isArray(raw)) return void 0;
+    for (const note of raw) {
+      if (!note || typeof note !== "object") continue;
+      const text = str(note["text"]);
+      if (text && /^Ignored\s*\(/i.test(text)) return text;
+    }
+    return void 0;
+  }
+  var BUSINESS_IMPACT_ORDER = ["HBI", "MBI", "LBI"];
+  function worstBusinessImpact(projects) {
+    let best;
+    let bestRank = BUSINESS_IMPACT_ORDER.length;
+    for (const p of projects) {
+      const profile = p["riskProfile"];
+      if (!profile || typeof profile !== "object") continue;
+      const impact = str(profile["businessImpact"]);
+      if (!impact) continue;
+      const rank = BUSINESS_IMPACT_ORDER.indexOf(impact);
+      if (rank >= 0 && rank < bestRank) {
+        bestRank = rank;
+        best = impact;
+      }
+    }
+    return best;
+  }
+  function ticketUrlsOf(raw) {
+    if (!Array.isArray(raw)) return [];
+    return raw.map((t) => t && typeof t === "object" ? str(t["url"]) : void 0).filter((u) => Boolean(u));
+  }
   function normalizeIssuesPage(rows) {
-    var _a4, _b, _c, _d, _e, _f, _g, _h;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i;
     const part = emptyPart();
     for (const raw of rows) {
       const issueId = str(raw["id"]);
@@ -3755,7 +3878,7 @@ var Server = (() => {
       const assetId = snap && typeof snap === "object" ? str(snap["id"]) : void 0;
       if (!issueId || !assetId) continue;
       const sourceRules = Array.isArray(raw["sourceRules"]) ? raw["sourceRules"] : [];
-      const first = (_a4 = sourceRules[0]) != null ? _a4 : {};
+      const first = (_a5 = sourceRules[0]) != null ? _a5 : {};
       const ruleId = str(first["id"]);
       const ruleName = str(first["name"]);
       const group = classifyIssue({ sourceRuleId: ruleId != null ? ruleId : null, ruleName: ruleName != null ? ruleName : null });
@@ -3764,12 +3887,17 @@ var Server = (() => {
       const control = first["control"];
       const resolutionRecommendation = (_c = str(first["resolutionRecommendation"])) != null ? _c : control && typeof control === "object" ? str(control["resolutionRecommendation"]) : void 0;
       const assetName = (_d = str(snap["name"])) != null ? _d : assetId;
-      const projects = Array.isArray(raw["projects"]) ? raw["projects"].map((p) => str(p["name"])).filter((n) => Boolean(n)) : [];
-      part.issues.push({
+      const projectRows = Array.isArray(raw["projects"]) ? raw["projects"] : [];
+      const projects = projectRows.map((p) => str(p["name"])).filter((n) => Boolean(n));
+      const assigneeRaw = raw["assignee"];
+      const aiAnalysis = raw["aiRemediationAnalysis"];
+      const environments = Array.isArray(raw["environments"]) ? raw["environments"].map((e) => str(e)).filter((e) => Boolean(e)) : void 0;
+      const ticketUrls = ticketUrlsOf(raw["serviceTickets"]);
+      const issue2 = {
         id: issueId,
         ruleId: (_e = ruleId != null ? ruleId : group == null ? void 0 : group.ruleId) != null ? _e : "",
         ruleName: (_f = ruleName != null ? ruleName : group == null ? void 0 : group.title) != null ? _f : "",
-        comboGroup: (_g = group == null ? void 0 : group.id) != null ? _g : "",
+        comboGroup: (_g = group == null ? void 0 : group.id) != null ? _g : OTHER_GROUP_ID,
         nativeSeverity,
         adjustedSeverity,
         status: (_h = str(raw["status"])) != null ? _h : "OPEN",
@@ -3781,8 +3909,25 @@ var Server = (() => {
         frameworks: group == null ? void 0 : group.frameworks,
         createdAt: str(raw["createdAt"]),
         dueAt: str(raw["dueAt"]),
-        resolutionRecommendation
-      });
+        resolutionRecommendation,
+        issueType: str(raw["type"]),
+        updatedAt: str(raw["updatedAt"]),
+        resolvedAt: str(raw["resolvedAt"]),
+        resolutionReason: str(raw["resolutionReason"]),
+        resolvedBy: resolvedByName(raw["resolvedBy"]),
+        assignee: assigneeRaw && typeof assigneeRaw === "object" ? (_i = str(assigneeRaw["name"])) != null ? _i : str(assigneeRaw["primaryEmail"]) : void 0,
+        businessImpact: worstBusinessImpact(projectRows),
+        entityStatus: str(snap["status"]),
+        subscriptionId: str(snap["subscriptionId"]),
+        ignoreNote: ignoreRationale(raw["notes"]),
+        ignoreExpiredAt: str(raw["rejectionExpiredAt"]),
+        aiVerdict: aiAnalysis && typeof aiAnalysis === "object" ? str(aiAnalysis["verdict"]) : void 0,
+        aiRecommendedSeverity: aiAnalysis && typeof aiAnalysis === "object" ? str(aiAnalysis["recommendedSeverity"]) : void 0
+      };
+      if (environments && environments.length) issue2.environments = environments;
+      if (ticketUrls.length) issue2.ticketUrls = ticketUrls;
+      if (raw["validatedAsExploitable"] === true) issue2.validatedAsExploitable = true;
+      part.issues.push(issue2);
       const kind = kindFromWizType(snap["type"]);
       if (kind) {
         const node2 = { id: assetId, kind, name: assetName };
@@ -3829,7 +3974,7 @@ var Server = (() => {
     return codes;
   }
   function normalizeConfigFindingsPage(rows) {
-    var _a4, _b;
+    var _a5, _b;
     const part = emptyPart();
     for (const raw of rows) {
       const id = str(raw["id"]);
@@ -3841,7 +3986,7 @@ var Server = (() => {
       const resourceId = resource && typeof resource === "object" ? str(resource["id"]) : void 0;
       if (!resourceId) continue;
       const rule = raw["rule"];
-      const ruleShortId = rule && typeof rule === "object" ? (_a4 = str(rule["shortId"])) != null ? _a4 : "" : "";
+      const ruleShortId = rule && typeof rule === "object" ? (_a5 = str(rule["shortId"])) != null ? _a5 : "" : "";
       part.findings.push({
         id,
         resourceId,
@@ -3912,7 +4057,7 @@ var Server = (() => {
     return part;
   }
   function mergeParts(parts, syncedAt) {
-    var _a4;
+    var _a5;
     const nodes = /* @__PURE__ */ new Map();
     const edges2 = /* @__PURE__ */ new Map();
     const issues2 = /* @__PURE__ */ new Map();
@@ -3934,7 +4079,7 @@ var Server = (() => {
       }
       for (const edge2 of part.edges) edges2.set(edge2.id, edge2);
       for (const issue2 of part.issues) issues2.set(issue2.id, issue2);
-      for (const finding of (_a4 = part.findings) != null ? _a4 : []) findings.set(finding.id, finding);
+      for (const finding of (_a5 = part.findings) != null ? _a5 : []) findings.set(finding.id, finding);
     }
     return {
       doc: { nodes: [...nodes.values()], edges: [...edges2.values()], syncedAt },
@@ -3963,10 +4108,10 @@ var Server = (() => {
     return "NONE";
   }
   function deriveAarsInput(node2, nodeIssues, rule = DEFAULT_AARS_RULE) {
-    var _a4, _b, _c, _d, _e, _f;
+    var _a5, _b, _c, _d, _e, _f;
     const codes = /* @__PURE__ */ new Set();
     for (const issue2 of nodeIssues) {
-      const fw = (_a4 = issue2.frameworks) != null ? _a4 : {};
+      const fw = (_a5 = issue2.frameworks) != null ? _a5 : {};
       for (const c of (_b = fw.owaspLlm) != null ? _b : []) codes.add(c);
       for (const c of (_c = fw.owaspAgentic) != null ? _c : []) codes.add(c);
       for (const c of (_d = fw.owaspMl) != null ? _d : []) codes.add(`ML_${c.replace(/\s+/g, "_").toUpperCase()}`);
@@ -3991,14 +4136,14 @@ var Server = (() => {
     };
   }
   function weightedGap(code, severity, rule) {
-    var _a4;
-    const w = severity === void 0 ? 1 : (_a4 = rule.findingSeverityWeights[severity]) != null ? _a4 : 1;
+    var _a5;
+    const w = severity === void 0 ? 1 : (_a5 = rule.findingSeverityWeights[severity]) != null ? _a5 : 1;
     if (w === 1) return gap(code);
     return gap(code, Math.max(0, Math.round(gapPointsFor(code, rule) * w)));
   }
   function buildAarsHintsFromFindings(findings, doc, issues2, rule = DEFAULT_AARS_RULE) {
-    var _a4;
-    const open = issues2.filter((i) => i.status === "OPEN");
+    var _a5;
+    const open = issues2.filter(isUnresolvedIssue);
     const issuesByAsset = groupBy(open, (i) => i.assetId);
     const codesByResource = /* @__PURE__ */ new Map();
     const worstByCode = /* @__PURE__ */ new Map();
@@ -4017,7 +4162,7 @@ var Server = (() => {
     for (const [resourceId, codes] of codesByResource) {
       const node2 = nodeById.get(resourceId);
       if (!node2) continue;
-      const base = deriveAarsInput(node2, (_a4 = issuesByAsset.get(resourceId)) != null ? _a4 : [], rule);
+      const base = deriveAarsInput(node2, (_a5 = issuesByAsset.get(resourceId)) != null ? _a5 : [], rule);
       const seen = new Set(base.gaps.map((g) => g.code));
       const gaps = [...base.gaps];
       for (const c of codes) {
@@ -4035,12 +4180,12 @@ var Server = (() => {
     return hints;
   }
   function enrichGraphDoc(doc, issues2, hints, rule = DEFAULT_AARS_RULE) {
-    const open = issues2.filter((i) => i.status === "OPEN");
+    const open = issues2.filter(isUnresolvedIssue);
     const byAsset = groupBy(open, (i) => i.assetId);
     const nodes = doc.nodes.map((raw) => {
-      var _a4, _b;
+      var _a5, _b;
       const node2 = { ...raw };
-      const nodeIssues = (_a4 = byAsset.get(node2.id)) != null ? _a4 : [];
+      const nodeIssues = (_a5 = byAsset.get(node2.id)) != null ? _a5 : [];
       if (nodeIssues.length) {
         node2.severity = worstSeverity(nodeIssues.map((i) => i.adjustedSeverity));
         const groups = [];
@@ -4168,7 +4313,7 @@ var Server = (() => {
   var T0 = "2026-04-02T08:00:00Z";
   var T1 = "2026-06-28T05:00:00Z";
   function node(seed) {
-    var _a4, _b, _c, _d, _e, _f, _g;
+    var _a5, _b, _c, _d, _e, _f, _g;
     return {
       id: seed.id,
       kind: seed.kind,
@@ -4176,7 +4321,7 @@ var Server = (() => {
       nativeType: seed.nativeType,
       cloudPlatform: seed.cloud,
       region: seed.region,
-      status: (_a4 = seed.status) != null ? _a4 : "Active",
+      status: (_a5 = seed.status) != null ? _a5 : "Active",
       firstSeen: T0,
       lastSeen: T1,
       isAccessibleFromInternet: seed.internet === void 0 ? false : seed.internet,
@@ -4199,11 +4344,11 @@ var Server = (() => {
   var GCP_MANAGED = "aiplatform#ReasoningEngine";
   var GCP_HOSTED = "hostedAiAgent";
   function gcpAgent(seed) {
-    var _a4, _b, _c;
+    var _a5, _b, _c;
     return {
       ...seed,
       kind: "AI_AGENT",
-      cloud: (_a4 = seed.cloud) != null ? _a4 : "GCP",
+      cloud: (_a5 = seed.cloud) != null ? _a5 : "GCP",
       nativeType: (_b = seed.nativeType) != null ? _b : GCP_MANAGED,
       techCats: (_c = seed.techCats) != null ? _c : ["AI Service"]
     };
@@ -4506,15 +4651,18 @@ var Server = (() => {
     edges.push(edge(id, "ALLOWS_ACCESS_TO", "agent-h-chatbot", i <= 2 ? "ADMIN" : "READ"));
   }
   function issue(seed) {
+    var _a5, _b, _c, _d;
     const group = classifyIssue({ sourceRuleId: seed.ruleId, ruleName: seed.ruleName });
-    return {
+    const row = {
       id: seed.id,
       ruleId: seed.ruleId,
       ruleName: seed.ruleName,
-      comboGroup: group ? group.id : "",
+      // An unmodelled rule lands in Other rather than "" — the same bucket a live sync
+      // would give it, so the dry-run demo shows the register the real one produces.
+      comboGroup: group ? group.id : OTHER_GROUP_ID,
       nativeSeverity: seed.nativeSeverity,
       adjustedSeverity: group ? group.adjustedSeverity : seed.nativeSeverity,
-      status: "OPEN",
+      status: (_a5 = seed.status) != null ? _a5 : "OPEN",
       assetId: seed.assetId,
       assetName: seed.assetName,
       region: seed.region,
@@ -4524,8 +4672,20 @@ var Server = (() => {
       justification: seed.justification,
       createdAt: seed.createdAt,
       dueAt: seed.dueAt,
-      resolutionRecommendation: seed.resolutionRecommendation
+      resolutionRecommendation: seed.resolutionRecommendation,
+      issueType: (_b = seed.issueType) != null ? _b : "TOXIC_COMBINATION",
+      updatedAt: seed.updatedAt,
+      assignee: seed.assignee,
+      businessImpact: seed.businessImpact,
+      entityStatus: seed.entityStatus,
+      ignoreNote: seed.ignoreNote,
+      ignoreExpiredAt: seed.ignoreExpiredAt,
+      aiVerdict: seed.aiVerdict,
+      aiRecommendedSeverity: seed.aiRecommendedSeverity
     };
+    if ((_c = seed.environments) == null ? void 0 : _c.length) row.environments = seed.environments;
+    if ((_d = seed.ticketUrls) == null ? void 0 : _d.length) row.ticketUrls = seed.ticketUrls;
+    return row;
   }
   var RULE_G1 = "Allow model invoke without Guardrail for user or role";
   var RULE_G2 = "Managed AI Agent with high privileges or sensitive data access";
@@ -4537,7 +4697,9 @@ var Server = (() => {
     issueSeq += 1;
     return `iss-${String(issueSeq).padStart(3, "0")}`;
   }
-  for (const role of awsRoles) {
+  awsRoles.forEach((role, n) => {
+    const lapsed = n === 0;
+    const working = n === 1;
     issues.push(issue({
       id: nextIssueId(),
       ruleId: "wc-id-2742",
@@ -4549,9 +4711,24 @@ var Server = (() => {
       projects: ["PROJECT-ALPHA"],
       justification: "No content filtering, data protection, or compliance enforcement on AI model calls.",
       frameworks: { owaspLlm: ["LLM06", "LLM02"], owaspAgentic: ["ASI02", "ASI03"], fiveRs: ["Restrict"] },
-      createdAt: "2026-05-14T09:12:00Z"
+      createdAt: "2026-05-14T09:12:00Z",
+      issueType: "CLOUD_CONFIGURATION",
+      updatedAt: "2026-08-13T10:29:28Z",
+      environments: ["PRODUCTION"],
+      entityStatus: "Active",
+      businessImpact: "MBI",
+      // Ignored by design until the guardrail baseline landed, then reopened when the
+      // ignore date passed. The expiry is the structured field, never parsed out of the note.
+      ignoreNote: lapsed ? "Ignored (By Design) by MANSUY.\nExplanation: guardrails are being rolled out per project team; a baseline has to be agreed before they can be enforced.\n\nIgnored until: Feb 1, 2026" : void 0,
+      ignoreExpiredAt: lapsed ? "2026-02-01T00:00:00Z" : void 0,
+      // Remediation under way: the status the register collected and never counted.
+      status: working ? "IN_PROGRESS" : void 0,
+      assignee: working ? "platform-security@example.com" : void 0,
+      ticketUrls: working ? ["https://example.slack.com/archives/C0AGUF82MM1/p1775622232097139"] : void 0,
+      aiVerdict: working ? "REMEDIATE" : void 0,
+      aiRecommendedSeverity: working ? "MEDIUM" : void 0
     }));
-  }
+  });
   var G2 = [
     { assetId: "agent-a", count: 1, llm: ["LLM06", "LLM01"], asi: ["ASI03", "ASI01"], ml: ["Data Poisoning"], fiveRs: ["Restrict"], why: "Prompt injection reaches PII and credentials; 5Rs gap confirms data is not restricted." },
     { assetId: "agent-b", count: 1, llm: ["LLM06", "LLM01"], asi: ["ASI03", "ASI01"], ml: ["Data Poisoning"], fiveRs: ["Restrict"], why: "Over-privileged IAM on a customer-facing managed agent." },
@@ -4626,6 +4803,55 @@ var Server = (() => {
       frameworks: { owaspAgentic: ["ASI03"], fiveRs: ["Reconfigure"] },
       createdAt: "2026-06-10T15:02:00Z"
     }));
+  }
+  var _a4;
+  {
+    const asset = AGENTS.find((a) => a.id === "agent-e");
+    const OTHER_SEEDS = [
+      {
+        ruleId: "wc-id-4101",
+        ruleName: "AI model endpoint without request logging",
+        sev: "LOW",
+        why: "Model invocations are not logged, so misuse leaves no trail to investigate."
+      },
+      {
+        ruleId: "wc-id-4102",
+        ruleName: "AI training dataset stored without encryption at rest",
+        sev: "MEDIUM",
+        why: "Training data is readable to anyone who reaches the bucket."
+      },
+      {
+        ruleId: "wc-id-4103",
+        ruleName: "AI service account key older than 90 days",
+        sev: "LOW",
+        why: "A long-lived static key on an AI workload widens the window for credential theft."
+      }
+    ];
+    for (const seed of OTHER_SEEDS) {
+      issues.push(issue({
+        id: nextIssueId(),
+        ruleId: seed.ruleId,
+        ruleName: seed.ruleName,
+        // CLOUD_CONFIGURATION: the type the register used to filter out entirely.
+        issueType: "CLOUD_CONFIGURATION",
+        assetId: asset.id,
+        assetName: asset.name,
+        nativeSeverity: seed.sev,
+        region: asset.region,
+        account: (_a4 = asset.account) == null ? void 0 : _a4.name,
+        projects: asset.projects,
+        justification: seed.why,
+        // No frameworks: an unmodelled rule contributes no AARS gap codes, so pillar B is
+        // left exactly where it was. Deriving codes from the rule's own risks/tags would
+        // re-price every asset with no way to attribute the movement.
+        frameworks: void 0,
+        createdAt: "2026-07-02T08:15:00Z",
+        environments: ["PRODUCTION"],
+        businessImpact: "MBI",
+        entityStatus: "Active",
+        updatedAt: "2026-08-13T10:30:01Z"
+      }));
+    }
   }
   var HINTS = {
     "agent-a": { gaps: [gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
@@ -4718,12 +4944,12 @@ var Server = (() => {
     }
   }
   function assetToRow(n) {
-    var _a4, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q;
     return {
       id: n.id,
       kind: n.kind,
       name: n.name,
-      native_type: (_a4 = n.nativeType) != null ? _a4 : null,
+      native_type: (_a5 = n.nativeType) != null ? _a5 : null,
       cloud: (_b = n.cloudPlatform) != null ? _b : null,
       region: (_c = n.region) != null ? _c : null,
       status: (_d = n.status) != null ? _d : null,
@@ -4752,9 +4978,9 @@ var Server = (() => {
     };
   }
   function rowToAsset(r) {
-    var _a4, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
     const node2 = {
-      id: String((_a4 = r["id"]) != null ? _a4 : ""),
+      id: String((_a5 = r["id"]) != null ? _a5 : ""),
       kind: String((_b = r["kind"]) != null ? _b : "AI_AGENT"),
       name: String((_c = r["name"]) != null ? _c : ""),
       nativeType: (_d = r["native_type"]) != null ? _d : void 0,
@@ -4801,20 +5027,20 @@ var Server = (() => {
     return node2;
   }
   function edgeToRow(e) {
-    var _a4;
+    var _a5;
     return {
       id: e.id,
       src: e.src,
       dst: e.dst,
       type: e.type,
       negated: boolCell(e.negated),
-      access_type: (_a4 = e.accessType) != null ? _a4 : null
+      access_type: (_a5 = e.accessType) != null ? _a5 : null
     };
   }
   function rowToEdge(r) {
-    var _a4, _b, _c, _d, _e;
+    var _a5, _b, _c, _d, _e;
     const e = {
-      id: String((_a4 = r["id"]) != null ? _a4 : ""),
+      id: String((_a5 = r["id"]) != null ? _a5 : ""),
       src: String((_b = r["src"]) != null ? _b : ""),
       dst: String((_c = r["dst"]) != null ? _c : ""),
       type: String((_d = r["type"]) != null ? _d : "USES")
@@ -4825,7 +5051,7 @@ var Server = (() => {
     return e;
   }
   function issueToRow(i) {
-    var _a4, _b, _c, _d, _e, _f, _g, _h, _i;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x;
     return {
       id: i.id,
       rule_id: i.ruleId,
@@ -4836,7 +5062,7 @@ var Server = (() => {
       status: i.status,
       asset_id: i.assetId,
       asset_name: i.assetName,
-      region: (_a4 = i.region) != null ? _a4 : null,
+      region: (_a5 = i.region) != null ? _a5 : null,
       account: (_b = i.account) != null ? _b : null,
       projects_json: JSON.stringify((_c = i.projects) != null ? _c : []),
       frameworks_json: JSON.stringify((_d = i.frameworks) != null ? _d : {}),
@@ -4844,16 +5070,37 @@ var Server = (() => {
       created_at: (_f = i.createdAt) != null ? _f : null,
       due_at: (_g = i.dueAt) != null ? _g : null,
       resolution_recommendation: (_h = i.resolutionRecommendation) != null ? _h : null,
-      remediation: (_i = i.remediation) != null ? _i : null
+      remediation: (_i = i.remediation) != null ? _i : null,
+      issue_type: (_j = i.issueType) != null ? _j : null,
+      updated_at: (_k = i.updatedAt) != null ? _k : null,
+      resolved_at: (_l = i.resolvedAt) != null ? _l : null,
+      resolution_reason: (_m = i.resolutionReason) != null ? _m : null,
+      resolved_by: (_n = i.resolvedBy) != null ? _n : null,
+      assignee: (_o = i.assignee) != null ? _o : null,
+      // Comma-joined, matching combo_groups / technology_categories on ai_assets; the
+      // _json suffix is reserved for structured values.
+      environments: ((_p = i.environments) != null ? _p : []).join(","),
+      validated_exploitable: boolCell(i.validatedAsExploitable),
+      business_impact: (_q = i.businessImpact) != null ? _q : null,
+      entity_status: (_r = i.entityStatus) != null ? _r : null,
+      subscription_id: (_s = i.subscriptionId) != null ? _s : null,
+      ignore_note: (_t = i.ignoreNote) != null ? _t : null,
+      ignore_expired_at: (_u = i.ignoreExpiredAt) != null ? _u : null,
+      ticket_urls: ((_v = i.ticketUrls) != null ? _v : []).join(","),
+      ai_verdict: (_w = i.aiVerdict) != null ? _w : null,
+      ai_recommended_severity: (_x = i.aiRecommendedSeverity) != null ? _x : null
     };
   }
   function rowToIssue(r) {
-    var _a4, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
-    return {
-      id: String((_a4 = r["id"]) != null ? _a4 : ""),
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E;
+    const issue2 = {
+      id: String((_a5 = r["id"]) != null ? _a5 : ""),
       ruleId: String((_b = r["rule_id"]) != null ? _b : ""),
       ruleName: String((_c = r["rule_name"]) != null ? _c : ""),
-      comboGroup: String((_d = r["combo_group"]) != null ? _d : ""),
+      // A ledger written before the Other bucket existed holds "" for every unclassified
+      // issue. Without this fallback those rows keep falling out of every rollup until
+      // someone happens to re-sync.
+      comboGroup: String((_d = r["combo_group"]) != null ? _d : "") || OTHER_GROUP_ID,
       nativeSeverity: String((_e = r["native_severity"]) != null ? _e : "UNKNOWN"),
       adjustedSeverity: String((_f = r["adjusted_severity"]) != null ? _f : "UNKNOWN"),
       status: String((_g = r["status"]) != null ? _g : "OPEN"),
@@ -4867,24 +5114,43 @@ var Server = (() => {
       createdAt: (_m = r["created_at"]) != null ? _m : void 0,
       dueAt: (_n = r["due_at"]) != null ? _n : void 0,
       resolutionRecommendation: (_o = r["resolution_recommendation"]) != null ? _o : void 0,
-      remediation: (_p = r["remediation"]) != null ? _p : void 0
+      remediation: (_p = r["remediation"]) != null ? _p : void 0,
+      issueType: (_q = r["issue_type"]) != null ? _q : void 0,
+      updatedAt: (_r = r["updated_at"]) != null ? _r : void 0,
+      resolvedAt: (_s = r["resolved_at"]) != null ? _s : void 0,
+      resolutionReason: (_t = r["resolution_reason"]) != null ? _t : void 0,
+      resolvedBy: (_u = r["resolved_by"]) != null ? _u : void 0,
+      assignee: (_v = r["assignee"]) != null ? _v : void 0,
+      businessImpact: (_w = r["business_impact"]) != null ? _w : void 0,
+      entityStatus: (_x = r["entity_status"]) != null ? _x : void 0,
+      subscriptionId: (_y = r["subscription_id"]) != null ? _y : void 0,
+      ignoreNote: (_z = r["ignore_note"]) != null ? _z : void 0,
+      ignoreExpiredAt: (_A = r["ignore_expired_at"]) != null ? _A : void 0,
+      aiVerdict: (_B = r["ai_verdict"]) != null ? _B : void 0,
+      aiRecommendedSeverity: (_C = r["ai_recommended_severity"]) != null ? _C : void 0
     };
+    const environments = String((_D = r["environments"]) != null ? _D : "").split(",").filter(Boolean);
+    if (environments.length) issue2.environments = environments;
+    const ticketUrls = String((_E = r["ticket_urls"]) != null ? _E : "").split(",").filter(Boolean);
+    if (ticketUrls.length) issue2.ticketUrls = ticketUrls;
+    if (parseBool(r["validated_exploitable"])) issue2.validatedAsExploitable = true;
+    return issue2;
   }
   function findingToRow(f) {
-    var _a4, _b;
+    var _a5, _b;
     return {
       id: f.id,
       resource_id: f.resourceId,
       rule_short_id: f.ruleShortId,
       severity: f.severity,
-      remediation: (_a4 = f.remediation) != null ? _a4 : null,
+      remediation: (_a5 = f.remediation) != null ? _a5 : null,
       framework_codes: ((_b = f.frameworkCodes) != null ? _b : []).join(",")
     };
   }
   function rowToFinding(r) {
-    var _a4, _b, _c, _d, _e, _f;
+    var _a5, _b, _c, _d, _e, _f;
     return {
-      id: String((_a4 = r["id"]) != null ? _a4 : ""),
+      id: String((_a5 = r["id"]) != null ? _a5 : ""),
       resourceId: String((_b = r["resource_id"]) != null ? _b : ""),
       ruleShortId: String((_c = r["rule_short_id"]) != null ? _c : ""),
       severity: String((_d = r["severity"]) != null ? _d : "UNKNOWN"),
@@ -4959,7 +5225,7 @@ var Server = (() => {
     return enrichGraphDoc(base, issues2, hints, rule);
   }
   function loadRawGraph() {
-    var _a4;
+    var _a5;
     const nodes = loadAssetsRaw();
     if (!nodes.length) return null;
     const edges2 = readAll(TABS.edges).map(rowToEdge);
@@ -4967,7 +5233,7 @@ var Server = (() => {
     return {
       nodes: nodes.map(stripAarsScore),
       edges: edges2,
-      syncedAt: latest ? String((_a4 = latest["finished_at"]) != null ? _a4 : "") : ""
+      syncedAt: latest ? String((_a5 = latest["finished_at"]) != null ? _a5 : "") : ""
     };
   }
   function stripAarsScore(n) {
@@ -5003,13 +5269,13 @@ var Server = (() => {
   function normalizeLegacyAars(doc) {
     let touched = false;
     const nodes = doc.nodes.map((n) => {
-      var _a4;
+      var _a5;
       const loose = n;
       if (loose.aarsBand === void 0 && n.aarsSeverity === void 0) return n;
       touched = true;
       const next = { ...loose };
       delete next.aarsBand;
-      const sev = normalizeAarsSeverity((_a4 = n.aarsSeverity) != null ? _a4 : loose.aarsBand);
+      const sev = normalizeAarsSeverity((_a5 = n.aarsSeverity) != null ? _a5 : loose.aarsBand);
       if (sev) next.aarsSeverity = sev;
       else delete next.aarsSeverity;
       return next;
@@ -5040,14 +5306,14 @@ var Server = (() => {
     return nodes === doc.nodes ? doc : { ...doc, nodes };
   }
   function loadGraphDocUncached() {
-    var _a4;
+    var _a5;
     const snap = readGraphSnapshot();
     if (snap) return withRiskNodes(withBandsApplied(normalizeLegacyAars(snap)));
     const assetRows = readAll(TABS.assets);
     if (!assetRows.length) return null;
     const nodes = withCurrentBands(assetRows.map(rowToAsset), currentBands());
     const edges2 = readAll(TABS.edges).map(rowToEdge);
-    const issues2 = loadIssues().filter((i) => i.status === "OPEN");
+    const issues2 = loadIssues().filter(isUnresolvedIssue);
     for (const issue2 of issues2) {
       nodes.push({
         id: issue2.id,
@@ -5068,7 +5334,7 @@ var Server = (() => {
     return withRiskNodes({
       nodes,
       edges: edges2,
-      syncedAt: latest ? String((_a4 = latest["finished_at"]) != null ? _a4 : "") : ""
+      syncedAt: latest ? String((_a5 = latest["finished_at"]) != null ? _a5 : "") : ""
     });
   }
   function loadAssetsRaw() {
@@ -5210,17 +5476,17 @@ var Server = (() => {
     ];
   }
   function rootFieldOf(step) {
-    var _a4;
+    var _a5;
     if (step.run === "cloudResources") return "cloudResourcesV2";
     if (step.run === "graphSearch") return "graphSearch";
-    return (_a4 = step.connectionField) != null ? _a4 : "";
+    return (_a5 = step.connectionField) != null ? _a5 : "";
   }
   function describeSyncSteps() {
     const overrides = getScanVars2();
     const resolved = describeAiTypes();
     return syncSteps(resolved.types).map((step) => {
-      var _a4, _b;
-      const base = defaultStepVariables(step.id, (_a4 = step.extraVariables) != null ? _a4 : {}, resolved.types);
+      var _a5, _b;
+      const base = defaultStepVariables(step.id, (_a5 = step.extraVariables) != null ? _a5 : {}, resolved.types);
       return {
         id: step.id,
         area: step.area,
@@ -5265,12 +5531,12 @@ var Server = (() => {
     }
   }
   function testStepVariables(stepId, vars) {
-    var _a4, _b;
+    var _a5, _b;
     const step = syncSteps().filter((s) => s.id === stepId)[0];
     if (!step) throw new Error(`No sync step called ${stepId}.`);
     const proposed = effectiveStepVars(
       stepId,
-      defaultStepVariables(stepId, (_a4 = step.extraVariables) != null ? _a4 : {}),
+      defaultStepVariables(stepId, (_a5 = step.extraVariables) != null ? _a5 : {}),
       vars
     );
     const opts = { query: step.query, cursor: null, extraVariables: proposed };
@@ -5358,10 +5624,10 @@ var Server = (() => {
     return Array.isArray(v) ? v.map(String) : [];
   }
   function jobParams(job) {
-    var _a4;
+    var _a5;
     const parsed = parseJson(job.params_json, {});
     return {
-      apiCalls: Number((_a4 = parsed["apiCalls"]) != null ? _a4 : 0),
+      apiCalls: Number((_a5 = parsed["apiCalls"]) != null ? _a5 : 0),
       skippedSteps: strList(parsed["skippedSteps"])
     };
   }
@@ -5406,9 +5672,9 @@ var Server = (() => {
     ScriptApp.newTrigger(CONTINUE_HANDLER).timeBased().after(CONTINUE_DELAY_MS).create();
   }
   function runBattery(job, opts) {
-    var _a4, _b;
+    var _a5, _b;
     const deadline = Date.now() + opts.budgetMs;
-    const syncId = (_a4 = job.sync_id) != null ? _a4 : job.job_id;
+    const syncId = (_a5 = job.sync_id) != null ? _a5 : job.job_id;
     const refs = partRefs(job);
     const params = jobParams(job);
     let stepIndex = job.step_index;
@@ -5578,11 +5844,11 @@ var Server = (() => {
     );
   }
   function openIssues() {
-    return loadIssues().filter((i) => i.status === "OPEN");
+    return loadIssues().filter(isUnresolvedIssue);
   }
   function bootstrap(_p) {
     return run(() => {
-      var _a4;
+      var _a5;
       return {
         ...cached("bootstrapCore", null, bootstrapCore),
         dataVersion: dataVersion(),
@@ -5590,12 +5856,12 @@ var Server = (() => {
         // Outside the cached core on purpose: a cached build stamp would be the one thing
         // guaranteed to lie after a deploy.
         build: buildInfo(),
-        activeJob: (_a4 = activeJob()) != null ? _a4 : null
+        activeJob: (_a5 = activeJob()) != null ? _a5 : null
       };
     });
   }
   function bootstrapCore() {
-    var _a4, _b;
+    var _a5, _b;
     const assets = loadAssets();
     const issues2 = openIssues();
     const latest = latestSync();
@@ -5603,7 +5869,7 @@ var Server = (() => {
     const scoredVersion = getScoredRuleVersion2();
     const bySeverity = {};
     for (const issue2 of issues2) {
-      bySeverity[issue2.adjustedSeverity] = ((_a4 = bySeverity[issue2.adjustedSeverity]) != null ? _a4 : 0) + 1;
+      bySeverity[issue2.adjustedSeverity] = ((_a5 = bySeverity[issue2.adjustedSeverity]) != null ? _a5 : 0) + 1;
     }
     const byAarsSeverity = {};
     for (const a of assets) {
@@ -5616,12 +5882,16 @@ var Server = (() => {
         glyphs: SEVERITY_GLYPHS,
         aarsSeverities: AARS_SEVERITY_ORDER
       },
-      comboLegend: COMBO_GROUPS.map((g) => ({
+      // REGISTER_GROUPS: the graph can group by the Other bucket, so the legend has to be
+      // able to name it — a group the canvas can draw but the legend can't label reads as
+      // a rendering bug.
+      comboLegend: REGISTER_GROUPS.map((g) => ({
         id: g.id,
         title: g.title,
         shortLabel: g.shortLabel,
         nativeSeverity: g.nativeSeverity,
-        adjustedSeverity: g.adjustedSeverity
+        adjustedSeverity: g.adjustedSeverity,
+        amplified: g.amplified
       })),
       settings: {
         defaultDepth: getDefaultDepth2(),
@@ -5663,14 +5933,14 @@ var Server = (() => {
     };
   }
   function filterOptions(assets) {
-    var _a4;
+    var _a5;
     const kinds = /* @__PURE__ */ new Set();
     const clouds = /* @__PURE__ */ new Set();
     const projects = /* @__PURE__ */ new Set();
     for (const a of assets) {
       kinds.add(a.kind);
       if (a.cloudPlatform) clouds.add(a.cloudPlatform);
-      for (const p of (_a4 = a.projects) != null ? _a4 : []) projects.add(p.name);
+      for (const p of (_a5 = a.projects) != null ? _a5 : []) projects.add(p.name);
       if (conditionHolds(a, "SENSITIVE_DATA")) kinds.add("SENSITIVE_DATA");
       if (conditionHolds(a, "INTERNET_EXPOSURE")) kinds.add("INTERNET_EXPOSURE");
       if (conditionHolds(a, "EXCESSIVE_PRIVILEGE")) kinds.add("EXCESSIVE_PRIVILEGE");
@@ -5686,7 +5956,7 @@ var Server = (() => {
     return run(() => {
       const params = p != null ? p : {};
       return cached("getGraph", graphCacheParams(params), () => {
-        var _a4;
+        var _a5;
         const doc = loadGraphDoc();
         if (!doc) return { empty: true };
         const options = resolveGraphParams(params, {
@@ -5694,8 +5964,8 @@ var Server = (() => {
           maxNodes: getMaxNodes2(),
           issues: openIssues(),
           scoredAssetIds: doc.nodes.filter((n) => {
-            var _a5;
-            return ((_a5 = n.aars) != null ? _a5 : 0) > 0;
+            var _a6;
+            return ((_a6 = n.aars) != null ? _a6 : 0) > 0;
           }).map((n) => n.id)
         });
         const view = resolveLayoutParams(params);
@@ -5712,7 +5982,7 @@ var Server = (() => {
             maxNodes: options.maxNodes,
             // the budget in force, so the UI can name it
             seedIds: options.seedIds,
-            expandIds: (_a4 = options.expandIds) != null ? _a4 : [],
+            expandIds: (_a5 = options.expandIds) != null ? _a5 : [],
             layout: view.mode,
             groupBy: view.groupBy,
             sort: view.sort
@@ -5723,12 +5993,12 @@ var Server = (() => {
     });
   }
   function assetRow(n) {
-    var _a4, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v;
     return {
       id: n.id,
       name: n.name,
       kind: n.kind,
-      nativeType: (_a4 = n.nativeType) != null ? _a4 : null,
+      nativeType: (_a5 = n.nativeType) != null ? _a5 : null,
       cloud: (_b = n.cloudPlatform) != null ? _b : null,
       region: (_c = n.region) != null ? _c : null,
       status: (_d = n.status) != null ? _d : null,
@@ -5752,12 +6022,12 @@ var Server = (() => {
     };
   }
   function assetTableRow(n, issuesBySeverity) {
-    var _a4, _b, _c, _d, _e, _f, _g, _h;
+    var _a5, _b, _c, _d, _e, _f, _g, _h;
     const row = {
       id: n.id,
       name: n.name,
       kind: n.kind,
-      cloud: (_a4 = n.cloudPlatform) != null ? _a4 : null,
+      cloud: (_a5 = n.cloudPlatform) != null ? _a5 : null,
       region: (_b = n.region) != null ? _b : null,
       severity: (_c = n.severity) != null ? _c : null,
       aars: (_d = n.aars) != null ? _d : null,
@@ -5771,11 +6041,11 @@ var Server = (() => {
     return row;
   }
   function issuesBySeverityByAsset(issues2) {
-    var _a4, _b, _c;
+    var _a5, _b, _c;
     const out = /* @__PURE__ */ new Map();
     for (const issue2 of issues2) {
       if (!issue2.assetId) continue;
-      const bucket = (_a4 = out.get(issue2.assetId)) != null ? _a4 : {};
+      const bucket = (_a5 = out.get(issue2.assetId)) != null ? _a5 : {};
       const sev = (_b = issue2.adjustedSeverity) != null ? _b : "UNKNOWN";
       bucket[sev] = ((_c = bucket[sev]) != null ? _c : 0) + 1;
       out.set(issue2.assetId, bucket);
@@ -5783,7 +6053,7 @@ var Server = (() => {
     return out;
   }
   function assetsModel() {
-    var _a4, _b;
+    var _a5, _b;
     const trend = aarsTrendFromHistory(syncHistory());
     const assets = loadAssets();
     const issues2 = openIssues();
@@ -5798,7 +6068,7 @@ var Server = (() => {
     const severities = /* @__PURE__ */ new Set();
     const projects = /* @__PURE__ */ new Set();
     for (const a of assets) {
-      if (a.aarsSeverity) aarsSeverityCounts[a.aarsSeverity] = ((_a4 = aarsSeverityCounts[a.aarsSeverity]) != null ? _a4 : 0) + 1;
+      if (a.aarsSeverity) aarsSeverityCounts[a.aarsSeverity] = ((_a5 = aarsSeverityCounts[a.aarsSeverity]) != null ? _a5 : 0) + 1;
       kinds.add(a.kind);
       if (a.cloudPlatform) clouds.add(a.cloudPlatform);
       if (a.region) regions.add(a.region);
@@ -5889,13 +6159,13 @@ var Server = (() => {
     });
   }
   function aarsDeltas(trend, live) {
-    var _a4, _b, _c, _d, _e, _f, _g;
+    var _a5, _b, _c, _d, _e, _f, _g;
     if (trend.length < 2) return null;
     const last = trend[trend.length - 1];
     const prev = trend[trend.length - 2];
     if (last.ruleVersion !== prev.ruleVersion) return null;
     for (const sev of AARS_SEVERITY_ORDER) {
-      if (((_b = (_a4 = last.counts) == null ? void 0 : _a4[sev]) != null ? _b : 0) !== ((_c = live[sev]) != null ? _c : 0)) return null;
+      if (((_b = (_a5 = last.counts) == null ? void 0 : _a5[sev]) != null ? _b : 0) !== ((_c = live[sev]) != null ? _c : 0)) return null;
     }
     const counts = {};
     for (const sev of AARS_SEVERITY_ORDER) {
@@ -5907,18 +6177,18 @@ var Server = (() => {
     return run(
       () => cached("assetOptions", null, () => ({
         rows: [...loadAssets()].sort((a, b) => {
-          var _a4, _b;
-          return Number((_a4 = b.aars) != null ? _a4 : -1) - Number((_b = a.aars) != null ? _b : -1);
+          var _a5, _b;
+          return Number((_a5 = b.aars) != null ? _a5 : -1) - Number((_b = a.aars) != null ? _b : -1);
         }).map((n) => ({ id: n.id, name: n.name, kind: n.kind }))
       }))
     );
   }
   function getAssetDetail(p) {
     return run(() => {
-      var _a4;
-      const id = String((_a4 = (p != null ? p : {})["id"]) != null ? _a4 : "");
+      var _a5;
+      const id = String((_a5 = (p != null ? p : {})["id"]) != null ? _a5 : "");
       return cached("getAssetDetail", { id }, () => {
-        var _a5;
+        var _a6;
         const doc = loadGraphDoc();
         if (!doc) return null;
         const nodeById = new Map(doc.nodes.map((n) => [n.id, n]));
@@ -5939,7 +6209,7 @@ var Server = (() => {
         }
         const findings = loadFindings().filter((f) => f.resourceId === id);
         return {
-          node: { ...assetRow(node2), aarsPillars: (_a5 = node2.aarsPillars) != null ? _a5 : null },
+          node: { ...assetRow(node2), aarsPillars: (_a6 = node2.aarsPillars) != null ? _a6 : null },
           issues: issues2,
           neighbors,
           findings
@@ -5949,9 +6219,9 @@ var Server = (() => {
   }
   function getIssues(p) {
     return run(() => {
-      var _a4;
+      var _a5;
       const params = p != null ? p : {};
-      const group = String((_a4 = params["group"]) != null ? _a4 : "");
+      const group = String((_a5 = params["group"]) != null ? _a5 : "");
       return cached("getIssues", { group }, () => {
         let rows = loadIssues();
         if (group) rows = rows.filter((i) => i.comboGroup === group);
@@ -5961,8 +6231,8 @@ var Server = (() => {
   }
   function getIssueDetail(p) {
     return run(() => {
-      var _a4, _b;
-      const id = String((_a4 = (p != null ? p : {})["id"]) != null ? _a4 : "");
+      var _a5, _b;
+      const id = String((_a5 = (p != null ? p : {})["id"]) != null ? _a5 : "");
       const issue2 = (_b = loadIssues().find((i) => i.id === id)) != null ? _b : null;
       if (!issue2) return null;
       const group = issue2.comboGroup ? comboGroupById(issue2.comboGroup) : null;
@@ -5985,31 +6255,47 @@ var Server = (() => {
         const issues2 = openIssues();
         const assetRows = loadAssets();
         const assets = new Map(assetRows.map((a) => [a.id, a]));
+        const digest = comboDigest(issues2, assetRows, (/* @__PURE__ */ new Date()).toISOString());
+        const digestById = new Map(digest.groups.map((g) => [g.id, g]));
         return {
           // Every count the page renders, computed once here rather than four times in the
           // browser. Additive: the `groups` shape below is unchanged, so a payload cached
           // before this shipped still renders the page (minus the summary sections).
-          digest: comboDigest(issues2, assetRows, (/* @__PURE__ */ new Date()).toISOString()),
-          groups: comboSummary(issues2).map((s) => ({
-            id: s.group.id,
-            ruleId: s.group.ruleId,
-            title: s.group.title,
-            shortLabel: s.group.shortLabel,
-            nativeSeverity: s.group.nativeSeverity,
-            adjustedSeverity: s.group.adjustedSeverity,
-            amplifierNote: s.group.amplifierNote,
-            // The declared half of the condition matrix. It rides on the group rather than
-            // only on the digest so the card's condition strip still says what the rule
-            // tests when an older cached payload arrives with no digest attached.
-            conditions: s.group.conditions,
-            frameworks: s.group.frameworks,
-            count: s.count,
-            assets: s.assetIds.map((id) => {
-              var _a4, _b;
-              const a = assets.get(id);
-              return a ? { id, name: a.name, aars: (_a4 = a.aars) != null ? _a4 : null, aarsSeverity: (_b = a.aarsSeverity) != null ? _b : null } : { id, name: id, aars: null, aarsSeverity: null };
-            })
-          })),
+          digest,
+          groups: comboSummary(issues2).map((s) => {
+            var _a5, _b, _c, _d;
+            return {
+              id: s.group.id,
+              ruleId: s.group.ruleId,
+              title: s.group.title,
+              shortLabel: s.group.shortLabel,
+              nativeSeverity: s.group.nativeSeverity,
+              adjustedSeverity: s.group.adjustedSeverity,
+              amplifierNote: s.group.amplifierNote,
+              // Whether this group re-rates its issues. The card renders the shift badge and
+              // the amplifier note together off this flag, so the note can never go missing
+              // from beside an adjusted severity — and the Other bucket, which makes no such
+              // claim, renders neither.
+              amplified: s.group.amplified,
+              // The declared half of the condition matrix. It rides on the group rather than
+              // only on the digest so the card's condition strip still says what the rule
+              // tests when an older cached payload arrives with no digest attached.
+              conditions: s.group.conditions,
+              frameworks: s.group.frameworks,
+              // The measured severity mix, mirrored onto the group so the page's severity
+              // filter can ask what a card actually HOLDS. Filtering on the declared
+              // adjustedSeverity alone hides the Other bucket — whose declared severity is
+              // the worst it holds, not the only one — while it still holds matching rows.
+              adjustedMix: (_b = (_a5 = digestById.get(s.group.id)) == null ? void 0 : _a5.adjustedMix) != null ? _b : {},
+              nativeMix: (_d = (_c = digestById.get(s.group.id)) == null ? void 0 : _c.nativeMix) != null ? _d : {},
+              count: s.count,
+              assets: s.assetIds.map((id) => {
+                var _a6, _b2;
+                const a = assets.get(id);
+                return a ? { id, name: a.name, aars: (_a6 = a.aars) != null ? _a6 : null, aarsSeverity: (_b2 = a.aarsSeverity) != null ? _b2 : null } : { id, name: id, aars: null, aarsSeverity: null };
+              })
+            };
+          }),
           totalOpen: issues2.length
         };
       })
@@ -6020,14 +6306,14 @@ var Server = (() => {
   }
   function getJobStatus(p) {
     return run(() => {
-      var _a4;
-      return jobStatus(String((_a4 = (p != null ? p : {})["jobId"]) != null ? _a4 : ""));
+      var _a5;
+      return jobStatus(String((_a5 = (p != null ? p : {})["jobId"]) != null ? _a5 : ""));
     });
   }
   function cancelSync2(p) {
     return run(() => {
-      var _a4;
-      return cancelSync(String((_a4 = (p != null ? p : {})["jobId"]) != null ? _a4 : ""));
+      var _a5;
+      return cancelSync(String((_a5 = (p != null ? p : {})["jobId"]) != null ? _a5 : ""));
     });
   }
   function getSyncHistory(_p) {
@@ -6049,9 +6335,9 @@ var Server = (() => {
   }
   function setScanVars2(p) {
     return mutate(() => {
-      var _a4;
+      var _a5;
       const params = p != null ? p : {};
-      const stepId = String((_a4 = params["stepId"]) != null ? _a4 : "");
+      const stepId = String((_a5 = params["stepId"]) != null ? _a5 : "");
       if (!isEditableStep(stepId)) {
         throw new Error(`${stepId || "That step"} does not take editable variables.`);
       }
@@ -6064,9 +6350,9 @@ var Server = (() => {
   }
   function testScanVars(p) {
     return run(() => {
-      var _a4;
+      var _a5;
       const params = p != null ? p : {};
-      const stepId = String((_a4 = params["stepId"]) != null ? _a4 : "");
+      const stepId = String((_a5 = params["stepId"]) != null ? _a5 : "");
       if (!isEditableStep(stepId)) {
         throw new Error(`${stepId || "That step"} does not take editable variables.`);
       }
@@ -6148,7 +6434,7 @@ var Server = (() => {
   }
   function previewAarsRule(p) {
     return run(() => {
-      var _a4, _b;
+      var _a5, _b;
       const params = p != null ? p : {};
       const proposed = cleanAarsRule(params["rule"]);
       const errors = validateAarsRule(proposed);
@@ -6159,8 +6445,8 @@ var Server = (() => {
       const tally = gapMatchTally(
         proposed,
         before.map((n) => {
-          var _a5, _b2;
-          return ((_b2 = (_a5 = n.aarsInput) == null ? void 0 : _a5.gaps) != null ? _b2 : []).map((g) => g.code);
+          var _a6, _b2;
+          return ((_b2 = (_a6 = n.aarsInput) == null ? void 0 : _a6.gaps) != null ? _b2 : []).map((g) => g.code);
         })
       );
       const census = Object.keys(tally.byCode).map((code) => ({ code, assets: tally.byCode[code] })).sort((x, y) => y.assets - x.assets || x.code.localeCompare(y.code)).slice(0, GAP_CENSUS_MAX);
@@ -6169,7 +6455,7 @@ var Server = (() => {
         const b = beforeById.get(a.id);
         const fromScore = typeof (b == null ? void 0 : b.aars) === "number" ? b.aars : null;
         const toScore = typeof a.aars === "number" ? a.aars : null;
-        const fromSeverity = (_a4 = b == null ? void 0 : b.aarsSeverity) != null ? _a4 : null;
+        const fromSeverity = (_a5 = b == null ? void 0 : b.aarsSeverity) != null ? _a5 : null;
         const toSeverity = (_b = a.aarsSeverity) != null ? _b : null;
         if (fromScore === toScore && fromSeverity === toSeverity) continue;
         movers.push({
@@ -6185,12 +6471,12 @@ var Server = (() => {
         });
       }
       movers.sort((x, y) => {
-        var _a5, _b2;
+        var _a6, _b2;
         const lvl = Number(y["levelChanged"]) - Number(x["levelChanged"]);
         if (lvl) return lvl;
         const mag = Math.abs(Number(y["delta"])) - Math.abs(Number(x["delta"]));
         if (mag) return mag;
-        return Number((_a5 = y["toScore"]) != null ? _a5 : -1) - Number((_b2 = x["toScore"]) != null ? _b2 : -1);
+        return Number((_a6 = y["toScore"]) != null ? _a6 : -1) - Number((_b2 = x["toScore"]) != null ? _b2 : -1);
       });
       return {
         total: before.length,
@@ -6227,10 +6513,10 @@ var Server = (() => {
   }
   function scoreAarsSample(p) {
     return run(() => {
-      var _a4, _b;
+      var _a5, _b;
       const params = p != null ? p : {};
       const rule = cleanAarsRule(params["rule"]);
-      const sample = (_a4 = params["sample"]) != null ? _a4 : {};
+      const sample = (_a5 = params["sample"]) != null ? _a5 : {};
       const rawSeverities = Array.isArray(sample["issueSeverities"]) ? sample["issueSeverities"] : [];
       const issueSeverities = rawSeverities.slice(0, SAMPLE_SEVERITIES_MAX).map((s) => String(s).trim().toUpperCase());
       const rawCodes = Array.isArray(sample["gapCodes"]) ? sample["gapCodes"] : [];

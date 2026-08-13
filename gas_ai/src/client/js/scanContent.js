@@ -95,19 +95,24 @@ export const SCAN_AREAS = [
   {
     id: "toxic",
     title: "Toxic Combination Engine",
-    query: "issuesV2 + per-rule relatedIssue (ISSUES_*)",
-    what: "Multi-condition rules that only fire when risks combine: privileged agents with " +
-      "sensitive data access, model invocation without guardrails, permissive execution " +
-      "identities.",
+    query: "issuesV2 (AI risk category, both issue types) + per-rule relatedIssue (ISSUES_*)",
+    what: "Every issue Wiz files under the AI risk category, tenant-wide — both toxic " +
+      "combinations and cloud-configuration issues. Four multi-condition patterns are " +
+      "modelled and re-rated (privileged agents with sensitive data access, model " +
+      "invocation without guardrails, permissive execution identities); everything else " +
+      "in the category is kept as Other AI risk rather than dropped.",
     lands: "combos",
     figure: (ctx) => {
       const totals = ctx.digest && ctx.digest.totals;
       if (!totals) return null;
+      // Unresolved, not just OPEN — the same population the Wiz console counts, so this
+      // figure can be compared against it directly.
+      const parts = [n(totals.patternsActive) + " of " + n(totals.patternsTotal) + " patterns firing"];
+      if (totals.unclassified) parts.push(n(totals.unclassified) + " outside them");
       return {
         value: String(n(totals.totalOpen)),
-        unit: "open · " + n(totals.patternsActive) + " of " + n(totals.patternsTotal) +
-          " patterns firing",
-        short: n(totals.totalOpen) + " open",
+        unit: "unresolved · " + parts.join(" · "),
+        short: n(totals.totalOpen) + " unresolved",
         source: "digest.totals.totalOpen",
       };
     },

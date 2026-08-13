@@ -20,7 +20,7 @@ import {
   type GraphDoc,
   type IssueRow,
 } from "./graphTypes";
-import { classifyIssue, type ComboGroup } from "./toxicCombos";
+import { classifyIssue, OTHER_GROUP_ID, type ComboGroup } from "./toxicCombos";
 import { clean, type Rec } from "./util";
 
 function str(v: unknown): string | undefined {
@@ -218,12 +218,79 @@ export function normalizeRuleAssetsPage(rows: Rec[], group: ComboGroup): Normali
 }
 
 /**
- * issuesV2 page (real toxic-combination issues) → one IssueRow per issue (real
+ * Who resolved an issue. The API returns `{ user }` OR `{ serviceAccount }`, never both;
+ * collapse to one display string so the ledger holds a name rather than a shape.
+ */
+function resolvedByName(raw: unknown): string | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const by = raw as Rec;
+  const user = by["user"] as Rec | null | undefined;
+  if (user && typeof user === "object") {
+    const name = str(user["name"]) ?? str(user["email"]);
+    if (name) return name;
+  }
+  const sa = by["serviceAccount"] as Rec | null | undefined;
+  if (sa && typeof sa === "object") return str(sa["name"]);
+  return undefined;
+}
+
+/**
+ * The accepted-risk rationale off the note log, when there is one.
+ *
+ * `notes` is an ordered log: an ignore writes "Ignored (By Design) by X … Ignored until:
+ * Feb 1, 2026", and its lapse later prepends "Status was updated to OPEN … as ignore date
+ * expired". Only the rationale is extracted, and the "Ignored until" date inside it is
+ * deliberately NOT parsed — `rejectionExpiredAt` is the structured field for that, and the
+ * note is free text a human typed.
+ */
+function ignoreRationale(raw: unknown): string | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  for (const note of raw as Rec[]) {
+    if (!note || typeof note !== "object") continue;
+    const text = str(note["text"]);
+    if (text && /^Ignored\s*\(/i.test(text)) return text;
+  }
+  return undefined;
+}
+
+/** Worst business impact across an issue's projects — one column answering "does this matter". */
+const BUSINESS_IMPACT_ORDER = ["HBI", "MBI", "LBI"];
+function worstBusinessImpact(projects: Rec[]): string | undefined {
+  let best: string | undefined;
+  let bestRank = BUSINESS_IMPACT_ORDER.length;
+  for (const p of projects) {
+    const profile = p["riskProfile"] as Rec | null | undefined;
+    if (!profile || typeof profile !== "object") continue;
+    const impact = str(profile["businessImpact"]);
+    if (!impact) continue;
+    const rank = BUSINESS_IMPACT_ORDER.indexOf(impact);
+    if (rank >= 0 && rank < bestRank) {
+      bestRank = rank;
+      best = impact;
+    }
+  }
+  return best;
+}
+
+/** Every serviceTickets[].url, in response order. */
+function ticketUrlsOf(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return (raw as Rec[])
+    .map((t) => (t && typeof t === "object" ? str(t["url"]) : undefined))
+    .filter((u): u is string => Boolean(u));
+}
+
+/**
+ * issuesV2 page (the tenant's AI Security register) → one IssueRow per issue (real
  * multiplicity, real native severity) plus a thin GNode reconstructed from each
  * issue's entitySnapshot. The thin node is join-safety: if entitySnapshot.id matches
  * an inventory node it merges field-wise (and is deliberately minimal so it never
  * clobbers the inventory node's richer cloudAccount); if it has no inventory match,
  * the graph stays coherent instead of dangling a HAS_ISSUE edge at a missing node.
+ *
+ * An issue whose source rule matches no COMBO_GROUPS pattern is stamped OTHER_GROUP_ID,
+ * not "" — the filter collects the whole AI category, so unrecognised rules are real
+ * register rows rather than noise, and comboSummary gives them their own bucket.
  */
 export function normalizeIssuesPage(rows: Rec[]): NormalizedPart {
   const part = emptyPart();
@@ -250,17 +317,25 @@ export function normalizeIssuesPage(rows: Rec[]): NormalizedPart {
       (control && typeof control === "object" ? str(control["resolutionRecommendation"]) : undefined);
 
     const assetName = str(snap!["name"]) ?? assetId;
-    const projects = Array.isArray(raw["projects"])
-      ? (raw["projects"] as Rec[])
-          .map((p) => str((p as Rec)["name"]))
-          .filter((n): n is string => Boolean(n))
-      : [];
+    const projectRows = Array.isArray(raw["projects"]) ? (raw["projects"] as Rec[]) : [];
+    const projects = projectRows
+      .map((p) => str(p["name"]))
+      .filter((n): n is string => Boolean(n));
 
-    part.issues.push({
+    const assigneeRaw = raw["assignee"] as Rec | null | undefined;
+    const aiAnalysis = raw["aiRemediationAnalysis"] as Rec | null | undefined;
+    const environments = Array.isArray(raw["environments"])
+      ? (raw["environments"] as unknown[])
+          .map((e) => str(e))
+          .filter((e): e is string => Boolean(e))
+      : undefined;
+    const ticketUrls = ticketUrlsOf(raw["serviceTickets"]);
+
+    const issue: IssueRow = {
       id: issueId,
       ruleId: ruleId ?? group?.ruleId ?? "",
       ruleName: ruleName ?? group?.title ?? "",
-      comboGroup: group?.id ?? "",
+      comboGroup: group?.id ?? OTHER_GROUP_ID,
       nativeSeverity,
       adjustedSeverity,
       status: str(raw["status"]) ?? "OPEN",
@@ -273,7 +348,34 @@ export function normalizeIssuesPage(rows: Rec[]): NormalizedPart {
       createdAt: str(raw["createdAt"]),
       dueAt: str(raw["dueAt"]),
       resolutionRecommendation,
-    });
+      issueType: str(raw["type"]),
+      updatedAt: str(raw["updatedAt"]),
+      resolvedAt: str(raw["resolvedAt"]),
+      resolutionReason: str(raw["resolutionReason"]),
+      resolvedBy: resolvedByName(raw["resolvedBy"]),
+      assignee:
+        assigneeRaw && typeof assigneeRaw === "object"
+          ? str(assigneeRaw["name"]) ?? str(assigneeRaw["primaryEmail"])
+          : undefined,
+      businessImpact: worstBusinessImpact(projectRows),
+      entityStatus: str(snap!["status"]),
+      subscriptionId: str(snap!["subscriptionId"]),
+      ignoreNote: ignoreRationale(raw["notes"]),
+      ignoreExpiredAt: str(raw["rejectionExpiredAt"]),
+      aiVerdict:
+        aiAnalysis && typeof aiAnalysis === "object" ? str(aiAnalysis["verdict"]) : undefined,
+      aiRecommendedSeverity:
+        aiAnalysis && typeof aiAnalysis === "object"
+          ? (str(aiAnalysis["recommendedSeverity"]) as Severity | undefined)
+          : undefined,
+    };
+    // Only set the array/boolean fields when the response actually carried them, so an
+    // absent field stays undefined ("not captured") rather than becoming [] or false.
+    if (environments && environments.length) issue.environments = environments;
+    if (ticketUrls.length) issue.ticketUrls = ticketUrls;
+    if (raw["validatedAsExploitable"] === true) issue.validatedAsExploitable = true;
+
+    part.issues.push(issue);
 
     const kind = kindFromWizType(snap!["type"]);
     if (kind) {
@@ -286,6 +388,14 @@ export function normalizeIssuesPage(rows: Rec[]): NormalizedPart {
       if (region) node.region = region;
       const externalId = str(snap!["externalId"]);
       if (externalId) node.externalId = externalId;
+      // Nothing else goes on this node, and that is load-bearing. mergeParts merges
+      // field-wise on any truthy value and ISSUES_TOXIC runs AFTER INVENTORY_AI, so a
+      // field set here REPLACES the inventory's. entitySnapshot is a point-in-time copy
+      // taken when the issue fired: its status can be stale, and its tags are an object
+      // map holding whatever the snapshot caught, so either one would quietly overwrite
+      // fresher, richer inventory data. Both facts ride on the IssueRow instead
+      // (entityStatus, subscriptionId), where they describe the issue rather than
+      // claiming to describe the asset.
       part.nodes.push(node);
     }
   }

@@ -4,7 +4,7 @@
 // any toxic combination.
 
 import { clampDepth, clampMaxNodes } from "./settingsLogic";
-import { EDGE_BUDGET_RATIO } from "./config";
+import { EDGE_BUDGET_RATIO, isUnresolvedIssue } from "./config";
 import {
   GROUP_KEYS,
   LAYOUT_MODES,
@@ -48,7 +48,7 @@ function comboAssetIds(issues: IssueRow[], groupId?: string): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
   for (const issue of issues) {
-    if (issue.status !== "OPEN" || !issue.comboGroup) continue;
+    if (!isUnresolvedIssue(issue) || !issue.comboGroup) continue;
     if (groupId && issue.comboGroup !== groupId) continue;
     if (issue.assetId && !seen.has(issue.assetId)) {
       seen.add(issue.assetId);

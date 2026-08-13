@@ -196,7 +196,7 @@ export interface IssueRow {
   id: string;
   ruleId: string;
   ruleName: string;
-  comboGroup: string;          // ComboGroup.id, "" when unclassified
+  comboGroup: string;          // ComboGroup.id; OTHER_GROUP_ID when no rule pattern matched
   nativeSeverity: Severity;
   adjustedSeverity: Severity;
   status: string;              // OPEN / RESOLVED / ...
@@ -216,6 +216,29 @@ export interface IssueRow {
   dueAt?: string;                    // issuesV2 dueAt (SLA deadline)
   resolutionRecommendation?: string; // sourceRule control recommendation (issuesV2)
   remediation?: string;              // config-finding remediation text (Phase 2)
+
+  // ---- issuesV2 lifecycle and context (exemples/risk_issues_response.js)
+  // All optional: the per-rule Q_RULE_ASSETS fallback synthesises issues from the
+  // inventory API, which carries none of this, so absent means "not captured" and
+  // never "not true".
+  issueType?: string;                // TOXIC_COMBINATION | CLOUD_CONFIGURATION
+  updatedAt?: string;
+  resolvedAt?: string;
+  resolutionReason?: string;
+  resolvedBy?: string;               // user name/email, else service-account name
+  assignee?: string;
+  environments?: string[];
+  validatedAsExploitable?: boolean;
+  businessImpact?: string;           // worst of projects[].riskProfile.businessImpact
+  entityStatus?: string;             // entitySnapshot.status — Active | Inactive
+  subscriptionId?: string;
+  /** The "Ignored (By Design) …" rationale, when one is on the note log. */
+  ignoreNote?: string;
+  /** rejectionExpiredAt — when an accepted-risk decision lapsed and reopened the issue. */
+  ignoreExpiredAt?: string;
+  ticketUrls?: string[];
+  aiVerdict?: string;                // aiRemediationAnalysis.verdict, e.g. REMEDIATE
+  aiRecommendedSeverity?: Severity;
 }
 
 /**

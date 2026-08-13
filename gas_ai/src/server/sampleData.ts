@@ -3,6 +3,11 @@
 // groups — and custom_score.md — the applied AARS table). Everything is fixed: no
 // Date.now(), no randomness, so dev reloads and tests see identical data.
 //
+// 32 issues, not 29: the live filter collects the whole AI risk category, so the seed
+// carries three rows matching no modelled pattern (they land in Other AI risk) and one
+// in-progress row. Without them the dry-run demo would show an empty Other card and no
+// remediation in flight — features the register has but the default experience wouldn't.
+//
 // Volume is deliberately amplified beyond the 14 named agents (extra buckets on the
 // autogen agent's service account, extra user accounts on the chatbot) so the graph
 // projection's per-kind caps and SUMMARY collapse nodes visibly engage at depth 3.
@@ -11,7 +16,7 @@ import { gap } from "../domain/aars";
 import type { AarsHints } from "../domain/graphEnrich";
 import type { FindingRow, GEdge, GNode, GraphDoc, IssueRow, NodeKind } from "../domain/graphTypes";
 import { edgeId } from "../domain/graphTypes";
-import { classifyIssue } from "../domain/toxicCombos";
+import { classifyIssue, OTHER_GROUP_ID } from "../domain/toxicCombos";
 
 const T0 = "2026-04-02T08:00:00Z"; // firstSeen for long-lived assets
 const T1 = "2026-06-28T05:00:00Z"; // lastSeen (the seed "sync" horizon)
@@ -361,18 +366,34 @@ interface IssueSeed {
   createdAt: string;
   dueAt?: string;
   resolutionRecommendation?: string;
+  // The issuesV2 half. Optional so the existing seeds stay as they were; a handful of
+  // rows below set them so the dry-run demo shows the shape a live sync produces.
+  status?: string;
+  issueType?: string;
+  updatedAt?: string;
+  assignee?: string;
+  environments?: string[];
+  businessImpact?: string;
+  entityStatus?: string;
+  ignoreNote?: string;
+  ignoreExpiredAt?: string;
+  ticketUrls?: string[];
+  aiVerdict?: string;
+  aiRecommendedSeverity?: IssueRow["aiRecommendedSeverity"];
 }
 
 function issue(seed: IssueSeed): IssueRow {
   const group = classifyIssue({ sourceRuleId: seed.ruleId, ruleName: seed.ruleName });
-  return {
+  const row: IssueRow = {
     id: seed.id,
     ruleId: seed.ruleId,
     ruleName: seed.ruleName,
-    comboGroup: group ? group.id : "",
+    // An unmodelled rule lands in Other rather than "" — the same bucket a live sync
+    // would give it, so the dry-run demo shows the register the real one produces.
+    comboGroup: group ? group.id : OTHER_GROUP_ID,
     nativeSeverity: seed.nativeSeverity,
     adjustedSeverity: group ? group.adjustedSeverity : seed.nativeSeverity,
-    status: "OPEN",
+    status: seed.status ?? "OPEN",
     assetId: seed.assetId,
     assetName: seed.assetName,
     region: seed.region,
@@ -383,7 +404,19 @@ function issue(seed: IssueSeed): IssueRow {
     createdAt: seed.createdAt,
     dueAt: seed.dueAt,
     resolutionRecommendation: seed.resolutionRecommendation,
+    issueType: seed.issueType ?? "TOXIC_COMBINATION",
+    updatedAt: seed.updatedAt,
+    assignee: seed.assignee,
+    businessImpact: seed.businessImpact,
+    entityStatus: seed.entityStatus,
+    ignoreNote: seed.ignoreNote,
+    ignoreExpiredAt: seed.ignoreExpiredAt,
+    aiVerdict: seed.aiVerdict,
+    aiRecommendedSeverity: seed.aiRecommendedSeverity,
   };
+  if (seed.environments?.length) row.environments = seed.environments;
+  if (seed.ticketUrls?.length) row.ticketUrls = seed.ticketUrls;
+  return row;
 }
 
 const RULE_G1 = "Allow model invoke without Guardrail for user or role";
@@ -399,7 +432,13 @@ function nextIssueId(): string {
 }
 
 // Group 1 — 8 Bedrock roles (MEDIUM → HIGH).
-for (const role of awsRoles) {
+//
+// The first two carry the lifecycle detail a live issuesV2 sync brings back, so the demo
+// shows an accepted risk that lapsed and a remediation already under way rather than
+// eight identical rows.
+awsRoles.forEach((role, n) => {
+  const lapsed = n === 0;
+  const working = n === 1;
   issues.push(issue({
     id: nextIssueId(),
     ruleId: "wc-id-2742",
@@ -413,8 +452,29 @@ for (const role of awsRoles) {
       "No content filtering, data protection, or compliance enforcement on AI model calls.",
     frameworks: { owaspLlm: ["LLM06", "LLM02"], owaspAgentic: ["ASI02", "ASI03"], fiveRs: ["Restrict"] },
     createdAt: "2026-05-14T09:12:00Z",
+    issueType: "CLOUD_CONFIGURATION",
+    updatedAt: "2026-08-13T10:29:28Z",
+    environments: ["PRODUCTION"],
+    entityStatus: "Active",
+    businessImpact: "MBI",
+    // Ignored by design until the guardrail baseline landed, then reopened when the
+    // ignore date passed. The expiry is the structured field, never parsed out of the note.
+    ignoreNote: lapsed
+      ? "Ignored (By Design) by MANSUY.\nExplanation: guardrails are being rolled out " +
+        "per project team; a baseline has to be agreed before they can be enforced.\n\n" +
+        "Ignored until: Feb 1, 2026"
+      : undefined,
+    ignoreExpiredAt: lapsed ? "2026-02-01T00:00:00Z" : undefined,
+    // Remediation under way: the status the register collected and never counted.
+    status: working ? "IN_PROGRESS" : undefined,
+    assignee: working ? "platform-security@example.com" : undefined,
+    ticketUrls: working
+      ? ["https://example.slack.com/archives/C0AGUF82MM1/p1775622232097139"]
+      : undefined,
+    aiVerdict: working ? "REMEDIATE" : undefined,
+    aiRecommendedSeverity: working ? "MEDIUM" : undefined,
   }));
-}
+});
 
 // Group 2 — 13 managed-agent issues (MEDIUM → HIGH).
 const G2: Array<{ assetId: string; count: number; llm: string[]; asi: string[]; ml?: string[]; fiveRs: string[]; why: string }> = [
@@ -496,6 +556,61 @@ for (const assetId of ["agent-j", "agent-k"]) {
     frameworks: { owaspAgentic: ["ASI03"], fiveRs: ["Reconfigure"] },
     createdAt: "2026-06-10T15:02:00Z",
   }));
+}
+
+// Other AI risk — 3 issues in the AI category matching no modelled pattern.
+//
+// The live filter collects the whole wct-id-1998 category, and a real tenant's rule set
+// is wider than the four combinations this register models. Without a cohort here the
+// dry-run demo would render an empty Other card and the bucket would look like dead code.
+// All three sit on ONE asset so the AARS movement they cause is attributable to one row.
+{
+  const asset = AGENTS.find((a) => a.id === "agent-e")!;
+  const OTHER_SEEDS: Array<{ ruleId: string; ruleName: string; sev: "MEDIUM" | "LOW"; why: string }> = [
+    {
+      ruleId: "wc-id-4101",
+      ruleName: "AI model endpoint without request logging",
+      sev: "LOW",
+      why: "Model invocations are not logged, so misuse leaves no trail to investigate.",
+    },
+    {
+      ruleId: "wc-id-4102",
+      ruleName: "AI training dataset stored without encryption at rest",
+      sev: "MEDIUM",
+      why: "Training data is readable to anyone who reaches the bucket.",
+    },
+    {
+      ruleId: "wc-id-4103",
+      ruleName: "AI service account key older than 90 days",
+      sev: "LOW",
+      why: "A long-lived static key on an AI workload widens the window for credential theft.",
+    },
+  ];
+  for (const seed of OTHER_SEEDS) {
+    issues.push(issue({
+      id: nextIssueId(),
+      ruleId: seed.ruleId,
+      ruleName: seed.ruleName,
+      // CLOUD_CONFIGURATION: the type the register used to filter out entirely.
+      issueType: "CLOUD_CONFIGURATION",
+      assetId: asset.id,
+      assetName: asset.name,
+      nativeSeverity: seed.sev,
+      region: asset.region,
+      account: asset.account?.name,
+      projects: asset.projects,
+      justification: seed.why,
+      // No frameworks: an unmodelled rule contributes no AARS gap codes, so pillar B is
+      // left exactly where it was. Deriving codes from the rule's own risks/tags would
+      // re-price every asset with no way to attribute the movement.
+      frameworks: undefined,
+      createdAt: "2026-07-02T08:15:00Z",
+      environments: ["PRODUCTION"],
+      businessImpact: "MBI",
+      entityStatus: "Active",
+      updatedAt: "2026-08-13T10:30:01Z",
+    }));
+  }
 }
 
 // ------------------------------------------------------ per-asset AARS pillar inputs

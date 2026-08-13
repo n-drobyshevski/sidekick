@@ -1,11 +1,24 @@
-// Toxic-combination classification: the seed's 29 issues split 8/13/6/2 across the
-// four groups; classification works by rule id and by rule-name pattern.
+// Toxic-combination classification and the register's bucketing rules: the seed's 32
+// issues — 8/13/6/2 across the four modelled groups, plus 3 in Other AI risk.
+// Classification works by rule id and by rule-name pattern; bucketing never drops a row.
 
 import { describe, expect, it } from "vitest";
 import {
-  classifyIssue, COMBO_GROUPS, CONDITION_KEYS, comboSummary,
+  classifyIssue, COMBO_GROUPS, CONDITION_KEYS, comboGroupById, comboSummary,
+  OTHER_AI_RISK, OTHER_GROUP_ID, REGISTER_GROUPS, registerBucketId,
 } from "../src/domain/toxicCombos";
+import { isUnresolvedIssue } from "../src/domain/config";
+import type { IssueRow } from "../src/domain/graphTypes";
 import { SEED_ISSUES } from "../src/server/sampleData";
+
+/** A minimal issue row — only the fields the rollups read. */
+function row(over: Partial<IssueRow>): IssueRow {
+  return {
+    id: "i1", ruleId: "", ruleName: "", comboGroup: OTHER_GROUP_ID,
+    nativeSeverity: "MEDIUM", adjustedSeverity: "MEDIUM", status: "OPEN",
+    assetId: "a1", assetName: "a1", ...over,
+  };
+}
 
 describe("classifyIssue", () => {
   it("matches by source rule id first", () => {
@@ -56,9 +69,86 @@ describe("classifyIssue", () => {
   });
 });
 
+describe("the Other AI risk bucket", () => {
+  it("is not a member of COMBO_GROUPS", () => {
+    // syncJobs.syncSteps() maps COMBO_GROUPS into one per-rule ISSUES_<ruleId> step via
+    // Q_RULE_ASSETS. A membership here would generate a step querying ruleIds: [""].
+    expect(COMBO_GROUPS.map((g) => g.id)).not.toContain(OTHER_GROUP_ID);
+    expect(COMBO_GROUPS.every((g) => g.ruleId !== "")).toBe(true);
+    expect(REGISTER_GROUPS.map((g) => g.id)).toContain(OTHER_GROUP_ID);
+    expect(REGISTER_GROUPS).toHaveLength(COMBO_GROUPS.length + 1);
+  });
+
+  it("resolves by id but is never something classifyIssue returns", () => {
+    expect(comboGroupById(OTHER_GROUP_ID)?.id).toBe(OTHER_GROUP_ID);
+    expect(classifyIssue({ sourceRuleId: "wc-id-9999" })).toBeNull();
+    expect(classifyIssue({ ruleName: "Other AI risk" })).toBeNull();
+    expect(classifyIssue({ ruleName: OTHER_AI_RISK.title })).toBeNull();
+  });
+
+  it("makes no amplifier claim, where every modelled pattern does", () => {
+    expect(OTHER_AI_RISK.amplified).toBe(false);
+    expect(OTHER_AI_RISK.amplifierNote).toBe("");
+    expect(OTHER_AI_RISK.conditions).toEqual([]);
+    for (const g of COMBO_GROUPS) expect(g.amplified).toBe(true);
+  });
+
+  it("reports the worst severity it actually holds, not a declared one", () => {
+    // Declared UNKNOWN would sort a CRITICAL unclassified issue to the bottom of a
+    // triage page ranked worst-first.
+    const summary = comboSummary([
+      row({ id: "a", comboGroup: "unknown-rule", adjustedSeverity: "LOW" }),
+      row({ id: "b", comboGroup: "unknown-rule", adjustedSeverity: "CRITICAL" }),
+    ]);
+    const other = summary.find((s) => s.group.id === OTHER_GROUP_ID)!;
+    expect(other.count).toBe(2);
+    expect(other.group.adjustedSeverity).toBe("CRITICAL");
+    // The shared constant is not mutated by the override.
+    expect(OTHER_AI_RISK.adjustedSeverity).toBe("UNKNOWN");
+  });
+});
+
+describe("comboSummary counts everything unresolved", () => {
+  it("buckets an unrecognised group id into Other rather than dropping it", () => {
+    // The old `if (!bucket) continue` is exactly how renaming a group id would silently
+    // empty the register.
+    const issues = [
+      row({ id: "a", comboGroup: "a-group-that-was-renamed" }),
+      row({ id: "b", comboGroup: "bedrock-no-guardrail" }),
+    ];
+    const summary = comboSummary(issues);
+    const total = summary.reduce((n, s) => n + s.count, 0);
+    expect(total).toBe(2);
+    expect(summary.find((s) => s.group.id === OTHER_GROUP_ID)!.count).toBe(1);
+    expect(registerBucketId({ comboGroup: "a-group-that-was-renamed" })).toBe(OTHER_GROUP_ID);
+    expect(registerBucketId({ comboGroup: "bedrock-no-guardrail" })).toBe("bedrock-no-guardrail");
+  });
+
+  it("counts IN_PROGRESS and excludes resolved work", () => {
+    const issues = [
+      row({ id: "a", status: "OPEN" }),
+      row({ id: "b", status: "IN_PROGRESS" }),
+      row({ id: "c", status: "RESOLVED" }),
+      row({ id: "d", status: "REJECTED" }),
+    ];
+    const total = comboSummary(issues).reduce((n, s) => n + s.count, 0);
+    expect(total).toBe(2);
+  });
+
+  it("sums to the unresolved issue count — the invariant that nothing vanishes", () => {
+    for (const issues of [
+      SEED_ISSUES,
+      [...SEED_ISSUES, row({ id: "x", comboGroup: "renamed" }), row({ id: "y", status: "IN_PROGRESS" })],
+    ]) {
+      const total = comboSummary(issues).reduce((n, s) => n + s.count, 0);
+      expect(total).toBe(issues.filter(isUnresolvedIssue).length);
+    }
+  });
+});
+
 describe("seed issues", () => {
-  it("has exactly 29 open issues split 8/13/6/2", () => {
-    expect(SEED_ISSUES).toHaveLength(29);
+  it("has 32 unresolved issues: 8/13/6/2 across the patterns, 3 in Other", () => {
+    expect(SEED_ISSUES).toHaveLength(32);
     const summary = comboSummary(SEED_ISSUES);
     const byId = Object.fromEntries(summary.map((s) => [s.group.id, s.count]));
     expect(byId).toEqual({
@@ -66,13 +156,19 @@ describe("seed issues", () => {
       "gcp-managed-privileged": 13,
       "gcp-hosted-privileged": 6,
       "permissive-exec-identity": 2,
+      [OTHER_GROUP_ID]: 3,
     });
   });
 
-  it("every seed issue classified into a group with an adjusted severity", () => {
+  it("modelled issues are amplified; the Other cohort keeps Wiz's severity", () => {
     for (const issue of SEED_ISSUES) {
       expect(issue.comboGroup).not.toBe("");
-      expect(issue.adjustedSeverity).not.toBe(issue.nativeSeverity);
+      if (issue.comboGroup === OTHER_GROUP_ID) {
+        // No pattern, no amplifier claim, no re-rating.
+        expect(issue.adjustedSeverity).toBe(issue.nativeSeverity);
+      } else {
+        expect(issue.adjustedSeverity).not.toBe(issue.nativeSeverity);
+      }
     }
   });
 

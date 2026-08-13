@@ -44,6 +44,7 @@ import {
 } from "../domain/aarsTrend";
 import {
   AARS_SEVERITY_ORDER,
+  isUnresolvedIssue,
   MAX_NODES_CEILING,
   MAX_NODES_FLOOR,
   SEVERITY_COLORS,
@@ -65,7 +66,7 @@ import { layoutGraph } from "../domain/graphLayout";
 import { projectGraph } from "../domain/graphProject";
 import { AI_ASSET_KINDS, type GEdge, type GNode, type IssueRow } from "../domain/graphTypes";
 import { comboDigest } from "../domain/comboDigest";
-import { COMBO_GROUPS, comboGroupById, comboSummary } from "../domain/toxicCombos";
+import { comboGroupById, comboSummary, REGISTER_GROUPS } from "../domain/toxicCombos";
 import type { Rec } from "../domain/util";
 import { archiveBytes } from "./archiveStore";
 import { activeJob } from "./jobsStore";
@@ -104,7 +105,7 @@ function mutate<T>(fn: () => T): ApiResult<T> {
 }
 
 function openIssues(): IssueRow[] {
-  return syncStore.loadIssues().filter((i) => i.status === "OPEN");
+  return syncStore.loadIssues().filter(isUnresolvedIssue);
 }
 
 // ------------------------------------------------------------------------ bootstrap
@@ -144,12 +145,16 @@ function bootstrapCore(): Rec {
       glyphs: SEVERITY_GLYPHS,
       aarsSeverities: AARS_SEVERITY_ORDER,
     },
-    comboLegend: COMBO_GROUPS.map((g) => ({
+    // REGISTER_GROUPS: the graph can group by the Other bucket, so the legend has to be
+    // able to name it — a group the canvas can draw but the legend can't label reads as
+    // a rendering bug.
+    comboLegend: REGISTER_GROUPS.map((g) => ({
       id: g.id,
       title: g.title,
       shortLabel: g.shortLabel,
       nativeSeverity: g.nativeSeverity,
       adjustedSeverity: g.adjustedSeverity,
+      amplified: g.amplified,
     })),
     settings: {
       defaultDepth: settingsStore.getDefaultDepth(),
@@ -599,11 +604,13 @@ export function getToxicCombos(_p?: unknown): ApiResult {
       const issues = openIssues();
       const assetRows = syncStore.loadAssets();
       const assets = new Map(assetRows.map((a) => [a.id, a]));
+      const digest = comboDigest(issues, assetRows, new Date().toISOString());
+      const digestById = new Map(digest.groups.map((g) => [g.id, g]));
       return {
         // Every count the page renders, computed once here rather than four times in the
         // browser. Additive: the `groups` shape below is unchanged, so a payload cached
         // before this shipped still renders the page (minus the summary sections).
-        digest: comboDigest(issues, assetRows, new Date().toISOString()),
+        digest,
         groups: comboSummary(issues).map((s) => ({
           id: s.group.id,
           ruleId: s.group.ruleId,
@@ -612,11 +619,22 @@ export function getToxicCombos(_p?: unknown): ApiResult {
           nativeSeverity: s.group.nativeSeverity,
           adjustedSeverity: s.group.adjustedSeverity,
           amplifierNote: s.group.amplifierNote,
+          // Whether this group re-rates its issues. The card renders the shift badge and
+          // the amplifier note together off this flag, so the note can never go missing
+          // from beside an adjusted severity — and the Other bucket, which makes no such
+          // claim, renders neither.
+          amplified: s.group.amplified,
           // The declared half of the condition matrix. It rides on the group rather than
           // only on the digest so the card's condition strip still says what the rule
           // tests when an older cached payload arrives with no digest attached.
           conditions: s.group.conditions,
           frameworks: s.group.frameworks,
+          // The measured severity mix, mirrored onto the group so the page's severity
+          // filter can ask what a card actually HOLDS. Filtering on the declared
+          // adjustedSeverity alone hides the Other bucket — whose declared severity is
+          // the worst it holds, not the only one — while it still holds matching rows.
+          adjustedMix: digestById.get(s.group.id)?.adjustedMix ?? {},
+          nativeMix: digestById.get(s.group.id)?.nativeMix ?? {},
           count: s.count,
           assets: s.assetIds.map((id) => {
             const a = assets.get(id);
