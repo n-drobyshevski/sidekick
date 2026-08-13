@@ -49,6 +49,7 @@ import {
   type Severity,
 } from "../domain/config";
 import { graphCacheParams, resolveGraphParams, resolveLayoutParams } from "../domain/graphApiParams";
+import { conditionHolds, conditionState } from "../domain/riskConditions";
 import { layoutGraph } from "../domain/graphLayout";
 import { projectGraph } from "../domain/graphProject";
 import { AI_ASSET_KINDS, type GEdge, type GNode, type IssueRow } from "../domain/graphTypes";
@@ -190,13 +191,13 @@ function filterOptions(assets: GNode[]): Rec {
     for (const p of a.projects ?? []) projects.add(p.name);
     // The risk nodes are derived on read and never land in TABS.assets, so the flags they
     // come from are the only trace of them here. Offer each kind as a pill exactly when
-    // some asset would produce one, so the evidence stays curatable.
-    if (a.hasSensitiveData || a.hasAccessToSensitiveData) kinds.add("SENSITIVE_DATA");
-    if (a.isAccessibleFromInternet === true || a.isOpenToAllInternet === true) {
-      kinds.add("INTERNET_EXPOSURE");
-    }
-    if (a.hasAdminPrivileges || a.hasHighPrivileges) kinds.add("EXCESSIVE_PRIVILEGE");
-    if (a.guardrailMissing === true) kinds.add("MISSING_GUARDRAIL");
+    // some asset would produce one, so the evidence stays curatable. `conditionHolds` is
+    // the same strict reading the topology builders use, so a pill appears exactly when a
+    // node would be drawn — these predicates were open-coded here and drifted once already.
+    if (conditionHolds(a, "SENSITIVE_DATA")) kinds.add("SENSITIVE_DATA");
+    if (conditionHolds(a, "INTERNET_EXPOSURE")) kinds.add("INTERNET_EXPOSURE");
+    if (conditionHolds(a, "EXCESSIVE_PRIVILEGE")) kinds.add("EXCESSIVE_PRIVILEGE");
+    if (conditionHolds(a, "MISSING_GUARDRAIL")) kinds.add("MISSING_GUARDRAIL");
   }
   return {
     kinds: [...kinds].sort(),
@@ -377,6 +378,10 @@ function assetsModel(): AssetsModel {
     kpis: {
       aiAssets: assets.filter((a) => AI_ASSET_KINDS.includes(a.kind)).length,
       agents: agents.length,
+      // The numerator, not just the percentage. The Wiz Scans page states coverage as
+      // "3 of 71 agents"; without this it had to recover the 3 by counting rows, which
+      // only works while the client holds every row.
+      protectedAgents,
       criticalAars: assets.filter((a) => a.aarsSeverity === "CRITICAL").length,
       highAars: assets.filter((a) => a.aarsSeverity === "HIGH").length,
       guardrailCoveragePct: agents.length
@@ -388,6 +393,14 @@ function assetsModel(): AssetsModel {
       openIssues: issues.length,
       complianceGaps: syncStore.loadFindings().length,
       agenticIdentities: assets.filter((a) => a.identityPurpose === "AGENTIC").length,
+      // Estate-wide counts for the two risk conditions that had no total. The flags were
+      // persisted and drawn on the graph, but `assetTableRow` strips them, so nothing
+      // could say how much of the estate they cover. `internetUnknown` is its own number
+      // on purpose: a hosted agent inherits exposure from its host and Wiz reports that
+      // as undetermined, so folding it into "not exposed" under-reports.
+      internetExposed: assets.filter((a) => conditionState(a, "INTERNET_EXPOSURE") === true).length,
+      internetUnknown: assets.filter((a) => conditionState(a, "INTERNET_EXPOSURE") === null).length,
+      highPrivilege: assets.filter((a) => conditionHolds(a, "EXCESSIVE_PRIVILEGE")).length,
     },
     aarsSeverityCounts,
     // Recorded per sync, so the window is short at first and cannot be backfilled.

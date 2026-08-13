@@ -8,7 +8,7 @@
 //   format.js    dates in the display zone
 //   severity.js  the severity marks (dot + word, never colour alone)
 //   data.js      quantity display: progress track, pager
-//   controls.js  status pills, KPI tiles
+//   controls.js  status pills, KPI tiles, stat rows
 //   feedback.js  loading / empty / error / toast / dialog / help tip
 //   sheet.js     the drill-down overlay and its section+row vocabulary
 //   combobox.js  the searchable portaled listbox
@@ -22,7 +22,8 @@ export {
 } from "./ui/severity.js";
 export { dataTable, meter, pager, progressBar } from "./ui/data.js";
 export {
-  field, filterChipRow, kpiCard, segmented, select, selectField, statusPill, togglePills,
+  field, filterChipRow, kpiCard, segmented, select, selectField, statRow, statusPill,
+  togglePills,
 } from "./ui/controls.js";
 export {
   confirmDialog, emptyState, errorState, helpTip, skeleton, skeletonStack, toast,

@@ -1,15 +1,154 @@
-/* ------------------------------------------------------------- scan-coverage cards */
-.scan-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
-.scan-card {
-  background: var(--surface); border: 1px solid var(--hairline);
-  border-radius: var(--radius-xl); padding: 16px; box-shadow: var(--shadow-card);
-  display: flex; flex-direction: column; gap: 8px;
+/* ============================================================== Wiz Scans: coverage */
+/* The prefix is `cov-`, not `scan-`: `.scan-zone` / `.scan-caption` / `.scan-buttons` are
+   the sidebar's sync zone (base.css), and a page family sharing that prefix would collide
+   with them the first time either grew a descendant selector. */
+
+/* ------------------------------------------------------------------ posture header */
+/* Three levels, the same shape the AI Inventory header uses: the hero says how much of the
+   scan surface reports, the strip says how that splits, the stat strip carries the sync
+   that produced both. Hero and strip are borderless — dominance from size and position,
+   never from a card or a stripe. */
+.cov-header {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.45fr) minmax(320px, 2fr);
+  gap: 20px 36px; align-items: start;
+  margin: 0 0 18px; padding-bottom: 4px; border-bottom: 1px solid var(--hairline);
 }
-.scan-card h3 { margin: 0; display: flex; align-items: center; gap: 8px; }
-.scan-card .scan-stat { font-size: 12px; font-weight: 600; color: var(--text-2); font-variant-numeric: tabular-nums; }
-.scan-card p { margin: 0; font-size: 13px; color: var(--text-2); }
-.scan-card .scan-callout {
-  font-size: 12px; color: var(--warn);
-  background: rgba(161, 98, 7, 0.08); border-radius: var(--radius-md); padding: 6px 8px;
+.cov-header .stat-list { grid-column: 1 / -1; }
+.cov-hero-sub { font-size: 12px; color: var(--text-3); margin-top: 3px; }
+.cov-strip { display: flex; flex-direction: column; gap: 8px; }
+.cov-strip-note { font-size: 12px; color: var(--text-3); margin: 0; max-width: var(--measure); }
+
+/* The coverage bar and its keys. Same visual recipe as .sevbar / .sevkey-row, but a
+   separate family on purpose: coverage is not severity, and minting `sev-fill-live` would
+   put three non-severities into the one namespace that means exactly one thing. */
+.cov-bar {
+  display: flex; width: 100%; height: 14px;
+  border-radius: var(--radius-pill); overflow: hidden; background: var(--track-bg);
 }
-.scan-card .scan-link { margin-top: auto; font-size: 12px; font-weight: 600; }
+.cov-bar-seg { height: 100%; }
+.cov-bar-seg[data-state="live"] { background: var(--ok); }
+.cov-bar-seg[data-state="partial"] { background: var(--warn); }
+.cov-bar-seg[data-state="unscanned"] { background: var(--sev-info); }
+.cov-bar-seg[data-state="empty"] { flex: 1; background: var(--track-bg); }
+
+.cov-keys { display: flex; flex-wrap: wrap; gap: 6px; }
+.cov-key {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; padding: 3px 10px;
+  border: 1px solid var(--hairline); border-radius: var(--radius-pill);
+  background: var(--page); color: var(--text-2);
+}
+.cov-key-glyph { font-size: 10px; line-height: 1; }
+.cov-key[data-state="live"] .cov-key-glyph { color: var(--ok); }
+.cov-key[data-state="partial"] .cov-key-glyph { color: var(--warn); }
+.cov-key[data-state="unscanned"] .cov-key-glyph { color: var(--sev-info-text); }
+.cov-key-num { font-weight: 600; color: var(--ink); }
+
+/* --------------------------------------------------------------- provenance diagram */
+/* Below its minimum the diagram scrolls rather than shrinking: 11px labels reduced to fit
+   a phone are not a smaller diagram, they are an unreadable one. The container is a real
+   tab stop because a scrollable region needs one — it is a container, not a widget, so it
+   adds no second keyboard model to the page. */
+.cov-diagram-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--hairline); border-radius: var(--radius-xl);
+  background: var(--page); padding: 4px 10px 8px;
+}
+.cov-diagram-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.cov-diagram { display: block; width: 100%; min-width: 720px; height: auto; }
+.cov-diagram-note { margin: 8px 0 0; max-width: var(--measure); }
+
+.cov-node-box { fill: var(--surface); stroke: var(--hairline); stroke-width: 1; }
+.cov-node[data-state="unscanned"] .cov-node-box {
+  fill: var(--page); stroke: rgba(0, 0, 0, 0.28); stroke-dasharray: 5 4;
+}
+.cov-node-name { font-size: 11.5px; font-weight: 600; fill: var(--ink); }
+.cov-node-fig { font-size: 11px; fill: var(--svg-text-2); font-variant-numeric: tabular-nums; }
+.cov-node[data-state="unscanned"] .cov-node-name { fill: var(--svg-text-2); }
+
+/* Filled / half / hollow. The dot is never the only cue — the node prints its figure or
+   the state's own words right beside it. */
+.cov-dot-ring { fill: none; stroke: var(--sev-info); stroke-width: 1.5; }
+.cov-dot[data-state="live"] .cov-dot-ring { stroke: var(--ok); }
+.cov-dot[data-state="live"] .cov-dot-fill { fill: var(--ok); }
+.cov-dot[data-state="partial"] .cov-dot-ring { stroke: var(--warn); }
+.cov-dot[data-state="partial"] .cov-dot-fill { fill: var(--warn); }
+
+.cov-spine { fill: var(--surface); stroke: var(--hairline); }
+.cov-spine-title { font-size: 12px; font-weight: 600; fill: var(--ink); }
+.cov-spine-step { font-size: 10.5px; fill: var(--svg-text-2); }
+
+/* The edge ink mirrors .gedge (graph.css) so the two pictures read as one system. An
+   unscanned path is dashed in NEUTRAL ink, not the graph's amber: there, dashed-amber means
+   a protective edge is absent — a finding about the tenant. Here it means we never ask the
+   question, which is a fact about this app. Same rhythm, different ink, and the register
+   spells the difference out in words. */
+.cov-edge { fill: none; stroke: rgba(0, 0, 0, 0.22); stroke-width: 1.25; }
+.cov-edge[data-state="partial"] { stroke: var(--warn); stroke-opacity: 0.55; }
+.cov-edge[data-state="unscanned"] { stroke-dasharray: 5 4; stroke-opacity: 0.55; }
+
+.cov-dest-box { fill: var(--page); stroke: var(--accent); stroke-opacity: 0.35; }
+.cov-dest-name { font-size: 12px; font-weight: 600; fill: var(--accent); }
+.cov-dest-sub { font-size: 10.5px; fill: var(--svg-text-2); }
+
+/* Lighting one area from its register row. Opacity only, so nothing moves. */
+.cov-node, .cov-edge, .cov-dest { transition: opacity 140ms ease-out; }
+.cov-diagram.is-dimmed .cov-node,
+.cov-diagram.is-dimmed .cov-edge { opacity: 0.34; }
+.cov-diagram.is-dimmed .cov-node.is-lit,
+.cov-diagram.is-dimmed .cov-edge.is-lit { opacity: 1; }
+/* Crimson is the interaction/identity channel, which is exactly what a highlight is —
+   it never stands for a state here, so lighting a path cannot be confused with one. */
+.cov-edge.is-lit { stroke: var(--accent); stroke-width: 2; stroke-opacity: 1; }
+.cov-node.is-lit .cov-node-box { stroke: var(--accent); stroke-width: 1.5; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cov-node, .cov-edge, .cov-dest { transition: none; }
+}
+
+/* ------------------------------------------------------------------------ register */
+/* The query column is the one place a table cell wraps: a GraphQL document name plus its
+   sync step does not fit a nowrap column, and truncating it hides the provenance that is
+   the whole point of the row. */
+.cov-register td .cov-q { white-space: normal; max-width: 34ch; display: inline-block; }
+.cov-q {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px; color: var(--text-3);
+}
+.cov-area { font-weight: 600; color: var(--ink); }
+.cov-figure { display: flex; flex-direction: column; gap: 1px; }
+.cov-figure-value { font-weight: 600; font-variant-numeric: tabular-nums; }
+.cov-figure-unit { font-size: 11.5px; color: var(--text-3); }
+.cov-lands { color: var(--text-2); }
+.cov-none { color: var(--text-3); }
+
+/* The shared .pill draws its own dot through ::before, and that dot is the same filled
+   circle for every kind — it separates states by colour alone. Coverage needs the glyph to
+   differ (● ◐ ○), so the pill's dot is suppressed rather than sitting beside a second mark
+   that says the same thing less well. */
+.cov-state { gap: 6px; }
+.cov-state::before { display: none; }
+.cov-state-glyph { font-size: 10px; line-height: 1; }
+
+/* An unscanned row recedes without disappearing: it is still a row of the record, and the
+   thing it records is that nothing was recorded. */
+.cov-register tbody tr:has(.pill.neutral) .cov-area { color: var(--text-2); }
+
+/* ------------------------------------------------------- sheet body, page-local prose */
+.cov-para { margin: 0; font-size: 13px; color: var(--text-2); }
+.cov-sheet-figure { color: var(--ink); font-size: 14px; }
+.cov-sheet-figure strong { font-size: 1.125rem; font-weight: 600; }
+.cov-note {
+  font-size: 12.5px; color: var(--text-2); background: rgba(0, 0, 0, 0.03);
+  border-radius: var(--radius-md); padding: 8px 10px; margin: 8px 0 0;
+}
+
+/* ------------------------------------------------------------------- narrow widths */
+@media (max-width: 980px) {
+  .cov-header { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 760px) {
+  .cov-header { grid-template-columns: 1fr; gap: 18px; }
+  .cov-diagram-scroll { padding: 4px 6px 8px; }
+}

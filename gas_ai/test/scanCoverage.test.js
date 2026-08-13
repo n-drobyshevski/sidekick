@@ -1,0 +1,183 @@
+// The Wiz Scans coverage layer as pure functions: what each area resolves to under a
+// given payload, and — the point of the whole design — what it resolves to when the
+// payload cannot back it. Same shape as comboView.test.js: the logic is tested here, the
+// pixels are checked in the dev harness.
+
+import { describe, expect, it } from "vitest";
+import {
+  COVERAGE, COVERAGE_ORDER, DESTINATIONS, SCAN_AREAS,
+  coverageTally, destinationOf, rankAreas, resolveArea, resolveAreas,
+} from "../src/client/js/scanContent.js";
+
+/** A payload from a synced tenant on a current server bundle. */
+const FULL = {
+  boot: { filterOptions: { projects: ["alpha", "beta", "gamma"] } },
+  kpis: {
+    aiAssets: 96,
+    agents: 71,
+    protectedAgents: 3,
+    guardrailCoveragePct: 4,
+    sensitiveAccess: 18,
+    openIssues: 29,
+    complianceGaps: 23,
+    agenticIdentities: 12,
+    internetExposed: 2,
+    internetUnknown: 5,
+    highPrivilege: 34,
+  },
+  total: 96,
+  digest: { totals: { totalOpen: 29, patternsActive: 4, patternsTotal: 4 } },
+};
+
+const byId = (resolved) => new Map(resolved.map((a) => [a.id, a]));
+const stateOf = (ctx, id) => byId(resolveAreas(ctx)).get(id).state;
+
+describe("resolveAreas on a full payload", () => {
+  const resolved = resolveAreas(FULL);
+
+  it("splits the nine areas 6 live / 2 partial / 1 unscanned", () => {
+    expect(coverageTally(resolved)).toEqual({ live: 6, partial: 2, unscanned: 1 });
+  });
+
+  it("tallies to exactly the number of areas, so the strip can never mislead", () => {
+    const tally = coverageTally(resolved);
+    const summed = COVERAGE_ORDER.reduce((acc, state) => acc + tally[state], 0);
+    expect(summed).toBe(SCAN_AREAS.length);
+  });
+
+  it("states guardrail coverage as the numerator the server now ships", () => {
+    const area = byId(resolved).get("guardrails");
+    expect(area.state).toBe("live");
+    expect(area.figure.value).toBe("3 of 71");
+    expect(area.figure.pct).toBe(4);
+  });
+
+  it("carries the undetermined exposure count rather than folding it into 'not exposed'", () => {
+    expect(byId(resolved).get("exposure").figure.unit).toContain("5 undetermined");
+  });
+
+  it("drops the undetermined clause when there is nothing undetermined", () => {
+    const ctx = { ...FULL, kpis: { ...FULL.kpis, internetUnknown: 0 } };
+    expect(stateOf(ctx, "exposure")).toBe("live");
+    const figure = byId(resolveAreas(ctx)).get("exposure").figure;
+    expect(figure.value).toBe("2");
+    expect(figure.unit).toBe("reachable");
+  });
+});
+
+describe("degradation — an area never claims more than its payload supports", () => {
+  it("steps guardrails back to partial when the server has no protectedAgents", () => {
+    const kpis = { ...FULL.kpis };
+    delete kpis.protectedAgents;
+    expect(stateOf({ ...FULL, kpis }, "guardrails")).toBe("partial");
+  });
+
+  it("steps exposure and CIEM back to partial on an older server bundle", () => {
+    const kpis = { ...FULL.kpis };
+    delete kpis.internetExposed;
+    delete kpis.highPrivilege;
+    const resolved = byId(resolveAreas({ ...FULL, kpis }));
+    expect(resolved.get("exposure").state).toBe("partial");
+    expect(resolved.get("ciem").state).toBe("partial");
+  });
+
+  it("steps toxic combinations back to partial when the digest is missing", () => {
+    expect(stateOf({ ...FULL, digest: null }, "toxic")).toBe("partial");
+  });
+
+  it("resolves every area to partial or unscanned when no payload arrived at all", () => {
+    const empty = { boot: {}, kpis: null, total: 0, digest: null };
+    for (const area of resolveAreas(empty)) {
+      expect(area.figure).toBeNull();
+      expect(area.state === "partial" || area.state === "unscanned").toBe(true);
+    }
+  });
+
+  it("treats a resolver that throws as an area that cannot answer", () => {
+    const thrower = {
+      id: "boom", title: "Boom", what: "", query: "", lands: "graph",
+      figure: () => { throw new Error("no such field"); },
+    };
+    expect(resolveArea(thrower, FULL).state).toBe("partial");
+  });
+});
+
+describe("declared states — the two things no payload can tell you", () => {
+  it("keeps supply chain unscanned under every payload", () => {
+    for (const ctx of [FULL, { boot: {}, kpis: null, digest: null }]) {
+      const area = byId(resolveAreas(ctx)).get("supply");
+      expect(area.state).toBe("unscanned");
+      expect(area.figure).toBeNull();
+    }
+  });
+
+  it("keeps compliance partial even though its figure resolves", () => {
+    const area = byId(resolveAreas(FULL)).get("compliance");
+    expect(area.state).toBe("partial");
+    expect(area.figure.value).toBe("23");
+  });
+
+  it("gives every declared-partial and unscanned area a note saying why", () => {
+    for (const area of resolveAreas(FULL)) {
+      if (area.state === "live") continue;
+      expect(area.note && area.note.length).toBeTruthy();
+    }
+  });
+});
+
+describe("shape and ordering", () => {
+  it("gives every area a stable id, a title, prose and a resolver", () => {
+    const ids = new Set();
+    for (const area of SCAN_AREAS) {
+      expect(typeof area.id).toBe("string");
+      expect(area.id).not.toBe("");
+      expect(ids.has(area.id)).toBe(false);
+      ids.add(area.id);
+      expect(area.title).toBeTruthy();
+      expect(area.what).toBeTruthy();
+      expect(typeof area.figure).toBe("function");
+    }
+  });
+
+  it("names a real destination, or none at all", () => {
+    for (const area of SCAN_AREAS) {
+      if (!area.lands) continue;
+      expect(DESTINATIONS.some((d) => d.id === area.lands)).toBe(true);
+    }
+    expect(destinationOf({ lands: "" })).toBeNull();
+    expect(destinationOf({ lands: "graph" }).title).toBe("Security Graph");
+  });
+
+  it("ranks best-informed first, then alphabetically", () => {
+    const ranked = rankAreas(resolveAreas(FULL));
+    const ranks = ranked.map((a) => COVERAGE[a.state].rank);
+    expect(ranks).toEqual([...ranks].sort((a, b) => a - b));
+    expect(ranked[ranked.length - 1].id).toBe("supply");
+
+    const live = ranked.filter((a) => a.state === "live").map((a) => a.title);
+    expect(live).toEqual([...live].sort((a, b) => a.localeCompare(b)));
+  });
+
+  it("gives every state a glyph and a word, so colour is never the only cue", () => {
+    for (const state of COVERAGE_ORDER) {
+      expect(COVERAGE[state].glyph).toBeTruthy();
+      expect(COVERAGE[state].label).toBeTruthy();
+    }
+  });
+});
+
+describe("the fabrications are gone", () => {
+  it("carries no hand-typed stat string on any area", () => {
+    for (const area of SCAN_AREAS) expect(area.stat).toBeUndefined();
+  });
+
+  it("quotes no framework percentage anywhere in the content", () => {
+    const prose = SCAN_AREAS.map((a) => [a.what, a.note || "", a.query].join(" ")).join(" ");
+    expect(prose).not.toMatch(/\d+\s?%/);
+  });
+
+  it("says MFA is not collected rather than claiming it is scanned", () => {
+    const identity = SCAN_AREAS.find((a) => a.id === "identity");
+    expect(identity.note).toMatch(/not collected/i);
+  });
+});

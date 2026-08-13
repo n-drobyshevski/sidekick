@@ -1,76 +1,268 @@
-// "What we scan with Wiz" — the static coverage content, editable in one place.
-// Sourced from ai/ai_agents_discovery_queries.md, ai/ai_framework.md and
-// ai/ai_issues_and_complience_overview.md. Stats reflect the documented tenant
-// posture; update them alongside the source docs.
+// "What we scan with Wiz" — the coverage content, and the pure layer that decides how much
+// of it this deployment can actually back with data.
+//
+// Prose is sourced from ai/ai_agents_discovery_queries.md, ai/ai_framework.md and
+// ai/ai_issues_and_complience_overview.md, and describes what the Wiz *product* does.
+// Every NUMBER, by contrast, is resolved from the last sync through `figure()` — this file
+// holds no figures of its own. It used to: four areas carried hand-typed `stat` strings,
+// and three of them named things this app has never collected (per-framework compliance
+// percentages, MFA status, supply-chain findings). A page that cannot tell a measured
+// number from a transcribed one is the "implied confidence" PRODUCT.md forbids.
+//
+// So the honest states are three, not two, and an area's state is DERIVED wherever a
+// resolver can decide it: if `figure()` cannot produce a number — an older server bundle
+// without the KPI, a failed RPC, an estate with none of that thing — the area degrades to
+// `partial` on its own rather than asserting a figure it cannot compute. Only "we never
+// ask Wiz this" and "we ask, but what comes back does not cover what the prose claims" are
+// declared, because no payload can tell you either.
+//
+// TODO: coverage is INFERRED here, not recorded. A sync step the tenant rejects with a 400
+// (syncJobs.ts, skippedSteps) shows up as `partial` only if it happens to zero out a KPI.
+// The durable fix is a `coverage_json` column on sync_history, written at commit time with
+// one row per step; then this page would report what ran rather than what resolved.
+
+/** The three coverage states, worst-informed last. Glyph + label, never colour alone. */
+export const COVERAGE = {
+  live: {
+    glyph: "●",
+    label: "Reporting",
+    rank: 0,
+    pill: "ok",
+    blurb: "a figure from the last sync",
+  },
+  partial: {
+    glyph: "◐",
+    label: "Partial",
+    rank: 1,
+    pill: "warn",
+    blurb: "queried and stored, but not totalled here",
+  },
+  unscanned: {
+    glyph: "○",
+    label: "Not scanned",
+    rank: 2,
+    pill: "neutral",
+    blurb: "no query runs in this deployment",
+  },
+};
+
+export const COVERAGE_ORDER = ["live", "partial", "unscanned"];
+
+/**
+ * Where a scan area's results end up. Ids are app routes.
+ *
+ * AARS Rules is deliberately NOT here. Nothing lands on it: it is the model that prices
+ * what the sync collected, which is the spine's "score" step, not a screen a query flows
+ * into. Listing it would draw a destination box with no edge reaching it — a picture of a
+ * connection this app does not have.
+ */
+export const DESTINATIONS = [
+  { id: "graph", title: "Security Graph", sub: "nodes, edges, attack paths" },
+  { id: "inventory", title: "AI Inventory", sub: "the scored asset register" },
+  { id: "combos", title: "Toxic Combinations", sub: "the multi-condition patterns" },
+];
+
+const n = (v) => Number(v || 0);
 
 export const SCAN_AREAS = [
   {
     id: "aispm",
     title: "AI-SPM Inventory",
-    what: "Discovers every AI asset across clouds — agents (managed and hosted), " +
-      "models, guardrails, pipelines, datasets and MCP servers — with ownership, " +
-      "region and project context.",
-    stat: "71 agents · 3 guardrails · 7 projects",
-    link: "inventory",
+    query: "cloudResourcesV2 (INVENTORY_AI)",
+    what: "Discovers every AI asset across clouds — agents (managed and hosted), models, " +
+      "guardrails, pipelines, datasets and MCP servers — with ownership, region and " +
+      "project context.",
+    lands: "inventory",
+    figure: (ctx) => {
+      if (!ctx.kpis) return null;
+      const projects = (ctx.boot.filterOptions && ctx.boot.filterOptions.projects) || [];
+      return {
+        value: String(n(ctx.kpis.aiAssets)),
+        unit: "AI assets · " + n(ctx.kpis.agents) + " agents · " + projects.length + " projects",
+      };
+    },
   },
   {
     id: "toxic",
     title: "Toxic Combination Engine",
-    what: "Multi-condition rules that only fire when risks combine: privileged agents " +
-      "with sensitive data access, model invocation without guardrails, permissive " +
-      "execution identities.",
-    stat: "29 open issues · 4 patterns",
-    link: "combos",
-  },
-  {
-    id: "ciem",
-    title: "CIEM / IAM Analysis",
-    what: "Effective-permission analysis on every identity an AI asset runs as or is " +
-      "reachable from — excessive access and lateral-movement findings on execution " +
-      "service accounts.",
-    link: "graph",
-  },
-  {
-    id: "dspm",
-    title: "Sensitive Data (DSPM)",
-    what: "Classifies PII/PHI/PCI in buckets and databases, then flags which AI assets " +
-      "can reach it (hasSensitiveData / hasAccessToSensitiveData on the graph).",
-    link: "graph",
+    query: "issuesV2 + per-rule relatedIssue (ISSUES_*)",
+    what: "Multi-condition rules that only fire when risks combine: privileged agents with " +
+      "sensitive data access, model invocation without guardrails, permissive execution " +
+      "identities.",
+    lands: "combos",
+    figure: (ctx) => {
+      const totals = ctx.digest && ctx.digest.totals;
+      if (!totals) return null;
+      return {
+        value: String(n(totals.totalOpen)),
+        unit: "open · " + n(totals.patternsActive) + " of " + n(totals.patternsTotal) +
+          " patterns firing",
+      };
+    },
   },
   {
     id: "guardrails",
     title: "Guardrail Coverage",
-    what: "Checks the PROTECTED_BY relationship between agents/models and guardrails; " +
-      "an absent edge marks the asset “no guardrail” — the strongest single amplifier " +
-      "in the toxic combinations.",
-    stat: "3 of 71 agents protected (≈4%)",
-    link: "graph",
+    query: "graphSearch · PROTECTED_BY with negate:true (GUARDRAIL_GAPS)",
+    what: "Checks the PROTECTED_BY relationship between agents/models and guardrails; an " +
+      "absent edge marks the asset “no guardrail” — the strongest single " +
+      "amplifier in the toxic combinations.",
+    lands: "graph",
+    figure: (ctx) => {
+      // protectedAgents is the numerator the server now ships. An older bundle without it
+      // returns undefined here, and the area steps back to `partial` rather than printing
+      // a coverage claim it cannot source.
+      if (!ctx.kpis || ctx.kpis.protectedAgents === undefined || !ctx.kpis.agents) return null;
+      return {
+        value: n(ctx.kpis.protectedAgents) + " of " + n(ctx.kpis.agents),
+        unit: "agents protected (" + n(ctx.kpis.guardrailCoveragePct) + "%)",
+        pct: n(ctx.kpis.guardrailCoveragePct),
+      };
+    },
+  },
+  {
+    id: "dspm",
+    title: "Sensitive Data (DSPM)",
+    query: "hasSensitiveData / hasAccessToSensitiveData on every resource",
+    what: "Classifies PII/PHI/PCI in buckets and databases, then flags which AI assets can " +
+      "reach it. The reachability is what the toxic combinations price, not the storage.",
+    lands: "graph",
+    figure: (ctx) => (ctx.kpis
+      ? { value: String(n(ctx.kpis.sensitiveAccess)), unit: "AI assets reach classified data" }
+      : null),
+  },
+  {
+    id: "ciem",
+    title: "CIEM / IAM Analysis",
+    // Narrowed deliberately. The SA_FINDINGS step does produce EXCESSIVE_ACCESS_FINDING and
+    // LATERAL_MOVEMENT_FINDING nodes, but they live in the graph document and nothing
+    // totals them — so the prose claims the privilege reading the figure can actually back,
+    // and the findings are named in the detail sheet where the graph link sits beside them.
+    query: "graphSearch · RUNS_AS, HAS_FINDING (RUNS_AS, SA_FINDINGS)",
+    what: "Reads effective permissions on every identity an AI asset runs as, flagging the " +
+      "admin and high-privilege ones. Excessive-access and lateral-movement findings on " +
+      "those service accounts are drawn on the graph beside the identity they belong to.",
+    lands: "graph",
+    note: "The figure counts assets and identities carrying a privilege flag. The individual " +
+      "excessive-access and lateral-movement findings are synced and drawn as graph nodes, " +
+      "but nothing totals them, so they are not a number on this page.",
+    figure: (ctx) => {
+      if (!ctx.kpis || ctx.kpis.highPrivilege === undefined) return null;
+      return {
+        value: String(n(ctx.kpis.highPrivilege)),
+        unit: "privileged · " + n(ctx.kpis.agenticIdentities) + " agentic identities",
+      };
+    },
   },
   {
     id: "exposure",
     title: "Network Exposure",
+    query: "isAccessibleFromInternet / isOpenToAllInternet on every resource",
     what: "Internet reachability on AI assets and their hosts. Managed agents report it " +
-      "directly; hosted agents inherit it from the VM or Cloud Run service — shown as " +
-      "“unknown” until the host is checked.",
-  },
-  {
-    id: "identity",
-    title: "Human Identity & MFA",
-    what: "Which people (and external identities) can reach AI assets, with MFA status " +
-      "and inactivity signals on those accounts.",
-  },
-  {
-    id: "supply",
-    title: "Code-to-Cloud Supply Chain",
-    what: "Traces hosted agents back through container images to source repositories " +
-      "(BUILT_FROM), surfacing malicious-package and pipeline findings on the path.",
+      "directly; hosted agents inherit it from the VM or Cloud Run service underneath, " +
+      "which Wiz reports as undetermined until that host is checked.",
+    lands: "graph",
+    figure: (ctx) => {
+      if (!ctx.kpis || ctx.kpis.internetExposed === undefined) return null;
+      // The undetermined count rides along rather than folding into "not exposed" — the
+      // under-reporting src/domain/riskConditions.ts exists to prevent.
+      const unknown = n(ctx.kpis.internetUnknown);
+      return {
+        value: String(n(ctx.kpis.internetExposed)),
+        unit: "reachable" + (unknown ? " · " + unknown + " undetermined" : ""),
+      };
+    },
   },
   {
     id: "compliance",
     title: "Compliance Frameworks",
-    what: "Continuous scoring against the AI security frameworks enabled in the tenant.",
-    stat: "OWASP LLM 97% · ML 99% · Agentic 98% · 5Rs 53%",
-    callout: "5Rs (data security) at 53% is the critical gap — it amplifies every " +
-      "sensitive-data issue. ISO 42001:2023 is available but currently disabled.",
+    query: "configurationFindings, FAIL only (CONFIG_FINDINGS)",
+    what: "Failing configuration findings against the AI security frameworks enabled in the " +
+      "tenant, stored per asset with the framework codes they violate.",
+    lands: "inventory",
+    // Declared, not derived: complianceGaps resolves a real number, but the area's subject
+    // is framework SCORING and this counts findings. A live badge here would let the number
+    // stand in for the thing it is not.
+    coverage: "partial",
+    note: "This sync counts failing configuration findings, and the framework codes each one " +
+      "violates are on the asset record. Per-framework scores — OWASP LLM, ML, Agentic, " +
+      "5Rs — are not queried, not stored and not shown here. The framework tags on the " +
+      "Toxic Combinations page are the static taxonomy, not a measured score.",
+    figure: (ctx) => (ctx.kpis
+      ? { value: String(n(ctx.kpis.complianceGaps)), unit: "failing findings" }
+      : null),
+  },
+  {
+    id: "identity",
+    title: "Human Identity Access",
+    query: "graphSearch · ALLOWS_ACCESS_TO, INBOUND (IDENTITY_ACCESS)",
+    what: "Which people, roles and external identities can reach AI assets. The access " +
+      "paths are drawn on the graph beside the asset they reach.",
+    lands: "graph",
+    coverage: "partial",
+    note: "Access paths are synced and drawn, but nothing totals them, so there is no figure " +
+      "for this area. MFA and inactivity signals on those accounts are not collected at " +
+      "all — no query selects them and no column stores them.",
+    figure: () => null,
+  },
+  {
+    id: "supply",
+    title: "Code-to-Cloud Supply Chain",
+    query: "—",
+    what: "Traces hosted agents back through container images to source repositories " +
+      "(BUILT_FROM), surfacing malicious-package and pipeline findings on the path.",
+    // Nothing to land: with no query there are no results, so the diagram draws its edge
+    // stopping at the spine rather than pretending a destination receives something.
+    lands: "",
+    coverage: "unscanned",
+    note: "No sync step issues this query. CONTAINER_IMAGE and REPOSITORY nodes appear on " +
+      "the graph only when the app is running on the bundled sample dataset — never from " +
+      "a live tenant.",
+    figure: () => null,
   },
 ];
+
+/**
+ * One area resolved against a payload: the record, its figure, and the state that figure
+ * earns. A declared `coverage` wins; otherwise a figure means `live` and no figure means
+ * `partial`, which is what makes a missing KPI degrade instead of lie.
+ */
+export function resolveArea(area, ctx) {
+  const declared = area.coverage || "";
+  const figure = declared === "unscanned" ? null : safeFigure(area, ctx);
+  const state = declared || (figure ? "live" : "partial");
+  return { ...area, figure, state };
+}
+
+function safeFigure(area, ctx) {
+  try {
+    return area.figure(ctx) || null;
+  } catch (e) {
+    // A resolver that throws is a resolver that cannot answer, which is exactly `partial`.
+    return null;
+  }
+}
+
+export function resolveAreas(ctx) {
+  return SCAN_AREAS.map((area) => resolveArea(area, ctx));
+}
+
+/** How many areas sit in each state. The header's hero and its strip both read this. */
+export function coverageTally(resolved) {
+  const tally = { live: 0, partial: 0, unscanned: 0 };
+  for (const area of resolved) tally[area.state] += 1;
+  return tally;
+}
+
+/** Register order: best-informed first, then alphabetical so the order never wobbles. */
+export function rankAreas(resolved) {
+  return [...resolved].sort((a, b) => {
+    const byState = COVERAGE[a.state].rank - COVERAGE[b.state].rank;
+    return byState || a.title.localeCompare(b.title);
+  });
+}
+
+/** The destination record an area lands in, or null for an area whose results go nowhere. */
+export function destinationOf(area) {
+  return DESTINATIONS.find((d) => d.id === area.lands) || null;
+}
