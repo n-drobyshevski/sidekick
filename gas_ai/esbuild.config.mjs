@@ -86,7 +86,32 @@ try {
 
 writeFileSync(join(dist, "js_app.html"), `<script>\n${clientJs}\n</script>\n`);
 
-const css = readFileSync(join(root, "src/client/styles.css"), "utf8");
+// --- Client stylesheet → HtmlService partial -------------------------------------------
+// Bundled (so styles.css can be an @import index over styles/*.css) and minified: this
+// ships inline in every doGet response exactly like the JS, so its bytes are first-paint
+// latency too. It used to be copied through verbatim.
+const cssResult = await build({
+  entryPoints: [join(root, "src/client/styles.css")],
+  bundle: true,
+  minify: true,
+  write: false,
+  logLevel: "info",
+});
+const css = cssResult.outputFiles[0].text;
+
+// The middlebox strips comments from the whole served document, not just the <script>
+// partial — a bare `//` surviving in the stylesheet would truncate the rest of its line
+// and take every rule after it on that line with it. CSS has no `//` comment syntax, so
+// any hit here is inside a string or a url() and is a real hazard.
+const strippedCss = stripCommentsLikeMiddlebox(css);
+if (strippedCss.includes("//")) {
+  const at = strippedCss.indexOf("//");
+  throw new Error(
+    `middlebox guard: bare \`//\` survives comment stripping in the stylesheet near ` +
+    `${JSON.stringify(strippedCss.slice(Math.max(0, at - 60), at + 20))}`,
+  );
+}
+
 writeFileSync(join(dist, "styles.html"), `<style>\n${css}\n</style>\n`);
 
 // index.html is copied verbatim (it contains <?!= include(...) ?> scriptlets).
