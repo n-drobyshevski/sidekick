@@ -18,7 +18,8 @@ import {
 import type { FindingRow, GEdge, GNode, GraphDoc, IssueRow, NodeKind } from "../domain/graphTypes";
 import { edgeId } from "../domain/graphTypes";
 import { aarsSeverity, type AarsBands, type AarsRule } from "../domain/aars";
-import { normalizeAarsSeverity } from "../domain/config";
+import { isUnresolvedIssue, normalizeAarsSeverity } from "../domain/config";
+import { OTHER_GROUP_ID } from "../domain/toxicCombos";
 import type { Severity } from "../domain/config";
 import { countAarsSeverities } from "../domain/aarsTrend";
 import { nowIso, type Rec } from "../domain/util";
@@ -182,15 +183,36 @@ export function issueToRow(i: IssueRow): Rec {
     due_at: i.dueAt ?? null,
     resolution_recommendation: i.resolutionRecommendation ?? null,
     remediation: i.remediation ?? null,
+    issue_type: i.issueType ?? null,
+    updated_at: i.updatedAt ?? null,
+    resolved_at: i.resolvedAt ?? null,
+    resolution_reason: i.resolutionReason ?? null,
+    resolved_by: i.resolvedBy ?? null,
+    assignee: i.assignee ?? null,
+    // Comma-joined, matching combo_groups / technology_categories on ai_assets; the
+    // _json suffix is reserved for structured values.
+    environments: (i.environments ?? []).join(","),
+    validated_exploitable: boolCell(i.validatedAsExploitable),
+    business_impact: i.businessImpact ?? null,
+    entity_status: i.entityStatus ?? null,
+    subscription_id: i.subscriptionId ?? null,
+    ignore_note: i.ignoreNote ?? null,
+    ignore_expired_at: i.ignoreExpiredAt ?? null,
+    ticket_urls: (i.ticketUrls ?? []).join(","),
+    ai_verdict: i.aiVerdict ?? null,
+    ai_recommended_severity: i.aiRecommendedSeverity ?? null,
   };
 }
 
 export function rowToIssue(r: Rec): IssueRow {
-  return {
+  const issue: IssueRow = {
     id: String(r["id"] ?? ""),
     ruleId: String(r["rule_id"] ?? ""),
     ruleName: String(r["rule_name"] ?? ""),
-    comboGroup: String(r["combo_group"] ?? ""),
+    // A ledger written before the Other bucket existed holds "" for every unclassified
+    // issue. Without this fallback those rows keep falling out of every rollup until
+    // someone happens to re-sync.
+    comboGroup: String(r["combo_group"] ?? "") || OTHER_GROUP_ID,
     nativeSeverity: String(r["native_severity"] ?? "UNKNOWN") as Severity,
     adjustedSeverity: String(r["adjusted_severity"] ?? "UNKNOWN") as Severity,
     status: String(r["status"] ?? "OPEN"),
@@ -205,7 +227,29 @@ export function rowToIssue(r: Rec): IssueRow {
     dueAt: (r["due_at"] as string | null) ?? undefined,
     resolutionRecommendation: (r["resolution_recommendation"] as string | null) ?? undefined,
     remediation: (r["remediation"] as string | null) ?? undefined,
+    issueType: (r["issue_type"] as string | null) ?? undefined,
+    updatedAt: (r["updated_at"] as string | null) ?? undefined,
+    resolvedAt: (r["resolved_at"] as string | null) ?? undefined,
+    resolutionReason: (r["resolution_reason"] as string | null) ?? undefined,
+    resolvedBy: (r["resolved_by"] as string | null) ?? undefined,
+    assignee: (r["assignee"] as string | null) ?? undefined,
+    businessImpact: (r["business_impact"] as string | null) ?? undefined,
+    entityStatus: (r["entity_status"] as string | null) ?? undefined,
+    subscriptionId: (r["subscription_id"] as string | null) ?? undefined,
+    ignoreNote: (r["ignore_note"] as string | null) ?? undefined,
+    ignoreExpiredAt: (r["ignore_expired_at"] as string | null) ?? undefined,
+    aiVerdict: (r["ai_verdict"] as string | null) ?? undefined,
+    aiRecommendedSeverity:
+      ((r["ai_recommended_severity"] as string | null) ?? undefined) as Severity | undefined,
   };
+  // Set only when non-empty, so a round trip preserves "not captured" as undefined
+  // rather than promoting it to an empty array or a false.
+  const environments = String(r["environments"] ?? "").split(",").filter(Boolean);
+  if (environments.length) issue.environments = environments;
+  const ticketUrls = String(r["ticket_urls"] ?? "").split(",").filter(Boolean);
+  if (ticketUrls.length) issue.ticketUrls = ticketUrls;
+  if (parseBool(r["validated_exploitable"])) issue.validatedAsExploitable = true;
+  return issue;
 }
 
 export function findingToRow(f: FindingRow): Rec {
@@ -494,7 +538,7 @@ function loadGraphDocUncached(): GraphDoc | null {
   if (!assetRows.length) return null;
   const nodes = withCurrentBands(assetRows.map(rowToAsset), currentBands());
   const edges = readAll(TABS.edges).map(rowToEdge);
-  const issues = loadIssues().filter((i) => i.status === "OPEN");
+  const issues = loadIssues().filter(isUnresolvedIssue);
   for (const issue of issues) {
     nodes.push({
       id: issue.id,

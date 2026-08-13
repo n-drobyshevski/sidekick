@@ -95,6 +95,39 @@ describe("overwrite against an out-of-date header row", () => {
     expect(sheets[TABS.assets].grid[0]).not.toContain("not_a_column");
     expect(readAll(TABS.assets)[0]["not_a_column"]).toBeUndefined();
   });
+
+  it("an ai_issues tab predating the lifecycle columns gains them, values intact", async () => {
+    const { overwrite, readAll, TABS, TAB_HEADERS } = await db();
+    // The 18-column header this tab shipped with before issuesV2 lifecycle fields landed.
+    sheets[TABS.issues] = fakeSheet([
+      [
+        "id", "rule_id", "rule_name", "combo_group", "native_severity", "adjusted_severity",
+        "status", "asset_id", "asset_name", "region", "account", "projects_json",
+        "frameworks_json", "justification", "created_at",
+        "due_at", "resolution_recommendation", "remediation",
+      ],
+      ["i1", "wc-id-2742", "old", "bedrock-no-guardrail", "MEDIUM", "HIGH", "OPEN", "a1", "A"],
+    ]);
+
+    overwrite(TABS.issues, [{
+      id: "i1", rule_id: "wc-id-2742", rule_name: "old", combo_group: "bedrock-no-guardrail",
+      native_severity: "MEDIUM", adjusted_severity: "HIGH", status: "IN_PROGRESS",
+      asset_id: "a1", asset_name: "A",
+      issue_type: "CLOUD_CONFIGURATION", resolved_at: "2026-08-01T00:00:00Z",
+      ignore_note: "Ignored (By Design) by MANSUY.", ai_verdict: "REMEDIATE",
+    }]);
+
+    const row = readAll(TABS.issues)[0];
+    expect(row["issue_type"]).toBe("CLOUD_CONFIGURATION");
+    expect(row["resolved_at"]).toBe("2026-08-01T00:00:00Z");
+    expect(row["ignore_note"]).toBe("Ignored (By Design) by MANSUY.");
+    expect(row["ai_verdict"]).toBe("REMEDIATE");
+    expect(row["status"]).toBe("IN_PROGRESS");
+    // The header row grew to the declared schema — no migration, no re-run of setup().
+    for (const header of TAB_HEADERS[TABS.issues]) {
+      expect(sheets[TABS.issues].grid[0]).toContain(header);
+    }
+  });
 });
 
 describe("updateWhere against an out-of-date header row", () => {

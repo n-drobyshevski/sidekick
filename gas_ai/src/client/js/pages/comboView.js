@@ -94,10 +94,30 @@ export function conditionPresent(tally) {
   return !!tally.required || (tally.carried || 0) > 0 || (tally.unknown || 0) > 0;
 }
 
+/**
+ * Whether a group re-rates its issues. The server sends the flag; the `!== false` reading
+ * means a payload cached before the flag existed still treats the four modelled patterns
+ * as amplified, which is what they are.
+ */
+export function isAmplified(group) {
+  return !!group && group.amplified !== false;
+}
+
 /** Page-level filters, applied to the pattern cards and the matrix rows alike. */
 export function groupMatches(group, digestGroup, state) {
   const s = state || {};
-  if (s.sev && String(group.adjustedSeverity || "").toUpperCase() !== s.sev) return false;
+  if (s.sev) {
+    // Filter on what the group HOLDS when the digest says, not on its declared level. A
+    // modelled pattern declares one severity for all its rows, but a residual bucket
+    // holds a mix — comparing its single declared level would hide the card under a
+    // filter its own rows match, while applyIssueFilters below happily kept them.
+    const mix = (digestGroup && digestGroup.adjustedMix) || group.adjustedMix;
+    if (mix) {
+      if (!mix[s.sev]) return false;
+    } else if (String(group.adjustedSeverity || "").toUpperCase() !== s.sev) {
+      return false;
+    }
+  }
   if (s.cond) {
     const conditions = digestGroup && digestGroup.conditions;
     if (!conditionPresent(conditions && conditions[s.cond])) return false;
@@ -160,6 +180,7 @@ export const ISSUE_COMPARATORS = {
   region: (a, b) => String(a.region || "").localeCompare(String(b.region || "")),
   account: (a, b) => String(a.account || "").localeCompare(String(b.account || "")),
   due: (a, b) => dueRank(a) - dueRank(b),
+  status: (a, b) => String(a.status || "").localeCompare(String(b.status || "")),
 };
 
 /** Columns whose natural order reads as descending — for aria-sort and the glyph. */

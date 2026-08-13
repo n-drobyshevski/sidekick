@@ -31,8 +31,8 @@ describe("enrichGraphDoc", () => {
     const doc = enriched();
     const issueNodes = doc.nodes.filter((n) => n.kind === "ISSUE");
     const issueEdges = doc.edges.filter((e) => e.type === "HAS_ISSUE");
-    expect(issueNodes).toHaveLength(29);
-    expect(issueEdges).toHaveLength(29);
+    expect(issueNodes).toHaveLength(SEED_ISSUES.length);
+    expect(issueEdges).toHaveLength(SEED_ISSUES.length);
     for (const e of issueEdges) {
       expect(doc.nodes.some((n) => n.id === e.src)).toBe(true);
       expect(issueNodes.some((n) => n.id === e.dst)).toBe(true);

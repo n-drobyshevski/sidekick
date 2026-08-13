@@ -16,7 +16,7 @@ import {
   normalizeRunsAsPage,
   reconcileIssues,
 } from "../src/domain/syncNormalize";
-import { COMBO_GROUPS } from "../src/domain/toxicCombos";
+import { COMBO_GROUPS, OTHER_GROUP_ID } from "../src/domain/toxicCombos";
 import type { IssueRow } from "../src/domain/graphTypes";
 
 const AGENT_RAW = {
@@ -209,6 +209,113 @@ describe("normalizeIssuesPage (issuesV2)", () => {
     const node = part.nodes[0];
     expect(node).toMatchObject({ id: "wiz-asset-42", kind: "AI_AGENT", name: "StockBuddy" });
     expect(node.cloudAccount).toBeUndefined(); // never overwrites inventory's richer account
+    // mergeParts merges field-wise on any truthy value and ISSUES_TOXIC runs after
+    // INVENTORY_AI, so anything set here REPLACES the inventory's. entitySnapshot is a
+    // point-in-time copy: its tags are whatever the snapshot caught and its status can be
+    // stale, so both ride on the IssueRow instead of overwriting fresher asset data.
+    expect(node.tags).toBeUndefined();
+    expect(node.status).toBeUndefined();
+  });
+
+  it("carries the issuesV2 lifecycle fields the register reports on", () => {
+    const raw = issueRaw("iss-1");
+    Object.assign(raw, {
+      updatedAt: "2026-08-13T10:30:01Z",
+      resolvedAt: "2026-08-01T00:00:00Z",
+      resolutionReason: "ISSUE_FIXED",
+      resolvedBy: { user: { id: "u1", name: "A. Analyst", email: "a@example.com" } },
+      assignee: { id: "u2", name: "B. Owner", primaryEmail: "b@example.com" },
+      environments: ["PRODUCTION"],
+      validatedAsExploitable: true,
+      rejectionExpiredAt: "2026-02-01T00:00:00Z",
+      serviceTickets: [
+        { id: "t1", name: "#sec-ai", url: "https://example.slack.com/archives/C1/p1" },
+      ],
+      aiRemediationAnalysis: { verdict: "REMEDIATE", recommendedSeverity: "MEDIUM" },
+    });
+    (raw["entitySnapshot"] as Record<string, unknown>)["status"] = "Inactive";
+    (raw["entitySnapshot"] as Record<string, unknown>)["subscriptionId"] = "sub-1";
+
+    const issue = normalizeIssuesPage([raw]).issues[0];
+    expect(issue.issueType).toBe("TOXIC_COMBINATION");
+    expect(issue.updatedAt).toBe("2026-08-13T10:30:01Z");
+    expect(issue.resolvedAt).toBe("2026-08-01T00:00:00Z");
+    expect(issue.resolutionReason).toBe("ISSUE_FIXED");
+    expect(issue.resolvedBy).toBe("A. Analyst");
+    expect(issue.assignee).toBe("B. Owner");
+    expect(issue.environments).toEqual(["PRODUCTION"]);
+    expect(issue.validatedAsExploitable).toBe(true);
+    expect(issue.entityStatus).toBe("Inactive");
+    expect(issue.subscriptionId).toBe("sub-1");
+    expect(issue.ignoreExpiredAt).toBe("2026-02-01T00:00:00Z");
+    expect(issue.ticketUrls).toEqual(["https://example.slack.com/archives/C1/p1"]);
+    expect(issue.aiVerdict).toBe("REMEDIATE");
+    expect(issue.aiRecommendedSeverity).toBe("MEDIUM");
+  });
+
+  it("collapses resolvedBy from either shape, and falls back to the email", () => {
+    const withSa = issueRaw("iss-sa");
+    withSa["resolvedBy"] = { user: null, serviceAccount: { id: "s1", name: "wiz-automation" } };
+    expect(normalizeIssuesPage([withSa]).issues[0].resolvedBy).toBe("wiz-automation");
+
+    const emailOnly = issueRaw("iss-e");
+    emailOnly["resolvedBy"] = { user: { id: "u1", email: "a@example.com" } };
+    expect(normalizeIssuesPage([emailOnly]).issues[0].resolvedBy).toBe("a@example.com");
+  });
+
+  it("takes the ignore rationale off the note log without parsing its prose", () => {
+    // notes[] is an ordered log: the lapse notice is prepended above the rationale. The
+    // "Ignored until: Feb 1, 2026" date inside the prose is deliberately NOT parsed —
+    // rejectionExpiredAt is the same fact as a timestamp, and the note is free text.
+    const raw = issueRaw("iss-ignored");
+    raw["notes"] = [
+      { id: "n1", text: "Status was updated to OPEN on 2026-02-01 as ignore date expired" },
+      { id: "n2", text: "Ignored (By Design) by MANSUY.\nExplanation: …\n\nIgnored until: Feb 1, 2026" },
+    ];
+    raw["rejectionExpiredAt"] = "2026-02-01T00:00:00Z";
+    const issue = normalizeIssuesPage([raw]).issues[0];
+    expect(issue.ignoreNote).toContain("Ignored (By Design) by MANSUY.");
+    expect(issue.ignoreExpiredAt).toBe("2026-02-01T00:00:00Z");
+  });
+
+  it("reduces business impact to the worst project", () => {
+    const raw = issueRaw("iss-bi");
+    raw["projects"] = [
+      { id: "p1", name: "LOW", riskProfile: { businessImpact: "LBI" } },
+      { id: "p2", name: "HIGH", riskProfile: { businessImpact: "HBI" } },
+      { id: "p3", name: "MED", riskProfile: { businessImpact: "MBI" } },
+    ];
+    expect(normalizeIssuesPage([raw]).issues[0].businessImpact).toBe("HBI");
+  });
+
+  it("buckets an unmodelled source rule into Other, carrying Wiz severity untouched", () => {
+    // The filter collects the whole AI risk category, so a rule outside the four patterns
+    // is a real register row — not noise to drop.
+    const raw = issueRaw("iss-other");
+    raw["sourceRules"] = [{ id: "wc-id-9999", name: "Some rule this register does not model" }];
+    const issue = normalizeIssuesPage([raw]).issues[0];
+    expect(issue.comboGroup).toBe(OTHER_GROUP_ID);
+    expect(issue.adjustedSeverity).toBe(issue.nativeSeverity);
+    expect(issue.frameworks).toBeUndefined();
+  });
+
+  it("treats absent optional fields as not-captured rather than empty", () => {
+    // The per-rule Q_RULE_ASSETS fallback synthesises issues from the inventory API,
+    // which carries none of this; undefined must not become [] or false.
+    const raw = issueRaw("iss-bare");
+    Object.assign(raw, {
+      notes: null, serviceTickets: null, resolvedBy: null, assignee: null,
+      environments: null, aiRemediationAnalysis: null, validatedAsExploitable: false,
+    });
+    const issue = normalizeIssuesPage([raw]).issues[0];
+    expect(issue.ignoreNote).toBeUndefined();
+    expect(issue.ticketUrls).toBeUndefined();
+    expect(issue.resolvedBy).toBeUndefined();
+    expect(issue.assignee).toBeUndefined();
+    expect(issue.environments).toBeUndefined();
+    expect(issue.aiVerdict).toBeUndefined();
+    expect(issue.validatedAsExploitable).toBeUndefined();
+    expect(issue.ignoreNote).toBeUndefined();
   });
 
   it("skips issues with no id or no attachable entity", () => {

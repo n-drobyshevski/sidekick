@@ -41,7 +41,7 @@ import type { GNode, NodeKind } from "./graphTypes";
 import { AI_ASSET_KINDS, NODE_KINDS, isRiskKind, severityRank } from "./graphTypes";
 import type { Projection } from "./graphProject";
 import { nodeOrder } from "./graphProject";
-import { COMBO_GROUPS, comboGroupById } from "./toxicCombos";
+import { comboGroupById, REGISTER_GROUPS } from "./toxicCombos";
 
 export const LAYOUT_MODES = ["lanes", "grouped", "rows"] as const;
 export type LayoutMode = (typeof LAYOUT_MODES)[number];
@@ -713,7 +713,10 @@ function orderGroups(
   const canonical = (key: string): number => {
     if (groupBy === "severity") return (SEVERITY_ORDER as readonly string[]).indexOf(key);
     if (groupBy === "kind") return (NODE_KINDS as readonly string[]).indexOf(key);
-    if (groupBy === "combo") return COMBO_GROUPS.findIndex((g) => g.id === key);
+    // REGISTER_GROUPS, not COMBO_GROUPS: the Other bucket is a real group the graph can
+    // be grouped by, and it belongs at a declared position (last) rather than falling
+    // through the unknown-key branch alongside genuinely unrecognised ids.
+    if (groupBy === "combo") return REGISTER_GROUPS.findIndex((g) => g.id === key);
     return -1;
   };
   const worstSeverity = (key: string): number => {

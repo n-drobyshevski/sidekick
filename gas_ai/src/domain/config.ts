@@ -6,6 +6,25 @@
 export const SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"] as const;
 export type Severity = (typeof SEVERITY_ORDER)[number];
 
+/**
+ * The issue statuses the register collects AND counts — one list, so the Wiz filter
+ * (aiIssuesVariables) and every rollup cannot disagree about the population.
+ *
+ * They did disagree. The query has always asked for OPEN *and* IN_PROGRESS, and then
+ * seven separate readers threw the IN_PROGRESS rows away with `status === "OPEN"`: the
+ * issues reached the ai_issues tab and were counted by nothing. That is why the register
+ * total read lower than the same filter in the Wiz console.
+ *
+ * Not for configurationFindings — their status vocabulary is OPEN/RESOLVED/REJECTED with
+ * no in-progress state, and normalizeConfigFindingsPage filters on its own.
+ */
+export const UNRESOLVED_ISSUE_STATUSES = ["OPEN", "IN_PROGRESS"] as const;
+
+/** Whether an issue is still live work: it is on the register and it is not done. */
+export function isUnresolvedIssue(issue: { status?: string }): boolean {
+  return (UNRESOLVED_ISSUE_STATUSES as readonly string[]).includes(String(issue.status ?? ""));
+}
+
 export const SEVERITY_COLORS: Record<string, string> = {
   CRITICAL: "#dc2626",
   HIGH: "#ea580c",

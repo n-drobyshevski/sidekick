@@ -15,12 +15,12 @@
 //
 // `nowIso` is injected rather than read from the clock so the SLA arithmetic is testable.
 
-import { SEVERITY_ORDER } from "./config";
+import { isUnresolvedIssue, SEVERITY_ORDER } from "./config";
 import type { Severity } from "./config";
 import type { GNode, IssueRow } from "./graphTypes";
 import { conditionState } from "./riskConditions";
 import { countBySeverity } from "./severity";
-import { CONDITION_KEYS, COMBO_GROUPS, comboSummary } from "./toxicCombos";
+import { CONDITION_KEYS, COMBO_GROUPS, comboSummary, registerBucketId } from "./toxicCombos";
 import type { ConditionKey } from "./toxicCombos";
 
 /**
@@ -66,6 +66,10 @@ export interface ComboTotals {
   assetsAffected: number;
   patternsActive: number;
   patternsTotal: number;
+  /** Issues in the Other bucket — in the AI category, matching no modelled pattern. */
+  unclassified: number;
+  /** Unresolved issues someone is already working: the remediation half of the total. */
+  inProgress: number;
   nativeMix: Record<string, number>;
   adjustedMix: Record<string, number>;
   reRated: number;
@@ -76,7 +80,7 @@ export interface ComboTotals {
 
 export interface ComboDigest {
   totals: ComboTotals;
-  /** In COMBO_GROUPS order; ranking for display is the client's call. */
+  /** In REGISTER_GROUPS order (Other last); ranking for display is the client's call. */
   groups: ComboGroupDigest[];
 }
 
@@ -127,22 +131,25 @@ function reRatedCount(issues: IssueRow[]): number {
 }
 
 /**
- * Roll up the OPEN toxic-combination issues and the assets they land on.
+ * Roll up the unresolved AI-risk issues and the assets they land on.
  *
- * `issues` may be the whole issue set — only OPEN rows count, exactly as comboSummary
- * treats them, so the page and the graph never disagree about the denominator.
+ * `issues` may be the whole issue set — only unresolved rows count, exactly as
+ * comboSummary treats them, so the page and the graph never disagree about the
+ * denominator. Bucketing goes through registerBucketId for the same reason.
  */
 export function comboDigest(issues: IssueRow[], assets: GNode[], nowIso: string): ComboDigest {
   const nowMs = Date.parse(nowIso);
   const byAsset = new Map(assets.map((a) => [a.id, a]));
-  const open = issues.filter((i) => i.status === "OPEN");
+  const open = issues.filter(isUnresolvedIssue);
   const summaries = comboSummary(issues);
-  const summaryById = new Map(summaries.map((s) => [s.group.id, s]));
 
-  const groups: ComboGroupDigest[] = COMBO_GROUPS.map((group) => {
-    const summary = summaryById.get(group.id);
-    const assetIds = summary ? summary.assetIds : [];
-    const rows = open.filter((i) => i.comboGroup === group.id);
+  // Driven by the summaries, not by COMBO_GROUPS: the summary list is what carries the
+  // Other bucket, and mapping COMBO_GROUPS here is how a fifth bucket would be computed
+  // and then silently never reach the page.
+  const groups: ComboGroupDigest[] = summaries.map((summary) => {
+    const group = summary.group;
+    const assetIds = summary.assetIds;
+    const rows = open.filter((i) => registerBucketId(i) === group.id);
     const conditions = emptyConditions();
     const declared = new Set<string>(group.conditions);
     for (const key of CONDITION_KEYS) conditions[key].required = declared.has(key);
@@ -162,7 +169,7 @@ export function comboDigest(issues: IssueRow[], assets: GNode[], nowIso: string)
     const sla = slaTally(rows, nowMs);
     return {
       id: group.id,
-      count: summary ? summary.count : 0,
+      count: summary.count,
       assetCount: assetIds.length,
       conditions,
       nativeMix: mixOf(rows, "nativeSeverity"),
@@ -174,22 +181,29 @@ export function comboDigest(issues: IssueRow[], assets: GNode[], nowIso: string)
     };
   });
 
-  // Estate totals are taken over the classified issues only — the same population the
-  // four patterns describe — so the KPI row and the cards add up.
-  const classified = open.filter((i) => summaryById.has(i.comboGroup));
+  // Estate totals are taken over EVERY unresolved issue. There used to be a `classified`
+  // narrowing here that dropped anything outside the four patterns, which is what made
+  // the KPI row read lower than the same filter in the Wiz console. Every issue now has
+  // a bucket, so the cards and the total add up by construction.
   const affected = new Set<string>();
   for (const s of summaries) for (const id of s.assetIds) affected.add(id);
-  const sla = slaTally(classified, nowMs);
+  const sla = slaTally(open, nowMs);
+  const modelled = new Set<string>(COMBO_GROUPS.map((g) => g.id));
 
   return {
     totals: {
-      totalOpen: classified.length,
+      totalOpen: open.length,
       assetsAffected: affected.size,
-      patternsActive: groups.filter((g) => g.count > 0).length,
+      // Four modelled patterns is still four: Other is a residual bucket, not a pattern,
+      // so counting it would render "5 of 5 patterns active" — a claim the rule set
+      // does not make.
+      patternsActive: groups.filter((g) => g.count > 0 && modelled.has(g.id)).length,
       patternsTotal: COMBO_GROUPS.length,
-      nativeMix: mixOf(classified, "nativeSeverity"),
-      adjustedMix: mixOf(classified, "adjustedSeverity"),
-      reRated: reRatedCount(classified),
+      unclassified: groups.filter((g) => !modelled.has(g.id)).reduce((n, g) => n + g.count, 0),
+      inProgress: open.filter((i) => i.status === "IN_PROGRESS").length,
+      nativeMix: mixOf(open, "nativeSeverity"),
+      adjustedMix: mixOf(open, "adjustedSeverity"),
+      reRated: reRatedCount(open),
       pastDue: sla.pastDue,
       dueSoon: sla.dueSoon,
       noDueDate: sla.noDueDate,

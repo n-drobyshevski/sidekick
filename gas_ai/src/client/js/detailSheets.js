@@ -11,7 +11,7 @@ import { kindLabel } from "./icons.js";
 import { slaState } from "./pages/comboView.js";
 import {
   aarsChip, clear, el, emptyState, errorState, fmtDate, fmtDateTime, meter,
-  openSheet, plural, sevBadge, sheetRow, sheetSection, skeleton,
+  openSheet, plural, sevBadge, sheetRow, sheetSection, skeleton, statusPill,
 } from "./ui.js";
 
 /** Fallback only — the caps in force ride on the bootstrap payload. */
@@ -390,6 +390,25 @@ export function openAssetSheet(assetId, opts = {}) {
 // --------------------------------------------------------------------------- issue
 
 /** Issue drill-down. opts.backTo returns to the asset sheet that opened it. */
+/**
+ * The Wiz issue type in the words the page uses elsewhere. Unknown values pass through
+ * rather than being mapped to a guess — a type this build has not seen is still a fact.
+ */
+function issueTypeLabel(type) {
+  if (type === "TOXIC_COMBINATION") return "Toxic combination";
+  if (type === "CLOUD_CONFIGURATION") return "Cloud configuration";
+  return type || "";
+}
+
+/** The issue status in the same words the pill beside it uses. */
+function issueStatusLabel(status) {
+  if (status === "IN_PROGRESS") return "In progress";
+  if (status === "OPEN") return "Open";
+  if (status === "RESOLVED") return "Resolved";
+  if (status === "REJECTED") return "Rejected";
+  return status || "";
+}
+
 export function openIssueSheet(issueId, opts = {}) {
   openSheet((body, close, ctx) => {
     async function render() {
@@ -417,18 +436,28 @@ export function openIssueSheet(issueId, opts = {}) {
       const { issue, group } = detail;
       clear(body);
 
+      // Status carries a word, not just a tint — the pill's text is the signal and the
+      // colour only reinforces it.
+      const chips = [
+        sevBadge(issue.adjustedSeverity),
+        el("span", { class: "small muted" }, `Wiz native ${issue.nativeSeverity}`),
+      ];
+      if (issue.status === "IN_PROGRESS") chips.push(statusPill("warn", "In progress"));
+      if (issue.validatedAsExploitable) {
+        chips.push(statusPill("bad", "Validated exploitable"));
+      }
+      chips.push(dueChip(issue.dueAt));
+
       ctx.setHeading({
         title: issue.ruleName,
         subtitle: issue.assetName,
         sev: issue.adjustedSeverity || "",
-        chips: [
-          sevBadge(issue.adjustedSeverity),
-          el("span", { class: "small muted" }, `Wiz native ${issue.nativeSeverity}`),
-          dueChip(issue.dueAt),
-        ],
+        chips,
       });
 
-      if (group) {
+      // Guarded on the note itself, not on the group: the Other bucket resolves to a real
+      // group with no amplifier claim, and an empty note would render as a blank slab.
+      if (group && group.amplifierNote) {
         body.append(el("div", { class: "sheet-section" },
           el("div", { class: "combo-note", role: "note" }, group.amplifierNote)));
       }
@@ -444,16 +473,68 @@ export function openIssueSheet(issueId, opts = {}) {
       const tags = fwTags(issue.frameworks);
       if (tags) body.append(sheetSection("Framework mappings", tags));
 
+      // An accepted risk that lapsed. The expiry is read off the structured field; the
+      // note is shown verbatim because it is a sentence a human wrote, and the date
+      // inside its prose is not what anything here is computed from.
+      if (issue.ignoreNote || issue.ignoreExpiredAt) {
+        const rows = [];
+        if (issue.ignoreExpiredAt) {
+          rows.push(el("div", { style: "margin-bottom:8px" },
+            statusPill("warn", "Ignore expired " + fmtDate(issue.ignoreExpiredAt))));
+        }
+        if (issue.ignoreNote) {
+          rows.push(el("p", { class: "small", style: "margin:0; white-space:pre-wrap" },
+            issue.ignoreNote));
+        }
+        body.append(sheetSection("Accepted risk", ...rows));
+      }
+
+      if ((issue.ticketUrls || []).length) {
+        const list = el("div", { style: "display:grid; gap:6px" });
+        issue.ticketUrls.forEach((url, n) => {
+          list.append(el("a", {
+            href: url,
+            target: "_blank",
+            rel: "noopener noreferrer",
+            class: "small",
+            style: "overflow-wrap:anywhere",
+            "aria-label": "Open ticket " + (n + 1) + " in a new tab",
+          }, url));
+        });
+        body.append(sheetSection("Tickets", list));
+      }
+
+      // Wiz's own remediation verdict, kept visibly separate from this register's
+      // adjusted severity — they are two different opinions about the same issue.
+      if (issue.aiVerdict) {
+        const verdict = el("div", { style: "display:flex; align-items:center; gap:8px" },
+          el("strong", { class: "small" }, issue.aiVerdict));
+        if (issue.aiRecommendedSeverity) verdict.append(sevBadge(issue.aiRecommendedSeverity));
+        body.append(sheetSection("Wiz AI analysis",
+          verdict,
+          el("p", { class: "small muted", style: "margin:8px 0 0" },
+            "Wiz's recommendation, not this register's adjusted severity.")));
+      }
+
       body.append(sheetSection("Facts",
         el("dl", { class: "kv" },
           ...kvIf("Rule id", issue.ruleId),
           ...kvRow("Asset", issue.assetName),
-          ...kvRow("Status", issue.status),
+          ...kvRow("Status", issueStatusLabel(issue.status)),
+          ...kvIf("Issue type", issueTypeLabel(issue.issueType)),
+          ...kvIf("Assignee", issue.assignee),
           ...kvIf("Region", issue.region),
           ...kvIf("Account", issue.account),
+          ...kvIf("Business impact", issue.businessImpact),
+          ...kvIf("Asset status", issue.entityStatus),
+          ...kvIf("Environments", (issue.environments || []).join(", ")),
           ...kvIf("Projects", (issue.projects || []).join(", ")),
           ...kvIf("Created", issue.createdAt ? fmtDate(issue.createdAt) : ""),
+          ...kvIf("Updated", issue.updatedAt ? fmtDate(issue.updatedAt) : ""),
           ...kvIf("Due", issue.dueAt ? fmtDateTime(issue.dueAt) : ""),
+          ...kvIf("Resolved", issue.resolvedAt ? fmtDate(issue.resolvedAt) : ""),
+          ...kvIf("Resolution", issue.resolutionReason),
+          ...kvIf("Resolved by", issue.resolvedBy),
         )));
 
       clear(ctx.footer()).append(

@@ -79,6 +79,18 @@ export const STEP_VAR_SPECS: StepVarSpec[] = [
         required: true,
       },
       {
+        path: "filterBy.type",
+        label: "Issue types",
+        help: "Which Wiz issue types to collect. TOXIC_COMBINATION is the four " +
+          "multi-condition patterns this register models; CLOUD_CONFIGURATION is the rest " +
+          "of the AI risk category, which lands in Other AI risk. Dropping either one " +
+          "drops those issues from the register total and from AARS pillar A — narrowing " +
+          "to TOXIC_COMBINATION alone reproduces the pre-2026-08 register.",
+        kind: "list",
+        options: ["TOXIC_COMBINATION", "CLOUD_CONFIGURATION", "THREAT_DETECTION"],
+        required: true,
+      },
+      {
         path: "filterBy.project",
         label: "Project scope",
         help: "Wiz project ids to restrict to. Empty means the whole tenant.",
@@ -92,6 +104,14 @@ export const STEP_VAR_SPECS: StepVarSpec[] = [
         options: ORDER_DIRECTIONS,
       },
     ],
+    // Deliberately NOT offering filterBy.frameworkCategory. Every figure this app
+    // publishes — the issue count, AARS pillar A, the Toxic Combinations page, the tab
+    // literally called ai_issues — is scoped to wct-id-1998 and labelled AI. Nothing in
+    // the response says "this is an AI issue"; the category filter IS the claim. Widen it
+    // and "AI issues" silently means "all issues", with no field to catch it. Same reason
+    // AGENTIC_IDENTITIES locks its purpose filter.
+    locked: "The AI risk category (wct-id-1998) is fixed: it is what makes these issues AI " +
+      "issues, so widening it would relabel the whole register rather than extend it.",
   },
   {
     stepId: "CONFIG_FINDINGS",

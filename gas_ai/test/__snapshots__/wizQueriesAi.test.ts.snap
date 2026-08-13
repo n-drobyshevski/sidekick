@@ -127,16 +127,35 @@ exports[`query documents > Q_ISSUES is unchanged 1`] = `
       createdAt
       updatedAt
       dueAt
-      projects { id name riskProfile { businessImpact } }
+      resolvedAt
+      resolutionReason
+      resolutionNote
+      rejectionExpiredAt
+      validatedAsExploitable
+      environments
+      assignee { id name primaryEmail }
+      resolvedBy { user { id name email } serviceAccount { id name type } }
+      notes { id text }
+      serviceTickets { id externalId name url }
+      applicationServices { id displayName }
+      aiRemediationAnalysis { verdict recommendedSeverity }
+      projects { id name slug riskProfile { businessImpact } }
       entitySnapshot {
         id
         type
+        status
         name
         cloudPlatform
         region
         subscriptionName
+        subscriptionId
+        subscriptionExternalId
         nativeType
         externalId
+        tags
+        kubernetesClusterName
+        kubernetesNamespaceName
+        resourceGroupId
       }
       sourceRules {
         ... on Control {

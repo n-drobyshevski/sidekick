@@ -18,6 +18,8 @@ import {
   writePath,
 } from "../src/domain/scanVars";
 import { getScanVars, withScanVars } from "../src/domain/settingsLogic";
+import { aiIssuesVariables } from "../src/server/wizQueriesAi";
+import { RISK_CATEGORY_ID } from "../src/domain/toxicCombos";
 
 const INV = "INVENTORY_AI";
 const ISS = "ISSUES_TOXIC";
@@ -43,6 +45,32 @@ describe("containment — an override moves only what its spec offers", () => {
     expect(readPath(clean, "first")).toBeUndefined();
     expect(readPath(clean, "after")).toBeUndefined();
     expect(readPath(clean, "quick")).toBeUndefined();
+  });
+
+  it("cannot widen the AI risk category — the filter that makes these AI issues", () => {
+    // frameworkCategory is deliberately absent from the ISSUES_TOXIC spec: nothing in the
+    // response says "this is an AI issue", so the category filter IS the claim, and
+    // widening it would relabel the whole register rather than extend it. cleanStepVars
+    // drops any path the spec does not name, and effectiveStepVars overlays BY PATH, so
+    // the builder's value survives whatever is stored. Asserted rather than trusted.
+    const stored = { filterBy: { frameworkCategory: ["wct-id-9999"] } };
+    expect(readPath(cleanStepVars(ISS, stored) ?? {}, "filterBy.frameworkCategory"))
+      .toBeUndefined();
+    const effective = effectiveStepVars(
+      ISS,
+      aiIssuesVariables(null) as Record<string, unknown>,
+      stored,
+    );
+    expect(readPath(effective, "filterBy.frameworkCategory")).toEqual([RISK_CATEGORY_ID]);
+    expect(varSpecFor(ISS)?.locked).toContain("wct-id-1998");
+  });
+
+  it("offers the issue-type filter, and refuses to empty it", () => {
+    const paths = (varSpecFor(ISS)?.fields ?? []).map((f) => f.path);
+    expect(paths).toContain("filterBy.type");
+    expect(validateStepVars(ISS, { filterBy: { type: [] } }).length).toBeGreaterThan(0);
+    const clean = cleanStepVars(ISS, { filterBy: { type: ["TOXIC_COMBINATION"] } });
+    expect(readPath(clean ?? {}, "filterBy.type")).toEqual(["TOXIC_COMBINATION"]);
   });
 
   it("refuses a step with no spec, however well-formed the value", () => {
@@ -77,10 +105,9 @@ describe("cleaning values", () => {
 });
 
 describe("effectiveStepVars — overlay by path, never replace", () => {
-  const base = {
-    filterBy: { status: ["OPEN", "IN_PROGRESS"], riskEqualsAny: ["wct-id-1998"], type: ["TOXIC_COMBINATION"] },
-    orderBy: { field: "SEVERITY_EXPLOITABLE", direction: "DESC" },
-  };
+  // The real builder output, so this suite cannot go on describing a filter shape the
+  // query stopped sending.
+  const base = aiIssuesVariables(null) as Record<string, unknown>;
 
   it("moves the overridden path", () => {
     const out = effectiveStepVars(ISS, base, { filterBy: { status: ["OPEN"] } });
@@ -89,10 +116,10 @@ describe("effectiveStepVars — overlay by path, never replace", () => {
 
   it("keeps the builder's other keys — including ones the operator never sees", () => {
     const out = effectiveStepVars(ISS, base, { filterBy: { status: ["OPEN"] } }) as Record<string, Record<string, unknown>>;
-    // The risk-category filter is what scopes this query to AI at all. An override that
+    // The category filter is what scopes this query to AI at all. An override that
     // replaced `filterBy` wholesale would silently drop it and collect the whole tenant.
-    expect(out.filterBy.riskEqualsAny).toEqual(["wct-id-1998"]);
-    expect(out.filterBy.type).toEqual(["TOXIC_COMBINATION"]);
+    expect(out.filterBy.frameworkCategory).toEqual([RISK_CATEGORY_ID]);
+    expect(out.filterBy.type).toEqual(["CLOUD_CONFIGURATION", "TOXIC_COMBINATION"]);
     expect(out.orderBy.field).toBe("SEVERITY_EXPLOITABLE");
   });
 

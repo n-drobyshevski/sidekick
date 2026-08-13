@@ -23,12 +23,13 @@ import { kindIconSvg, kindLabel, categoryOf } from "../icons.js";
 import {
   clear, dataTable, debounce, el, emptyState, errorState, kpiCard, pager, sectionLabel,
   select,
-  selectField, sevBadge, sevKeyRow, sevSegmentBar, sevSpoken, skeleton, togglePills,
+  selectField, sevBadge, sevKeyRow, sevSegmentBar, sevSpoken, skeleton, statusPill,
+  togglePills,
 } from "../ui.js";
 import {
   CONDITION_KEYS, ISSUE_COMPARATORS, ISSUE_SORT_DESC, SEVERITY_RANK,
   applyIssueFilters, comboParamPatch, conditionPresent, groupMatches, issueFilterOptions,
-  rankGroups, readComboParams, shiftSegments, shiftSummary, sortIssues,
+  isAmplified, rankGroups, readComboParams, shiftSegments, shiftSummary, sortIssues,
 } from "./comboView.js";
 
 /**
@@ -181,9 +182,16 @@ export async function renderCombos(main, params) {
     const dueSub = totals.noDueDate
       ? totals.dueSoon + " due within 7 days · " + totals.noDueDate + " with no deadline"
       : totals.dueSoon + " due within 7 days";
+    // What the headline number is made of. This is the figure an analyst compares against
+    // the Wiz console, so it says where its parts came from rather than leaving the
+    // difference between "issues" and "modelled patterns" to be guessed at.
+    const openParts = [totals.reRated + " re-rated by the amplifier"];
+    if (totals.unclassified) {
+      openParts.push(totals.unclassified + " outside the four patterns");
+    }
+    if (totals.inProgress) openParts.push(totals.inProgress + " in progress");
     return el("div", { class: "kpi-row" },
-      kpiCard("Open issues", String(totals.totalOpen),
-        totals.reRated + " re-rated by the amplifier"),
+      kpiCard("Open issues", String(totals.totalOpen), openParts.join(" · ")),
       kpiCard("Assets affected", String(totals.assetsAffected),
         "distinct across every pattern"),
       kpiCard("Patterns active", totals.patternsActive + " of " + totals.patternsTotal,
@@ -412,14 +420,27 @@ export async function renderCombos(main, params) {
     ];
     if (dg && dg.pastDue) counts.push(dg.pastDue + " past due");
 
+    // A modelled pattern re-rates its issues, so it shows the shift and the note that
+    // justifies it — the two are emitted together so severity can never appear to change
+    // silently. The Other bucket makes no such claim: it shows the severity mix it
+    // actually holds, and says plainly that Wiz's rating is carried through untouched.
+    const amplified = isAmplified(group);
+    const note = amplified
+      ? group.amplifierNote
+      : "Not one of the four modelled patterns — these are AI-risk-category issues with " +
+        "no combination rule this register models. Wiz severity is carried through " +
+        "unchanged; no amplifier is applied.";
+
     card.append(
       el("div", { class: "combo-head" },
         el("h3", { class: "combo-title" }, group.title),
-        shiftBadge(group.nativeSeverity, group.adjustedSeverity),
+        amplified
+          ? shiftBadge(group.nativeSeverity, group.adjustedSeverity)
+          : mixBadge(group, dg),
         el("span", { class: "combo-count num" }, counts.join(" · ")),
       ),
-      el("div", { class: "combo-note", role: "note" }, group.amplifierNote),
     );
+    if (note) card.append(el("div", { class: "combo-note", role: "note" }, note));
 
     const conditions = conditionStrip(group, dg);
     if (conditions) card.append(conditions);
@@ -456,6 +477,21 @@ export async function renderCombos(main, params) {
 
     if (expanded) loadIssues(group, issuesHost);
     return card;
+  }
+
+  /**
+   * What an unamplified bucket holds, in place of a shift badge. Severity here is a mix,
+   * not a single level, so a lone badge would have to pick one and imply the rest away.
+   * sevKeyRow renders dot + level word + count, so the reading never rides on colour.
+   */
+  function mixBadge(group, dg) {
+    const mix = (dg && dg.adjustedMix) || group.adjustedMix || {};
+    const segments = shiftSegments(mix, group.count);
+    if (!segments.length) return el("span", { class: "small muted" }, "No open issues");
+    return el("span", {
+      role: "img",
+      "aria-label": "Severity mix: " + sevSpoken(segments),
+    }, sevKeyRow(segments, { variant: "legend" }));
   }
 
   /** Wiz native and adjusted as one reading, not a badge with a caption floating beside it. */
@@ -642,8 +678,16 @@ export async function renderCombos(main, params) {
       { key: "asset", label: "Asset", cell: (i) => i.assetName },
       { key: "severity", label: "Adjusted", cell: (i) => sevBadge(i.adjustedSeverity) },
       { key: "native", label: "Wiz native", cell: (i) => i.nativeSeverity },
+      // The status the register used to collect and never show. statusPill carries the
+      // word, so the state never rides on the tint alone.
+      {
+        key: "status",
+        label: "Status",
+        cell: (i) => (i.status === "IN_PROGRESS"
+          ? statusPill("warn", "In progress")
+          : statusPill("neutral", "Open")),
+      },
       { key: "due", label: "Due", cell: (i) => dueChip(i.dueAt) || "—" },
-      { key: "region", label: "Region", cell: (i) => i.region || "—" },
       { key: "account", label: "Account", cell: (i) => i.account || "—" },
       { key: null, label: "Projects", cell: (i) => (i.projects || []).join(", ") || "—" },
     ];

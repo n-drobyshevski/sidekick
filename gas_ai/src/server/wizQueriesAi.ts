@@ -8,8 +8,10 @@
 //   configurationFindings(first, after, filterBy)  — compliance findings
 // The cloudResourcesV2/graphSearch selection sets are inferred from ai/queries/*.md;
 // the issuesV2 / configurationFindings selections are transcribed from the real tenant
-// captures in gas_ai/exemples/ (toxic_combos_*, ai_cloud_config_findings_*,
+// captures in gas_ai/exemples/ (risk_issues_*, toxic_combos_*, ai_cloud_config_findings_*,
 // agentic_idenities_*, get_ai_agents_*). Reconcile the normalizers against those.
+// issuesV2 follows risk_issues_* — the tenant-wide "Risk Issues" view; toxic_combos_* is
+// the same root captured earlier under a narrower, project-scoped filter.
 
 import { RISK_CATEGORY_ID } from "../domain/toxicCombos";
 
@@ -264,10 +266,16 @@ export const Q_IDENTITY_ACCESS = graphSearchQuery(
 
 // ------------------------------------------------------------ issuesV2 (real issues)
 
-// Trimmed from exemples/toxic_combos_request.js: only the fields the normalizer reads.
+// Trimmed from exemples/risk_issues_request.js (the tenant-wide "Risk Issues" capture);
+// the older project-scoped exemples/toxic_combos_request.js is the same root with a
+// narrower filter. Only the fields the normalizer reads are selected.
 // sourceRules carries both inline fragments — the tenant capture returned `Control`
 // with id "wc-id-3217" and a resolutionRecommendation, but CloudConfigurationRule is
 // the other shape source rules take, so both are selected.
+//
+// The lifecycle half (resolvedAt / resolutionReason / resolvedBy / notes) is what lets
+// the register say anything about remediation rather than only about exposure; the
+// capture proves every one of these fields resolves on this tenant.
 export const Q_ISSUES =
   "query SidekickAiIssues($first: Int, $after: String, $filterBy: IssueFilters, $orderBy: IssueOrder) {\n" +
   "  issuesV2(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {\n" +
@@ -281,16 +289,41 @@ export const Q_ISSUES =
   "      createdAt\n" +
   "      updatedAt\n" +
   "      dueAt\n" +
-  "      projects { id name riskProfile { businessImpact } }\n" +
+  "      resolvedAt\n" +
+  "      resolutionReason\n" +
+  "      resolutionNote\n" +
+  "      rejectionExpiredAt\n" +
+  "      validatedAsExploitable\n" +
+  "      environments\n" +
+  "      assignee { id name primaryEmail }\n" +
+  "      resolvedBy { user { id name email } serviceAccount { id name type } }\n" +
+  "      notes { id text }\n" +
+  "      serviceTickets { id externalId name url }\n" +
+  "      applicationServices { id displayName }\n" +
+  // The capture gates this behind @include(if: $fetchAiRemediationAnalysis); the
+  // convention here is to drop @include and select plainly, which is valid — but this
+  // is an AI-analysis join, the same expensive class os_vulns.py deliberately leaves
+  // off. ISSUES_TOXIC is an optional step, so a timeout would SKIP THE WHOLE STEP
+  // rather than fail loudly: if the step starts landing in the skipped list, this is
+  // the first line to delete.
+  "      aiRemediationAnalysis { verdict recommendedSeverity }\n" +
+  "      projects { id name slug riskProfile { businessImpact } }\n" +
   "      entitySnapshot {\n" +
   "        id\n" +
   "        type\n" +
+  "        status\n" +
   "        name\n" +
   "        cloudPlatform\n" +
   "        region\n" +
   "        subscriptionName\n" +
+  "        subscriptionId\n" +
+  "        subscriptionExternalId\n" +
   "        nativeType\n" +
   "        externalId\n" +
+  "        tags\n" +
+  "        kubernetesClusterName\n" +
+  "        kubernetesNamespaceName\n" +
+  "        resourceGroupId\n" +
   "      }\n" +
   "      sourceRules {\n" +
   "        ... on Control {\n" +
@@ -316,16 +349,30 @@ export const Q_ISSUES =
   "}\n";
 
 /**
- * The $filterBy / $orderBy variables for Q_ISSUES. Filters to OPEN/IN_PROGRESS
- * toxic-combination issues under the AI risk category (wct-id-1998), optionally
+ * The $filterBy / $orderBy variables for Q_ISSUES: the tenant's AI Security register,
+ * transcribed from exemples/risk_issues_request.js (98 issues, 2026-08-13). Optionally
  * scoped to a project (WIZ_PROJECT_ID_V2 via projectScope()). Pure — scope is a
  * parameter so the document stays static and the builder is unit-testable.
+ *
+ * Two choices worth knowing, because an earlier version of this builder made the other
+ * one each time:
+ *
+ * `frameworkCategory`, not `riskEqualsAny`. wct-id-1998 is a framework-category id
+ * ("Wiz for Risk Assessment > AI Security"), and the sibling aiConfigFindingsVariables
+ * already passes it that way. Both filters are real and this tenant accepts both — they
+ * are different axes that happen to take the same id — but the console's own Risk Issues
+ * view uses frameworkCategory, so the register now matches what an analyst sees.
+ *
+ * Both issue types. Narrowing to TOXIC_COMBINATION dropped every CLOUD_CONFIGURATION
+ * issue in the category, which is a silent under-count of the same register. Issues
+ * whose source rule is not one of COMBO_GROUPS now land in the "other" bucket rather
+ * than being dropped — see comboSummary.
  */
 export function aiIssuesVariables(scope: string[] | null): { filterBy: unknown; orderBy: unknown } {
   const filterBy: Record<string, unknown> = {
     status: ["OPEN", "IN_PROGRESS"],
-    riskEqualsAny: [RISK_CATEGORY_ID],
-    type: ["TOXIC_COMBINATION"],
+    frameworkCategory: [RISK_CATEGORY_ID],
+    type: ["CLOUD_CONFIGURATION", "TOXIC_COMBINATION"],
   };
   if (scope && scope.length) filterBy["project"] = scope;
   return { filterBy, orderBy: { field: "SEVERITY_EXPLOITABLE", direction: "DESC" } };

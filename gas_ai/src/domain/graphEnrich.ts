@@ -14,6 +14,7 @@ import {
   type InternetExposure,
   type IssueSeverityKey,
 } from "./aars";
+import { isUnresolvedIssue } from "./config";
 import type { Severity } from "./config";
 import { conditionHolds, conditionState } from "./riskConditions";
 import type { ConditionKey } from "./toxicCombos";
@@ -154,7 +155,7 @@ export function buildAarsHintsFromFindings(
   issues: IssueRow[],
   rule: AarsRule = DEFAULT_AARS_RULE,
 ): AarsHints {
-  const open = issues.filter((i) => i.status === "OPEN");
+  const open = issues.filter(isUnresolvedIssue);
   const issuesByAsset = groupBy(open, (i) => i.assetId);
   const codesByResource = new Map<string, string[]>();
   // The worst severity any finding contributing this code carried, so a code reached by
@@ -205,7 +206,7 @@ export function enrichGraphDoc(
   hints?: AarsHints,
   rule: AarsRule = DEFAULT_AARS_RULE,
 ): GraphDoc {
-  const open = issues.filter((i) => i.status === "OPEN");
+  const open = issues.filter(isUnresolvedIssue);
   const byAsset = groupBy(open, (i) => i.assetId);
 
   const nodes: GNode[] = doc.nodes.map((raw) => {
