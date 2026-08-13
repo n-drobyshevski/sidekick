@@ -170,6 +170,69 @@ var Server = (() => {
     return total;
   }
 
+  // src/domain/util.ts
+  function toStr(v, fallback = "") {
+    return v === null || v === void 0 ? fallback : String(v);
+  }
+  function toNum(v, fallback = 0) {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : fallback;
+  }
+  function clampInt(v, fallback, min, max) {
+    const n = Math.round(Number(v));
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(max, Math.max(min, n));
+  }
+  function cmp(a, b) {
+    return a < b ? -1 : a > b ? 1 : 0;
+  }
+  function cmpBy(key) {
+    return (a, b) => cmp(key(a), key(b));
+  }
+  function indexBy(xs, key) {
+    const out = /* @__PURE__ */ new Map();
+    for (const x of xs) out.set(key(x), x);
+    return out;
+  }
+  function pushInto(map, key, ...values) {
+    const bucket = map.get(key);
+    if (bucket) bucket.push(...values);
+    else map.set(key, [...values]);
+  }
+  function groupBy(xs, key) {
+    const out = /* @__PURE__ */ new Map();
+    for (const x of xs) pushInto(out, key(x), x);
+    return out;
+  }
+  function present(v) {
+    if (v === null || v === void 0) return false;
+    if (typeof v === "number" && Number.isNaN(v)) return false;
+    if (typeof v === "string" && v.trim() === "") return false;
+    return true;
+  }
+  function clean(v) {
+    return present(v) ? v : null;
+  }
+  function parseTs(v) {
+    const c = clean(v);
+    if (c === null) return null;
+    if (c instanceof Date) return isNaN(c.getTime()) ? null : c.getTime();
+    if (typeof c === "number" && Number.isFinite(c)) return c;
+    let s = String(c).trim();
+    if (!s) return null;
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(s)) s = s.replace(" ", "T");
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(s)) s += "Z";
+    const t = Date.parse(s);
+    return Number.isNaN(t) ? null : t;
+  }
+  function toIso(ms) {
+    if (ms === null || !Number.isFinite(ms)) return null;
+    return new Date(Math.floor(ms / 1e3) * 1e3).toISOString().replace(".000Z", "Z");
+  }
+  function nowIso(now) {
+    return toIso(now != null ? now : Date.now());
+  }
+
   // src/server/sheetsDb.ts
   var TABS = {
     assets: "ai_assets",
@@ -306,9 +369,7 @@ var Server = (() => {
   }
   function fromCell(v) {
     if (v === "" || v === null || v === void 0) return null;
-    if (v instanceof Date) {
-      return new Date(Math.floor(v.getTime() / 1e3) * 1e3).toISOString().replace(".000Z", "Z");
-    }
+    if (v instanceof Date) return toIso(v.getTime());
     return v;
   }
   function toCell(v) {
@@ -346,36 +407,35 @@ var Server = (() => {
     }
     return [...existing, ...missing];
   }
+  function writeGrid(sh, headers, startRow, rows) {
+    if (!rows.length) return;
+    const grid = rows.map((r) => headers.map((h) => toCell(r[h])));
+    const range = sh.getRange(startRow, 1, grid.length, headers.length);
+    range.setNumberFormat("@");
+    range.setValues(grid);
+  }
   function overwrite(tab, rows) {
     const sh = sheet(tab);
     const headers = ensureHeaders(sh, tab);
     const lastRow = sh.getLastRow();
     if (lastRow > 1) sh.getRange(2, 1, lastRow - 1, headers.length).clearContent();
-    if (!rows.length) return;
-    const grid = rows.map((r) => headers.map((h) => toCell(r[h])));
-    const range = sh.getRange(2, 1, grid.length, headers.length);
-    range.setNumberFormat("@");
-    range.setValues(grid);
+    writeGrid(sh, headers, 2, rows);
   }
   function appendRows(tab, rows) {
     if (!rows.length) return;
     const sh = sheet(tab);
-    const headers = ensureHeaders(sh, tab);
-    const grid = rows.map((r) => headers.map((h) => toCell(r[h])));
-    const range = sh.getRange(sh.getLastRow() + 1, 1, grid.length, headers.length);
-    range.setNumberFormat("@");
-    range.setValues(grid);
+    writeGrid(sh, ensureHeaders(sh, tab), sh.getLastRow() + 1, rows);
   }
   function dataRowCount(tab) {
     return Math.max(0, sheet(tab).getLastRow() - 1);
   }
   function updateWhere(tab, keyColumn, keyValue, patch) {
     const sh = sheet(tab);
+    if (sh.getLastRow() < 2) return false;
+    const headers = ensureHeaders(sh, tab);
     const lastRow = sh.getLastRow();
-    const lastCol = sh.getLastColumn();
-    if (lastRow < 2) return false;
+    const lastCol = headers.length;
     const values = sh.getRange(1, 1, lastRow, lastCol).getValues();
-    const headers = values[0].map(String);
     const keyIdx = headers.indexOf(keyColumn);
     if (keyIdx < 0) return false;
     for (let i = 1; i < values.length; i++) {
@@ -566,8 +626,36 @@ var Server = (() => {
   var PAGE_SIZE = 100;
   var PAGE_SIZE_FALLBACK = 50;
   var MAX_PAGES = 200;
-  var RESOURCE_FIELDS = "      id\n      name\n      type\n      nativeType\n      cloudPlatform\n      region\n      status\n      firstSeen\n      lastSeen\n      externalId\n      isAccessibleFromInternet\n      isOpenToAllInternet\n      hasSensitiveData\n      hasAccessToSensitiveData\n      hasAdminPrivileges\n      hasHighPrivileges\n      technology { id name categories { id name } }\n      cloudAccount { id name externalId cloudProvider }\n      projects { id name riskProfile { businessImpact } }\n      tags { key value }\n";
-  var ENTITY_FIELDS = "        id\n        name\n        type\n        nativeType\n        cloudPlatform\n        region\n        ... on CloudResource {\n          status\n          firstSeen\n          lastSeen\n          externalId\n          isAccessibleFromInternet\n          isOpenToAllInternet\n          hasSensitiveData\n          hasAccessToSensitiveData\n          hasAdminPrivileges\n          hasHighPrivileges\n          technology { id name categories { id name } }\n          cloudAccount { id name externalId cloudProvider }\n          projects { id name riskProfile { businessImpact } }\n          tags { key value }\n        }\n";
+  var IDENTITY_FIELDS = [
+    "id",
+    "name",
+    "type",
+    "nativeType",
+    "cloudPlatform",
+    "region"
+  ];
+  var CLOUD_RESOURCE_FIELDS = [
+    "status",
+    "firstSeen",
+    "lastSeen",
+    "externalId",
+    "isAccessibleFromInternet",
+    "isOpenToAllInternet",
+    "hasSensitiveData",
+    "hasAccessToSensitiveData",
+    "hasAdminPrivileges",
+    "hasHighPrivileges",
+    "technology { id name categories { id name } }",
+    "cloudAccount { id name externalId cloudProvider }",
+    "projects { id name riskProfile { businessImpact } }",
+    "tags { key value }"
+  ];
+  function indented(fields, spaces) {
+    const pad = new Array(spaces + 1).join(" ");
+    return fields.map((f) => pad + f + "\n").join("");
+  }
+  var RESOURCE_FIELDS = indented(IDENTITY_FIELDS, 6) + indented(CLOUD_RESOURCE_FIELDS, 6);
+  var ENTITY_FIELDS = indented(IDENTITY_FIELDS, 8) + "        ... on CloudResource {\n" + indented(CLOUD_RESOURCE_FIELDS, 10) + "        }\n";
   function graphSearchQuery(name, queryBody) {
     return "query " + name + "($quick: Boolean, $first: Int, $after: String) {\n  graphSearch(quick: $quick, first: $first, after: $after, query: {\n" + queryBody + "  }) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      entities {\n" + ENTITY_FIELDS + "      }\n    }\n  }\n}\n";
   }
@@ -587,16 +675,19 @@ var Server = (() => {
     "AI_TOOL",
     "MCP_SERVER"
   ];
+  function aiFlavored(values) {
+    return values.filter((v) => {
+      const tokens = v.toUpperCase().split(/[\s_]+/);
+      return tokens.includes("AI") || tokens.includes("MCP") || tokens.includes("GENAI") || tokens.includes("LLM");
+    });
+  }
   function chooseAiResourceTypes(enumValues, override) {
     if (override && override.length) return { types: override, source: "override", aiLooking: [] };
     if (!enumValues) {
       return { types: [...AI_RESOURCE_TYPE_CANDIDATES], source: "candidates", aiLooking: [] };
     }
     const present2 = new Set(enumValues);
-    const aiLooking = enumValues.filter((v) => {
-      const tokens = v.toUpperCase().split(/[\s_]+/);
-      return tokens.includes("AI") || tokens.includes("MCP") || tokens.includes("GENAI") || tokens.includes("LLM");
-    });
+    const aiLooking = aiFlavored(enumValues);
     const intersection = AI_RESOURCE_TYPE_CANDIDATES.filter((t) => present2.has(t));
     if (intersection.length) return { types: intersection, source: "intersection", aiLooking };
     if (aiLooking.length) return { types: aiLooking, source: "ai-tokens", aiLooking };
@@ -716,7 +807,8 @@ var Server = (() => {
       }
       if (code === 429 || code >= 500) {
         lastError = `HTTP ${code}`;
-        Utilities.sleep(1e3 * Math.pow(2, attempt));
+        const ceiling = 1e3 * Math.pow(2, attempt);
+        Utilities.sleep(Math.floor(ceiling / 2 + Math.random() * (ceiling / 2)));
         continue;
       }
       if (code !== 200) {
@@ -834,32 +926,13 @@ var Server = (() => {
       totalCount: typeof rawTotal === "number" ? rawTotal : null
     };
   }
-  function fetchCloudResourcesPage(o) {
+  function fetchPage(field, o, extra) {
     var _a4;
     const run2 = (first) => {
       var _a5, _b;
       return readConnection(
         gqlPost(o.query, {
-          first,
-          after: (_a5 = o.cursor) != null ? _a5 : null,
-          ...(_b = o.extraVariables) != null ? _b : {}
-        })["cloudResourcesV2"],
-        "cloudResourcesV2"
-      );
-    };
-    try {
-      return run2((_a4 = o.first) != null ? _a4 : PAGE_SIZE);
-    } catch (e) {
-      if (e instanceof WizQueryError && /HTTP 4\d\d/.test(e.message)) throw e;
-      return run2(PAGE_SIZE_FALLBACK);
-    }
-  }
-  function fetchConnectionPage(field, o) {
-    var _a4;
-    const run2 = (first) => {
-      var _a5, _b;
-      return readConnection(
-        gqlPost(o.query, {
+          ...extra != null ? extra : {},
           first,
           after: (_a5 = o.cursor) != null ? _a5 : null,
           ...(_b = o.extraVariables) != null ? _b : {}
@@ -874,35 +947,17 @@ var Server = (() => {
       return run2(PAGE_SIZE_FALLBACK);
     }
   }
+  function fetchCloudResourcesPage(o) {
+    return fetchPage("cloudResourcesV2", o);
+  }
+  function fetchConnectionPage(field, o) {
+    return fetchPage(field, o);
+  }
   function fetchGraphSearchPage(o) {
-    var _a4;
-    const run2 = (first) => {
-      var _a5, _b;
-      return readConnection(
-        gqlPost(o.query, {
-          quick: true,
-          first,
-          after: (_a5 = o.cursor) != null ? _a5 : null,
-          ...(_b = o.extraVariables) != null ? _b : {}
-        })["graphSearch"],
-        "graphSearch"
-      );
-    };
-    try {
-      return run2((_a4 = o.first) != null ? _a4 : PAGE_SIZE);
-    } catch (e) {
-      if (e instanceof WizQueryError && /HTTP 4\d\d/.test(e.message)) throw e;
-      return run2(PAGE_SIZE_FALLBACK);
-    }
+    return fetchPage("graphSearch", o, { quick: true });
   }
 
   // src/server/diagnostics.ts
-  function aiFlavored(values) {
-    return values.filter((v) => {
-      const tokens = v.toUpperCase().split(/[\s_]+/);
-      return tokens.includes("AI") || tokens.includes("MCP") || tokens.includes("GENAI") || tokens.includes("LLM");
-    });
-  }
   function preview(value) {
     if (!value || !value.trim()) return "(unset)";
     const v = value.trim();
@@ -1101,13 +1156,6 @@ var Server = (() => {
     "flags"
   ];
   var ASSET_FLAGS = ["combo", "guardrail", "agentic"];
-  function str(v) {
-    return v === null || v === void 0 ? "" : String(v);
-  }
-  function num(v) {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : 0;
-  }
   function score(v) {
     const n = Number(v != null ? v : -1);
     return Number.isFinite(n) ? n : -1;
@@ -1118,13 +1166,13 @@ var Server = (() => {
   });
   function sevRank(v) {
     var _a4;
-    return (_a4 = SEV_RANK[str(v).toUpperCase()]) != null ? _a4 : -1;
+    return (_a4 = SEV_RANK[toStr(v).toUpperCase()]) != null ? _a4 : -1;
   }
   function list(v) {
-    const raw = Array.isArray(v) ? v : str(v).split(",");
+    const raw = Array.isArray(v) ? v : toStr(v).split(",");
     const out = [];
     for (const item of raw) {
-      const s = str(item).trim();
+      const s = toStr(item).trim();
       if (s && out.indexOf(s) < 0) out.push(s);
     }
     return out;
@@ -1140,9 +1188,9 @@ var Server = (() => {
     return values.map((v) => v.toUpperCase()).filter((v) => allowed.indexOf(v) >= 0);
   }
   function resolveAssetQuery(params) {
-    const sort = str(params["sort"]);
+    const sort = toStr(params["sort"]);
     const resolvedSort = ASSET_SORTS.indexOf(sort) >= 0 ? sort : "aars";
-    const dir = str(params["dir"]).toLowerCase();
+    const dir = toStr(params["dir"]).toLowerCase();
     const page = Number(params["page"]);
     const pageSize = Number(params["pageSize"]);
     const aarsSeverities = listWithLegacy(
@@ -1154,7 +1202,7 @@ var Server = (() => {
       return (_a4 = normalizeAarsSeverity(v)) != null ? _a4 : "";
     }).filter((v, i, all) => v !== "" && all.indexOf(v) === i);
     return {
-      q: str(params["q"]).trim().toLowerCase(),
+      q: toStr(params["q"]).trim().toLowerCase(),
       aarsSeverities,
       severities: keepValid(
         listWithLegacy(params["severities"], params["severity"]),
@@ -1172,24 +1220,24 @@ var Server = (() => {
     };
   }
   function hasAssetFlag(row, flag) {
-    if (flag === "combo") return num(row["combos"]) > 0;
+    if (flag === "combo") return toNum(row["combos"]) > 0;
     if (flag === "guardrail") return row["guardrailMissing"] === true;
     if (flag === "agentic") return row["agentic"] === true;
     return false;
   }
   function rowProjects(row) {
     const v = row["projects"];
-    return Array.isArray(v) ? v.map(str).filter(Boolean) : [];
+    return Array.isArray(v) ? v.map((v2) => toStr(v2)).filter(Boolean) : [];
   }
   function matchesAssetQuery(row, q) {
-    if (q.q && !str(row["name"]).toLowerCase().includes(q.q)) return false;
-    if (q.kinds.length && q.kinds.indexOf(str(row["kind"])) < 0) return false;
-    if (q.clouds.length && q.clouds.indexOf(str(row["cloud"])) < 0) return false;
-    if (q.regions.length && q.regions.indexOf(str(row["region"])) < 0) return false;
-    if (q.aarsSeverities.length && q.aarsSeverities.indexOf(str(row["aarsSeverity"])) < 0) {
+    if (q.q && !toStr(row["name"]).toLowerCase().includes(q.q)) return false;
+    if (q.kinds.length && q.kinds.indexOf(toStr(row["kind"])) < 0) return false;
+    if (q.clouds.length && q.clouds.indexOf(toStr(row["cloud"])) < 0) return false;
+    if (q.regions.length && q.regions.indexOf(toStr(row["region"])) < 0) return false;
+    if (q.aarsSeverities.length && q.aarsSeverities.indexOf(toStr(row["aarsSeverity"])) < 0) {
       return false;
     }
-    if (q.severities.length && q.severities.indexOf(str(row["severity"])) < 0) return false;
+    if (q.severities.length && q.severities.indexOf(toStr(row["severity"])) < 0) return false;
     if (q.projects.length) {
       const mine = rowProjects(row);
       if (!q.projects.some((p) => mine.indexOf(p) >= 0)) return false;
@@ -1202,12 +1250,12 @@ var Server = (() => {
   }
   var PRIMARY = {
     aars: (a, b) => score(a["aars"]) - score(b["aars"]),
-    name: (a, b) => str(a["name"]).localeCompare(str(b["name"])),
-    kind: (a, b) => str(a["kind"]).localeCompare(str(b["kind"])),
-    cloud: (a, b) => str(a["cloud"]).localeCompare(str(b["cloud"])),
-    region: (a, b) => str(a["region"]).localeCompare(str(b["region"])),
+    name: (a, b) => toStr(a["name"]).localeCompare(toStr(b["name"])),
+    kind: (a, b) => toStr(a["kind"]).localeCompare(toStr(b["kind"])),
+    cloud: (a, b) => toStr(a["cloud"]).localeCompare(toStr(b["cloud"])),
+    region: (a, b) => toStr(a["region"]).localeCompare(toStr(b["region"])),
     severity: (a, b) => sevRank(a["severity"]) - sevRank(b["severity"]),
-    combos: (a, b) => num(a["combos"]) - num(b["combos"])
+    combos: (a, b) => toNum(a["combos"]) - toNum(b["combos"])
   };
   var byScoreDesc = (a, b) => score(b["aars"]) - score(a["aars"]);
   function assetComparator(sort, dir) {
@@ -1225,11 +1273,11 @@ var Server = (() => {
     return [...rows].sort(assetComparator(resolved, dir != null ? dir : DEFAULT_SORT_DIR[resolved]));
   }
   function facetValues(key, row) {
-    if (key === "kinds") return [str(row["kind"])].filter(Boolean);
-    if (key === "clouds") return [str(row["cloud"])].filter(Boolean);
-    if (key === "regions") return [str(row["region"])].filter(Boolean);
-    if (key === "aarsSeverities") return [str(row["aarsSeverity"])].filter(Boolean);
-    if (key === "severities") return [str(row["severity"])].filter(Boolean);
+    if (key === "kinds") return [toStr(row["kind"])].filter(Boolean);
+    if (key === "clouds") return [toStr(row["cloud"])].filter(Boolean);
+    if (key === "regions") return [toStr(row["region"])].filter(Boolean);
+    if (key === "aarsSeverities") return [toStr(row["aarsSeverity"])].filter(Boolean);
+    if (key === "severities") return [toStr(row["severity"])].filter(Boolean);
     if (key === "projects") return rowProjects(row);
     return ASSET_FLAGS.filter((f) => hasAssetFlag(row, f));
   }
@@ -1380,11 +1428,6 @@ var Server = (() => {
   };
   function rec(v) {
     return v && typeof v === "object" && !Array.isArray(v) ? v : {};
-  }
-  function clampInt(v, fallback, min, max) {
-    const n = Math.round(Number(v));
-    if (!Number.isFinite(n)) return fallback;
-    return Math.min(max, Math.max(min, n));
   }
   function clampMultiplier(v, fallback) {
     const n = Number(v);
@@ -1567,7 +1610,7 @@ var Server = (() => {
       const ruleVersion = Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
       points.push({ at, counts, ruleVersion });
     }
-    points.sort((a, b) => a.at < b.at ? -1 : a.at > b.at ? 1 : 0);
+    points.sort(cmpBy((p) => p.at));
     return limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
   }
   function ruleChangePoints(points) {
@@ -1580,9 +1623,7 @@ var Server = (() => {
 
   // src/domain/settingsLogic.ts
   function clampDepth(v) {
-    const n = Math.round(Number(v));
-    if (!Number.isFinite(n)) return DEPTH_DEFAULT;
-    return Math.min(DEPTH_MAX, Math.max(DEPTH_MIN, n));
+    return clampInt(v, DEPTH_DEFAULT, DEPTH_MIN, DEPTH_MAX);
   }
   function getDefaultDepth(settings) {
     var _a4;
@@ -1592,9 +1633,7 @@ var Server = (() => {
     return { ...settings, default_depth: clampDepth(depth) };
   }
   function clampMaxNodes(v) {
-    const n = Math.round(Number(v));
-    if (!Number.isFinite(n)) return MAX_NODES_DEFAULT;
-    return Math.min(MAX_NODES_CEILING, Math.max(MAX_NODES_FLOOR, n));
+    return clampInt(v, MAX_NODES_DEFAULT, MAX_NODES_FLOOR, MAX_NODES_CEILING);
   }
   function getMaxNodes(settings) {
     var _a4;
@@ -1738,7 +1777,7 @@ var Server = (() => {
     if (sev !== 0) return sev;
     const aars = ((_a4 = b.aars) != null ? _a4 : -1) - ((_b = a.aars) != null ? _b : -1);
     if (aars !== 0) return aars;
-    return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+    return cmp(a.name, b.name);
   }
   function passesFilters(node2, f) {
     var _a4, _b, _c, _d, _e, _f, _g, _h;
@@ -1755,10 +1794,9 @@ var Server = (() => {
   }
   function projectGraph(doc, opts) {
     var _a4, _b, _c, _d, _e, _f, _g, _h, _i, _j;
-    const byId = /* @__PURE__ */ new Map();
-    for (const n of doc.nodes) byId.set(n.id, n);
+    const byId = indexBy(doc.nodes, (n) => n.id);
     const adjacency = /* @__PURE__ */ new Map();
-    const sortedEdges = [...doc.edges].sort((a, b) => a.id < b.id ? -1 : 1);
+    const sortedEdges = [...doc.edges].sort(cmpBy((e) => e.id));
     for (const edge2 of sortedEdges) {
       if (!byId.has(edge2.src) || !byId.has(edge2.dst)) continue;
       if (!adjacency.has(edge2.src)) adjacency.set(edge2.src, []);
@@ -2043,7 +2081,7 @@ var Server = (() => {
       while (merged.get(root) !== root) root = merged.get(root);
       return root;
     };
-    const groupBy = (key) => {
+    const groupBy2 = (key) => {
       const out = /* @__PURE__ */ new Map();
       for (const node2 of p.nodes) {
         const k = key(node2.id);
@@ -2052,7 +2090,7 @@ var Server = (() => {
       }
       return out;
     };
-    const initial = groupBy((id) => keyOf.get(id));
+    const initial = groupBy2((id) => keyOf.get(id));
     const initialShared = sharedEdges((id) => keyOf.get(id));
     for (const key of [...initial.keys()].sort()) {
       const list2 = initial.get(key);
@@ -2067,7 +2105,7 @@ var Server = (() => {
       if (target) merged.set(resolve(key), resolve(target));
     }
     const finalKey = (id) => resolve(keyOf.get(id));
-    const members = groupBy(finalKey);
+    const members = groupBy2(finalKey);
     const shared = sharedEdges(finalKey);
     const worst = (key) => {
       var _a5;
@@ -2250,9 +2288,9 @@ var Server = (() => {
       }
     } else {
       const byId = new Map(p.nodes.map((n) => [n.id, n]));
-      const cmp = comparator(sort);
+      const cmp2 = comparator(sort);
       for (const lane of lanes) {
-        lane.sort((a, b) => cmp(byId.get(a), byId.get(b)));
+        lane.sort((a, b) => cmp2(byId.get(a), byId.get(b)));
       }
     }
     const rankOf = sort === "smart" ? clusterRanks(p) : null;
@@ -2315,18 +2353,18 @@ var Server = (() => {
       mode: "lanes"
     };
   }
-  function groupKeyOf(node2, groupBy, parentOf) {
-    if ((node2.kind === "SUMMARY" || isRiskKind(node2.kind)) && groupBy !== "kind") {
-      const own = ownGroupKey(node2, groupBy);
+  function groupKeyOf(node2, groupBy2, parentOf) {
+    if ((node2.kind === "SUMMARY" || isRiskKind(node2.kind)) && groupBy2 !== "kind") {
+      const own = ownGroupKey(node2, groupBy2);
       if (own !== GROUP_NONE) return own;
       const parent = parentOf.get(node2.id);
-      return parent ? groupKeyOf(parent, groupBy, parentOf) : GROUP_NONE;
+      return parent ? groupKeyOf(parent, groupBy2, parentOf) : GROUP_NONE;
     }
-    return ownGroupKey(node2, groupBy);
+    return ownGroupKey(node2, groupBy2);
   }
-  function ownGroupKey(node2, groupBy) {
+  function ownGroupKey(node2, groupBy2) {
     var _a4, _b, _c, _d, _e, _f, _g;
-    switch (groupBy) {
+    switch (groupBy2) {
       case "combo": {
         const groups = [...(_a4 = node2.comboGroups) != null ? _a4 : []].sort();
         return (_b = groups[0]) != null ? _b : GROUP_NONE;
@@ -2345,17 +2383,17 @@ var Server = (() => {
         return GROUP_NONE;
     }
   }
-  function groupLabel(key, groupBy) {
+  function groupLabel(key, groupBy2) {
     var _a4, _b;
     if (key === GROUP_NONE) return "Ungrouped";
-    if (groupBy === "combo") return (_b = (_a4 = comboGroupById(key)) == null ? void 0 : _a4.shortLabel) != null ? _b : key;
+    if (groupBy2 === "combo") return (_b = (_a4 = comboGroupById(key)) == null ? void 0 : _a4.shortLabel) != null ? _b : key;
     return key;
   }
-  function orderGroups(keys, groupBy, members) {
+  function orderGroups(keys, groupBy2, members) {
     const canonical = (key) => {
-      if (groupBy === "severity") return SEVERITY_ORDER.indexOf(key);
-      if (groupBy === "kind") return NODE_KINDS.indexOf(key);
-      if (groupBy === "combo") return COMBO_GROUPS.findIndex((g) => g.id === key);
+      if (groupBy2 === "severity") return SEVERITY_ORDER.indexOf(key);
+      if (groupBy2 === "kind") return NODE_KINDS.indexOf(key);
+      if (groupBy2 === "combo") return COMBO_GROUPS.findIndex((g) => g.id === key);
       return -1;
     };
     const worstSeverity2 = (key) => {
@@ -2429,12 +2467,12 @@ var Server = (() => {
   }
   function assignToHubs(p, parentOf) {
     var _a4;
-    const cmp = (a, b) => nodeOrder(a, b) || cmpId(a, b);
+    const cmp2 = (a, b) => nodeOrder(a, b) || cmpId(a, b);
     let hubs = p.nodes.filter((n) => n.kind === "AI_AGENT");
     if (!hubs.length) {
       hubs = p.nodes.filter((n) => AI_ASSET_KINDS.includes(n.kind));
     }
-    hubs = [...hubs].sort(cmp);
+    hubs = [...hubs].sort(cmp2);
     const adj = /* @__PURE__ */ new Map();
     const sortedEdges = [...p.edges].sort((a, b) => a.id < b.id ? -1 : 1);
     for (const e of sortedEdges) {
@@ -2466,12 +2504,12 @@ var Server = (() => {
   function layoutGrouped(p, opts) {
     var _a4, _b, _c;
     const margin = (_a4 = opts.margin) != null ? _a4 : 120;
-    const groupBy = (_b = opts.groupBy) != null ? _b : "combo";
+    const groupBy2 = (_b = opts.groupBy) != null ? _b : "combo";
     const sort = (_c = opts.sort) != null ? _c : "smart";
     const parentOf = parentIndex(p);
-    const cmp = comparator(sort);
+    const cmp2 = comparator(sort);
     const specs = [];
-    if (groupBy === "asset") {
+    if (groupBy2 === "asset") {
       const { hubOf, hubs } = assignToHubs(p, parentOf);
       const members = new Map(hubs.map((h) => [h.id, []]));
       const strays = [];
@@ -2481,19 +2519,19 @@ var Server = (() => {
         else strays.push(node2);
       }
       for (const hub of hubs) {
-        const sats = members.get(hub.id).filter((n) => n.id !== hub.id).sort(cmp);
+        const sats = members.get(hub.id).filter((n) => n.id !== hub.id).sort(cmp2);
         specs.push(radialBlock(hub.id, hub.name, hub, sats));
       }
-      if (strays.length) specs.push(gridBlock(GROUP_NONE, "Ungrouped", [...strays].sort(cmp)));
+      if (strays.length) specs.push(gridBlock(GROUP_NONE, "Ungrouped", [...strays].sort(cmp2)));
     } else {
       const members = /* @__PURE__ */ new Map();
       for (const node2 of p.nodes) {
-        const key = groupKeyOf(node2, groupBy, parentOf);
+        const key = groupKeyOf(node2, groupBy2, parentOf);
         if (!members.has(key)) members.set(key, []);
         members.get(key).push(node2);
       }
-      for (const key of orderGroups([...members.keys()], groupBy, members)) {
-        specs.push(gridBlock(key, groupLabel(key, groupBy), [...members.get(key)].sort(cmp)));
+      for (const key of orderGroups([...members.keys()], groupBy2, members)) {
+        specs.push(gridBlock(key, groupLabel(key, groupBy2), [...members.get(key)].sort(cmp2)));
       }
     }
     const totalArea = specs.reduce(
@@ -2519,7 +2557,7 @@ var Server = (() => {
       shelfH = Math.max(shelfH, spec.height);
       maxX = Math.max(maxX, gx + spec.width);
       groups.push({
-        id: `${groupBy}:${spec.key}`,
+        id: `${groupBy2}:${spec.key}`,
         key: spec.key,
         label: spec.label,
         x: gx,
@@ -2545,9 +2583,13 @@ var Server = (() => {
 
   // src/domain/graphApiParams.ts
   function toList(v) {
-    if (Array.isArray(v)) return v.map(String).filter(Boolean);
-    if (typeof v === "string") return v.split(",").filter(Boolean);
-    return [];
+    const raw = Array.isArray(v) ? v : typeof v === "string" ? v.split(",") : [];
+    const out = [];
+    for (const item of raw) {
+      const s = String(item != null ? item : "").trim();
+      if (s && out.indexOf(s) < 0) out.push(s);
+    }
+    return out;
   }
   function comboAssetIds(issues2, groupId) {
     const out = [];
@@ -2625,6 +2667,28 @@ var Server = (() => {
     };
   }
 
+  // src/domain/riskConditions.ts
+  function conditionState(node2, key) {
+    switch (key) {
+      case "MISSING_GUARDRAIL":
+        return node2.guardrailMissing === true;
+      case "EXCESSIVE_PRIVILEGE":
+        return node2.hasAdminPrivileges === true || node2.hasHighPrivileges === true;
+      case "SENSITIVE_DATA":
+        return node2.hasSensitiveData === true || node2.hasAccessToSensitiveData === true;
+      case "INTERNET_EXPOSURE": {
+        const reachable = node2.isAccessibleFromInternet;
+        const openToAll = node2.isOpenToAllInternet;
+        if (reachable === true || openToAll === true) return true;
+        const unknown = (v) => v === null || v === void 0;
+        return unknown(reachable) || unknown(openToAll) ? null : false;
+      }
+    }
+  }
+  function conditionHolds(node2, key) {
+    return conditionState(node2, key) === true;
+  }
+
   // src/domain/severity.ts
   function normalizeSeverity(sev) {
     if (typeof sev !== "string") return "UNKNOWN";
@@ -2646,17 +2710,7 @@ var Server = (() => {
   // src/domain/comboDigest.ts
   var DUE_SOON_DAYS = 7;
   var DAY_MS = 864e5;
-  function carriesCondition(asset, key) {
-    if (key === "MISSING_GUARDRAIL") return asset.guardrailMissing === true;
-    if (key === "EXCESSIVE_PRIVILEGE") {
-      return asset.hasAdminPrivileges === true || asset.hasHighPrivileges === true;
-    }
-    if (key === "SENSITIVE_DATA") {
-      return asset.hasSensitiveData === true || asset.hasAccessToSensitiveData === true;
-    }
-    const exposed = asset.isAccessibleFromInternet;
-    return exposed === null || exposed === void 0 ? null : exposed === true;
-  }
+  var carriesCondition = conditionState;
   function mixOf(issues2, field) {
     return countBySeverity(issues2.map((i) => ({ severity: i[field] })));
   }
@@ -2742,36 +2796,6 @@ var Server = (() => {
       },
       groups
     };
-  }
-
-  // src/domain/util.ts
-  function present(v) {
-    if (v === null || v === void 0) return false;
-    if (typeof v === "number" && Number.isNaN(v)) return false;
-    if (typeof v === "string" && v.trim() === "") return false;
-    return true;
-  }
-  function clean(v) {
-    return present(v) ? v : null;
-  }
-  function parseTs(v) {
-    const c = clean(v);
-    if (c === null) return null;
-    if (c instanceof Date) return isNaN(c.getTime()) ? null : c.getTime();
-    if (typeof c === "number" && Number.isFinite(c)) return c;
-    let s = String(c).trim();
-    if (!s) return null;
-    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(s)) s = s.replace(" ", "T");
-    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(s)) s += "Z";
-    const t = Date.parse(s);
-    return Number.isNaN(t) ? null : t;
-  }
-  function toIso(ms) {
-    if (ms === null || !Number.isFinite(ms)) return null;
-    return new Date(Math.floor(ms / 1e3) * 1e3).toISOString().replace(".000Z", "Z");
-  }
-  function nowIso(now) {
-    return toIso(now != null ? now : Date.now());
   }
 
   // src/server/jobsStore.ts
@@ -3085,7 +3109,7 @@ var Server = (() => {
   });
 
   // src/domain/syncNormalize.ts
-  function str2(v) {
+  function str(v) {
     const c = clean(v);
     return c === null ? void 0 : String(c);
   }
@@ -3097,20 +3121,20 @@ var Server = (() => {
   }
   function normalizeCloudResource(raw) {
     var _a4, _b;
-    const id = str2(raw["id"]);
+    const id = str(raw["id"]);
     const kind = kindFromWizType(raw["type"]);
     if (!id || !kind) return null;
     const node2 = {
       id,
       kind,
-      name: (_a4 = str2(raw["name"])) != null ? _a4 : id,
-      nativeType: str2(raw["nativeType"]),
-      cloudPlatform: str2(raw["cloudPlatform"]),
-      region: str2(raw["region"]),
-      status: str2(raw["status"]),
-      firstSeen: str2(raw["firstSeen"]),
-      lastSeen: str2(raw["lastSeen"]),
-      externalId: str2(raw["externalId"]),
+      name: (_a4 = str(raw["name"])) != null ? _a4 : id,
+      nativeType: str(raw["nativeType"]),
+      cloudPlatform: str(raw["cloudPlatform"]),
+      region: str(raw["region"]),
+      status: str(raw["status"]),
+      firstSeen: str(raw["firstSeen"]),
+      lastSeen: str(raw["lastSeen"]),
+      externalId: str(raw["externalId"]),
       isAccessibleFromInternet: triBool(raw["isAccessibleFromInternet"]),
       isOpenToAllInternet: triBool(raw["isOpenToAllInternet"]),
       hasSensitiveData: bool(raw["hasSensitiveData"]),
@@ -3122,31 +3146,31 @@ var Server = (() => {
     if (technology && typeof technology === "object") {
       const cats = technology["categories"];
       if (Array.isArray(cats)) {
-        const names = cats.map((c) => str2(c["name"])).filter((n) => Boolean(n));
+        const names = cats.map((c) => str(c["name"])).filter((n) => Boolean(n));
         if (names.length) node2.technologyCategories = names;
       }
     }
     const ia = raw["issueAnalytics"];
     if (ia && typeof ia === "object") {
-      const num2 = (v) => typeof v === "number" ? v : Number(v) || 0;
+      const num = (v) => typeof v === "number" ? v : Number(v) || 0;
       node2.issueAnalytics = {
-        total: num2(ia["issueCount"]),
-        info: num2(ia["informationalSeverityCount"]),
-        low: num2(ia["lowSeverityCount"]),
-        medium: num2(ia["mediumSeverityCount"]),
-        high: num2(ia["highSeverityCount"]),
-        critical: num2(ia["criticalSeverityCount"])
+        total: num(ia["issueCount"]),
+        info: num(ia["informationalSeverityCount"]),
+        low: num(ia["lowSeverityCount"]),
+        medium: num(ia["mediumSeverityCount"]),
+        high: num(ia["highSeverityCount"]),
+        critical: num(ia["criticalSeverityCount"])
       };
     }
     const account = raw["cloudAccount"];
     if (account && typeof account === "object") {
-      const accId = str2(account["id"]);
+      const accId = str(account["id"]);
       if (accId) {
         node2.cloudAccount = {
           id: accId,
-          name: (_b = str2(account["name"])) != null ? _b : accId,
-          externalId: str2(account["externalId"]),
-          cloudProvider: str2(account["cloudProvider"])
+          name: (_b = str(account["name"])) != null ? _b : accId,
+          externalId: str(account["externalId"]),
+          cloudProvider: str(account["cloudProvider"])
         };
       }
     }
@@ -3154,10 +3178,10 @@ var Server = (() => {
     if (Array.isArray(projects)) {
       node2.projects = projects.map((p) => {
         const rec2 = p;
-        const pid = str2(rec2["id"]);
-        const name = str2(rec2["name"]);
+        const pid = str(rec2["id"]);
+        const name = str(rec2["name"]);
         const riskProfile = rec2["riskProfile"];
-        const businessImpact = riskProfile && typeof riskProfile === "object" ? str2(riskProfile["businessImpact"]) : void 0;
+        const businessImpact = riskProfile && typeof riskProfile === "object" ? str(riskProfile["businessImpact"]) : void 0;
         return pid && name ? { id: pid, name, businessImpact } : null;
       }).filter((p) => p !== null);
     }
@@ -3166,8 +3190,8 @@ var Server = (() => {
       node2.tags = tags.map((t) => {
         var _a5;
         const rec2 = t;
-        const key = str2(rec2["key"]);
-        return key ? { key, value: (_a5 = str2(rec2["value"])) != null ? _a5 : "" } : null;
+        const key = str(rec2["key"]);
+        return key ? { key, value: (_a5 = str(rec2["value"])) != null ? _a5 : "" } : null;
       }).filter((t) => t !== null);
     }
     return node2;
@@ -3222,21 +3246,21 @@ var Server = (() => {
     var _a4, _b, _c, _d, _e, _f, _g, _h;
     const part = emptyPart();
     for (const raw of rows) {
-      const issueId = str2(raw["id"]);
+      const issueId = str(raw["id"]);
       const snap = raw["entitySnapshot"];
-      const assetId = snap && typeof snap === "object" ? str2(snap["id"]) : void 0;
+      const assetId = snap && typeof snap === "object" ? str(snap["id"]) : void 0;
       if (!issueId || !assetId) continue;
       const sourceRules = Array.isArray(raw["sourceRules"]) ? raw["sourceRules"] : [];
       const first = (_a4 = sourceRules[0]) != null ? _a4 : {};
-      const ruleId = str2(first["id"]);
-      const ruleName = str2(first["name"]);
+      const ruleId = str(first["id"]);
+      const ruleName = str(first["name"]);
       const group = classifyIssue({ sourceRuleId: ruleId != null ? ruleId : null, ruleName: ruleName != null ? ruleName : null });
-      const nativeSeverity = (_b = str2(raw["severity"])) != null ? _b : "UNKNOWN";
+      const nativeSeverity = (_b = str(raw["severity"])) != null ? _b : "UNKNOWN";
       const adjustedSeverity = group ? group.adjustedSeverity : nativeSeverity;
       const control = first["control"];
-      const resolutionRecommendation = (_c = str2(first["resolutionRecommendation"])) != null ? _c : control && typeof control === "object" ? str2(control["resolutionRecommendation"]) : void 0;
-      const assetName = (_d = str2(snap["name"])) != null ? _d : assetId;
-      const projects = Array.isArray(raw["projects"]) ? raw["projects"].map((p) => str2(p["name"])).filter((n) => Boolean(n)) : [];
+      const resolutionRecommendation = (_c = str(first["resolutionRecommendation"])) != null ? _c : control && typeof control === "object" ? str(control["resolutionRecommendation"]) : void 0;
+      const assetName = (_d = str(snap["name"])) != null ? _d : assetId;
+      const projects = Array.isArray(raw["projects"]) ? raw["projects"].map((p) => str(p["name"])).filter((n) => Boolean(n)) : [];
       part.issues.push({
         id: issueId,
         ruleId: (_e = ruleId != null ? ruleId : group == null ? void 0 : group.ruleId) != null ? _e : "",
@@ -3244,27 +3268,27 @@ var Server = (() => {
         comboGroup: (_g = group == null ? void 0 : group.id) != null ? _g : "",
         nativeSeverity,
         adjustedSeverity,
-        status: (_h = str2(raw["status"])) != null ? _h : "OPEN",
+        status: (_h = str(raw["status"])) != null ? _h : "OPEN",
         assetId,
         assetName,
-        region: str2(snap["region"]),
-        account: str2(snap["subscriptionName"]),
+        region: str(snap["region"]),
+        account: str(snap["subscriptionName"]),
         projects,
         frameworks: group == null ? void 0 : group.frameworks,
-        createdAt: str2(raw["createdAt"]),
-        dueAt: str2(raw["dueAt"]),
+        createdAt: str(raw["createdAt"]),
+        dueAt: str(raw["dueAt"]),
         resolutionRecommendation
       });
       const kind = kindFromWizType(snap["type"]);
       if (kind) {
         const node2 = { id: assetId, kind, name: assetName };
-        const nativeType = str2(snap["nativeType"]);
+        const nativeType = str(snap["nativeType"]);
         if (nativeType) node2.nativeType = nativeType;
-        const cloud = str2(snap["cloudPlatform"]);
+        const cloud = str(snap["cloudPlatform"]);
         if (cloud) node2.cloudPlatform = cloud;
-        const region = str2(snap["region"]);
+        const region = str(snap["region"]);
         if (region) node2.region = region;
-        const externalId = str2(snap["externalId"]);
+        const externalId = str(snap["externalId"]);
         if (externalId) node2.externalId = externalId;
         part.nodes.push(node2);
       }
@@ -3304,22 +3328,22 @@ var Server = (() => {
     var _a4, _b;
     const part = emptyPart();
     for (const raw of rows) {
-      const id = str2(raw["id"]);
+      const id = str(raw["id"]);
       if (!id) continue;
-      if (str2(raw["result"]) !== "FAIL") continue;
-      const status = str2(raw["status"]);
+      if (str(raw["result"]) !== "FAIL") continue;
+      const status = str(raw["status"]);
       if (status && status !== "OPEN") continue;
       const resource = raw["resource"];
-      const resourceId = resource && typeof resource === "object" ? str2(resource["id"]) : void 0;
+      const resourceId = resource && typeof resource === "object" ? str(resource["id"]) : void 0;
       if (!resourceId) continue;
       const rule = raw["rule"];
-      const ruleShortId = rule && typeof rule === "object" ? (_a4 = str2(rule["shortId"])) != null ? _a4 : "" : "";
+      const ruleShortId = rule && typeof rule === "object" ? (_a4 = str(rule["shortId"])) != null ? _a4 : "" : "";
       part.findings.push({
         id,
         resourceId,
         ruleShortId,
-        severity: (_b = str2(raw["severity"])) != null ? _b : "UNKNOWN",
-        remediation: str2(raw["remediation"]),
+        severity: (_b = str(raw["severity"])) != null ? _b : "UNKNOWN",
+        remediation: str(raw["remediation"]),
         frameworkCodes: frameworkCodesFromRule(rule, ruleShortId)
       });
     }
@@ -3452,17 +3476,12 @@ var Server = (() => {
   function buildAarsHintsFromFindings(findings, doc, issues2) {
     var _a4;
     const open = issues2.filter((i) => i.status === "OPEN");
-    const issuesByAsset = /* @__PURE__ */ new Map();
-    for (const issue2 of open) {
-      if (!issuesByAsset.has(issue2.assetId)) issuesByAsset.set(issue2.assetId, []);
-      issuesByAsset.get(issue2.assetId).push(issue2);
-    }
+    const issuesByAsset = groupBy(open, (i) => i.assetId);
     const codesByResource = /* @__PURE__ */ new Map();
     for (const f of findings) {
-      if (!codesByResource.has(f.resourceId)) codesByResource.set(f.resourceId, []);
-      codesByResource.get(f.resourceId).push(...f.frameworkCodes);
+      pushInto(codesByResource, f.resourceId, ...f.frameworkCodes);
     }
-    const nodeById = new Map(doc.nodes.map((n) => [n.id, n]));
+    const nodeById = indexBy(doc.nodes, (n) => n.id);
     const hints = {};
     for (const [resourceId, codes] of codesByResource) {
       const node2 = nodeById.get(resourceId);
@@ -3482,11 +3501,7 @@ var Server = (() => {
   }
   function enrichGraphDoc(doc, issues2, hints, rule = DEFAULT_AARS_RULE) {
     const open = issues2.filter((i) => i.status === "OPEN");
-    const byAsset = /* @__PURE__ */ new Map();
-    for (const issue2 of open) {
-      if (!byAsset.has(issue2.assetId)) byAsset.set(issue2.assetId, []);
-      byAsset.get(issue2.assetId).push(issue2);
-    }
+    const byAsset = groupBy(open, (i) => i.assetId);
     const nodes = doc.nodes.map((raw) => {
       var _a4;
       const node2 = { ...raw };
@@ -3531,119 +3546,77 @@ var Server = (() => {
       syncedAt: doc.syncedAt
     };
   }
-  function withSensitiveDataNodes(doc) {
-    const existing = new Set(
-      doc.nodes.filter((n) => n.kind === "SENSITIVE_DATA").map((n) => n.id)
-    );
-    const sensitiveNodes = [];
-    const sensitiveEdges = [];
+  function withDerivedNodes(doc, spec) {
+    const existing = new Set(doc.nodes.filter((n) => n.kind === spec.kind).map((n) => n.id));
+    const suppressed = spec.suppress ? spec.suppress(doc) : null;
+    const added = [];
+    const addedEdges = [];
     for (const node2 of doc.nodes) {
-      if (node2.kind === "SENSITIVE_DATA") continue;
-      if (!node2.hasSensitiveData && !node2.hasAccessToSensitiveData) continue;
-      const sensId = `sensitive|${node2.id}`;
-      if (existing.has(sensId)) continue;
-      const type = node2.hasSensitiveData ? "HAS_SENSITIVE_DATA" : "HAS_ACCESS_TO_SENSITIVE_DATA";
-      sensitiveNodes.push({ id: sensId, kind: "SENSITIVE_DATA", name: "Sensitive data" });
-      sensitiveEdges.push({ id: edgeId(node2.id, type, sensId), src: node2.id, dst: sensId, type });
+      if (node2.kind === spec.kind) continue;
+      if (!conditionHolds(node2, spec.kind)) continue;
+      if (suppressed && suppressed.has(node2.id)) continue;
+      const id = `${spec.prefix}|${node2.id}`;
+      if (existing.has(id)) continue;
+      const type = typeof spec.edgeType === "function" ? spec.edgeType(node2) : spec.edgeType;
+      added.push({
+        id,
+        kind: spec.kind,
+        name: typeof spec.name === "function" ? spec.name(node2) : spec.name
+      });
+      const edge2 = { id: edgeId(node2.id, type, id, spec.negated), src: node2.id, dst: id, type };
+      if (spec.negated) edge2.negated = true;
+      addedEdges.push(edge2);
     }
-    if (!sensitiveNodes.length) return doc;
+    if (!added.length) return doc;
     return {
-      nodes: [...doc.nodes, ...sensitiveNodes],
-      edges: [...doc.edges, ...sensitiveEdges],
+      nodes: [...doc.nodes, ...added],
+      edges: [...doc.edges, ...addedEdges],
       syncedAt: doc.syncedAt
     };
+  }
+  function withSensitiveDataNodes(doc) {
+    return withDerivedNodes(doc, {
+      kind: "SENSITIVE_DATA",
+      prefix: "sensitive",
+      name: "Sensitive data",
+      edgeType: (n) => n.hasSensitiveData ? "HAS_SENSITIVE_DATA" : "HAS_ACCESS_TO_SENSITIVE_DATA"
+    });
   }
   function withInternetExposureNodes(doc) {
-    const existing = new Set(
-      doc.nodes.filter((n) => n.kind === "INTERNET_EXPOSURE").map((n) => n.id)
-    );
-    const exposureNodes = [];
-    const exposureEdges = [];
-    for (const node2 of doc.nodes) {
-      if (node2.kind === "INTERNET_EXPOSURE") continue;
-      if (node2.isAccessibleFromInternet !== true && node2.isOpenToAllInternet !== true) continue;
-      const expId = `internet|${node2.id}`;
-      if (existing.has(expId)) continue;
-      exposureNodes.push({ id: expId, kind: "INTERNET_EXPOSURE", name: "Internet exposure" });
-      exposureEdges.push({
-        id: edgeId(node2.id, "EXPOSED_TO_INTERNET", expId),
-        src: node2.id,
-        dst: expId,
-        type: "EXPOSED_TO_INTERNET"
-      });
-    }
-    if (!exposureNodes.length) return doc;
-    return {
-      nodes: [...doc.nodes, ...exposureNodes],
-      edges: [...doc.edges, ...exposureEdges],
-      syncedAt: doc.syncedAt
-    };
+    return withDerivedNodes(doc, {
+      kind: "INTERNET_EXPOSURE",
+      prefix: "internet",
+      name: "Internet exposure",
+      edgeType: "EXPOSED_TO_INTERNET"
+    });
   }
   function withExcessivePrivilegeNodes(doc) {
-    const existing = new Set(
-      doc.nodes.filter((n) => n.kind === "EXCESSIVE_PRIVILEGE").map((n) => n.id)
-    );
-    const kindById = new Map(doc.nodes.map((n) => [n.id, n.kind]));
-    const hasRealFinding = /* @__PURE__ */ new Set();
-    for (const e of doc.edges) {
-      if (e.type === "HAS_FINDING" && kindById.get(e.dst) === "EXCESSIVE_ACCESS_FINDING") {
-        hasRealFinding.add(e.src);
+    return withDerivedNodes(doc, {
+      kind: "EXCESSIVE_PRIVILEGE",
+      prefix: "excessive",
+      // ADMIN wins over HIGH when both are set — it is the stronger claim.
+      name: (n) => n.hasAdminPrivileges ? "Admin privileges" : "Excessive rights",
+      edgeType: "HAS_EXCESSIVE_PRIVILEGE",
+      suppress: (d) => {
+        const kindById = new Map(d.nodes.map((n) => [n.id, n.kind]));
+        const withRealFinding = /* @__PURE__ */ new Set();
+        for (const e of d.edges) {
+          if (e.type === "HAS_FINDING" && kindById.get(e.dst) === "EXCESSIVE_ACCESS_FINDING") {
+            withRealFinding.add(e.src);
+          }
+        }
+        return withRealFinding;
       }
-    }
-    const privNodes = [];
-    const privEdges = [];
-    for (const node2 of doc.nodes) {
-      if (node2.kind === "EXCESSIVE_PRIVILEGE") continue;
-      if (!node2.hasAdminPrivileges && !node2.hasHighPrivileges) continue;
-      if (hasRealFinding.has(node2.id)) continue;
-      const privId = `excessive|${node2.id}`;
-      if (existing.has(privId)) continue;
-      privNodes.push({
-        id: privId,
-        kind: "EXCESSIVE_PRIVILEGE",
-        // ADMIN wins over HIGH when both are set — it is the stronger claim.
-        name: node2.hasAdminPrivileges ? "Admin privileges" : "Excessive rights"
-      });
-      privEdges.push({
-        id: edgeId(node2.id, "HAS_EXCESSIVE_PRIVILEGE", privId),
-        src: node2.id,
-        dst: privId,
-        type: "HAS_EXCESSIVE_PRIVILEGE"
-      });
-    }
-    if (!privNodes.length) return doc;
-    return {
-      nodes: [...doc.nodes, ...privNodes],
-      edges: [...doc.edges, ...privEdges],
-      syncedAt: doc.syncedAt
-    };
+    });
   }
   function withMissingGuardrailNodes(doc) {
-    const existing = new Set(
-      doc.nodes.filter((n) => n.kind === "MISSING_GUARDRAIL").map((n) => n.id)
-    );
-    const gapNodes = [];
-    const gapEdges = [];
-    for (const node2 of doc.nodes) {
-      if (node2.kind === "MISSING_GUARDRAIL") continue;
-      if (node2.guardrailMissing !== true) continue;
-      const gapId = `noguardrail|${node2.id}`;
-      if (existing.has(gapId)) continue;
-      gapNodes.push({ id: gapId, kind: "MISSING_GUARDRAIL", name: "No guardrail" });
-      gapEdges.push({
-        id: edgeId(node2.id, "PROTECTED_BY", gapId, true),
-        src: node2.id,
-        dst: gapId,
-        type: "PROTECTED_BY",
-        negated: true
-      });
-    }
-    if (!gapNodes.length) return doc;
-    return {
-      nodes: [...doc.nodes, ...gapNodes],
-      edges: [...doc.edges, ...gapEdges],
-      syncedAt: doc.syncedAt
-    };
+    return withDerivedNodes(doc, {
+      kind: "MISSING_GUARDRAIL",
+      prefix: "noguardrail",
+      name: "No guardrail",
+      edgeType: "PROTECTED_BY",
+      negated: true
+    });
   }
 
   // src/server/sampleData.ts
@@ -4377,7 +4350,7 @@ var Server = (() => {
   function persistSync(rawDoc, issues2, hints, meta, now, findings = []) {
     const { version: ruleVersion, rule } = getAarsRule2();
     const enriched = enrichGraphDoc(rawDoc, issues2, hints, rule);
-    const assetNodes = enriched.nodes.filter((n) => n.kind !== "ISSUE" && n.kind !== "SUMMARY");
+    const assetNodes = realNodes(enriched.nodes);
     const assetEdges = enriched.edges.filter((e) => e.type !== "HAS_ISSUE");
     overwrite(TABS.assets, assetNodes.map(assetToRow));
     overwrite(TABS.edges, assetEdges.map(edgeToRow));
@@ -4404,8 +4377,7 @@ var Server = (() => {
       aars_rule_version: ruleVersion
     }]);
     setScoredRuleVersion(ruleVersion);
-    bumpDataVersion();
-    invalidateReadMemos();
+    commit();
     return enriched;
   }
   function rescoreInventory() {
@@ -4415,12 +4387,11 @@ var Server = (() => {
       setScoredRuleVersion(version);
       return { version, assetCount: 0, counts: countAarsSeverities([]) };
     }
-    const assetNodes = enriched.nodes.filter((n) => n.kind !== "ISSUE" && n.kind !== "SUMMARY");
+    const assetNodes = realNodes(enriched.nodes);
     overwrite(TABS.assets, assetNodes.map(assetToRow));
     writeGraphSnapshot(enriched);
     setScoredRuleVersion(version);
-    bumpDataVersion();
-    invalidateReadMemos();
+    commit();
     return {
       version,
       assetCount: assetNodes.length,
@@ -4430,7 +4401,7 @@ var Server = (() => {
   function scoreAssetsWith(rule) {
     const enriched = enrichFromTabs(rule);
     if (!enriched) return [];
-    return enriched.nodes.filter((n) => n.kind !== "ISSUE" && n.kind !== "SUMMARY");
+    return realNodes(enriched.nodes);
   }
   function enrichFromTabs(rule) {
     const base = loadRawGraph();
@@ -4471,6 +4442,13 @@ var Server = (() => {
     assetsMemo = void 0;
     issuesMemo = void 0;
     findingsMemo = void 0;
+  }
+  function commit() {
+    bumpDataVersion();
+    invalidateReadMemos();
+  }
+  function realNodes(nodes) {
+    return nodes.filter((n) => n.kind !== "ISSUE" && n.kind !== "SUMMARY");
   }
   function loadGraphDoc() {
     if (graphDocMemo !== void 0) return graphDocMemo;
@@ -4577,8 +4555,7 @@ var Server = (() => {
     overwrite(TABS.findings, []);
     overwrite(TABS.syncHistory, []);
     trashGraphSnapshot();
-    bumpDataVersion();
-    invalidateReadMemos();
+    commit();
   }
 
   // src/server/syncJobs.ts
@@ -4713,27 +4690,19 @@ var Server = (() => {
       message: `Dry-run sync complete: ${doc.nodes.length} nodes, ${doc.edges.length} edges, ${SEED_ISSUES.length} issues (sample data).`
     };
   }
+  function strList(v) {
+    return Array.isArray(v) ? v.map(String) : [];
+  }
   function jobParams(job) {
-    var _a4, _b;
-    try {
-      const parsed = JSON.parse((_a4 = job.params_json) != null ? _a4 : "{}");
-      const skipped = parsed["skippedSteps"];
-      return {
-        apiCalls: Number((_b = parsed["apiCalls"]) != null ? _b : 0),
-        skippedSteps: Array.isArray(skipped) ? skipped.map(String) : []
-      };
-    } catch {
-      return { apiCalls: 0, skippedSteps: [] };
-    }
+    var _a4;
+    const parsed = parseJson(job.params_json, {});
+    return {
+      apiCalls: Number((_a4 = parsed["apiCalls"]) != null ? _a4 : 0),
+      skippedSteps: strList(parsed["skippedSteps"])
+    };
   }
   function partRefs(job) {
-    var _a4;
-    try {
-      const parsed = JSON.parse((_a4 = job.part_refs_json) != null ? _a4 : "[]");
-      return Array.isArray(parsed) ? parsed.map(String) : [];
-    } catch {
-      return [];
-    }
+    return strList(parseJson(job.part_refs_json, []));
   }
   function startLiveSync() {
     const now = nowIso();
