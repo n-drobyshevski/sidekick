@@ -644,7 +644,7 @@ export async function renderAarsRules(main, _params, ctx) {
         "It is a systemic signal: the 5Rs data-security score sits at 53% across the whole " +
           "estate, so every data-related point carries the same uplift regardless of asset.",
       ],
-      { label: "About the 5Rs amplifier" },
+      { label: "About the 5Rs amplifier", term: "pillar-c" },
     ),
   );
 

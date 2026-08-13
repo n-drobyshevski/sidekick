@@ -1,6 +1,7 @@
 // What the app says when it is loading, empty, broken, or asking — plus the help tip that
 // replaces `title=` wherever the explanation matters.
 
+import { buildHash } from "../store.js";
 import { el } from "./dom.js";
 
 export function toast(message, kind) {
@@ -123,14 +124,33 @@ let _helpTipSeq = 0;
  * This replaces `title=` for anything that matters. A native tooltip is unreachable by
  * keyboard, invisible on touch, and truncated by the OS — fine for a hint, wrong for the
  * page's central disclaimer about what it is not showing you.
+ *
+ * `term` names an entry in the Help key sheet and appends a link to it. Two consequences
+ * worth knowing:
+ *
+ *   - The bubble DROPS `role="tooltip"` when a term is given. A tooltip must not contain
+ *     focusable content, so a bubble with a link in it is not one; `aria-describedby`
+ *     still names it, which keeps the announcement without the false role.
+ *   - The link is keyboard-reachable for free, because the reveal in components.css is
+ *     `:focus-within`, not `:focus` — tabbing off the wrapper and onto the link keeps the
+ *     bubble open, and `place()` re-runs because `focusin` bubbles up from it.
  */
-export function helpTip(content, lines, { label, className } = {}) {
+export function helpTip(content, lines, { label, className, term } = {}) {
   const items = Array.isArray(lines) ? lines : [lines];
   const id = `helptip-${++_helpTipSeq}`;
   const bubble = el(
     "span",
-    { class: "helptip-bubble", role: "tooltip", id },
+    { class: "helptip-bubble", role: term ? null : "tooltip", id },
     ...items.map((t) => el("span", { class: "helptip-line" }, t)),
+    term
+      ? el("a", {
+          class: "helptip-link",
+          href: buildHash("help", { term }),
+          // index.html sets <base target="_top">, which would escape the GAS sandbox
+          // iframe; _self keeps hash routing in-frame, as the sidebar links do.
+          target: "_self",
+        }, "Full definition →")
+      : null,
   );
   // Pinned to the viewport just before each reveal. Absolutely positioned inside the
   // trigger it would be clipped by any overflow ancestor — and this one lives inside
