@@ -29,8 +29,10 @@ import {
   MULTIPLIER_MAX,
   MULTIPLIER_MIN,
   POINTS_MAX,
+  ruleDiscrimination,
   ruleSummary,
   shadowedGapRules,
+  unreachableGapRules,
   validateAarsRule,
 } from "../domain/aarsRule";
 import {
@@ -785,6 +787,12 @@ export function previewAarsRule(p?: unknown): ApiResult {
       summary: ruleSummary(proposed),
       bandRanges: bandRanges(proposed.bands),
       shadowedGapRules: shadowedGapRules(proposed),
+      // A THIRD state, distinct from both shadowed and unexercised: the row names a code
+      // no derivation can raise, so it cannot fire in any tenant, not just this one.
+      unreachableGapRules: unreachableGapRules(proposed),
+      // How well the draft separates the estate — the number the band counts above cannot
+      // show, because a rule that gives every asset the same score still fills a band.
+      discrimination: ruleDiscrimination(after, proposed),
       // Coverage: how many gap instances each cascade row priced, what fell through to the
       // fallback, and the codes the estate carries. A row at 0 here is NOT the same claim
       // as shadowedGapRules — one can never fire, the other simply is not exercised — and

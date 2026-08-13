@@ -728,11 +728,26 @@ export async function renderAarsRules(main, _params, ctx) {
     moverMore,
   );
 
+  // How well the draft SEPARATES the estate. The band strip above cannot show this: a
+  // rule that hands every asset the same score still fills a band, and still reads as a
+  // confident answer. Only the absences give it away — few distinct scores, empty bands,
+  // a pillar pinned at its cap — so they are stated rather than left to be noticed.
+  const diagList = el("div", { class: "diag-list" });
+  const diagWarn = el("div", {});
+  const diagSection = el(
+    "div",
+    {},
+    el("h2", { class: "section-label", style: "margin-top:18px" }, "How well it separates"),
+    diagList,
+    diagWarn,
+  );
+
   impact.append(
     el("h2", { class: "section-label" }, "Impact on the current inventory"),
     impactState,
     impactStrip,
     impactHeadline,
+    diagSection,
     moverSection,
   );
 
@@ -1278,8 +1293,9 @@ export async function renderAarsRules(main, _params, ctx) {
     setValue(ampField.input, draft.dataAmplifier);
     ampField.setChanged(saved.dataAmplifier !== draft.dataAmplifier, saved.dataAmplifier);
 
-    // --- cascade rows: the gloss, the shadow / unexercised note, and the coverage count
+    // --- cascade rows: the gloss, the shadow / unreachable / unexercised note, and the count
     const shadowed = (preview && preview.shadowedGapRules) || [];
+    const unreachable = (preview && preview.unreachableGapRules) || [];
     const matchCounts = (preview && preview.gapMatchCounts) || null;
     const instanceTotal = (preview && preview.gapInstanceTotal) || 0;
     const rows = cascadeBody.querySelectorAll("tr[data-idx]");
@@ -1287,15 +1303,21 @@ export async function renderAarsRules(main, _params, ctx) {
       const row = draft.gapPoints[i];
       const meta = tr.querySelector(".rule-rowmeta");
       const err = errs.gaps[i];
-      const dead = !err && shadowed.indexOf(i) >= 0;
+      const shadow = !err && shadowed.indexOf(i) >= 0;
+      const unreach = !err && !shadow && unreachable.indexOf(i) >= 0;
+      const dead = shadow || unreach;
       const priced = matchCounts ? matchCounts[i] ?? 0 : null;
 
-      // Two ways to price nothing, and they are NOT the same claim. A shadowed row can
-      // never fire — that is a mistake. A live row at zero is simply a rule this tenant
-      // does not exercise, which is fine, so it keeps its full weight on the page.
+      // THREE ways to price nothing, and they are three different claims. A shadowed row
+      // is masked by an earlier rule — a mistake in this cascade. An unreachable row names
+      // a code no derivation emits, so it cannot fire in ANY tenant — a mistake about what
+      // the model can see, and the one the operator has no other way to discover. A live
+      // row at zero is simply a rule this tenant does not exercise, which is fine, so it
+      // keeps its full weight on the page.
       let note = "";
       if (err) note = err;
-      else if (dead) note = "never fires — an earlier rule already matches this";
+      else if (shadow) note = "never fires — an earlier rule already matches this";
+      else if (unreach) note = "never fires — nothing raises this code; switch its gap source on";
       else if (priced === 0 && instanceTotal) note = "in force — nothing in this tenant carries it";
       setText(meta, note);
       meta.classList.toggle("field-error", !!err);
@@ -1499,9 +1521,12 @@ export async function renderAarsRules(main, _params, ctx) {
     setText(impactHeadline, headline);
     setText(liveNote, `Impact updated. ${headline}`);
 
+    paintDiscrimination(preview.discrimination);
+
     clear(moverList);
     clear(moverMore);
     moverSection.hidden = !preview.movers.length;
+
     for (const m of preview.movers.slice(0, MOVERS_INLINE)) {
       moverList.append(moverRow(m));
     }
@@ -1525,6 +1550,86 @@ export async function renderAarsRules(main, _params, ctx) {
         );
       });
       moverMore.append(more);
+    }
+  }
+
+  /**
+   * The separation read-out. Every line is a plain sentence rather than a bare metric,
+   * because "distinctScores: 2" tells an operator nothing and "every asset lands on one
+   * of 2 scores" tells them the model has stopped working.
+   *
+   * A saturated pillar gets a warning of its own: above a cap the score cannot tell two
+   * assets apart at all, so a majority sitting there means that pillar — and every rule
+   * the operator has tuned inside it — is contributing nothing to the ranking.
+   */
+  function paintDiscrimination(d) {
+    clear(diagList);
+    clear(diagWarn);
+    diagSection.hidden = !d || !d.scored;
+    if (!d || !d.scored) return;
+
+    const line = (label, value, hint) =>
+      el(
+        "div",
+        { class: "diag-row" },
+        el("span", { class: "diag-row__label" }, label),
+        el("span", { class: "diag-row__value" }, value),
+        hint ? el("span", { class: "diag-row__hint small muted" }, hint) : null,
+      );
+
+    // Worst first, so an unreachable CRITICAL is named before an empty INFO.
+    const ALL_LEVELS = RAIL_ORDER.slice().reverse();
+    const empties = ALL_LEVELS.filter((b) => !(d.bandOccupancy[b] > 0));
+    diagList.append(
+      line(
+        "Distinct scores",
+        `${d.distinctScores} across ${d.scored} assets`,
+        d.distinctScores <= 3 ? "too few to rank by" : "",
+      ),
+      line(
+        "Largest tie",
+        `${d.largestTieGroup} assets share one score`,
+        d.largestTieGroup > d.scored / 2 ? "a “top N” would cut into this block arbitrarily" : "",
+      ),
+      line("Range used", `${d.range.min}–${d.range.max} of 0–100`, ""),
+      line(
+        "Levels reached",
+        `${ALL_LEVELS.length - empties.length} of ${ALL_LEVELS.length}`,
+        empties.length ? `nothing lands in ${empties.join(", ")}` : "",
+      ),
+    );
+
+    // Pillars pinned at their cap for a majority. Named individually: which pillar has
+    // stopped discriminating is the whole diagnosis.
+    const pillars = [
+      ["A", "toxic combinations", d.saturated.toxic],
+      ["B", "compliance gaps", d.saturated.compliance],
+      ["C", "data exposure", d.saturated.data],
+      ["D", "internet exposure", d.saturated.exposure],
+    ];
+    for (const [letter, name, n] of pillars) {
+      if (!n || n <= d.scored / 2) continue;
+      const all = n === d.scored;
+      diagWarn.append(
+        el(
+          "p",
+          { class: "diag-warn small" },
+          el("span", { class: "diag-warn__mark", "aria-hidden": "true" }, "▲"),
+          `Pillar ${letter} — ${name} — is at its cap for ${all ? "every one of the" : n + " of"} ` +
+            `${d.scored} scored assets, so it separates ${all ? "none of them" : "almost none of them"}. ` +
+            `Above a cap two very different assets score the same. ` +
+            (letter === "B"
+              ? "Every cascade row below is being clamped away; lower the prices, raise the cap, or switch pillar B to root-sum-square."
+              : "Lower the points or raise the cap."),
+        ),
+      );
+    }
+    if (d.saturated.score > d.scored / 2) {
+      diagWarn.append(
+        el("p", { class: "diag-warn small" },
+          el("span", { class: "diag-warn__mark", "aria-hidden": "true" }, "▲"),
+          `${d.saturated.score} of ${d.scored} assets are clamped at 100 — the scale has run out.`),
+      );
     }
   }
 

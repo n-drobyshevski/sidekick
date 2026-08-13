@@ -266,6 +266,148 @@ export function shadowedGapRules(rule: AarsRule): number[] {
   return dead;
 }
 
+/**
+ * Every gap code a DERIVATION can raise, as opposed to one a tenant's findings might
+ * carry. Three groups, matching the three places codes are made:
+ *   - graphEnrich.deriveAarsInput: the OWASP families off issue mappings, NO_GUARDRAIL,
+ *     and the three gapSources codes
+ *   - syncNormalize.frameworkCodesFromRule: the same OWASP token shapes off config rules
+ * A code outside this set is not an error — tenant finding shortIds live there, and the
+ * cascade's fallback exists to govern them — but a cascade ROW naming a code outside it
+ * can never fire, which is a different thing from a row this tenant merely doesn't exercise.
+ */
+const DERIVABLE_PREFIXES = ["LLM", "ASI", "ML_", "5R_"];
+const DERIVABLE_EXACT = ["NO_GUARDRAIL", "DEPRECATED_MODEL", "INACTIVE_AGENT", "FIVE_RS"];
+
+/** Whether any derivation could emit this code, given what the rule has switched on. */
+function isDerivable(code: string, rule: AarsRule): boolean {
+  const c = cleanGapCode(code);
+  if (!c) return false;
+  if (c === "DEPRECATED_MODEL") return rule.gapSources.deprecatedModel === true;
+  if (c === "INACTIVE_AGENT") return rule.gapSources.inactiveAgent === true;
+  if (c.startsWith("5R_")) return rule.gapSources.fiveRs === true;
+  // FIVE_RS is the UNNAMED form. Nothing raises it: the fiveRs source always names which
+  // of the five, so this code can only ever arrive on a tenant finding.
+  if (c === "FIVE_RS") return false;
+  if (DERIVABLE_EXACT.includes(c)) return true;
+  return DERIVABLE_PREFIXES.some((p) => c.startsWith(p));
+}
+
+/**
+ * Rows that can never fire because NOTHING EMITS the code they name — as distinct from
+ * `shadowedGapRules` (an earlier row already claims it) and from a row this tenant simply
+ * doesn't exercise yet. The page must separate the three: only the last is a rule in
+ * working order, and under the spec rule three of the nine default rows are in here.
+ *
+ * A row is only reported when it names an exclusively-derived code. Anything that could
+ * plausibly arrive as a tenant finding shortId is left alone — the operator knows their
+ * own tenant better than this function does.
+ */
+export function unreachableGapRules(rule: AarsRule): number[] {
+  const dead: number[] = [];
+  rule.gapPoints.forEach((row, i) => {
+    // A prefix row is unreachable only when the whole family it names is off; a bare
+    // prefix like "LLM" always has live members.
+    const claimsDerivedFamily =
+      row.match === "prefix"
+        ? row.code.startsWith("5R") && rule.gapSources.fiveRs !== true
+        : DERIVABLE_EXACT.includes(cleanGapCode(row.code)) && !isDerivable(row.code, rule);
+    if (claimsDerivedFamily) dead.push(i);
+  });
+  return dead;
+}
+
+/**
+ * How well a rule separates the estate it is applied to.
+ *
+ * This exists because the model can stop discriminating without anything looking wrong:
+ * a pillar pinned at its cap for every asset still renders a confident number, and the
+ * band counts still add up. The failure only shows as an absence — few distinct scores,
+ * empty bands, a large tie group at the top.
+ *
+ * Cap saturation is the specific thing to watch. Above a cap the score's discriminative
+ * power is exactly zero: two assets with very different inputs receive the same number,
+ * so any ranking within that block is arbitrary. `atPillarBCap` at 100% means the whole
+ * cascade — every row, every price, the entire editable surface — is contributing
+ * nothing, which is the state the spec rule reaches on live data.
+ */
+export interface RuleDiscrimination {
+  /** Assets carrying a score. Unscored nodes are not part of any of these counts. */
+  scored: number;
+  /** How many different scores those assets take. `scored` here means perfect separation. */
+  distinctScores: number;
+  /** The largest set of assets sharing one score — the tie block a "top N" would cut into. */
+  largestTieGroup: number;
+  /** Occupancy per level, INFO included, zeroes kept: an empty band is the finding. */
+  bandOccupancy: Record<string, number>;
+  /** Lowest and highest score actually reached, so an unused range is visible. */
+  range: { min: number; max: number };
+  /** Assets pinned at each pillar's cap, and at the 0–100 ceiling. */
+  saturated: { toxic: number; compliance: number; data: number; exposure: number; score: number };
+}
+
+const EMPTY_DISCRIMINATION: RuleDiscrimination = {
+  scored: 0,
+  distinctScores: 0,
+  largestTieGroup: 0,
+  bandOccupancy: {},
+  range: { min: 0, max: 0 },
+  saturated: { toxic: 0, compliance: 0, data: 0, exposure: 0, score: 0 },
+};
+
+/**
+ * Measure a scored estate against the rule that scored it. Pure, and reads only what
+ * `scoreAssetsWith` already returns, so the preview pays no extra Sheets read for it.
+ */
+export function ruleDiscrimination(
+  nodes: ReadonlyArray<{
+    aars?: number;
+    aarsSeverity?: string;
+    aarsPillars?: { toxic: number; compliance: number; data: number; exposure?: number };
+  }>,
+  rule: AarsRule,
+): RuleDiscrimination {
+  const scores: number[] = [];
+  const counts: Record<string, number> = {};
+  for (const b of ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]) counts[b] = 0;
+  const saturated = { toxic: 0, compliance: 0, data: 0, exposure: 0, score: 0 };
+  const maxData = Math.round(
+    Math.max(...EXPOSURE_KEYS.map((k) => rule.dataExposurePoints[k])) * rule.dataAmplifier,
+  );
+  const maxExposure = Math.max(...INTERNET_EXPOSURE_KEYS.map((k) => rule.exposurePoints[k]));
+
+  for (const n of nodes) {
+    if (typeof n.aars !== "number") continue;
+    scores.push(n.aars);
+    const band = String(n.aarsSeverity ?? "");
+    if (band in counts) counts[band] = counts[band]! + 1;
+    const p = n.aarsPillars;
+    if (p) {
+      if (p.toxic >= rule.pillarACap) saturated.toxic++;
+      if (p.compliance >= rule.pillarBCap) saturated.compliance++;
+      // A pillar whose ceiling is zero is switched off, not saturated — counting every
+      // asset as "at the cap" there would report pillar D as the problem in every tenant.
+      if (maxData > 0 && p.data >= maxData) saturated.data++;
+      if (maxExposure > 0 && (p.exposure ?? 0) >= maxExposure) saturated.exposure++;
+    }
+    if (n.aars >= 100) saturated.score++;
+  }
+
+  if (!scores.length) return { ...EMPTY_DISCRIMINATION, bandOccupancy: counts };
+
+  const byScore = new Map<number, number>();
+  for (const s of scores) byScore.set(s, (byScore.get(s) ?? 0) + 1);
+
+  return {
+    scored: scores.length,
+    distinctScores: byScore.size,
+    largestTieGroup: Math.max(...byScore.values()),
+    bandOccupancy: counts,
+    range: { min: Math.min(...scores), max: Math.max(...scores) },
+    saturated,
+  };
+}
+
 /** What the cascade actually priced, per row — the evidence behind "order is meaning". */
 export interface GapTally {
   /** Instances each row priced, index-aligned with `rule.gapPoints`. */
