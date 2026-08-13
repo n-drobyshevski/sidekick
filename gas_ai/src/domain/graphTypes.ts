@@ -143,6 +143,13 @@ export interface GNode {
   projects?: Array<{ id: string; name: string; businessImpact?: string }>;
   tags?: Array<{ key: string; value: string }>;
   technologyCategories?: string[]; // Wiz technology.categories[].name (e.g. "AI Service")
+  /**
+   * "Hosted" | "PaaS", unprefixed from Wiz's DeploymentType* enum. Explains why an
+   * exposure flag is null: a Hosted agent inherits reachability from its compute, which is
+   * what UNDETERMINED means. Across the 40 real agents in gas_ai/exemples/ this predicts
+   * knowability exactly — PaaS resolved 23/23, Hosted undetermined 17/17.
+   */
+  deploymentType?: string;
   // Agentic-identity enrichment (cloudResourcesV2 + identityPurpose:AGENTIC):
   identityPurpose?: string; // "AGENTIC" for agent execution identities
   issueAnalytics?: {        // per-identity related-issue severity rollup (display-only)

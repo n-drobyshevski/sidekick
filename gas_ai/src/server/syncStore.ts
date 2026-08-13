@@ -81,6 +81,7 @@ export function assetToRow(n: GNode): Rec {
     admin_priv: boolCell(n.hasAdminPrivileges),
     guardrail_missing: boolCell(n.guardrailMissing),
     technology_categories: (n.technologyCategories ?? []).join(","),
+    deployment_type: n.deploymentType ?? null,
     severity: n.severity ?? null,
     aars: n.aars ?? null,
     aars_severity: n.aarsSeverity ?? null,
@@ -147,6 +148,8 @@ export function rowToAsset(r: Rec): GNode {
   if (tags) node.tags = tags;
   const techCats = String(r["technology_categories"] ?? "").split(",").filter(Boolean);
   if (techCats.length) node.technologyCategories = techCats;
+  const deployment = (r["deployment_type"] as string | null) ?? null;
+  if (deployment) node.deploymentType = deployment;
   const purpose = (r["identity_purpose"] as string | null) ?? null;
   if (purpose) node.identityPurpose = purpose;
   const analytics = parseJson<GNode["issueAnalytics"] | null>(r["issue_analytics_json"], null);

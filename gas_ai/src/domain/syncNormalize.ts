@@ -20,6 +20,7 @@ import {
   type GraphDoc,
   type IssueRow,
 } from "./graphTypes";
+import type { AccessType } from "./graphTypes";
 import { classifyIssue, type ComboGroup } from "./toxicCombos";
 import { clean, type Rec } from "./util";
 
@@ -111,6 +112,16 @@ export function normalizeCloudResource(raw: Rec): GNode | null {
         return pid && name ? { id: pid, name, businessImpact } : null;
       })
       .filter((p): p is NonNullable<typeof p> => p !== null);
+  }
+  // Wiz returns deploymentType inside the graphEntity properties blob, prefixed
+  // ("DeploymentTypeHosted" / "DeploymentTypePaaS") the way its enums are throughout that
+  // map. Stored unprefixed so the value reads as what it is. It explains WHY an exposure
+  // flag is null rather than adding a risk claim of its own.
+  const props = raw["graphEntity"];
+  const propBag = props && typeof props === "object" ? (props as Rec)["properties"] : null;
+  if (propBag && typeof propBag === "object") {
+    const dt = str((propBag as Rec)["deploymentType"]);
+    if (dt) node.deploymentType = dt.replace(/^DeploymentType/, "");
   }
   const tags = raw["tags"];
   if (Array.isArray(tags)) {
@@ -377,6 +388,26 @@ function entitiesOf(row: Rec): GNode[] {
     .filter((n): n is GNode => n !== null);
 }
 
+/**
+ * The strongest `accessType` any entity in this row carries.
+ *
+ * Read from the RAW row because `entitiesOf` normalizes to GNode, which has no such field
+ * — the grant lives on the matched ACCESS_ROLE, not on the identity or the agent. ADMIN
+ * beats HIGH_PRIVILEGE beats the rest; a row carrying none falls back to HIGH_PRIVILEGE,
+ * which is what the query's own filter guarantees was matched.
+ */
+function accessTypeOf(row: Rec): AccessType {
+  const entities = row?.["entities"];
+  if (!Array.isArray(entities)) return "HIGH_PRIVILEGE";
+  let best: AccessType = "HIGH_PRIVILEGE";
+  for (const e of entities) {
+    const raw = String((e as Rec)?.["accessType"] ?? "").trim().toUpperCase();
+    if (raw === "ADMIN") return "ADMIN";
+    if (raw === "HIGH_PRIVILEGE") best = "HIGH_PRIVILEGE";
+  }
+  return best;
+}
+
 /** graphSearch "agents without guardrail" page → agents flagged guardrailMissing. */
 export function normalizeNoGuardrailPage(rows: Rec[]): NormalizedPart {
   const part = emptyPart();
@@ -428,13 +459,18 @@ export function normalizeIdentityAccessPage(rows: Rec[]): NormalizedPart {
     );
     part.nodes.push(...entities);
     if (!agent) continue;
+    // The query asks for accessType EQUALS ["HIGH_PRIVILEGE", "ADMIN"] and this used to
+    // stamp every resulting edge HIGH_PRIVILEGE, silently downgrading every ADMIN grant.
+    // Read it off the matched role instead, and only fall back where the row does not
+    // carry one — a fallback that under-claims is the safe direction.
+    const roleAccess = accessTypeOf(row);
     for (const identity of identities) {
       part.edges.push({
         id: edgeId(identity.id, "ALLOWS_ACCESS_TO", agent.id),
         src: identity.id,
         dst: agent.id,
         type: "ALLOWS_ACCESS_TO",
-        accessType: "HIGH_PRIVILEGE",
+        accessType: roleAccess,
       });
     }
   }

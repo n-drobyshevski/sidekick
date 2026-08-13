@@ -274,6 +274,7 @@ var Server = (() => {
       "combo_groups",
       "tags_json",
       "technology_categories",
+      "deployment_type",
       "identity_purpose",
       "issue_analytics_json"
     ],
@@ -649,7 +650,14 @@ var Server = (() => {
     "technology { id name categories { id name } }",
     "cloudAccount { id name externalId cloudProvider }",
     "projects { id name riskProfile { businessImpact } }",
-    "tags { key value }"
+    "tags { key value }",
+    // WHY an exposure flag is null. Across the 40 agents in
+    // gas_ai/exemples/get_ai_agents_reponse.js this predicts reachability-knowability
+    // perfectly: DeploymentTypePaaS resolves 23/23, DeploymentTypeHosted is undetermined
+    // 17/17 — because a hosted agent inherits reachability from the VM or Cloud Run service
+    // underneath it, which is exactly what UNDETERMINED means. `properties` is a bare JSON
+    // scalar on GraphEntity (no subselection), per the same capture's own fragment.
+    "graphEntity { properties }"
   ];
   function indented(fields, spaces) {
     const pad = new Array(spaces + 1).join(" ");
@@ -713,7 +721,7 @@ var Server = (() => {
   );
   var Q_SA_EXCESSIVE_ACCESS = graphSearchQuery(
     "SidekickAiAgentSaExcessiveAccess",
-    '    type: "AI_AGENT"\n    select: true\n    relationships: [{\n      type: "RUNS_AS"\n      with: {\n        type: "SERVICE_ACCOUNT"\n        select: true\n        relationships: [{\n          type: "HAS_FINDING"\n          with: { type: "EXCESSIVE_ACCESS_FINDING", select: true }\n        }]\n      }\n    }]\n'
+    '    type: "AI_AGENT"\n    select: true\n    relationships: [{\n      type: "RUNS_AS"\n      with: {\n        type: "SERVICE_ACCOUNT"\n        select: true\n        relationships: [{\n          type: "HAS_FINDING"\n          with: { type: ["EXCESSIVE_ACCESS_FINDING", "LATERAL_MOVEMENT_FINDING"], select: true }\n        }]\n      }\n    }]\n'
   );
   var Q_IDENTITY_ACCESS = graphSearchQuery(
     "SidekickAiIdentitiesWithAgentAccess",
@@ -3635,7 +3643,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "a9ab79114288" : "dev";
+  var BUILD_ID = true ? "c455084ac0aa" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -3956,6 +3964,12 @@ var Server = (() => {
         return pid && name ? { id: pid, name, businessImpact } : null;
       }).filter((p) => p !== null);
     }
+    const props = raw["graphEntity"];
+    const propBag = props && typeof props === "object" ? props["properties"] : null;
+    if (propBag && typeof propBag === "object") {
+      const dt = str(propBag["deploymentType"]);
+      if (dt) node2.deploymentType = dt.replace(/^DeploymentType/, "");
+    }
     const tags = raw["tags"];
     if (Array.isArray(tags)) {
       node2.tags = tags.map((t) => {
@@ -4135,6 +4149,18 @@ var Server = (() => {
     if (!Array.isArray(entities)) return [];
     return entities.map((e) => normalizeCloudResource(e)).filter((n) => n !== null);
   }
+  function accessTypeOf(row) {
+    var _a4;
+    const entities = row == null ? void 0 : row["entities"];
+    if (!Array.isArray(entities)) return "HIGH_PRIVILEGE";
+    let best = "HIGH_PRIVILEGE";
+    for (const e of entities) {
+      const raw = String((_a4 = e == null ? void 0 : e["accessType"]) != null ? _a4 : "").trim().toUpperCase();
+      if (raw === "ADMIN") return "ADMIN";
+      if (raw === "HIGH_PRIVILEGE") best = "HIGH_PRIVILEGE";
+    }
+    return best;
+  }
   function normalizeNoGuardrailPage(rows) {
     const part = emptyPart();
     for (const row of rows) {
@@ -4175,13 +4201,14 @@ var Server = (() => {
       );
       part.nodes.push(...entities);
       if (!agent) continue;
+      const roleAccess = accessTypeOf(row);
       for (const identity of identities) {
         part.edges.push({
           id: edgeId(identity.id, "ALLOWS_ACCESS_TO", agent.id),
           src: identity.id,
           dst: agent.id,
           type: "ALLOWS_ACCESS_TO",
-          accessType: "HIGH_PRIVILEGE"
+          accessType: roleAccess
         });
       }
     }
@@ -5046,7 +5073,7 @@ var Server = (() => {
     }
   }
   function assetToRow(n) {
-    var _a4, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q;
+    var _a4, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r;
     return {
       id: n.id,
       kind: n.kind,
@@ -5074,19 +5101,20 @@ var Server = (() => {
       admin_priv: boolCell(n.hasAdminPrivileges),
       guardrail_missing: boolCell(n.guardrailMissing),
       technology_categories: ((_l = n.technologyCategories) != null ? _l : []).join(","),
-      severity: (_m = n.severity) != null ? _m : null,
-      aars: (_n = n.aars) != null ? _n : null,
-      aars_severity: (_o = n.aarsSeverity) != null ? _o : null,
+      deployment_type: (_m = n.deploymentType) != null ? _m : null,
+      severity: (_n = n.severity) != null ? _n : null,
+      aars: (_o = n.aars) != null ? _o : null,
+      aars_severity: (_p = n.aarsSeverity) != null ? _p : null,
       aars_pillars_json: n.aarsPillars ? JSON.stringify(n.aarsPillars) : null,
       aars_input_json: n.aarsInput ? JSON.stringify(n.aarsInput) : null,
-      combo_groups: ((_p = n.comboGroups) != null ? _p : []).join(","),
+      combo_groups: ((_q = n.comboGroups) != null ? _q : []).join(","),
       tags_json: n.tags ? JSON.stringify(n.tags) : null,
-      identity_purpose: (_q = n.identityPurpose) != null ? _q : null,
+      identity_purpose: (_r = n.identityPurpose) != null ? _r : null,
       issue_analytics_json: n.issueAnalytics ? JSON.stringify(n.issueAnalytics) : null
     };
   }
   function rowToAsset(r) {
-    var _a4, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
+    var _a4, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q;
     const node2 = {
       id: String((_a4 = r["id"]) != null ? _a4 : ""),
       kind: String((_b = r["kind"]) != null ? _b : "AI_AGENT"),
@@ -5139,7 +5167,9 @@ var Server = (() => {
     if (tags) node2.tags = tags;
     const techCats = String((_o = r["technology_categories"]) != null ? _o : "").split(",").filter(Boolean);
     if (techCats.length) node2.technologyCategories = techCats;
-    const purpose = (_p = r["identity_purpose"]) != null ? _p : null;
+    const deployment = (_p = r["deployment_type"]) != null ? _p : null;
+    if (deployment) node2.deploymentType = deployment;
+    const purpose = (_q = r["identity_purpose"]) != null ? _q : null;
     if (purpose) node2.identityPurpose = purpose;
     const analytics = parseJson(r["issue_analytics_json"], null);
     if (analytics) node2.issueAnalytics = analytics;

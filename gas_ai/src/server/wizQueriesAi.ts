@@ -49,6 +49,13 @@ const CLOUD_RESOURCE_FIELDS = [
   "cloudAccount { id name externalId cloudProvider }",
   "projects { id name riskProfile { businessImpact } }",
   "tags { key value }",
+  // WHY an exposure flag is null. Across the 40 agents in
+  // gas_ai/exemples/get_ai_agents_reponse.js this predicts reachability-knowability
+  // perfectly: DeploymentTypePaaS resolves 23/23, DeploymentTypeHosted is undetermined
+  // 17/17 — because a hosted agent inherits reachability from the VM or Cloud Run service
+  // underneath it, which is exactly what UNDETERMINED means. `properties` is a bare JSON
+  // scalar on GraphEntity (no subselection), per the same capture's own fragment.
+  "graphEntity { properties }",
 ];
 
 function indented(fields: string[], spaces: number): string {
@@ -227,7 +234,11 @@ export const Q_SA_EXCESSIVE_ACCESS = graphSearchQuery(
   "        select: true\n" +
   "        relationships: [{\n" +
   "          type: \"HAS_FINDING\"\n" +
-  "          with: { type: \"EXCESSIVE_ACCESS_FINDING\", select: true }\n" +
+  // Both CIEM finding kinds. normalizeRunsAsPage has always handled
+  // LATERAL_MOVEMENT_FINDING and the query never asked for it, so that branch was dead
+  // code — and ai/queries/6_IAM.MD §6.7 rates a lateral-movement path to admin as the
+  // largest single weight of any signal this app was not fetching.
+  "          with: { type: [\"EXCESSIVE_ACCESS_FINDING\", \"LATERAL_MOVEMENT_FINDING\"], select: true }\n" +
   "        }]\n" +
   "      }\n" +
   "    }]\n",

@@ -29,7 +29,7 @@ export const TAB_HEADERS: Record<string, string[]> = {
     "internet", "open_internet", "sensitive_data", "sensitive_access", "high_priv",
     "admin_priv", "guardrail_missing", "severity", "aars", "aars_severity",
     "aars_pillars_json", "aars_input_json",
-    "combo_groups", "tags_json", "technology_categories",
+    "combo_groups", "tags_json", "technology_categories", "deployment_type",
     "identity_purpose", "issue_analytics_json",
   ],
   [TABS.edges]: ["id", "src", "dst", "type", "negated", "access_type"],

@@ -944,7 +944,7 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
   "getStorageStats": {
     "data": {
       "archiveBytes": 0,
-      "cellCount": 21100,
+      "cellCount": 21200,
       "rows": {
         "assets": 0,
         "edges": 0,
@@ -9007,7 +9007,7 @@ exports[`read endpoints > getStorageStats answers the same shape 1`] = `
 {
   "data": {
     "archiveBytes": 74001,
-    "cellCount": 21100,
+    "cellCount": 21200,
     "rows": {
       "assets": 85,
       "edges": 83,
@@ -9633,6 +9633,7 @@ exports[`the persisted ledger > writes the tabs the schema declares 2`] = `
     "admin_priv": "false",
     "cloud": "GCP",
     "combo_groups": "gcp-managed-privileged",
+    "deployment_type": null,
     "first_seen": "2026-04-02T08:00:00Z",
     "guardrail_missing": "true",
     "high_priv": "true",
