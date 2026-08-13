@@ -49,6 +49,20 @@ palette is deliberately identical across both tools.
    three default cascade rows fire at all), `exposurePoints` (score reachability), and
    `findingSeverityWeights` (let a failing control's severity matter). `AARS_V2_RULE` is a
    calibrated preset combining them, loadable from the Rules page.
+   A second pass added the signal the model was missing rather than the arithmetic:
+   `privilegePoints` (ADMIN over HIGH — an axis `dataExposureOf` discarded entirely),
+   `environmentRules` (an operator-editable cascade over the cloud-account name, the only
+   prod/non-prod signal the tenant actually carries), `combinationRules` (conjunctions —
+   the thing a product named after toxic combinations could not express), a dormant-agent
+   gap source, `businessImpactPoints` (Wiz's own rating, previously dropped at
+   `assetToRow`), and `reachPointsPer`/`reachCap` — the first term taken from the GRAPH,
+   counting distinct sensitive resources reachable through the identity chain.
+   `scoringMode: "multiplicative"` and `AARS_V3_RULE` restructure the score into
+   likelihood × impact: the pillars were summed, but data and privilege describe what
+   happens IF an asset is compromised while gaps and reachability describe how LIKELY that
+   is, so an unreachable agent holding PII and a reachable agent holding nothing landed on
+   the same number. Likelihood combines by noisy-OR and is floored — an unobserved asset is
+   under-observed, not safe. See `ai/AARS_ASSESSMENT.md`.
 3. **Persist**: wholesale rewrite of the `ai_assets` / `ai_edges` / `ai_issues` tabs,
    a gzipped graph snapshot to Drive (the fast read path), then the `sync_history`
    row LAST — the commit record. No history row = the sync never happened.

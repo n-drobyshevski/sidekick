@@ -230,3 +230,138 @@ enrichGraphDoc(seedGraphDoc("T"), SEED_ISSUES, undefined, AARS_V2_RULE);
 The same numbers are asserted in `gas_ai/test/aars.test.ts`,
 `gas_ai/test/aarsRule.test.ts` and `gas_ai/test/graphEnrich.test.ts`; `npm run check` in
 `gas_ai/` runs them.
+
+
+---
+
+# Part II — the signal roadmap and the likelihood × impact model
+
+*Follow-up pass. Part I fixed the arithmetic; the score was then out of **signal**, not out
+of arithmetic — a 12-asset tie survived under v2 because those assets were genuinely
+identical to the model.*
+
+## 10. Evidence: real captured tenant responses
+
+`gas_ai/exemples/` holds real request/response pairs — 396 KB of `cloudResourcesV2` covering
+40 of 68 agents, plus issue and finding captures. Stronger evidence than vendor docs, and it
+**killed** as many candidates as it confirmed.
+
+### Confirmed and varying — built on
+
+| signal | distribution across the 40 real agents |
+|---|---|
+| environment from `cloudAccount.name` | `dpcp-production-…`, `dpcp-preproduction-…`, `sap-nonprodpartner`, `inix-horsprod-…`, `ai-industry-pp-…` → **16 of 40 classify**: PROD 2 / PREPROD 6 / NONPROD 7 / DEV 1 |
+| `graphEntity.properties.deploymentType` | PaaS 23 / Hosted 17 |
+| `isAccessibleFromInternet` tri-state | known 23 / **UNDETERMINED 17 (43%)** |
+| `status` | Active 36 / **Inactive 4** |
+| `projects[].riskProfile.businessImpact` | **`LBI` ×9, `MBI` ×2** — real variance, and it was being dropped at `syncStore.assetToRow` |
+
+`deploymentType` predicts exposure-knowability **exactly**: PaaS → known 23/23, Hosted →
+undetermined 17/17. A hosted agent inherits reachability from the compute underneath it,
+which is precisely what UNDETERMINED means.
+
+### Confirmed but flat — NOT built on
+
+`maxExposureLevel` is **0 for all 40**. `businessUnit` is **empty in all 11** issue rows.
+`validatedAsExploitable` is **`false` in all 5**. `technology.status`/`businessModel` splits
+17/23 but is **exactly co-linear with `deploymentType`**. Config findings are **all MEDIUM,
+all FAIL, 2 distinct rule ids** — so Part I's `findingSeverityWeights` is correct but inert
+here. **A term with no variance adds zero ranking information.**
+
+### Not verifiable from the captures
+
+The capture uses a richer, different query shape than the app's and selects none of
+`lastSeen`, `hasHighPrivileges` or `hasAdminPrivileges`. So the privilege axis and the
+dormancy test are **not confirmed against real payloads** — `lastSeen` came back null on all
+40 while `updatedAt` is populated 40/40, which is the next thing to wire.
+
+## 11. Bugs found while mapping the surface
+
+- **`accessType` was hard-coded** to `"HIGH_PRIVILEGE"` (`syncNormalize.ts`) even though the
+  query asks for `EQUALS ["HIGH_PRIVILEGE", "ADMIN"]` — every ADMIN grant silently downgraded.
+- **`LATERAL_MOVEMENT_FINDING` handling was dead code**: the normalizer existed, the query
+  never asked for that node type. `ai/queries/6_IAM.MD` §6.7 rates it the largest single
+  weight of any unfetched signal.
+- **`hasAdminPrivileges`** round-tripped fully and **changed no score anywhere**:
+  `dataExposureOf` ORs it with `hasHighPrivileges` and only reaches that branch when the
+  asset has no sensitive access.
+
+## 12. The model: likelihood × impact
+
+The pillars were **summed**, but sensitive data and privilege describe what happens *if* an
+asset is compromised, while control gaps and reachability describe how *likely* that is. An
+unreachable agent holding PII and a reachable agent holding nothing landed on the same
+number while needing opposite work.
+
+`scoringMode: "multiplicative"` separates them:
+
+```
+L = 1 − Π(1 − pᵢ)   over likelihood pillars, each as its share of its own ceiling
+L = max(L, likelihoodFloor)
+I = Σ impact pillars, normalised against the sum of THEIR ceilings
+score = round(100 × L × I/100)
+```
+
+Noisy-OR because likelihood evidence is *alternative routes to one outcome*, so it must
+saturate toward 1 rather than sum past it — the cap-saturation failure of Part I, avoided by
+construction rather than by clamping. Impact is summed because impact terms are not
+alternatives: data *and* admin *and* production is worse on three separate counts.
+
+**The floor is what stops this being naive.** A pure product scores an unreachable asset at
+zero, which no estate can support — and 43% of this tenant's agents are UNDETERMINED
+precisely because nobody has checked. OWASP's AIVSS draft reaches the same conclusion from
+the other side, flooring its mitigation factor at 0.67 because *"no mitigation, however
+strong, can fully eliminate the residual risk contributed by agentic amplification
+factors"* ([AIVSS v0.8](https://aivss.owasp.org/) §3.4.1).
+
+**On AIVSS more broadly:** it is a pre-1.0 draft, it scores *vulnerabilities* not assets, and
+it explicitly forbids the aggregation a register score needs — *"do not average scores across
+findings"* (§3.2). Its equation is not adoptable here. Its ten agentic amplification factors
+(autonomy, tool surface, memory, dynamic identity, multi-agent interaction, self-modification…)
+*are* properties of the agent rather than of the finding, and remain the most interesting
+future capability vector.
+
+**A property operators must understand:** impact is normalised against the *sum* of impact
+ceilings, so adding a term whose ceiling nothing reaches drags every other asset's impact
+fraction down. Caps must be set to what is *achievable* in that tenant — which is a judgement,
+and is what the Rules page is for.
+
+## 13. What shipped
+
+All opt-in; `DEFAULT_AARS_RULE` stays additive and still reproduces the applied table.
+
+| | |
+|---|---|
+| `privilegePoints` | ADMIN over HIGH, as its own axis |
+| `environmentRules` | operator-editable account-name cascade; every negative form sits above `prod`, or `sap-nonprodpartner` classifies as production |
+| `combinationRules` | conjunctions — the thing a product named after toxic combinations could not previously express |
+| `gapSources.dormantAgent` | the shadow/orphaned asset (`ai/ai_agents_discovery_queries.md` §11) |
+| `businessImpactPoints` | Wiz's own rating, no longer discarded |
+| `scoringMode` + `AARS_V3_RULE` | the likelihood × impact model |
+| `reachPointsPer` / `reachCap` | graph-derived: distinct sensitive resources reachable through the identity chain |
+
+Measured over the seed estate, **live derivation path**:
+
+| | spec | v2 | **v3** |
+|---|---|---|---|
+| distinct scores | 5 | 11 | **11** |
+| largest tie | 15 | 12 | **8** |
+| bands occupied | CRITICAL only | HIGH only | HIGH 10 / MEDIUM 9 / LOW 2 / INFO 9 |
+
+**The remaining 8-tie is exactly `AWSReservedSSO_FinanceAdmin_01..08`** — eight byte-identical
+clones of one role. No scoring function separates identical inputs, so that is the floor and
+the model now reaches it. What remains is a *grouping* problem: eight clones each inflate the
+band census. Not every tie is a defect.
+
+## 14. Still open
+
+- **Dormancy is inert until a recency field lands.** `lastSeen` is null across the capture;
+  `updatedAt` is populated 40/40 and is not yet normalized.
+- **`HBI` never appears** in the sample. If the real estate is all LBI/MBI, `businessImpact`
+  buys less separation than hoped.
+- **The chain query is untested against a live tenant.** It is `optional: true`, so a schema
+  mismatch degrades to a recorded skipped step — but its real yield is unknown.
+- **Clone grouping** (§13) is the highest-value remaining work, and it is a product change
+  rather than a scoring one.
+- **Still unqueried:** agent-to-agent trust (ASI07), MCP/tool supply chain (ASI04), model
+  provenance (LLM03). 12 of the 21 declared edge kinds still exist only in sample data.
