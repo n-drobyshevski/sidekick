@@ -31,7 +31,7 @@ import {
 import { svgEl } from "../icons.js";
 import {
   clear, closeActiveSheet, dataTable, el, emptyState, errorState, fmtDate, fmtDateTime,
-  openSheet, plural, sectionLabel, sheetSection, skeleton, statRow,
+  onPageTeardown, openSheet, plural, sectionLabel, sheetSection, skeleton, statRow,
 } from "../ui.js";
 
 // Only the whole-estate head of api_getAssets is read (kpis, total) — never `rows`. Past
@@ -290,39 +290,63 @@ export async function renderScans(main, params, ctx) {
 // scan area moves everything without a coordinate edit anywhere.
 
 const DIA = {
-  width: 960,
-  top: 26,
-  nodeH: 40,
-  gap: 6,
-  srcX: 0,
-  srcW: 250,
-  spineX: 430,
-  spineW: 100,
-  destX: 700,
-  destW: 260,
-  destH: 48,
+  // The narrowest the picture stays legible at. Below this the container scrolls rather
+  // than scaling the labels down.
+  minWidth: 700,
+  top: 14,
+  bottom: 12,
+  // One line per source. The figure sits on the title's row, right-aligned, so a node is a
+  // row rather than a card — which is what takes the height out: nine two-line cards ran
+  // 414px of node before any padding, nine rows run 230.
+  nodeH: 22,
+  gap: 4,
+  destH: 40,
   // The spine is a WAIST, not a wall. It stands shorter than the run of sources and takes
   // their edges through the middle of its face, so the picture reads as nine things
   // converging into one — which is what a sync is. Distributing the entry points across
   // the full height instead drew nine parallel lines that happened to stop at a box.
-  spineSpan: 0.5,
-  inFan: 0.66,
-  outFan: 0.4,
-  destSpan: 0.78,
+  spineSpan: 0.62,
+  spineMinH: 92,
+  inFan: 0.62,
+  outFan: 0.36,
+  destSpan: 0.9,
 };
 
-export function diagramLayout(areas, destinations) {
+const clamp = (lo, v, hi) => Math.max(lo, Math.min(hi, v));
+
+/** Height is a function of the area count alone, so the skeleton can reserve it exactly. */
+export function diagramHeight(count) {
+  return DIA.top + count * (DIA.nodeH + DIA.gap) - DIA.gap + DIA.bottom;
+}
+
+/**
+ * Geometry for a given rendered width, in CSS pixels — the viewBox is then set to that same
+ * width, so the picture draws 1:1 and its labels are the size the stylesheet asked for. A
+ * fixed viewBox with width:100% scaled the whole schematic up on a wide pane instead, which
+ * bought no extra information and cost a screen of height.
+ *
+ * Everything derives from the area and destination lists, so a tenth scan area moves the
+ * whole picture with no coordinate edit anywhere.
+ */
+export function diagramLayout(areas, destinations, width) {
   const step = DIA.nodeH + DIA.gap;
   const span = areas.length * step - DIA.gap;
   const mid = DIA.top + span / 2;
 
+  // The bands breathe with the width rather than pinning to it: past ~1500px more room for
+  // a nine-word label buys nothing, so the extra goes into the gaps the edges run through.
+  const srcW = clamp(300, width * 0.36, 520);
+  const destW = clamp(230, width * 0.27, 400);
+  const spineW = clamp(132, width * 0.14, 210);
+  const destX = width - destW;
+  const spineX = srcW + (destX - srcW - spineW) / 2;
+
   const sources = areas.map((area, i) => ({
-    area,
-    x: DIA.srcX, y: DIA.top + i * step, w: DIA.srcW, h: DIA.nodeH,
+    area, x: 0, y: DIA.top + i * step, w: srcW, h: DIA.nodeH,
   }));
 
-  const spineH = span * DIA.spineSpan;
-  const spine = { x: DIA.spineX, y: mid - spineH / 2, w: DIA.spineW, h: spineH };
+  const spineH = Math.max(DIA.spineMinH, span * DIA.spineSpan);
+  const spine = { x: spineX, y: mid - spineH / 2, w: spineW, h: spineH };
 
   // Both fans are spread symmetrically about the middle, so a single item sits centred and
   // the run stays balanced however many areas or screens there turn out to be.
@@ -332,9 +356,9 @@ export function diagramLayout(areas, destinations) {
   const destSpan = span * DIA.destSpan;
   const dests = destinations.map((dest, j) => ({
     dest,
-    x: DIA.destX,
+    x: destX,
     y: spread(j, destinations.length, destSpan - DIA.destH) - DIA.destH / 2,
-    w: DIA.destW,
+    w: destW,
     h: DIA.destH,
   }));
 
@@ -364,7 +388,7 @@ export function diagramLayout(areas, destinations) {
     });
   });
 
-  return { sources, spine, dests, edges, height: DIA.top + span + 18 };
+  return { sources, spine, dests, edges, width, height: diagramHeight(areas.length) };
 }
 
 function curve(e) {
@@ -374,11 +398,63 @@ function curve(e) {
     ", " + e.x2 + " " + e.y2;
 }
 
+/**
+ * The picture, plus a stable `light(areaId)` the register drives.
+ *
+ * It rebuilds on resize because the layout is measured, not scaled: the observer hands back
+ * the container's content width, the SVG is drawn at exactly that width, and the labels
+ * never grow or shrink. `light` survives each rebuild — the register wires its rows once.
+ */
 function provenanceDiagram(ranked, tally) {
-  const layout = diagramLayout(ranked, DESTINATIONS);
+  const scroll = el("div", {
+    class: "cov-diagram-scroll",
+    tabindex: "0",
+    role: "group",
+    "aria-label": "Provenance diagram, scrollable",
+  });
+
+  let lit = "";
+  let apply = () => {};
+  let lastWidth = 0;
+
+  function build(width) {
+    const drawn = buildDiagram(ranked, tally, width);
+    clear(scroll).append(drawn.svg);
+    apply = drawn.light;
+    apply(lit);
+  }
+
+  // Drawn once before insertion so the container is never an empty box the register can
+  // jump into; the first observer callback then corrects it to the real width.
+  build(1080);
+
+  if (typeof ResizeObserver !== "undefined") {
+    const ro = new ResizeObserver((entries) => {
+      const box = entries[0] && entries[0].contentRect;
+      if (!box || !box.width) return;
+      const width = Math.max(DIA.minWidth, Math.round(box.width));
+      // Sub-pixel churn and the scrollbar appearing are not resizes worth a rebuild.
+      if (Math.abs(width - lastWidth) < 8) return;
+      lastWidth = width;
+      build(width);
+    });
+    ro.observe(scroll);
+    // Without this each visit leaves an observer attached to a container that outlives it,
+    // holding the resolved area list behind it — the leak graphView.js's destroy() closes.
+    onPageTeardown(() => ro.disconnect());
+  }
+
+  return {
+    node: scroll,
+    light: (areaId) => { lit = areaId; apply(areaId); },
+  };
+}
+
+function buildDiagram(ranked, tally, width) {
+  const layout = diagramLayout(ranked, DESTINATIONS, width);
   const svg = svgEl("svg", {
     class: "cov-diagram",
-    viewBox: "0 0 " + DIA.width + " " + layout.height,
+    viewBox: "0 0 " + width + " " + layout.height,
     preserveAspectRatio: "xMidYMid meet",
     role: "img",
     focusable: "false",
@@ -388,6 +464,9 @@ function provenanceDiagram(ranked, tally) {
       tally.partial + " partial, " + tally.unscanned + " not scanned here. " +
       "The register below lists every area with the same information.",
   });
+  // In pixels, matching the viewBox, so the render is exactly 1:1. Past the container's
+  // width this overflows and the wrapper scrolls, which is the intended narrow behaviour.
+  svg.style.width = width + "px";
 
   const edgeLayer = svgEl("g", { class: "cov-edges" });
   const nodeLayer = svgEl("g", { class: "cov-nodes" });
@@ -414,22 +493,23 @@ function provenanceDiagram(ranked, tally) {
       class: "cov-spine", x: spine.x, y: spine.y, width: spine.w, height: spine.h, rx: 10,
     }),
   );
-  const spineLines = ["normalize", "enrich", "score", "persist"];
+  const spineCx = spine.x + spine.w / 2;
   const spineMid = spine.y + spine.h / 2;
-  nodeLayer.append(text("cov-spine-title", spine.x + spine.w / 2, spineMid - 34, "Sync", "middle"));
-  spineLines.forEach((line, i) => {
-    nodeLayer.append(
-      text("cov-spine-step", spine.x + spine.w / 2, spineMid - 12 + i * 16, line, "middle"),
-    );
+  nodeLayer.append(text("cov-spine-title", spineCx, spineMid - 28, "Sync", "middle"));
+  ["normalize", "enrich", "score", "persist"].forEach((line, i) => {
+    nodeLayer.append(text("cov-spine-step", spineCx, spineMid - 9 + i * 14, line, "middle"));
   });
 
+  // One row per source: dot, title, and the figure right-aligned against the far edge, so
+  // the numbers line up down the column and the row reads left to right as a sentence.
   for (const s of layout.sources) {
     const g = svgEl("g", { class: "cov-node", "data-state": s.area.state });
+    const baseline = s.y + s.h / 2 + 4;
     g.append(
-      svgEl("rect", { class: "cov-node-box", x: s.x, y: s.y, width: s.w, height: s.h, rx: 9 }),
-      dot(s.x + 15, s.y + s.h / 2, s.area.state),
-      text("cov-node-name", s.x + 28, s.y + 17, s.area.title),
-      text("cov-node-fig", s.x + 28, s.y + 31, nodeCaption(s.area)),
+      svgEl("rect", { class: "cov-node-box", x: s.x, y: s.y, width: s.w, height: s.h, rx: 7 }),
+      dot(s.x + 13, s.y + s.h / 2, s.area.state),
+      text("cov-node-name", s.x + 25, baseline, s.area.title),
+      text("cov-node-fig", s.x + s.w - 11, baseline, nodeCaption(s.area), "end"),
     );
     nodeLayer.append(g);
     touch(s.area.id, g);
@@ -438,19 +518,12 @@ function provenanceDiagram(ranked, tally) {
   for (const d of layout.dests) {
     const g = svgEl("g", { class: "cov-dest" });
     g.append(
-      svgEl("rect", { class: "cov-dest-box", x: d.x, y: d.y, width: d.w, height: d.h, rx: 9 }),
-      text("cov-dest-name", d.x + 16, d.y + 21, d.dest.title),
-      text("cov-dest-sub", d.x + 16, d.y + 36, d.dest.sub),
+      svgEl("rect", { class: "cov-dest-box", x: d.x, y: d.y, width: d.w, height: d.h, rx: 7 }),
+      text("cov-dest-name", d.x + 14, d.y + 18, d.dest.title),
+      text("cov-dest-sub", d.x + 14, d.y + 32, d.dest.sub),
     );
     nodeLayer.append(g);
   }
-
-  const scroll = el("div", {
-    class: "cov-diagram-scroll",
-    tabindex: "0",
-    role: "group",
-    "aria-label": "Provenance diagram, scrollable",
-  }, svg);
 
   let litIds = [];
   function light(areaId) {
@@ -460,12 +533,13 @@ function provenanceDiagram(ranked, tally) {
     svg.classList.toggle("is-dimmed", litIds.length > 0);
   }
 
-  return { node: scroll, light };
+  return { svg, light };
 }
 
+/** The one-line caption inside a node: its headline figure, or what it has instead. */
 function nodeCaption(area) {
-  if (area.figure) return area.figure.value + " " + area.figure.unit;
-  return COVERAGE[area.state].blurb;
+  if (area.figure) return area.figure.short || area.figure.value;
+  return COVERAGE[area.state].short;
 }
 
 function text(cls, x, y, content, anchor) {
@@ -497,10 +571,9 @@ function dot(cx, cy, state) {
 // jump several hundred pixels when the payload lands.
 
 function scansSkeleton() {
-  // The diagram renders at 1:1 or smaller (never scaled up), so its viewBox height IS the
-  // tallest it can be — reserve exactly that and the register cannot jump when data lands.
-  const diagramHeight = diagramLayout(new Array(SCAN_AREAS.length).fill({ state: "partial" }),
-    DESTINATIONS).height;
+  // Height depends only on how many areas there are, never on the width, so the stub can
+  // reserve the diagram's exact box and the register cannot jump when the payload lands.
+  const reserve = diagramHeight(SCAN_AREAS.length);
   const stats = el("div", { class: "stat-list" });
   for (let i = 0; i < 4; i++) {
     stats.append(el("div", { class: "stat-row" },
@@ -520,7 +593,7 @@ function scansSkeleton() {
         skeleton("pill", { width: "320px" })),
       stats),
     skeleton("title", { width: "220px" }),
-    skeleton("chart", { height: diagramHeight + "px" }),
+    skeleton("chart", { height: reserve + "px" }),
     skeleton("title", { width: "130px" }),
     el("div", { class: "skeleton-stack", style: "gap:10px; margin-top:8px" },
       ...Array.from({ length: 9 }, () => skeleton("line", { height: "22px" }))),
