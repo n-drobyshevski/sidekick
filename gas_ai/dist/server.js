@@ -604,6 +604,11 @@ var Server = (() => {
     // CIEM finding entities
     "EXCESSIVE_ACCESS_FINDING",
     "LATERAL_MOVEMENT_FINDING",
+    // Synthesized from the identity-access scan: one per AI asset a HUMAN identity can reach
+    // at high privilege. Declared beside the CIEM findings rather than with the other
+    // synthetic kinds below, so the grouped layout files it with the access finding it
+    // complements — that layout orders its blocks by this list.
+    "IDENTITY_ACCESS_FINDING",
     // synthetic
     "ISSUE",
     // one node per open risk issue (toxic-combination instance)
@@ -625,7 +630,8 @@ var Server = (() => {
     "EXCESSIVE_PRIVILEGE",
     "MISSING_GUARDRAIL",
     "EXCESSIVE_ACCESS_FINDING",
-    "LATERAL_MOVEMENT_FINDING"
+    "LATERAL_MOVEMENT_FINDING",
+    "IDENTITY_ACCESS_FINDING"
   ];
   function isRiskKind(kind) {
     return RISK_NODE_KINDS.includes(kind);
@@ -2490,6 +2496,7 @@ var Server = (() => {
   var LANE_OF = {
     ISSUE: 0,
     EXCESSIVE_ACCESS_FINDING: 0,
+    IDENTITY_ACCESS_FINDING: 0,
     LATERAL_MOVEMENT_FINDING: 0,
     EXCESSIVE_PRIVILEGE: 0,
     MISSING_GUARDRAIL: 0,
@@ -3441,7 +3448,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "afe26d4e43c7" : "dev";
+  var BUILD_ID = true ? "7c30bcb4ac83" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -4300,6 +4307,50 @@ var Server = (() => {
         return withRealFinding;
       }
     });
+  }
+  function withIdentityAccessNodes(doc) {
+    const HUMAN_REACH = /* @__PURE__ */ new Set(["ADMIN", "HIGH_PRIVILEGE"]);
+    const aiAssets = new Set(
+      doc.nodes.filter((n) => AI_ASSET_KINDS.includes(n.kind)).map((n) => n.id)
+    );
+    const humans = new Set(doc.nodes.filter((n) => n.kind === "USER_ACCOUNT").map((n) => n.id));
+    const existing = new Set(
+      doc.nodes.filter((n) => n.kind === "IDENTITY_ACCESS_FINDING").map((n) => n.id)
+    );
+    const kindById = new Map(doc.nodes.map((n) => [n.id, n.kind]));
+    const withRealFinding = /* @__PURE__ */ new Set();
+    for (const e of doc.edges) {
+      if (e.type === "HAS_FINDING" && kindById.get(e.dst) === "EXCESSIVE_ACCESS_FINDING") {
+        withRealFinding.add(e.src);
+      }
+    }
+    const reached = /* @__PURE__ */ new Set();
+    for (const e of doc.edges) {
+      if (e.type !== "ALLOWS_ACCESS_TO") continue;
+      if (!e.accessType || !HUMAN_REACH.has(e.accessType)) continue;
+      if (!humans.has(e.src) || !aiAssets.has(e.dst)) continue;
+      if (withRealFinding.has(e.dst)) continue;
+      reached.add(e.dst);
+    }
+    const added = [];
+    const addedEdges = [];
+    for (const assetId of reached) {
+      const id = `identityaccess|${assetId}`;
+      if (existing.has(id)) continue;
+      added.push({ id, kind: "IDENTITY_ACCESS_FINDING", name: "Human access" });
+      addedEdges.push({
+        id: edgeId(assetId, "HAS_FINDING", id),
+        src: assetId,
+        dst: id,
+        type: "HAS_FINDING"
+      });
+    }
+    if (!added.length) return doc;
+    return {
+      nodes: [...doc.nodes, ...added],
+      edges: [...doc.edges, ...addedEdges],
+      syncedAt: doc.syncedAt
+    };
   }
   function withMissingGuardrailNodes(doc) {
     return withDerivedNodes(doc, {
@@ -5292,7 +5343,9 @@ var Server = (() => {
   }
   function withRiskNodes(doc) {
     return withMissingGuardrailNodes(
-      withExcessivePrivilegeNodes(withInternetExposureNodes(withSensitiveDataNodes(doc)))
+      withIdentityAccessNodes(
+        withExcessivePrivilegeNodes(withInternetExposureNodes(withSensitiveDataNodes(doc)))
+      )
     );
   }
   function withCurrentBands(nodes, bands) {

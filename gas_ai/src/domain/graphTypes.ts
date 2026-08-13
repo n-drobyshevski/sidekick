@@ -37,6 +37,11 @@ export const NODE_KINDS = [
   "VIRTUAL_MACHINE", "SERVERLESS", "CONTAINER_IMAGE", "REPOSITORY",
   // CIEM finding entities
   "EXCESSIVE_ACCESS_FINDING", "LATERAL_MOVEMENT_FINDING",
+  // Synthesized from the identity-access scan: one per AI asset a HUMAN identity can reach
+  // at high privilege. Declared beside the CIEM findings rather than with the other
+  // synthetic kinds below, so the grouped layout files it with the access finding it
+  // complements — that layout orders its blocks by this list.
+  "IDENTITY_ACCESS_FINDING",
   // synthetic
   "ISSUE",    // one node per open risk issue (toxic-combination instance)
   "SUMMARY",  // collapse node: "+N more <kind>" emitted by the projection
@@ -56,7 +61,7 @@ export type NodeKind = (typeof NODE_KINDS)[number];
  */
 export const RISK_NODE_KINDS: readonly NodeKind[] = [
   "ISSUE", "SENSITIVE_DATA", "INTERNET_EXPOSURE", "EXCESSIVE_PRIVILEGE", "MISSING_GUARDRAIL",
-  "EXCESSIVE_ACCESS_FINDING", "LATERAL_MOVEMENT_FINDING",
+  "EXCESSIVE_ACCESS_FINDING", "LATERAL_MOVEMENT_FINDING", "IDENTITY_ACCESS_FINDING",
 ];
 
 export function isRiskKind(kind: string): boolean {

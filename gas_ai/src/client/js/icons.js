@@ -1,65 +1,237 @@
-// Inline SVG icon sprite for node kinds: stroke path data in a 16x16 viewBox,
-// rendered by graphView with class .gnode-icon. Icons accompany the kind LABEL —
-// they are a redundant cue, never the only signal.
+// Inline SVG icon sprite for node kinds: path data in a 16x16 viewBox, rendered by
+// graphView with class .gnode-icon. Icons accompany the kind LABEL — they are a redundant
+// cue, never the only signal.
+//
+// An entry is a plain `d` string, stroked by CSS, or `{ d, solid: true }` for a filled
+// path. Solid paths take `class="gicon-solid"` and paint with `fill: currentColor`, so
+// every surface that already strokes the mark in currentColor fills it correctly too.
+// Every kind draws a distinct mark: test/icons.test.js fails the build on a duplicate,
+// which is what nine alias assignments and one byte-identical pair used to be.
 
 const PATHS = {
+  // --- AI assets ---------------------------------------------------------------
+  // Supplied artwork, transcribed from a 100x100 source at x0.16. The head outline's
+  // bottom-right gap is deliberate — it is where the sparkle sits. Filled circles in the
+  // source become `h0.01` dots, the house idiom for a disc under the round linecap.
   AI_AGENT: [
-    "M4 6 h8 v6 a2 2 0 0 1 -2 2 h-4 a2 2 0 0 1 -2 -2 z",
-    "M8 6 V3", "M8 3 m-1 0 a1 1 0 1 0 2 0 a1 1 0 1 0 -2 0",
-    "M6 9.5 h0.01", "M10 9.5 h0.01",
+    "M7.68 9.6 L5.12 9.6 C3.84 9.6 2.88 8.64 2.88 7.36 L2.88 6.4 C2.88 5.12 3.84 4.16 5.12 4.16 L9.28 4.16 C10.56 4.16 11.52 5.12 11.52 6.4 L11.52 7.68",
+    "M7.2 4.16 L7.2 2.24",
+    "M2.88 6.88 L1.6 6.88", "M11.52 6.88 L12.8 6.88",
+    "M2.88 14.4 L2.88 13.12 C2.88 11.84 3.84 10.88 5.12 10.88 L6.72 10.88",
+    "M5.44 6.88 h0.01", "M8.96 6.88 h0.01",
+    { d: "M10.88 8 C10.88 10.24 12.16 11.2 14.4 11.2 C12.16 11.2 10.88 12.16 10.88 14.4 C10.88 12.16 9.6 11.2 7.36 11.2 C9.6 11.2 10.88 10.24 10.88 8 Z", solid: true },
   ],
-  AI_MODEL: ["M8 2 L14 5 L8 8 L2 5 Z", "M2 8 L8 11 L14 8", "M2 11 L8 14 L14 11"],
-  AI_GUARDRAIL: ["M8 2 L13 4 V8 C13 11 11 13 8 14 C5 13 3 11 3 8 V4 Z", "M6 8 L7.5 9.5 L10.5 6.5"],
-  AI_PIPELINE: ["M2 4 h4 v4 h-4 z", "M10 8 h4 v4 h-4 z", "M6 6 h2 a2 2 0 0 1 2 2 v2"],
-  AI_DATASET: ["M3 4 a5 1.8 0 0 0 10 0 a5 1.8 0 0 0 -10 0", "M3 4 v8 a5 1.8 0 0 0 10 0 v-8", "M3 8 a5 1.8 0 0 0 10 0"],
-  MCP_SERVER: ["M5 2 v4", "M11 2 v4", "M3 6 h10 v3 a5 5 0 0 1 -10 0 z", "M8 14 v-2"],
-  SERVICE_ACCOUNT: ["M9 7 a3 3 0 1 0 -3 -3", "M9 7 L3 13", "M5 11 l1.5 1.5", "M7 9 l1.5 1.5"],
+  // Three linked nodes, per the reference. The nodes are SQUARE on purpose: REPOSITORY,
+  // uiIcons' `graph` and the sidebar's Graph mark are all circle-node clusters, and the
+  // record-sheet header renders one of them 14px from this glyph.
+  AI_MODEL: [
+    "M2 2.5 h3.5 v3.5 h-3.5 z",
+    "M2 10 h3.5 v3.5 h-3.5 z",
+    "M10.5 6.2 h3.5 v3.5 h-3.5 z",
+    "M5.5 4.25 L10.5 7.4",
+    "M5.5 11.75 L10.5 8.7",
+    "M3.75 6 V10",
+  ],
+  // Barrier gate. Replaces the shield so MISSING_GUARDRAIL can be the same barrier, broken.
+  AI_GUARDRAIL: [
+    "M2 5.5 h12 v3 h-12 z",
+    "M4.5 8.5 V14", "M11.5 8.5 V14",
+    "M6 5.5 L4.5 8.5", "M10 5.5 L8.5 8.5",
+  ],
+  // A pipe with a valve on top: the wide bar is the handwheel, the stem drops into the run,
+  // and the two rings are pipe joints. The wide-bar-over-narrow-body shape is what rules out
+  // a briefcase, whose handle is always narrower than its case.
+  AI_PIPELINE: [
+    "M2 8.5 h12 v4.5 h-12 z",
+    "M5 8.5 V13", "M11 8.5 V13",
+    "M8 8.5 V5",
+    "M5.5 5 h5",
+  ],
+  // Lidded archive box. The cylinder it used to draw now belongs to DATABASE alone.
+  AI_DATASET: [
+    "M2 3.5 h12 v3 h-12 z",
+    "M3 6.5 v7 h10 v-7",
+    "M6.5 9.5 h3",
+  ],
+  // Sitemap: one host, two children. Boxes, not circles — circles here would collide with
+  // REPOSITORY and with uiIcons' `graph` mark, which renders 14px away in a sheet header.
+  MCP_SERVER: [
+    "M6 2 h4 v3 h-4 z",
+    "M2 11 h4 v3 h-4 z",
+    "M10 11 h4 v3 h-4 z",
+    "M8 5 V8", "M4 11 V8 H12 V11",
+  ],
+  AI_AGENT_REGISTRY: [
+    "M2.5 5 h9.5 v8.5 h-9.5 z",
+    "M4.5 5 V2.5 h9 v8.5",
+    "M4.8 8.2 h5", "M4.8 10.6 h3.2",
+  ],
+  AI_DEPLOYMENT: [
+    { d: "M6 2.5 C6 5.51 7.57 6.8 10.3 6.8 C7.57 6.8 6 8.09 6 11.1 C6 8.09 4.43 6.8 1.7 6.8 C4.43 6.8 6 5.51 6 2.5 Z", solid: true },
+    { d: "M11.9 9.1 C11.9 10.85 12.81 11.6 14.4 11.6 C12.81 11.6 11.9 12.35 11.9 14.1 C11.9 12.35 10.99 11.6 9.4 11.6 C10.99 11.6 11.9 10.85 11.9 9.1 Z", solid: true },
+  ],
+  AI_EXTENSION: [
+    "M3 3 h4 a1.4 1.4 0 1 1 2.8 0 h3.2 v3.2 a1.4 1.4 0 1 0 0 2.8 V13 H9.8 a1.4 1.4 0 1 0 -2.8 0 H3 Z",
+  ],
+  AI_GATEWAY: [
+    "M2.5 13.5 V7.5 a5.5 5.5 0 0 1 11 0 V13.5",
+    "M5.5 13.5 V8 a2.5 2.5 0 0 1 5 0 V13.5",
+    "M1.5 13.5 h13",
+  ],
+  AI_SERVICE: [
+    "M3.5 13 a2.8 2.8 0 0 1 0.3 -5.6 a3.6 3.6 0 0 1 6.7 0.9 a2.4 2.4 0 0 1 -0.2 4.7 z",
+    { d: "M12.4 1.9 C12.4 3.65 13.31 4.4 14.9 4.4 C13.31 4.4 12.4 5.15 12.4 6.9 C12.4 5.15 11.49 4.4 9.9 4.4 C11.49 4.4 12.4 3.65 12.4 1.9 Z", solid: true },
+  ],
+  // Supplied artwork: a dumbbell with the AI sparkle. Reduced, not transcribed — the source
+  // draws each plate as a rounded rect and the handle as a pair of rails 10 units apart,
+  // which at x0.16 is 1.6, exactly one stroke width, so every pair would weld shut. Each
+  // plate becomes the single stroke it would have collapsed into, and the endcaps and the
+  // 4-unit gap connectors (0.64 here, narrower than the stroke) are dropped.
+  //
+  // The source masks the dumbbell out from behind an outlined star. A mask is not
+  // expressible in `d` data — but a SOLID sparkle drawn last occludes exactly what the mask
+  // hid, and it matches the marker on AI_AGENT, AI_DEPLOYMENT and AI_SERVICE.
+  AI_SKILL: [
+    "M2.2 7.6 V12",
+    "M4.9 6.4 V13.2",
+    "M4.9 9.8 H11.1",
+    "M11.1 6.4 V13.2",
+    "M13.8 7.6 V12",
+    { d: "M11.5 1.3 C11.5 3.33 12.56 4.2 14.4 4.2 C12.56 4.2 11.5 5.07 11.5 7.1 C11.5 5.07 10.44 4.2 8.6 4.2 C10.44 4.2 11.5 3.33 11.5 1.3 Z", solid: true },
+  ],
+  // PROPOSAL, no reference supplied. Sliders no longer mean "skill", so the pair would have
+  // stopped reading; this is the dumbbell inside a template frame, minus the sparkle.
+  AI_SKILL_TEMPLATE: [
+    "M3 2.5 h10 a1.5 1.5 0 0 1 1.5 1.5 v8 a1.5 1.5 0 0 1 -1.5 1.5 h-10 a1.5 1.5 0 0 1 -1.5 -1.5 v-8 a1.5 1.5 0 0 1 1.5 -1.5 z",
+    "M4.8 6.4 V9.6",
+    "M4.8 8 H11.2",
+    "M11.2 6.4 V9.6",
+  ],
+  AI_TOOL: [
+    "M9.8 4.2 a0.67 0.67 0 0 0 0 0.93 l1.07 1.07 a0.67 0.67 0 0 0 0.93 0 l2.51 -2.51 a4 4 0 0 1 -5.29 5.29 l-4.61 4.61 a1.41 1.41 0 0 1 -2 -2 l4.61 -4.61 a4 4 0 0 1 5.29 -5.29 l-2.51 2.51 z",
+  ],
+
+  // --- identities --------------------------------------------------------------
+  // Supplied artwork: antenna, symmetric ears, rounded head, two eyes, mouth. NOT a literal
+  // x0.16 transcription — the source strokes at 4/100 of its grid where the house strokes at
+  // 10/16, so at true scale the 5.8-unit head would swallow all three of its own features.
+  // Composition and proportions are kept; the head is opened up to 7.4x6.8 and the features
+  // spread to clear the stroke. The key this used to draw is now ACCESS_KEY's, where a key
+  // actually belongs.
+  SERVICE_ACCOUNT: [
+    "M6 4.6 h4 a1.7 1.7 0 0 1 1.7 1.7 v3.4 a1.7 1.7 0 0 1 -1.7 1.7 h-4 a1.7 1.7 0 0 1 -1.7 -1.7 v-3.4 a1.7 1.7 0 0 1 1.7 -1.7 z",
+    "M8 4.6 V2.3",
+    "M2.1 7 V9.4", "M13.9 7 V9.4",
+    "M6.3 7.2 h0.01", "M9.7 7.2 h0.01",
+    "M6.3 9.4 h3.4",
+  ],
   USER_ACCOUNT: ["M8 8 a3 3 0 1 0 0 -6 a3 3 0 0 0 0 6", "M2.5 14 a5.5 4.5 0 0 1 11 0"],
-  ACCESS_ROLE: ["M4 2 h8 v12 h-8 z", "M6 5 h4", "M8 9 a1.5 1.5 0 1 0 0 -3 a1.5 1.5 0 0 0 0 3", "M6 12 a2 2 0 0 1 4 0"],
-  ACCESS_ROLE_BINDING: ["M6 10 L10 6", "M4 8 a3 3 0 0 1 0 -4 l1 -1 a3 3 0 0 1 4 0", "M12 8 a3 3 0 0 1 0 4 l-1 1 a3 3 0 0 1 -4 0"],
+  ACCESS_ROLE: [
+    "M3.5 2 h9 v12 h-9 z",
+    "M6.5 4.5 h3",
+    "M8 9 a1.5 1.5 0 1 0 0 -3 a1.5 1.5 0 0 0 0 3",
+    "M5.8 12 a2.4 2 0 0 1 4.4 0",
+  ],
+  ACCESS_ROLE_BINDING: [
+    "M8 2 L14 13.5 H2 Z",
+    "M8 7 a1.3 1.3 0 1 0 0 2.6 a1.3 1.3 0 0 0 0 -2.6",
+    "M5.8 12.6 a2.4 2 0 0 1 4.4 0",
+  ],
+  ACCESS_KEY: [
+    "M5.5 10.5 m-2.8 0 a2.8 2.8 0 1 0 5.6 0 a2.8 2.8 0 1 0 -5.6 0",
+    "M7.5 8.5 L13.5 2.5",
+    "M11 5 L12.3 6.3", "M9.4 6.6 L10.7 7.9",
+  ],
+
+  // --- data --------------------------------------------------------------------
   BUCKET: ["M3 4 h10 l-1.5 9 a1 1 0 0 1 -1 1 h-5 a1 1 0 0 1 -1 -1 z", "M3 4 a5 1.5 0 0 0 10 0"],
-  DATABASE: ["M3 4 a5 1.8 0 0 0 10 0 a5 1.8 0 0 0 -10 0", "M3 4 v8 a5 1.8 0 0 0 10 0 v-8"],
-  VIRTUAL_MACHINE: ["M2 3 h12 v8 h-12 z", "M6 14 h4", "M8 11 v3"],
+  DATABASE: [
+    "M3 4 a5 1.8 0 0 0 10 0 a5 1.8 0 0 0 -10 0",
+    "M3 4 v8 a5 1.8 0 0 0 10 0 v-8",
+    "M3 8 a5 1.8 0 0 0 10 0",
+  ],
+
+  // --- compute / supply chain --------------------------------------------------
+  VIRTUAL_MACHINE: ["M1.5 5.5 h9 v8 h-9 z", "M4.5 5.5 V2.5 h9 v8 h-3"],
   SERVERLESS: ["M9 2 L4 9 h3 l-1 5 l6 -7 h-3 z"],
-  CONTAINER_IMAGE: ["M2 5 L8 2 L14 5 V11 L8 14 L2 11 Z", "M2 5 L8 8 L14 5", "M8 8 V14"],
-  REPOSITORY: ["M5 3 a1.5 1.5 0 1 0 0 3 a1.5 1.5 0 0 0 0 -3", "M5 13 a1.5 1.5 0 1 0 0 -3 a1.5 1.5 0 0 0 0 3", "M11 5 a1.5 1.5 0 1 0 0 -3 a1.5 1.5 0 0 0 0 3", "M5 6 v4", "M11 5 a6 6 0 0 1 -4.5 5"],
-  EXCESSIVE_ACCESS_FINDING: ["M8 2 L15 14 H1 Z", "M8 6.5 V10", "M8 12 h0.01"],
-  LATERAL_MOVEMENT_FINDING: ["M2 5 h9", "M9 2.5 L11.5 5 L9 7.5", "M14 11 h-9", "M7 8.5 L4.5 11 L7 13.5"],
+  CONTAINER_IMAGE: [
+    "M2 5.5 V3.5 a1.5 1.5 0 0 1 1.5 -1.5 H5.5",
+    "M10.5 2 H12.5 a1.5 1.5 0 0 1 1.5 1.5 V5.5",
+    "M14 10.5 V12.5 a1.5 1.5 0 0 1 -1.5 1.5 H10.5",
+    "M5.5 14 H3.5 a1.5 1.5 0 0 1 -1.5 -1.5 V10.5",
+    "M8 5.8 a2.2 2.2 0 1 0 0 4.4 a2.2 2.2 0 0 0 0 -4.4",
+  ],
+  REPOSITORY: [
+    "M5 3 a1.5 1.5 0 1 0 0 3 a1.5 1.5 0 0 0 0 -3",
+    "M5 13 a1.5 1.5 0 1 0 0 -3 a1.5 1.5 0 0 0 0 3",
+    "M11 5 a1.5 1.5 0 1 0 0 -3 a1.5 1.5 0 0 0 0 3",
+    "M5 6 v4", "M11 5 a6 6 0 0 1 -4.5 5",
+  ],
+
+  // --- CIEM findings -----------------------------------------------------------
+  // Open padlock: the shackle sits clear of the body. Replaces the warning triangle,
+  // which was byte-identical to ISSUE.
+  EXCESSIVE_ACCESS_FINDING: [
+    "M2 7 h8 v6.5 h-8 z",
+    "M8 7 V4.5 a2.6 2.6 0 0 1 5.2 0 V6.2",
+    "M6 9.6 v1.6",
+  ],
+  // Supplied artwork, for a NODE KIND THAT DOES NOT EXIST YET (see the plan). Opened up
+  // from the source rather than transcribed: at a literal x0.16 the head is r0.96 against a
+  // 1.6 stroke, leaving a 0.32 hole — it renders as a blob. r1.45 restores the source's own
+  // radius-to-stroke ratio, and the limbs are lengthened to match.
+  IDENTITY_ACCESS_FINDING: [
+    "M6.6 2.8 m-1.45 0 a1.45 1.45 0 1 0 2.9 0 a1.45 1.45 0 1 0 -2.9 0",
+    "M2.4 8.9 L4.3 6.4 L7 5.9 L5.4 9.2 L8.2 10.6 L6.9 13.4",
+    "M6 7.5 H9.7",
+    "M4.3 10.4 L2.4 13.2",
+    "M11.1 7 V4.4 H14.2 V13.2 H11.1 V10.2",
+  ],
+  // Host to host. Deliberately not a node-cluster: REPOSITORY, uiIcons' `graph` and the
+  // sidebar's Graph mark are all already three-circles-and-lines.
+  LATERAL_MOVEMENT_FINDING: [
+    "M1.5 5 h4 v6 h-4 z",
+    "M10.5 5 h4 v6 h-4 z",
+    "M6 8 H9.6",
+    "M8.3 6.7 L9.8 8 L8.3 9.3",
+  ],
+
+  // --- synthetic ---------------------------------------------------------------
   ISSUE: ["M8 2 L15 14 H1 Z", "M8 6.5 V10", "M8 12 h0.01"],
   SUMMARY: ["M4 8 h0.01", "M8 8 h0.01", "M12 8 h0.01"],
-  // Padlock — reads as "sensitive", distinct from the shield (guardrail) and cylinder (dataset).
-  SENSITIVE_DATA: ["M4 7 h8 v6 h-8 z", "M6 7 V5 a2 2 0 0 1 4 0 V7", "M8 9.5 v2"],
-  // Globe — reads as "internet / public exposure".
-  INTERNET_EXPOSURE: ["M8 2 a6 6 0 1 0 0 12 a6 6 0 0 0 0 -12", "M2 8 h12", "M8 2 a9 6 0 0 0 0 12", "M8 2 a9 6 0 0 1 0 12"],
-  // Key with a struck-through bow — "rights, too many of them". Distinct from the
-  // padlock (sensitive data) and the wrench-key of SERVICE_ACCOUNT.
-  EXCESSIVE_PRIVILEGE: [
-    "M6 6.5 a3 3 0 1 0 0 3 a3 3 0 0 0 0 -3", "M8.5 8 H14", "M11 8 v2.5", "M13 8 v2",
-    "M3 3 L15 13",
+  // Gem — the mark Wiz hangs on a data finding. Replaces the padlock, which now reads
+  // as access (EXCESSIVE_ACCESS_FINDING) rather than as sensitivity.
+  SENSITIVE_DATA: [
+    "M4 2.5 h8 l2 3.8 L8 14 L2 6.3 Z",
+    "M2 6.3 h12",
+    "M5.9 6.3 L8 14 L10.1 6.3",
+    "M4 2.5 L5.9 6.3", "M12 2.5 L10.1 6.3",
   ],
-  // Broken shield — the guardrail outline of AI_GUARDRAIL with a gap and a crack, so
-  // absence reads at a glance instead of looking like coverage.
+  // The meridians were drawn at rx 9 inside a globe of radius 6, so they ballooned well
+  // outside the sphere — the chord is 12, exactly 2*ry, which makes rx the full bulge.
+  // rx 3 puts them back on the surface.
+  INTERNET_EXPOSURE: [
+    "M8 2 a6 6 0 1 0 0 12 a6 6 0 0 0 0 -12",
+    "M2 8 h12",
+    "M8 2 a3 6 0 0 0 0 12", "M8 2 a3 6 0 0 1 0 12",
+  ],
+  // ACCESS_KEY's key, struck through: the rights are real and there are too many of them.
+  // The strike crosses the shaft at a right angle and stops clear of the bow — run corner
+  // to corner it lands on top of the ring and the key stops reading as a key.
+  EXCESSIVE_PRIVILEGE: [
+    "M5.5 10.5 m-2.8 0 a2.8 2.8 0 1 0 5.6 0 a2.8 2.8 0 1 0 -5.6 0",
+    "M7.5 8.5 L13.5 2.5",
+    "M11 5 L12.3 6.3",
+    "M7.6 2.6 L13.4 8.4",
+  ],
+  // AI_GUARDRAIL's barrier, snapped in two: both halves keep the rail's depth and meet at
+  // a matching jagged break, so absence reads at a glance instead of looking like coverage.
   MISSING_GUARDRAIL: [
-    "M8 2 L13 4 V8 C13 10 12 11.5 10.5 12.7",
-    "M8 2 L3 4 V8 C3 11 5 13 8 14",
-    "M8 5 L6.5 8.5 h3 L8 11.5",
+    "M2 5.5 h5 l0.8 1.5 l-0.8 1.5 h-5 z",
+    "M14 5.5 h-4 l-0.8 1.5 l0.8 1.5 h4 z",
+    "M4.5 8.5 V14", "M11.5 8.5 V14",
   ],
 };
-
-// Tenant-vocabulary AI kinds reuse the closest existing glyph (icons are a
-// redundant cue beside the text label, never the only signal).
-PATHS.AI_AGENT_REGISTRY = PATHS.REPOSITORY;
-PATHS.AI_DEPLOYMENT = PATHS.VIRTUAL_MACHINE;
-PATHS.AI_EXTENSION = PATHS.AI_PIPELINE;
-PATHS.AI_GATEWAY = PATHS.MCP_SERVER;
-PATHS.AI_SERVICE = PATHS.AI_MODEL;
-PATHS.AI_SKILL = PATHS.SERVERLESS;
-PATHS.AI_SKILL_TEMPLATE = PATHS.CONTAINER_IMAGE;
-PATHS.AI_TOOL = PATHS.SERVERLESS;
-// A long-standing hole: ACCESS_KEY is in NODE_KINDS but had no glyph, so a key drew as the
-// three-dot collapse stub. SERVICE_ACCOUNT's mark already IS a key, and a key is what a
-// service account carries.
-PATHS.ACCESS_KEY = PATHS.SERVICE_ACCOUNT;
 
 export const KIND_LABELS = {
   AI_AGENT: "AI Agent",
@@ -90,6 +262,7 @@ export const KIND_LABELS = {
   CONTAINER_IMAGE: "Container Image",
   REPOSITORY: "Repository",
   EXCESSIVE_ACCESS_FINDING: "Excessive Access",
+  IDENTITY_ACCESS_FINDING: "Identity Access",
   LATERAL_MOVEMENT_FINDING: "Lateral Movement",
   ISSUE: "Issue",
   SUMMARY: "More",
@@ -119,15 +292,30 @@ export function svgEl(tag, attrs) {
   return node;
 }
 
+/**
+ * A kind's raw path data, for tests and tooling. Returns null for an unknown kind rather
+ * than kindIcon's SUMMARY fallback, so a coverage check can tell "this kind has no glyph"
+ * apart from "this kind draws the collapse stub". Hands back a copy: PATHS is module-private
+ * precisely so nobody can reach in and mutate it the way the alias block did.
+ */
+export function glyphPaths(kind) {
+  const paths = PATHS[kind];
+  return paths ? paths.slice() : null;
+}
+
 /** A 16x16 stroke icon <g> for a node kind (falls back to the summary dots). */
 export function kindIcon(kind, size = 16) {
   const g = document.createElementNS(SVG_NS, "g");
   g.setAttribute("class", "gnode-icon");
   g.setAttribute("aria-hidden", "true");
   const paths = PATHS[kind] || PATHS.SUMMARY;
-  for (const d of paths) {
+  for (const entry of paths) {
     const p = document.createElementNS(SVG_NS, "path");
-    p.setAttribute("d", d);
+    p.setAttribute("d", typeof entry === "string" ? entry : entry.d);
+    // A solid path is filled, not stroked. The class stands on its own rather than being
+    // scoped under .gnode-icon: pages/help.js relabels this group as help-node-icon, which
+    // would silently stop a `.gnode-icon .solid` rule matching there.
+    if (typeof entry !== "string" && entry.solid) p.setAttribute("class", "gicon-solid");
     g.append(p);
   }
   if (size !== 16) g.setAttribute("transform", `scale(${size / 16})`);
@@ -210,10 +398,13 @@ export const KIND_CATEGORY = {
   VIRTUAL_MACHINE: "asset", SERVERLESS: "asset", CONTAINER_IMAGE: "asset", REPOSITORY: "asset",
   // data (green): datastores, datasets, and the sensitive-data marker
   AI_DATASET: "data", BUCKET: "data", DATABASE: "data", SENSITIVE_DATA: "data",
-  // IAM / access (purple)
+  // IAM / access (purple). ACCESS_KEY was missing here for as long as it has existed, so a
+  // credential rendered in the asset tint while its own label said "Access Key".
   SERVICE_ACCOUNT: "iam", USER_ACCOUNT: "iam", ACCESS_ROLE: "iam", ACCESS_ROLE_BINDING: "iam",
+  ACCESS_KEY: "iam",
   // vulnerabilities & misconfigurations (red)
-  ISSUE: "vuln", EXCESSIVE_ACCESS_FINDING: "vuln", LATERAL_MOVEMENT_FINDING: "vuln",
+  ISSUE: "vuln", EXCESSIVE_ACCESS_FINDING: "vuln", IDENTITY_ACCESS_FINDING: "vuln",
+  LATERAL_MOVEMENT_FINDING: "vuln",
   EXCESSIVE_PRIVILEGE: "vuln", MISSING_GUARDRAIL: "vuln",
   // internet exposure (yellow)
   INTERNET_EXPOSURE: "exposure",

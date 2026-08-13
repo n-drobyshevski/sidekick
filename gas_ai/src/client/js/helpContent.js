@@ -101,9 +101,9 @@ export const ENTRIES = [
     blurb:
       "Every node says what it is three times over: a pale category tint, a saturated " +
       "kind icon, and the kind spelled out underneath. The tint is the CATEGORY — five of " +
-      "them — and the icon and the word are the KIND. Colour is never the only cue, and " +
-      "two kinds sharing a glyph is normal: the icon rides beside the label, never instead " +
-      "of it.",
+      "them — and the icon and the word are the KIND. Every kind draws its own mark, so a " +
+      "glyph names one thing and one thing only. Colour is still never the only cue: the " +
+      "icon rides beside the label, never instead of it.",
     drawnOn: ["graph", "inventory"],
     mark: () => kindMark("AI_AGENT"),
     // The strip of every category, so the reader can match a tint on screen to a word.

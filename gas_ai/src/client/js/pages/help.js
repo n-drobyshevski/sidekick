@@ -27,7 +27,7 @@ import { COVERAGE, coverageTally, resolveAreas } from "../scanContent.js";
 import {
   ROUTE_TITLES, findEntry, groupByFamily, resolveEntries,
 } from "../helpContent.js";
-import { CATEGORY_LABELS, svgEl } from "../icons.js";
+import { CATEGORY_LABELS, kindIcon, svgEl } from "../icons.js";
 import { bootstrap, bootstrapCached, navigate, swrCall } from "../store.js";
 import {
   clear, el, fmtDateTime, helpTip, motionOk, sectionLabel, statusPill,
@@ -359,6 +359,23 @@ function anatomySvg() {
     svg.append(g);
     return g;
   };
+  /**
+   * The real mark, positioned — never a copy of its path data.
+   *
+   * This figure used to re-type AI_AGENT's and MISSING_GUARDRAIL's `d` strings byte for
+   * byte, against the rule helpContent.js states for the whole Help surface: a mark is
+   * RENDERED, never redrawn, so a specimen cannot drift into being a picture of a component
+   * that no longer looks like that. It had already drifted. kindIcon() hardcodes
+   * `class="gnode-icon"`, so the class is re-set to the figure's own; test/icons.test.js
+   * fails if any glyph's path data reappears in this file.
+   */
+  const specimenMark = (kind, category, transform) => {
+    const g = kindIcon(kind);
+    g.setAttribute("class", "help-node-icon");
+    g.setAttribute("transform", transform);
+    g.dataset.category = category;
+    return g;
+  };
 
   // The halo: crimson, dashed, drawn around the node rather than on it.
   const halo = group("halo");
@@ -380,17 +397,7 @@ function anatomySvg() {
     class: "help-node-accent", x: 24, y: 38, width: 3, height: 56, rx: 1.5,
     "data-category": "asset",
   });
-  const icon = svgEl("g", { transform: "translate(38,42)" });
-  icon.dataset.category = "asset";
-  icon.setAttribute("class", "help-node-icon");
-  for (const d of [
-    "M4 6 h8 v6 a2 2 0 0 1 -2 2 h-4 a2 2 0 0 1 -2 -2 z",
-    "M8 6 V3",
-    "M8 3 m-1 0 a1 1 0 1 0 2 0 a1 1 0 1 0 -2 0",
-    "M6 9.5 h0.01",
-    "M10 9.5 h0.01",
-  ]) add(icon, "path", { d });
-  kind.append(icon);
+  kind.append(specimenMark("AI_AGENT", "asset", "translate(38,42)"));
   add(kind, "text", { class: "help-node-name", x: 62, y: 54 }, "checkout-bot");
   add(kind, "text", { class: "help-node-kind", x: 62, y: 68, "data-category": "asset" }, "AI AGENT");
 
@@ -413,15 +420,7 @@ function anatomySvg() {
     class: "help-node-box", x: 414, y: 42, width: 208, height: 48, rx: 10,
     "data-category": "vuln",
   });
-  const gicon = svgEl("g", { transform: "translate(428,58)" });
-  gicon.dataset.category = "vuln";
-  gicon.setAttribute("class", "help-node-icon");
-  for (const d of [
-    "M8 2 L13 4 V8 C13 10 12 11.5 10.5 12.7",
-    "M8 2 L3 4 V8 C3 11 5 13 8 14",
-    "M8 5 L6.5 8.5 h3 L8 11.5",
-  ]) add(gicon, "path", { d });
-  signal.append(gicon);
+  signal.append(specimenMark("MISSING_GUARDRAIL", "vuln", "translate(428,58)"));
   add(signal, "text", { class: "help-node-name", x: 452, y: 62 }, "No Guardrail");
   add(signal, "text", {
     class: "help-node-kind", x: 452, y: 76, "data-category": "vuln",

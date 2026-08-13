@@ -10,6 +10,7 @@ import {
   buildAarsHintsFromFindings,
   enrichGraphDoc,
   withExcessivePrivilegeNodes,
+  withIdentityAccessNodes,
   withInternetExposureNodes,
   withMissingGuardrailNodes,
   withSensitiveDataNodes,
@@ -491,14 +492,16 @@ export function normalizeLegacyAars(doc: GraphDoc): GraphDoc {
 }
 
 /**
- * Risk topology (sensitive data, internet exposure, excessive rights, missing guardrail)
- * is derived on read, not persisted — so it applies to already-synced graphs and never
- * reaches the asset/inventory tables (which read TABS.assets directly, bypassing this
- * doc). See the with* helpers in graphEnrich.
+ * Risk topology (sensitive data, internet exposure, excessive rights, human identity
+ * access, missing guardrail) is derived on read, not persisted — so it applies to
+ * already-synced graphs and never reaches the asset/inventory tables (which read
+ * TABS.assets directly, bypassing this doc). See the with* helpers in graphEnrich.
  */
 function withRiskNodes(doc: GraphDoc): GraphDoc {
   return withMissingGuardrailNodes(
-    withExcessivePrivilegeNodes(withInternetExposureNodes(withSensitiveDataNodes(doc))),
+    withIdentityAccessNodes(
+      withExcessivePrivilegeNodes(withInternetExposureNodes(withSensitiveDataNodes(doc))),
+    ),
   );
 }
 
