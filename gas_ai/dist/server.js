@@ -1635,6 +1635,10 @@ var Server = (() => {
   }
 
   // src/domain/graphTypes.ts
+  function severityRank(s) {
+    const i = SEVERITY_ORDER.indexOf(s != null ? s : "");
+    return i === -1 ? SEVERITY_ORDER.length : i;
+  }
   var NODE_KINDS = [
     // AI assets (Wiz AI-SPM resource types)
     "AI_AGENT",
@@ -1728,10 +1732,6 @@ var Server = (() => {
     ACCESS_ROLE_BINDING: 5
   };
   var DEFAULT_KIND_CAP = 12;
-  function severityRank(s) {
-    const i = SEVERITY_ORDER.indexOf(s != null ? s : "");
-    return i === -1 ? SEVERITY_ORDER.length : i;
-  }
   function nodeOrder(a, b) {
     var _a4, _b;
     const sev = severityRank(a.severity) - severityRank(b.severity);
@@ -1951,10 +1951,6 @@ var Server = (() => {
   var BLOCK_GAP_X = 48;
   var BLOCK_GAP_Y = 64;
   var MAX_SHELF_W = 1600;
-  function severityRank2(s) {
-    const i = SEVERITY_ORDER.indexOf(s != null ? s : "");
-    return i === -1 ? SEVERITY_ORDER.length : i;
-  }
   function cmpName(a, b) {
     return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
   }
@@ -1963,7 +1959,7 @@ var Server = (() => {
   }
   function comparator(sort) {
     if (sort === "severity") {
-      return (a, b) => severityRank2(a.severity) - severityRank2(b.severity) || cmpName(a, b) || cmpId(a, b);
+      return (a, b) => severityRank(a.severity) - severityRank(b.severity) || cmpName(a, b) || cmpId(a, b);
     }
     if (sort === "aars") {
       return (a, b) => {
@@ -2076,7 +2072,7 @@ var Server = (() => {
     const worst = (key) => {
       var _a5;
       let rank = SEVERITY_ORDER.length;
-      for (const n of (_a5 = members.get(key)) != null ? _a5 : []) rank = Math.min(rank, severityRank2(n.severity));
+      for (const n of (_a5 = members.get(key)) != null ? _a5 : []) rank = Math.min(rank, severityRank(n.severity));
       return rank;
     };
     const keys = [...members.keys()].filter((k) => members.get(k).length > 1).sort((a, b) => worst(a) - worst(b) || members.get(b).length - members.get(a).length || (a < b ? -1 : a > b ? 1 : 0));
@@ -2365,7 +2361,7 @@ var Server = (() => {
     const worstSeverity2 = (key) => {
       var _a4;
       let worst = SEVERITY_ORDER.length;
-      for (const n of (_a4 = members.get(key)) != null ? _a4 : []) worst = Math.min(worst, severityRank2(n.severity));
+      for (const n of (_a4 = members.get(key)) != null ? _a4 : []) worst = Math.min(worst, severityRank(n.severity));
       return worst;
     };
     return [...keys].sort((a, b) => {
@@ -3420,14 +3416,10 @@ var Server = (() => {
   }
 
   // src/domain/graphEnrich.ts
-  function severityRank3(s) {
-    const i = SEVERITY_ORDER.indexOf(s != null ? s : "");
-    return i === -1 ? SEVERITY_ORDER.length : i;
-  }
   function worstSeverity(severities) {
     let worst;
     for (const s of severities) {
-      if (worst === void 0 || severityRank3(s) < severityRank3(worst)) worst = s;
+      if (worst === void 0 || severityRank(s) < severityRank(worst)) worst = s;
     }
     return worst;
   }
