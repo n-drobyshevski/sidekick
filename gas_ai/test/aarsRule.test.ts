@@ -10,10 +10,12 @@ import {
   cleanGapCode,
   MAX_GAP_RULES,
   gapMatchTally,
+  ruleDiscrimination,
   ruleSummary,
   rulesEqual,
   scoringEqual,
   shadowedGapRules,
+  unreachableGapRules,
   validateAarsRule,
 } from "../src/domain/aarsRule";
 
@@ -229,6 +231,93 @@ describe("bandRanges", () => {
     const ranges = bandRanges({ critical: 60, high: 50, medium: 30, low: 10 });
     expect(ranges[0].label).toBe("score 60–100");
     expect(ranges[1].label).toBe("score 50–59");
+  });
+});
+
+describe("unreachableGapRules", () => {
+  it("names the three default rows nothing can raise", () => {
+    const dead = unreachableGapRules(DEFAULT_AARS_RULE).map((i) => DEFAULT_AARS_RULE.gapPoints[i]!);
+    expect(dead.map((r) => `${r.match} ${r.code}`))
+      .toEqual(["exact DEPRECATED_MODEL", "exact FIVE_RS", "prefix 5R"]);
+  });
+
+  it("is not the same claim as shadowedGapRules — these rows are not shadowed", () => {
+    expect(shadowedGapRules(DEFAULT_AARS_RULE)).toEqual([]);
+    expect(unreachableGapRules(DEFAULT_AARS_RULE).length).toBe(3);
+  });
+
+  it("switching a gap source on brings its rows back to life", () => {
+    const rule = withRule({ gapSources: { fiveRs: true, deprecatedModel: true } });
+    const dead = unreachableGapRules(rule).map((i) => rule.gapPoints[i]!.code);
+    expect(dead).not.toContain("DEPRECATED_MODEL");
+    expect(dead).not.toContain("5R");
+    // FIVE_RS stays unreachable: the source always names WHICH of the five, so the
+    // unnamed form can only ever arrive on a tenant finding.
+    expect(dead).toContain("FIVE_RS");
+  });
+
+  it("leaves the OWASP family rows alone — they are always live", () => {
+    const codes = unreachableGapRules(DEFAULT_AARS_RULE).map((i) => DEFAULT_AARS_RULE.gapPoints[i]!.code);
+    for (const live of ["LLM", "ASI", "ML", "LLM04", "LLM05", "NO_GUARDRAIL"]) {
+      expect(codes).not.toContain(live);
+    }
+  });
+});
+
+describe("ruleDiscrimination", () => {
+  const asset = (aars: number, sev: string, pillars: { toxic: number; compliance: number; data: number; exposure?: number }) =>
+    ({ aars, aarsSeverity: sev, aarsPillars: pillars });
+
+  it("reports nothing measurable for an unscored estate", () => {
+    const d = ruleDiscrimination([{ }, { }], DEFAULT_AARS_RULE);
+    expect(d.scored).toBe(0);
+    expect(d.distinctScores).toBe(0);
+    // The bands are still enumerated, all at zero — an absent level and an empty one
+    // must render the same way.
+    expect(d.bandOccupancy).toEqual({ CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, INFO: 0 });
+  });
+
+  it("counts distinct scores and the largest tie group", () => {
+    const d = ruleDiscrimination(
+      [62, 62, 62, 66, 76].map((s) => asset(s, "HIGH", { toxic: 20, compliance: 20, data: 22 })),
+      DEFAULT_AARS_RULE,
+    );
+    expect(d.scored).toBe(5);
+    expect(d.distinctScores).toBe(3);
+    expect(d.largestTieGroup).toBe(3);
+    expect(d.range).toEqual({ min: 62, max: 76 });
+  });
+
+  it("catches the failure this whole diagnostic exists for: a pillar at cap for everyone", () => {
+    // The live-path shape: pillar B pinned at 30 for every asset, so the cascade is
+    // contributing nothing and the score collapses onto two values.
+    const estate = [72, 72, 72, 76, 76].map((s) =>
+      asset(s, "CRITICAL", { toxic: s === 72 ? 20 : 24, compliance: 30, data: 22 }));
+    const d = ruleDiscrimination(estate, DEFAULT_AARS_RULE);
+    expect(d.saturated.compliance).toBe(5);
+    expect(d.saturated.compliance).toBe(d.scored); // 100% — no discrimination left
+    expect(d.distinctScores).toBe(2);
+    expect(d.bandOccupancy["MEDIUM"]).toBe(0); // a whole band unreachable
+  });
+
+  it("does not report a switched-off pillar as saturated", () => {
+    // Pillar D is off in the spec rule, so every asset sits at its zero ceiling —
+    // reporting that as saturation would flag every tenant.
+    const d = ruleDiscrimination(
+      [asset(62, "HIGH", { toxic: 20, compliance: 20, data: 22, exposure: 0 })],
+      DEFAULT_AARS_RULE,
+    );
+    expect(d.saturated.exposure).toBe(0);
+    expect(d.saturated.data).toBe(1); // pillar C IS at its ceiling, and that is real
+  });
+
+  it("counts the 0–100 ceiling separately from the pillar caps", () => {
+    const d = ruleDiscrimination(
+      [asset(100, "CRITICAL", { toxic: 50, compliance: 30, data: 22 })],
+      DEFAULT_AARS_RULE,
+    );
+    expect(d.saturated.score).toBe(1);
+    expect(d.saturated.toxic).toBe(1);
   });
 });
 

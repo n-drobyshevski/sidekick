@@ -12,9 +12,13 @@ import {
   type AarsBands,
   type AarsRule,
   type DataExposure,
+  type GapAggregation,
   type GapMatch,
   type GapPointRule,
+  type GapSources,
+  type InternetExposure,
   type IssueSeverityKey,
+  type MultiIssueScaling,
 } from "./aars";
 import { clampInt } from "./util";
 
@@ -22,6 +26,8 @@ export const POINTS_MIN = 0;
 export const POINTS_MAX = 100;
 export const MULTIPLIER_MIN = 1;
 export const MULTIPLIER_MAX = 3;
+export const WEIGHT_MIN = 0;
+export const WEIGHT_MAX = 3;
 export const BAND_MIN = 1;
 export const BAND_MAX = 100;
 export const CODE_MAX_LEN = 64;
@@ -30,6 +36,7 @@ export const MAX_GAP_RULES = 60;
 
 const SEVERITY_KEYS: IssueSeverityKey[] = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
 const EXPOSURE_KEYS: DataExposure[] = ["SENSITIVE", "DATA_ACCESS", "NONE"];
+const INTERNET_EXPOSURE_KEYS: InternetExposure[] = ["CONFIRMED", "UNDETERMINED", "NONE"];
 const BAND_KEYS: Array<keyof AarsBands> = ["critical", "high", "medium", "low"];
 const BAND_LABELS: Record<keyof AarsBands, string> = {
   critical: "CRITICAL",
@@ -50,6 +57,18 @@ function clampMultiplier(v: unknown, fallback: number): number {
   if (!Number.isFinite(n)) return fallback;
   const rounded = Math.round(n * 100) / 100;
   return Math.min(MULTIPLIER_MAX, Math.max(MULTIPLIER_MIN, rounded));
+}
+
+/**
+ * A finding-severity weight. Unlike `clampMultiplier` this floor is 0, not 1: weighting a
+ * LOW failing control down to nothing is a legitimate model, whereas a multiplier below 1
+ * would mean "more issues, less risk".
+ */
+function clampWeight(v: unknown, fallback: number): number {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return fallback;
+  const rounded = Math.round(n * 100) / 100;
+  return Math.min(WEIGHT_MAX, Math.max(WEIGHT_MIN, rounded));
 }
 
 export function cleanGapCode(v: unknown): string {
@@ -88,6 +107,35 @@ export function cleanAarsRule(raw: unknown): AarsRule {
     );
   }
 
+  // A source is on ONLY when it says so: anything unreadable reads as off, so a
+  // hand-edited cell can never silently widen what counts as a gap.
+  const srcRaw = rec(r["gapSources"]);
+  const gapSources: GapSources = {
+    fiveRs: srcRaw["fiveRs"] === true,
+    deprecatedModel: srcRaw["deprecatedModel"] === true,
+    inactiveAgent: srcRaw["inactiveAgent"] === true,
+  };
+
+  const fswRaw = rec(r["findingSeverityWeights"]);
+  const findingSeverityWeights = {} as Record<IssueSeverityKey, number>;
+  for (const k of SEVERITY_KEYS) {
+    findingSeverityWeights[k] = clampWeight(
+      fswRaw[k],
+      DEFAULT_AARS_RULE.findingSeverityWeights[k],
+    );
+  }
+
+  const expoRaw = rec(r["exposurePoints"]);
+  const exposurePoints = {} as Record<InternetExposure, number>;
+  for (const k of INTERNET_EXPOSURE_KEYS) {
+    exposurePoints[k] = clampInt(
+      expoRaw[k],
+      DEFAULT_AARS_RULE.exposurePoints[k],
+      POINTS_MIN,
+      POINTS_MAX,
+    );
+  }
+
   const bandRaw = rec(r["bands"]);
   const bands = {} as AarsBands;
   for (const k of BAND_KEYS) {
@@ -99,12 +147,18 @@ export function cleanAarsRule(raw: unknown): AarsRule {
     ? gapsRaw.map(cleanGapRule).filter((g): g is GapPointRule => g !== null).slice(0, MAX_GAP_RULES)
     : DEFAULT_AARS_RULE.gapPoints.map((g) => ({ ...g }));
 
+  // An unreadable mode falls back to the SPEC mode, never to the newer one: a rule blob
+  // written before these fields existed must keep scoring exactly as it did.
+  const multiIssueScaling: MultiIssueScaling = r["multiIssueScaling"] === "log2" ? "log2" : "flat";
+  const gapAggregation: GapAggregation = r["gapAggregation"] === "rss" ? "rss" : "sum";
+
   return {
     severityPoints,
     multiIssueMultiplier: clampMultiplier(
       r["multiIssueMultiplier"],
       DEFAULT_AARS_RULE.multiIssueMultiplier,
     ),
+    multiIssueScaling,
     pillarACap: clampInt(r["pillarACap"], DEFAULT_AARS_RULE.pillarACap, POINTS_MIN, POINTS_MAX),
     gapPoints,
     gapFallbackPoints: clampInt(
@@ -113,9 +167,13 @@ export function cleanAarsRule(raw: unknown): AarsRule {
       POINTS_MIN,
       POINTS_MAX,
     ),
+    gapAggregation,
+    gapSources,
+    findingSeverityWeights,
     pillarBCap: clampInt(r["pillarBCap"], DEFAULT_AARS_RULE.pillarBCap, POINTS_MIN, POINTS_MAX),
     dataExposurePoints,
     dataAmplifier: clampMultiplier(r["dataAmplifier"], DEFAULT_AARS_RULE.dataAmplifier),
+    exposurePoints,
     bands,
   };
 }
@@ -138,6 +196,23 @@ export function validateAarsRule(rule: AarsRule): string[] {
           `land in ${BAND_LABELS[lower]}.`,
       );
     }
+  }
+
+  // UNDETERMINED means "nobody has checked", so pricing it at or above a CONFIRMED
+  // exposure would make not knowing worse than knowing the answer is yes — and would
+  // reward leaving a hosted agent unexamined. Zero-vs-zero (pillar D off) is fine.
+  const { CONFIRMED, UNDETERMINED, NONE } = rule.exposurePoints;
+  if (UNDETERMINED > CONFIRMED) {
+    errors.push(
+      `Undetermined internet exposure (${UNDETERMINED}) must not score above confirmed ` +
+        `exposure (${CONFIRMED}) — "we haven't checked" cannot outrank "yes, it is reachable".`,
+    );
+  }
+  if (NONE > UNDETERMINED) {
+    errors.push(
+      `No internet exposure (${NONE}) must not score above undetermined exposure ` +
+        `(${UNDETERMINED}).`,
+    );
   }
 
   if (!rule.gapPoints.length) {
@@ -189,6 +264,148 @@ export function shadowedGapRules(rule: AarsRule): number[] {
     }
   });
   return dead;
+}
+
+/**
+ * Every gap code a DERIVATION can raise, as opposed to one a tenant's findings might
+ * carry. Three groups, matching the three places codes are made:
+ *   - graphEnrich.deriveAarsInput: the OWASP families off issue mappings, NO_GUARDRAIL,
+ *     and the three gapSources codes
+ *   - syncNormalize.frameworkCodesFromRule: the same OWASP token shapes off config rules
+ * A code outside this set is not an error — tenant finding shortIds live there, and the
+ * cascade's fallback exists to govern them — but a cascade ROW naming a code outside it
+ * can never fire, which is a different thing from a row this tenant merely doesn't exercise.
+ */
+const DERIVABLE_PREFIXES = ["LLM", "ASI", "ML_", "5R_"];
+const DERIVABLE_EXACT = ["NO_GUARDRAIL", "DEPRECATED_MODEL", "INACTIVE_AGENT", "FIVE_RS"];
+
+/** Whether any derivation could emit this code, given what the rule has switched on. */
+function isDerivable(code: string, rule: AarsRule): boolean {
+  const c = cleanGapCode(code);
+  if (!c) return false;
+  if (c === "DEPRECATED_MODEL") return rule.gapSources.deprecatedModel === true;
+  if (c === "INACTIVE_AGENT") return rule.gapSources.inactiveAgent === true;
+  if (c.startsWith("5R_")) return rule.gapSources.fiveRs === true;
+  // FIVE_RS is the UNNAMED form. Nothing raises it: the fiveRs source always names which
+  // of the five, so this code can only ever arrive on a tenant finding.
+  if (c === "FIVE_RS") return false;
+  if (DERIVABLE_EXACT.includes(c)) return true;
+  return DERIVABLE_PREFIXES.some((p) => c.startsWith(p));
+}
+
+/**
+ * Rows that can never fire because NOTHING EMITS the code they name — as distinct from
+ * `shadowedGapRules` (an earlier row already claims it) and from a row this tenant simply
+ * doesn't exercise yet. The page must separate the three: only the last is a rule in
+ * working order, and under the spec rule three of the nine default rows are in here.
+ *
+ * A row is only reported when it names an exclusively-derived code. Anything that could
+ * plausibly arrive as a tenant finding shortId is left alone — the operator knows their
+ * own tenant better than this function does.
+ */
+export function unreachableGapRules(rule: AarsRule): number[] {
+  const dead: number[] = [];
+  rule.gapPoints.forEach((row, i) => {
+    // A prefix row is unreachable only when the whole family it names is off; a bare
+    // prefix like "LLM" always has live members.
+    const claimsDerivedFamily =
+      row.match === "prefix"
+        ? row.code.startsWith("5R") && rule.gapSources.fiveRs !== true
+        : DERIVABLE_EXACT.includes(cleanGapCode(row.code)) && !isDerivable(row.code, rule);
+    if (claimsDerivedFamily) dead.push(i);
+  });
+  return dead;
+}
+
+/**
+ * How well a rule separates the estate it is applied to.
+ *
+ * This exists because the model can stop discriminating without anything looking wrong:
+ * a pillar pinned at its cap for every asset still renders a confident number, and the
+ * band counts still add up. The failure only shows as an absence — few distinct scores,
+ * empty bands, a large tie group at the top.
+ *
+ * Cap saturation is the specific thing to watch. Above a cap the score's discriminative
+ * power is exactly zero: two assets with very different inputs receive the same number,
+ * so any ranking within that block is arbitrary. `atPillarBCap` at 100% means the whole
+ * cascade — every row, every price, the entire editable surface — is contributing
+ * nothing, which is the state the spec rule reaches on live data.
+ */
+export interface RuleDiscrimination {
+  /** Assets carrying a score. Unscored nodes are not part of any of these counts. */
+  scored: number;
+  /** How many different scores those assets take. `scored` here means perfect separation. */
+  distinctScores: number;
+  /** The largest set of assets sharing one score — the tie block a "top N" would cut into. */
+  largestTieGroup: number;
+  /** Occupancy per level, INFO included, zeroes kept: an empty band is the finding. */
+  bandOccupancy: Record<string, number>;
+  /** Lowest and highest score actually reached, so an unused range is visible. */
+  range: { min: number; max: number };
+  /** Assets pinned at each pillar's cap, and at the 0–100 ceiling. */
+  saturated: { toxic: number; compliance: number; data: number; exposure: number; score: number };
+}
+
+const EMPTY_DISCRIMINATION: RuleDiscrimination = {
+  scored: 0,
+  distinctScores: 0,
+  largestTieGroup: 0,
+  bandOccupancy: {},
+  range: { min: 0, max: 0 },
+  saturated: { toxic: 0, compliance: 0, data: 0, exposure: 0, score: 0 },
+};
+
+/**
+ * Measure a scored estate against the rule that scored it. Pure, and reads only what
+ * `scoreAssetsWith` already returns, so the preview pays no extra Sheets read for it.
+ */
+export function ruleDiscrimination(
+  nodes: ReadonlyArray<{
+    aars?: number;
+    aarsSeverity?: string;
+    aarsPillars?: { toxic: number; compliance: number; data: number; exposure?: number };
+  }>,
+  rule: AarsRule,
+): RuleDiscrimination {
+  const scores: number[] = [];
+  const counts: Record<string, number> = {};
+  for (const b of ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]) counts[b] = 0;
+  const saturated = { toxic: 0, compliance: 0, data: 0, exposure: 0, score: 0 };
+  const maxData = Math.round(
+    Math.max(...EXPOSURE_KEYS.map((k) => rule.dataExposurePoints[k])) * rule.dataAmplifier,
+  );
+  const maxExposure = Math.max(...INTERNET_EXPOSURE_KEYS.map((k) => rule.exposurePoints[k]));
+
+  for (const n of nodes) {
+    if (typeof n.aars !== "number") continue;
+    scores.push(n.aars);
+    const band = String(n.aarsSeverity ?? "");
+    if (band in counts) counts[band] = counts[band]! + 1;
+    const p = n.aarsPillars;
+    if (p) {
+      if (p.toxic >= rule.pillarACap) saturated.toxic++;
+      if (p.compliance >= rule.pillarBCap) saturated.compliance++;
+      // A pillar whose ceiling is zero is switched off, not saturated — counting every
+      // asset as "at the cap" there would report pillar D as the problem in every tenant.
+      if (maxData > 0 && p.data >= maxData) saturated.data++;
+      if (maxExposure > 0 && (p.exposure ?? 0) >= maxExposure) saturated.exposure++;
+    }
+    if (n.aars >= 100) saturated.score++;
+  }
+
+  if (!scores.length) return { ...EMPTY_DISCRIMINATION, bandOccupancy: counts };
+
+  const byScore = new Map<number, number>();
+  for (const s of scores) byScore.set(s, (byScore.get(s) ?? 0) + 1);
+
+  return {
+    scored: scores.length,
+    distinctScores: byScore.size,
+    largestTieGroup: Math.max(...byScore.values()),
+    bandOccupancy: counts,
+    range: { min: Math.min(...scores), max: Math.max(...scores) },
+    saturated,
+  };
 }
 
 /** What the cascade actually priced, per row — the evidence behind "order is meaning". */
@@ -267,15 +484,35 @@ export function ruleSummary(rule: AarsRule): string[] {
     String(Math.round(rule.dataExposurePoints[k] * rule.dataAmplifier)),
   ).join(" / ");
 
+  const countClause =
+    rule.multiIssueScaling === "log2"
+      ? `each doubling of the open-issue count multiplies that by a further ` +
+        `×${rule.multiIssueMultiplier} step (two issues ×${rule.multiIssueMultiplier}, ` +
+        `four ×${(1 + (rule.multiIssueMultiplier - 1) * 2).toFixed(2)}, ` +
+        `eight ×${(1 + (rule.multiIssueMultiplier - 1) * 3).toFixed(2)})`
+      : `more than one open issue multiplies that by ×${rule.multiIssueMultiplier}, ` +
+        `however many there are`;
+  const gapClause =
+    rule.gapAggregation === "rss"
+      ? `matched prices combine as a root-sum-square, so each further gap adds less than the last`
+      : `matched prices are added up`;
+
   return [
     `Pillar A — toxic combinations, capped at ${rule.pillarACap}. The asset's worst open ` +
-      `issue scores ${sev}; more than one open issue multiplies that by ` +
-      `×${rule.multiIssueMultiplier}, however many there are.`,
+      `issue scores ${sev}; ${countClause}.`,
     `Pillar B — compliance gaps, capped at ${rule.pillarBCap}. ${rule.gapPoints.length} ` +
       `pricing rules are tried in order, first match wins; an unmatched code scores ` +
-      `${pointsPhrase(rule.gapFallbackPoints)}.`,
+      `${pointsPhrase(rule.gapFallbackPoints)}. ${gapClause[0]!.toUpperCase()}${gapClause.slice(1)}.`,
     `Pillar C — data exposure: ${exposure}, all amplified by ×${rule.dataAmplifier} ` +
       `(→ ${amplified}).`,
+    rule.exposurePoints.CONFIRMED === 0 &&
+    rule.exposurePoints.UNDETERMINED === 0 &&
+    rule.exposurePoints.NONE === 0
+      ? `Pillar D — internet exposure scores nothing; reachability is reported beside the ` +
+        `score but never added to it.`
+      : `Pillar D — internet exposure: confirmed ${rule.exposurePoints.CONFIRMED}, ` +
+        `undetermined ${rule.exposurePoints.UNDETERMINED}, none ${rule.exposurePoints.NONE}. ` +
+        `Not amplified — the 5Rs signal says nothing about reachability.`,
     `Levels — CRITICAL at ${rule.bands.critical} and above, HIGH from ${rule.bands.high}, ` +
       `MEDIUM from ${rule.bands.medium}, LOW from ${rule.bands.low}, INFO below that. ` +
       `Scores are clamped to 100.`,
