@@ -136,6 +136,30 @@ export function emptyPart(): NormalizedPart {
   return { nodes: [], edges: [], issues: [], findings: [] };
 }
 
+/**
+ * The four arms, as ONE named operation over the type.
+ *
+ * The sync loop used to write this out by hand and carried three of the four: `findings`
+ * was never accumulated, so `CONFIG_FINDINGS` — which emits findings and nothing else — had
+ * its every page dropped on live syncs, and `ai_findings` was rewritten empty each time.
+ * Nothing failed; a real number just read zero. Spelling the arms out at a call site is how
+ * that happened, so they are spelled out exactly once, here, and `partIsEmpty` is derived
+ * from the same list rather than restating it.
+ */
+export function appendPart(target: NormalizedPart, part: NormalizedPart): void {
+  target.nodes.push(...part.nodes);
+  target.edges.push(...part.edges);
+  target.issues.push(...part.issues);
+  target.findings.push(...part.findings);
+}
+
+/** True when a part carries nothing at all — on ANY arm. */
+export function partIsEmpty(part: NormalizedPart): boolean {
+  return (
+    !part.nodes.length && !part.edges.length && !part.issues.length && !part.findings.length
+  );
+}
+
 /** cloudResourcesV2 inventory page → nodes only. */
 export function normalizeInventoryPage(rows: Rec[]): NormalizedPart {
   const part = emptyPart();

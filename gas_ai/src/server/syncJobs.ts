@@ -11,6 +11,7 @@
 
 import {
   emptyPart,
+  appendPart,
   mergeParts,
   normalizeConfigFindingsPage,
   normalizeIdentityAccessPage,
@@ -20,6 +21,7 @@ import {
   normalizePrincipalsPage,
   normalizeRuleAssetsPage,
   normalizeRunsAsPage,
+  partIsEmpty,
   reconcileIssues,
   type NormalizedPart,
 } from "../domain/syncNormalize";
@@ -319,7 +321,7 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
   let hopPart = emptyPart();
 
   const spillHopPart = (): void => {
-    if (!hopPart.nodes.length && !hopPart.edges.length && !hopPart.issues.length) return;
+    if (partIsEmpty(hopPart)) return;
     const name = `normalized-part-${String(refs.length + 1).padStart(3, "0")}.json.gz`;
     refs.push(writeGzJson(syncFolder(syncId), name, hopPart).getId());
     hopPart = emptyPart();
@@ -383,10 +385,9 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
         // reconciling the normalizers (ai/queries/reponse_schemas/).
         writeSyncPage(syncId, stepIndex, page, result.rows);
 
-        const normalized = step.normalize(result.rows);
-        hopPart.nodes.push(...normalized.nodes);
-        hopPart.edges.push(...normalized.edges);
-        hopPart.issues.push(...normalized.issues);
+        // One operation over all four arms. Written out by hand here, this carried three:
+        // findings were fetched, archived, normalized and dropped on every live sync.
+        appendPart(hopPart, step.normalize(result.rows));
 
         updateJob(job.job_id, {
           step_index: stepIndex,
