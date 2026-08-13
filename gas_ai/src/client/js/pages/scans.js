@@ -25,7 +25,7 @@
 
 import { bootstrap, navigate, swrCall } from "../store.js";
 import {
-  COVERAGE, COVERAGE_ORDER, DESTINATIONS,
+  COVERAGE, COVERAGE_ORDER, DESTINATIONS, SCAN_AREAS,
   coverageTally, destinationOf, rankAreas, resolveAreas,
 } from "../scanContent.js";
 import { svgEl } from "../icons.js";
@@ -291,16 +291,16 @@ export async function renderScans(main, params, ctx) {
 
 const DIA = {
   width: 960,
-  top: 40,
-  nodeH: 44,
-  gap: 8,
+  top: 26,
+  nodeH: 40,
+  gap: 6,
   srcX: 0,
   srcW: 250,
   spineX: 430,
   spineW: 100,
   destX: 700,
   destW: 260,
-  destH: 54,
+  destH: 48,
   // The spine is a WAIST, not a wall. It stands shorter than the run of sources and takes
   // their edges through the middle of its face, so the picture reads as nine things
   // converging into one — which is what a sync is. Distributing the entry points across
@@ -364,7 +364,7 @@ export function diagramLayout(areas, destinations) {
     });
   });
 
-  return { sources, spine, dests, edges, height: DIA.top + span + 24 };
+  return { sources, spine, dests, edges, height: DIA.top + span + 18 };
 }
 
 function curve(e) {
@@ -428,8 +428,8 @@ function provenanceDiagram(ranked, tally) {
     g.append(
       svgEl("rect", { class: "cov-node-box", x: s.x, y: s.y, width: s.w, height: s.h, rx: 9 }),
       dot(s.x + 15, s.y + s.h / 2, s.area.state),
-      text("cov-node-name", s.x + 28, s.y + 19, s.area.title),
-      text("cov-node-fig", s.x + 28, s.y + 34, nodeCaption(s.area)),
+      text("cov-node-name", s.x + 28, s.y + 17, s.area.title),
+      text("cov-node-fig", s.x + 28, s.y + 31, nodeCaption(s.area)),
     );
     nodeLayer.append(g);
     touch(s.area.id, g);
@@ -439,8 +439,8 @@ function provenanceDiagram(ranked, tally) {
     const g = svgEl("g", { class: "cov-dest" });
     g.append(
       svgEl("rect", { class: "cov-dest-box", x: d.x, y: d.y, width: d.w, height: d.h, rx: 9 }),
-      text("cov-dest-name", d.x + 16, d.y + 23, d.dest.title),
-      text("cov-dest-sub", d.x + 16, d.y + 39, d.dest.sub),
+      text("cov-dest-name", d.x + 16, d.y + 21, d.dest.title),
+      text("cov-dest-sub", d.x + 16, d.y + 36, d.dest.sub),
     );
     nodeLayer.append(g);
   }
@@ -497,7 +497,9 @@ function dot(cx, cy, state) {
 // jump several hundred pixels when the payload lands.
 
 function scansSkeleton() {
-  const diagramHeight = diagramLayout(new Array(9).fill({ id: "", state: "partial", lands: "" }),
+  // The diagram renders at 1:1 or smaller (never scaled up), so its viewBox height IS the
+  // tallest it can be — reserve exactly that and the register cannot jump when data lands.
+  const diagramHeight = diagramLayout(new Array(SCAN_AREAS.length).fill({ state: "partial" }),
     DESTINATIONS).height;
   const stats = el("div", { class: "stat-list" });
   for (let i = 0; i < 4; i++) {
@@ -518,7 +520,7 @@ function scansSkeleton() {
         skeleton("pill", { width: "320px" })),
       stats),
     skeleton("title", { width: "220px" }),
-    skeleton("chart", { height: diagramHeight * 0.62 + "px" }),
+    skeleton("chart", { height: diagramHeight + "px" }),
     skeleton("title", { width: "130px" }),
     el("div", { class: "skeleton-stack", style: "gap:10px; margin-top:8px" },
       ...Array.from({ length: 9 }, () => skeleton("line", { height: "22px" }))),

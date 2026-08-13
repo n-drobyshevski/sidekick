@@ -54,9 +54,22 @@
   overflow-x: auto;
   border: 1px solid var(--hairline); border-radius: var(--radius-xl);
   background: var(--page); padding: 4px 10px 8px;
+  /* Hugs the diagram rather than running the width of the pane: the picture is capped at
+     960, and a frame stretched past it leaves the figure floating in its own margins. It
+     reads as a figure — narrower than the register below it, aligned with the headings. */
+  max-width: 980px;
 }
 .cov-diagram-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.cov-diagram { display: block; width: 100%; min-width: 720px; height: auto; }
+/* Capped at its own viewBox width, and centred in whatever is left. Scaling a schematic UP
+   makes it bigger without making it say more: on a 1600px pane an uncapped diagram rendered
+   half again its design size, taking a screen and a half of height and blowing 11.5px labels
+   up to 16px, which is larger than the h1 above it. At 1:1 the labels sit at the size they
+   were chosen at, and the picture stays something you take in at a glance. */
+.cov-diagram {
+  display: block; height: auto;
+  width: 100%; max-width: 960px; min-width: 720px;
+  margin-inline: auto;
+}
 .cov-diagram-note { margin: 8px 0 0; max-width: var(--measure); }
 
 .cov-node-box { fill: var(--surface); stroke: var(--hairline); stroke-width: 1; }
