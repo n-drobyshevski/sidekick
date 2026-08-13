@@ -15,16 +15,7 @@ import {
   getToken,
   resolveAiResourceTypes,
 } from "./wizClientAi";
-import { aiInventoryVariables, Q_AI_INVENTORY } from "./wizQueriesAi";
-
-/** Enum members that read as AI vocabulary (token match, so EMAIL ≠ AI). */
-function aiFlavored(values: string[]): string[] {
-  return values.filter((v) => {
-    const tokens = v.toUpperCase().split(/[\s_]+/);
-    return tokens.includes("AI") || tokens.includes("MCP") ||
-      tokens.includes("GENAI") || tokens.includes("LLM");
-  });
-}
+import { aiFlavored, aiInventoryVariables, Q_AI_INVENTORY } from "./wizQueriesAi";
 
 /** Length + first4…last4 preview of a non-secret id/token — never the whole value. */
 function preview(value: string | null): string {

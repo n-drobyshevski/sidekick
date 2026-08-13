@@ -81,7 +81,11 @@ function gqlPost(query: string, variables: Rec): Rec {
     }
     if (code === 429 || code >= 500) {
       lastError = `HTTP ${code}`;
-      Utilities.sleep(1000 * Math.pow(2, attempt));
+      // Exponential backoff with full jitter. A sync fans a battery of queries at one
+      // tenant, and several hitting the same 429 would otherwise retry in lockstep and
+      // re-create the burst that caused it; the randomness spreads them out.
+      const ceiling = 1000 * Math.pow(2, attempt);
+      Utilities.sleep(Math.floor(ceiling / 2 + Math.random() * (ceiling / 2)));
       continue;
     }
     if (code !== 200) {
@@ -274,35 +278,21 @@ export interface FetchOptions {
   first?: number;
 }
 
-export function fetchCloudResourcesPage(o: FetchOptions): PageResult {
-  const run = (first: number) =>
-    readConnection(
-      gqlPost(o.query, {
-        first,
-        after: o.cursor ?? null,
-        ...(o.extraVariables ?? {}),
-      })["cloudResourcesV2"] as Rec,
-      "cloudResourcesV2",
-    );
-  try {
-    return run(o.first ?? PAGE_SIZE);
-  } catch (e) {
-    if (e instanceof WizQueryError && /HTTP 4\d\d/.test(e.message)) throw e;
-    return run(PAGE_SIZE_FALLBACK);
-  }
-}
-
 /**
- * Read one page from an arbitrary top-level connection (issuesV2,
- * configurationFindings, …). Same paging contract and PAGE_SIZE fallback as
- * fetchCloudResourcesPage, but the connection field is a parameter so a single
- * reader serves every non-graphSearch root. graphSearch keeps its own reader
- * because it must always send quick:true.
+ * Read one page from a top-level connection.
+ *
+ * The size fallback is the point: a tenant that rejects the requested page size with a
+ * 5xx or a transport error gets one retry at the smaller size, but a 4xx is the schema
+ * saying no and is rethrown untouched — retrying it smaller would just fail again slower.
+ *
+ * `extra` is merged into the variables, which is how graphSearch sends its mandatory
+ * `quick: true` without needing a reader of its own.
  */
-export function fetchConnectionPage(field: string, o: FetchOptions): PageResult {
+function fetchPage(field: string, o: FetchOptions, extra?: Rec): PageResult {
   const run = (first: number) =>
     readConnection(
       gqlPost(o.query, {
+        ...(extra ?? {}),
         first,
         after: o.cursor ?? null,
         ...(o.extraVariables ?? {}),
@@ -317,21 +307,21 @@ export function fetchConnectionPage(field: string, o: FetchOptions): PageResult 
   }
 }
 
-export function fetchGraphSearchPage(o: FetchOptions): PageResult {
-  const run = (first: number) =>
-    readConnection(
-      gqlPost(o.query, {
-        quick: true,
-        first,
-        after: o.cursor ?? null,
-        ...(o.extraVariables ?? {}),
-      })["graphSearch"] as Rec,
-      "graphSearch",
-    );
-  try {
-    return run(o.first ?? PAGE_SIZE);
-  } catch (e) {
-    if (e instanceof WizQueryError && /HTTP 4\d\d/.test(e.message)) throw e;
-    return run(PAGE_SIZE_FALLBACK);
-  }
+/**
+ * The cloudResourcesV2 root. This was a separate 16-line function whose body was
+ * character-for-character `fetchConnectionPage("cloudResourcesV2", o)`.
+ */
+export function fetchCloudResourcesPage(o: FetchOptions): PageResult {
+  return fetchPage("cloudResourcesV2", o);
 }
+
+/** Any other top-level connection: issuesV2, configurationFindings, … */
+export function fetchConnectionPage(field: string, o: FetchOptions): PageResult {
+  return fetchPage(field, o);
+}
+
+/** graphSearch, which must always send `quick: true`. */
+export function fetchGraphSearchPage(o: FetchOptions): PageResult {
+  return fetchPage("graphSearch", o, { quick: true });
+}
+

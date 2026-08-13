@@ -1,0 +1,229 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`query documents > Q_AGENTS_NO_GUARDRAIL is unchanged 1`] = `
+"query SidekickAiAgentsWithoutGuardrail($quick: Boolean, $first: Int, $after: String) {
+  graphSearch(quick: $quick, first: $first, after: $after, query: {
+    type: "AI_AGENT"
+    select: true
+    relationships: [{
+      type: "PROTECTED_BY"
+      with: { type: "AI_GUARDRAIL", select: false }
+      negate: true
+    }]
+  }) {
+    totalCount
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      entities {
+        id
+        name
+        type
+        nativeType
+        cloudPlatform
+        region
+        ... on CloudResource {
+          status
+          firstSeen
+          lastSeen
+          externalId
+          isAccessibleFromInternet
+          isOpenToAllInternet
+          hasSensitiveData
+          hasAccessToSensitiveData
+          hasAdminPrivileges
+          hasHighPrivileges
+          technology { id name categories { id name } }
+          cloudAccount { id name externalId cloudProvider }
+          projects { id name riskProfile { businessImpact } }
+          tags { key value }
+        }
+      }
+    }
+  }
+}
+"
+`;
+
+exports[`query documents > Q_AI_INVENTORY is unchanged 1`] = `
+"query SidekickAiInventory($first: Int, $after: String, $filterBy: CloudResourceV2Filters) {
+  cloudResourcesV2(first: $first, after: $after, filterBy: $filterBy) {
+    totalCount
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      id
+      name
+      type
+      nativeType
+      cloudPlatform
+      region
+      status
+      firstSeen
+      lastSeen
+      externalId
+      isAccessibleFromInternet
+      isOpenToAllInternet
+      hasSensitiveData
+      hasAccessToSensitiveData
+      hasAdminPrivileges
+      hasHighPrivileges
+      technology { id name categories { id name } }
+      cloudAccount { id name externalId cloudProvider }
+      projects { id name riskProfile { businessImpact } }
+      tags { key value }
+    }
+  }
+}
+"
+`;
+
+exports[`query documents > Q_CONFIG_FINDINGS is unchanged 1`] = `
+"query SidekickAiConfigFindings($first: Int, $after: String, $filterBy: ConfigurationFindingFilters, $orderBy: ConfigurationFindingOrder) {
+  configurationFindings(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {
+    totalCount
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      id
+      name
+      severity
+      result
+      status
+      remediation
+      source
+      targetExternalId
+      subscription { id name externalId cloudProvider }
+      resource {
+        id
+        name
+        type
+        projects { id name riskProfile { businessImpact } }
+      }
+      rule {
+        id
+        shortId
+        name
+        description
+        remediationInstructions
+        risks
+        threats
+        tags { key value }
+        opaPolicy
+      }
+    }
+  }
+}
+"
+`;
+
+exports[`query documents > Q_ISSUES is unchanged 1`] = `
+"query SidekickAiIssues($first: Int, $after: String, $filterBy: IssueFilters, $orderBy: IssueOrder) {
+  issuesV2(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {
+    totalCount
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      id
+      type
+      severity
+      status
+      createdAt
+      updatedAt
+      dueAt
+      projects { id name riskProfile { businessImpact } }
+      entitySnapshot {
+        id
+        type
+        name
+        cloudPlatform
+        region
+        subscriptionName
+        nativeType
+        externalId
+      }
+      sourceRules {
+        ... on Control {
+          id
+          name
+          description
+          severity
+          risks
+          threats
+          resolutionRecommendation
+        }
+        ... on CloudConfigurationRule {
+          id
+          name
+          description
+          risks
+          threats
+          control { resolutionRecommendation severity }
+        }
+      }
+    }
+  }
+}
+"
+`;
+
+exports[`query documents > Q_PRINCIPALS is unchanged 1`] = `
+"query SidekickAiPrincipals($first: Int, $after: String, $filterBy: CloudResourceV2Filters, $orderBy: CloudResourceOrder) {
+  cloudResourcesV2(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {
+    totalCount
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      id
+      name
+      type
+      nativeType
+      hasSensitiveData
+      hasAccessToSensitiveData
+      hasAdminPrivileges
+      hasHighPrivileges
+      technology { id name categories { id name } }
+      cloudAccount { id name externalId cloudProvider }
+      projects { id name riskProfile { businessImpact } }
+      issueAnalytics {
+        issueCount
+        informationalSeverityCount
+        lowSeverityCount
+        mediumSeverityCount
+        highSeverityCount
+        criticalSeverityCount
+      }
+    }
+  }
+}
+"
+`;
+
+exports[`query documents > Q_RULE_ASSETS is unchanged 1`] = `
+"query SidekickAiRuleAssets($first: Int, $after: String, $ruleIds: [String!]) {
+  cloudResourcesV2(first: $first, after: $after, filterBy: {
+    relatedIssue: { sourceRuleId: { equals: $ruleIds }, status: { equals: ["OPEN"] } }
+  }) {
+    totalCount
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      id
+      name
+      type
+      nativeType
+      cloudPlatform
+      region
+      status
+      firstSeen
+      lastSeen
+      externalId
+      isAccessibleFromInternet
+      isOpenToAllInternet
+      hasSensitiveData
+      hasAccessToSensitiveData
+      hasAdminPrivileges
+      hasHighPrivileges
+      technology { id name categories { id name } }
+      cloudAccount { id name externalId cloudProvider }
+      projects { id name riskProfile { businessImpact } }
+      tags { key value }
+    }
+  }
+}
+"
+`;
