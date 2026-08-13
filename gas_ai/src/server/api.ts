@@ -12,6 +12,7 @@ import {
   sortAssetRows,
 } from "../domain/assetTable";
 import {
+  AARS_V2_RULE,
   computeAars,
   DEFAULT_AARS_RULE,
   gap,
@@ -29,8 +30,10 @@ import {
   MULTIPLIER_MAX,
   MULTIPLIER_MIN,
   POINTS_MAX,
+  ruleDiscrimination,
   ruleSummary,
   shadowedGapRules,
+  unreachableGapRules,
   validateAarsRule,
 } from "../domain/aarsRule";
 import {
@@ -50,6 +53,14 @@ import {
 } from "../domain/config";
 import { graphCacheParams, resolveGraphParams, resolveLayoutParams } from "../domain/graphApiParams";
 import { conditionHolds, conditionState } from "../domain/riskConditions";
+import {
+  cleanStepVars,
+  isEditableStep,
+  MAX_LIST_VALUES,
+  MAX_VALUE_LEN,
+  STEP_VAR_SPECS,
+  validateStepVars,
+} from "../domain/scanVars";
 import { layoutGraph } from "../domain/graphLayout";
 import { projectGraph } from "../domain/graphProject";
 import { AI_ASSET_KINDS, type GEdge, type GNode, type IssueRow } from "../domain/graphTypes";
@@ -641,6 +652,72 @@ export function getSyncHistory(_p?: unknown): ApiResult {
   })));
 }
 
+// --------------------------------------------------------------------- scan queries
+
+/**
+ * Every sync step as data: the document it sends, the variables it sends, where the answer
+ * lands, whether the last sync skipped it, and which of its variables can be edited.
+ *
+ * Not cached. The whole point is that it describes the battery as configured right now, and
+ * a stale answer here is a lie about what the tenant is being asked.
+ */
+export function getScanQueries(_p?: unknown): ApiResult {
+  return run(() => ({
+    steps: syncJobs.describeSyncSteps(),
+    specs: STEP_VAR_SPECS,
+    skippedSteps: settingsStore.getSkippedSteps(),
+    hasCredentials: hasWizCredentials(),
+    limits: { maxListValues: MAX_LIST_VALUES, maxValueLen: MAX_VALUE_LEN },
+    // Named rather than folded into `variables`: the transport adds these to every request,
+    // so showing them as if they were configuration would invite someone to edit them.
+    transportVariables: ["first", "after", "quick"],
+  }));
+}
+
+export function setScanVars(p?: unknown): ApiResult {
+  return mutate(() => {
+    const params = (p ?? {}) as Rec;
+    const stepId = String(params["stepId"] ?? "");
+    if (!isEditableStep(stepId)) {
+      throw new Error(`${stepId || "That step"} does not take editable variables.`);
+    }
+    const proposed = cleanStepVars(stepId, params["vars"]);
+    const errors = validateStepVars(stepId, proposed);
+    if (errors.length) throw new Error(errors.join(" "));
+    settingsStore.setScanVars(stepId, proposed);
+    return { steps: syncJobs.describeSyncSteps() };
+  });
+}
+
+/**
+ * Send one page with the proposed variables and report what came back — without persisting
+ * anything, and without touching the ledger.
+ *
+ * This exists because the failure mode it catches is silent: optional steps swallow an
+ * HTTP 400, so a filter Wiz rejects looks exactly like a tenant with nothing to report. A
+ * test that returns the row count AND what the step's own normalizer made of those rows is
+ * the difference between "this works" and "this returns 100 rows the normalizer discards".
+ */
+export function testScanVars(p?: unknown): ApiResult {
+  return run(() => {
+    const params = (p ?? {}) as Rec;
+    const stepId = String(params["stepId"] ?? "");
+    if (!isEditableStep(stepId)) {
+      throw new Error(`${stepId || "That step"} does not take editable variables.`);
+    }
+    const proposed = cleanStepVars(stepId, params["vars"]);
+    const errors = validateStepVars(stepId, proposed);
+    if (errors.length) throw new Error(errors.join(" "));
+    if (!hasWizCredentials()) {
+      throw new Error(
+        "A test run calls Wiz, and no credentials are configured — this deployment is in " +
+        "dry-run. Add credentials in Settings to test a filter against the tenant.",
+      );
+    }
+    return syncJobs.testStepVariables(stepId, proposed);
+  });
+}
+
 // ------------------------------------------------------------------------- settings
 
 export function getSettings(_p?: unknown): ApiResult {
@@ -684,6 +761,9 @@ function ruleState(): Rec {
     version: stored.version,
     rule: stored.rule,
     defaults: DEFAULT_AARS_RULE,
+    // Whole rules the page can load into the draft. `defaults` above is the spec model and
+    // stays where it is (Reset reads it); presets are alternatives, not a fallback.
+    presets: { v2: AARS_V2_RULE },
     summary: ruleSummary(stored.rule),
     scoredVersion,
     // Only the point model can strand the persisted scores; bands re-derive on read, and
@@ -785,6 +865,12 @@ export function previewAarsRule(p?: unknown): ApiResult {
       summary: ruleSummary(proposed),
       bandRanges: bandRanges(proposed.bands),
       shadowedGapRules: shadowedGapRules(proposed),
+      // A THIRD state, distinct from both shadowed and unexercised: the row names a code
+      // no derivation can raise, so it cannot fire in any tenant, not just this one.
+      unreachableGapRules: unreachableGapRules(proposed),
+      // How well the draft separates the estate — the number the band counts above cannot
+      // show, because a rule that gives every asset the same score still fills a band.
+      discrimination: ruleDiscrimination(after, proposed),
       // Coverage: how many gap instances each cascade row priced, what fell through to the
       // fallback, and the codes the estate carries. A row at 0 here is NOT the same claim
       // as shadowedGapRules — one can never fire, the other simply is not exercised — and

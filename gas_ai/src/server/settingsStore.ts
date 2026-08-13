@@ -84,6 +84,25 @@ export function setAarsRule(rule: unknown): logic.StoredAarsRule {
   return stored;
 }
 
+export const getSkippedSteps = (): string[] => logic.getSkippedSteps(loadSettings());
+
+/** Record what the sync just skipped. Skips the whole-tab rewrite when nothing changed. */
+export function setSkippedSteps(steps: unknown): void {
+  const settings = loadSettings();
+  const next = logic.withSkippedSteps(settings, steps);
+  const before = logic.getSkippedSteps(settings).join(" ");
+  if (logic.getSkippedSteps(next).join(" ") === before) return;
+  saveSettings(next);
+}
+
+export const getScanVars = (): Rec => logic.getScanVars(loadSettings());
+
+/** Save (or, with an empty override, clear) one step's variable override. */
+export function setScanVars(stepId: string, vars: unknown): Rec {
+  saveSettings(logic.withScanVars(loadSettings(), stepId, vars));
+  return getScanVars();
+}
+
 export const getScoredRuleVersion = (): number => logic.getScoredRuleVersion(loadSettings());
 
 /**

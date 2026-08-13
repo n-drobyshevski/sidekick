@@ -1,3 +1,22 @@
+> **Status.** This document is normative **for the default rule** (`DEFAULT_AARS_RULE` in
+> `gas_ai/src/domain/aars.ts`), and `gas_ai/test/aars.test.ts` reproduces the applied
+> 14-row table below exactly. It is not the only model the product ships: see
+> [AARS_ASSESSMENT.md](AARS_ASSESSMENT.md) for an audit of where this model stops
+> discriminating on live data, and for `AARS_V2_RULE`, a calibrated alternative an operator
+> can load from the AARS Rules page.
+>
+> Two things to know when reading the tables below:
+>
+> - **Pillar B's unit is ambiguous.** "Asset maps to a failing OWASP LLM control → +10"
+>   reads as one charge per *framework*, and the applied table charges one code per asset
+>   accordingly. The implementation charges per *code*. Wiz maps a single toxic-combination
+>   issue onto several LLM codes and several ASI codes, so live scoring reaches the 30-point
+>   cap for every asset while this table shows 20 or 25. The applied table is reproducible
+>   only because the dry-run scores from hand-pinned hints.
+> - **The ×1.1 amplifier is a tenant-wide constant**, so it cannot change any ranking — but
+>   it does decide band membership. It is the entire reason `agent-H-chatbot` below is
+>   CRITICAL at 71 rather than HIGH at 69.
+
 his is a great strategic direction. Here's a proposed AI Asset Risk Score (AARS) framework built from your actual environment data, combining toxic combination participation, compliance framework signals, and data exposure context.
 
 🧠 Proposed: AI Asset Risk Score (AARS)

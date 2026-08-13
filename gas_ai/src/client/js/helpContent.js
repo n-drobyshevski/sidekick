@@ -365,7 +365,7 @@ export const ENTRIES = [
     aka: "AI Asset Risk Score",
     family: "score",
     blurb:
-      "One number per asset, 0 to 100, summed across three pillars and clamped. It is this " +
+      "One number per asset, 0 to 100, summed across four pillars and clamped. It is this " +
       "app's own score, not a Wiz field: it prices what the sync collected, so the model " +
       "that produces it is editable and its inputs are persisted beside every score.",
     drawnOn: ["inventory", "graph", "aars"],
@@ -421,8 +421,10 @@ export const ENTRIES = [
     family: "score",
     blurb:
       "Points for the combinations an asset is in, priced by the worst severity among " +
-      "them and lifted by a multiplier when it is in more than one. Capped, so no single " +
-      "pillar can carry the whole score.",
+      "them and lifted by a multiplier once there is more than one issue. How that " +
+      "multiplier scales is itself a choice: flat applies it once, log2 grows it with the " +
+      "issue count so a tenth issue still moves the number. Capped, so no single pillar " +
+      "can carry the whole score.",
     drawnOn: ["aars"],
     mark: () => el("span", { class: "pill neutral" }, "A"),
     // The model in force, not a measurement — true before the first sync.
@@ -442,7 +444,10 @@ export const ENTRIES = [
       "Points for the framework codes an asset's failing findings violate, priced by an " +
       "ORDERED cascade — first match wins, ending in a fallback for codes the codebook " +
       "does not carry. Its quantity is order, not magnitude, which is why that pillar is " +
-      "the one edited as a table.",
+      "the one edited as a table. How the matched prices COMBINE is a second choice: " +
+      "summing them pins most assets to the cap, because Wiz maps one underlying risk " +
+      "onto an OWASP LLM code and an ASI code and an ML title, so root-sum-square is " +
+      "offered to soften that triple charge and keep the pillar discriminating.",
     drawnOn: ["aars", "inventory"],
     mark: () => el("span", { class: "pill neutral" }, "B"),
     count: (ctx) => {
@@ -476,6 +481,43 @@ export const ENTRIES = [
       if (!caps || caps.data === undefined) return null;
       return { n: n(caps.data), value: "cap " + n(caps.data), unit: "of 100", route: "aars", params: {} };
     },
+  },
+  {
+    id: "pillar-d",
+    term: "Pillar D",
+    aka: "internet reachability",
+    family: "score",
+    blurb:
+      "Points for whether the asset is reachable from the internet. Its three states are " +
+      "not a severity ramp: UNDETERMINED is an epistemic state, not a middling amount of " +
+      "exposure — Wiz reports it for a hosted agent because reachability is inherited " +
+      "from the host underneath and was never evaluated on the agent itself. It prices " +
+      "BELOW confirmed and ABOVE none, which is the honest reading of “this needs " +
+      "checking”, and it must never be collapsed into either neighbour.",
+    drawnOn: ["aars", "graph"],
+    mark: () => el("span", { class: "pill neutral" }, "D"),
+    more:
+      "Priced at zero in the spec rule, which scores exposure nowhere even though the " +
+      "graph draws it as a first-class node. The calibrated preset turns it on.",
+    // No count: the bootstrap ships pillar caps for A, B and C only, and inventing a
+    // ceiling for D from the client would be a figure with no source. The page says
+    // where to read it instead.
+    link: { label: "Open AARS Rules", route: "aars", params: {} },
+  },
+  {
+    id: "gap-sources",
+    term: "Gap sources",
+    aka: "what may raise a gap",
+    family: "score",
+    blurb:
+      "Separate from what a gap COSTS: which derivations are allowed to raise one at all. " +
+      "Every source is off by default, because switching one on re-prices assets and the " +
+      "applied table in the spec is normative for the default rule. They exist because " +
+      "three rows of the default cascade price codes nothing in the live pipeline emits — " +
+      "not shadowed, unreachable, with the signal each needs already in the sheets.",
+    drawnOn: ["aars"],
+    mark: () => el("span", { class: "pill neutral" }, "±"),
+    link: { label: "Open AARS Rules", route: "aars", params: {} },
   },
   {
     id: "rescore",

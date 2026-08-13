@@ -1126,6 +1126,7 @@ var Server = (() => {
     getIssueDetail: () => getIssueDetail,
     getIssues: () => getIssues,
     getJobStatus: () => getJobStatus,
+    getScanQueries: () => getScanQueries,
     getSettings: () => getSettings,
     getStorageStats: () => getStorageStats,
     getSyncHistory: () => getSyncHistory,
@@ -1136,7 +1137,9 @@ var Server = (() => {
     runSync: () => runSync,
     scoreAarsSample: () => scoreAarsSample,
     setAarsRule: () => setAarsRule2,
-    setSettings: () => setSettings
+    setScanVars: () => setScanVars2,
+    setSettings: () => setSettings,
+    testScanVars: () => testScanVars
   });
 
   // src/domain/config.ts
@@ -1378,6 +1381,7 @@ var Server = (() => {
   var DEFAULT_AARS_RULE = {
     severityPoints: { CRITICAL: 50, HIGH: 35, MEDIUM: 20, LOW: 8 },
     multiIssueMultiplier: 1.2,
+    multiIssueScaling: "flat",
     pillarACap: 50,
     gapPoints: [
       { match: "exact", code: "NO_GUARDRAIL", points: 10 },
@@ -1391,11 +1395,47 @@ var Server = (() => {
       { match: "prefix", code: "5R", points: 5 }
     ],
     gapFallbackPoints: 5,
+    gapAggregation: "sum",
+    // Off: switching any of these on adds gaps the doc's applied table never priced.
+    gapSources: { fiveRs: false, deprecatedModel: false, inactiveAgent: false },
+    // All 1: the spec reads a failing control as present-or-absent, never as more or less
+    // severe. Kept as a knob because ai_findings.severity is already persisted and unused.
+    findingSeverityWeights: { CRITICAL: 1, HIGH: 1, MEDIUM: 1, LOW: 1 },
     pillarBCap: 30,
     dataExposurePoints: { SENSITIVE: 20, DATA_ACCESS: 10, NONE: 0 },
     // 5Rs framework at 53% — data-exposure controls are systemically weak, so all
     // data-related points are amplified (ai/custom_score.md Pillar C).
     dataAmplifier: 1.1,
+    // Pillar D is OFF in the spec rule. The doc reports internet exposure beside the score
+    // but never adds it to one, so scoring it here would change every published number.
+    exposurePoints: { CONFIRMED: 0, UNDETERMINED: 0, NONE: 0 },
+    bands: { critical: 70, high: 50, medium: 30, low: 10 }
+  };
+  var AARS_V2_RULE = {
+    severityPoints: { CRITICAL: 40, HIGH: 28, MEDIUM: 16, LOW: 6 },
+    multiIssueMultiplier: 1.2,
+    multiIssueScaling: "log2",
+    pillarACap: 45,
+    gapPoints: [
+      { match: "exact", code: "NO_GUARDRAIL", points: 10 },
+      { match: "exact", code: "INACTIVE_AGENT", points: 10 },
+      { match: "exact", code: "DEPRECATED_MODEL", points: 5 },
+      { match: "exact", code: "LLM04", points: 5 },
+      { match: "exact", code: "LLM05", points: 5 },
+      { match: "prefix", code: "LLM", points: 10 },
+      { match: "prefix", code: "ASI", points: 10 },
+      { match: "prefix", code: "ML", points: 5 },
+      { match: "exact", code: "FIVE_RS", points: 5 },
+      { match: "prefix", code: "5R", points: 5 }
+    ],
+    gapFallbackPoints: 5,
+    gapAggregation: "rss",
+    gapSources: { fiveRs: true, deprecatedModel: true, inactiveAgent: true },
+    findingSeverityWeights: { CRITICAL: 1.5, HIGH: 1.2, MEDIUM: 1, LOW: 0.6 },
+    pillarBCap: 25,
+    dataExposurePoints: { SENSITIVE: 12, DATA_ACCESS: 6, NONE: 0 },
+    dataAmplifier: 1,
+    exposurePoints: { CONFIRMED: 18, UNDETERMINED: 7, NONE: 0 },
     bands: { critical: 70, high: 50, medium: 30, low: 10 }
   };
   var AARS_MAX_SCORE = 100;
@@ -1426,24 +1466,41 @@ var Server = (() => {
     }
     return worst;
   }
+  function multiIssueFactor(count, rule) {
+    if (count <= 1) return 1;
+    if (rule.multiIssueScaling === "log2") {
+      return 1 + (rule.multiIssueMultiplier - 1) * Math.log2(count);
+    }
+    return rule.multiIssueMultiplier;
+  }
+  function aggregateGapPoints(points, rule) {
+    if (rule.gapAggregation === "rss") {
+      return Math.round(Math.sqrt(points.reduce((acc, p) => acc + p * p, 0)));
+    }
+    return points.reduce((acc, p) => acc + p, 0);
+  }
   function computeAars(input, rule = DEFAULT_AARS_RULE) {
-    var _a4;
+    var _a4, _b, _c;
     let toxic = worstSeverityPoints(input.issueSeverities, rule);
-    if (input.issueSeverities.length > 1) toxic *= rule.multiIssueMultiplier;
+    toxic *= multiIssueFactor(input.issueSeverities.length, rule);
     toxic = Math.min(rule.pillarACap, Math.round(toxic));
     const compliance = Math.min(
       rule.pillarBCap,
-      input.gaps.reduce((acc, g) => {
-        var _a5;
-        return acc + ((_a5 = g.points) != null ? _a5 : gapPointsFor(g.code, rule));
-      }, 0)
+      aggregateGapPoints(
+        input.gaps.map((g) => {
+          var _a5;
+          return (_a5 = g.points) != null ? _a5 : gapPointsFor(g.code, rule);
+        }),
+        rule
+      )
     );
     const data = Math.round(((_a4 = rule.dataExposurePoints[input.dataExposure]) != null ? _a4 : 0) * rule.dataAmplifier);
-    const score2 = Math.min(AARS_MAX_SCORE, toxic + compliance + data);
+    const exposure = (_c = rule.exposurePoints[(_b = input.internetExposure) != null ? _b : "NONE"]) != null ? _c : 0;
+    const score2 = Math.min(AARS_MAX_SCORE, toxic + compliance + data + exposure);
     return {
       score: score2,
       severity: aarsSeverity(score2, rule.bands),
-      pillars: { toxic, compliance, data }
+      pillars: { toxic, compliance, data, exposure }
     };
   }
   function gapBreakdown(gaps, rule = DEFAULT_AARS_RULE) {
@@ -1462,12 +1519,15 @@ var Server = (() => {
   var POINTS_MAX = 100;
   var MULTIPLIER_MIN = 1;
   var MULTIPLIER_MAX = 3;
+  var WEIGHT_MIN = 0;
+  var WEIGHT_MAX = 3;
   var BAND_MIN = 1;
   var BAND_MAX = 100;
   var CODE_MAX_LEN = 64;
   var MAX_GAP_RULES = 60;
   var SEVERITY_KEYS = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
   var EXPOSURE_KEYS = ["SENSITIVE", "DATA_ACCESS", "NONE"];
+  var INTERNET_EXPOSURE_KEYS = ["CONFIRMED", "UNDETERMINED", "NONE"];
   var BAND_KEYS = ["critical", "high", "medium", "low"];
   var BAND_LABELS = {
     critical: "CRITICAL",
@@ -1483,6 +1543,12 @@ var Server = (() => {
     if (!Number.isFinite(n)) return fallback;
     const rounded = Math.round(n * 100) / 100;
     return Math.min(MULTIPLIER_MAX, Math.max(MULTIPLIER_MIN, rounded));
+  }
+  function clampWeight(v, fallback) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return fallback;
+    const rounded = Math.round(n * 100) / 100;
+    return Math.min(WEIGHT_MAX, Math.max(WEIGHT_MIN, rounded));
   }
   function cleanGapCode(v) {
     return String(v != null ? v : "").trim().toUpperCase().slice(0, CODE_MAX_LEN);
@@ -1511,6 +1577,30 @@ var Server = (() => {
         POINTS_MAX
       );
     }
+    const srcRaw = rec(r["gapSources"]);
+    const gapSources = {
+      fiveRs: srcRaw["fiveRs"] === true,
+      deprecatedModel: srcRaw["deprecatedModel"] === true,
+      inactiveAgent: srcRaw["inactiveAgent"] === true
+    };
+    const fswRaw = rec(r["findingSeverityWeights"]);
+    const findingSeverityWeights = {};
+    for (const k of SEVERITY_KEYS) {
+      findingSeverityWeights[k] = clampWeight(
+        fswRaw[k],
+        DEFAULT_AARS_RULE.findingSeverityWeights[k]
+      );
+    }
+    const expoRaw = rec(r["exposurePoints"]);
+    const exposurePoints = {};
+    for (const k of INTERNET_EXPOSURE_KEYS) {
+      exposurePoints[k] = clampInt(
+        expoRaw[k],
+        DEFAULT_AARS_RULE.exposurePoints[k],
+        POINTS_MIN,
+        POINTS_MAX
+      );
+    }
     const bandRaw = rec(r["bands"]);
     const bands = {};
     for (const k of BAND_KEYS) {
@@ -1518,12 +1608,15 @@ var Server = (() => {
     }
     const gapsRaw = Array.isArray(r["gapPoints"]) ? r["gapPoints"] : null;
     const gapPoints = gapsRaw ? gapsRaw.map(cleanGapRule).filter((g) => g !== null).slice(0, MAX_GAP_RULES) : DEFAULT_AARS_RULE.gapPoints.map((g) => ({ ...g }));
+    const multiIssueScaling = r["multiIssueScaling"] === "log2" ? "log2" : "flat";
+    const gapAggregation = r["gapAggregation"] === "rss" ? "rss" : "sum";
     return {
       severityPoints,
       multiIssueMultiplier: clampMultiplier(
         r["multiIssueMultiplier"],
         DEFAULT_AARS_RULE.multiIssueMultiplier
       ),
+      multiIssueScaling,
       pillarACap: clampInt(r["pillarACap"], DEFAULT_AARS_RULE.pillarACap, POINTS_MIN, POINTS_MAX),
       gapPoints,
       gapFallbackPoints: clampInt(
@@ -1532,9 +1625,13 @@ var Server = (() => {
         POINTS_MIN,
         POINTS_MAX
       ),
+      gapAggregation,
+      gapSources,
+      findingSeverityWeights,
       pillarBCap: clampInt(r["pillarBCap"], DEFAULT_AARS_RULE.pillarBCap, POINTS_MIN, POINTS_MAX),
       dataExposurePoints,
       dataAmplifier: clampMultiplier(r["dataAmplifier"], DEFAULT_AARS_RULE.dataAmplifier),
+      exposurePoints,
       bands
     };
   }
@@ -1548,6 +1645,17 @@ var Server = (() => {
           `The ${BAND_LABELS[upper]} threshold (${rule.bands[upper]}) must sit above the ${BAND_LABELS[lower]} threshold (${rule.bands[lower]}) \u2014 otherwise no score can land in ${BAND_LABELS[lower]}.`
         );
       }
+    }
+    const { CONFIRMED, UNDETERMINED, NONE } = rule.exposurePoints;
+    if (UNDETERMINED > CONFIRMED) {
+      errors.push(
+        `Undetermined internet exposure (${UNDETERMINED}) must not score above confirmed exposure (${CONFIRMED}) \u2014 "we haven't checked" cannot outrank "yes, it is reachable".`
+      );
+    }
+    if (NONE > UNDETERMINED) {
+      errors.push(
+        `No internet exposure (${NONE}) must not score above undetermined exposure (${UNDETERMINED}).`
+      );
     }
     if (!rule.gapPoints.length) {
       errors.push(
@@ -1584,6 +1692,70 @@ var Server = (() => {
       }
     });
     return dead;
+  }
+  var DERIVABLE_PREFIXES = ["LLM", "ASI", "ML_", "5R_"];
+  var DERIVABLE_EXACT = ["NO_GUARDRAIL", "DEPRECATED_MODEL", "INACTIVE_AGENT", "FIVE_RS"];
+  function isDerivable(code, rule) {
+    const c = cleanGapCode(code);
+    if (!c) return false;
+    if (c === "DEPRECATED_MODEL") return rule.gapSources.deprecatedModel === true;
+    if (c === "INACTIVE_AGENT") return rule.gapSources.inactiveAgent === true;
+    if (c.startsWith("5R_")) return rule.gapSources.fiveRs === true;
+    if (c === "FIVE_RS") return false;
+    if (DERIVABLE_EXACT.includes(c)) return true;
+    return DERIVABLE_PREFIXES.some((p) => c.startsWith(p));
+  }
+  function unreachableGapRules(rule) {
+    const dead = [];
+    rule.gapPoints.forEach((row, i) => {
+      const claimsDerivedFamily = row.match === "prefix" ? row.code.startsWith("5R") && rule.gapSources.fiveRs !== true : DERIVABLE_EXACT.includes(cleanGapCode(row.code)) && !isDerivable(row.code, rule);
+      if (claimsDerivedFamily) dead.push(i);
+    });
+    return dead;
+  }
+  var EMPTY_DISCRIMINATION = {
+    scored: 0,
+    distinctScores: 0,
+    largestTieGroup: 0,
+    bandOccupancy: {},
+    range: { min: 0, max: 0 },
+    saturated: { toxic: 0, compliance: 0, data: 0, exposure: 0, score: 0 }
+  };
+  function ruleDiscrimination(nodes, rule) {
+    var _a4, _b, _c;
+    const scores = [];
+    const counts = {};
+    for (const b of ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]) counts[b] = 0;
+    const saturated = { toxic: 0, compliance: 0, data: 0, exposure: 0, score: 0 };
+    const maxData = Math.round(
+      Math.max(...EXPOSURE_KEYS.map((k) => rule.dataExposurePoints[k])) * rule.dataAmplifier
+    );
+    const maxExposure = Math.max(...INTERNET_EXPOSURE_KEYS.map((k) => rule.exposurePoints[k]));
+    for (const n of nodes) {
+      if (typeof n.aars !== "number") continue;
+      scores.push(n.aars);
+      const band = String((_a4 = n.aarsSeverity) != null ? _a4 : "");
+      if (band in counts) counts[band] = counts[band] + 1;
+      const p = n.aarsPillars;
+      if (p) {
+        if (p.toxic >= rule.pillarACap) saturated.toxic++;
+        if (p.compliance >= rule.pillarBCap) saturated.compliance++;
+        if (maxData > 0 && p.data >= maxData) saturated.data++;
+        if (maxExposure > 0 && ((_b = p.exposure) != null ? _b : 0) >= maxExposure) saturated.exposure++;
+      }
+      if (n.aars >= 100) saturated.score++;
+    }
+    if (!scores.length) return { ...EMPTY_DISCRIMINATION, bandOccupancy: counts };
+    const byScore = /* @__PURE__ */ new Map();
+    for (const s of scores) byScore.set(s, ((_c = byScore.get(s)) != null ? _c : 0) + 1);
+    return {
+      scored: scores.length,
+      distinctScores: byScore.size,
+      largestTieGroup: Math.max(...byScore.values()),
+      bandOccupancy: counts,
+      range: { min: Math.min(...scores), max: Math.max(...scores) },
+      saturated
+    };
   }
   function gapMatchTally(rule, codeLists) {
     var _a4;
@@ -1624,10 +1796,13 @@ var Server = (() => {
     const amplified = EXPOSURE_KEYS.map(
       (k) => String(Math.round(rule.dataExposurePoints[k] * rule.dataAmplifier))
     ).join(" / ");
+    const countClause = rule.multiIssueScaling === "log2" ? `each doubling of the open-issue count multiplies that by a further \xD7${rule.multiIssueMultiplier} step (two issues \xD7${rule.multiIssueMultiplier}, four \xD7${(1 + (rule.multiIssueMultiplier - 1) * 2).toFixed(2)}, eight \xD7${(1 + (rule.multiIssueMultiplier - 1) * 3).toFixed(2)})` : `more than one open issue multiplies that by \xD7${rule.multiIssueMultiplier}, however many there are`;
+    const gapClause = rule.gapAggregation === "rss" ? `matched prices combine as a root-sum-square, so each further gap adds less than the last` : `matched prices are added up`;
     return [
-      `Pillar A \u2014 toxic combinations, capped at ${rule.pillarACap}. The asset's worst open issue scores ${sev}; more than one open issue multiplies that by \xD7${rule.multiIssueMultiplier}, however many there are.`,
-      `Pillar B \u2014 compliance gaps, capped at ${rule.pillarBCap}. ${rule.gapPoints.length} pricing rules are tried in order, first match wins; an unmatched code scores ${pointsPhrase(rule.gapFallbackPoints)}.`,
+      `Pillar A \u2014 toxic combinations, capped at ${rule.pillarACap}. The asset's worst open issue scores ${sev}; ${countClause}.`,
+      `Pillar B \u2014 compliance gaps, capped at ${rule.pillarBCap}. ${rule.gapPoints.length} pricing rules are tried in order, first match wins; an unmatched code scores ${pointsPhrase(rule.gapFallbackPoints)}. ${gapClause[0].toUpperCase()}${gapClause.slice(1)}.`,
       `Pillar C \u2014 data exposure: ${exposure}, all amplified by \xD7${rule.dataAmplifier} (\u2192 ${amplified}).`,
+      rule.exposurePoints.CONFIRMED === 0 && rule.exposurePoints.UNDETERMINED === 0 && rule.exposurePoints.NONE === 0 ? `Pillar D \u2014 internet exposure scores nothing; reachability is reported beside the score but never added to it.` : `Pillar D \u2014 internet exposure: confirmed ${rule.exposurePoints.CONFIRMED}, undetermined ${rule.exposurePoints.UNDETERMINED}, none ${rule.exposurePoints.NONE}. Not amplified \u2014 the 5Rs signal says nothing about reachability.`,
       `Levels \u2014 CRITICAL at ${rule.bands.critical} and above, HIGH from ${rule.bands.high}, MEDIUM from ${rule.bands.medium}, LOW from ${rule.bands.low}, INFO below that. Scores are clamped to 100.`
     ];
   }
@@ -1700,6 +1875,199 @@ var Server = (() => {
     return marks;
   }
 
+  // src/domain/scanVars.ts
+  var MAX_LIST_VALUES = 40;
+  var MAX_VALUE_LEN = 120;
+  var ISSUE_STATUSES = ["OPEN", "IN_PROGRESS", "RESOLVED", "REJECTED"];
+  var ORDER_DIRECTIONS = ["ASC", "DESC"];
+  var STEP_VAR_SPECS = [
+    {
+      stepId: "INVENTORY_AI",
+      fields: [
+        {
+          path: "filterBy.type.equals",
+          label: "Resource types",
+          help: "The Wiz resource types treated as AI assets. Resolved against this tenant's schema by default; setting them here pins the list instead.",
+          kind: "list",
+          required: true
+        }
+      ]
+    },
+    {
+      stepId: "ISSUES_TOXIC",
+      fields: [
+        {
+          path: "filterBy.status",
+          label: "Issue status",
+          help: "Which issue states to collect. Narrowing to OPEN drops in-progress work from the register and from AARS pillar A.",
+          kind: "list",
+          options: ISSUE_STATUSES,
+          required: true
+        },
+        {
+          path: "filterBy.project",
+          label: "Project scope",
+          help: "Wiz project ids to restrict to. Empty means the whole tenant.",
+          kind: "list"
+        },
+        {
+          path: "orderBy.direction",
+          label: "Order direction",
+          help: "Which end of the severity order the paging walks first.",
+          kind: "enum",
+          options: ORDER_DIRECTIONS
+        }
+      ]
+    },
+    {
+      stepId: "CONFIG_FINDINGS",
+      fields: [
+        {
+          path: "filterBy.status",
+          label: "Finding status",
+          help: "Compliance findings are additionally filtered to result FAIL after they arrive, so widening this collects more rows but stores only failures.",
+          kind: "list",
+          options: ["OPEN", "RESOLVED", "REJECTED"],
+          required: true
+        },
+        {
+          path: "orderBy.direction",
+          label: "Order direction",
+          help: "Which end of the severity order the paging walks first.",
+          kind: "enum",
+          options: ORDER_DIRECTIONS
+        }
+      ]
+    },
+    {
+      stepId: "AGENTIC_IDENTITIES",
+      fields: [
+        {
+          path: "filterBy.type.equals",
+          label: "Identity types",
+          help: "Which principal types to collect.",
+          kind: "list",
+          required: true
+        }
+      ],
+      // Deliberately NOT offering filterBy.identityPurpose. normalizePrincipalsPage stamps
+      // identityPurpose = "AGENTIC" on every row it returns, because the API does not send the
+      // field back — the flag is a claim about the filter, not about the data. Let the filter
+      // widen and every identity in the estate is relabelled agentic, with nothing to catch it.
+      locked: "The agentic-purpose filter is fixed: the sync labels what this query returns as agentic, so widening it would mislabel every identity it collected."
+    }
+  ];
+  var SPEC_BY_STEP = {};
+  for (const spec of STEP_VAR_SPECS) SPEC_BY_STEP[spec.stepId] = spec;
+  function varSpecFor(stepId) {
+    var _a4;
+    return (_a4 = SPEC_BY_STEP[stepId]) != null ? _a4 : null;
+  }
+  function isEditableStep(stepId) {
+    const spec = varSpecFor(stepId);
+    return !!spec && spec.fields.length > 0;
+  }
+  function readPath(obj, path) {
+    let cur = obj;
+    for (const key of path.split(".")) {
+      if (!cur || typeof cur !== "object") return void 0;
+      cur = cur[key];
+    }
+    return cur;
+  }
+  function writePath(obj, path, value) {
+    const keys = path.split(".");
+    let cur = obj;
+    for (let i = 0; i < keys.length - 1; i++) {
+      const key = keys[i];
+      const next = cur[key];
+      if (!next || typeof next !== "object" || Array.isArray(next)) cur[key] = {};
+      cur = cur[keys[i]];
+    }
+    cur[keys[keys.length - 1]] = value;
+  }
+  function cleanValue(v) {
+    return String(v != null ? v : "").trim().slice(0, MAX_VALUE_LEN);
+  }
+  function cleanList(v) {
+    if (!Array.isArray(v)) return [];
+    const out = [];
+    for (const raw of v) {
+      const s = cleanValue(raw);
+      if (s && out.indexOf(s) < 0) out.push(s);
+      if (out.length >= MAX_LIST_VALUES) break;
+    }
+    return out;
+  }
+  function cleanStepVars(stepId, raw) {
+    const spec = varSpecFor(stepId);
+    if (!spec || !raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    const out = {};
+    let touched = false;
+    for (const field of spec.fields) {
+      const value = readPath(raw, field.path);
+      if (value === void 0 || value === null) continue;
+      if (field.kind === "list") {
+        const list2 = cleanList(value);
+        writePath(out, field.path, list2);
+        touched = true;
+      } else {
+        const s = cleanValue(value).toUpperCase();
+        if (!s) continue;
+        if (field.options && field.options.indexOf(s) < 0) continue;
+        writePath(out, field.path, s);
+        touched = true;
+      }
+    }
+    return touched ? out : null;
+  }
+  function validateStepVars(stepId, vars) {
+    const spec = varSpecFor(stepId);
+    if (!spec) return [`${stepId} does not take editable variables.`];
+    if (!vars) return [];
+    const errors = [];
+    for (const field of spec.fields) {
+      const value = readPath(vars, field.path);
+      if (value === void 0) continue;
+      if (field.kind === "list") {
+        const list2 = Array.isArray(value) ? value : [];
+        if (field.required && !list2.length) {
+          errors.push(
+            `${field.label} cannot be empty \u2014 an empty filter asks Wiz for everything, which is not what this step normalizes.`
+          );
+        }
+        if (list2.length >= MAX_LIST_VALUES) {
+          errors.push(`${field.label} is capped at ${MAX_LIST_VALUES} values.`);
+        }
+      }
+    }
+    return errors;
+  }
+  function effectiveStepVars(stepId, base, override) {
+    const clean2 = cleanStepVars(stepId, override);
+    if (!clean2) return base;
+    const spec = varSpecFor(stepId);
+    const merged = JSON.parse(JSON.stringify(base != null ? base : {}));
+    for (const field of spec ? spec.fields : []) {
+      const value = readPath(clean2, field.path);
+      if (value === void 0) continue;
+      writePath(merged, field.path, value);
+    }
+    return merged;
+  }
+  function changedPaths(stepId, base, override) {
+    const clean2 = cleanStepVars(stepId, override);
+    if (!clean2) return [];
+    const spec = varSpecFor(stepId);
+    const out = [];
+    for (const field of spec ? spec.fields : []) {
+      const next = readPath(clean2, field.path);
+      if (next === void 0) continue;
+      if (JSON.stringify(next) !== JSON.stringify(readPath(base, field.path))) out.push(field.path);
+    }
+    return out;
+  }
+
   // src/domain/settingsLogic.ts
   function clampDepth(v) {
     return clampInt(v, DEPTH_DEFAULT, DEPTH_MIN, DEPTH_MAX);
@@ -1750,6 +2118,33 @@ var Server = (() => {
       ...settings,
       aars_scored_version: Number.isFinite(v) && v > 0 ? Math.round(v) : 0
     };
+  }
+  function getScanVars(settings) {
+    const raw = settings["scan_vars"];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+    const out = {};
+    for (const [stepId, value] of Object.entries(raw)) {
+      const clean2 = cleanStepVars(stepId, value);
+      if (clean2) out[stepId] = clean2;
+    }
+    return out;
+  }
+  function getSkippedSteps(settings) {
+    const raw = settings["last_skipped_steps"];
+    if (!Array.isArray(raw)) return [];
+    return raw.map((v) => String(v != null ? v : "")).filter(Boolean);
+  }
+  function withSkippedSteps(settings, steps) {
+    const list2 = Array.isArray(steps) ? steps.map((v) => String(v != null ? v : "")).filter(Boolean) : [];
+    return { ...settings, last_skipped_steps: list2 };
+  }
+  function withScanVars(settings, stepId, vars) {
+    const current = getScanVars(settings);
+    const clean2 = cleanStepVars(stepId, vars);
+    const next = { ...current };
+    if (clean2) next[stepId] = clean2;
+    else delete next[stepId];
+    return { ...settings, scan_vars: next };
   }
 
   // src/domain/graphTypes.ts
@@ -2964,7 +3359,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "098068ea381e" : "dev";
+  var BUILD_ID = true ? "e5399643a271" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -3173,6 +3568,19 @@ var Server = (() => {
     saveSettings(next);
     return stored;
   }
+  var getSkippedSteps2 = () => getSkippedSteps(loadSettings());
+  function setSkippedSteps(steps) {
+    const settings = loadSettings();
+    const next = withSkippedSteps(settings, steps);
+    const before = getSkippedSteps(settings).join(" ");
+    if (getSkippedSteps(next).join(" ") === before) return;
+    saveSettings(next);
+  }
+  var getScanVars2 = () => getScanVars(loadSettings());
+  function setScanVars(stepId, vars) {
+    saveSettings(withScanVars(loadSettings(), stepId, vars));
+    return getScanVars2();
+  }
   var getScoredRuleVersion2 = () => getScoredRuleVersion(loadSettings());
   function setScoredRuleVersion(version) {
     const settings = loadSettings();
@@ -3189,8 +3597,10 @@ var Server = (() => {
     clearCancelFlag: () => clearCancelFlag,
     continueJob: () => continueJob,
     dailySync: () => dailySync,
+    describeSyncSteps: () => describeSyncSteps,
     jobStatus: () => jobStatus,
-    startSync: () => startSync
+    startSync: () => startSync,
+    testStepVariables: () => testStepVariables
   });
 
   // src/domain/syncNormalize.ts
@@ -3283,6 +3693,15 @@ var Server = (() => {
   }
   function emptyPart() {
     return { nodes: [], edges: [], issues: [], findings: [] };
+  }
+  function appendPart(target, part) {
+    target.nodes.push(...part.nodes);
+    target.edges.push(...part.edges);
+    target.issues.push(...part.issues);
+    target.findings.push(...part.findings);
+  }
+  function partIsEmpty(part) {
+    return !part.nodes.length && !part.edges.length && !part.issues.length && !part.findings.length;
   }
   function normalizeInventoryPage(rows) {
     const part = emptyPart();
@@ -3537,17 +3956,29 @@ var Server = (() => {
     if (node2.hasHighPrivileges || node2.hasAdminPrivileges) return "DATA_ACCESS";
     return "NONE";
   }
-  function deriveAarsInput(node2, nodeIssues) {
-    var _a4, _b, _c, _d;
+  function internetExposureOf(node2) {
+    const state = conditionState(node2, "INTERNET_EXPOSURE");
+    if (state === true) return "CONFIRMED";
+    if (state === null) return "UNDETERMINED";
+    return "NONE";
+  }
+  function deriveAarsInput(node2, nodeIssues, rule = DEFAULT_AARS_RULE) {
+    var _a4, _b, _c, _d, _e, _f;
     const codes = /* @__PURE__ */ new Set();
     for (const issue2 of nodeIssues) {
       const fw = (_a4 = issue2.frameworks) != null ? _a4 : {};
       for (const c of (_b = fw.owaspLlm) != null ? _b : []) codes.add(c);
       for (const c of (_c = fw.owaspAgentic) != null ? _c : []) codes.add(c);
       for (const c of (_d = fw.owaspMl) != null ? _d : []) codes.add(`ML_${c.replace(/\s+/g, "_").toUpperCase()}`);
+      if (rule.gapSources.fiveRs) {
+        for (const c of (_e = fw.fiveRs) != null ? _e : []) codes.add(`5R_${c.replace(/\s+/g, "_").toUpperCase()}`);
+      }
     }
     const gaps = [...codes].sort().map((c) => gap(c));
     if (node2.guardrailMissing) gaps.push(gap("NO_GUARDRAIL"));
+    const status = String((_f = node2.status) != null ? _f : "").trim().toUpperCase();
+    if (rule.gapSources.deprecatedModel && status === "DEPRECATED") gaps.push(gap("DEPRECATED_MODEL"));
+    if (rule.gapSources.inactiveAgent && status === "INACTIVE") gaps.push(gap("INACTIVE_AGENT"));
     const dataExposure = dataExposureOf(node2);
     return {
       // AARS Pillar A scores Wiz-NATIVE severities (the applied table in
@@ -3555,32 +3986,51 @@ var Server = (() => {
       // lens, not a scoring input — using it would double-count the 5Rs amplifier.
       issueSeverities: nodeIssues.map((i) => i.nativeSeverity),
       gaps,
-      dataExposure
+      dataExposure,
+      internetExposure: internetExposureOf(node2)
     };
   }
-  function buildAarsHintsFromFindings(findings, doc, issues2) {
+  function weightedGap(code, severity, rule) {
+    var _a4;
+    const w = severity === void 0 ? 1 : (_a4 = rule.findingSeverityWeights[severity]) != null ? _a4 : 1;
+    if (w === 1) return gap(code);
+    return gap(code, Math.max(0, Math.round(gapPointsFor(code, rule) * w)));
+  }
+  function buildAarsHintsFromFindings(findings, doc, issues2, rule = DEFAULT_AARS_RULE) {
     var _a4;
     const open = issues2.filter((i) => i.status === "OPEN");
     const issuesByAsset = groupBy(open, (i) => i.assetId);
     const codesByResource = /* @__PURE__ */ new Map();
+    const worstByCode = /* @__PURE__ */ new Map();
     for (const f of findings) {
       pushInto(codesByResource, f.resourceId, ...f.frameworkCodes);
+      for (const c of f.frameworkCodes) {
+        const key = `${f.resourceId}|${c}`;
+        const prev = worstByCode.get(key);
+        if (prev === void 0 || severityRank(f.severity) < severityRank(prev)) {
+          worstByCode.set(key, f.severity);
+        }
+      }
     }
     const nodeById = indexBy(doc.nodes, (n) => n.id);
     const hints = {};
     for (const [resourceId, codes] of codesByResource) {
       const node2 = nodeById.get(resourceId);
       if (!node2) continue;
-      const base = deriveAarsInput(node2, (_a4 = issuesByAsset.get(resourceId)) != null ? _a4 : []);
+      const base = deriveAarsInput(node2, (_a4 = issuesByAsset.get(resourceId)) != null ? _a4 : [], rule);
       const seen = new Set(base.gaps.map((g) => g.code));
       const gaps = [...base.gaps];
       for (const c of codes) {
         if (c && !seen.has(c)) {
           seen.add(c);
-          gaps.push(gap(c));
+          gaps.push(weightedGap(c, worstByCode.get(`${resourceId}|${c}`), rule));
         }
       }
-      hints[resourceId] = { gaps, dataExposure: base.dataExposure };
+      hints[resourceId] = {
+        gaps,
+        dataExposure: base.dataExposure,
+        internetExposure: base.internetExposure
+      };
     }
     return hints;
   }
@@ -3588,7 +4038,7 @@ var Server = (() => {
     const open = issues2.filter((i) => i.status === "OPEN");
     const byAsset = groupBy(open, (i) => i.assetId);
     const nodes = doc.nodes.map((raw) => {
-      var _a4;
+      var _a4, _b;
       const node2 = { ...raw };
       const nodeIssues = (_a4 = byAsset.get(node2.id)) != null ? _a4 : [];
       if (nodeIssues.length) {
@@ -3602,12 +4052,22 @@ var Server = (() => {
       const hint = hints == null ? void 0 : hints[node2.id];
       const scorable = node2.kind !== "ISSUE" && node2.kind !== "SUMMARY" && (AI_ASSET_KINDS.includes(node2.kind) || nodeIssues.length > 0 || hint !== void 0);
       if (scorable) {
-        const input = hint ? { issueSeverities: nodeIssues.map((i) => i.nativeSeverity), ...hint } : deriveAarsInput(node2, nodeIssues);
+        const input = hint ? {
+          issueSeverities: nodeIssues.map((i) => i.nativeSeverity),
+          ...hint,
+          // A hint written before pillar D existed carries no exposure; re-derive it
+          // rather than let `undefined` read as NONE.
+          internetExposure: (_b = hint.internetExposure) != null ? _b : internetExposureOf(node2)
+        } : deriveAarsInput(node2, nodeIssues, rule);
         const result = computeAars(input, rule);
         node2.aars = result.score;
         node2.aarsSeverity = result.severity;
         node2.aarsPillars = result.pillars;
-        node2.aarsInput = { gaps: input.gaps, dataExposure: input.dataExposure };
+        node2.aarsInput = {
+          gaps: input.gaps,
+          dataExposure: input.dataExposure,
+          internetExposure: input.internetExposure
+        };
       }
       return node2;
     });
@@ -4492,7 +4952,7 @@ var Server = (() => {
     const base = loadRawGraph();
     if (!base) return null;
     const issues2 = loadIssues();
-    const hints = { ...buildAarsHintsFromFindings(loadFindings(), base, issues2) };
+    const hints = { ...buildAarsHintsFromFindings(loadFindings(), base, issues2, rule) };
     for (const node2 of base.nodes) {
       if (node2.aarsInput) hints[node2.id] = node2.aarsInput;
     }
@@ -4649,19 +5109,26 @@ var Server = (() => {
   var CONTINUE_DELAY_MS = 3e4;
   var FIRST_STEP_BUDGET_MS = 45e3;
   var BUDGET_MS = 27e4;
-  function syncSteps() {
+  function syncSteps(aiTypes) {
+    const types = aiTypes != null ? aiTypes : resolveAiResourceTypes().types;
+    const overrides = getScanVars2();
+    const vars = (stepId, base) => effectiveStepVars(stepId, base, overrides[stepId]);
     return [
       {
         id: "INVENTORY_AI",
+        area: "aispm",
+        writes: ["ai_assets"],
         run: "cloudResources",
         query: Q_AI_INVENTORY,
-        extraVariables: aiInventoryVariables(resolveAiResourceTypes().types),
+        extraVariables: vars("INVENTORY_AI", aiInventoryVariables(types)),
         normalize: normalizeInventoryPage
       },
       // One cursor walk per toxic-combination source rule: the assets carrying an OPEN
       // issue for that rule (issue rows are reconstructed one-per-asset).
       ...COMBO_GROUPS.map((group) => ({
         id: `ISSUES_${group.ruleId}`,
+        area: "toxic",
+        writes: ["ai_assets", "ai_issues"],
         run: "cloudResources",
         query: Q_RULE_ASSETS,
         extraVariables: { ruleIds: [group.ruleId] },
@@ -4672,25 +5139,31 @@ var Server = (() => {
       // above; reconcileIssues drops the synthetic per-rule rows these supersede.
       {
         id: "ISSUES_TOXIC",
+        area: "toxic",
+        writes: ["ai_issues", "ai_assets"],
         run: "connection",
         connectionField: "issuesV2",
         query: Q_ISSUES,
-        extraVariables: aiIssuesVariables(projectScope()),
+        extraVariables: vars("ISSUES_TOXIC", aiIssuesVariables(projectScope())),
         normalize: normalizeIssuesPage,
         optional: true
       },
       // Real compliance findings (configurationFindings) — feeds AARS pillar B.
       {
         id: "CONFIG_FINDINGS",
+        area: "compliance",
+        writes: ["ai_findings"],
         run: "connection",
         connectionField: "configurationFindings",
         query: Q_CONFIG_FINDINGS,
-        extraVariables: aiConfigFindingsVariables(projectScope()),
+        extraVariables: vars("CONFIG_FINDINGS", aiConfigFindingsVariables(projectScope())),
         normalize: normalizeConfigFindingsPage,
         optional: true
       },
       {
         id: "GUARDRAIL_GAPS",
+        area: "guardrails",
+        writes: ["ai_assets.guardrail_missing"],
         run: "graphSearch",
         query: Q_AGENTS_NO_GUARDRAIL,
         normalize: normalizeNoGuardrailPage,
@@ -4698,6 +5171,8 @@ var Server = (() => {
       },
       {
         id: "RUNS_AS",
+        area: "ciem",
+        writes: ["ai_edges (RUNS_AS)", "ai_assets"],
         run: "graphSearch",
         query: Q_AGENT_RUNS_AS,
         normalize: normalizeRunsAsPage,
@@ -4705,6 +5180,8 @@ var Server = (() => {
       },
       {
         id: "SA_FINDINGS",
+        area: "ciem",
+        writes: ["ai_edges (HAS_FINDING)", "ai_assets"],
         run: "graphSearch",
         query: Q_SA_EXCESSIVE_ACCESS,
         normalize: normalizeRunsAsPage,
@@ -4712,6 +5189,8 @@ var Server = (() => {
       },
       {
         id: "IDENTITY_ACCESS",
+        area: "identity",
+        writes: ["ai_edges (ALLOWS_ACCESS_TO)", "ai_assets"],
         run: "graphSearch",
         query: Q_IDENTITY_ACCESS,
         normalize: normalizeIdentityAccessPage,
@@ -4720,13 +5199,112 @@ var Server = (() => {
       // Agentic execution identities (cloudResourcesV2 + identityPurpose:AGENTIC).
       {
         id: "AGENTIC_IDENTITIES",
+        area: "ciem",
+        writes: ["ai_assets.identity_purpose"],
         run: "cloudResources",
         query: Q_PRINCIPALS,
-        extraVariables: aiPrincipalsVariables(projectScope()),
+        extraVariables: vars("AGENTIC_IDENTITIES", aiPrincipalsVariables(projectScope())),
         normalize: normalizePrincipalsPage,
         optional: true
       }
     ];
+  }
+  function rootFieldOf(step) {
+    var _a4;
+    if (step.run === "cloudResources") return "cloudResourcesV2";
+    if (step.run === "graphSearch") return "graphSearch";
+    return (_a4 = step.connectionField) != null ? _a4 : "";
+  }
+  function describeSyncSteps() {
+    const overrides = getScanVars2();
+    const resolved = describeAiTypes();
+    return syncSteps(resolved.types).map((step) => {
+      var _a4, _b;
+      const base = defaultStepVariables(step.id, (_a4 = step.extraVariables) != null ? _a4 : {}, resolved.types);
+      return {
+        id: step.id,
+        area: step.area,
+        writes: step.writes,
+        rootField: rootFieldOf(step),
+        run: step.run,
+        optional: !!step.optional,
+        document: step.query,
+        // What this step will actually send, overrides included. `first`, `after` and (for
+        // graphSearch) `quick` are added by the transport on every request and are named in
+        // the panel rather than folded in here, so what is shown is what is configured.
+        variables: (_b = step.extraVariables) != null ? _b : {},
+        defaultVariables: base,
+        editable: isEditableStep(step.id),
+        overridden: changedPaths(step.id, base, overrides[step.id]),
+        // Only INVENTORY_AI's default depends on resolving types against the tenant, so it is
+        // the only step whose description can be provisional. Said out loud rather than shown
+        // as settled fact — this page's whole job is not doing that.
+        typesResolved: step.id === "INVENTORY_AI" ? resolved.resolved : true
+      };
+    });
+  }
+  function describeAiTypes() {
+    try {
+      return { types: resolveAiResourceTypes().types, resolved: true };
+    } catch (e) {
+      return { types: AI_RESOURCE_TYPE_CANDIDATES, resolved: false };
+    }
+  }
+  function defaultStepVariables(stepId, withOverride, aiTypes) {
+    switch (stepId) {
+      case "INVENTORY_AI":
+        return aiInventoryVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types);
+      case "ISSUES_TOXIC":
+        return aiIssuesVariables(projectScope());
+      case "CONFIG_FINDINGS":
+        return aiConfigFindingsVariables(projectScope());
+      case "AGENTIC_IDENTITIES":
+        return aiPrincipalsVariables(projectScope());
+      default:
+        return withOverride;
+    }
+  }
+  function testStepVariables(stepId, vars) {
+    var _a4, _b;
+    const step = syncSteps().filter((s) => s.id === stepId)[0];
+    if (!step) throw new Error(`No sync step called ${stepId}.`);
+    const proposed = effectiveStepVars(
+      stepId,
+      defaultStepVariables(stepId, (_a4 = step.extraVariables) != null ? _a4 : {}),
+      vars
+    );
+    const opts = { query: step.query, cursor: null, extraVariables: proposed };
+    let result;
+    try {
+      if (step.run === "cloudResources") result = fetchCloudResourcesPage(opts);
+      else if (step.run === "graphSearch") result = fetchGraphSearchPage(opts);
+      else result = fetchConnectionPage((_b = step.connectionField) != null ? _b : "", opts);
+    } catch (e) {
+      return {
+        ok: false,
+        stepId,
+        variables: proposed,
+        error: String(e instanceof Error ? e.message : e)
+      };
+    }
+    const part = step.normalize(result.rows);
+    return {
+      ok: true,
+      stepId,
+      variables: proposed,
+      rows: result.rows.length,
+      totalCount: result.totalCount,
+      hasNextPage: result.hasNextPage,
+      normalized: {
+        nodes: part.nodes.length,
+        edges: part.edges.length,
+        issues: part.issues.length,
+        findings: part.findings.length
+      },
+      // One row, so the operator can see the shape came back as expected. Stringified and
+      // capped: a raw Wiz row can be large, and this rides a google.script.run response.
+      sample: result.rows.length ? JSON.stringify(result.rows[0]).slice(0, 1200) : ""
+    };
   }
   function startSync() {
     const existing = activeJob();
@@ -4770,6 +5348,7 @@ var Server = (() => {
       void 0,
       SEED_FINDINGS
     );
+    setSkippedSteps([]);
     return {
       jobId: null,
       message: `Dry-run sync complete: ${doc.nodes.length} nodes, ${doc.edges.length} edges, ${SEED_ISSUES.length} issues (sample data).`
@@ -4838,7 +5417,7 @@ var Server = (() => {
     let nodesSoFar = job.nodes_so_far;
     let hopPart = emptyPart();
     const spillHopPart = () => {
-      if (!hopPart.nodes.length && !hopPart.edges.length && !hopPart.issues.length) return;
+      if (partIsEmpty(hopPart)) return;
       const name = `normalized-part-${String(refs.length + 1).padStart(3, "0")}.json.gz`;
       refs.push(writeGzJson(syncFolder(syncId), name, hopPart).getId());
       hopPart = emptyPart();
@@ -4888,10 +5467,7 @@ var Server = (() => {
           page += 1;
           nodesSoFar += result.rows.length;
           writeSyncPage(syncId, stepIndex, page, result.rows);
-          const normalized = step.normalize(result.rows);
-          hopPart.nodes.push(...normalized.nodes);
-          hopPart.edges.push(...normalized.edges);
-          hopPart.issues.push(...normalized.issues);
+          appendPart(hopPart, step.normalize(result.rows));
           updateJob(job.job_id, {
             step_index: stepIndex,
             cursor: result.endCursor,
@@ -4934,13 +5510,16 @@ var Server = (() => {
         return;
       }
       updateJob(job.job_id, { phase: "PERSISTING" });
-      const hints = buildAarsHintsFromFindings(findings, doc, issues2);
-      const persist = () => persistSync(doc, issues2, hints, {
-        syncId,
-        mode: "live",
-        startedAt,
-        apiCalls: params.apiCalls
-      }, void 0, findings);
+      const hints = buildAarsHintsFromFindings(findings, doc, issues2, getAarsRule2().rule);
+      const persist = () => {
+        persistSync(doc, issues2, hints, {
+          syncId,
+          mode: "live",
+          startedAt,
+          apiCalls: params.apiCalls
+        }, void 0, findings);
+        setSkippedSteps(params.skippedSteps);
+      };
       if (opts.lockHeld) persist();
       else withScriptLock(persist);
       updateJob(job.job_id, { phase: "DONE" });
@@ -5456,6 +6035,52 @@ var Server = (() => {
       rows: syncHistory().reverse()
     })));
   }
+  function getScanQueries(_p) {
+    return run(() => ({
+      steps: describeSyncSteps(),
+      specs: STEP_VAR_SPECS,
+      skippedSteps: getSkippedSteps2(),
+      hasCredentials: hasWizCredentials(),
+      limits: { maxListValues: MAX_LIST_VALUES, maxValueLen: MAX_VALUE_LEN },
+      // Named rather than folded into `variables`: the transport adds these to every request,
+      // so showing them as if they were configuration would invite someone to edit them.
+      transportVariables: ["first", "after", "quick"]
+    }));
+  }
+  function setScanVars2(p) {
+    return mutate(() => {
+      var _a4;
+      const params = p != null ? p : {};
+      const stepId = String((_a4 = params["stepId"]) != null ? _a4 : "");
+      if (!isEditableStep(stepId)) {
+        throw new Error(`${stepId || "That step"} does not take editable variables.`);
+      }
+      const proposed = cleanStepVars(stepId, params["vars"]);
+      const errors = validateStepVars(stepId, proposed);
+      if (errors.length) throw new Error(errors.join(" "));
+      setScanVars(stepId, proposed);
+      return { steps: describeSyncSteps() };
+    });
+  }
+  function testScanVars(p) {
+    return run(() => {
+      var _a4;
+      const params = p != null ? p : {};
+      const stepId = String((_a4 = params["stepId"]) != null ? _a4 : "");
+      if (!isEditableStep(stepId)) {
+        throw new Error(`${stepId || "That step"} does not take editable variables.`);
+      }
+      const proposed = cleanStepVars(stepId, params["vars"]);
+      const errors = validateStepVars(stepId, proposed);
+      if (errors.length) throw new Error(errors.join(" "));
+      if (!hasWizCredentials()) {
+        throw new Error(
+          "A test run calls Wiz, and no credentials are configured \u2014 this deployment is in dry-run. Add credentials in Settings to test a filter against the tenant."
+        );
+      }
+      return testStepVariables(stepId, proposed);
+    });
+  }
   function getSettings(_p) {
     return run(() => ({
       defaultDepth: getDefaultDepth2(),
@@ -5489,6 +6114,9 @@ var Server = (() => {
       version: stored.version,
       rule: stored.rule,
       defaults: DEFAULT_AARS_RULE,
+      // Whole rules the page can load into the draft. `defaults` above is the spec model and
+      // stays where it is (Reset reads it); presets are alternatives, not a fallback.
+      presets: { v2: AARS_V2_RULE },
       summary: ruleSummary(stored.rule),
       scoredVersion,
       // Only the point model can strand the persisted scores; bands re-derive on read, and
@@ -5573,6 +6201,12 @@ var Server = (() => {
         summary: ruleSummary(proposed),
         bandRanges: bandRanges(proposed.bands),
         shadowedGapRules: shadowedGapRules(proposed),
+        // A THIRD state, distinct from both shadowed and unexercised: the row names a code
+        // no derivation can raise, so it cannot fire in any tenant, not just this one.
+        unreachableGapRules: unreachableGapRules(proposed),
+        // How well the draft separates the estate — the number the band counts above cannot
+        // show, because a rule that gives every asset the same score still fills a band.
+        discrimination: ruleDiscrimination(after, proposed),
         // Coverage: how many gap instances each cascade row priced, what fell through to the
         // fallback, and the codes the estate carries. A row at 0 here is NOT the same claim
         // as shadowedGapRules — one can never fire, the other simply is not exercised — and

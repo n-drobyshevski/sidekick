@@ -6,13 +6,17 @@ import { describe, expect, it } from "vitest";
 import {
   buildAarsHintsFromFindings,
   dataExposureOf,
+  deriveAarsInput,
   enrichGraphDoc,
+  internetExposureOf,
   withExcessivePrivilegeNodes,
   withInternetExposureNodes,
   withMissingGuardrailNodes,
   withSensitiveDataNodes,
 } from "../src/domain/graphEnrich";
-import { DEFAULT_AARS_RULE } from "../src/domain/aars";
+import { DEFAULT_AARS_RULE, gapPointsFor, type AarsRule } from "../src/domain/aars";
+import { cleanAarsRule } from "../src/domain/aarsRule";
+import type { Severity } from "../src/domain/config";
 import type { FindingRow, GNode, GraphDoc, IssueRow } from "../src/domain/graphTypes";
 import { SEED_AARS_HINTS, SEED_ISSUES, seedGraphDoc } from "../src/server/sampleData";
 
@@ -184,6 +188,9 @@ describe("enrichGraphDoc", () => {
     expect(agentA.aarsInput).toEqual({
       gaps: [{ code: "LLM06" }, { code: "NO_GUARDRAIL" }],
       dataExposure: "SENSITIVE",
+      // Recorded even though the spec rule prices it at 0: pillar D must be re-priceable
+      // from the persisted input, exactly like the gaps beside it.
+      internetExposure: "NONE",
     });
   });
 
@@ -232,6 +239,125 @@ describe("enrichGraphDoc", () => {
     const agentA = doc.nodes.find((n) => n.id === "agent-a")!;
     expect(agentA.aars).toBe(62);
     expect(agentA.aarsSeverity).toBe("CRITICAL"); // HIGH under the default bands
+  });
+});
+
+// The three dead rows. Each of these codes is priced by DEFAULT_AARS_RULE's cascade and
+// emitted by nothing, so the rows can never fire — not shadowed, unreachable. Each source
+// is off by default, which is what keeps the applied table intact.
+describe("deriveAarsInput — gapSources", () => {
+  const node = (over: Partial<GNode>): GNode =>
+    ({ id: "n", kind: "AI_AGENT", name: "n", ...over }) as GNode;
+  const issue = (over: Partial<IssueRow>): IssueRow =>
+    ({
+      id: "i", ruleId: "r", ruleName: "r", comboGroup: "g",
+      nativeSeverity: "MEDIUM", adjustedSeverity: "HIGH", status: "OPEN",
+      assetId: "n", assetName: "n", ...over,
+    }) as IssueRow;
+  const codes = (input: { gaps: Array<{ code: string }> }) => input.gaps.map((g) => g.code);
+  const on = (over: Partial<AarsRule["gapSources"]>): AarsRule =>
+    cleanAarsRule({ ...DEFAULT_AARS_RULE, gapSources: { ...DEFAULT_AARS_RULE.gapSources, ...over } });
+
+  const withFiveRs = [issue({ frameworks: { owaspLlm: ["LLM06"], fiveRs: ["Restrict", "Reduce"] } })];
+
+  it("raises none of them under the spec rule", () => {
+    expect(codes(deriveAarsInput(node({ status: "Deprecated" }), withFiveRs)))
+      .toEqual(["LLM06"]);
+    expect(codes(deriveAarsInput(node({ status: "Inactive" }), withFiveRs)))
+      .toEqual(["LLM06"]);
+  });
+
+  it("fiveRs turns the issue's 5Rs mapping into codes the cascade already prices", () => {
+    const got = codes(deriveAarsInput(node({}), withFiveRs, on({ fiveRs: true })));
+    expect(got).toContain("5R_RESTRICT");
+    expect(got).toContain("5R_REDUCE");
+    // And those land on the default cascade's `prefix 5R` row rather than the fallback.
+    expect(gapPointsFor("5R_RESTRICT", DEFAULT_AARS_RULE)).toBe(5);
+  });
+
+  it("deprecatedModel reads the asset's own status, and only that status", () => {
+    expect(codes(deriveAarsInput(node({ status: "Deprecated" }), [], on({ deprecatedModel: true }))))
+      .toEqual(["DEPRECATED_MODEL"]);
+    expect(codes(deriveAarsInput(node({ status: "Active" }), [], on({ deprecatedModel: true }))))
+      .toEqual([]);
+  });
+
+  it("inactiveAgent flags the dormant-but-privileged agent (ASI10)", () => {
+    expect(codes(deriveAarsInput(node({ status: "Inactive" }), [], on({ inactiveAgent: true }))))
+      .toEqual(["INACTIVE_AGENT"]);
+  });
+
+  it("matches status case-insensitively — the sheet round-trips free text", () => {
+    expect(codes(deriveAarsInput(node({ status: "  inactive " }), [], on({ inactiveAgent: true }))))
+      .toEqual(["INACTIVE_AGENT"]);
+  });
+});
+
+describe("buildAarsHintsFromFindings — findingSeverityWeights", () => {
+  const doc: GraphDoc = {
+    nodes: [{ id: "n", kind: "AI_AGENT", name: "n" }],
+    edges: [],
+    syncedAt: T,
+  };
+  const finding = (severity: Severity, code: string): FindingRow =>
+    ({ id: `f-${code}`, resourceId: "n", ruleShortId: code, severity, frameworkCodes: [code] });
+
+  it("adds no per-gap override at the spec weights, so the input stays byte-identical", () => {
+    const hints = buildAarsHintsFromFindings([finding("CRITICAL", "SUB-082")], doc, []);
+    expect(hints["n"]!.gaps).toEqual([{ code: "SUB-082" }]);
+  });
+
+  it("prices a CRITICAL failing control above a LOW one once weights are tuned", () => {
+    const rule = cleanAarsRule({
+      ...DEFAULT_AARS_RULE,
+      findingSeverityWeights: { CRITICAL: 2, HIGH: 1.5, MEDIUM: 1, LOW: 0.5 },
+    });
+    const hints = buildAarsHintsFromFindings(
+      [finding("CRITICAL", "SUB-082"), finding("LOW", "SUB-114")],
+      doc,
+      [],
+      rule,
+    );
+    // Both fall to the cascade's fallback of 5, then take their weight.
+    expect(hints["n"]!.gaps).toEqual([{ code: "SUB-082", points: 10 }, { code: "SUB-114", points: 3 }]);
+  });
+
+  it("weights a code by the WORST finding that contributed it", () => {
+    const rule = cleanAarsRule({
+      ...DEFAULT_AARS_RULE,
+      findingSeverityWeights: { CRITICAL: 2, HIGH: 1, MEDIUM: 1, LOW: 1 },
+    });
+    const hints = buildAarsHintsFromFindings(
+      [finding("LOW", "SUB-082"), { ...finding("CRITICAL", "SUB-082"), id: "f2" }],
+      doc,
+      [],
+      rule,
+    );
+    expect(hints["n"]!.gaps).toEqual([{ code: "SUB-082", points: 10 }]);
+  });
+});
+
+describe("internetExposureOf", () => {
+  const node = (over: Partial<GNode>): GNode =>
+    ({ id: "a", kind: "AI_AGENT", name: "a", ...over }) as GNode;
+
+  it("reads a confirmed exposure from either flag", () => {
+    expect(internetExposureOf(node({ isAccessibleFromInternet: true }))).toBe("CONFIRMED");
+    expect(internetExposureOf(node({ isOpenToAllInternet: true }))).toBe("CONFIRMED");
+  });
+
+  it("keeps an unevaluated hosted agent UNDETERMINED — never CONFIRMED, never NONE", () => {
+    expect(internetExposureOf(node({ isAccessibleFromInternet: null }))).toBe("UNDETERMINED");
+    expect(internetExposureOf(node({}))).toBe("UNDETERMINED");
+    expect(
+      internetExposureOf(node({ isAccessibleFromInternet: false, isOpenToAllInternet: null })),
+    ).toBe("UNDETERMINED");
+  });
+
+  it("is NONE only when both flags are explicitly false", () => {
+    expect(
+      internetExposureOf(node({ isAccessibleFromInternet: false, isOpenToAllInternet: false })),
+    ).toBe("NONE");
   });
 });
 

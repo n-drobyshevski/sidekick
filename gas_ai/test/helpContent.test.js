@@ -26,7 +26,7 @@ import { lookupGap } from "../src/client/js/codebook.js";
 // asserts against a fiction — which is exactly how the band-threshold resolver shipped
 // reading upper-case keys off a lower-case object and silently degrading to "not counted
 // here" on every deployment.
-import { DEFAULT_AARS_RULE } from "../src/domain/aars";
+import { DEFAULT_AARS_RULE, computeAars } from "../src/domain/aars";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (p) => readFileSync(join(root, p), "utf8");
@@ -130,6 +130,54 @@ describe("the entry list", () => {
       expect(typeof e.mark, e.id).toBe("function");
       expect(e.blurb.length, e.id).toBeGreaterThan(40);
       expect(e.term.length, e.id).toBeGreaterThan(0);
+    }
+  });
+});
+
+// The prose is the part of this page that rots silently. Nothing about a definition that
+// has quietly become false makes the app throw, fail a type check, or look wrong — so the
+// facts the copy states about the model are asserted against the model itself.
+//
+// This block exists because the page shipped saying "three pillars" and main added a
+// fourth (D, internet reachability) in the same window. No test caught it: every route
+// still resolved, every code still existed, every resolver still answered.
+describe("the prose, against the model it describes", () => {
+  const PILLAR_WORDS = ["no", "one", "two", "three", "four", "five", "six"];
+
+  /** The pillars the scoring model actually reports, read off a real score. */
+  function modelPillars() {
+    const result = computeAars(
+      { issueSeverities: ["HIGH"], gaps: [{ code: "LLM06" }], dataExposure: "NONE" },
+      DEFAULT_AARS_RULE,
+    );
+    return Object.keys(result.pillars);
+  }
+
+  it("names one entry per pillar the model reports", () => {
+    const pillars = modelPillars();
+    const entries = ENTRIES.filter((e) => /^pillar-[a-z]$/.test(e.id)).map((e) => e.id);
+    expect(entries.length, "pillars in the model: " + pillars.join(", ")).toBe(pillars.length);
+  });
+
+  it("counts the pillars correctly in the score's own definition", () => {
+    const word = PILLAR_WORDS[modelPillars().length];
+    const aars = ENTRIES.find((e) => e.id === "aars");
+    expect(aars.blurb).toContain(word + " pillars");
+  });
+
+  // The figure's callout copy makes the same claim, from a different file.
+  it("counts the pillars correctly in the figure callouts", () => {
+    const word = PILLAR_WORDS[modelPillars().length];
+    const claims = [...HELP_PAGE_JS.matchAll(/(\w+) pillars/g)].map((m) => m[1]);
+    expect(claims.length).toBeGreaterThan(0);
+    for (const claim of claims) expect(claim).toBe(word);
+  });
+
+  it("does not describe a rule knob the model no longer has", () => {
+    // Every knob the copy names by its own spelling must still be a field on the rule.
+    const named = ["multiIssueScaling", "gapAggregation", "gapSources", "exposurePoints"];
+    for (const knob of named) {
+      expect(Object.prototype.hasOwnProperty.call(DEFAULT_AARS_RULE, knob), knob).toBe(true);
     }
   });
 });

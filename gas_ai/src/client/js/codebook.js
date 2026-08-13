@@ -27,8 +27,15 @@ export const CODEBOOK = [
     group: "OWASP LLM Top 10",
     vintage: "2025 edition",
     standing:
-      "Published. A 2026 edition renumbers eight of the ten entries — this model is written " +
-      "against 2025, so a code here means what 2025 says it means.",
+      "Published. The 2026 edition (released 3 August 2026) renumbers eight of the ten " +
+      "entries — this model is written against 2025, so a code here means what 2025 says it " +
+      "means. Five codes MEAN DIFFERENT THINGS across the two vintages, and two pairs " +
+      "effectively swap: 2025 LLM03 Supply Chain → 2026 LLM04, while 2026 LLM03 is Excessive " +
+      "Agency (2025 LLM06); 2025 LLM05 Improper Output Handling → 2026 LLM10, while 2026 LLM05 " +
+      "is Data and Model Poisoning (2025 LLM04); 2025 LLM07 System Prompt Leakage → 2026 LLM08, " +
+      "renamed Hidden Context Exposure; 2025 LLM10 Unbounded Consumption → 2026 LLM06. Only " +
+      "LLM01 and LLM02 keep their number. A connector emitting 2026 codes into this cascade " +
+      "would be priced against the wrong risk — check the vintage before trusting a code.",
     entries: [
       ["LLM01", "Prompt Injection", "Crafted input alters the model's behaviour, bypassing its instructions or safety rules."],
       ["LLM02", "Sensitive Information Disclosure", "The model reveals PII, secrets or proprietary data in its output."],
@@ -46,14 +53,17 @@ export const CODEBOOK = [
     group: "OWASP Agentic (ASI)",
     vintage: "2026 edition",
     standing:
-      "Published 1.0. Supersedes an earlier, differently numbered T1–T15 threat list that is " +
-      "still in circulation, so a scanner emitting T13 means roughly what ASI10 means here.",
+      "Published 1.0 (announced December 2025). It does NOT supersede the T-numbered list: " +
+      "“Agentic AI — Threats and Mitigations” is a parallel companion, updated to v1.1 in the " +
+      "same release and now running T1–T17, not T1–T15. The two are different layers — ASI is " +
+      "the ranked risk list, T is the granular attack pathway — and OWASP ships the official " +
+      "cross-map in ASI 2026 Appendix A. A scanner emitting T13 spans ASI10 and ASI04.",
     entries: [
       ["ASI01", "Agent Goal Hijack", "Untrusted content redirects the agent's objective while it believes it serves the user."],
       ["ASI02", "Tool Misuse & Exploitation", "Legitimate tools weaponised via deceptive input, poisoned metadata or unsafe chaining."],
       ["ASI03", "Identity & Privilege Abuse", "Over-broad delegated credentials turn any hijack into unauthorised action."],
-      ["ASI04", "Agentic Supply Chain", "Compromised frameworks, MCP servers or tool schemas the agent dynamically trusts."],
-      ["ASI05", "Unexpected Code Execution", "Agent-generated or agent-triggered code runs outside its sandbox or validation boundary."],
+      ["ASI04", "Agentic Supply Chain Vulnerabilities", "Compromised frameworks, MCP servers or tool schemas the agent dynamically trusts."],
+      ["ASI05", "Unexpected Code Execution (RCE)", "Agent-generated or agent-triggered code runs outside its sandbox or validation boundary."],
       ["ASI06", "Memory & Context Poisoning", "Data planted in persistent memory or retrieval steers behaviour in later sessions."],
       ["ASI07", "Insecure Inter-Agent Communication", "Agent-to-agent messages spoofed, replayed or tampered with for lack of auth."],
       ["ASI08", "Cascading Failures", "One agent's error or compromise fans out through connected workflows at scale."],
@@ -103,10 +113,14 @@ export const CODEBOOK = [
     vintage: "synthesised on sync",
     standing:
       "Not a framework code. The enrichment pass raises these itself, so they are stable by " +
-      "definition and change only when this app changes.",
+      "definition and change only when this app changes. NO_GUARDRAIL is always raised; " +
+      "DEPRECATED_MODEL and INACTIVE_AGENT are read off the asset's own status and only " +
+      "reach the cascade when their gap source is switched on in the rule — until then a " +
+      "row pricing them can never fire.",
     entries: [
       ["NO_GUARDRAIL", "No guardrail attached", "Guardrail coverage flagged the asset — the LLM01 / ASI01 gap."],
       ["DEPRECATED_MODEL", "Deprecated model", "The asset runs a model the provider has retired, e.g. text-embedding-005."],
+      ["INACTIVE_AGENT", "Dormant agent", "Inactive, but still holding its privileges and data reach — the ASI10 Rogue Agents shape."],
     ],
   },
   {

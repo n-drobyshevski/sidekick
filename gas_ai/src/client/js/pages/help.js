@@ -257,7 +257,7 @@ const CALLOUTS = [
   {
     parts: ["aars"],
     title: "The AARS score",
-    text: "0 to 100 across three pillars. Its band is set on the AARS Rules page and applies retroactively.",
+    text: "0 to 100 across four pillars. Its band is set on the AARS Rules page and applies retroactively.",
     term: "aars",
   },
   {

@@ -314,6 +314,37 @@
 .impact-row__delta { font-variant-numeric: tabular-nums; min-width: 46px; text-align: right; }
 .impact-headline { margin: 0 0 12px; max-width: var(--measure); }
 
+/* --- separation read-out ------------------------------------------------------------- */
+/* Same three-column rhythm as .impact-row above, so the two blocks read as one pane
+   rather than two widgets that happen to be stacked. The hint sits on its own line: it
+   is a sentence, not a number, and squeezing it into a column would truncate it. */
+.diag-list { display: flex; flex-direction: column; gap: 2px; margin: 10px 0 12px; }
+.diag-row {
+  display: grid; grid-template-columns: 1fr auto; align-items: baseline;
+  gap: 6px 10px; padding: 5px 0; font-size: 12px;
+  border-bottom: 1px solid var(--hairline);
+}
+.diag-row:last-child { border-bottom: none; }
+.diag-row__label { color: var(--text-2); }
+.diag-row__value { font-variant-numeric: tabular-nums; color: var(--ink); text-align: right; }
+.diag-row__hint { grid-column: 1 / -1; }
+
+/* A saturated pillar is the same class of statement as the stale-data banner below —
+   "what you are looking at is not doing what it appears to" — so it reuses .notice.warn's
+   palette rather than introducing a second warning colour. It carries its own glyph
+   element (not .notice's ::before) because the text wraps to several lines here and the
+   mark has to stay at the top of the block rather than centred against it. */
+.diag-warn {
+  display: flex; gap: 8px; align-items: flex-start;
+  margin: 8px 0 0; padding: 10px 12px;
+  max-width: var(--measure);
+  color: var(--warn);
+  background: rgba(161, 98, 7, 0.10);
+  border: 1px solid rgba(161, 98, 7, 0.30);
+  border-radius: var(--radius-lg);
+}
+.diag-warn__mark { flex: none; line-height: 1.45; }
+
 /* Two deliberate lines per mover — the name can be long, and wrapping the transition
    under it beats letting a 400px pane break the chips at an arbitrary point. */
 .mover-list { display: flex; flex-direction: column; }
