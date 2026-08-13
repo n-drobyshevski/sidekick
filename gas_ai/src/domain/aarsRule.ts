@@ -12,9 +12,12 @@ import {
   type AarsBands,
   type AarsRule,
   type DataExposure,
+  type GapAggregation,
   type GapMatch,
   type GapPointRule,
+  type InternetExposure,
   type IssueSeverityKey,
+  type MultiIssueScaling,
 } from "./aars";
 import { clampInt } from "./util";
 
@@ -30,6 +33,7 @@ export const MAX_GAP_RULES = 60;
 
 const SEVERITY_KEYS: IssueSeverityKey[] = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
 const EXPOSURE_KEYS: DataExposure[] = ["SENSITIVE", "DATA_ACCESS", "NONE"];
+const INTERNET_EXPOSURE_KEYS: InternetExposure[] = ["CONFIRMED", "UNDETERMINED", "NONE"];
 const BAND_KEYS: Array<keyof AarsBands> = ["critical", "high", "medium", "low"];
 const BAND_LABELS: Record<keyof AarsBands, string> = {
   critical: "CRITICAL",
@@ -88,6 +92,17 @@ export function cleanAarsRule(raw: unknown): AarsRule {
     );
   }
 
+  const expoRaw = rec(r["exposurePoints"]);
+  const exposurePoints = {} as Record<InternetExposure, number>;
+  for (const k of INTERNET_EXPOSURE_KEYS) {
+    exposurePoints[k] = clampInt(
+      expoRaw[k],
+      DEFAULT_AARS_RULE.exposurePoints[k],
+      POINTS_MIN,
+      POINTS_MAX,
+    );
+  }
+
   const bandRaw = rec(r["bands"]);
   const bands = {} as AarsBands;
   for (const k of BAND_KEYS) {
@@ -99,12 +114,18 @@ export function cleanAarsRule(raw: unknown): AarsRule {
     ? gapsRaw.map(cleanGapRule).filter((g): g is GapPointRule => g !== null).slice(0, MAX_GAP_RULES)
     : DEFAULT_AARS_RULE.gapPoints.map((g) => ({ ...g }));
 
+  // An unreadable mode falls back to the SPEC mode, never to the newer one: a rule blob
+  // written before these fields existed must keep scoring exactly as it did.
+  const multiIssueScaling: MultiIssueScaling = r["multiIssueScaling"] === "log2" ? "log2" : "flat";
+  const gapAggregation: GapAggregation = r["gapAggregation"] === "rss" ? "rss" : "sum";
+
   return {
     severityPoints,
     multiIssueMultiplier: clampMultiplier(
       r["multiIssueMultiplier"],
       DEFAULT_AARS_RULE.multiIssueMultiplier,
     ),
+    multiIssueScaling,
     pillarACap: clampInt(r["pillarACap"], DEFAULT_AARS_RULE.pillarACap, POINTS_MIN, POINTS_MAX),
     gapPoints,
     gapFallbackPoints: clampInt(
@@ -113,9 +134,11 @@ export function cleanAarsRule(raw: unknown): AarsRule {
       POINTS_MIN,
       POINTS_MAX,
     ),
+    gapAggregation,
     pillarBCap: clampInt(r["pillarBCap"], DEFAULT_AARS_RULE.pillarBCap, POINTS_MIN, POINTS_MAX),
     dataExposurePoints,
     dataAmplifier: clampMultiplier(r["dataAmplifier"], DEFAULT_AARS_RULE.dataAmplifier),
+    exposurePoints,
     bands,
   };
 }
@@ -138,6 +161,23 @@ export function validateAarsRule(rule: AarsRule): string[] {
           `land in ${BAND_LABELS[lower]}.`,
       );
     }
+  }
+
+  // UNDETERMINED means "nobody has checked", so pricing it at or above a CONFIRMED
+  // exposure would make not knowing worse than knowing the answer is yes — and would
+  // reward leaving a hosted agent unexamined. Zero-vs-zero (pillar D off) is fine.
+  const { CONFIRMED, UNDETERMINED, NONE } = rule.exposurePoints;
+  if (UNDETERMINED > CONFIRMED) {
+    errors.push(
+      `Undetermined internet exposure (${UNDETERMINED}) must not score above confirmed ` +
+        `exposure (${CONFIRMED}) — "we haven't checked" cannot outrank "yes, it is reachable".`,
+    );
+  }
+  if (NONE > UNDETERMINED) {
+    errors.push(
+      `No internet exposure (${NONE}) must not score above undetermined exposure ` +
+        `(${UNDETERMINED}).`,
+    );
   }
 
   if (!rule.gapPoints.length) {
@@ -267,15 +307,35 @@ export function ruleSummary(rule: AarsRule): string[] {
     String(Math.round(rule.dataExposurePoints[k] * rule.dataAmplifier)),
   ).join(" / ");
 
+  const countClause =
+    rule.multiIssueScaling === "log2"
+      ? `each doubling of the open-issue count multiplies that by a further ` +
+        `×${rule.multiIssueMultiplier} step (two issues ×${rule.multiIssueMultiplier}, ` +
+        `four ×${(1 + (rule.multiIssueMultiplier - 1) * 2).toFixed(2)}, ` +
+        `eight ×${(1 + (rule.multiIssueMultiplier - 1) * 3).toFixed(2)})`
+      : `more than one open issue multiplies that by ×${rule.multiIssueMultiplier}, ` +
+        `however many there are`;
+  const gapClause =
+    rule.gapAggregation === "rss"
+      ? `matched prices combine as a root-sum-square, so each further gap adds less than the last`
+      : `matched prices are added up`;
+
   return [
     `Pillar A — toxic combinations, capped at ${rule.pillarACap}. The asset's worst open ` +
-      `issue scores ${sev}; more than one open issue multiplies that by ` +
-      `×${rule.multiIssueMultiplier}, however many there are.`,
+      `issue scores ${sev}; ${countClause}.`,
     `Pillar B — compliance gaps, capped at ${rule.pillarBCap}. ${rule.gapPoints.length} ` +
       `pricing rules are tried in order, first match wins; an unmatched code scores ` +
-      `${pointsPhrase(rule.gapFallbackPoints)}.`,
+      `${pointsPhrase(rule.gapFallbackPoints)}. ${gapClause[0]!.toUpperCase()}${gapClause.slice(1)}.`,
     `Pillar C — data exposure: ${exposure}, all amplified by ×${rule.dataAmplifier} ` +
       `(→ ${amplified}).`,
+    rule.exposurePoints.CONFIRMED === 0 &&
+    rule.exposurePoints.UNDETERMINED === 0 &&
+    rule.exposurePoints.NONE === 0
+      ? `Pillar D — internet exposure scores nothing; reachability is reported beside the ` +
+        `score but never added to it.`
+      : `Pillar D — internet exposure: confirmed ${rule.exposurePoints.CONFIRMED}, ` +
+        `undetermined ${rule.exposurePoints.UNDETERMINED}, none ${rule.exposurePoints.NONE}. ` +
+        `Not amplified — the 5Rs signal says nothing about reachability.`,
     `Levels — CRITICAL at ${rule.bands.critical} and above, HIGH from ${rule.bands.high}, ` +
       `MEDIUM from ${rule.bands.medium}, LOW from ${rule.bands.low}, INFO below that. ` +
       `Scores are clamped to 100.`,

@@ -10,9 +10,10 @@ import {
   type AarsInput,
   type AarsRule,
   type DataExposure,
+  type InternetExposure,
 } from "./aars";
 import type { Severity } from "./config";
-import { conditionHolds } from "./riskConditions";
+import { conditionHolds, conditionState } from "./riskConditions";
 import type { ConditionKey } from "./toxicCombos";
 import {
   AI_ASSET_KINDS,
@@ -29,6 +30,13 @@ import { groupBy, indexBy, pushInto } from "./util";
 export interface AarsHint {
   gaps: AarsGap[];
   dataExposure: DataExposure;
+  /**
+   * Optional because persisted `aars_input_json` blobs written before pillar D existed do
+   * not carry it. Absent means "not recorded", NOT "not exposed" — enrichGraphDoc falls
+   * back to re-deriving it from the node rather than defaulting it to NONE, so an upgrade
+   * does not silently declare the whole estate unreachable.
+   */
+  internetExposure?: InternetExposure;
 }
 export type AarsHints = Record<string, AarsHint>;
 
@@ -50,6 +58,22 @@ function worstSeverity(severities: Severity[]): Severity | undefined {
 export function dataExposureOf(node: GNode): DataExposure {
   if (node.hasAccessToSensitiveData || node.hasSensitiveData) return "SENSITIVE";
   if (node.hasHighPrivileges || node.hasAdminPrivileges) return "DATA_ACCESS";
+  return "NONE";
+}
+
+/**
+ * Internet reachability (AARS pillar D) through the SAME predicate the graph topology and
+ * the Toxic Combinations matrix read (riskConditions.conditionState). Going through that
+ * table rather than reading the flags here is the point: those two consumers used to
+ * disagree about exposure, and a third private reading would re-open exactly that bug.
+ *
+ * `null` — reachability inherited from the underlying compute and never evaluated — maps to
+ * UNDETERMINED, never to CONFIRMED and never to NONE.
+ */
+export function internetExposureOf(node: GNode): InternetExposure {
+  const state = conditionState(node, "INTERNET_EXPOSURE");
+  if (state === true) return "CONFIRMED";
+  if (state === null) return "UNDETERMINED";
   return "NONE";
 }
 
@@ -77,6 +101,7 @@ export function deriveAarsInput(node: GNode, nodeIssues: IssueRow[]): AarsInput 
     issueSeverities: nodeIssues.map((i) => i.nativeSeverity),
     gaps,
     dataExposure,
+    internetExposure: internetExposureOf(node),
   };
 }
 
@@ -115,7 +140,11 @@ export function buildAarsHintsFromFindings(
         gaps.push(gap(c));
       }
     }
-    hints[resourceId] = { gaps, dataExposure: base.dataExposure };
+    hints[resourceId] = {
+      gaps,
+      dataExposure: base.dataExposure,
+      internetExposure: base.internetExposure,
+    };
   }
   return hints;
 }
@@ -153,8 +182,14 @@ export function enrichGraphDoc(
       node.kind !== "SUMMARY" &&
       (AI_ASSET_KINDS.includes(node.kind) || nodeIssues.length > 0 || hint !== undefined);
     if (scorable) {
-      const input = hint
-        ? { issueSeverities: nodeIssues.map((i) => i.nativeSeverity), ...hint }
+      const input: AarsInput = hint
+        ? {
+            issueSeverities: nodeIssues.map((i) => i.nativeSeverity),
+            ...hint,
+            // A hint written before pillar D existed carries no exposure; re-derive it
+            // rather than let `undefined` read as NONE.
+            internetExposure: hint.internetExposure ?? internetExposureOf(node),
+          }
         : deriveAarsInput(node, nodeIssues);
       const result = computeAars(input, rule);
       node.aars = result.score;
@@ -162,7 +197,11 @@ export function enrichGraphDoc(
       node.aarsPillars = result.pillars;
       // Keep the inputs beside the score so a later rule change can re-price exactly
       // these gaps rather than re-deriving a fresh, possibly different, set of them.
-      node.aarsInput = { gaps: input.gaps, dataExposure: input.dataExposure };
+      node.aarsInput = {
+        gaps: input.gaps,
+        dataExposure: input.dataExposure,
+        internetExposure: input.internetExposure,
+      };
     }
     return node;
   });

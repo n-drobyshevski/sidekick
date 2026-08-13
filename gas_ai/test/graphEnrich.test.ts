@@ -7,6 +7,7 @@ import {
   buildAarsHintsFromFindings,
   dataExposureOf,
   enrichGraphDoc,
+  internetExposureOf,
   withExcessivePrivilegeNodes,
   withInternetExposureNodes,
   withMissingGuardrailNodes,
@@ -184,6 +185,9 @@ describe("enrichGraphDoc", () => {
     expect(agentA.aarsInput).toEqual({
       gaps: [{ code: "LLM06" }, { code: "NO_GUARDRAIL" }],
       dataExposure: "SENSITIVE",
+      // Recorded even though the spec rule prices it at 0: pillar D must be re-priceable
+      // from the persisted input, exactly like the gaps beside it.
+      internetExposure: "NONE",
     });
   });
 
@@ -232,6 +236,30 @@ describe("enrichGraphDoc", () => {
     const agentA = doc.nodes.find((n) => n.id === "agent-a")!;
     expect(agentA.aars).toBe(62);
     expect(agentA.aarsSeverity).toBe("CRITICAL"); // HIGH under the default bands
+  });
+});
+
+describe("internetExposureOf", () => {
+  const node = (over: Partial<GNode>): GNode =>
+    ({ id: "a", kind: "AI_AGENT", name: "a", ...over }) as GNode;
+
+  it("reads a confirmed exposure from either flag", () => {
+    expect(internetExposureOf(node({ isAccessibleFromInternet: true }))).toBe("CONFIRMED");
+    expect(internetExposureOf(node({ isOpenToAllInternet: true }))).toBe("CONFIRMED");
+  });
+
+  it("keeps an unevaluated hosted agent UNDETERMINED — never CONFIRMED, never NONE", () => {
+    expect(internetExposureOf(node({ isAccessibleFromInternet: null }))).toBe("UNDETERMINED");
+    expect(internetExposureOf(node({}))).toBe("UNDETERMINED");
+    expect(
+      internetExposureOf(node({ isAccessibleFromInternet: false, isOpenToAllInternet: null })),
+    ).toBe("UNDETERMINED");
+  });
+
+  it("is NONE only when both flags are explicitly false", () => {
+    expect(
+      internetExposureOf(node({ isAccessibleFromInternet: false, isOpenToAllInternet: false })),
+    ).toBe("NONE");
   });
 });
 

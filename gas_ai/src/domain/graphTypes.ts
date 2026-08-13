@@ -2,7 +2,7 @@
 // synthetic issue/summary nodes) and typed edges (the Wiz security-graph relationship
 // vocabulary, from ai/ai_agents_discovery_queries.md and ai/queries/*).
 
-import type { AarsGap, DataExposure } from "./aars";
+import type { AarsGap, DataExposure, InternetExposure } from "./aars";
 import type { AarsSeverity, Severity } from "./config";
 import { SEVERITY_ORDER } from "./config";
 
@@ -150,7 +150,7 @@ export interface GNode {
   severity?: Severity;      // worst attached open-issue severity (ISSUE nodes: own severity)
   aars?: number;            // AI Asset Risk Score 0–100 (AI assets only)
   aarsSeverity?: AarsSeverity;
-  aarsPillars?: { toxic: number; compliance: number; data: number };
+  aarsPillars?: { toxic: number; compliance: number; data: number; exposure?: number };
   /**
    * What the score was computed FROM, minus the issue severities (those stay in the issues
    * tab and are read back from it). Persisted because the inputs are not otherwise
@@ -158,7 +158,12 @@ export interface GNode {
    * sync from findings that may since have changed. Re-pricing these under a new rule is
    * what "recompute" means — re-deriving them would answer a different question.
    */
-  aarsInput?: { gaps: AarsGap[]; dataExposure: DataExposure };
+  aarsInput?: {
+    gaps: AarsGap[];
+    dataExposure: DataExposure;
+    /** Absent on rows persisted before pillar D existed; re-derived on the next enrich. */
+    internetExposure?: InternetExposure;
+  };
   comboGroups?: string[];   // toxic-combination group ids this node participates in
   // SUMMARY nodes only:
   summaryOf?: NodeKind;
