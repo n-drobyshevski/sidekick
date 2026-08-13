@@ -62,9 +62,12 @@ function git(root, args) {
 function commitStamp(root) {
   try {
     const sha = git(root, ["rev-parse", "--short", "HEAD"]);
+    // Dirtiness of src/ ONLY, matching what sourceStamp hashes. dist/ is tracked in this
+    // repo (it enables no-toolchain deployment), and the build writes it — so a whole-tree
+    // check reports "-dirty" on every single build, which would make the flag meaningless.
     let dirty = false;
     try {
-      dirty = git(root, ["status", "--porcelain"]).length > 0;
+      dirty = git(root, ["status", "--porcelain", "--", "src"]).length > 0;
     } catch { /* status can fail in odd checkouts; the SHA alone is still useful */ }
     return { commit: sha + (dirty ? "-dirty" : ""), date: git(root, ["log", "-1", "--format=%cI"]) };
   } catch {
