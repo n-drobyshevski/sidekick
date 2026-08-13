@@ -103,6 +103,11 @@ export function getJob(jobId: string): JobRow | null {
 
 const TERMINAL: JobPhase[] = ["DONE", "FAILED", "CANCELLED"];
 
+/** Whether a phase is an end state — the single definition activeJob() and Stop both read. */
+export function isTerminalPhase(phase: JobPhase): boolean {
+  return TERMINAL.includes(phase);
+}
+
 /** No progress for this long with no live continuation = the job died mid-flight. */
 export const STALE_JOB_MS = 30 * 60_000;
 
@@ -163,5 +168,5 @@ export function lastJobOfKind(kind: JobKind): JobRow | null {
 
 /** The single in-flight job, or null (jobs are single-flight across kinds). */
 export function activeJob(): JobRow | null {
-  return listJobs().find((j) => !TERMINAL.includes(j.phase)) ?? null;
+  return listJobs().find((j) => !isTerminalPhase(j.phase)) ?? null;
 }

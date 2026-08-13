@@ -41,7 +41,7 @@ import * as archive from "./archiveStore";
 import * as errorLog from "./errorLog";
 import * as findings from "./findings";
 import * as history from "./historyStore";
-import { activeJob, getJob } from "./jobsStore";
+import { activeJob, getJob, isStaleJob, isTerminalPhase, type JobRow } from "./jobsStore";
 import * as ledgerStore from "./ledgerStore";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
 import { hasWizCredentials } from "./props";
@@ -169,8 +169,23 @@ function bootstrapCore(): Rec {
   };
 }
 
+/**
+ * A JobRow for the client, plus a server-computed `stale`. The client used to infer "stuck"
+ * by comparing `updated_at` against the *browser's* clock, which makes a wedged job look
+ * healthy (or a healthy one look wedged) on any machine whose clock is off. Staleness is a
+ * property of the job, so the server — which owns both the timestamp and the threshold in
+ * jobsStore.isStaleJob — is the one that should decide it.
+ */
+function jobSummary(job: JobRow | null): Rec | null {
+  if (!job) return null;
+  return {
+    ...(job as unknown as Rec),
+    stale: !isTerminalPhase(job.phase) && isStaleJob(job),
+  };
+}
+
 function activeJobSummary(): Rec | null {
-  return (activeJob() as unknown as Rec) ?? null;
+  return jobSummary(activeJob());
 }
 
 // ------------------------------------------------------------------------- findings
@@ -1476,7 +1491,7 @@ export function runScan(p?: unknown): ApiResult {
 export function getJobStatus(p?: unknown): ApiResult {
   return run(() => {
     const jobId = String((p as Rec)?.["jobId"] ?? "");
-    return jobId ? getJob(jobId) : activeJobSummary();
+    return jobId ? jobSummary(getJob(jobId)) : activeJobSummary();
   });
 }
 
