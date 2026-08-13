@@ -21,7 +21,7 @@ import { bootstrap, navigate, setParams, swrCall } from "../store.js";
 import { dueChip, fwTags, openAssetSheet, openIssueSheet } from "../detailSheets.js";
 import { kindIconSvg, kindLabel, categoryOf } from "../icons.js";
 import {
-  clear, el, emptyState, errorState, kpiCard, pager, sectionLabel, sevBadge, sevKeyRow,
+  clear, dataTable, el, emptyState, errorState, kpiCard, pager, sectionLabel, sevBadge, sevKeyRow,
   sevSegmentBar, sevSpoken, skeleton,
 } from "../ui.js";
 import {
@@ -657,49 +657,30 @@ export async function renderCombos(main, params) {
       { key: null, label: "Projects", cell: (i) => (i.projects || []).join(", ") || "—" },
     ];
 
-    const headRow = el("tr", {});
-    for (const col of COLS) {
-      if (!col.key) {
-        headRow.append(el("th", {}, col.label));
-        continue;
-      }
-      const active = view.sort === col.key;
-      const descending = ISSUE_SORT_DESC[col.key] ? view.dir === 1 : view.dir === -1;
-      const th = el("th", {},
-        el("button", {
-          class: "th-sort",
-          onclick: () => {
-            view.dir = view.sort === col.key ? -view.dir : 1;
-            view.sort = col.key;
-            view.page = 0;
-            persist();
-            renderIssues(group, mount, issueRows.get(group.id) || []);
-          },
-        }, col.label, active ? (descending ? " ▼" : " ▲") : ""));
-      if (active) th.setAttribute("aria-sort", descending ? "descending" : "ascending");
-      headRow.append(th);
-    }
+    // `dir` is 1/-1 against each column's natural first-click order (ISSUE_SORT_DESC),
+    // which is this page's convention and is unit-tested in comboView.test.js. The shared
+    // table only needs to know which way the active column currently reads.
+    const descending = view.sort && (ISSUE_SORT_DESC[view.sort] ? view.dir === 1 : view.dir === -1);
 
-    const tbody = el("tbody", {});
-    for (const issue of rows) {
-      tbody.append(el("tr", {
-        class: "clickable",
-        tabindex: "0",
-        role: "button",
-        "aria-label": "Issue on " + issue.assetName,
-        onclick: () => openIssueSheet(issue.id),
-        onkeydown: (e) => {
-          if (e.key === "Enter") openIssueSheet(issue.id);
-        },
-      }, ...COLS.map((col) => el("td", {}, col.cell(issue)))));
-    }
-    if (!rows.length) {
-      tbody.append(el("tr", {},
-        el("td", { colspan: String(COLS.length), class: "combo-issues-empty" },
-          "No issue in this pattern matches the current filters.")));
-    }
-
-    return el("div", { class: "table-wrap" },
-      el("table", { class: "data" }, el("thead", {}, headRow), tbody));
+    return dataTable({
+      columns: COLS.map((col, i) => ({
+        key: col.key || `col-${i}`,
+        label: col.label,
+        sortable: !!col.key,
+        cell: col.cell,
+      })),
+      rows,
+      sort: view.sort ? { key: view.sort, descending } : null,
+      onSort: (key) => {
+        view.dir = view.sort === key ? -view.dir : 1;
+        view.sort = key;
+        view.page = 0;
+        persist();
+        renderIssues(group, mount, issueRows.get(group.id) || []);
+      },
+      onRowOpen: (issue) => openIssueSheet(issue.id),
+      rowLabel: (issue) => "Issue on " + issue.assetName,
+      emptyText: "No issue in this pattern matches the current filters.",
+    });
   }
 }

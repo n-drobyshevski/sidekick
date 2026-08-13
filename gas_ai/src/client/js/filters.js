@@ -17,7 +17,7 @@
 // deliberately NOT closeOnRouteChange — it rewrites its own query params on every toggle
 // and would otherwise close itself (see the comment on the route hook in ui.js).
 
-import { clear, el, openSheet } from "./ui.js";
+import { clear, el, meter, openSheet } from "./ui.js";
 
 /**
  * @param opts.entries      () => [{key, label, sev?, patch}] — what is applied right now.
@@ -180,8 +180,10 @@ export function facetGroup(spec) {
     const dot = opt.sev ? el("span", { class: "sev-dot", "aria-hidden": "true" }) : null;
     const labelEl = el("span", { class: "facet-label" }, dot, el("span", {}, opt.label));
     const countEl = el("span", { class: "facet-count num" }, String(opt.count));
-    const fillEl = el("span", { class: "facet-bar-fill" });
-    const bar = el("span", { class: "facet-bar", "aria-hidden": "true" }, fillEl);
+    // Decorative: the count sits next to it as text. Neutral on purpose — a facet count is
+    // a quantity, not a severity, and the Rationed Ink Rule spends colour only on risk.
+    const bar = meter(0, { decorative: true, className: "meter--facet" });
+    const fillEl = bar.fill;
     const btn = el("button", {
       class: "facet-row" + (opt.sev ? " sev-" + opt.sev : ""),
       "aria-pressed": "false",

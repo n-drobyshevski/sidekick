@@ -298,5 +298,3 @@
 .pillar-row { display: flex; align-items: center; gap: 10px; margin: 6px 0; font-size: 12px; }
 .pillar-row .pillar-name { width: 120px; color: var(--text-2); }
 .pillar-row .pillar-val { width: 44px; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
-.pillar-track { flex: 1; height: 8px; overflow: hidden; }
-.pillar-fill { background: var(--graphite); }

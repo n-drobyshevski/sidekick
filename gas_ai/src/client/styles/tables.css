@@ -64,3 +64,7 @@ a { color: var(--accent); }
   font-size: 13px; color: var(--text-3);
   border: 1px dashed var(--hairline); border-radius: var(--radius-lg);
 }
+
+/* The "nothing matched" row inside a table, so an empty result still sits in the
+   structure it belongs to rather than replacing it. */
+.table-empty { color: var(--text-3); white-space: normal; text-align: center; }

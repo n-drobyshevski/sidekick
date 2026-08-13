@@ -7,7 +7,7 @@
 // dot + label chip. Kind = icon + text label.
 
 import { categoryOf, kindIcon, kindLabel } from "./icons.js";
-import { el } from "./ui.js";
+import { dataTable, el } from "./ui.js";
 
 // No literal `//` (middlebox guard) — see icons.js for the full note.
 const SVG_NS = ["http:", "", "www.w3.org", "2000", "svg"].join("/");
@@ -703,41 +703,24 @@ export function graphTable(data, handlers = {}) {
   // score first, names A-first); -1 flips it. `desc: true` marks columns whose
   // natural order reads as descending (for aria-sort and the glyph).
   const COLS = [
-    { key: "name", label: "Name", value: (r) => r.node.name },
-    { key: "kind", label: "Kind", value: (r) => kindLabel(r.node.kind) },
-    { key: "severity", label: "Severity", value: (r) => sevRank(r.node.severity), desc: true },
-    { key: "aars", label: "AARS", value: (r) => -(r.node.aars ?? -1), desc: true },
-    { key: "combo", label: "Toxic combo", value: (r) => ((r.node.comboGroups || []).length ? 0 : 1) },
-    { key: "guardrail", label: "Guardrail", value: (r) => (r.node.guardrailMissing ? 0 : 1) },
-    { key: "degree", label: "Connections", value: (r) => -r.degree, desc: true },
+    { key: "name", label: "Name", value: (r) => r.node.name, cell: (r) => r.node.name },
+    { key: "kind", label: "Kind", value: (r) => kindLabel(r.node.kind),
+      cell: (r) => kindLabel(r.node.kind) },
+    { key: "severity", label: "Severity", value: (r) => sevRank(r.node.severity), desc: true,
+      cell: (r) => r.node.severity || "—" },
+    { key: "aars", label: "AARS", value: (r) => -(r.node.aars ?? -1), desc: true,
+      className: "num",
+      cell: (r) => (r.node.aars !== undefined && r.node.aars !== null
+        ? `${r.node.aars} ${r.node.aarsSeverity || ""}` : "—") },
+    { key: "combo", label: "Toxic combo", value: (r) => ((r.node.comboGroups || []).length ? 0 : 1),
+      cell: (r) => ((r.node.comboGroups || []).length ? "TC member" : "—") },
+    { key: "guardrail", label: "Guardrail", value: (r) => (r.node.guardrailMissing ? 0 : 1),
+      cell: (r) => (r.node.guardrailMissing ? "missing" : "—") },
+    { key: "degree", label: "Connections", value: (r) => -r.degree, desc: true,
+      className: "num", cell: (r) => String(r.degree) },
   ];
   let sortKey = null;
   let sortDir = 1;
-
-  const tbody = el("tbody", {});
-  const headCells = new Map();
-
-  function rowEl({ node, degree: deg }) {
-    return el("tr", {
-      class: "clickable",
-      tabindex: "0",
-      role: "button",
-      "aria-label": nodeAriaLabel(node),
-      onclick: () => handlers.onNodeOpen && handlers.onNodeOpen(node),
-      onkeydown: (e) => {
-        if (e.key === "Enter") handlers.onNodeOpen && handlers.onNodeOpen(node);
-      },
-    },
-      el("td", {}, node.name),
-      el("td", {}, kindLabel(node.kind)),
-      el("td", {}, node.severity || "—"),
-      el("td", { class: "num" }, node.aars !== undefined && node.aars !== null
-        ? `${node.aars} ${node.aarsSeverity || ""}` : "—"),
-      el("td", {}, (node.comboGroups || []).length ? "TC member" : "—"),
-      el("td", {}, node.guardrailMissing ? "missing" : "—"),
-      el("td", { class: "num" }, String(deg)),
-    );
-  }
 
   function paintRows() {
     let list = rows;
@@ -751,44 +734,34 @@ export function graphTable(data, handlers = {}) {
         return a.node.name < b.node.name ? -1 : a.node.name > b.node.name ? 1 : 0;
       });
     }
-    tbody.textContent = "";
-    for (const r of list) tbody.append(rowEl(r));
-    for (const [key, th] of headCells) {
-      const col = COLS.find((c) => c.key === key);
-      const descending = col.desc ? sortDir === 1 : sortDir === -1;
-      if (key === sortKey) th.setAttribute("aria-sort", descending ? "descending" : "ascending");
-      else th.removeAttribute("aria-sort");
-      const glyph = th.querySelector(".th-sort-glyph");
-      if (glyph) glyph.textContent = key === sortKey ? (descending ? "▼" : "▲") : "";
+    // Repaint in place rather than rebuilding: the header button that was just pressed has
+    // to keep keyboard focus, so the table is built once and only its rows and sort marks
+    // are refreshed.
+    table.setRows(list);
+    if (!sortKey) {
+      table.setSort(null);
+      return;
     }
+    const col = COLS.find((c) => c.key === sortKey);
+    table.setSort({ key: sortKey, descending: col.desc ? sortDir === 1 : sortDir === -1 });
   }
 
-  const headRow = el("tr", {});
-  for (const col of COLS) {
-    const th = el("th", { scope: "col" },
-      el("button", {
-        class: "th-sort",
-        onclick: () => {
-          if (sortKey === col.key) sortDir = -sortDir;
-          else {
-            sortKey = col.key;
-            sortDir = 1;
-          }
-          paintRows();
-        },
-      },
-        col.label,
-        el("span", { class: "th-sort-glyph", "aria-hidden": "true" }),
-      ),
-    );
-    headCells.set(col.key, th);
-    headRow.append(th);
-  }
+  const table = dataTable({
+    columns: COLS.map((c) => ({
+      key: c.key, label: c.label, sortable: true, cell: c.cell, className: c.className,
+    })),
+    rows: [],
+    onSort: (key) => {
+      if (sortKey === key) sortDir = -sortDir;
+      else {
+        sortKey = key;
+        sortDir = 1;
+      }
+      paintRows();
+    },
+    onRowOpen: (r) => handlers.onNodeOpen && handlers.onNodeOpen(r.node),
+    rowLabel: (r) => nodeAriaLabel(r.node),
+  });
   paintRows();
-
-  return el("div", { class: "table-wrap" },
-    el("table", { class: "data" },
-      el("thead", {}, headRow),
-      tbody,
-    ));
+  return table;
 }

@@ -45,21 +45,32 @@
 }
 
 /* ------------------------------------------------------------------------ meters */
-/* Meter base: a rounded track with a proportional fill. Three of these grew separately —
-   the sync progress bar, the AARS/pillar meters, and the facet count bars — each
-   restating the same six declarations. Height, fill colour and clipping are what genuinely
-   differ, and stay with each member below. */
-.progress-track, .pillar-track, .facet-bar {
+/* Meter base: a rounded track with a proportional fill (ui/data.js meter()). The AARS
+   score meters, the stat-list meters, the detail sheet's pillar bars and the facet count
+   bars were four hand-built copies of this. The sync progress bar keeps its own class
+   because it also has an indeterminate state and run-state tints, but it shares the body. */
+.meter, .progress-track {
   border-radius: var(--radius-pill);
   background: var(--track-bg);
 }
-/* display:block so a fill works as a <span> too — a percentage width on an inline box is
-   ignored, which silently renders every meter as an empty track. */
-.progress-fill, .pillar-fill, .facet-bar-fill {
+/* display:block so the fill works as a <span> too — a percentage width on an inline box
+   is ignored, which silently renders every meter as an empty track. */
+.meter-fill, .progress-fill {
   display: block;
   height: 100%;
   border-radius: var(--radius-pill);
 }
+/* Neutral graphite fill: the level is already carried by the chip beside the meter, and
+   fifty tinted bars down a page is the wall of colour PRODUCT.md rejects. */
+.meter { display: block; height: 8px; overflow: hidden; }
+.meter-fill { background: var(--graphite); }
+/* The four jobs it does: fill a sheet row, sit in a stat cell, sit in a table cell, and
+   underline a facet count. */
+.meter--flex { flex: 1; }
+.meter--stat { flex: 0 0 52px; width: 52px; height: 6px; }
+.meter--score { flex: 0 0 40px; width: 40px; height: 5px; }
+.meter--facet { height: 3px; overflow: visible; }
+.meter--facet .meter-fill { background: rgba(0, 0, 0, 0.32); }
 
 /* --------------------------------------------------------------------- severity */
 .sev-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }

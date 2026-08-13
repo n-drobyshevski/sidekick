@@ -29,9 +29,9 @@ import {
   facetCounts, filterAssetRows, pageOf, resolveAssetQuery, sortAssetRows,
 } from "../assetQuery.js";
 import {
-  aarsChip, clear, closeActiveSheet, confirmDialog, el, emptyState, errorState, fmtDate,
-  pager, plural, sectionLabel, sevBadge, sevEntries, sevKeyRow, sevSegmentBar, sevSpoken,
-  skeleton, toast,
+  aarsChip, clear, closeActiveSheet, confirmDialog, dataTable, el, emptyState, errorState,
+  fmtDate, meter, pager, plural, sectionLabel, sevBadge, sevEntries, sevKeyRow,
+  sevSegmentBar, sevSpoken, skeleton, toast,
 } from "../ui.js";
 
 const PAGE_SIZES = [25, 50, 100, 250];
@@ -85,13 +85,11 @@ const VIEW_PARAMS = [
 /**
  * The score as a quantity beside the chip that gives its level. Neutral graphite on
  * purpose: the level is already colored on the chip, and fifty tinted bars down a page is
- * the wall of color PRODUCT.md rejects. aria-hidden because aarsChip already names both
+ * the wall of color PRODUCT.md rejects. Decorative because aarsChip already names both
  * the number and the level — one announcement per cell, not two.
  */
 function aarsMeter(score) {
-  const pct = Math.max(0, Math.min(100, Number(score) || 0));
-  return el("span", { class: "pillar-track score-meter", "aria-hidden": "true" },
-    el("span", { class: "pillar-fill", style: `width:${pct}%` }));
+  return meter(score, { decorative: true, className: "meter--score" });
 }
 
 /**
@@ -480,12 +478,10 @@ export async function renderInventory(main, params) {
       el("div", { class: "stat-name" }, name),
       el("div", { class: "stat-figure" },
         el("div", { class: "mini-value num" }, value),
-        meterPct === null || meterPct === undefined ? null : el("span", {
-          class: "pillar-track stat-meter",
-          role: "progressbar",
-          "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(meterPct),
-          "aria-label": `${name}, ${meterPct} percent`,
-        }, el("span", { class: "pillar-fill", style: `width:${meterPct}%` }))),
+        meterPct === null || meterPct === undefined ? null : meter(meterPct, {
+          className: "meter--stat",
+          label: `${name}, ${meterPct} percent`,
+        })),
       el("div", { class: "stat-sub" }, sub),
     );
   }
@@ -796,7 +792,7 @@ export async function renderInventory(main, params) {
       return;
     }
 
-    resultsHost.append(view === "cards" ? cardGrid(pageRows) : dataTable(pageRows));
+    resultsHost.append(view === "cards" ? cardGrid(pageRows) : assetTable(pageRows));
 
     const sizeSel = el("select", { "aria-label": "Rows per page" },
       ...PAGE_SIZES.map((n) => el("option", { value: String(n) }, `${n} / page`)));
@@ -829,62 +825,42 @@ export async function renderInventory(main, params) {
     }, "Graph");
   }
 
-  function dataTable(rows) {
-    const headRow = el("tr", {});
-    for (const col of COLUMNS) {
-      if (!col.sort) {
-        headRow.append(el("th", { scope: "col" }, col.label));
-        continue;
-      }
-      const active = query.sort === col.sort;
-      const th = el("th", { scope: "col" },
-        el("button", {
-          class: "th-sort",
-          "data-sort": col.sort,
-          "aria-label": `Sort by ${col.label}`,
-          onclick: () => setSort(col.sort),
-        },
-          col.label,
-          el("span", { class: "th-sort-glyph", "aria-hidden": "true" },
-            active ? (query.dir === "desc" ? "▼" : "▲") : ""),
-        ),
-      );
-      if (active) th.setAttribute("aria-sort", query.dir === "desc" ? "descending" : "ascending");
-      headRow.append(th);
-    }
+  function assetTable(rows) {
+    /** Cell renderers, keyed to COLUMNS above so header and body cannot drift apart. */
+    const CELLS = {
+      name: (row) => [row.name,
+        row.agentic ? el("span", { class: "pill", style: "margin-left:6px" }, "Agentic") : null],
+      kind: (row) => kindLabel(row.kind),
+      cloud: (row) => row.cloud || "—",
+      region: (row) => row.region || "—",
+      aars: (row) => (row.aars === null || row.aars === undefined
+        ? el("span", { class: "muted small" }, "—")
+        : el("span", { class: "aars-cell" },
+            aarsChip(row.aars, row.aarsSeverity), aarsMeter(row.aars))),
+      severity: (row) => (row.severity
+        ? el("span", { class: "issue-cell" }, sevBadge(row.severity), issueBars(row.issuesBySeverity))
+        : "—"),
+      combos: (row) => (row.combos ? el("span", { class: "pill bad" }, `TC ×${row.combos}`) : "—"),
+      guardrail: (row) => (row.guardrailMissing ? el("span", { class: "pill warn" }, "missing") : "—"),
+      projects: (row) => (row.projects || []).join(", ") || "—",
+      actions: (row) => graphButton(row),
+    };
 
-    const tbody = el("tbody", {});
-    for (const row of rows) {
-      tbody.append(el("tr", {
-        class: "clickable",
-        tabindex: "0",
-        role: "button",
-        "aria-label": `${row.name}, ${kindLabel(row.kind)}`,
-        onclick: openRow(row),
-        onkeydown: (e) => {
-          if (e.key === "Enter") openRow(row)();
-        },
-      },
-        el("td", {}, row.name,
-          row.agentic ? el("span", { class: "pill", style: "margin-left:6px" }, "Agentic") : null),
-        el("td", {}, kindLabel(row.kind)),
-        el("td", {}, row.cloud || "—"),
-        el("td", {}, row.region || "—"),
-        el("td", {}, row.aars === null || row.aars === undefined
-          ? el("span", { class: "muted small" }, "—")
-          : el("span", { class: "aars-cell" }, aarsChip(row.aars, row.aarsSeverity), aarsMeter(row.aars))),
-        el("td", {}, row.severity
-          ? el("span", { class: "issue-cell" }, sevBadge(row.severity), issueBars(row.issuesBySeverity))
-          : "—"),
-        el("td", {}, row.combos ? el("span", { class: "pill bad" }, `TC ×${row.combos}`) : "—"),
-        el("td", {}, row.guardrailMissing ? el("span", { class: "pill warn" }, "missing") : "—"),
-        el("td", {}, (row.projects || []).join(", ") || "—"),
-        el("td", {}, graphButton(row)),
-      ));
-    }
-
-    return el("div", { class: "table-wrap" },
-      el("table", { class: "data" }, el("thead", {}, headRow), tbody));
+    return dataTable({
+      columns: COLUMNS.map((col) => ({
+        key: col.sort || col.key,
+        label: col.label,
+        sortable: !!col.sort,
+        cell: CELLS[col.key],
+      })),
+      rows,
+      // `dir` is this page's own convention ("asc"/"desc", seeded from the URL); the shared
+      // table only needs to know which way the active column currently reads.
+      sort: query.sort ? { key: query.sort, descending: query.dir === "desc" } : null,
+      onSort: setSort,
+      onRowOpen: (row) => openRow(row)(),
+      rowLabel: (row) => `${row.name}, ${kindLabel(row.kind)}`,
+    });
   }
 
   function cardGrid(rows) {

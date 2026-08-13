@@ -258,8 +258,6 @@ h3.sheet-section-title {
 .facet-count { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
 /* Neutral on purpose: a facet count is a quantity, not a severity, and the Rationed Ink
    Rule spends colour only on risk. */
-.facet-bar { height: 3px; }
-.facet-bar-fill { background: rgba(0, 0, 0, 0.32); }
 /* Zero yield: dimmed AND carrying a visible 0 — never dimming alone, which reads as
    "broken" rather than "empty" (the same rule .rule-dead follows). aria-disabled, not
    disabled, so the option stays focusable and its 0 stays discoverable. */
@@ -277,5 +275,5 @@ h3.sheet-section-title {
   .kv dt:first-child { margin-top: 0; }
   .pillar-row { flex-wrap: wrap; }
   .pillar-row .pillar-name { width: auto; flex: 1 1 auto; }
-  .pillar-track { flex: 1 1 100%; order: 3; }
+  .meter--flex { flex: 1 1 100%; order: 3; }
 }

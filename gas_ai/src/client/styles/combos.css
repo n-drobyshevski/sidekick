@@ -155,7 +155,7 @@
    advertises two of them and hides the rest. */
 .combo-issues .filter-bar input[type="search"] { min-width: 260px; }
 .combo-issues .pager { margin-top: 10px; }
-.combo-issues-empty { color: var(--text-3); white-space: normal; text-align: center; }
+
 
 @media (max-width: 720px) {
   /* Below this the five matrix columns stop being readable; the cells keep their marks

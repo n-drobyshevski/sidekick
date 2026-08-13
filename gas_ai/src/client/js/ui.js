@@ -19,7 +19,7 @@ export { DISPLAY_TZ, fmtDate, fmtDateTime, plural } from "./ui/format.js";
 export {
   aarsChip, sevBadge, sevEntries, sevKeyRow, sevSegmentBar, sevSpoken,
 } from "./ui/severity.js";
-export { pager, progressBar } from "./ui/data.js";
+export { dataTable, meter, pager, progressBar } from "./ui/data.js";
 export { kpiCard, statusPill } from "./ui/controls.js";
 export {
   confirmDialog, emptyState, errorState, helpTip, skeleton, toast,

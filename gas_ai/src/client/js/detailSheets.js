@@ -10,7 +10,7 @@ import { bootstrapCached, navigate } from "./store.js";
 import { kindLabel } from "./icons.js";
 import { slaState } from "./pages/comboView.js";
 import {
-  aarsChip, clear, el, emptyState, errorState, fmtDate, fmtDateTime,
+  aarsChip, clear, el, emptyState, errorState, fmtDate, fmtDateTime, meter,
   openSheet, sevBadge, sheetRow, sheetSection, skeleton,
 } from "./ui.js";
 
@@ -46,19 +46,14 @@ function pillarBars(pillars, caps) {
   for (const key of ["toxic", "compliance", "data"]) {
     const value = Number(pillars[key] ?? 0);
     const max = Number(caps[key] ?? PILLAR_MAX[key]) || 1;
-    const pct = Math.max(0, Math.min(100, (value / max) * 100));
-    const fill = el("div", { class: "pillar-fill" });
-    fill.style.width = `${pct}%`;
     wrap.append(
       el("div", { class: "pillar-row" },
         el("span", { class: "pillar-name" }, PILLAR_LABEL[key]),
-        // progressbar, not meter: `meter` has uneven NVDA/VoiceOver support. The visible
-        // "x/max" beside it is the label, so the track itself stays unnamed and silent.
-        el("div", {
-          class: "pillar-track", role: "progressbar",
-          "aria-valuemin": "0", "aria-valuemax": String(max), "aria-valuenow": String(value),
-          "aria-label": `${PILLAR_LABEL[key]}, ${value} of ${max} points`,
-        }, fill),
+        meter(value, {
+          max,
+          className: "meter--flex",
+          label: `${PILLAR_LABEL[key]}, ${value} of ${max} points`,
+        }),
         el("span", { class: "pillar-val" }, `${value}/${max}`),
       ),
     );

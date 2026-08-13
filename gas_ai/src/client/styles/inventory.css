@@ -37,7 +37,7 @@
 .stat-row .stat-figure { display: flex; align-items: center; gap: 9px; }
 .stat-row .stat-sub { font-size: 11px; color: var(--text-3); }
 .stat-row .mini-value { font-size: 1.125rem; font-weight: 600; letter-spacing: -0.01em; }
-.pillar-track.stat-meter { flex: 0 0 52px; width: 52px; height: 6px; }
+
 @media (max-width: 620px) {
   .stat-row { padding: 10px 0; }
   .stat-row + .stat-row { border-left: none; border-top: 1px solid var(--hairline); }
@@ -71,8 +71,8 @@
    purpose: the level is already coloured on the chip, and fifty tinted bars down a page is
    the wall of colour PRODUCT.md rejects. */
 .aars-cell, .issue-cell { display: inline-flex; align-items: center; gap: 8px; }
-.pillar-track.score-meter { flex: 0 0 40px; width: 40px; height: 5px; }
-td .pillar-track { background: rgba(0, 0, 0, 0.09); }
+
+td .meter { background: rgba(0, 0, 0, 0.09); }
 /* Open issues split by severity is a .sevbar--xs (components.css). Here colour IS the
    content — the mix of levels is the whole point — so it is rationed, not decorative,
    and the aria-label names the counts. */
@@ -94,7 +94,7 @@ td .pillar-track { background: rgba(0, 0, 0, 0.09); }
   flex: 1; min-width: 0; font-weight: 600; font-size: 13px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.asset-card .pillar-track.score-meter { width: auto; flex: 1 1 auto; }
+.asset-card .meter--score { width: auto; flex: 1 1 auto; }
 .asset-card-marks { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .asset-card-marks:empty { display: none; }
 .asset-card-meta { display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 12px; color: var(--text-3); }
