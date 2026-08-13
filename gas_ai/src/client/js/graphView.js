@@ -7,7 +7,7 @@
 // dot + label chip. Kind = icon + text label.
 
 import { categoryOf, kindIcon, kindLabel } from "./icons.js";
-import { dataTable, el } from "./ui.js";
+import { dataTable, el, sevRank } from "./ui.js";
 
 // No literal `//` (middlebox guard) — see icons.js for the full note.
 const SVG_NS = ["http:", "", "www.w3.org", "2000", "svg"].join("/");
@@ -683,10 +683,7 @@ export function renderGraph(container, data, handlers = {}) {
 export function graphTable(data, handlers = {}) {
   const { nodes, edges } = data;
   const sevOrder = (data.palette && data.palette.order) || [];
-  const sevRank = (s) => {
-    const i = sevOrder.indexOf(s || "");
-    return i === -1 ? sevOrder.length : i;
-  };
+  const rank = (s) => sevRank(s, sevOrder);
   const degree = new Map();
   for (const e of edges) {
     degree.set(e.src, (degree.get(e.src) || 0) + 1);
@@ -706,7 +703,7 @@ export function graphTable(data, handlers = {}) {
     { key: "name", label: "Name", value: (r) => r.node.name, cell: (r) => r.node.name },
     { key: "kind", label: "Kind", value: (r) => kindLabel(r.node.kind),
       cell: (r) => kindLabel(r.node.kind) },
-    { key: "severity", label: "Severity", value: (r) => sevRank(r.node.severity), desc: true,
+    { key: "severity", label: "Severity", value: (r) => rank(r.node.severity), desc: true,
       cell: (r) => r.node.severity || "—" },
     { key: "aars", label: "AARS", value: (r) => -(r.node.aars ?? -1), desc: true,
       className: "num",

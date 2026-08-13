@@ -21,6 +21,7 @@ import {
   confirmDialog,
   downloadText,
   el,
+  field,
   emptyState,
   openSheet,
   sevBadge,
@@ -143,56 +144,6 @@ function priceCode(rule, code) {
  * "null" — so any conditional child has to come through here. el()'s own children are
  * already filtered.
  */
-function fill(node, ...children) {
-  for (const child of children.flat()) if (child) node.append(child);
-  return node;
-}
-
-/**
- * A labelled field. The visible label IS the accessible name (a real <label for>), and the
- * explanation rides along as aria-describedby — so voice control can address the field by
- * the words next to it, which an aria-label override would break.
- */
-function field(id, labelText, control, hintText) {
-  const hintId = hintText ? `${id}-hint` : null;
-  if (hintId) control.setAttribute("aria-describedby", hintId);
-  const label = el("label", { class: "field-label", for: id }, labelText);
-  const errId = `${id}-err`;
-  const err = el("span", { class: "field-error", id: errId, hidden: true });
-  return {
-    node: el(
-      "div",
-      { class: "field" },
-      label,
-      control,
-      hintText ? el("span", { class: "field-hint small muted", id: hintId }, hintText) : null,
-      err,
-    ),
-    label,
-    err,
-    /** Show or clear an inline error, wiring aria-invalid and describedby together. */
-    setError(msg) {
-      if (msg) {
-        setText(err, msg);
-        err.hidden = false;
-        control.setAttribute("aria-invalid", "true");
-        control.setAttribute("aria-describedby", [hintId, errId].filter(Boolean).join(" "));
-      } else {
-        err.hidden = true;
-        control.removeAttribute("aria-invalid");
-        if (hintId) control.setAttribute("aria-describedby", hintId);
-        else control.removeAttribute("aria-describedby");
-      }
-    },
-    /** Mark the field as differing from what is saved, and say so in words. */
-    setChanged(changed, savedValue) {
-      label.classList.toggle("field--changed", !!changed);
-      if (changed) label.title = `Saved value: ${savedValue}`;
-      else label.removeAttribute("title");
-    },
-  };
-}
-
 function numberInput(id, { value, min, max, step }) {
   return el("input", {
     type: "number",
@@ -658,14 +609,11 @@ export async function renderAarsRules(main, _params, ctx) {
   // ------------------------------------------------------------------ section helper
   function section(title, lede, children) {
     const id = nextId("sec");
-    const sec = el("section", { class: "rule-section", "aria-labelledby": id });
-    fill(
-      sec,
+    return el("section", { class: "rule-section", "aria-labelledby": id },
       el("h2", { class: "section-label", id }, title),
       lede ? el("p", { class: "rule-section__lede small muted" }, lede) : null,
       ...children,
     );
-    return sec;
   }
 
   // ------------------------------------------------------------- cascade (structural)
@@ -1200,16 +1148,15 @@ export async function renderAarsRules(main, _params, ctx) {
     }
     const p = sampleResult.pillars;
     const breakdown = sampleResult.gapBreakdown || [];
-    fill(
-      sandboxResultHost,
+    sandboxResultHost.append(
       aarsChip(sampleResult.score, sampleResult.severity),
       el("span", { class: "small muted" },
         `A ${p.toxic} + B ${p.compliance} + C ${p.data}` +
           (p.toxic + p.compliance + p.data > sampleResult.score ? " (clamped to 100)" : "")),
-      breakdown.length
-        ? el("span", { class: "small muted" },
-            "Gaps: " + breakdown.map((g) => `${g.code} ${g.points}`).join(", "))
-        : null,
+      ...(breakdown.length
+        ? [el("span", { class: "small muted" },
+            "Gaps: " + breakdown.map((g) => `${g.code} ${g.points}`).join(", "))]
+        : []),
     );
   }
 

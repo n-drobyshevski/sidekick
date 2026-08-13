@@ -41,3 +41,18 @@ export function fmtDateTime(iso) {
 export function plural(n, word) {
   return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
+
+/**
+ * Position on a severity scale, LOWER = WORSE, with anything unrecognised sorting last.
+ * `order` is a parameter, not a constant, because the callers rank against different
+ * scales — the combos page against its own SEVERITY_RANK, the graph against the palette
+ * order the server sent with the payload.
+ *
+ * Note the sign. assetQuery.js has its own `sevRank` on an INVERTED scale (higher = worse)
+ * because it is a hand-kept mirror of src/domain/assetTable.ts that assetQueryMirror.test.ts
+ * holds it to. It looks like this one and means the opposite; do not fold them together.
+ */
+export function sevRank(sev, order) {
+  const i = (order || []).indexOf(String(sev || "").toUpperCase());
+  return i === -1 ? (order || []).length : i;
+}

@@ -53,7 +53,7 @@ function combosSkeleton(count) {
   const kpis = el("div", { class: "kpi-row" });
   for (let i = 0; i < 4; i++) {
     kpis.append(el("div", { class: "kpi-card" },
-      el("div", { style: "display:flex; flex-direction:column; gap:9px" },
+      el("div", { class: "skeleton-stack", style: "gap:9px" },
         skeleton("line", { width: "62%" }),
         skeleton("stat", { width: "45%" }),
         skeleton("line", { width: "78%" }))));
@@ -61,12 +61,12 @@ function combosSkeleton(count) {
   const summary = el("div", { class: "chart-row" },
     el("div", { class: "chart-card" },
       skeleton("line", { width: "220px" }),
-      el("div", { style: "margin-top:14px; display:flex; flex-direction:column; gap:14px" },
+      el("div", { class: "skeleton-stack", style: "margin-top:14px; gap:14px" },
         skeleton("line", { height: "26px" }),
         skeleton("line", { height: "26px" }))),
     el("div", { class: "chart-card" },
       skeleton("line", { width: "200px" }),
-      el("div", { style: "margin-top:14px; display:flex; flex-direction:column; gap:10px" },
+      el("div", { class: "skeleton-stack", style: "margin-top:14px" },
         ...[0, 1, 2, 3].map(() => skeleton("line", { height: "18px" })))));
 
   const stack = el("div", {});

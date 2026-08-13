@@ -9,10 +9,9 @@
 // else. `nodes.length <= maxNodes` and `edges.length <= maxEdges` hold for every
 // projection, whatever the tenant's size.
 
-import { SEVERITY_ORDER } from "./config";
 import { MAX_EDGES_DEFAULT, MAX_NODES_DEFAULT, SEED_WAVE_RATIO } from "./config";
 import type { GEdge, GNode, GraphDoc, NodeKind } from "./graphTypes";
-import { isRiskKind } from "./graphTypes";
+import { isRiskKind, severityRank } from "./graphTypes";
 
 export interface ProjectFilters {
   severities?: string[];
@@ -63,10 +62,6 @@ export const DEFAULT_PER_KIND_CAP: Partial<Record<string, number>> = {
 };
 export const DEFAULT_KIND_CAP = 12;
 
-function severityRank(s: string | undefined): number {
-  const i = (SEVERITY_ORDER as readonly string[]).indexOf(s ?? "");
-  return i === -1 ? SEVERITY_ORDER.length : i; // lower = worse
-}
 
 /** Deterministic neighbor priority: worse severity, then higher AARS, then name. */
 export function nodeOrder(a: GNode, b: GNode): number {

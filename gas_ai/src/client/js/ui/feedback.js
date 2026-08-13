@@ -83,6 +83,26 @@ export function skeleton(variant = "", { width, height, radius } = {}) {
   return node;
 }
 
+/**
+ * A column of placeholder lines — the `flex-column + N skeleton lines` idiom that every
+ * page's loading stub had written out inline, with its own gap and its own array literal.
+ *
+ * `widths` cycles, so a stack can look like text rather than like a stack of identical
+ * bars. Each page keeps its own SHAPE (the stub IS the layout, and a stub that predicts
+ * the wrong page makes the real content jump); only this repetition is shared.
+ */
+export function skeletonStack(count, { gap = "12px", height, widths, variant = "line" } = {}) {
+  const stack = el("div", { class: "skeleton-stack" });
+  stack.style.gap = gap;
+  for (let i = 0; i < count; i++) {
+    stack.append(skeleton(variant, {
+      height,
+      width: widths ? widths[i % widths.length] : undefined,
+    }));
+  }
+  return stack;
+}
+
 export function emptyState(message, hint) {
   return el(
     "div",

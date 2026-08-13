@@ -31,7 +31,7 @@ import {
 import {
   aarsChip, clear, closeActiveSheet, confirmDialog, dataTable, el, emptyState, errorState,
   fmtDate, meter, pager, plural, sectionLabel, sevBadge, sevEntries, sevKeyRow,
-  sevSegmentBar, sevSpoken, skeleton, toast,
+  sevSegmentBar, sevSpoken, skeleton, skeletonStack, toast,
 } from "../ui.js";
 
 const PAGE_SIZES = [25, 50, 100, 250];
@@ -152,8 +152,7 @@ function inventorySkeleton() {
       ...Array.from({ length: 4 }, () => skeleton("line", { height: "18px" }))),
   );
   const toolbar = el("div", { class: "inv-toolbar" }, skeleton("line", { height: "34px" }));
-  const rows = el("div", { style: "display:flex; flex-direction:column; gap:12px" });
-  for (let i = 0; i < 8; i++) rows.append(skeleton("line", { height: "18px" }));
+  const rows = skeletonStack(8, { height: "18px" });
   return el("div", { role: "status", "aria-label": "Loading inventory" }, header, toolbar, rows);
 }
 

@@ -11,7 +11,7 @@ import {
   type AarsRule,
   type DataExposure,
 } from "./aars";
-import { SEVERITY_ORDER, type Severity } from "./config";
+import type { Severity } from "./config";
 import {
   AI_ASSET_KINDS,
   edgeId,
@@ -20,6 +20,7 @@ import {
   type GNode,
   type GraphDoc,
   type IssueRow,
+  severityRank,
 } from "./graphTypes";
 
 export interface AarsHint {
@@ -28,10 +29,6 @@ export interface AarsHint {
 }
 export type AarsHints = Record<string, AarsHint>;
 
-function severityRank(s: string | undefined): number {
-  const i = (SEVERITY_ORDER as readonly string[]).indexOf(s ?? "");
-  return i === -1 ? SEVERITY_ORDER.length : i; // lower = worse
-}
 
 function worstSeverity(severities: Severity[]): Severity | undefined {
   let worst: Severity | undefined;
