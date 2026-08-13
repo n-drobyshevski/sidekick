@@ -1,4 +1,4 @@
-// The build stamps, computed once and shared by the real build (esbuild.config.mjs) and
+// The build stamp, computed once and shared by the real build (esbuild.config.mjs) and
 // the dev harness (dev/serve.mjs).
 //
 // Shared rather than copied because the dev server builds its own server bundle: if only
@@ -6,27 +6,45 @@
 // an unstamped server and report a deployment mismatch that isn't one. That false alarm
 // happened, which is why this file exists.
 //
-// Two stamps, two questions:
+//   __BUILD_ID__   a content hash of src/. Folded into every CacheService key
+//                  (serverCache.ts) so a deploy makes payloads computed by the old code
+//                  unreachable at once, instead of serving them until the TTL expires:
+//                  the "I deployed the fix but still see the bug" trap. It is also what
+//                  the Settings page shows and what `npm run which-build` resolves.
 //
-//   __BUILD_ID__      a hash of the source tree. A CONTENT hash, not a timestamp, so the
-//                     same source yields the same stamp — a no-op rebuild produces no
-//                     dist churn, while any code change flips it. Folded into every
-//                     CacheService key (serverCache.ts) so a deploy makes payloads
-//                     computed by the old code unreachable at once, instead of serving
-//                     them until the TTL expires: the "I deployed the fix but still see
-//                     the bug" trap.
+// WHY THERE IS NO COMMIT STAMP HERE
 //
-//   __BUILD_COMMIT__  the commit it was built from, and __BUILD_DATE__ that commit's
-//   __BUILD_DATE__    date. A content hash cannot be looked up; a SHA can, which is what
-//                     makes "is that PR in this build" an ancestry question git can
-//                     settle. Both are stable per commit, so neither churns dist either.
+// There used to be, on the reasoning that a content hash cannot be looked up but a SHA
+// can. __BUILD_COMMIT__ and __BUILD_DATE__ were removed because a commit stamp inside a
+// committed artifact is a fixpoint that does not exist.
+//
+// dist/ is tracked in this repo, so the order is always: build, then commit src and dist
+// together. At build time the commit that will contain the build has no SHA yet, so the
+// bundle can only ever name its own parent — and rebuilding to correct that produces a
+// new commit, which makes it stale again. The symptom was that every `npm run check`
+// after any commit left dist/ dirty by exactly one line, forever, with no sequence of
+// commits that could settle it.
+//
+// A hash of src/ has no such problem: src/ does not contain dist/, so the input does not
+// depend on the output. Same source, same stamp — a no-op rebuild produces no dist churn,
+// and only a real source change flips it. (gas/ has always stamped this way.)
+//
+// The lookup the SHA existed for is now `npm run which-build`, which replays this same
+// hash across history. That answers strictly more than an embedded SHA could: it names
+// every commit that produces a given build rather than one arbitrary member of that set,
+// and it works on an id read off a deployed app, not only on a build made here.
 
-import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-function sourceStamp(root) {
+/**
+ * Content hash of `<root>/src`, over the file types that reach a bundle.
+ *
+ * Exported because whichBuild.mjs replays it against historical checkouts — it must be
+ * the same function, not a second implementation that agrees until it doesn't.
+ */
+export function sourceStamp(root) {
   const h = createHash("sha1");
   const walk = (dir) => {
     for (const e of readdirSync(dir, { withFileTypes: true })
@@ -42,51 +60,8 @@ function sourceStamp(root) {
   return h.digest("hex").slice(0, 12);
 }
 
-function git(root, args) {
-  return execFileSync("git", args, {
-    cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
-  }).trim();
-}
-
-/**
- * The commit the bundle was built from, plus its date.
- *
- * `-dirty` when the tree has uncommitted changes, because then the SHA names something
- * the bundle is NOT. Both fall back to "" outside a git checkout (a release tarball, a
- * machine where npm is blocked), which the UI renders as "unknown" rather than lying.
- *
- * Note the off-by-one for the committed dist/: building then committing src+dist together
- * stamps the PARENT commit. That is still enough to place a build on the history — it is
- * an ancestry question, not an equality one.
- */
-function commitStamp(root) {
-  try {
-    const sha = git(root, ["rev-parse", "--short", "HEAD"]);
-    // Dirtiness of src/ ONLY, matching what sourceStamp hashes. dist/ is tracked in this
-    // repo (it enables no-toolchain deployment), and the build writes it — so a whole-tree
-    // check reports "-dirty" on every single build, which would make the flag meaningless.
-    let dirty = false;
-    try {
-      dirty = git(root, ["status", "--porcelain", "--", "src"]).length > 0;
-    } catch { /* status can fail in odd checkouts; the SHA alone is still useful */ }
-    return { commit: sha + (dirty ? "-dirty" : ""), date: git(root, ["log", "-1", "--format=%cI"]) };
-  } catch {
-    return { commit: "", date: "" };
-  }
-}
-
-/** esbuild `define` map, plus the raw values for logging. */
+/** esbuild `define` map, plus the raw value for logging. */
 export function buildStamp(root) {
   const id = sourceStamp(root);
-  const { commit, date } = commitStamp(root);
-  return {
-    id,
-    commit,
-    date,
-    define: {
-      __BUILD_ID__: JSON.stringify(id),
-      __BUILD_COMMIT__: JSON.stringify(commit),
-      __BUILD_DATE__: JSON.stringify(date),
-    },
-  };
+  return { id, define: { __BUILD_ID__: JSON.stringify(id) } };
 }

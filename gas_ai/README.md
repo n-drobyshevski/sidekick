@@ -101,6 +101,32 @@ npm run check      # the full gate; run before every push
 
 Useful harness flags: `?noseed` (empty state), `?slow=400` (loading states).
 
+### Which build is deployed?
+
+An Apps Script deployment can be stale three ways at once — the project holds an old
+file, the web app is pinned to an old VERSION so `clasp push` changes nothing at
+`/exec`, or a copy-paste deploy updated some files and not others. Settings → Build
+answers it: the client and server bundles are stamped separately (they ship as separate
+files) and the page calls out a mismatch.
+
+The stamp is a content hash of `src/`, not a commit SHA. Turn it back into commits with:
+
+```bash
+npm run which-build              # the id baked into dist/
+npm run which-build <id>         # an id read off a deployment
+```
+
+It replays the hash across history and reports where `src/` reached that state, the
+window during which that build is live, and the `git merge-base --is-ancestor` check for
+"is my change in it?".
+
+> Why not just stamp the commit? `dist/` is committed here, so a SHA baked into the
+> bundle can only ever name its own *parent* — the build happens before the commit that
+> contains it exists. Rebuilding to fix that makes a new commit, which makes it stale
+> again, so every `npm run check` after any commit left `dist/` dirty by one line
+> forever. A hash of `src/` has no such loop, because `src/` does not contain `dist/`.
+> See `buildStamp.mjs`.
+
 ### Constraints worth knowing
 
 - **No template literals / no `//` inside client strings.** The build lowers template
