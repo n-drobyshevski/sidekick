@@ -60,6 +60,11 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
         "version": 0,
       },
       "activeJob": null,
+      "build": {
+        "commit": "",
+        "date": "",
+        "id": "dev",
+      },
       "comboLegend": [
         {
           "adjustedSeverity": "HIGH",
@@ -772,6 +777,11 @@ exports[`read endpoints > bootstrap answers the same shape 1`] = `
       "version": 0,
     },
     "activeJob": null,
+    "build": {
+      "commit": "",
+      "date": "",
+      "id": "dev",
+    },
     "comboLegend": [
       {
         "adjustedSeverity": "HIGH",

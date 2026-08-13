@@ -2884,6 +2884,14 @@ var Server = (() => {
     }
   }
 
+  // src/server/buildInfo.ts
+  var BUILD_ID = true ? "acc2652ddfd7" : "dev";
+  var BUILD_COMMIT = true ? "58da31d" : "";
+  var BUILD_DATE = true ? "2026-08-13T07:30:10+00:00" : "";
+  function buildInfo() {
+    return { id: BUILD_ID, commit: BUILD_COMMIT, date: BUILD_DATE };
+  }
+
   // src/domain/sha1.ts
   function utf8Bytes(s) {
     const out = [];
@@ -2962,7 +2970,7 @@ var Server = (() => {
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
-  var KEY_PREFIX = "wsk";
+  var KEY_PREFIX = `wsk.${BUILD_ID}`;
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -4923,6 +4931,9 @@ var Server = (() => {
         ...cached("bootstrapCore", null, bootstrapCore),
         dataVersion: dataVersion(),
         hasCredentials: hasWizCredentials(),
+        // Outside the cached core on purpose: a cached build stamp would be the one thing
+        // guaranteed to lie after a deploy.
+        build: buildInfo(),
         activeJob: (_a4 = activeJob()) != null ? _a4 : null
       };
     });
