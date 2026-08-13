@@ -1,0 +1,248 @@
+/* ================================================================== Help: the key sheet */
+/* The prefix is `help-`, with one deliberate collision to avoid: `.helptip*` in
+   components.css is the hover explainer and is a different family entirely. Nothing here
+   may start a descendant selector at `.help` alone.
+
+   Two families are mirrored rather than reused, for the same reason scans.css mirrors the
+   severity bar instead of calling sevSegmentBar:
+
+   - `.help-node*` mirrors `.gnode*` from graph.css. The real one sets `cursor: pointer`
+     and styles `:focus-visible`, because a graph node IS a control. This figure is a
+     picture with no tab stops, so borrowing those rules would advertise a clickability it
+     does not have.
+   - `.help-glyph` / `.help-cat-swatch` take their colours from the same tokens the graph
+     and the coverage page use, so a mark here and the mark it teaches cannot drift apart. */
+
+/* ------------------------------------------------------------------- the reading column */
+/* 1080px, not the pane. The figure is 640 wide and the entry grid is mark + definition +
+   count; past about this width the count strands itself at the far edge of the screen and
+   a row stops reading as one statement. */
+.help-page { max-width: 1080px; }
+
+/* ------------------------------------------------------------------------ the dateline */
+.help-dateline {
+  display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
+  margin: 10px 0 0; font-size: 12px; color: var(--text-3);
+  max-width: var(--measure);
+}
+
+/* ------------------------------------------------------------------------ the page map */
+.help-map { display: flex; flex-direction: column; }
+.help-map-row {
+  display: grid; grid-template-columns: minmax(140px, 190px) 1fr auto;
+  gap: 8px 18px; align-items: baseline;
+  padding: 9px 0; border-bottom: 1px solid var(--hairline);
+}
+.help-map-row:last-child { border-bottom: none; }
+.help-map-page { font-weight: 600; }
+.help-map-q { color: var(--text-2); }
+
+/* ---------------------------------------------------------------------- the limits block */
+/* Derived from the coverage resolvers, never authored here. A one-line row per area, the
+   same shape the coverage register uses, so the two read as the same statement. */
+.help-limit-row {
+  display: grid; grid-template-columns: 18px minmax(110px, 150px) 1fr;
+  gap: 8px 14px; align-items: baseline;
+  padding: 9px 0; border-bottom: 1px solid var(--hairline);
+}
+.help-limit-glyph { font-size: 12px; line-height: 1.4; color: var(--sev-info-text); }
+.help-limit-row[data-state="partial"] .help-limit-glyph { color: var(--warn); }
+.help-limit-name { font-weight: 600; }
+.help-limit-note { color: var(--text-2); }
+/* The state in words, so the glyph is a reinforcement rather than a code to decipher. */
+.help-limit-state { font-weight: 600; color: var(--sev-info-text); }
+.help-limit-row[data-state="partial"] .help-limit-state { color: var(--warn); }
+.help-limits-src, .help-limits-none {
+  margin: 10px 0 0; font-size: 12px; color: var(--text-3); max-width: var(--measure);
+}
+
+/* -------------------------------------------------------------------------- the anatomy */
+/* Figure over callouts, not beside them. Side by side, a 150px-tall drawing sat next to a
+   six-item list and left most of a screen empty in both columns; stacked, the callouts
+   wrap into as many columns as the pane affords and the whole section costs ~330px. */
+.help-anatomy { display: flex; flex-direction: column; gap: 14px; }
+.help-figure { min-width: 0; }
+/* Below its minimum the figure scrolls rather than scaling: 10px labels shrunk to fit a
+   phone are not a smaller diagram, they are an unreadable one. The container is a real tab
+   stop because a scrollable region needs one — it is a container, not a widget, so it adds
+   no second keyboard model to the page. */
+.help-figure-scroll {
+  overflow-x: auto;
+  /* Hug the drawing rather than the pane: a 640px picture inside a full-width box reads
+     as a box that failed to fill, not as a framed figure. */
+  width: fit-content; max-width: 100%;
+  border: 1px solid var(--hairline); border-radius: var(--radius-xl);
+  background: var(--page); padding: 8px 12px;
+}
+.help-figure-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.help-scene { display: block; min-width: 640px; width: 640px; height: auto; }
+.help-figure-note {
+  margin: 10px 0 0; font-size: 11.5px; color: var(--text-3); max-width: var(--measure);
+}
+
+/* Dimming is the figure's only state. It rides opacity on the groups the callout names,
+   and the global reduced-motion block in overrides.css already zeroes the transition. */
+.help-scene [data-part] { transition: opacity 0.14s ease; }
+.help-scene.dimming [data-part]:not(.lit) { opacity: 0.26; }
+
+.help-halo-ring {
+  fill: none; stroke: var(--accent); stroke-width: 2; stroke-dasharray: 2 3;
+}
+.help-tc-badge { fill: var(--accent); }
+.help-tc-text { font-size: 9px; font-weight: 700; fill: #ffffff; }
+
+.help-node-box { fill: var(--surface); stroke: var(--hairline); stroke-width: 1; }
+.help-node-box[data-category="asset"] { fill: var(--cat-asset-tint); }
+.help-node-box[data-category="vuln"] { fill: var(--cat-vuln-tint); }
+.help-node-accent[data-category="asset"] { fill: var(--cat-asset-ink); }
+.help-node-icon { fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.help-node-icon[data-category="asset"] { stroke: var(--cat-asset-ink); }
+.help-node-icon[data-category="vuln"] { stroke: var(--cat-vuln-ink); }
+.help-node-name { font-size: 12px; font-weight: 600; fill: var(--ink); }
+.help-node-kind { font-size: 10px; letter-spacing: 0.04em; fill: var(--svg-text-2); }
+.help-node-kind[data-category="asset"] { fill: var(--cat-asset-text); }
+.help-node-kind[data-category="vuln"] { fill: var(--cat-vuln-text); }
+/* The two-token rule inside the figure: the DOT takes the fill, the WORD takes the
+   darkened text token so it clears 4.5:1 on the pale tint underneath. */
+.help-node-dot { fill: var(--sev-high); }
+.help-node-sev { font-size: 10px; font-weight: 700; fill: var(--sev-high-text); }
+.help-node-aars {
+  font-size: 10px; font-weight: 600; fill: var(--svg-text-2);
+  font-variant-numeric: tabular-nums;
+}
+.help-edge { fill: none; stroke: rgba(0, 0, 0, 0.3); stroke-width: 1.3; }
+.help-edge.absent { stroke: var(--sev-medium-text); stroke-dasharray: 5 4; }
+.help-edge-label { font-size: 9.5px; letter-spacing: 0.03em; fill: var(--svg-text-2); }
+
+/* The callout list IS the figure's keyboard path — see the header comment in help.js.
+   It wraps into as many columns as fit, which keeps DOM order (and so tab order) reading
+   1 to 6 left-to-right, top-to-bottom. */
+/* An explicit ladder rather than auto-fit: six items want 3+3 or 2+2+2, and auto-fit at
+   this width lands on four columns, which leaves a two-item orphan row. */
+.help-callouts {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 2px 14px; align-items: start;
+}
+@media (max-width: 900px) { .help-callouts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .help-callouts { grid-template-columns: minmax(0, 1fr); } }
+.help-callout {
+  display: grid; grid-template-columns: 18px 1fr; gap: 10px;
+  width: 100%; text-align: left; align-items: start;
+  padding: 8px 9px; border: 1px solid transparent; border-radius: var(--radius-md);
+  background: none; color: inherit; font: inherit; cursor: pointer;
+}
+.help-callout:hover { background: var(--wash-hover); border-color: var(--hairline); }
+.help-callout:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.help-callout-n { font-size: 11px; font-weight: 600; color: var(--text-3); padding-top: 1px; }
+.help-callout:hover .help-callout-n, .help-callout:focus-visible .help-callout-n {
+  color: var(--accent);
+}
+.help-callout-t { font-size: 12.5px; line-height: 1.45; }
+.help-callout-t b { display: block; font-weight: 600; }
+.help-callout-t span { color: var(--text-2); }
+
+/* -------------------------------------------------------------------------- the lexicon */
+.help-family {
+  margin: 22px 0 2px; font-size: 0.9375rem; font-weight: 600; color: var(--ink);
+}
+.help-family:first-child { margin-top: 0; }
+
+.help-entry {
+  display: grid; grid-template-columns: 92px minmax(0, 1fr) minmax(150px, 190px);
+  gap: 16px; align-items: start;
+  padding: 14px 0; border-bottom: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+}
+.help-entry-mark { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; padding-top: 1px; }
+.help-entry-term { font-size: 13px; font-weight: 600; }
+.help-entry-term em { font-style: normal; font-weight: 400; color: var(--text-3); }
+.help-entry-def { margin: 3px 0 0; font-size: 12.5px; color: var(--text-2); max-width: var(--measure); }
+.help-entry-more {
+  margin: 6px 0 0; font-size: 12px; color: var(--text-3); max-width: var(--measure);
+}
+.help-entry-where { margin-top: 6px; font-size: 11.5px; color: var(--text-3); }
+
+/* The count cell, in its three states. A zero is never a link. */
+.help-entry-count {
+  display: flex; flex-direction: column; align-items: flex-end; gap: 2px;
+  text-align: right; padding-top: 1px;
+}
+.help-count-link { font-size: 12.5px; font-weight: 600; }
+.help-count-value { font-size: 12.5px; font-weight: 600; }
+.help-count-unit { font-size: 11px; color: var(--text-3); }
+.help-count-none { font-size: 12px; color: var(--text-3); }
+
+.help-lex-foot {
+  margin: 18px 0 0; font-size: 12px; color: var(--text-3); max-width: var(--measure);
+}
+
+/* A term arrived at from a helpTip's link. The fade is a CSS animation, so the global
+   reduced-motion block already flattens it to an instant, static highlight. */
+.help-entry.revealed { animation: help-reveal 1.8s ease-out 1; }
+@keyframes help-reveal {
+  0%, 45% { background: rgba(190, 18, 60, 0.09); }
+  100% { background: transparent; }
+}
+
+/* ---------------------------------------------------------------------- inline specimens */
+/* Marks the product spells as characters rather than drawing as components. */
+.help-glyph { font-size: 12px; line-height: 1; color: var(--text-2); }
+.help-glyph.ok { color: var(--ok); }
+.help-kindmark { display: inline-flex; align-items: center; }
+.help-kindmark .gnode-icon { stroke: var(--text-2); }
+
+.help-tc {
+  display: inline-flex; align-items: center;
+  padding: 1px 7px; border-radius: var(--radius-pill);
+  font-size: 10px; font-weight: 700; letter-spacing: 0.05em;
+  background: var(--accent); color: #ffffff;
+}
+/* The halo, on its own, at chip scale. */
+.help-halo {
+  display: inline-block; width: 22px; height: 22px; border-radius: 50%;
+  border: 2px dashed var(--accent);
+}
+/* The negated edge, on its own. */
+.help-dash {
+  display: inline-block; width: 26px; height: 0;
+  border-top: 2px dashed var(--sev-medium-text);
+}
+/* The fill/text split, shown as the two swatches it is. */
+.help-twotoken {
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.help-twotoken::before, .help-twotoken::after {
+  content: ""; width: 11px; height: 11px; border-radius: 3px;
+}
+.help-twotoken::before { background: var(--sev-critical); }
+.help-twotoken::after { background: var(--sev-critical-text); }
+
+/* The category key under the node-kind entry. */
+.help-catstrip { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.help-cat {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 10px; border-radius: var(--radius-pill);
+  border: 1px solid var(--hairline); background: var(--page);
+  font-size: 11.5px; color: var(--text-2);
+}
+.help-cat-swatch { width: 9px; height: 9px; border-radius: 2px; background: var(--text-3); }
+.help-cat[data-category="asset"] .help-cat-swatch { background: var(--cat-asset-ink); }
+.help-cat[data-category="data"] .help-cat-swatch { background: var(--cat-data-ink); }
+.help-cat[data-category="iam"] .help-cat-swatch { background: var(--cat-iam-ink); }
+.help-cat[data-category="vuln"] .help-cat-swatch { background: var(--cat-vuln-ink); }
+.help-cat[data-category="exposure"] .help-cat-swatch { background: var(--cat-exposure-ink); }
+
+/* ------------------------------------------------------------------ narrow: one column */
+/* At the <=800px top-bar layout the two-column figure has nowhere to go, so the callouts
+   fall under the drawing and the entry grid collapses to a single column with the count
+   left-aligned under its definition rather than stranded on the right. */
+@media (max-width: 800px) {
+  .help-entry { grid-template-columns: 34px minmax(0, 1fr); }
+  .help-entry-count {
+    grid-column: 2; align-items: flex-start; text-align: left; margin-top: 4px;
+  }
+  .help-map-row { grid-template-columns: 1fr auto; }
+  .help-map-q { grid-column: 1 / -1; }
+  .help-limit-row { grid-template-columns: 18px 1fr; }
+  .help-limit-note { grid-column: 2; }
+}

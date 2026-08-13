@@ -270,6 +270,24 @@
   transition: opacity 0.14s ease, transform 0.14s ease;
 }
 .helptip-line { display: block; }
+/* The link a `term` adds, pointing at the Help key sheet. `.helptip` sets `cursor: help`
+   and it would otherwise inherit, so a real link would not look like one. */
+.helptip-link {
+  align-self: flex-start; margin-top: 2px;
+  color: var(--accent); font-weight: 500; text-decoration: none; cursor: pointer;
+  border-bottom: 1px solid transparent;
+}
+.helptip-link:hover { border-bottom-color: currentColor; }
+.helptip-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Invisible bridges over the 8px gap between the trigger and the bubble. Without them the
+   pointer crosses dead space on its way to the link and the bubble closes underneath it.
+   They inherit the bubble's `pointer-events: none` while it is hidden, so they never
+   become stray hover targets; the bubble is placed above OR below, so both sides exist. */
+.helptip-bubble::before, .helptip-bubble::after {
+  content: ""; position: absolute; left: 0; right: 0; height: 10px;
+}
+.helptip-bubble::before { top: -10px; }
+.helptip-bubble::after { bottom: -10px; }
 .helptip:hover > .helptip-bubble,
 .helptip:focus-within > .helptip-bubble { opacity: 1; pointer-events: auto; transform: translateY(0); }
 @media (prefers-reduced-motion: reduce) {

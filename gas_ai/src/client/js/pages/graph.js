@@ -523,7 +523,7 @@ export async function renderGraphPage(main, params, _ctx) {
             "Some neighbours — or, on a whole-estate view, some starting points — are not drawn.",
             "Load more to widen it a step at a time, or narrow the filters, start from a single asset or combination, or raise the node budget in Settings.",
           ],
-          { label: "Why this view is capped" },
+          { label: "Why this view is capped", term: "depth-budget" },
         ));
       }
     }
