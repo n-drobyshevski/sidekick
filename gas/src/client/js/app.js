@@ -151,6 +151,12 @@ let jobPoller = null;
 let scanCardHost = null; // the progress-card slot in the current scan zone
 let scanButtonsRow = null; // the Run/Quick buttons, hidden while a job runs
 let stoppingJobId = null; // optimistic "Stopping…" until the server confirms CANCELLED
+let stoppingSince = 0; // when Stop was pressed — the optimistic state expires (see paintCard)
+// How long "Stopping…" is allowed to stand before the action comes back. A live fetch hop
+// honors the cooperative flag at its next page boundary, which can take a page's worth of
+// time; past that, a request that hasn't landed isn't going to, and the button must return
+// rather than leave the user staring at a state with no exit.
+const STOPPING_GRACE_MS = 45000;
 let lastJob = null; // most recent JobRow, for an immediate repaint on Stop
 let scanDetails = null; // open scan-details drawer handle, kept live by the poller
 
@@ -414,12 +420,17 @@ async function startScan(incremental, btn) {
   }
 }
 
-/** Render the progress card for a job and hide the Run/Quick buttons. */
+/** Render the progress card for a job and hide the Run/Quick buttons (unless it's wedged). */
 function paintCard(job) {
   if (!scanCardHost) return;
   lastJob = job;
+  // "Stopping…" is optimistic, and it used to be permanent: it hid the Stop button and only
+  // cleared on a CANCELLED the server might never produce. Expire it so the action returns.
+  if (stoppingJobId === job.job_id && Date.now() - stoppingSince > STOPPING_GRACE_MS) {
+    stoppingJobId = null;
+  }
   const stopping = stoppingJobId === job.job_id && job.phase !== "CANCELLED";
-  renderScanCard(scanCardHost, job, {
+  const view = renderScanCard(scanCardHost, job, {
     // Read lastJob at click time, not the job captured when this Details button was built —
     // renderScanCard reuses the button across polls, so a captured job would be stale and the
     // drawer would flash 0 findings/0 pages for one tick before the poller updates it.
@@ -431,7 +442,10 @@ function paintCard(job) {
   });
   // Keep an open details drawer in step with the poll — otherwise its values freeze at open time.
   if (scanDetails) scanDetails.update(job);
-  if (scanButtonsRow) scanButtonsRow.style.display = "none";
+  // Hiding Run/Quick behind a live job is single-flight housekeeping — but a job that has gone
+  // quiet for half an hour isn't live, and startScan() is the path that reclaims a stale job
+  // and recovers a killed mid-write. Hiding it there took away the last way out.
+  if (scanButtonsRow) scanButtonsRow.style.display = view.stuck ? "" : "none";
 }
 
 function clearCard() {
@@ -442,10 +456,15 @@ function clearCard() {
 
 async function requestStop(jobId) {
   stoppingJobId = jobId;
+  stoppingSince = Date.now();
   if (lastJob && lastJob.job_id === jobId) paintCard(lastJob); // instant "Stopping…"
   try {
     const res = await call("api_cancelScan", { jobId });
     toast(res.message || "Stopping scan…");
+    // The server reaps a dead job synchronously and reports it. Drop the optimistic state at
+    // once rather than sitting in "Stopping…" for a job that is already terminal; the poller
+    // picks up the terminal phase on its next tick.
+    if (res.stopped) stoppingJobId = null;
   } catch (e) {
     stoppingJobId = null;
     toast(String(e.message || e), "error");

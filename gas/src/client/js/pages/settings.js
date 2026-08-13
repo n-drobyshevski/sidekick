@@ -2,6 +2,7 @@
 
 import { call } from "../api.js";
 import { backfillStatusView } from "../backfillStatus.js";
+import { capacityView } from "../capacity.js";
 import { decodePrefill, PREFILL_KEY } from "../attributionPrefill.js";
 import { bootstrap, setParams } from "../store.js";
 import {
@@ -546,12 +547,13 @@ export async function renderSettings(main, params, ctx) {
   // ------------------------------------------------------------- storage stats
   try {
     const stats = await call("api_getStorageStats", {});
-    const near = stats.cellCount > 6_000_000;
+    // capacity.js owns the thresholds and the wording so this panel and the Data page's
+    // breakdown can never disagree about when the ledger is "nearly full".
+    const cap = capacityView(stats);
     const storageBody = [
       usageMeter({
-        used: stats.cellCount, total: stats.cellLimit, label: "Spreadsheet cells",
-        state: near ? "warn" : "",
-        note: near ? "Approaching the 10M-cell ceiling — lower the retention window." : null,
+        used: cap.used, total: cap.total, label: "Spreadsheet cells",
+        state: cap.state, note: cap.note,
       }),
       el("p", { class: "muted small", style: "margin:12px 0 0" },
         `${stats.scanCount} scan(s), ${stats.sealedCount} sealed, ` +

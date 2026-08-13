@@ -41,7 +41,7 @@ import * as archive from "./archiveStore";
 import * as errorLog from "./errorLog";
 import * as findings from "./findings";
 import * as history from "./historyStore";
-import { activeJob, getJob } from "./jobsStore";
+import { activeJob, getJob, isStaleJob, isTerminalPhase, type JobRow } from "./jobsStore";
 import * as ledgerStore from "./ledgerStore";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
 import { hasWizCredentials } from "./props";
@@ -49,7 +49,7 @@ import * as backfillJobs from "./backfillJobs";
 import * as scanJobs from "./scanJobs";
 import { BUILD_ID, cached, dataVersion } from "./serverCache";
 import * as settingsStore from "./settingsStore";
-import { cellCount, SCHEMA_VERSION } from "./sheetsDb";
+import { cellUsage, SCHEMA_VERSION, TAB_HEADERS, TABS } from "./sheetsDb";
 import * as supportGroups from "./supportGroups";
 
 export interface ApiResult<T = unknown> {
@@ -169,8 +169,23 @@ function bootstrapCore(): Rec {
   };
 }
 
+/**
+ * A JobRow for the client, plus a server-computed `stale`. The client used to infer "stuck"
+ * by comparing `updated_at` against the *browser's* clock, which makes a wedged job look
+ * healthy (or a healthy one look wedged) on any machine whose clock is off. Staleness is a
+ * property of the job, so the server — which owns both the timestamp and the threshold in
+ * jobsStore.isStaleJob — is the one that should decide it.
+ */
+function jobSummary(job: JobRow | null): Rec | null {
+  if (!job) return null;
+  return {
+    ...(job as unknown as Rec),
+    stale: !isTerminalPhase(job.phase) && isStaleJob(job),
+  };
+}
+
 function activeJobSummary(): Rec | null {
-  return (activeJob() as unknown as Rec) ?? null;
+  return jobSummary(activeJob());
 }
 
 // ------------------------------------------------------------------------- findings
@@ -1476,7 +1491,7 @@ export function runScan(p?: unknown): ApiResult {
 export function getJobStatus(p?: unknown): ApiResult {
   return run(() => {
     const jobId = String((p as Rec)?.["jobId"] ?? "");
-    return jobId ? getJob(jobId) : activeJobSummary();
+    return jobId ? jobSummary(getJob(jobId)) : activeJobSummary();
   });
 }
 
@@ -1897,16 +1912,23 @@ export function clearRecentErrors(_p?: unknown): ApiResult {
 // cellCount() walks every sheet in the spreadsheet — cache it per DATA_VERSION. Extracted so
 // warmReadModels and the endpoint share one entry.
 const cachedStorageStatsData = () =>
-  // "storageStats" → "storageStats2": payload gained the severity data-quality diagnostic
-  // (distinctSeverities, unknownSeverityCount); dataVersion persists across deploys, so
-  // bumping the namespace prevents serving a stale old-shape entry (up to the TTL).
-  cached("storageStats2", null, () => {
+  // "storageStats2" → "storageStats3": payload gained the per-tab capacity breakdown
+  // (cellsByTab, ledgerRowCells); dataVersion persists across deploys, so bumping the
+  // namespace prevents serving a stale old-shape entry (up to the TTL). The prior bump was
+  // for the severity data-quality diagnostic (distinctSeverities, unknownSeverityCount).
+  cached("storageStats3", null, () => {
     const scans = ledgerStore.loadScanRows();
     const scan = findings.currentScan();
     const baseRows = ledgerStore.loadBaseRows() as unknown as Rec[];
+    const usage = cellUsage();
     return {
-      cellCount: cellCount(),
+      cellCount: usage.total,
       cellLimit: 10_000_000,
+      // What is consuming the ceiling, so "nearly full" comes with somewhere to look.
+      cellsByTab: usage.tabs,
+      // Cells one more tracked vulnerability costs, read off the live header list rather than
+      // hardcoded, so the headroom estimate stays right as ledger columns are added.
+      ledgerRowCells: (TAB_HEADERS[TABS.vulnLedger] ?? []).length,
       scanCount: scans.length,
       sealedCount: scans.filter((s) => s.sealed).length,
       oldestScanTs: scans.length ? scans[0].ts : null,

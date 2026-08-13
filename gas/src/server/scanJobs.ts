@@ -22,15 +22,20 @@ import { buildFrame, pageOfFromRuns } from "./frameCore";
 import * as history from "./historyStore";
 import {
   activeJob,
+  clearTriggers,
+  CONTINUE_HANDLERS,
   createJob,
   getJob,
+  isTerminalPhase,
   newJobId,
   reclaimIfStale,
   updateJob,
+  type JobKind,
+  type JobPhase,
   type JobRow,
 } from "./jobsStore";
 import * as ledgerStore from "./ledgerStore";
-import { recoverIfNeeded, withScriptLock } from "./locks";
+import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
 import { deleteProp, getProp, hasWizCredentials, setProp } from "./props";
 import { SAMPLE_FLAT, SAMPLE_GROUPED } from "./sampleData";
 import * as settingsStore from "./settingsStore";
@@ -40,13 +45,27 @@ import { fetchPage, MAX_PAGES, WizDeltaFilterError } from "./wizClient";
 const BUDGET_MS = 270_000; // 4.5 min of a 6-min execution (continuation hops)
 const FIRST_STEP_BUDGET_MS = 45_000; // keep the "Run scan" RPC snappy; rest via trigger
 const CONTINUE_DELAY_MS = 30_000;
+// A hop that couldn't take the lock waits longer than a normal yield: the holder is another
+// mutation running to completion, and re-firing every 30s just burns trigger runtime quota.
+const CONTINUE_RETRY_MS = 90_000;
 const CONTINUE_HANDLER = "trigger_continueScan";
 const DELTA_OVERLAP_MINUTES = 15;
+// Liveness probe for Stop. A hop holds the script lock for its whole duration, so failing to
+// take it means something is genuinely executing. One second (what this used to be) is inside
+// the noise of an unrelated read, which turned incidental contention into a dead Stop button.
+const FORCE_STOP_LOCK_MS = 10_000;
 
 // Cancel is signalled through a Script Property (lock-free) rather than the jobs tab:
 // a running hop holds the mutation lock for its whole duration, so a lock-bound write
 // would block. The fetch loop polls this flag between pages and bails.
 class ScanCancelled extends Error {}
+
+/** `stopped` is the client's cue that the job is already terminal — no "Stopping…" to sit in. */
+export interface CancelResult {
+  jobId: string;
+  stopped: boolean;
+  message: string;
+}
 const cancelKey = (jobId: string) => `CANCEL_${jobId}`;
 function isCancelRequested(jobId: string): boolean {
   return Boolean(getProp(cancelKey(jobId)));
@@ -56,50 +75,100 @@ function clearCancel(jobId: string): void {
 }
 
 /**
- * Request cancellation of a running scan (lock-free). Honored only during FETCHING —
- * once RECONCILING/PERSISTING starts, the `scans` row is imminent and the job finishes
- * (seconds). Returns immediately; a live scan flips to CANCELLED on the next page boundary.
+ * Request cancellation of the running job (lock-free). During FETCHING this is cooperative:
+ * the page loop polls the flag between pages and bails, so nothing is committed. Past that —
+ * or when nothing is alive to read the flag at all — forceStop() finishes the job directly.
  *
- * An *orphaned* scan — one whose execution died between deleting its continuation trigger
- * and scheduling the next, so no hop is running and none is scheduled — would never read
- * the cooperative flag and would sit "running" forever (the Stop button appears dead). We
- * detect that here and finalize it immediately.
+ * Stop used to have two states it could never escape, and a wedged scan hit both at once:
+ *   - an *orphaned* scan, whose execution died between deleting its continuation trigger and
+ *     scheduling the next, so no hop is running and none is scheduled;
+ *   - a scan whose PERSISTING hop was killed by the 6-minute execution cap, which this
+ *     function declined to touch on the grounds that the `scans` row was "imminent" — while
+ *     the UI hid the Run buttons that were the only other route to recoverIfNeeded().
+ * forceStop covers both, and every phase in between.
  */
-export function cancelScan(jobId: string): { jobId: string; message: string } {
+export function cancelScan(jobId: string): CancelResult {
   const job = getJob(jobId);
-  if (!job || job.kind !== "scan") return { jobId, message: "No such scan." };
-  if (job.phase === "DONE" || job.phase === "FAILED" || job.phase === "CANCELLED") {
-    return { jobId, message: "Scan already finished." };
+  if (!job) return { jobId, stopped: false, message: "No such job." };
+  if (isTerminalPhase(job.phase)) {
+    return { jobId, stopped: true, message: "Scan already finished." };
   }
+  // Jobs are single-flight ACROSS kinds, and bootstrap hands the client whatever activeJob()
+  // returns — so the card offering this Stop may be showing a wedged import or backfill.
+  // Refusing those ("No such scan.") left the one job blocking every scan unreachable.
+  if (job.kind !== "scan") return { jobId, ...forceStopOtherKind(job) };
   // Raise the cooperative flag first: a live fetch hop honors it at the next page
   // boundary, and continueJob honors it before its next hop.
   setProp(cancelKey(jobId), "1");
   // Then try to reap it directly, in case nothing is alive to honor the flag.
-  return { jobId, message: forceStopIfOrphaned(jobId) ? "Scan stopped." : "Stopping scan…" };
+  const message = forceStop(jobId);
+  return message === null
+    ? { jobId, stopped: false, message: "Stopping scan…" }
+    : { jobId, stopped: true, message };
 }
 
 /**
- * Finalize a scan the cooperative flag can't reach. The script lock is the liveness probe:
- * a running hop holds it for its whole duration, so acquiring it instantly means no hop is
- * executing. In FETCHING/RECONCILING nothing is committed yet (the `scans` row lands last),
- * so it's safe to reap now — even if a continuation trigger is still listed. A *dead* trigger
- * (killed execution, exhausted trigger quota) stays listed but never fires; trusting it here
- * is what pinned the job in "Stopping…" forever. We delete any stray trigger and cancel; if
- * one somehow fires afterward, continueJob finds the job terminal and no-ops. A live hop just
- * fails the tryLock and the cooperative flag handles it.
+ * Finish a scan the cooperative flag can't reach; returns the message to show, or null when a
+ * live hop holds the lock and the flag will do the job.
+ *
+ * The script lock is the liveness probe: a hop holds it for its whole duration, so acquiring
+ * it means no execution is running and the job is dead whatever its row says. What that
+ * warrants depends on how far it got:
+ *
+ *   FETCHING / RECONCILING — nothing is committed (the `scans` row is appended last), so the
+ *     partial archive is trashed and the job goes CANCELLED.
+ *   PERSISTING / REPLAYING — mid-write territory, and recoverIfNeeded() is the only correct
+ *     handling: it restores the ledger tabs from the Drive journal, or closes the job as DONE
+ *     when the commit record landed after all. finalizeCancel here would trash an archive
+ *     that a committed `scans` row still points at.
+ *
+ * A *dead* continuation trigger (killed execution, exhausted trigger quota) stays listed but
+ * never fires; trusting it here is what pinned the job in "Stopping…" forever. Stray triggers
+ * are deleted on the paths that terminate the job — if one fires afterward, continueJob finds
+ * the job terminal and no-ops.
  */
-function forceStopIfOrphaned(jobId: string): boolean {
+function forceStop(jobId: string): string | null {
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(1000)) return false; // a hop holds it → the cooperative flag will fire
+  if (!lock.tryLock(FORCE_STOP_LOCK_MS)) return null; // a hop holds it → the flag will fire
   try {
+    recoverIfNeeded(); // roll back (or close out) a killed PERSISTING/REPLAYING hop
     const job = getJob(jobId);
-    if (!job || job.kind !== "scan") return false;
-    // Only pre-commit phases are safe to reap; PERSISTING/REPLAYING is mid-write territory
-    // that recoverIfNeeded() rolls back from the journal instead.
-    if (job.phase !== "FETCHING" && job.phase !== "RECONCILING") return false;
-    clearContinuationTriggers(); // drop any (possibly dead) pending hop
-    finalizeCancel(job); // trashes the never-committed archive, phase → CANCELLED
-    return true;
+    if (!job || job.kind !== "scan") return null;
+    if (isTerminalPhase(job.phase)) {
+      clearContinuationTriggers();
+      clearCancel(jobId);
+      return "Scan stopped.";
+    }
+    if (job.phase === "FETCHING" || job.phase === "RECONCILING") {
+      clearContinuationTriggers(); // drop any (possibly dead) pending hop
+      finalizeCancel(job); // trashes the never-committed archive, phase → CANCELLED
+      return "Scan stopped.";
+    }
+    // A phase recoverIfNeeded() deliberately leaves alone. Keep the flag raised and leave any
+    // watchdog trigger armed rather than stranding the job by deleting its only wake-up.
+    return null;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Stop a wedged job of another kind. Staleness, not the lock, is the gate here: an import or
+ * backfill sitting between continuation hops leaves the lock free while being perfectly
+ * alive, so "the lock is free" alone would kill healthy work. reclaimIfStale clears the
+ * continuation trigger belonging to that job's own kind.
+ */
+function forceStopOtherKind(job: JobRow): { stopped: boolean; message: string } {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(FORCE_STOP_LOCK_MS)) {
+    return { stopped: false, message: `A ${job.kind} job is running and can't be interrupted.` };
+  }
+  try {
+    recoverIfNeeded();
+    const fresh = getJob(job.job_id);
+    if (!fresh || isTerminalPhase(fresh.phase)) return { stopped: true, message: "Job stopped." };
+    if (reclaimIfStale(fresh)) return { stopped: true, message: "Job stopped." };
+    return { stopped: false, message: `A ${job.kind} job is still working — let it finish.` };
   } finally {
     lock.releaseLock();
   }
@@ -438,6 +507,13 @@ function finishScan(jobId: string, scanId: string, params: ScanParams, slim: Rec
   }
 
   updateJob(jobId, { phase: "PERSISTING", scan_id: scanId });
+  // Arm a watchdog BEFORE the write. The persist is synchronous and holds the script lock, so
+  // if the 6-minute execution cap (or a trigger-runtime quota kill) takes it mid-write there
+  // is otherwise nothing left to notice: PERSISTING schedules no hop of its own, and the only
+  // other route to recoverIfNeeded() is a write the UI hides behind the job card. The one-shot
+  // fires shortly after, finds the job still PERSISTING with the lock free, and rolls it back
+  // from the journal. Cleared below the moment the write lands.
+  scheduleContinuation();
   ledgerStore.persistFlatScan(records, {
     mode: params.mode,
     scanId,
@@ -447,6 +523,10 @@ function finishScan(jobId: string, scanId: string, params: ScanParams, slim: Rec
   });
   afterPersist(records);
   updateJob(jobId, { phase: "DONE" });
+  clearContinuationTriggers(); // the commit record landed — retire the watchdog
+  // A Stop pressed after finishScan's clearCancel above (i.e. during the persist) would
+  // otherwise leave its CANCEL_ property behind for good.
+  clearCancel(jobId);
 }
 
 function loadBaselineSlim(baselineScanId: string): Rec[] | null {
@@ -528,8 +608,8 @@ function refreshSupportGroupsAfterScan(): void {
 
 // ------------------------------------------------------------------ continuation
 
-function scheduleContinuation(): void {
-  ScriptApp.newTrigger(CONTINUE_HANDLER).timeBased().after(CONTINUE_DELAY_MS).create();
+function scheduleContinuation(delayMs = CONTINUE_DELAY_MS): void {
+  ScriptApp.newTrigger(CONTINUE_HANDLER).timeBased().after(delayMs).create();
 }
 
 /** Remove all one-shot continuation triggers (each firing re-arms if needed). */
@@ -541,23 +621,38 @@ export function clearContinuationTriggers(): void {
 
 /** Trigger target: resume the active scan job. */
 export function continueJob(_e?: unknown): void {
-  withScriptLock(() => {
-    clearContinuationTriggers();
-    const job = activeJob();
-    if (!job || job.kind !== "scan") return;
-    if (job.phase === "FETCHING") {
-      if (isCancelRequested(job.job_id)) {
-        finalizeCancel(job);
-        return;
+  try {
+    withScriptLock(() => {
+      clearContinuationTriggers();
+      const job = activeJob();
+      if (!job || job.kind !== "scan") return;
+      if (job.phase === "FETCHING") {
+        if (isCancelRequested(job.job_id)) {
+          finalizeCancel(job);
+          return;
+        }
+        step(job);
+      } else if (job.phase === "RECONCILING") {
+        const params = JSON.parse(job.params_json ?? "{}") as ScanParams;
+        const slim = (archive.readSlimRecords(job.scan_id!) as Rec[]) ?? [];
+        finishScan(job.job_id, job.scan_id!, params, slim);
+      } else if (job.phase === "PERSISTING" || job.phase === "REPLAYING") {
+        // The watchdog finishScan arms before the write. Reaching it means that execution
+        // died mid-persist: recoverIfNeeded() restores the ledger from the journal, or closes
+        // the job as DONE when the commit record landed after all. The persist is never
+        // re-run from here — the journal, not this hop, is what makes the mutation atomic.
+        recoverIfNeeded();
+        clearCancel(job.job_id);
       }
-      step(job);
-    } else if (job.phase === "RECONCILING") {
-      const params = JSON.parse(job.params_json ?? "{}") as ScanParams;
-      const slim = (archive.readSlimRecords(job.scan_id!) as Rec[]) ?? [];
-      finishScan(job.job_id, job.scan_id!, params, slim);
-    }
-    // PERSISTING is crash territory — recoverIfNeeded() handles it on the next write.
-  }, 120_000);
+    }, 120_000);
+  } catch (e) {
+    // clearContinuationTriggers() runs INSIDE the lock, so a lock timeout leaves this hop's
+    // one-shot already spent and no successor scheduled — the job would sit in FETCHING with
+    // nothing alive to move it, which is exactly the orphan this module works to avoid.
+    // Re-arm before rethrowing so the walk resumes once the other mutation finishes.
+    if (e instanceof LedgerBusyError) scheduleContinuation(CONTINUE_RETRY_MS);
+    throw e;
+  }
 }
 
 /** Daily trigger target: a scheduled full scan (skipped without credentials). */
@@ -569,4 +664,54 @@ export function dailyScan(): void {
 /** Job status for the UI poller. */
 export function jobStatus(jobId: string): JobRow | null {
   return getJob(jobId);
+}
+
+// ---------------------------------------------------------------- operator escape hatch
+
+export interface ResetResult {
+  cleared: boolean;
+  jobId: string | null;
+  kind: JobKind | null;
+  phase: JobPhase | null;
+  message: string;
+}
+
+/**
+ * Last-resort recovery, run from the GAS editor (`resetStuckJob` in dist/entry.js) when the
+ * web app can't reach the job at all — a deployment too old to have the Stop path below, or a
+ * phase no UI surfaces. Everything the in-app Stop does, without needing the web app: roll a
+ * killed mid-write back from its journal, delete every continuation trigger of every kind,
+ * force whatever survives to FAILED, and drop the cancel flags.
+ *
+ * Safe to run when nothing is wrong — with no active job it reports that and touches nothing.
+ * The script lock is still taken, so a genuinely running hop is waited for rather than raced.
+ */
+export function resetStuckJob(): ResetResult {
+  const result = withScriptLock((): ResetResult => {
+    // Read the row BEFORE recovering, so the report names the phase it was wedged in rather
+    // than the terminal one recoverIfNeeded may have just moved it to.
+    const before = activeJob();
+    recoverIfNeeded();
+    if (!before) {
+      return { cleared: false, jobId: null, kind: null, phase: null, message: "No active job." };
+    }
+    for (const handler of Object.values(CONTINUE_HANDLERS)) clearTriggers(handler);
+    clearCancel(before.job_id);
+    const after = activeJob();
+    if (after) {
+      updateJob(after.job_id, {
+        phase: "FAILED",
+        error: "Reset: cleared by resetStuckJob() from the Apps Script editor.",
+      });
+    }
+    return {
+      cleared: true,
+      jobId: before.job_id,
+      kind: before.kind,
+      phase: before.phase,
+      message: `Cleared ${before.kind} job ${before.job_id} (was ${before.phase}).`,
+    };
+  }, 120_000);
+  console.log(result.message);
+  return result;
 }

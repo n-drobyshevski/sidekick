@@ -13,6 +13,12 @@ function setup() { return Server.setup(); }
 // which auth/query step fails (secret-safe) to the execution log. Never used by a scan.
 function wizDiagnostic() { return Server.wizDiagnostic(); }
 
+// Last-resort recovery for a job the web app can't reach: rolls a killed mid-write back from
+// its journal, deletes every continuation trigger, and forces whatever survives to FAILED so
+// scanning is unblocked (jobs are single-flight across kinds). Reports what it cleared to the
+// execution log. Safe to run when nothing is wrong.
+function resetStuckJob() { return Server.jobs.resetStuckJob(); }
+
 // Trigger handlers (names referenced by ScriptApp.newTrigger calls).
 function trigger_dailyScan() { Server.jobs.dailyScan(); }
 function trigger_continueScan(e) { Server.jobs.continueJob(e); }

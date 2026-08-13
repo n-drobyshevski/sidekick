@@ -587,8 +587,13 @@ var Server = (() => {
     }
     return false;
   }
-  function cellCount() {
-    return ledgerSpreadsheet().getSheets().reduce((acc, sh) => acc + sh.getMaxRows() * sh.getMaxColumns(), 0);
+  function cellUsage() {
+    const tabs = ledgerSpreadsheet().getSheets().map((sh) => {
+      const rows = sh.getMaxRows();
+      const cols = sh.getMaxColumns();
+      return { name: sh.getName(), rows, cols, cells: rows * cols };
+    });
+    return { total: tabs.reduce((acc, t) => acc + t.cells, 0), tabs };
   }
 
   // src/server/setup.ts
@@ -4716,7 +4721,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "22fb7e3f2946" : "dev";
+  var BUILD_ID = true ? "b5021b99ad31" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -4895,6 +4900,9 @@ var Server = (() => {
     return (_a = listJobs().find((j) => j.job_id === jobId)) != null ? _a : null;
   }
   var TERMINAL = ["DONE", "FAILED", "CANCELLED"];
+  function isTerminalPhase(phase) {
+    return TERMINAL.includes(phase);
+  }
   var STALE_JOB_MS = 30 * 6e4;
   function isStaleJob(job, now) {
     const updated = parseTs(job.updated_at);
@@ -4927,7 +4935,7 @@ var Server = (() => {
   }
   function activeJob() {
     var _a;
-    return (_a = listJobs().find((j) => !TERMINAL.includes(j.phase))) != null ? _a : null;
+    return (_a = listJobs().find((j) => !isTerminalPhase(j.phase))) != null ? _a : null;
   }
 
   // src/server/ledgerStore.ts
@@ -6197,6 +6205,7 @@ var Server = (() => {
     continueJob: () => continueJob,
     dailyScan: () => dailyScan,
     jobStatus: () => jobStatus,
+    resetStuckJob: () => resetStuckJob,
     slimRecord: () => slimRecord,
     startScan: () => startScan
   });
@@ -6228,8 +6237,10 @@ var Server = (() => {
   var BUDGET_MS2 = 27e4;
   var FIRST_STEP_BUDGET_MS2 = 45e3;
   var CONTINUE_DELAY_MS2 = 3e4;
+  var CONTINUE_RETRY_MS = 9e4;
   var CONTINUE_HANDLER2 = "trigger_continueScan";
   var DELTA_OVERLAP_MINUTES = 15;
+  var FORCE_STOP_LOCK_MS = 1e4;
   var ScanCancelled = class extends Error {
   };
   var cancelKey = (jobId) => `CANCEL_${jobId}`;
@@ -6241,23 +6252,48 @@ var Server = (() => {
   }
   function cancelScan(jobId) {
     const job = getJob(jobId);
-    if (!job || job.kind !== "scan") return { jobId, message: "No such scan." };
-    if (job.phase === "DONE" || job.phase === "FAILED" || job.phase === "CANCELLED") {
-      return { jobId, message: "Scan already finished." };
+    if (!job) return { jobId, stopped: false, message: "No such job." };
+    if (isTerminalPhase(job.phase)) {
+      return { jobId, stopped: true, message: "Scan already finished." };
     }
+    if (job.kind !== "scan") return { jobId, ...forceStopOtherKind(job) };
     setProp(cancelKey(jobId), "1");
-    return { jobId, message: forceStopIfOrphaned(jobId) ? "Scan stopped." : "Stopping scan\u2026" };
+    const message = forceStop(jobId);
+    return message === null ? { jobId, stopped: false, message: "Stopping scan\u2026" } : { jobId, stopped: true, message };
   }
-  function forceStopIfOrphaned(jobId) {
+  function forceStop(jobId) {
     const lock = LockService.getScriptLock();
-    if (!lock.tryLock(1e3)) return false;
+    if (!lock.tryLock(FORCE_STOP_LOCK_MS)) return null;
     try {
+      recoverIfNeeded();
       const job = getJob(jobId);
-      if (!job || job.kind !== "scan") return false;
-      if (job.phase !== "FETCHING" && job.phase !== "RECONCILING") return false;
-      clearContinuationTriggers2();
-      finalizeCancel(job);
-      return true;
+      if (!job || job.kind !== "scan") return null;
+      if (isTerminalPhase(job.phase)) {
+        clearContinuationTriggers2();
+        clearCancel(jobId);
+        return "Scan stopped.";
+      }
+      if (job.phase === "FETCHING" || job.phase === "RECONCILING") {
+        clearContinuationTriggers2();
+        finalizeCancel(job);
+        return "Scan stopped.";
+      }
+      return null;
+    } finally {
+      lock.releaseLock();
+    }
+  }
+  function forceStopOtherKind(job) {
+    const lock = LockService.getScriptLock();
+    if (!lock.tryLock(FORCE_STOP_LOCK_MS)) {
+      return { stopped: false, message: `A ${job.kind} job is running and can't be interrupted.` };
+    }
+    try {
+      recoverIfNeeded();
+      const fresh = getJob(job.job_id);
+      if (!fresh || isTerminalPhase(fresh.phase)) return { stopped: true, message: "Job stopped." };
+      if (reclaimIfStale(fresh)) return { stopped: true, message: "Job stopped." };
+      return { stopped: false, message: `A ${job.kind} job is still working \u2014 let it finish.` };
     } finally {
       lock.releaseLock();
     }
@@ -6545,6 +6581,7 @@ var Server = (() => {
       writeFrameSafely(scanId, records, pageOfFromRuns(readPageRuns(scanId), records.length));
     }
     updateJob(jobId, { phase: "PERSISTING", scan_id: scanId });
+    scheduleContinuation2();
     persistFlatScan2(records, {
       mode: params.mode,
       scanId,
@@ -6554,6 +6591,8 @@ var Server = (() => {
     });
     afterPersist(records);
     updateJob(jobId, { phase: "DONE" });
+    clearContinuationTriggers2();
+    clearCancel(jobId);
   }
   function loadBaselineSlim(baselineScanId) {
     const slim = readSlimRecords(baselineScanId);
@@ -6615,8 +6654,8 @@ var Server = (() => {
       recordError("supportGroupRefresh", e);
     }
   }
-  function scheduleContinuation2() {
-    ScriptApp.newTrigger(CONTINUE_HANDLER2).timeBased().after(CONTINUE_DELAY_MS2).create();
+  function scheduleContinuation2(delayMs = CONTINUE_DELAY_MS2) {
+    ScriptApp.newTrigger(CONTINUE_HANDLER2).timeBased().after(delayMs).create();
   }
   function clearContinuationTriggers2() {
     for (const t of ScriptApp.getProjectTriggers()) {
@@ -6624,23 +6663,31 @@ var Server = (() => {
     }
   }
   function continueJob(_e) {
-    withScriptLock(() => {
-      var _a, _b;
-      clearContinuationTriggers2();
-      const job = activeJob();
-      if (!job || job.kind !== "scan") return;
-      if (job.phase === "FETCHING") {
-        if (isCancelRequested(job.job_id)) {
-          finalizeCancel(job);
-          return;
+    try {
+      withScriptLock(() => {
+        var _a, _b;
+        clearContinuationTriggers2();
+        const job = activeJob();
+        if (!job || job.kind !== "scan") return;
+        if (job.phase === "FETCHING") {
+          if (isCancelRequested(job.job_id)) {
+            finalizeCancel(job);
+            return;
+          }
+          step2(job);
+        } else if (job.phase === "RECONCILING") {
+          const params = JSON.parse((_a = job.params_json) != null ? _a : "{}");
+          const slim = (_b = readSlimRecords(job.scan_id)) != null ? _b : [];
+          finishScan(job.job_id, job.scan_id, params, slim);
+        } else if (job.phase === "PERSISTING" || job.phase === "REPLAYING") {
+          recoverIfNeeded();
+          clearCancel(job.job_id);
         }
-        step2(job);
-      } else if (job.phase === "RECONCILING") {
-        const params = JSON.parse((_a = job.params_json) != null ? _a : "{}");
-        const slim = (_b = readSlimRecords(job.scan_id)) != null ? _b : [];
-        finishScan(job.job_id, job.scan_id, params, slim);
-      }
-    }, 12e4);
+      }, 12e4);
+    } catch (e) {
+      if (e instanceof LedgerBusyError) scheduleContinuation2(CONTINUE_RETRY_MS);
+      throw e;
+    }
   }
   function dailyScan() {
     if (!hasWizCredentials()) return;
@@ -6648,6 +6695,33 @@ var Server = (() => {
   }
   function jobStatus(jobId) {
     return getJob(jobId);
+  }
+  function resetStuckJob() {
+    const result = withScriptLock(() => {
+      const before = activeJob();
+      recoverIfNeeded();
+      if (!before) {
+        return { cleared: false, jobId: null, kind: null, phase: null, message: "No active job." };
+      }
+      for (const handler of Object.values(CONTINUE_HANDLERS)) clearTriggers(handler);
+      clearCancel(before.job_id);
+      const after = activeJob();
+      if (after) {
+        updateJob(after.job_id, {
+          phase: "FAILED",
+          error: "Reset: cleared by resetStuckJob() from the Apps Script editor."
+        });
+      }
+      return {
+        cleared: true,
+        jobId: before.job_id,
+        kind: before.kind,
+        phase: before.phase,
+        message: `Cleared ${before.kind} job ${before.job_id} (was ${before.phase}).`
+      };
+    }, 12e4);
+    console.log(result.message);
+    return result;
   }
 
   // src/server/api.ts
@@ -6738,9 +6812,15 @@ var Server = (() => {
       } : { statuses: [], assetTypes: [], clouds: [], subscriptions: [], supportGroups: [] }
     };
   }
+  function jobSummary(job) {
+    if (!job) return null;
+    return {
+      ...job,
+      stale: !isTerminalPhase(job.phase) && isStaleJob(job)
+    };
+  }
   function activeJobSummary() {
-    var _a;
-    return (_a = activeJob()) != null ? _a : null;
+    return jobSummary(activeJob());
   }
   function getFindings(p) {
     return run(() => {
@@ -7833,7 +7913,7 @@ var Server = (() => {
     return run(() => {
       var _a;
       const jobId = String((_a = p == null ? void 0 : p["jobId"]) != null ? _a : "");
-      return jobId ? getJob(jobId) : activeJobSummary();
+      return jobId ? jobSummary(getJob(jobId)) : activeJobSummary();
     });
   }
   function cancelScan2(p) {
@@ -8190,16 +8270,24 @@ var Server = (() => {
     });
   }
   var cachedStorageStatsData = () => (
-    // "storageStats" → "storageStats2": payload gained the severity data-quality diagnostic
-    // (distinctSeverities, unknownSeverityCount); dataVersion persists across deploys, so
-    // bumping the namespace prevents serving a stale old-shape entry (up to the TTL).
-    cached("storageStats2", null, () => {
+    // "storageStats2" → "storageStats3": payload gained the per-tab capacity breakdown
+    // (cellsByTab, ledgerRowCells); dataVersion persists across deploys, so bumping the
+    // namespace prevents serving a stale old-shape entry (up to the TTL). The prior bump was
+    // for the severity data-quality diagnostic (distinctSeverities, unknownSeverityCount).
+    cached("storageStats3", null, () => {
+      var _a;
       const scans = loadScanRows();
       const scan = currentScan();
       const baseRows2 = loadBaseRows();
+      const usage = cellUsage();
       return {
-        cellCount: cellCount(),
+        cellCount: usage.total,
         cellLimit: 1e7,
+        // What is consuming the ceiling, so "nearly full" comes with somewhere to look.
+        cellsByTab: usage.tabs,
+        // Cells one more tracked vulnerability costs, read off the live header list rather than
+        // hardcoded, so the headroom estimate stays right as ledger columns are added.
+        ledgerRowCells: ((_a = TAB_HEADERS[TABS.vulnLedger]) != null ? _a : []).length,
         scanCount: scans.length,
         sealedCount: scans.filter((s) => s.sealed).length,
         oldestScanTs: scans.length ? scans[0].ts : null,

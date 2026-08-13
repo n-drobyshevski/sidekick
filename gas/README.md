@@ -211,6 +211,24 @@ bytes**, so a month of history does not have to fit inside a `google.script.run`
 The Databricks rebuild consumes it directly — see `brick/README.md`,
 *Migrating from the Apps Script app*.
 
+## Storage headroom
+
+A spreadsheet holds **10M cells**, and the ledger is the one structure that grows without
+bound. **Data → Storage** shows how much of that ceiling is spent, expresses the remainder in
+the unit that matters (*"room for about N more tracked vulnerabilities"*, derived from the live
+`vuln_ledger` header count, not a hardcoded row width), and breaks the usage down per tab so
+"nearly full" arrives with somewhere to look. The same meter — same thresholds, same wording,
+from the same `capacityView` — remains in **Settings → Storage**.
+
+Two things the breakdown makes visible that a single total hides:
+
+- Cells are counted as the **allocated grid** (rows × columns), because that is what the 10M
+  limit enforces. A tab sitting at Sheets' default 1000×26 costs 26k cells while completely
+  empty, so the eight small tabs together have a fixed floor comparable to a mid-size ledger.
+- Past **60%** the meter warns and past **85%** it escalates, both pointing at the two levers
+  that reclaim room: the retention window and compaction. Colour never carries that alone —
+  the percentage and the note say it too.
+
 ## Setup (one-time)
 
 1. `npm install && npm run check` (typecheck + tests + build).
@@ -261,6 +279,31 @@ cancelled scan leaves no partial data. The determinate **percentage** needs the
 header via `ensureTabs`). Until then the bar is a working/indeterminate bar with live
 counts — no error, just no percent.
 
+### When a scan dies mid-flight
+
+Past the fetch phase a *healthy* run can't be interrupted — the `scans` row is seconds away
+and the card says so. But an execution killed mid-write (the 6-minute cap on a large
+`vuln_ledger` rewrite, or an exhausted trigger-runtime quota) leaves a job that will never
+finish, and `activeJob()` is single-flight **across kinds**, so that one row blocks the daily
+trigger and every other job with it. Three things make sure it clears:
+
+- **A watchdog trigger is armed before the persist** and retired the moment the commit record
+  lands. If the write dies, the one-shot fires, finds the job still `PERSISTING` with the
+  script lock free, and rolls the ledger back from its Drive journal — no user action at all.
+- **Stop escalates by phase.** Once a job has been silent for `STALE_JOB_MS` (30 min) the card
+  offers **Force stop** at any phase, and the sidebar's Run buttons come back. Server-side,
+  `cancelScan` runs `recoverIfNeeded()` first, so a killed mid-write is *rolled back from its
+  journal*, never cancelled outright — cancelling would trash an archive a committed `scans`
+  row may still point at. It also reaches a wedged import or backfill, since either blocks
+  scanning just as effectively.
+- **`resetStuckJob()`** is the last resort, run from the GAS editor's function dropdown when
+  the web app can't reach the job at all: it recovers, deletes every continuation trigger,
+  forces whatever survives to `FAILED`, and logs what it cleared. Safe to run when nothing
+  is wrong.
+
+Without the web app or a deploy, any Settings write also clears it — `api.mutate()` runs
+`recoverIfNeeded()` inside the script lock — as does starting a scan.
+
 ## Development
 
 ```
@@ -308,8 +351,12 @@ Things node tests cannot cover — verify after the first deployment:
       `vuln_ledger`, and files under `scans/<id>/` + `obs/`.
 - [ ] Trigger continuation: temporarily set `FIRST_STEP_BUDGET_MS` low, confirm a
       multi-hop scan completes and the one-shot trigger cleans itself up.
-- [ ] Kill an execution mid-persist (editor Stop) → next write logs the journal
-      recovery and the `scans` tab shows no phantom scan.
+- [ ] Kill an execution mid-persist (editor Stop) → the watchdog `trigger_continueScan` fires
+      within a minute or two, logs the journal recovery, and the `scans` tab shows no phantom
+      scan — with no user action. Then delete the watchdog trigger too and confirm the card
+      offers **Force stop** (and the sidebar Run buttons return) once the job goes stale, and
+      that pressing it clears the job. Finally, run `resetStuckJob()` from the editor against
+      a wedged job and confirm the log line names the phase it was stuck in.
 - [ ] Web app at `/exec`: charts render (Chart.js bundled, no CDN fetch), Blob CSV download works in the IFRAME
       sandbox, the drill-down sheet traps focus and closes on ESC, hash deep links
       (`#/overview?sev=CRITICAL&q=log4j`) restore filters.

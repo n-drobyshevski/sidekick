@@ -80,9 +80,14 @@ export function scanProgressView(job, nowMs) {
     updatedMs !== null &&
     nowMs - updatedMs > STALL_MS;
   // A far longer gap means the job almost certainly died mid-flight (killed execution,
-  // no pending continuation) — worth an actionable "may have stopped" prompt.
+  // no pending continuation) — worth an actionable "may have stopped" prompt. `job.stale` is
+  // the server's own verdict (jobsStore.isStaleJob, 30 min) and wins when present: this
+  // comparison is against the *browser's* clock, so a machine whose time is off would
+  // otherwise mislabel a healthy job — or, worse, a wedged one.
   const stuck =
-    state === "running" && updatedMs !== null && nowMs - updatedMs > STUCK_MS;
+    state === "running" &&
+    (job.stale === true ||
+      (job.stale === undefined && updatedMs !== null && nowMs - updatedMs > STUCK_MS));
 
   let phaseLabel = PHASE_LABEL[phase] || phase || "Working";
   if (stalled) phaseLabel = "Waiting for next step…";
@@ -106,6 +111,13 @@ export function scanProgressView(job, nowMs) {
     stalled,
     stuck,
     canStop: state === "running" && phase === "FETCHING",
+    // Past FETCHING a *healthy* run is seconds from committing and must not be interrupted —
+    // but a run that has gone quiet for half an hour is not going to commit anything, and
+    // leaving it uninterruptible is what wedges the whole app (jobs are single-flight across
+    // kinds, so one dead row blocks every scan and the daily trigger with it). The server
+    // decides what to do with the request per phase: a killed mid-write is rolled back from
+    // its journal, never cancelled outright.
+    canForceStop: state === "running" && stuck,
     error: cleanError(job.error),
   };
 }
@@ -194,22 +206,32 @@ export function renderScanCard(host, job, { onStop, onDetails, nowMs, stopping }
   countsEl.textContent =
     v.state === "failed" ? (v.error || "Scan failed.")
     : v.state === "cancelled" ? "Scan stopped."
-    : v.stuck ? "No progress for a while — it may have stopped. Stop it, then run a new scan."
+    : v.stuck ? "No progress for a while — it may have stopped. Force stop to clear it."
     : v.countsText || "Starting…";
 
   // Rebuild the actions only when their composition changes, so stable buttons don't
   // re-announce under the live region and their handlers survive between polls.
   const canStopNow = v.canStop && !!onStop;
+  const canForceNow = !canStopNow && v.canForceStop && !!onStop;
   const running = v.state === "running";
-  const sig = `${onDetails ? "d" : ""}|${canStopNow ? "s" : running && onStop ? "x" : ""}`;
+  const stopSig = canStopNow ? "s" : canForceNow ? "f" : running && onStop ? "x" : "";
+  const sig = `${onDetails ? "d" : ""}|${stopSig}`;
   if (actionsEl.dataset.sig !== sig) {
     actionsEl.dataset.sig = sig;
     clear(actionsEl);
     if (onDetails) actionsEl.append(el("button", { class: "linklike", onclick: onDetails }, "Details"));
     if (canStopNow) {
       actionsEl.append(el("button", { class: "linklike danger", onclick: onStop }, "Stop"));
+    } else if (canForceNow) {
+      // The run has gone quiet long enough to be presumed dead, so Stop comes back at any
+      // phase — the label says "Force" because the server may have to roll a half-written
+      // ledger back from its journal rather than simply cancel.
+      actionsEl.append(el("button", {
+        class: "linklike danger", onclick: onStop,
+        title: "The scan appears to have stopped — clear it so a new one can run.",
+      }, "Force stop"));
     } else if (running && onStop) {
-      // Past FETCHING the run can't be cancelled — explain rather than silently drop Stop.
+      // Past FETCHING a healthy run can't be cancelled — explain rather than silently drop Stop.
       actionsEl.append(el("button", {
         class: "linklike", disabled: true,
         title: "Saving can't be interrupted — let it finish.",
@@ -258,10 +280,14 @@ export function openScanDetails(job, opts = {}) {
     }
 
     const actions = el("div", { class: "sheet-actions", style: "margin-top:16px" });
-    // v.canStop is recomputed each paint, so the Stop button retires once the job leaves FETCHING.
+    // v.canStop / v.canForceStop are recomputed each paint, so the button retires once the job
+    // leaves FETCHING and returns as "Force stop" if the run then goes quiet.
     if (v.canStop && onStop) {
       actions.append(el("button", { class: "danger", onclick: () => { onStop(); closeFn(); } },
         "Stop scan"));
+    } else if (v.canForceStop && onStop) {
+      actions.append(el("button", { class: "danger", onclick: () => { onStop(); closeFn(); } },
+        "Force stop"));
     } else if (v.state === "running" && onStop) {
       // Explain the vanished Stop instead of leaving it a mystery once saving starts.
       actions.append(el("button", { class: "danger", disabled: true,
@@ -275,12 +301,14 @@ export function openScanDetails(job, opts = {}) {
     const children = [
       stepper,
       progressBar(v.pct, v.state === "running" ? "" : v.state),
-      // A long silence almost always means the run died — say so and offer a way out.
+      // A long silence almost always means the run died — say so and offer a way out. The old
+      // copy pointed at "Run a new scan from the sidebar" in the one case where the sidebar
+      // buttons were hidden behind this very card, which is advice the app made impossible.
       v.stuck
         ? el("div", { class: "scan-stall-note", role: "status" },
             el("span", { "aria-hidden": "true" }, "⚠ "),
             "No progress for a while — the scan may have stopped. " +
-              (v.canStop && onStop
+              ((v.canStop || v.canForceStop) && onStop
                 ? "Stop it, then run a new scan from the sidebar."
                 : "Run a new scan from the sidebar."))
         : null,

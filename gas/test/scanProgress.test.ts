@@ -48,7 +48,40 @@ describe("scanProgressView", () => {
       const v = scanProgressView({ ...base, phase, findings_so_far: 5000, total_count: 5000 }, T0);
       expect(v.pct).toBeNull();
       expect(v.canStop).toBe(false);
+      expect(v.canForceStop).toBe(false); // a healthy save is seconds from committing
     }
+  });
+
+  // A save killed by the 6-minute execution cap used to be uninterruptible forever: canStop is
+  // false past FETCHING, so the card offered only a disabled button while the sidebar's Run
+  // buttons — the other route to recovery — were hidden behind that same card.
+  it("offers a force stop once a save has gone quiet", () => {
+    const v = scanProgressView({ ...base, phase: "PERSISTING" }, T0 + 12 * 3_600_000);
+    expect(v.stuck).toBe(true);
+    expect(v.canStop).toBe(false);
+    expect(v.canForceStop).toBe(true);
+  });
+
+  it("never offers a force stop on a job that already settled", () => {
+    for (const phase of ["DONE", "FAILED", "CANCELLED"]) {
+      const v = scanProgressView({ ...base, phase }, T0 + 12 * 3_600_000);
+      expect(v.canForceStop).toBe(false);
+    }
+  });
+
+  it("trusts the server's staleness verdict over the browser's clock", () => {
+    // A machine whose clock runs fast would call a healthy job stuck, and one running slow
+    // would keep hiding the way out of a wedged one. `stale` comes from jobsStore.isStaleJob.
+    const skewedFast = scanProgressView(
+      { ...base, phase: "PERSISTING", stale: false },
+      T0 + 12 * 3_600_000,
+    );
+    expect(skewedFast.stuck).toBe(false);
+    expect(skewedFast.canForceStop).toBe(false);
+
+    const skewedSlow = scanProgressView({ ...base, phase: "PERSISTING", stale: true }, T0);
+    expect(skewedSlow.stuck).toBe(true);
+    expect(skewedSlow.canForceStop).toBe(true);
   });
 
   it("reports 100% and all steps done on DONE", () => {
