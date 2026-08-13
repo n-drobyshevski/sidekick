@@ -3510,8 +3510,8 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       "capped": true,
       "shownEdges": 79,
       "shownNodes": 99,
-      "totalEdges": 205,
-      "totalNodes": 207,
+      "totalEdges": 206,
+      "totalNodes": 208,
     },
     "edges": [
       {
@@ -3773,12 +3773,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "type": "HAS_EXCESSIVE_PRIVILEGE",
       },
       {
-        "dst": "iss-019",
-        "id": "agent-f-preprod|HAS_ISSUE|iss-019",
-        "src": "agent-f-preprod",
-        "type": "HAS_ISSUE",
-      },
-      {
         "dst": "sensitive|agent-f",
         "id": "agent-f|HAS_ACCESS_TO_SENSITIVE_DATA|sensitive|agent-f",
         "src": "agent-f",
@@ -3863,6 +3857,12 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "id": "agent-h-chatbot|HAS_EXCESSIVE_PRIVILEGE|excessive|agent-h-chatbot",
         "src": "agent-h-chatbot",
         "type": "HAS_EXCESSIVE_PRIVILEGE",
+      },
+      {
+        "dst": "identityaccess|agent-h-chatbot",
+        "id": "agent-h-chatbot|HAS_FINDING|identityaccess|agent-h-chatbot",
+        "src": "agent-h-chatbot",
+        "type": "HAS_FINDING",
       },
       {
         "dst": "iss-026",
@@ -4022,7 +4022,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "id": "iss-026",
           "lane": 0,
           "shelf": 0,
-          "x": 770,
+          "x": 640,
           "y": 120,
         },
         {
@@ -4030,7 +4030,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "id": "iss-027",
           "lane": 0,
           "shelf": 0,
-          "x": 1030,
+          "x": 900,
           "y": 120,
         },
         {
@@ -4038,7 +4038,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "id": "excessive|agent-h-chatbot",
           "lane": 0,
           "shelf": 0,
-          "x": 1290,
+          "x": 1160,
+          "y": 120,
+        },
+        {
+          "cluster": 0,
+          "id": "identityaccess|agent-h-chatbot",
+          "lane": 0,
+          "shelf": 0,
+          "x": 1420,
           "y": 120,
         },
         {
@@ -4046,7 +4054,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "id": "noguardrail|agent-h-chatbot",
           "lane": 0,
           "shelf": 0,
-          "x": 1550,
+          "x": 1680,
           "y": 120,
         },
         {
@@ -4691,18 +4699,10 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         },
         {
           "cluster": 10,
-          "id": "iss-019",
-          "lane": 0,
-          "shelf": 3,
-          "x": 1040,
-          "y": 2520,
-        },
-        {
-          "cluster": 10,
           "id": "excessive|agent-f-preprod",
           "lane": 0,
           "shelf": 3,
-          "x": 1300,
+          "x": 1040,
           "y": 2520,
         },
         {
@@ -4718,7 +4718,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "id": "agent-f-preprod",
           "lane": 1,
           "shelf": 3,
-          "x": 1170,
+          "x": 1040,
           "y": 2670,
         },
         {
@@ -4726,7 +4726,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "id": "agent-j",
           "lane": 1,
           "shelf": 3,
-          "x": 2480,
+          "x": 2220,
           "y": 2670,
         },
         {
@@ -4734,7 +4734,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "id": "agent-k",
           "lane": 1,
           "shelf": 3,
-          "x": 2740,
+          "x": 2480,
           "y": 2670,
         },
         {
@@ -4750,7 +4750,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "id": "role-finance-admin-01",
           "lane": 2,
           "shelf": 3,
-          "x": 1700,
+          "x": 1440,
           "y": 2820,
         },
         {
@@ -4758,7 +4758,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "id": "role-finance-admin-02",
           "lane": 2,
           "shelf": 3,
-          "x": 1960,
+          "x": 1700,
           "y": 2820,
         },
         {
@@ -4766,7 +4766,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "id": "role-finance-admin-03",
           "lane": 2,
           "shelf": 3,
-          "x": 2220,
+          "x": 1960,
           "y": 2820,
         },
         {
@@ -4774,7 +4774,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "id": "role-finance-admin-04",
           "lane": 2,
           "shelf": 3,
-          "x": 2480,
+          "x": 2220,
           "y": 2820,
         },
         {
@@ -4782,7 +4782,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "id": "role-finance-admin-05",
           "lane": 2,
           "shelf": 3,
-          "x": 2740,
+          "x": 2480,
           "y": 2820,
         },
         {
@@ -4790,7 +4790,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "id": "role-finance-admin-06",
           "lane": 2,
           "shelf": 3,
-          "x": 3000,
+          "x": 2740,
           "y": 2820,
         },
         {
@@ -4798,7 +4798,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "id": "role-finance-admin-07",
           "lane": 2,
           "shelf": 3,
-          "x": 3260,
+          "x": 3000,
           "y": 2820,
         },
         {
@@ -4806,7 +4806,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "id": "role-finance-admin-08",
           "lane": 2,
           "shelf": 3,
-          "x": 3520,
+          "x": 3260,
           "y": 2820,
         },
         {
@@ -6732,16 +6732,6 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "comboGroups": [
           "gcp-managed-privileged",
         ],
-        "id": "iss-019",
-        "kind": "ISSUE",
-        "name": "Managed AI Agent with high privileges or sensitive data access",
-        "severity": "HIGH",
-        "status": "OPEN",
-      },
-      {
-        "comboGroups": [
-          "gcp-managed-privileged",
-        ],
         "id": "iss-020",
         "kind": "ISSUE",
         "name": "Managed AI Agent with high privileges or sensitive data access",
@@ -6957,6 +6947,11 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "id": "excessive|agent-i",
         "kind": "EXCESSIVE_PRIVILEGE",
         "name": "Excessive rights",
+      },
+      {
+        "id": "identityaccess|agent-h-chatbot",
+        "kind": "IDENTITY_ACCESS_FINDING",
+        "name": "Human access",
       },
       {
         "id": "noguardrail|agent-a",

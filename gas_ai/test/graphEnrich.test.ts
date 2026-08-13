@@ -10,6 +10,7 @@ import {
   enrichGraphDoc,
   internetExposureOf,
   withExcessivePrivilegeNodes,
+  withIdentityAccessNodes,
   withInternetExposureNodes,
   withMissingGuardrailNodes,
   withSensitiveDataNodes,
@@ -480,6 +481,81 @@ describe("withExcessivePrivilegeNodes", () => {
       syncedAt: T,
     };
     expect(withExcessivePrivilegeNodes(clean)).toBe(clean);
+  });
+});
+
+describe("withIdentityAccessNodes", () => {
+  /** A minimal doc: one agent, one human, one service account, one non-AI resource. */
+  function doc(edges: GraphDoc["edges"], extraNodes: GNode[] = []): GraphDoc {
+    return {
+      syncedAt: T,
+      nodes: [
+        { id: "agent", kind: "AI_AGENT", name: "agent" },
+        { id: "human", kind: "USER_ACCOUNT", name: "ops@example.com" },
+        { id: "sa", kind: "SERVICE_ACCOUNT", name: "sa" },
+        { id: "bucket", kind: "BUCKET", name: "bucket" },
+        ...extraNodes,
+      ],
+      edges,
+    };
+  }
+  const allows = (src: string, dst: string, accessType: "ADMIN" | "HIGH_PRIVILEGE" | "READ") => ({
+    id: `${src}|ALLOWS_ACCESS_TO|${dst}`, src, dst, type: "ALLOWS_ACCESS_TO" as const, accessType,
+  });
+
+  it("adds one finding per AI asset a human can reach at high privilege", () => {
+    const out = withIdentityAccessNodes(doc([allows("human", "agent", "ADMIN")]));
+    const found = out.nodes.filter((n) => n.kind === "IDENTITY_ACCESS_FINDING");
+    expect(found).toHaveLength(1);
+    expect(found[0].id).toBe("identityaccess|agent");
+    expect(out.edges.filter((e) => e.dst === "identityaccess|agent")).toEqual([
+      { id: "agent|HAS_FINDING|identityaccess|agent", src: "agent", dst: "identityaccess|agent", type: "HAS_FINDING" },
+    ]);
+  });
+
+  // A service account reaching the agent it runs is normal operation, not a finding —
+  // and the graph already draws that identity and that edge.
+  it("ignores machine identities", () => {
+    const base = doc([allows("sa", "agent", "ADMIN")]);
+    expect(withIdentityAccessNodes(base)).toBe(base);
+  });
+
+  it("ignores read-level access", () => {
+    const base = doc([allows("human", "agent", "READ")]);
+    expect(withIdentityAccessNodes(base)).toBe(base);
+  });
+
+  it("ignores access to resources that are not AI assets", () => {
+    const base = doc([allows("human", "bucket", "ADMIN")]);
+    expect(withIdentityAccessNodes(base)).toBe(base);
+  });
+
+  // The rule withExcessivePrivilegeNodes already applies: the tenant's own finding is the
+  // better evidence, and drawing both shows one problem twice.
+  it("defers to a real EXCESSIVE_ACCESS_FINDING on the same asset", () => {
+    const base = doc(
+      [
+        allows("human", "agent", "ADMIN"),
+        { id: "agent|HAS_FINDING|ea", src: "agent", dst: "ea", type: "HAS_FINDING" as const },
+      ],
+      [{ id: "ea", kind: "EXCESSIVE_ACCESS_FINDING", name: "Excessive access" }],
+    );
+    expect(withIdentityAccessNodes(base)).toBe(base);
+  });
+
+  it("emits one finding however many humans reach the asset", () => {
+    const out = withIdentityAccessNodes(
+      doc(
+        [allows("human", "agent", "ADMIN"), allows("human2", "agent", "HIGH_PRIVILEGE")],
+        [{ id: "human2", kind: "USER_ACCOUNT", name: "other@example.com" }],
+      ),
+    );
+    expect(out.nodes.filter((n) => n.kind === "IDENTITY_ACCESS_FINDING")).toHaveLength(1);
+  });
+
+  it("is idempotent", () => {
+    const once = withIdentityAccessNodes(doc([allows("human", "agent", "ADMIN")]));
+    expect(withIdentityAccessNodes(once)).toBe(once);
   });
 });
 

@@ -203,4 +203,4 @@
 /* The compact card has no room for the canvas's dashed TC halo and corner badge — both
    overhang the card bounds and would clip against a tight viewBox. The stripe carries the
    membership instead, reinforcing the "· TC" the kind line already prints. */
-.gnode[data-combo] .gnode-accent { fill: var(--accent); }
+.gnode[data-combo] .gnode-medallion { stroke: var(--accent); }

@@ -91,13 +91,16 @@
 .help-tc-badge { fill: var(--accent); }
 .help-tc-text { font-size: 9px; font-weight: 700; fill: #ffffff; }
 
+/* The figure mirrors the real card, so the medallion lives here too and the ground stays
+   neutral. `color` rides alongside every literal `stroke` so a solid glyph path — which
+   fills with currentColor — takes the category ink rather than inheriting black. */
 .help-node-box { fill: var(--surface); stroke: var(--hairline); stroke-width: 1; }
-.help-node-box[data-category="asset"] { fill: var(--cat-asset-tint); }
-.help-node-box[data-category="vuln"] { fill: var(--cat-vuln-tint); }
-.help-node-accent[data-category="asset"] { fill: var(--cat-asset-ink); }
+.help-node-medallion { fill: var(--page); stroke: var(--hairline); stroke-width: 1.5; }
+.help-node-medallion[data-category="asset"] { fill: var(--cat-asset-tint); stroke: var(--cat-asset-ink); }
+.help-node-medallion[data-category="vuln"] { fill: var(--cat-vuln-tint); stroke: var(--cat-vuln-ink); }
 .help-node-icon { fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-.help-node-icon[data-category="asset"] { stroke: var(--cat-asset-ink); }
-.help-node-icon[data-category="vuln"] { stroke: var(--cat-vuln-ink); }
+.help-node-icon[data-category="asset"] { stroke: var(--cat-asset-ink); color: var(--cat-asset-ink); }
+.help-node-icon[data-category="vuln"] { stroke: var(--cat-vuln-ink); color: var(--cat-vuln-ink); }
 .help-node-name { font-size: 12px; font-weight: 600; fill: var(--ink); }
 .help-node-kind { font-size: 10px; letter-spacing: 0.04em; fill: var(--svg-text-2); }
 .help-node-kind[data-category="asset"] { fill: var(--cat-asset-text); }
@@ -189,7 +192,7 @@
 .help-glyph { font-size: 12px; line-height: 1; color: var(--text-2); }
 .help-glyph.ok { color: var(--ok); }
 .help-kindmark { display: inline-flex; align-items: center; }
-.help-kindmark .gnode-icon { stroke: var(--text-2); }
+.help-kindmark .gnode-icon { stroke: var(--text-2); color: var(--text-2); }
 
 .help-tc {
   display: inline-flex; align-items: center;

@@ -35,16 +35,34 @@
   --warn: #a16207;
   --bad: #b91c1c;
 
-  /* Graph node categories — reinforce the kind icon + label, never the only cue. Chosen
-     OFF the severity channel (indigo not #2563eb, gold not #d97706) so the severity dot
-     reads true; vuln reuses the brand crimson (already the risk/toxic color). Each has a
-     saturated `ink` (icon + accent stripe, ≥3:1 graphical), a darker `text`, and a pale
-     `tint` fill that keeps --ink node text ≥4.5:1. */
-  --cat-asset-ink: #4f46e5;    --cat-asset-text: #4338ca;    --cat-asset-tint: #eef2ff;
-  --cat-data-ink: #059669;     --cat-data-text: #047857;     --cat-data-tint: #ecfdf5;
-  --cat-iam-ink: #7c3aed;      --cat-iam-text: #6d28d9;      --cat-iam-tint: #f5f3ff;
-  --cat-vuln-ink: #be123c;     --cat-vuln-text: #9f1239;     --cat-vuln-tint: #fff1f2;
-  --cat-exposure-ink: #ca8a04; --cat-exposure-text: #854d0e; --cat-exposure-tint: #fefce8;
+  /* Graph node categories — reinforce the kind icon + label, never the only cue. These are
+     Wiz's own cluster hues, so a category means the same colour here as in the console the
+     analyst came from: compute blue, data green, identity purple, vulnerability red,
+     network orange. Each has a saturated `ink` (icon + medallion ring, ≥3:1 graphical), a
+     darker `text` that clears 4.5:1 on BOTH white and its own tint (combos.css uses it on
+     each), and a pale `tint` fill.
+
+     These USED to be held deliberately off the severity channel so the per-node severity
+     dot read as unambiguously a severity. Adopting Wiz's literal values gives that up, and
+     the collision is exact, not approximate:
+
+       --cat-vuln-ink      #dc2626 IS --sev-critical
+       --cat-vuln-text     #b91c1c IS --sev-critical-text
+       --cat-exposure-ink  #ea580c IS --sev-high
+       --cat-exposure-text #c2410c IS --sev-high-text
+       --cat-asset-text    #1d4ed8 IS --sev-low-text
+
+     So a category tint no longer reads as distinct from a severity, and the severity DOT
+     AND WORD are now the only severity signal on a node. They stay paired, so severity is
+     still never carried by colour alone — but the redundancy is gone. Retint deliberately.
+
+     One deviation from Wiz: its network orange #f97316 measures 2.64:1 on its own tint and
+     fails the 3:1 floor for a graphical mark, so exposure takes #ea580c (3.35:1). */
+  --cat-asset-ink: #3b82f6;    --cat-asset-text: #1d4ed8;    --cat-asset-tint: #eff6ff;
+  --cat-data-ink: #16a34a;     --cat-data-text: #15803d;     --cat-data-tint: #f0fdf4;
+  --cat-iam-ink: #8b5cf6;      --cat-iam-text: #6d28d9;      --cat-iam-tint: #f5f3ff;
+  --cat-vuln-ink: #dc2626;     --cat-vuln-text: #b91c1c;     --cat-vuln-tint: #fef2f2;
+  --cat-exposure-ink: #ea580c; --cat-exposure-text: #c2410c; --cat-exposure-tint: #fff7ed;
 
   --radius-sm: 6px;
   --radius-md: 8px;

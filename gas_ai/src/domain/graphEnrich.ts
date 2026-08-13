@@ -390,6 +390,75 @@ export function withExcessivePrivilegeNodes(doc: GraphDoc): GraphDoc {
 }
 
 /**
+ * Human identity access.
+ *
+ * The identity-access scan already syncs who can reach each AI asset, but nothing counted
+ * it — scanContent.js says so in as many words ("Access paths are synced and drawn, but
+ * nothing totals them"). This makes it a countable, filterable neighbour on the attack
+ * path, the way the other four risk topologies do.
+ *
+ * It cannot use withDerivedNodes: that helper reads a per-node boolean through
+ * conditionState, and this signal is an EDGE — identity → ALLOWS_ACCESS_TO → asset,
+ * carrying an accessType. So it walks edges instead.
+ *
+ * Two rules keep it from drawing a fact the graph already shows:
+ *
+ *  - HUMAN identities only. USER_ACCOUNT, never SERVICE_ACCOUNT — an agent's own execution
+ *    identity reaching it is normal operation, not a finding.
+ *  - Assets that already carry a REAL CIEM finding are skipped, exactly as
+ *    withExcessivePrivilegeNodes skips them: the tenant's own finding is better evidence,
+ *    and drawing both would show one problem twice.
+ */
+export function withIdentityAccessNodes(doc: GraphDoc): GraphDoc {
+  const HUMAN_REACH: ReadonlySet<string> = new Set(["ADMIN", "HIGH_PRIVILEGE"]);
+  const aiAssets = new Set(
+    doc.nodes.filter((n) => (AI_ASSET_KINDS as readonly string[]).includes(n.kind)).map((n) => n.id),
+  );
+  const humans = new Set(doc.nodes.filter((n) => n.kind === "USER_ACCOUNT").map((n) => n.id));
+  const existing = new Set(
+    doc.nodes.filter((n) => n.kind === "IDENTITY_ACCESS_FINDING").map((n) => n.id),
+  );
+
+  const kindById = new Map(doc.nodes.map((n) => [n.id, n.kind]));
+  const withRealFinding = new Set<string>();
+  for (const e of doc.edges) {
+    if (e.type === "HAS_FINDING" && kindById.get(e.dst) === "EXCESSIVE_ACCESS_FINDING") {
+      withRealFinding.add(e.src);
+    }
+  }
+
+  const reached = new Set<string>();
+  for (const e of doc.edges) {
+    if (e.type !== "ALLOWS_ACCESS_TO") continue;
+    if (!e.accessType || !HUMAN_REACH.has(e.accessType)) continue;
+    if (!humans.has(e.src) || !aiAssets.has(e.dst)) continue;
+    if (withRealFinding.has(e.dst)) continue;
+    reached.add(e.dst);
+  }
+
+  const added: GNode[] = [];
+  const addedEdges: GEdge[] = [];
+  for (const assetId of reached) {
+    const id = `identityaccess|${assetId}`;
+    if (existing.has(id)) continue;
+    added.push({ id, kind: "IDENTITY_ACCESS_FINDING", name: "Human access" });
+    addedEdges.push({
+      id: edgeId(assetId, "HAS_FINDING", id),
+      src: assetId,
+      dst: id,
+      type: "HAS_FINDING",
+    });
+  }
+
+  if (!added.length) return doc;
+  return {
+    nodes: [...doc.nodes, ...added],
+    edges: [...doc.edges, ...addedEdges],
+    syncedAt: doc.syncedAt,
+  };
+}
+
+/**
  * Guardrail coverage.
  *
  * The edge is a NEGATED `PROTECTED_BY` — the vocabulary already says "the protective edge
