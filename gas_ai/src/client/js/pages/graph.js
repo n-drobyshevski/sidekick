@@ -343,16 +343,36 @@ export async function renderGraphPage(main, params, _ctx) {
     }
   }
 
+  /**
+   * The nodes on the canvas right now, minus the collapse placeholders — what the detail
+   * sheet's prev/next walks. A SUMMARY node expands its parent rather than opening a
+   * record, so stepping onto one would be a dead stop.
+   */
+  function openableNodes() {
+    return ((lastData && lastData.nodes) || []).filter((n) => n.kind !== "SUMMARY");
+  }
+
   const handlers = {
     onNodeOpen: (node) => {
+      const nodes = openableNodes();
+      const index = nodes.findIndex((n) => n.id === node.id);
+      // One list across both record types: onNodeOpen dispatches by kind, so stepping from
+      // an asset onto an issue opens the right sheet without the caller knowing which.
+      const records = index === -1 ? null : {
+        ids: nodes.map((n) => n.id),
+        index,
+        label: "node",
+        open: (id, i) => handlers.onNodeOpen(nodes[i]),
+      };
       // An ISSUE node carries the issue's own id (graphEnrich materializes one per open
       // issue), so it opens its issue sheet rather than doing nothing at all.
       if (node.kind === "ISSUE") {
-        openIssueSheet(node.id, { title: node.name });
+        openIssueSheet(node.id, { title: node.name, records });
         return;
       }
       openAssetSheet(node.id, {
         seed: node,
+        records,
         onFocusGraph: (id) => update({ seed: id, seedKind: "asset", expand: "" }),
         onExpand: (id) => {
           const expanded = new Set(listSplit(state.expand));

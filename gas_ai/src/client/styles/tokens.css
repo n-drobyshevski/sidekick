@@ -66,6 +66,16 @@
   --sheet-w: min(600px, 94vw);
   --sheet-w-wide: min(920px, 96vw);
 
+  /* The record sheets (asset, issue) run wider again, and are user-resizable between the
+     floor and 96vw. They carry a section rail beside the content pane, so the rail's width
+     comes out of the sheet rather than out of the reading column. Deliberately separate
+     tokens from --sheet-w: the filter, sync-progress and scan drawers are single-pane and
+     must not widen along with them. */
+  --sheet-w-record: min(960px, 94vw);
+  --sheet-w-record-wide: min(1280px, 96vw);
+  --sheet-w-record-min: 520px;
+  --sheet-rail-w: 184px;
+
   /* Semantic z-index, for the layers this app actually stacks. Only the values consumed
      below are defined; the route overlay (20), the <=800px top bar (45), the boot splash
      (55) and the toasts (60) stay literals until something needs to reason about them.

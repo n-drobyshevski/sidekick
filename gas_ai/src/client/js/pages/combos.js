@@ -545,9 +545,21 @@ export async function renderCombos(main, params) {
   function assetRow(group) {
     const row = el("div", { class: "combo-assets" },
       el("span", { class: "label" }, "Assets"));
+    // Prev/next walks this pattern's own asset list, so the sheet stays inside the
+    // combination the reader opened it from.
+    const assets = group.assets;
+    const openAsset = (a) => openAssetSheet(a.id, {
+      seed: a,
+      records: {
+        ids: assets.map((x) => x.id),
+        index: assets.indexOf(a),
+        label: "asset",
+        open: (id, i) => openAsset(assets[i]),
+      },
+    });
     const chips = group.assets.map((a) => el("button", {
       class: "asset-chip",
-      onclick: () => openAssetSheet(a.id, { seed: a }),
+      onclick: () => openAsset(a),
       "aria-label": a.name + ", AARS " + (a.aars === null || a.aars === undefined ? "unscored" : a.aars),
     },
       el("span", { class: "asset-chip-name" }, a.name),
@@ -674,6 +686,16 @@ export async function renderCombos(main, params) {
   }
 
   function issueTable(mount, group, rows) {
+    // `rows` is this table's current page, already filtered and sorted — stepping through
+    // it is stepping through exactly what the reader can see.
+    const openIssueRow = (issue) => openIssueSheet(issue.id, {
+      records: {
+        ids: rows.map((r) => r.id),
+        index: rows.indexOf(issue),
+        label: "issue",
+        open: (id, i) => openIssueRow(rows[i]),
+      },
+    });
     const COLS = [
       { key: "asset", label: "Asset", cell: (i) => i.assetName },
       { key: "severity", label: "Adjusted", cell: (i) => sevBadge(i.adjustedSeverity) },
@@ -713,7 +735,7 @@ export async function renderCombos(main, params) {
         persist();
         renderIssues(group, mount, issueRows.get(group.id) || []);
       },
-      onRowOpen: (issue) => openIssueSheet(issue.id),
+      onRowOpen: (issue) => openIssueRow(issue),
       rowLabel: (issue) => "Issue on " + issue.assetName,
       emptyText: "No issue in this pattern matches the current filters.",
     });

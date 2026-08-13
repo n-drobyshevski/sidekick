@@ -13,6 +13,7 @@
 //   sheet.js     the drill-down overlay and its section+row vocabulary
 //   combobox.js  the searchable portaled listbox
 //   code.js      a monospace block, and copying out of a sandboxed iframe
+//   uiIcons.js   chrome glyphs (close, chevrons, grip) — icons.js does node kinds
 //   rail.js      one value drawn on the shared 0–100 axis, and edited on it
 //   portals.js   the open-portal count the sheet's focus trap defers to
 
@@ -34,5 +35,6 @@ export {
 } from "./ui/sheet.js";
 export { filterCombobox } from "./ui/combobox.js";
 export { codeBlock, copyButton, copyText } from "./ui/code.js";
+export { uiIcon } from "./ui/uiIcons.js";
 export { pointRail, railScale } from "./ui/rail.js";
 export { debounce, onPageTeardown, runPageTeardown } from "./ui/timing.js";

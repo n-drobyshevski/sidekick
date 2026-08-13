@@ -241,6 +241,11 @@ export async function renderInventory(main, params) {
   let payload = null;
   let allMode = true;
   let facets = null;      // current facet counts, whichever side computed them
+  // The rows currently on screen, in the order they are shown — what the detail sheet's
+  // prev/next steps through. A page's worth, not the whole filtered set: the cluster's
+  // ends should mean "the end of what you are looking at". Declared up here with the rest
+  // of the page's state because renderResults() is hoisted and runs before its own line.
+  let visibleRows = [];
   let countText = null;   // the one live region on the page
   let resultsHost = null;
   let footerCount = null; // the drawer's running result count
@@ -779,6 +784,7 @@ export async function renderInventory(main, params) {
       return;
     }
 
+    visibleRows = pageRows;
     resultsHost.append(view === "cards" ? cardGrid(pageRows) : assetTable(pageRows));
 
     const sizeSel = el("select", { "aria-label": "Rows per page" },
@@ -795,11 +801,25 @@ export async function renderInventory(main, params) {
     );
   }
 
-  function openRow(row) {
+  function openAsset(row) {
     // The row already holds everything the sheet's header shows, so pass it as the seed:
     // identity and verdict paint on the same frame as the slide-in, and only the body
     // waits for the RPC.
-    return () => openAssetSheet(row.id, { seed: row });
+    const rows = visibleRows;
+    const index = rows.indexOf(row);
+    openAssetSheet(row.id, {
+      seed: row,
+      records: index === -1 ? null : {
+        ids: rows.map((r) => r.id),
+        index,
+        label: "asset",
+        open: (id, i) => openAsset(rows[i]),
+      },
+    });
+  }
+
+  function openRow(row) {
+    return () => openAsset(row);
   }
 
   function graphButton(row) {
