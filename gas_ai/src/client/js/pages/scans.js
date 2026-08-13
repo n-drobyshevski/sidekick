@@ -23,15 +23,17 @@
 //    lines of page-local markup on the same visual recipe, which is cheaper than the
 //    confusion.
 
-import { bootstrap, navigate, swrCall } from "../store.js";
+import { call } from "../api.js";
+import { bootstrap, swrCall } from "../store.js";
 import {
   COVERAGE, COVERAGE_ORDER, DESTINATIONS, SCAN_AREAS,
   coverageTally, destinationOf, rankAreas, resolveAreas,
 } from "../scanContent.js";
 import { svgEl } from "../icons.js";
+import { openAreaSheet } from "./scanSheet.js";
 import {
   clear, closeActiveSheet, dataTable, el, emptyState, errorState, fmtDate, fmtDateTime,
-  onPageTeardown, openSheet, plural, sectionLabel, sheetSection, skeleton, statRow,
+  onPageTeardown, plural, sectionLabel, skeleton, statRow,
 } from "../ui.js";
 
 // Only the whole-estate head of api_getAssets is read (kpis, total) — never `rows`. Past
@@ -66,11 +68,15 @@ export async function renderScans(main, params, ctx) {
 
   let assets = null;
   let combos = null;
+  let queries = null;
   let combosError = "";
 
   const settled = await Promise.allSettled([
     swrCall("api_getAssets", ASSETS_PARAMS, (fresh) => { assets = fresh; paint(); }),
     swrCall("api_getToxicCombos", {}, (fresh) => { combos = fresh; paint(); }),
+    // Not SWR: this describes the battery as configured right now, and the panel states it
+    // to the operator as fact. A cached answer is a claim about a query that may have moved.
+    call("api_getScanQueries", {}),
   ]);
 
   if (settled[0].status === "rejected") {
@@ -88,6 +94,9 @@ export async function renderScans(main, params, ctx) {
   // failure is named in its detail sheet rather than swallowed.
   if (settled[1].status === "fulfilled") combos = settled[1].value;
   else combosError = String((settled[1].reason && settled[1].reason.message) || settled[1].reason);
+  // The queries are drill-down detail, not the page. Losing them costs the panel its query
+  // sections and nothing else, so a failure here must not blank the coverage picture.
+  if (settled[2].status === "fulfilled") queries = settled[2].value;
 
   paint();
 
@@ -208,7 +217,7 @@ export async function renderScans(main, params, ctx) {
         { key: "state", label: "State", cell: (a) => statePill(a.state) },
       ],
       rows: ranked,
-      onRowOpen: (a) => openAreaSheet(a),
+      onRowOpen: (a) => openAreaSheet(a, sheetContext()),
       rowLabel: (a) => a.title + ", " + COVERAGE[a.state].label +
         (a.figure ? ", " + a.figure.value + " " + a.figure.unit : ""),
     });
@@ -246,41 +255,21 @@ export async function renderScans(main, params, ctx) {
       meta.label);
   }
 
-  function openAreaSheet(area) {
-    const dest = destinationOf(area);
-    const meta = COVERAGE[area.state];
-    openSheet((body) => {
-      // Filtered, not spread straight in: `el()` drops null children, but append() stringifies
-      // them, and a sheet that prints the word "null" under a heading is exactly the kind of
-      // thing this page exists to stop doing.
-      const sections = [
-        sheetSection("What Wiz does here", el("p", { class: "cov-para" }, area.what)),
-        sheetSection("Reported in this tenant",
-          area.figure
-            ? el("p", { class: "cov-para cov-sheet-figure" },
-                el("strong", { class: "num" }, area.figure.value), " " + area.figure.unit)
-            : el("p", { class: "cov-para cov-none" }, "No figure — " + meta.blurb + "."),
-          area.note ? el("p", { class: "cov-note" }, area.note) : null,
-          area.id === "toxic" && combosError
-            ? el("p", { class: "cov-note" },
-                "The toxic-combination payload failed to load this time: " + combosError)
-            : null),
-        sheetSection("Query", el("p", { class: "cov-para cov-q" }, area.query || "—")),
-        dest && area.state !== "unscanned"
-          ? sheetSection("Where the results land",
-              el("button", {
-                class: "linklike",
-                type: "button",
-                onclick: () => navigate(dest.id, {}),
-              }, "Open the " + dest.title + " →"),
-              el("p", { class: "small muted", style: "margin-top:4px" }, dest.sub))
-          : null,
-      ];
-      body.append(...sections.filter(Boolean));
-    }, {
-      title: area.title,
-      subtitle: meta.label + " · " + meta.blurb,
-    });
+  /**
+   * What the drill-down needs that the page already has. Rebuilt per open so a sheet always
+   * describes the payload on screen, and `refresh` re-reads after a variables save.
+   */
+  function sheetContext() {
+    return {
+      steps: (queries && queries.steps) || [],
+      specs: (queries && queries.specs) || [],
+      skippedSteps: (queries && queries.skippedSteps) || [],
+      transportVariables: (queries && queries.transportVariables) || [],
+      hasCredentials: queries ? queries.hasCredentials : boot.hasCredentials,
+      combosError,
+      destinationOf,
+      refresh: () => renderScans(clear(main), params, ctx),
+    };
   }
 }
 
