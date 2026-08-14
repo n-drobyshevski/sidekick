@@ -52,11 +52,13 @@ const stateOf = (ctx, id) => byId(resolveAreas(ctx)).get(id).state;
 describe("resolveAreas on a full payload", () => {
   const resolved = resolveAreas(FULL);
 
-  it("splits the ten areas 8 live / 1 partial / 1 unscanned", () => {
-    // Human identity access moved live: the paths were always synced and only the total was
-    // missing. Compliance frameworks is the one remaining declared `partial` — it counts
-    // failing findings while its subject is framework SCORING, which no payload here carries.
-    expect(coverageTally(resolved)).toEqual({ live: 8, partial: 1, unscanned: 1 });
+  it("splits the ten areas 9 live / 0 partial / 1 unscanned", () => {
+    // Supply chain is now the only area that is not live, and it is the only one that
+    // SHOULD be: no query runs for it at all. The last declared `partial` was the
+    // configuration-findings area, which held that badge only while it claimed framework
+    // SCORING as its subject and could count nothing but findings. Scoring is its own area
+    // now, so the badge described a gap that had already moved.
+    expect(coverageTally(resolved)).toEqual({ live: 9, partial: 0, unscanned: 1 });
   });
 
   it("reports framework posture as an average over the frameworks that actually scored", () => {
@@ -190,10 +192,22 @@ describe("declared states — the two things no payload can tell you", () => {
     }
   });
 
-  it("keeps compliance partial even though its figure resolves", () => {
-    const area = byId(resolveAreas(FULL)).get("compliance");
-    expect(area.state).toBe("partial");
+  it("reports configuration findings live, and derives that rather than declaring it", () => {
+    const area = byId(resolveAreas(FULL)).get("configFindings");
+    expect(area.state).toBe("live");
     expect(area.figure.value).toBe("23");
+    // No declared coverage at all — the state has to come off the figure, which is what
+    // makes the next assertion possible. A hardcoded `live` would read identically here
+    // and lie on a tenant that never answered.
+    expect(area.coverage).toBeUndefined();
+  });
+
+  it("steps configuration findings back to partial when the KPI is missing", () => {
+    // An older server bundle, a failed RPC, a tenant that rejected the optional step: all
+    // arrive as an absent KPI, and none of them is a confident zero.
+    const noKpi = { ...FULL, kpis: { ...FULL.kpis, complianceGaps: undefined } };
+    expect(stateOf(noKpi, "configFindings")).toBe("partial");
+    expect(stateOf({ boot: {}, kpis: null, digest: null }, "configFindings")).toBe("partial");
   });
 
   it("gives every declared-partial and unscanned area a note saying why", () => {
