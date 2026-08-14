@@ -74,15 +74,17 @@ const SECTIONS = [
 export async function renderHelp(main, params, _ctx) {
   const boot = bootstrapCached() || (await bootstrap());
 
-  // One column with a reading width, rather than letting a reference page run out to the
-  // full 1800px the pane can offer. The graph and the inventory earn the whole width
-  // because their content is a canvas and a register; this page is a document, and a
-  // definition whose count sits 900px to its right is two facts, not one row.
+  // The page spans the pane, like every other page here. It used to stop at 1080px, on the
+  // argument that a document is not a canvas and "a definition whose count sits 900px to
+  // its right is two facts, not one row". The observation was right and the remedy was too
+  // blunt: the thing that comes apart at width is a ROW, so the row is where it is fixed —
+  // each one caps its content column at --measure and keeps its right-hand cell beside it,
+  // with a trailing gutter taking the surplus (see help.css). That holds at 1920px, which a
+  // page-level cap never did; it only postponed the problem to the width it allowed.
   //
-  // The index rail lives in the width that decision was already leaving unused, so the
-  // reading measure is unchanged. It is FIRST in the DOM and second in the grid on
-  // purpose: it is a jump control, so a keyboard reader has to meet it before the ~2500px
-  // it exists to skip. Below its breakpoint it is display:none and costs no tab stop.
+  // The index rail is FIRST in the DOM and second in the grid on purpose: it is a jump
+  // control, so a keyboard reader has to meet it before the ~2500px it exists to skip.
+  // Below its breakpoint it is display:none and costs no tab stop.
   const page = el("div", { class: "help-page" });
   const doc = el("div", { class: "help-doc" });
   const index = pageIndex();
