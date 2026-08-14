@@ -57,7 +57,10 @@ export interface QueryNode {
   steps?: QueryStep[];
 }
 
-export interface QueryStep {
+/** A step is either one hop along a relationship, or a boolean grouping of other steps. */
+export type QueryStep = RelationStep | GroupStep;
+
+export interface RelationStep {
   edge: QueryEdge;
   /** Follow the edge dst→src. "service account USED BY agent" is the same edge, read backwards. */
   reverse?: boolean;
@@ -71,6 +74,27 @@ export interface QueryStep {
   /** ANY edges only: how far to walk. 1–MAX_HOPS. This is where the old depth slider landed. */
   hops?: number;
   node: QueryNode;
+}
+
+/**
+ * A boolean block over other steps. The steps of a node are ANDed implicitly, so `and` is only
+ * ever needed to nest inside an `or`; `or` is the one that adds expressive power.
+ *
+ * A group occupies NO binding slot of its own — it is punctuation, not an entity. Its children
+ * occupy theirs, and for an `or` group EVERY branch reserves its slots even though only one
+ * branch fills them on any given row. That is what keeps the table rectangular: a row always
+ * has the same cells in the same order, showing values under the branch that matched and `—`
+ * under the others, which is the visual language `optional` already established.
+ */
+export interface GroupStep {
+  op: "and" | "or";
+  /** No branch matched? Null the whole group's slots and keep the row, instead of dropping it. */
+  optional?: boolean;
+  steps: QueryStep[];
+}
+
+export function isGroup(step: QueryStep): step is GroupStep {
+  return (step as GroupStep).op !== undefined;
 }
 
 /** What a fresh visit asks: the product's primary lens, unchanged from the old default. */
@@ -306,6 +330,7 @@ function readNode(raw: unknown, depth: number, counter: { nodes: number }): Quer
 function readStep(raw: unknown, depth: number, counter: { nodes: number }): QueryStep {
   if (!raw || typeof raw !== "object") fail("step must be an object");
   const r = raw as Rec;
+  if (r["op"] !== undefined) return readGroup(r, depth, counter);
   const edge = r["edge"];
   if (typeof edge !== "string" || (edge !== "ANY" && !EDGE_SET.has(edge))) {
     fail(`unknown relationship: ${String(edge)}`);
@@ -325,6 +350,27 @@ function readStep(raw: unknown, depth: number, counter: { nodes: number }): Quer
   }
   if (step.negate && step.optional) fail("a relationship cannot be both negated and optional");
   return step;
+}
+
+/**
+ * An AND / OR block.
+ *
+ * A group is counted against `MAX_QUERY_DEPTH` like any other level but against no node budget
+ * of its own — it binds nothing, and its children are already counted. One branch is allowed:
+ * a group is built by adding it and then adding branches to it, and rejecting the intermediate
+ * state would make the builder unusable for the sake of a rule nothing depends on.
+ */
+function readGroup(r: Rec, depth: number, counter: { nodes: number }): GroupStep {
+  const op = r["op"];
+  if (op !== "and" && op !== "or") fail(`unknown group operator: ${String(op)}`);
+  if (depth > MAX_QUERY_DEPTH) fail(`query nests deeper than ${MAX_QUERY_DEPTH} levels`);
+  const steps = r["steps"];
+  if (!Array.isArray(steps) || !steps.length) {
+    fail(`an ${op.toUpperCase()} group needs at least one branch`);
+  }
+  const group: GroupStep = { op, steps: steps.map((s) => readStep(s, depth + 1, counter)) };
+  if (r["optional"] === true) group.optional = true;
+  return group;
 }
 
 // ------------------------------------------------------------------------- vocabulary
@@ -411,6 +457,14 @@ export interface ColumnGroup {
   fields: Array<{ key: string; label: string; numeric?: boolean }>;
   /** Every field this kind could show, for the column chooser. */
   available: Array<{ key: string; label: string }>;
+  /**
+   * Set on groups that are ALTERNATIVES rather than a sequence: they belong to different
+   * branches of one OR, so no row ever fills more than one of them. The table rules between
+   * them and says OR, because presenting them as consecutive column groups would read as
+   * "all of this happened" when the truth is "one of these did".
+   */
+  altOf?: string;
+  altIndex?: number;
 }
 
 /**
@@ -419,7 +473,9 @@ export interface ColumnGroup {
  */
 export function queryColumnGroups(query: QueryNode, selected?: Array<string[] | null>): ColumnGroup[] {
   const groups: ColumnGroup[] = [];
-  walkShown(query, (node) => {
+  for (const slot of bindingSlots(query)) {
+    const node = slot.node;
+    if (node.show === false) continue;
     const index = groups.length;
     const offered = fieldsForKind(node.kind);
     const offeredKeys = new Set(offered.map((f) => f.key));
@@ -434,28 +490,66 @@ export function queryColumnGroups(query: QueryNode, selected?: Array<string[] | 
         return { key: f.key, label: f.label, numeric: f.numeric };
       }),
       available: offered.map((f) => ({ key: f.key, label: f.label })),
+      // Only when the group IS an alternative. Most queries have no OR in them, and stamping
+      // every column group with two undefined keys would put them in the wire payload and in
+      // the golden snapshot, where they read as a fact about the group rather than an absence.
+      ...(slot.altOf === undefined ? {} : { altOf: slot.altOf, altIndex: slot.altIndex }),
     });
-  });
+  }
   return groups;
 }
 
-/** The shown nodes, pre-order — the same walk the binder uses, so slots and groups line up. */
-function walkShown(node: QueryNode, visit: (n: QueryNode) => void): void {
-  if (node.show !== false) visit(node);
-  for (const step of node.steps ?? []) {
-    if (step.negate) continue;
-    walkShown(step.node, visit);
-  }
+/**
+ * THE walk. Every node that occupies a binding slot, in pre-order.
+ *
+ * There used to be two of these — this one and a `walkShown` that re-derived the same order
+ * while skipping hidden nodes — and everything downstream depended on them agreeing. They are
+ * one now, and "shown" is read off the slot rather than being a second traversal's opinion:
+ * `queryColumnGroups` filters this list, `runQuery` builds its mask from it, and `toCells`
+ * indexes into it. One order, four readers, no convention to remember.
+ *
+ * The rule that makes this subtle: a NEGATED step asserts absence, so it binds nothing and
+ * consumes no slot — and neither does anything under it. The client's `queryRows` and
+ * `applyWhere` walk the same shape for the same reason; if the two sides ever disagree, every
+ * filter past the divergence lands on the wrong node and the query quietly answers a different
+ * question. That is what `test/graphQueryWalk.test.ts` exists to catch.
+ */
+function bindingSlots(node: QueryNode, path = "", alt?: Alternation): SlotInfo[] {
+  const out: SlotInfo[] = [{ node, altOf: alt?.of, altIndex: alt?.index }];
+  (node.steps ?? []).forEach((step, i) => out.push(...stepSlots(step, path + "." + i, alt)));
+  return out;
 }
 
-/** Every binding slot, shown or not — one per traversed node, pre-order. */
-function bindingSlots(node: QueryNode): QueryNode[] {
-  const out: QueryNode[] = [node];
-  for (const step of node.steps ?? []) {
-    if (step.negate) continue;
-    out.push(...bindingSlots(step.node));
+interface Alternation { of: string; index: number }
+
+export interface SlotInfo {
+  node: QueryNode;
+  /** The OR group whose branch this slot sits in, identified by its path. */
+  altOf?: string;
+  /** Which branch. Slots from different branches of one group never co-occur in a row. */
+  altIndex?: number;
+}
+
+/**
+ * The slots one step contributes.
+ *
+ * `path` only has to be STABLE and unique per group, never parsed — it is the identity two
+ * column groups compare to discover they are alternatives of each other. Callers that want
+ * nothing but the count pass a placeholder.
+ */
+function stepSlots(step: QueryStep, path: string, alt?: Alternation): SlotInfo[] {
+  if (isGroup(step)) {
+    const out: SlotInfo[] = [];
+    step.steps.forEach((child, i) => {
+      // An `and` group is transparent to alternation — its children belong to whatever branch
+      // the group itself sits in. An `or` group starts a new one, innermost winning.
+      const inner = step.op === "or" ? { of: path, index: i } : alt;
+      out.push(...stepSlots(child, path + "." + i, inner));
+    });
+    return out;
   }
-  return out;
+  if (step.negate) return [];
+  return bindingSlots(step.node, path, alt);
 }
 
 // ------------------------------------------------------------------------- evaluation
@@ -551,8 +645,8 @@ function matchesNode(node: GNode, q: QueryNode): boolean {
   return true;
 }
 
-/** Candidate targets of one step from one node, each with the edges walked to reach it. */
-function stepTargets(from: GNode, step: QueryStep, adj: Adjacency): Array<{ node: GNode; edges: GEdge[] }> {
+/** Candidate targets of one relation step, each with the edges walked to reach it. */
+function stepTargets(from: GNode, step: RelationStep, adj: Adjacency): Array<{ node: GNode; edges: GEdge[] }> {
   if (step.edge === "ANY") return anyHopTargets(from, step, adj);
 
   const edges = (step.reverse ? adj.in.get(from.id) : adj.out.get(from.id)) ?? [];
@@ -578,7 +672,7 @@ function stepTargets(from: GNode, step: QueryStep, adj: Adjacency): Array<{ node
  * `FIND <that asset> THAT relates within 2 hops to ANY` is the neighbourhood view, expressed as
  * a query like everything else on the page.
  */
-function anyHopTargets(from: GNode, step: QueryStep, adj: Adjacency): Array<{ node: GNode; edges: GEdge[] }> {
+function anyHopTargets(from: GNode, step: RelationStep, adj: Adjacency): Array<{ node: GNode; edges: GEdge[] }> {
   const limit = Math.min(MAX_HOPS, Math.max(1, step.hops ?? 1));
   const prev = new Map<string, { via: GEdge; from: string }>();
   const seen = new Set<string>([from.id]);
@@ -635,45 +729,127 @@ interface ScanState {
  */
 function solutions(q: QueryNode, node: GNode, adj: Adjacency, scan: ScanState): Solution[] {
   let acc: Solution[] = [{ slots: [node], edges: [] }];
-
   for (const step of q.steps ?? []) {
-    const targets = stepTargets(node, step, adj);
-
-    if (step.negate) {
-      if (targets.length) return [];
-      continue;
-    }
-
-    const stepSolutions: Solution[] = [];
-    for (const t of targets) {
-      for (const sub of solutions(step.node, t.node, adj, scan)) {
-        stepSolutions.push({ slots: sub.slots, edges: t.edges.concat(sub.edges) });
-      }
-      if (scan.truncated) break;
-    }
-
-    if (!stepSolutions.length) {
-      if (!step.optional) return [];
-      // The row survives with the whole subtree null-bound, so its column group stays in place
-      // and reads as "nothing here" rather than shifting every later column one to the left.
-      stepSolutions.push({ slots: bindingSlots(step.node).map(() => null), edges: [] });
-    }
-
-    const combined: Solution[] = [];
-    for (const left of acc) {
-      for (const right of stepSolutions) {
-        if (++scan.scanned > scan.max) {
-          scan.truncated = true;
-          return combined;
-        }
-        combined.push({ slots: left.slots.concat(right.slots), edges: left.edges.concat(right.edges) });
-      }
-    }
-    acc = combined;
+    const sub = solveStep(step, node, adj, scan);
+    // null means this step cannot be satisfied, which kills the whole binding — the steps of a
+    // node are ANDed. An empty slot list is a different thing entirely (a negated step that
+    // held), and must not be confused with it.
+    if (sub === null) return [];
+    acc = crossProduct(acc, sub, scan);
     if (scan.truncated) return acc;
   }
-
   return acc;
+}
+
+/** The AND combine: every pairing of a left binding with a right one, under the scan budget. */
+function crossProduct(left: Solution[], right: Solution[], scan: ScanState): Solution[] {
+  const out: Solution[] = [];
+  for (const a of left) {
+    for (const b of right) {
+      if (++scan.scanned > scan.max) {
+        scan.truncated = true;
+        return out;
+      }
+      out.push({ slots: a.slots.concat(b.slots), edges: a.edges.concat(b.edges) });
+    }
+  }
+  return out;
+}
+
+/** A binding that fills `width` slots with nothing — an unmatched optional, or an OR sibling. */
+function nullSolution(width: number): Solution {
+  return { slots: new Array(width).fill(null) as Array<GNode | null>, edges: [] };
+}
+
+/**
+ * Every way ONE step can be satisfied from `from`, or `null` if it cannot be.
+ *
+ * The null-versus-empty distinction is the whole contract: `null` fails the enclosing binding,
+ * `[{slots: [], …}]` succeeds while contributing no columns (what a held negation looks like),
+ * and anything longer contributes that many slots.
+ */
+function solveStep(step: QueryStep, from: GNode, adj: Adjacency, scan: ScanState): Solution[] | null {
+  if (isGroup(step)) return solveGroup(step, from, adj, scan);
+
+  const targets = stepTargets(from, step, adj);
+  if (step.negate) {
+    // Absence asserted. It binds nothing, so it contributes one zero-width solution — the
+    // identity of the cross product — rather than no solutions, which would annihilate the row.
+    return targets.length ? null : [{ slots: [], edges: [] }];
+  }
+
+  const out: Solution[] = [];
+  for (const t of targets) {
+    for (const sub of solutions(step.node, t.node, adj, scan)) {
+      out.push({ slots: sub.slots, edges: t.edges.concat(sub.edges) });
+    }
+    if (scan.truncated) break;
+  }
+  if (out.length) return out;
+  // The row survives with the whole subtree null-bound, so its column group stays in place and
+  // reads as "nothing here" rather than shifting every later column one to the left.
+  return step.optional ? [nullSolution(stepSlots(step, "").length)] : null;
+}
+
+/**
+ * A boolean block.
+ *
+ * `and` is the ordinary cross product over its branches. `or` is a UNION: each branch is solved
+ * independently and its bindings are padded with nulls into the group's full width, so a
+ * solution always describes every branch — the one that matched, and the ones that did not.
+ * Without that padding the branches would return rows of different widths and the table's
+ * columns would slide out from under their headers.
+ */
+function solveGroup(group: GroupStep, from: GNode, adj: Adjacency, scan: ScanState): Solution[] | null {
+  const widths = group.steps.map((s) => stepSlots(s, "").length);
+
+  if (group.op === "and") {
+    let acc: Solution[] = [{ slots: [], edges: [] }];
+    for (const child of group.steps) {
+      const sub = solveStep(child, from, adj, scan);
+      if (sub === null) {
+        return group.optional ? [nullSolution(total(widths))] : null;
+      }
+      acc = crossProduct(acc, sub, scan);
+      if (scan.truncated) return acc;
+    }
+    return acc;
+  }
+
+  const bound: Solution[] = [];
+  const empty: Solution[] = [];
+  for (let i = 0; i < group.steps.length; i++) {
+    if (scan.truncated) break;
+    const sub = solveStep(group.steps[i], from, adj, scan);
+    if (sub === null) continue; // this branch simply did not match; the others still can
+    const before = total(widths.slice(0, i));
+    const after = total(widths.slice(i + 1));
+    for (const s of sub) {
+      const solution: Solution = {
+        slots: (new Array(before).fill(null) as Array<GNode | null>)
+          .concat(s.slots, new Array(after).fill(null) as Array<GNode | null>),
+        edges: s.edges,
+      };
+      (s.slots.some((n) => n !== null) ? bound : empty).push(solution);
+    }
+  }
+
+  // A branch that HELD WITHOUT BINDING — a negation, or an all-optional subtree — produces a
+  // row with every cell empty. Such a row is subsumed by any bound row for the same asset: it
+  // agrees everywhere and shows less, so "runs as an identity OR has no model" would list an
+  // agent that does both twice, once with the identity and once with nothing, and the second
+  // row could not say why it was there. Bound answers win; the empty one is the fallback, and
+  // collapses to a single row so that "no model OR no guardrail" does not report an agent
+  // missing both as two identical blanks.
+  if (bound.length) return bound;
+  if (empty.length) return [empty[0]];
+  return group.optional ? [nullSolution(total(widths))] : null;
+}
+
+function total(ns: number[]): number {
+  let sum = 0;
+  for (const n of ns) sum += n;
+  return sum;
 }
 
 /**
@@ -691,8 +867,7 @@ export function runQuery(doc: GraphDoc, query: QueryNode, opts: RunOptions = {})
 
   // Which slots are shown, as a mask over the pre-order slot list. Built once: the binder emits
   // every traversed node (the Graph view wants the waypoints) and only the table drops them.
-  const slotQueries = bindingSlots(query);
-  const shownMask = slotQueries.map((q) => q.show !== false);
+  const shownMask = bindingSlots(query).map((slot) => slot.node.show !== false);
   const groupFields = groups.map((g) => g.fields.map((f) => f.key));
 
   const roots = doc.nodes

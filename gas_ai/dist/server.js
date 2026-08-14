@@ -158,17 +158,17 @@ var Server = (() => {
     while (files.hasNext()) files.next().setTrashed(true);
   }
   function archiveBytes() {
-    let total = 0;
+    let total2 = 0;
     for (const name of SUBFOLDERS) {
       const walk = (folder) => {
         const files = folder.getFiles();
-        while (files.hasNext()) total += files.next().getSize();
+        while (files.hasNext()) total2 += files.next().getSize();
         const folders = folder.getFolders();
         while (folders.hasNext()) walk(folders.next());
       };
       walk(subfolder(name));
     }
-    return total;
+    return total2;
   }
 
   // src/domain/util.ts
@@ -2960,7 +2960,7 @@ var Server = (() => {
     const perRule = rule.gapPoints.map(() => 0);
     const byCode = {};
     let fallback = 0;
-    let total = 0;
+    let total2 = 0;
     for (const list2 of codeLists != null ? codeLists : []) {
       if (!Array.isArray(list2)) continue;
       const seen = /* @__PURE__ */ new Set();
@@ -2969,7 +2969,7 @@ var Server = (() => {
         if (!code || seen.has(code)) continue;
         seen.add(code);
         byCode[code] = ((_a5 = byCode[code]) != null ? _a5 : 0) + 1;
-        total++;
+        total2++;
         let matched = false;
         for (let i = 0; i < rule.gapPoints.length; i++) {
           const row = rule.gapPoints[i];
@@ -2983,7 +2983,7 @@ var Server = (() => {
         if (!matched) fallback++;
       }
     }
-    return { perRule, fallback, total, byCode };
+    return { perRule, fallback, total: total2, byCode };
   }
   function pointsPhrase(n) {
     return n === 1 ? "1 point" : `${n} points`;
@@ -4887,6 +4887,9 @@ var Server = (() => {
   }
 
   // src/domain/graphQuery.ts
+  function isGroup(step) {
+    return step.op !== void 0;
+  }
   var DEFAULT_QUERY = { kind: "AI_AGENT" };
   var QUERY_ROW_MAX = 2e3;
   var QUERY_SCAN_MAX = 1e5;
@@ -5064,6 +5067,7 @@ var Server = (() => {
     var _a5;
     if (!raw || typeof raw !== "object") fail("step must be an object");
     const r = raw;
+    if (r["op"] !== void 0) return readGroup(r, depth, counter);
     const edge2 = r["edge"];
     if (typeof edge2 !== "string" || edge2 !== "ANY" && !EDGE_SET.has(edge2)) {
       fail(`unknown relationship: ${String(edge2)}`);
@@ -5081,6 +5085,18 @@ var Server = (() => {
     }
     if (step.negate && step.optional) fail("a relationship cannot be both negated and optional");
     return step;
+  }
+  function readGroup(r, depth, counter) {
+    const op = r["op"];
+    if (op !== "and" && op !== "or") fail(`unknown group operator: ${String(op)}`);
+    if (depth > MAX_QUERY_DEPTH) fail(`query nests deeper than ${MAX_QUERY_DEPTH} levels`);
+    const steps = r["steps"];
+    if (!Array.isArray(steps) || !steps.length) {
+      fail(`an ${op.toUpperCase()} group needs at least one branch`);
+    }
+    const group = { op, steps: steps.map((s) => readStep(s, depth + 1, counter)) };
+    if (r["optional"] === true) group.optional = true;
+    return group;
   }
   function queryVocabulary(doc) {
     var _a5;
@@ -5119,9 +5135,11 @@ var Server = (() => {
     return { kinds, stepsFrom };
   }
   function queryColumnGroups(query, selected) {
+    var _a5;
     const groups = [];
-    walkShown(query, (node2) => {
-      var _a5;
+    for (const slot of bindingSlots(query)) {
+      const node2 = slot.node;
+      if (node2.show === false) continue;
       const index = groups.length;
       const offered = fieldsForKind(node2.kind);
       const offeredKeys = new Set(offered.map((f) => f.key));
@@ -5135,27 +5153,32 @@ var Server = (() => {
           const f = FIELD_BY_KEY.get(k);
           return { key: f.key, label: f.label, numeric: f.numeric };
         }),
-        available: offered.map((f) => ({ key: f.key, label: f.label }))
+        available: offered.map((f) => ({ key: f.key, label: f.label })),
+        // Only when the group IS an alternative. Most queries have no OR in them, and stamping
+        // every column group with two undefined keys would put them in the wire payload and in
+        // the golden snapshot, where they read as a fact about the group rather than an absence.
+        ...slot.altOf === void 0 ? {} : { altOf: slot.altOf, altIndex: slot.altIndex }
       });
-    });
+    }
     return groups;
   }
-  function walkShown(node2, visit) {
+  function bindingSlots(node2, path = "", alt) {
     var _a5;
-    if (node2.show !== false) visit(node2);
-    for (const step of (_a5 = node2.steps) != null ? _a5 : []) {
-      if (step.negate) continue;
-      walkShown(step.node, visit);
-    }
-  }
-  function bindingSlots(node2) {
-    var _a5;
-    const out = [node2];
-    for (const step of (_a5 = node2.steps) != null ? _a5 : []) {
-      if (step.negate) continue;
-      out.push(...bindingSlots(step.node));
-    }
+    const out = [{ node: node2, altOf: alt == null ? void 0 : alt.of, altIndex: alt == null ? void 0 : alt.index }];
+    ((_a5 = node2.steps) != null ? _a5 : []).forEach((step, i) => out.push(...stepSlots(step, path + "." + i, alt)));
     return out;
+  }
+  function stepSlots(step, path, alt) {
+    if (isGroup(step)) {
+      const out = [];
+      step.steps.forEach((child, i) => {
+        const inner = step.op === "or" ? { of: path, index: i } : alt;
+        out.push(...stepSlots(child, path + "." + i, inner));
+      });
+      return out;
+    }
+    if (step.negate) return [];
+    return bindingSlots(step.node, path, alt);
   }
   function buildAdjacency(doc) {
     const byId = new Map(doc.nodes.map((n) => [n.id, n]));
@@ -5253,36 +5276,83 @@ var Server = (() => {
     var _a5;
     let acc = [{ slots: [node2], edges: [] }];
     for (const step of (_a5 = q.steps) != null ? _a5 : []) {
-      const targets = stepTargets(node2, step, adj);
-      if (step.negate) {
-        if (targets.length) return [];
-        continue;
-      }
-      const stepSolutions = [];
-      for (const t of targets) {
-        for (const sub of solutions(step.node, t.node, adj, scan)) {
-          stepSolutions.push({ slots: sub.slots, edges: t.edges.concat(sub.edges) });
-        }
-        if (scan.truncated) break;
-      }
-      if (!stepSolutions.length) {
-        if (!step.optional) return [];
-        stepSolutions.push({ slots: bindingSlots(step.node).map(() => null), edges: [] });
-      }
-      const combined = [];
-      for (const left of acc) {
-        for (const right of stepSolutions) {
-          if (++scan.scanned > scan.max) {
-            scan.truncated = true;
-            return combined;
-          }
-          combined.push({ slots: left.slots.concat(right.slots), edges: left.edges.concat(right.edges) });
-        }
-      }
-      acc = combined;
+      const sub = solveStep(step, node2, adj, scan);
+      if (sub === null) return [];
+      acc = crossProduct(acc, sub, scan);
       if (scan.truncated) return acc;
     }
     return acc;
+  }
+  function crossProduct(left, right, scan) {
+    const out = [];
+    for (const a of left) {
+      for (const b of right) {
+        if (++scan.scanned > scan.max) {
+          scan.truncated = true;
+          return out;
+        }
+        out.push({ slots: a.slots.concat(b.slots), edges: a.edges.concat(b.edges) });
+      }
+    }
+    return out;
+  }
+  function nullSolution(width) {
+    return { slots: new Array(width).fill(null), edges: [] };
+  }
+  function solveStep(step, from, adj, scan) {
+    if (isGroup(step)) return solveGroup(step, from, adj, scan);
+    const targets = stepTargets(from, step, adj);
+    if (step.negate) {
+      return targets.length ? null : [{ slots: [], edges: [] }];
+    }
+    const out = [];
+    for (const t of targets) {
+      for (const sub of solutions(step.node, t.node, adj, scan)) {
+        out.push({ slots: sub.slots, edges: t.edges.concat(sub.edges) });
+      }
+      if (scan.truncated) break;
+    }
+    if (out.length) return out;
+    return step.optional ? [nullSolution(stepSlots(step, "").length)] : null;
+  }
+  function solveGroup(group, from, adj, scan) {
+    const widths = group.steps.map((s) => stepSlots(s, "").length);
+    if (group.op === "and") {
+      let acc = [{ slots: [], edges: [] }];
+      for (const child of group.steps) {
+        const sub = solveStep(child, from, adj, scan);
+        if (sub === null) {
+          return group.optional ? [nullSolution(total(widths))] : null;
+        }
+        acc = crossProduct(acc, sub, scan);
+        if (scan.truncated) return acc;
+      }
+      return acc;
+    }
+    const bound = [];
+    const empty = [];
+    for (let i = 0; i < group.steps.length; i++) {
+      if (scan.truncated) break;
+      const sub = solveStep(group.steps[i], from, adj, scan);
+      if (sub === null) continue;
+      const before = total(widths.slice(0, i));
+      const after = total(widths.slice(i + 1));
+      for (const s of sub) {
+        const solution = {
+          slots: new Array(before).fill(null).concat(s.slots, new Array(after).fill(null)),
+          edges: s.edges
+        };
+        (s.slots.some((n) => n !== null) ? bound : empty).push(solution);
+      }
+    }
+    if (bound.length) return bound;
+    if (empty.length) return [empty[0]];
+    return group.optional ? [nullSolution(total(widths))] : null;
+  }
+  function total(ns) {
+    let sum = 0;
+    for (const n of ns) sum += n;
+    return sum;
   }
   function runQuery(doc, query, opts = {}) {
     var _a5, _b;
@@ -5290,8 +5360,7 @@ var Server = (() => {
     const scan = { scanned: 0, max: (_b = opts.scanMax) != null ? _b : QUERY_SCAN_MAX, truncated: false };
     const adj = buildAdjacency(doc);
     const groups = queryColumnGroups(query, opts.columns);
-    const slotQueries = bindingSlots(query);
-    const shownMask = slotQueries.map((q) => q.show !== false);
+    const shownMask = bindingSlots(query).map((slot) => slot.node.show !== false);
     const groupFields = groups.map((g) => g.fields.map((f) => f.key));
     const roots = doc.nodes.filter((n) => matchesNode(n, query)).sort((a, b) => {
       var _a6, _b2;
@@ -5300,10 +5369,10 @@ var Server = (() => {
     const rows = [];
     const nodeIds = /* @__PURE__ */ new Set();
     const edgeIds = /* @__PURE__ */ new Set();
-    let total = 0;
+    let total2 = 0;
     for (const root of roots) {
       for (const sol of solutions(query, root, adj, scan)) {
-        total += 1;
+        total2 += 1;
         if (rows.length < rowMax) {
           rows.push({ cells: toCells(sol.slots, shownMask, groupFields) });
           for (const n of sol.slots) if (n) nodeIds.add(n.id);
@@ -5319,8 +5388,8 @@ var Server = (() => {
     return {
       rows,
       groups,
-      total,
-      capped: total > rows.length,
+      total: total2,
+      capped: total2 > rows.length,
       truncated: scan.truncated,
       nodeIds: [...nodeIds],
       edgeIds: [...edgeIds]
@@ -6047,7 +6116,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "7e5efd689002" : "dev";
+  var BUILD_ID = true ? "d109a9d76313" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }

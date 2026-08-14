@@ -7,6 +7,9 @@ import {
   MAX_QUERY_NODES,
   QueryError,
   type QueryNode,
+  type QueryStep,
+  type RelationStep,
+  isGroup,
   defaultFieldsForKind,
   fieldsForKind,
   humanDiscoveryMethod,
@@ -72,11 +75,17 @@ describe("validateQuery", () => {
 
   it("clamps hops and only reads them on an ANY edge", () => {
     const q = validateQuery({ kind: "AI_AGENT", steps: [{ edge: "ANY", hops: 99, node: { kind: "ANY" } }] });
-    expect(q.steps?.[0].hops).toBe(3);
+    expect(relation(q.steps?.[0]).hops).toBe(3);
     const typed = validateQuery({ kind: "AI_AGENT", steps: [{ edge: "RUNS_AS", hops: 3, node: { kind: "SERVICE_ACCOUNT" } }] });
-    expect(typed.steps?.[0].hops).toBeUndefined();
+    expect(relation(typed.steps?.[0]).hops).toBeUndefined();
   });
 });
+
+/** Narrow a step to a relation, failing loudly if a group turned up where one was not expected. */
+function relation(step: QueryStep | undefined): RelationStep {
+  if (!step || isGroup(step)) throw new Error("expected a relation step, got " + JSON.stringify(step));
+  return step;
+}
 
 describe("queryVocabulary", () => {
   const vocab = queryVocabulary(DOC);
@@ -284,5 +293,177 @@ describe("columns", () => {
     expect(humanDiscoveryMethod("MethodCloudScanning")).toBe("Cloud Scanning");
     expect(humanDiscoveryMethod("MethodWorkloadScanning")).toBe("Workload Scanning");
     expect(humanDiscoveryMethod("SomethingNew")).toBe("Something New");
+  });
+});
+
+// ---------------------------------------------------------------- AND / OR groups
+
+/**
+ * A four-node fixture with a deliberate asymmetry: `both` satisfies either branch, `sa-only`
+ * and `model-only` satisfy exactly one, and `neither` satisfies none. Every OR assertion below
+ * reads off that shape, so a change in semantics shows up as a specific row moving rather than
+ * as a count nobody can reason about.
+ */
+const BRANCHES: GraphDoc = {
+  syncedAt: DOC.syncedAt,
+  nodes: [
+    { id: "both", kind: "AI_AGENT", name: "both" },
+    { id: "sa-only", kind: "AI_AGENT", name: "sa-only" },
+    { id: "model-only", kind: "AI_AGENT", name: "model-only" },
+    { id: "neither", kind: "AI_AGENT", name: "neither" },
+    { id: "sa1", kind: "SERVICE_ACCOUNT", name: "sa-one" },
+    { id: "sa2", kind: "SERVICE_ACCOUNT", name: "sa-two" },
+    { id: "m1", kind: "AI_MODEL", name: "model-one" },
+  ],
+  edges: [
+    { id: "e1", src: "both", dst: "sa1", type: "RUNS_AS" },
+    { id: "e2", src: "both", dst: "m1", type: "USES_MODEL" },
+    { id: "e3", src: "sa-only", dst: "sa2", type: "RUNS_AS" },
+    { id: "e4", src: "model-only", dst: "m1", type: "USES_MODEL" },
+  ],
+};
+
+const OR_QUERY = {
+  kind: "AI_AGENT",
+  steps: [{
+    op: "or",
+    steps: [
+      { edge: "RUNS_AS", node: { kind: "SERVICE_ACCOUNT" } },
+      { edge: "USES_MODEL", node: { kind: "AI_MODEL" } },
+    ],
+  }],
+};
+
+describe("AND / OR groups", () => {
+  it("validates a group and rejects a bad operator or an empty one", () => {
+    expect(validateQuery(OR_QUERY)).toEqual(OR_QUERY);
+    expect(() => validateQuery({ kind: "AI_AGENT", steps: [{ op: "xor", steps: [] }] }))
+      .toThrow(/unknown group operator/);
+    expect(() => validateQuery({ kind: "AI_AGENT", steps: [{ op: "or", steps: [] }] }))
+      .toThrow(/needs at least one branch/);
+  });
+
+  it("OR is a union, not a cross product", () => {
+    const res = runQuery(BRANCHES, validateQuery(OR_QUERY));
+    // both(2) + sa-only(1) + model-only(1); `neither` satisfies no branch and is dropped.
+    expect(res.total).toBe(4);
+    expect(res.rows.map((r) => r.cells[0]?.name).sort())
+      .toEqual(["both", "both", "model-only", "sa-only"]);
+  });
+
+  it("reserves every branch's slots and nulls the ones that did not match", () => {
+    const res = runQuery(BRANCHES, validateQuery(OR_QUERY));
+    // Three groups on every row: the agent, then one per branch — even though no row can ever
+    // fill both branches at once. That is what keeps the table rectangular.
+    for (const row of res.rows) expect(row.cells).toHaveLength(3);
+
+    const saOnly = res.rows.find((r) => r.cells[0]?.name === "sa-only");
+    expect(saOnly?.cells[1]?.name).toBe("sa-two");
+    expect(saOnly?.cells[2]).toBeNull();
+
+    const modelOnly = res.rows.find((r) => r.cells[0]?.name === "model-only");
+    expect(modelOnly?.cells[1]).toBeNull();
+    expect(modelOnly?.cells[2]?.name).toBe("model-one");
+  });
+
+  it("marks the branches as alternatives so the table can say OR rather than AND", () => {
+    const groups = queryColumnGroups(validateQuery(OR_QUERY));
+    expect(groups[0].altOf).toBeUndefined();
+    expect(groups[1].altOf).toBeDefined();
+    expect(groups[1].altOf).toBe(groups[2].altOf);
+    expect([groups[1].altIndex, groups[2].altIndex]).toEqual([0, 1]);
+  });
+
+  it("drops the row when no branch matches, unless the group is optional", () => {
+    const optional = validateQuery({ ...OR_QUERY, steps: [{ ...OR_QUERY.steps[0], optional: true }] });
+    const res = runQuery(BRANCHES, optional);
+    const neither = res.rows.find((r) => r.cells[0]?.name === "neither");
+    expect(neither).toBeDefined();
+    expect(neither?.cells).toHaveLength(3);
+    expect(neither?.cells[1]).toBeNull();
+    expect(neither?.cells[2]).toBeNull();
+  });
+
+  it("AND inside OR still cross-products, and mixes with a plain step", () => {
+    // "an agent that uses a model AND (runs as an identity OR uses a model)" — the plain step
+    // narrows to the two model users, then the OR unions over them.
+    const mixed = validateQuery({
+      kind: "AI_AGENT",
+      steps: [
+        { edge: "USES_MODEL", node: { kind: "AI_MODEL" } },
+        OR_QUERY.steps[0],
+      ],
+    });
+    const res = runQuery(BRANCHES, mixed);
+    expect(res.rows.map((r) => r.cells[0]?.name).sort()).toEqual(["both", "both", "model-only"]);
+    // agent + model + two OR branches
+    for (const row of res.rows) expect(row.cells).toHaveLength(4);
+  });
+
+  it("a negated branch holds without binding anything", () => {
+    // "runs as an identity OR has no model" — `neither` qualifies on the second branch.
+    const res = runQuery(BRANCHES, validateQuery({
+      kind: "AI_AGENT",
+      steps: [{
+        op: "or",
+        steps: [
+          { edge: "RUNS_AS", node: { kind: "SERVICE_ACCOUNT" } },
+          { edge: "USES_MODEL", negate: true, node: { kind: "AI_MODEL" } },
+        ],
+      }],
+    }));
+    expect(res.rows.map((r) => r.cells[0]?.name).sort()).toEqual(["both", "neither", "sa-only"]);
+    // The negated branch reserves no slot, so there are only two groups.
+    for (const row of res.rows) expect(row.cells).toHaveLength(2);
+  });
+
+  it("keeps every walk in step: slots, mask, column groups and cells agree", () => {
+    // The invariant the whole design rests on. If these ever disagree, values slide off their
+    // headers silently — no error, just a table quietly describing something else.
+    for (const q of [OR_QUERY, { kind: "AI_AGENT", steps: [OR_QUERY.steps[0], { edge: "USES_MODEL", node: { kind: "AI_MODEL", show: false } }] }]) {
+      const query = validateQuery(q);
+      const res = runQuery(BRANCHES, query);
+      const groups = queryColumnGroups(query);
+      expect(groups).toHaveLength(res.groups.length);
+      for (const row of res.rows) expect(row.cells).toHaveLength(groups.length);
+    }
+  });
+});
+
+describe("OR subsumption", () => {
+  it("prefers a bound branch over one that merely held, and collapses blanks to one", () => {
+    // "runs as an identity OR has no model". `sa-only` satisfies both — it must appear once,
+    // carrying the identity, not twice with the second row unable to say why it matched.
+    const res = runQuery(BRANCHES, validateQuery({
+      kind: "AI_AGENT",
+      steps: [{
+        op: "or",
+        steps: [
+          { edge: "RUNS_AS", node: { kind: "SERVICE_ACCOUNT" } },
+          { edge: "USES_MODEL", negate: true, node: { kind: "AI_MODEL" } },
+        ],
+      }],
+    }));
+    const names = res.rows.map((r) => r.cells[0]?.name).sort();
+    expect(names).toEqual(["both", "neither", "sa-only"]);
+    expect(res.rows.find((r) => r.cells[0]?.name === "sa-only")?.cells[1]?.name).toBe("sa-two");
+    // `neither` matched on the negation alone, so its identity cell is empty rather than absent.
+    expect(res.rows.find((r) => r.cells[0]?.name === "neither")?.cells[1]).toBeNull();
+  });
+
+  it("an agent failing two negated branches at once is still one row", () => {
+    const res = runQuery(BRANCHES, validateQuery({
+      kind: "AI_AGENT",
+      steps: [{
+        op: "or",
+        steps: [
+          { edge: "RUNS_AS", negate: true, node: { kind: "SERVICE_ACCOUNT" } },
+          { edge: "USES_MODEL", negate: true, node: { kind: "AI_MODEL" } },
+        ],
+      }],
+    }));
+    // `neither` has no identity AND no model; both branches hold, and it appears once.
+    expect(res.rows.filter((r) => r.cells[0]?.name === "neither")).toHaveLength(1);
+    expect(res.rows.map((r) => r.cells[0]?.name).sort()).toEqual(["model-only", "neither", "sa-only"]);
   });
 });
