@@ -95,14 +95,15 @@ function gqlPost(query: string, variables: Rec): Rec {
             "WIZ_CLIENT_ID/WIZ_CLIENT_SECRET for auto-refresh."
           : "";
       throw new WizQueryError(
-        `Wiz query failed (HTTP ${code})${hint}: ${response.getContentText().slice(0, 500)}`,
+        `Wiz query failed (HTTP ${code})${hint}: ${errorDigest(response.getContentText())}`,
       );
     }
     const body = JSON.parse(response.getContentText()) as Rec;
     const data = body["data"] as Rec | undefined;
     if (!data) {
-      const errors = JSON.stringify(body["errors"] ?? body).slice(0, 500);
-      throw new WizQueryError(`Wiz response carried no data: ${errors}`);
+      throw new WizQueryError(
+        `Wiz response carried no data: ${errorDigest(response.getContentText())}`,
+      );
     }
     return data;
   }
@@ -248,6 +249,40 @@ export function resolveAiResourceTypes(log?: (m: string) => void): AiTypeResolut
     /* cache is an optimization */
   }
   return chosen;
+}
+
+/** How much of a failed response body a thrown message carries. */
+const ERROR_BODY_MAX = 800;
+
+/**
+ * A GraphQL error body reduced to the part an operator can act on.
+ *
+ * Raw, a validation failure is mostly boilerplate: every entry repeats
+ * `"locations":[{"line":15,"column":9}],"extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}`
+ * around one short sentence. A tenant rejecting three fields spent ~450 of the old
+ * 500-character budget on that scaffolding and got truncated mid-message — which is
+ * exactly how a rejection of `nativeType`, `cloudPlatform` and `region` reached a screen
+ * with the fourth message cut off. Joining the `message` values fits several times more
+ * signal in the same space.
+ *
+ * Falls back to the raw text for anything that is not a GraphQL error envelope — an HTML
+ * error page from a proxy, say — because then the raw text IS the diagnosis. Never throws:
+ * this runs on a path that is already failing.
+ */
+export function errorDigest(text: string): string {
+  try {
+    const parsed = JSON.parse(text) as Rec;
+    const errors = parsed["errors"];
+    if (Array.isArray(errors) && errors.length) {
+      const messages = errors
+        .map((e) => (e && typeof e === "object" ? String((e as Rec)["message"] ?? "") : ""))
+        .filter(Boolean);
+      if (messages.length) return messages.join(" | ").slice(0, ERROR_BODY_MAX);
+    }
+  } catch {
+    /* not JSON — fall through to the raw text */
+  }
+  return String(text).slice(0, ERROR_BODY_MAX);
 }
 
 export interface PageResult {

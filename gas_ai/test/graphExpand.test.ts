@@ -247,6 +247,61 @@ describe("decodeExpansion — robustness", () => {
     expect(endpoint?.unmodeled).toBe(true);
   });
 
+  it("reads the properties bag when the CloudResource fragment gave nothing", () => {
+    // An entity that is not a CloudResource gets nothing from that fragment, and this
+    // traversal reaches several — ENDPOINT, IAM_BINDING, CONTAINER. `properties` is on
+    // the GraphEntity interface and the capture shows it populated for every entity, so
+    // it is what keeps those nodes from arriving as a bare id.
+    const out = decodeExpansion(SLOTS, [
+      row({
+        0: entity("agent", "AI_AGENT", {
+          properties: {
+            nativeType: "aiplatform#ReasoningEngine",
+            cloudPlatform: "GCP",
+            region: "europe-west1",
+            status: "Active",
+            externalId: "projects/x/reasoningEngines/1",
+            hasAdminPrivileges: true,
+            "accessibleFrom.internet": false,
+            openToAllInternet: false,
+          },
+        }),
+      }),
+    ]);
+    const agent = out.nodes[0];
+    expect(agent.nativeType).toBe("aiplatform#ReasoningEngine");
+    expect(agent.cloud).toBe("GCP");
+    expect(agent.region).toBe("europe-west1");
+    expect(agent.status).toBe("Active");
+    expect(agent.adminPriv).toBe(true);
+    // The bag spells the two exposure flags differently from the fragment.
+    expect(agent.internet).toBe(false);
+    expect(agent.openInternet).toBe(false);
+  });
+
+  it("prefers the flat field over the bag when both arrive", () => {
+    const out = decodeExpansion(SLOTS, [
+      row({
+        0: entity("agent", "AI_AGENT", {
+          cloudPlatform: "AWS",
+          properties: { cloudPlatform: "GCP" },
+        }),
+      }),
+    ]);
+    expect(out.nodes[0].cloud).toBe("AWS");
+  });
+
+  it("survives a missing or malformed properties bag", () => {
+    const out = decodeExpansion(SLOTS, [
+      row({
+        0: entity("a", "AI_AGENT"),
+        28: entity("ep", "ENDPOINT", { properties: "not-an-object" }),
+      }),
+    ]);
+    expect(out.nodes).toHaveLength(2);
+    expect(out.nodes[1].cloud).toBeNull();
+  });
+
   it("dedupes nodes and edges across rows", () => {
     const r = row({ 0: entity("agent", "AI_AGENT"), 28: entity("ep", "ENDPOINT") });
     const out = decodeExpansion(SLOTS, [r, r, r]);

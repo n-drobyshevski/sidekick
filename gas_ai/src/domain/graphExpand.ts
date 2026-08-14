@@ -499,28 +499,54 @@ function toExpandedNode(raw: Rec): ExpandedNode | null {
   const projects = Array.isArray(raw["projects"])
     ? (raw["projects"] as Rec[]).map((p) => str(p?.["name"]) ?? "").filter(Boolean)
     : [];
+
+  // The flat CloudResource fields, else the raw `properties` bag.
+  //
+  // Both are asked for, because neither alone covers the row. `... on CloudResource`
+  // contributes nothing to an entity that is not one, and this traversal reaches several
+  // that are not — ENDPOINT, IAM_BINDING, CONTAINER, CONFIGURATION_FINDING. `properties`
+  // is on the GraphEntity interface itself and the capture shows it populated for every
+  // entity in the row, so it is what keeps those nodes from arriving as a bare id.
+  const props = (raw["properties"] && typeof raw["properties"] === "object"
+    ? raw["properties"]
+    : {}) as Rec;
+  const pick = (key: string): unknown => (raw[key] !== undefined ? raw[key] : props[key]);
+  const pickStr = (key: string): string | null => str(pick(key)) ?? null;
+  const isTrue = (key: string): boolean => pick(key) === true;
+
   return {
     id,
     name: str(raw["name"]) ?? id,
     kind: known ?? (rawType ? rawType.toUpperCase().replace(/[^A-Z0-9]+/g, "_") : "UNKNOWN"),
     unmodeled: !known,
-    nativeType: str(raw["nativeType"]) ?? null,
-    cloud: str(raw["cloudPlatform"]) ?? null,
-    region: str(raw["region"]) ?? null,
-    status: str(raw["status"]) ?? null,
-    firstSeen: str(raw["firstSeen"]) ?? null,
-    lastSeen: str(raw["lastSeen"]) ?? null,
-    externalId: str(raw["externalId"]) ?? null,
+    nativeType: pickStr("nativeType"),
+    cloud: pickStr("cloudPlatform"),
+    region: pickStr("region"),
+    status: pickStr("status"),
+    firstSeen: pickStr("firstSeen"),
+    lastSeen: pickStr("lastSeen"),
+    externalId: pickStr("externalId"),
     projects,
     // DataFinding is the one entity here carrying its own severity; everything else is
     // inventory and gets its severity from the register, which this path does not touch.
-    severity: str(raw["severity"]) ?? null,
-    internet: triBool(raw["isAccessibleFromInternet"]),
-    openInternet: triBool(raw["isOpenToAllInternet"]),
-    sensitiveData: raw["hasSensitiveData"] === true,
-    sensitiveAccess: raw["hasAccessToSensitiveData"] === true,
-    highPriv: raw["hasHighPrivileges"] === true,
-    adminPriv: raw["hasAdminPrivileges"] === true,
+    severity: pickStr("severity"),
+    // `openToAllInternet` / `accessibleFrom.internet` are the names the properties bag
+    // uses for the two the CloudResource fragment spells isOpenToAllInternet /
+    // isAccessibleFromInternet.
+    internet: triBool(
+      raw["isAccessibleFromInternet"] !== undefined
+        ? raw["isAccessibleFromInternet"]
+        : props["accessibleFrom.internet"],
+    ),
+    openInternet: triBool(
+      raw["isOpenToAllInternet"] !== undefined
+        ? raw["isOpenToAllInternet"]
+        : props["openToAllInternet"],
+    ),
+    sensitiveData: isTrue("hasSensitiveData"),
+    sensitiveAccess: isTrue("hasAccessToSensitiveData"),
+    highPriv: isTrue("hasHighPrivileges"),
+    adminPriv: isTrue("hasAdminPrivileges"),
   };
 }
 
