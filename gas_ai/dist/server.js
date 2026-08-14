@@ -948,6 +948,7 @@ var Server = (() => {
     "SidekickAiIdentitiesWithAgentAccess",
     '    type: "AI_AGENT"\n    select: true\n    relationships: [{\n      type: "ALLOWS_ACCESS_TO"\n      direction: INBOUND\n      with: {\n        type: "ACCESS_ROLE_BINDING"\n        select: false\n        relationships: [\n          {\n            type: "BOUND_TO"\n            with: { type: ["USER_ACCOUNT", "SERVICE_ACCOUNT"], select: true }\n          }\n          {\n            type: "PERMITS_ACCESS_ROLE"\n            with: {\n              type: "ACCESS_ROLE"\n              select: true\n              where: { accessType: { EQUALS: ["HIGH_PRIVILEGE", "ADMIN"] } }\n            }\n          }\n        ]\n      }\n    }]\n'
   );
+  var Q_AGENT_EXPANSION = "query SidekickAiAgentExpansion($quick: Boolean, $first: Int, $after: String, $query: GraphEntityQueryInput, $projectId: String) {\n  graphSearch(\n    quick: $quick\n    first: $first\n    after: $after\n    query: $query\n    projectId: $projectId\n  ) {\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      entities {\n" + DATA_ENTITY_FIELDS + "      }\n    }\n  }\n}\n";
   var Q_ISSUES = "query SidekickAiIssues($first: Int, $after: String, $filterBy: IssueFilters, $orderBy: IssueOrder) {\n  issuesV2(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      type\n      severity\n      status\n      createdAt\n      updatedAt\n      dueAt\n      resolvedAt\n      resolutionReason\n      resolutionNote\n      rejectionExpiredAt\n      validatedAsExploitable\n      environments\n      assignee { id name primaryEmail }\n      resolvedBy { user { id name email } serviceAccount { id name type } }\n      notes { id text }\n      serviceTickets { id externalId name url }\n      applicationServices { id displayName }\n      aiRemediationAnalysis { verdict recommendedSeverity }\n      projects { id name slug riskProfile { businessImpact } }\n      entitySnapshot {\n        id\n        type\n        status\n        name\n        cloudPlatform\n        region\n        subscriptionName\n        subscriptionId\n        subscriptionExternalId\n        nativeType\n        externalId\n        tags\n        kubernetesClusterName\n        kubernetesNamespaceName\n        resourceGroupId\n      }\n      sourceRules {\n        ... on Control {\n          id\n          name\n          description\n          severity\n          risks\n          threats\n          resolutionRecommendation\n        }\n        ... on CloudConfigurationRule {\n          id\n          name\n          description\n          risks\n          threats\n          control { resolutionRecommendation severity }\n        }\n        ... on CloudEventRule {\n          id\n          name\n          description\n          risks\n          threats\n        }\n      }\n    }\n  }\n}\n";
   function aiIssuesVariables(scope) {
     const filterBy = {
@@ -1346,6 +1347,7 @@ var Server = (() => {
   __export(api_exports, {
     bootstrap: () => bootstrap,
     cancelSync: () => cancelSync2,
+    expandAsset: () => expandAsset,
     getAarsRule: () => getAarsRule3,
     getAssetDetail: () => getAssetDetail,
     getAssetOptions: () => getAssetOptions,
@@ -3940,7 +3942,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "57d6f4990cfc" : "dev";
+  var BUILD_ID = true ? "eb34d65ba045" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -4095,6 +4097,423 @@ var Server = (() => {
     return value;
   }
 
+  // src/domain/graphExpand.ts
+  function typeList(t) {
+    return Array.isArray(t) ? t : [t];
+  }
+  function isSelected(spec) {
+    return spec.select !== false;
+  }
+  var AGENT_EXPANSION = {
+    type: "AI_AGENT",
+    relationships: [
+      // 1. Execution identity and its CIEM findings.
+      {
+        type: "PRINCIPAL",
+        optional: true,
+        edge: { type: "ACTING_AS" },
+        relationships: [
+          {
+            type: "EXCESSIVE_ACCESS_FINDING",
+            optional: true,
+            edge: { type: "CONTAINS" }
+          }
+        ]
+      },
+      // 2. Data the agent reads, and what has been classified in it.
+      {
+        type: ["AI_DATASET", "BUCKET"],
+        optional: true,
+        edge: { type: "READS_DATA_FROM" },
+        relationships: [
+          {
+            type: ["BUCKET", "DATABASE"],
+            optional: true,
+            edge: { type: "READS_DATA_FROM" },
+            relationships: [
+              { type: "DATA_FINDING", optional: true, edge: { type: "HAS_DATA_FINDING" } }
+            ]
+          },
+          { type: "DATA_FINDING", optional: true, edge: { type: "HAS_DATA_FINDING" } }
+        ]
+      },
+      // 3. Data the agent writes.
+      {
+        type: "BUCKET",
+        optional: true,
+        edge: { type: "STORES_DATA_IN" },
+        relationships: [
+          { type: "DATA_FINDING", optional: true, edge: { type: "HAS_DATA_FINDING" } }
+        ]
+      },
+      // 4. Tooling: the tool, whatever runs it, that runner's identity and reachable data,
+      //    and any agent the tool invokes in turn. The INVOKES leg is the agent-to-agent
+      //    trust chain ai/ai_agents_discovery_queries.md names as unmodeled.
+      {
+        type: "AI_TOOL",
+        optional: true,
+        edge: { type: "USES" },
+        relationships: [
+          {
+            type: ["SERVERLESS", "WEB_SERVICE"],
+            optional: true,
+            edge: { type: "RUNS", reverse: true },
+            relationships: [
+              {
+                type: "SERVICE_ACCOUNT",
+                optional: true,
+                edge: { type: "ACTING_AS" },
+                relationships: [
+                  {
+                    // Not selected: the binding is the mechanism, the resource is the point.
+                    type: "IAM_BINDING",
+                    select: false,
+                    optional: true,
+                    edge: { type: "ENTITLES", reverse: true },
+                    where: { accessTypes: { EQUALS: ["Data"] } },
+                    relationships: [
+                      {
+                        type: "DATA_RESOURCE",
+                        optional: true,
+                        edge: { type: "ALLOWS_ACCESS_TO" },
+                        where: {
+                          _or: [
+                            { publicAccessTypes: { IS_SET: false } },
+                            { publicAccessTypes: { LIST_DOES_NOT_CONTAIN_ANY: ["Data"] } }
+                          ],
+                          hasSensitiveData: { EQUALS: true }
+                        },
+                        relationships: [
+                          {
+                            type: "DATA_FINDING",
+                            optional: true,
+                            edge: { type: "HAS_DATA_FINDING" },
+                            where: {
+                              severity: {
+                                EQUALS: [
+                                  "DataFindingSeverityCritical",
+                                  "DataFindingSeverityHigh"
+                                ]
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              { type: "PRINCIPAL", optional: true, edge: { type: "ACTING_AS" } },
+              { type: "AI_AGENT", optional: true, edge: { type: "INVOKES" } }
+            ]
+          }
+        ]
+      },
+      // 5. Models and services, their guardrails, endpoints, identities, and the pipeline
+      //    that produced them.
+      {
+        type: ["AI_MODEL", "AI_SERVICE"],
+        optional: true,
+        edge: { type: "USES" },
+        relationships: [
+          {
+            type: "AI_MODEL",
+            optional: true,
+            edge: { type: "USES" },
+            relationships: [
+              {
+                type: "AI_GUARDRAIL",
+                optional: true,
+                edge: { type: "PROTECTS", reverse: true }
+              },
+              { type: "ENDPOINT", optional: true, edge: { type: "SERVES" } },
+              {
+                type: "PRINCIPAL",
+                optional: true,
+                edge: { type: "ACTING_AS" },
+                relationships: [
+                  {
+                    type: "EXCESSIVE_ACCESS_FINDING",
+                    optional: true,
+                    edge: { type: "ALERTED_ON", reverse: true }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            type: "AI_PIPELINE",
+            optional: true,
+            edge: { type: "PRODUCES", reverse: true },
+            relationships: [
+              { type: "AI_MODEL", optional: true, edge: { type: "USES" } },
+              {
+                type: ["AI_DATASET", "BUCKET"],
+                optional: true,
+                edge: { type: "READS_DATA_FROM" },
+                relationships: [
+                  {
+                    type: ["BUCKET", "DATABASE"],
+                    optional: true,
+                    edge: { type: "READS_DATA_FROM" }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      // 6. The agent's own guardrail and its misconfigurations.
+      {
+        type: "AI_GUARDRAIL",
+        optional: true,
+        edge: { type: "PROTECTS", reverse: true },
+        relationships: [
+          {
+            type: "CONFIGURATION_FINDING",
+            optional: true,
+            edge: { type: "ALERTED_ON", reverse: true }
+          }
+        ]
+      },
+      // 7. Network reachability.
+      { type: "ENDPOINT", optional: true, edge: { type: "SERVES" } },
+      // 8. The agent's own configuration findings.
+      {
+        type: "CONFIGURATION_FINDING",
+        optional: true,
+        edge: { type: "ALERTED_ON", reverse: true }
+      },
+      // 9. Compute the agent runs on, that compute's identity and reachable data, and the
+      //    kubernetes chain up to the cluster's own identity.
+      {
+        type: ["VIRTUAL_MACHINE", "SERVERLESS", "CONTAINER_IMAGE"],
+        optional: true,
+        edge: { type: "RUNS", reverse: true },
+        relationships: [
+          { type: "ENDPOINT", optional: true, edge: { type: "SERVES" } },
+          {
+            type: "SERVICE_ACCOUNT",
+            optional: true,
+            edge: { type: "ACTING_AS" },
+            relationships: [
+              {
+                type: "IAM_BINDING",
+                select: false,
+                optional: true,
+                edge: { type: "ENTITLES", reverse: true },
+                where: { accessTypes: { EQUALS: ["Data"] } },
+                relationships: [
+                  {
+                    type: "DATA_RESOURCE",
+                    optional: true,
+                    edge: { type: "ALLOWS_ACCESS_TO" },
+                    where: {
+                      _or: [
+                        { publicAccessTypes: { IS_SET: false } },
+                        { publicAccessTypes: { LIST_DOES_NOT_CONTAIN_ANY: ["Data"] } }
+                      ],
+                      hasSensitiveData: { EQUALS: true }
+                    },
+                    relationships: [
+                      {
+                        type: "DATA_FINDING",
+                        optional: true,
+                        edge: { type: "HAS_DATA_FINDING" },
+                        where: {
+                          severity: {
+                            EQUALS: [
+                              "DataFindingSeverityCritical",
+                              "DataFindingSeverityHigh"
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            type: "CONTAINER",
+            optional: true,
+            edge: { type: "INSTANCE_OF", reverse: true },
+            relationships: [
+              {
+                type: "DEPLOYMENT",
+                optional: true,
+                edge: { type: "CONTAINS", reverse: true },
+                relationships: [
+                  {
+                    type: "KUBERNETES_CLUSTER",
+                    optional: true,
+                    edge: { type: "CONTAINS", reverse: true },
+                    relationships: [
+                      {
+                        type: "SERVICE_ACCOUNT",
+                        optional: true,
+                        edge: { type: "ACTING_AS" },
+                        relationships: [
+                          {
+                            // Selected here, unlike the two above it. The console's own
+                            // asymmetry, kept: dropping it would shift every later slot.
+                            type: "IAM_BINDING",
+                            optional: true,
+                            edge: { type: "ENTITLES", reverse: true },
+                            relationships: [
+                              {
+                                type: "DATA_RESOURCE",
+                                optional: true,
+                                edge: { type: "ALLOWS_ACCESS_TO" }
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      // 10. MCP servers and the tools they expose.
+      {
+        type: "MCP_SERVER",
+        optional: true,
+        edge: { type: "USES" },
+        relationships: [
+          { type: "AI_TOOL", optional: true, edge: { type: "EXPOSES" } }
+        ]
+      }
+    ]
+  };
+  function toGraphEntityQuery(spec, vertexId) {
+    var _a5;
+    const out = { type: typeList(spec.type) };
+    if (isSelected(spec)) out["select"] = true;
+    const where = vertexId ? { _vertexID: { EQUALS: vertexId } } : spec.where;
+    if (where) out["where"] = where;
+    const rels = (_a5 = spec.relationships) != null ? _a5 : [];
+    if (rels.length) {
+      out["relationships"] = rels.map((child) => {
+        var _a6;
+        const edge2 = (_a6 = child.edge) != null ? _a6 : { type: "RELATED_TO" };
+        const rel = {
+          type: [edge2.reverse ? { type: edge2.type, reverse: true } : { type: edge2.type }],
+          with: toGraphEntityQuery(child)
+        };
+        if (child.optional) rel["optional"] = true;
+        if (child.negate) rel["negate"] = true;
+        return rel;
+      });
+    }
+    return out;
+  }
+  function flattenSlots(spec) {
+    const slots = [];
+    function walk(node2, parentIndex2) {
+      var _a5, _b, _c;
+      let ownIndex = parentIndex2;
+      if (isSelected(node2)) {
+        ownIndex = slots.length;
+        slots.push({
+          index: ownIndex,
+          parentIndex: parentIndex2,
+          types: typeList(node2.type),
+          edgeType: (_a5 = node2.edge) == null ? void 0 : _a5.type,
+          reverse: (_b = node2.edge) == null ? void 0 : _b.reverse
+        });
+      }
+      for (const child of (_c = node2.relationships) != null ? _c : []) walk(child, ownIndex);
+    }
+    walk(spec, null);
+    return slots;
+  }
+  function expandEdgeId(src, type, dst) {
+    return `${src}|${type}|${dst}`;
+  }
+  function str(v) {
+    return v === null || v === void 0 || v === "" ? void 0 : String(v);
+  }
+  function triBool(v) {
+    return v === true ? true : v === false ? false : null;
+  }
+  function toExpandedNode(raw) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i;
+    const id = str(raw["id"]);
+    if (!id) return null;
+    const rawType = str(raw["type"]);
+    const known = kindFromWizType(rawType);
+    const projects = Array.isArray(raw["projects"]) ? raw["projects"].map((p) => {
+      var _a6;
+      return (_a6 = str(p == null ? void 0 : p["name"])) != null ? _a6 : "";
+    }).filter(Boolean) : [];
+    return {
+      id,
+      name: (_a5 = str(raw["name"])) != null ? _a5 : id,
+      kind: known != null ? known : rawType ? rawType.toUpperCase().replace(/[^A-Z0-9]+/g, "_") : "UNKNOWN",
+      unmodeled: !known,
+      nativeType: (_b = str(raw["nativeType"])) != null ? _b : null,
+      cloud: (_c = str(raw["cloudPlatform"])) != null ? _c : null,
+      region: (_d = str(raw["region"])) != null ? _d : null,
+      status: (_e = str(raw["status"])) != null ? _e : null,
+      firstSeen: (_f = str(raw["firstSeen"])) != null ? _f : null,
+      lastSeen: (_g = str(raw["lastSeen"])) != null ? _g : null,
+      externalId: (_h = str(raw["externalId"])) != null ? _h : null,
+      projects,
+      // DataFinding is the one entity here carrying its own severity; everything else is
+      // inventory and gets its severity from the register, which this path does not touch.
+      severity: (_i = str(raw["severity"])) != null ? _i : null,
+      internet: triBool(raw["isAccessibleFromInternet"]),
+      openInternet: triBool(raw["isOpenToAllInternet"]),
+      sensitiveData: raw["hasSensitiveData"] === true,
+      sensitiveAccess: raw["hasAccessToSensitiveData"] === true,
+      highPriv: raw["hasHighPrivileges"] === true,
+      adminPriv: raw["hasAdminPrivileges"] === true
+    };
+  }
+  function decodeExpansion(slots, rows) {
+    const nodes = /* @__PURE__ */ new Map();
+    const edges2 = /* @__PURE__ */ new Map();
+    let arityMismatches = 0;
+    let rowsDecoded = 0;
+    for (const row of Array.isArray(rows) ? rows : []) {
+      const entities = row == null ? void 0 : row["entities"];
+      if (!Array.isArray(entities)) continue;
+      if (entities.length !== slots.length) {
+        arityMismatches += 1;
+        continue;
+      }
+      rowsDecoded += 1;
+      const resolved = [];
+      for (let i = 0; i < slots.length; i += 1) {
+        const raw = entities[i];
+        const node2 = raw && typeof raw === "object" ? toExpandedNode(raw) : null;
+        resolved.push(node2);
+        if (node2 && !nodes.has(node2.id)) nodes.set(node2.id, node2);
+      }
+      for (const slot of slots) {
+        const self = resolved[slot.index];
+        if (!self || slot.parentIndex === null || !slot.edgeType) continue;
+        const parent = resolved[slot.parentIndex];
+        if (!parent || parent.id === self.id) continue;
+        const src = slot.reverse ? self.id : parent.id;
+        const dst = slot.reverse ? parent.id : self.id;
+        const id = expandEdgeId(src, slot.edgeType, dst);
+        if (!edges2.has(id)) edges2.set(id, { id, src, dst, type: slot.edgeType });
+      }
+    }
+    return {
+      nodes: Array.from(nodes.values()),
+      edges: Array.from(edges2.values()),
+      arityMismatches,
+      rowsDecoded
+    };
+  }
+
   // src/server/settingsStore.ts
   var settingsMemo;
   function loadSettings() {
@@ -4185,34 +4604,35 @@ var Server = (() => {
   });
 
   // src/domain/syncNormalize.ts
-  function str(v) {
+  function str2(v) {
     const c = clean(v);
     return c === null ? void 0 : String(c);
   }
   function bool(v) {
     return v === true;
   }
-  function triBool(v) {
+  function triBool2(v) {
     return v === true ? true : v === false ? false : null;
   }
   function normalizeCloudResource(raw) {
     var _a5, _b;
-    const id = str(raw["id"]);
+    if (!raw || typeof raw !== "object") return null;
+    const id = str2(raw["id"]);
     const kind = kindFromWizType(raw["type"]);
     if (!id || !kind) return null;
     const node2 = {
       id,
       kind,
-      name: (_a5 = str(raw["name"])) != null ? _a5 : id,
-      nativeType: str(raw["nativeType"]),
-      cloudPlatform: str(raw["cloudPlatform"]),
-      region: str(raw["region"]),
-      status: str(raw["status"]),
-      firstSeen: str(raw["firstSeen"]),
-      lastSeen: str(raw["lastSeen"]),
-      externalId: str(raw["externalId"]),
-      isAccessibleFromInternet: triBool(raw["isAccessibleFromInternet"]),
-      isOpenToAllInternet: triBool(raw["isOpenToAllInternet"]),
+      name: (_a5 = str2(raw["name"])) != null ? _a5 : id,
+      nativeType: str2(raw["nativeType"]),
+      cloudPlatform: str2(raw["cloudPlatform"]),
+      region: str2(raw["region"]),
+      status: str2(raw["status"]),
+      firstSeen: str2(raw["firstSeen"]),
+      lastSeen: str2(raw["lastSeen"]),
+      externalId: str2(raw["externalId"]),
+      isAccessibleFromInternet: triBool2(raw["isAccessibleFromInternet"]),
+      isOpenToAllInternet: triBool2(raw["isOpenToAllInternet"]),
       hasSensitiveData: bool(raw["hasSensitiveData"]),
       hasAccessToSensitiveData: bool(raw["hasAccessToSensitiveData"]),
       hasHighPrivileges: bool(raw["hasHighPrivileges"]),
@@ -4222,7 +4642,7 @@ var Server = (() => {
     if (technology && typeof technology === "object") {
       const cats = technology["categories"];
       if (Array.isArray(cats)) {
-        const names = cats.map((c) => str(c["name"])).filter((n) => Boolean(n));
+        const names = cats.map((c) => str2(c["name"])).filter((n) => Boolean(n));
         if (names.length) node2.technologyCategories = names;
       }
     }
@@ -4240,13 +4660,13 @@ var Server = (() => {
     }
     const account = raw["cloudAccount"];
     if (account && typeof account === "object") {
-      const accId = str(account["id"]);
+      const accId = str2(account["id"]);
       if (accId) {
         node2.cloudAccount = {
           id: accId,
-          name: (_b = str(account["name"])) != null ? _b : accId,
-          externalId: str(account["externalId"]),
-          cloudProvider: str(account["cloudProvider"])
+          name: (_b = str2(account["name"])) != null ? _b : accId,
+          externalId: str2(account["externalId"]),
+          cloudProvider: str2(account["cloudProvider"])
         };
       }
     }
@@ -4254,10 +4674,10 @@ var Server = (() => {
     if (Array.isArray(projects)) {
       node2.projects = projects.map((p) => {
         const rec2 = p;
-        const pid = str(rec2["id"]);
-        const name = str(rec2["name"]);
+        const pid = str2(rec2["id"]);
+        const name = str2(rec2["name"]);
         const riskProfile = rec2["riskProfile"];
-        const businessImpact = riskProfile && typeof riskProfile === "object" ? str(riskProfile["businessImpact"]) : void 0;
+        const businessImpact = riskProfile && typeof riskProfile === "object" ? str2(riskProfile["businessImpact"]) : void 0;
         return pid && name ? { id: pid, name, businessImpact } : null;
       }).filter((p) => p !== null);
     }
@@ -4266,8 +4686,8 @@ var Server = (() => {
       node2.tags = tags.map((t) => {
         var _a6;
         const rec2 = t;
-        const key = str(rec2["key"]);
-        return key ? { key, value: (_a6 = str(rec2["value"])) != null ? _a6 : "" } : null;
+        const key = str2(rec2["key"]);
+        return key ? { key, value: (_a6 = str2(rec2["value"])) != null ? _a6 : "" } : null;
       }).filter((t) => t !== null);
     }
     return node2;
@@ -4334,18 +4754,18 @@ var Server = (() => {
     const by = raw;
     const user = by["user"];
     if (user && typeof user === "object") {
-      const name = (_a5 = str(user["name"])) != null ? _a5 : str(user["email"]);
+      const name = (_a5 = str2(user["name"])) != null ? _a5 : str2(user["email"]);
       if (name) return name;
     }
     const sa = by["serviceAccount"];
-    if (sa && typeof sa === "object") return str(sa["name"]);
+    if (sa && typeof sa === "object") return str2(sa["name"]);
     return void 0;
   }
   function ignoreRationale(raw) {
     if (!Array.isArray(raw)) return void 0;
     for (const note of raw) {
       if (!note || typeof note !== "object") continue;
-      const text = str(note["text"]);
+      const text = str2(note["text"]);
       if (text && /^Ignored\s*\(/i.test(text)) return text;
     }
     return void 0;
@@ -4357,7 +4777,7 @@ var Server = (() => {
     for (const p of projects) {
       const profile = p["riskProfile"];
       if (!profile || typeof profile !== "object") continue;
-      const impact = str(profile["businessImpact"]);
+      const impact = str2(profile["businessImpact"]);
       if (!impact) continue;
       const rank = BUSINESS_IMPACT_ORDER.indexOf(impact);
       if (rank >= 0 && rank < bestRank) {
@@ -4369,31 +4789,31 @@ var Server = (() => {
   }
   function ticketUrlsOf(raw) {
     if (!Array.isArray(raw)) return [];
-    return raw.map((t) => t && typeof t === "object" ? str(t["url"]) : void 0).filter((u) => Boolean(u));
+    return raw.map((t) => t && typeof t === "object" ? str2(t["url"]) : void 0).filter((u) => Boolean(u));
   }
   function normalizeIssuesPage(rows) {
     var _a5, _b, _c, _d, _e, _f, _g, _h, _i;
     const part = emptyPart();
     for (const raw of rows) {
-      const issueId = str(raw["id"]);
+      const issueId = str2(raw["id"]);
       const snap = raw["entitySnapshot"];
-      const assetId = snap && typeof snap === "object" ? str(snap["id"]) : void 0;
+      const assetId = snap && typeof snap === "object" ? str2(snap["id"]) : void 0;
       if (!issueId || !assetId) continue;
       const sourceRules = Array.isArray(raw["sourceRules"]) ? raw["sourceRules"] : [];
       const first = (_a5 = sourceRules[0]) != null ? _a5 : {};
-      const ruleId = str(first["id"]);
-      const ruleName = str(first["name"]);
+      const ruleId = str2(first["id"]);
+      const ruleName = str2(first["name"]);
       const group = classifyIssue({ sourceRuleId: ruleId != null ? ruleId : null, ruleName: ruleName != null ? ruleName : null });
-      const nativeSeverity = (_b = str(raw["severity"])) != null ? _b : "UNKNOWN";
+      const nativeSeverity = (_b = str2(raw["severity"])) != null ? _b : "UNKNOWN";
       const adjustedSeverity = group ? group.adjustedSeverity : nativeSeverity;
       const control = first["control"];
-      const resolutionRecommendation = (_c = str(first["resolutionRecommendation"])) != null ? _c : control && typeof control === "object" ? str(control["resolutionRecommendation"]) : void 0;
-      const assetName = (_d = str(snap["name"])) != null ? _d : assetId;
+      const resolutionRecommendation = (_c = str2(first["resolutionRecommendation"])) != null ? _c : control && typeof control === "object" ? str2(control["resolutionRecommendation"]) : void 0;
+      const assetName = (_d = str2(snap["name"])) != null ? _d : assetId;
       const projectRows = Array.isArray(raw["projects"]) ? raw["projects"] : [];
-      const projects = projectRows.map((p) => str(p["name"])).filter((n) => Boolean(n));
+      const projects = projectRows.map((p) => str2(p["name"])).filter((n) => Boolean(n));
       const assigneeRaw = raw["assignee"];
       const aiAnalysis = raw["aiRemediationAnalysis"];
-      const environments = Array.isArray(raw["environments"]) ? raw["environments"].map((e) => str(e)).filter((e) => Boolean(e)) : void 0;
+      const environments = Array.isArray(raw["environments"]) ? raw["environments"].map((e) => str2(e)).filter((e) => Boolean(e)) : void 0;
       const ticketUrls = ticketUrlsOf(raw["serviceTickets"]);
       const issue2 = {
         id: issueId,
@@ -4402,29 +4822,29 @@ var Server = (() => {
         comboGroup: (_g = group == null ? void 0 : group.id) != null ? _g : OTHER_GROUP_ID,
         nativeSeverity,
         adjustedSeverity,
-        status: (_h = str(raw["status"])) != null ? _h : "OPEN",
+        status: (_h = str2(raw["status"])) != null ? _h : "OPEN",
         assetId,
         assetName,
-        region: str(snap["region"]),
-        account: str(snap["subscriptionName"]),
+        region: str2(snap["region"]),
+        account: str2(snap["subscriptionName"]),
         projects,
         frameworks: group == null ? void 0 : group.frameworks,
-        createdAt: str(raw["createdAt"]),
-        dueAt: str(raw["dueAt"]),
+        createdAt: str2(raw["createdAt"]),
+        dueAt: str2(raw["dueAt"]),
         resolutionRecommendation,
-        issueType: str(raw["type"]),
-        updatedAt: str(raw["updatedAt"]),
-        resolvedAt: str(raw["resolvedAt"]),
-        resolutionReason: str(raw["resolutionReason"]),
+        issueType: str2(raw["type"]),
+        updatedAt: str2(raw["updatedAt"]),
+        resolvedAt: str2(raw["resolvedAt"]),
+        resolutionReason: str2(raw["resolutionReason"]),
         resolvedBy: resolvedByName(raw["resolvedBy"]),
-        assignee: assigneeRaw && typeof assigneeRaw === "object" ? (_i = str(assigneeRaw["name"])) != null ? _i : str(assigneeRaw["primaryEmail"]) : void 0,
+        assignee: assigneeRaw && typeof assigneeRaw === "object" ? (_i = str2(assigneeRaw["name"])) != null ? _i : str2(assigneeRaw["primaryEmail"]) : void 0,
         businessImpact: worstBusinessImpact(projectRows),
-        entityStatus: str(snap["status"]),
-        subscriptionId: str(snap["subscriptionId"]),
+        entityStatus: str2(snap["status"]),
+        subscriptionId: str2(snap["subscriptionId"]),
         ignoreNote: ignoreRationale(raw["notes"]),
-        ignoreExpiredAt: str(raw["rejectionExpiredAt"]),
-        aiVerdict: aiAnalysis && typeof aiAnalysis === "object" ? str(aiAnalysis["verdict"]) : void 0,
-        aiRecommendedSeverity: aiAnalysis && typeof aiAnalysis === "object" ? str(aiAnalysis["recommendedSeverity"]) : void 0
+        ignoreExpiredAt: str2(raw["rejectionExpiredAt"]),
+        aiVerdict: aiAnalysis && typeof aiAnalysis === "object" ? str2(aiAnalysis["verdict"]) : void 0,
+        aiRecommendedSeverity: aiAnalysis && typeof aiAnalysis === "object" ? str2(aiAnalysis["recommendedSeverity"]) : void 0
       };
       if (environments && environments.length) issue2.environments = environments;
       if (ticketUrls.length) issue2.ticketUrls = ticketUrls;
@@ -4433,13 +4853,13 @@ var Server = (() => {
       const kind = kindFromWizType(snap["type"]);
       if (kind) {
         const node2 = { id: assetId, kind, name: assetName };
-        const nativeType = str(snap["nativeType"]);
+        const nativeType = str2(snap["nativeType"]);
         if (nativeType) node2.nativeType = nativeType;
-        const cloud = str(snap["cloudPlatform"]);
+        const cloud = str2(snap["cloudPlatform"]);
         if (cloud) node2.cloudPlatform = cloud;
-        const region = str(snap["region"]);
+        const region = str2(snap["region"]);
         if (region) node2.region = region;
-        const externalId = str(snap["externalId"]);
+        const externalId = str2(snap["externalId"]);
         if (externalId) node2.externalId = externalId;
         part.nodes.push(node2);
       }
@@ -4479,22 +4899,22 @@ var Server = (() => {
     var _a5, _b;
     const part = emptyPart();
     for (const raw of rows) {
-      const id = str(raw["id"]);
+      const id = str2(raw["id"]);
       if (!id) continue;
-      if (str(raw["result"]) !== "FAIL") continue;
-      const status = str(raw["status"]);
+      if (str2(raw["result"]) !== "FAIL") continue;
+      const status = str2(raw["status"]);
       if (status && status !== "OPEN") continue;
       const resource = raw["resource"];
-      const resourceId = resource && typeof resource === "object" ? str(resource["id"]) : void 0;
+      const resourceId = resource && typeof resource === "object" ? str2(resource["id"]) : void 0;
       if (!resourceId) continue;
       const rule = raw["rule"];
-      const ruleShortId = rule && typeof rule === "object" ? (_a5 = str(rule["shortId"])) != null ? _a5 : "" : "";
+      const ruleShortId = rule && typeof rule === "object" ? (_a5 = str2(rule["shortId"])) != null ? _a5 : "" : "";
       part.findings.push({
         id,
         resourceId,
         ruleShortId,
-        severity: (_b = str(raw["severity"])) != null ? _b : "UNKNOWN",
-        remediation: str(raw["remediation"]),
+        severity: (_b = str2(raw["severity"])) != null ? _b : "UNKNOWN",
+        remediation: str2(raw["remediation"]),
         frameworkCodes: frameworkCodesFromRule(rule, ruleShortId)
       });
     }
@@ -4539,7 +4959,10 @@ var Server = (() => {
   var DATA_STORE_KINDS = /* @__PURE__ */ new Set(["BUCKET", "DATABASE", "DATABASE_SERVER"]);
   function rawEntitiesOf(row) {
     const entities = row["entities"];
-    return Array.isArray(entities) ? entities : [];
+    if (!Array.isArray(entities)) return [];
+    return entities.filter(
+      (e) => Boolean(e) && typeof e === "object"
+    );
   }
   function normalizeSensitiveDataAccessPage(rows) {
     var _a5;
@@ -4571,12 +4994,12 @@ var Server = (() => {
       const storeId = stores[0].id;
       for (const raw of rawEntitiesOf(row)) {
         if (kindFromWizType(raw["type"]) !== "DATA_FINDING") continue;
-        const id = str(raw["id"]);
+        const id = str2(raw["id"]);
         if (!id) continue;
         part.dataFindings.push({
           id,
           resourceId: storeId,
-          name: (_a5 = str(raw["name"])) != null ? _a5 : id,
+          name: (_a5 = str2(raw["name"])) != null ? _a5 : id,
           severity: normalizeDataFindingSeverity(raw["severity"])
         });
       }
@@ -4584,7 +5007,7 @@ var Server = (() => {
     return part;
   }
   function normalizeDataFindingSeverity(v) {
-    const raw = str(v);
+    const raw = str2(v);
     if (!raw) return "UNKNOWN";
     const bare = raw.replace(/^DataFindingSeverity/i, "").toUpperCase();
     return SEVERITY_ORDER.includes(bare) ? bare : "UNKNOWN";
@@ -6694,6 +7117,45 @@ var Server = (() => {
           neighbors,
           findings,
           dataFindings
+        };
+      });
+    });
+  }
+  var EXPAND_MAX_NODES = 200;
+  var EXPAND_MAX_EDGES = 400;
+  function expandAsset(p) {
+    return run(() => {
+      var _a5;
+      const id = String((_a5 = (p != null ? p : {})["id"]) != null ? _a5 : "");
+      if (!id) return null;
+      if (!hasWizCredentials()) {
+        return { source: "stored", nodes: [], edges: [], arityMismatches: 0, truncated: false };
+      }
+      return cached("expandAsset", { id }, () => {
+        var _a6, _b;
+        const slots = flattenSlots(AGENT_EXPANSION);
+        const page = fetchGraphSearchPage({
+          query: Q_AGENT_EXPANSION,
+          extraVariables: {
+            query: toGraphEntityQuery(AGENT_EXPANSION, id),
+            projectId: (_b = (_a6 = projectScope()) == null ? void 0 : _a6[0]) != null ? _b : null
+          }
+        });
+        const decoded = decodeExpansion(slots, page.rows);
+        const nodes = decoded.nodes.slice(0, EXPAND_MAX_NODES);
+        const keep = new Set(nodes.map((n) => n.id));
+        const edges2 = decoded.edges.filter((e) => keep.has(e.src) && keep.has(e.dst)).slice(0, EXPAND_MAX_EDGES);
+        return {
+          source: "live",
+          fetchedAt: nowIso(),
+          rootId: id,
+          nodes,
+          edges: edges2,
+          // Surfaced, not swallowed. A non-zero count means the tenant returned an entity
+          // array of a different length than the spec's slot list, so those rows were
+          // refused rather than decoded onto the wrong nodes — the operator needs to know.
+          arityMismatches: decoded.arityMismatches,
+          truncated: decoded.nodes.length > nodes.length || decoded.edges.length > edges2.length || page.hasNextPage
         };
       });
     });

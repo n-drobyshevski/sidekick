@@ -189,9 +189,19 @@ window during which that build is live, and the `git merge-base --is-ancestor` c
 - **Severity never follows the brand.** Crimson marks identity/interaction and
   toxic-combination membership (always paired with the `TC` glyph); severity is
   always a dot + label with the shared palette; AARS chips reuse severity tokens.
-- **graphSearch response shapes are inferred**, not captured — the
+- **`graphSearch` entity arrays are POSITIONAL.** `entities[i]` is the i-th `select: true`
+  node of the query in depth-first pre-order, and an `optional` leg that matched nothing
+  contributes a literal `null` holding its position. Captured and documented in
+  `ai/queries/reponse_schemas/3_graphsearch_response.md`, from
+  `exemples/ai_agent_expand_response.js`. Two things follow. `src/domain/syncNormalize.ts`
+  identifies entities by TYPE (`entities.find(e => e.kind === X)`), which is sound only
+  because each battery traversal is a 2–4 hop chain where a type occurs at most once per
+  path — it does not generalize to a wide traversal, so `src/domain/graphExpand.ts` decodes
+  by position instead, deriving the query and the slot list from one spec tree. And any
+  reader of a raw entity must guard the element for null, not just the row.
+- **The other graphSearch shapes are still inferred**, not captured — the remaining
   `ai/queries/reponse_schemas/` stubs are empty. Every sync archives its raw pages
-  to Drive (`syncs/<sync_id>/step-N-page-*.json.gz`); after the first live sync,
+  to Drive (`syncs/<sync_id>/step-N-page-*.json.gz`); after a live sync,
   copy representative pages into `ai/queries/reponse_schemas/` and reconcile
   `src/domain/syncNormalize.ts` against them. Live AARS inputs are heuristic
   (`deriveAarsInput`) until real compliance data is wired; dry-run uses exact

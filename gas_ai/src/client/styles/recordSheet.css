@@ -179,6 +179,17 @@
 .sheet-card-title { font-size: 13px; font-weight: 600; margin: 0; flex: 1 1 auto; }
 .sheet-card-body { padding: 4px 14px 10px; }
 .sheet-card-body .empty { border: none; padding: 12px 0; }
+/* More than one tool in a card head; the head is a flex row, so they need their own box. */
+.sheet-card-tools { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+
+/* Where the connection map's contents came from — last sync, or a live read of the tenant.
+   The two are indistinguishable on screen otherwise, and conflating them is exactly the
+   failure PRODUCT.md's "honest state" principle names. Warn and bad carry a word as well
+   as a colour, so the distinction survives without the hue. */
+.sheet-prov { padding-top: 8px; margin-top: 6px; border-top: 1px solid var(--hairline); }
+.sheet-prov p { margin: 2px 0; }
+.sheet-prov-warn { color: var(--warn); }
+.sheet-prov-bad { color: var(--bad); }
 
 /* ------------------------------------------------------------ the connection map */
 /* One hop of the security graph, drawn in the graph page's own node vocabulary — every

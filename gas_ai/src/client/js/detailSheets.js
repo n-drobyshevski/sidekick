@@ -8,6 +8,7 @@
 import { call } from "./api.js";
 import { bootstrapCached, navigate } from "./store.js";
 import { egoGraph } from "./egoGraph.js";
+import { mergeLiveRels } from "./egoLayout.js";
 import { categoryOf, edgeLabel, kindIconSvg, kindLabel } from "./icons.js";
 import { severityMixText } from "./graphNode.js";
 import { slaState } from "./pages/comboView.js";
@@ -284,6 +285,63 @@ function toolButton(btn) {
   return btn;
 }
 
+/** The "Expand from Wiz" affordance: one RPC, its own busy and error states. */
+function expandButton(assetId, onDone) {
+  const btn = el("button", { class: "sheet-tool" }, uiIcon("graph", 14), "Expand from Wiz");
+  btn.onclick = async () => {
+    btn.disabled = true;
+    const label = btn.textContent;
+    btn.textContent = "Expanding…";
+    try {
+      onDone(await call("api_expandAsset", { id: assetId }));
+    } catch (e) {
+      btn.textContent = label;
+      btn.disabled = false;
+      onDone({ source: "error", error: e && e.message ? e.message : String(e) });
+    }
+  };
+  return btn;
+}
+
+/**
+ * What the map is actually showing. Principle 5 of PRODUCT.md in one line: a snapshot and
+ * a live read look identical on screen, so the difference has to be said out loud —
+ * including when the live read refused rows it could not trust.
+ */
+function provenanceLine(live, addedCount) {
+  if (!live) {
+    return el("p", { class: "small muted sheet-prov" }, "Neighborhood from the last sync.");
+  }
+  if (live.source === "error") {
+    return el("p", { class: "small sheet-prov sheet-prov-bad" },
+      "Live expansion failed: " + live.error + " Showing the last sync.");
+  }
+  if (live.source === "stored") {
+    return el("p", { class: "small muted sheet-prov" },
+      "Live expansion needs Wiz credentials. Showing the last sync.");
+  }
+  const parts = ["Expanded live " + fmtDateTime(live.fetchedAt) + "."];
+  parts.push(addedCount > 0
+    ? plural(addedCount, "connection") + " not in the last sync."
+    : "Nothing the last sync had missed.");
+  const total = (live.nodes || []).length;
+  if (total > addedCount + 1) {
+    parts.push(plural(total, "entity") + " found in total, including beyond one hop.");
+  }
+  const notes = [];
+  if (live.truncated) notes.push("Result was capped; open the graph for the rest.");
+  if (live.arityMismatches) {
+    // Not a cosmetic warning. A mismatch means the tenant returned an entity array of a
+    // different length than the query's selected-node count, so those rows were refused
+    // rather than decoded onto the wrong nodes — the spec and the schema have diverged.
+    notes.push(plural(live.arityMismatches, "row") +
+      " skipped: the tenant's response shape did not match the query.");
+  }
+  return el("div", { class: "sheet-prov" },
+    el("p", { class: "small muted" }, parts.join(" ")),
+    notes.length ? el("p", { class: "small sheet-prov-warn" }, notes.join(" ")) : null);
+}
+
 /** A bordered card inside the overlay: the one-pixel whisper, never a second real shadow. */
 function sheetCard(title, action, ...children) {
   return el("div", { class: "sheet-card" },
@@ -339,6 +397,9 @@ export function openAssetSheet(assetId, opts = {}) {
       const { node, issues, neighbors, findings } = detail;
       const openIssues = issues || [];
       const rels = neighbors || [];
+      // Result of "Expand from Wiz", null until the analyst asks for it. Held here rather
+      // than fetched on open so the sheet costs no UrlFetchApp quota by default.
+      let liveExpansion = null;
       const compliance = findings || [];
       const caps = pillarCaps();
       clear(body);
@@ -427,24 +488,41 @@ export function openAssetSheet(assetId, opts = {}) {
           // — the identity it runs as, the data it reaches, the guardrail it hasn't got —
           // is a shape, and a list makes the reader assemble it. Relationships still holds
           // every connection, and the map's own "+N more" stub leads there.
-          let map = null;
-          if (rels.length) {
-            const boot = bootstrapCached();
-            map = egoGraph({
-              focal: node,
-              rels,
-              palette: boot && boot.palette,
-              onOpen: openNeighbor,
-              onShowAll: () => ctx.selectSection("relationships"),
-            });
-            ctx.onDispose(map.destroy);
-          }
-          pane.append(sheetCard(
-            `Connections (${rels.length})`,
-            el("button", { class: "sheet-tool", onclick: openGraph },
-              uiIcon("graph", 14), "Open in graph"),
-            map ? map.node : emptyState("No connections in the last sync."),
-          ));
+          // Stored neighbours come from the LAST SYNC's snapshot, which can only hold what
+          // the battery's five fixed traversals collected. "Expand from Wiz" asks the
+          // tenant about this one agent across all ten relationship subtrees the console
+          // expands. Which of the two is on screen is stated, never implied — a map that
+          // silently mixes a week-old snapshot with a live read is worse than either.
+          const card = el("div");
+          const paintConnections = () => {
+            const merged = mergeLiveRels(node, rels, liveExpansion);
+            let map = null;
+            if (merged.length) {
+              const boot = bootstrapCached();
+              map = egoGraph({
+                focal: node,
+                rels: merged,
+                palette: boot && boot.palette,
+                onOpen: openNeighbor,
+                onShowAll: () => ctx.selectSection("relationships"),
+              });
+              ctx.onDispose(map.destroy);
+            }
+            clear(card).append(sheetCard(
+              "Connections (" + merged.length + ")",
+              el("div", { class: "sheet-card-tools" },
+                expandButton(node.id, (result) => {
+                  liveExpansion = result;
+                  paintConnections();
+                }),
+                el("button", { class: "sheet-tool", onclick: openGraph },
+                  uiIcon("graph", 14), "Open in graph")),
+              map ? map.node : emptyState("No connections in the last sync."),
+              provenanceLine(liveExpansion, merged.length - rels.length),
+            ));
+          };
+          paintConnections();
+          pane.append(card);
           // The record as the server sent it. An analyst who needs a field this sheet does
           // not name should not have to open the browser console to read it.
           const raw = JSON.stringify(detail, null, 2);

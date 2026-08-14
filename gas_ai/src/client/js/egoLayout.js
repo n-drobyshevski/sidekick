@@ -67,6 +67,42 @@ function compareRels(a, b) {
  * freed for a "+N more" stub: "shown" holds the first "cap - 1" (worst-and-most-
  * structural-first) and "hiddenCount" covers the rest.
  */
+/**
+ * A live per-agent expansion folded into the stored neighbour list, one hop only.
+ *
+ * `live` is api_expandAsset's payload: nodes and edges decoded positionally from a
+ * graphSearch traversal that reaches several hops out — a service account's data
+ * resources, a deployment's cluster. This list feeds a ONE-HOP map, so only edges incident
+ * on the focal node become rels; the deeper nodes are counted and reported in the card's
+ * provenance line, and the graph page is where they are actually walkable.
+ *
+ * Deduped against the stored rels by (node id, edge type). A relationship the last sync
+ * already knew about must not appear twice because Wiz confirmed it again — the map would
+ * draw two identical spokes and the count above it would be wrong.
+ */
+export function mergeLiveRels(focal, storedRels, live) {
+  var stored = storedRels || [];
+  if (!focal || !live || !live.nodes || !live.nodes.length) return stored;
+  var byId = new Map(live.nodes.map(function (n) { return [n.id, n]; }));
+  var seen = new Set(stored.map(function (r) { return r.node.id + "|" + r.edge.type; }));
+  var extra = [];
+  for (var e of live.edges || []) {
+    if (e.src !== focal.id && e.dst !== focal.id) continue;
+    var otherId = e.src === focal.id ? e.dst : e.src;
+    var other = byId.get(otherId);
+    if (!other || otherId === focal.id) continue;
+    var key = otherId + "|" + e.type;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    extra.push({
+      edge: { id: e.id, src: e.src, dst: e.dst, type: e.type },
+      node: other,
+      direction: e.src === focal.id ? "out" : "in",
+    });
+  }
+  return stored.concat(extra);
+}
+
 export function pickEgoNeighbours(rels, cap) {
   var ranked = (rels || []).slice().sort(compareRels);
 

@@ -2,7 +2,7 @@
 // logic is tested here, the pixels are checked in the dev harness.
 
 import { describe, it, expect } from "vitest";
-import { EGO, pickEgoNeighbours, egoLayout } from "../src/client/js/egoLayout.js";
+import { EGO, mergeLiveRels, pickEgoNeighbours, egoLayout } from "../src/client/js/egoLayout.js";
 
 function rel(overrides) {
   var base = {
@@ -315,5 +315,90 @@ describe("egoLayout", () => {
     expect(edges[0].labelY).toBe(Math.round((onCurve - EGO.labelLift) * 100) / 100);
     // The chord at the same t would be somewhere else entirely.
     expect(edges[0].labelY).not.toBe(Math.round((y1 + (y2 - y1) * t - EGO.labelLift) * 100) / 100);
+  });
+});
+
+describe("mergeLiveRels", () => {
+  var focal = { id: "agent", name: "agent", kind: "AI_AGENT" };
+  var stored = [{
+    edge: { id: "e0", src: "agent", dst: "sa", type: "RUNS_AS" },
+    node: { id: "sa", name: "sa", kind: "SERVICE_ACCOUNT" },
+    direction: "out",
+  }];
+
+  function live(nodes, edges) {
+    return { source: "live", nodes: nodes, edges: edges };
+  }
+
+  it("leaves the stored list alone when there is nothing live", () => {
+    expect(mergeLiveRels(focal, stored, null)).toBe(stored);
+    expect(mergeLiveRels(focal, stored, live([], []))).toBe(stored);
+  });
+
+  it("adds one-hop neighbours the last sync did not have", () => {
+    var out = mergeLiveRels(focal, stored, live(
+      [{ id: "mcp", name: "mcp-1", kind: "MCP_SERVER" }],
+      [{ id: "e1", src: "agent", dst: "mcp", type: "USES" }],
+    ));
+    expect(out).toHaveLength(2);
+    expect(out[1].node.id).toBe("mcp");
+    expect(out[1].direction).toBe("out");
+  });
+
+  it("reads direction off the edge, not off the traversal", () => {
+    // RUNS is a reverse edge: the compute runs the agent, so it is INBOUND here.
+    var out = mergeLiveRels(focal, [], live(
+      [{ id: "vm", name: "vm-1", kind: "VIRTUAL_MACHINE" }],
+      [{ id: "e1", src: "vm", dst: "agent", type: "RUNS" }],
+    ));
+    expect(out[0].direction).toBe("in");
+    expect(out[0].node.id).toBe("vm");
+  });
+
+  it("does not re-add a relationship the sync already knew about", () => {
+    var out = mergeLiveRels(focal, stored, live(
+      [{ id: "sa", name: "sa", kind: "SERVICE_ACCOUNT" }],
+      [{ id: "e1", src: "agent", dst: "sa", type: "RUNS_AS" }],
+    ));
+    expect(out).toHaveLength(1);
+  });
+
+  it("keeps the same neighbour under a DIFFERENT edge type", () => {
+    // Wiz's vocabulary and the model's are not the same set; ACTING_AS is a real second
+    // fact about this pair, not a duplicate of RUNS_AS.
+    var out = mergeLiveRels(focal, stored, live(
+      [{ id: "sa", name: "sa", kind: "SERVICE_ACCOUNT" }],
+      [{ id: "e1", src: "agent", dst: "sa", type: "ACTING_AS" }],
+    ));
+    expect(out).toHaveLength(2);
+    expect(out[1].edge.type).toBe("ACTING_AS");
+  });
+
+  it("drops edges that do not touch the focal node", () => {
+    // The expansion is multi-hop; a service account's data resource is real but is not a
+    // neighbour of the agent, and drawing it as one would misstate the topology.
+    var out = mergeLiveRels(focal, [], live(
+      [
+        { id: "sa", name: "sa", kind: "SERVICE_ACCOUNT" },
+        { id: "bucket", name: "b", kind: "BUCKET" },
+      ],
+      [
+        { id: "e1", src: "agent", dst: "sa", type: "ACTING_AS" },
+        { id: "e2", src: "sa", dst: "bucket", type: "ALLOWS_ACCESS_TO" },
+      ],
+    ));
+    expect(out).toHaveLength(1);
+    expect(out[0].node.id).toBe("sa");
+  });
+
+  it("ignores an edge whose node the payload did not carry, and self-edges", () => {
+    var out = mergeLiveRels(focal, [], live(
+      [{ id: "agent", name: "agent", kind: "AI_AGENT" }],
+      [
+        { id: "e1", src: "agent", dst: "ghost", type: "USES" },
+        { id: "e2", src: "agent", dst: "agent", type: "INVOKES" },
+      ],
+    ));
+    expect(out).toHaveLength(0);
   });
 });

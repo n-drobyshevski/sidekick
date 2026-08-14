@@ -331,6 +331,48 @@ export const Q_IDENTITY_ACCESS = graphSearchQuery(
   "    }]\n",
 );
 
+/**
+ * Per-agent neighbourhood expansion. Unlike every other graphSearch document here, the
+ * traversal is NOT inlined — it arrives as a $query variable built by
+ * domain/graphExpand.toGraphEntityQuery(AGENT_EXPANSION, agentId).
+ *
+ * Two reasons it has to be a variable. It is pinned to one entity
+ * (`where: { _vertexID: { EQUALS: <id> } }`), so inlining would hand the gateway a
+ * textually distinct document per agent — defeating its query cache — and would splice a
+ * caller-supplied id into GraphQL source. And the same spec object that renders this
+ * variable also renders the 43-slot list the response is decoded against; sharing one
+ * literal is what keeps the query and the decoder from drifting apart. The file already
+ * reached this conclusion from the other side for the inventory query (see the note above
+ * on inline filter literals proving fragile against the tenant's gateway).
+ *
+ * $projectId is nullable and left null when WIZ_PROJECT_ID_V2 is unset, matching every
+ * other graphSearch document here — they omit the argument entirely and run tenant-wide.
+ * The console capture sends it as String!, but that is the console scoping itself to the
+ * project the operator had open.
+ *
+ * DATA_ENTITY_FIELDS, not the console's `properties` blob: the capture's selection set is
+ * an order of magnitude larger and normalizeCloudResource reads none of it. The
+ * DataFinding fragment is needed because the traversal selects DATA_FINDING in five slots.
+ */
+export const Q_AGENT_EXPANSION =
+  "query SidekickAiAgentExpansion($quick: Boolean, $first: Int, $after: String, " +
+  "$query: GraphEntityQueryInput, $projectId: String) {\n" +
+  "  graphSearch(\n" +
+  "    quick: $quick\n" +
+  "    first: $first\n" +
+  "    after: $after\n" +
+  "    query: $query\n" +
+  "    projectId: $projectId\n" +
+  "  ) {\n" +
+  "    pageInfo { hasNextPage endCursor }\n" +
+  "    nodes {\n" +
+  "      entities {\n" +
+  DATA_ENTITY_FIELDS +
+  "      }\n" +
+  "    }\n" +
+  "  }\n" +
+  "}\n";
+
 // ------------------------------------------------------------ issuesV2 (real issues)
 
 // Trimmed from exemples/risk_issues_request.js (the tenant-wide "Risk Issues" capture);
