@@ -8,8 +8,10 @@
 //   configurationFindings(first, after, filterBy)  — compliance findings
 // The cloudResourcesV2/graphSearch selection sets are inferred from ai/queries/*.md;
 // the issuesV2 / configurationFindings selections are transcribed from the real tenant
-// captures in gas_ai/exemples/ (risk_issues_*, toxic_combos_*, ai_cloud_config_findings_*,
-// agentic_idenities_*, get_ai_agents_*). Reconcile the normalizers against those.
+// captures in gas_ai/exemples/ (risk_issues_*, toxic_combos_*, ai_cloud_config_findings_request
+// + ai_config_findings_response — the pair is spelled two different ways on disk, and the
+// response half is truncated mid-node, which is why fixtures are transcribed by hand rather
+// than imported — agentic_idenities_*, get_ai_agents_*). Reconcile the normalizers against those.
 // issuesV2 follows risk_issues_* — the tenant-wide "Risk Issues" view; toxic_combos_* is
 // the same root captured earlier under a narrower, project-scoped filter.
 
@@ -528,8 +530,21 @@ export function aiIssuesVariables(scope: string[] | null): { filterBy: unknown; 
 
 // --------------------------------------------------- configurationFindings (compliance)
 
-// Trimmed from exemples/ai_cloud_config_findings_request.js (the @include directives are
-// dropped; totalCount is selected plainly). Feeds AARS pillar B and carries remediation.
+// Transcribed from exemples/ai_cloud_config_findings_request.js (the @include directives
+// are dropped; totalCount is selected plainly). Feeds AARS pillar B, backs the Cloud
+// Configuration register, and carries remediation.
+//
+// Every field here is proven by that capture — the tenant answered all of them. Fields
+// the published ConfigurationFinding schema carries but the capture does NOT are
+// deliberately absent, `resolutionReason` above all: an unknown field fails the whole
+// document, and CONFIG_FINDINGS is an optional step that swallows an HTTP 400, so a
+// rejected query would look exactly like a tenant with nothing to report. Probe one
+// through the Wiz Scans variables panel's test run before adding it here.
+//
+// `firstSeenAt` and `analyzedAt` are the register's only lifecycle clock. Wiz sends NO
+// resolvedAt on a configuration finding, so when one closes is knowable only by
+// differencing this app's own sync history — which is why they are collected now even
+// though nothing reads them yet. Uncollected history cannot be backfilled.
 export const Q_CONFIG_FINDINGS =
   "query SidekickAiConfigFindings($first: Int, $after: String, $filterBy: ConfigurationFindingFilters, $orderBy: ConfigurationFindingOrder) {\n" +
   "  configurationFindings(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {\n" +
@@ -538,22 +553,35 @@ export const Q_CONFIG_FINDINGS =
   "    nodes {\n" +
   "      id\n" +
   "      name\n" +
+  "      deleted\n" +
+  "      analyzedAt\n" +
+  "      firstSeenAt\n" +
   "      severity\n" +
   "      result\n" +
   "      status\n" +
   "      remediation\n" +
   "      source\n" +
   "      targetExternalId\n" +
-  "      subscription { id name externalId cloudProvider }\n" +
+  "      ignoreRules { id tags { key value } }\n" +
+  "      subscription {\n" +
+  "        id\n" +
+  "        name\n" +
+  "        externalId\n" +
+  "        cloudProvider\n" +
+  "        sourceDeployments { id name status }\n" +
+  "      }\n" +
   "      resource {\n" +
   "        id\n" +
   "        name\n" +
   "        type\n" +
+  "        status\n" +
   "        projects { id name riskProfile { businessImpact } }\n" +
   "      }\n" +
+  "      sourceMappedIacFindings { id name }\n" +
   "      rule {\n" +
   "        id\n" +
   "        shortId\n" +
+  "        graphId\n" +
   "        name\n" +
   "        description\n" +
   "        remediationInstructions\n" +
@@ -567,15 +595,24 @@ export const Q_CONFIG_FINDINGS =
   "}\n";
 
 /**
- * The $filterBy / $orderBy variables for Q_CONFIG_FINDINGS. OPEN findings under the AI
- * risk framework category (wct-id-1998), optionally project-scoped (the resource filter
- * nests projectId, matching the capture). Pure — scope is a parameter.
+ * The $filterBy / $orderBy variables for Q_CONFIG_FINDINGS. Findings under the AI risk
+ * framework category (wct-id-1998), optionally project-scoped (the resource filter nests
+ * projectId, matching the capture). Pure — scope is a parameter.
+ *
+ * RESOLVED joins OPEN in the default because a configuration finding carries no
+ * resolvedAt: the only way this app can ever say when one closed is to have seen it
+ * closed. Collecting the resolved rows is what makes that possible later; nothing reads
+ * them yet, and normalizeConfigFindingsPage keeps them out of the gap counts.
+ *
+ * REJECTED is deliberately NOT in the default. It is an accepted-risk decision rather
+ * than a posture fact, and scanVars offers it as an opt-in on the step's editable
+ * status field for a tenant that wants to see exceptions in the register.
  */
 export function aiConfigFindingsVariables(
   scope: string[] | null,
 ): { filterBy: unknown; orderBy: unknown } {
   const filterBy: Record<string, unknown> = {
-    status: ["OPEN"],
+    status: ["OPEN", "RESOLVED"],
     frameworkCategory: [RISK_CATEGORY_ID],
   };
   if (scope && scope.length) filterBy["resource"] = { projectId: scope };

@@ -33,6 +33,8 @@ function api_getAssets(p) { return timedApi_("getAssets", p); }
 function api_getAssetOptions(p) { return timedApi_("getAssetOptions", p); }
 function api_getAssetDetail(p) { return timedApi_("getAssetDetail", p); }
 function api_expandAsset(p) { return timedApi_("expandAsset", p); }
+function api_getConfigFindings(p) { return timedApi_("getConfigFindings", p); }
+function api_getConfigFindingDetail(p) { return timedApi_("getConfigFindingDetail", p); }
 function api_getIssues(p) { return timedApi_("getIssues", p); }
 function api_getIssueDetail(p) { return timedApi_("getIssueDetail", p); }
 function api_getToxicCombos(p) { return timedApi_("getToxicCombos", p); }

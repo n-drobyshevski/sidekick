@@ -652,9 +652,17 @@ for (const role of awsRoles) {
 }
 
 // ----------------------------------------------------------- config-findings (dry-run)
-// Failing compliance findings keyed to the resources they fail on. Display-only in
+// Compliance findings keyed to the resources they were evaluated against. Display-only in
 // dry-run (the applied AARS table is pinned by SEED_AARS_HINTS); on live syncs the
 // equivalent findings drive AARS pillar B via buildAarsHintsFromFindings.
+//
+// The last four rows are the point of this block, not filler. Three of them are keyed to
+// a REGION and a RAW_ACCESS_POLICY — resource types NODE_KINDS does not carry — and one
+// is RESOLVED. That is what the live tenant actually returns for the AI framework
+// category: rules that fail on a region's metadata store or an IAM policy, not on an AI
+// asset. Without them the dry run would show a register where every finding links to an
+// agent, the unlinked column would always read "—", and the Cloud Configuration page's
+// central claim would be untestable outside a live tenant.
 
 const SEED_FINDINGS_DATA: FindingRow[] = [
   {
@@ -666,6 +674,36 @@ const SEED_FINDINGS_DATA: FindingRow[] = [
       "Encrypt the Vertex AI metadata store with a customer-managed key and restrict the " +
       "agent service account's access to it.",
     frameworkCodes: ["SUB-082", "LLM06"],
+    name: "Vertex AI Metadata Store is not encrypted with a customer-managed key",
+    status: "OPEN",
+    result: "FAIL",
+    firstSeenAt: "2026-06-12T19:42:35Z",
+    analyzedAt: "2026-07-07T15:59:10Z",
+    ruleId: "60442ee5-452a-48cb-8694-9061c920e10d",
+    ruleName: "Vertex AI Metadata Store should be encrypted with a customer-managed key",
+    ruleDescription:
+      "This rule checks whether the Vertex AI Metadata Store is encrypted with a " +
+      "customer-managed key. It fails if kms_key_name is not configured.",
+    remediationInstructions:
+      "Delete the current Vertex AI Metadata Store, then create a new one with a " +
+      "customer-managed key. Encryption cannot be changed after creation.",
+    opaPolicy: "package wiz\n\ndefault result = \"pass\"\n\nresult = \"fail\" {\n" +
+      "\tnot input.vertexAIMetadataStoreConfiguration.encryption_spec.kms_key_name\n}\n",
+    risks: ["AI_SECURITY", "UNPROTECTED_DATA"],
+    threats: [],
+    resourceName: "Agent A",
+    resourceType: "AI_AGENT",
+    resourceStatus: "Active",
+    source: "WIZ_CSPM",
+    subscriptionName: "gcp-account-01",
+    cloudProvider: "GCP",
+    projects: [
+      { id: "proj-project-beta", name: "PROJECT-BETA", businessImpact: "MBI" },
+      { id: "proj-project-alpha", name: "PROJECT-ALPHA", businessImpact: "LBI" },
+    ],
+    businessImpact: "MBI",
+    ignoreRuleIds: [],
+    iacFindingIds: [],
   },
   {
     id: "cfg-002",
@@ -676,6 +714,28 @@ const SEED_FINDINGS_DATA: FindingRow[] = [
       "Disable public ingress on the Cloud Run service hosting the agent, or place it " +
       "behind an authenticated load balancer.",
     frameworkCodes: ["SUB-114"],
+    name: "AI agent host is reachable from the public internet",
+    status: "OPEN",
+    result: "FAIL",
+    firstSeenAt: "2026-05-02T08:15:00Z",
+    analyzedAt: "2026-07-13T21:52:08Z",
+    ruleName: "AI agent hosts should not be open to all internet",
+    ruleDescription:
+      "This rule checks whether the compute hosting an AI agent accepts ingress from " +
+      "0.0.0.0/0. It fails when no authenticating front end sits in front of it.",
+    risks: ["AI_SECURITY"],
+    threats: [],
+    resourceName: "agent-H-chatbot",
+    resourceType: "AI_AGENT",
+    resourceStatus: "Active",
+    source: "WIZ_CSPM",
+    subscriptionName: "gcp-account-05",
+    cloudProvider: "GCP",
+    projects: [{ id: "proj-project-alpha", name: "PROJECT-ALPHA", businessImpact: "LBI" }],
+    businessImpact: "LBI",
+    // Traced to IaC: the register's shift-left link, and the only seeded row that has one.
+    iacFindingIds: ["iac-cloudrun-ingress-1"],
+    ignoreRuleIds: [],
   },
   {
     id: "cfg-003",
@@ -684,6 +744,163 @@ const SEED_FINDINGS_DATA: FindingRow[] = [
     severity: "MEDIUM",
     remediation: "Enable audit logging for all data access performed by the agent identity.",
     frameworkCodes: ["SUB-047"],
+    name: "Data access by the AI agent identity is not audited",
+    status: "OPEN",
+    result: "FAIL",
+    firstSeenAt: "2026-06-25T08:43:01Z",
+    analyzedAt: "2026-07-13T21:52:13Z",
+    ruleName: "AI agent identities should have data access logging enabled",
+    risks: ["AI_SECURITY"],
+    threats: [],
+    resourceName: "Agent E",
+    resourceType: "AI_AGENT",
+    resourceStatus: "Active",
+    source: "WIZ_CSPM",
+    subscriptionName: "gcp-account-03",
+    cloudProvider: "GCP",
+    projects: [{ id: "proj-project-alpha", name: "PROJECT-ALPHA", businessImpact: "LBI" }],
+    businessImpact: "LBI",
+    ignoreRuleIds: [],
+    iacFindingIds: [],
+  },
+  // ---- keyed to resources the AI graph does not model ----
+  {
+    id: "cfg-004",
+    // A REGION. Not a NodeKind, so this prices no AARS score and shows as off-inventory.
+    resourceId: "region-europe-west1-packaging",
+    ruleShortId: "SUB-082",
+    severity: "MEDIUM",
+    remediation:
+      "Delete and recreate the metadata store with a customer-managed key. Encryption " +
+      "cannot be changed after creation.",
+    frameworkCodes: ["SUB-082", "LLM06"],
+    name: "Vertex AI Metadata Store is not encrypted with a customer-managed key",
+    status: "OPEN",
+    result: "FAIL",
+    firstSeenAt: "2026-06-12T19:42:35Z",
+    analyzedAt: "2026-06-19T10:27:22Z",
+    ruleId: "60442ee5-452a-48cb-8694-9061c920e10d",
+    ruleName: "Vertex AI Metadata Store should be encrypted with a customer-managed key",
+    ruleDescription:
+      "This rule checks whether the Vertex AI Metadata Store is encrypted with a " +
+      "customer-managed key. It fails if kms_key_name is not configured.",
+    opaPolicy: "package wiz\n\ndefault result = \"pass\"\n\nresult = \"fail\" {\n" +
+      "\tnot input.vertexAIMetadataStoreConfiguration.encryption_spec.kms_key_name\n}\n",
+    risks: ["AI_SECURITY", "UNPROTECTED_DATA"],
+    threats: [],
+    resourceName: "europe-west1 (packaging-data)",
+    resourceType: "REGION",
+    resourceStatus: "Active",
+    targetExternalId: "packaging-data/europe-west1",
+    source: "WIZ_CSPM",
+    subscriptionName: "packaging-data",
+    cloudProvider: "GCP",
+    projects: [{ id: "proj-project-gamma", name: "PROJECT-GAMMA", businessImpact: "MBI" }],
+    businessImpact: "MBI",
+    ignoreRuleIds: [],
+    iacFindingIds: [],
+  },
+  {
+    id: "cfg-005",
+    // A RAW_ACCESS_POLICY — an IAM policy document, likewise absent from the graph.
+    resourceId: "policy-bedrock-invoke-1",
+    ruleShortId: "IAM-267",
+    severity: "MEDIUM",
+    remediation:
+      "Add a bedrock:GuardrailIdentifier condition to the policy statement that allows " +
+      "bedrock:InvokeModel, or add a Deny that requires one.",
+    frameworkCodes: ["IAM-267", "LLM06"],
+    name: "IAM policy allows Bedrock model invocation without guardrail condition",
+    status: "OPEN",
+    result: "FAIL",
+    firstSeenAt: "2026-07-21T16:03:20Z",
+    analyzedAt: "2026-08-03T23:20:36Z",
+    ruleId: "a1f587c5-32ac-4c08-8d91-e53d2d6db828",
+    ruleName: "IAM Policy Bedrock Model Invocation should include Guardrail Condition",
+    ruleDescription:
+      "This rule checks whether IAM policies that allow Bedrock model invocation include " +
+      "guardrail conditions. Amazon Bedrock foundation models can process sensitive data " +
+      "and generate harmful content; guardrails enforce content filtering and usage policy.",
+    remediationInstructions:
+      "aws iam create-policy-version --policy-arn {{policyArn}} --set-as-default " +
+      "--policy-document '{ … \"Condition\": { \"StringEquals\": " +
+      "{ \"bedrock:GuardrailIdentifier\": \"<YOUR_GUARDRAIL_ID>\" } } … }'",
+    risks: ["AI_SECURITY"],
+    threats: [],
+    resourceName: "AIFFORECASTSUPPLY-DEMANDFORECASTEU-IAM-V2-2",
+    resourceType: "RAW_ACCESS_POLICY",
+    source: "WIZ_CSPM",
+    subscriptionName: "aws-account-prod-01",
+    cloudProvider: "AWS",
+    projects: [{ id: "proj-project-alpha", name: "PROJECT-ALPHA", businessImpact: "LBI" }],
+    businessImpact: "LBI",
+    // An accepted risk that still fails: the register shows the exception rather than
+    // quietly dropping the row out of the gap count.
+    ignoreRuleIds: ["ignore-bedrock-guardrail-waiver"],
+    iacFindingIds: [],
+  },
+  {
+    id: "cfg-006",
+    // A SERVICE_ACCOUNT no agent in this estate runs as, so still off-inventory.
+    resourceId: "sa-bigdata-ai-weatherforecast-pp",
+    ruleShortId: "IAM-236",
+    severity: "HIGH",
+    remediation:
+      "Add an aws:SourceAccount or aws:SourceArn condition to the role's trust policy so " +
+      "only Bedrock in your own account can assume it.",
+    frameworkCodes: ["IAM-236"],
+    name: "Bedrock Service Role missing conditions to prevent confused deputy attacks",
+    status: "OPEN",
+    result: "FAIL",
+    firstSeenAt: "2026-01-06T10:48:24Z",
+    analyzedAt: "2026-08-07T07:37:39Z",
+    ruleId: "1a1b2762-dee3-434f-b5b4-41597c48052b",
+    ruleName: "Bedrock Service Roles should prevent confused deputy attacks",
+    ruleDescription:
+      "Fails when a role trusted by bedrock.amazonaws.com has no Condition with " +
+      "aws:SourceAccount or aws:SourceArn. A service with access to several accounts can " +
+      "otherwise be tricked into acting on an unintended one.",
+    risks: ["AI_SECURITY"],
+    threats: [],
+    resourceName: "BIGDATA-AI-AIGEN-WEATHERFORECAST-PP",
+    resourceType: "SERVICE_ACCOUNT",
+    resourceStatus: "Active",
+    targetExternalId: "arn:aws:iam::614303399241:role/BIGDATA-AI-AIGEN-WEATHERFORECAST-PP",
+    source: "WIZ_CSPM",
+    subscriptionName: "aws-account-prod-01",
+    cloudProvider: "AWS",
+    projects: [{ id: "proj-project-alpha", name: "PROJECT-ALPHA", businessImpact: "LBI" }],
+    businessImpact: "LBI",
+    ignoreRuleIds: [],
+    iacFindingIds: [],
+  },
+  {
+    id: "cfg-007",
+    // RESOLVED, and therefore PASS. Stored for the lifecycle clock, counted by nothing:
+    // isOpenGap keeps it out of complianceGaps, AARS pillar B and the severity strip.
+    resourceId: "agent-a",
+    ruleShortId: "SUB-114",
+    severity: "HIGH",
+    remediation: "Public ingress was removed from the service hosting this agent.",
+    frameworkCodes: ["SUB-114"],
+    name: "AI agent host is reachable from the public internet",
+    status: "RESOLVED",
+    result: "PASS",
+    firstSeenAt: "2026-03-11T09:00:00Z",
+    analyzedAt: "2026-08-07T07:37:41Z",
+    ruleName: "AI agent hosts should not be open to all internet",
+    risks: ["AI_SECURITY"],
+    threats: [],
+    resourceName: "Agent A",
+    resourceType: "AI_AGENT",
+    resourceStatus: "Active",
+    source: "WIZ_CSPM",
+    subscriptionName: "gcp-account-01",
+    cloudProvider: "GCP",
+    projects: [{ id: "proj-project-alpha", name: "PROJECT-ALPHA", businessImpact: "LBI" }],
+    businessImpact: "LBI",
+    ignoreRuleIds: [],
+    iacFindingIds: [],
   },
 ];
 

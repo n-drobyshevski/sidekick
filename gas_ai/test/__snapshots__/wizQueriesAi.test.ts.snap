@@ -130,22 +130,35 @@ exports[`query documents > Q_CONFIG_FINDINGS is unchanged 1`] = `
     nodes {
       id
       name
+      deleted
+      analyzedAt
+      firstSeenAt
       severity
       result
       status
       remediation
       source
       targetExternalId
-      subscription { id name externalId cloudProvider }
+      ignoreRules { id tags { key value } }
+      subscription {
+        id
+        name
+        externalId
+        cloudProvider
+        sourceDeployments { id name status }
+      }
       resource {
         id
         name
         type
+        status
         projects { id name riskProfile { businessImpact } }
       }
+      sourceMappedIacFindings { id name }
       rule {
         id
         shortId
+        graphId
         name
         description
         remediationInstructions

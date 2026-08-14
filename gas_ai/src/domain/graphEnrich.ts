@@ -14,7 +14,7 @@ import {
   type InternetExposure,
   type IssueSeverityKey,
 } from "./aars";
-import { isUnresolvedIssue, SEVERITY_ORDER } from "./config";
+import { isOpenGap, isUnresolvedIssue, SEVERITY_ORDER } from "./config";
 import type { Severity } from "./config";
 import { conditionHolds, conditionState } from "./riskConditions";
 import type { ConditionKey } from "./toxicCombos";
@@ -149,6 +149,18 @@ function weightedGap(code: string, severity: Severity | undefined, rule: AarsRul
  * still caps pillar B at 30). dataExposure comes from deriveAarsInput, so hinted and
  * un-hinted assets classify identically. Assets with no findings are omitted and fall
  * through to deriveAarsInput unchanged.
+ *
+ * Only FAILING, OPEN findings price anything — `isOpenGap`. That filter used to live at
+ * the normalizer, which stored nothing else; now that the register also keeps RESOLVED
+ * and PASS rows for the lifecycle clock, it has to be applied here or a control someone
+ * already fixed would keep scoring against the asset forever. Same population as before,
+ * so no score moves on upgrade.
+ *
+ * A finding whose `resourceId` matches no node is skipped, and that is correct rather
+ * than lossy: most AI-security configuration rules fail on a REGION, an IAM policy or an
+ * unattached service account, none of which the AI graph models, and there is no asset to
+ * charge the gap to. It does mean the gap total and the priced total differ, which is why
+ * `kpis.complianceGapsUnlinked` reports the difference instead of leaving it implied.
  */
 export function buildAarsHintsFromFindings(
   findings: FindingRow[],
@@ -163,7 +175,7 @@ export function buildAarsHintsFromFindings(
   // both a CRITICAL and a LOW control is weighted by the CRITICAL — the same "worst wins"
   // reading pillar A applies to issues.
   const worstByCode = new Map<string, Severity>();
-  for (const f of findings) {
+  for (const f of findings.filter(isOpenGap)) {
     pushInto(codesByResource, f.resourceId, ...f.frameworkCodes);
     for (const c of f.frameworkCodes) {
       const key = `${f.resourceId}|${c}`;

@@ -99,6 +99,41 @@ export function issueSections(detail) {
   ];
 }
 
+// ------------------------------------------------------------- cloud configuration
+
+/**
+ * Rail sections for a configuration finding. "detail" is getConfigFindingDetail's payload
+ * — { finding, gap, asset } — with every part tolerated missing.
+ *
+ * "Affected asset" is empty far more often than the issue sheet's equivalent, and that is
+ * the normal case rather than a defect: most AI-security rules are evaluated against a
+ * region, an IAM policy or an identity no agent runs as, none of which the AI inventory
+ * holds. The section still shows, so the sheet says which it is instead of hiding the
+ * question.
+ */
+export function configFindingSections(detail) {
+  var d = detail || {};
+  var f = d.finding || {};
+
+  var fix = f.remediation || f.remediationInstructions;
+  var ignoreCount = (f.ignoreRuleIds || []).length;
+  var iacCount = (f.iacFindingIds || []).length;
+  var projectCount = (f.projects || []).length;
+
+  return [
+    section("overview", "Overview", null, null, false),
+    section("fix", "Remediation", "Remediation", null, !fix),
+    section("accepted", "Accepted risk", "Remediation", ignoreCount, ignoreCount === 0),
+    section("iac", "Infrastructure as code", "Remediation", iacCount, iacCount === 0),
+    section("rule", "The control", "Context", null, !f.ruleDescription),
+    section("policy", "Policy", "Context", null, !f.opaPolicy),
+    section("resource", "Resource", "Context", null, !f.resourceId),
+    section("asset", "Affected asset", "Context", null, !d.asset),
+    section("projects", "Projects", "Context", projectCount, projectCount === 0),
+    section("facts", "Facts", "Context", null, false),
+  ];
+}
+
 // -------------------------------------------------------------------------- navigation
 
 /**

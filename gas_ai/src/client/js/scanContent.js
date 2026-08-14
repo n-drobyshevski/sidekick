@@ -65,6 +65,7 @@ export const DESTINATIONS = [
   { id: "graph", title: "Security Graph", sub: "nodes, edges, attack paths" },
   { id: "inventory", title: "AI Inventory", sub: "the scored asset register" },
   { id: "combos", title: "Toxic Combinations", sub: "the multi-condition patterns" },
+  { id: "config", title: "Cloud Configuration", sub: "failing controls by rule" },
 ];
 
 const n = (v) => Number(v || 0);
@@ -215,9 +216,10 @@ export const SCAN_AREAS = [
     id: "compliance",
     title: "Compliance Frameworks",
     query: "configurationFindings, FAIL only (CONFIG_FINDINGS)",
-    what: "Failing configuration findings against the AI security frameworks enabled in the " +
-      "tenant, stored per asset with the framework codes they violate.",
-    lands: "inventory",
+    what: "Configuration findings against the AI security frameworks enabled in the " +
+      "tenant, stored whole and listed on the Cloud Configuration page. Failing ones carry " +
+      "the framework codes they violate onto the asset record.",
+    lands: "config",
     // Declared, not derived: complianceGaps resolves a real number, but the area's subject
     // is framework SCORING and this counts findings. A live badge here would let the number
     // stand in for the thing it is not.
@@ -225,11 +227,20 @@ export const SCAN_AREAS = [
     note: "This sync counts failing configuration findings, and the framework codes each one " +
       "violates are on the asset record. Per-framework scores — OWASP LLM, ML, Agentic, " +
       "5Rs — are not queried, not stored and not shown here. The framework tags on the " +
-      "Toxic Combinations page are the static taxonomy, not a measured score.",
+      "Toxic Combinations page are the static taxonomy, not a measured score. The step also " +
+      "collects RESOLVED findings and their first-seen dates: Wiz sends no resolvedAt on a " +
+      "configuration finding, so a closure can only ever be dated by this app having seen " +
+      "it close. Nothing reads those yet, and they are excluded from the count below.",
     figure: (ctx) => (ctx.kpis
       ? {
         value: String(n(ctx.kpis.complianceGaps)),
-        unit: "failing findings",
+        // A finding is keyed to the resource evaluated, which for most AI-security rules
+        // is a region, an IAM policy or an unattached identity — not an AI asset. Those
+        // price no AARS score, so the split is stated rather than left to be inferred.
+        unit: "failing findings" +
+          (n(ctx.kpis.complianceGapsUnlinked)
+            ? " · " + n(ctx.kpis.complianceGapsUnlinked) + " not on an AI asset"
+            : ""),
         short: n(ctx.kpis.complianceGaps) + " failing",
         source: "kpis.complianceGaps",
       }

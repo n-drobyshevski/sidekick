@@ -78,6 +78,11 @@ export const READ_APIS: Array<[name: string, params: unknown]> = [
   // One of agent-h-chatbot's own issues, so the two new golden cases are cross-checkable
   // against each other as well as against the dry-run sync snapshot.
   ["getIssueDetail", { id: "iss-026" }],
+  ["getConfigFindings", {}],
+  // cfg-005 is the off-inventory case on purpose: a RAW_ACCESS_POLICY the AI graph does
+  // not model, carrying an ignore rule. It pins both the null `asset` arm and the
+  // accepted-risk arm, which the linked findings would not reach.
+  ["getConfigFindingDetail", { id: "cfg-005" }],
 ];
 
 /**

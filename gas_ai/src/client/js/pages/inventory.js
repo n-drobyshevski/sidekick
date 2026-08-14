@@ -461,7 +461,16 @@ export async function renderInventory(main, params) {
         coverage === null || coverage === undefined ? null : coverage),
       statRow("Sensitive data access", String(kpis.sensitiveAccess ?? 0), "AI assets"),
       statRow("Open issues", String(kpis.openIssues ?? 0), "toxic-combination instances"),
-      statRow("Compliance gaps", String(kpis.complianceGaps ?? 0), "failing config findings"),
+      // The unlinked count is not a caveat, it is the number's shape. A configuration
+      // finding is keyed to the resource it was evaluated against, and most AI-security
+      // rules fail on a region, an IAM policy or a service account no agent runs as —
+      // none of which are AI assets, so none of them price an AARS score. Saying how many
+      // stops the total reading as "gaps on the assets below".
+      statRow("Compliance gaps", String(kpis.complianceGaps ?? 0),
+        "failing config findings" +
+        (kpis.complianceGapsUnlinked
+          ? ` · ${kpis.complianceGapsUnlinked} not on an AI asset`
+          : "")),
     );
 
     // The strip is a control, so it has to reflect state it did not itself change — a

@@ -268,26 +268,120 @@ export function rowToIssue(r: Rec): IssueRow {
   return issue;
 }
 
+/**
+ * A Sheets cell holds at most 50,000 characters and rejects the whole write past that.
+ * `opa_policy` is the only column here that carries an unbounded document (a rule's full
+ * Rego), so it is the only one clamped — losing the tail of one policy is recoverable,
+ * failing the sync's findings write is not. The marker makes a clamped value legible
+ * rather than mysteriously truncated.
+ */
+const CELL_MAX = 50000;
+const CLAMP_MARKER = "\n… truncated for storage";
+function cell(v: string | undefined): string | null {
+  if (v === undefined) return null;
+  if (v.length <= CELL_MAX) return v;
+  return v.slice(0, CELL_MAX - CLAMP_MARKER.length) + CLAMP_MARKER;
+}
+
+/**
+ * The read side of an optional text column, as `(r[k] as string | null) ?? undefined`
+ * written once instead of two dozen times. fromCell already maps an empty cell to null;
+ * a column a legacy row never had reads as undefined. Both mean "not recorded".
+ */
+function optional(v: unknown): string | undefined {
+  return v === null || v === undefined || v === "" ? undefined : String(v);
+}
+
 export function findingToRow(f: FindingRow): Rec {
   return {
     id: f.id,
     resource_id: f.resourceId,
     rule_short_id: f.ruleShortId,
     severity: f.severity,
-    remediation: f.remediation ?? null,
+    remediation: cell(f.remediation),
     framework_codes: (f.frameworkCodes ?? []).join(","),
+
+    name: f.name ?? null,
+    status: f.status ?? null,
+    result: f.result ?? null,
+    // Tri-state, like the internet flag: "null" for a response that never carried the
+    // field. isOpenGap only tombstones on an explicit true, so absent must not read false.
+    deleted: triCell(f.deleted),
+    first_seen_at: f.firstSeenAt ?? null,
+    analyzed_at: f.analyzedAt ?? null,
+
+    rule_id: f.ruleId ?? null,
+    rule_graph_id: f.ruleGraphId ?? null,
+    rule_name: f.ruleName ?? null,
+    rule_description: cell(f.ruleDescription),
+    remediation_instructions: cell(f.remediationInstructions),
+    opa_policy: cell(f.opaPolicy),
+    risks_json: f.risks && f.risks.length ? JSON.stringify(f.risks) : null,
+    threats_json: f.threats && f.threats.length ? JSON.stringify(f.threats) : null,
+
+    resource_name: f.resourceName ?? null,
+    resource_type: f.resourceType ?? null,
+    resource_status: f.resourceStatus ?? null,
+    target_external_id: f.targetExternalId ?? null,
+    source: f.source ?? null,
+
+    subscription_id: f.subscriptionId ?? null,
+    subscription_name: f.subscriptionName ?? null,
+    cloud_provider: f.cloudProvider ?? null,
+    projects_json: f.projects && f.projects.length ? JSON.stringify(f.projects) : null,
+    business_impact: f.businessImpact ?? null,
+
+    ignore_rule_ids_json:
+      f.ignoreRuleIds && f.ignoreRuleIds.length ? JSON.stringify(f.ignoreRuleIds) : null,
+    iac_finding_ids_json:
+      f.iacFindingIds && f.iacFindingIds.length ? JSON.stringify(f.iacFindingIds) : null,
   };
 }
 
 export function rowToFinding(r: Rec): FindingRow {
-  return {
+  const finding: FindingRow = {
     id: String(r["id"] ?? ""),
     resourceId: String(r["resource_id"] ?? ""),
     ruleShortId: String(r["rule_short_id"] ?? ""),
     severity: String(r["severity"] ?? "UNKNOWN") as Severity,
-    remediation: (r["remediation"] as string | null) ?? undefined,
+    remediation: optional(r["remediation"]),
     frameworkCodes: String(r["framework_codes"] ?? "").split(",").filter(Boolean),
+
+    name: optional(r["name"]),
+    status: optional(r["status"]),
+    result: optional(r["result"]),
+    firstSeenAt: optional(r["first_seen_at"]),
+    analyzedAt: optional(r["analyzed_at"]),
+
+    ruleId: optional(r["rule_id"]),
+    ruleGraphId: optional(r["rule_graph_id"]),
+    ruleName: optional(r["rule_name"]),
+    ruleDescription: optional(r["rule_description"]),
+    remediationInstructions: optional(r["remediation_instructions"]),
+    opaPolicy: optional(r["opa_policy"]),
+    risks: parseJson<string[]>(r["risks_json"], []),
+    threats: parseJson<string[]>(r["threats_json"], []),
+
+    resourceName: optional(r["resource_name"]),
+    resourceType: optional(r["resource_type"]),
+    resourceStatus: optional(r["resource_status"]),
+    targetExternalId: optional(r["target_external_id"]),
+    source: optional(r["source"]),
+
+    subscriptionId: optional(r["subscription_id"]),
+    subscriptionName: optional(r["subscription_name"]),
+    cloudProvider: optional(r["cloud_provider"]),
+    projects: parseJson<FindingRow["projects"]>(r["projects_json"], []),
+    businessImpact: optional(r["business_impact"]),
+
+    ignoreRuleIds: parseJson<string[]>(r["ignore_rule_ids_json"], []),
+    iacFindingIds: parseJson<string[]>(r["iac_finding_ids_json"], []),
   };
+  // Absent stays absent: a legacy row has no `deleted` cell at all, and reading that as
+  // `false` would assert a tombstone check that never ran.
+  const deleted = parseTri(r["deleted"]);
+  if (deleted !== null) finding.deleted = deleted;
+  return finding;
 }
 
 export function dataFindingToRow(f: DataFindingRow): Rec {

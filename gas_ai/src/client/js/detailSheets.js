@@ -11,7 +11,9 @@ import { expansionStatus, mergeLiveRels, shouldAutoExpand } from "./egoLayout.js
 import { categoryOf, edgeLabel, kindIconSvg, kindLabel } from "./icons.js";
 import { severityMixText } from "./graphNode.js";
 import { slaState } from "./pages/comboView.js";
-import { assetSections, issueSections, recordCursor } from "./recordSections.js";
+import {
+  assetSections, configFindingSections, issueSections, recordCursor,
+} from "./recordSections.js";
 import {
   aarsChip, clear, codeBlock, copyButton, el, emptyState, errorState, fmtDate, fmtDateTime,
   meter, openSheet, plural, sevBadge, sheetRow, sheetSection, skeleton, statusPill, uiIcon,
@@ -651,8 +653,10 @@ export function openAssetSheet(assetId, opts = {}) {
         compliance(pane) {
           if (!compliance.length) {
             pane.append(emptyState(
-              "No compliance findings on this asset.",
-              "The last sync returned no configuration finding against it.",
+              "No failing controls on this asset.",
+              "The last sync returned no failing configuration finding against it. " +
+              "Most AI-security controls are evaluated against regions, IAM policies and " +
+              "identities rather than assets — the Cloud Configuration page has the full register.",
             ));
             return;
           }
@@ -660,8 +664,20 @@ export function openAssetSheet(assetId, opts = {}) {
           for (const f of compliance) {
             list.append(sheetRow({
               badge: sevBadge(f.severity),
+              title: f.ruleName || f.name || f.ruleShortId,
               meta: [el("span", { class: "small muted" }, f.ruleShortId || "—")],
               fix: f.remediation,
+              // The row is a door: the whole record — rule description, remediation
+              // template, the Rego that decided this — is one fetch away rather than
+              // absent, and this pane deliberately ships none of it.
+              ariaLabel: "Open finding " + (f.ruleName || f.ruleShortId),
+              onOpen: () => openConfigFindingSheet(f.id, {
+                seed: f,
+                backTo: {
+                  label: node.name || assetId,
+                  onBack: () => openAssetSheet(assetId, opts),
+                },
+              }),
             }));
           }
           pane.append(list);
@@ -1223,6 +1239,292 @@ export function openIssueSheet(issueId, opts = {}) {
     closeOnRouteChange: true,
     backTo: opts.backTo || null,
     rail: { ariaLabel: "Issue sections" },
+    resizable: true,
+    expandable: true,
+    records: opts.records || null,
+    onClose: () => {
+      disposed = true;
+      if (opts.onClose) opts.onClose();
+    },
+  });
+}
+
+// -------------------------------------------------------------- cloud configuration
+
+/** OPEN / RESOLVED / REJECTED with a word, never a bare tint. */
+function configStatusPill(finding, gap) {
+  if (gap) return statusPill("bad", "Failing");
+  if (finding.status === "RESOLVED") return statusPill("good", "Resolved");
+  if (finding.status === "REJECTED") return statusPill("warn", "Rejected");
+  if (finding.result === "PASS") return statusPill("good", "Passing");
+  return statusPill("neutral", finding.status || "Unknown");
+}
+
+/**
+ * One configuration finding, whole.
+ *
+ * This is where the widened selection set pays for itself: the register row carries only
+ * what a table cell needs, and everything explanatory — the rule's own description, the
+ * resource-specific remediation, the Rego the evaluation actually ran, the IaC it traces
+ * back to — arrives here, one finding at a time, because those fields repeat verbatim
+ * across every finding of the same rule.
+ */
+export function openConfigFindingSheet(findingId, opts = {}) {
+  let disposed = false;
+
+  openSheet((body, close, ctx) => {
+    function paint(detail) {
+      const f = detail.finding;
+      const gap = detail.gap;
+      clear(body);
+
+      const chips = [sevBadge(f.severity), configStatusPill(f, gap)];
+      if ((f.ignoreRuleIds || []).length) chips.push(statusPill("warn", "Ignored"));
+      if ((f.iacFindingIds || []).length) chips.push(statusPill("neutral", "From IaC"));
+      if (!detail.asset) {
+        // Stated, not hidden. A finding on a region or an IAM policy prices no AARS
+        // score, and the sheet should say so where the score would otherwise be looked for.
+        chips.push(statusPill("neutral", "Not an AI asset"));
+      }
+
+      ctx.setHeading({
+        title: f.name || f.ruleName || f.id,
+        subtitle: f.resourceName || f.resourceId,
+        sev: f.severity || "",
+        icon: kindIconSvg("ISSUE", 18),
+        tone: categoryOf("ISSUE"),
+        actions: [
+          toolButton(copyButton(() => f.id, {
+            label: "Copy ID", copiedLabel: "Copied", title: f.id,
+          })),
+        ],
+        chips,
+      });
+
+      const panes = {
+        overview(pane) {
+          pane.append(sheetSection("What failed",
+            el("p", { class: "small", style: "margin:0" },
+              f.ruleName || f.name || "This control has no description on the rule.")));
+          if (f.risks && f.risks.length) {
+            pane.append(sheetSection("Risk categories",
+              el("div", { class: "pill-row" },
+                ...f.risks.map((r) => statusPill("neutral", r.replace(/_/g, " ").toLowerCase())))));
+          }
+          if (f.firstSeenAt) {
+            pane.append(sheetSection("Age",
+              el("p", { class: "small", style: "margin:0" },
+                "First seen " + fmtDate(f.firstSeenAt) +
+                (f.analyzedAt ? " · last evaluated " + fmtDate(f.analyzedAt) : "")),
+              // Wiz sends no resolvedAt on a configuration finding, so this sheet can date
+              // the start of the problem and never its end. Saying so beats implying the
+              // absent field is a zero.
+              el("p", { class: "small muted", style: "margin:6px 0 0" },
+                "Wiz reports no resolution date for configuration findings; " +
+                "closure can only be dated from this app's own sync history.")));
+          }
+        },
+
+        fix(pane) {
+          const own = f.remediation;
+          const template = f.remediationInstructions;
+          if (!own && !template) {
+            pane.append(emptyState("The rule carries no remediation text."));
+            return;
+          }
+          if (own) {
+            pane.append(sheetSection("For this resource", codeBlock(own, {
+              label: "Remediation for this resource", maxHeight: "340px",
+            })));
+          }
+          // Shown second and labelled: the template still carries its {{placeholders}},
+          // and mistaking it for the resolved instructions above would mean pasting a
+          // literal {{roleName}} into a CLI.
+          if (template && template !== own) {
+            pane.append(sheetSection("Rule template", codeBlock(template, {
+              label: "Rule remediation template", maxHeight: "260px",
+            })),
+            el("p", { class: "small muted", style: "margin:6px 0 0" },
+              "The rule's generic instructions, placeholders unresolved."));
+          }
+        },
+
+        accepted(pane) {
+          const ids = f.ignoreRuleIds || [];
+          if (!ids.length) {
+            pane.append(emptyState("No ignore rule covers this finding."));
+            return;
+          }
+          pane.append(el("p", { class: "small", style: "margin:0 0 8px" },
+            plural(ids.length, "ignore rule") + " cover this finding, so someone has " +
+            "accepted this risk. It still counts as a failing control while its status " +
+            "stays OPEN."));
+          pane.append(el("div", { class: "sheet-list" },
+            ...ids.map((id) => sheetRow({ meta: [el("span", { class: "small muted" }, id)] }))));
+        },
+
+        iac(pane) {
+          const ids = f.iacFindingIds || [];
+          if (!ids.length) {
+            pane.append(emptyState(
+              "Wiz did not trace this finding to infrastructure as code.",
+              "Either the resource was not provisioned from scanned IaC, or the mapping is absent.",
+            ));
+            return;
+          }
+          pane.append(el("p", { class: "small", style: "margin:0 0 8px" },
+            "Wiz mapped this misconfiguration back to IaC. Fixing it at source stops it " +
+            "returning on the next deploy."));
+          pane.append(el("div", { class: "sheet-list" },
+            ...ids.map((id) => sheetRow({ meta: [el("span", { class: "small muted" }, id)] }))));
+        },
+
+        rule(pane) {
+          if (!f.ruleDescription) {
+            pane.append(emptyState("The rule carries no description."));
+            return;
+          }
+          pane.append(el("p", { class: "small", style: "margin:0; white-space:pre-wrap" },
+            f.ruleDescription));
+        },
+
+        policy(pane) {
+          if (!f.opaPolicy) {
+            pane.append(emptyState("No policy document on this rule."));
+            return;
+          }
+          pane.append(
+            el("p", { class: "small muted", style: "margin:0 0 8px" },
+              "The Rego the evaluation actually ran — the definition of pass and fail here."),
+            codeBlock(f.opaPolicy, { label: "Rule policy", maxHeight: "420px" }),
+          );
+        },
+
+        resource(pane) {
+          pane.append(el("dl", { class: "kv kv--cols2" },
+            ...kvIf("Name", f.resourceName),
+            ...kvIf("Type", f.resourceType),
+            ...kvIf("Status", f.resourceStatus),
+            ...kvIf("Id", f.resourceId ? idValue(f.resourceId) : ""),
+            ...kvIf("External id", f.targetExternalId ? idValue(f.targetExternalId) : ""),
+            ...kvIf("Cloud", f.cloudProvider),
+            ...kvIf("Subscription", f.subscriptionName),
+            ...kvIf("Business impact", f.businessImpact),
+          ));
+        },
+
+        asset(pane) {
+          if (!detail.asset) {
+            pane.append(emptyState(
+              "This finding is not on an AI asset.",
+              "It was evaluated against a " + (f.resourceType || "resource").toLowerCase() +
+              ", which the AI inventory does not hold — so it counts as a compliance gap " +
+              "but prices no asset's AARS score.",
+            ));
+            return;
+          }
+          pane.append(sheetCard(
+            detail.asset.name || detail.asset.id,
+            el("button", {
+              class: "sheet-tool",
+              onclick: () => openAssetSheet(detail.asset.id, {
+                seed: { name: detail.asset.name },
+                backTo: {
+                  label: f.name || f.ruleName || "Finding",
+                  onBack: () => openConfigFindingSheet(findingId, opts),
+                },
+              }),
+            }, "Open asset"),
+            el("dl", { class: "kv" },
+              ...kvIf("Kind", detail.asset.kind ? kindLabel(detail.asset.kind) : ""),
+              ...kvIf("Cloud", detail.asset.cloud),
+              ...kvIf("Region", detail.asset.region)),
+          ));
+        },
+
+        projects(pane) {
+          const projects = f.projects || [];
+          if (!projects.length) {
+            pane.append(emptyState("No projects on this resource."));
+            return;
+          }
+          pane.append(el("div", { class: "sheet-list" },
+            ...projects.map((p) => sheetRow({
+              meta: [
+                el("span", { class: "small" }, p.name),
+                p.businessImpact
+                  ? el("span", { class: "small muted" }, p.businessImpact)
+                  : null,
+              ].filter(Boolean),
+            }))));
+        },
+
+        facts(pane) {
+          pane.append(el("dl", { class: "kv kv--cols2" },
+            ...kvIf("Rule", f.ruleShortId),
+            ...kvIf("Rule id", f.ruleId ? idValue(f.ruleId) : ""),
+            ...kvRow("Status", f.status || "—"),
+            ...kvRow("Result", f.result || "—"),
+            ...kvIf("Counts as a gap", gap ? "Yes" : "No"),
+            ...kvIf("Source", f.source),
+            ...kvIf("First seen", f.firstSeenAt ? fmtDate(f.firstSeenAt) : ""),
+            ...kvIf("Last evaluated", f.analyzedAt ? fmtDateTime(f.analyzedAt) : ""),
+            ...kvIf("Framework codes", (f.frameworkCodes || []).join(", ")),
+            ...kvIf("Risks", (f.risks || []).join(", ")),
+            ...kvIf("Threats", (f.threats || []).join(", ")),
+          ));
+        },
+      };
+
+      ctx.rail(configFindingSections(detail), (id, pane) => {
+        const render1 = panes[id];
+        if (render1) render1(pane);
+      });
+
+      ctx.announce(
+        (f.name || f.ruleName || "Configuration finding") +
+        " on " + (f.resourceName || f.resourceId) + ", " + f.severity + "." +
+        (gap ? " Failing." : " Not currently failing."),
+      );
+    }
+
+    async function render() {
+      ctx.setBusy(true);
+      clear(body).append(skeleton("line", { height: "18px" }));
+      let detail;
+      try {
+        detail = await swrCall("api_getConfigFindingDetail", { id: findingId }, (fresh) => {
+          if (disposed || !fresh) return;
+          paint(fresh);
+        });
+      } catch (e) {
+        if (disposed) return;
+        ctx.setBusy(false);
+        clear(body).append(errorState("Couldn't load this finding.", {
+          detail: e && e.message ? e.message : e,
+          onRetry: render,
+        }));
+        return;
+      }
+      if (disposed) return;
+      ctx.setBusy(false);
+      if (!detail) {
+        clear(body).append(emptyState(
+          "This finding is no longer in the register.",
+          "The last sync rewrote the findings tab and did not return it.",
+        ));
+        return;
+      }
+      paint(detail);
+    }
+    render();
+  }, {
+    title: opts.seed ? (opts.seed.name || opts.seed.ruleName) : (opts.title || "Finding"),
+    subtitle: opts.seed ? (opts.seed.resourceName || opts.seed.resourceId) : findingId,
+    sev: opts.seed ? (opts.seed.severity || "") : "",
+    closeOnRouteChange: true,
+    backTo: opts.backTo || null,
+    rail: { ariaLabel: "Finding sections" },
     resizable: true,
     expandable: true,
     records: opts.records || null,

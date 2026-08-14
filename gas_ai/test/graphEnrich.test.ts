@@ -487,6 +487,36 @@ describe("buildAarsHintsFromFindings", () => {
     expect(hints["missing"]).toBeUndefined(); // finding f2's resource isn't in the doc
     expect(hints["asset-2"]).toBeUndefined(); // no finding
   });
+
+  // The gate that moved. It used to sit in normalizeConfigFindingsPage, which stored
+  // nothing but FAIL + OPEN; now the register also keeps RESOLVED and PASS rows for the
+  // lifecycle clock, so without isOpenGap here a control someone already fixed would go
+  // on scoring against the asset forever.
+  it("prices only failing, open, live findings", () => {
+    const priced = (extra: Partial<FindingRow>) =>
+      buildAarsHintsFromFindings(
+        [{
+          id: "f", resourceId: "asset-2", ruleShortId: "SUB-500", severity: "HIGH",
+          frameworkCodes: ["SUB-500"], status: "OPEN", result: "FAIL", ...extra,
+        }],
+        doc,
+        [],
+      )["asset-2"];
+
+    expect(priced({})).toBeDefined();
+    expect(priced({ status: "RESOLVED", result: "PASS" })).toBeUndefined();
+    expect(priced({ status: "REJECTED" })).toBeUndefined();
+    expect(priced({ deleted: true })).toBeUndefined();
+  });
+
+  // The upgrade guarantee: rows written before the tab carried result/status still price
+  // exactly what they used to. Every fixture above omits both fields, so the whole of the
+  // rest of this file is already asserting it — this names it so a future change to
+  // isOpenGap's absent-is-permissive rule fails somewhere that says why.
+  it("still prices a legacy row that carries neither result nor status", () => {
+    const hints = buildAarsHintsFromFindings(findings, doc, issues);
+    expect(hints["asset-1"]!.gaps.map((g) => g.code)).toContain("SUB-082");
+  });
 });
 
 // ---------------------------------------------------------------------------

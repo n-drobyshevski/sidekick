@@ -121,21 +121,9 @@ export function normalizeCloudResource(raw: Rec): GNode | null {
     }
   }
   const projects = raw["projects"];
-  if (Array.isArray(projects)) {
-    node.projects = projects
-      .map((p) => {
-        const rec = p as Rec;
-        const pid = str(rec["id"]);
-        const name = str(rec["name"]);
-        // businessImpact is nested under riskProfile in the API, not flat on Project.
-        const riskProfile = rec["riskProfile"] as Rec | null | undefined;
-        const businessImpact = riskProfile && typeof riskProfile === "object"
-          ? str(riskProfile["businessImpact"])
-          : undefined;
-        return pid && name ? { id: pid, name, businessImpact } : null;
-      })
-      .filter((p): p is NonNullable<typeof p> => p !== null);
-  }
+  // Guard kept: projectsOf answers [] for a non-array, and an asset whose response
+  // carried no projects key must stay `undefined` here rather than gain an empty list.
+  if (Array.isArray(projects)) node.projects = projectsOf(projects);
   const tags = raw["tags"];
   if (Array.isArray(tags)) {
     node.tags = tags
@@ -474,26 +462,71 @@ function frameworkCodesFromRule(rule: Rec | null | undefined, shortId: string): 
   return codes;
 }
 
+/** The `id`s of an object list (ignoreRules, sourceMappedIacFindings), in response order. */
+function idsOf(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return (raw as Rec[])
+    .map((r) => (r && typeof r === "object" ? str(r["id"]) : undefined))
+    .filter((v): v is string => !!v);
+}
+
+/** A string array off the response, dropping blanks. Rule `risks` / `threats`. */
+function strListOf(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((v) => str(v)).filter((v): v is string => !!v);
+}
+
+/** `projects { id name riskProfile { businessImpact } }` → the flat shape rows store. */
+function projectsOf(raw: unknown): Array<{ id: string; name: string; businessImpact?: string }> {
+  if (!Array.isArray(raw)) return [];
+  return (raw as Rec[])
+    .map((p) => {
+      if (!p || typeof p !== "object") return null;
+      const id = str(p["id"]);
+      const name = str(p["name"]);
+      if (!id || !name) return null;
+      // businessImpact is nested under riskProfile in the API, not flat on Project.
+      const profile = p["riskProfile"] as Rec | null | undefined;
+      const businessImpact = profile && typeof profile === "object"
+        ? str(profile["businessImpact"])
+        : undefined;
+      return { id, name, businessImpact };
+    })
+    .filter((p): p is NonNullable<typeof p> => p !== null);
+}
+
 /**
- * configurationFindings page → FindingRow per FAILING, OPEN finding, keyed to the
- * resource it fails on. Only `result === "FAIL"` (a passing control is not a gap) and
- * OPEN findings are kept; each carries its remediation text and the AARS gap codes it
- * contributes. No nodes/edges/issues — findings are a side channel feeding pillar B.
+ * configurationFindings page → one FindingRow per finding, keyed to the resource it was
+ * evaluated against. No nodes/edges/issues — findings are a side channel that feeds AARS
+ * pillar B and backs the Cloud Configuration register.
+ *
+ * STORES BROADLY, JUDGES NARROWLY. This used to drop everything that was not
+ * `result === "FAIL"` and OPEN, which was right while the step only ever asked for OPEN
+ * rows. It is wrong now the filter also asks for RESOLVED: a finding that resolved
+ * because someone fixed the misconfiguration comes back PASS, so the old gate would have
+ * discarded precisely the rows the widened filter exists to collect — and silently, since
+ * a dropped row and a tenant with nothing to report look identical downstream.
+ *
+ * So the gate moved out of the door and into `isOpenGap` (domain/config.ts), which every
+ * consumer that counts or prices a finding calls. What survives here is only the two
+ * conditions that make a row unusable rather than uninteresting: no id, or no resource to
+ * key it to.
  */
 export function normalizeConfigFindingsPage(rows: Rec[]): NormalizedPart {
   const part = emptyPart();
   for (const raw of rows) {
     const id = str(raw["id"]);
     if (!id) continue;
-    if (str(raw["result"]) !== "FAIL") continue;
-    const status = str(raw["status"]);
-    if (status && status !== "OPEN") continue;
     const resource = raw["resource"] as Rec | null | undefined;
     const resourceId = resource && typeof resource === "object" ? str(resource["id"]) : undefined;
     if (!resourceId) continue;
     const rule = raw["rule"] as Rec | null | undefined;
-    const ruleShortId =
-      rule && typeof rule === "object" ? str(rule["shortId"]) ?? "" : "";
+    const hasRule = !!rule && typeof rule === "object";
+    const ruleShortId = hasRule ? str(rule!["shortId"]) ?? "" : "";
+    const subscription = raw["subscription"] as Rec | null | undefined;
+    const hasSub = !!subscription && typeof subscription === "object";
+    const rawProjects = resource && typeof resource === "object" ? resource["projects"] : undefined;
+
     part.findings.push({
       id,
       resourceId,
@@ -501,6 +534,42 @@ export function normalizeConfigFindingsPage(rows: Rec[]): NormalizedPart {
       severity: (str(raw["severity"]) ?? "UNKNOWN") as Severity,
       remediation: str(raw["remediation"]),
       frameworkCodes: frameworkCodesFromRule(rule, ruleShortId),
+
+      name: str(raw["name"]),
+      status: str(raw["status"]),
+      result: str(raw["result"]),
+      // Only an explicit `true` is a tombstone. `deleted` absent from the response must
+      // stay absent on the row, not become `false` — "not collected" and "collected and
+      // false" are different facts, and isOpenGap reads the difference.
+      deleted: raw["deleted"] === true ? true : undefined,
+      firstSeenAt: str(raw["firstSeenAt"]),
+      analyzedAt: str(raw["analyzedAt"]),
+
+      ruleId: hasRule ? str(rule!["id"]) : undefined,
+      ruleGraphId: hasRule ? str(rule!["graphId"]) : undefined,
+      ruleName: hasRule ? str(rule!["name"]) : undefined,
+      ruleDescription: hasRule ? str(rule!["description"]) : undefined,
+      remediationInstructions: hasRule ? str(rule!["remediationInstructions"]) : undefined,
+      opaPolicy: hasRule ? str(rule!["opaPolicy"]) : undefined,
+      risks: hasRule ? strListOf(rule!["risks"]) : [],
+      threats: hasRule ? strListOf(rule!["threats"]) : [],
+
+      resourceName: str(resource!["name"]),
+      resourceType: str(resource!["type"]),
+      resourceStatus: str(resource!["status"]),
+      targetExternalId: str(raw["targetExternalId"]),
+      source: str(raw["source"]),
+
+      subscriptionId: hasSub ? str(subscription!["id"]) : undefined,
+      subscriptionName: hasSub ? str(subscription!["name"]) : undefined,
+      cloudProvider: hasSub ? str(subscription!["cloudProvider"]) : undefined,
+      projects: projectsOf(rawProjects),
+      businessImpact: Array.isArray(rawProjects)
+        ? worstBusinessImpact(rawProjects as Rec[])
+        : undefined,
+
+      ignoreRuleIds: idsOf(raw["ignoreRules"]),
+      iacFindingIds: idsOf(raw["sourceMappedIacFindings"]),
     });
   }
   return part;
