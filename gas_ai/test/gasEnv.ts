@@ -72,6 +72,12 @@ export const READ_APIS: Array<[name: string, params: unknown]> = [
   ["getSettings", {}],
   ["getAarsRule", {}],
   ["getStorageStats", {}],
+  // agent-h-chatbot is the max-degree node in the golden getGraph payload (17 neighbors),
+  // so it exercises the widest neighbour list getAssetDetail can produce in this estate.
+  ["getAssetDetail", { id: "agent-h-chatbot" }],
+  // One of agent-h-chatbot's own issues, so the two new golden cases are cross-checkable
+  // against each other as well as against the dry-run sync snapshot.
+  ["getIssueDetail", { id: "iss-026" }],
 ];
 
 /**

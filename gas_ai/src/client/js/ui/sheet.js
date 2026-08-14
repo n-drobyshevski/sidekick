@@ -596,6 +596,10 @@ export function openSheet(renderBody, opts = {}) {
     selectSection(id) {
       selectSection(id);
     },
+    /** The currently-selected rail section id, or null on a sheet with no rail. */
+    currentSection() {
+      return activeSectionId;
+    },
     /** Refine the header once the RPC lands — the record's real name, not a placeholder. */
     setHeading(o) {
       const p = o || {};

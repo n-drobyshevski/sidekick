@@ -688,7 +688,11 @@ export async function renderCombos(main, params) {
   function issueTable(mount, group, rows) {
     // `rows` is this table's current page, already filtered and sorted — stepping through
     // it is stepping through exactly what the reader can see.
+    // The full IssueRow is already in hand from the page's own load — seed the sheet, and
+    // seed every prev/next step through this table too (the recursive `open` call below
+    // goes back through this same function).
     const openIssueRow = (issue) => openIssueSheet(issue.id, {
+      seed: issue,
       records: {
         ids: rows.map((r) => r.id),
         index: rows.indexOf(issue),
