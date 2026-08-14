@@ -91,6 +91,34 @@ export function shouldAutoExpand(node, boot) {
 }
 
 /**
+ * What the connection card should be saying about where its contents came from.
+ *
+ * Pure, and separate from the sentence it turns into, because the precedence is the part
+ * that matters and the part that silently regressed: an expansion in flight OUTRANKS
+ * everything else. The card paints stored neighbours immediately and the live result lands
+ * a moment later, and during that gap it used to read "Neighborhood from the last sync" —
+ * a completed-sounding statement about a job still running, which is exactly the reading
+ * PRODUCT.md's honest-state principle exists to prevent.
+ *
+ * `live` is api_expandAsset's payload, or null before one has landed.
+ */
+export function expansionStatus(live, addedCount, expanding) {
+  if (expanding) return { state: "expanding" };
+  if (!live) return { state: "stored-only" };
+  if (live.source === "error") return { state: "error", error: live.error };
+  if (live.source === "stored") return { state: "no-credentials" };
+  if (live.source === "unsupported") return { state: "unsupported" };
+  return {
+    state: "live",
+    added: Math.max(0, addedCount || 0),
+    total: (live.nodes || []).length,
+    fetchedAt: live.fetchedAt,
+    truncated: Boolean(live.truncated),
+    arityMismatches: live.arityMismatches || 0,
+  };
+}
+
+/**
  * A live per-agent expansion folded into the stored neighbour list, one hop only.
  *
  * `live` is api_expandAsset's payload: nodes and edges decoded positionally from a

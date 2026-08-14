@@ -8,7 +8,7 @@
 import { call } from "./api.js";
 import { bootstrapCached, navigate } from "./store.js";
 import { egoGraph } from "./egoGraph.js";
-import { mergeLiveRels, shouldAutoExpand } from "./egoLayout.js";
+import { expansionStatus, mergeLiveRels, shouldAutoExpand } from "./egoLayout.js";
 import { categoryOf, edgeLabel, kindIconSvg, kindLabel } from "./icons.js";
 import { severityMixText } from "./graphNode.js";
 import { slaState } from "./pages/comboView.js";
@@ -314,15 +314,16 @@ async function expandNow(assetId) {
   }
 }
 
-/** The "Expand from Wiz" affordance: one RPC, its own busy state. */
-function expandButton(assetId, onDone) {
-  const btn = el("button", { class: "sheet-tool" }, uiIcon("graph", 14), "Expand from Wiz");
-  btn.onclick = async () => {
-    btn.disabled = true;
-    btn.textContent = "Expanding…";
-    onDone(await expandNow(assetId));
-  };
-  return btn;
+/**
+ * The "Expand from Wiz" affordance.
+ *
+ * No busy state of its own any more: it hands off to beginExpansion, which repaints the
+ * card into its in-flight state — the button gives way to the card's own "Expanding from
+ * Wiz…" line. One indicator, in one place, whichever path started the work.
+ */
+function expandButton(onStart) {
+  return el("button", { class: "sheet-tool", onclick: onStart },
+    uiIcon("graph", 14), "Expand from Wiz");
 }
 
 /**
@@ -330,45 +331,53 @@ function expandButton(assetId, onDone) {
  * a live read look identical on screen, so the difference has to be said out loud —
  * including when the live read refused rows it could not trust.
  */
-function provenanceLine(live, addedCount) {
-  if (!live) {
-    return el("p", { class: "small muted sheet-prov" }, "Neighborhood from the last sync.");
+function provenanceContent(live, addedCount, expanding) {
+  const s = expansionStatus(live, addedCount, expanding);
+  if (s.state === "expanding") {
+    // The ring is decoration; the sentence is the signal. Someone who cannot see the ring,
+    // or who has motion turned off, still gets told what is happening in words.
+    return [el("p", { class: "small muted" },
+      el("span", { class: "prov-spinner", "aria-hidden": "true" }),
+      "Expanding from Wiz…")];
   }
-  if (live.source === "error") {
-    return el("p", { class: "small sheet-prov sheet-prov-bad" },
-      "Live expansion failed: " + live.error + " Showing the last sync.");
+  if (s.state === "stored-only") {
+    return [el("p", { class: "small muted" }, "Neighborhood from the last sync.")];
   }
-  if (live.source === "stored") {
-    return el("p", { class: "small muted sheet-prov" },
-      "Live expansion needs Wiz credentials. Showing the last sync.");
+  if (s.state === "error") {
+    return [el("p", { class: "small sheet-prov-bad" },
+      "Live expansion failed: " + s.error + " Showing the last sync.")];
   }
-  if (live.source === "unsupported") {
+  if (s.state === "no-credentials") {
+    return [el("p", { class: "small muted" },
+      "Live expansion needs Wiz credentials. Showing the last sync.")];
+  }
+  if (s.state === "unsupported") {
     // The affordance is hidden for non-agents, so this should be unreachable from the UI.
     // It exists because the server can still answer it, and a silent empty result here
     // would read exactly like a successful expansion that found nothing.
-    return el("p", { class: "small muted sheet-prov" },
-      "Live expansion is defined for AI agents. Showing the last sync.");
+    return [el("p", { class: "small muted" },
+      "Live expansion is defined for AI agents. Showing the last sync.")];
   }
-  const parts = ["Expanded live " + fmtDateTime(live.fetchedAt) + "."];
-  parts.push(addedCount > 0
-    ? plural(addedCount, "connection") + " not in the last sync."
+  const parts = ["Expanded live " + fmtDateTime(s.fetchedAt) + "."];
+  parts.push(s.added > 0
+    ? plural(s.added, "connection") + " not in the last sync."
     : "Nothing the last sync had missed.");
-  const total = (live.nodes || []).length;
-  if (total > addedCount + 1) {
-    parts.push(plural(total, "entity") + " found in total, including beyond one hop.");
+  if (s.total > s.added + 1) {
+    parts.push(plural(s.total, "entity") + " found in total, including beyond one hop.");
   }
   const notes = [];
-  if (live.truncated) notes.push("Result was capped; open the graph for the rest.");
-  if (live.arityMismatches) {
+  if (s.truncated) notes.push("Result was capped; open the graph for the rest.");
+  if (s.arityMismatches) {
     // Not a cosmetic warning. A mismatch means the tenant returned an entity array of a
     // different length than the query's selected-node count, so those rows were refused
     // rather than decoded onto the wrong nodes — the spec and the schema have diverged.
-    notes.push(plural(live.arityMismatches, "row") +
+    notes.push(plural(s.arityMismatches, "row") +
       " skipped: the tenant's response shape did not match the query.");
   }
-  return el("div", { class: "sheet-prov" },
+  return [
     el("p", { class: "small muted" }, parts.join(" ")),
-    notes.length ? el("p", { class: "small sheet-prov-warn" }, notes.join(" ")) : null);
+    notes.length ? el("p", { class: "small sheet-prov-warn" }, notes.join(" ")) : null,
+  ];
 }
 
 /** A bordered card inside the overlay: the one-pixel whisper, never a second real shadow. */
@@ -430,6 +439,7 @@ export function openAssetSheet(assetId, opts = {}) {
       // auto-expand setting is on. Null until one of the two lands.
       let liveExpansion = null;
       let autoExpandStarted = false;
+      let expanding = false;
       const compliance = findings || [];
       const caps = pillarCaps();
       clear(body);
@@ -524,10 +534,25 @@ export function openAssetSheet(assetId, opts = {}) {
           // expands. Which of the two is on screen is stated, never implied — a map that
           // silently mixes a week-old snapshot with a live read is worse than either.
           const card = el("div");
+          // Built once and re-parented on each repaint rather than rebuilt, so it stays one
+          // live region: assistive tech announces "Expanding from Wiz…" and then the result
+          // as changes to the same node, instead of two unrelated insertions.
+          const prov = el("div", { class: "sheet-prov", role: "status", "aria-live": "polite" });
           const onExpanded = (result) => {
             if (disposed) return;
+            expanding = false;
             liveExpansion = result;
             paintConnections();
+          };
+          // The one way in, for both the button and the automatic path. They used to differ
+          // — the button disabled itself and relabelled, the automatic path showed nothing
+          // at all — which is why an auto-expansion looked like an idle card until it
+          // landed.
+          const beginExpansion = () => {
+            if (expanding) return;
+            expanding = true;
+            paintConnections();
+            expandNow(node.id).then(onExpanded);
           };
           const paintConnections = () => {
             const merged = mergeLiveRels(node, rels, liveExpansion);
@@ -543,19 +568,24 @@ export function openAssetSheet(assetId, opts = {}) {
               });
               ctx.onDispose(map.destroy);
             }
+            clear(prov).append(...provenanceContent(
+              liveExpansion, merged.length - rels.length, expanding,
+            ));
             clear(card).append(sheetCard(
               "Connections (" + merged.length + ")",
               el("div", { class: "sheet-card-tools" },
                 // Offered only where it can succeed, and only while it still has something
-                // to do: after a successful expansion serverCache would hand back the same
-                // payload, so the button would be a control that visibly does nothing.
-                canExpand(node) && (!liveExpansion || liveExpansion.source === "error")
-                  ? expandButton(node.id, onExpanded)
+                // to do: not while one is in flight, and not after a successful expansion,
+                // where serverCache would hand back the same payload and the button would
+                // be a control that visibly does nothing.
+                canExpand(node) && !expanding
+                  && (!liveExpansion || liveExpansion.source === "error")
+                  ? expandButton(beginExpansion)
                   : null,
                 el("button", { class: "sheet-tool", onclick: openGraph },
                   uiIcon("graph", 14), "Open in graph")),
               map ? map.node : emptyState("No connections in the last sync."),
-              provenanceLine(liveExpansion, merged.length - rels.length),
+              prov,
             ));
           };
           paintConnections();
@@ -567,7 +597,7 @@ export function openAssetSheet(assetId, opts = {}) {
           // switch, which would otherwise re-fire on every visit to the overview.
           if (!autoExpandStarted && shouldAutoExpand(node, bootstrapCached())) {
             autoExpandStarted = true;
-            expandNow(node.id).then(onExpanded);
+            beginExpansion();
           }
           // The record as the server sent it. An analyst who needs a field this sheet does
           // not name should not have to open the browser console to read it.
