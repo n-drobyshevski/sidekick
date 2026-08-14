@@ -68,13 +68,21 @@ import { AI_ASSET_KINDS, type GEdge, type GNode, type IssueRow } from "../domain
 import { DATASTORE_KINDS } from "../domain/graphEnrich";
 import { comboDigest } from "../domain/comboDigest";
 import { comboGroupById, comboSummary, REGISTER_GROUPS } from "../domain/toxicCombos";
-import type { Rec } from "../domain/util";
+import { nowIso, type Rec } from "../domain/util";
 import { archiveBytes } from "./archiveStore";
 import { activeJob } from "./jobsStore";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
 import { buildInfo } from "./buildInfo";
-import { hasWizCredentials } from "./props";
+import { hasWizCredentials, projectScope } from "./props";
 import { cached, dataVersion } from "./serverCache";
+import {
+  AGENT_EXPANSION,
+  decodeExpansion,
+  flattenSlots,
+  toGraphEntityQuery,
+} from "../domain/graphExpand";
+import { Q_AGENT_EXPANSION } from "./wizQueriesAi";
+import * as wizClientAi from "./wizClientAi";
 import * as settingsStore from "./settingsStore";
 import { cellCount, dataRowCount, TABS } from "./sheetsDb";
 import * as syncJobs from "./syncJobs";
@@ -604,6 +612,73 @@ export function getAssetDetail(p?: unknown): ApiResult {
         neighbors,
         findings,
         dataFindings,
+      };
+    });
+  });
+}
+
+/**
+ * Caps on what one expansion may return. The traversal has 43 slots and the transport
+ * asks for 100 rows, so a densely connected agent could in principle put several thousand
+ * entity references on the wire; no endpoint here ships an unbounded list.
+ */
+const EXPAND_MAX_NODES = 200;
+const EXPAND_MAX_EDGES = 400;
+
+/**
+ * Live per-agent neighbourhood, straight from Wiz, for the detail sheet's Connections card.
+ *
+ * getAssetDetail's `neighbors` is a one-hop scan of the LAST SYNC's snapshot — it can only
+ * show what the sync battery's five fixed traversals happened to collect. This asks the
+ * tenant about one agent right now, across all ten relationship subtrees the console
+ * expands, which is where guardrails, endpoints, MCP servers and agent-to-agent INVOKES
+ * chains actually come from.
+ *
+ * Presentation-only by design. Nothing here is persisted, no AARS pillar moves, and
+ * NODE_KINDS is untouched — a kind the model does not declare keeps its raw Wiz type and
+ * is flagged `unmodeled` so the card can render it honestly rather than drop it.
+ *
+ * Without credentials it reports `source: "stored"` and returns nothing, leaving the sheet
+ * on its existing stored neighbours: dry-run has to stay fully usable.
+ */
+export function expandAsset(p?: unknown): ApiResult {
+  return run(() => {
+    const id = String(((p ?? {}) as Rec)["id"] ?? "");
+    if (!id) return null;
+    if (!hasWizCredentials()) {
+      return { source: "stored", nodes: [], edges: [], arityMismatches: 0, truncated: false };
+    }
+    // Cached: reopening the same sheet must not spend another UrlFetchApp call. The key
+    // carries the data version, so a sync invalidates it along with everything else.
+    return cached("expandAsset", { id }, () => {
+      const slots = flattenSlots(AGENT_EXPANSION);
+      const page = wizClientAi.fetchGraphSearchPage({
+        query: Q_AGENT_EXPANSION,
+        extraVariables: {
+          query: toGraphEntityQuery(AGENT_EXPANSION, id),
+          projectId: projectScope()?.[0] ?? null,
+        },
+      });
+      const decoded = decodeExpansion(slots, page.rows);
+      const nodes = decoded.nodes.slice(0, EXPAND_MAX_NODES);
+      const keep = new Set(nodes.map((n) => n.id));
+      const edges = decoded.edges
+        .filter((e) => keep.has(e.src) && keep.has(e.dst))
+        .slice(0, EXPAND_MAX_EDGES);
+      return {
+        source: "live",
+        fetchedAt: nowIso(),
+        rootId: id,
+        nodes,
+        edges,
+        // Surfaced, not swallowed. A non-zero count means the tenant returned an entity
+        // array of a different length than the spec's slot list, so those rows were
+        // refused rather than decoded onto the wrong nodes — the operator needs to know.
+        arityMismatches: decoded.arityMismatches,
+        truncated:
+          decoded.nodes.length > nodes.length ||
+          decoded.edges.length > edges.length ||
+          page.hasNextPage,
       };
     });
   });

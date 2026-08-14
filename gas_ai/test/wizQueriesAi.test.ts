@@ -8,6 +8,7 @@ import { kindFromWizType } from "../src/domain/graphTypes";
 import {
   AI_RESOURCE_TYPE_CANDIDATES,
   Q_AGENT_RUNS_AS,
+  Q_AGENT_EXPANSION,
   Q_AGENT_SENSITIVE_DATA_ACCESS,
   Q_AGENTS_NO_GUARDRAIL,
   Q_IDENTITY_ACCESS,
@@ -276,6 +277,7 @@ describe("query documents", () => {
     ["Q_CONFIG_FINDINGS", Q_CONFIG_FINDINGS],
     ["Q_PRINCIPALS", Q_PRINCIPALS],
     ["Q_AGENT_SENSITIVE_DATA_ACCESS", Q_AGENT_SENSITIVE_DATA_ACCESS],
+    ["Q_AGENT_EXPANSION", Q_AGENT_EXPANSION],
   ];
 
   for (const [name, doc] of DOCS) {
@@ -304,10 +306,27 @@ describe("query documents", () => {
     // optional steps skipped for the sake of one new one. The fragment lives in a variant
     // used by exactly one document, whose step is itself optional.
     expect(Q_AGENT_SENSITIVE_DATA_ACCESS).toContain("... on DataFinding");
+    // Q_AGENT_EXPANSION carries it too, and for the same reason: its traversal selects
+    // DATA_FINDING in five of its 43 slots. It is also not a sync step — a tenant that
+    // rejects the type costs one detail-sheet button, not four battery steps.
+    expect(Q_AGENT_EXPANSION).toContain("... on DataFinding");
     for (const doc of [Q_AGENTS_NO_GUARDRAIL, Q_AGENT_RUNS_AS, Q_SA_EXCESSIVE_ACCESS,
       Q_IDENTITY_ACCESS]) {
       expect(doc).not.toContain("DataFinding");
     }
+  });
+
+  it("Q_AGENT_EXPANSION takes its traversal as a variable, not as document text", () => {
+    // The one graphSearch document here whose query body is NOT inlined. It is pinned to a
+    // single entity, so inlining would give the gateway a textually distinct document per
+    // agent and would splice a caller-supplied id into GraphQL source.
+    expect(Q_AGENT_EXPANSION).toContain("$query: GraphEntityQueryInput");
+    expect(Q_AGENT_EXPANSION).toContain("query: $query");
+    expect(Q_AGENT_EXPANSION).not.toContain("_vertexID");
+    expect(Q_AGENT_EXPANSION).not.toContain("relationships:");
+    // projectId stays nullable: every other graphSearch document omits it and runs
+    // tenant-wide, and WIZ_PROJECT_ID_V2 is optional.
+    expect(Q_AGENT_EXPANSION).toContain("$projectId: String)");
   });
 
   it("asks for the whole chain, with only the finding leg optional", () => {

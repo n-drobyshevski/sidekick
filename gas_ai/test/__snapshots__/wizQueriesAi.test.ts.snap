@@ -1,5 +1,49 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`query documents > Q_AGENT_EXPANSION is unchanged 1`] = `
+"query SidekickAiAgentExpansion($quick: Boolean, $first: Int, $after: String, $query: GraphEntityQueryInput, $projectId: String) {
+  graphSearch(
+    quick: $quick
+    first: $first
+    after: $after
+    query: $query
+    projectId: $projectId
+  ) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      entities {
+        id
+        name
+        type
+        nativeType
+        cloudPlatform
+        region
+        ... on CloudResource {
+          status
+          firstSeen
+          lastSeen
+          externalId
+          isAccessibleFromInternet
+          isOpenToAllInternet
+          hasSensitiveData
+          hasAccessToSensitiveData
+          hasAdminPrivileges
+          hasHighPrivileges
+          technology { id name categories { id name } }
+          cloudAccount { id name externalId cloudProvider }
+          projects { id name riskProfile { businessImpact } }
+          tags { key value }
+        }
+        ... on DataFinding {
+          severity
+        }
+      }
+    }
+  }
+}
+"
+`;
+
 exports[`query documents > Q_AGENT_SENSITIVE_DATA_ACCESS is unchanged 1`] = `
 "query SidekickAiAgentSensitiveDataAccess($quick: Boolean, $first: Int, $after: String) {
   graphSearch(quick: $quick, first: $first, after: $after, query: {

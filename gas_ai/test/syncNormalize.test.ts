@@ -179,6 +179,28 @@ describe("normalizeSensitiveDataAccessPage — the data-exposure chain", () => {
     expect(part.dataFindings).toEqual([]);
   });
 
+  it("survives the null padding the API actually sends for that row", () => {
+    // The test above models "no finding" as a SHORT array. The tenant does not send a
+    // short array — exemples/ai_agent_expand_response.js shows an unmatched `optional` leg
+    // comes back as a literal null holding its position, 39 of them in that capture. With
+    // no guard on the element, normalizeCloudResource read raw["id"] off null and threw a
+    // TypeError; runBattery only forgives an optional step on HTTP 400, so that TypeError
+    // failed the whole sync rather than being recorded as a skip.
+    const part = normalizeSensitiveDataAccessPage([
+      { entities: [AGENT_RAW, SA_RAW, STORE_RAW, null] },
+    ]);
+    expect(part.edges).toHaveLength(2);
+    expect(part.dataFindings).toEqual([]);
+  });
+
+  it("ignores null entities everywhere else too", () => {
+    expect(normalizeCloudResource(null as never)).toBeNull();
+    expect(normalizeRunsAsPage([{ entities: [AGENT_RAW, null, SA_RAW, null] }]).edges)
+      .toHaveLength(1);
+    expect(normalizeNoGuardrailPage([{ entities: [null, AGENT_RAW] }]).nodes)
+      .toHaveLength(1);
+  });
+
   it("drops findings it cannot attribute, rather than guessing a store", () => {
     const second = { ...STORE_RAW, id: "wiz-node-db-1", name: "db-core", type: "DATABASE" };
     const part = normalizeSensitiveDataAccessPage([{

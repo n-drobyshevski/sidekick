@@ -37,8 +37,20 @@ function triBool(v: unknown): boolean | null {
   return v === true ? true : v === false ? false : null;
 }
 
-/** One CloudResource (cloudResourcesV2 node or graphSearch entity) → GNode, or null. */
+/**
+ * One CloudResource (cloudResourcesV2 node or graphSearch entity) → GNode, or null.
+ *
+ * The null/non-object guard is load-bearing, not defensive habit. A graphSearch row pads
+ * its `entities` array with a literal `null` wherever an `optional` relationship leg found
+ * no match — confirmed against the per-agent expansion capture in
+ * exemples/ai_agent_expand_response.js, where 39 of 43 slots are null. Without the guard
+ * `raw["id"]` throws a TypeError, and because runBattery only forgives an optional step on
+ * HTTP 400 (syncJobs.ts), that TypeError fails the entire sync instead of being recorded
+ * as a skip. Q_AGENT_SENSITIVE_DATA_ACCESS marks HAS_DATA_FINDING optional, so any
+ * classified store with no data finding reaches here.
+ */
 export function normalizeCloudResource(raw: Rec): GNode | null {
+  if (!raw || typeof raw !== "object") return null;
   const id = str(raw["id"]);
   // Real tenants return display-style types ("AI Agent"), the design docs used
   // enum style ("AI_AGENT") — kindFromWizType accepts both.
@@ -541,7 +553,12 @@ const DATA_STORE_KINDS: ReadonlySet<string> = new Set(["BUCKET", "DATABASE", "DA
  */
 function rawEntitiesOf(row: Rec): Rec[] {
   const entities = row["entities"];
-  return Array.isArray(entities) ? (entities as Rec[]) : [];
+  if (!Array.isArray(entities)) return [];
+  // Null padding for unmatched `optional` legs must be dropped here too: the caller reads
+  // raw["type"] directly, without going through normalizeCloudResource's guard.
+  return (entities as unknown[]).filter(
+    (e): e is Rec => Boolean(e) && typeof e === "object",
+  );
 }
 
 /**
