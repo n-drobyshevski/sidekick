@@ -2607,6 +2607,14 @@ var Server = (() => {
     if (reason) return "unknown";
     return posturePct2 === null ? "unknown" : "scored";
   }
+  function titleRepeatsExternalId(externalId, title) {
+    const id = String(externalId != null ? externalId : "").trim();
+    const t = String(title != null ? title : "").trim();
+    if (!id || !t) return false;
+    if (!(t.toUpperCase().indexOf(id.toUpperCase()) === 0)) return false;
+    const next = t.charAt(id.length);
+    return next === "" || next === " " || next === "	";
+  }
   function severityRank2(s) {
     const i = SEVERITY_ORDER.indexOf(s);
     return i === -1 ? SEVERITY_ORDER.length : i;
@@ -2618,6 +2626,9 @@ var Server = (() => {
     return {
       frameworkId: row.frameworkId,
       externalId,
+      // Suppressed when the title already opens with it, so an OWASP LLM row reads
+      // "1 LLM01:2025 Prompt Injection" rather than "11 LLM01:2025 Prompt Injection".
+      showExternalId: !titleRepeatsExternalId(externalId, row.title),
       title: row.title,
       description: row.description,
       posturePct: row.posturePct,
@@ -3058,6 +3069,8 @@ var Server = (() => {
   var DEFAULT_FRAMEWORK_IDS = [
     "wf-id-275",
     // OWASP Top 10 For Agentic Applications 2026
+    "wf-id-201",
+    // OWASP LLM Security Top 10
     "wf-id-214",
     // 5Rs - Wiz for Data Security
     "wf-id-106"
@@ -3070,12 +3083,12 @@ var Server = (() => {
   }
   function resolveDefaultFrameworks(catalogue) {
     var _a5;
-    const wanted = ["AGENTIC", "5R", "ML"];
+    const wanted = ["AGENTIC", "LLM", "5R", "ML"];
     const picked = [];
     for (const want of wanted) {
       for (const f of catalogue) {
         const n = String((_a5 = f.name) != null ? _a5 : "").toUpperCase();
-        const hit = want === "5R" ? /\b5\s?RS?\b/.test(n) : want === "ML" ? n.includes("MACHINE LEARNING") || /\bML\b/.test(n) : n.includes("AGENTIC");
+        const hit = want === "5R" ? /\b5\s?RS?\b/.test(n) : want === "ML" ? n.includes("MACHINE LEARNING") || /\bML\b/.test(n) : want === "LLM" ? n.includes("LLM") : n.includes("AGENTIC");
         if (hit && picked.indexOf(f.id) === -1) {
           picked.push(f.id);
           break;
@@ -4610,7 +4623,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "2646a362b963" : "dev";
+  var BUILD_ID = true ? "0b9a7a0f6163" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -5834,15 +5847,21 @@ var Server = (() => {
     return String(label != null ? label : "").trim().replace(/\s+/g, "_").toUpperCase();
   }
   function frameworkGapCode(input) {
-    var _a5, _b, _c;
+    var _a5, _b, _c, _d;
     const ext = String((_a5 = input.subcategoryExternalId) != null ? _a5 : "").trim().toUpperCase();
     if (/^(LLM|ASI)\d{2}$/.test(ext)) return ext;
+    if (input.family === "OWASP_LLM") {
+      const m = String((_b = input.categoryName) != null ? _b : "").toUpperCase().match(/\b(LLM\d{2})\b(?::(\d{4}))?/);
+      if (!m) return "";
+      if (m[2] && m[2] !== "2025") return "";
+      return m[1];
+    }
     if (input.family === "OWASP_ML") {
-      const title = snake((_b = input.subcategoryTitle) != null ? _b : "");
+      const title = snake((_c = input.subcategoryTitle) != null ? _c : "");
       return title ? `ML_${title}` : "";
     }
     if (input.family === "WIZ_5RS") {
-      const cat = snake((_c = input.categoryName) != null ? _c : "");
+      const cat = snake((_d = input.categoryName) != null ? _d : "");
       return cat ? `5R_${cat}` : "";
     }
     return "";
@@ -6904,6 +6923,15 @@ var Server = (() => {
       policyTypes: ["CONTROL"],
       selected: true
     },
+    {
+      id: "wf-id-201",
+      name: "OWASP LLM Security Top 10",
+      description: "LLM application risks: prompt injection, disclosure, poisoning.",
+      builtin: true,
+      enabled: true,
+      policyTypes: ["CLOUD_CONFIGURATION_RULE", "CONTROL"],
+      selected: true
+    },
     // Present in the tenant, NOT selected — so the Settings picker has something to show
     // that is off, and the page can prove selection is this app's decision rather than a
     // list of everything Wiz has.
@@ -7004,7 +7032,27 @@ var Server = (() => {
       emptyPostureReason: null
     },
     seedCategory("wf-id-106", "ML02", "Data Poisoning Attack", 100, 126e3, 0),
-    seedSubCategory("wf-id-106", "ML02", "ML02", "Data Poisoning Attack", 100, 126e3, 0)
+    seedSubCategory("wf-id-106", "ML02", "ML02", "Data Poisoning Attack", 100, 126e3, 0),
+    // ---- OWASP LLM ----
+    // The awkward shape: NUMERIC external ids, with the OWASP code carried in the category
+    // NAME and stamped with its edition. Seeded so the dry run exercises the one framework
+    // whose codes cannot be read off an id.
+    {
+      frameworkId: "wf-id-201",
+      level: "framework",
+      nodeId: "wf-id-201",
+      title: "OWASP LLM Security Top 10",
+      posturePct: 95,
+      passCount: 0,
+      failCount: 0,
+      passSubCategoryCount: 1,
+      failSubCategoryCount: 1,
+      emptyPostureReason: null
+    },
+    seedCategory("wf-id-201", "1", "1 LLM01:2025 Prompt Injection", 90, 691, 70),
+    seedSubCategory("wf-id-201", "1", "1.1", "1.1  Prompt Injection", 90, 691, 70),
+    seedCategory("wf-id-201", "2", "2 LLM02:2025 Sensitive Information Disclosure", 98, 5929, 100),
+    seedSubCategory("wf-id-201", "2", "2.1", "2.1 Sensitive Information Disclosure", 98, 5929, 100)
   ];
   function seedPolicy(frameworkId, categoryExternalId, subcategoryExternalId, shortId, name, severity, passCount, failCount) {
     return {
@@ -7112,6 +7160,28 @@ var Server = (() => {
       "CRITICAL",
       30,
       1
+    ),
+    // SUB-114 also lands under LLM01, so one finding ends up carrying an ASI code, an ML_
+    // code AND an LLM code — three vocabularies on one failing control, which is the point.
+    seedPolicy(
+      "wf-id-201",
+      "1",
+      "1.1",
+      "SUB-114",
+      "Agent must be attached to a guardrail",
+      "HIGH",
+      9,
+      5
+    ),
+    seedPolicy(
+      "wf-id-201",
+      "2",
+      "2.1",
+      "IAM-267",
+      "Agent service accounts must not hold wildcard data permissions",
+      "HIGH",
+      42,
+      3
     ),
     // Nothing to assess: every count zero AND the flag set. Renders as its own state, never
     // as a 0% score.

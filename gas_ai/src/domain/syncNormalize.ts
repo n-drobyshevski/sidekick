@@ -867,7 +867,12 @@ function snake(label: string): string {
  * looks like it worked while pricing the wrong thing. The three spellings, from
  * client/js/codebook.js:
  *
- *   - OWASP LLM / Agentic: the external id IS the code (`ASI01`, `LLM03`). Self-identifying.
+ *   - OWASP Agentic: the external id IS the code (`ASI01`). Self-identifying.
+ *   - OWASP LLM: the external ids are NUMERIC (`1`, `1.1`) and the code lives in the
+ *     CATEGORY NAME — `1 LLM01:2025 Prompt Injection`. Reading the number would be wrong
+ *     twice over: `1.1` is not a code, and the framework's own numbering does not track
+ *     the OWASP ordinal in every edition. So the name is parsed, and nothing is minted
+ *     when it carries no code.
  *   - OWASP ML: `ML_` + the subcategory TITLE, not an ordinal. The codebook says so
  *     outright — "the ML0n below is a mapping this page states, not one the data contains"
  *     — and graphEnrich already derives them this way from issue mappings. `ML01` would be
@@ -888,6 +893,20 @@ export function frameworkGapCode(input: {
 }): string {
   const ext = String(input.subcategoryExternalId ?? "").trim().toUpperCase();
   if (/^(LLM|ASI)\d{2}$/.test(ext)) return ext;
+  if (input.family === "OWASP_LLM") {
+    // "1 LLM01:2025 Prompt Injection" → LLM01. The `:2025` is the EDITION, and it decides
+    // whether the code may be used at all: the codebook is written against OWASP LLM 2025
+    // and warns that the 2026 edition renumbers eight of the ten entries, with two pairs
+    // effectively swapping. A 2026 `LLM03` priced against a 2025 `LLM03` row would score
+    // Excessive Agency as Supply Chain — a confidently wrong number, which is worse than
+    // no number. So an edition this model was not written against mints nothing and the
+    // finding falls to its own shortId.
+    const m = String(input.categoryName ?? "").toUpperCase()
+      .match(/\b(LLM\d{2})\b(?::(\d{4}))?/);
+    if (!m) return "";
+    if (m[2] && m[2] !== "2025") return "";
+    return m[1];
+  }
   if (input.family === "OWASP_ML") {
     const title = snake(input.subcategoryTitle ?? "");
     return title ? `ML_${title}` : "";

@@ -16,6 +16,7 @@ import {
   buildFrameworkTree,
   complianceKpis,
   postureState,
+  titleRepeatsExternalId,
 } from "../src/domain/compliancePosture";
 import {
   normalizeCompliancePosturePage,
@@ -245,5 +246,38 @@ describe("mirrorsCategory — the one-level frameworks", () => {
     ];
     const tree = buildFrameworkTree("wf-id-777", orphan, [], [])!;
     expect(tree.categories[0].mirrorsCategory).toBe(false);
+  });
+});
+
+describe("titleRepeatsExternalId — the duplicated number", () => {
+  it("is true when the title opens with its own id, as OWASP LLM names do", () => {
+    expect(titleRepeatsExternalId("1", "1 LLM01:2025 Prompt Injection")).toBe(true);
+    expect(titleRepeatsExternalId("1.1", "1.1  Prompt Injection")).toBe(true);
+    expect(titleRepeatsExternalId("ASI01", "ASI01 Agent Goal Hijack")).toBe(true);
+  });
+
+  it("is false when the title is a bare name, as the 5Rs are", () => {
+    expect(titleRepeatsExternalId("2", "Restrict")).toBe(false);
+    expect(titleRepeatsExternalId("2.1", "Public data exposure")).toBe(false);
+  });
+
+  it("only matches a WHOLE token — a prefix that is not the id does not count", () => {
+    // "1" must not suppress the chip on "1.1 …", or the row loses its only number.
+    expect(titleRepeatsExternalId("1", "1.1 Prompt Injection")).toBe(false);
+    expect(titleRepeatsExternalId("ASI1", "ASI10 Rogue Agents")).toBe(false);
+  });
+
+  it("is false for empty input rather than throwing", () => {
+    expect(titleRepeatsExternalId("", "Anything")).toBe(false);
+    expect(titleRepeatsExternalId("1", "")).toBe(false);
+  });
+
+  it("drives showExternalId on every node of the tree", () => {
+    const asi = buildFrameworkTree("wf-id-275", posture, policies, frameworks)!;
+    // ASI titles repeat their id, so the chip is suppressed.
+    expect(asi.categories.every((c) => c.showExternalId === false)).toBe(true);
+    const fiveRsTree = buildFrameworkTree("wf-id-214", posture, policies, frameworks)!;
+    // 5Rs titles are bare names, so the chip carries the only number on the row.
+    expect(fiveRsTree.categories.every((c) => c.showExternalId === true)).toBe(true);
   });
 });

@@ -20,6 +20,7 @@ import {
   AGENTIC_FRAMEWORK,
   FIVE_RS_FRAMEWORK,
   FRAMEWORK_CATALOGUE,
+  LLM_FRAMEWORK,
   SHARED_CONTROL_ID,
 } from "./frameworkPosture.fixture";
 
@@ -208,5 +209,90 @@ describe("normalizeFrameworksPage", () => {
 
   it("skips rows with no id rather than inventing one", () => {
     expect(normalizeFrameworksPage([{ name: "nameless" }]).frameworks).toHaveLength(0);
+  });
+});
+
+describe("OWASP LLM — the framework whose codes hide in the category name", () => {
+  const llm = normalizeCompliancePosturePage([LLM_FRAMEWORK]);
+
+  it("is recognised as the LLM family, not the ML one", () => {
+    // "OWASP LLM Security Top 10" contains no \bML\b — the boundary inside "LLM" is not a
+    // word boundary — so the ML branch must not claim it.
+    expect(frameworkFamily("OWASP LLM Security Top 10")).toBe("OWASP_LLM");
+  });
+
+  it("flattens with numeric external ids, unlike the ASI frameworks", () => {
+    const cats = llm.posture.filter((p) => p.level === "category");
+    expect(cats.map((c) => c.categoryExternalId)).toEqual(["1", "2"]);
+    const subs = llm.posture.filter((p) => p.level === "subcategory");
+    expect(subs.map((s) => s.subcategoryExternalId)).toEqual(["1.1", "2.1"]);
+  });
+
+  it("derives LLM01 / LLM02 from the CATEGORY NAME — the only place they appear", () => {
+    expect(frameworkGapCode({
+      family: "OWASP_LLM",
+      categoryName: "1 LLM01:2025 Prompt Injection",
+      subcategoryExternalId: "1.1",
+      subcategoryTitle: "1.1  Prompt Injection",
+    })).toBe("LLM01");
+    expect(frameworkGapCode({
+      family: "OWASP_LLM",
+      categoryName: "2 LLM02:2025 Sensitive Information Disclosure",
+      subcategoryExternalId: "2.1",
+      subcategoryTitle: "2.1 Sensitive Information Disclosure",
+    })).toBe("LLM02");
+  });
+
+  it("maps its policies onto those codes end to end", () => {
+    const lookup = frameworkCodeLookup(
+      llm.frameworkPolicies,
+      llm.posture,
+      normalizeFrameworksPage([{
+        id: "wf-id-201", name: "OWASP LLM Security Top 10",
+        builtin: true, enabled: true, policyTypes: [],
+      }]).frameworks,
+    );
+    expect(lookup["AIService-003"]).toEqual(["LLM01"]);
+    expect(lookup[SHARED_CONTROL_ID]).toEqual(["LLM02"]);
+  });
+
+  it("mints nothing when the name carries no code, rather than guessing from the number", () => {
+    // A tenant on the 2026 edition, or a renamed category: "1.1" is not a code and there is
+    // no honest way to turn it into one. The finding's own shortId still raises a gap.
+    expect(frameworkGapCode({
+      family: "OWASP_LLM",
+      categoryName: "1 Prompt Injection",
+      subcategoryExternalId: "1.1",
+      subcategoryTitle: "1.1 Prompt Injection",
+    })).toBe("");
+  });
+});
+
+describe("OWASP LLM edition — a 2026 code must not be priced against a 2025 rule", () => {
+  it("accepts the 2025 edition the codebook is written against", () => {
+    expect(frameworkGapCode({
+      family: "OWASP_LLM", categoryName: "3 LLM03:2025 Supply Chain",
+    })).toBe("LLM03");
+  });
+
+  it("REFUSES a 2026 code rather than scoring it as its 2025 namesake", () => {
+    // The codebook: 2025 LLM03 is Supply Chain, 2026 LLM03 is Excessive Agency. Pricing one
+    // as the other produces a confident wrong number, which is worse than no number — so
+    // the finding falls back to its own shortId and the fallback row governs it.
+    expect(frameworkGapCode({
+      family: "OWASP_LLM", categoryName: "3 LLM03:2026 Excessive Agency",
+    })).toBe("");
+  });
+
+  it("accepts an unversioned name — nothing claims it is the wrong edition", () => {
+    expect(frameworkGapCode({
+      family: "OWASP_LLM", categoryName: "6 LLM06 Excessive Agency",
+    })).toBe("LLM06");
+  });
+
+  it("still takes a self-identifying external id whatever the category is called", () => {
+    expect(frameworkGapCode({
+      family: "OWASP_LLM", subcategoryExternalId: "LLM09", categoryName: "9 Misinformation",
+    })).toBe("LLM09");
   });
 });

@@ -172,6 +172,7 @@ export function withSkippedSteps(settings: Rec, steps: unknown): Rec {
  */
 export const DEFAULT_FRAMEWORK_IDS = [
   "wf-id-275", // OWASP Top 10 For Agentic Applications 2026
+  "wf-id-201", // OWASP LLM Security Top 10
   "wf-id-214", // 5Rs - Wiz for Data Security
   "wf-id-106", // OWASP ML Security Top 10
 ];
@@ -208,7 +209,10 @@ export function getSelectedFrameworks(settings: Rec): string[] {
 export function resolveDefaultFrameworks(
   catalogue: { id: string; name: string }[],
 ): string[] {
-  const wanted = ["AGENTIC", "5R", "ML"];
+  // Order matters only for readability of the result; the matchers are mutually exclusive.
+  // Note ML and LLM cannot collide: `\bML\b` finds no word boundary inside "LLM", and
+  // "OWASP ML Security Top 10" contains no "LLM" substring.
+  const wanted = ["AGENTIC", "LLM", "5R", "ML"];
   const picked: string[] = [];
   for (const want of wanted) {
     for (const f of catalogue) {
@@ -217,7 +221,9 @@ export function resolveDefaultFrameworks(
         ? /\b5\s?RS?\b/.test(n)
         : want === "ML"
           ? (n.includes("MACHINE LEARNING") || /\bML\b/.test(n))
-          : n.includes("AGENTIC");
+          : want === "LLM"
+            ? n.includes("LLM")
+            : n.includes("AGENTIC");
       if (hit && picked.indexOf(f.id) === -1) {
         picked.push(f.id);
         break;

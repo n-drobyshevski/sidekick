@@ -30,12 +30,12 @@ describe("getCompliance after a dry-run sync", () => {
   it("returns a tree per framework the seed carries posture for", () => {
     const data = compliance();
     expect(data.trees.map((t: any) => t.frameworkId).sort())
-      .toEqual(["wf-id-106", "wf-id-214", "wf-id-275"]);
+      .toEqual(["wf-id-106", "wf-id-201", "wf-id-214", "wf-id-275"]);
   });
 
   it("sorts worst-scored first", () => {
-    // 5Rs 85, Agentic 96, ML 100.
-    expect(compliance().trees.map((t: any) => t.posturePct)).toEqual([85, 96, 100]);
+    // 5Rs 85, LLM 95, Agentic 96, ML 100.
+    expect(compliance().trees.map((t: any) => t.posturePct)).toEqual([85, 95, 96, 100]);
   });
 
   it("rebuilds the Agentic framework's categories and their policies", () => {
@@ -44,6 +44,16 @@ describe("getCompliance after a dry-run sync", () => {
       .toEqual(["ASI01", "ASI03", "ASI08", "ASI10"]);
     // Distinct policies, not policy rows: SUB-082 and SUB-114 are each mapped twice.
     expect(tree.policyCount).toBe(6);
+  });
+
+  it("reads the OWASP LLM framework, whose codes live in the category name", () => {
+    const tree = compliance().trees.find((t: any) => t.frameworkId === "wf-id-201");
+    expect(tree.name).toBe("OWASP LLM Security Top 10");
+    // Numeric external ids, unlike the ASI frameworks — the shape that broke the first
+    // cut of the gap-code mapping.
+    expect(tree.categories.map((c: any) => c.externalId)).toEqual(["1", "2"]);
+    expect(tree.categories[0].title).toBe("1 LLM01:2025 Prompt Injection");
+    expect(tree.categories.map((c: any) => c.posturePct)).toEqual([90, 98]);
   });
 
   it("keeps the empty category empty — with a reason, not a zero", () => {
@@ -65,12 +75,12 @@ describe("getCompliance after a dry-run sync", () => {
 
   it("ships the catalogue with this app's selection folded in", () => {
     const data = compliance();
-    // Four frameworks exist in the seed tenant; the CIS one is deliberately not collected,
+    // Five frameworks exist in the seed tenant; the CIS one is deliberately not collected,
     // so the picker can show something that is off.
-    expect(data.catalogue).toHaveLength(4);
+    expect(data.catalogue).toHaveLength(5);
     const cis = data.catalogue.find((f: any) => f.id === "wf-id-042");
     expect(cis.selected).toBe(false);
-    expect(data.catalogue.filter((f: any) => f.selected)).toHaveLength(3);
+    expect(data.catalogue.filter((f: any) => f.selected)).toHaveLength(4);
   });
 
   it("reports a requested framework only when it actually has posture", () => {
@@ -82,9 +92,9 @@ describe("getCompliance after a dry-run sync", () => {
 
   it("computes the estate KPI the Wiz Scans area reads", () => {
     const kpis = compliance().kpis;
-    expect(kpis.frameworks).toBe(3);
-    expect(kpis.scoredFrameworks).toBe(3);
-    expect(kpis.averagePosture).toBe(94); // mean(96, 85, 100), rounded
+    expect(kpis.frameworks).toBe(4);
+    expect(kpis.scoredFrameworks).toBe(4);
+    expect(kpis.averagePosture).toBe(94); // mean(96, 85, 100, 95), rounded
     expect(kpis.failingPolicies).toBe(5);
   });
 });
@@ -125,7 +135,7 @@ describe("setSelectedFrameworks", () => {
     // someone edits a checkbox would lose the last sync's answer for no reason.
     server.api.setSelectedFrameworks({ ids: [] });
     const trees = compliance().trees;
-    expect(trees).toHaveLength(3);
+    expect(trees).toHaveLength(4);
     expect(trees.every((t: any) => t.categories.length > 0)).toBe(true);
   });
 });

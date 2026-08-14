@@ -47,6 +47,19 @@ const STATE_ORDER = ["scored", "noResources", "noPolicies", "unknown"];
 const SEGMENTED_MAX = 4;
 
 /**
+ * The leading external-id chip, or nothing when the title already opens with it.
+ *
+ * OWASP LLM names its categories "1 LLM01:2025 Prompt Injection" while numbering them "1",
+ * so an unconditional chip renders "11 LLM01:2025 …". The predicate lives in the read
+ * model, where it is tested — compliancePosture.titleRepeatsExternalId.
+ */
+function extChip(node) {
+  return node.showExternalId
+    ? el("span", { class: "comp-ext" }, node.externalId)
+    : null;
+}
+
+/**
  * The register's columns.
  *
  * No `onRowOpen` on this table, deliberately. A category row already carries a disclosure
@@ -385,7 +398,7 @@ export async function renderCompliance(main, params, ctx) {
             class: "comp-row-toggle",
             onclick: () => openSubcategorySheet(tree, cat, only),
           },
-            el("span", { class: "comp-ext" }, cat.externalId),
+            extChip(cat),
             cat.title),
           posture: postureCell(cat),
           checks: checksCell(cat),
@@ -411,7 +424,7 @@ export async function renderCompliance(main, params, ctx) {
         },
           el("span", { class: "comp-row-chevron", "aria-hidden": "true" }, "›"),
           el("span", {},
-            el("span", { class: "comp-ext" }, cat.externalId),
+            extChip(cat),
             cat.title)),
         posture: postureCell(cat),
         checks: checksCell(cat),
@@ -429,7 +442,7 @@ export async function renderCompliance(main, params, ctx) {
             class: "comp-row-toggle comp-sub-title",
             onclick: () => openSubcategorySheet(tree, cat, sub),
           },
-            el("span", { class: "comp-ext" }, sub.externalId),
+            extChip(sub),
             sub.title),
           posture: postureCell(sub),
           checks: checksCell(sub),

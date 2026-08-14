@@ -256,3 +256,69 @@ export const FRAMEWORK_CATALOGUE: Rec[] = [
     policyTypes: ["CONTROL"],
   },
 ];
+
+/**
+ * OWASP LLM Security Top 10 (wf-id-201) — the shape that breaks a naive code mapping.
+ *
+ * Unlike the Agentic framework, whose external ids ARE the codes (ASI01), this one numbers
+ * its categories "1", "2" and its subcategories "1.1", "2.1". The OWASP code lives in the
+ * category NAME — "1 LLM01:2025 Prompt Injection" — and nowhere else, complete with the
+ * edition marker. The codebook is written against the 2025 edition and warns that 2026
+ * renumbers eight of the ten, so that `:2025` is load-bearing, not decoration.
+ *
+ * Note the doubled space in "1.1  Prompt Injection": transcribed verbatim, because a title
+ * this app tidies is a title that no longer matches the tenant's.
+ */
+export const LLM_FRAMEWORK: Rec = {
+  id: "wf-id-201",
+  name: "OWASP LLM Security Top 10",
+  description: null,
+  builtin: true,
+  enabled: true,
+  complianceAnalytics: {
+    passSubCategoryCount: 3,
+    failSubCategoryCount: 5,
+    averageCompliancePosture: 95,
+    emptyPostureReason: null,
+    categoryAnalytics: [
+      {
+        category: {
+          id: "wct-id-2976",
+          description: "Prompt Injection Attackers manipulate input prompts to make the LLM "
+            + "behave maliciously or bypass security controls.",
+          name: "1 LLM01:2025 Prompt Injection",
+          externalId: "1",
+        },
+        passCount: 691,
+        failCount: 70,
+        passSubCategoryCount: 0,
+        failSubCategoryCount: 1,
+        averageCompliancePosture: 90,
+        emptyPostureReason: null,
+        subCategoryAnalytics: [
+          subCategory("1.1", "1.1  Prompt Injection", 90, 691, 70, [failingCloudRule]),
+        ],
+      },
+      {
+        category: {
+          id: "wct-id-2977",
+          description: "LLM inadvertently reveals private data, intellectual property, or "
+            + "system details through its responses.",
+          name: "2 LLM02:2025 Sensitive Information Disclosure",
+          externalId: "2",
+        },
+        passCount: 5929,
+        failCount: 100,
+        passSubCategoryCount: 0,
+        failSubCategoryCount: 1,
+        averageCompliancePosture: 98,
+        emptyPostureReason: null,
+        subCategoryAnalytics: [
+          subCategory("2.1", "2.1 Sensitive Information Disclosure", 98, 5929, 100, [
+            sharedControl,
+          ]),
+        ],
+      },
+    ],
+  },
+};

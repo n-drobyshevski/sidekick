@@ -211,8 +211,24 @@ describe("framework selection", () => {
       { id: "wf-9002", name: "OWASP Top 10 For Agentic Applications 2026" },
       { id: "wf-9003", name: "5Rs - Wiz for Data Security" },
       { id: "wf-9004", name: "OWASP ML Security Top 10" },
+      { id: "wf-9005", name: "OWASP LLM Security Top 10" },
     ];
-    expect(resolveDefaultFrameworks(catalogue)).toEqual(["wf-9002", "wf-9003", "wf-9004"]);
+    expect(resolveDefaultFrameworks(catalogue))
+      .toEqual(["wf-9002", "wf-9005", "wf-9003", "wf-9004"]);
+  });
+
+  it("never confuses the ML framework with the LLM one", () => {
+    // `\bML\b` finds no word boundary inside "LLM", and "OWASP ML Security Top 10" holds
+    // no "LLM" substring — so each matcher claims exactly one, whichever order they sit in.
+    expect(resolveDefaultFrameworks([{ id: "a", name: "OWASP LLM Security Top 10" }]))
+      .toEqual(["a"]);
+    expect(resolveDefaultFrameworks([{ id: "b", name: "OWASP ML Security Top 10" }]))
+      .toEqual(["b"]);
+    const both = resolveDefaultFrameworks([
+      { id: "ml", name: "OWASP ML Security Top 10" },
+      { id: "llm", name: "OWASP LLM Security Top 10" },
+    ]);
+    expect(both.sort()).toEqual(["llm", "ml"]);
   });
 
   it("keeps the id defaults when a catalogue holds nothing it recognises", () => {

@@ -71,10 +71,34 @@ export function postureState(
   return posturePct === null ? "unknown" : "scored";
 }
 
+/**
+ * Whether a node's title already opens with its own external id.
+ *
+ * The register prints the external id as a leading chip, which reads well when the title
+ * is the bare name ("ASI01" · "Agent Goal Hijack"). The OWASP LLM framework numbers its
+ * categories "1", "2" and NAMES them "1 LLM01:2025 Prompt Injection" — so the chip renders
+ * "1" immediately before a title starting "1 ", and the row reads "11 LLM01:2025 …".
+ *
+ * Tested rather than eyeballed because it is a question about the data (does this title
+ * repeat this id?) and the answer differs per framework.
+ */
+export function titleRepeatsExternalId(externalId: string, title: string): boolean {
+  const id = String(externalId ?? "").trim();
+  const t = String(title ?? "").trim();
+  if (!id || !t) return false;
+  if (!(t.toUpperCase().indexOf(id.toUpperCase()) === 0)) return false;
+  // Only a WHOLE-token match counts: "ASI1" must not suppress the chip on "ASI10 Rogue
+  // Agents", and "1" must not suppress it on "1.1 Prompt Injection".
+  const next = t.charAt(id.length);
+  return next === "" || next === " " || next === "\t";
+}
+
 /** One node of the tree the page renders. */
 export interface PostureNode {
   frameworkId: string;
   externalId: string;
+  /** False when the title already opens with the external id — see titleRepeatsExternalId. */
+  showExternalId: boolean;
   title: string;
   description?: string;
   posturePct: number | null;
@@ -142,6 +166,9 @@ function toNode(row: PostureRow, externalId: string): PostureNode {
   return {
     frameworkId: row.frameworkId,
     externalId,
+    // Suppressed when the title already opens with it, so an OWASP LLM row reads
+    // "1 LLM01:2025 Prompt Injection" rather than "11 LLM01:2025 Prompt Injection".
+    showExternalId: !titleRepeatsExternalId(externalId, row.title),
     title: row.title,
     description: row.description,
     posturePct: row.posturePct,

@@ -976,6 +976,15 @@ export const SEED_FRAMEWORKS: FrameworkRow[] = [
     policyTypes: ["CONTROL"],
     selected: true,
   },
+  {
+    id: "wf-id-201",
+    name: "OWASP LLM Security Top 10",
+    description: "LLM application risks: prompt injection, disclosure, poisoning.",
+    builtin: true,
+    enabled: true,
+    policyTypes: ["CLOUD_CONFIGURATION_RULE", "CONTROL"],
+    selected: true,
+  },
   // Present in the tenant, NOT selected — so the Settings picker has something to show
   // that is off, and the page can prove selection is this app's decision rather than a
   // list of everything Wiz has.
@@ -1068,6 +1077,21 @@ export const SEED_POSTURE: PostureRow[] = [
   },
   seedCategory("wf-id-106", "ML02", "Data Poisoning Attack", 100, 126000, 0),
   seedSubCategory("wf-id-106", "ML02", "ML02", "Data Poisoning Attack", 100, 126000, 0),
+
+  // ---- OWASP LLM ----
+  // The awkward shape: NUMERIC external ids, with the OWASP code carried in the category
+  // NAME and stamped with its edition. Seeded so the dry run exercises the one framework
+  // whose codes cannot be read off an id.
+  {
+    frameworkId: "wf-id-201", level: "framework", nodeId: "wf-id-201",
+    title: "OWASP LLM Security Top 10",
+    posturePct: 95, passCount: 0, failCount: 0,
+    passSubCategoryCount: 1, failSubCategoryCount: 1, emptyPostureReason: null,
+  },
+  seedCategory("wf-id-201", "1", "1 LLM01:2025 Prompt Injection", 90, 691, 70),
+  seedSubCategory("wf-id-201", "1", "1.1", "1.1  Prompt Injection", 90, 691, 70),
+  seedCategory("wf-id-201", "2", "2 LLM02:2025 Sensitive Information Disclosure", 98, 5929, 100),
+  seedSubCategory("wf-id-201", "2", "2.1", "2.1 Sensitive Information Disclosure", 98, 5929, 100),
 ];
 
 function seedPolicy(
@@ -1117,6 +1141,12 @@ export const SEED_FRAMEWORK_POLICIES: FrameworkPolicyRow[] = [
     "Agent must be attached to a guardrail", "HIGH", 9, 5),
   seedPolicy("wf-id-214", "2", "2.1", "SUB-047",
     "Training bucket must not allow public write", "CRITICAL", 30, 1),
+  // SUB-114 also lands under LLM01, so one finding ends up carrying an ASI code, an ML_
+  // code AND an LLM code — three vocabularies on one failing control, which is the point.
+  seedPolicy("wf-id-201", "1", "1.1", "SUB-114",
+    "Agent must be attached to a guardrail", "HIGH", 9, 5),
+  seedPolicy("wf-id-201", "2", "2.1", "IAM-267",
+    "Agent service accounts must not hold wildcard data permissions", "HIGH", 42, 3),
   // Nothing to assess: every count zero AND the flag set. Renders as its own state, never
   // as a 0% score.
   {
