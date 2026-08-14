@@ -3,7 +3,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
-  EGO, egoLayout, mergeLiveRels, pickEgoNeighbours, shouldAutoExpand,
+  EGO, egoLayout, expansionStatus, mergeLiveRels, pickEgoNeighbours, shouldAutoExpand,
 } from "../src/client/js/egoLayout.js";
 
 function rel(overrides) {
@@ -443,5 +443,56 @@ describe("shouldAutoExpand", () => {
     }
     expect(shouldAutoExpand(null, boot())).toBe(false);
     expect(shouldAutoExpand({ id: "x" }, boot())).toBe(false);
+  });
+});
+
+describe("expansionStatus", () => {
+  function liveResult(over) {
+    return Object.assign({
+      source: "live", fetchedAt: "2026-08-14T09:00:00Z",
+      nodes: [{ id: "a" }, { id: "b" }], edges: [],
+      arityMismatches: 0, truncated: false,
+    }, over || {});
+  }
+
+  it("an expansion in flight outranks everything else", () => {
+    // The bug this exists to prevent: the card paints stored neighbours at once and the
+    // live result lands a moment later, and in that gap it read "Neighborhood from the
+    // last sync" — a finished-sounding sentence about a job still running.
+    expect(expansionStatus(null, 0, true).state).toBe("expanding");
+    expect(expansionStatus(liveResult(), 2, true).state).toBe("expanding");
+    expect(expansionStatus({ source: "error", error: "boom" }, 0, true).state).toBe("expanding");
+  });
+
+  it("says nothing has happened yet before an expansion is asked for", () => {
+    expect(expansionStatus(null, 0, false).state).toBe("stored-only");
+  });
+
+  it("distinguishes the three ways a live read can decline to say anything", () => {
+    expect(expansionStatus({ source: "error", error: "boom" }, 0, false))
+      .toEqual({ state: "error", error: "boom" });
+    expect(expansionStatus({ source: "stored" }, 0, false).state).toBe("no-credentials");
+    expect(expansionStatus({ source: "unsupported" }, 0, false).state).toBe("unsupported");
+  });
+
+  it("carries the counts and the two warnings on a real result", () => {
+    const s = expansionStatus(liveResult({ truncated: true, arityMismatches: 3 }), 2, false);
+    expect(s.state).toBe("live");
+    expect(s.added).toBe(2);
+    expect(s.total).toBe(2);
+    expect(s.truncated).toBe(true);
+    expect(s.arityMismatches).toBe(3);
+    expect(s.fetchedAt).toBe("2026-08-14T09:00:00Z");
+  });
+
+  it("never reports a negative added count", () => {
+    // merged.length - rels.length is the caller's arithmetic; a dedupe that removed more
+    // than it added must not surface as "-1 connections not in the last sync".
+    expect(expansionStatus(liveResult(), -2, false).added).toBe(0);
+    expect(expansionStatus(liveResult(), undefined, false).added).toBe(0);
+  });
+
+  it("tolerates a result with no nodes array", () => {
+    expect(expansionStatus({ source: "live" }, 0, false).total).toBe(0);
   });
 });

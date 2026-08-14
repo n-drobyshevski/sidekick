@@ -18,8 +18,9 @@ import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
-  ENTRIES, FAMILIES, ROUTE_TITLES, findEntry, groupByFamily, resolveEntries,
+  ENTRIES, FAMILIES, ROUTE_TITLES, findEntry, groupByFamily, lexTally, resolveEntries,
 } from "../src/client/js/helpContent.js";
+import { ROUTE_ICONS } from "../src/client/js/routeIcons.js";
 import { KIND_LABELS } from "../src/client/js/icons.js";
 import { lookupGap } from "../src/client/js/codebook.js";
 // The real rule, not a hand-written copy of it. A fixture that spells `bands` its own way
@@ -334,5 +335,84 @@ describe("the page", () => {
     expect(help).toBeTruthy();
     expect(scans).toBeTruthy();
     expect(help[1]).toBe(scans[1]);
+  });
+
+  // The rail is a second address for the page's structure, and a second address is a
+  // second thing to forget. A seventh family, or a fifth section, has to appear in both.
+  it("indexes every section and every family in the rail", () => {
+    const block = HELP_PAGE_JS.match(/const SECTIONS = \[([\s\S]*?)\n\];/);
+    expect(block, "SECTIONS array not found in pages/help.js").toBeTruthy();
+    const ids = [...block[1].matchAll(/\["([a-z0-9-]+)",/g)].map((m) => m[1]);
+    expect(ids.length, "every top-level section needs an anchor id").toBe(4);
+    for (const id of ids) {
+      expect(HELP_PAGE_JS, id + " is listed but never rendered").toMatch(
+        new RegExp("section\\(\\d\\)|SECTIONS\\["),
+      );
+    }
+    // The rail builds its vocabulary rows straight off groupByFamily(ENTRIES), so every
+    // declared family reaches it as long as the family actually holds entries — which the
+    // losslessness test above already pins.
+    const families = groupByFamily(ENTRIES).map((g) => g.family.id);
+    expect(families.sort()).toEqual(FAMILIES.map((f) => f.id).sort());
+  });
+
+  // The rail's counts, the family headings' counts and the header's hero are all built
+  // BEFORE the first await, from lengths rather than from figures. If any of them started
+  // reading a resolved count the page would move when the RPCs landed, which is the one
+  // thing this page's header comment forbids outright.
+  it("builds the lexicon shell from ENTRIES, not from a payload", () => {
+    expect(HELP_PAGE_JS).toMatch(/groupByFamily\(ENTRIES\)/);
+  });
+});
+
+describe("the route icon set", () => {
+  // The page map, the "Drawn on" line and the sidebar now draw one vocabulary. A route
+  // added to PAGES without a glyph renders an empty tile rather than failing, so the miss
+  // has to fail here instead.
+  it("has a glyph for every page", () => {
+    for (const route of pageKeys()) {
+      expect(ROUTE_ICONS[route], route + " has no icon in routeIcons.js").toBeTruthy();
+    }
+  });
+
+  it("has a glyph for every route the Help page draws", () => {
+    const named = new Set();
+    for (const entry of ENTRIES) for (const r of entry.drawnOn || []) named.add(r);
+    for (const m of HELP_PAGE_JS.matchAll(/\["([a-z]+)", "[^"]*\?"\]/g)) named.add(m[1]);
+    for (const route of named) {
+      expect(ROUTE_ICONS[route], route + " is drawn on Help but has no glyph").toBeTruthy();
+    }
+  });
+});
+
+describe("lexTally", () => {
+  // The header's hero and its strip read this; the count cell reads each entry. They are
+  // the same four branches, so a term can never be counted in the strip and rendered
+  // differently in the row.
+  it("accounts for every entry exactly once", () => {
+    for (const ctx of [EMPTY_CTX, FULL_CTX]) {
+      const t = lexTally(resolveEntries(ctx));
+      const sum = t.figure + t.zero + t.uncounted + t.convention;
+      expect(sum).toBe(ENTRIES.length);
+    }
+  });
+
+  // The pre-sync honest state, which is the state the reader most likely to open Help is
+  // in. Only the four `fromSettings` terms may answer, because only they read the model in
+  // force rather than the estate; everything else must be "not counted here", never zero.
+  it("withholds every estate figure before the first sync", () => {
+    const t = lexTally(resolveEntries(EMPTY_CTX));
+    const settings = ENTRIES.filter((e) => e.fromSettings).length;
+    expect(t.zero, "an unknown estate must never report a zero").toBe(0);
+    expect(t.figure).toBeLessThanOrEqual(settings);
+    expect(t.uncounted).toBe(
+      ENTRIES.filter((e) => e.count).length - t.figure,
+    );
+  });
+
+  it("answers for every countable term once the payload is complete", () => {
+    const t = lexTally(resolveEntries(FULL_CTX));
+    expect(t.uncounted, "a complete payload should leave nothing uncounted").toBe(0);
+    expect(t.convention).toBe(ENTRIES.filter((e) => !e.count).length);
   });
 });

@@ -191,6 +191,25 @@
 .sheet-prov-warn { color: var(--warn); }
 .sheet-prov-bad { color: var(--bad); }
 
+/* Work in flight on the connection card. The same masked conic-gradient donut the sync
+   zone uses for .scan-spinner, at line-height size — one visual vocabulary for "working"
+   across the app rather than a second one invented here. It is decoration only: the
+   sentence beside it says "Expanding from Wiz…", so the state survives without the ring. */
+.prov-spinner {
+  --ring: var(--accent);
+  --track: rgba(0, 0, 0, 0.10);
+  display: inline-block; vertical-align: -2px; margin-right: 6px;
+  width: 11px; height: 11px; border-radius: 50%;
+  background: conic-gradient(var(--ring) 0 25%, var(--track) 0);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
+          mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
+  animation: scan-spin 0.9s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  /* No spin: a calm 40% arc still reads as "working" without motion. */
+  .prov-spinner { animation: none; background: conic-gradient(var(--ring) 0 40%, var(--track) 0); }
+}
+
 /* ------------------------------------------------------------ the connection map */
 /* One hop of the security graph, drawn in the graph page's own node vocabulary — every
    .gnode / .gedge rule in graph.css dresses it for free, so a node means the same thing
