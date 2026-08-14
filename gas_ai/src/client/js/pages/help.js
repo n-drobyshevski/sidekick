@@ -22,15 +22,27 @@
 //    payload app.js has already awaited, so it is painted before the first await and the
 //    counts fill in place. There are deliberately no height-reserving skeletons here: the
 //    layout does not move when the numbers land.
+//
+// 4. THE STRUCTURE IS BUILT ONCE; ONLY THE ROWS ARE REPAINTED. paint() used to do
+//    `clear(lexHost).append(lexicon(...))`, which rebuilt all six family headings two or
+//    three times per visit — destroying the very ids the index rail and the ?term= link
+//    scroll to, and silently dropping focus if the reader had tabbed onto a count link
+//    while a read was still in flight. So the section wrappers, the family headings and
+//    the index are built from ENTRIES before the first await (their counts are lengths,
+//    not figures, so they are known then and never change), and paint() only clears the
+//    per-family lists. Anything that has an id, or that the rail points at, must be built
+//    in the shell — never inside paint().
 
 import { COVERAGE, coverageTally, resolveAreas } from "../scanContent.js";
 import {
-  ROUTE_TITLES, findEntry, groupByFamily, resolveEntries,
+  ENTRIES, ROUTE_TITLES, findEntry, groupByFamily, lexTally, resolveEntries,
 } from "../helpContent.js";
 import { CATEGORY_LABELS, kindIcon, svgEl } from "../icons.js";
-import { bootstrap, bootstrapCached, navigate, swrCall } from "../store.js";
+import { ROUTE_ICONS } from "../routeIcons.js";
+import { bootstrap, bootstrapCached, navigate, setParams, swrCall } from "../store.js";
 import {
-  clear, el, fmtDateTime, helpTip, motionOk, sectionLabel, statusPill,
+  clear, el, fmtDateTime, helpTip, motionOk, onPageTeardown, sectionLabel, statusPill,
+  uiIcon,
 } from "../ui.js";
 
 // Byte-identical to the constants pages/scans.js, pages/inventory.js and pages/combos.js
@@ -49,6 +61,16 @@ const PAGE_MAP = [
   ["scans", "Where did this figure come from?"],
 ];
 
+// The page's own sections, named once. renderHelp() lays them out and pageIndex() lists
+// them, both from this array, so the rail can never name a heading the page does not have
+// (or miss one it does).
+const SECTIONS = [
+  ["help-sec-map", "Where each question is answered"],
+  ["help-sec-limits", "What this app cannot tell you"],
+  ["help-sec-anatomy", "Anatomy of a node"],
+  ["help-sec-lexicon", "The vocabulary"],
+];
+
 export async function renderHelp(main, params, _ctx) {
   const boot = bootstrapCached() || (await bootstrap());
 
@@ -56,30 +78,37 @@ export async function renderHelp(main, params, _ctx) {
   // full 1800px the pane can offer. The graph and the inventory earn the whole width
   // because their content is a canvas and a register; this page is a document, and a
   // definition whose count sits 900px to its right is two facts, not one row.
+  //
+  // The index rail lives in the width that decision was already leaving unused, so the
+  // reading measure is unchanged. It is FIRST in the DOM and second in the grid on
+  // purpose: it is a jump control, so a keyboard reader has to meet it before the ~2500px
+  // it exists to skip. Below its breakpoint it is display:none and costs no tab stop.
   const page = el("div", { class: "help-page" });
+  const doc = el("div", { class: "help-doc" });
+  const index = pageIndex();
+  page.append(index, doc);
   main.append(page);
 
-  page.append(
+  doc.append(
     el("h1", {}, "Help"),
     el("p", { class: "page-sub" },
       "What every word and mark on these screens means, and how much of each this tenant " +
       "holds. Every figure below is the one the last sync produced."),
-    dateline(boot),
   );
 
+  const headHost = el("div", { class: "help-head" });
   const limitsHost = el("div", { class: "help-limits" });
-  const lexHost = el("div", { class: "help-lex" });
+  const lex = lexiconShell();
 
-  page.append(
-    sectionLabel("Where each question is answered"),
-    pageMap(),
-    sectionLabel("What this app cannot tell you"),
-    limitsHost,
-    sectionLabel("Anatomy of a node"),
-    anatomy(),
-    sectionLabel("The vocabulary"),
-    lexHost,
+  doc.append(
+    headHost,
+    section(0, pageMap()),
+    section(1, limitsHost),
+    section(2, anatomy()),
+    section(3, lex.node),
   );
+
+  index.wire(page);
 
   // Painted once from the bootstrap alone, then repainted as each RPC lands. Both reads
   // are optional: a failure leaves the entries in their "not counted here" state, which
@@ -123,58 +152,278 @@ export async function renderHelp(main, params, _ctx) {
     const areas = resolveAreas({ boot, kpis, total: ctx.total, digest });
     ctx.tally = coverageTally(areas);
 
+    // Resolved once and read twice — the header states how the book answers, the rows
+    // state how each term does, and they are the same array.
+    const resolved = resolveEntries(ctx);
+
+    clear(headHost).append(header(boot, lexTally(resolved)));
     clear(limitsHost).append(limits(areas));
-    clear(lexHost).append(lexicon(resolveEntries(ctx)));
+    lex.fill(resolved);
   }
 }
 
-// ------------------------------------------------------------------------- the dateline
+/**
+ * One top-level section: its h2 heading, carrying the id the rail scrolls to, over its
+ * body. `tabIndex = -1` makes the heading a focus target for jumpTo() without adding a tab
+ * stop — a fragment destination should be focusable, not tabbable.
+ */
+function section(i, body) {
+  const head = sectionLabel(SECTIONS[i][1]);
+  head.id = SECTIONS[i][0];
+  head.tabIndex = -1;
+  return el("div", { class: "help-section" }, head, body);
+}
 
-function dateline(boot) {
+// --------------------------------------------------------------------------- the header
+//
+// The two-level posture header every other page in this app opens with — the shape of
+// scans.js's postureHeader() and the inventory's `.inv-header`, minus their third level.
+// The obvious third level would carry "last sync" and "mode", and both are already IN this
+// header: the strip note says the first in words and the pill says the second. A stat
+// strip repeating them would be the same fact at three addresses.
+//
+// Two levels, one added fact. The hero says how much of this key sheet the deployment can
+// actually put a number on — which is the second half of the page's own subtitle, and is
+// stated nowhere else — and the strip says how the rest divides.
+
+// The four states a term's count column can be in, in the order the bar stacks them: an
+// answer, an answer that is zero, no answer, and no question. They are the branches
+// countCell() takes, and lexTally() counts them — see the note on lexTally in
+// helpContent.js for why the three must stay in step.
+const LEX_STATES = [
+  { key: "figure", glyph: "●", label: "carry a figure" },
+  { key: "zero", glyph: "◐", label: "none in this tenant" },
+  { key: "uncounted", glyph: "○", label: "not counted here" },
+  { key: "convention", glyph: "–", label: "conventions, not quantities" },
+];
+
+function header(boot, tally) {
   const sync = boot.latestSync || null;
   const dryRun = !!sync && String(sync.mode || "") === "dry-run";
-  const row = el("p", { class: "help-dateline" });
+  // A zero is an answer. "None in this tenant" is a figure the last sync produced, so it
+  // counts toward what the page can put a number on; only "not counted here" does not.
+  const answered = tally.figure + tally.zero;
 
-  // Two different kinds of number appear in the count column and the dateline has to keep
+  const hero = el("div", { class: "help-hero" },
+    el("div", { class: "kpi-label" }, "Carrying a figure"),
+    el("div", { class: "hero-value num" }, answered + " of " + ENTRIES.length),
+    el("p", { class: "help-hero-sub" },
+      "terms this key sheet can put a number on right now"),
+    sync
+      ? (dryRun
+          ? statusPill("neutral", "Dry-run · sample data")
+          : statusPill("ok", "Live · this tenant"))
+      : statusPill("neutral", "No sync yet"),
+  );
+
+  // Two different kinds of number appear in the count column and this note has to keep
   // them apart. A MEASUREMENT comes from the last sync and needs one. A SETTING — the
   // depth, the node budget, the pillar caps, the band thresholds — is the model in force
   // right now and is just as true before the first sync as after it. Saying "no term
   // below carries a count" while four of them show a figure is the kind of small
-  // over-claim PRODUCT.md's honest-state principle is aimed at.
-  if (!sync) {
-    row.append(
-      statusPill("neutral", "No sync yet"),
-      el("span", {},
-        "Nothing has been collected, so no term below carries a figure from your estate — " +
-        "the scoring model and view settings shown are still the ones in force. Run " +
-        "“Sync now” in the sidebar; without credentials it loads the sample dataset."),
-    );
-    return row;
-  }
-  row.append(
-    dryRun
-      ? statusPill("neutral", "Dry-run · sample data")
-      : statusPill("ok", "Live · this tenant"),
-    el("span", {},
-      "Figures are from the sync of " + fmtDateTime(sync.finished_at) +
-      "; the scoring model and view settings are the ones in force now."),
+  // over-claim PRODUCT.md's honest-state principle is aimed at. Both sentences are the
+  // ones the dateline carried; they are moved here verbatim, not rewritten.
+  const note = sync
+    ? "Figures are from the sync of " + fmtDateTime(sync.finished_at) +
+      "; the scoring model and view settings are the ones in force now."
+    : "Nothing has been collected, so no term below carries a figure from your estate — " +
+      "the scoring model and view settings shown are still the ones in force. Run " +
+      "“Sync now” in the sidebar; without credentials it loads the sample dataset.";
+
+  const strip = el("div", { class: "help-strip" },
+    el("div", { class: "kpi-label" }, "The key sheet"),
+    lexBar(tally),
+    lexKeys(tally),
+    el("p", { class: "help-strip-note" }, note),
   );
+
+  return el("div", { class: "help-header" }, hero, strip);
+}
+
+/**
+ * The distribution as one bar. `aria-hidden` because the keys under it carry the same four
+ * numbers as text — the call scans.js makes for its coverage bar, for the same reason.
+ * Empty buckets are skipped rather than drawn at zero width, so the bar never carries a
+ * seam that means nothing.
+ */
+function lexBar(tally) {
+  const bar = el("div", { class: "help-lexbar", "aria-hidden": "true" });
+  for (const state of LEX_STATES) {
+    const n = tally[state.key] || 0;
+    if (!n) continue;
+    const seg = el("div", { class: "help-lexbar-seg" });
+    seg.dataset.bucket = state.key;
+    seg.style.flexGrow = String(n);
+    bar.append(seg);
+  }
+  return bar;
+}
+
+/** The key, always all four, so the row's width does not change when a count lands. */
+function lexKeys(tally) {
+  const row = el("div", { class: "help-lexkeys" });
+  for (const state of LEX_STATES) {
+    const chip = el("span", { class: "help-lexkey" },
+      el("span", { class: "help-lexkey-glyph", "aria-hidden": "true" }, state.glyph),
+      el("span", { class: "help-lexkey-num num" }, String(tally[state.key] || 0)),
+      state.label);
+    chip.dataset.bucket = state.key;
+    row.append(chip);
+  }
   return row;
+}
+
+// ---------------------------------------------------------------------- the index rail
+//
+// A nav over ONE scrolling document, deliberately not the record sheet's `.sheet-rail`:
+// that one is a real `tablist` over hidden panes, with a roving tabindex and activation
+// following focus, and inheriting those semantics here would promise a pane swap that
+// never happens. The visual recipe IS borrowed — accent bar plus weight, never a tint
+// alone — because that is the app's own rule for an active nav item.
+//
+// Buttons, not anchors: the app is hash-routed, so an href="#help-family-graph" would
+// clobber the route rather than scroll to the heading.
+
+function pageIndex() {
+  const nav = el("nav", { class: "help-index", "aria-label": "On this page" });
+  const items = [];
+
+  const add = (id, label, count, ariaLabel) => {
+    const btn = el("button", {
+      class: "help-index-item",
+      type: "button",
+      "aria-label": ariaLabel || null,
+      onclick: () => jumpTo(id),
+    },
+      el("span", { class: "help-index-item-label" }, label),
+      count === null ? null : el("span", { class: "help-index-count num" }, String(count)),
+    );
+    btn.dataset.target = id;
+    nav.append(btn);
+    items.push(btn);
+  };
+
+  nav.append(el("div", { class: "help-index-label" }, "On this page"));
+  for (const [id, title] of SECTIONS) add(id, title, null);
+
+  // The per-family counts are lengths of ENTRIES, not resolved figures — structural, known
+  // before the first await, and unchanged by any payload. That is what lets the rail paint
+  // once and never repaint, which is what lets its scroll targets stay put.
+  nav.append(el("div", { class: "help-index-label" }, "The vocabulary"));
+  for (const g of groupByFamily(ENTRIES)) {
+    add("help-family-" + g.family.id, g.family.title, g.entries.length,
+      g.family.title + ", " + g.entries.length + " terms");
+  }
+
+  nav.wire = (page) => wireIndex(nav, page, items);
+  return nav;
+}
+
+/** Scroll a section heading into view and land focus on it. */
+function jumpTo(id) {
+  const node = document.getElementById(id);
+  if (!node) return;
+  node.scrollIntoView({ behavior: motionOk() ? "smooth" : "auto", block: "start" });
+  // preventScroll: the smooth scroll above is still in flight, and an unguarded focus()
+  // would cancel it with a jump to the same place.
+  node.focus({ preventScroll: true });
+}
+
+/**
+ * Light the item whose section the reader is in.
+ *
+ * `main` owns the scroll on desktop (height:100vh; overflow-y:auto) and the body owns it
+ * at the <=800px top-bar layout, so the scroller is resolved from the computed overflow
+ * rather than from a width guess.
+ *
+ * A scroll listener rather than an IntersectionObserver, which is the usual advice and is
+ * wrong here. An observer fires when an element CROSSES a boundary, and that is a strict
+ * subset of when the answer changes: the family headings are `position: sticky`, so once
+ * one is pinned at the top of the pane it never crosses anything again, and a jump that
+ * lands between two crossings leaves the rail pointing at the section before the one the
+ * reader is looking at. This was measurable — jumping to "The vocabulary" left "Anatomy of
+ * a node" lit. The listener is passive and coalesced onto one animation frame, and the work
+ * per frame is ten getBoundingClientRect reads, which is what the observer callback did
+ * anyway.
+ *
+ * The current section is then the LAST anchor at or above a band near the top of the pane,
+ * read in document order — deterministic at any scroll speed.
+ */
+function wireIndex(nav, page, items) {
+  const targets = items
+    .map((btn) => ({ btn, node: document.getElementById(btn.dataset.target) }))
+    .filter((t) => t.node);
+  if (!targets.length) return;
+
+  const root = page.closest("main");
+  const scroller = root && getComputedStyle(root).overflowY === "auto" ? root : window;
+  let active = null;
+  let queued = false;
+
+  const pick = () => {
+    queued = false;
+    // Hidden below its breakpoint: offsetParent is null, and there is nothing to light.
+    // This is why the media query hides the rail with `display: none` rather than
+    // `visibility: hidden`, which would leave an offsetParent and light an unseen item.
+    if (!nav.offsetParent) return;
+    const band = (root ? root.getBoundingClientRect().top : 0) + 96;
+    let chosen = targets[0];
+    for (const t of targets) {
+      if (t.node.getBoundingClientRect().top <= band) chosen = t;
+    }
+    if (chosen.btn === active) return;
+    if (active) active.removeAttribute("aria-current");
+    active = chosen.btn;
+    active.setAttribute("aria-current", "true");
+  };
+
+  const onScroll = () => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(pick);
+  };
+
+  // Resize covers the breakpoint too: a reader who widens past it reveals a rail that has
+  // never been lit, and would otherwise see no current section until they scrolled.
+  scroller.addEventListener("scroll", onScroll, { passive: true });
+  window.addEventListener("resize", onScroll, { passive: true });
+
+  // app.js runs the teardown right before it clears the pane. Without this the listeners
+  // outlive the page and keep its whole DOM alive across every later route change.
+  onPageTeardown(() => {
+    scroller.removeEventListener("scroll", onScroll);
+    window.removeEventListener("resize", onScroll);
+  });
+
+  pick();
 }
 
 // -------------------------------------------------------------------------- the page map
 
+// The question leads and the page name follows, which is the way round the reader has
+// them: they arrived with a question and do not yet know what the five pages are called.
+// The whole row is the button — a 40px "Open →" stranded at the far end of a 1000px row is
+// a target nobody can hit and a control nested inside a row that is not one.
+//
+// The glyph is the route's OWN sidebar mark, from routeIcons.js. A reader who follows this
+// row is going to look for that page in the nav next time, and finding the same mark there
+// is the whole of PRODUCT.md's "earned familiarity".
 function pageMap() {
   const list = el("div", { class: "help-map" });
   for (const [route, question] of PAGE_MAP) {
-    list.append(el("div", { class: "help-map-row" },
-      el("span", { class: "help-map-page" }, ROUTE_TITLES[route]),
-      el("span", { class: "help-map-q" }, question),
-      el("button", {
-        class: "linklike",
-        type: "button",
-        onclick: () => navigate(route, {}),
-      }, "Open →"),
+    list.append(el("button", {
+      class: "help-map-item",
+      type: "button",
+      "aria-label": question + " — open " + ROUTE_TITLES[route],
+      onclick: () => navigate(route, {}),
+    },
+      el("span", {
+        class: "help-map-icon", "aria-hidden": "true", html: ROUTE_ICONS[route] || "",
+      }),
+      el("span", { class: "help-map-text" },
+        el("span", { class: "help-map-q" }, question),
+        el("span", { class: "help-map-page" }, ROUTE_TITLES[route])),
+      el("span", { class: "help-map-go", "aria-hidden": "true" }, uiIcon("chevron-right", 14)),
     ));
   }
   return list;
@@ -194,20 +443,25 @@ function limits(areas) {
 
   if (!gaps.length) {
     host.append(el("p", { class: "help-limits-none" },
-      "Every scan area this app queries is currently reporting a figure."));
+      statusPill("ok", COVERAGE.live.glyph + " Complete"),
+      el("span", {},
+        "Every scan area this app queries is currently reporting a figure."),
+    ));
     return host;
   }
 
   for (const area of gaps) {
     const meta = COVERAGE[area.state];
-    // The glyph is the non-colour cue, but a glyph nobody has a key for is a decoration.
-    // The state's WORD leads the note, so the row says what it means without the reader
-    // having to learn that a half-filled circle is "partial" first.
+    // The state wears the app's own status pill rather than a hand-rolled glyph plus a
+    // bolded word — `COVERAGE[state].pill` has carried the right kind all along and this
+    // was the one block on the page reporting STATE without using the state component.
+    // The glyph rides inside the pill, so the non-colour cue survives and the state's WORD
+    // still leads the row: the reader never has to learn that a half-filled circle means
+    // "partial" before the row makes sense.
     host.append(el("div", { class: "help-limit-row", "data-state": area.state },
-      el("span", { class: "help-limit-glyph", "aria-hidden": "true" }, meta.glyph),
+      statusPill(meta.pill, meta.glyph + " " + meta.label),
       el("span", { class: "help-limit-name" }, area.title),
       el("span", { class: "help-limit-note" },
-        el("b", { class: "help-limit-state" }, meta.label + " — "),
         area.note || (meta.blurb.charAt(0).toUpperCase() + meta.blurb.slice(1) + ".")),
     ));
   }
@@ -433,16 +687,34 @@ function anatomySvg() {
 
 // -------------------------------------------------------------------------- the lexicon
 
-function lexicon(resolved) {
+/**
+ * The lexicon's structure, built once, plus a fill() that repaints only the rows.
+ *
+ * The six headings carry the ids the index rail and the ?term= link scroll to, so they
+ * cannot be rebuilt on every count arrival — see rule 4 in this file's header. Their counts
+ * are `entries.length`, a property of the book rather than of the estate, so they are known
+ * from the synchronous first paint and never move.
+ *
+ * groupByFamily reads only `.family`, a static field, so the raw ENTRIES give exactly the
+ * group set the resolved entries will.
+ */
+function lexiconShell() {
   const host = el("div", {});
-  const groups = groupByFamily(resolved);
+  const lists = new Map();
 
-  for (const g of groups) {
-    host.append(el("h3", { class: "help-family", id: "help-family-" + g.family.id },
-      g.family.title));
+  for (const g of groupByFamily(ENTRIES)) {
+    const head = el("h3", { class: "help-family", id: "help-family-" + g.family.id },
+      el("span", { class: "help-family-t" }, g.family.title),
+      el("span", { class: "help-family-n num" }, String(g.entries.length)));
+    head.tabIndex = -1;
     const list = el("div", { class: "help-entries" });
-    for (const entry of g.entries) list.append(entryRow(entry));
-    host.append(list);
+    lists.set(g.family.id, list);
+    // Each family is its own block, because a sticky element cannot leave its containing
+    // block. As siblings of one host all six headings would pin against the whole lexicon
+    // and stack — the newest opaque one happens to cover the rest, so it LOOKS right, but
+    // the last family's heading would then stay pinned over the footer that follows it.
+    // One block per family means each heading is released exactly when its own rows end.
+    host.append(el("div", { class: "help-family-block" }, head, list));
   }
 
   host.append(el("p", { class: "help-lex-foot" },
@@ -456,11 +728,25 @@ function lexicon(resolved) {
       onclick: () => navigate("aars", {}),
     }, "Open the code reference →"),
   ));
-  return host;
+
+  return {
+    node: host,
+    fill(resolved) {
+      for (const g of groupByFamily(resolved)) {
+        const list = lists.get(g.family.id);
+        if (!list) continue;
+        clear(list);
+        for (const entry of g.entries) list.append(entryRow(entry));
+      }
+    },
+  };
 }
 
 function entryRow(entry) {
-  const row = el("div", { class: "help-entry", id: entryDomId(entry.id) });
+  // tabindex="-1" adds no tab stop; it makes the row a focus target for revealEntry(),
+  // which is what a fragment destination has to be if following a "Full definition →" link
+  // is to move the reader rather than just the scrollbar.
+  const row = el("div", { class: "help-entry", id: entryDomId(entry.id), tabindex: "-1" });
 
   row.append(el("div", { class: "help-entry-mark" }, entry.mark()));
 
@@ -472,9 +758,22 @@ function entryRow(entry) {
   );
   if (entry.strip) body.append(categoryStrip(entry.strip()));
   if (entry.more) body.append(el("p", { class: "help-entry-more" }, entry.more));
+  // Each destination keeps its word and gains the route's own sidebar mark, so the page
+  // names one set of pages in one vocabulary rather than two. Deliberately NOT links: the
+  // count cell and `entry.link` already own this row's destinations, and 33 rows carrying
+  // up to three more buttons each would triple the page's tab stops to reach places the
+  // row can already reach.
   if (entry.drawnOn && entry.drawnOn.length) {
-    body.append(el("div", { class: "help-entry-where" },
-      "Drawn on: " + entry.drawnOn.map((r) => ROUTE_TITLES[r] || r).join(" · ")));
+    const where = el("div", { class: "help-entry-where" },
+      el("span", { class: "help-where-lead" }, "Drawn on"));
+    for (const route of entry.drawnOn) {
+      where.append(el("span", { class: "help-where-item" },
+        el("span", {
+          class: "help-where-icon", "aria-hidden": "true", html: ROUTE_ICONS[route] || "",
+        }),
+        ROUTE_TITLES[route] || route));
+    }
+    body.append(where);
   }
   row.append(body);
   row.append(countCell(entry));
@@ -561,19 +860,33 @@ function entryDomId(id) {
 }
 
 /**
- * Scroll a term into view and mark it, for a ?term= link off a helpTip.
+ * Scroll a term into view, land on it, and mark it — for a ?term= link off a helpTip, and
+ * for a callout naming the term it teaches.
  *
  * The highlight is a class the stylesheet fades out, not a scripted animation, so the
  * reduced-motion block in overrides.css already governs it. The scroll asks for smooth
  * behaviour only when motion is welcome.
+ *
+ * Focus moves too. Scrolling alone leaves a keyboard or screen-reader reader who followed
+ * "Full definition →" sitting at the top of a document that silently jumped somewhere
+ * else; `preventScroll` keeps the smooth scroll already in flight from being cancelled by
+ * the focus call. And the term goes into the URL, so arriving at a definition by any route
+ * leaves an address bar that links back to it — the ?term= deep link has always worked and
+ * has never been discoverable.
  */
 function revealEntry(id) {
   const node = document.getElementById(entryDomId(id));
   if (!node) return;
   node.scrollIntoView({ behavior: motionOk() ? "smooth" : "auto", block: "center" });
+  node.focus({ preventScroll: true });
+  setParams({ term: id });
   node.classList.remove("revealed");
   // Force a reflow so re-selecting the same term restarts the fade instead of doing
   // nothing because the class never left.
   void node.offsetWidth;
   node.classList.add("revealed");
+  // Under prefers-reduced-motion the highlight is a static tint rather than a fade (see
+  // help.css), so something has to end it. Leaving the row is the honest end: the reader
+  // has arrived and moved on. `once` keeps repeated reveals from stacking listeners.
+  node.addEventListener("blur", () => node.classList.remove("revealed"), { once: true });
 }
