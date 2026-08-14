@@ -10,7 +10,9 @@
 // captured responses when they land in ai/queries/reponse_schemas/).
 
 import { SEVERITY_ORDER, type Severity } from "./config";
+import { HOST_KINDS } from "./exposureQuery";
 import {
+  AI_ASSET_KINDS,
   edgeId,
   entityField,
   kindFromWizType,
@@ -90,6 +92,14 @@ export function normalizeCloudResource(raw: Rec): GNode | null {
   // purpose instead of looking like an ordinary service account.
   const purpose = str(f("identityPurpose"));
   if (purpose) node.identityPurpose = purpose;
+  // ENDPOINT entities only (aliased to exposureLevel_name / portValidationResult in
+  // graphTypes.PROPERTY_ALIASES). Set only when present, so every other kind's row stays
+  // exactly as it was — and read from the payload rather than inferred from which query
+  // returned the row, because the host-exposure traversal returns endpoints unfiltered.
+  const exposureLevel = str(f("exposureLevel"));
+  if (exposureLevel) node.exposureLevel = exposureLevel;
+  const portValidation = str(f("portValidation"));
+  if (portValidation) node.portValidation = portValidation;
   const technology = raw["technology"] as Rec | null | undefined;
   if (technology && typeof technology === "object") {
     const cats = technology["categories"];
@@ -1150,6 +1160,135 @@ export function withDataFindingCounts(doc: GraphDoc, rows: DataFindingRow[]): Gr
     edges: doc.edges,
     syncedAt: doc.syncedAt,
   };
+}
+
+// ---------------------------------------------------------------- network exposure
+
+const HOST_KIND_SET: ReadonlySet<string> = new Set(HOST_KINDS);
+
+/** The raw entity of the first matching kind in a row — the sub-objects `entitiesOf` drops. */
+function rawEntityOfKind(row: Rec, kinds: ReadonlySet<string>): Rec | undefined {
+  for (const raw of rawEntitiesOf(row)) {
+    const kind = kindFromWizType(raw["type"]);
+    if (kind && kinds.has(kind)) return raw;
+  }
+  return undefined;
+}
+
+/** Push `value` onto `list` if it is a non-empty string not already there. Order-stable. */
+function addUnique(list: string[], value: string | undefined): void {
+  if (value && list.indexOf(value) < 0) list.push(value);
+}
+
+/**
+ * graphSearch "AI asset ← RUNS ← internet-reachable VM / SERVERLESS" page.
+ *
+ * Emits the asset, the host, the `asset -HOSTED_ON-> host` edge the traversal implies, the
+ * host's public-exposure evidence (ports and source ranges), and one ENDPOINT node per
+ * `applicationEndpoints` entry with a `host -SERVES-> endpoint` edge.
+ *
+ * BY TYPE, NOT BY SLOT — and this is the one place that needs saying, because
+ * graphExpand.ts:17 spells out at length why the same shortcut is unsound there. It is sound
+ * here because the spec has exactly TWO selected nodes over DISJOINT type sets: the root is
+ * an AI resource type, the leg is VIRTUAL_MACHINE / SERVERLESS, and neither can appear
+ * twice in one row. The battery's other graphSearch normalizers rest on the same property.
+ *
+ * The endpoints hang off the HOST, not off the asset — that is where the capture puts them
+ * (exemples/ai_exposure_host_response.js) and it is why `withExposureEvidence` has to walk
+ * `asset -HOSTED_ON-> host -SERVES-> endpoint` and not only the direct edge.
+ *
+ * NOT NORMALIZED, deliberately: `lateralMovementPaths` and `codeSourcePath`. The document
+ * fetches both (the console's own flags), and every page lands whole in the Drive archive
+ * via `writeSyncPage`. Turning them into edges is what is refused. A lateral-movement path
+ * is an ordered list of arbitrary intermediate hops with no declared relationship between
+ * them, and the only capture returns `codeSourcePath: { totalCount: 0, nodes: null }` — so a
+ * BUILT_FROM chain written against it would be a guess about a payload nobody has seen,
+ * which is precisely the confidently-wrong-edge failure this file exists to avoid. The
+ * archive is the response-capture source; a normalizer can be written when there is one.
+ */
+export function normalizeHostExposurePage(rows: Rec[]): NormalizedPart {
+  const part = emptyPart();
+  for (const row of rows) {
+    const entities = entitiesOf(row);
+    const asset = entities.find((e) => (AI_ASSET_KINDS as readonly string[]).includes(e.kind));
+    const host = entities.find((e) => HOST_KIND_SET.has(e.kind));
+    part.nodes.push(...entities);
+    if (!host) continue;
+    if (asset) {
+      part.edges.push({
+        id: edgeId(asset.id, "HOSTED_ON", host.id),
+        src: asset.id,
+        dst: host.id,
+        type: "HOSTED_ON",
+      });
+    }
+
+    const rawHost = rawEntityOfKind(row, HOST_KIND_SET);
+    const exposures = rawHost ? (rawHost["publicExposures"] as Rec | null | undefined) : undefined;
+    const exposureNodes = exposures && typeof exposures === "object" ? exposures["nodes"] : null;
+    if (!Array.isArray(exposureNodes)) continue;
+
+    const ports: string[] = [];
+    const sourceIpRanges: string[] = [];
+    for (const exposure of exposureNodes as Rec[]) {
+      if (!exposure || typeof exposure !== "object") continue;
+      addUnique(ports, str(exposure["portRange"]));
+      addUnique(sourceIpRanges, str(exposure["sourceIpRange"]));
+      const endpoints = exposure["applicationEndpoints"];
+      if (!Array.isArray(endpoints)) continue;
+      for (const rawEndpoint of endpoints as Rec[]) {
+        const endpoint = normalizeCloudResource(rawEndpoint);
+        if (!endpoint || endpoint.kind !== "ENDPOINT") continue;
+        part.nodes.push(endpoint);
+        part.edges.push({
+          id: edgeId(host.id, "SERVES", endpoint.id),
+          src: host.id,
+          dst: endpoint.id,
+          type: "SERVES",
+        });
+      }
+    }
+    // On the HOST, which is the node these facts are true of. `withExposureEvidence` carries
+    // them up to the assets it runs; stamping them on the asset here would claim the agent
+    // itself listens on those ports.
+    if (ports.length || sourceIpRanges.length) {
+      const evidence: NonNullable<GNode["exposureEvidence"]> = {};
+      if (ports.length) evidence.ports = ports;
+      if (sourceIpRanges.length) evidence.sourceIpRanges = sourceIpRanges;
+      host.exposureEvidence = evidence;
+    }
+  }
+  return part;
+}
+
+/**
+ * graphSearch "AI asset → SERVES → validated, High/Medium-rated ENDPOINT" page.
+ *
+ * Two selected nodes over disjoint type sets again, so by-type is sound — see
+ * normalizeHostExposurePage.
+ *
+ * The endpoint's own `exposureLevel` / `portValidation` ride on the node
+ * (normalizeCloudResource reads them from the properties bag). Nothing is stamped from the
+ * filter, which is the difference between this step and normalizePrincipalsPage: there, the
+ * flag exists only as a claim about the filter and the filter is therefore locked; here the
+ * response carries the values, so what is stored is what Wiz said.
+ */
+export function normalizeEndpointExposurePage(rows: Rec[]): NormalizedPart {
+  const part = emptyPart();
+  for (const row of rows) {
+    const entities = entitiesOf(row);
+    const asset = entities.find((e) => (AI_ASSET_KINDS as readonly string[]).includes(e.kind));
+    const endpoint = entities.find((e) => e.kind === "ENDPOINT");
+    part.nodes.push(...entities);
+    if (!asset || !endpoint) continue;
+    part.edges.push({
+      id: edgeId(asset.id, "SERVES", endpoint.id),
+      src: asset.id,
+      dst: endpoint.id,
+      type: "SERVES",
+    });
+  }
+  return part;
 }
 
 /**

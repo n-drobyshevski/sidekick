@@ -235,16 +235,31 @@ describe("decodeExpansion — robustness", () => {
   });
 
   it("keeps an unmodeled kind under its raw Wiz type, flagged", () => {
+    // Slot 29 is the agent's own CONFIGURATION_FINDING. It stands in for ENDPOINT, which
+    // used to be this test's example: the network-exposure steps now collect endpoints
+    // deliberately, so ENDPOINT joined NODE_KINDS and stopped being unmodeled — see below.
+    const out = decodeExpansion(SLOTS, [
+      row({ 0: entity("agent", "AI_AGENT"), 29: entity("cfg", "CONFIGURATION_FINDING") }),
+    ]);
+    const agent = out.nodes.find((n) => n.id === "agent");
+    const finding = out.nodes.find((n) => n.id === "cfg");
+    expect(agent?.unmodeled).toBe(false);
+    // It must survive rather than be dropped, because the sheet renders it and the client
+    // already falls back for unknown kinds.
+    expect(finding?.kind).toBe("CONFIGURATION_FINDING");
+    expect(finding?.unmodeled).toBe(true);
+  });
+
+  it("no longer flags ENDPOINT as unmodeled — the exposure steps declare it", () => {
+    // The expansion has always reached ENDPOINT (slot 28, the agent's SERVES leg) and used
+    // to render it as an unknown kind with the collapse glyph. Two sync steps now persist
+    // endpoints, so the kind is declared and this path picks that up for free.
     const out = decodeExpansion(SLOTS, [
       row({ 0: entity("agent", "AI_AGENT"), 28: entity("ep", "ENDPOINT") }),
     ]);
-    const agent = out.nodes.find((n) => n.id === "agent");
     const endpoint = out.nodes.find((n) => n.id === "ep");
-    expect(agent?.unmodeled).toBe(false);
-    // ENDPOINT is not in NODE_KINDS; it must survive rather than be dropped, because the
-    // sheet renders it and the client already falls back for unknown kinds.
     expect(endpoint?.kind).toBe("ENDPOINT");
-    expect(endpoint?.unmodeled).toBe(true);
+    expect(endpoint?.unmodeled).toBe(false);
   });
 
   it("reads the properties bag when the CloudResource fragment gave nothing", () => {

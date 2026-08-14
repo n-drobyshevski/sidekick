@@ -94,6 +94,10 @@ const LANE_OF: Record<string, number> = {
   SERVERLESS: 5,
   CONTAINER_IMAGE: 5,
   REPOSITORY: 5,
+  // Beside the compute that serves it. An endpoint is the far edge of the estate, but it is
+  // inventory rather than evidence, so it belongs in the infrastructure band and not in the
+  // risk band where INTERNET_EXPOSURE sits.
+  ENDPOINT: 5,
 };
 const LANE_COUNT = 6;
 

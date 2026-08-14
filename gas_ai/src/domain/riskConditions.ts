@@ -33,6 +33,23 @@ export function conditionState(node: GNode, key: ConditionKey): ConditionState {
     case "SENSITIVE_DATA":
       return node.hasSensitiveData === true || node.hasAccessToSensitiveData === true;
     case "INTERNET_EXPOSURE": {
+      // Topology first. A hosted AI asset carries NO exposure flags of its own — Wiz reports
+      // them on the compute underneath — which is why this used to answer `null` forever for
+      // exactly the assets most worth knowing about. The two exposure steps walk that hop
+      // (domain/exposureQuery.ts) and `withExposureEvidence` folds what they find onto the
+      // asset; reading it here is what makes one answer serve the Inventory, the combos
+      // matrix, the graph stub and AARS pillar D.
+      //
+      // This can only ever UPGRADE. Absent evidence falls straight through to the flags, so
+      // an asset the steps never reached scores exactly as it did before they existed, and
+      // nothing here can turn a definite `false` into a `true` on its own — the evidence is
+      // a positive finding or it is not present at all.
+      const evidence = node.exposureEvidence;
+      if (evidence) {
+        const hosts = evidence.hostIds ?? [];
+        const endpoints = evidence.endpointIds ?? [];
+        if (hosts.length > 0 || endpoints.length > 0) return true;
+      }
       // Either flag counts. `isOpenToAllInternet` is the STRONGER signal of the two, so
       // reading only `isAccessibleFromInternet` (as this side used to) under-reports the
       // worse case. Undetermined only when neither is set to true and at least one is

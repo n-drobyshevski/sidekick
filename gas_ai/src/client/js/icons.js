@@ -176,6 +176,14 @@ const PATHS = {
     "M11 5 a1.5 1.5 0 1 0 0 -3 a1.5 1.5 0 0 0 0 3",
     "M5 6 v4", "M11 5 a6 6 0 0 1 -4.5 5",
   ],
+  // A listening socket with two arcs radiating off it. Deliberately NOT the globe: the globe
+  // is INTERNET_EXPOSURE, a claim that something is reachable, and an endpoint rated Low is
+  // an endpoint that is not.
+  ENDPOINT: [
+    "M2 5.5 h5 v5 h-5 z",
+    "M9 4.5 a5 5 0 0 1 0 7",
+    "M9 6.8 a2.6 2.6 0 0 1 0 2.4",
+  ],
 
   // --- CIEM findings -----------------------------------------------------------
   // Open padlock: the shackle sits clear of the body. Replaces the warning triangle,
@@ -280,6 +288,7 @@ export const KIND_LABELS = {
   DATABASE_SERVER: "Database Server",
   VIRTUAL_MACHINE: "VM",
   SERVERLESS: "Serverless",
+  ENDPOINT: "Endpoint",
   CONTAINER_IMAGE: "Container Image",
   REPOSITORY: "Repository",
   EXCESSIVE_ACCESS_FINDING: "Excessive Access",
@@ -392,6 +401,7 @@ export const EDGE_LABELS = {
   USES_DATASET: "uses dataset",
   STORED_IN: "stored in",
   HOSTED_ON: "hosted on",
+  SERVES: "serves",
   BUILT_FROM: "built from",
   CAN_INVOKE: "can invoke",
   ENFORCES: "enforces",
@@ -420,6 +430,11 @@ export const KIND_CATEGORY = {
   AI_EXTENSION: "asset", AI_GATEWAY: "asset", AI_SERVICE: "asset", AI_SKILL: "asset",
   AI_SKILL_TEMPLATE: "asset", AI_TOOL: "asset",
   VIRTUAL_MACHINE: "asset", SERVERLESS: "asset", CONTAINER_IMAGE: "asset", REPOSITORY: "asset",
+  // Inventory, not evidence — so it takes the asset tint rather than the exposure one, for
+  // the reason AI_DATASET and BUCKET take theirs. An endpoint rated Low is a real endpoint
+  // and not an exposure; painting every endpoint yellow would say otherwise. Whether one
+  // IS an exposure is carried by the INTERNET_EXPOSURE node its asset gains.
+  ENDPOINT: "asset",
   // data (green): datastores, datasets, and the two data markers. DATA_FINDING is filed
   // here rather than with the red findings deliberately — it is the last hop of the data
   // chain and Wiz draws it in the data tint. Its badness reaches the eye through the card's

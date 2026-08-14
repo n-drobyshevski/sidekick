@@ -15,7 +15,10 @@
 // issuesV2 follows risk_issues_* — the tenant-wide "Risk Issues" view; toxic_combos_* is
 // the same root captured earlier under a narrower, project-scoped filter.
 
+import { endpointExposureSpec, hostExposureSpec } from "../domain/exposureQuery";
+import { toGraphEntityQuery } from "../domain/graphExpand";
 import { RISK_CATEGORY_ID } from "../domain/toxicCombos";
+import type { Rec } from "../domain/util";
 
 export const PAGE_SIZE = 100;
 export const PAGE_SIZE_FALLBACK = 50;
@@ -394,6 +397,187 @@ export const Q_AGENT_EXPANSION =
   "    }\n" +
   "  }\n" +
   "}\n";
+
+// ------------------------------------------------------------- network exposure
+
+/**
+ * The console's own GraphSearch operation, VERBATIM — both named fragments, every
+ * `@include` gate, the unused `$controlId` / `$issueId` arguments and all.
+ *
+ * Transcribed from exemples/ai_exposure_host_request.js and
+ * exemples/ai_exposure_endpoint_request.js. Two steps send it (HOST_EXPOSURE and
+ * ENDPOINT_EXPOSURE) with different `$query` values, the way Q_RULE_ASSETS is one document
+ * run once per combo group.
+ *
+ * WHY THE @include GATES SURVIVE. Every other document here drops them and selects plainly,
+ * which is valid and simpler. Not this one: the gates are what keep `issueAnalytics` and
+ * `threatAnalytics` OFF. Selected plainly they would add two `issues(filterBy: …)` joins to
+ * every entity on every path — the expensive AI-analysis class this codebase deliberately
+ * avoids, on the widest selection set the app sends. Keeping the gates and passing the
+ * capture's own flag values makes the request byte-comparable to one this tenant provably
+ * answered, which is the whole safety argument for a selection set this large.
+ *
+ * WHY IT DOES NOT REUSE ENTITY_FIELDS. That constant is shared by five battery traversals,
+ * and its doc comment says why each addition is a way to have all five rejected at once.
+ * A private selection set contains the blast radius: both steps are `optional`, so a tenant
+ * that rejects `publicExposures` skips these two and leaves the rest of the battery intact.
+ *
+ * TWO DELIBERATE DEVIATIONS from the capture:
+ *
+ *  - `$projectId` is `String`, not `String!`. The console sends it non-null because the
+ *    operator had a project open; every step here runs tenant-wide unless WIZ_PROJECT_ID_V2
+ *    says otherwise. Q_AGENT_EXPANSION already makes exactly this change for the same reason.
+ *  - The operation is named `SidekickAiExposure` rather than `GraphSearch`. Operation names
+ *    reach the gateway's logs, and every other document in this file is Sidekick-prefixed.
+ */
+export const Q_AI_EXPOSURE =
+  "query SidekickAiExposure($query: GraphEntityQueryInput, $controlId: ID, " +
+  "$projectId: String, $first: Int, $after: String, $fetchTotalCount: Boolean = false, " +
+  "$quick: Boolean = true, $fetchPublicExposurePaths: Boolean = false, " +
+  "$fetchInternalExposurePaths: Boolean = false, $fetchIssueAnalytics: Boolean = false, " +
+  "$fetchThreatAnalytics: Boolean = false, $fetchLateralMovement: Boolean = false, " +
+  "$fetchCodeSource: Boolean = false, $fetchKubernetes: Boolean = false, " +
+  "$fetchCost: Boolean = false, $issueId: ID) {\n" +
+  "  graphSearch(\n" +
+  "    query: $query\n" +
+  "    controlId: $controlId\n" +
+  "    projectId: $projectId\n" +
+  "    first: $first\n" +
+  "    after: $after\n" +
+  "    quick: $quick\n" +
+  "    issueId: $issueId\n" +
+  "  ) {\n" +
+  "    totalCount @include(if: $fetchTotalCount)\n" +
+  "    maxCountReached @include(if: $fetchTotalCount)\n" +
+  "    pageInfo { endCursor hasNextPage }\n" +
+  "    nodes {\n" +
+  "      entities {\n" +
+  "        providerUniqueId\n" +
+  "        deletedAt\n" +
+  "        isRestricted\n" +
+  "        ...PathGraphEntityFragment\n" +
+  "        userMetadata { isInWatchlist isIgnored note }\n" +
+  "        technologies { id icon }\n" +
+  "        cost(\n" +
+  "          filterBy: {timestamp: {inLast: {amount: 30, unit: DurationFilterValueUnitDays}}}\n" +
+  "        ) @include(if: $fetchCost) {\n" +
+  "          amortized\n" +
+  "          blended\n" +
+  "          unblended\n" +
+  "          netAmortized\n" +
+  "          netUnblended\n" +
+  "          currencyCode\n" +
+  "        }\n" +
+  "        costImpact @include(if: $fetchCost) { monthly }\n" +
+  "        publicExposures(first: 10) @include(if: $fetchPublicExposurePaths) {\n" +
+  "          nodes { ...NetworkExposureFragment }\n" +
+  "        }\n" +
+  "        otherSubscriptionExposures(first: 10) @include(if: $fetchInternalExposurePaths) {\n" +
+  "          nodes { ...NetworkExposureFragment }\n" +
+  "        }\n" +
+  "        otherVnetExposures(first: 10) @include(if: $fetchInternalExposurePaths) {\n" +
+  "          nodes { ...NetworkExposureFragment }\n" +
+  "        }\n" +
+  "        lateralMovementPaths(first: 10) @include(if: $fetchLateralMovement) {\n" +
+  "          nodes {\n" +
+  "            id\n" +
+  "            pathEntities { entity { providerUniqueId ...PathGraphEntityFragment } }\n" +
+  "          }\n" +
+  "        }\n" +
+  "        codeSourcePath(first: 10) @include(if: $fetchCodeSource) {\n" +
+  "          totalCount\n" +
+  "          nodes {\n" +
+  "            id\n" +
+  "            pathEntities { providerUniqueId ...PathGraphEntityFragment }\n" +
+  "          }\n" +
+  "        }\n" +
+  "        kubernetesPaths(first: 10) @include(if: $fetchKubernetes) {\n" +
+  "          nodes { id path { providerUniqueId ...PathGraphEntityFragment } }\n" +
+  "        }\n" +
+  "      }\n" +
+  "      aggregateCount\n" +
+  "    }\n" +
+  "  }\n" +
+  "}\n" +
+  "\n" +
+  "fragment PathGraphEntityFragment on GraphEntity {\n" +
+  "  providerUniqueId\n" +
+  "  id\n" +
+  "  name\n" +
+  "  type\n" +
+  "  properties\n" +
+  // Unlike `... on CloudResource` (see ENTITY_FIELDS above, which the tenant rejected
+  // outright), GEAiAgent IS among GraphEntity's possible types — the capture returns
+  // `"__typename": "GEAiAgent"` on the agent entity. The description it carries is the one
+  // field the flat inventory root has never been able to give us.
+  "  typedProperties { ... on GEAiAgent { description } }\n" +
+  "  issueAnalytics: issues(\n" +
+  "    filterBy: {status: [IN_PROGRESS, OPEN], type: [TOXIC_COMBINATION, CLOUD_CONFIGURATION]}\n" +
+  "  ) @include(if: $fetchIssueAnalytics) {\n" +
+  "    highSeverityCount\n" +
+  "    criticalSeverityCount\n" +
+  "  }\n" +
+  "  threatAnalytics: issues(\n" +
+  "    filterBy: {status: [IN_PROGRESS, OPEN], type: [THREAT_DETECTION], " +
+  "createdAt: {inLast: {amount: 7, unit: DurationFilterValueUnitDays}}}\n" +
+  "  ) @include(if: $fetchThreatAnalytics) {\n" +
+  "    highSeverityCount\n" +
+  "    criticalSeverityCount\n" +
+  "  }\n" +
+  "}\n" +
+  "\n" +
+  "fragment NetworkExposureFragment on NetworkExposure {\n" +
+  "  id\n" +
+  "  portRange\n" +
+  "  sourceIpRange\n" +
+  "  destinationIpRange\n" +
+  "  path { providerUniqueId ...PathGraphEntityFragment }\n" +
+  "  applicationEndpoints { providerUniqueId ...PathGraphEntityFragment }\n" +
+  "}\n";
+
+/**
+ * The `@include` flags both exposure steps send, exactly as the two captures send them.
+ *
+ * `fetchTotalCount` stays FALSE, which costs the job row its progress total (readConnection
+ * degrades to `totalCount: null` and runBattery already writes `result.totalCount ?? 0`).
+ * That is the capture's own value and this is the one document where being byte-comparable
+ * to a proven request is worth more than a progress number.
+ */
+const EXPOSURE_FETCH_FLAGS: Rec = {
+  fetchTotalCount: false,
+  fetchPublicExposurePaths: true,
+  fetchInternalExposurePaths: false,
+  fetchIssueAnalytics: false,
+  fetchThreatAnalytics: false,
+  fetchLateralMovement: true,
+  fetchCodeSource: true,
+  fetchKubernetes: false,
+  fetchCost: false,
+};
+
+/** $query + $projectId + the fetch flags for HOST_EXPOSURE. */
+export function hostExposureVariables(
+  types: readonly string[],
+  scope: string[] | null,
+): Rec {
+  return {
+    ...EXPOSURE_FETCH_FLAGS,
+    query: toGraphEntityQuery(hostExposureSpec(types)),
+    projectId: scope && scope.length ? scope[0] : null,
+  };
+}
+
+/** $query + $projectId + the fetch flags for ENDPOINT_EXPOSURE. */
+export function endpointExposureVariables(
+  types: readonly string[],
+  scope: string[] | null,
+): Rec {
+  return {
+    ...EXPOSURE_FETCH_FLAGS,
+    query: toGraphEntityQuery(endpointExposureSpec(types)),
+    projectId: scope && scope.length ? scope[0] : null,
+  };
+}
 
 // ------------------------------------------------------------ issuesV2 (real issues)
 

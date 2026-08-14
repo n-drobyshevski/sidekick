@@ -174,6 +174,29 @@ export const STEP_VAR_SPECS: StepVarSpec[] = [
       "would yield confidently wrong edges rather than an error.",
   },
   {
+    stepId: "HOST_EXPOSURE",
+    fields: [],
+    locked: "This step has no editable filter: normalizeHostExposurePage rebuilds the " +
+      "HOSTED_ON and SERVES edges from which entity TYPES a row carries, and its whole " +
+      "claim is `accessibleFrom.internet` on the compute — widen that and the step reports " +
+      "unreachable hosts as reachable ones.",
+  },
+  {
+    stepId: "ENDPOINT_EXPOSURE",
+    // No knob, and the exposure-level list is exactly the knob it looks like it should have.
+    // It is withheld because the same two values appear in a SECOND place: RATED_EXPOSURE_LEVELS
+    // in domain/exposureQuery.ts, which is what withExposureEvidence tests the returned level
+    // against. That double reading is deliberate — ENDPOINT rows also arrive from
+    // HOST_EXPOSURE, unfiltered and (in the capture) rated Low, so the bar has to be applied
+    // to the payload rather than assumed from the query. An operator who widened the filter
+    // here would collect Low-rated endpoints as graph nodes and see the exposure figure not
+    // move, which is a worse answer than no knob at all.
+    fields: [],
+    locked: "This step has no editable filter: the High/Medium bar is also applied to the " +
+      "endpoints the host-exposure step returns unfiltered, so moving it here would widen " +
+      "what is collected without moving what counts as an exposure.",
+  },
+  {
     stepId: "FRAMEWORKS_LIST",
     // Declared with no fields rather than left out of this list entirely: an absent spec
     // renders as the generic "no spec" fallback, which reads as an oversight, and someone

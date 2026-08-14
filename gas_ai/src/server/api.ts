@@ -319,6 +319,14 @@ function assetRow(n: GNode): Rec {
     comboGroups: n.comboGroups ?? [],
     internet: n.isAccessibleFromInternet ?? null,
     openInternet: n.isOpenToAllInternet ?? null,
+    // ENDPOINT rows only; null everywhere else. The pair is the dynamic scanner's verdict,
+    // and the detail sheet prints both because either alone is misleading — an open port
+    // behind SSO rates Low and is not an exposure.
+    exposureLevel: n.exposureLevel ?? null,
+    portValidation: n.portValidation ?? null,
+    // Null, not {}, when the exposure steps never reached this asset — the same "clean" vs
+    // "never asked" split dataFindingCount keeps below.
+    exposureEvidence: n.exposureEvidence ?? null,
     sensitiveAccess: n.hasAccessToSensitiveData ?? false,
     sensitiveData: n.hasSensitiveData ?? false,
     highPriv: n.hasHighPrivileges ?? false,
@@ -515,6 +523,14 @@ function assetsModel(): AssetsModel {
       // as undetermined, so folding it into "not exposed" under-reports.
       internetExposed: assets.filter((a) => conditionState(a, "INTERNET_EXPOSURE") === true).length,
       internetUnknown: assets.filter((a) => conditionState(a, "INTERNET_EXPOSURE") === null).length,
+      // The two grades of evidence behind `internetExposed`, reported separately because
+      // they are separate claims. `internetValidated` counts assets serving an endpoint Wiz's
+      // scanner connected to and policy rates High or Medium; `internetViaHost` counts those
+      // whose reachability was established one hop away, on the compute they run on. An
+      // asset can be in both, and one in neither is exposed by its own two flags.
+      internetValidated: assets.filter((a) => (a.exposureEvidence?.endpointIds ?? []).length > 0)
+        .length,
+      internetViaHost: assets.filter((a) => (a.exposureEvidence?.hostIds ?? []).length > 0).length,
       highPrivilege: assets.filter((a) => conditionHolds(a, "EXCESSIVE_PRIVILEGE")).length,
     },
     aarsSeverityCounts,

@@ -283,7 +283,15 @@ var Server = (() => {
       // DSPM classification on a datastore row. Appended, so an existing ledger picks them
       // up on the next sync with no migration (see the note on ai_issues below).
       "data_finding_count",
-      "data_findings_json"
+      "data_findings_json",
+      // Network exposure. The first two are the dynamic scanner's verdicts and belong to
+      // ENDPOINT rows; the third is the join `withExposureEvidence` folds onto an AI asset,
+      // and is what lets the Inventory and the combos matrix — which read this tab directly
+      // and never see the graph document — agree with the graph about what is exposed.
+      // Appended for the same no-migration reason.
+      "exposure_level",
+      "port_validation",
+      "exposure_evidence_json"
     ],
     [TABS.edges]: ["id", "src", "dst", "type", "negated", "access_type"],
     [TABS.issues]: [
@@ -643,6 +651,51 @@ var Server = (() => {
     return notes.join("\n");
   }
 
+  // src/domain/exposureQuery.ts
+  var RATED_EXPOSURE_LEVELS = ["High", "Medium"];
+  var VALIDATED_PORT_STATE = "Open";
+  var HOST_KINDS = ["VIRTUAL_MACHINE", "SERVERLESS"];
+  function hostExposureSpec(types) {
+    return {
+      type: [...types],
+      relationships: [
+        {
+          type: [...HOST_KINDS],
+          edge: { type: "RUNS", reverse: true },
+          where: { "accessibleFrom.internet": { EQUALS: true } }
+        }
+      ]
+    };
+  }
+  function endpointExposureSpec(types) {
+    return {
+      type: [...types],
+      relationships: [
+        {
+          type: "ENDPOINT",
+          edge: { type: "SERVES" },
+          where: {
+            exposureLevel_name: { EQUALS: [...RATED_EXPOSURE_LEVELS] },
+            portValidationResult: { EQUALS: VALIDATED_PORT_STATE }
+          }
+        }
+      ]
+    };
+  }
+  function isRatedExposure(level, portValidation) {
+    if (portValidation !== VALIDATED_PORT_STATE) return false;
+    return RATED_EXPOSURE_LEVELS.indexOf(level != null ? level : "") >= 0;
+  }
+  function worseExposureLevel(a, b) {
+    const rank = (v) => {
+      const i = RATED_EXPOSURE_LEVELS.indexOf(v != null ? v : "");
+      return i === -1 ? RATED_EXPOSURE_LEVELS.length : i;
+    };
+    if (a === void 0) return b;
+    if (b === void 0) return a;
+    return rank(a) <= rank(b) ? a : b;
+  }
+
   // src/domain/config.ts
   var SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
   var UNRESOLVED_ISSUE_STATUSES = ["OPEN", "IN_PROGRESS"];
@@ -760,7 +813,16 @@ var Server = (() => {
     // One node per datastore that carries classified data findings — the aggregate, not the
     // individual finding. Wiz draws the same collapse ("Data Findings", count badge); a
     // bucket with 200 findings would otherwise spend the entire node budget by itself.
-    "DATA_FINDING"
+    "DATA_FINDING",
+    // The network-exposure traversals' far end: a validated, reachable service address such as
+    // `https://…run.app:443`. INVENTORY, not evidence — it carries a name, a region, a status
+    // and a subscription, which is why it stays out of RISK_NODE_KINDS with BUCKET and
+    // DATABASE rather than joining the derived stubs.
+    //
+    // graphExpand.toExpandedNode used to flag this kind `unmodeled`, because declaring it here
+    // "would admit them into the sync and persistence path too". That is now the intent: two
+    // sync steps collect these deliberately.
+    "ENDPOINT"
   ];
   var RISK_NODE_KINDS = [
     "ISSUE",
@@ -807,7 +869,12 @@ var Server = (() => {
     firstSeen: ["creationDate"],
     lastSeen: ["updatedAt"],
     isAccessibleFromInternet: ["accessibleFrom.internet"],
-    isOpenToAllInternet: ["openToAllInternet"]
+    isOpenToAllInternet: ["openToAllInternet"],
+    // ENDPOINT entities only. Wiz spells the dynamic scanner's two verdicts with suffixes the
+    // rest of the model has no use for; aliasing them here is what lets the GNode field keep
+    // the name the app reads it by.
+    exposureLevel: ["exposureLevel_name"],
+    portValidation: ["portValidationResult"]
   };
   function entityField(raw, key) {
     var _a5;
@@ -824,6 +891,428 @@ var Server = (() => {
   }
   function edgeId(src, type, dst, negated) {
     return `${src}|${type}|${dst}${negated ? "|neg" : ""}`;
+  }
+
+  // src/domain/graphExpand.ts
+  function typeList(t) {
+    return Array.isArray(t) ? t : [t];
+  }
+  function isSelected(spec) {
+    return spec.select !== false;
+  }
+  var AGENT_EXPANSION = {
+    type: "AI_AGENT",
+    relationships: [
+      // 1. Execution identity and its CIEM findings.
+      {
+        type: "PRINCIPAL",
+        optional: true,
+        edge: { type: "ACTING_AS" },
+        relationships: [
+          {
+            type: "EXCESSIVE_ACCESS_FINDING",
+            optional: true,
+            edge: { type: "CONTAINS" }
+          }
+        ]
+      },
+      // 2. Data the agent reads, and what has been classified in it.
+      {
+        type: ["AI_DATASET", "BUCKET"],
+        optional: true,
+        edge: { type: "READS_DATA_FROM" },
+        relationships: [
+          {
+            type: ["BUCKET", "DATABASE"],
+            optional: true,
+            edge: { type: "READS_DATA_FROM" },
+            relationships: [
+              { type: "DATA_FINDING", optional: true, edge: { type: "HAS_DATA_FINDING" } }
+            ]
+          },
+          { type: "DATA_FINDING", optional: true, edge: { type: "HAS_DATA_FINDING" } }
+        ]
+      },
+      // 3. Data the agent writes.
+      {
+        type: "BUCKET",
+        optional: true,
+        edge: { type: "STORES_DATA_IN" },
+        relationships: [
+          { type: "DATA_FINDING", optional: true, edge: { type: "HAS_DATA_FINDING" } }
+        ]
+      },
+      // 4. Tooling: the tool, whatever runs it, that runner's identity and reachable data,
+      //    and any agent the tool invokes in turn. The INVOKES leg is the agent-to-agent
+      //    trust chain ai/ai_agents_discovery_queries.md names as unmodeled.
+      {
+        type: "AI_TOOL",
+        optional: true,
+        edge: { type: "USES" },
+        relationships: [
+          {
+            type: ["SERVERLESS", "WEB_SERVICE"],
+            optional: true,
+            edge: { type: "RUNS", reverse: true },
+            relationships: [
+              {
+                type: "SERVICE_ACCOUNT",
+                optional: true,
+                edge: { type: "ACTING_AS" },
+                relationships: [
+                  {
+                    // Not selected: the binding is the mechanism, the resource is the point.
+                    type: "IAM_BINDING",
+                    select: false,
+                    optional: true,
+                    edge: { type: "ENTITLES", reverse: true },
+                    where: { accessTypes: { EQUALS: ["Data"] } },
+                    relationships: [
+                      {
+                        type: "DATA_RESOURCE",
+                        optional: true,
+                        edge: { type: "ALLOWS_ACCESS_TO" },
+                        where: {
+                          _or: [
+                            { publicAccessTypes: { IS_SET: false } },
+                            { publicAccessTypes: { LIST_DOES_NOT_CONTAIN_ANY: ["Data"] } }
+                          ],
+                          hasSensitiveData: { EQUALS: true }
+                        },
+                        relationships: [
+                          {
+                            type: "DATA_FINDING",
+                            optional: true,
+                            edge: { type: "HAS_DATA_FINDING" },
+                            where: {
+                              severity: {
+                                EQUALS: [
+                                  "DataFindingSeverityCritical",
+                                  "DataFindingSeverityHigh"
+                                ]
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              { type: "PRINCIPAL", optional: true, edge: { type: "ACTING_AS" } },
+              { type: "AI_AGENT", optional: true, edge: { type: "INVOKES" } }
+            ]
+          }
+        ]
+      },
+      // 5. Models and services, their guardrails, endpoints, identities, and the pipeline
+      //    that produced them.
+      {
+        type: ["AI_MODEL", "AI_SERVICE"],
+        optional: true,
+        edge: { type: "USES" },
+        relationships: [
+          {
+            type: "AI_MODEL",
+            optional: true,
+            edge: { type: "USES" },
+            relationships: [
+              {
+                type: "AI_GUARDRAIL",
+                optional: true,
+                edge: { type: "PROTECTS", reverse: true }
+              },
+              { type: "ENDPOINT", optional: true, edge: { type: "SERVES" } },
+              {
+                type: "PRINCIPAL",
+                optional: true,
+                edge: { type: "ACTING_AS" },
+                relationships: [
+                  {
+                    type: "EXCESSIVE_ACCESS_FINDING",
+                    optional: true,
+                    edge: { type: "ALERTED_ON", reverse: true }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            type: "AI_PIPELINE",
+            optional: true,
+            edge: { type: "PRODUCES", reverse: true },
+            relationships: [
+              { type: "AI_MODEL", optional: true, edge: { type: "USES" } },
+              {
+                type: ["AI_DATASET", "BUCKET"],
+                optional: true,
+                edge: { type: "READS_DATA_FROM" },
+                relationships: [
+                  {
+                    type: ["BUCKET", "DATABASE"],
+                    optional: true,
+                    edge: { type: "READS_DATA_FROM" }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      // 6. The agent's own guardrail and its misconfigurations.
+      {
+        type: "AI_GUARDRAIL",
+        optional: true,
+        edge: { type: "PROTECTS", reverse: true },
+        relationships: [
+          {
+            type: "CONFIGURATION_FINDING",
+            optional: true,
+            edge: { type: "ALERTED_ON", reverse: true }
+          }
+        ]
+      },
+      // 7. Network reachability.
+      { type: "ENDPOINT", optional: true, edge: { type: "SERVES" } },
+      // 8. The agent's own configuration findings.
+      {
+        type: "CONFIGURATION_FINDING",
+        optional: true,
+        edge: { type: "ALERTED_ON", reverse: true }
+      },
+      // 9. Compute the agent runs on, that compute's identity and reachable data, and the
+      //    kubernetes chain up to the cluster's own identity.
+      {
+        type: ["VIRTUAL_MACHINE", "SERVERLESS", "CONTAINER_IMAGE"],
+        optional: true,
+        edge: { type: "RUNS", reverse: true },
+        relationships: [
+          { type: "ENDPOINT", optional: true, edge: { type: "SERVES" } },
+          {
+            type: "SERVICE_ACCOUNT",
+            optional: true,
+            edge: { type: "ACTING_AS" },
+            relationships: [
+              {
+                type: "IAM_BINDING",
+                select: false,
+                optional: true,
+                edge: { type: "ENTITLES", reverse: true },
+                where: { accessTypes: { EQUALS: ["Data"] } },
+                relationships: [
+                  {
+                    type: "DATA_RESOURCE",
+                    optional: true,
+                    edge: { type: "ALLOWS_ACCESS_TO" },
+                    where: {
+                      _or: [
+                        { publicAccessTypes: { IS_SET: false } },
+                        { publicAccessTypes: { LIST_DOES_NOT_CONTAIN_ANY: ["Data"] } }
+                      ],
+                      hasSensitiveData: { EQUALS: true }
+                    },
+                    relationships: [
+                      {
+                        type: "DATA_FINDING",
+                        optional: true,
+                        edge: { type: "HAS_DATA_FINDING" },
+                        where: {
+                          severity: {
+                            EQUALS: [
+                              "DataFindingSeverityCritical",
+                              "DataFindingSeverityHigh"
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            type: "CONTAINER",
+            optional: true,
+            edge: { type: "INSTANCE_OF", reverse: true },
+            relationships: [
+              {
+                type: "DEPLOYMENT",
+                optional: true,
+                edge: { type: "CONTAINS", reverse: true },
+                relationships: [
+                  {
+                    type: "KUBERNETES_CLUSTER",
+                    optional: true,
+                    edge: { type: "CONTAINS", reverse: true },
+                    relationships: [
+                      {
+                        type: "SERVICE_ACCOUNT",
+                        optional: true,
+                        edge: { type: "ACTING_AS" },
+                        relationships: [
+                          {
+                            // Selected here, unlike the two above it. The console's own
+                            // asymmetry, kept: dropping it would shift every later slot.
+                            type: "IAM_BINDING",
+                            optional: true,
+                            edge: { type: "ENTITLES", reverse: true },
+                            relationships: [
+                              {
+                                type: "DATA_RESOURCE",
+                                optional: true,
+                                edge: { type: "ALLOWS_ACCESS_TO" }
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      // 10. MCP servers and the tools they expose.
+      {
+        type: "MCP_SERVER",
+        optional: true,
+        edge: { type: "USES" },
+        relationships: [
+          { type: "AI_TOOL", optional: true, edge: { type: "EXPOSES" } }
+        ]
+      }
+    ]
+  };
+  function toGraphEntityQuery(spec, vertexId) {
+    var _a5;
+    const out = { type: typeList(spec.type) };
+    if (isSelected(spec)) out["select"] = true;
+    const where = vertexId ? { _vertexID: { EQUALS: vertexId } } : spec.where;
+    if (where) out["where"] = where;
+    const rels = (_a5 = spec.relationships) != null ? _a5 : [];
+    if (rels.length) {
+      out["relationships"] = rels.map((child) => {
+        var _a6;
+        const edge2 = (_a6 = child.edge) != null ? _a6 : { type: "RELATED_TO" };
+        const rel = {
+          type: [edge2.reverse ? { type: edge2.type, reverse: true } : { type: edge2.type }],
+          with: toGraphEntityQuery(child)
+        };
+        if (child.optional) rel["optional"] = true;
+        if (child.negate) rel["negate"] = true;
+        return rel;
+      });
+    }
+    return out;
+  }
+  function flattenSlots(spec) {
+    const slots = [];
+    function walk(node2, parentIndex2) {
+      var _a5, _b, _c;
+      let ownIndex = parentIndex2;
+      if (isSelected(node2)) {
+        ownIndex = slots.length;
+        slots.push({
+          index: ownIndex,
+          parentIndex: parentIndex2,
+          types: typeList(node2.type),
+          edgeType: (_a5 = node2.edge) == null ? void 0 : _a5.type,
+          reverse: (_b = node2.edge) == null ? void 0 : _b.reverse
+        });
+      }
+      for (const child of (_c = node2.relationships) != null ? _c : []) walk(child, ownIndex);
+    }
+    walk(spec, null);
+    return slots;
+  }
+  function expandEdgeId(src, type, dst) {
+    return `${src}|${type}|${dst}`;
+  }
+  function str(v) {
+    return v === null || v === void 0 || v === "" ? void 0 : String(v);
+  }
+  function triBool(v) {
+    return v === true ? true : v === false ? false : null;
+  }
+  function toExpandedNode(raw) {
+    var _a5;
+    const id = str(raw["id"]);
+    if (!id) return null;
+    const rawType = str(raw["type"]);
+    const known = kindFromWizType(rawType);
+    const projects = Array.isArray(raw["projects"]) ? raw["projects"].map((p) => {
+      var _a6;
+      return (_a6 = str(p == null ? void 0 : p["name"])) != null ? _a6 : "";
+    }).filter(Boolean) : [];
+    const pickStr = (key) => {
+      var _a6;
+      return (_a6 = str(entityField(raw, key))) != null ? _a6 : null;
+    };
+    const isTrue = (key) => entityField(raw, key) === true;
+    return {
+      id,
+      name: (_a5 = str(raw["name"])) != null ? _a5 : id,
+      kind: known != null ? known : rawType ? rawType.toUpperCase().replace(/[^A-Z0-9]+/g, "_") : "UNKNOWN",
+      unmodeled: !known,
+      nativeType: pickStr("nativeType"),
+      cloud: pickStr("cloudPlatform"),
+      region: pickStr("region"),
+      status: pickStr("status"),
+      firstSeen: pickStr("firstSeen"),
+      lastSeen: pickStr("lastSeen"),
+      externalId: pickStr("externalId"),
+      projects,
+      // DataFinding is the one entity here carrying its own severity; everything else is
+      // inventory and gets its severity from the register, which this path does not touch.
+      severity: pickStr("severity"),
+      internet: triBool(entityField(raw, "isAccessibleFromInternet")),
+      openInternet: triBool(entityField(raw, "isOpenToAllInternet")),
+      sensitiveData: isTrue("hasSensitiveData"),
+      sensitiveAccess: isTrue("hasAccessToSensitiveData"),
+      highPriv: isTrue("hasHighPrivileges"),
+      adminPriv: isTrue("hasAdminPrivileges")
+    };
+  }
+  function decodeExpansion(slots, rows) {
+    const nodes = /* @__PURE__ */ new Map();
+    const edges2 = /* @__PURE__ */ new Map();
+    let arityMismatches = 0;
+    let rowsDecoded = 0;
+    for (const row of Array.isArray(rows) ? rows : []) {
+      const entities = row == null ? void 0 : row["entities"];
+      if (!Array.isArray(entities)) continue;
+      if (entities.length !== slots.length) {
+        arityMismatches += 1;
+        continue;
+      }
+      rowsDecoded += 1;
+      const resolved = [];
+      for (let i = 0; i < slots.length; i += 1) {
+        const raw = entities[i];
+        const node2 = raw && typeof raw === "object" ? toExpandedNode(raw) : null;
+        resolved.push(node2);
+        if (node2 && !nodes.has(node2.id)) nodes.set(node2.id, node2);
+      }
+      for (const slot of slots) {
+        const self = resolved[slot.index];
+        if (!self || slot.parentIndex === null || !slot.edgeType) continue;
+        const parent = resolved[slot.parentIndex];
+        if (!parent || parent.id === self.id) continue;
+        const src = slot.reverse ? self.id : parent.id;
+        const dst = slot.reverse ? parent.id : self.id;
+        const id = expandEdgeId(src, slot.edgeType, dst);
+        if (!edges2.has(id)) edges2.set(id, { id, src, dst, type: slot.edgeType });
+      }
+    }
+    return {
+      nodes: Array.from(nodes.values()),
+      edges: Array.from(edges2.values()),
+      arityMismatches,
+      rowsDecoded
+    };
   }
 
   // src/domain/toxicCombos.ts
@@ -1085,6 +1574,32 @@ var Server = (() => {
     '    type: "AI_AGENT"\n    select: true\n    relationships: [{\n      type: "ALLOWS_ACCESS_TO"\n      direction: INBOUND\n      with: {\n        type: "ACCESS_ROLE_BINDING"\n        select: false\n        relationships: [\n          {\n            type: "BOUND_TO"\n            with: { type: ["USER_ACCOUNT", "SERVICE_ACCOUNT"], select: true }\n          }\n          {\n            type: "PERMITS_ACCESS_ROLE"\n            with: {\n              type: "ACCESS_ROLE"\n              select: true\n              where: { accessType: { EQUALS: ["HIGH_PRIVILEGE", "ADMIN"] } }\n            }\n          }\n        ]\n      }\n    }]\n'
   );
   var Q_AGENT_EXPANSION = "query SidekickAiAgentExpansion($quick: Boolean, $first: Int, $after: String, $query: GraphEntityQueryInput, $projectId: String) {\n  graphSearch(\n    quick: $quick\n    first: $first\n    after: $after\n    query: $query\n    projectId: $projectId\n  ) {\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      entities {\n" + ENTITY_FIELDS + "      }\n    }\n  }\n}\n";
+  var Q_AI_EXPOSURE = "query SidekickAiExposure($query: GraphEntityQueryInput, $controlId: ID, $projectId: String, $first: Int, $after: String, $fetchTotalCount: Boolean = false, $quick: Boolean = true, $fetchPublicExposurePaths: Boolean = false, $fetchInternalExposurePaths: Boolean = false, $fetchIssueAnalytics: Boolean = false, $fetchThreatAnalytics: Boolean = false, $fetchLateralMovement: Boolean = false, $fetchCodeSource: Boolean = false, $fetchKubernetes: Boolean = false, $fetchCost: Boolean = false, $issueId: ID) {\n  graphSearch(\n    query: $query\n    controlId: $controlId\n    projectId: $projectId\n    first: $first\n    after: $after\n    quick: $quick\n    issueId: $issueId\n  ) {\n    totalCount @include(if: $fetchTotalCount)\n    maxCountReached @include(if: $fetchTotalCount)\n    pageInfo { endCursor hasNextPage }\n    nodes {\n      entities {\n        providerUniqueId\n        deletedAt\n        isRestricted\n        ...PathGraphEntityFragment\n        userMetadata { isInWatchlist isIgnored note }\n        technologies { id icon }\n        cost(\n          filterBy: {timestamp: {inLast: {amount: 30, unit: DurationFilterValueUnitDays}}}\n        ) @include(if: $fetchCost) {\n          amortized\n          blended\n          unblended\n          netAmortized\n          netUnblended\n          currencyCode\n        }\n        costImpact @include(if: $fetchCost) { monthly }\n        publicExposures(first: 10) @include(if: $fetchPublicExposurePaths) {\n          nodes { ...NetworkExposureFragment }\n        }\n        otherSubscriptionExposures(first: 10) @include(if: $fetchInternalExposurePaths) {\n          nodes { ...NetworkExposureFragment }\n        }\n        otherVnetExposures(first: 10) @include(if: $fetchInternalExposurePaths) {\n          nodes { ...NetworkExposureFragment }\n        }\n        lateralMovementPaths(first: 10) @include(if: $fetchLateralMovement) {\n          nodes {\n            id\n            pathEntities { entity { providerUniqueId ...PathGraphEntityFragment } }\n          }\n        }\n        codeSourcePath(first: 10) @include(if: $fetchCodeSource) {\n          totalCount\n          nodes {\n            id\n            pathEntities { providerUniqueId ...PathGraphEntityFragment }\n          }\n        }\n        kubernetesPaths(first: 10) @include(if: $fetchKubernetes) {\n          nodes { id path { providerUniqueId ...PathGraphEntityFragment } }\n        }\n      }\n      aggregateCount\n    }\n  }\n}\n\nfragment PathGraphEntityFragment on GraphEntity {\n  providerUniqueId\n  id\n  name\n  type\n  properties\n  typedProperties { ... on GEAiAgent { description } }\n  issueAnalytics: issues(\n    filterBy: {status: [IN_PROGRESS, OPEN], type: [TOXIC_COMBINATION, CLOUD_CONFIGURATION]}\n  ) @include(if: $fetchIssueAnalytics) {\n    highSeverityCount\n    criticalSeverityCount\n  }\n  threatAnalytics: issues(\n    filterBy: {status: [IN_PROGRESS, OPEN], type: [THREAT_DETECTION], createdAt: {inLast: {amount: 7, unit: DurationFilterValueUnitDays}}}\n  ) @include(if: $fetchThreatAnalytics) {\n    highSeverityCount\n    criticalSeverityCount\n  }\n}\n\nfragment NetworkExposureFragment on NetworkExposure {\n  id\n  portRange\n  sourceIpRange\n  destinationIpRange\n  path { providerUniqueId ...PathGraphEntityFragment }\n  applicationEndpoints { providerUniqueId ...PathGraphEntityFragment }\n}\n";
+  var EXPOSURE_FETCH_FLAGS = {
+    fetchTotalCount: false,
+    fetchPublicExposurePaths: true,
+    fetchInternalExposurePaths: false,
+    fetchIssueAnalytics: false,
+    fetchThreatAnalytics: false,
+    fetchLateralMovement: true,
+    fetchCodeSource: true,
+    fetchKubernetes: false,
+    fetchCost: false
+  };
+  function hostExposureVariables(types, scope) {
+    return {
+      ...EXPOSURE_FETCH_FLAGS,
+      query: toGraphEntityQuery(hostExposureSpec(types)),
+      projectId: scope && scope.length ? scope[0] : null
+    };
+  }
+  function endpointExposureVariables(types, scope) {
+    return {
+      ...EXPOSURE_FETCH_FLAGS,
+      query: toGraphEntityQuery(endpointExposureSpec(types)),
+      projectId: scope && scope.length ? scope[0] : null
+    };
+  }
   var Q_ISSUES = "query SidekickAiIssues($first: Int, $after: String, $filterBy: IssueFilters, $orderBy: IssueOrder) {\n  issuesV2(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      type\n      severity\n      status\n      createdAt\n      updatedAt\n      dueAt\n      resolvedAt\n      resolutionReason\n      resolutionNote\n      rejectionExpiredAt\n      validatedAsExploitable\n      environments\n      assignee { id name primaryEmail }\n      resolvedBy { user { id name email } serviceAccount { id name type } }\n      notes { id text }\n      serviceTickets { id externalId name url }\n      applicationServices { id displayName }\n      aiRemediationAnalysis { verdict recommendedSeverity }\n      projects { id name slug riskProfile { businessImpact } }\n      entitySnapshot {\n        id\n        type\n        status\n        name\n        cloudPlatform\n        region\n        subscriptionName\n        subscriptionId\n        subscriptionExternalId\n        nativeType\n        externalId\n        tags\n        kubernetesClusterName\n        kubernetesNamespaceName\n        resourceGroupId\n      }\n      sourceRules {\n        ... on Control {\n          id\n          name\n          description\n          severity\n          risks\n          threats\n          resolutionRecommendation\n        }\n        ... on CloudConfigurationRule {\n          id\n          name\n          description\n          risks\n          threats\n          control { resolutionRecommendation severity }\n        }\n        ... on CloudEventRule {\n          id\n          name\n          description\n          risks\n          threats\n        }\n      }\n    }\n  }\n}\n";
   function aiIssuesVariables(scope) {
     const filterBy = {
@@ -2857,6 +3372,24 @@ var Server = (() => {
       locked: "This step has no editable filter: normalizeSensitiveDataAccessPage rebuilds the chain's edges from which entity TYPES a row carries, so a changed selection set would yield confidently wrong edges rather than an error."
     },
     {
+      stepId: "HOST_EXPOSURE",
+      fields: [],
+      locked: "This step has no editable filter: normalizeHostExposurePage rebuilds the HOSTED_ON and SERVES edges from which entity TYPES a row carries, and its whole claim is `accessibleFrom.internet` on the compute \u2014 widen that and the step reports unreachable hosts as reachable ones."
+    },
+    {
+      stepId: "ENDPOINT_EXPOSURE",
+      // No knob, and the exposure-level list is exactly the knob it looks like it should have.
+      // It is withheld because the same two values appear in a SECOND place: RATED_EXPOSURE_LEVELS
+      // in domain/exposureQuery.ts, which is what withExposureEvidence tests the returned level
+      // against. That double reading is deliberate — ENDPOINT rows also arrive from
+      // HOST_EXPOSURE, unfiltered and (in the capture) rated Low, so the bar has to be applied
+      // to the payload rather than assumed from the query. An operator who widened the filter
+      // here would collect Low-rated endpoints as graph nodes and see the exposure figure not
+      // move, which is a worse answer than no knob at all.
+      fields: [],
+      locked: "This step has no editable filter: the High/Medium bar is also applied to the endpoints the host-exposure step returns unfiltered, so moving it here would widen what is collected without moving what counts as an exposure."
+    },
+    {
       stepId: "FRAMEWORKS_LIST",
       // Declared with no fields rather than left out of this list entirely: an absent spec
       // renders as the generic "no spec" fallback, which reads as an oversight, and someone
@@ -3325,7 +3858,11 @@ var Server = (() => {
     VIRTUAL_MACHINE: 5,
     SERVERLESS: 5,
     CONTAINER_IMAGE: 5,
-    REPOSITORY: 5
+    REPOSITORY: 5,
+    // Beside the compute that serves it. An endpoint is the far edge of the estate, but it is
+    // inventory rather than evidence, so it belongs in the infrastructure band and not in the
+    // risk band where INTERNET_EXPOSURE sits.
+    ENDPOINT: 5
   };
   var LANE_COUNT = 6;
   function laneOf(kind, summaryOf) {
@@ -4028,6 +4565,7 @@ var Server = (() => {
 
   // src/domain/riskConditions.ts
   function conditionState(node2, key) {
+    var _a5, _b;
     switch (key) {
       case "MISSING_GUARDRAIL":
         return node2.guardrailMissing === true;
@@ -4036,6 +4574,12 @@ var Server = (() => {
       case "SENSITIVE_DATA":
         return node2.hasSensitiveData === true || node2.hasAccessToSensitiveData === true;
       case "INTERNET_EXPOSURE": {
+        const evidence = node2.exposureEvidence;
+        if (evidence) {
+          const hosts = (_a5 = evidence.hostIds) != null ? _a5 : [];
+          const endpoints = (_b = evidence.endpointIds) != null ? _b : [];
+          if (hosts.length > 0 || endpoints.length > 0) return true;
+        }
         const reachable = node2.isAccessibleFromInternet;
         const openToAll = node2.isOpenToAllInternet;
         if (reachable === true || openToAll === true) return true;
@@ -4346,9 +4890,66 @@ var Server = (() => {
     return withDerivedNodes(doc, {
       kind: "INTERNET_EXPOSURE",
       prefix: "internet",
-      name: "Internet exposure",
+      name: (n) => {
+        var _a5, _b;
+        const evidence = n.exposureEvidence;
+        if ((_a5 = evidence == null ? void 0 : evidence.endpointIds) == null ? void 0 : _a5.length) return "Internet exposure \xB7 validated endpoint";
+        if ((_b = evidence == null ? void 0 : evidence.hostIds) == null ? void 0 : _b.length) return "Internet exposure \xB7 exposed host";
+        return "Internet exposure";
+      },
       edgeType: "EXPOSED_TO_INTERNET"
     });
+  }
+  function withExposureEvidence(doc) {
+    const byId = indexBy(doc.nodes, (n) => n.id);
+    const hostsOf = /* @__PURE__ */ new Map();
+    const servesOf = /* @__PURE__ */ new Map();
+    for (const edge2 of doc.edges) {
+      if (edge2.type === "HOSTED_ON") pushInto(hostsOf, edge2.src, edge2.dst);
+      else if (edge2.type === "SERVES") pushInto(servesOf, edge2.src, edge2.dst);
+    }
+    if (!hostsOf.size && !servesOf.size) return doc;
+    let touched = false;
+    const nodes = doc.nodes.map((node2) => {
+      var _a5, _b, _c, _d, _e, _f, _g;
+      if (!AI_ASSET_KINDS.includes(node2.kind)) return node2;
+      const hostIds = ((_a5 = hostsOf.get(node2.id)) != null ? _a5 : []).filter((id) => {
+        const host = byId.get(id);
+        return !!host && conditionHolds(host, "INTERNET_EXPOSURE");
+      });
+      const endpointIds = [];
+      let worst;
+      const consider = (id) => {
+        const endpoint = byId.get(id);
+        if (!endpoint || endpoint.kind !== "ENDPOINT") return;
+        if (!isRatedExposure(endpoint.exposureLevel, endpoint.portValidation)) return;
+        if (endpointIds.indexOf(id) < 0) endpointIds.push(id);
+        worst = worseExposureLevel(worst, endpoint.exposureLevel);
+      };
+      for (const id of (_b = servesOf.get(node2.id)) != null ? _b : []) consider(id);
+      for (const hostId of (_c = hostsOf.get(node2.id)) != null ? _c : []) {
+        for (const id of (_d = servesOf.get(hostId)) != null ? _d : []) consider(id);
+      }
+      const ports = [];
+      const sourceIpRanges = [];
+      for (const hostId of hostIds) {
+        const evidence2 = (_e = byId.get(hostId)) == null ? void 0 : _e.exposureEvidence;
+        for (const p of (_f = evidence2 == null ? void 0 : evidence2.ports) != null ? _f : []) if (ports.indexOf(p) < 0) ports.push(p);
+        for (const r of (_g = evidence2 == null ? void 0 : evidence2.sourceIpRanges) != null ? _g : []) {
+          if (sourceIpRanges.indexOf(r) < 0) sourceIpRanges.push(r);
+        }
+      }
+      if (!hostIds.length && !endpointIds.length) return node2;
+      const evidence = {};
+      if (hostIds.length) evidence.hostIds = hostIds;
+      if (endpointIds.length) evidence.endpointIds = endpointIds;
+      if (worst) evidence.exposureLevel = worst;
+      if (ports.length) evidence.ports = ports;
+      if (sourceIpRanges.length) evidence.sourceIpRanges = sourceIpRanges;
+      touched = true;
+      return { ...node2, exposureEvidence: evidence };
+    });
+    return touched ? { nodes, edges: doc.edges, syncedAt: doc.syncedAt } : doc;
   }
   function withExcessivePrivilegeNodes(doc) {
     return withDerivedNodes(doc, {
@@ -4623,7 +5224,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "0b9a7a0f6163" : "dev";
+  var BUILD_ID = true ? "ce592847c710" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -4778,428 +5379,6 @@ var Server = (() => {
     return value;
   }
 
-  // src/domain/graphExpand.ts
-  function typeList(t) {
-    return Array.isArray(t) ? t : [t];
-  }
-  function isSelected(spec) {
-    return spec.select !== false;
-  }
-  var AGENT_EXPANSION = {
-    type: "AI_AGENT",
-    relationships: [
-      // 1. Execution identity and its CIEM findings.
-      {
-        type: "PRINCIPAL",
-        optional: true,
-        edge: { type: "ACTING_AS" },
-        relationships: [
-          {
-            type: "EXCESSIVE_ACCESS_FINDING",
-            optional: true,
-            edge: { type: "CONTAINS" }
-          }
-        ]
-      },
-      // 2. Data the agent reads, and what has been classified in it.
-      {
-        type: ["AI_DATASET", "BUCKET"],
-        optional: true,
-        edge: { type: "READS_DATA_FROM" },
-        relationships: [
-          {
-            type: ["BUCKET", "DATABASE"],
-            optional: true,
-            edge: { type: "READS_DATA_FROM" },
-            relationships: [
-              { type: "DATA_FINDING", optional: true, edge: { type: "HAS_DATA_FINDING" } }
-            ]
-          },
-          { type: "DATA_FINDING", optional: true, edge: { type: "HAS_DATA_FINDING" } }
-        ]
-      },
-      // 3. Data the agent writes.
-      {
-        type: "BUCKET",
-        optional: true,
-        edge: { type: "STORES_DATA_IN" },
-        relationships: [
-          { type: "DATA_FINDING", optional: true, edge: { type: "HAS_DATA_FINDING" } }
-        ]
-      },
-      // 4. Tooling: the tool, whatever runs it, that runner's identity and reachable data,
-      //    and any agent the tool invokes in turn. The INVOKES leg is the agent-to-agent
-      //    trust chain ai/ai_agents_discovery_queries.md names as unmodeled.
-      {
-        type: "AI_TOOL",
-        optional: true,
-        edge: { type: "USES" },
-        relationships: [
-          {
-            type: ["SERVERLESS", "WEB_SERVICE"],
-            optional: true,
-            edge: { type: "RUNS", reverse: true },
-            relationships: [
-              {
-                type: "SERVICE_ACCOUNT",
-                optional: true,
-                edge: { type: "ACTING_AS" },
-                relationships: [
-                  {
-                    // Not selected: the binding is the mechanism, the resource is the point.
-                    type: "IAM_BINDING",
-                    select: false,
-                    optional: true,
-                    edge: { type: "ENTITLES", reverse: true },
-                    where: { accessTypes: { EQUALS: ["Data"] } },
-                    relationships: [
-                      {
-                        type: "DATA_RESOURCE",
-                        optional: true,
-                        edge: { type: "ALLOWS_ACCESS_TO" },
-                        where: {
-                          _or: [
-                            { publicAccessTypes: { IS_SET: false } },
-                            { publicAccessTypes: { LIST_DOES_NOT_CONTAIN_ANY: ["Data"] } }
-                          ],
-                          hasSensitiveData: { EQUALS: true }
-                        },
-                        relationships: [
-                          {
-                            type: "DATA_FINDING",
-                            optional: true,
-                            edge: { type: "HAS_DATA_FINDING" },
-                            where: {
-                              severity: {
-                                EQUALS: [
-                                  "DataFindingSeverityCritical",
-                                  "DataFindingSeverityHigh"
-                                ]
-                              }
-                            }
-                          }
-                        ]
-                      }
-                    ]
-                  }
-                ]
-              },
-              { type: "PRINCIPAL", optional: true, edge: { type: "ACTING_AS" } },
-              { type: "AI_AGENT", optional: true, edge: { type: "INVOKES" } }
-            ]
-          }
-        ]
-      },
-      // 5. Models and services, their guardrails, endpoints, identities, and the pipeline
-      //    that produced them.
-      {
-        type: ["AI_MODEL", "AI_SERVICE"],
-        optional: true,
-        edge: { type: "USES" },
-        relationships: [
-          {
-            type: "AI_MODEL",
-            optional: true,
-            edge: { type: "USES" },
-            relationships: [
-              {
-                type: "AI_GUARDRAIL",
-                optional: true,
-                edge: { type: "PROTECTS", reverse: true }
-              },
-              { type: "ENDPOINT", optional: true, edge: { type: "SERVES" } },
-              {
-                type: "PRINCIPAL",
-                optional: true,
-                edge: { type: "ACTING_AS" },
-                relationships: [
-                  {
-                    type: "EXCESSIVE_ACCESS_FINDING",
-                    optional: true,
-                    edge: { type: "ALERTED_ON", reverse: true }
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            type: "AI_PIPELINE",
-            optional: true,
-            edge: { type: "PRODUCES", reverse: true },
-            relationships: [
-              { type: "AI_MODEL", optional: true, edge: { type: "USES" } },
-              {
-                type: ["AI_DATASET", "BUCKET"],
-                optional: true,
-                edge: { type: "READS_DATA_FROM" },
-                relationships: [
-                  {
-                    type: ["BUCKET", "DATABASE"],
-                    optional: true,
-                    edge: { type: "READS_DATA_FROM" }
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      // 6. The agent's own guardrail and its misconfigurations.
-      {
-        type: "AI_GUARDRAIL",
-        optional: true,
-        edge: { type: "PROTECTS", reverse: true },
-        relationships: [
-          {
-            type: "CONFIGURATION_FINDING",
-            optional: true,
-            edge: { type: "ALERTED_ON", reverse: true }
-          }
-        ]
-      },
-      // 7. Network reachability.
-      { type: "ENDPOINT", optional: true, edge: { type: "SERVES" } },
-      // 8. The agent's own configuration findings.
-      {
-        type: "CONFIGURATION_FINDING",
-        optional: true,
-        edge: { type: "ALERTED_ON", reverse: true }
-      },
-      // 9. Compute the agent runs on, that compute's identity and reachable data, and the
-      //    kubernetes chain up to the cluster's own identity.
-      {
-        type: ["VIRTUAL_MACHINE", "SERVERLESS", "CONTAINER_IMAGE"],
-        optional: true,
-        edge: { type: "RUNS", reverse: true },
-        relationships: [
-          { type: "ENDPOINT", optional: true, edge: { type: "SERVES" } },
-          {
-            type: "SERVICE_ACCOUNT",
-            optional: true,
-            edge: { type: "ACTING_AS" },
-            relationships: [
-              {
-                type: "IAM_BINDING",
-                select: false,
-                optional: true,
-                edge: { type: "ENTITLES", reverse: true },
-                where: { accessTypes: { EQUALS: ["Data"] } },
-                relationships: [
-                  {
-                    type: "DATA_RESOURCE",
-                    optional: true,
-                    edge: { type: "ALLOWS_ACCESS_TO" },
-                    where: {
-                      _or: [
-                        { publicAccessTypes: { IS_SET: false } },
-                        { publicAccessTypes: { LIST_DOES_NOT_CONTAIN_ANY: ["Data"] } }
-                      ],
-                      hasSensitiveData: { EQUALS: true }
-                    },
-                    relationships: [
-                      {
-                        type: "DATA_FINDING",
-                        optional: true,
-                        edge: { type: "HAS_DATA_FINDING" },
-                        where: {
-                          severity: {
-                            EQUALS: [
-                              "DataFindingSeverityCritical",
-                              "DataFindingSeverityHigh"
-                            ]
-                          }
-                        }
-                      }
-                    ]
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            type: "CONTAINER",
-            optional: true,
-            edge: { type: "INSTANCE_OF", reverse: true },
-            relationships: [
-              {
-                type: "DEPLOYMENT",
-                optional: true,
-                edge: { type: "CONTAINS", reverse: true },
-                relationships: [
-                  {
-                    type: "KUBERNETES_CLUSTER",
-                    optional: true,
-                    edge: { type: "CONTAINS", reverse: true },
-                    relationships: [
-                      {
-                        type: "SERVICE_ACCOUNT",
-                        optional: true,
-                        edge: { type: "ACTING_AS" },
-                        relationships: [
-                          {
-                            // Selected here, unlike the two above it. The console's own
-                            // asymmetry, kept: dropping it would shift every later slot.
-                            type: "IAM_BINDING",
-                            optional: true,
-                            edge: { type: "ENTITLES", reverse: true },
-                            relationships: [
-                              {
-                                type: "DATA_RESOURCE",
-                                optional: true,
-                                edge: { type: "ALLOWS_ACCESS_TO" }
-                              }
-                            ]
-                          }
-                        ]
-                      }
-                    ]
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      // 10. MCP servers and the tools they expose.
-      {
-        type: "MCP_SERVER",
-        optional: true,
-        edge: { type: "USES" },
-        relationships: [
-          { type: "AI_TOOL", optional: true, edge: { type: "EXPOSES" } }
-        ]
-      }
-    ]
-  };
-  function toGraphEntityQuery(spec, vertexId) {
-    var _a5;
-    const out = { type: typeList(spec.type) };
-    if (isSelected(spec)) out["select"] = true;
-    const where = vertexId ? { _vertexID: { EQUALS: vertexId } } : spec.where;
-    if (where) out["where"] = where;
-    const rels = (_a5 = spec.relationships) != null ? _a5 : [];
-    if (rels.length) {
-      out["relationships"] = rels.map((child) => {
-        var _a6;
-        const edge2 = (_a6 = child.edge) != null ? _a6 : { type: "RELATED_TO" };
-        const rel = {
-          type: [edge2.reverse ? { type: edge2.type, reverse: true } : { type: edge2.type }],
-          with: toGraphEntityQuery(child)
-        };
-        if (child.optional) rel["optional"] = true;
-        if (child.negate) rel["negate"] = true;
-        return rel;
-      });
-    }
-    return out;
-  }
-  function flattenSlots(spec) {
-    const slots = [];
-    function walk(node2, parentIndex2) {
-      var _a5, _b, _c;
-      let ownIndex = parentIndex2;
-      if (isSelected(node2)) {
-        ownIndex = slots.length;
-        slots.push({
-          index: ownIndex,
-          parentIndex: parentIndex2,
-          types: typeList(node2.type),
-          edgeType: (_a5 = node2.edge) == null ? void 0 : _a5.type,
-          reverse: (_b = node2.edge) == null ? void 0 : _b.reverse
-        });
-      }
-      for (const child of (_c = node2.relationships) != null ? _c : []) walk(child, ownIndex);
-    }
-    walk(spec, null);
-    return slots;
-  }
-  function expandEdgeId(src, type, dst) {
-    return `${src}|${type}|${dst}`;
-  }
-  function str(v) {
-    return v === null || v === void 0 || v === "" ? void 0 : String(v);
-  }
-  function triBool(v) {
-    return v === true ? true : v === false ? false : null;
-  }
-  function toExpandedNode(raw) {
-    var _a5;
-    const id = str(raw["id"]);
-    if (!id) return null;
-    const rawType = str(raw["type"]);
-    const known = kindFromWizType(rawType);
-    const projects = Array.isArray(raw["projects"]) ? raw["projects"].map((p) => {
-      var _a6;
-      return (_a6 = str(p == null ? void 0 : p["name"])) != null ? _a6 : "";
-    }).filter(Boolean) : [];
-    const pickStr = (key) => {
-      var _a6;
-      return (_a6 = str(entityField(raw, key))) != null ? _a6 : null;
-    };
-    const isTrue = (key) => entityField(raw, key) === true;
-    return {
-      id,
-      name: (_a5 = str(raw["name"])) != null ? _a5 : id,
-      kind: known != null ? known : rawType ? rawType.toUpperCase().replace(/[^A-Z0-9]+/g, "_") : "UNKNOWN",
-      unmodeled: !known,
-      nativeType: pickStr("nativeType"),
-      cloud: pickStr("cloudPlatform"),
-      region: pickStr("region"),
-      status: pickStr("status"),
-      firstSeen: pickStr("firstSeen"),
-      lastSeen: pickStr("lastSeen"),
-      externalId: pickStr("externalId"),
-      projects,
-      // DataFinding is the one entity here carrying its own severity; everything else is
-      // inventory and gets its severity from the register, which this path does not touch.
-      severity: pickStr("severity"),
-      internet: triBool(entityField(raw, "isAccessibleFromInternet")),
-      openInternet: triBool(entityField(raw, "isOpenToAllInternet")),
-      sensitiveData: isTrue("hasSensitiveData"),
-      sensitiveAccess: isTrue("hasAccessToSensitiveData"),
-      highPriv: isTrue("hasHighPrivileges"),
-      adminPriv: isTrue("hasAdminPrivileges")
-    };
-  }
-  function decodeExpansion(slots, rows) {
-    const nodes = /* @__PURE__ */ new Map();
-    const edges2 = /* @__PURE__ */ new Map();
-    let arityMismatches = 0;
-    let rowsDecoded = 0;
-    for (const row of Array.isArray(rows) ? rows : []) {
-      const entities = row == null ? void 0 : row["entities"];
-      if (!Array.isArray(entities)) continue;
-      if (entities.length !== slots.length) {
-        arityMismatches += 1;
-        continue;
-      }
-      rowsDecoded += 1;
-      const resolved = [];
-      for (let i = 0; i < slots.length; i += 1) {
-        const raw = entities[i];
-        const node2 = raw && typeof raw === "object" ? toExpandedNode(raw) : null;
-        resolved.push(node2);
-        if (node2 && !nodes.has(node2.id)) nodes.set(node2.id, node2);
-      }
-      for (const slot of slots) {
-        const self = resolved[slot.index];
-        if (!self || slot.parentIndex === null || !slot.edgeType) continue;
-        const parent = resolved[slot.parentIndex];
-        if (!parent || parent.id === self.id) continue;
-        const src = slot.reverse ? self.id : parent.id;
-        const dst = slot.reverse ? parent.id : self.id;
-        const id = expandEdgeId(src, slot.edgeType, dst);
-        if (!edges2.has(id)) edges2.set(id, { id, src, dst, type: slot.edgeType });
-      }
-    }
-    return {
-      nodes: Array.from(nodes.values()),
-      edges: Array.from(edges2.values()),
-      arityMismatches,
-      rowsDecoded
-    };
-  }
-
   // src/server/settingsStore.ts
   var settingsMemo;
   function loadSettings() {
@@ -5343,6 +5522,10 @@ var Server = (() => {
     };
     const purpose = str2(f("identityPurpose"));
     if (purpose) node2.identityPurpose = purpose;
+    const exposureLevel = str2(f("exposureLevel"));
+    if (exposureLevel) node2.exposureLevel = exposureLevel;
+    const portValidation = str2(f("portValidation"));
+    if (portValidation) node2.portValidation = portValidation;
     const technology = raw["technology"];
     if (technology && typeof technology === "object") {
       const cats = technology["categories"];
@@ -6021,6 +6204,83 @@ var Server = (() => {
       syncedAt: doc.syncedAt
     };
   }
+  var HOST_KIND_SET = new Set(HOST_KINDS);
+  function rawEntityOfKind(row, kinds) {
+    for (const raw of rawEntitiesOf(row)) {
+      const kind = kindFromWizType(raw["type"]);
+      if (kind && kinds.has(kind)) return raw;
+    }
+    return void 0;
+  }
+  function addUnique(list2, value) {
+    if (value && list2.indexOf(value) < 0) list2.push(value);
+  }
+  function normalizeHostExposurePage(rows) {
+    const part = emptyPart();
+    for (const row of rows) {
+      const entities = entitiesOf(row);
+      const asset = entities.find((e) => AI_ASSET_KINDS.includes(e.kind));
+      const host = entities.find((e) => HOST_KIND_SET.has(e.kind));
+      part.nodes.push(...entities);
+      if (!host) continue;
+      if (asset) {
+        part.edges.push({
+          id: edgeId(asset.id, "HOSTED_ON", host.id),
+          src: asset.id,
+          dst: host.id,
+          type: "HOSTED_ON"
+        });
+      }
+      const rawHost = rawEntityOfKind(row, HOST_KIND_SET);
+      const exposures = rawHost ? rawHost["publicExposures"] : void 0;
+      const exposureNodes = exposures && typeof exposures === "object" ? exposures["nodes"] : null;
+      if (!Array.isArray(exposureNodes)) continue;
+      const ports = [];
+      const sourceIpRanges = [];
+      for (const exposure of exposureNodes) {
+        if (!exposure || typeof exposure !== "object") continue;
+        addUnique(ports, str2(exposure["portRange"]));
+        addUnique(sourceIpRanges, str2(exposure["sourceIpRange"]));
+        const endpoints = exposure["applicationEndpoints"];
+        if (!Array.isArray(endpoints)) continue;
+        for (const rawEndpoint of endpoints) {
+          const endpoint = normalizeCloudResource(rawEndpoint);
+          if (!endpoint || endpoint.kind !== "ENDPOINT") continue;
+          part.nodes.push(endpoint);
+          part.edges.push({
+            id: edgeId(host.id, "SERVES", endpoint.id),
+            src: host.id,
+            dst: endpoint.id,
+            type: "SERVES"
+          });
+        }
+      }
+      if (ports.length || sourceIpRanges.length) {
+        const evidence = {};
+        if (ports.length) evidence.ports = ports;
+        if (sourceIpRanges.length) evidence.sourceIpRanges = sourceIpRanges;
+        host.exposureEvidence = evidence;
+      }
+    }
+    return part;
+  }
+  function normalizeEndpointExposurePage(rows) {
+    const part = emptyPart();
+    for (const row of rows) {
+      const entities = entitiesOf(row);
+      const asset = entities.find((e) => AI_ASSET_KINDS.includes(e.kind));
+      const endpoint = entities.find((e) => e.kind === "ENDPOINT");
+      part.nodes.push(...entities);
+      if (!asset || !endpoint) continue;
+      part.edges.push({
+        id: edgeId(asset.id, "SERVES", endpoint.id),
+        src: asset.id,
+        dst: endpoint.id,
+        type: "SERVES"
+      });
+    }
+    return part;
+  }
   function normalizeIdentityAccessPage(rows) {
     const part = emptyPart();
     for (const row of rows) {
@@ -6125,7 +6385,12 @@ var Server = (() => {
       projects: ((_g = seed.projects) != null ? _g : []).map((name) => ({ id: `proj-${name.toLowerCase()}`, name })),
       technologyCategories: seed.techCats,
       identityPurpose: seed.identityPurpose,
-      issueAnalytics: seed.issueAnalytics
+      issueAnalytics: seed.issueAnalytics,
+      // Left undefined unless a seed sets them, so every node that is not an endpoint or an
+      // exposed host reads back exactly as it did before these columns existed.
+      exposureLevel: seed.exposureLevel,
+      portValidation: seed.portValidation,
+      exposureEvidence: seed.exposureEvidence
     };
   }
   function edge(src, type, dst, accessType) {
@@ -6331,7 +6596,22 @@ var Server = (() => {
     { id: "db-analytics", kind: "DATABASE", name: "db-analytics", cloud: "GCP", region: "europe-west1", projects: ["PROJECT-DELTA"] },
     // Compute / supply chain for the hosted agents
     { id: "vm-agent-i-host", kind: "VIRTUAL_MACHINE", name: "vm-agent-i-host", cloud: "GCP", region: "europe-west4", internet: false, projects: ["PROJECT-ZETA"] },
-    { id: "run-agent-h", kind: "SERVERLESS", name: "cloudrun-agent-h", cloud: "GCP", region: "europe-west1", internet: true, projects: ["PROJECT-DELTA"] },
+    { id: "run-agent-h", kind: "SERVERLESS", name: "cloudrun-agent-h", cloud: "GCP", region: "europe-west1", internet: true, openInternet: true, projects: ["PROJECT-DELTA"], exposureEvidence: { ports: ["443", "80"], sourceIpRanges: ["0.0.0.0/0"] } },
+    // Network exposure, seeded to put BOTH grades of evidence on one screen and to make them
+    // visibly disagree — which is the whole reason the two queries are two steps.
+    //
+    //   endpoint-agent-h   Low  + Open, on the internet-reachable Cloud Run revision.
+    //                      This is the capture's own shape (exemples/ai_exposure_host_response.js):
+    //                      openToAllInternet, ports 80 and 443 open to 0.0.0.0/0, and both
+    //                      endpoints rated Low because they redirect to SSO. agent-h-chatbot
+    //                      is therefore exposed VIA ITS HOST and NOT validated.
+    //   endpoint-agent-i   High + Open, served directly by an agent whose VM is NOT reachable.
+    //                      The mirror image: validated, with no host exposure behind it.
+    //
+    // Between them the dry run exercises every branch of withExposureEvidence, including the
+    // one that must NOT fire.
+    { id: "endpoint-agent-h", kind: "ENDPOINT", name: "https://agent-h-chatbot.a.run.app:443", cloud: "GCP", region: "europe-west1", exposureLevel: "Low", portValidation: "Open", projects: ["PROJECT-DELTA"] },
+    { id: "endpoint-agent-i", kind: "ENDPOINT", name: "https://agent-i.internal-tools.example:8443", cloud: "GCP", region: "europe-west4", exposureLevel: "High", portValidation: "Open", projects: ["PROJECT-ZETA"] },
     { id: "img-agent-h", kind: "CONTAINER_IMAGE", name: "img-agent-h:latest", cloud: "GCP", projects: ["PROJECT-DELTA"] },
     { id: "repo-agent-h", kind: "REPOSITORY", name: "repo-agent-h", projects: ["PROJECT-DELTA"] },
     // CIEM findings
@@ -6419,6 +6699,8 @@ var Server = (() => {
   edges.push(edge("model-bedrock-claude", "ENFORCES", "guardrail-bedrock"));
   edges.push(edge("agent-i", "HOSTED_ON", "vm-agent-i-host"));
   edges.push(edge("agent-h-chatbot", "HOSTED_ON", "run-agent-h"));
+  edges.push(edge("run-agent-h", "SERVES", "endpoint-agent-h"));
+  edges.push(edge("agent-i", "SERVES", "endpoint-agent-i"));
   edges.push(edge("agent-h-chatbot", "BUILT_FROM", "img-agent-h"));
   edges.push(edge("img-agent-h", "BUILT_FROM", "repo-agent-h"));
   edges.push(edge("agent-a", "USES_MODEL", "model-text-embedding-005"));
@@ -7259,7 +7541,7 @@ var Server = (() => {
     }
   }
   function assetToRow(n) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t;
     return {
       id: n.id,
       kind: n.kind,
@@ -7294,11 +7576,18 @@ var Server = (() => {
       // undefined, not as "zero findings". The graph draws no aggregate for either, but the
       // pillar-C knob and the DSPM coverage state both need to tell them apart.
       data_finding_count: (_r = n.dataFindingCount) != null ? _r : null,
-      data_findings_json: n.dataFindingSeverities ? JSON.stringify(n.dataFindingSeverities) : null
+      data_findings_json: n.dataFindingSeverities ? JSON.stringify(n.dataFindingSeverities) : null,
+      exposure_level: (_s = n.exposureLevel) != null ? _s : null,
+      port_validation: (_t = n.portValidation) != null ? _t : null,
+      // `null` rather than `"{}"` when there is no evidence, and rowToAsset reads it back as
+      // undefined: an asset the exposure steps never reached must not become one they reached
+      // and found clean. conditionState falls through to the flags for the first and would
+      // have to keep falling through for the second — but only one of them is honest about it.
+      exposure_evidence_json: n.exposureEvidence ? JSON.stringify(n.exposureEvidence) : null
     };
   }
   function rowToAsset(r) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r;
     const node2 = {
       id: String((_a5 = r["id"]) != null ? _a5 : ""),
       kind: String((_b = r["kind"]) != null ? _b : "AI_AGENT"),
@@ -7350,6 +7639,12 @@ var Server = (() => {
     }
     const findingSevs = parseJson(r["data_findings_json"], null);
     if (findingSevs) node2.dataFindingSeverities = findingSevs;
+    const exposureLevel = (_q = r["exposure_level"]) != null ? _q : null;
+    if (exposureLevel) node2.exposureLevel = exposureLevel;
+    const portValidation = (_r = r["port_validation"]) != null ? _r : null;
+    if (portValidation) node2.portValidation = portValidation;
+    const evidence = parseJson(r["exposure_evidence_json"], null);
+    if (evidence) node2.exposureEvidence = evidence;
     return node2;
   }
   function edgeToRow(e) {
@@ -7692,7 +7987,8 @@ var Server = (() => {
   function persistSync(rawDoc, issues2, hints, meta, now, findings = [], dataFindings = [], frameworks = [], posture = [], frameworkPolicies = []) {
     const { version: ruleVersion, rule } = getAarsRule2();
     const counted = withDataFindingCounts(rawDoc, dataFindings);
-    const enriched = enrichGraphDoc(counted, issues2, hints, rule);
+    const exposed = withExposureEvidence(counted);
+    const enriched = enrichGraphDoc(exposed, issues2, hints, rule);
     const assetNodes = realNodes(enriched.nodes);
     const assetEdges = enriched.edges.filter((e) => e.type !== "HAS_ISSUE");
     overwrite(TABS.assets, assetNodes.map(assetToRow));
@@ -8080,6 +8376,39 @@ var Server = (() => {
         normalize: normalizeSensitiveDataAccessPage,
         optional: true
       },
+      // Network exposure, in two steps because they are two claims. HOST_EXPOSURE says the
+      // compute under an AI asset is reachable; ENDPOINT_EXPOSURE says Wiz's scanner reached a
+      // live endpoint it serves and policy rates that a real exposure. The capture proves they
+      // can disagree — a Cloud Run revision that is openToAllInternet, serving endpoints rated
+      // Low because they redirect to SSO. See domain/exposureQuery.ts.
+      //
+      // Both run AFTER the CIEM and DSPM steps for the reason SENSITIVE_DATA_ACCESS gives:
+      // they re-emit the AI asset as a thin projection, and mergeParts lets later truthy
+      // values win field-wise, so landing the richer projections first means these can only
+      // add to them.
+      {
+        id: "HOST_EXPOSURE",
+        area: "exposure",
+        writes: [
+          "ai_edges (HOSTED_ON, SERVES)",
+          "ai_assets (VM/SERVERLESS + ENDPOINT rows, exposure_evidence_json)"
+        ],
+        run: "graphSearch",
+        query: Q_AI_EXPOSURE,
+        extraVariables: hostExposureVariables(types, projectScope()),
+        normalize: normalizeHostExposurePage,
+        optional: true
+      },
+      {
+        id: "ENDPOINT_EXPOSURE",
+        area: "exposure",
+        writes: ["ai_edges (SERVES)", "ai_assets (ENDPOINT rows, exposure_level, port_validation)"],
+        run: "graphSearch",
+        query: Q_AI_EXPOSURE,
+        extraVariables: endpointExposureVariables(types, projectScope()),
+        normalize: normalizeEndpointExposurePage,
+        optional: true
+      },
       {
         id: "IDENTITY_ACCESS",
         area: "identity",
@@ -8102,6 +8431,11 @@ var Server = (() => {
       }
     ];
   }
+  var TYPE_DEPENDENT_STEPS = /* @__PURE__ */ new Set([
+    "INVENTORY_AI",
+    "HOST_EXPOSURE",
+    "ENDPOINT_EXPOSURE"
+  ]);
   function rootFieldOf(step) {
     var _a5;
     if (step.run === "cloudResources") return "cloudResourcesV2";
@@ -8141,10 +8475,10 @@ var Server = (() => {
         defaultVariables: base,
         editable: isEditableStep(step.id),
         overridden: changedPaths(step.id, base, overrides[step.id]),
-        // Only INVENTORY_AI's default depends on resolving types against the tenant, so it is
-        // the only step whose description can be provisional. Said out loud rather than shown
-        // as settled fact — this page's whole job is not doing that.
-        typesResolved: step.id === "INVENTORY_AI" ? resolved.resolved : true
+        // Three steps build their filter from the tenant-resolved AI type list, so only those
+        // three can be described provisionally. Said out loud rather than shown as settled
+        // fact — this page's whole job is not doing that.
+        typesResolved: TYPE_DEPENDENT_STEPS.has(step.id) ? resolved.resolved : true
       };
     });
   }
@@ -8165,6 +8499,10 @@ var Server = (() => {
         return aiConfigFindingsVariables(projectScope());
       case "AGENTIC_IDENTITIES":
         return aiPrincipalsVariables(projectScope());
+      case "HOST_EXPOSURE":
+        return hostExposureVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
+      case "ENDPOINT_EXPOSURE":
+        return endpointExposureVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
       case "FRAMEWORKS_LIST":
         return aiSecurityFrameworksVariables();
       default:
@@ -8663,7 +9001,7 @@ var Server = (() => {
     });
   }
   function assetRow(n) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G;
     return {
       id: n.id,
       name: n.name,
@@ -8682,28 +9020,36 @@ var Server = (() => {
       comboGroups: (_l = n.comboGroups) != null ? _l : [],
       internet: (_m = n.isAccessibleFromInternet) != null ? _m : null,
       openInternet: (_n = n.isOpenToAllInternet) != null ? _n : null,
-      sensitiveAccess: (_o = n.hasAccessToSensitiveData) != null ? _o : false,
-      sensitiveData: (_p = n.hasSensitiveData) != null ? _p : false,
-      highPriv: (_q = n.hasHighPrivileges) != null ? _q : false,
-      adminPriv: (_r = n.hasAdminPrivileges) != null ? _r : false,
-      guardrailMissing: (_s = n.guardrailMissing) != null ? _s : false,
+      // ENDPOINT rows only; null everywhere else. The pair is the dynamic scanner's verdict,
+      // and the detail sheet prints both because either alone is misleading — an open port
+      // behind SSO rates Low and is not an exposure.
+      exposureLevel: (_o = n.exposureLevel) != null ? _o : null,
+      portValidation: (_p = n.portValidation) != null ? _p : null,
+      // Null, not {}, when the exposure steps never reached this asset — the same "clean" vs
+      // "never asked" split dataFindingCount keeps below.
+      exposureEvidence: (_q = n.exposureEvidence) != null ? _q : null,
+      sensitiveAccess: (_r = n.hasAccessToSensitiveData) != null ? _r : false,
+      sensitiveData: (_s = n.hasSensitiveData) != null ? _s : false,
+      highPriv: (_t = n.hasHighPrivileges) != null ? _t : false,
+      adminPriv: (_u = n.hasAdminPrivileges) != null ? _u : false,
+      guardrailMissing: (_v = n.guardrailMissing) != null ? _v : false,
       // Null, not 0, when the sensitive-data traversal never reached this node: the graph
       // card and the insight row both key on truthiness, and a 0 would make "we never asked"
       // render exactly like "we looked and it is clean".
-      dataFindingCount: (_t = n.dataFindingCount) != null ? _t : null,
-      dataFindingSeverities: (_u = n.dataFindingSeverities) != null ? _u : null,
+      dataFindingCount: (_w = n.dataFindingCount) != null ? _w : null,
+      dataFindingSeverities: (_x = n.dataFindingSeverities) != null ? _x : null,
       // On the aggregate node only — the count it collapses.
-      summaryCount: (_v = n.summaryCount) != null ? _v : null,
-      technologyCategories: (_w = n.technologyCategories) != null ? _w : [],
-      cloudAccount: (_y = (_x = n.cloudAccount) == null ? void 0 : _x.name) != null ? _y : null,
+      summaryCount: (_y = n.summaryCount) != null ? _y : null,
+      technologyCategories: (_z = n.technologyCategories) != null ? _z : [],
+      cloudAccount: (_B = (_A = n.cloudAccount) == null ? void 0 : _A.name) != null ? _B : null,
       // Full account object, for the detail sheet — cloudAccount above stays a bare
       // name string since existing client code already reads it as one.
-      cloudAccountRef: (_z = n.cloudAccount) != null ? _z : null,
-      tags: (_A = n.tags) != null ? _A : [],
-      identityPurpose: (_B = n.identityPurpose) != null ? _B : null,
-      issueAnalytics: (_C = n.issueAnalytics) != null ? _C : null,
+      cloudAccountRef: (_C = n.cloudAccount) != null ? _C : null,
+      tags: (_D = n.tags) != null ? _D : [],
+      identityPurpose: (_E = n.identityPurpose) != null ? _E : null,
+      issueAnalytics: (_F = n.issueAnalytics) != null ? _F : null,
       // Full project objects, for the detail sheet — projects above stays name-only.
-      projectRefs: ((_D = n.projects) != null ? _D : []).map((p) => ({
+      projectRefs: ((_G = n.projects) != null ? _G : []).map((p) => ({
         id: p.id,
         name: p.name,
         businessImpact: p.businessImpact
@@ -8823,6 +9169,19 @@ var Server = (() => {
         // as undetermined, so folding it into "not exposed" under-reports.
         internetExposed: assets.filter((a) => conditionState(a, "INTERNET_EXPOSURE") === true).length,
         internetUnknown: assets.filter((a) => conditionState(a, "INTERNET_EXPOSURE") === null).length,
+        // The two grades of evidence behind `internetExposed`, reported separately because
+        // they are separate claims. `internetValidated` counts assets serving an endpoint Wiz's
+        // scanner connected to and policy rates High or Medium; `internetViaHost` counts those
+        // whose reachability was established one hop away, on the compute they run on. An
+        // asset can be in both, and one in neither is exposed by its own two flags.
+        internetValidated: assets.filter((a) => {
+          var _a6, _b2;
+          return ((_b2 = (_a6 = a.exposureEvidence) == null ? void 0 : _a6.endpointIds) != null ? _b2 : []).length > 0;
+        }).length,
+        internetViaHost: assets.filter((a) => {
+          var _a6, _b2;
+          return ((_b2 = (_a6 = a.exposureEvidence) == null ? void 0 : _a6.hostIds) != null ? _b2 : []).length > 0;
+        }).length,
         highPrivilege: assets.filter((a) => conditionHolds(a, "EXCESSIVE_PRIVILEGE")).length
       },
       aarsSeverityCounts,
