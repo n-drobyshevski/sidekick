@@ -27,7 +27,7 @@ export const FACET_KEYS = [
   "aarsSeverities", "severities", "kinds", "clouds", "regions", "projects", "flags",
 ];
 
-export const ASSET_FLAGS = ["combo", "guardrail", "agentic"];
+export const ASSET_FLAGS = ["combo", "guardrail", "agentic", "datafindings"];
 
 // Mirrors SEVERITY_ORDER / AARS_SEVERITY_ORDER in src/domain/config.ts.
 const SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
@@ -120,6 +120,7 @@ export function hasAssetFlag(row, flag) {
   if (flag === "combo") return num(row.combos) > 0;
   if (flag === "guardrail") return row.guardrailMissing === true;
   if (flag === "agentic") return row.agentic === true;
+  if (flag === "datafindings") return num(row.dataFindings) > 0;
   return false;
 }
 

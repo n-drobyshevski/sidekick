@@ -9,6 +9,7 @@
 import {
   buildAarsHintsFromFindings,
   enrichGraphDoc,
+  withDataFindingNodes,
   withExcessivePrivilegeNodes,
   withIdentityAccessNodes,
   withInternetExposureNodes,
@@ -16,7 +17,10 @@ import {
   withSensitiveDataNodes,
   type AarsHints,
 } from "../domain/graphEnrich";
-import type { FindingRow, GEdge, GNode, GraphDoc, IssueRow, NodeKind } from "../domain/graphTypes";
+import { withDataFindingCounts } from "../domain/syncNormalize";
+import type {
+  DataFindingRow, FindingRow, GEdge, GNode, GraphDoc, IssueRow, NodeKind,
+} from "../domain/graphTypes";
 import { edgeId } from "../domain/graphTypes";
 import { aarsSeverity, type AarsBands, type AarsRule } from "../domain/aars";
 import { isUnresolvedIssue, normalizeAarsSeverity } from "../domain/config";
@@ -86,6 +90,11 @@ export function assetToRow(n: GNode): Rec {
     tags_json: n.tags ? JSON.stringify(n.tags) : null,
     identity_purpose: n.identityPurpose ?? null,
     issue_analytics_json: n.issueAnalytics ? JSON.stringify(n.issueAnalytics) : null,
+    // `?? null` rather than `?? 0`: a store the traversal never reached must read back as
+    // undefined, not as "zero findings". The graph draws no aggregate for either, but the
+    // pillar-C knob and the DSPM coverage state both need to tell them apart.
+    data_finding_count: n.dataFindingCount ?? null,
+    data_findings_json: n.dataFindingSeverities ? JSON.stringify(n.dataFindingSeverities) : null,
   };
 }
 
@@ -137,6 +146,12 @@ export function rowToAsset(r: Rec): GNode {
   if (purpose) node.identityPurpose = purpose;
   const analytics = parseJson<GNode["issueAnalytics"] | null>(r["issue_analytics_json"], null);
   if (analytics) node.issueAnalytics = analytics;
+  const findingCount = r["data_finding_count"];
+  if (findingCount !== null && findingCount !== undefined && String(findingCount) !== "") {
+    node.dataFindingCount = Number(findingCount);
+  }
+  const findingSevs = parseJson<Record<string, number> | null>(r["data_findings_json"], null);
+  if (findingSevs) node.dataFindingSeverities = findingSevs;
   return node;
 }
 
@@ -275,6 +290,24 @@ export function rowToFinding(r: Rec): FindingRow {
   };
 }
 
+export function dataFindingToRow(f: DataFindingRow): Rec {
+  return {
+    id: f.id,
+    resource_id: f.resourceId,
+    name: f.name,
+    severity: f.severity,
+  };
+}
+
+export function rowToDataFinding(r: Rec): DataFindingRow {
+  return {
+    id: String(r["id"] ?? ""),
+    resourceId: String(r["resource_id"] ?? ""),
+    name: String(r["name"] ?? ""),
+    severity: String(r["severity"] ?? "UNKNOWN") as Severity,
+  };
+}
+
 // ----------------------------------------------------------------------- persist
 
 export interface SyncMeta {
@@ -295,9 +328,12 @@ export function persistSync(
   meta: SyncMeta,
   now?: number,
   findings: FindingRow[] = [],
+  dataFindings: DataFindingRow[] = [],
 ): GraphDoc {
   const { version: ruleVersion, rule } = settingsStore.getAarsRule();
-  const enriched = enrichGraphDoc(rawDoc, issues, hints, rule);
+  // Counts first: pillar C prices them, so they have to be on the nodes before enrichment.
+  const counted = withDataFindingCounts(rawDoc, dataFindings);
+  const enriched = enrichGraphDoc(counted, issues, hints, rule);
 
   // Tabs hold the real (non-synthetic) nodes; ISSUE nodes are derivable from ai_issues.
   const assetNodes = realNodes(enriched.nodes);
@@ -306,6 +342,7 @@ export function persistSync(
   overwrite(TABS.edges, assetEdges.map(edgeToRow));
   overwrite(TABS.issues, issues.map(issueToRow));
   overwrite(TABS.findings, findings.map(findingToRow));
+  overwrite(TABS.dataFindings, dataFindings.map(dataFindingToRow));
 
   const snapshotRef = writeGraphSnapshot(enriched);
 
@@ -434,12 +471,14 @@ let graphDocMemo: GraphDoc | null | undefined;
 let assetsMemo: GNode[] | undefined;
 let issuesMemo: IssueRow[] | undefined;
 let findingsMemo: FindingRow[] | undefined;
+let dataFindingsMemo: DataFindingRow[] | undefined;
 
 function invalidateReadMemos(): void {
   graphDocMemo = undefined;
   assetsMemo = undefined;
   issuesMemo = undefined;
   findingsMemo = undefined;
+  dataFindingsMemo = undefined;
 }
 
 /**
@@ -492,15 +531,22 @@ export function normalizeLegacyAars(doc: GraphDoc): GraphDoc {
 }
 
 /**
- * Risk topology (sensitive data, internet exposure, excessive rights, human identity
- * access, missing guardrail) is derived on read, not persisted — so it applies to
+ * Risk topology (data findings, sensitive data, internet exposure, excessive rights, human
+ * identity access, missing guardrail) is derived on read, not persisted — so it applies to
  * already-synced graphs and never reaches the asset/inventory tables (which read
  * TABS.assets directly, bypassing this doc). See the with* helpers in graphEnrich.
+ *
+ * withDataFindingNodes runs INNERMOST. It only reads persisted columns, so ordering is not
+ * load-bearing for correctness — but the aggregate is evidence hanging off a real store, and
+ * building the real topology before the stubs that stand in for it keeps the rule "enrich
+ * what was synced, then hang stand-ins off what was not" true of the composition itself.
  */
 function withRiskNodes(doc: GraphDoc): GraphDoc {
   return withMissingGuardrailNodes(
     withIdentityAccessNodes(
-      withExcessivePrivilegeNodes(withInternetExposureNodes(withSensitiveDataNodes(doc))),
+      withExcessivePrivilegeNodes(
+        withInternetExposureNodes(withSensitiveDataNodes(withDataFindingNodes(doc))),
+      ),
     ),
   );
 }
@@ -591,6 +637,13 @@ export function loadFindings(): FindingRow[] {
   return findingsMemo;
 }
 
+export function loadDataFindings(): DataFindingRow[] {
+  if (dataFindingsMemo === undefined) {
+    dataFindingsMemo = readAll(TABS.dataFindings).map(rowToDataFinding);
+  }
+  return dataFindingsMemo;
+}
+
 export function syncHistory(): Rec[] {
   return readAll(TABS.syncHistory);
 }
@@ -607,6 +660,7 @@ export function resetData(): void {
   overwrite(TABS.edges, []);
   overwrite(TABS.issues, []);
   overwrite(TABS.findings, []);
+  overwrite(TABS.dataFindings, []);
   overwrite(TABS.syncHistory, []);
   trashGraphSnapshot();
   commit();

@@ -65,6 +65,7 @@ import {
 import { layoutGraph } from "../domain/graphLayout";
 import { projectGraph } from "../domain/graphProject";
 import { AI_ASSET_KINDS, type GEdge, type GNode, type IssueRow } from "../domain/graphTypes";
+import { DATASTORE_KINDS } from "../domain/graphEnrich";
 import { comboDigest } from "../domain/comboDigest";
 import { comboGroupById, comboSummary, REGISTER_GROUPS } from "../domain/toxicCombos";
 import type { Rec } from "../domain/util";
@@ -172,15 +173,13 @@ function bootstrapCore(): Rec {
       bandRanges: bandRanges(aarsRule.rule.bands),
       // The three pillar ceilings, so the detail sheet's breakdown bars measure against
       // the rule in force instead of hardcoding the defaults and lying after an edit.
-      // Pillar C's ceiling is its own top exposure tier through the amplifier — the same
-      // arithmetic `aars.ts` does when it scores.
+      // Pillar C's ceiling is now the rule's own explicit cap — it used to be re-derived
+      // here from the exposure tier alone, which under a rule that prices data findings
+      // would draw every bar against a ceiling the pillar can exceed.
       pillarCaps: {
         toxic: aarsRule.rule.pillarACap,
         compliance: aarsRule.rule.pillarBCap,
-        data: Math.round(
-          Math.max(...Object.values(aarsRule.rule.dataExposurePoints)) *
-            aarsRule.rule.dataAmplifier,
-        ),
+        data: aarsRule.rule.pillarCCap,
       },
       scoredVersion,
       stale: scoredVersion !== aarsRule.version,
@@ -290,6 +289,13 @@ function assetRow(n: GNode): Rec {
     highPriv: n.hasHighPrivileges ?? false,
     adminPriv: n.hasAdminPrivileges ?? false,
     guardrailMissing: n.guardrailMissing ?? false,
+    // Null, not 0, when the sensitive-data traversal never reached this node: the graph
+    // card and the insight row both key on truthiness, and a 0 would make "we never asked"
+    // render exactly like "we looked and it is clean".
+    dataFindingCount: n.dataFindingCount ?? null,
+    dataFindingSeverities: n.dataFindingSeverities ?? null,
+    // On the aggregate node only — the count it collapses.
+    summaryCount: n.summaryCount ?? null,
     technologyCategories: n.technologyCategories ?? [],
     cloudAccount: n.cloudAccount?.name ?? null,
     // Full account object, for the detail sheet — cloudAccount above stays a bare
@@ -325,6 +331,16 @@ function assetTableRow(n: GNode, issuesBySeverity?: Record<string, number>): Rec
     combos: (n.comboGroups ?? []).length,
     guardrailMissing: n.guardrailMissing ?? false,
     agentic: n.identityPurpose === "AGENTIC",
+    // How many classified findings this asset can REACH — its own if it is a datastore,
+    // whatever its execution identity can read if it is an agent.
+    //
+    // Two sources because the reach walk is persisted through `aarsInput`, which only
+    // scored nodes carry: a BUCKET is never scored (AARS covers AI assets), so a store
+    // holding three findings would otherwise report 0 in the register while the graph drew
+    // them. Identities fall in the same gap and stay uncovered here — service accounts are
+    // unscored for reasons that predate this chain, so nothing persists their reach.
+    dataFindings: (n.aarsInput?.dataFindings ?? []).reduce((sum, f) => sum + f.count, 0)
+      || (n.dataFindingCount ?? 0),
     projects: (n.projects ?? []).map((p) => p.name),
   };
   // Only the rows that have open issues carry the breakdown. Most of a healthy estate has
@@ -418,6 +434,15 @@ function assetsModel(): AssetsModel {
       sensitiveAccess: assets.filter(
         (a) => AI_ASSET_KINDS.includes(a.kind) && a.hasAccessToSensitiveData,
       ).length,
+      // The DSPM pair. Every datastore in TABS.assets arrived on a path from an AI agent —
+      // INVENTORY_AI filters to AI resource types, so a bucket can only have been returned
+      // by the sensitive-data traversal — which is what makes this an honest reachability
+      // count without reading edges, something loadAssets (a tab-direct read model) cannot
+      // do. The dry run seeds datastores directly, so the invariant is a live-tenant one.
+      sensitiveDatastores: assets.filter(
+        (a) => DATASTORE_KINDS.includes(a.kind) && a.hasSensitiveData,
+      ).length,
+      dataFindings: assets.reduce((sum, a) => sum + (a.dataFindingCount ?? 0), 0),
       openIssues: issues.length,
       complianceGaps: syncStore.loadFindings().length,
       agenticIdentities: assets.filter((a) => a.identityPurpose === "AGENTIC").length,
@@ -564,6 +589,11 @@ export function getAssetDetail(p?: unknown): ApiResult {
         });
       }
       const findings = syncStore.loadFindings().filter((f) => f.resourceId === id);
+      // The graph draws one aggregate per store; this is what it aggregates. Folded into
+      // getAssetDetail rather than given its own endpoint — a new endpoint is a three-file
+      // change (api.ts, the hand-written delegator in dist/entry.js, the call site) that
+      // the build's drift guard polices, and the sheet is already open on this asset.
+      const dataFindings = syncStore.loadDataFindings().filter((f) => f.resourceId === id);
       return {
         node: {
           ...assetRow(node),
@@ -573,6 +603,7 @@ export function getAssetDetail(p?: unknown): ApiResult {
         issues,
         neighbors,
         findings,
+        dataFindings,
       };
     });
   });
@@ -975,6 +1006,7 @@ export function getStorageStats(_p?: unknown): ApiResult {
         assets: dataRowCount(TABS.assets),
         edges: dataRowCount(TABS.edges),
         issues: dataRowCount(TABS.issues),
+        dataFindings: dataRowCount(TABS.dataFindings),
         syncs: dataRowCount(TABS.syncHistory),
       },
     }), 3_600),

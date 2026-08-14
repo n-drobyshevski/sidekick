@@ -125,6 +125,17 @@ export function cleanAarsRule(raw: unknown): AarsRule {
     );
   }
 
+  const dfpRaw = rec(r["dataFindingPoints"]);
+  const dataFindingPoints = {} as Record<IssueSeverityKey, number>;
+  for (const k of SEVERITY_KEYS) {
+    dataFindingPoints[k] = clampInt(
+      dfpRaw[k],
+      DEFAULT_AARS_RULE.dataFindingPoints[k],
+      POINTS_MIN,
+      POINTS_MAX,
+    );
+  }
+
   const expoRaw = rec(r["exposurePoints"]);
   const exposurePoints = {} as Record<InternetExposure, number>;
   for (const k of INTERNET_EXPOSURE_KEYS) {
@@ -151,6 +162,8 @@ export function cleanAarsRule(raw: unknown): AarsRule {
   // written before these fields existed must keep scoring exactly as it did.
   const multiIssueScaling: MultiIssueScaling = r["multiIssueScaling"] === "log2" ? "log2" : "flat";
   const gapAggregation: GapAggregation = r["gapAggregation"] === "rss" ? "rss" : "sum";
+  const dataFindingScaling: MultiIssueScaling =
+    r["dataFindingScaling"] === "log2" ? "log2" : "flat";
 
   return {
     severityPoints,
@@ -173,6 +186,13 @@ export function cleanAarsRule(raw: unknown): AarsRule {
     pillarBCap: clampInt(r["pillarBCap"], DEFAULT_AARS_RULE.pillarBCap, POINTS_MIN, POINTS_MAX),
     dataExposurePoints,
     dataAmplifier: clampMultiplier(r["dataAmplifier"], DEFAULT_AARS_RULE.dataAmplifier),
+    dataFindingPoints,
+    dataFindingScaling,
+    dataFindingMultiplier: clampMultiplier(
+      r["dataFindingMultiplier"],
+      DEFAULT_AARS_RULE.dataFindingMultiplier,
+    ),
+    pillarCCap: clampInt(r["pillarCCap"], DEFAULT_AARS_RULE.pillarCCap, POINTS_MIN, POINTS_MAX),
     exposurePoints,
     bands,
   };
@@ -213,6 +233,19 @@ export function validateAarsRule(rule: AarsRule): string[] {
       `No internet exposure (${NONE}) must not score above undetermined exposure ` +
         `(${UNDETERMINED}).`,
     );
+  }
+
+  // Same shape as the exposure check above: a scale that is not descending would price a
+  // milder finding above a worse one, and the number would still look confident.
+  for (let i = 1; i < SEVERITY_KEYS.length; i++) {
+    const worse = SEVERITY_KEYS[i - 1]!;
+    const milder = SEVERITY_KEYS[i]!;
+    if (rule.dataFindingPoints[milder] > rule.dataFindingPoints[worse]) {
+      errors.push(
+        `A ${milder.toLowerCase()} data finding (${rule.dataFindingPoints[milder]}) must not ` +
+          `score above a ${worse.toLowerCase()} one (${rule.dataFindingPoints[worse]}).`,
+      );
+    }
   }
 
   if (!rule.gapPoints.length) {
@@ -371,8 +404,18 @@ export function ruleDiscrimination(
   const counts: Record<string, number> = {};
   for (const b of ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]) counts[b] = 0;
   const saturated = { toxic: 0, compliance: 0, data: 0, exposure: 0, score: 0 };
-  const maxData = Math.round(
-    Math.max(...EXPOSURE_KEYS.map((k) => rule.dataExposurePoints[k])) * rule.dataAmplifier,
+  // Both of pillar C's terms, under its explicit cap. This number is what measures whether
+  // the finding term worked: `saturated.data` is the count of assets sitting exactly here,
+  // and driving it down is the whole reason the term exists (ai/AARS_ASSESSMENT.md:190).
+  // Deriving it from the tier alone would report the pillar saturated at a value it can now
+  // exceed, and so would report success on every estate.
+  const maxData = Math.min(
+    rule.pillarCCap,
+    Math.round(
+      (Math.max(...EXPOSURE_KEYS.map((k) => rule.dataExposurePoints[k])) +
+        Math.max(...SEVERITY_KEYS.map((k) => rule.dataFindingPoints[k]))) *
+        rule.dataAmplifier,
+    ),
   );
   const maxExposure = Math.max(...INTERNET_EXPOSURE_KEYS.map((k) => rule.exposurePoints[k]));
 
@@ -496,6 +539,17 @@ export function ruleSummary(rule: AarsRule): string[] {
     rule.gapAggregation === "rss"
       ? `matched prices combine as a root-sum-square, so each further gap adds less than the last`
       : `matched prices are added up`;
+  // Said out loud when off, the way pillar D's clause is: a term scoring nothing is a
+  // deliberate choice, and a summary that just omitted it would read as an oversight.
+  const findingClause = SEVERITY_KEYS.every((k) => rule.dataFindingPoints[k] === 0)
+    ? `The data findings an asset can reach score nothing; they are drawn on the graph but ` +
+      `never added to the score.`
+    : `The worst data finding it can reach adds ` +
+      SEVERITY_KEYS.map((k) => `${k.toLowerCase()} ${rule.dataFindingPoints[k]}`).join(" / ") +
+      (rule.dataFindingScaling === "log2"
+        ? `, and each doubling of the finding count multiplies that by a further ` +
+          `×${rule.dataFindingMultiplier} step.`
+        : `, however many it reaches.`);
 
   return [
     `Pillar A — toxic combinations, capped at ${rule.pillarACap}. The asset's worst open ` +
@@ -503,8 +557,8 @@ export function ruleSummary(rule: AarsRule): string[] {
     `Pillar B — compliance gaps, capped at ${rule.pillarBCap}. ${rule.gapPoints.length} ` +
       `pricing rules are tried in order, first match wins; an unmatched code scores ` +
       `${pointsPhrase(rule.gapFallbackPoints)}. ${gapClause[0]!.toUpperCase()}${gapClause.slice(1)}.`,
-    `Pillar C — data exposure: ${exposure}, all amplified by ×${rule.dataAmplifier} ` +
-      `(→ ${amplified}).`,
+    `Pillar C — data exposure, capped at ${rule.pillarCCap}: ${exposure}, all amplified by ` +
+      `×${rule.dataAmplifier} (→ ${amplified}). ${findingClause}`,
     rule.exposurePoints.CONFIRMED === 0 &&
     rule.exposurePoints.UNDETERMINED === 0 &&
     rule.exposurePoints.NONE === 0

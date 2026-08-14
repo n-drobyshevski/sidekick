@@ -14,7 +14,9 @@
 
 import { gap } from "../domain/aars";
 import type { AarsHints } from "../domain/graphEnrich";
-import type { FindingRow, GEdge, GNode, GraphDoc, IssueRow, NodeKind } from "../domain/graphTypes";
+import type {
+  DataFindingRow, FindingRow, GEdge, GNode, GraphDoc, IssueRow, NodeKind,
+} from "../domain/graphTypes";
 import { edgeId } from "../domain/graphTypes";
 import { classifyIssue, OTHER_GROUP_ID } from "../domain/toxicCombos";
 
@@ -692,6 +694,29 @@ export const SEED_EDGES: GEdge[] = edges;
 export const SEED_ISSUES: IssueRow[] = issues;
 export const SEED_FINDINGS: FindingRow[] = SEED_FINDINGS_DATA;
 export const SEED_AARS_HINTS: AarsHints = HINTS;
+
+/**
+ * DSPM findings on the classified datastores the agents can already reach.
+ *
+ * Sized to put every branch of the topology on one screen:
+ *   bucket-customer-pii    3 — the screenshot's count badge, and a mixed severity
+ *   db-customer-core       2 — a second store, reached by four different agents
+ *   bucket-finance-reports 1 — the aggregate still draws at N=1
+ *   bucket-partner-data    0 — classified, nothing found yet: the chain draws with no
+ *   bucket-pricing-models  0   aggregate at the end of it
+ *
+ * `persistSync` folds these into `dataFindingCount` / `dataFindingSeverities` on the store,
+ * exactly as it does for a live sync, so the dry run exercises the real path rather than a
+ * pre-computed shortcut.
+ */
+export const SEED_DATA_FINDINGS: DataFindingRow[] = [
+  { id: "df-pii-01", resourceId: "bucket-customer-pii", name: "PII: email addresses (12,400 rows)", severity: "CRITICAL" },
+  { id: "df-pii-02", resourceId: "bucket-customer-pii", name: "PII: national identification numbers", severity: "HIGH" },
+  { id: "df-pii-03", resourceId: "bucket-customer-pii", name: "PCI: primary account numbers", severity: "HIGH" },
+  { id: "df-core-01", resourceId: "db-customer-core", name: "PII: postal addresses", severity: "CRITICAL" },
+  { id: "df-core-02", resourceId: "db-customer-core", name: "PII: dates of birth", severity: "MEDIUM" },
+  { id: "df-fin-01", resourceId: "bucket-finance-reports", name: "Financial: unpublished results", severity: "HIGH" },
+];
 
 /** The raw (un-enriched) seed graph; persistSync enriches it like a live sync. */
 export function seedGraphDoc(syncedAt: string): GraphDoc {

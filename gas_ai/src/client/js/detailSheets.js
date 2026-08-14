@@ -9,6 +9,7 @@ import { call } from "./api.js";
 import { bootstrapCached, navigate } from "./store.js";
 import { egoGraph } from "./egoGraph.js";
 import { categoryOf, edgeLabel, kindIconSvg, kindLabel } from "./icons.js";
+import { severityMixText } from "./graphNode.js";
 import { slaState } from "./pages/comboView.js";
 import { assetSections, issueSections, recordCursor } from "./recordSections.js";
 import {
@@ -205,6 +206,13 @@ function insightRow(node) {
   else if (node.highPriv) add("warn", "EXCESSIVE_PRIVILEGE", "High privileges");
   if (node.openInternet) add("bad", "INTERNET_EXPOSURE", "Open to all internet");
   else if (node.internet) add("warn", "INTERNET_EXPOSURE", "Internet exposed");
+  // Above the two flags below it, because it is the stronger claim: those say Wiz
+  // classified something here, this says what was actually found.
+  if (node.dataFindingCount) {
+    const mix = severityMixText(node.dataFindingSeverities);
+    add("bad", "DATA_FINDING",
+      node.dataFindingCount + " data findings" + (mix ? " — " + mix : ""));
+  }
   if (node.sensitiveData) add("warn", "SENSITIVE_DATA", "Holds sensitive data");
   if (node.sensitiveAccess) add("warn", "SENSITIVE_DATA", "Access to sensitive data");
   if (node.guardrailMissing) add("warn", "MISSING_GUARDRAIL", "No guardrail");

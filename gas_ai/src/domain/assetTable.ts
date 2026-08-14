@@ -60,7 +60,7 @@ export type FacetKey = (typeof FACET_KEYS)[number];
  * it is what someone ticking two risk boxes means. The drawer labels the group so the
  * semantics are on screen rather than guessed at.
  */
-export const ASSET_FLAGS = ["combo", "guardrail", "agentic"] as const;
+export const ASSET_FLAGS = ["combo", "guardrail", "agentic", "datafindings"] as const;
 export type AssetFlag = (typeof ASSET_FLAGS)[number];
 
 export interface AssetTableQuery {
@@ -166,6 +166,12 @@ export function hasAssetFlag(row: Rec, flag: string): boolean {
   if (flag === "combo") return num(row["combos"]) > 0;
   if (flag === "guardrail") return row["guardrailMissing"] === true;
   if (flag === "agentic") return row["agentic"] === true;
+  // "In a toxic combination AND reaching classified data" is the triage question this
+  // dimension's AND semantics exist for. Note the reach is only known for scored assets
+  // and for the datastores themselves — an identity's reach is not persisted, so pairing
+  // this with `agentic` narrows to nothing rather than to the agentic identities that can
+  // read classified data.
+  if (flag === "datafindings") return num(row["dataFindings"]) > 0;
   return false;
 }
 

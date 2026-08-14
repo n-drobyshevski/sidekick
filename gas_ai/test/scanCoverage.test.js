@@ -18,6 +18,8 @@ const FULL = {
     protectedAgents: 3,
     guardrailCoveragePct: 4,
     sensitiveAccess: 18,
+    sensitiveDatastores: 6,
+    dataFindings: 14,
     openIssues: 29,
     complianceGaps: 23,
     agenticIdentities: 12,
@@ -79,6 +81,14 @@ describe("degradation — an area never claims more than its payload supports", 
     const resolved = byId(resolveAreas({ ...FULL, kpis }));
     expect(resolved.get("exposure").state).toBe("partial");
     expect(resolved.get("ciem").state).toBe("partial");
+  });
+
+  it("steps DSPM back to partial on a zero, which is also what a rejected step leaves", () => {
+    // The sensitive-data traversal is optional: a tenant whose schema rejects it records a
+    // skip and reports nothing, which reaches the resolver as the same 0 a genuinely clean
+    // estate would. Claiming `live` on that would assert a reading nobody took.
+    const kpis = { ...FULL.kpis, sensitiveDatastores: 0, dataFindings: 0 };
+    expect(stateOf({ ...FULL, kpis }, "dspm")).toBe("partial");
   });
 
   it("steps toxic combinations back to partial when the digest is missing", () => {

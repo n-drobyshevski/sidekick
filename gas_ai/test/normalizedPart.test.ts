@@ -1,4 +1,4 @@
-// The four arms of NormalizedPart, and the accumulation the sync loop does over them.
+// The five arms of NormalizedPart, and the accumulation the sync loop does over them.
 //
 // These exist because of a shipped defect: the loop in syncJobs.ts wrote the accumulation
 // out by hand and carried three of the four arms. `findings` was never collected, so the
@@ -7,7 +7,7 @@
 // that had findings, and buildAarsHintsFromFindings received nothing so AARS pillar B fell
 // back to the heuristic it was written to replace. No error, anywhere.
 //
-// So the arm list is asserted against the type's own keys rather than retyped here: a fifth
+// So the arm list is asserted against the type's own keys rather than retyped here: a sixth
 // arm added to NormalizedPart fails these tests until appendPart and partIsEmpty carry it.
 
 import { describe, expect, it } from "vitest";
@@ -28,12 +28,13 @@ function partWithOnly(arm: keyof NormalizedPart): NormalizedPart {
   if (arm === "edges") part.edges.push({ src: "a", dst: "b", type: "RUNS_AS" } as never);
   if (arm === "issues") part.issues.push({ id: "i1", assetId: "a" } as never);
   if (arm === "findings") part.findings.push({ id: "f1", resourceId: "a" } as never);
+  if (arm === "dataFindings") part.dataFindings.push({ id: "d1", resourceId: "a" } as never);
   return part;
 }
 
 describe("the arm list", () => {
-  it("is the four the ledger persists", () => {
-    expect(ARMS.sort()).toEqual(["edges", "findings", "issues", "nodes"]);
+  it("is the five the ledger persists", () => {
+    expect(ARMS.sort()).toEqual(["dataFindings", "edges", "findings", "issues", "nodes"]);
   });
 });
 

@@ -16,6 +16,7 @@ export const TABS = {
   edges: "ai_edges",
   issues: "ai_issues",
   findings: "ai_findings",
+  dataFindings: "ai_data_findings",
   syncHistory: "sync_history",
   settings: "settings",
   jobs: "jobs",
@@ -31,6 +32,9 @@ export const TAB_HEADERS: Record<string, string[]> = {
     "aars_pillars_json", "aars_input_json",
     "combo_groups", "tags_json", "technology_categories",
     "identity_purpose", "issue_analytics_json",
+    // DSPM classification on a datastore row. Appended, so an existing ledger picks them
+    // up on the next sync with no migration (see the note on ai_issues below).
+    "data_finding_count", "data_findings_json",
   ],
   [TABS.edges]: ["id", "src", "dst", "type", "negated", "access_type"],
   [TABS.issues]: [
@@ -50,6 +54,10 @@ export const TAB_HEADERS: Record<string, string[]> = {
   [TABS.findings]: [
     "id", "resource_id", "rule_short_id", "severity", "remediation", "framework_codes",
   ],
+  // DSPM findings, kept apart from the compliance findings above on purpose: that tab
+  // prices AARS pillar B and counts as `complianceGaps`, and a classification finding
+  // folded into it would inflate both.
+  [TABS.dataFindings]: ["id", "resource_id", "name", "severity"],
   [TABS.syncHistory]: [
     "sync_id", "started_at", "finished_at", "status", "mode",
     "node_count", "edge_count", "issue_count", "api_calls", "snapshot_ref", "error",

@@ -188,8 +188,22 @@ describe("computeAars — the rule is what makes those numbers", () => {
     const rule = tuned({
       dataExposurePoints: { SENSITIVE: 30, DATA_ACCESS: 10, NONE: 0 },
       dataAmplifier: 1.5,
+      // 30 × 1.5 = 45 needs headroom: the pillar now carries an explicit cap, which the
+      // spec rule sets at 22 (its old implicit ceiling, 20 × 1.1).
+      pillarCCap: 50,
     });
     expect(computeAars(agentA, rule).pillars.data).toBe(45);
+  });
+
+  it("clamps pillar C at its own cap, exposure tier and findings together", () => {
+    const rule = tuned({
+      dataExposurePoints: { SENSITIVE: 20, DATA_ACCESS: 10, NONE: 0 },
+      dataAmplifier: 1,
+      dataFindingPoints: { CRITICAL: 30, HIGH: 20, MEDIUM: 10, LOW: 5 },
+      pillarCCap: 25,
+    });
+    const reaching = { ...agentA, dataFindingSeverities: ["CRITICAL"] as Severity[] };
+    expect(computeAars(reaching, rule).pillars.data).toBe(25); // 20 + 30 = 50, capped
   });
 
   it("clamps to 100 whatever the rule says", () => {
@@ -270,10 +284,48 @@ describe("AARS_V2_RULE — the calibrated preset", () => {
   });
 
   it("spends the whole 0–100 scale: the four caps sum to exactly 100", () => {
-    const maxData = Math.round(
-      AARS_V2_RULE.dataExposurePoints.SENSITIVE * AARS_V2_RULE.dataAmplifier);
+    // Pillar C's ceiling is its own cap now, not its top exposure tier: the tier is only
+    // half the pillar since the finding term landed, and deriving the sum from the tier
+    // alone would report the scale under-spent by exactly the half that was added.
     const maxExposure = AARS_V2_RULE.exposurePoints.CONFIRMED;
-    expect(AARS_V2_RULE.pillarACap + AARS_V2_RULE.pillarBCap + maxData + maxExposure).toBe(100);
+    expect(
+      AARS_V2_RULE.pillarACap + AARS_V2_RULE.pillarBCap + AARS_V2_RULE.pillarCCap + maxExposure,
+    ).toBe(100);
+  });
+
+  it("splits pillar C so it takes more than the two values it used to", () => {
+    // The defect ai/AARS_ASSESSMENT.md:190 records: pillar C at its ceiling for 20 of 30
+    // assets, because a boolean has two states. Reaching sensitive data is worth 6; what
+    // you reach is worth up to 6 more.
+    const sensitive = {
+      issueSeverities: ["MEDIUM"] as Severity[],
+      gaps: [gap("LLM06")],
+      dataExposure: "SENSITIVE" as const,
+    };
+    const score = (findings: Severity[]) =>
+      computeAars({ ...sensitive, dataFindingSeverities: findings }, AARS_V2_RULE).pillars.data;
+
+    expect(computeAars(sensitive, AARS_V2_RULE).pillars.data).toBe(6); // tier alone
+    expect(score(["MEDIUM"])).toBe(8);
+    expect(score(["HIGH"])).toBe(10);
+    expect(score(["CRITICAL"])).toBe(12);
+    expect(new Set([6, score(["MEDIUM"]), score(["HIGH"]), score(["CRITICAL"])]).size)
+      .toBeGreaterThan(2);
+  });
+
+  it("scores identically with and without findings under the SPEC rule", () => {
+    // The convention every knob in this file follows: off by default, so no tenant
+    // re-scores on upgrade and ai/custom_score.md's applied table stays the truth.
+    const base = {
+      issueSeverities: ["MEDIUM"] as Severity[],
+      gaps: [gap("LLM06"), gap("NO_GUARDRAIL")],
+      dataExposure: "SENSITIVE" as const,
+    };
+    const withFindings = {
+      ...base,
+      dataFindingSeverities: ["CRITICAL", "HIGH", "HIGH"] as Severity[],
+    };
+    expect(computeAars(withFindings)).toEqual(computeAars(base));
   });
 
   it("folds the 5Rs amplifier into the points rather than carrying it as a constant", () => {

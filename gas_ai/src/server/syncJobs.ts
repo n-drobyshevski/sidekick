@@ -21,6 +21,7 @@ import {
   normalizePrincipalsPage,
   normalizeRuleAssetsPage,
   normalizeRunsAsPage,
+  normalizeSensitiveDataAccessPage,
   partIsEmpty,
   reconcileIssues,
   type NormalizedPart,
@@ -33,7 +34,9 @@ import { readGzJsonFile, syncFolder, writeGzJson, writeSyncPage } from "./archiv
 import { activeJob, createJob, getJob, newJobId, updateJob, type JobRow } from "./jobsStore";
 import { withScriptLock } from "./locks";
 import { getProp, hasWizCredentials, projectScope, setProp, deleteProp } from "./props";
-import { seedGraphDoc, SEED_AARS_HINTS, SEED_FINDINGS, SEED_ISSUES, SEED_TREND } from "./sampleData";
+import {
+  seedGraphDoc, SEED_AARS_HINTS, SEED_DATA_FINDINGS, SEED_FINDINGS, SEED_ISSUES, SEED_TREND,
+} from "./sampleData";
 import * as settingsStore from "./settingsStore";
 import { appendRows, dataRowCount, TABS } from "./sheetsDb";
 import { parseJson, persistSync } from "./syncStore";
@@ -52,6 +55,7 @@ import {
   aiPrincipalsVariables,
   MAX_PAGES,
   Q_AGENT_RUNS_AS,
+  Q_AGENT_SENSITIVE_DATA_ACCESS,
   Q_AGENTS_NO_GUARDRAIL,
   Q_AI_INVENTORY,
   Q_CONFIG_FINDINGS,
@@ -185,6 +189,22 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       run: "graphSearch",
       query: Q_SA_EXCESSIVE_ACCESS,
       normalize: normalizeRunsAsPage,
+      optional: true,
+    },
+    // The data-exposure chain. Runs AFTER the two CIEM steps on purpose: it re-emits the
+    // agent and its service account, and mergeParts lets later truthy values win field-wise,
+    // so landing the richer CIEM projections first means this step can only add to them.
+    {
+      id: "SENSITIVE_DATA_ACCESS",
+      area: "dspm",
+      writes: [
+        "ai_edges (RUNS_AS, ALLOWS_ACCESS_TO)",
+        "ai_assets (BUCKET/DATABASE rows, data_finding_count)",
+        "ai_data_findings",
+      ],
+      run: "graphSearch",
+      query: Q_AGENT_SENSITIVE_DATA_ACCESS,
+      normalize: normalizeSensitiveDataAccessPage,
       optional: true,
     },
     {
@@ -399,6 +419,7 @@ function dryRunSync(): StartResult {
     { syncId, mode: "dry-run", startedAt, apiCalls: 0 },
     undefined,
     SEED_FINDINGS,
+    SEED_DATA_FINDINGS,
   );
   // A dry-run issues no queries, so nothing can have been rejected. Clearing rather than
   // leaving the previous live run's list behind, which would attribute a stale skip to a
@@ -630,7 +651,7 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
         mode: "live",
         startedAt,
         apiCalls: params.apiCalls,
-      }, undefined, findings);
+      }, undefined, findings, merged.dataFindings);
       // Written with the commit, so what the Scans page reports as skipped always describes
       // the sync whose numbers it is showing. The job row carrying this is discarded the
       // moment the job goes terminal, which is why it could not be read back before.

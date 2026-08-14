@@ -206,7 +206,15 @@ describe("settings round trip", () => {
 describe("the specs themselves", () => {
   it("only names steps that exist, and gives every field a label and help", () => {
     for (const spec of STEP_VAR_SPECS) {
-      expect(spec.fields.length, `${spec.stepId} has no fields`).toBeGreaterThan(0);
+      // A spec earns its place by offering fields OR by explaining a lock — never by being
+      // empty of both, which is the dead weight this assertion exists to catch. The second
+      // case is real: `isEditableStep` already returns false for a step with no spec at all,
+      // so a fields-less spec is written precisely to replace the generic locked note with
+      // this step's own reason.
+      expect(
+        spec.fields.length > 0 || !!spec.locked,
+        `${spec.stepId} has neither fields nor a locked note`,
+      ).toBe(true);
       for (const f of spec.fields) {
         expect(f.label, `${spec.stepId}.${f.path} has no label`).toBeTruthy();
         expect(f.help, `${spec.stepId}.${f.path} has no help`).toBeTruthy();

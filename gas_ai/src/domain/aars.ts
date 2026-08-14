@@ -46,6 +46,16 @@ export interface AarsInput {
    * NONE, and the spec rule prices all three states at zero anyway.
    */
   internetExposure?: InternetExposure;
+  /**
+   * Severities of the DSPM data findings this asset can REACH — one entry per finding,
+   * exactly as `issueSeverities` is one entry per issue, summed over every classified
+   * datastore on its RUNS_AS → ALLOWS_ACCESS_TO path.
+   *
+   * Absent means "not collected" (the traversal was never run, or the row predates it),
+   * never "none found". The spec rule prices it at zero either way, so the distinction only
+   * bites once a rule turns the term on.
+   */
+  dataFindingSeverities?: Severity[];
 }
 
 export interface AarsResult {
@@ -159,6 +169,34 @@ export interface AarsRule {
   dataExposurePoints: Record<DataExposure, number>;
   dataAmplifier: number;
   /**
+   * Pillar C's FINDING term — points for the WORST data-finding severity the asset reaches,
+   * scaled by how many it reaches. All zeros in the spec rule.
+   *
+   * This is what ai/AARS_ASSESSMENT.md:74,190 measures the need for: pillar C sits at its
+   * ceiling for 20 of 30 assets under BOTH the spec rule and v2, because it prices a
+   * boolean — "reaches sensitive data" — that most of the estate shares, and the assessment
+   * calls that "a true fact about the estate rather than a modelling error". A pillar
+   * constant across two thirds of the population ranks nothing. The finding term reads what
+   * the boolean cannot: WHICH data, and how much of it.
+   *
+   * Its arithmetic is pillar A's — worst severity, scaled by count — deliberately, because
+   * that is the shape this model already uses for "N instances of a graded thing" and a
+   * second shape would be a second thing to audit.
+   */
+  dataFindingPoints: Record<IssueSeverityKey, number>;
+  /** How `dataFindingPoints` scales with the finding COUNT. `flat` reads only the worst. */
+  dataFindingScaling: MultiIssueScaling;
+  /** The count multiplier, under `log2`. Ignored under `flat`. */
+  dataFindingMultiplier: number;
+  /**
+   * Ceiling on pillar C as a whole (exposure tier + findings).
+   *
+   * Explicit for the first time. It used to be implicit in the arithmetic — 20 × 1.1 = 22,
+   * the largest value the tier alone could reach — which was adequate while the tier was
+   * the only term. Adding a second unbounded term needs the bound said out loud.
+   */
+  pillarCCap: number;
+  /**
    * Pillar D — internet reachability. All zeros in the spec rule, which scores exposure
    * nowhere despite the graph computing it as a first-class node
    * (graphEnrich.withInternetExposureNodes) and the doc devoting a section to it.
@@ -201,6 +239,16 @@ export const DEFAULT_AARS_RULE: AarsRule = {
   // 5Rs framework at 53% — data-exposure controls are systemically weak, so all
   // data-related points are amplified (ai/custom_score.md Pillar C).
   dataAmplifier: 1.1,
+  // OFF: every point zero, so the term contributes nothing and pillar C is arithmetically
+  // what it has always been. ai/custom_score.md's applied 14-row table — which pins
+  // test/aars.test.ts — therefore keeps passing untouched. Sixth knob to follow that
+  // convention, after multiIssueScaling, gapAggregation, gapSources, findingSeverityWeights
+  // and exposurePoints.
+  dataFindingPoints: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 },
+  dataFindingScaling: "flat",
+  dataFindingMultiplier: 1,
+  // 22 = the old implicit ceiling (20 × 1.1), so naming it changes no score.
+  pillarCCap: 22,
   // Pillar D is OFF in the spec rule. The doc reports internet exposure beside the score
   // but never adds it to one, so scoring it here would change every published number.
   exposurePoints: { CONFIRMED: 0, UNDETERMINED: 0, NONE: 0 },
@@ -225,13 +273,14 @@ export const DEFAULT_AARS_RULE: AarsRule = {
  *                which is what makes the cascade's dead rows fire. The cascade order is
  *                the spec's, plus a row for INACTIVE_AGENT so it is priced deliberately
  *                rather than by the fallback.
- *   Pillar C 12  Halved, and the amplifier folded into the points. The 5Rs ×1.1 is a
- *                tenant-wide constant: it cannot change a ranking, only inflate every
- *                score, yet it decides individual band membership (it is the whole reason
- *                agent-H-chatbot is CRITICAL at 71 rather than HIGH at 69). Baking it in
- *                makes the pillar say what it means. The weight drops because the pillar
- *                is at its ceiling for two thirds of the estate and so ranks almost
- *                nothing — a near-constant term is not worth 22 points of a 100-point scale.
+ *   Pillar C 12  Halved, the amplifier folded into the points, and SPLIT into a tier term
+ *                and a finding term. The 5Rs ×1.1 is a tenant-wide constant: it cannot
+ *                change a ranking, only inflate every score, yet it decides individual band
+ *                membership (it is the whole reason agent-H-chatbot is CRITICAL at 71 rather
+ *                than HIGH at 69). Baking it in makes the pillar say what it means. The
+ *                split is what stops the pillar being near-constant: the boolean it used to
+ *                price alone is shared by two thirds of the estate, so the findings an asset
+ *                actually reaches now carry half the pillar's weight.
  *   Pillar D 18  The budget pillar C gave up. Reachability is the signal the spec computes,
  *                draws on the graph, writes a section of the doc about, and never scores.
  *                UNDETERMINED is priced well below CONFIRMED: it means "nobody has checked
@@ -263,8 +312,16 @@ export const AARS_V2_RULE: AarsRule = {
   gapSources: { fiveRs: true, deprecatedModel: true, inactiveAgent: true },
   findingSeverityWeights: { CRITICAL: 1.5, HIGH: 1.2, MEDIUM: 1, LOW: 0.6 },
   pillarBCap: 25,
-  dataExposurePoints: { SENSITIVE: 12, DATA_ACCESS: 6, NONE: 0 },
+  // Split, so the pillar takes more than two values. Reaching sensitive data is worth 6 —
+  // half what it was, because it is what most of the estate shares — and what you reach is
+  // worth up to 6 more. An asset with one MEDIUM finding scores 6+2=8; one with three
+  // CRITICALs scores 6+7=13, clamped to the 12 cap. Two values become five.
+  dataExposurePoints: { SENSITIVE: 6, DATA_ACCESS: 3, NONE: 0 },
   dataAmplifier: 1,
+  dataFindingPoints: { CRITICAL: 6, HIGH: 4, MEDIUM: 2, LOW: 1 },
+  dataFindingScaling: "log2",
+  dataFindingMultiplier: 1.2,
+  pillarCCap: 12,
   exposurePoints: { CONFIRMED: 18, UNDETERMINED: 7, NONE: 0 },
   bands: { critical: 70, high: 50, medium: 30, low: 10 },
 };
@@ -306,13 +363,28 @@ export function aarsSeverity(
   return "INFO";
 }
 
-function worstSeverityPoints(severities: Severity[], rule: AarsRule): number {
+/** The largest price any of these severities carries in `points`. Zero for an empty list. */
+function worstPoints(severities: Severity[], points: Record<IssueSeverityKey, number>): number {
   let worst = 0;
   for (const s of severities) {
-    const p = rule.severityPoints[s as IssueSeverityKey] ?? 0;
+    const p = points[s as IssueSeverityKey] ?? 0;
     if (p > worst) worst = p;
   }
   return worst;
+}
+
+function worstSeverityPoints(severities: Severity[], rule: AarsRule): number {
+  return worstPoints(severities, rule.severityPoints);
+}
+
+/**
+ * Both scalings agree at n≤1 (×1) and n=2 (×m); see multiIssueFactor, which is this with the
+ * pillar-A knobs bound. Shared so pillar C's count term cannot drift from pillar A's.
+ */
+function countFactor(count: number, scaling: MultiIssueScaling, multiplier: number): number {
+  if (count <= 1) return 1;
+  if (scaling === "log2") return 1 + (multiplier - 1) * Math.log2(count);
+  return multiplier;
 }
 
 /**
@@ -321,11 +393,21 @@ function worstSeverityPoints(severities: Severity[], rule: AarsRule): number {
  * already reading correctly, and it is asserted in aars.test.ts.
  */
 export function multiIssueFactor(count: number, rule: AarsRule): number {
-  if (count <= 1) return 1;
-  if (rule.multiIssueScaling === "log2") {
-    return 1 + (rule.multiIssueMultiplier - 1) * Math.log2(count);
-  }
-  return rule.multiIssueMultiplier;
+  return countFactor(count, rule.multiIssueScaling, rule.multiIssueMultiplier);
+}
+
+/**
+ * Pillar C's finding term: the worst reachable data-finding severity, scaled by how many
+ * findings are reachable. Zero when nothing was collected AND when nothing was found — the
+ * two are distinguished upstream (an absent list vs an empty one), not here, because both
+ * add nothing to a score.
+ */
+export function dataFindingPointsFor(severities: Severity[], rule: AarsRule): number {
+  if (!severities.length) return 0;
+  return Math.round(
+    worstPoints(severities, rule.dataFindingPoints) *
+      countFactor(severities.length, rule.dataFindingScaling, rule.dataFindingMultiplier),
+  );
 }
 
 /** Combine priced gaps per the rule's aggregation. Identical for zero or one gap. */
@@ -349,7 +431,12 @@ export function computeAars(input: AarsInput, rule: AarsRule = DEFAULT_AARS_RULE
     ),
   );
 
-  const data = Math.round((rule.dataExposurePoints[input.dataExposure] ?? 0) * rule.dataAmplifier);
+  // Pillar C in two terms: the exposure TIER (does it reach sensitive data at all) and the
+  // FINDINGS (what, and how much). The amplifier covers both — the 5Rs weakness it encodes
+  // is about data-security controls generally, which is exactly what a data finding reports.
+  const dataTier = rule.dataExposurePoints[input.dataExposure] ?? 0;
+  const dataFound = dataFindingPointsFor(input.dataFindingSeverities ?? [], rule);
+  const data = Math.min(rule.pillarCCap, Math.round((dataTier + dataFound) * rule.dataAmplifier));
 
   // Pillar D is NOT amplified: dataAmplifier is the 5Rs data-security signal, and
   // reachability is a network fact that signal says nothing about.

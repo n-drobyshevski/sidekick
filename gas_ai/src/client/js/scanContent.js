@@ -142,19 +142,27 @@ export const SCAN_AREAS = [
   {
     id: "dspm",
     title: "Sensitive Data (DSPM)",
-    query: "hasSensitiveData / hasAccessToSensitiveData on every resource",
-    what: "Classifies PII/PHI/PCI in buckets and databases, then flags which AI assets can " +
-      "reach it. The reachability is what the toxic combinations price, not the storage.",
+    query: "graphSearch · RUNS_AS → ALLOWS_ACCESS_TO → HAS_DATA_FINDING",
+    what: "Walks each agent's execution identity to the buckets and databases it can reach, " +
+      "keeps the ones Wiz classified as holding sensitive data, and collects the findings " +
+      "on them. The reachability is what the toxic combinations price, not the storage.",
     lands: "graph",
-    carriedBy: "INVENTORY_AI",
-    figure: (ctx) => (ctx.kpis
-      ? {
-        value: String(n(ctx.kpis.sensitiveAccess)),
-        unit: "AI assets reach classified data",
-        short: n(ctx.kpis.sensitiveAccess) + " assets reach it",
-        source: "kpis.sensitiveAccess",
-      }
-      : null),
+    // This area used to declare itself carried by INVENTORY_AI's two booleans, which was
+    // honest but thin: it could say how many assets reach classified data and never which
+    // data. It has its own step now.
+    carriedBy: "SENSITIVE_DATA_ACCESS",
+    figure: (ctx) => {
+      // Zero and "never asked" are the same payload here, so a zero degrades the area to
+      // `partial` rather than asserting a reading — the derived-not-declared rule this page
+      // runs on. A tenant that rejected the step shows in the skipped-steps list beside it.
+      if (!ctx.kpis || !n(ctx.kpis.sensitiveDatastores)) return null;
+      return {
+        value: String(n(ctx.kpis.sensitiveDatastores)),
+        unit: "classified datastores in reach · " + n(ctx.kpis.dataFindings) + " findings",
+        short: n(ctx.kpis.sensitiveDatastores) + " datastores in reach",
+        source: "kpis.sensitiveDatastores",
+      };
+    },
   },
   {
     id: "ciem",

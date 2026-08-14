@@ -5,6 +5,12 @@
 // graph.css's selectors don't care which card is on screen.
 
 import { categoryOf, kindIcon, kindLabel, svgEl } from "./icons.js";
+import { sevEntries, sevSpoken } from "./ui/severity.js";
+
+// Mirrors SEVERITY_ORDER in src/domain/config.ts, for the same reason egoLayout.js,
+// assetQuery.js and comboView.js each keep their own copy: the client bundle cannot import
+// the domain layer, and the order must still agree with it.
+const SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
 
 export const NODE_W = 196;
 export const NODE_H = 56;
@@ -19,6 +25,11 @@ export function truncate(s, n) {
   return str.length > n ? str.slice(0, n - 1) + "…" : str;
 }
 
+/** "1 critical, 2 high" — a severity mix in words, worst first. Empty when there is none. */
+export function severityMixText(mix) {
+  return sevSpoken(sevEntries(mix, SEVERITY_ORDER), { lower: true });
+}
+
 export function nodeAriaLabel(node) {
   const parts = [kindLabel(node.kind), node.name];
   if (node.severity) parts.push("severity " + node.severity);
@@ -27,6 +38,17 @@ export function nodeAriaLabel(node) {
   }
   if ((node.comboGroups || []).length) parts.push("toxic combination member");
   if (node.guardrailMissing) parts.push("no guardrail");
+  if (node.kind === "DATA_FINDING") {
+    // The count badge is a number in a box; on its own it says nothing about how bad. The
+    // mix is what makes the card readable without colour, which the design system requires.
+    parts.length = 0;
+    const mix = severityMixText(node.dataFindingSeverities);
+    parts.push(node.summaryCount + " data findings" + (mix ? " — " + mix : ""));
+    parts.push("press Enter for details");
+  }
+  if (node.dataFindingCount) {
+    parts.push(node.dataFindingCount + " data findings");
+  }
   if (node.kind === "SUMMARY") {
     parts.length = 0;
     parts.push(node.summaryCount + " more " + kindLabel(node.summaryOf) + " nodes, press Enter to expand");
@@ -108,6 +130,19 @@ function drawFullCard(node, palette) {
     g.append(tc);
   }
 
+  // Data-finding count badge — the "3" Wiz puts on the same node. It takes the TC slot,
+  // which is free here: an aggregate hangs off a datastore and carries no combo membership
+  // of its own. The number never stands alone — the card also prints the worst severity as
+  // a dot and a word, and nodeAriaLabel reads out the whole mix.
+  if (node.kind === "DATA_FINDING" && node.summaryCount) {
+    g.append(svgEl("circle", { class: "gnode-count-badge", cx: NODE_W - 12, cy: -2, r: 11 }));
+    const count = svgEl("text", {
+      class: "gnode-count-text", x: NODE_W - 12, y: 2.5, "text-anchor": "middle",
+    });
+    count.textContent = String(node.summaryCount);
+    g.append(count);
+  }
+
   // (Missing guardrail used to draw a dashed stub here. It is now a real
   // MISSING_GUARDRAIL node joined by a negated PROTECTED_BY edge, which the edge
   // renderer already draws dashed and labels "(ABSENT)" — drawing both would show
@@ -149,9 +184,13 @@ function drawCompactCard(node, palette) {
   // collided on any scored node.
   const hasAars = node.aars !== undefined && node.aars !== null && !isSummary;
   const name = svgEl("text", { class: "gnode-name", x: 42, y: 17 });
-  name.textContent = truncate(
-    isSummary ? node.name + " " + kindLabel(node.summaryOf) : node.name, hasAars ? 12 : 19,
-  );
+  // The count rides in the NAME here rather than as a badge: the full card's badge sits at
+  // y:-2, outside the card bounds, which clips against the compact viewBox — the same
+  // reason the TC badge became the word "TC" on line 2.
+  const label = node.kind === "DATA_FINDING" && node.summaryCount
+    ? node.name + " ×" + node.summaryCount
+    : isSummary ? node.name + " " + kindLabel(node.summaryOf) : node.name;
+  name.textContent = truncate(label, hasAars ? 12 : 19);
   g.append(name);
   if (hasAars) {
     const aars = svgEl("text", {

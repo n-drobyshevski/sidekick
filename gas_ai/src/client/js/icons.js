@@ -150,6 +150,15 @@ const PATHS = {
     "M3 4 v8 a5 1.8 0 0 0 10 0 v-8",
     "M3 8 a5 1.8 0 0 0 10 0",
   ],
+  // DATABASE's cylinder, racked: two short drums with a gap, so a server reads as the HOST
+  // of databases rather than as one. Narrower than DATABASE on purpose — side by side the
+  // pair must not resolve into the same silhouette at 16px.
+  DATABASE_SERVER: [
+    "M4 3 a4 1.4 0 0 0 8 0 a4 1.4 0 0 0 -8 0",
+    "M4 3 v3 a4 1.4 0 0 0 8 0 v-3",
+    "M4 9.5 a4 1.4 0 0 0 8 0 a4 1.4 0 0 0 -8 0",
+    "M4 9.5 v3 a4 1.4 0 0 0 8 0 v-3",
+  ],
 
   // --- compute / supply chain --------------------------------------------------
   VIRTUAL_MACHINE: ["M1.5 5.5 h9 v8 h-9 z", "M4.5 5.5 V2.5 h9 v8 h-3"],
@@ -199,9 +208,20 @@ const PATHS = {
   // --- synthetic ---------------------------------------------------------------
   ISSUE: ["M8 2 L15 14 H1 Z", "M8 6.5 V10", "M8 12 h0.01"],
   SUMMARY: ["M4 8 h0.01", "M8 8 h0.01", "M12 8 h0.01"],
-  // Gem — the mark Wiz hangs on a data finding. Replaces the padlock, which now reads
-  // as access (EXCESSIVE_ACCESS_FINDING) rather than as sensitivity.
+  // The gem, unfinished. SENSITIVE_DATA is now the FALLBACK marker — Wiz says this asset
+  // touches classified data, but no path to the store could be walked — so it draws the
+  // data-finding gem with its facets and its lower point missing: the same claim, not yet
+  // resolved into one. Same idiom as MISSING_GUARDRAIL, which is AI_GUARDRAIL's barrier
+  // snapped in two.
   SENSITIVE_DATA: [
+    "M4 2.5 h8 l2 3.8",
+    "M2 6.3 L4 2.5",
+    "M2 6.3 h12",
+    "M4.7 8.9 L8 12.7", "M11.3 8.9 L8 12.7",
+  ],
+  // The gem itself, which is the mark Wiz hangs on a data finding — moved here from
+  // SENSITIVE_DATA, where it always described this and stood in for it.
+  DATA_FINDING: [
     "M4 2.5 h8 l2 3.8 L8 14 L2 6.3 Z",
     "M2 6.3 h12",
     "M5.9 6.3 L8 14 L10.1 6.3",
@@ -257,6 +277,7 @@ export const KIND_LABELS = {
   ACCESS_KEY: "Access Key",
   BUCKET: "Bucket",
   DATABASE: "Database",
+  DATABASE_SERVER: "Database Server",
   VIRTUAL_MACHINE: "VM",
   SERVERLESS: "Serverless",
   CONTAINER_IMAGE: "Container Image",
@@ -267,6 +288,8 @@ export const KIND_LABELS = {
   ISSUE: "Issue",
   SUMMARY: "More",
   SENSITIVE_DATA: "Sensitive Data",
+  // Plural: the node is one aggregate per datastore, never one finding.
+  DATA_FINDING: "Data Findings",
   INTERNET_EXPOSURE: "Internet Exposure",
   EXCESSIVE_PRIVILEGE: "Excessive Rights",
   MISSING_GUARDRAIL: "No Guardrail",
@@ -378,6 +401,7 @@ export const EDGE_LABELS = {
   HAS_ACCESS_TO_SENSITIVE_DATA: "has access to sensitive data",
   EXPOSED_TO_INTERNET: "exposed to internet",
   HAS_EXCESSIVE_PRIVILEGE: "has excessive privilege",
+  HAS_DATA_FINDING: "has data findings",
 };
 
 /** Human-readable label for an edge type; unknown types fall back to the raw enum. */
@@ -396,8 +420,12 @@ export const KIND_CATEGORY = {
   AI_EXTENSION: "asset", AI_GATEWAY: "asset", AI_SERVICE: "asset", AI_SKILL: "asset",
   AI_SKILL_TEMPLATE: "asset", AI_TOOL: "asset",
   VIRTUAL_MACHINE: "asset", SERVERLESS: "asset", CONTAINER_IMAGE: "asset", REPOSITORY: "asset",
-  // data (green): datastores, datasets, and the sensitive-data marker
-  AI_DATASET: "data", BUCKET: "data", DATABASE: "data", SENSITIVE_DATA: "data",
+  // data (green): datastores, datasets, and the two data markers. DATA_FINDING is filed
+  // here rather than with the red findings deliberately — it is the last hop of the data
+  // chain and Wiz draws it in the data tint. Its badness reaches the eye through the card's
+  // own severity dot and word, so nothing is carried by colour alone either way.
+  AI_DATASET: "data", BUCKET: "data", DATABASE: "data", DATABASE_SERVER: "data",
+  SENSITIVE_DATA: "data", DATA_FINDING: "data",
   // IAM / access (purple). ACCESS_KEY was missing here for as long as it has existed, so a
   // credential rendered in the asset tint while its own label said "Access Key".
   SERVICE_ACCOUNT: "iam", USER_ACCOUNT: "iam", ACCESS_ROLE: "iam", ACCESS_ROLE_BINDING: "iam",

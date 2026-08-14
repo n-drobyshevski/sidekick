@@ -156,6 +156,16 @@ export const STEP_VAR_SPECS: StepVarSpec[] = [
     locked: "The agentic-purpose filter is fixed: the sync labels what this query returns as " +
       "agentic, so widening it would mislabel every identity it collected.",
   },
+  {
+    stepId: "SENSITIVE_DATA_ACCESS",
+    // No fields at all, so isEditableStep is false and the panel offers no control. Stated
+    // here rather than left to fall through, because "nothing to edit" and "editing this
+    // would be unsafe" are different facts and only the second one needs saying.
+    fields: [],
+    locked: "This step has no editable filter: normalizeSensitiveDataAccessPage rebuilds " +
+      "the chain's edges from which entity TYPES a row carries, so a changed selection set " +
+      "would yield confidently wrong edges rather than an error.",
+  },
 ];
 
 const SPEC_BY_STEP: Record<string, StepVarSpec> = {};

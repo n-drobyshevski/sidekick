@@ -7,7 +7,11 @@ import { describe, expect, it } from "vitest";
 import { kindFromWizType } from "../src/domain/graphTypes";
 import {
   AI_RESOURCE_TYPE_CANDIDATES,
+  Q_AGENT_RUNS_AS,
+  Q_AGENT_SENSITIVE_DATA_ACCESS,
   Q_AGENTS_NO_GUARDRAIL,
+  Q_IDENTITY_ACCESS,
+  Q_SA_EXCESSIVE_ACCESS,
   Q_AI_INVENTORY,
   Q_CONFIG_FINDINGS,
   Q_ISSUES,
@@ -271,6 +275,7 @@ describe("query documents", () => {
     ["Q_ISSUES", Q_ISSUES],
     ["Q_CONFIG_FINDINGS", Q_CONFIG_FINDINGS],
     ["Q_PRINCIPALS", Q_PRINCIPALS],
+    ["Q_AGENT_SENSITIVE_DATA_ACCESS", Q_AGENT_SENSITIVE_DATA_ACCESS],
   ];
 
   for (const [name, doc] of DOCS) {
@@ -290,5 +295,30 @@ describe("query documents", () => {
       expect(entity, `graphSearch is missing ${f}`).toContain(f);
     }
     expect(flatFields.length).toBeGreaterThan(10);
+  });
+
+  it("keeps the DataFinding fragment out of every OTHER graphSearch document", () => {
+    // The blast-radius guard. ENTITY_FIELDS is shared by four steps; adding
+    // `... on DataFinding` there would make a tenant whose schema does not carry that type
+    // reject guardrail coverage, RUNS_AS, SA findings and identity access all at once — four
+    // optional steps skipped for the sake of one new one. The fragment lives in a variant
+    // used by exactly one document, whose step is itself optional.
+    expect(Q_AGENT_SENSITIVE_DATA_ACCESS).toContain("... on DataFinding");
+    for (const doc of [Q_AGENTS_NO_GUARDRAIL, Q_AGENT_RUNS_AS, Q_SA_EXCESSIVE_ACCESS,
+      Q_IDENTITY_ACCESS]) {
+      expect(doc).not.toContain("DataFinding");
+    }
+  });
+
+  it("asks for the whole chain, with only the finding leg optional", () => {
+    // The two outer legs are the path; without them there is nothing to draw. The finding
+    // leg is optional because a store Wiz classified but has found nothing specific in must
+    // still appear — requiring it collapses the chain back to nothing.
+    for (const token of ["RUNS_AS", "SERVICE_ACCOUNT", "ALLOWS_ACCESS_TO", "BUCKET",
+      "DATABASE_SERVER", "hasSensitiveData", "HAS_DATA_FINDING"]) {
+      expect(Q_AGENT_SENSITIVE_DATA_ACCESS, `chain is missing ${token}`).toContain(token);
+    }
+    const optionalLegs = Q_AGENT_SENSITIVE_DATA_ACCESS.match(/optional: true/g) ?? [];
+    expect(optionalLegs).toHaveLength(1);
   });
 });

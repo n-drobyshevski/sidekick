@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { SEVERITY_ORDER } from "../src/domain/config";
 import {
   enrichGraphDoc,
+  withDataFindingNodes,
   withExcessivePrivilegeNodes,
   withInternetExposureNodes,
   withMissingGuardrailNodes,
@@ -334,8 +335,12 @@ describe("layoutGrouped: risk evidence", () => {
     );
   }
 
+  // No `sensitive|agent-h-chatbot`: that agent runs as sa-agent-h-chatbot, which reaches
+  // db-customer-core, so its data exposure is drawn as the real chain and the stub is
+  // suppressed. The stub's own behaviour is covered directly in graphEnrich.test.ts; what
+  // this file tests is that a derived node inherits its asset's block, and the two
+  // remaining kinds prove that as well as three did.
   const evidence = [
-    "sensitive|agent-h-chatbot",
     "excessive|agent-h-chatbot",
     "noguardrail|agent-h-chatbot",
   ];
@@ -354,9 +359,34 @@ describe("layoutGrouped: risk evidence", () => {
 
   it("still groups the derived nodes by their own kind under 'kind'", () => {
     const layout = grouped("kind", "smart", RISK_PROJECTION);
-    expect(blockOf(layout, "sensitive|agent-h-chatbot")?.key).toBe("SENSITIVE_DATA");
     expect(blockOf(layout, "excessive|agent-h-chatbot")?.key).toBe("EXCESSIVE_PRIVILEGE");
     expect(blockOf(layout, "noguardrail|agent-h-chatbot")?.key).toBe("MISSING_GUARDRAIL");
+  });
+
+  it("files a data-finding aggregate under its own kind, and in its STORE's block", () => {
+    // The aggregate's parent is the datastore, not the agent — so under an inventory
+    // grouping it inherits the store's bucket, and under 'kind' it stands on its own.
+    // Its own fixture rather than the seed estate: what is asserted is the grouping rule,
+    // and pinning it to whichever seed bucket happens to carry findings would make this
+    // test fail for reasons that have nothing to do with layout.
+    const doc = withDataFindingNodes({
+      nodes: [
+        { id: "sa", kind: "SERVICE_ACCOUNT", name: "sa", cloudPlatform: "GCP" },
+        {
+          id: "store", kind: "BUCKET", name: "store", cloudPlatform: "GCP",
+          hasSensitiveData: true, dataFindingCount: 3, dataFindingSeverities: { HIGH: 3 },
+        },
+      ],
+      edges: [{ id: "e1", src: "sa", dst: "store", type: "ALLOWS_ACCESS_TO" }],
+      syncedAt: "2026-06-28T05:00:00Z",
+    });
+    const projection = projectGraph(doc, { seedIds: ["sa"], depth: 2 });
+    expect(projection.nodes.some((n) => n.id === "datafinding|store")).toBe(true);
+
+    expect(blockOf(grouped("kind", "smart", projection), "datafinding|store")?.key)
+      .toBe("DATA_FINDING");
+    const byCloud = grouped("cloud", "smart", projection);
+    expect(blockOf(byCloud, "datafinding|store")?.key).toBe(blockOf(byCloud, "store")?.key);
   });
 
   it("an ISSUE keeps its OWN combo group rather than inheriting its asset's first", () => {

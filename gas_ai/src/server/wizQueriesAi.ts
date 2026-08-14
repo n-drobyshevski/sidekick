@@ -73,7 +73,21 @@ const ENTITY_FIELDS =
 // working capture passes the whole filter as a $filterBy variable, so the
 // inventory query does the same and its document stays static.)
 
-function graphSearchQuery(name: string, queryBody: string): string {
+/**
+ * A DATA_FINDING is not a CloudResource, so its severity needs its own inline fragment.
+ *
+ * Kept OUT of ENTITY_FIELDS deliberately. That constant is shared by every graphSearch
+ * step, and a tenant whose schema does not spell the type `DataFinding` would reject the
+ * document — taking guardrail coverage, RUNS_AS and identity access down with it. Isolated
+ * here, the blast radius is one optional step that records a skip and moves on.
+ */
+const DATA_ENTITY_FIELDS =
+  ENTITY_FIELDS +
+  "        ... on DataFinding {\n" +
+  "          severity\n" +
+  "        }\n";
+
+function graphSearchQueryWith(name: string, queryBody: string, entityFields: string): string {
   return (
     "query " + name + "($quick: Boolean, $first: Int, $after: String) {\n" +
     "  graphSearch(quick: $quick, first: $first, after: $after, query: {\n" +
@@ -83,12 +97,16 @@ function graphSearchQuery(name: string, queryBody: string): string {
     "    pageInfo { hasNextPage endCursor }\n" +
     "    nodes {\n" +
     "      entities {\n" +
-    ENTITY_FIELDS +
+    entityFields +
     "      }\n" +
     "    }\n" +
     "  }\n" +
     "}\n"
   );
+}
+
+function graphSearchQuery(name: string, queryBody: string): string {
+  return graphSearchQueryWith(name, queryBody, ENTITY_FIELDS);
 }
 
 /**
@@ -233,6 +251,55 @@ export const Q_SA_EXCESSIVE_ACCESS = graphSearchQuery(
   "        }]\n" +
   "      }\n" +
   "    }]\n",
+);
+
+/**
+ * The data-exposure attack path, end to end:
+ *   AI_AGENT → RUNS_AS → SERVICE_ACCOUNT → ALLOWS_ACCESS_TO → classified store → findings.
+ *
+ * Wiz's own shape, not ours. The tenant capture in exemples/toxic_combos_response.js
+ * echoes control wc-id-3217's query back, whose block named "Sensitive Data Access" ends
+ * `-ALLOWS_ACCESS_TO→ DATA_RESOURCE[hasSensitiveData] -HAS_DATA_FINDING→ DATA_FINDING`;
+ * ai/queries/6_IAM.MD hand-writes the RUNS_AS form of the same traversal.
+ *
+ * Until this existed, sensitive data was two booleans on the agent and the data lane was
+ * empty on every live tenant — BUCKET and DATABASE were declared kinds that only the
+ * dry-run fixture ever instantiated.
+ *
+ * `HAS_DATA_FINDING` is optional; the other two are not. A store Wiz has classified but on
+ * which no finding rule has fired must still draw — requiring the finding would collapse
+ * the whole path back to nothing, which is the state this query exists to end. Requiring
+ * the first two costs nothing, because without them there is no path to draw.
+ *
+ * DATABASE_SERVER is in the type list because `kindFromWizType` returns null for kinds the
+ * model has never declared and the normalizer then drops the ENTIRE row — losing the agent
+ * and the service account, not just the store.
+ */
+export const Q_AGENT_SENSITIVE_DATA_ACCESS = graphSearchQueryWith(
+  "SidekickAiAgentSensitiveDataAccess",
+  "    type: \"AI_AGENT\"\n" +
+  "    select: true\n" +
+  "    relationships: [{\n" +
+  "      type: \"RUNS_AS\"\n" +
+  "      with: {\n" +
+  "        type: \"SERVICE_ACCOUNT\"\n" +
+  "        select: true\n" +
+  "        relationships: [{\n" +
+  "          type: \"ALLOWS_ACCESS_TO\"\n" +
+  "          with: {\n" +
+  "            type: [\"BUCKET\", \"DATABASE\", \"DATABASE_SERVER\"]\n" +
+  "            select: true\n" +
+  "            where: { hasSensitiveData: { EQUALS: true } }\n" +
+  "            relationships: [{\n" +
+  "              type: \"HAS_DATA_FINDING\"\n" +
+  "              optional: true\n" +
+  "              with: { type: \"DATA_FINDING\", select: true }\n" +
+  "            }]\n" +
+  "          }\n" +
+  "        }]\n" +
+  "      }\n" +
+  "    }]\n",
+  DATA_ENTITY_FIELDS,
 );
 
 /** Human/role identities with high-privilege or admin access INTO agents. */
