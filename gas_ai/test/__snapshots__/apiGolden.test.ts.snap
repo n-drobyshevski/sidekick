@@ -154,6 +154,7 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
         ],
       },
       "settings": {
+        "autoExpand": true,
         "defaultDepth": 2,
         "maxNodes": 100,
         "maxNodesCeiling": 400,
@@ -582,6 +583,7 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
   },
   "getSettings": {
     "data": {
+      "autoExpand": true,
       "defaultDepth": 2,
       "hasCredentials": false,
       "maxNodes": 100,
@@ -1177,6 +1179,7 @@ exports[`read endpoints > bootstrap answers the same shape 1`] = `
       ],
     },
     "settings": {
+      "autoExpand": true,
       "defaultDepth": 2,
       "maxNodes": 100,
       "maxNodesCeiling": 400,
@@ -9000,6 +9003,7 @@ Ignored until: Feb 1, 2026",
 exports[`read endpoints > getSettings answers the same shape 1`] = `
 {
   "data": {
+    "autoExpand": true,
     "defaultDepth": 2,
     "hasCredentials": false,
     "maxNodes": 100,

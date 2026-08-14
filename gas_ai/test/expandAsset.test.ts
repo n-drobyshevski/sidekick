@@ -40,6 +40,21 @@ describe("expandAsset", () => {
     expect(res.data).toBeNull();
   });
 
+  it("refuses a non-agent before spending a call, and says which case it is", () => {
+    // AGENT_EXPANSION is rooted at type AI_AGENT, so pinning _vertexID to a bucket asks a
+    // question that cannot match. Answering "stored" or an empty success would both read
+    // as "we looked and there was nothing new"; "unsupported" is the truth.
+    const assets = (server.api.getAssets({ pageSize: 500 }) as Result).data as {
+      rows: Array<{ id: string; kind: string }>;
+    };
+    const nonAgent = assets.rows.filter((r) => r.kind !== "AI_AGENT")[0];
+    expect(nonAgent, "sample estate should contain a non-agent asset").toBeTruthy();
+
+    const res = server.api.expandAsset({ id: nonAgent.id }) as Result;
+    expect(res.ok).toBe(true);
+    expect((res.data as { source: string }).source).toBe("unsupported");
+  });
+
   it("is reachable under the name dist/entry.js delegates to", () => {
     // The three-file rule: api.ts, the hand-written delegator, the client call site. The
     // build's drift guard covers the first two; this covers the export actually existing.

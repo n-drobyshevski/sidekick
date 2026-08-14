@@ -68,6 +68,29 @@ function compareRels(a, b) {
  * structural-first) and "hiddenCount" covers the rest.
  */
 /**
+ * Whether this sheet should ask Wiz for the node's neighbourhood without being told to.
+ *
+ * Three conditions, all required:
+ *   - the node is an AI_AGENT. AGENT_EXPANSION is rooted at that type, so expanding
+ *     anything else runs a query that structurally cannot match — zero rows, one call
+ *     spent, and a result that reads as "nothing new" when nothing was ever asked.
+ *   - credentials exist. Without them the endpoint answers "stored" locally, so firing is
+ *     a pointless round trip on every sheet open in a dry-run checkout.
+ *   - the operator has not turned the setting off.
+ *
+ * `autoExpand !== false` rather than `=== true` on purpose, and it must stay that way:
+ * bootstrapCached() legitimately returns null before bootstrap resolves, and the setting
+ * is ON by default server-side. Testing for `=== true` would make the client quietly
+ * disagree with the server during boot.
+ */
+export function shouldAutoExpand(node, boot) {
+  if (!node || node.kind !== "AI_AGENT") return false;
+  if (!boot || !boot.hasCredentials) return false;
+  var settings = boot.settings || {};
+  return settings.autoExpand !== false;
+}
+
+/**
  * A live per-agent expansion folded into the stored neighbour list, one hop only.
  *
  * `live` is api_expandAsset's payload: nodes and edges decoded positionally from a

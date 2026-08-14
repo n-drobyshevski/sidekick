@@ -172,6 +172,9 @@ function bootstrapCore(): Rec {
       // exactly what the server will honor instead of hardcoding it twice.
       maxNodesFloor: MAX_NODES_FLOOR,
       maxNodesCeiling: MAX_NODES_CEILING,
+      // Read by the asset sheet to decide whether to expand on open. It rides bootstrap
+      // rather than its own call because the sheet needs it synchronously, before any RPC.
+      autoExpand: settingsStore.getAutoExpand(),
     },
     // The band ranges every page's AARS copy is written from, so "score 70–100" is read
     // off the rule in force instead of being retyped wherever a level is named.
@@ -645,9 +648,19 @@ export function expandAsset(p?: unknown): ApiResult {
   return run(() => {
     const id = String(((p ?? {}) as Rec)["id"] ?? "");
     if (!id) return null;
-    if (!hasWizCredentials()) {
-      return { source: "stored", nodes: [], edges: [], arityMismatches: 0, truncated: false };
-    }
+    const empty = { nodes: [], edges: [], arityMismatches: 0, truncated: false };
+    // Kind before credentials, deliberately. AGENT_EXPANSION is rooted at type AI_AGENT,
+    // so pinning _vertexID to anything else asks a question that cannot match: zero rows,
+    // one UrlFetchApp call spent, and a caller who would reasonably read the empty result
+    // as "nothing new out there". That is true whether or not credentials exist, so it is
+    // the more accurate answer of the two. The client hides the affordance for non-agents
+    // as well; this is the guard that holds when the client is stale, wrong, or bypassed.
+    // An id absent from the last sync still proceeds — it may exist in Wiz but postdate
+    // the snapshot, and refusing it would make a new agent permanently unexpandable.
+    const doc = syncStore.loadGraphDoc();
+    const node = doc ? doc.nodes.filter((n) => n.id === id)[0] : undefined;
+    if (node && node.kind !== "AI_AGENT") return { source: "unsupported", ...empty };
+    if (!hasWizCredentials()) return { source: "stored", ...empty };
     // Cached: reopening the same sheet must not spend another UrlFetchApp call. The key
     // carries the data version, so a sync invalidates it along with everything else.
     return cached("expandAsset", { id }, () => {
@@ -866,6 +879,7 @@ export function getSettings(_p?: unknown): ApiResult {
     maxNodes: settingsStore.getMaxNodes(),
     maxNodesFloor: MAX_NODES_FLOOR,
     maxNodesCeiling: MAX_NODES_CEILING,
+    autoExpand: settingsStore.getAutoExpand(),
     hasCredentials: hasWizCredentials(),
   }));
 }
@@ -877,9 +891,15 @@ export function setSettings(p?: unknown): ApiResult {
       settingsStore.setDefaultDepth(params["defaultDepth"]);
     }
     if (params["maxNodes"] !== undefined) settingsStore.setMaxNodes(params["maxNodes"]);
+    // `!== undefined`, not truthiness: `false` is a value the caller must be able to send,
+    // and `if (params["autoExpand"])` would make the flag impossible to turn off.
+    if (params["autoExpand"] !== undefined) settingsStore.setAutoExpand(params["autoExpand"]);
     return {
       defaultDepth: settingsStore.getDefaultDepth(),
       maxNodes: settingsStore.getMaxNodes(),
+      // Echoed so the Settings page's paint({ ...s, ...fresh }) repaints the STORED value
+      // rather than the one it asked for.
+      autoExpand: settingsStore.getAutoExpand(),
     };
   });
 }

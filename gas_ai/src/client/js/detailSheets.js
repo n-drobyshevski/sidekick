@@ -8,7 +8,7 @@
 import { call } from "./api.js";
 import { bootstrapCached, navigate } from "./store.js";
 import { egoGraph } from "./egoGraph.js";
-import { mergeLiveRels } from "./egoLayout.js";
+import { mergeLiveRels, shouldAutoExpand } from "./egoLayout.js";
 import { categoryOf, edgeLabel, kindIconSvg, kindLabel } from "./icons.js";
 import { severityMixText } from "./graphNode.js";
 import { slaState } from "./pages/comboView.js";
@@ -285,20 +285,42 @@ function toolButton(btn) {
   return btn;
 }
 
-/** The "Expand from Wiz" affordance: one RPC, its own busy and error states. */
+/**
+ * Whether a live expansion can say anything about this node at all.
+ *
+ * AGENT_EXPANSION is rooted at type AI_AGENT, so expanding a bucket or a service account
+ * asks a question that cannot match. The server refuses those too; this keeps the app from
+ * offering an action that could only ever come back empty.
+ */
+function canExpand(node) {
+  if (!node || node.kind !== "AI_AGENT") return false;
+  // Credentials too: without them the endpoint can only answer "needs credentials", and a
+  // control whose sole outcome is an apology is worse than no control. The Settings page
+  // is where that state is explained.
+  const boot = bootstrapCached();
+  return Boolean(boot && boot.hasCredentials);
+}
+
+/**
+ * One expansion RPC, resolving to a payload in every case — a rejection becomes an
+ * `error` record rather than a throw, so the button path and the automatic path can share
+ * one shape and the card always has something honest to say.
+ */
+async function expandNow(assetId) {
+  try {
+    return await call("api_expandAsset", { id: assetId });
+  } catch (e) {
+    return { source: "error", error: e && e.message ? e.message : String(e) };
+  }
+}
+
+/** The "Expand from Wiz" affordance: one RPC, its own busy state. */
 function expandButton(assetId, onDone) {
   const btn = el("button", { class: "sheet-tool" }, uiIcon("graph", 14), "Expand from Wiz");
   btn.onclick = async () => {
     btn.disabled = true;
-    const label = btn.textContent;
     btn.textContent = "Expanding…";
-    try {
-      onDone(await call("api_expandAsset", { id: assetId }));
-    } catch (e) {
-      btn.textContent = label;
-      btn.disabled = false;
-      onDone({ source: "error", error: e && e.message ? e.message : String(e) });
-    }
+    onDone(await expandNow(assetId));
   };
   return btn;
 }
@@ -319,6 +341,13 @@ function provenanceLine(live, addedCount) {
   if (live.source === "stored") {
     return el("p", { class: "small muted sheet-prov" },
       "Live expansion needs Wiz credentials. Showing the last sync.");
+  }
+  if (live.source === "unsupported") {
+    // The affordance is hidden for non-agents, so this should be unreachable from the UI.
+    // It exists because the server can still answer it, and a silent empty result here
+    // would read exactly like a successful expansion that found nothing.
+    return el("p", { class: "small muted sheet-prov" },
+      "Live expansion is defined for AI agents. Showing the last sync.");
   }
   const parts = ["Expanded live " + fmtDateTime(live.fetchedAt) + "."];
   parts.push(addedCount > 0
@@ -397,9 +426,10 @@ export function openAssetSheet(assetId, opts = {}) {
       const { node, issues, neighbors, findings } = detail;
       const openIssues = issues || [];
       const rels = neighbors || [];
-      // Result of "Expand from Wiz", null until the analyst asks for it. Held here rather
-      // than fetched on open so the sheet costs no UrlFetchApp quota by default.
+      // Result of the live expansion — from the button, or fired automatically when the
+      // auto-expand setting is on. Null until one of the two lands.
       let liveExpansion = null;
+      let autoExpandStarted = false;
       const compliance = findings || [];
       const caps = pillarCaps();
       clear(body);
@@ -494,6 +524,11 @@ export function openAssetSheet(assetId, opts = {}) {
           // expands. Which of the two is on screen is stated, never implied — a map that
           // silently mixes a week-old snapshot with a live read is worse than either.
           const card = el("div");
+          const onExpanded = (result) => {
+            if (disposed) return;
+            liveExpansion = result;
+            paintConnections();
+          };
           const paintConnections = () => {
             const merged = mergeLiveRels(node, rels, liveExpansion);
             let map = null;
@@ -511,10 +546,12 @@ export function openAssetSheet(assetId, opts = {}) {
             clear(card).append(sheetCard(
               "Connections (" + merged.length + ")",
               el("div", { class: "sheet-card-tools" },
-                expandButton(node.id, (result) => {
-                  liveExpansion = result;
-                  paintConnections();
-                }),
+                // Offered only where it can succeed, and only while it still has something
+                // to do: after a successful expansion serverCache would hand back the same
+                // payload, so the button would be a control that visibly does nothing.
+                canExpand(node) && (!liveExpansion || liveExpansion.source === "error")
+                  ? expandButton(node.id, onExpanded)
+                  : null,
                 el("button", { class: "sheet-tool", onclick: openGraph },
                   uiIcon("graph", 14), "Open in graph")),
               map ? map.node : emptyState("No connections in the last sync."),
@@ -523,6 +560,15 @@ export function openAssetSheet(assetId, opts = {}) {
           };
           paintConnections();
           pane.append(card);
+          // AFTER the first paint, never before it: the stored neighbours have to appear
+          // at once, with the live result folded in when it arrives. Awaiting the RPC here
+          // would put a network round trip in front of every agent sheet open.
+          // `autoExpandStarted` guards the section renderer running again on a section
+          // switch, which would otherwise re-fire on every visit to the overview.
+          if (!autoExpandStarted && shouldAutoExpand(node, bootstrapCached())) {
+            autoExpandStarted = true;
+            expandNow(node.id).then(onExpanded);
+          }
           // The record as the server sent it. An analyst who needs a field this sheet does
           // not name should not have to open the browser console to read it.
           const raw = JSON.stringify(detail, null, 2);

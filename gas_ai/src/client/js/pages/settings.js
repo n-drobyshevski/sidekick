@@ -4,7 +4,7 @@
 import { call } from "../api.js";
 import { bootstrap } from "../store.js";
 import { clientBuild, describeBuild } from "../buildInfo.js";
-import { clear, el, emptyState, skeleton, statusPill, toast } from "../ui.js";
+import { clear, el, emptyState, segmented, skeleton, statusPill, toast } from "../ui.js";
 
 export async function renderSettings(main, _params, ctx) {
   main.append(
@@ -95,7 +95,39 @@ export async function renderSettings(main, _params, ctx) {
       ),
     );
 
-    // Connection status.
+    // Connection status, and the one behaviour that depends on it.
+    //
+    // This toggle saves on change, unlike the two fields above it, which batch behind one
+    // Save button. That is a choice, not an oversight: a second Save button on one page
+    // reads as ambiguous scope, and a control in this card driven by a button in that one
+    // is worse. A single binary with an immediately reversible effect is the case where
+    // save-on-change is the honest model.
+    const autoExpandToggle = segmented({
+      options: [{ value: "on", label: "On" }, { value: "off", label: "Off" }],
+      value: s.autoExpand === false ? "off" : "on",
+      ariaLabel: "Expand agent neighbourhoods from Wiz automatically",
+      onChange: async (v) => {
+        try {
+          const fresh = await call("api_setSettings", { autoExpand: v === "on" });
+          autoExpandToggle.set(fresh.autoExpand === false ? "off" : "on");
+          toast("Settings saved.");
+          // Bootstrap carries this flag to the detail sheet, so it has to be re-read
+          // before an already-open sheet consults it again.
+          ctx.refresh();
+        } catch (e) {
+          // Snap back to the stored value: the control must never show a state the
+          // server did not accept.
+          autoExpandToggle.set(s.autoExpand === false ? "off" : "on");
+          toast(String(e.message || e), "error");
+        }
+      },
+    });
+    if (!s.hasCredentials) {
+      // Inert without credentials — the expansion is a live read. The pill beside it
+      // already says why, so this does not repeat the reason in different words.
+      for (const btn of autoExpandToggle.querySelectorAll("button")) btn.disabled = true;
+    }
+
     host.append(
       el("div", { class: "card" },
         el("h3", {}, "Wiz connection"),
@@ -109,6 +141,16 @@ export async function renderSettings(main, _params, ctx) {
           "WIZ_CLIENT_ID + WIZ_CLIENT_SECRET), set in the Apps Script editor under " +
           "Project Settings. They are never entered or shown here. Run wizDiagnostic() " +
           "in the editor to validate them."),
+        el("div", { class: "field", style: "margin:14px 0 0" },
+          el("label", { class: "field-label" }, "Expand agent neighbourhoods automatically"),
+          autoExpandToggle),
+        el("p", { class: "small muted", style: "margin:8px 0 0" },
+          "An AI agent's detail sheet shows the connections the last sync collected, which " +
+          "is only what the scan's fixed traversals asked for. With this on, opening an " +
+          "agent also asks Wiz for its full neighbourhood — guardrails, endpoints, MCP " +
+          "servers and the agents it invokes — and folds anything new into the connection " +
+          "map, saying so beneath it. One API call per agent per scan, reused for the rest " +
+          "of the day. Turn it off to read only what the last sync stored."),
       ),
     );
 

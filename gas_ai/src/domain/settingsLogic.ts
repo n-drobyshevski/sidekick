@@ -45,6 +45,33 @@ export function withMaxNodes(settings: Rec, maxNodes: unknown): Rec {
   return { ...settings, max_nodes: clampMaxNodes(maxNodes) };
 }
 
+// ----------------------------------------------------------------------- auto-expand
+
+/**
+ * Whether an agent's detail sheet asks Wiz for its neighbourhood on open, instead of
+ * waiting for the "Expand from Wiz" button.
+ *
+ * ON by default. The stored snapshot only holds what the sync battery's five fixed
+ * traversals collected, so a sheet that has not been expanded is showing a partial picture
+ * without the reader having any way to know it. The cost is bounded: one UrlFetchApp call
+ * per agent per data version, memoized by serverCache, and the sheet paints its stored
+ * neighbours first and repaints when the live result lands — so it buys latency on nothing.
+ *
+ * The get/with asymmetry is not an oversight. `get` tests `!== false` because
+ * settingsStore.loadSettings turns a blank cell into `null`, and for an on-by-default flag
+ * `null` has to read as ON — the same hazard the `?? DEFAULT` in the getters above exists
+ * for. `with` tests `=== true` to match the strict-coercion idiom in aarsRule.ts, so a
+ * value arriving from the wire is normalized to a real boolean rather than stored as
+ * something truthy that later reads back differently.
+ */
+export function getAutoExpand(settings: Rec): boolean {
+  return settings["auto_expand"] !== false;
+}
+
+export function withAutoExpand(settings: Rec, on: unknown): Rec {
+  return { ...settings, auto_expand: on === true };
+}
+
 // ------------------------------------------------------------------------- AARS rule
 
 export interface StoredAarsRule {
