@@ -975,10 +975,11 @@ export function openIssueSheet(issueId, opts = {}) {
         overview(pane) {
           // PRODUCT.md principle 5: a stored read and a live read must not look identical
           // on screen. This paint came straight from a row the caller already held — no
-          // fetch happened yet — so it says so, in the same vocabulary provenanceLine()
-          // uses for the asset sheet's stored/live map.
+          // fetch happened yet — so it says so, in the same vocabulary provenanceContent()
+          // uses for the asset sheet's stored/live map. The --lead modifier drops that
+          // vocabulary's separator rule: this line opens the pane instead of closing a card.
           if (seeded) {
-            provNode = el("p", { class: "small muted sheet-prov" },
+            provNode = el("p", { class: "small muted sheet-prov sheet-prov--lead" },
               "From the list — checking for updates.");
             pane.append(provNode);
           }
