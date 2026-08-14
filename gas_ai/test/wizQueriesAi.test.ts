@@ -4,7 +4,7 @@
 // { type: { equals: [...] } } operator shape.
 
 import { describe, expect, it } from "vitest";
-import { kindFromWizType } from "../src/domain/graphTypes";
+import { entityField, kindFromWizType } from "../src/domain/graphTypes";
 import {
   AI_RESOURCE_TYPE_CANDIDATES,
   Q_AGENT_RUNS_AS,
@@ -25,6 +25,7 @@ import {
   chooseAiResourceTypes,
   isInvalidEnumValueError,
 } from "../src/server/wizQueriesAi";
+import { errorDigest } from "../src/server/wizClientAi";
 import { RISK_CATEGORY_ID } from "../src/domain/toxicCombos";
 import { isUnresolvedIssue, UNRESOLVED_ISSUE_STATUSES } from "../src/domain/config";
 
@@ -286,35 +287,62 @@ describe("query documents", () => {
     });
   }
 
-  it("asks graphSearch for every field the flat query asks for", () => {
-    // The invariant the two lists exist to satisfy, asserted rather than trusted.
-    const flatFields = Q_AI_INVENTORY.split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l && !l.includes("{") && !l.includes("}") && !l.startsWith("query")
-        && !l.startsWith("$") && !l.includes("(") && !l.includes(":"));
-    const entity = Q_AGENTS_NO_GUARDRAIL;
-    for (const f of flatFields) {
-      expect(entity, `graphSearch is missing ${f}`).toContain(f);
+  it("asks a graphSearch entity for the interface fields and the properties bag, only", () => {
+    // This used to assert the opposite — that graphSearch asks for every field the flat
+    // query does. It cannot. The tenant answers `... on CloudResource` with
+    //
+    //   Fragment cannot be spread here as objects of type "GraphEntity" can never be of
+    //   type "CloudResource"
+    //
+    // and then "Cannot query field X on type CloudResource" for each field inside it. The
+    // resource facts are not reachable as fields on this root at all; they arrive in
+    // `properties`. Because ENTITY_FIELDS is shared by all five battery traversals and
+    // syncJobs skips an optional step on a 400, that one fragment silently dropped
+    // guardrail coverage, RUNS_AS, SA excessive access, sensitive-data access and identity
+    // access from every live sync at once.
+    for (const [name, doc] of DOCS) {
+      if (!doc.includes("graphSearch")) continue;
+      const entities = doc.slice(doc.indexOf("entities {"));
+      expect(entities, `${name} still spreads a fragment on GraphEntity`)
+        .not.toContain("... on");
+      expect(entities, `${name} does not ask for properties`).toContain("properties");
+      for (const field of ["cloudPlatform", "region", "status", "firstSeen", "externalId",
+        "hasSensitiveData", "hasAdminPrivileges", "technology", "cloudAccount", "tags"]) {
+        expect(entities, `${name} selects ${field} on GraphEntity`).not.toContain(field);
+      }
     }
-    expect(flatFields.length).toBeGreaterThan(10);
   });
 
-  it("keeps the DataFinding fragment out of every OTHER graphSearch document", () => {
-    // The blast-radius guard. ENTITY_FIELDS is shared by four steps; adding
-    // `... on DataFinding` there would make a tenant whose schema does not carry that type
-    // reject guardrail coverage, RUNS_AS, SA findings and identity access all at once — four
-    // optional steps skipped for the sake of one new one. The fragment lives in a variant
-    // used by exactly one document, whose step is itself optional.
-    expect(Q_AGENT_SENSITIVE_DATA_ACCESS).toContain("... on DataFinding");
-    // Q_AGENT_EXPANSION carries it too, and for the same reason: its traversal selects
-    // DATA_FINDING in five of its 43 slots. It is also not a sync step — a tenant that
-    // rejects the type costs one detail-sheet button, not four battery steps.
-    expect(Q_AGENT_EXPANSION).toContain("... on DataFinding");
-    for (const doc of [Q_AGENTS_NO_GUARDRAIL, Q_AGENT_RUNS_AS, Q_SA_EXCESSIVE_ACCESS,
-      Q_IDENTITY_ACCESS]) {
-      expect(doc).not.toContain("DataFinding");
+  it("still asks the FLAT root for every resource field, where they do exist", () => {
+    // The split between the two lists marks which root carries what; the flat query is
+    // untouched by any of this.
+    for (const field of ["nativeType", "cloudPlatform", "region", "status", "firstSeen",
+      "lastSeen", "externalId", "isAccessibleFromInternet", "hasSensitiveData",
+      "hasAdminPrivileges"]) {
+      expect(Q_AI_INVENTORY, `flat inventory dropped ${field}`).toContain(field);
     }
   });
+
+  it("reaches the same facts through entityField, whichever root they came from", () => {
+    // The claim the query change rests on: a graphSearch entity's properties bag answers
+    // the same questions the flat node does, including the two Wiz spells differently.
+    const flat = { cloudPlatform: "GCP", region: "eu", isAccessibleFromInternet: true };
+    const entity = {
+      properties: {
+        cloudPlatform: "GCP", region: "eu", "accessibleFrom.internet": true,
+        creationDate: "2026-04-21T14:10:00Z", severity: "SeverityMedium",
+      },
+    };
+    for (const key of ["cloudPlatform", "region", "isAccessibleFromInternet"]) {
+      expect(entityField(entity, key)).toEqual(entityField(flat, key));
+    }
+    expect(entityField(entity, "firstSeen")).toBe("2026-04-21T14:10:00Z");
+    expect(entityField(entity, "severity")).toBe("SeverityMedium");
+    // A flat value still wins over the bag, and an absent key is undefined either way.
+    expect(entityField({ region: "us", properties: { region: "eu" } }, "region")).toBe("us");
+    expect(entityField({}, "region")).toBeUndefined();
+  });
+
 
   it("Q_AGENT_EXPANSION takes its traversal as a variable, not as document text", () => {
     // The one graphSearch document here whose query body is NOT inlined. It is pinned to a
@@ -339,5 +367,51 @@ describe("query documents", () => {
     }
     const optionalLegs = Q_AGENT_SENSITIVE_DATA_ACCESS.match(/optional: true/g) ?? [];
     expect(optionalLegs).toHaveLength(1);
+  });
+});
+
+describe("errorDigest", () => {
+  it("keeps the messages and drops the scaffolding", () => {
+    // The real rejection that started this: three fields, of which the raw body only got
+    // three-and-a-bit through in 500 characters because every entry repeats its locations
+    // and extensions.
+    const raw = JSON.stringify({
+      errors: ["nativeType", "cloudPlatform", "region"].map((f, i) => ({
+        message: `Cannot query field "${f}" on type "GraphEntity".`,
+        locations: [{ line: 15 + i, column: 9 }],
+        extensions: { code: "GRAPHQL_VALIDATION_FAILED" },
+      })),
+    });
+    const digest = errorDigest(raw);
+    for (const f of ["nativeType", "cloudPlatform", "region"]) {
+      expect(digest).toContain(f);
+    }
+    expect(digest).not.toContain("GRAPHQL_VALIDATION_FAILED");
+    expect(digest).not.toContain("locations");
+    expect(digest.length).toBeLessThan(raw.length / 2);
+  });
+
+  it("leaves the enum-rejection wording intact for isInvalidEnumValueError", () => {
+    // That predicate matches on substrings of the thrown message, so condensing the body
+    // must not change the words it looks for.
+    const raw = JSON.stringify({
+      errors: [{ message: 'CloudResourceTypeFilter cannot represent value: ["AI_AGENT"]' }],
+    });
+    expect(isInvalidEnumValueError(`Wiz query failed (HTTP 400): ${errorDigest(raw)}`)).toBe(true);
+  });
+
+  it("falls back to the raw text when the body is not a GraphQL envelope", () => {
+    // A proxy's HTML error page has no messages to extract, and then the raw text is the
+    // diagnosis rather than noise around it.
+    expect(errorDigest("<html>502 Bad Gateway</html>")).toBe("<html>502 Bad Gateway</html>");
+    expect(errorDigest("")).toBe("");
+    expect(errorDigest('{"data":null}')).toBe('{"data":null}');
+  });
+
+  it("bounds the result however long the error list is", () => {
+    const many = JSON.stringify({
+      errors: Array.from({ length: 200 }, (_, i) => ({ message: `field_${i} is not valid` })),
+    });
+    expect(errorDigest(many).length).toBeLessThanOrEqual(800);
   });
 });

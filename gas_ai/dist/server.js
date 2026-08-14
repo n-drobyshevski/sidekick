@@ -685,6 +685,25 @@ var Server = (() => {
     const norm = t.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_");
     return NODE_KINDS.includes(norm) ? norm : null;
   }
+  var PROPERTY_ALIASES = {
+    firstSeen: ["creationDate"],
+    lastSeen: ["updatedAt"],
+    isAccessibleFromInternet: ["accessibleFrom.internet"],
+    isOpenToAllInternet: ["openToAllInternet"]
+  };
+  function entityField(raw, key) {
+    var _a5;
+    if (!raw || typeof raw !== "object") return void 0;
+    if (raw[key] !== void 0) return raw[key];
+    const props = raw["properties"];
+    if (!props || typeof props !== "object") return void 0;
+    const bag = props;
+    if (bag[key] !== void 0) return bag[key];
+    for (const alias of (_a5 = PROPERTY_ALIASES[key]) != null ? _a5 : []) {
+      if (bag[alias] !== void 0) return bag[alias];
+    }
+    return void 0;
+  }
   function edgeId(src, type, dst, negated) {
     return `${src}|${type}|${dst}${negated ? "|neg" : ""}`;
   }
@@ -850,12 +869,12 @@ var Server = (() => {
   var IDENTITY_FIELDS = [
     "id",
     "name",
-    "type",
-    "nativeType",
-    "cloudPlatform",
-    "region"
+    "type"
   ];
   var CLOUD_RESOURCE_FIELDS = [
+    "nativeType",
+    "cloudPlatform",
+    "region",
     "status",
     "firstSeen",
     "lastSeen",
@@ -876,8 +895,7 @@ var Server = (() => {
     return fields.map((f) => pad + f + "\n").join("");
   }
   var RESOURCE_FIELDS = indented(IDENTITY_FIELDS, 6) + indented(CLOUD_RESOURCE_FIELDS, 6);
-  var ENTITY_FIELDS = indented(IDENTITY_FIELDS, 8) + "        ... on CloudResource {\n" + indented(CLOUD_RESOURCE_FIELDS, 10) + "        }\n";
-  var DATA_ENTITY_FIELDS = ENTITY_FIELDS + "        ... on DataFinding {\n          severity\n        }\n";
+  var ENTITY_FIELDS = indented(IDENTITY_FIELDS, 8) + "        properties\n";
   function graphSearchQueryWith(name, queryBody, entityFields) {
     return "query " + name + "($quick: Boolean, $first: Int, $after: String) {\n  graphSearch(quick: $quick, first: $first, after: $after, query: {\n" + queryBody + "  }) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      entities {\n" + entityFields + "      }\n    }\n  }\n}\n";
   }
@@ -942,13 +960,13 @@ var Server = (() => {
   var Q_AGENT_SENSITIVE_DATA_ACCESS = graphSearchQueryWith(
     "SidekickAiAgentSensitiveDataAccess",
     '    type: "AI_AGENT"\n    select: true\n    relationships: [{\n      type: "RUNS_AS"\n      with: {\n        type: "SERVICE_ACCOUNT"\n        select: true\n        relationships: [{\n          type: "ALLOWS_ACCESS_TO"\n          with: {\n            type: ["BUCKET", "DATABASE", "DATABASE_SERVER"]\n            select: true\n            where: { hasSensitiveData: { EQUALS: true } }\n            relationships: [{\n              type: "HAS_DATA_FINDING"\n              optional: true\n              with: { type: "DATA_FINDING", select: true }\n            }]\n          }\n        }]\n      }\n    }]\n',
-    DATA_ENTITY_FIELDS
+    ENTITY_FIELDS
   );
   var Q_IDENTITY_ACCESS = graphSearchQuery(
     "SidekickAiIdentitiesWithAgentAccess",
     '    type: "AI_AGENT"\n    select: true\n    relationships: [{\n      type: "ALLOWS_ACCESS_TO"\n      direction: INBOUND\n      with: {\n        type: "ACCESS_ROLE_BINDING"\n        select: false\n        relationships: [\n          {\n            type: "BOUND_TO"\n            with: { type: ["USER_ACCOUNT", "SERVICE_ACCOUNT"], select: true }\n          }\n          {\n            type: "PERMITS_ACCESS_ROLE"\n            with: {\n              type: "ACCESS_ROLE"\n              select: true\n              where: { accessType: { EQUALS: ["HIGH_PRIVILEGE", "ADMIN"] } }\n            }\n          }\n        ]\n      }\n    }]\n'
   );
-  var Q_AGENT_EXPANSION = "query SidekickAiAgentExpansion($quick: Boolean, $first: Int, $after: String, $query: GraphEntityQueryInput, $projectId: String) {\n  graphSearch(\n    quick: $quick\n    first: $first\n    after: $after\n    query: $query\n    projectId: $projectId\n  ) {\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      entities {\n" + DATA_ENTITY_FIELDS + "      }\n    }\n  }\n}\n";
+  var Q_AGENT_EXPANSION = "query SidekickAiAgentExpansion($quick: Boolean, $first: Int, $after: String, $query: GraphEntityQueryInput, $projectId: String) {\n  graphSearch(\n    quick: $quick\n    first: $first\n    after: $after\n    query: $query\n    projectId: $projectId\n  ) {\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      entities {\n" + ENTITY_FIELDS + "      }\n    }\n  }\n}\n";
   var Q_ISSUES = "query SidekickAiIssues($first: Int, $after: String, $filterBy: IssueFilters, $orderBy: IssueOrder) {\n  issuesV2(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      type\n      severity\n      status\n      createdAt\n      updatedAt\n      dueAt\n      resolvedAt\n      resolutionReason\n      resolutionNote\n      rejectionExpiredAt\n      validatedAsExploitable\n      environments\n      assignee { id name primaryEmail }\n      resolvedBy { user { id name email } serviceAccount { id name type } }\n      notes { id text }\n      serviceTickets { id externalId name url }\n      applicationServices { id displayName }\n      aiRemediationAnalysis { verdict recommendedSeverity }\n      projects { id name slug riskProfile { businessImpact } }\n      entitySnapshot {\n        id\n        type\n        status\n        name\n        cloudPlatform\n        region\n        subscriptionName\n        subscriptionId\n        subscriptionExternalId\n        nativeType\n        externalId\n        tags\n        kubernetesClusterName\n        kubernetesNamespaceName\n        resourceGroupId\n      }\n      sourceRules {\n        ... on Control {\n          id\n          name\n          description\n          severity\n          risks\n          threats\n          resolutionRecommendation\n        }\n        ... on CloudConfigurationRule {\n          id\n          name\n          description\n          risks\n          threats\n          control { resolutionRecommendation severity }\n        }\n        ... on CloudEventRule {\n          id\n          name\n          description\n          risks\n          threats\n        }\n      }\n    }\n  }\n}\n";
   function aiIssuesVariables(scope) {
     const filterBy = {
@@ -1018,7 +1036,6 @@ var Server = (() => {
     return token;
   }
   function gqlPost(query, variables) {
-    var _a5;
     const apiUrl = requireProp(PROP_KEYS.wizApiUrl);
     let token = getToken();
     let lastError = "";
@@ -1044,14 +1061,15 @@ var Server = (() => {
       if (code !== 200) {
         const hint = code === 401 && getProp(PROP_KEYS.wizApiToken) ? " \u2014 WIZ_API_TOKEN was rejected; it may have expired. Refresh it, or set WIZ_CLIENT_ID/WIZ_CLIENT_SECRET for auto-refresh." : "";
         throw new WizQueryError(
-          `Wiz query failed (HTTP ${code})${hint}: ${response.getContentText().slice(0, 500)}`
+          `Wiz query failed (HTTP ${code})${hint}: ${errorDigest(response.getContentText())}`
         );
       }
       const body = JSON.parse(response.getContentText());
       const data = body["data"];
       if (!data) {
-        const errors = JSON.stringify((_a5 = body["errors"]) != null ? _a5 : body).slice(0, 500);
-        throw new WizQueryError(`Wiz response carried no data: ${errors}`);
+        throw new WizQueryError(
+          `Wiz response carried no data: ${errorDigest(response.getContentText())}`
+        );
       }
       return data;
     }
@@ -1141,6 +1159,22 @@ var Server = (() => {
     } catch {
     }
     return chosen;
+  }
+  var ERROR_BODY_MAX = 800;
+  function errorDigest(text) {
+    try {
+      const parsed = JSON.parse(text);
+      const errors = parsed["errors"];
+      if (Array.isArray(errors) && errors.length) {
+        const messages = errors.map((e) => {
+          var _a5;
+          return e && typeof e === "object" ? String((_a5 = e["message"]) != null ? _a5 : "") : "";
+        }).filter(Boolean);
+        if (messages.length) return messages.join(" | ").slice(0, ERROR_BODY_MAX);
+      }
+    } catch {
+    }
+    return String(text).slice(0, ERROR_BODY_MAX);
   }
   function readConnection(connection, field) {
     var _a5, _b, _c;
@@ -3948,7 +3982,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "cad533d3d562" : "dev";
+  var BUILD_ID = true ? "d0735898aad2" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -4448,7 +4482,7 @@ var Server = (() => {
     return v === true ? true : v === false ? false : null;
   }
   function toExpandedNode(raw) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i;
+    var _a5;
     const id = str(raw["id"]);
     if (!id) return null;
     const rawType = str(raw["type"]);
@@ -4457,28 +4491,33 @@ var Server = (() => {
       var _a6;
       return (_a6 = str(p == null ? void 0 : p["name"])) != null ? _a6 : "";
     }).filter(Boolean) : [];
+    const pickStr = (key) => {
+      var _a6;
+      return (_a6 = str(entityField(raw, key))) != null ? _a6 : null;
+    };
+    const isTrue = (key) => entityField(raw, key) === true;
     return {
       id,
       name: (_a5 = str(raw["name"])) != null ? _a5 : id,
       kind: known != null ? known : rawType ? rawType.toUpperCase().replace(/[^A-Z0-9]+/g, "_") : "UNKNOWN",
       unmodeled: !known,
-      nativeType: (_b = str(raw["nativeType"])) != null ? _b : null,
-      cloud: (_c = str(raw["cloudPlatform"])) != null ? _c : null,
-      region: (_d = str(raw["region"])) != null ? _d : null,
-      status: (_e = str(raw["status"])) != null ? _e : null,
-      firstSeen: (_f = str(raw["firstSeen"])) != null ? _f : null,
-      lastSeen: (_g = str(raw["lastSeen"])) != null ? _g : null,
-      externalId: (_h = str(raw["externalId"])) != null ? _h : null,
+      nativeType: pickStr("nativeType"),
+      cloud: pickStr("cloudPlatform"),
+      region: pickStr("region"),
+      status: pickStr("status"),
+      firstSeen: pickStr("firstSeen"),
+      lastSeen: pickStr("lastSeen"),
+      externalId: pickStr("externalId"),
       projects,
       // DataFinding is the one entity here carrying its own severity; everything else is
       // inventory and gets its severity from the register, which this path does not touch.
-      severity: (_i = str(raw["severity"])) != null ? _i : null,
-      internet: triBool(raw["isAccessibleFromInternet"]),
-      openInternet: triBool(raw["isOpenToAllInternet"]),
-      sensitiveData: raw["hasSensitiveData"] === true,
-      sensitiveAccess: raw["hasAccessToSensitiveData"] === true,
-      highPriv: raw["hasHighPrivileges"] === true,
-      adminPriv: raw["hasAdminPrivileges"] === true
+      severity: pickStr("severity"),
+      internet: triBool(entityField(raw, "isAccessibleFromInternet")),
+      openInternet: triBool(entityField(raw, "isOpenToAllInternet")),
+      sensitiveData: isTrue("hasSensitiveData"),
+      sensitiveAccess: isTrue("hasAccessToSensitiveData"),
+      highPriv: isTrue("hasHighPrivileges"),
+      adminPriv: isTrue("hasAdminPrivileges")
     };
   }
   function decodeExpansion(slots, rows) {
@@ -4630,24 +4669,27 @@ var Server = (() => {
     const id = str2(raw["id"]);
     const kind = kindFromWizType(raw["type"]);
     if (!id || !kind) return null;
+    const f = (key) => entityField(raw, key);
     const node2 = {
       id,
       kind,
       name: (_a5 = str2(raw["name"])) != null ? _a5 : id,
-      nativeType: str2(raw["nativeType"]),
-      cloudPlatform: str2(raw["cloudPlatform"]),
-      region: str2(raw["region"]),
-      status: str2(raw["status"]),
-      firstSeen: str2(raw["firstSeen"]),
-      lastSeen: str2(raw["lastSeen"]),
-      externalId: str2(raw["externalId"]),
-      isAccessibleFromInternet: triBool2(raw["isAccessibleFromInternet"]),
-      isOpenToAllInternet: triBool2(raw["isOpenToAllInternet"]),
-      hasSensitiveData: bool(raw["hasSensitiveData"]),
-      hasAccessToSensitiveData: bool(raw["hasAccessToSensitiveData"]),
-      hasHighPrivileges: bool(raw["hasHighPrivileges"]),
-      hasAdminPrivileges: bool(raw["hasAdminPrivileges"])
+      nativeType: str2(f("nativeType")),
+      cloudPlatform: str2(f("cloudPlatform")),
+      region: str2(f("region")),
+      status: str2(f("status")),
+      firstSeen: str2(f("firstSeen")),
+      lastSeen: str2(f("lastSeen")),
+      externalId: str2(f("externalId")),
+      isAccessibleFromInternet: triBool2(f("isAccessibleFromInternet")),
+      isOpenToAllInternet: triBool2(f("isOpenToAllInternet")),
+      hasSensitiveData: bool(f("hasSensitiveData")),
+      hasAccessToSensitiveData: bool(f("hasAccessToSensitiveData")),
+      hasHighPrivileges: bool(f("hasHighPrivileges")),
+      hasAdminPrivileges: bool(f("hasAdminPrivileges"))
     };
+    const purpose = str2(f("identityPurpose"));
+    if (purpose) node2.identityPurpose = purpose;
     const technology = raw["technology"];
     if (technology && typeof technology === "object") {
       const cats = technology["categories"];
@@ -5010,7 +5052,9 @@ var Server = (() => {
           id,
           resourceId: storeId,
           name: (_a5 = str2(raw["name"])) != null ? _a5 : id,
-          severity: normalizeDataFindingSeverity(raw["severity"])
+          // Through entityField: on a graphSearch entity `severity` rides in the properties
+          // bag, not flat. The capture shows it there on the finding entities.
+          severity: normalizeDataFindingSeverity(entityField(raw, "severity"))
         });
       }
     }

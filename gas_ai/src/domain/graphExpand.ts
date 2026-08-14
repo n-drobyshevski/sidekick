@@ -28,7 +28,7 @@
 // renders it into the slot list, and a test pins the slot count against the real capture.
 
 import { type Rec } from "./util";
-import { kindFromWizType } from "./graphTypes";
+import { entityField, kindFromWizType } from "./graphTypes";
 
 /**
  * One node in the traversal. `select` defaults to TRUE — the common case in the capture,
@@ -499,28 +499,34 @@ function toExpandedNode(raw: Rec): ExpandedNode | null {
   const projects = Array.isArray(raw["projects"])
     ? (raw["projects"] as Rec[]).map((p) => str(p?.["name"]) ?? "").filter(Boolean)
     : [];
+
+  // Every fact through entityField: on this root they live in the `properties` bag, not
+  // flat. The shared helper also knows the two names Wiz spells differently there.
+  const pickStr = (key: string): string | null => str(entityField(raw, key)) ?? null;
+  const isTrue = (key: string): boolean => entityField(raw, key) === true;
+
   return {
     id,
     name: str(raw["name"]) ?? id,
     kind: known ?? (rawType ? rawType.toUpperCase().replace(/[^A-Z0-9]+/g, "_") : "UNKNOWN"),
     unmodeled: !known,
-    nativeType: str(raw["nativeType"]) ?? null,
-    cloud: str(raw["cloudPlatform"]) ?? null,
-    region: str(raw["region"]) ?? null,
-    status: str(raw["status"]) ?? null,
-    firstSeen: str(raw["firstSeen"]) ?? null,
-    lastSeen: str(raw["lastSeen"]) ?? null,
-    externalId: str(raw["externalId"]) ?? null,
+    nativeType: pickStr("nativeType"),
+    cloud: pickStr("cloudPlatform"),
+    region: pickStr("region"),
+    status: pickStr("status"),
+    firstSeen: pickStr("firstSeen"),
+    lastSeen: pickStr("lastSeen"),
+    externalId: pickStr("externalId"),
     projects,
     // DataFinding is the one entity here carrying its own severity; everything else is
     // inventory and gets its severity from the register, which this path does not touch.
-    severity: str(raw["severity"]) ?? null,
-    internet: triBool(raw["isAccessibleFromInternet"]),
-    openInternet: triBool(raw["isOpenToAllInternet"]),
-    sensitiveData: raw["hasSensitiveData"] === true,
-    sensitiveAccess: raw["hasAccessToSensitiveData"] === true,
-    highPriv: raw["hasHighPrivileges"] === true,
-    adminPriv: raw["hasAdminPrivileges"] === true,
+    severity: pickStr("severity"),
+    internet: triBool(entityField(raw, "isAccessibleFromInternet")),
+    openInternet: triBool(entityField(raw, "isOpenToAllInternet")),
+    sensitiveData: isTrue("hasSensitiveData"),
+    sensitiveAccess: isTrue("hasAccessToSensitiveData"),
+    highPriv: isTrue("hasHighPrivileges"),
+    adminPriv: isTrue("hasAdminPrivileges"),
   };
 }
 

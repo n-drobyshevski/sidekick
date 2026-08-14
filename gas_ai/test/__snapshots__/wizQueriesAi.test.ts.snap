@@ -15,28 +15,7 @@ exports[`query documents > Q_AGENT_EXPANSION is unchanged 1`] = `
         id
         name
         type
-        nativeType
-        cloudPlatform
-        region
-        ... on CloudResource {
-          status
-          firstSeen
-          lastSeen
-          externalId
-          isAccessibleFromInternet
-          isOpenToAllInternet
-          hasSensitiveData
-          hasAccessToSensitiveData
-          hasAdminPrivileges
-          hasHighPrivileges
-          technology { id name categories { id name } }
-          cloudAccount { id name externalId cloudProvider }
-          projects { id name riskProfile { businessImpact } }
-          tags { key value }
-        }
-        ... on DataFinding {
-          severity
-        }
+        properties
       }
     }
   }
@@ -77,28 +56,7 @@ exports[`query documents > Q_AGENT_SENSITIVE_DATA_ACCESS is unchanged 1`] = `
         id
         name
         type
-        nativeType
-        cloudPlatform
-        region
-        ... on CloudResource {
-          status
-          firstSeen
-          lastSeen
-          externalId
-          isAccessibleFromInternet
-          isOpenToAllInternet
-          hasSensitiveData
-          hasAccessToSensitiveData
-          hasAdminPrivileges
-          hasHighPrivileges
-          technology { id name categories { id name } }
-          cloudAccount { id name externalId cloudProvider }
-          projects { id name riskProfile { businessImpact } }
-          tags { key value }
-        }
-        ... on DataFinding {
-          severity
-        }
+        properties
       }
     }
   }
@@ -124,25 +82,7 @@ exports[`query documents > Q_AGENTS_NO_GUARDRAIL is unchanged 1`] = `
         id
         name
         type
-        nativeType
-        cloudPlatform
-        region
-        ... on CloudResource {
-          status
-          firstSeen
-          lastSeen
-          externalId
-          isAccessibleFromInternet
-          isOpenToAllInternet
-          hasSensitiveData
-          hasAccessToSensitiveData
-          hasAdminPrivileges
-          hasHighPrivileges
-          technology { id name categories { id name } }
-          cloudAccount { id name externalId cloudProvider }
-          projects { id name riskProfile { businessImpact } }
-          tags { key value }
-        }
+        properties
       }
     }
   }

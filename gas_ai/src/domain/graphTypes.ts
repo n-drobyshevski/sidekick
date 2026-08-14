@@ -5,6 +5,7 @@
 import type { AarsGap, DataExposure, InternetExposure } from "./aars";
 import type { AarsSeverity, Severity } from "./config";
 import { SEVERITY_ORDER } from "./config";
+import type { Rec } from "./util";
 
 /**
  * Position on the severity scale, LOWER = WORSE, with anything unrecognised sorting last.
@@ -104,6 +105,48 @@ export function kindFromWizType(t: unknown): NodeKind | null {
   if (typeof t !== "string" || !t.trim()) return null;
   const norm = t.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_");
   return (NODE_KINDS as readonly string[]).includes(norm) ? (norm as NodeKind) : null;
+}
+
+/**
+ * Where the same fact lives under a different name inside a graphEntity's `properties`.
+ *
+ * The flat `cloudResourcesV2` root spells these one way; the properties bag on a
+ * graphSearch entity spells them another. Everything not listed here has the same name in
+ * both, which is most of them.
+ */
+const PROPERTY_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  firstSeen: ["creationDate"],
+  lastSeen: ["updatedAt"],
+  isAccessibleFromInternet: ["accessibleFrom.internet"],
+  isOpenToAllInternet: ["openToAllInternet"],
+};
+
+/**
+ * One field of a Wiz entity, whichever of the two shapes it arrived in.
+ *
+ * `cloudResourcesV2` returns resource fields flat on the node. A `graphSearch` entity does
+ * NOT, and cannot be made to: the tenant's schema answers `... on CloudResource` with
+ *
+ *   Fragment cannot be spread here as objects of type "GraphEntity" can never be of type
+ *   "CloudResource"
+ *
+ * — CloudResource is not among GraphEntity's possible types, and the type that does bear
+ * that name carries none of these fields either. On that root the facts live in the
+ * `properties` bag, which is what the Wiz console itself selects (see
+ * gas_ai/exemples/ai_agent_expand_response.js). Reading flat first and falling back to the
+ * bag lets one normalizer serve both roots.
+ */
+export function entityField(raw: Rec, key: string): unknown {
+  if (!raw || typeof raw !== "object") return undefined;
+  if (raw[key] !== undefined) return raw[key];
+  const props = raw["properties"];
+  if (!props || typeof props !== "object") return undefined;
+  const bag = props as Rec;
+  if (bag[key] !== undefined) return bag[key];
+  for (const alias of PROPERTY_ALIASES[key] ?? []) {
+    if (bag[alias] !== undefined) return bag[alias];
+  }
+  return undefined;
 }
 
 export const EDGE_TYPES = [

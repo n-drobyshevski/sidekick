@@ -24,19 +24,22 @@ export const MAX_PAGES = 200;
 // Project — a flat `projects { businessImpact }` selection is rejected
 // ("Cannot query field businessImpact on type Project"). Select it nested and
 // the normalizer flattens it back onto the project record.
-// The resource field set, declared once.
+// The resource field set, declared once, in two lists.
 //
-// It is requested two ways: flat, from the cloudResourcesV2 root, and split inside a
-// graphSearch entity, where only the identity fields are on the interface and the rest
-// live behind a `... on CloudResource` inline fragment. Those were two hand-maintained
-// lists of the same ~20 fields differing only in indentation, so a field added to one and
-// forgotten in the other silently degraded half the sync battery.
+// The split is not cosmetic and it is not symmetric: it marks which fields exist on which
+// ROOT. `cloudResourcesV2` returns all of them flat on a node. A `graphSearch` entity
+// returns only the first list — the rest are unreachable there as fields at all, and the
+// facts arrive in a `properties` bag instead. See ENTITY_FIELDS below for the tenant error
+// that established this; graphTypes.entityField is what lets one normalizer read both.
 //
 // String concatenation rather than template literals, matching the rest of this file.
 const IDENTITY_FIELDS = [
-  "id", "name", "type", "nativeType", "cloudPlatform", "region",
+  "id", "name", "type",
 ];
 const CLOUD_RESOURCE_FIELDS = [
+  "nativeType",
+  "cloudPlatform",
+  "region",
   "status",
   "firstSeen",
   "lastSeen",
@@ -62,31 +65,46 @@ function indented(fields: string[], spaces: number): string {
 const RESOURCE_FIELDS =
   indented(IDENTITY_FIELDS, 6) + indented(CLOUD_RESOURCE_FIELDS, 6);
 
-/** Split, for a graphSearch entity (CloudResource is an inline fragment there). */
+/**
+ * For a graphSearch entity: the interface fields, and the properties bag. No inline
+ * fragment, because there is no fragment to spread. The tenant answers
+ * `... on CloudResource` with
+ *
+ *   Fragment cannot be spread here as objects of type "GraphEntity" can never be of type
+ *   "CloudResource"
+ *
+ * followed by "Cannot query field X on type CloudResource" for every field inside it —
+ * CloudResource is not among GraphEntity's possible types, and the type that does bear
+ * that name has none of these fields anyway. The resource facts are simply not reachable
+ * as fields on this root.
+ *
+ * They are reachable in `properties`, which is what the Wiz console's own expansion asks
+ * for and what the capture in exemples/ai_agent_expand_response.js returns populated:
+ * nativeType, cloudPlatform, region, status, externalId, the privilege and exposure
+ * booleans, identityPurpose, and severity on the finding entities. graphTypes.entityField
+ * reads a node either way, so one normalizer still serves both roots.
+ *
+ * Deliberately minimal beyond that. This constant is shared by every graphSearch document
+ * here and each addition is a way for all five battery traversals to be rejected at once —
+ * which is exactly what the CloudResource fragment did, silently, on every live sync.
+ */
 const ENTITY_FIELDS =
   indented(IDENTITY_FIELDS, 8) +
-  "        ... on CloudResource {\n" +
-  indented(CLOUD_RESOURCE_FIELDS, 10) +
-  "        }\n";
+  "        properties\n";
 
 // (Inline filter literals proved fragile against the tenant's gateway — the
 // working capture passes the whole filter as a $filterBy variable, so the
 // inventory query does the same and its document stays static.)
 
 /**
- * A DATA_FINDING is not a CloudResource, so its severity needs its own inline fragment.
+ * A DATA_FINDING's severity used to need its own `... on DataFinding` fragment, because
+ * the flat fields came from `... on CloudResource` and a finding is not one.
  *
- * Kept OUT of ENTITY_FIELDS deliberately. That constant is shared by every graphSearch
- * step, and a tenant whose schema does not spell the type `DataFinding` would reject the
- * document — taking guardrail coverage, RUNS_AS and identity access down with it. Isolated
- * here, the blast radius is one optional step that records a skip and moves on.
+ * Both fragments are gone. `properties` carries severity directly — the capture shows
+ * `"severity": "SeverityMedium"` in the bag on the EXCESSIVE_ACCESS_FINDING entity — so
+ * the fragment bought nothing and cost another spread the tenant could reject the same way
+ * it rejected CloudResource. One field set now serves every graphSearch document.
  */
-const DATA_ENTITY_FIELDS =
-  ENTITY_FIELDS +
-  "        ... on DataFinding {\n" +
-  "          severity\n" +
-  "        }\n";
-
 function graphSearchQueryWith(name: string, queryBody: string, entityFields: string): string {
   return (
     "query " + name + "($quick: Boolean, $first: Int, $after: String) {\n" +
@@ -299,7 +317,7 @@ export const Q_AGENT_SENSITIVE_DATA_ACCESS = graphSearchQueryWith(
   "        }]\n" +
   "      }\n" +
   "    }]\n",
-  DATA_ENTITY_FIELDS,
+  ENTITY_FIELDS,
 );
 
 /** Human/role identities with high-privilege or admin access INTO agents. */
@@ -350,9 +368,11 @@ export const Q_IDENTITY_ACCESS = graphSearchQuery(
  * The console capture sends it as String!, but that is the console scoping itself to the
  * project the operator had open.
  *
- * DATA_ENTITY_FIELDS, not the console's `properties` blob: the capture's selection set is
- * an order of magnitude larger and normalizeCloudResource reads none of it. The
- * DataFinding fragment is needed because the traversal selects DATA_FINDING in five slots.
+ * Shares ENTITY_FIELDS with the battery. That is now the console's own selection —
+ * interface fields plus `properties` — which suits this document doubly well: the
+ * traversal reaches ENDPOINT, IAM_BINDING, CONTAINER, DEPLOYMENT, KUBERNETES_CLUSTER and
+ * CONFIGURATION_FINDING, none of which the battery ever touches, and the bag is the only
+ * place their cloud, region and status were ever going to come from.
  */
 export const Q_AGENT_EXPANSION =
   "query SidekickAiAgentExpansion($quick: Boolean, $first: Int, $after: String, " +
@@ -367,7 +387,7 @@ export const Q_AGENT_EXPANSION =
   "    pageInfo { hasNextPage endCursor }\n" +
   "    nodes {\n" +
   "      entities {\n" +
-  DATA_ENTITY_FIELDS +
+  ENTITY_FIELDS +
   "      }\n" +
   "    }\n" +
   "  }\n" +
