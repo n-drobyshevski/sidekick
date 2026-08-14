@@ -158,9 +158,13 @@ export function queryBar(opts) {
     if (focusPath && !rows.some((r) => rowKey(r) === focusPath)) focusPath = "";
 
     rows.forEach((row, i) => {
-      const parentKind = row.path.length ? nodeAt(query, row.path.slice(0, -1)).kind : null;
+      // The nearest enclosing NODE, walking up past any boolean groups — a group has no kind,
+      // and the relationships a step can offer come from the node the step hangs off, not from
+      // the punctuation in between.
+      const parentKind = enclosingKind(query, row.path);
       const line = el("div", {
-        class: "gq-row" + (row.hidden ? " is-hidden" : "") + (row.negate ? " is-negated" : ""),
+        class: "gq-row" + (row.hidden ? " is-hidden" : "") + (row.negate ? " is-negated" : "")
+          + (row.group ? " is-group" : ""),
         role: "treeitem",
         "aria-level": String(row.level + 1),
         "aria-label": rowLabel(row),
@@ -171,6 +175,28 @@ export function queryBar(opts) {
       });
 
       line.append(el("span", { class: "gq-kw" }, row.keyword));
+
+      // A boolean block: the keyword IS the control, plus the branch count and a remove. The
+      // palette builds these (and offers to add branches); this renders whatever the query
+      // holds, including one arriving from a hand-edited link.
+      if (row.group) {
+        line.append(el("span", { class: "gq-group-note muted small" },
+          row.branches === 1
+            ? "1 branch"
+            : row.branches + (row.op === "or" ? " alternatives" : " conditions")));
+        const groupActions = el("span", { class: "gq-row-actions" });
+        groupActions.append(iconButton("plus", "Add a branch to this " + row.keyword + " block", () => {
+          const first = stepsFrom(enclosingKind(query, row.path))[0];
+          commit(addStep(query, row.path, first
+            ? { edge: first.edge, reverse: first.reverse, node: { kind: first.kind } }
+            : { ...ANY_STEP, node: { kind: "ANY" } }));
+        }));
+        groupActions.append(iconButton("close", "Remove this " + row.keyword + " block",
+          () => commit(removeStep(query, row.path))));
+        line.append(groupActions);
+        list.append(line);
+        return;
+      }
 
       if (row.path.length) {
         const options = edgeOptions(parentKind);
@@ -229,7 +255,26 @@ export function queryBar(opts) {
     return row.path.join("-") || "root";
   }
 
+  /**
+   * The kind of the nearest enclosing node, skipping boolean groups.
+   *
+   * `nodeAt` answers null for a path that lands on a group, because a group has no kind of its
+   * own. Every caller here wants the node the step actually hangs off, which is the first one
+   * found walking back up.
+   */
+  function enclosingKind(query, path) {
+    for (let p = path.slice(0, -1); ; p = p.slice(0, -1)) {
+      const node = nodeAt(query, p);
+      if (node) return node.kind;
+      if (!p.length) return null;
+    }
+  }
+
   function rowLabel(row) {
+    if (row.group) {
+      return (row.op === "or" ? "Either of" : "All of") + " " + row.branches
+        + (row.branches === 1 ? " branch" : " branches");
+    }
     if (!row.path.length) return "Find " + kindLabel(row.kind);
     return "That " + describeEdge(row) + " " + kindLabel(row.kind)
       + (row.hidden ? ", columns hidden" : "");

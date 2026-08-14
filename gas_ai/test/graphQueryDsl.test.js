@@ -20,6 +20,8 @@ import {
   setEdge,
   setHidden,
   setKind,
+  isGroup,
+  wrapInGroup,
 } from "../src/client/js/pages/graphQuery.js";
 
 const AGENT_RUNS_AS_SA = {
@@ -223,5 +225,115 @@ describe("migrateLegacyParams", () => {
     // — which is exactly what graphParams did before this, and a saved link must not change
     // the view it opens just because the page behind it was rewritten.
     expect(migrateLegacyParams({ seed: "a", depth: "0" }).find).toBe("ANY(*ANY2.ANY)");
+  });
+});
+
+describe("groups in the DSL", () => {
+  it("round-trips OR and AND blocks, and nests them", () => {
+    const cases = [
+      "AI_AGENT(OR(RUNS_AS.SERVICE_ACCOUNT'USES_MODEL.AI_MODEL))",
+      "AI_AGENT(AND(RUNS_AS.SERVICE_ACCOUNT'USES_MODEL.AI_MODEL))",
+      "AI_AGENT(*OR(RUNS_AS.SERVICE_ACCOUNT'USES_MODEL.AI_MODEL))",
+      "AI_AGENT(OR(RUNS_AS.SERVICE_ACCOUNT'!PROTECTED_BY.AI_GUARDRAIL))",
+      "AI_AGENT(USES_MODEL.AI_MODEL'OR(A.X'B.Y))".replace("A.X", "RUNS_AS.SERVICE_ACCOUNT").replace("B.Y", "HOSTED_ON.SERVERLESS"),
+      "AI_AGENT(OR(RUNS_AS.SERVICE_ACCOUNT(ALLOWS_ACCESS_TO.BUCKET)'USES_MODEL.AI_MODEL))",
+      "AI_AGENT(OR(AND(RUNS_AS.SERVICE_ACCOUNT'USES_MODEL.AI_MODEL)'HOSTED_ON.SERVERLESS))",
+    ];
+    for (const s of cases) expect(serializeQuery(parseQuery(s))).toBe(s);
+  });
+
+  it("stays inside the character set encodeURIComponent leaves alone", () => {
+    const s = "AI_AGENT(*OR(RUNS_AS.SERVICE_ACCOUNT'!PROTECTED_BY.AI_GUARDRAIL))";
+    expect(encodeURIComponent(s)).toBe(s);
+  });
+
+  it("reads a group as a step, not as a relationship called OR", () => {
+    const q = parseQuery("AI_AGENT(OR(RUNS_AS.SERVICE_ACCOUNT))");
+    expect(isGroup(q.steps[0])).toBe(true);
+    expect(q.steps[0]).toEqual({ op: "or", steps: [{ edge: "RUNS_AS", node: { kind: "SERVICE_ACCOUNT" } }] });
+  });
+
+  it("rejects a group that is malformed or wears a flag it cannot mean", () => {
+    expect(() => parseQuery("AI_AGENT(OR(RUNS_AS.SERVICE_ACCOUNT)")).toThrow();
+    expect(() => parseQuery("AI_AGENT(!OR(RUNS_AS.SERVICE_ACCOUNT))")).toThrow(/takes no ! or ~/);
+    expect(() => parseQuery("AI_AGENT(~OR(RUNS_AS.SERVICE_ACCOUNT))")).toThrow(/takes no ! or ~/);
+  });
+
+  it("tells a group from a relationship by what FOLLOWS the token, not by the token", () => {
+    // `OR(` is a group; `OR.` is a relationship that happens to be spelled OR. This parser is
+    // a SYNTAX parser and does not know the edge vocabulary — `validateQuery` on the server is
+    // the one that rejects a relationship no graph has, and it does so by name so the message
+    // says which. Parsing it here rather than guessing keeps that boundary honest.
+    const asEdge = parseQuery("AI_AGENT(OR.SERVICE_ACCOUNT)");
+    expect(isGroup(asEdge.steps[0])).toBe(false);
+    expect(asEdge.steps[0].edge).toBe("OR");
+    expect(isGroup(parseQuery("AI_AGENT(OR(RUNS_AS.SERVICE_ACCOUNT))").steps[0])).toBe(true);
+    expect(serializeQuery(parseQuery("AI_AGENT(ANY.BUCKET)"))).toBe("AI_AGENT(ANY.BUCKET)");
+  });
+});
+
+describe("group rows and edits", () => {
+  const OR_Q = parseQuery("AI_AGENT(OR(RUNS_AS.SERVICE_ACCOUNT'USES_MODEL.AI_MODEL))");
+
+  it("gives the group its own row, taking no slot, with its branches beneath it", () => {
+    const rows = queryRows(OR_Q);
+    expect(rows.map((r) => [r.keyword, r.level, r.index])).toEqual([
+      ["FIND", 0, 0],
+      ["OR", 1, null],
+      ["THAT", 2, 1],
+      ["THAT", 2, 2],
+    ]);
+    expect(rows[1].group).toBe(true);
+    expect(rows[1].branches).toBe(2);
+  });
+
+  it("marks OR branches as alternatives and leaves AND children alone", () => {
+    expect(queryRows(OR_Q).slice(2).map((r) => r.alt.index)).toEqual([0, 1]);
+    const andRows = queryRows(parseQuery("AI_AGENT(AND(RUNS_AS.SERVICE_ACCOUNT'USES_MODEL.AI_MODEL))"));
+    expect(andRows.every((r) => !r.alt)).toBe(true);
+  });
+
+  it("addresses a branch by path, and reports a group path as having no node", () => {
+    expect(nodeAt(OR_Q, [0, 0]).kind).toBe("SERVICE_ACCOUNT");
+    expect(nodeAt(OR_Q, [0, 1]).kind).toBe("AI_MODEL");
+    // The group itself is punctuation — it has no kind to report.
+    expect(nodeAt(OR_Q, [0])).toBeNull();
+  });
+
+  it("adds a branch to a group rather than a step to a node", () => {
+    const next = addStep(OR_Q, [0], { edge: "HOSTED_ON", node: { kind: "SERVERLESS" } });
+    expect(serializeQuery(next))
+      .toBe("AI_AGENT(OR(RUNS_AS.SERVICE_ACCOUNT'USES_MODEL.AI_MODEL'HOSTED_ON.SERVERLESS))");
+  });
+
+  it("prunes a group left with no branches instead of leaving empty punctuation", () => {
+    let q = removeStep(OR_Q, [0, 1]);
+    expect(serializeQuery(q)).toBe("AI_AGENT(OR(RUNS_AS.SERVICE_ACCOUNT))");
+    q = removeStep(q, [0, 0]);
+    expect(serializeQuery(q)).toBe("AI_AGENT");
+  });
+
+  it("wraps an existing step so a second branch can join it", () => {
+    const plain = parseQuery("AI_AGENT(RUNS_AS.SERVICE_ACCOUNT)");
+    const wrapped = wrapInGroup(plain, [0], "or");
+    expect(serializeQuery(wrapped)).toBe("AI_AGENT(OR(RUNS_AS.SERVICE_ACCOUNT))");
+    expect(serializeQuery(addStep(wrapped, [0], { edge: "USES_MODEL", node: { kind: "AI_MODEL" } })))
+      .toBe("AI_AGENT(OR(RUNS_AS.SERVICE_ACCOUNT'USES_MODEL.AI_MODEL))");
+  });
+
+  it("never mutates the tree it was given", () => {
+    const before = JSON.stringify(OR_Q);
+    addStep(OR_Q, [0], { edge: "HOSTED_ON", node: { kind: "SERVERLESS" } });
+    removeStep(OR_Q, [0, 0]);
+    wrapInGroup(OR_Q, [0], "and");
+    setKind(OR_Q, [0, 0], "ACCESS_KEY");
+    expect(JSON.stringify(OR_Q)).toBe(before);
+  });
+
+  it("folds where onto branch nodes by their slot, skipping the group", () => {
+    const wire = applyWhere(OR_Q, parseWhere("0.cloud.GCP,2.name.gpt"));
+    expect(wire.where).toEqual([{ key: "cloud", values: ["GCP"] }]);
+    expect(wire.steps[0].steps[0].node.where).toBeUndefined();
+    expect(wire.steps[0].steps[1].node.where).toEqual([{ key: "name", values: ["gpt"] }]);
   });
 });

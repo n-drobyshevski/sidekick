@@ -103,10 +103,17 @@ export function queryTable(payload, opts = {}) {
   groups.forEach((group, gi) => {
     const fields = group.fields || [];
     if (!fields.length) return;
+    // Two groups belonging to the same OR are ALTERNATIVES: no row fills both. Saying so in
+    // the header is the difference between "an agent, its identity and its model" and "an
+    // agent, and either its identity or its model" — the second is what the query asked.
+    const prev = groups[gi - 1];
+    const alternative = group.altOf !== undefined && prev && prev.altOf === group.altOf;
     headerGroups.push({
-      label: groupLabel(group, gi, groups),
+      label: alternative
+        ? el("span", {}, el("span", { class: "gq-alt-kw" }, "or"), groupLabel(group, gi, groups))
+        : groupLabel(group, gi, groups),
       span: fields.length,
-      className: "gq-group-head",
+      className: "gq-group-head" + (alternative ? " is-alt" : ""),
     });
     fields.forEach((field, fi) => {
       columns.push({

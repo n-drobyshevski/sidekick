@@ -180,3 +180,19 @@
   .gq-count { margin-left: 0; padding-top: 0; }
   .gq-chip { max-width: 190px; }
 }
+
+/* A boolean block's row: the keyword pill IS the control, so the row carries only the branch
+   count beside it. Ruled on the left so the branches beneath read as belonging to it. */
+.gq-row.is-group { border-left: 2px solid var(--hairline); }
+.gq-group-note { margin-left: 2px; }
+
+/* An OR branch's column group. The rule between alternatives is solid where the rule between
+   sequential groups is a hairline, and the word carries the meaning — a border alone would be
+   a colour-free but still purely visual cue, which is no better. */
+.gq-table table.data thead .th-groups th.is-alt { border-left: 1px solid rgba(0, 0, 0, 0.28); }
+.gq-table table.data th.is-alt + tr th { border-left-color: rgba(0, 0, 0, 0.28); }
+.gq-alt-kw {
+  display: inline-block; margin-right: 6px;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-3);
+}

@@ -16,6 +16,8 @@
 //   find=AI_AGENT(RUNS_AS.!SERVICE_ACCOUNT)            hidden: traverse it, no columns
 //   find=AI_AGENT(ANY2.BUCKET)                         "related within 2 hops" — the old depth
 //   find=AI_AGENT(RUNS_AS.SERVICE_ACCOUNT'HOSTED_ON.SERVERLESS)     two steps off one node
+//   find=AI_AGENT(OR(RUNS_AS.SERVICE_ACCOUNT'!PROTECTED_BY.AI_GUARDRAIL))   either one
+//   find=AI_AGENT(USES_MODEL.AI_MODEL'OR(A.X'B.Y))                  one AND, then either
 //
 // Property filters ride in a separate `where` param rather than inside the tree, because they
 // are the half that changes most (every click in the filter panel) and nesting them would make
@@ -95,6 +97,24 @@ function readStep(c) {
     break;
   }
   let edge = readToken(c);
+  // A boolean block, not a relationship. `OR` and `AND` are safe as reserved words because no
+  // EDGE_TYPES member is named either, and the two are told apart by what follows: a group is
+  // followed by "(", a relationship by ".". Only `optional` is meaningful on a group — negating
+  // or reversing punctuation means nothing.
+  if ((edge === "OR" || edge === "AND") && c.s[c.i] === "(") {
+    if (step.negate || step.reverse) throw new Error(edge + " takes no ! or ~ flag");
+    c.i++;
+    const group = { op: edge.toLowerCase(), steps: [] };
+    if (step.optional) group.optional = true;
+    for (;;) {
+      group.steps.push(readStep(c));
+      if (c.s[c.i] === SEP_SIBLING) { c.i++; continue; }
+      break;
+    }
+    if (c.s[c.i] !== ")") throw new Error("unclosed " + edge + " group");
+    c.i++;
+    return group;
+  }
   // ANY carries its hop count glued to the token — ANY2 — so the grammar needs no extra
   // separator for the one step type that takes an argument.
   const hops = edge.match(/^ANY([0-9]*)$/);
@@ -129,12 +149,21 @@ export function serializeQuery(node) {
 }
 
 function serializeStep(step) {
+  if (isGroup(step)) {
+    return (step.optional ? "*" : "") + step.op.toUpperCase()
+      + "(" + step.steps.map(serializeStep).join(SEP_SIBLING) + ")";
+  }
   let out = "";
   if (step.negate) out += "!";
   if (step.reverse) out += "~";
   if (step.optional) out += "*";
   out += step.edge === "ANY" ? "ANY" + (step.hops && step.hops > 1 ? String(step.hops) : "") : step.edge;
   return out + SEP_EDGE + serializeQuery(step.node);
+}
+
+/** A step is a boolean block rather than a hop. Mirrors `isGroup` in the domain module. */
+export function isGroup(step) {
+  return !!step && step.op !== undefined;
 }
 
 // ------------------------------------------------------------------------- where
@@ -184,45 +213,69 @@ export function serializeWhere(byIndex) {
 }
 
 /**
+ * THE client walk — the twin of `bindingSlots` in the domain module.
+ *
+ * `queryRows` and `applyWhere` both go through here, so the pre-order they see is the same
+ * pre-order the evaluator binds against. That agreement is the whole ballgame: the `where`
+ * param addresses nodes by their slot number, and if the two sides ever count differently then
+ * every filter past the divergence lands on the wrong node and the query quietly answers a
+ * different question. `test/graphQueryWalk.test.js` runs both sides against the real server to
+ * prove they still agree.
+ *
+ * The three rules, all of which the domain shares:
+ *   - a NEGATED step binds nothing, so it takes no slot and its subtree is not walked;
+ *   - a GROUP is punctuation and takes no slot, but its branches are walked in order;
+ *   - everything else takes the next slot.
+ *
+ * `visit` receives `{ node, step, path, level, index, group, alt }`; `index` is the slot, or
+ * null for a group row and a negated step.
+ */
+function walkQuery(query, visit) {
+  let slot = 0;
+
+  const atNode = (node, step, level, path, alt) => {
+    const negated = !!(step && step.negate);
+    visit({ node, step, path, level, index: negated ? null : slot++, group: false, alt });
+    if (negated) return;
+    (node.steps || []).forEach((s, i) => atStep(s, level + 1, path.concat(i), alt));
+  };
+
+  const atStep = (step, level, path, alt) => {
+    if (isGroup(step)) {
+      visit({ node: null, step, path, level, index: null, group: true, alt });
+      step.steps.forEach((child, i) => {
+        // An `and` group is transparent to alternation; an `or` starts a new one.
+        const inner = step.op === "or" ? { of: path.join("."), index: i } : alt;
+        atStep(child, level + 1, path.concat(i), inner);
+      });
+      return;
+    }
+    atNode(step.node, step, level, path, alt);
+  };
+
+  atNode(query, null, 0, [], undefined);
+}
+
+/**
  * Fold the `where` map into the tree, so what goes over the wire is one object.
  *
  * Kept as two params in the URL and one object on the wire deliberately: the URL wants the
  * halves separable (a filter click rewrites one param, not the whole query), and the server
  * wants them together (it validates and evaluates one tree).
+ *
+ * It copies the tree first and then walks the COPY, so the traversal that assigns filters is
+ * literally the same function `queryRows` uses. The previous version re-implemented the walk
+ * inline and had to remember the negated-subtree rule on its own.
  */
 export function applyWhere(query, byIndex) {
-  let index = 0;
-  const walk = (node) => {
-    const filters = byIndex.get(index++);
-    const out = { kind: node.kind };
-    if (node.show === false) out.show = false;
-    if (filters && filters.size) {
-      out.where = [...filters.keys()].sort().map((key) => ({ key, values: filters.get(key) }));
-    }
-    if (node.steps && node.steps.length) {
-      out.steps = node.steps.map((step) => {
-        const copy = { edge: step.edge };
-        if (step.reverse) copy.reverse = true;
-        if (step.negate) copy.negate = true;
-        if (step.optional) copy.optional = true;
-        if (step.hops) copy.hops = step.hops;
-        // A negated step binds nothing, so it consumes no pre-order slot — the same rule the
-        // evaluator's `bindingSlots` follows. Walking into it here would shift every later
-        // node's filters onto the wrong node.
-        copy.node = step.negate ? stripFilters(step.node) : walk(step.node);
-        return copy;
-      });
-    }
-    return out;
-  };
-  return walk(query);
-}
-
-function stripFilters(node) {
-  const out = { kind: node.kind };
-  if (node.show === false) out.show = false;
-  if (node.steps && node.steps.length) out.steps = node.steps.map((s) => ({ ...s, node: stripFilters(s.node) }));
-  return out;
+  const copy = copyNode(query);
+  walkQuery(copy, ({ node, index }) => {
+    if (index === null || !node) return;
+    const filters = byIndex.get(index);
+    if (!filters || !filters.size) return;
+    node.where = [...filters.keys()].sort().map((key) => ({ key, values: filters.get(key) }));
+  });
+  return copy;
 }
 
 // ------------------------------------------------------------------------- builder rows
@@ -230,20 +283,36 @@ function stripFilters(node) {
 /**
  * The query as a flat list of builder rows — one per line in the bar.
  *
- * Each row carries its keyword (FIND for the root, THAT for every step), its nesting level, the
- * node's pre-order index (so a filter chip knows which node it belongs to), and a `path` the
- * page uses to address the row when patching. The page owns rendering; this owns the shape.
+ * Each row carries its keyword (FIND for the root, THAT for a relationship, OR / AND for a
+ * boolean block), its nesting level, the node's pre-order index (so a filter chip knows which
+ * node it belongs to), and a `path` the page uses to address the row when patching.
  */
 export function queryRows(query) {
   const rows = [];
-  let index = 0;
-  const walk = (node, step, level, path) => {
-    const slot = step && step.negate ? null : index++;
+  walkQuery(query, ({ node, step, path, level, index, group, alt }) => {
+    if (group) {
+      rows.push({
+        keyword: step.op.toUpperCase(),
+        group: true,
+        op: step.op,
+        level,
+        path,
+        index: null,
+        optional: !!step.optional,
+        /** A group with one branch left is punctuation around nothing; the bar offers to unwrap it. */
+        branches: step.steps.length,
+        canHide: false,
+        canRemove: true,
+        alt,
+      });
+      return;
+    }
     rows.push({
       keyword: path.length ? "THAT" : "FIND",
+      group: false,
       level,
       path,
-      index: slot,
+      index,
       kind: node.kind,
       hidden: node.show === false,
       edge: step ? step.edge : null,
@@ -254,20 +323,58 @@ export function queryRows(query) {
       /** A negated step binds nothing, so there is nothing to show or hide. */
       canHide: !(step && step.negate) && !!path.length,
       canRemove: !!path.length,
+      alt,
     });
-    // Nothing under a negated step can bind, so nothing under it is a row.
-    if (step && step.negate) return;
-    (node.steps || []).forEach((s, i) => walk(s.node, s, level + 1, path.concat(i)));
-  };
-  walk(query, null, 0, []);
+  });
   return rows;
 }
 
-/** The node at `path` — [] is the root, [0] its first step's target, and so on. */
+/**
+ * The container at `path` — the root node for `[]`, then one index per step.
+ *
+ * Nodes and groups are both containers, and both keep their children in `.steps`, which is what
+ * lets one loop walk through either. A path segment that lands on a group descends INTO the
+ * group; one that lands on a relationship descends into its target node.
+ */
+function containerAt(query, path) {
+  let at = query;
+  for (const i of path) {
+    const step = (at.steps || [])[i];
+    if (!step) return null;
+    at = isGroup(step) ? step : step.node;
+  }
+  return at;
+}
+
+/** The node at `path`. Null when the path addresses a group, which has no kind of its own. */
 export function nodeAt(query, path) {
-  let node = query;
-  for (const i of path) node = node.steps[i].node;
-  return node;
+  const at = containerAt(query, path);
+  return at && at.kind !== undefined ? at : null;
+}
+
+/** The step at `path` — a relation or a group. Null for the root, which is neither. */
+export function stepAt(query, path) {
+  if (!path.length) return null;
+  const parent = containerAt(query, path.slice(0, -1));
+  return parent ? (parent.steps || [])[path[path.length - 1]] || null : null;
+}
+
+// ------------------------------------------------------------------------- edits
+
+function copyStep(step) {
+  if (isGroup(step)) {
+    const out = { op: step.op, steps: step.steps.map(copyStep) };
+    if (step.optional) out.optional = true;
+    return out;
+  }
+  return { ...step, node: copyNode(step.node) };
+}
+
+function copyNode(node) {
+  const out = { kind: node.kind };
+  if (node.show === false) out.show = false;
+  if (node.steps) out.steps = node.steps.map(copyStep);
+  return out;
 }
 
 /**
@@ -275,28 +382,15 @@ export function nodeAt(query, path) {
  *
  * Immutable because the page diffs old against new to decide whether to refetch, exactly the
  * way `update()` diffs DATA_KEYS — mutating in place would make every edit look like no edit.
+ * The whole tree is copied and then mutated in place rather than cloned along the path: a query
+ * is at most a dozen nodes, and the path-aware clone this replaces was the fiddliest code in
+ * the file for no measurable gain.
  */
-export function editQuery(query, path, mutateNode) {
-  const clone = (node, depth) => {
-    const copy = { kind: node.kind };
-    if (node.show === false) copy.show = false;
-    if (node.steps) {
-      copy.steps = node.steps.map((s, i) => ({
-        ...s,
-        node: i === path[depth] ? clone(s.node, depth + 1) : deepCopy(s.node),
-      }));
-    }
-    if (depth === path.length) mutateNode(copy);
-    return copy;
-  };
-  return clone(query, 0);
-}
-
-function deepCopy(node) {
-  const out = { kind: node.kind };
-  if (node.show === false) out.show = false;
-  if (node.steps) out.steps = node.steps.map((s) => ({ ...s, node: deepCopy(s.node) }));
-  return out;
+export function editQuery(query, path, mutate) {
+  const copy = copyNode(query);
+  const target = containerAt(copy, path);
+  if (target) mutate(target);
+  return copy;
 }
 
 /** Drop the step at `path` (and everything under it). The root cannot be removed. */
@@ -304,23 +398,44 @@ export function removeStep(query, path) {
   if (!path.length) return query;
   const parentPath = path.slice(0, -1);
   const at = path[path.length - 1];
-  return editQuery(query, parentPath, (node) => {
-    node.steps = (node.steps || []).filter((_, i) => i !== at);
-    if (!node.steps.length) delete node.steps;
+  const next = editQuery(query, parentPath, (parent) => {
+    parent.steps = (parent.steps || []).filter((_, i) => i !== at);
+    if (!parent.steps.length && parent.kind !== undefined) delete parent.steps;
   });
+  // A group emptied of branches is punctuation around nothing. Removing it here rather than
+  // leaving an "OR" row with no children keeps the bar readable without a second click.
+  return pruneEmptyGroups(next);
 }
 
-/** Append a step under `path`. */
+function pruneEmptyGroups(query) {
+  const prune = (container) => {
+    if (!container.steps) return;
+    container.steps = container.steps.filter((step) => {
+      if (!isGroup(step)) {
+        prune(step.node);
+        return true;
+      }
+      prune(step);
+      return step.steps.length > 0;
+    });
+    if (!container.steps.length && container.kind !== undefined) delete container.steps;
+  };
+  const copy = copyNode(query);
+  prune(copy);
+  return copy;
+}
+
+/** Append a step under `path` — to a node's step list, or to a group's branch list. */
 export function addStep(query, path, step) {
-  return editQuery(query, path, (node) => {
-    node.steps = (node.steps || []).concat([step]);
+  return editQuery(query, path, (container) => {
+    container.steps = (container.steps || []).concat([step]);
   });
 }
 
-/** Replace the node at `path`, keeping its steps only when the new kind can still carry them. */
+/** Replace the node at `path`, dropping steps the new kind cannot carry. */
 export function setKind(query, path, kind) {
   return editQuery(query, path, (node) => {
-    if (node.kind === kind) return;
+    if (node.kind === undefined || node.kind === kind) return;
     node.kind = kind;
     // The steps below were chosen against the old kind's vocabulary; keeping them would build a
     // query that cannot match and give no hint why.
@@ -330,18 +445,29 @@ export function setKind(query, path, kind) {
 
 export function setHidden(query, path, hidden) {
   return editQuery(query, path, (node) => {
+    if (node.kind === undefined) return;
     if (hidden) node.show = false;
     else delete node.show;
   });
 }
 
-/** Replace the relationship on the step at `path`. */
+/** Merge a patch into the step at `path` — its relationship, or a group's `optional`. */
 export function setEdge(query, path, patch) {
   if (!path.length) return query;
   const parentPath = path.slice(0, -1);
   const at = path[path.length - 1];
-  return editQuery(query, parentPath, (node) => {
-    node.steps = (node.steps || []).map((s, i) => (i === at ? { ...s, ...patch } : s));
+  return editQuery(query, parentPath, (parent) => {
+    parent.steps = (parent.steps || []).map((s, i) => (i === at ? { ...s, ...patch } : s));
+  });
+}
+
+/** Wrap the step at `path` in a new boolean group, so a second branch can join it. */
+export function wrapInGroup(query, path, op) {
+  if (!path.length) return query;
+  const parentPath = path.slice(0, -1);
+  const at = path[path.length - 1];
+  return editQuery(query, parentPath, (parent) => {
+    parent.steps = (parent.steps || []).map((s, i) => (i === at ? { op, steps: [s] } : s));
   });
 }
 

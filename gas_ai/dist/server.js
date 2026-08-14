@@ -6116,7 +6116,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "d109a9d76313" : "dev";
+  var BUILD_ID = true ? "7045bb144b94" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
