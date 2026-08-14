@@ -654,6 +654,7 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
       "empty": true,
       "kinds": [],
       "stepsFrom": {},
+      "valuesFor": {},
     },
     "ok": true,
   },
@@ -10952,7 +10953,7 @@ Ignored until: Feb 1, 2026",
 }
 `;
 
-exports[`read endpoints > getQueryVocabulary answers the same shape 1`] = `
+exports[`read endpoints > getQueryVocabulary (bare) answers the same shape 1`] = `
 {
   "data": {
     "kinds": [
@@ -11518,6 +11519,811 @@ exports[`read endpoints > getQueryVocabulary answers the same shape 1`] = `
           "edge": "HOSTED_ON",
           "kind": "AI_AGENT",
           "reverse": true,
+        },
+      ],
+    },
+    "valuesFor": {},
+  },
+  "ok": true,
+}
+`;
+
+exports[`read endpoints > getQueryVocabulary (values for AI Agent) answers the same shape 1`] = `
+{
+  "data": {
+    "kinds": [
+      {
+        "count": 14,
+        "kind": "AI_AGENT",
+      },
+      {
+        "count": 2,
+        "kind": "AI_MODEL",
+      },
+      {
+        "count": 3,
+        "kind": "AI_GUARDRAIL",
+      },
+      {
+        "count": 1,
+        "kind": "AI_PIPELINE",
+      },
+      {
+        "count": 1,
+        "kind": "AI_DATASET",
+      },
+      {
+        "count": 1,
+        "kind": "MCP_SERVER",
+      },
+      {
+        "count": 14,
+        "kind": "SERVICE_ACCOUNT",
+      },
+      {
+        "count": 12,
+        "kind": "USER_ACCOUNT",
+      },
+      {
+        "count": 8,
+        "kind": "ACCESS_ROLE",
+      },
+      {
+        "count": 1,
+        "kind": "ACCESS_KEY",
+      },
+      {
+        "count": 19,
+        "kind": "BUCKET",
+      },
+      {
+        "count": 2,
+        "kind": "DATABASE",
+      },
+      {
+        "count": 1,
+        "kind": "VIRTUAL_MACHINE",
+      },
+      {
+        "count": 1,
+        "kind": "SERVERLESS",
+      },
+      {
+        "count": 1,
+        "kind": "CONTAINER_IMAGE",
+      },
+      {
+        "count": 1,
+        "kind": "REPOSITORY",
+      },
+      {
+        "count": 2,
+        "kind": "EXCESSIVE_ACCESS_FINDING",
+      },
+      {
+        "count": 1,
+        "kind": "LATERAL_MOVEMENT_FINDING",
+      },
+      {
+        "count": 1,
+        "kind": "IDENTITY_ACCESS_FINDING",
+      },
+      {
+        "count": 32,
+        "kind": "ISSUE",
+      },
+      {
+        "count": 10,
+        "kind": "SENSITIVE_DATA",
+      },
+      {
+        "count": 4,
+        "kind": "INTERNET_EXPOSURE",
+      },
+      {
+        "count": 32,
+        "kind": "EXCESSIVE_PRIVILEGE",
+      },
+      {
+        "count": 19,
+        "kind": "MISSING_GUARDRAIL",
+      },
+      {
+        "count": 3,
+        "kind": "DATA_FINDING",
+      },
+      {
+        "count": 2,
+        "kind": "ENDPOINT",
+      },
+    ],
+    "stepsFrom": {
+      "ACCESS_KEY": [
+        {
+          "count": 1,
+          "edge": "HAS_ACCESS_TO_SENSITIVE_DATA",
+          "kind": "SENSITIVE_DATA",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "RUNS_AS",
+          "kind": "AI_AGENT",
+          "reverse": true,
+        },
+      ],
+      "ACCESS_ROLE": [
+        {
+          "count": 8,
+          "edge": "CAN_INVOKE",
+          "kind": "AI_MODEL",
+          "reverse": false,
+        },
+        {
+          "count": 8,
+          "edge": "HAS_ACCESS_TO_SENSITIVE_DATA",
+          "kind": "SENSITIVE_DATA",
+          "reverse": false,
+        },
+        {
+          "count": 8,
+          "edge": "HAS_EXCESSIVE_PRIVILEGE",
+          "kind": "EXCESSIVE_PRIVILEGE",
+          "reverse": false,
+        },
+        {
+          "count": 8,
+          "edge": "HAS_ISSUE",
+          "kind": "ISSUE",
+          "reverse": false,
+        },
+      ],
+      "AI_AGENT": [
+        {
+          "count": 24,
+          "edge": "HAS_ISSUE",
+          "kind": "ISSUE",
+          "reverse": false,
+        },
+        {
+          "count": 14,
+          "edge": "RUNS_AS",
+          "kind": "SERVICE_ACCOUNT",
+          "reverse": false,
+        },
+        {
+          "count": 13,
+          "edge": "HAS_EXCESSIVE_PRIVILEGE",
+          "kind": "EXCESSIVE_PRIVILEGE",
+          "reverse": false,
+        },
+        {
+          "count": 12,
+          "edge": "ALLOWS_ACCESS_TO",
+          "kind": "USER_ACCOUNT",
+          "reverse": true,
+        },
+        {
+          "count": 3,
+          "edge": "EXPOSED_TO_INTERNET",
+          "kind": "INTERNET_EXPOSURE",
+          "reverse": false,
+        },
+        {
+          "count": 2,
+          "edge": "INVOKES_TOOL",
+          "kind": "MCP_SERVER",
+          "reverse": false,
+        },
+        {
+          "count": 2,
+          "edge": "USES_MODEL",
+          "kind": "AI_MODEL",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "BUILT_FROM",
+          "kind": "CONTAINER_IMAGE",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "HAS_FINDING",
+          "kind": "IDENTITY_ACCESS_FINDING",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "HOSTED_ON",
+          "kind": "SERVERLESS",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "HOSTED_ON",
+          "kind": "VIRTUAL_MACHINE",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "PROTECTED_BY",
+          "kind": "AI_GUARDRAIL",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "RUNS_AS",
+          "kind": "ACCESS_KEY",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "SERVES",
+          "kind": "ENDPOINT",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "USES_DATASET",
+          "kind": "AI_DATASET",
+          "reverse": false,
+        },
+      ],
+      "AI_DATASET": [
+        {
+          "count": 1,
+          "edge": "HAS_SENSITIVE_DATA",
+          "kind": "SENSITIVE_DATA",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "STORED_IN",
+          "kind": "BUCKET",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "USES_DATASET",
+          "kind": "AI_AGENT",
+          "reverse": true,
+        },
+        {
+          "count": 1,
+          "edge": "USES_DATASET",
+          "kind": "AI_PIPELINE",
+          "reverse": true,
+        },
+      ],
+      "AI_GUARDRAIL": [
+        {
+          "count": 1,
+          "edge": "ENFORCES",
+          "kind": "AI_MODEL",
+          "reverse": true,
+        },
+        {
+          "count": 1,
+          "edge": "PROTECTED_BY",
+          "kind": "AI_AGENT",
+          "reverse": true,
+        },
+      ],
+      "AI_MODEL": [
+        {
+          "count": 8,
+          "edge": "CAN_INVOKE",
+          "kind": "ACCESS_ROLE",
+          "reverse": true,
+        },
+        {
+          "count": 2,
+          "edge": "USES_MODEL",
+          "kind": "AI_AGENT",
+          "reverse": true,
+        },
+        {
+          "count": 1,
+          "edge": "ENFORCES",
+          "kind": "AI_GUARDRAIL",
+          "reverse": false,
+        },
+      ],
+      "AI_PIPELINE": [
+        {
+          "count": 1,
+          "edge": "USES_DATASET",
+          "kind": "AI_DATASET",
+          "reverse": false,
+        },
+      ],
+      "BUCKET": [
+        {
+          "count": 24,
+          "edge": "ALLOWS_ACCESS_TO",
+          "kind": "SERVICE_ACCOUNT",
+          "reverse": true,
+        },
+        {
+          "count": 2,
+          "edge": "HAS_DATA_FINDING",
+          "kind": "DATA_FINDING",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "STORED_IN",
+          "kind": "AI_DATASET",
+          "reverse": true,
+        },
+      ],
+      "CONTAINER_IMAGE": [
+        {
+          "count": 1,
+          "edge": "BUILT_FROM",
+          "kind": "REPOSITORY",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "BUILT_FROM",
+          "kind": "AI_AGENT",
+          "reverse": true,
+        },
+      ],
+      "DATABASE": [
+        {
+          "count": 8,
+          "edge": "ALLOWS_ACCESS_TO",
+          "kind": "SERVICE_ACCOUNT",
+          "reverse": true,
+        },
+        {
+          "count": 1,
+          "edge": "HAS_DATA_FINDING",
+          "kind": "DATA_FINDING",
+          "reverse": false,
+        },
+      ],
+      "DATA_FINDING": [
+        {
+          "count": 2,
+          "edge": "HAS_DATA_FINDING",
+          "kind": "BUCKET",
+          "reverse": true,
+        },
+        {
+          "count": 1,
+          "edge": "HAS_DATA_FINDING",
+          "kind": "DATABASE",
+          "reverse": true,
+        },
+      ],
+      "ENDPOINT": [
+        {
+          "count": 1,
+          "edge": "SERVES",
+          "kind": "AI_AGENT",
+          "reverse": true,
+        },
+        {
+          "count": 1,
+          "edge": "SERVES",
+          "kind": "SERVERLESS",
+          "reverse": true,
+        },
+      ],
+      "EXCESSIVE_ACCESS_FINDING": [
+        {
+          "count": 2,
+          "edge": "HAS_FINDING",
+          "kind": "SERVICE_ACCOUNT",
+          "reverse": true,
+        },
+      ],
+      "EXCESSIVE_PRIVILEGE": [
+        {
+          "count": 13,
+          "edge": "HAS_EXCESSIVE_PRIVILEGE",
+          "kind": "AI_AGENT",
+          "reverse": true,
+        },
+        {
+          "count": 11,
+          "edge": "HAS_EXCESSIVE_PRIVILEGE",
+          "kind": "SERVICE_ACCOUNT",
+          "reverse": true,
+        },
+        {
+          "count": 8,
+          "edge": "HAS_EXCESSIVE_PRIVILEGE",
+          "kind": "ACCESS_ROLE",
+          "reverse": true,
+        },
+      ],
+      "IDENTITY_ACCESS_FINDING": [
+        {
+          "count": 1,
+          "edge": "HAS_FINDING",
+          "kind": "AI_AGENT",
+          "reverse": true,
+        },
+      ],
+      "INTERNET_EXPOSURE": [
+        {
+          "count": 3,
+          "edge": "EXPOSED_TO_INTERNET",
+          "kind": "AI_AGENT",
+          "reverse": true,
+        },
+        {
+          "count": 1,
+          "edge": "EXPOSED_TO_INTERNET",
+          "kind": "SERVERLESS",
+          "reverse": true,
+        },
+      ],
+      "ISSUE": [
+        {
+          "count": 24,
+          "edge": "HAS_ISSUE",
+          "kind": "AI_AGENT",
+          "reverse": true,
+        },
+        {
+          "count": 8,
+          "edge": "HAS_ISSUE",
+          "kind": "ACCESS_ROLE",
+          "reverse": true,
+        },
+      ],
+      "LATERAL_MOVEMENT_FINDING": [
+        {
+          "count": 1,
+          "edge": "HAS_FINDING",
+          "kind": "SERVICE_ACCOUNT",
+          "reverse": true,
+        },
+      ],
+      "MCP_SERVER": [
+        {
+          "count": 2,
+          "edge": "INVOKES_TOOL",
+          "kind": "AI_AGENT",
+          "reverse": true,
+        },
+      ],
+      "REPOSITORY": [
+        {
+          "count": 1,
+          "edge": "BUILT_FROM",
+          "kind": "CONTAINER_IMAGE",
+          "reverse": true,
+        },
+      ],
+      "SENSITIVE_DATA": [
+        {
+          "count": 8,
+          "edge": "HAS_ACCESS_TO_SENSITIVE_DATA",
+          "kind": "ACCESS_ROLE",
+          "reverse": true,
+        },
+        {
+          "count": 1,
+          "edge": "HAS_ACCESS_TO_SENSITIVE_DATA",
+          "kind": "ACCESS_KEY",
+          "reverse": true,
+        },
+        {
+          "count": 1,
+          "edge": "HAS_SENSITIVE_DATA",
+          "kind": "AI_DATASET",
+          "reverse": true,
+        },
+      ],
+      "SERVERLESS": [
+        {
+          "count": 1,
+          "edge": "EXPOSED_TO_INTERNET",
+          "kind": "INTERNET_EXPOSURE",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "SERVES",
+          "kind": "ENDPOINT",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "HOSTED_ON",
+          "kind": "AI_AGENT",
+          "reverse": true,
+        },
+      ],
+      "SERVICE_ACCOUNT": [
+        {
+          "count": 24,
+          "edge": "ALLOWS_ACCESS_TO",
+          "kind": "BUCKET",
+          "reverse": false,
+        },
+        {
+          "count": 14,
+          "edge": "RUNS_AS",
+          "kind": "AI_AGENT",
+          "reverse": true,
+        },
+        {
+          "count": 11,
+          "edge": "HAS_EXCESSIVE_PRIVILEGE",
+          "kind": "EXCESSIVE_PRIVILEGE",
+          "reverse": false,
+        },
+        {
+          "count": 8,
+          "edge": "ALLOWS_ACCESS_TO",
+          "kind": "DATABASE",
+          "reverse": false,
+        },
+        {
+          "count": 2,
+          "edge": "HAS_FINDING",
+          "kind": "EXCESSIVE_ACCESS_FINDING",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "HAS_FINDING",
+          "kind": "LATERAL_MOVEMENT_FINDING",
+          "reverse": false,
+        },
+      ],
+      "USER_ACCOUNT": [
+        {
+          "count": 12,
+          "edge": "ALLOWS_ACCESS_TO",
+          "kind": "AI_AGENT",
+          "reverse": false,
+        },
+      ],
+      "VIRTUAL_MACHINE": [
+        {
+          "count": 1,
+          "edge": "HOSTED_ON",
+          "kind": "AI_AGENT",
+          "reverse": true,
+        },
+      ],
+    },
+    "valuesFor": {
+      "AI_AGENT": [
+        {
+          "key": "discoveredBy",
+          "values": [
+            {
+              "count": 12,
+              "value": "Cloud Scanning",
+            },
+            {
+              "count": 2,
+              "value": "Workload Scanning",
+            },
+          ],
+        },
+        {
+          "key": "cloud",
+          "values": [
+            {
+              "count": 14,
+              "value": "GCP",
+            },
+          ],
+        },
+        {
+          "key": "region",
+          "values": [
+            {
+              "count": 5,
+              "value": "europe-west1",
+            },
+            {
+              "count": 4,
+              "value": "europe-west4",
+            },
+            {
+              "count": 3,
+              "value": "us-west1",
+            },
+            {
+              "count": 2,
+              "value": "europe-west3",
+            },
+          ],
+        },
+        {
+          "key": "status",
+          "values": [
+            {
+              "count": 13,
+              "value": "Active",
+            },
+            {
+              "count": 1,
+              "value": "Inactive",
+            },
+          ],
+        },
+        {
+          "key": "severity",
+          "values": [
+            {
+              "count": 11,
+              "value": "HIGH",
+            },
+            {
+              "count": 2,
+              "value": "MEDIUM",
+            },
+            {
+              "count": 1,
+              "value": "unknown",
+            },
+          ],
+        },
+        {
+          "key": "aarsSeverity",
+          "values": [
+            {
+              "count": 9,
+              "value": "HIGH",
+            },
+            {
+              "count": 2,
+              "value": "CRITICAL",
+            },
+            {
+              "count": 2,
+              "value": "LOW",
+            },
+            {
+              "count": 1,
+              "value": "INFO",
+            },
+          ],
+        },
+        {
+          "key": "projects",
+          "values": [
+            {
+              "count": 14,
+              "value": "PROJECT-ALPHA",
+            },
+            {
+              "count": 7,
+              "value": "PROJECT-BETA",
+            },
+            {
+              "count": 1,
+              "value": "PROJECT-DELTA",
+            },
+            {
+              "count": 1,
+              "value": "PROJECT-EPSILON",
+            },
+            {
+              "count": 1,
+              "value": "PROJECT-ETA",
+            },
+            {
+              "count": 1,
+              "value": "PROJECT-GAMMA",
+            },
+            {
+              "count": 1,
+              "value": "PROJECT-ZETA",
+            },
+          ],
+        },
+        {
+          "key": "guardrail",
+          "values": [
+            {
+              "count": 11,
+              "value": "missing",
+            },
+            {
+              "count": 3,
+              "value": "present",
+            },
+          ],
+        },
+        {
+          "key": "comboGroup",
+          "values": [
+            {
+              "count": 9,
+              "value": "gcp-managed-privileged",
+            },
+            {
+              "count": 2,
+              "value": "gcp-hosted-privileged",
+            },
+            {
+              "count": 2,
+              "value": "permissive-exec-identity",
+            },
+            {
+              "count": 1,
+              "value": "other-ai-risk",
+            },
+            {
+              "count": 1,
+              "value": "unknown",
+            },
+          ],
+        },
+        {
+          "key": "internet",
+          "values": [
+            {
+              "count": 11,
+              "value": "false",
+            },
+            {
+              "count": 3,
+              "value": "true",
+            },
+          ],
+        },
+        {
+          "key": "sensitiveAccess",
+          "values": [
+            {
+              "count": 11,
+              "value": "true",
+            },
+            {
+              "count": 3,
+              "value": "false",
+            },
+          ],
+        },
+        {
+          "key": "sensitiveData",
+          "values": [
+            {
+              "count": 14,
+              "value": "false",
+            },
+          ],
+        },
+        {
+          "key": "highPriv",
+          "values": [
+            {
+              "count": 13,
+              "value": "true",
+            },
+            {
+              "count": 1,
+              "value": "false",
+            },
+          ],
+        },
+        {
+          "key": "adminPriv",
+          "values": [
+            {
+              "count": 13,
+              "value": "false",
+            },
+            {
+              "count": 1,
+              "value": "true",
+            },
+          ],
         },
       ],
     },
@@ -12407,12 +13213,28 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
             "label": "Toxic combinations",
           },
           {
+            "key": "comboGroup",
+            "label": "Toxic combination",
+          },
+          {
             "key": "internet",
             "label": "Internet reachable",
           },
           {
             "key": "sensitiveAccess",
             "label": "Reaches classified data",
+          },
+          {
+            "key": "sensitiveData",
+            "label": "Holds classified data",
+          },
+          {
+            "key": "highPriv",
+            "label": "High privileges",
+          },
+          {
+            "key": "adminPriv",
+            "label": "Admin privileges",
           },
         ],
         "fields": [
@@ -12495,12 +13317,28 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
             "label": "Toxic combinations",
           },
           {
+            "key": "comboGroup",
+            "label": "Toxic combination",
+          },
+          {
             "key": "internet",
             "label": "Internet reachable",
           },
           {
             "key": "sensitiveAccess",
             "label": "Reaches classified data",
+          },
+          {
+            "key": "sensitiveData",
+            "label": "Holds classified data",
+          },
+          {
+            "key": "highPriv",
+            "label": "High privileges",
+          },
+          {
+            "key": "adminPriv",
+            "label": "Admin privileges",
           },
         ],
         "fields": [
@@ -14575,12 +15413,28 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
             "label": "Toxic combinations",
           },
           {
+            "key": "comboGroup",
+            "label": "Toxic combination",
+          },
+          {
             "key": "internet",
             "label": "Internet reachable",
           },
           {
             "key": "sensitiveAccess",
             "label": "Reaches classified data",
+          },
+          {
+            "key": "sensitiveData",
+            "label": "Holds classified data",
+          },
+          {
+            "key": "highPriv",
+            "label": "High privileges",
+          },
+          {
+            "key": "adminPriv",
+            "label": "Admin privileges",
           },
         ],
         "fields": [

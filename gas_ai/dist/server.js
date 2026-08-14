@@ -4914,17 +4914,19 @@ var Server = (() => {
     return spaced || raw;
   }
   var QUERY_FIELDS = [
-    { key: "name", label: "Name", get: (n) => n.name },
-    { key: "kind", label: "Kind", get: (n) => n.kind },
+    { key: "name", label: "Name", type: "text", get: (n) => n.name },
+    { key: "kind", label: "Kind", type: "choice", get: (n) => n.kind },
     {
       key: "publisher",
       label: "Publisher",
+      type: "text",
       kinds: AI_ASSET_KINDS,
       get: (n) => orNull(n.publisher)
     },
     {
       key: "discoveredBy",
       label: "Discovered by",
+      type: "choice",
       kinds: AI_ASSET_KINDS,
       get: (n) => {
         var _a5;
@@ -4935,36 +4937,40 @@ var Server = (() => {
     {
       key: "displayName",
       label: "Display name",
+      type: "text",
       kinds: IDENTITY_KINDS,
       get: (n) => orNull(n.displayName)
     },
-    { key: "email", label: "Email", kinds: IDENTITY_KINDS, get: (n) => orNull(n.email) },
+    { key: "email", label: "Email", type: "text", kinds: IDENTITY_KINDS, get: (n) => orNull(n.email) },
     {
       // Three states, not two. Absent means the identity steps never carried a dormancy read;
       // rendering that as "No" would assert the opposite of what is known.
       key: "inactive",
       label: "Inactive for the last 90 days",
+      type: "boolean",
       kinds: IDENTITY_KINDS,
       get: (n) => n.inactive === void 0 ? null : n.inactive
     },
     {
       key: "identityPurpose",
       label: "Purpose",
+      type: "choice",
       kinds: IDENTITY_KINDS,
       get: (n) => orNull(n.identityPurpose)
     },
-    { key: "cloud", label: "Cloud", get: (n) => orNull(n.cloudPlatform) },
-    { key: "region", label: "Region", get: (n) => orNull(n.region) },
-    { key: "status", label: "Status", get: (n) => orNull(n.status) },
-    { key: "severity", label: "Issue severity", get: (n) => orNull(n.severity) },
-    { key: "aars", label: "AARS", numeric: true, get: (n) => {
+    { key: "cloud", label: "Cloud", type: "choice", get: (n) => orNull(n.cloudPlatform) },
+    { key: "region", label: "Region", type: "choice", get: (n) => orNull(n.region) },
+    { key: "status", label: "Status", type: "choice", get: (n) => orNull(n.status) },
+    { key: "severity", label: "Issue severity", type: "choice", get: (n) => orNull(n.severity) },
+    { key: "aars", label: "AARS", type: "number", numeric: true, get: (n) => {
       var _a5;
       return (_a5 = n.aars) != null ? _a5 : null;
     } },
-    { key: "aarsSeverity", label: "AARS level", get: (n) => orNull(n.aarsSeverity) },
+    { key: "aarsSeverity", label: "AARS level", type: "choice", get: (n) => orNull(n.aarsSeverity) },
     {
       key: "projects",
       label: "Projects",
+      type: "choice",
       get: (n) => {
         var _a5;
         const names = ((_a5 = n.projects) != null ? _a5 : []).map((p) => p.name).filter(Boolean);
@@ -4974,28 +4980,72 @@ var Server = (() => {
     {
       key: "guardrail",
       label: "Guardrail",
+      type: "choice",
       kinds: AI_ASSET_KINDS,
       get: (n) => n.guardrailMissing === void 0 ? null : n.guardrailMissing ? "missing" : "present"
     },
     {
       key: "combos",
       label: "Toxic combinations",
+      type: "number",
+      numeric: true,
       get: (n) => {
         var _a5;
         const g = (_a5 = n.comboGroups) != null ? _a5 : [];
         return g.length ? g.length : null;
-      },
-      numeric: true
+      }
     },
     {
+      // The combination patterns BY NAME, where `combos` only ever counted them. "Show me the
+      // members of the privileged managed-agent pattern" is the question the register is built
+      // around, and a count cannot answer it.
+      key: "comboGroup",
+      label: "Toxic combination",
+      type: "choice",
+      get: (n) => {
+        var _a5;
+        const g = (_a5 = n.comboGroups) != null ? _a5 : [];
+        return g.length ? g.join(", ") : null;
+      }
+    },
+    {
+      // Read through the SAME predicate the canvas draws from. Reading only
+      // `isAccessibleFromInternet` — which is what this did — disagreed with the graph on a node
+      // that is open to all internet but not flagged accessible: the table said no while an
+      // INTERNET_EXPOSURE node hung off it two panes away. One reading, one answer.
       key: "internet",
       label: "Internet reachable",
-      get: (n) => n.isAccessibleFromInternet === void 0 || n.isAccessibleFromInternet === null ? null : n.isAccessibleFromInternet
+      type: "boolean",
+      get: (n) => conditionState(n, "INTERNET_EXPOSURE")
     },
     {
       key: "sensitiveAccess",
       label: "Reaches classified data",
+      type: "boolean",
       get: (n) => n.hasAccessToSensitiveData === void 0 ? null : n.hasAccessToSensitiveData
+    },
+    {
+      // HOLDS classified data, which is a different claim from reaching it — a bucket holds, an
+      // agent reaches. The pair is what makes the data-exposure path readable from either end.
+      key: "sensitiveData",
+      label: "Holds classified data",
+      type: "boolean",
+      get: (n) => n.hasSensitiveData === void 0 ? null : n.hasSensitiveData
+    },
+    {
+      // Kept apart rather than folded into one "privileged" flag: ADMIN is the stronger claim,
+      // and `withExcessivePrivilegeNodes` names its stub differently for it. EXCESSIVE_PRIVILEGE
+      // is their disjunction, so anyone wanting that reads the risk condition instead.
+      key: "highPriv",
+      label: "High privileges",
+      type: "boolean",
+      get: (n) => n.hasHighPrivileges === void 0 ? null : n.hasHighPrivileges
+    },
+    {
+      key: "adminPriv",
+      label: "Admin privileges",
+      type: "boolean",
+      get: (n) => n.hasAdminPrivileges === void 0 ? null : n.hasAdminPrivileges
     }
   ];
   var FIELD_BY_KEY = new Map(QUERY_FIELDS.map((f) => [f.key, f]));
@@ -5050,7 +5100,13 @@ var Server = (() => {
           fail(`unknown filter field: ${String(key)}`);
         }
         if (!Array.isArray(values) || !values.length) fail(`filter ${key} has no values`);
-        filters.push({ key, values: values.map((v) => String(v)) });
+        const op = f["op"];
+        if (op !== void 0 && op !== "eq" && op !== "contains") {
+          fail(`unknown filter operator: ${String(op)}`);
+        }
+        const filter = { key, values: values.map((v) => String(v)) };
+        if (op === "contains") filter.op = "contains";
+        filters.push(filter);
       }
       if (filters.length) node2.where = filters;
     }
@@ -5098,6 +5154,7 @@ var Server = (() => {
     if (r["optional"] === true) group.optional = true;
     return group;
   }
+  var VALUE_CARDINALITY_MAX = 40;
   function queryVocabulary(doc) {
     var _a5;
     const byId = new Map(doc.nodes.map((n) => [n.id, n]));
@@ -5132,7 +5189,37 @@ var Server = (() => {
       var _a6;
       return { kind, count: (_a6 = kindCounts.get(kind)) != null ? _a6 : 0 };
     });
-    return { kinds, stepsFrom };
+    return { kinds, stepsFrom, valuesFor: {} };
+  }
+  function fieldValuesFor(doc, kind) {
+    var _a5;
+    const nodes = doc.nodes.filter((n) => n.kind === kind);
+    const perField = [];
+    for (const spec of QUERY_FIELDS) {
+      if (spec.type !== "choice" && spec.type !== "boolean") continue;
+      if (spec.kinds && !spec.kinds.includes(kind)) continue;
+      if (spec.key === "kind") continue;
+      const counts = /* @__PURE__ */ new Map();
+      let overflow = false;
+      for (const node2 of nodes) {
+        const raw = spec.get(node2);
+        const parts = raw === null ? ["unknown"] : spec.type === "choice" ? String(raw).split(", ") : [String(raw)];
+        for (const part of parts) {
+          if (!part) continue;
+          if (!counts.has(part) && counts.size >= VALUE_CARDINALITY_MAX) {
+            overflow = true;
+            continue;
+          }
+          counts.set(part, ((_a5 = counts.get(part)) != null ? _a5 : 0) + 1);
+        }
+      }
+      if (overflow || !counts.size) continue;
+      perField.push({
+        key: spec.key,
+        values: [...counts.entries()].map(([value, count2]) => ({ value, count: count2 })).sort((a, b) => b.count - a.count || cmp(a.value, b.value))
+      });
+    }
+    return perField;
   }
   function queryColumnGroups(query, selected) {
     var _a5;
@@ -5202,6 +5289,9 @@ var Server = (() => {
       return f.values.some((x) => x === "unknown" || x === "");
     }
     const s = String(v).toLowerCase();
+    if (f.op === "contains") {
+      return f.values.some((x) => s.indexOf(String(x).toLowerCase()) !== -1);
+    }
     return f.values.some((x) => {
       const want = String(x).toLowerCase();
       if (want === s) return true;
@@ -6116,7 +6206,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "7045bb144b94" : "dev";
+  var BUILD_ID = true ? "c633675d17f5" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -10423,12 +10513,16 @@ var Server = (() => {
       });
     });
   }
-  function getQueryVocabulary() {
+  function getQueryVocabulary(p) {
+    const params = p != null ? p : {};
+    const kind = typeof params["kind"] === "string" && NODE_KINDS.includes(params["kind"]) ? params["kind"] : null;
     return run(
-      () => cached("queryVocabulary", {}, () => {
+      () => cached("queryVocabulary", { kind }, () => {
         const doc = loadGraphDoc();
-        if (!doc) return { empty: true, kinds: [], stepsFrom: {} };
-        return queryVocabulary(doc);
+        if (!doc) return { empty: true, kinds: [], stepsFrom: {}, valuesFor: {} };
+        const vocab = queryVocabulary(doc);
+        if (!kind) return vocab;
+        return { ...vocab, valuesFor: { [kind]: fieldValuesFor(doc, kind) } };
       })
     );
   }

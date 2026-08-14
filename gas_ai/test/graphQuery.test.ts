@@ -6,11 +6,14 @@ import {
   DEFAULT_QUERY,
   MAX_QUERY_NODES,
   QueryError,
+  QUERY_FIELDS,
+  VALUE_CARDINALITY_MAX,
   type QueryNode,
   type QueryStep,
   type RelationStep,
   isGroup,
   defaultFieldsForKind,
+  fieldValuesFor,
   fieldsForKind,
   humanDiscoveryMethod,
   queryColumnGroups,
@@ -465,5 +468,115 @@ describe("OR subsumption", () => {
     // `neither` has no identity AND no model; both branches hold, and it appears once.
     expect(res.rows.filter((r) => r.cells[0]?.name === "neither")).toHaveLength(1);
     expect(res.rows.map((r) => r.cells[0]?.name).sort()).toEqual(["model-only", "neither", "sa-only"]);
+  });
+});
+
+describe("filter vocabulary", () => {
+  it("gives every field a type, so the palette knows what control to draw", () => {
+    for (const f of QUERY_FIELDS) {
+      expect(["text", "choice", "boolean", "number"]).toContain(f.type);
+    }
+    const typeOf = (key: string) => QUERY_FIELDS.find((f) => f.key === key)?.type;
+    expect(typeOf("name")).toBe("text");
+    expect(typeOf("cloud")).toBe("choice");
+    expect(typeOf("inactive")).toBe("boolean");
+    expect(typeOf("aars")).toBe("number");
+  });
+
+  it("contains is a substring where eq is the whole value", () => {
+    const exact = runQuery(DOC, validateQuery({
+      kind: "AI_AGENT", where: [{ key: "name", values: ["agent"] }],
+    }));
+    expect(exact.total).toBe(0); // no agent is named exactly "agent"
+
+    const sub = runQuery(DOC, validateQuery({
+      kind: "AI_AGENT", where: [{ key: "name", values: ["agent"], op: "contains" }],
+    }));
+    expect(sub.total).toBeGreaterThan(0);
+    for (const row of sub.rows) {
+      expect(String(row.cells[0]?.name).toLowerCase()).toContain("agent");
+    }
+  });
+
+  it("rejects an operator it does not implement", () => {
+    expect(() => validateQuery({
+      kind: "AI_AGENT", where: [{ key: "name", values: ["x"], op: "startsWith" }],
+    })).toThrow(/unknown filter operator/);
+  });
+
+  it("reads internet reachability through the same predicate the canvas draws", () => {
+    // The old getter read only `isAccessibleFromInternet`, so a node open to all internet but
+    // not flagged accessible said "No" in the table while the graph hung an exposure node off
+    // it. One reading, one answer.
+    const doc: GraphDoc = {
+      syncedAt: DOC.syncedAt,
+      nodes: [{
+        id: "open", kind: "AI_AGENT", name: "open-to-all",
+        isAccessibleFromInternet: false, isOpenToAllInternet: true,
+      }],
+      edges: [],
+    };
+    const res = runQuery(doc, validateQuery({ kind: "AI_AGENT" }), { columns: [["name", "internet"]] });
+    expect(res.rows[0].cells[0]?.fields.internet).toBe(true);
+  });
+
+  it("can filter the combination patterns by name, not just count them", () => {
+    const withCombo = DOC.nodes.find((n) => (n.comboGroups ?? []).length);
+    if (!withCombo) throw new Error("the seed carries no combination membership");
+    const group = (withCombo.comboGroups ?? [])[0];
+    const res = runQuery(DOC, validateQuery({
+      kind: withCombo.kind, where: [{ key: "comboGroup", values: [group] }],
+    }));
+    expect(res.total).toBeGreaterThan(0);
+    for (const row of res.rows) {
+      const node = DOC.nodes.find((n) => n.id === row.cells[0]?.id);
+      expect(node?.comboGroups).toContain(group);
+    }
+  });
+
+  it("keeps the value lists off the bare vocabulary, to be asked for per kind", () => {
+    // Every kind's lists together were 22 KB of a 28 KB vocabulary, none of it read until the
+    // palette opens and then only for one kind. The page fetches the vocabulary bare.
+    expect(queryVocabulary(DOC).valuesFor).toEqual({});
+  });
+
+  it("offers the values a kind actually takes, counted, commonest first", () => {
+    const forAgent = fieldValuesFor(DOC, "AI_AGENT");
+    const cloud = forAgent.find((f) => f.key === "cloud");
+    if (!cloud) throw new Error("no cloud values offered for AI_AGENT");
+    expect(cloud.values.map((v) => v.value)).toContain("GCP");
+    // Counts descend, so the picker leads with what the estate is mostly made of.
+    for (let i = 1; i < cloud.values.length; i++) {
+      expect(cloud.values[i - 1].count).toBeGreaterThanOrEqual(cloud.values[i].count);
+    }
+    // A field a kind cannot answer is not offered for it.
+    expect(fieldValuesFor(DOC, "BUCKET").find((f) => f.key === "publisher")).toBeUndefined();
+  });
+
+  it("counts a multi-value cell once per value, and offers `unknown` as a real choice", () => {
+    const forAgent = fieldValuesFor(DOC, "AI_AGENT");
+    const projects = forAgent.find((f) => f.key === "projects");
+    if (projects) {
+      const total = projects.values.reduce((a, v) => a + v.count, 0);
+      const agents = DOC.nodes.filter((n) => n.kind === "AI_AGENT").length;
+      // More entries than assets, because an asset in two projects is counted under both.
+      expect(total).toBeGreaterThanOrEqual(agents);
+    }
+    const publisher = forAgent.find((f) => f.key === "publisher");
+    expect(publisher).toBeUndefined(); // text, not a choice — no value list
+    const guardrail = forAgent.find((f) => f.key === "guardrail");
+    expect(guardrail?.values.map((v) => v.value).sort()).toEqual(["missing", "present"]);
+  });
+
+  it("offers no list at all past the cardinality cap, rather than a truncated one", () => {
+    // A truncated list is the worst of the three options: it looks complete and is not.
+    const many: GraphDoc = {
+      syncedAt: DOC.syncedAt,
+      nodes: Array.from({ length: VALUE_CARDINALITY_MAX + 5 }, (_, i) => ({
+        id: "n" + i, kind: "AI_AGENT" as const, name: "n" + i, region: "region-" + i,
+      })),
+      edges: [],
+    };
+    expect(fieldValuesFor(many, "AI_AGENT").find((f) => f.key === "region")).toBeUndefined();
   });
 });

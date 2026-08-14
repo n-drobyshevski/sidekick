@@ -24,6 +24,7 @@
 
 import type { EdgeType, GEdge, GNode, GraphDoc, NodeKind } from "./graphTypes";
 import { AI_ASSET_KINDS, EDGE_TYPES, NODE_KINDS, severityRank } from "./graphTypes";
+import { conditionState } from "./riskConditions";
 import { cmp, pushInto, type Rec } from "./util";
 
 // ------------------------------------------------------------------------- the model
@@ -42,6 +43,12 @@ export type QueryEdge = EdgeType | "ANY";
 export interface PropFilter {
   key: string;
   values: string[];
+  /**
+   * How each value is compared. `eq` (the default, and what every existing filter means) is
+   * whole-value equality; `contains` is a substring, which is the only useful reading of a
+   * filter on a name — "prod" should find "prod-agent-01", and until this existed it did not.
+   */
+  op?: "eq" | "contains";
 }
 
 export interface QueryNode {
@@ -132,9 +139,17 @@ export const MAX_HOPS = 3;
 
 export type FieldValue = string | number | boolean | null;
 
+/**
+ * What KIND of value a field holds, which decides how it is filtered and how the palette
+ * draws it: free text takes an input and a substring match, a choice takes a value list with
+ * counts, a yes/no takes three states because absent is its own answer.
+ */
+export type FieldType = "text" | "choice" | "boolean" | "number";
+
 export interface FieldSpec {
   key: string;
   label: string;
+  type: FieldType;
   /** Kinds that offer this field. Absent = every kind. */
   kinds?: readonly NodeKind[];
   /** Right-align in the table — numbers only. */
@@ -165,68 +180,96 @@ export function humanDiscoveryMethod(raw: string): string {
 }
 
 export const QUERY_FIELDS: readonly FieldSpec[] = [
-  { key: "name", label: "Name", get: (n) => n.name },
-  { key: "kind", label: "Kind", get: (n) => n.kind },
+  { key: "name", label: "Name", type: "text", get: (n) => n.name },
+  { key: "kind", label: "Kind", type: "choice", get: (n) => n.kind },
   {
-    key: "publisher", label: "Publisher", kinds: AI_ASSET_KINDS,
+    key: "publisher", label: "Publisher", type: "text", kinds: AI_ASSET_KINDS,
     get: (n) => orNull(n.publisher),
   },
   {
-    key: "discoveredBy", label: "Discovered by", kinds: AI_ASSET_KINDS,
+    key: "discoveredBy", label: "Discovered by", type: "choice", kinds: AI_ASSET_KINDS,
     get: (n) => {
       const m = n.discoveryMethods ?? [];
       return m.length ? m.map(humanDiscoveryMethod).join(", ") : null;
     },
   },
   {
-    key: "displayName", label: "Display name", kinds: IDENTITY_KINDS,
+    key: "displayName", label: "Display name", type: "text", kinds: IDENTITY_KINDS,
     get: (n) => orNull(n.displayName),
   },
-  { key: "email", label: "Email", kinds: IDENTITY_KINDS, get: (n) => orNull(n.email) },
+  { key: "email", label: "Email", type: "text", kinds: IDENTITY_KINDS, get: (n) => orNull(n.email) },
   {
     // Three states, not two. Absent means the identity steps never carried a dormancy read;
     // rendering that as "No" would assert the opposite of what is known.
-    key: "inactive", label: "Inactive for the last 90 days", kinds: IDENTITY_KINDS,
+    key: "inactive", label: "Inactive for the last 90 days", type: "boolean", kinds: IDENTITY_KINDS,
     get: (n) => (n.inactive === undefined ? null : n.inactive),
   },
   {
-    key: "identityPurpose", label: "Purpose", kinds: IDENTITY_KINDS,
+    key: "identityPurpose", label: "Purpose", type: "choice", kinds: IDENTITY_KINDS,
     get: (n) => orNull(n.identityPurpose),
   },
-  { key: "cloud", label: "Cloud", get: (n) => orNull(n.cloudPlatform) },
-  { key: "region", label: "Region", get: (n) => orNull(n.region) },
-  { key: "status", label: "Status", get: (n) => orNull(n.status) },
-  { key: "severity", label: "Issue severity", get: (n) => orNull(n.severity) },
-  { key: "aars", label: "AARS", numeric: true, get: (n) => (n.aars ?? null) },
-  { key: "aarsSeverity", label: "AARS level", get: (n) => orNull(n.aarsSeverity) },
+  { key: "cloud", label: "Cloud", type: "choice", get: (n) => orNull(n.cloudPlatform) },
+  { key: "region", label: "Region", type: "choice", get: (n) => orNull(n.region) },
+  { key: "status", label: "Status", type: "choice", get: (n) => orNull(n.status) },
+  { key: "severity", label: "Issue severity", type: "choice", get: (n) => orNull(n.severity) },
+  { key: "aars", label: "AARS", type: "number", numeric: true, get: (n) => (n.aars ?? null) },
+  { key: "aarsSeverity", label: "AARS level", type: "choice", get: (n) => orNull(n.aarsSeverity) },
   {
-    key: "projects", label: "Projects",
+    key: "projects", label: "Projects", type: "choice",
     get: (n) => {
       const names = (n.projects ?? []).map((p) => p.name).filter(Boolean);
       return names.length ? names.join(", ") : null;
     },
   },
   {
-    key: "guardrail", label: "Guardrail", kinds: AI_ASSET_KINDS,
+    key: "guardrail", label: "Guardrail", type: "choice", kinds: AI_ASSET_KINDS,
     get: (n) => (n.guardrailMissing === undefined ? null : (n.guardrailMissing ? "missing" : "present")),
   },
   {
-    key: "combos", label: "Toxic combinations",
+    key: "combos", label: "Toxic combinations", type: "number", numeric: true,
     get: (n) => {
       const g = n.comboGroups ?? [];
       return g.length ? g.length : null;
     },
-    numeric: true,
   },
   {
-    key: "internet", label: "Internet reachable",
-    get: (n) => (n.isAccessibleFromInternet === undefined || n.isAccessibleFromInternet === null
-      ? null
-      : n.isAccessibleFromInternet),
+    // The combination patterns BY NAME, where `combos` only ever counted them. "Show me the
+    // members of the privileged managed-agent pattern" is the question the register is built
+    // around, and a count cannot answer it.
+    key: "comboGroup", label: "Toxic combination", type: "choice",
+    get: (n) => {
+      const g = n.comboGroups ?? [];
+      return g.length ? g.join(", ") : null;
+    },
   },
   {
-    key: "sensitiveAccess", label: "Reaches classified data",
+    // Read through the SAME predicate the canvas draws from. Reading only
+    // `isAccessibleFromInternet` — which is what this did — disagreed with the graph on a node
+    // that is open to all internet but not flagged accessible: the table said no while an
+    // INTERNET_EXPOSURE node hung off it two panes away. One reading, one answer.
+    key: "internet", label: "Internet reachable", type: "boolean",
+    get: (n) => conditionState(n, "INTERNET_EXPOSURE"),
+  },
+  {
+    key: "sensitiveAccess", label: "Reaches classified data", type: "boolean",
     get: (n) => (n.hasAccessToSensitiveData === undefined ? null : n.hasAccessToSensitiveData),
+  },
+  {
+    // HOLDS classified data, which is a different claim from reaching it — a bucket holds, an
+    // agent reaches. The pair is what makes the data-exposure path readable from either end.
+    key: "sensitiveData", label: "Holds classified data", type: "boolean",
+    get: (n) => (n.hasSensitiveData === undefined ? null : n.hasSensitiveData),
+  },
+  {
+    // Kept apart rather than folded into one "privileged" flag: ADMIN is the stronger claim,
+    // and `withExcessivePrivilegeNodes` names its stub differently for it. EXCESSIVE_PRIVILEGE
+    // is their disjunction, so anyone wanting that reads the risk condition instead.
+    key: "highPriv", label: "High privileges", type: "boolean",
+    get: (n) => (n.hasHighPrivileges === undefined ? null : n.hasHighPrivileges),
+  },
+  {
+    key: "adminPriv", label: "Admin privileges", type: "boolean",
+    get: (n) => (n.hasAdminPrivileges === undefined ? null : n.hasAdminPrivileges),
   },
 ];
 
@@ -312,7 +355,13 @@ function readNode(raw: unknown, depth: number, counter: { nodes: number }): Quer
         fail(`unknown filter field: ${String(key)}`);
       }
       if (!Array.isArray(values) || !values.length) fail(`filter ${key} has no values`);
-      filters.push({ key, values: values.map((v) => String(v)) });
+      const op = (f as Rec)["op"];
+      if (op !== undefined && op !== "eq" && op !== "contains") {
+        fail(`unknown filter operator: ${String(op)}`);
+      }
+      const filter: PropFilter = { key, values: values.map((v) => String(v)) };
+      if (op === "contains") filter.op = "contains";
+      filters.push(filter);
     }
     if (filters.length) node.where = filters;
   }
@@ -383,12 +432,39 @@ export interface VocabEntry {
   count: number;
 }
 
+/**
+ * The distinct values one choice field takes, with how many nodes carry each.
+ *
+ * Capped: past `VALUE_CARDINALITY_MAX` a picker is worse than a text box, and shipping five
+ * hundred region names to every builder would cost more than the control is worth. A field
+ * over the cap simply offers no list, and the palette falls back to a contains search — which
+ * is why `contains` had to exist before this could.
+ */
+export const VALUE_CARDINALITY_MAX = 40;
+
+export interface FieldValues {
+  key: string;
+  values: Array<{ value: string; count: number }>;
+}
+
 export interface Vocabulary {
   /** Kinds present in the graph, with their node counts, worst-populated first is NOT the order —
    *  declaration order is, so the picker reads the same way the legend does. */
   kinds: Array<{ kind: NodeKind; count: number }>;
   /** For each kind, the steps that can actually match from it. */
   stepsFrom: Record<string, VocabEntry[]>;
+  /**
+   * The choice fields a kind can be filtered on and the values they actually take IN THIS
+   * TENANT — offering "GCP, AWS, Azure" to an estate that is entirely GCP would be describing
+   * the schema rather than the graph.
+   *
+   * Populated for ONE kind at a time, on request. Every kind's lists together came to 22 KB of
+   * the 28 KB vocabulary on a 119-node dry run, all of it unused until someone opens the
+   * palette — and then only ever one kind's worth is read. So the page fetches the vocabulary
+   * bare and the palette asks for the kind it is about; `swrCall` keys on the params, so each
+   * is fetched once per session.
+   */
+  valuesFor: Record<string, FieldValues[]>;
 }
 
 /**
@@ -444,7 +520,54 @@ export function queryVocabulary(doc: GraphDoc): Vocabulary {
     .filter((k) => kindCounts.has(k))
     .map((kind) => ({ kind, count: kindCounts.get(kind) ?? 0 }));
 
-  return { kinds, stepsFrom };
+  return { kinds, stepsFrom, valuesFor: {} };
+}
+
+/**
+ * What each choice field actually holds, per kind.
+ *
+ * Multi-value cells are counted per VALUE, not per cell: an asset in two projects contributes
+ * to both, because "how many assets are in PROJECT-ALPHA" is the question the number answers.
+ * A `null` becomes the literal "unknown" bucket, which `matchesFilter` already accepts as a
+ * filter value — "Wiz never told us" is a real answer and has to be selectable.
+ */
+export function fieldValuesFor(doc: GraphDoc, kind: NodeKind): FieldValues[] {
+  const nodes = doc.nodes.filter((n) => n.kind === kind);
+  const perField: FieldValues[] = [];
+  for (const spec of QUERY_FIELDS) {
+    if (spec.type !== "choice" && spec.type !== "boolean") continue;
+    if (spec.kinds && !spec.kinds.includes(kind)) continue;
+    // `kind` is a no-op here: this list is keyed BY kind, so it could only ever offer the one
+    // value, filtering a thing by what it already is. A node asking for ANY kind gets its
+    // options from `vocab.kinds`, which carries every kind with a count already.
+    if (spec.key === "kind") continue;
+    const counts = new Map<string, number>();
+    let overflow = false;
+    for (const node of nodes) {
+      const raw = spec.get(node);
+      const parts = raw === null
+        ? ["unknown"]
+        : (spec.type === "choice" ? String(raw).split(", ") : [String(raw)]);
+      for (const part of parts) {
+        if (!part) continue;
+        if (!counts.has(part) && counts.size >= VALUE_CARDINALITY_MAX) {
+          overflow = true;
+          continue;
+        }
+        counts.set(part, (counts.get(part) ?? 0) + 1);
+      }
+    }
+    // Over the cap the list would be a worse control than a search box, and a TRUNCATED list
+    // is the worst of the three — it looks complete and is not. Offer nothing instead.
+    if (overflow || !counts.size) continue;
+    perField.push({
+      key: spec.key,
+      values: [...counts.entries()]
+        .map(([value, count]) => ({ value, count }))
+        .sort((a, b) => (b.count - a.count) || cmp(a.value, b.value)),
+    });
+  }
+  return perField;
 }
 
 // ------------------------------------------------------------------------- columns
@@ -628,6 +751,11 @@ function matchesFilter(node: GNode, f: PropFilter): boolean {
     return f.values.some((x) => x === "unknown" || x === "");
   }
   const s = String(v).toLowerCase();
+  if (f.op === "contains") {
+    // Substring, over the whole rendered value. A multi-value cell is already joined, so
+    // "portal" finds a project list containing CE-DPCP-PORTAL without needing the split below.
+    return f.values.some((x) => s.indexOf(String(x).toLowerCase()) !== -1);
+  }
   return f.values.some((x) => {
     const want = String(x).toLowerCase();
     if (want === s) return true;

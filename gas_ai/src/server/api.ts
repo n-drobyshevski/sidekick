@@ -86,16 +86,19 @@ import { layoutGraph } from "../domain/graphLayout";
 import { nodeOrder, projectGraph, type Projection } from "../domain/graphProject";
 import {
   DEFAULT_QUERY,
+  fieldValuesFor,
   queryVocabulary,
   runQuery,
   validateQuery,
 } from "../domain/graphQuery";
 import {
   AI_ASSET_KINDS,
+  NODE_KINDS,
   type GEdge,
   type GNode,
   type GraphDoc,
   type IssueRow,
+  type NodeKind,
 } from "../domain/graphTypes";
 import { DATASTORE_KINDS } from "../domain/graphEnrich";
 import { comboDigest } from "../domain/comboDigest";
@@ -370,12 +373,20 @@ export function getGraph(p?: unknown): ApiResult {
  * it costs no extra round trip before first paint, and keeping it out of the bootstrap payload
  * keeps a small, hot, universally-fetched object small.
  */
-export function getQueryVocabulary(): ApiResult {
+export function getQueryVocabulary(p?: unknown): ApiResult {
+  const params = (p ?? {}) as Rec;
+  // One kind's filter values, when asked for. The relationship vocabulary is small and rides
+  // every page load; the value lists are not, and only ever one kind's worth is read at a time.
+  const kind = typeof params["kind"] === "string" && (NODE_KINDS as readonly string[]).includes(params["kind"])
+    ? (params["kind"] as NodeKind)
+    : null;
   return run(() =>
-    cached("queryVocabulary", {}, () => {
+    cached("queryVocabulary", { kind }, () => {
       const doc = syncStore.loadGraphDoc();
-      if (!doc) return { empty: true, kinds: [], stepsFrom: {} };
-      return queryVocabulary(doc);
+      if (!doc) return { empty: true, kinds: [], stepsFrom: {}, valuesFor: {} };
+      const vocab = queryVocabulary(doc);
+      if (!kind) return vocab;
+      return { ...vocab, valuesFor: { [kind]: fieldValuesFor(doc, kind) } };
     }),
   );
 }
