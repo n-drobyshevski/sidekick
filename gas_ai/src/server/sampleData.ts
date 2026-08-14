@@ -47,6 +47,8 @@ interface NodeSeed {
   exposureLevel?: string;
   portValidation?: string;
   exposureEvidence?: GNode["exposureEvidence"];
+  inactive?: boolean;
+  inactiveTimeframe?: string;
 }
 
 function node(seed: NodeSeed): GNode {
@@ -77,6 +79,8 @@ function node(seed: NodeSeed): GNode {
     exposureLevel: seed.exposureLevel,
     portValidation: seed.portValidation,
     exposureEvidence: seed.exposureEvidence,
+    inactive: seed.inactive,
+    inactiveTimeframe: seed.inactiveTimeframe,
   };
 }
 
@@ -374,10 +378,30 @@ for (let i = 1; i <= 14; i++) {
   extraNodes.push({ id, kind: "BUCKET", name: `bucket-autogen-scratch-${n}`, cloud: "GCP", region: "us-west1", projects: ["PROJECT-BETA"] });
   edges.push(edge("sa-agent-autogen", "ALLOWS_ACCESS_TO", id, "WRITE"));
 }
+// Twelve operators on the customer-facing chatbot, two of them admins — and the READ ten are
+// there to be excluded. A live IDENTITY_ACCESS sync only ever returns ADMIN and
+// HIGH_PRIVILEGE bindings, so a figure that counted all twelve would read as "human reach"
+// while meaning something no tenant can reproduce.
+//
+// One admin is DORMANT. That pairing is the whole reason identity dormancy is collected: an
+// account nobody has used in ninety days that still holds admin on an internet-reachable
+// agent is a backdoor with no one watching it. `user-ops-02` is deliberately the inactive
+// one, and `user-ops-03` carries an explicit `inactive: false` so the dry run exercises
+// "reported active" as well as "reported dormant" and "never reported".
 for (let i = 1; i <= 12; i++) {
   const n = String(i).padStart(2, "0");
   const id = `user-ops-${n}`;
-  extraNodes.push({ id, kind: "USER_ACCOUNT", name: `ops.user${n}@example.com`, cloud: "GCP" });
+  const seed: NodeSeed = {
+    id, kind: "USER_ACCOUNT", name: `ops.user${n}@example.com`, cloud: "GCP",
+  };
+  if (i === 2) {
+    seed.inactive = true;
+    seed.inactiveTimeframe = "Inactive90Days";
+  } else if (i === 3) {
+    seed.inactive = false;
+    seed.inactiveTimeframe = "Active";
+  }
+  extraNodes.push(seed);
   edges.push(edge(id, "ALLOWS_ACCESS_TO", "agent-h-chatbot", i <= 2 ? "ADMIN" : "READ"));
 }
 

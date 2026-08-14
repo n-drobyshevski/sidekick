@@ -153,14 +153,31 @@ const PROPERTY_ALIASES: Readonly<Record<string, readonly string[]>> = {
 export function entityField(raw: Rec, key: string): unknown {
   if (!raw || typeof raw !== "object") return undefined;
   if (raw[key] !== undefined) return raw[key];
-  const props = raw["properties"];
-  if (!props || typeof props !== "object") return undefined;
-  const bag = props as Rec;
+  const bag = propertyBag(raw);
+  if (!bag) return undefined;
   if (bag[key] !== undefined) return bag[key];
   for (const alias of PROPERTY_ALIASES[key] ?? []) {
     if (bag[alias] !== undefined) return bag[alias];
   }
   return undefined;
+}
+
+/**
+ * Where the properties bag sits, which is not the same place on all three roots.
+ *
+ * A graphSearch entity carries it flat as `properties`. A `cloudResourcesV2` node carries the
+ * resource fields flat and the bag one level deeper, under `graphEntity` — which is exactly
+ * why the agentic-identities step could see `hasAdminPrivileges` but not `inactiveInLast90Days`
+ * or the real `identityPurpose`, even though the tenant returns all three in the same capture
+ * (exemples/agentic_identities_response.js). One helper, three roots.
+ */
+function propertyBag(raw: Rec): Rec | null {
+  const flat = raw["properties"];
+  if (flat && typeof flat === "object") return flat as Rec;
+  const entity = raw["graphEntity"];
+  if (!entity || typeof entity !== "object") return null;
+  const nested = (entity as Rec)["properties"];
+  return nested && typeof nested === "object" ? (nested as Rec) : null;
 }
 
 export const EDGE_TYPES = [
@@ -263,6 +280,33 @@ export interface GNode {
   technologyCategories?: string[]; // Wiz technology.categories[].name (e.g. "AI Service")
   // Agentic-identity enrichment (cloudResourcesV2 + identityPurpose:AGENTIC):
   identityPurpose?: string; // "AGENTIC" for agent execution identities
+  /**
+   * Identity rows only. `inactiveInLast90Days` / `inactiveTimeframe` out of the properties
+   * bag — Wiz's own dormancy read, from cloud audit events.
+   *
+   * Absent means the identity steps never carried it, never "in use". A dormant identity
+   * holding admin access to an AI asset is the finding; a dormant one that reaches nothing is
+   * housekeeping, so the flag is only ever interesting joined to `humanAccess` below.
+   */
+  inactive?: boolean;
+  inactiveTimeframe?: string;   // e.g. "Active", "Inactive90Days"
+  /**
+   * Who can reach this AI asset, folded onto it at commit by `withHumanAccess`.
+   *
+   * HUMAN identities only (USER_ACCOUNT). An agent's own execution identity reaching it is
+   * normal operation rather than a finding — the rule `withIdentityAccessNodes` already
+   * applies to decide whether to draw a stub, applied once here so the register, the graph
+   * and the Scans figure cannot disagree about it.
+   *
+   * Absent means IDENTITY_ACCESS reached nothing, never "nobody can reach this".
+   */
+  humanAccess?: {
+    identityIds: string[];
+    /** True when at least one of them holds ADMIN rather than merely HIGH_PRIVILEGE. */
+    admin?: boolean;
+    /** How many of them Wiz reports dormant — the join that makes the flag worth having. */
+    inactiveCount?: number;
+  };
   issueAnalytics?: {        // per-identity related-issue severity rollup (display-only)
     total: number;
     info: number;

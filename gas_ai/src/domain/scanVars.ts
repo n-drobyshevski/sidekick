@@ -156,12 +156,15 @@ export const STEP_VAR_SPECS: StepVarSpec[] = [
         required: true,
       },
     ],
-    // Deliberately NOT offering filterBy.identityPurpose. normalizePrincipalsPage stamps
-    // identityPurpose = "AGENTIC" on every row it returns, because the API does not send the
-    // field back — the flag is a claim about the filter, not about the data. Let the filter
-    // widen and every identity in the estate is relabelled agentic, with nothing to catch it.
-    locked: "The agentic-purpose filter is fixed: the sync labels what this query returns as " +
-      "agentic, so widening it would mislabel every identity it collected.",
+    // Still NOT offering filterBy.identityPurpose, but the reason has narrowed. Wiz DOES
+    // return the purpose — `IdentityPurposeAgentic`, in the graph entity's properties bag —
+    // and Q_PRINCIPALS now selects that bag, so a collected row normally carries its own
+    // label. The stamp survives as the fallback for a tenant whose schema rejects
+    // `graphEntity`, and that fallback is what a widened filter would turn into a mislabel:
+    // every row it collected would come back stamped AGENTIC with nothing to catch it.
+    locked: "The agentic-purpose filter is fixed: where the tenant does not return an " +
+      "identity's own purpose the sync falls back to labelling what this query returns as " +
+      "agentic, so widening it would mislabel exactly the identities it could not verify.",
   },
   {
     stepId: "SENSITIVE_DATA_ACCESS",
@@ -172,6 +175,18 @@ export const STEP_VAR_SPECS: StepVarSpec[] = [
     locked: "This step has no editable filter: normalizeSensitiveDataAccessPage rebuilds " +
       "the chain's edges from which entity TYPES a row carries, so a changed selection set " +
       "would yield confidently wrong edges rather than an error.",
+  },
+  {
+    stepId: "IDENTITY_ACCESS",
+    // Its traversal is a $query variable now, so in principle the access-level list is a
+    // path an override could reach. Withheld for the reason ENDPOINT_EXPOSURE's is: those two
+    // values also live in HUMAN_ACCESS_TYPES (domain/identityQuery.ts), which is what
+    // withHumanAccess and withIdentityAccessNodes judge an edge by. Widening the filter would
+    // collect READ bindings the figure then refuses to count.
+    fields: [],
+    locked: "This step has no editable filter: the ADMIN / HIGH_PRIVILEGE bar is applied " +
+      "again when the reach is totalled and drawn, so widening it here would collect " +
+      "bindings that never reach a number.",
   },
   {
     stepId: "HOST_EXPOSURE",

@@ -17,6 +17,7 @@ import {
 import { isOpenGap, isUnresolvedIssue, SEVERITY_ORDER } from "./config";
 import type { Severity } from "./config";
 import { isRatedExposure, worseExposureLevel } from "./exposureQuery";
+import { HUMAN_ACCESS_TYPES } from "./identityQuery";
 import { conditionHolds, conditionState } from "./riskConditions";
 import type { ConditionKey } from "./toxicCombos";
 import {
@@ -576,6 +577,63 @@ export function withInternetExposureNodes(doc: GraphDoc): GraphDoc {
 }
 
 /**
+ * Fold human identity access onto the assets it reaches.
+ *
+ * The Wiz Scans page used to declare this area `partial` with the note "access paths are
+ * synced and drawn, but nothing totals them". This is what totals them — and the reason it
+ * could not simply be counted where the figure is shown is that reach is an EDGE fact, while
+ * the Inventory register and the combos matrix read the `ai_assets` tab directly and never
+ * see an edge. So it is folded onto the asset at commit and persisted, exactly as
+ * `withExposureEvidence` folds reachability.
+ *
+ * COUNTED FROM THE EDGES, NEVER FROM THE DRAWN STUBS. `withIdentityAccessNodes` deliberately
+ * suppresses an asset that already carries a real EXCESSIVE_ACCESS_FINDING, so that one
+ * problem is not drawn twice — a perfectly good rule for a picture and a silently wrong one
+ * for a number. Counting stubs would report "assets where we drew a stub" under a label that
+ * says "assets a human can reach", and the gap between the two would move with CIEM coverage.
+ *
+ * HUMANS ONLY, for the reason that builder gives: an agent's own execution identity reaching
+ * it is normal operation, not a finding.
+ */
+export function withHumanAccess(doc: GraphDoc): GraphDoc {
+  const reach: ReadonlySet<string> = new Set(HUMAN_ACCESS_TYPES);
+  const byId = indexBy(doc.nodes, (n) => n.id);
+  const humans = new Set(doc.nodes.filter((n) => n.kind === "USER_ACCOUNT").map((n) => n.id));
+  if (!humans.size) return doc;
+
+  const reachedBy = new Map<string, string[]>();
+  const admins = new Set<string>();
+  for (const edge of doc.edges) {
+    if (edge.type !== "ALLOWS_ACCESS_TO") continue;
+    if (!edge.accessType || !reach.has(edge.accessType)) continue;
+    if (!humans.has(edge.src)) continue;
+    const target = byId.get(edge.dst);
+    if (!target || !AI_ASSET_KINDS.includes(target.kind)) continue;
+    pushInto(reachedBy, edge.dst, edge.src);
+    if (edge.accessType === "ADMIN") admins.add(edge.dst);
+  }
+  if (!reachedBy.size) return doc;
+
+  return {
+    nodes: doc.nodes.map((node) => {
+      const identityIds = reachedBy.get(node.id);
+      if (!identityIds || !identityIds.length) return node;
+      const access: NonNullable<GNode["humanAccess"]> = { identityIds };
+      if (admins.has(node.id)) access.admin = true;
+      // Only counted when the identity rows actually carry the flag. `undefined` there means
+      // the traversal never reported dormancy for that identity, which is not the same as
+      // reporting it active — so an estate where nothing is known contributes 0 and reads as
+      // "none known dormant" rather than manufacturing a clean bill of health.
+      const inactiveCount = identityIds.filter((id) => byId.get(id)?.inactive === true).length;
+      if (inactiveCount) access.inactiveCount = inactiveCount;
+      return { ...node, humanAccess: access };
+    }),
+    edges: doc.edges,
+    syncedAt: doc.syncedAt,
+  };
+}
+
+/**
  * Fold the network-exposure topology onto the assets it describes.
  *
  * The two exposure steps land three separate facts in the graph — an internet-reachable
@@ -714,7 +772,9 @@ export function withExcessivePrivilegeNodes(doc: GraphDoc): GraphDoc {
  *    and drawing both would show one problem twice.
  */
 export function withIdentityAccessNodes(doc: GraphDoc): GraphDoc {
-  const HUMAN_REACH: ReadonlySet<string> = new Set(["ADMIN", "HIGH_PRIVILEGE"]);
+  // The same list identityAccessSpec filters the query on and withHumanAccess totals. It was
+  // a private copy here; three readings of "what counts as human reach" is two too many.
+  const HUMAN_REACH: ReadonlySet<string> = new Set(HUMAN_ACCESS_TYPES);
   const aiAssets = new Set(
     doc.nodes.filter((n) => (AI_ASSET_KINDS as readonly string[]).includes(n.kind)).map((n) => n.id),
   );

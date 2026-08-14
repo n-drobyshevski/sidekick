@@ -44,6 +44,10 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // and never see the graph document — agree with the graph about what is exposed.
     // Appended for the same no-migration reason.
     "exposure_level", "port_validation", "exposure_evidence_json",
+    // Human identity access. The first two belong to identity rows (Wiz's dormancy read from
+    // cloud audit events); the third is the join `withHumanAccess` folds onto an AI asset, so
+    // the register and the Scans figure can total reach without reading edges. Appended.
+    "inactive", "inactive_timeframe", "human_access_json",
   ],
   [TABS.edges]: ["id", "src", "dst", "type", "negated", "access_type"],
   [TABS.issues]: [

@@ -35,6 +35,10 @@ const FULL = {
     internetValidated: 1,
     internetViaHost: 2,
     highPrivilege: 34,
+    humanReachable: 4,
+    humanReachableAdmin: 2,
+    humanIdentities: 7,
+    humanDormant: 1,
   },
   total: 96,
   digest: { totals: { totalOpen: 29, patternsActive: 4, patternsTotal: 4 } },
@@ -46,8 +50,11 @@ const stateOf = (ctx, id) => byId(resolveAreas(ctx)).get(id).state;
 describe("resolveAreas on a full payload", () => {
   const resolved = resolveAreas(FULL);
 
-  it("splits the ten areas 7 live / 2 partial / 1 unscanned", () => {
-    expect(coverageTally(resolved)).toEqual({ live: 7, partial: 2, unscanned: 1 });
+  it("splits the ten areas 8 live / 1 partial / 1 unscanned", () => {
+    // Human identity access moved live: the paths were always synced and only the total was
+    // missing. Compliance frameworks is the one remaining declared `partial` — it counts
+    // failing findings while its subject is framework SCORING, which no payload here carries.
+    expect(coverageTally(resolved)).toEqual({ live: 8, partial: 1, unscanned: 1 });
   });
 
   it("reports framework posture as an average over the frameworks that actually scored", () => {
@@ -247,7 +254,43 @@ describe("the fabrications are gone", () => {
   });
 
   it("says MFA is not collected rather than claiming it is scanned", () => {
+    // Narrowed, not dropped. The note used to say MFA AND inactivity were uncollected; Wiz
+    // returns inactivity in the identity properties bag and the sync reads it now, so only
+    // the MFA half survives — Wiz reports that for IdP-sourced human identities, and every
+    // identity on this estate's AI paths is a cloud service account or role.
     const identity = SCAN_AREAS.find((a) => a.id === "identity");
-    expect(identity.note).toMatch(/not collected/i);
+    expect(identity.note).toMatch(/MFA is still not collected/i);
+    expect(identity.note).not.toMatch(/inactivity signals .* not collected/i);
+  });
+});
+
+describe("human identity access", () => {
+  const resolved = byId(resolveAreas(FULL));
+
+  it("reports a figure now instead of declaring itself partial", () => {
+    // The area was `coverage: "partial"` with the note "nothing totals them". The paths were
+    // always synced; only the KPI was missing.
+    expect(SCAN_AREAS.find((a) => a.id === "identity").coverage).toBeUndefined();
+    expect(resolved.get("identity").state).toBe("live");
+    expect(resolved.get("identity").figure.value).toBe("4");
+  });
+
+  it("names the identities, the admins and the dormant ones", () => {
+    const unit = resolved.get("identity").figure.unit;
+    expect(unit).toContain("7 identities");
+    expect(unit).toContain("2 at admin");
+    expect(unit).toContain("1 dormant");
+  });
+
+  it("drops the admin and dormant clauses when there are none", () => {
+    const kpis = { ...FULL.kpis, humanReachableAdmin: 0, humanDormant: 0 };
+    const figure = byId(resolveAreas({ ...FULL, kpis })).get("identity").figure;
+    expect(figure.unit).toBe("AI assets reachable · 7 identities");
+  });
+
+  it("steps back to partial on an older server bundle with no reach KPI", () => {
+    const kpis = { ...FULL.kpis };
+    delete kpis.humanReachable;
+    expect(stateOf({ ...FULL, kpis }, "identity")).toBe("partial");
   });
 });

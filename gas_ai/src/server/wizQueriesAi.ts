@@ -17,6 +17,7 @@
 
 import { endpointExposureSpec, hostExposureSpec } from "../domain/exposureQuery";
 import { toGraphEntityQuery } from "../domain/graphExpand";
+import { identityAccessSpec } from "../domain/identityQuery";
 import { RISK_CATEGORY_ID } from "../domain/toxicCombos";
 import type { Rec } from "../domain/util";
 
@@ -325,34 +326,60 @@ export const Q_AGENT_SENSITIVE_DATA_ACCESS = graphSearchQueryWith(
   ENTITY_FIELDS,
 );
 
-/** Human/role identities with high-privilege or admin access INTO agents. */
-export const Q_IDENTITY_ACCESS = graphSearchQuery(
-  "SidekickAiIdentitiesWithAgentAccess",
-  "    type: \"AI_AGENT\"\n" +
-  "    select: true\n" +
-  "    relationships: [{\n" +
-  "      type: \"ALLOWS_ACCESS_TO\"\n" +
-  "      direction: INBOUND\n" +
-  "      with: {\n" +
-  "        type: \"ACCESS_ROLE_BINDING\"\n" +
-  "        select: false\n" +
-  "        relationships: [\n" +
-  "          {\n" +
-  "            type: \"BOUND_TO\"\n" +
-  "            with: { type: [\"USER_ACCOUNT\", \"SERVICE_ACCOUNT\"], select: true }\n" +
-  "          }\n" +
-  "          {\n" +
-  "            type: \"PERMITS_ACCESS_ROLE\"\n" +
-  "            with: {\n" +
-  "              type: \"ACCESS_ROLE\"\n" +
-  "              select: true\n" +
-  "              where: { accessType: { EQUALS: [\"HIGH_PRIVILEGE\", \"ADMIN\"] } }\n" +
-  "            }\n" +
-  "          }\n" +
-  "        ]\n" +
-  "      }\n" +
-  "    }]\n",
-);
+/**
+ * A graphSearch document whose traversal arrives as the `$query` VARIABLE rather than inline.
+ *
+ * Same shape as the inline builder above and the same shared ENTITY_FIELDS — the difference
+ * is only where the traversal comes from. A document needs this form the moment its type
+ * list is resolved at runtime: string-building the tenant's AI types into GraphQL source
+ * would hand the gateway a textually distinct document per tenant and splice resolved values
+ * into query text, which is the conclusion the note at the top of this file reached from the
+ * other direction for the inventory filter.
+ */
+function graphSearchVarQuery(name: string): string {
+  return (
+    "query " + name + "($quick: Boolean, $first: Int, $after: String, " +
+    "$query: GraphEntityQueryInput, $projectId: String) {\n" +
+    "  graphSearch(\n" +
+    "    quick: $quick\n" +
+    "    first: $first\n" +
+    "    after: $after\n" +
+    "    query: $query\n" +
+    "    projectId: $projectId\n" +
+    "  ) {\n" +
+    "    totalCount\n" +
+    "    pageInfo { hasNextPage endCursor }\n" +
+    "    nodes {\n" +
+    "      entities {\n" +
+    ENTITY_FIELDS +
+    "      }\n" +
+    "    }\n" +
+    "  }\n" +
+    "}\n"
+  );
+}
+
+/**
+ * Human/role identities with high-privilege or admin access INTO an AI asset.
+ *
+ * The traversal is `identityAccessSpec` (domain/identityQuery.ts), passed as `$query`. It
+ * used to be inline, rooted at the literal `type: "AI_AGENT"` — so a model carrying an admin
+ * binding, or an MCP server a contractor could reach, was never collected and the Scans page
+ * had no way to say which kinds it had looked at. The root is now the tenant-resolved AI type
+ * list, the same one INVENTORY_AI and the two exposure steps use.
+ */
+export const Q_IDENTITY_ACCESS = graphSearchVarQuery("SidekickAiIdentitiesWithAssetAccess");
+
+/** The `$query` / `$projectId` variables for Q_IDENTITY_ACCESS. Pure — scope is a parameter. */
+export function identityAccessVariables(
+  types: readonly string[],
+  scope: string[] | null,
+): Rec {
+  return {
+    query: toGraphEntityQuery(identityAccessSpec(types)),
+    projectId: scope && scope.length ? scope[0] : null,
+  };
+}
 
 /**
  * Per-agent neighbourhood expansion. Unlike every other graphSearch document here, the
@@ -825,6 +852,19 @@ export const Q_PRINCIPALS =
   "      technology { id name categories { id name } }\n" +
   "      cloudAccount { id name externalId cloudProvider }\n" +
   "      projects { id name riskProfile { businessImpact } }\n" +
+  // The identity facts live HERE and nowhere else on this root. `inactiveInLast90Days`,
+  // `inactiveTimeframe`, `enabled`, `userDirectory` and the real `identityPurpose` are all in
+  // the graph entity's properties bag — the capture in exemples/agentic_identities_response.js
+  // returns every one of them, one level deeper than the flat fields above.
+  //
+  // Until this line existed the app could not tell a dormant identity from an active one,
+  // and normalizePrincipalsPage had to STAMP identityPurpose because nothing in the selection
+  // set carried it. The Wiz Scans page said so in as many words: "MFA and inactivity signals
+  // on those accounts are not collected at all — no query selects them".
+  //
+  // One field, and the blast radius is contained: AGENTIC_IDENTITIES is optional, so a tenant
+  // whose schema rejects `graphEntity` skips the step and is recorded.
+  "      graphEntity { properties }\n" +
   "      issueAnalytics {\n" +
   "        issueCount\n" +
   "        informationalSeverityCount\n" +

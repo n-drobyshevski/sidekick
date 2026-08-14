@@ -64,6 +64,7 @@ import {
   aiPrincipalsVariables,
   endpointExposureVariables,
   hostExposureVariables,
+  identityAccessVariables,
   MAX_PAGES,
   Q_AGENT_RUNS_AS,
   Q_AI_EXPOSURE,
@@ -315,9 +316,13 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
     {
       id: "IDENTITY_ACCESS",
       area: "identity",
-      writes: ["ai_edges (ALLOWS_ACCESS_TO)", "ai_assets"],
+      writes: [
+        "ai_edges (ALLOWS_ACCESS_TO)",
+        "ai_assets (USER_ACCOUNT/ACCESS_ROLE rows, inactive, human_access_json)",
+      ],
       run: "graphSearch",
       query: Q_IDENTITY_ACCESS,
+      extraVariables: identityAccessVariables(types, projectScope()),
       normalize: normalizeIdentityAccessPage,
       optional: true,
     },
@@ -337,7 +342,7 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
 
 /** Steps whose variables embed the tenant-resolved AI resource types. */
 const TYPE_DEPENDENT_STEPS: ReadonlySet<string> = new Set([
-  "INVENTORY_AI", "HOST_EXPOSURE", "ENDPOINT_EXPOSURE",
+  "INVENTORY_AI", "HOST_EXPOSURE", "ENDPOINT_EXPOSURE", "IDENTITY_ACCESS",
 ]);
 
 /** The connection field a step reads its rows from — the one the response must carry. */
@@ -432,6 +437,8 @@ function defaultStepVariables(stepId: string, withOverride: Rec, aiTypes?: reado
       return hostExposureVariables(aiTypes ?? resolveAiResourceTypes().types, projectScope());
     case "ENDPOINT_EXPOSURE":
       return endpointExposureVariables(aiTypes ?? resolveAiResourceTypes().types, projectScope());
+    case "IDENTITY_ACCESS":
+      return identityAccessVariables(aiTypes ?? resolveAiResourceTypes().types, projectScope());
     case "FRAMEWORKS_LIST":
       return aiSecurityFrameworksVariables() as unknown as Rec;
     default:

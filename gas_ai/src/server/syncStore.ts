@@ -12,6 +12,7 @@ import {
   withDataFindingNodes,
   withExcessivePrivilegeNodes,
   withExposureEvidence,
+  withHumanAccess,
   withIdentityAccessNodes,
   withInternetExposureNodes,
   withMissingGuardrailNodes,
@@ -104,6 +105,11 @@ export function assetToRow(n: GNode): Rec {
     // and found clean. conditionState falls through to the flags for the first and would
     // have to keep falling through for the second — but only one of them is honest about it.
     exposure_evidence_json: n.exposureEvidence ? JSON.stringify(n.exposureEvidence) : null,
+    // `?? null`, never `?? false`: an identity row the tenant reported no dormancy for must
+    // read back as undefined. "Not reported" and "in use" are different answers.
+    inactive: n.inactive === undefined ? null : boolCell(n.inactive),
+    inactive_timeframe: n.inactiveTimeframe ?? null,
+    human_access_json: n.humanAccess ? JSON.stringify(n.humanAccess) : null,
   };
 }
 
@@ -170,6 +176,14 @@ export function rowToAsset(r: Rec): GNode {
   // as it did before the exposure steps were added.
   const evidence = parseJson<GNode["exposureEvidence"] | null>(r["exposure_evidence_json"], null);
   if (evidence) node.exposureEvidence = evidence;
+  // parseTri rather than parseBool: an empty cell is "not reported", and reading it as false
+  // would report every identity in a pre-upgrade ledger as demonstrably in use.
+  const inactive = parseTri(r["inactive"]);
+  if (inactive !== null) node.inactive = inactive;
+  const inactiveTimeframe = (r["inactive_timeframe"] as string | null) ?? null;
+  if (inactiveTimeframe) node.inactiveTimeframe = inactiveTimeframe;
+  const humanAccess = parseJson<GNode["humanAccess"] | null>(r["human_access_json"], null);
+  if (humanAccess) node.humanAccess = humanAccess;
   return node;
 }
 
@@ -603,7 +617,13 @@ export function persistSync(
   // is computed, and a score computed from an un-joined node would price a hosted agent as
   // UNDETERMINED forever.
   const exposed = withExposureEvidence(counted);
-  const enriched = enrichGraphDoc(exposed, issues, hints, rule);
+  // Human reach, same reasoning one step further: it is an edge fact that the tab-direct read
+  // models can never see, so it is joined onto the asset before anything reads a number off
+  // one. It prices no pillar, so its position relative to enrichment is not load-bearing —
+  // it sits here to keep the "join what was synced, then enrich" order true of the whole
+  // sequence rather than of two thirds of it.
+  const reachable = withHumanAccess(exposed);
+  const enriched = enrichGraphDoc(reachable, issues, hints, rule);
 
   // Tabs hold the real (non-synthetic) nodes; ISSUE nodes are derivable from ai_issues.
   const assetNodes = realNodes(enriched.nodes);

@@ -231,6 +231,20 @@ function bootstrapCore(): Rec {
   };
 }
 
+/**
+ * The distinct human identities holding admin/high-privilege access to any AI asset.
+ *
+ * A set, not a sum: one operator with a binding on six agents is one person to talk to, and
+ * summing the per-asset lists would report six.
+ */
+function distinctHumanIdentities(assets: GNode[]): Set<string> {
+  const ids = new Set<string>();
+  for (const a of assets) {
+    for (const id of a.humanAccess?.identityIds ?? []) ids.add(id);
+  }
+  return ids;
+}
+
 function filterOptions(assets: GNode[]): Rec {
   const kinds = new Set<string>();
   const clouds = new Set<string>();
@@ -327,6 +341,11 @@ function assetRow(n: GNode): Rec {
     // Null, not {}, when the exposure steps never reached this asset — the same "clean" vs
     // "never asked" split dataFindingCount keeps below.
     exposureEvidence: n.exposureEvidence ?? null,
+    // Identity rows carry the first two; AI assets carry the third. Null, not false/{}, for
+    // the "never reported" vs "reported clean" split the rest of this row keeps.
+    inactive: n.inactive ?? null,
+    inactiveTimeframe: n.inactiveTimeframe ?? null,
+    humanAccess: n.humanAccess ?? null,
     sensitiveAccess: n.hasAccessToSensitiveData ?? false,
     sensitiveData: n.hasSensitiveData ?? false,
     highPriv: n.hasHighPrivileges ?? false,
@@ -531,6 +550,21 @@ function assetsModel(): AssetsModel {
       internetValidated: assets.filter((a) => (a.exposureEvidence?.endpointIds ?? []).length > 0)
         .length,
       internetViaHost: assets.filter((a) => (a.exposureEvidence?.hostIds ?? []).length > 0).length,
+      // Human identity access. The Wiz Scans page declared this area partial because "nothing
+      // totals them"; these are the totals, counted off the persisted join rather than off the
+      // graph stubs, which are deliberately suppressed where a real CIEM finding exists.
+      //
+      // The unit is deliberately narrow and the page says so: the traversal only ever returns
+      // ADMIN and HIGH_PRIVILEGE bindings, so this is not "assets a person can reach" — it is
+      // "assets a person can reach with rights worth naming".
+      humanReachable: assets.filter((a) => (a.humanAccess?.identityIds ?? []).length > 0).length,
+      humanReachableAdmin: assets.filter((a) => a.humanAccess?.admin === true).length,
+      // Distinct identities across every asset, so one operator with access to six agents
+      // counts once. `humanDormant` is the join worth having: a dormant account holding admin
+      // rights on an AI asset is a low-noise backdoor, and it is the reason the identity
+      // properties are collected at all.
+      humanIdentities: distinctHumanIdentities(assets).size,
+      humanDormant: assets.reduce((sum, a) => sum + (a.humanAccess?.inactiveCount ?? 0), 0),
       highPrivilege: assets.filter((a) => conditionHolds(a, "EXCESSIVE_PRIVILEGE")).length,
     },
     aarsSeverityCounts,

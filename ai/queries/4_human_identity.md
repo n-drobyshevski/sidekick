@@ -515,9 +515,89 @@ query HighRiskIdentitiesWithAIAgentAccess(
 |---|---|
 | **`ALLOWS_ACCESS_TO`** | Primary IAM edge in Wiz graph — connects identities to resources they can access |
 | **`RUNS_AS`** | Connects AI_AGENT → SERVICE_ACCOUNT — the execution identity |
-| **`lastActivity: { BEFORE: "now-90d" }`** | Relative date filter — adjust threshold as needed (30d, 60d, 90d) |
-| **`mfaEnabled: false`** | Available on `USER_ACCOUNT` nodes — not on `SERVICE_ACCOUNT` |
+| **`lastActivity: { BEFORE: "now-90d" }`** | ⚠️ **Unverified.** No capture in this repo uses this filter. Dormancy is available as a *returned property* instead — see "What is implemented" below. |
+| **`mfaEnabled: false`** | ⚠️ **Unverified.** Asserted when this doc was drafted; no capture in `gas_ai/exemples/` carries an `mfa*` field on any entity, and every identity on this estate's AI paths is a cloud service account or role, which has no MFA. Wiz reports MFA for human identities sourced from a connected IdP (Okta/Entra). Probe before relying on it. |
 | **`accessType`** | Filter on the relationship edge — values: `READ`, `WRITE`, `ADMIN`, `HIGH_PRIVILEGE` |
 | **`quick: true`** | Recommended for large tenants — trades completeness for speed |
 | **Query 4.8 priority** | This is your **highest-value** query — combines 3 risk factors in one shot |
 | **Your env relevance** | `AWSReservedSSO_FinanceAdmin` roles (8 issues) are prime candidates for 4.1 and 4.5 |
+---
+
+## ✅ What is implemented
+
+The queries above are a design menu; one of them runs. This section is the reconciliation, so
+the doc cannot drift from the sync.
+
+### The step: `IDENTITY_ACCESS`
+
+Query 4.1, **re-rooted and de-stamped**. `Q_IDENTITY_ACCESS` in
+`gas_ai/src/server/wizQueriesAi.ts`, traversal in `gas_ai/src/domain/identityQuery.ts`:
+
+```
+AI asset  <-ALLOWS_ACCESS_TO-  ACCESS_ROLE_BINDING  -BOUND_TO->            USER_ACCOUNT / SERVICE_ACCOUNT
+                                                    -PERMITS_ACCESS_ROLE-> ACCESS_ROLE[accessType Admin|High]
+```
+
+Three differences from 4.1 as written above, each of which was a way the old figure could have
+been wrong:
+
+1. **The root is the tenant-resolved AI type list**, not the literal `"AI_AGENT"`. A model with
+   an admin binding, or an MCP server a contractor can reach, used to be uncollected with
+   nothing on the page to say so. The traversal is therefore a `$query` **variable** rather
+   than inline GraphQL text — a resolved type list must not be string-built into a document.
+2. **The reverse leg is `reverse: true`** inside the relationship's type object, not
+   `direction: INBOUND` at the relationship level. Both are accepted; the first is the form
+   both console captures use in the variable position, which is where this now lives.
+3. **`accessType` is read from the returned `ACCESS_ROLE`**, not stamped from the filter. The
+   normalizer used to write `HIGH_PRIVILEGE` onto every edge, which flattened `ADMIN` into it
+   and made "who is admin on an agent" unanswerable from the ledger. A tenant whose bag omits
+   the field falls back to the old constant, so nothing regresses.
+
+### Dormancy — 4.2, without a `lastActivity` filter
+
+Wiz returns it as a **property**, not something to filter on:
+`inactiveInLast90Days` and `inactiveTimeframe`, in the graph entity's properties bag. The
+capture proves it: `gas_ai/exemples/agentic_identities_response.js:44`.
+
+The catch was where the bag sits. A graphSearch entity carries `properties` flat; a
+`cloudResourcesV2` node carries the resource fields flat and the bag one level deeper, under
+`graphEntity`. `Q_PRINCIPALS` selected only the flat fields, so the whole identity vocabulary
+— dormancy, `enabled`, `userDirectory` and the *real* `identityPurpose` — was one selection
+away the entire time. It now selects `graphEntity { properties }`, and `entityField`
+(`gas_ai/src/domain/graphTypes.ts`) reads all three roots.
+
+Two consequences worth knowing:
+
+- `identityPurpose` comes back as `IdentityPurposeAgentic` while the filter takes `AGENTIC`.
+  Every consumer compares against the short form, so a traversal-reached agentic identity used
+  to be labelled in the ledger and uncounted on the page. `normalizeIdentityPurpose` strips
+  the prefix, the same way `normalizeDataFindingSeverity` handles `DataFindingSeverityCritical`.
+- The stamp in `normalizePrincipalsPage` survives only as a fallback for a tenant that does not
+  return the field — which is why that filter stays locked in `scanVars`.
+
+### The total
+
+`withHumanAccess` (`gas_ai/src/domain/graphEnrich.ts`) folds reach onto the AI asset at commit
+and persists it (`human_access_json`), because the Inventory register and the combos matrix
+read the `ai_assets` tab directly and never see an edge.
+
+It counts **from the edges, never from the drawn stubs**. `withIdentityAccessNodes` suppresses
+an asset that already carries a real `EXCESSIVE_ACCESS_FINDING` so one problem is not drawn
+twice — right for a picture, silently wrong for a number, and the gap between the two would
+move with CIEM coverage. `test/identityAccess.test.ts` pins that case.
+
+KPIs: `humanReachable`, `humanReachableAdmin`, `humanIdentities` (distinct — one operator with
+bindings on six agents is one person), `humanDormant`.
+
+### Not implemented, and why
+
+| Query | Status |
+|---|---|
+| 4.3 **no MFA** | No field. Not in any capture; MFA is an IdP-sourced human-identity property and this estate's AI paths carry service accounts and roles. The Scans page says so rather than leaving it implied. |
+| 4.4 **external identities** | No query. Nothing distinguishes an external identity in what is collected. |
+| 4.7 **write access to agent code buckets** | No query. The data-exposure chain walks the agent's own identity to classified stores; a human's write access to a source bucket is a different traversal. |
+| 4.8 **combined** | Partly reachable now — dormant ∧ admin ∧ AI access is `humanAccess.inactiveCount` joined to `humanAccess.admin` — but it is not filed as its own finding. |
+
+Read-only grants are **collected by nothing**: the traversal only asks for `ADMIN` and
+`HIGH_PRIVILEGE`, so "N assets reachable" always means "reachable with rights worth naming".
+The Scans area states that in its own note rather than letting the number imply otherwise.

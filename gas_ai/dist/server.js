@@ -291,7 +291,13 @@ var Server = (() => {
       // Appended for the same no-migration reason.
       "exposure_level",
       "port_validation",
-      "exposure_evidence_json"
+      "exposure_evidence_json",
+      // Human identity access. The first two belong to identity rows (Wiz's dormancy read from
+      // cloud audit events); the third is the join `withHumanAccess` folds onto an AI asset, so
+      // the register and the Scans figure can total reach without reading edges. Appended.
+      "inactive",
+      "inactive_timeframe",
+      "human_access_json"
     ],
     [TABS.edges]: ["id", "src", "dst", "type", "negated", "access_type"],
     [TABS.issues]: [
@@ -880,14 +886,21 @@ var Server = (() => {
     var _a5;
     if (!raw || typeof raw !== "object") return void 0;
     if (raw[key] !== void 0) return raw[key];
-    const props = raw["properties"];
-    if (!props || typeof props !== "object") return void 0;
-    const bag = props;
+    const bag = propertyBag(raw);
+    if (!bag) return void 0;
     if (bag[key] !== void 0) return bag[key];
     for (const alias of (_a5 = PROPERTY_ALIASES[key]) != null ? _a5 : []) {
       if (bag[alias] !== void 0) return bag[alias];
     }
     return void 0;
+  }
+  function propertyBag(raw) {
+    const flat = raw["properties"];
+    if (flat && typeof flat === "object") return flat;
+    const entity = raw["graphEntity"];
+    if (!entity || typeof entity !== "object") return null;
+    const nested = entity["properties"];
+    return nested && typeof nested === "object" ? nested : null;
   }
   function edgeId(src, type, dst, negated) {
     return `${src}|${type}|${dst}${negated ? "|neg" : ""}`;
@@ -1315,6 +1328,42 @@ var Server = (() => {
     };
   }
 
+  // src/domain/identityQuery.ts
+  var HUMAN_ACCESS_TYPES = ["ADMIN", "HIGH_PRIVILEGE"];
+  var BOUND_IDENTITY_KINDS = ["USER_ACCOUNT", "SERVICE_ACCOUNT"];
+  function identityAccessSpec(types) {
+    return {
+      type: [...types],
+      relationships: [
+        {
+          type: "ACCESS_ROLE_BINDING",
+          select: false,
+          edge: { type: "ALLOWS_ACCESS_TO", reverse: true },
+          relationships: [
+            {
+              type: [...BOUND_IDENTITY_KINDS],
+              edge: { type: "BOUND_TO" }
+            },
+            {
+              type: "ACCESS_ROLE",
+              edge: { type: "PERMITS_ACCESS_ROLE" },
+              where: { accessType: { EQUALS: [...HUMAN_ACCESS_TYPES] } }
+            }
+          ]
+        }
+      ]
+    };
+  }
+  function normalizeIdentityPurpose(v) {
+    if (typeof v !== "string" || !v.trim()) return void 0;
+    return v.trim().replace(/^IdentityPurpose/i, "").toUpperCase();
+  }
+  function normalizeAccessType(v) {
+    if (typeof v !== "string" || !v.trim()) return void 0;
+    const norm = v.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_");
+    return HUMAN_ACCESS_TYPES.indexOf(norm) >= 0 ? norm : void 0;
+  }
+
   // src/domain/toxicCombos.ts
   var CONDITION_KEYS = [
     "MISSING_GUARDRAIL",
@@ -1569,10 +1618,16 @@ var Server = (() => {
     '    type: "AI_AGENT"\n    select: true\n    relationships: [{\n      type: "RUNS_AS"\n      with: {\n        type: "SERVICE_ACCOUNT"\n        select: true\n        relationships: [{\n          type: "ALLOWS_ACCESS_TO"\n          with: {\n            type: ["BUCKET", "DATABASE", "DATABASE_SERVER"]\n            select: true\n            where: { hasSensitiveData: { EQUALS: true } }\n            relationships: [{\n              type: "HAS_DATA_FINDING"\n              optional: true\n              with: { type: "DATA_FINDING", select: true }\n            }]\n          }\n        }]\n      }\n    }]\n',
     ENTITY_FIELDS
   );
-  var Q_IDENTITY_ACCESS = graphSearchQuery(
-    "SidekickAiIdentitiesWithAgentAccess",
-    '    type: "AI_AGENT"\n    select: true\n    relationships: [{\n      type: "ALLOWS_ACCESS_TO"\n      direction: INBOUND\n      with: {\n        type: "ACCESS_ROLE_BINDING"\n        select: false\n        relationships: [\n          {\n            type: "BOUND_TO"\n            with: { type: ["USER_ACCOUNT", "SERVICE_ACCOUNT"], select: true }\n          }\n          {\n            type: "PERMITS_ACCESS_ROLE"\n            with: {\n              type: "ACCESS_ROLE"\n              select: true\n              where: { accessType: { EQUALS: ["HIGH_PRIVILEGE", "ADMIN"] } }\n            }\n          }\n        ]\n      }\n    }]\n'
-  );
+  function graphSearchVarQuery(name) {
+    return "query " + name + "($quick: Boolean, $first: Int, $after: String, $query: GraphEntityQueryInput, $projectId: String) {\n  graphSearch(\n    quick: $quick\n    first: $first\n    after: $after\n    query: $query\n    projectId: $projectId\n  ) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      entities {\n" + ENTITY_FIELDS + "      }\n    }\n  }\n}\n";
+  }
+  var Q_IDENTITY_ACCESS = graphSearchVarQuery("SidekickAiIdentitiesWithAssetAccess");
+  function identityAccessVariables(types, scope) {
+    return {
+      query: toGraphEntityQuery(identityAccessSpec(types)),
+      projectId: scope && scope.length ? scope[0] : null
+    };
+  }
   var Q_AGENT_EXPANSION = "query SidekickAiAgentExpansion($quick: Boolean, $first: Int, $after: String, $query: GraphEntityQueryInput, $projectId: String) {\n  graphSearch(\n    quick: $quick\n    first: $first\n    after: $after\n    query: $query\n    projectId: $projectId\n  ) {\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      entities {\n" + ENTITY_FIELDS + "      }\n    }\n  }\n}\n";
   var Q_AI_EXPOSURE = "query SidekickAiExposure($query: GraphEntityQueryInput, $controlId: ID, $projectId: String, $first: Int, $after: String, $fetchTotalCount: Boolean = false, $quick: Boolean = true, $fetchPublicExposurePaths: Boolean = false, $fetchInternalExposurePaths: Boolean = false, $fetchIssueAnalytics: Boolean = false, $fetchThreatAnalytics: Boolean = false, $fetchLateralMovement: Boolean = false, $fetchCodeSource: Boolean = false, $fetchKubernetes: Boolean = false, $fetchCost: Boolean = false, $issueId: ID) {\n  graphSearch(\n    query: $query\n    controlId: $controlId\n    projectId: $projectId\n    first: $first\n    after: $after\n    quick: $quick\n    issueId: $issueId\n  ) {\n    totalCount @include(if: $fetchTotalCount)\n    maxCountReached @include(if: $fetchTotalCount)\n    pageInfo { endCursor hasNextPage }\n    nodes {\n      entities {\n        providerUniqueId\n        deletedAt\n        isRestricted\n        ...PathGraphEntityFragment\n        userMetadata { isInWatchlist isIgnored note }\n        technologies { id icon }\n        cost(\n          filterBy: {timestamp: {inLast: {amount: 30, unit: DurationFilterValueUnitDays}}}\n        ) @include(if: $fetchCost) {\n          amortized\n          blended\n          unblended\n          netAmortized\n          netUnblended\n          currencyCode\n        }\n        costImpact @include(if: $fetchCost) { monthly }\n        publicExposures(first: 10) @include(if: $fetchPublicExposurePaths) {\n          nodes { ...NetworkExposureFragment }\n        }\n        otherSubscriptionExposures(first: 10) @include(if: $fetchInternalExposurePaths) {\n          nodes { ...NetworkExposureFragment }\n        }\n        otherVnetExposures(first: 10) @include(if: $fetchInternalExposurePaths) {\n          nodes { ...NetworkExposureFragment }\n        }\n        lateralMovementPaths(first: 10) @include(if: $fetchLateralMovement) {\n          nodes {\n            id\n            pathEntities { entity { providerUniqueId ...PathGraphEntityFragment } }\n          }\n        }\n        codeSourcePath(first: 10) @include(if: $fetchCodeSource) {\n          totalCount\n          nodes {\n            id\n            pathEntities { providerUniqueId ...PathGraphEntityFragment }\n          }\n        }\n        kubernetesPaths(first: 10) @include(if: $fetchKubernetes) {\n          nodes { id path { providerUniqueId ...PathGraphEntityFragment } }\n        }\n      }\n      aggregateCount\n    }\n  }\n}\n\nfragment PathGraphEntityFragment on GraphEntity {\n  providerUniqueId\n  id\n  name\n  type\n  properties\n  typedProperties { ... on GEAiAgent { description } }\n  issueAnalytics: issues(\n    filterBy: {status: [IN_PROGRESS, OPEN], type: [TOXIC_COMBINATION, CLOUD_CONFIGURATION]}\n  ) @include(if: $fetchIssueAnalytics) {\n    highSeverityCount\n    criticalSeverityCount\n  }\n  threatAnalytics: issues(\n    filterBy: {status: [IN_PROGRESS, OPEN], type: [THREAT_DETECTION], createdAt: {inLast: {amount: 7, unit: DurationFilterValueUnitDays}}}\n  ) @include(if: $fetchThreatAnalytics) {\n    highSeverityCount\n    criticalSeverityCount\n  }\n}\n\nfragment NetworkExposureFragment on NetworkExposure {\n  id\n  portRange\n  sourceIpRange\n  destinationIpRange\n  path { providerUniqueId ...PathGraphEntityFragment }\n  applicationEndpoints { providerUniqueId ...PathGraphEntityFragment }\n}\n";
   var EXPOSURE_FETCH_FLAGS = {
@@ -1618,7 +1673,7 @@ var Server = (() => {
     if (scope && scope.length) filterBy["resource"] = { projectId: scope };
     return { filterBy, orderBy: { field: "SEVERITY", direction: "DESC" } };
   }
-  var Q_PRINCIPALS = "query SidekickAiPrincipals($first: Int, $after: String, $filterBy: CloudResourceV2Filters, $orderBy: CloudResourceOrder) {\n  cloudResourcesV2(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      name\n      type\n      nativeType\n      hasSensitiveData\n      hasAccessToSensitiveData\n      hasAdminPrivileges\n      hasHighPrivileges\n      technology { id name categories { id name } }\n      cloudAccount { id name externalId cloudProvider }\n      projects { id name riskProfile { businessImpact } }\n      issueAnalytics {\n        issueCount\n        informationalSeverityCount\n        lowSeverityCount\n        mediumSeverityCount\n        highSeverityCount\n        criticalSeverityCount\n      }\n    }\n  }\n}\n";
+  var Q_PRINCIPALS = "query SidekickAiPrincipals($first: Int, $after: String, $filterBy: CloudResourceV2Filters, $orderBy: CloudResourceOrder) {\n  cloudResourcesV2(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      name\n      type\n      nativeType\n      hasSensitiveData\n      hasAccessToSensitiveData\n      hasAdminPrivileges\n      hasHighPrivileges\n      technology { id name categories { id name } }\n      cloudAccount { id name externalId cloudProvider }\n      projects { id name riskProfile { businessImpact } }\n      graphEntity { properties }\n      issueAnalytics {\n        issueCount\n        informationalSeverityCount\n        lowSeverityCount\n        mediumSeverityCount\n        highSeverityCount\n        criticalSeverityCount\n      }\n    }\n  }\n}\n";
   function aiPrincipalsVariables(scope) {
     const filterBy = {
       type: { equals: ["SERVICE_ACCOUNT", "ACCESS_KEY"] },
@@ -3357,11 +3412,13 @@ var Server = (() => {
           required: true
         }
       ],
-      // Deliberately NOT offering filterBy.identityPurpose. normalizePrincipalsPage stamps
-      // identityPurpose = "AGENTIC" on every row it returns, because the API does not send the
-      // field back — the flag is a claim about the filter, not about the data. Let the filter
-      // widen and every identity in the estate is relabelled agentic, with nothing to catch it.
-      locked: "The agentic-purpose filter is fixed: the sync labels what this query returns as agentic, so widening it would mislabel every identity it collected."
+      // Still NOT offering filterBy.identityPurpose, but the reason has narrowed. Wiz DOES
+      // return the purpose — `IdentityPurposeAgentic`, in the graph entity's properties bag —
+      // and Q_PRINCIPALS now selects that bag, so a collected row normally carries its own
+      // label. The stamp survives as the fallback for a tenant whose schema rejects
+      // `graphEntity`, and that fallback is what a widened filter would turn into a mislabel:
+      // every row it collected would come back stamped AGENTIC with nothing to catch it.
+      locked: "The agentic-purpose filter is fixed: where the tenant does not return an identity's own purpose the sync falls back to labelling what this query returns as agentic, so widening it would mislabel exactly the identities it could not verify."
     },
     {
       stepId: "SENSITIVE_DATA_ACCESS",
@@ -3370,6 +3427,16 @@ var Server = (() => {
       // would be unsafe" are different facts and only the second one needs saying.
       fields: [],
       locked: "This step has no editable filter: normalizeSensitiveDataAccessPage rebuilds the chain's edges from which entity TYPES a row carries, so a changed selection set would yield confidently wrong edges rather than an error."
+    },
+    {
+      stepId: "IDENTITY_ACCESS",
+      // Its traversal is a $query variable now, so in principle the access-level list is a
+      // path an override could reach. Withheld for the reason ENDPOINT_EXPOSURE's is: those two
+      // values also live in HUMAN_ACCESS_TYPES (domain/identityQuery.ts), which is what
+      // withHumanAccess and withIdentityAccessNodes judge an edge by. Widening the filter would
+      // collect READ bindings the figure then refuses to count.
+      fields: [],
+      locked: "This step has no editable filter: the ADMIN / HIGH_PRIVILEGE bar is applied again when the reach is totalled and drawn, so widening it here would collect bindings that never reach a number."
     },
     {
       stepId: "HOST_EXPOSURE",
@@ -4900,6 +4967,40 @@ var Server = (() => {
       edgeType: "EXPOSED_TO_INTERNET"
     });
   }
+  function withHumanAccess(doc) {
+    const reach = new Set(HUMAN_ACCESS_TYPES);
+    const byId = indexBy(doc.nodes, (n) => n.id);
+    const humans = new Set(doc.nodes.filter((n) => n.kind === "USER_ACCOUNT").map((n) => n.id));
+    if (!humans.size) return doc;
+    const reachedBy = /* @__PURE__ */ new Map();
+    const admins = /* @__PURE__ */ new Set();
+    for (const edge2 of doc.edges) {
+      if (edge2.type !== "ALLOWS_ACCESS_TO") continue;
+      if (!edge2.accessType || !reach.has(edge2.accessType)) continue;
+      if (!humans.has(edge2.src)) continue;
+      const target = byId.get(edge2.dst);
+      if (!target || !AI_ASSET_KINDS.includes(target.kind)) continue;
+      pushInto(reachedBy, edge2.dst, edge2.src);
+      if (edge2.accessType === "ADMIN") admins.add(edge2.dst);
+    }
+    if (!reachedBy.size) return doc;
+    return {
+      nodes: doc.nodes.map((node2) => {
+        const identityIds = reachedBy.get(node2.id);
+        if (!identityIds || !identityIds.length) return node2;
+        const access = { identityIds };
+        if (admins.has(node2.id)) access.admin = true;
+        const inactiveCount = identityIds.filter((id) => {
+          var _a5;
+          return ((_a5 = byId.get(id)) == null ? void 0 : _a5.inactive) === true;
+        }).length;
+        if (inactiveCount) access.inactiveCount = inactiveCount;
+        return { ...node2, humanAccess: access };
+      }),
+      edges: doc.edges,
+      syncedAt: doc.syncedAt
+    };
+  }
   function withExposureEvidence(doc) {
     const byId = indexBy(doc.nodes, (n) => n.id);
     const hostsOf = /* @__PURE__ */ new Map();
@@ -4971,7 +5072,7 @@ var Server = (() => {
     });
   }
   function withIdentityAccessNodes(doc) {
-    const HUMAN_REACH = /* @__PURE__ */ new Set(["ADMIN", "HIGH_PRIVILEGE"]);
+    const HUMAN_REACH = new Set(HUMAN_ACCESS_TYPES);
     const aiAssets = new Set(
       doc.nodes.filter((n) => AI_ASSET_KINDS.includes(n.kind)).map((n) => n.id)
     );
@@ -5224,7 +5325,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "ce592847c710" : "dev";
+  var BUILD_ID = true ? "70be74c86a23" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -5520,8 +5621,12 @@ var Server = (() => {
       hasHighPrivileges: bool(f("hasHighPrivileges")),
       hasAdminPrivileges: bool(f("hasAdminPrivileges"))
     };
-    const purpose = str2(f("identityPurpose"));
+    const purpose = normalizeIdentityPurpose(f("identityPurpose"));
     if (purpose) node2.identityPurpose = purpose;
+    const inactive = f("inactiveInLast90Days");
+    if (inactive === true || inactive === false) node2.inactive = inactive;
+    const inactiveTimeframe = str2(f("inactiveTimeframe"));
+    if (inactiveTimeframe) node2.inactiveTimeframe = inactiveTimeframe;
     const exposureLevel = str2(f("exposureLevel"));
     if (exposureLevel) node2.exposureLevel = exposureLevel;
     const portValidation = str2(f("portValidation"));
@@ -5609,7 +5714,7 @@ var Server = (() => {
     for (const raw of rows) {
       const node2 = normalizeCloudResource(raw);
       if (!node2) continue;
-      node2.identityPurpose = "AGENTIC";
+      if (!node2.identityPurpose) node2.identityPurpose = "AGENTIC";
       part.nodes.push(node2);
     }
     return part;
@@ -6282,22 +6387,25 @@ var Server = (() => {
     return part;
   }
   function normalizeIdentityAccessPage(rows) {
+    var _a5;
     const part = emptyPart();
     for (const row of rows) {
       const entities = entitiesOf(row);
-      const agent = entities.find((e) => e.kind === "AI_AGENT");
+      const asset = entities.find((e) => AI_ASSET_KINDS.includes(e.kind));
       const identities = entities.filter(
         (e) => e.kind === "USER_ACCOUNT" || e.kind === "SERVICE_ACCOUNT" || e.kind === "ACCESS_ROLE"
       );
       part.nodes.push(...entities);
-      if (!agent) continue;
+      if (!asset) continue;
+      const rawRole = rawEntitiesOf(row).find((e) => kindFromWizType(e["type"]) === "ACCESS_ROLE");
+      const accessType = (_a5 = rawRole ? normalizeAccessType(entityField(rawRole, "accessType")) : void 0) != null ? _a5 : "HIGH_PRIVILEGE";
       for (const identity of identities) {
         part.edges.push({
-          id: edgeId(identity.id, "ALLOWS_ACCESS_TO", agent.id),
+          id: edgeId(identity.id, "ALLOWS_ACCESS_TO", asset.id),
           src: identity.id,
-          dst: agent.id,
+          dst: asset.id,
           type: "ALLOWS_ACCESS_TO",
-          accessType: "HIGH_PRIVILEGE"
+          accessType
         });
       }
     }
@@ -6390,7 +6498,9 @@ var Server = (() => {
       // exposed host reads back exactly as it did before these columns existed.
       exposureLevel: seed.exposureLevel,
       portValidation: seed.portValidation,
-      exposureEvidence: seed.exposureEvidence
+      exposureEvidence: seed.exposureEvidence,
+      inactive: seed.inactive,
+      inactiveTimeframe: seed.inactiveTimeframe
     };
   }
   function edge(src, type, dst, accessType) {
@@ -6719,7 +6829,20 @@ var Server = (() => {
   for (let i = 1; i <= 12; i++) {
     const n = String(i).padStart(2, "0");
     const id = `user-ops-${n}`;
-    extraNodes.push({ id, kind: "USER_ACCOUNT", name: `ops.user${n}@example.com`, cloud: "GCP" });
+    const seed = {
+      id,
+      kind: "USER_ACCOUNT",
+      name: `ops.user${n}@example.com`,
+      cloud: "GCP"
+    };
+    if (i === 2) {
+      seed.inactive = true;
+      seed.inactiveTimeframe = "Inactive90Days";
+    } else if (i === 3) {
+      seed.inactive = false;
+      seed.inactiveTimeframe = "Active";
+    }
+    extraNodes.push(seed);
     edges.push(edge(id, "ALLOWS_ACCESS_TO", "agent-h-chatbot", i <= 2 ? "ADMIN" : "READ"));
   }
   function issue(seed) {
@@ -7541,7 +7664,7 @@ var Server = (() => {
     }
   }
   function assetToRow(n) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u;
     return {
       id: n.id,
       kind: n.kind,
@@ -7583,11 +7706,16 @@ var Server = (() => {
       // undefined: an asset the exposure steps never reached must not become one they reached
       // and found clean. conditionState falls through to the flags for the first and would
       // have to keep falling through for the second — but only one of them is honest about it.
-      exposure_evidence_json: n.exposureEvidence ? JSON.stringify(n.exposureEvidence) : null
+      exposure_evidence_json: n.exposureEvidence ? JSON.stringify(n.exposureEvidence) : null,
+      // `?? null`, never `?? false`: an identity row the tenant reported no dormancy for must
+      // read back as undefined. "Not reported" and "in use" are different answers.
+      inactive: n.inactive === void 0 ? null : boolCell(n.inactive),
+      inactive_timeframe: (_u = n.inactiveTimeframe) != null ? _u : null,
+      human_access_json: n.humanAccess ? JSON.stringify(n.humanAccess) : null
     };
   }
   function rowToAsset(r) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s;
     const node2 = {
       id: String((_a5 = r["id"]) != null ? _a5 : ""),
       kind: String((_b = r["kind"]) != null ? _b : "AI_AGENT"),
@@ -7645,6 +7773,12 @@ var Server = (() => {
     if (portValidation) node2.portValidation = portValidation;
     const evidence = parseJson(r["exposure_evidence_json"], null);
     if (evidence) node2.exposureEvidence = evidence;
+    const inactive = parseTri(r["inactive"]);
+    if (inactive !== null) node2.inactive = inactive;
+    const inactiveTimeframe = (_s = r["inactive_timeframe"]) != null ? _s : null;
+    if (inactiveTimeframe) node2.inactiveTimeframe = inactiveTimeframe;
+    const humanAccess = parseJson(r["human_access_json"], null);
+    if (humanAccess) node2.humanAccess = humanAccess;
     return node2;
   }
   function edgeToRow(e) {
@@ -7988,7 +8122,8 @@ var Server = (() => {
     const { version: ruleVersion, rule } = getAarsRule2();
     const counted = withDataFindingCounts(rawDoc, dataFindings);
     const exposed = withExposureEvidence(counted);
-    const enriched = enrichGraphDoc(exposed, issues2, hints, rule);
+    const reachable = withHumanAccess(exposed);
+    const enriched = enrichGraphDoc(reachable, issues2, hints, rule);
     const assetNodes = realNodes(enriched.nodes);
     const assetEdges = enriched.edges.filter((e) => e.type !== "HAS_ISSUE");
     overwrite(TABS.assets, assetNodes.map(assetToRow));
@@ -8412,9 +8547,13 @@ var Server = (() => {
       {
         id: "IDENTITY_ACCESS",
         area: "identity",
-        writes: ["ai_edges (ALLOWS_ACCESS_TO)", "ai_assets"],
+        writes: [
+          "ai_edges (ALLOWS_ACCESS_TO)",
+          "ai_assets (USER_ACCOUNT/ACCESS_ROLE rows, inactive, human_access_json)"
+        ],
         run: "graphSearch",
         query: Q_IDENTITY_ACCESS,
+        extraVariables: identityAccessVariables(types, projectScope()),
         normalize: normalizeIdentityAccessPage,
         optional: true
       },
@@ -8434,7 +8573,8 @@ var Server = (() => {
   var TYPE_DEPENDENT_STEPS = /* @__PURE__ */ new Set([
     "INVENTORY_AI",
     "HOST_EXPOSURE",
-    "ENDPOINT_EXPOSURE"
+    "ENDPOINT_EXPOSURE",
+    "IDENTITY_ACCESS"
   ]);
   function rootFieldOf(step) {
     var _a5;
@@ -8503,6 +8643,8 @@ var Server = (() => {
         return hostExposureVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
       case "ENDPOINT_EXPOSURE":
         return endpointExposureVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
+      case "IDENTITY_ACCESS":
+        return identityAccessVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
       case "FRAMEWORKS_LIST":
         return aiSecurityFrameworksVariables();
       default:
@@ -8940,6 +9082,14 @@ var Server = (() => {
       filterOptions: filterOptions(assets)
     };
   }
+  function distinctHumanIdentities(assets) {
+    var _a5, _b;
+    const ids = /* @__PURE__ */ new Set();
+    for (const a of assets) {
+      for (const id of (_b = (_a5 = a.humanAccess) == null ? void 0 : _a5.identityIds) != null ? _b : []) ids.add(id);
+    }
+    return ids;
+  }
   function filterOptions(assets) {
     var _a5;
     const kinds = /* @__PURE__ */ new Set();
@@ -9001,7 +9151,7 @@ var Server = (() => {
     });
   }
   function assetRow(n) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G, _H, _I, _J;
     return {
       id: n.id,
       name: n.name,
@@ -9028,28 +9178,33 @@ var Server = (() => {
       // Null, not {}, when the exposure steps never reached this asset — the same "clean" vs
       // "never asked" split dataFindingCount keeps below.
       exposureEvidence: (_q = n.exposureEvidence) != null ? _q : null,
-      sensitiveAccess: (_r = n.hasAccessToSensitiveData) != null ? _r : false,
-      sensitiveData: (_s = n.hasSensitiveData) != null ? _s : false,
-      highPriv: (_t = n.hasHighPrivileges) != null ? _t : false,
-      adminPriv: (_u = n.hasAdminPrivileges) != null ? _u : false,
-      guardrailMissing: (_v = n.guardrailMissing) != null ? _v : false,
+      // Identity rows carry the first two; AI assets carry the third. Null, not false/{}, for
+      // the "never reported" vs "reported clean" split the rest of this row keeps.
+      inactive: (_r = n.inactive) != null ? _r : null,
+      inactiveTimeframe: (_s = n.inactiveTimeframe) != null ? _s : null,
+      humanAccess: (_t = n.humanAccess) != null ? _t : null,
+      sensitiveAccess: (_u = n.hasAccessToSensitiveData) != null ? _u : false,
+      sensitiveData: (_v = n.hasSensitiveData) != null ? _v : false,
+      highPriv: (_w = n.hasHighPrivileges) != null ? _w : false,
+      adminPriv: (_x = n.hasAdminPrivileges) != null ? _x : false,
+      guardrailMissing: (_y = n.guardrailMissing) != null ? _y : false,
       // Null, not 0, when the sensitive-data traversal never reached this node: the graph
       // card and the insight row both key on truthiness, and a 0 would make "we never asked"
       // render exactly like "we looked and it is clean".
-      dataFindingCount: (_w = n.dataFindingCount) != null ? _w : null,
-      dataFindingSeverities: (_x = n.dataFindingSeverities) != null ? _x : null,
+      dataFindingCount: (_z = n.dataFindingCount) != null ? _z : null,
+      dataFindingSeverities: (_A = n.dataFindingSeverities) != null ? _A : null,
       // On the aggregate node only — the count it collapses.
-      summaryCount: (_y = n.summaryCount) != null ? _y : null,
-      technologyCategories: (_z = n.technologyCategories) != null ? _z : [],
-      cloudAccount: (_B = (_A = n.cloudAccount) == null ? void 0 : _A.name) != null ? _B : null,
+      summaryCount: (_B = n.summaryCount) != null ? _B : null,
+      technologyCategories: (_C = n.technologyCategories) != null ? _C : [],
+      cloudAccount: (_E = (_D = n.cloudAccount) == null ? void 0 : _D.name) != null ? _E : null,
       // Full account object, for the detail sheet — cloudAccount above stays a bare
       // name string since existing client code already reads it as one.
-      cloudAccountRef: (_C = n.cloudAccount) != null ? _C : null,
-      tags: (_D = n.tags) != null ? _D : [],
-      identityPurpose: (_E = n.identityPurpose) != null ? _E : null,
-      issueAnalytics: (_F = n.issueAnalytics) != null ? _F : null,
+      cloudAccountRef: (_F = n.cloudAccount) != null ? _F : null,
+      tags: (_G = n.tags) != null ? _G : [],
+      identityPurpose: (_H = n.identityPurpose) != null ? _H : null,
+      issueAnalytics: (_I = n.issueAnalytics) != null ? _I : null,
       // Full project objects, for the detail sheet — projects above stays name-only.
-      projectRefs: ((_G = n.projects) != null ? _G : []).map((p) => ({
+      projectRefs: ((_J = n.projects) != null ? _J : []).map((p) => ({
         id: p.id,
         name: p.name,
         businessImpact: p.businessImpact
@@ -9182,6 +9337,30 @@ var Server = (() => {
           var _a6, _b2;
           return ((_b2 = (_a6 = a.exposureEvidence) == null ? void 0 : _a6.hostIds) != null ? _b2 : []).length > 0;
         }).length,
+        // Human identity access. The Wiz Scans page declared this area partial because "nothing
+        // totals them"; these are the totals, counted off the persisted join rather than off the
+        // graph stubs, which are deliberately suppressed where a real CIEM finding exists.
+        //
+        // The unit is deliberately narrow and the page says so: the traversal only ever returns
+        // ADMIN and HIGH_PRIVILEGE bindings, so this is not "assets a person can reach" — it is
+        // "assets a person can reach with rights worth naming".
+        humanReachable: assets.filter((a) => {
+          var _a6, _b2;
+          return ((_b2 = (_a6 = a.humanAccess) == null ? void 0 : _a6.identityIds) != null ? _b2 : []).length > 0;
+        }).length,
+        humanReachableAdmin: assets.filter((a) => {
+          var _a6;
+          return ((_a6 = a.humanAccess) == null ? void 0 : _a6.admin) === true;
+        }).length,
+        // Distinct identities across every asset, so one operator with access to six agents
+        // counts once. `humanDormant` is the join worth having: a dormant account holding admin
+        // rights on an AI asset is a low-noise backdoor, and it is the reason the identity
+        // properties are collected at all.
+        humanIdentities: distinctHumanIdentities(assets).size,
+        humanDormant: assets.reduce((sum, a) => {
+          var _a6, _b2;
+          return sum + ((_b2 = (_a6 = a.humanAccess) == null ? void 0 : _a6.inactiveCount) != null ? _b2 : 0);
+        }, 0),
         highPrivilege: assets.filter((a) => conditionHolds(a, "EXCESSIVE_PRIVILEGE")).length
       },
       aarsSeverityCounts,

@@ -1,0 +1,101 @@
+// Human identity access: who can reach an AI asset, and whether that identity is still in
+// use.
+//
+// The traversal is Wiz's own shape — an AI asset is reached THROUGH a role binding, never
+// directly, so the binding is walked but not selected:
+//
+//   AI asset <-ALLOWS_ACCESS_TO- ACCESS_ROLE_BINDING -BOUND_TO->        USER_ACCOUNT / SERVICE_ACCOUNT
+//                                                   -PERMITS_ACCESS_ROLE-> ACCESS_ROLE[accessType]
+//
+// TWO THINGS THIS MODULE EXISTS TO KEEP HONEST.
+//
+// 1. The root is the TENANT-RESOLVED AI type list, not the literal "AI_AGENT" this query
+//    used to carry. A model with an admin binding on it, an MCP server a contractor can
+//    reach — neither was collected, and the Scans page had no way to say so. Same narrowing
+//    the exposure traversals had, fixed the same way.
+//
+// 2. `accessType` is READ, not assumed. The query filters on [ADMIN, HIGH_PRIVILEGE] and the
+//    normalizer used to stamp HIGH_PRIVILEGE on every edge it built — a claim about the
+//    filter rather than about the data, which flattened ADMIN and HIGH_PRIVILEGE into one
+//    value and made "how many people are ADMIN on an agent" unanswerable. The ACCESS_ROLE
+//    entity is selected, so its own value is right there in the properties bag.
+
+import { type SelectSpec } from "./graphExpand";
+
+/**
+ * The access levels that count as a human reaching an AI asset.
+ *
+ * Declared ONCE and read from three places: `identityAccessSpec` filters the query on it,
+ * `withHumanAccess` tests the edge against it, and `withIdentityAccessNodes` decides whether
+ * to draw a stub. Those three used to hold two copies of this list between them.
+ */
+export const HUMAN_ACCESS_TYPES = ["ADMIN", "HIGH_PRIVILEGE"] as const;
+
+/** The identity kinds the `BOUND_TO` leg can return. */
+export const BOUND_IDENTITY_KINDS = ["USER_ACCOUNT", "SERVICE_ACCOUNT"] as const;
+
+/**
+ * Human/role identities with admin or high-privilege access INTO an AI asset.
+ *
+ * The binding is `select: false` — it is the mechanism, and the two things worth having are
+ * at its ends. That makes the response's positional `entities` array three slots wide (asset,
+ * identity, role) even though the traversal is four nodes deep; `toGraphEntityQuery` and
+ * `flattenSlots` agree on that because they read the same literal.
+ *
+ * The reverse leg is spelled `reverse: true` inside the relationship's type object, which is
+ * the form both console captures use in the `$query` VARIABLE position
+ * (exemples/ai_exposure_*_request.js). The string-built document this replaced spelled the
+ * same thing `direction: INBOUND` at the relationship level. Both are accepted; the captured
+ * one is the one with evidence behind it, and it is the position we are moving to.
+ */
+export function identityAccessSpec(types: readonly string[]): SelectSpec {
+  return {
+    type: [...types],
+    relationships: [
+      {
+        type: "ACCESS_ROLE_BINDING",
+        select: false,
+        edge: { type: "ALLOWS_ACCESS_TO", reverse: true },
+        relationships: [
+          {
+            type: [...BOUND_IDENTITY_KINDS],
+            edge: { type: "BOUND_TO" },
+          },
+          {
+            type: "ACCESS_ROLE",
+            edge: { type: "PERMITS_ACCESS_ROLE" },
+            where: { accessType: { EQUALS: [...HUMAN_ACCESS_TYPES] } },
+          },
+        ],
+      },
+    ],
+  };
+}
+
+/**
+ * Wiz spells identity purpose `IdentityPurposeAgentic`, not `AGENTIC` — the capture in
+ * exemples/agentic_identities_response.js returns the long form in the properties bag while
+ * the FILTER takes the short one. Strip the prefix and uppercase, so one vocabulary reaches
+ * the rest of the app.
+ *
+ * Exactly the shape `normalizeDataFindingSeverity` already uses for
+ * `DataFindingSeverityCritical`; a second Wiz enum that reads one way and filters another.
+ */
+export function normalizeIdentityPurpose(v: unknown): string | undefined {
+  if (typeof v !== "string" || !v.trim()) return undefined;
+  return v.trim().replace(/^IdentityPurpose/i, "").toUpperCase();
+}
+
+/**
+ * An access level off an ACCESS_ROLE's properties bag, or undefined when the tenant did not
+ * carry one.
+ *
+ * Undefined is what makes the caller's fallback safe: a tenant whose bag omits `accessType`
+ * gets exactly the old stamped behaviour, so nothing regresses, and a tenant that does carry
+ * it stops having ADMIN reported as HIGH_PRIVILEGE.
+ */
+export function normalizeAccessType(v: unknown): string | undefined {
+  if (typeof v !== "string" || !v.trim()) return undefined;
+  const norm = v.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_");
+  return (HUMAN_ACCESS_TYPES as readonly string[]).indexOf(norm) >= 0 ? norm : undefined;
+}

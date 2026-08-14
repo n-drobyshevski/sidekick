@@ -265,6 +265,22 @@ function insightRow(node) {
   if (node.sensitiveData) add("warn", "SENSITIVE_DATA", "Holds sensitive data");
   if (node.sensitiveAccess) add("warn", "SENSITIVE_DATA", "Access to sensitive data");
   if (node.guardrailMissing) add("warn", "MISSING_GUARDRAIL", "No guardrail");
+  // Who can reach this asset, and how many of them have stopped showing up. The dormant
+  // clause is the finding — an account nobody uses that still holds admin on an AI asset is
+  // a backdoor with no one watching it.
+  const access = node.humanAccess;
+  const reachCount = (access && access.identityIds ? access.identityIds.length : 0);
+  if (reachCount) {
+    const dormant = (access.inactiveCount || 0);
+    add(access.admin ? "bad" : "warn", "IDENTITY_ACCESS_FINDING",
+      reachCount + " human identit" + (reachCount === 1 ? "y" : "ies") +
+      (access.admin ? " at admin" : " at high privilege") +
+      (dormant ? " — " + dormant + " dormant" : ""));
+  }
+  if (node.inactive === true) {
+    add("warn", "SERVICE_ACCOUNT",
+      "Dormant" + (node.inactiveTimeframe ? " · " + node.inactiveTimeframe : " in the last 90 days"));
+  }
   if (node.identityPurpose === "AGENTIC") add("neutral", "SERVICE_ACCOUNT", "Agentic identity");
   return items.length ? el("div", { class: "insights" }, ...items) : null;
 }

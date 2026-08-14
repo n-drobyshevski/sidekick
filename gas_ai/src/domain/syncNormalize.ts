@@ -11,6 +11,7 @@
 
 import { SEVERITY_ORDER, type Severity } from "./config";
 import { HOST_KINDS } from "./exposureQuery";
+import { normalizeAccessType, normalizeIdentityPurpose } from "./identityQuery";
 import {
   AI_ASSET_KINDS,
   edgeId,
@@ -87,11 +88,19 @@ export function normalizeCloudResource(raw: Rec): GNode | null {
     hasHighPrivileges: bool(f("hasHighPrivileges")),
     hasAdminPrivileges: bool(f("hasAdminPrivileges")),
   };
-  // Only the principals query selects this flat; on a graphSearch entity it rides in the
-  // properties bag, which is how an agentic identity reached through a traversal keeps its
-  // purpose instead of looking like an ordinary service account.
-  const purpose = str(f("identityPurpose"));
+  // Wiz returns `IdentityPurposeAgentic`, while the FILTER takes `AGENTIC` — one enum that
+  // reads one way and filters another, exactly like DataFindingSeverity. Normalizing here is
+  // what lets an identity reached through a traversal keep its real purpose instead of
+  // looking like an ordinary service account or being stamped with the filter's value.
+  const purpose = normalizeIdentityPurpose(f("identityPurpose"));
   if (purpose) node.identityPurpose = purpose;
+  // Dormancy, on identity rows. Only when the response carried it: absent must stay absent,
+  // because "we never asked" and "in use" are different answers and a dormant identity with
+  // admin access to an agent is the whole point of collecting this.
+  const inactive = f("inactiveInLast90Days");
+  if (inactive === true || inactive === false) node.inactive = inactive;
+  const inactiveTimeframe = str(f("inactiveTimeframe"));
+  if (inactiveTimeframe) node.inactiveTimeframe = inactiveTimeframe;
   // ENDPOINT entities only (aliased to exposureLevel_name / portValidationResult in
   // graphTypes.PROPERTY_ALIASES). Set only when present, so every other kind's row stays
   // exactly as it was — and read from the payload rather than inferred from which query
@@ -215,16 +224,28 @@ export function normalizeInventoryPage(rows: Rec[]): NormalizedPart {
 }
 
 /**
- * Agentic-identities page (cloudResourcesV2 filtered by identityPurpose:AGENTIC) →
- * identity nodes flagged AGENTIC. identityPurpose isn't returned by the API (it's a
- * filter), so it's set by construction; issueAnalytics is read by normalizeCloudResource.
+ * Agentic-identities page (cloudResourcesV2 filtered by identityPurpose:AGENTIC) → identity
+ * nodes, now carrying their own purpose and dormancy rather than a stamp.
+ *
+ * The stamp survives only as a FALLBACK, and the change of order matters. This used to read
+ * "identityPurpose isn't returned by the API (it's a filter), so it's set by construction" —
+ * which was true of the SELECTION SET, not of the API: the capture in
+ * exemples/agentic_identities_response.js returns `IdentityPurposeAgentic` in the graph
+ * entity's properties bag, one level below the flat fields this query used to ask for.
+ * Q_PRINCIPALS selects that bag now, so the real value is read where it exists.
+ *
+ * Where it does NOT exist — an older tenant, a rejected `graphEntity` selection — the stamp
+ * still applies, because these rows came back from a purpose-filtered query and dropping the
+ * label would zero `kpis.agenticIdentities` on a tenant that has plenty. That fallback is
+ * also why the filter stays locked in scanVars: it is a claim about the filter, and a widened
+ * filter would relabel every row it collected.
  */
 export function normalizePrincipalsPage(rows: Rec[]): NormalizedPart {
   const part = emptyPart();
   for (const raw of rows) {
     const node = normalizeCloudResource(raw);
     if (!node) continue;
-    node.identityPurpose = "AGENTIC";
+    if (!node.identityPurpose) node.identityPurpose = "AGENTIC";
     part.nodes.push(node);
   }
   return part;
@@ -1292,26 +1313,42 @@ export function normalizeEndpointExposurePage(rows: Rec[]): NormalizedPart {
 }
 
 /**
- * graphSearch "identities with high-privilege access to agents" page → identities +
- * agents + the implied identity → ALLOWS_ACCESS_TO → agent edge.
+ * graphSearch "identities with admin or high-privilege access to an AI asset" page →
+ * identities + the asset + the implied identity → ALLOWS_ACCESS_TO → asset edge.
+ *
+ * TWO CHANGES worth knowing, both of which used to make this narrower than it read:
+ *
+ * The root is any AI asset kind, not `AI_AGENT`. The traversal was pinned to agents, so a
+ * model with an admin binding on it and an MCP server a contractor could reach were both
+ * invisible — and nothing said so, because the area had no figure to be wrong.
+ *
+ * `accessType` is READ off the ACCESS_ROLE the traversal selected, not stamped from the
+ * query's filter. Stamping HIGH_PRIVILEGE on every edge flattened ADMIN into it and made
+ * "who is admin on an agent" unanswerable from the ledger. A tenant whose bag omits the field
+ * falls back to the old constant, so nothing regresses where the value is not there.
  */
 export function normalizeIdentityAccessPage(rows: Rec[]): NormalizedPart {
   const part = emptyPart();
   for (const row of rows) {
     const entities = entitiesOf(row);
-    const agent = entities.find((e) => e.kind === "AI_AGENT");
+    const asset = entities.find((e) => (AI_ASSET_KINDS as readonly string[]).includes(e.kind));
     const identities = entities.filter(
       (e) => e.kind === "USER_ACCOUNT" || e.kind === "SERVICE_ACCOUNT" || e.kind === "ACCESS_ROLE",
     );
     part.nodes.push(...entities);
-    if (!agent) continue;
+    if (!asset) continue;
+    // One row is one binding, so one role — read from the raw entity, since a GNode has no
+    // access level of its own (it is a fact about the grant, not about the identity).
+    const rawRole = rawEntitiesOf(row).find((e) => kindFromWizType(e["type"]) === "ACCESS_ROLE");
+    const accessType = (rawRole ? normalizeAccessType(entityField(rawRole, "accessType")) : undefined)
+      ?? "HIGH_PRIVILEGE";
     for (const identity of identities) {
       part.edges.push({
-        id: edgeId(identity.id, "ALLOWS_ACCESS_TO", agent.id),
+        id: edgeId(identity.id, "ALLOWS_ACCESS_TO", asset.id),
         src: identity.id,
-        dst: agent.id,
+        dst: asset.id,
         type: "ALLOWS_ACCESS_TO",
-        accessType: "HIGH_PRIVILEGE",
+        accessType: accessType as GEdge["accessType"],
       });
     }
   }
