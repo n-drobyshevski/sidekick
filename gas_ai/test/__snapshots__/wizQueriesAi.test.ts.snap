@@ -15,10 +15,10 @@ exports[`query documents > Q_AGENT_EXPANSION is unchanged 1`] = `
         id
         name
         type
-        nativeType
-        cloudPlatform
-        region
         ... on CloudResource {
+          nativeType
+          cloudPlatform
+          region
           status
           firstSeen
           lastSeen
@@ -37,6 +37,7 @@ exports[`query documents > Q_AGENT_EXPANSION is unchanged 1`] = `
         ... on DataFinding {
           severity
         }
+        properties
       }
     }
   }
@@ -77,10 +78,10 @@ exports[`query documents > Q_AGENT_SENSITIVE_DATA_ACCESS is unchanged 1`] = `
         id
         name
         type
-        nativeType
-        cloudPlatform
-        region
         ... on CloudResource {
+          nativeType
+          cloudPlatform
+          region
           status
           firstSeen
           lastSeen
@@ -124,10 +125,10 @@ exports[`query documents > Q_AGENTS_NO_GUARDRAIL is unchanged 1`] = `
         id
         name
         type
-        nativeType
-        cloudPlatform
-        region
         ... on CloudResource {
+          nativeType
+          cloudPlatform
+          region
           status
           firstSeen
           lastSeen

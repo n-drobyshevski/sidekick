@@ -25,6 +25,7 @@ import {
   chooseAiResourceTypes,
   isInvalidEnumValueError,
 } from "../src/server/wizQueriesAi";
+import { errorDigest } from "../src/server/wizClientAi";
 import { RISK_CATEGORY_ID } from "../src/domain/toxicCombos";
 import { isUnresolvedIssue, UNRESOLVED_ISSUE_STATUSES } from "../src/domain/config";
 
@@ -316,6 +317,51 @@ describe("query documents", () => {
     }
   });
 
+  it("selects nothing but id/name/type on the bare GraphEntity interface", () => {
+    // A live tenant answered every graphSearch document here with
+    //   HTTP 400 Cannot query field "nativeType" on type "GraphEntity"
+    // and the same for cloudPlatform and region. They are CloudResource fields; the
+    // interface does not carry them. Because ENTITY_FIELDS is shared by all five battery
+    // traversals and syncJobs skips an optional step on a 400, that one mistake silently
+    // dropped guardrail coverage, RUNS_AS, SA excessive access, sensitive-data access and
+    // identity access from every live sync at once.
+    //
+    // Asserted on the rendered document rather than the constant: what the tenant
+    // validates is the text, and the split between the two lists is exactly the thing
+    // that was wrong.
+    for (const [name, doc] of DOCS) {
+      if (!doc.includes("graphSearch")) continue;
+      const head = doc.slice(doc.indexOf("entities {"), doc.indexOf("... on CloudResource"));
+      for (const field of ["nativeType", "cloudPlatform", "region", "status", "tags"]) {
+        expect(head, `${name} puts ${field} on the interface`).not.toContain(field);
+      }
+      expect(head).toContain("id");
+      expect(head).toContain("name");
+      expect(head).toContain("type");
+    }
+  });
+
+  it("keeps every CloudResource field the flat query has, just inside the fragment", () => {
+    // Moving the three is a relocation, not a removal — the response shape is flat either
+    // way, so normalizeCloudResource keeps reading them off the top level.
+    for (const field of ["nativeType", "cloudPlatform", "region"]) {
+      expect(Q_AGENT_RUNS_AS).toContain(field);
+      expect(Q_AI_INVENTORY).toContain(field);
+    }
+  });
+
+  it("Q_AGENT_EXPANSION also asks for the raw properties bag", () => {
+    // The expansion reaches types that are not CloudResource, for which the fragment
+    // contributes nothing. `properties` is on the interface and the capture shows it
+    // populated for every entity, so it is the decoder's fallback. Deliberately NOT in
+    // ENTITY_FIELDS: the battery persists what it reads and does not need the payload.
+    expect(Q_AGENT_EXPANSION).toContain("properties");
+    for (const doc of [Q_AGENTS_NO_GUARDRAIL, Q_AGENT_RUNS_AS, Q_SA_EXCESSIVE_ACCESS,
+      Q_IDENTITY_ACCESS, Q_AGENT_SENSITIVE_DATA_ACCESS]) {
+      expect(doc).not.toContain("properties");
+    }
+  });
+
   it("Q_AGENT_EXPANSION takes its traversal as a variable, not as document text", () => {
     // The one graphSearch document here whose query body is NOT inlined. It is pinned to a
     // single entity, so inlining would give the gateway a textually distinct document per
@@ -339,5 +385,51 @@ describe("query documents", () => {
     }
     const optionalLegs = Q_AGENT_SENSITIVE_DATA_ACCESS.match(/optional: true/g) ?? [];
     expect(optionalLegs).toHaveLength(1);
+  });
+});
+
+describe("errorDigest", () => {
+  it("keeps the messages and drops the scaffolding", () => {
+    // The real rejection that started this: three fields, of which the raw body only got
+    // three-and-a-bit through in 500 characters because every entry repeats its locations
+    // and extensions.
+    const raw = JSON.stringify({
+      errors: ["nativeType", "cloudPlatform", "region"].map((f, i) => ({
+        message: `Cannot query field "${f}" on type "GraphEntity".`,
+        locations: [{ line: 15 + i, column: 9 }],
+        extensions: { code: "GRAPHQL_VALIDATION_FAILED" },
+      })),
+    });
+    const digest = errorDigest(raw);
+    for (const f of ["nativeType", "cloudPlatform", "region"]) {
+      expect(digest).toContain(f);
+    }
+    expect(digest).not.toContain("GRAPHQL_VALIDATION_FAILED");
+    expect(digest).not.toContain("locations");
+    expect(digest.length).toBeLessThan(raw.length / 2);
+  });
+
+  it("leaves the enum-rejection wording intact for isInvalidEnumValueError", () => {
+    // That predicate matches on substrings of the thrown message, so condensing the body
+    // must not change the words it looks for.
+    const raw = JSON.stringify({
+      errors: [{ message: 'CloudResourceTypeFilter cannot represent value: ["AI_AGENT"]' }],
+    });
+    expect(isInvalidEnumValueError(`Wiz query failed (HTTP 400): ${errorDigest(raw)}`)).toBe(true);
+  });
+
+  it("falls back to the raw text when the body is not a GraphQL envelope", () => {
+    // A proxy's HTML error page has no messages to extract, and then the raw text is the
+    // diagnosis rather than noise around it.
+    expect(errorDigest("<html>502 Bad Gateway</html>")).toBe("<html>502 Bad Gateway</html>");
+    expect(errorDigest("")).toBe("");
+    expect(errorDigest('{"data":null}')).toBe('{"data":null}');
+  });
+
+  it("bounds the result however long the error list is", () => {
+    const many = JSON.stringify({
+      errors: Array.from({ length: 200 }, (_, i) => ({ message: `field_${i} is not valid` })),
+    });
+    expect(errorDigest(many).length).toBeLessThanOrEqual(800);
   });
 });

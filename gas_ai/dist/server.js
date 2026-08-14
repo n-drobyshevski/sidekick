@@ -850,12 +850,15 @@ var Server = (() => {
   var IDENTITY_FIELDS = [
     "id",
     "name",
-    "type",
-    "nativeType",
-    "cloudPlatform",
-    "region"
+    "type"
   ];
   var CLOUD_RESOURCE_FIELDS = [
+    // Moved off the interface, where the tenant rejected them. They are CloudResource
+    // fields, and the flat cloudResourcesV2 selection is unaffected — RESOURCE_FIELDS is
+    // the concatenation of both lists either way.
+    "nativeType",
+    "cloudPlatform",
+    "region",
     "status",
     "firstSeen",
     "lastSeen",
@@ -878,6 +881,7 @@ var Server = (() => {
   var RESOURCE_FIELDS = indented(IDENTITY_FIELDS, 6) + indented(CLOUD_RESOURCE_FIELDS, 6);
   var ENTITY_FIELDS = indented(IDENTITY_FIELDS, 8) + "        ... on CloudResource {\n" + indented(CLOUD_RESOURCE_FIELDS, 10) + "        }\n";
   var DATA_ENTITY_FIELDS = ENTITY_FIELDS + "        ... on DataFinding {\n          severity\n        }\n";
+  var EXPAND_ENTITY_FIELDS = DATA_ENTITY_FIELDS + "        properties\n";
   function graphSearchQueryWith(name, queryBody, entityFields) {
     return "query " + name + "($quick: Boolean, $first: Int, $after: String) {\n  graphSearch(quick: $quick, first: $first, after: $after, query: {\n" + queryBody + "  }) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      entities {\n" + entityFields + "      }\n    }\n  }\n}\n";
   }
@@ -948,7 +952,7 @@ var Server = (() => {
     "SidekickAiIdentitiesWithAgentAccess",
     '    type: "AI_AGENT"\n    select: true\n    relationships: [{\n      type: "ALLOWS_ACCESS_TO"\n      direction: INBOUND\n      with: {\n        type: "ACCESS_ROLE_BINDING"\n        select: false\n        relationships: [\n          {\n            type: "BOUND_TO"\n            with: { type: ["USER_ACCOUNT", "SERVICE_ACCOUNT"], select: true }\n          }\n          {\n            type: "PERMITS_ACCESS_ROLE"\n            with: {\n              type: "ACCESS_ROLE"\n              select: true\n              where: { accessType: { EQUALS: ["HIGH_PRIVILEGE", "ADMIN"] } }\n            }\n          }\n        ]\n      }\n    }]\n'
   );
-  var Q_AGENT_EXPANSION = "query SidekickAiAgentExpansion($quick: Boolean, $first: Int, $after: String, $query: GraphEntityQueryInput, $projectId: String) {\n  graphSearch(\n    quick: $quick\n    first: $first\n    after: $after\n    query: $query\n    projectId: $projectId\n  ) {\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      entities {\n" + DATA_ENTITY_FIELDS + "      }\n    }\n  }\n}\n";
+  var Q_AGENT_EXPANSION = "query SidekickAiAgentExpansion($quick: Boolean, $first: Int, $after: String, $query: GraphEntityQueryInput, $projectId: String) {\n  graphSearch(\n    quick: $quick\n    first: $first\n    after: $after\n    query: $query\n    projectId: $projectId\n  ) {\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      entities {\n" + EXPAND_ENTITY_FIELDS + "      }\n    }\n  }\n}\n";
   var Q_ISSUES = "query SidekickAiIssues($first: Int, $after: String, $filterBy: IssueFilters, $orderBy: IssueOrder) {\n  issuesV2(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      type\n      severity\n      status\n      createdAt\n      updatedAt\n      dueAt\n      resolvedAt\n      resolutionReason\n      resolutionNote\n      rejectionExpiredAt\n      validatedAsExploitable\n      environments\n      assignee { id name primaryEmail }\n      resolvedBy { user { id name email } serviceAccount { id name type } }\n      notes { id text }\n      serviceTickets { id externalId name url }\n      applicationServices { id displayName }\n      aiRemediationAnalysis { verdict recommendedSeverity }\n      projects { id name slug riskProfile { businessImpact } }\n      entitySnapshot {\n        id\n        type\n        status\n        name\n        cloudPlatform\n        region\n        subscriptionName\n        subscriptionId\n        subscriptionExternalId\n        nativeType\n        externalId\n        tags\n        kubernetesClusterName\n        kubernetesNamespaceName\n        resourceGroupId\n      }\n      sourceRules {\n        ... on Control {\n          id\n          name\n          description\n          severity\n          risks\n          threats\n          resolutionRecommendation\n        }\n        ... on CloudConfigurationRule {\n          id\n          name\n          description\n          risks\n          threats\n          control { resolutionRecommendation severity }\n        }\n        ... on CloudEventRule {\n          id\n          name\n          description\n          risks\n          threats\n        }\n      }\n    }\n  }\n}\n";
   function aiIssuesVariables(scope) {
     const filterBy = {
@@ -1018,7 +1022,6 @@ var Server = (() => {
     return token;
   }
   function gqlPost(query, variables) {
-    var _a5;
     const apiUrl = requireProp(PROP_KEYS.wizApiUrl);
     let token = getToken();
     let lastError = "";
@@ -1044,14 +1047,15 @@ var Server = (() => {
       if (code !== 200) {
         const hint = code === 401 && getProp(PROP_KEYS.wizApiToken) ? " \u2014 WIZ_API_TOKEN was rejected; it may have expired. Refresh it, or set WIZ_CLIENT_ID/WIZ_CLIENT_SECRET for auto-refresh." : "";
         throw new WizQueryError(
-          `Wiz query failed (HTTP ${code})${hint}: ${response.getContentText().slice(0, 500)}`
+          `Wiz query failed (HTTP ${code})${hint}: ${errorDigest(response.getContentText())}`
         );
       }
       const body = JSON.parse(response.getContentText());
       const data = body["data"];
       if (!data) {
-        const errors = JSON.stringify((_a5 = body["errors"]) != null ? _a5 : body).slice(0, 500);
-        throw new WizQueryError(`Wiz response carried no data: ${errors}`);
+        throw new WizQueryError(
+          `Wiz response carried no data: ${errorDigest(response.getContentText())}`
+        );
       }
       return data;
     }
@@ -1141,6 +1145,22 @@ var Server = (() => {
     } catch {
     }
     return chosen;
+  }
+  var ERROR_BODY_MAX = 800;
+  function errorDigest(text) {
+    try {
+      const parsed = JSON.parse(text);
+      const errors = parsed["errors"];
+      if (Array.isArray(errors) && errors.length) {
+        const messages = errors.map((e) => {
+          var _a5;
+          return e && typeof e === "object" ? String((_a5 = e["message"]) != null ? _a5 : "") : "";
+        }).filter(Boolean);
+        if (messages.length) return messages.join(" | ").slice(0, ERROR_BODY_MAX);
+      }
+    } catch {
+    }
+    return String(text).slice(0, ERROR_BODY_MAX);
   }
   function readConnection(connection, field) {
     var _a5, _b, _c;
@@ -3948,7 +3968,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "27ec61fc672e" : "dev";
+  var BUILD_ID = true ? "9ab539f0f97c" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -4448,7 +4468,7 @@ var Server = (() => {
     return v === true ? true : v === false ? false : null;
   }
   function toExpandedNode(raw) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i;
+    var _a5;
     const id = str(raw["id"]);
     if (!id) return null;
     const rawType = str(raw["type"]);
@@ -4457,28 +4477,42 @@ var Server = (() => {
       var _a6;
       return (_a6 = str(p == null ? void 0 : p["name"])) != null ? _a6 : "";
     }).filter(Boolean) : [];
+    const props = raw["properties"] && typeof raw["properties"] === "object" ? raw["properties"] : {};
+    const pick2 = (key) => raw[key] !== void 0 ? raw[key] : props[key];
+    const pickStr = (key) => {
+      var _a6;
+      return (_a6 = str(pick2(key))) != null ? _a6 : null;
+    };
+    const isTrue = (key) => pick2(key) === true;
     return {
       id,
       name: (_a5 = str(raw["name"])) != null ? _a5 : id,
       kind: known != null ? known : rawType ? rawType.toUpperCase().replace(/[^A-Z0-9]+/g, "_") : "UNKNOWN",
       unmodeled: !known,
-      nativeType: (_b = str(raw["nativeType"])) != null ? _b : null,
-      cloud: (_c = str(raw["cloudPlatform"])) != null ? _c : null,
-      region: (_d = str(raw["region"])) != null ? _d : null,
-      status: (_e = str(raw["status"])) != null ? _e : null,
-      firstSeen: (_f = str(raw["firstSeen"])) != null ? _f : null,
-      lastSeen: (_g = str(raw["lastSeen"])) != null ? _g : null,
-      externalId: (_h = str(raw["externalId"])) != null ? _h : null,
+      nativeType: pickStr("nativeType"),
+      cloud: pickStr("cloudPlatform"),
+      region: pickStr("region"),
+      status: pickStr("status"),
+      firstSeen: pickStr("firstSeen"),
+      lastSeen: pickStr("lastSeen"),
+      externalId: pickStr("externalId"),
       projects,
       // DataFinding is the one entity here carrying its own severity; everything else is
       // inventory and gets its severity from the register, which this path does not touch.
-      severity: (_i = str(raw["severity"])) != null ? _i : null,
-      internet: triBool(raw["isAccessibleFromInternet"]),
-      openInternet: triBool(raw["isOpenToAllInternet"]),
-      sensitiveData: raw["hasSensitiveData"] === true,
-      sensitiveAccess: raw["hasAccessToSensitiveData"] === true,
-      highPriv: raw["hasHighPrivileges"] === true,
-      adminPriv: raw["hasAdminPrivileges"] === true
+      severity: pickStr("severity"),
+      // `openToAllInternet` / `accessibleFrom.internet` are the names the properties bag
+      // uses for the two the CloudResource fragment spells isOpenToAllInternet /
+      // isAccessibleFromInternet.
+      internet: triBool(
+        raw["isAccessibleFromInternet"] !== void 0 ? raw["isAccessibleFromInternet"] : props["accessibleFrom.internet"]
+      ),
+      openInternet: triBool(
+        raw["isOpenToAllInternet"] !== void 0 ? raw["isOpenToAllInternet"] : props["openToAllInternet"]
+      ),
+      sensitiveData: isTrue("hasSensitiveData"),
+      sensitiveAccess: isTrue("hasAccessToSensitiveData"),
+      highPriv: isTrue("hasHighPrivileges"),
+      adminPriv: isTrue("hasAdminPrivileges")
     };
   }
   function decodeExpansion(slots, rows) {

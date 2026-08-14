@@ -33,10 +33,29 @@ export const MAX_PAGES = 200;
 // forgotten in the other silently degraded half the sync battery.
 //
 // String concatenation rather than template literals, matching the rest of this file.
+// What the GraphEntity INTERFACE actually carries. Three fields short of what this list
+// used to claim, and the shortfall was not cosmetic: a live tenant answered every
+// graphSearch document here with
+//
+//   HTTP 400 Cannot query field "nativeType" on type "GraphEntity"   (and cloudPlatform, region)
+//
+// ENTITY_FIELDS is shared by all five battery traversals, and syncJobs skips an optional
+// step on a 400 — so guardrail coverage, RUNS_AS, SA excessive access, sensitive-data
+// access and identity access were all being dropped on every live sync, silently, with
+// nothing but a skippedSteps entry to show for it. Keep this list to fields the interface
+// really has; the console's own capture (exemples/ai_agent_expand_response.js, whose
+// PathGraphEntityFragment selects only providerUniqueId / id / name / type / properties /
+// typedProperties) is the reference for what belongs here.
 const IDENTITY_FIELDS = [
-  "id", "name", "type", "nativeType", "cloudPlatform", "region",
+  "id", "name", "type",
 ];
 const CLOUD_RESOURCE_FIELDS = [
+  // Moved off the interface, where the tenant rejected them. They are CloudResource
+  // fields, and the flat cloudResourcesV2 selection is unaffected — RESOURCE_FIELDS is
+  // the concatenation of both lists either way.
+  "nativeType",
+  "cloudPlatform",
+  "region",
   "status",
   "firstSeen",
   "lastSeen",
@@ -86,6 +105,26 @@ const DATA_ENTITY_FIELDS =
   "        ... on DataFinding {\n" +
   "          severity\n" +
   "        }\n";
+
+/**
+ * The expansion's entity fields: the data ones, plus the raw `properties` bag.
+ *
+ * `properties` is there because the expansion reaches types the battery never touches —
+ * ENDPOINT, IAM_BINDING, CONTAINER, DEPLOYMENT, KUBERNETES_CLUSTER, CONFIGURATION_FINDING.
+ * Whether each of those is a `CloudResource` is the tenant's business, and for the ones
+ * that are not, the `... on CloudResource` fragment contributes nothing at all: the node
+ * would arrive with an id, a name and a type and no cloud, region or status to show.
+ *
+ * The console asks for exactly this bag instead of the flat fields, and the capture in
+ * exemples/ai_agent_expand_response.js shows it carrying nativeType, cloudPlatform,
+ * region, status, externalId and the privilege/exposure booleans for every entity in the
+ * row. So it is the one selection with hard evidence behind it, and graphExpand's decoder
+ * falls back to it field by field.
+ *
+ * Not added to ENTITY_FIELDS: the battery persists what it reads, and a ~40-key bag per
+ * entity across five paginated traversals is a payload cost the sync does not need.
+ */
+const EXPAND_ENTITY_FIELDS = DATA_ENTITY_FIELDS + "        properties\n";
 
 function graphSearchQueryWith(name: string, queryBody: string, entityFields: string): string {
   return (
@@ -367,7 +406,7 @@ export const Q_AGENT_EXPANSION =
   "    pageInfo { hasNextPage endCursor }\n" +
   "    nodes {\n" +
   "      entities {\n" +
-  DATA_ENTITY_FIELDS +
+  EXPAND_ENTITY_FIELDS +
   "      }\n" +
   "    }\n" +
   "  }\n" +
