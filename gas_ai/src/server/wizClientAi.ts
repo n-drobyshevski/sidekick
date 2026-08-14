@@ -360,3 +360,28 @@ export function fetchGraphSearchPage(o: FetchOptions): PageResult {
   return fetchPage("graphSearch", o, { quick: true });
 }
 
+/**
+ * A top-level field returning ONE OBJECT rather than a connection: securityFramework(id:).
+ *
+ * Deliberately not routed through fetchPage. Two reasons, and both are correctness rather
+ * than tidiness:
+ *
+ *   1. fetchPage injects `first` and `after` unconditionally. This operation declares
+ *      neither, and a strict server rejects undeclared variables.
+ *   2. readConnection on a non-connection does NOT throw — it finds no `nodes`, returns
+ *      `rows: []`, and reports success. On an `optional: true` step (which every posture
+ *      step is, so one framework a tenant lacks cannot fail the battery) that is
+ *      indistinguishable from "this framework scored nothing", and would fail silently
+ *      and permanently. So a missing object is an ERROR here, stated as one.
+ *
+ * The single object is returned as a one-row page so every step shares one `PageResult`
+ * shape and one `normalize(rows)` signature.
+ */
+export function fetchSingleObject(field: string, o: FetchOptions): PageResult {
+  const obj = gqlPost(o.query, { ...(o.extraVariables ?? {}) })[field];
+  if (!obj || typeof obj !== "object") {
+    throw new WizQueryError(`Wiz response carried no ${field} object.`);
+  }
+  return { rows: [obj as Rec], hasNextPage: false, endCursor: null, totalCount: 1 };
+}
+

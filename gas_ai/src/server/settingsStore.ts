@@ -99,6 +99,35 @@ export function setSkippedSteps(steps: unknown): void {
   saveSettings(next);
 }
 
+/**
+ * The framework selection, resolved against the synced catalogue on first use.
+ *
+ * `catalogue` is a thunk so the common path — a stored selection — never pays for a tab
+ * read it does not need.
+ */
+export function getSelectedFrameworks(
+  catalogue?: () => { id: string; name: string }[],
+): string[] {
+  const settings = loadSettings();
+  if (Array.isArray(settings["selected_frameworks"])) {
+    return logic.getSelectedFrameworks(settings);
+  }
+  // Never configured. Resolve the defaults by NAME against whatever the catalogue holds —
+  // a framework id is version-scoped and not portable, so the shipped ids are a cold start
+  // rather than an answer. Not persisted here: a read must not write, and the operator's
+  // first explicit save is what should turn this into a stored decision.
+  const rows = catalogue ? catalogue() : [];
+  return rows.length
+    ? logic.resolveDefaultFrameworks(rows)
+    : logic.getSelectedFrameworks(settings);
+}
+
+/** Choose which frameworks the sync collects posture for. */
+export function setSelectedFrameworks(ids: unknown): string[] {
+  saveSettings(logic.withSelectedFrameworks(loadSettings(), ids));
+  return getSelectedFrameworks();
+}
+
 export const getScanVars = (): Rec => logic.getScanVars(loadSettings());
 
 /** Save (or, with an empty override, clear) one step's variable override. */

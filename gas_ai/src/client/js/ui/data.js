@@ -86,6 +86,11 @@ export function dataTable(spec) {
   const {
     columns, rows = [], sort = null, onSort = null,
     onRowOpen = null, rowLabel = null, emptyText = "", className = "",
+    // Per-row class, for tables whose rows are not all the same KIND of row — the
+    // compliance register's category rows and their subcategory children share one set of
+    // columns and one keyboard path, and differ only in how they are dressed. Returning
+    // nothing leaves the row exactly as it was.
+    rowClass = null,
   } = spec;
 
   const headCells = new Map();
@@ -127,12 +132,13 @@ export function dataTable(spec) {
     for (const row of list) {
       const cells = columns.map((col) =>
         el("td", { class: col.className || null }, col.cell(row)));
+      const extra = rowClass ? rowClass(row) : "";
       if (!onRowOpen) {
-        tbody.append(el("tr", {}, ...cells));
+        tbody.append(el("tr", { class: extra || null }, ...cells));
         continue;
       }
       tbody.append(el("tr", {
-        class: "clickable",
+        class: `clickable${extra ? " " + extra : ""}`,
         tabindex: "0",
         role: "button",
         "aria-label": rowLabel ? rowLabel(row) : null,
