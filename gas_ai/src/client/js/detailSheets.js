@@ -5,8 +5,7 @@
 // Order is a decision, not a layout: the verdict and the fix come before the ledger of
 // infrastructure facts, because the analyst opened this to decide something.
 
-import { call } from "./api.js";
-import { bootstrapCached, navigate } from "./store.js";
+import { bootstrapCached, navigate, swrCall } from "./store.js";
 import { egoGraph } from "./egoGraph.js";
 import { expansionStatus, mergeLiveRels, shouldAutoExpand } from "./egoLayout.js";
 import { categoryOf, edgeLabel, kindIconSvg, kindLabel } from "./icons.js";
@@ -43,6 +42,14 @@ function comboTitle(id) {
   const legend = (boot && boot.comboLegend) || [];
   const hit = legend.filter((g) => g.id === id)[0];
   return hit ? hit.title : "Toxic combination";
+}
+
+/** The combination's amplifier note — what the issue sheet seeds without a round trip. */
+function comboNote(id) {
+  const boot = bootstrapCached();
+  const legend = (boot && boot.comboLegend) || [];
+  const hit = legend.filter((g) => g.id === id)[0];
+  return hit ? hit.amplifierNote : "";
 }
 
 function pillarBars(pillars, caps) {
@@ -308,7 +315,7 @@ function canExpand(node) {
  */
 async function expandNow(assetId) {
   try {
-    return await call("api_expandAsset", { id: assetId });
+    return await swrCall("api_expandAsset", { id: assetId });
   } catch (e) {
     return { source: "error", error: e && e.message ? e.message : String(e) };
   }
@@ -407,31 +414,12 @@ export function openAssetSheet(assetId, opts = {}) {
   let disposed = false;
 
   openSheet((body, close, ctx) => {
-    async function render() {
-      ctx.setBusy(true);
-      clear(body).append(assetSkeleton());
-      let detail;
-      try {
-        detail = await call("api_getAssetDetail", { id: assetId });
-      } catch (e) {
-        if (disposed) return;
-        ctx.setBusy(false);
-        clear(body).append(errorState("Couldn't load this asset.", {
-          detail: e && e.message ? e.message : e,
-          onRetry: render,
-        }));
-        return;
-      }
-      if (disposed) return;
-      ctx.setBusy(false);
-      if (!detail) {
-        clear(body).append(emptyState(
-          "Asset not found in the last sync.",
-          "It may have been removed from the estate since the sync ran.",
-        ));
-        return;
-      }
-
+    /**
+     * Paint the record. `restoreSectionId`, when given, is the rail section the reader was
+     * on before this call — set by a background revalidation's repaint, so a reader mid-way
+     * through Relationships doesn't get yanked back to Overview under them.
+     */
+    function paint(detail, restoreSectionId) {
       const { node, issues, neighbors, findings } = detail;
       const openIssues = issues || [];
       const rels = neighbors || [];
@@ -600,13 +588,23 @@ export function openAssetSheet(assetId, opts = {}) {
             beginExpansion();
           }
           // The record as the server sent it. An analyst who needs a field this sheet does
-          // not name should not have to open the browser console to read it.
-          const raw = JSON.stringify(detail, null, 2);
-          pane.append(el("details", { class: "disclosure" },
+          // not name should not have to open the browser console to read it. Most analysts
+          // never open this, so the stringify + code block are built lazily on first toggle
+          // rather than paid on every Overview paint.
+          const rawWrap = el("div", { style: "padding:8px 0 4px" });
+          let rawBuilt = false;
+          const rawDetails = el("details", { class: "disclosure" },
             el("summary", { class: "disclosure-toggle" }, "Raw record"),
-            el("div", { style: "padding:8px 0 4px" },
+            rawWrap);
+          rawDetails.addEventListener("toggle", () => {
+            if (rawBuilt || !rawDetails.open) return;
+            rawBuilt = true;
+            const raw = JSON.stringify(detail, null, 2);
+            rawWrap.append(
               copyButton(() => raw, { label: "Copy JSON" }),
-              codeBlock(raw, { label: "Raw record, as JSON", maxHeight: "320px" }))));
+              codeBlock(raw, { label: "Raw record, as JSON", maxHeight: "320px" }));
+          });
+          pane.append(rawDetails);
         },
 
         issues(pane) {
@@ -630,12 +628,16 @@ export function openAssetSheet(assetId, opts = {}) {
               tags: fwTags(issue.frameworks, true),
               fix: issue.remediation || issue.resolutionRecommendation,
               ariaLabel: `Issue: ${issueTitle(issue)}, ${issue.adjustedSeverity}`,
+              // The full IssueRow is already in hand — seed the sheet, and seed every
+              // prev/next step through this same list too.
               onOpen: () => openIssueSheet(issue.id, {
+                seed: issue,
                 records: {
                   ids: openIssues.map((i) => i.id),
                   index: openIssues.indexOf(issue),
                   label: "issue",
-                  open: (id) => openIssueSheet(id, {
+                  open: (id, i) => openIssueSheet(id, {
+                    seed: openIssues[i],
                     backTo: { label: node.name, onBack: () => openAssetSheet(assetId, opts) },
                   }),
                 },
@@ -686,6 +688,7 @@ export function openAssetSheet(assetId, opts = {}) {
                 title: issueTitle(issue),
                 ariaLabel: `Issue: ${issueTitle(issue)}, ${issue.adjustedSeverity}`,
                 onOpen: () => openIssueSheet(issue.id, {
+                  seed: issue,
                   backTo: { label: node.name, onBack: () => openAssetSheet(assetId, opts) },
                 }),
               }))),
@@ -808,6 +811,9 @@ export function openAssetSheet(assetId, opts = {}) {
         const render1 = panes[id];
         if (render1) render1(pane);
       });
+      // Rail rebuild above defaults back to the first section — put the reader back where
+      // they were before a background revalidation repainted under them.
+      if (restoreSectionId) ctx.selectSection(restoreSectionId);
 
       const cursor = opts.records
         ? recordCursor(opts.records.ids, opts.records.index)
@@ -817,6 +823,50 @@ export function openAssetSheet(assetId, opts = {}) {
         `${plural(openIssues.length, "open issue")}, ${plural(rels.length, "relationship")}.` +
         (cursor.total ? ` Record ${cursor.position} of ${cursor.total}.` : ""),
       );
+
+      // Warm the next record in the list once the sheet has settled here — a click after a
+      // dwell should resolve from cache. Registered per paint so a repaint re-arms it; the
+      // dispose list only ever grows by one timer per paint, cleared together on close.
+      if (cursor.nextId !== null && cursor.nextId !== undefined) {
+        const nextId = cursor.nextId;
+        const warmTimer = setTimeout(() => {
+          swrCall("api_getAssetDetail", { id: nextId }).catch(() => {});
+        }, 600);
+        ctx.onDispose(() => clearTimeout(warmTimer));
+      }
+    }
+
+    async function render() {
+      ctx.setBusy(true);
+      clear(body).append(assetSkeleton());
+      let detail;
+      try {
+        detail = await swrCall("api_getAssetDetail", { id: assetId }, (fresh) => {
+          if (disposed) return;
+          // The place a reader is reading is worth more than the freshest paint landing
+          // instantly under them — capture it, repaint, then put it back.
+          const place = ctx.currentSection();
+          paint(fresh, place);
+        });
+      } catch (e) {
+        if (disposed) return;
+        ctx.setBusy(false);
+        clear(body).append(errorState("Couldn't load this asset.", {
+          detail: e && e.message ? e.message : e,
+          onRetry: render,
+        }));
+        return;
+      }
+      if (disposed) return;
+      ctx.setBusy(false);
+      if (!detail) {
+        clear(body).append(emptyState(
+          "Asset not found in the last sync.",
+          "It may have been removed from the estate since the sync ran.",
+        ));
+        return;
+      }
+      paint(detail);
     }
 
     render();
@@ -877,31 +927,15 @@ export function openIssueSheet(issueId, opts = {}) {
   let disposed = false;
 
   openSheet((body, close, ctx) => {
-    async function render() {
-      ctx.setBusy(true);
-      clear(body).append(issueSkeleton());
-      let detail;
-      try {
-        detail = await call("api_getIssueDetail", { id: issueId });
-      } catch (e) {
-        if (disposed) return;
-        ctx.setBusy(false);
-        clear(body).append(errorState("Couldn't load this issue.", {
-          detail: e && e.message ? e.message : e,
-          onRetry: render,
-        }));
-        return;
-      }
-      if (disposed) return;
-      ctx.setBusy(false);
-      if (!detail) {
-        clear(body).append(emptyState(
-          "Issue not found.",
-          "It may have been resolved or dropped since the last sync.",
-        ));
-        return;
-      }
+    /**
+     * Paint the record. `seeded` marks the zero-RPC path: the caller already held the row,
+     * so this paint carries a provenance line and a background revalidation instead of the
+     * usual busy/fetch dance. A seeded paint never arms the next-record warm timer — on a
+     * seeded door, stepping to the next record is already free.
+     */
+    function paint(detail, seeded) {
       const { issue, group } = detail;
+      let provNode = null;
       clear(body);
 
       // Status carries a word, not just a tint — the pill's text is the signal and the
@@ -939,6 +973,16 @@ export function openIssueSheet(issueId, opts = {}) {
 
       const panes = {
         overview(pane) {
+          // PRODUCT.md principle 5: a stored read and a live read must not look identical
+          // on screen. This paint came straight from a row the caller already held — no
+          // fetch happened yet — so it says so, in the same vocabulary provenanceContent()
+          // uses for the asset sheet's stored/live map. The --lead modifier drops that
+          // vocabulary's separator rule: this line opens the pane instead of closing a card.
+          if (seeded) {
+            provNode = el("p", { class: "small muted sheet-prov sheet-prov--lead" },
+              "From the list — checking for updates.");
+            pane.append(provNode);
+          }
           // Guarded on the note itself, not on the group: the Other bucket resolves to a
           // real group with no amplifier claim, and an empty note is a blank slab.
           if (group && group.amplifierNote) {
@@ -1092,11 +1136,90 @@ export function openIssueSheet(issueId, opts = {}) {
         `${issueTitle(issue)} on ${issue.assetName}, ${issue.adjustedSeverity}.` +
         (cursor.total ? ` Record ${cursor.position} of ${cursor.total}.` : ""),
       );
+
+      // Warm the next record after a dwell — but not on a seeded door: stepping through a
+      // seeded list is already free, so there is nothing here worth prefetching.
+      if (!seeded && cursor.nextId !== null && cursor.nextId !== undefined) {
+        const nextId = cursor.nextId;
+        const warmTimer = setTimeout(() => {
+          swrCall("api_getIssueDetail", { id: nextId }).catch(() => {});
+        }, 600);
+        ctx.onDispose(() => clearTimeout(warmTimer));
+      }
+
+      // The fire-and-forget revalidation that makes the seeded paint honest rather than
+      // merely fast. Off the critical path — nothing above awaited this. Repaints (and
+      // re-announces, through paint's own ctx.announce above) only when the row actually
+      // changed; either way the provisional line settles.
+      if (seeded) {
+        const settle = () => {
+          if (provNode) {
+            provNode.remove();
+            provNode = null;
+          }
+        };
+        swrCall("api_getIssueDetail", { id: issueId })
+          .then((fresh) => {
+            if (disposed) return;
+            settle();
+            // Compare the issue only, not the whole detail: the synthesised seed's `group`
+            // is a one-field stand-in (comboNote's amplifierNote lookup), never shaped like
+            // the server's real group object, so comparing the two wholesale would read as
+            // "changed" on every single seeded open and double-announce an unchanged issue.
+            if (JSON.stringify(fresh.issue) !== JSON.stringify(detail.issue)) paint(fresh, false);
+          })
+          .catch(() => {
+            if (disposed) return;
+            settle();
+          });
+      }
+    }
+
+    async function render() {
+      // The caller already holds this exact row — paint it straight through, no transport
+      // on the critical path at all.
+      if (opts.seed && opts.seed.id === issueId) {
+        paint({ issue: opts.seed, group: { amplifierNote: comboNote(opts.seed.comboGroup) } }, true);
+        return;
+      }
+      ctx.setBusy(true);
+      clear(body).append(issueSkeleton());
+      let detail;
+      try {
+        // swrCall, not call: the graph door is the one that still fetches, and it is also
+        // the one the next-record warm timer prefetches INTO this same cache. A bare call()
+        // here would ignore that entry and re-pay the round trip it just spent.
+        detail = await swrCall("api_getIssueDetail", { id: issueId }, (fresh) => {
+          if (disposed) return;
+          paint(fresh, false);
+        });
+      } catch (e) {
+        if (disposed) return;
+        ctx.setBusy(false);
+        clear(body).append(errorState("Couldn't load this issue.", {
+          detail: e && e.message ? e.message : e,
+          onRetry: render,
+        }));
+        return;
+      }
+      if (disposed) return;
+      ctx.setBusy(false);
+      if (!detail) {
+        clear(body).append(emptyState(
+          "Issue not found.",
+          "It may have been resolved or dropped since the last sync.",
+        ));
+        return;
+      }
+      paint(detail, false);
     }
     render();
   }, {
-    title: opts.title || "Issue",
-    subtitle: issueId,
+    // The header paints from the seed immediately — a real name and severity instead of
+    // the literal word "Issue" over a raw id for the whole round trip.
+    title: opts.seed ? issueTitle(opts.seed) : (opts.title || "Issue"),
+    subtitle: opts.seed ? opts.seed.assetName : issueId,
+    sev: opts.seed ? (opts.seed.adjustedSeverity || "") : "",
     closeOnRouteChange: true,
     backTo: opts.backTo || null,
     rail: { ariaLabel: "Issue sections" },

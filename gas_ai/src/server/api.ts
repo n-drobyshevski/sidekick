@@ -164,6 +164,10 @@ function bootstrapCore(): Rec {
       nativeSeverity: g.nativeSeverity,
       adjustedSeverity: g.adjustedSeverity,
       amplified: g.amplified,
+      // The issue detail sheet needs this to render its seeded paint without a server
+      // round trip; it's a compile-time constant on an already-cached payload, so
+      // riding it on bootstrap costs no extra I/O.
+      amplifierNote: g.amplifierNote,
     })),
     settings: {
       defaultDepth: settingsStore.getDefaultDepth(),
@@ -600,11 +604,6 @@ export function getAssetDetail(p?: unknown): ApiResult {
         });
       }
       const findings = syncStore.loadFindings().filter((f) => f.resourceId === id);
-      // The graph draws one aggregate per store; this is what it aggregates. Folded into
-      // getAssetDetail rather than given its own endpoint — a new endpoint is a three-file
-      // change (api.ts, the hand-written delegator in dist/entry.js, the call site) that
-      // the build's drift guard polices, and the sheet is already open on this asset.
-      const dataFindings = syncStore.loadDataFindings().filter((f) => f.resourceId === id);
       return {
         node: {
           ...assetRow(node),
@@ -614,7 +613,6 @@ export function getAssetDetail(p?: unknown): ApiResult {
         issues,
         neighbors,
         findings,
-        dataFindings,
       };
     });
   });

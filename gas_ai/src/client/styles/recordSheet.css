@@ -190,6 +190,12 @@
 .sheet-prov p { margin: 2px 0; }
 .sheet-prov-warn { color: var(--warn); }
 .sheet-prov-bad { color: var(--bad); }
+/* The same statement, made BEFORE the content rather than after it: the seeded issue sheet
+   says where its record came from at the top of the pane. The rule above separates a
+   trailing note from the card it follows; leading a pane with it draws a hairline under
+   nothing, and a hairline that separates nothing is exactly the kind of decoration
+   DESIGN.md's elevation rules exist to prevent. Same voice, no rule. */
+.sheet-prov--lead { padding-top: 0; margin-top: 0; border-top: 0; }
 
 /* Work in flight on the connection card. The same masked conic-gradient donut the sync
    zone uses for .scan-spinner, at line-height size — one visual vocabulary for "working"

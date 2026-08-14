@@ -3982,7 +3982,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "d0735898aad2" : "dev";
+  var BUILD_ID = true ? "6a873a94dcea" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -6030,15 +6030,6 @@ var Server = (() => {
       severity: f.severity
     };
   }
-  function rowToDataFinding(r) {
-    var _a5, _b, _c, _d;
-    return {
-      id: String((_a5 = r["id"]) != null ? _a5 : ""),
-      resourceId: String((_b = r["resource_id"]) != null ? _b : ""),
-      name: String((_c = r["name"]) != null ? _c : ""),
-      severity: String((_d = r["severity"]) != null ? _d : "UNKNOWN")
-    };
-  }
   function persistSync(rawDoc, issues2, hints, meta, now, findings = [], dataFindings = []) {
     const { version: ruleVersion, rule } = getAarsRule2();
     const counted = withDataFindingCounts(rawDoc, dataFindings);
@@ -6240,12 +6231,6 @@ var Server = (() => {
   function loadFindings() {
     if (findingsMemo === void 0) findingsMemo = readAll(TABS.findings).map(rowToFinding);
     return findingsMemo;
-  }
-  function loadDataFindings() {
-    if (dataFindingsMemo === void 0) {
-      dataFindingsMemo = readAll(TABS.dataFindings).map(rowToDataFinding);
-    }
-    return dataFindingsMemo;
   }
   function syncHistory() {
     return readAll(TABS.syncHistory);
@@ -6804,7 +6789,11 @@ var Server = (() => {
         shortLabel: g.shortLabel,
         nativeSeverity: g.nativeSeverity,
         adjustedSeverity: g.adjustedSeverity,
-        amplified: g.amplified
+        amplified: g.amplified,
+        // The issue detail sheet needs this to render its seeded paint without a server
+        // round trip; it's a compile-time constant on an already-cached payload, so
+        // riding it on bootstrap costs no extra I/O.
+        amplifierNote: g.amplifierNote
       })),
       settings: {
         defaultDepth: getDefaultDepth2(),
@@ -7163,7 +7152,6 @@ var Server = (() => {
           });
         }
         const findings = loadFindings().filter((f) => f.resourceId === id);
-        const dataFindings = loadDataFindings().filter((f) => f.resourceId === id);
         return {
           node: {
             ...assetRow(node2),
@@ -7172,8 +7160,7 @@ var Server = (() => {
           },
           issues: issues2,
           neighbors,
-          findings,
-          dataFindings
+          findings
         };
       });
     });
