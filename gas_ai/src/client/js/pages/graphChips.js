@@ -18,53 +18,22 @@
 //     and the empty state has to say so rather than blaming the starting point.
 
 import { listJoin, listSplit } from "../store.js";
-import { kindLabel } from "../icons.js";
 
 /**
+ * The starting point, the depth and the node-type lens used to be chips here. They are not
+ * filters any more — they are the QUERY, spelled out in the builder above this row, where the
+ * user can see and edit them directly. A chip restating "Type: AI Agent" beside a bar already
+ * reading `FIND [AI Agent]` would be the second control answering one question that the
+ * `isDefault` machinery below was invented to apologise for.
+ *
+ * What remains is what genuinely narrows the ANSWER rather than shaping the question.
+ *
  * @param {object} state    the resolved graph params (see graphParams in graph.js)
- * @param {object} defaults the deployment settings ({defaultDepth, maxNodes})
- * @param {object} ctx      {comboLegend, defaultSeedKind, defaultKinds} — the last two
- *                          name what a fresh visit seeded, so those chips can be labelled
- *                          as defaults rather than counted as user filters.
+ * @param {object} defaults the deployment settings ({maxNodes})
  * @returns {Array<{key, label, sev?, isDefault?, isNarrowing?, patch}>}
  */
-export function filterEntries(state, defaults, ctx = {}) {
+export function filterEntries(state, defaults) {
   const entries = [];
-  const comboLegend = ctx.comboLegend || [];
-  const defaultDepth = defaults.defaultDepth || 2;
-  const defaultKinds = new Set(listSplit(ctx.defaultKinds || ""));
-  const seedIsDefault = !!ctx.defaultSeedKind && state.seedKind === ctx.defaultSeedKind && !state.seed;
-
-  if (state.seedKind === "scored") {
-    entries.push({
-      key: "seed",
-      label: "Start",
-      value: "All scored assets",
-      isDefault: seedIsDefault,
-      isNarrowing: true,
-      patch: { seed: "", seedKind: "", expand: "" },
-    });
-  } else if (state.seed) {
-    const combo = state.seedKind === "combo"
-      ? comboLegend.find((x) => x.id === state.seed)
-      : null;
-    entries.push({
-      key: "seed",
-      label: "Start",
-      value: combo ? combo.shortLabel : state.seed,
-      isNarrowing: true,
-      patch: { seed: "", seedKind: "", expand: "" },
-    });
-  }
-
-  if (state.depth !== defaultDepth) {
-    entries.push({
-      key: "depth",
-      label: "Depth",
-      value: String(state.depth),
-      patch: { depth: String(defaultDepth), expand: "" },
-    });
-  }
 
   for (const s of listSplit(state.severities)) {
     entries.push({
@@ -74,17 +43,6 @@ export function filterEntries(state, defaults, ctx = {}) {
       sev: s,
       isNarrowing: true,
       patch: { severities: listJoin(listSplit(state.severities).filter((x) => x !== s)) },
-    });
-  }
-
-  for (const k of listSplit(state.kinds)) {
-    entries.push({
-      key: "kind-" + k,
-      label: "Type",
-      value: kindLabel(k),
-      isDefault: defaultKinds.has(k) && listSplit(state.kinds).length === defaultKinds.size,
-      isNarrowing: true,
-      patch: { kinds: listJoin(listSplit(state.kinds).filter((x) => x !== k)) },
     });
   }
 
@@ -128,7 +86,5 @@ export function isNarrowingSet(entries) {
 /** Which field group in the filter panel a chip belongs to. */
 export function sectionOf(entry) {
   if (entry.key.startsWith("sev-")) return "severity";
-  if (entry.key.startsWith("kind-")) return "kinds";
-  if (entry.key === "seed" || entry.key === "maxNodes") return "start";
   return entry.key;
 }

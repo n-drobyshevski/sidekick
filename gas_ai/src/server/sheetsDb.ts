@@ -50,6 +50,12 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // cloud audit events); the third is the join `withHumanAccess` folds onto an AI asset, so
     // the register and the Scans figure can total reach without reading edges. Appended.
     "inactive", "inactive_timeframe", "human_access_json",
+    // Identity display fields (the human title and address an operator gave the account) and
+    // the two AI-asset provenance fields the Security Graph's default columns read. All four
+    // come out of the graph entity's properties bag. Appended for the usual no-migration
+    // reason: ensureHeaders adds declared-but-missing headers to the right of whatever a tab
+    // already has, and every read maps by header NAME.
+    "display_name", "email", "publisher", "discovery_methods",
   ],
   [TABS.edges]: ["id", "src", "dst", "type", "negated", "access_type"],
   [TABS.issues]: [

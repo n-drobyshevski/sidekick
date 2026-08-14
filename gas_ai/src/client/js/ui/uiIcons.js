@@ -43,6 +43,24 @@ const PATHS = {
     "M4.6 10.9 L7.4 6.1",
     "M8.7 6.1 L11.3 9.9",
   ],
+  // The Security Graph's query builder. `plus` adds a relationship or a filter; the two eyes
+  // are the show/hide toggle on a node's column group; `table` and `columns` dress the VIEW
+  // control and the column chooser beside it.
+  plus: ["M8 3.5 V12.5", "M3.5 8 H12.5"],
+  eye: [
+    "M1.8 8 C3.6 4.8 5.7 3.2 8 3.2 C10.3 3.2 12.4 4.8 14.2 8 " +
+      "C12.4 11.2 10.3 12.8 8 12.8 C5.7 12.8 3.6 11.2 1.8 8 Z",
+    "M8 6.2 a1.8 1.8 0 1 0 0 3.6 a1.8 1.8 0 0 0 0 -3.6",
+  ],
+  // Hidden is not the same glyph dimmed: colour and opacity are not signals on their own, so
+  // the struck-through eye carries the state in its shape.
+  "eye-off": [
+    "M3.1 5.4 C2.6 6.1 2.1 7 1.8 8 C3.6 11.2 5.7 12.8 8 12.8 C9 12.8 9.9 12.6 10.8 12.1",
+    "M13.2 10.4 C13.6 9.7 13.9 8.9 14.2 8 C12.4 4.8 10.3 3.2 8 3.2 C7.5 3.2 7 3.3 6.5 3.4",
+    "M2.5 2.5 L13.5 13.5",
+  ],
+  table: ["M2.5 3.5 h11 v9 h-11 z", "M2.5 6.5 H13.5", "M6.5 6.5 V12.5"],
+  columns: ["M2.5 3.5 h11 v9 h-11 z", "M6.5 3.5 V12.5", "M10.5 3.5 V12.5"],
 };
 
 // Same fallback posture as kindIcon(): an unknown name reads as "more" rather than throwing.

@@ -83,12 +83,24 @@ import {
   validateStepVars,
 } from "../domain/scanVars";
 import { layoutGraph } from "../domain/graphLayout";
-import { projectGraph } from "../domain/graphProject";
-import { AI_ASSET_KINDS, type GEdge, type GNode, type IssueRow } from "../domain/graphTypes";
+import { nodeOrder, projectGraph, type Projection } from "../domain/graphProject";
+import {
+  DEFAULT_QUERY,
+  queryVocabulary,
+  runQuery,
+  validateQuery,
+} from "../domain/graphQuery";
+import {
+  AI_ASSET_KINDS,
+  type GEdge,
+  type GNode,
+  type GraphDoc,
+  type IssueRow,
+} from "../domain/graphTypes";
 import { DATASTORE_KINDS } from "../domain/graphEnrich";
 import { comboDigest } from "../domain/comboDigest";
 import { comboGroupById, comboSummary, REGISTER_GROUPS } from "../domain/toxicCombos";
-import { nowIso, type Rec } from "../domain/util";
+import { clampInt, nowIso, type Rec } from "../domain/util";
 import { archiveBytes } from "./archiveStore";
 import { activeJob } from "./jobsStore";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
@@ -346,6 +358,120 @@ export function getGraph(p?: unknown): ApiResult {
       };
     });
   });
+}
+
+// ------------------------------------------------------------------ graph query
+
+/**
+ * The vocabulary the query builder is allowed to offer — kinds and relationships that exist in
+ * THIS tenant's graph, not the whole enum.
+ *
+ * Its own endpoint rather than a field on `bootstrap`: the page prefetches both in parallel, so
+ * it costs no extra round trip before first paint, and keeping it out of the bootstrap payload
+ * keeps a small, hot, universally-fetched object small.
+ */
+export function getQueryVocabulary(): ApiResult {
+  return run(() =>
+    cached("queryVocabulary", {}, () => {
+      const doc = syncStore.loadGraphDoc();
+      if (!doc) return { empty: true, kinds: [], stepsFrom: {} };
+      return queryVocabulary(doc);
+    }),
+  );
+}
+
+/**
+ * Run a path query and answer BOTH views from one payload.
+ *
+ * The table wants rows; the canvas wants a laid-out subgraph. Shipping them together is what
+ * keeps the VIEW toggle instant — the page swaps which one it paints without a second round
+ * trip, exactly as it did when both views read one `getGraph` payload. The row list is bounded
+ * by QUERY_ROW_MAX and the canvas by the deployment's node budget, so neither half is
+ * unbounded (`src/domain/assetTable.ts` sets the precedent).
+ */
+export function runGraphQuery(p?: unknown): ApiResult {
+  return run(() => {
+    const params = (p ?? {}) as Rec;
+    const query = validateQuery(params["query"] ?? DEFAULT_QUERY);
+    const columns = readColumnSelection(params["columns"]);
+    const view = resolveLayoutParams(params);
+    const maxNodes = clampInt(
+      params["maxNodes"],
+      settingsStore.getMaxNodes(),
+      MAX_NODES_FLOOR,
+      MAX_NODES_CEILING,
+    );
+    // The validated tree is the cache key, not the raw params: two spellings of the same query
+    // (an absent `show: true`, a step order the builder rewrote) must not each buy their own
+    // cache entry and their own Sheets read.
+    return cached("graphQuery", { query, columns, view, maxNodes }, () => {
+      const doc = syncStore.loadGraphDoc();
+      if (!doc) return { empty: true };
+      const result = runQuery(doc, query, { columns });
+      const projection = inducedProjection(doc, result.nodeIds, result.edgeIds, maxNodes);
+      return {
+        rows: result.rows,
+        groups: result.groups,
+        total: result.total,
+        capped: result.capped,
+        truncated: result.truncated,
+        nodes: projection.nodes,
+        edges: projection.edges,
+        summaries: projection.summaries,
+        counts: projection.counts,
+        layout: layoutGraph(projection, view),
+        options: { maxNodes, layout: view.mode, groupBy: view.groupBy, sort: view.sort },
+        syncedAt: doc.syncedAt,
+      };
+    });
+  });
+}
+
+/** `columns[i]` is the field-key list for the i-th shown node, or null to take its defaults. */
+function readColumnSelection(raw: unknown): Array<string[] | null> | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  return raw.map((entry) =>
+    Array.isArray(entry) ? entry.map((k) => String(k)) : null);
+}
+
+/**
+ * The matched paths as a drawable subgraph.
+ *
+ * `projectGraph` cannot do this job: it answers "what is within N hops of these seeds", and the
+ * whole point of a query is that the answer is a specific set of paths rather than a
+ * neighbourhood. So the projection is assembled directly — but in the SAME shape, so
+ * `layoutGraph` takes it unchanged.
+ *
+ * Over budget, nodes are dropped worst-last by `nodeOrder` (the canvas's own ordering, so a
+ * capped view keeps the interesting end) and any edge losing an endpoint goes with them. No
+ * SUMMARY stubs: a "+N more" pill collapses a fan-out under one parent, and a truncated path
+ * set has no parent to hang one off — the counts line says what was dropped instead.
+ */
+function inducedProjection(
+  doc: GraphDoc,
+  nodeIds: string[],
+  edgeIds: string[],
+  maxNodes: number,
+): Projection {
+  const wantNodes = new Set(nodeIds);
+  const wantEdges = new Set(edgeIds);
+  const all = doc.nodes.filter((n) => wantNodes.has(n.id)).sort(nodeOrder);
+  const nodes = all.slice(0, maxNodes);
+  const admitted = new Set(nodes.map((n) => n.id));
+  const allEdges = doc.edges.filter((e) => wantEdges.has(e.id));
+  const edges = allEdges.filter((e) => admitted.has(e.src) && admitted.has(e.dst));
+  return {
+    nodes,
+    edges,
+    summaries: [],
+    counts: {
+      totalNodes: all.length,
+      shownNodes: nodes.length,
+      totalEdges: allEdges.length,
+      shownEdges: edges.length,
+      capped: nodes.length < all.length,
+    },
+  };
 }
 
 // ------------------------------------------------------------------------ inventory

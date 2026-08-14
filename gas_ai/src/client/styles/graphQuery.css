@@ -1,0 +1,182 @@
+/* ------------------------------------------------- security graph query builder */
+/* The FIND / THAT rows above the canvas, the VIEW row under them, and the path table.
+   New classes only — nothing here reaches into a shared recipe, so the inventory, combos
+   and compliance registers are untouched by any of it.
+
+   Colour follows the existing tokens rather than the reference screenshot's blue chrome:
+   an entity chip is tinted by its graph CATEGORY, which is where the reader already learned
+   that purple means an identity and blue means an AI asset. The tint is redundant with the
+   kind icon and the kind label beside it, never the only cue. */
+
+.gq {
+  display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 16px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--surface);
+}
+.gq-rows { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.gq-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  border-radius: var(--radius-md);
+  padding: 2px 4px 2px 0;
+}
+/* One tab stop for the tree; arrows move within it. The ring is the base recipe's, never
+   overridden — a roving-tabindex widget is exactly where a missing focus ring strands
+   someone. */
+.gq-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* A hidden node still constrains the query, so it stays legible rather than being greyed
+   into looking disabled — the struck-through eye carries the state. */
+.gq-row.is-hidden .gq-chip { border-style: dashed; }
+
+/* FIND / THAT / VIEW: the DESIGN.md label role, in a neutral pill so the keyword reads as
+   grammar rather than as another control. */
+.gq-kw {
+  flex: 0 0 auto;
+  min-width: 42px; text-align: center;
+  padding: 2px 7px; border-radius: var(--radius-sm);
+  background: var(--track-bg);
+  font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+/* Negation is a word, not a colour: "NOT" spelled out beside the relationship it inverts. */
+.gq-not {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+  color: var(--sev-high-text);
+}
+
+/* The chip IS the combobox's own trigger, restyled — see chipPicker() for why. Everything
+   below therefore has to win against the .combobox-trigger recipe rather than replace it. */
+.gq-chip-wrap { display: inline-flex; }
+.gq-chip-wrap .combobox-trigger-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gq-chip-wrap .combobox-caret { color: var(--text-3); font-size: 10px; margin-left: 2px; }
+.gq-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-height: 28px; padding: 2px 8px 2px 7px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--hairline);
+  background: var(--page);
+  box-shadow: none;
+  font-size: 13px; font-weight: 600;
+  color: var(--ink);
+  max-width: 320px;
+}
+.gq-chip-icon { flex: 0 0 auto; }
+/* A relationship is a verb: neutral ground and lighter weight, so the two ENTITIES are what
+   the eye picks out of the line. */
+.gq-chip--edge {
+  background: var(--surface);
+  font-weight: 500;
+  color: var(--text-2);
+}
+.gq-chip--edge:hover { color: var(--ink); }
+
+/* Category tinting, matching the canvas medallions exactly: pale ground, saturated ink on the
+   icon (a graphical mark, >=3:1), the darkened text token on the label (>=4.5:1 on that
+   ground). The two-token rule, applied to a chip. */
+.gq-chip[data-category="asset"] {
+  background: var(--cat-asset-tint); border-color: var(--cat-asset-ink);
+  color: var(--cat-asset-text);
+}
+.gq-chip[data-category="asset"] .gq-chip-icon { color: var(--cat-asset-ink); stroke: var(--cat-asset-ink); }
+.gq-chip[data-category="data"] {
+  background: var(--cat-data-tint); border-color: var(--cat-data-ink);
+  color: var(--cat-data-text);
+}
+.gq-chip[data-category="data"] .gq-chip-icon { color: var(--cat-data-ink); stroke: var(--cat-data-ink); }
+.gq-chip[data-category="iam"] {
+  background: var(--cat-iam-tint); border-color: var(--cat-iam-ink);
+  color: var(--cat-iam-text);
+}
+.gq-chip[data-category="iam"] .gq-chip-icon { color: var(--cat-iam-ink); stroke: var(--cat-iam-ink); }
+.gq-chip[data-category="vuln"] {
+  background: var(--cat-vuln-tint); border-color: var(--cat-vuln-ink);
+  color: var(--cat-vuln-text);
+}
+.gq-chip[data-category="vuln"] .gq-chip-icon { color: var(--cat-vuln-ink); stroke: var(--cat-vuln-ink); }
+.gq-chip[data-category="exposure"] {
+  background: var(--cat-exposure-tint); border-color: var(--cat-exposure-ink);
+  color: var(--cat-exposure-text);
+}
+.gq-chip[data-category="exposure"] .gq-chip-icon { color: var(--cat-exposure-ink); stroke: var(--cat-exposure-ink); }
+
+/* Row actions: flat 26px squares. They reset the 36px bordered global button recipe the same
+   way .filter-chip-body does — left alone, three shadowed surfaces would sit in a 28px line. */
+.gq-row-actions { display: inline-flex; align-items: center; gap: 2px; margin-left: 2px; }
+.gq-iconbtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; min-height: 0; padding: 0;
+  border: none; background: none; box-shadow: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+}
+.gq-iconbtn:hover { background: var(--wash-hover); color: var(--ink); border-color: transparent; }
+.gq-iconbtn[aria-pressed="false"] { color: var(--text-3); }
+
+/* Result count: right-aligned on the first row's line, tabular so it does not jitter as the
+   number changes under a live filter. */
+.gq-count {
+  margin-left: auto; align-self: flex-start;
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  padding-top: 4px;
+}
+
+/* ------------------------------------------------------------------- header actions */
+.gq-head-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.gq-head-actions button { min-height: 30px; padding: 4px 10px; font-size: 13px; }
+
+/* ------------------------------------------------------------------------ view row */
+.gq-viewbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--hairline);
+}
+.gq-viewbar-end { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.gq-viewbar .segmented > button { min-height: 30px; }
+.gq-view-icon { display: inline-flex; margin-right: 6px; vertical-align: -2px; }
+
+/* --------------------------------------------------------------------- path table */
+.gq-results { padding-bottom: 8px; }
+/* The group header row: quieter than the column row beneath it, and ruled off so the reader
+   sees which columns belong to which node in the query. */
+.gq-table table.data thead .th-groups th {
+  font-size: 11px; letter-spacing: 0.06em;
+  color: var(--text-2);
+  background: var(--surface);
+  border-bottom: 1px solid var(--hairline);
+  padding-top: 7px; padding-bottom: 5px;
+}
+.gq-table table.data thead .th-groups th + th,
+.gq-table table.data th.gq-group-start,
+.gq-table table.data td.gq-group-start { border-left: 1px solid var(--hairline); }
+/* Two header rows, so the second one sticks below the first rather than on top of it. */
+.gq-table table.data thead .th-groups th { top: 0; }
+.gq-table table.data thead tr:last-child th { top: 27px; }
+
+.gq-name { display: inline-flex; align-items: center; gap: 7px; max-width: 100%; }
+.gq-name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The kind icon in a tinted tile, the same category cue the canvas medallion carries. */
+.gq-cell-icon {
+  flex: 0 0 auto; width: 18px; height: 18px; padding: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--track-bg);
+  color: var(--text-2);
+}
+.gq-name[data-category="asset"] .gq-cell-icon { background: var(--cat-asset-tint); color: var(--cat-asset-ink); stroke: var(--cat-asset-ink); }
+.gq-name[data-category="data"] .gq-cell-icon { background: var(--cat-data-tint); color: var(--cat-data-ink); stroke: var(--cat-data-ink); }
+.gq-name[data-category="iam"] .gq-cell-icon { background: var(--cat-iam-tint); color: var(--cat-iam-ink); stroke: var(--cat-iam-ink); }
+.gq-name[data-category="vuln"] .gq-cell-icon { background: var(--cat-vuln-tint); color: var(--cat-vuln-ink); stroke: var(--cat-vuln-ink); }
+.gq-name[data-category="exposure"] .gq-cell-icon { background: var(--cat-exposure-tint); color: var(--cat-exposure-ink); stroke: var(--cat-exposure-ink); }
+
+/* ----------------------------------------------------------------- column chooser */
+.gq-columns { display: flex; flex-direction: column; gap: 14px; min-width: 220px; }
+.gq-columns-group { display: flex; flex-direction: column; gap: 6px; }
+.gq-columns-group > .label { margin: 0; }
+
+@media (max-width: 800px) {
+  .gq { gap: 6px 10px; }
+  .gq-count { margin-left: 0; padding-top: 0; }
+  .gq-chip { max-width: 190px; }
+}

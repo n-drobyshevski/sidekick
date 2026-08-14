@@ -649,6 +649,14 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
     },
     "ok": true,
   },
+  "getQueryVocabulary": {
+    "data": {
+      "empty": true,
+      "kinds": [],
+      "stepsFrom": {},
+    },
+    "ok": true,
+  },
   "getSettings": {
     "data": {
       "autoExpand": true,
@@ -663,7 +671,7 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
   "getStorageStats": {
     "data": {
       "archiveBytes": 0,
-      "cellCount": 38900,
+      "cellCount": 39300,
       "rows": {
         "assets": 0,
         "dataFindings": 0,
@@ -1038,6 +1046,12 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
         },
       ],
       "totalOpen": 0,
+    },
+    "ok": true,
+  },
+  "runGraphQuery": {
+    "data": {
+      "empty": true,
     },
     "ok": true,
   },
@@ -6792,6 +6806,9 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "comboGroups": [
           "gcp-managed-privileged",
         ],
+        "discoveryMethods": [
+          "MethodCloudScanning",
+        ],
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": true,
         "hasAccessToSensitiveData": true,
@@ -6815,6 +6832,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
             "name": "PROJECT-ALPHA",
           },
         ],
+        "publisher": "Platform Engineering",
         "region": "europe-west1",
         "severity": "HIGH",
         "status": "Active",
@@ -6860,6 +6878,9 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "cloudPlatform": "GCP",
         "comboGroups": [
           "gcp-managed-privileged",
+        ],
+        "discoveryMethods": [
+          "MethodCloudScanning",
         ],
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": true,
@@ -6937,6 +6958,9 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "comboGroups": [
           "gcp-managed-privileged",
         ],
+        "discoveryMethods": [
+          "MethodCloudScanning",
+        ],
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": true,
         "hasAccessToSensitiveData": true,
@@ -7008,6 +7032,9 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "cloudPlatform": "GCP",
         "comboGroups": [
           "gcp-managed-privileged",
+        ],
+        "discoveryMethods": [
+          "MethodCloudScanning",
         ],
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": true,
@@ -7081,6 +7108,9 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "comboGroups": [
           "gcp-managed-privileged",
         ],
+        "discoveryMethods": [
+          "MethodCloudScanning",
+        ],
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": true,
         "hasAccessToSensitiveData": true,
@@ -7151,6 +7181,9 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "gcp-managed-privileged",
           "other-ai-risk",
         ],
+        "discoveryMethods": [
+          "MethodCloudScanning",
+        ],
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": true,
         "hasAccessToSensitiveData": true,
@@ -7206,6 +7239,9 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "comboGroups": [
           "gcp-managed-privileged",
         ],
+        "discoveryMethods": [
+          "MethodCloudScanning",
+        ],
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": true,
         "hasAccessToSensitiveData": true,
@@ -7257,6 +7293,9 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "comboGroups": [
           "gcp-managed-privileged",
         ],
+        "discoveryMethods": [
+          "MethodCloudScanning",
+        ],
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": true,
         "hasAccessToSensitiveData": true,
@@ -7307,6 +7346,9 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "cloudPlatform": "GCP",
         "comboGroups": [
           "gcp-managed-privileged",
+        ],
+        "discoveryMethods": [
+          "MethodCloudScanning",
         ],
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": true,
@@ -7379,6 +7421,9 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "cloudPlatform": "GCP",
         "comboGroups": [
           "gcp-hosted-privileged",
+        ],
+        "discoveryMethods": [
+          "MethodWorkloadScanning",
         ],
         "exposureEvidence": {
           "hostIds": [
@@ -7484,6 +7529,9 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "comboGroups": [
           "gcp-hosted-privileged",
         ],
+        "discoveryMethods": [
+          "MethodWorkloadScanning",
+        ],
         "exposureEvidence": {
           "endpointIds": [
             "endpoint-agent-i",
@@ -7546,6 +7594,9 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "comboGroups": [
           "permissive-exec-identity",
         ],
+        "discoveryMethods": [
+          "MethodCloudScanning",
+        ],
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
         "hasAccessToSensitiveData": false,
@@ -7601,6 +7652,9 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "cloudPlatform": "GCP",
         "comboGroups": [
           "permissive-exec-identity",
+        ],
+        "discoveryMethods": [
+          "MethodCloudScanning",
         ],
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
@@ -8321,6 +8375,8 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       },
       {
         "cloudPlatform": "GCP",
+        "displayName": "Vertex AI Agent Service Account",
+        "email": "sa-agent-a@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
         "hasAccessToSensitiveData": true,
@@ -8350,6 +8406,8 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       },
       {
         "cloudPlatform": "GCP",
+        "displayName": "Vertex AI Reasoning Agent Identity",
+        "email": "sa-agent-b@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
         "hasAccessToSensitiveData": true,
@@ -8379,6 +8437,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       },
       {
         "cloudPlatform": "GCP",
+        "email": "sa-agent-autogen@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
         "hasAccessToSensitiveData": true,
@@ -8408,6 +8467,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       },
       {
         "cloudPlatform": "GCP",
+        "email": "sa-agent-d-test@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
         "hasAccessToSensitiveData": true,
@@ -8437,6 +8497,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       },
       {
         "cloudPlatform": "GCP",
+        "email": "sa-agent-d@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
         "hasAccessToSensitiveData": true,
@@ -8466,6 +8527,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       },
       {
         "cloudPlatform": "GCP",
+        "email": "sa-agent-e@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
         "hasAccessToSensitiveData": true,
@@ -8495,6 +8557,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       },
       {
         "cloudPlatform": "GCP",
+        "email": "sa-agent-f@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
         "hasAccessToSensitiveData": true,
@@ -8524,6 +8587,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       },
       {
         "cloudPlatform": "GCP",
+        "email": "sa-agent-f-preprod@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
         "hasAccessToSensitiveData": true,
@@ -8553,6 +8617,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       },
       {
         "cloudPlatform": "GCP",
+        "email": "sa-agent-g@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
         "hasAccessToSensitiveData": true,
@@ -8582,6 +8647,8 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       },
       {
         "cloudPlatform": "GCP",
+        "displayName": "Support chatbot runtime identity",
+        "email": "sa-agent-h-chatbot@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
         "hasAccessToSensitiveData": true,
@@ -8611,6 +8678,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
       },
       {
         "cloudPlatform": "GCP",
+        "email": "sa-agent-i@iam.gserviceaccount.com",
         "firstSeen": "2026-04-02T08:00:00Z",
         "guardrailMissing": false,
         "hasAccessToSensitiveData": true,
@@ -10884,6 +10952,580 @@ Ignored until: Feb 1, 2026",
 }
 `;
 
+exports[`read endpoints > getQueryVocabulary answers the same shape 1`] = `
+{
+  "data": {
+    "kinds": [
+      {
+        "count": 14,
+        "kind": "AI_AGENT",
+      },
+      {
+        "count": 2,
+        "kind": "AI_MODEL",
+      },
+      {
+        "count": 3,
+        "kind": "AI_GUARDRAIL",
+      },
+      {
+        "count": 1,
+        "kind": "AI_PIPELINE",
+      },
+      {
+        "count": 1,
+        "kind": "AI_DATASET",
+      },
+      {
+        "count": 1,
+        "kind": "MCP_SERVER",
+      },
+      {
+        "count": 14,
+        "kind": "SERVICE_ACCOUNT",
+      },
+      {
+        "count": 12,
+        "kind": "USER_ACCOUNT",
+      },
+      {
+        "count": 8,
+        "kind": "ACCESS_ROLE",
+      },
+      {
+        "count": 1,
+        "kind": "ACCESS_KEY",
+      },
+      {
+        "count": 19,
+        "kind": "BUCKET",
+      },
+      {
+        "count": 2,
+        "kind": "DATABASE",
+      },
+      {
+        "count": 1,
+        "kind": "VIRTUAL_MACHINE",
+      },
+      {
+        "count": 1,
+        "kind": "SERVERLESS",
+      },
+      {
+        "count": 1,
+        "kind": "CONTAINER_IMAGE",
+      },
+      {
+        "count": 1,
+        "kind": "REPOSITORY",
+      },
+      {
+        "count": 2,
+        "kind": "EXCESSIVE_ACCESS_FINDING",
+      },
+      {
+        "count": 1,
+        "kind": "LATERAL_MOVEMENT_FINDING",
+      },
+      {
+        "count": 1,
+        "kind": "IDENTITY_ACCESS_FINDING",
+      },
+      {
+        "count": 32,
+        "kind": "ISSUE",
+      },
+      {
+        "count": 10,
+        "kind": "SENSITIVE_DATA",
+      },
+      {
+        "count": 4,
+        "kind": "INTERNET_EXPOSURE",
+      },
+      {
+        "count": 32,
+        "kind": "EXCESSIVE_PRIVILEGE",
+      },
+      {
+        "count": 19,
+        "kind": "MISSING_GUARDRAIL",
+      },
+      {
+        "count": 3,
+        "kind": "DATA_FINDING",
+      },
+      {
+        "count": 2,
+        "kind": "ENDPOINT",
+      },
+    ],
+    "stepsFrom": {
+      "ACCESS_KEY": [
+        {
+          "count": 1,
+          "edge": "HAS_ACCESS_TO_SENSITIVE_DATA",
+          "kind": "SENSITIVE_DATA",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "RUNS_AS",
+          "kind": "AI_AGENT",
+          "reverse": true,
+        },
+      ],
+      "ACCESS_ROLE": [
+        {
+          "count": 8,
+          "edge": "CAN_INVOKE",
+          "kind": "AI_MODEL",
+          "reverse": false,
+        },
+        {
+          "count": 8,
+          "edge": "HAS_ACCESS_TO_SENSITIVE_DATA",
+          "kind": "SENSITIVE_DATA",
+          "reverse": false,
+        },
+        {
+          "count": 8,
+          "edge": "HAS_EXCESSIVE_PRIVILEGE",
+          "kind": "EXCESSIVE_PRIVILEGE",
+          "reverse": false,
+        },
+        {
+          "count": 8,
+          "edge": "HAS_ISSUE",
+          "kind": "ISSUE",
+          "reverse": false,
+        },
+      ],
+      "AI_AGENT": [
+        {
+          "count": 24,
+          "edge": "HAS_ISSUE",
+          "kind": "ISSUE",
+          "reverse": false,
+        },
+        {
+          "count": 14,
+          "edge": "RUNS_AS",
+          "kind": "SERVICE_ACCOUNT",
+          "reverse": false,
+        },
+        {
+          "count": 13,
+          "edge": "HAS_EXCESSIVE_PRIVILEGE",
+          "kind": "EXCESSIVE_PRIVILEGE",
+          "reverse": false,
+        },
+        {
+          "count": 12,
+          "edge": "ALLOWS_ACCESS_TO",
+          "kind": "USER_ACCOUNT",
+          "reverse": true,
+        },
+        {
+          "count": 3,
+          "edge": "EXPOSED_TO_INTERNET",
+          "kind": "INTERNET_EXPOSURE",
+          "reverse": false,
+        },
+        {
+          "count": 2,
+          "edge": "INVOKES_TOOL",
+          "kind": "MCP_SERVER",
+          "reverse": false,
+        },
+        {
+          "count": 2,
+          "edge": "USES_MODEL",
+          "kind": "AI_MODEL",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "BUILT_FROM",
+          "kind": "CONTAINER_IMAGE",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "HAS_FINDING",
+          "kind": "IDENTITY_ACCESS_FINDING",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "HOSTED_ON",
+          "kind": "SERVERLESS",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "HOSTED_ON",
+          "kind": "VIRTUAL_MACHINE",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "PROTECTED_BY",
+          "kind": "AI_GUARDRAIL",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "RUNS_AS",
+          "kind": "ACCESS_KEY",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "SERVES",
+          "kind": "ENDPOINT",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "USES_DATASET",
+          "kind": "AI_DATASET",
+          "reverse": false,
+        },
+      ],
+      "AI_DATASET": [
+        {
+          "count": 1,
+          "edge": "HAS_SENSITIVE_DATA",
+          "kind": "SENSITIVE_DATA",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "STORED_IN",
+          "kind": "BUCKET",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "USES_DATASET",
+          "kind": "AI_AGENT",
+          "reverse": true,
+        },
+        {
+          "count": 1,
+          "edge": "USES_DATASET",
+          "kind": "AI_PIPELINE",
+          "reverse": true,
+        },
+      ],
+      "AI_GUARDRAIL": [
+        {
+          "count": 1,
+          "edge": "ENFORCES",
+          "kind": "AI_MODEL",
+          "reverse": true,
+        },
+        {
+          "count": 1,
+          "edge": "PROTECTED_BY",
+          "kind": "AI_AGENT",
+          "reverse": true,
+        },
+      ],
+      "AI_MODEL": [
+        {
+          "count": 8,
+          "edge": "CAN_INVOKE",
+          "kind": "ACCESS_ROLE",
+          "reverse": true,
+        },
+        {
+          "count": 2,
+          "edge": "USES_MODEL",
+          "kind": "AI_AGENT",
+          "reverse": true,
+        },
+        {
+          "count": 1,
+          "edge": "ENFORCES",
+          "kind": "AI_GUARDRAIL",
+          "reverse": false,
+        },
+      ],
+      "AI_PIPELINE": [
+        {
+          "count": 1,
+          "edge": "USES_DATASET",
+          "kind": "AI_DATASET",
+          "reverse": false,
+        },
+      ],
+      "BUCKET": [
+        {
+          "count": 24,
+          "edge": "ALLOWS_ACCESS_TO",
+          "kind": "SERVICE_ACCOUNT",
+          "reverse": true,
+        },
+        {
+          "count": 2,
+          "edge": "HAS_DATA_FINDING",
+          "kind": "DATA_FINDING",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "STORED_IN",
+          "kind": "AI_DATASET",
+          "reverse": true,
+        },
+      ],
+      "CONTAINER_IMAGE": [
+        {
+          "count": 1,
+          "edge": "BUILT_FROM",
+          "kind": "REPOSITORY",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "BUILT_FROM",
+          "kind": "AI_AGENT",
+          "reverse": true,
+        },
+      ],
+      "DATABASE": [
+        {
+          "count": 8,
+          "edge": "ALLOWS_ACCESS_TO",
+          "kind": "SERVICE_ACCOUNT",
+          "reverse": true,
+        },
+        {
+          "count": 1,
+          "edge": "HAS_DATA_FINDING",
+          "kind": "DATA_FINDING",
+          "reverse": false,
+        },
+      ],
+      "DATA_FINDING": [
+        {
+          "count": 2,
+          "edge": "HAS_DATA_FINDING",
+          "kind": "BUCKET",
+          "reverse": true,
+        },
+        {
+          "count": 1,
+          "edge": "HAS_DATA_FINDING",
+          "kind": "DATABASE",
+          "reverse": true,
+        },
+      ],
+      "ENDPOINT": [
+        {
+          "count": 1,
+          "edge": "SERVES",
+          "kind": "AI_AGENT",
+          "reverse": true,
+        },
+        {
+          "count": 1,
+          "edge": "SERVES",
+          "kind": "SERVERLESS",
+          "reverse": true,
+        },
+      ],
+      "EXCESSIVE_ACCESS_FINDING": [
+        {
+          "count": 2,
+          "edge": "HAS_FINDING",
+          "kind": "SERVICE_ACCOUNT",
+          "reverse": true,
+        },
+      ],
+      "EXCESSIVE_PRIVILEGE": [
+        {
+          "count": 13,
+          "edge": "HAS_EXCESSIVE_PRIVILEGE",
+          "kind": "AI_AGENT",
+          "reverse": true,
+        },
+        {
+          "count": 11,
+          "edge": "HAS_EXCESSIVE_PRIVILEGE",
+          "kind": "SERVICE_ACCOUNT",
+          "reverse": true,
+        },
+        {
+          "count": 8,
+          "edge": "HAS_EXCESSIVE_PRIVILEGE",
+          "kind": "ACCESS_ROLE",
+          "reverse": true,
+        },
+      ],
+      "IDENTITY_ACCESS_FINDING": [
+        {
+          "count": 1,
+          "edge": "HAS_FINDING",
+          "kind": "AI_AGENT",
+          "reverse": true,
+        },
+      ],
+      "INTERNET_EXPOSURE": [
+        {
+          "count": 3,
+          "edge": "EXPOSED_TO_INTERNET",
+          "kind": "AI_AGENT",
+          "reverse": true,
+        },
+        {
+          "count": 1,
+          "edge": "EXPOSED_TO_INTERNET",
+          "kind": "SERVERLESS",
+          "reverse": true,
+        },
+      ],
+      "ISSUE": [
+        {
+          "count": 24,
+          "edge": "HAS_ISSUE",
+          "kind": "AI_AGENT",
+          "reverse": true,
+        },
+        {
+          "count": 8,
+          "edge": "HAS_ISSUE",
+          "kind": "ACCESS_ROLE",
+          "reverse": true,
+        },
+      ],
+      "LATERAL_MOVEMENT_FINDING": [
+        {
+          "count": 1,
+          "edge": "HAS_FINDING",
+          "kind": "SERVICE_ACCOUNT",
+          "reverse": true,
+        },
+      ],
+      "MCP_SERVER": [
+        {
+          "count": 2,
+          "edge": "INVOKES_TOOL",
+          "kind": "AI_AGENT",
+          "reverse": true,
+        },
+      ],
+      "REPOSITORY": [
+        {
+          "count": 1,
+          "edge": "BUILT_FROM",
+          "kind": "CONTAINER_IMAGE",
+          "reverse": true,
+        },
+      ],
+      "SENSITIVE_DATA": [
+        {
+          "count": 8,
+          "edge": "HAS_ACCESS_TO_SENSITIVE_DATA",
+          "kind": "ACCESS_ROLE",
+          "reverse": true,
+        },
+        {
+          "count": 1,
+          "edge": "HAS_ACCESS_TO_SENSITIVE_DATA",
+          "kind": "ACCESS_KEY",
+          "reverse": true,
+        },
+        {
+          "count": 1,
+          "edge": "HAS_SENSITIVE_DATA",
+          "kind": "AI_DATASET",
+          "reverse": true,
+        },
+      ],
+      "SERVERLESS": [
+        {
+          "count": 1,
+          "edge": "EXPOSED_TO_INTERNET",
+          "kind": "INTERNET_EXPOSURE",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "SERVES",
+          "kind": "ENDPOINT",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "HOSTED_ON",
+          "kind": "AI_AGENT",
+          "reverse": true,
+        },
+      ],
+      "SERVICE_ACCOUNT": [
+        {
+          "count": 24,
+          "edge": "ALLOWS_ACCESS_TO",
+          "kind": "BUCKET",
+          "reverse": false,
+        },
+        {
+          "count": 14,
+          "edge": "RUNS_AS",
+          "kind": "AI_AGENT",
+          "reverse": true,
+        },
+        {
+          "count": 11,
+          "edge": "HAS_EXCESSIVE_PRIVILEGE",
+          "kind": "EXCESSIVE_PRIVILEGE",
+          "reverse": false,
+        },
+        {
+          "count": 8,
+          "edge": "ALLOWS_ACCESS_TO",
+          "kind": "DATABASE",
+          "reverse": false,
+        },
+        {
+          "count": 2,
+          "edge": "HAS_FINDING",
+          "kind": "EXCESSIVE_ACCESS_FINDING",
+          "reverse": false,
+        },
+        {
+          "count": 1,
+          "edge": "HAS_FINDING",
+          "kind": "LATERAL_MOVEMENT_FINDING",
+          "reverse": false,
+        },
+      ],
+      "USER_ACCOUNT": [
+        {
+          "count": 12,
+          "edge": "ALLOWS_ACCESS_TO",
+          "kind": "AI_AGENT",
+          "reverse": false,
+        },
+      ],
+      "VIRTUAL_MACHINE": [
+        {
+          "count": 1,
+          "edge": "HOSTED_ON",
+          "kind": "AI_AGENT",
+          "reverse": true,
+        },
+      ],
+    },
+  },
+  "ok": true,
+}
+`;
+
 exports[`read endpoints > getSettings answers the same shape 1`] = `
 {
   "data": {
@@ -10901,8 +11543,8 @@ exports[`read endpoints > getSettings answers the same shape 1`] = `
 exports[`read endpoints > getStorageStats answers the same shape 1`] = `
 {
   "data": {
-    "archiveBytes": 73568,
-    "cellCount": 38900,
+    "archiveBytes": 75066,
+    "cellCount": 39300,
     "rows": {
       "assets": 87,
       "dataFindings": 6,
@@ -11612,6 +12254,3663 @@ exports[`read endpoints > getToxicCombos answers the same shape 1`] = `
 }
 `;
 
+exports[`read endpoints > runGraphQuery (agent runs as service account) answers the same shape 1`] = `
+{
+  "data": {
+    "capped": false,
+    "counts": {
+      "capped": false,
+      "shownEdges": 14,
+      "shownNodes": 28,
+      "totalEdges": 14,
+      "totalNodes": 28,
+    },
+    "edges": [
+      {
+        "dst": "sa-agent-a",
+        "id": "agent-a|RUNS_AS|sa-agent-a",
+        "src": "agent-a",
+        "type": "RUNS_AS",
+      },
+      {
+        "dst": "sa-agent-b",
+        "id": "agent-b|RUNS_AS|sa-agent-b",
+        "src": "agent-b",
+        "type": "RUNS_AS",
+      },
+      {
+        "dst": "sa-agent-autogen",
+        "id": "agent-autogen|RUNS_AS|sa-agent-autogen",
+        "src": "agent-autogen",
+        "type": "RUNS_AS",
+      },
+      {
+        "dst": "sa-agent-d-test",
+        "id": "agent-d-test|RUNS_AS|sa-agent-d-test",
+        "src": "agent-d-test",
+        "type": "RUNS_AS",
+      },
+      {
+        "dst": "sa-agent-d",
+        "id": "agent-d|RUNS_AS|sa-agent-d",
+        "src": "agent-d",
+        "type": "RUNS_AS",
+      },
+      {
+        "dst": "sa-agent-e",
+        "id": "agent-e|RUNS_AS|sa-agent-e",
+        "src": "agent-e",
+        "type": "RUNS_AS",
+      },
+      {
+        "dst": "sa-agent-f",
+        "id": "agent-f|RUNS_AS|sa-agent-f",
+        "src": "agent-f",
+        "type": "RUNS_AS",
+      },
+      {
+        "dst": "sa-agent-f-preprod",
+        "id": "agent-f-preprod|RUNS_AS|sa-agent-f-preprod",
+        "src": "agent-f-preprod",
+        "type": "RUNS_AS",
+      },
+      {
+        "dst": "sa-agent-g",
+        "id": "agent-g|RUNS_AS|sa-agent-g",
+        "src": "agent-g",
+        "type": "RUNS_AS",
+      },
+      {
+        "dst": "sa-agent-h-chatbot",
+        "id": "agent-h-chatbot|RUNS_AS|sa-agent-h-chatbot",
+        "src": "agent-h-chatbot",
+        "type": "RUNS_AS",
+      },
+      {
+        "dst": "sa-agent-i",
+        "id": "agent-i|RUNS_AS|sa-agent-i",
+        "src": "agent-i",
+        "type": "RUNS_AS",
+      },
+      {
+        "dst": "sa-agent-j",
+        "id": "agent-j|RUNS_AS|sa-agent-j",
+        "src": "agent-j",
+        "type": "RUNS_AS",
+      },
+      {
+        "dst": "sa-agent-k",
+        "id": "agent-k|RUNS_AS|sa-agent-k",
+        "src": "agent-k",
+        "type": "RUNS_AS",
+      },
+      {
+        "dst": "sa-agent-l-support",
+        "id": "agent-l-support|RUNS_AS|sa-agent-l-support",
+        "src": "agent-l-support",
+        "type": "RUNS_AS",
+      },
+    ],
+    "groups": [
+      {
+        "available": [
+          {
+            "key": "name",
+            "label": "Name",
+          },
+          {
+            "key": "kind",
+            "label": "Kind",
+          },
+          {
+            "key": "publisher",
+            "label": "Publisher",
+          },
+          {
+            "key": "discoveredBy",
+            "label": "Discovered by",
+          },
+          {
+            "key": "cloud",
+            "label": "Cloud",
+          },
+          {
+            "key": "region",
+            "label": "Region",
+          },
+          {
+            "key": "status",
+            "label": "Status",
+          },
+          {
+            "key": "severity",
+            "label": "Issue severity",
+          },
+          {
+            "key": "aars",
+            "label": "AARS",
+          },
+          {
+            "key": "aarsSeverity",
+            "label": "AARS level",
+          },
+          {
+            "key": "projects",
+            "label": "Projects",
+          },
+          {
+            "key": "guardrail",
+            "label": "Guardrail",
+          },
+          {
+            "key": "combos",
+            "label": "Toxic combinations",
+          },
+          {
+            "key": "internet",
+            "label": "Internet reachable",
+          },
+          {
+            "key": "sensitiveAccess",
+            "label": "Reaches classified data",
+          },
+        ],
+        "fields": [
+          {
+            "key": "name",
+            "label": "Name",
+            "numeric": undefined,
+          },
+          {
+            "key": "publisher",
+            "label": "Publisher",
+            "numeric": undefined,
+          },
+          {
+            "key": "discoveredBy",
+            "label": "Discovered by",
+            "numeric": undefined,
+          },
+        ],
+        "index": 0,
+        "kind": "AI_AGENT",
+        "label": "AI_AGENT",
+      },
+      {
+        "available": [
+          {
+            "key": "name",
+            "label": "Name",
+          },
+          {
+            "key": "kind",
+            "label": "Kind",
+          },
+          {
+            "key": "displayName",
+            "label": "Display name",
+          },
+          {
+            "key": "email",
+            "label": "Email",
+          },
+          {
+            "key": "inactive",
+            "label": "Inactive for the last 90 days",
+          },
+          {
+            "key": "identityPurpose",
+            "label": "Purpose",
+          },
+          {
+            "key": "cloud",
+            "label": "Cloud",
+          },
+          {
+            "key": "region",
+            "label": "Region",
+          },
+          {
+            "key": "status",
+            "label": "Status",
+          },
+          {
+            "key": "severity",
+            "label": "Issue severity",
+          },
+          {
+            "key": "aars",
+            "label": "AARS",
+          },
+          {
+            "key": "aarsSeverity",
+            "label": "AARS level",
+          },
+          {
+            "key": "projects",
+            "label": "Projects",
+          },
+          {
+            "key": "combos",
+            "label": "Toxic combinations",
+          },
+          {
+            "key": "internet",
+            "label": "Internet reachable",
+          },
+          {
+            "key": "sensitiveAccess",
+            "label": "Reaches classified data",
+          },
+        ],
+        "fields": [
+          {
+            "key": "name",
+            "label": "Name",
+            "numeric": undefined,
+          },
+          {
+            "key": "displayName",
+            "label": "Display name",
+            "numeric": undefined,
+          },
+          {
+            "key": "inactive",
+            "label": "Inactive for the last 90 days",
+            "numeric": undefined,
+          },
+        ],
+        "index": 1,
+        "kind": "SERVICE_ACCOUNT",
+        "label": "SERVICE_ACCOUNT",
+      },
+    ],
+    "layout": {
+      "height": 1940,
+      "laneGap": 150,
+      "mode": "rows",
+      "nodes": [
+        {
+          "cluster": 0,
+          "id": "agent-a",
+          "lane": 1,
+          "shelf": 0,
+          "x": 120,
+          "y": 270,
+        },
+        {
+          "cluster": 1,
+          "id": "agent-autogen",
+          "lane": 1,
+          "shelf": 0,
+          "x": 520,
+          "y": 270,
+        },
+        {
+          "cluster": 2,
+          "id": "agent-b",
+          "lane": 1,
+          "shelf": 0,
+          "x": 920,
+          "y": 270,
+        },
+        {
+          "cluster": 3,
+          "id": "agent-d",
+          "lane": 1,
+          "shelf": 0,
+          "x": 1320,
+          "y": 270,
+        },
+        {
+          "cluster": 4,
+          "id": "agent-d-test",
+          "lane": 1,
+          "shelf": 0,
+          "x": 1720,
+          "y": 270,
+        },
+        {
+          "cluster": 5,
+          "id": "agent-e",
+          "lane": 1,
+          "shelf": 0,
+          "x": 2120,
+          "y": 270,
+        },
+        {
+          "cluster": 6,
+          "id": "agent-f",
+          "lane": 1,
+          "shelf": 0,
+          "x": 2520,
+          "y": 270,
+        },
+        {
+          "cluster": 0,
+          "id": "sa-agent-a",
+          "lane": 2,
+          "shelf": 0,
+          "x": 120,
+          "y": 420,
+        },
+        {
+          "cluster": 1,
+          "id": "sa-agent-autogen",
+          "lane": 2,
+          "shelf": 0,
+          "x": 520,
+          "y": 420,
+        },
+        {
+          "cluster": 2,
+          "id": "sa-agent-b",
+          "lane": 2,
+          "shelf": 0,
+          "x": 920,
+          "y": 420,
+        },
+        {
+          "cluster": 3,
+          "id": "sa-agent-d",
+          "lane": 2,
+          "shelf": 0,
+          "x": 1320,
+          "y": 420,
+        },
+        {
+          "cluster": 4,
+          "id": "sa-agent-d-test",
+          "lane": 2,
+          "shelf": 0,
+          "x": 1720,
+          "y": 420,
+        },
+        {
+          "cluster": 5,
+          "id": "sa-agent-e",
+          "lane": 2,
+          "shelf": 0,
+          "x": 2120,
+          "y": 420,
+        },
+        {
+          "cluster": 6,
+          "id": "sa-agent-f",
+          "lane": 2,
+          "shelf": 0,
+          "x": 2520,
+          "y": 420,
+        },
+        {
+          "cluster": 7,
+          "id": "agent-f-preprod",
+          "lane": 1,
+          "shelf": 1,
+          "x": 120,
+          "y": 1220,
+        },
+        {
+          "cluster": 8,
+          "id": "agent-g",
+          "lane": 1,
+          "shelf": 1,
+          "x": 520,
+          "y": 1220,
+        },
+        {
+          "cluster": 9,
+          "id": "agent-h-chatbot",
+          "lane": 1,
+          "shelf": 1,
+          "x": 920,
+          "y": 1220,
+        },
+        {
+          "cluster": 10,
+          "id": "agent-i",
+          "lane": 1,
+          "shelf": 1,
+          "x": 1320,
+          "y": 1220,
+        },
+        {
+          "cluster": 11,
+          "id": "agent-j",
+          "lane": 1,
+          "shelf": 1,
+          "x": 1720,
+          "y": 1220,
+        },
+        {
+          "cluster": 12,
+          "id": "agent-k",
+          "lane": 1,
+          "shelf": 1,
+          "x": 2120,
+          "y": 1220,
+        },
+        {
+          "cluster": 13,
+          "id": "agent-l-support",
+          "lane": 1,
+          "shelf": 1,
+          "x": 2520,
+          "y": 1220,
+        },
+        {
+          "cluster": 7,
+          "id": "sa-agent-f-preprod",
+          "lane": 2,
+          "shelf": 1,
+          "x": 120,
+          "y": 1370,
+        },
+        {
+          "cluster": 8,
+          "id": "sa-agent-g",
+          "lane": 2,
+          "shelf": 1,
+          "x": 520,
+          "y": 1370,
+        },
+        {
+          "cluster": 9,
+          "id": "sa-agent-h-chatbot",
+          "lane": 2,
+          "shelf": 1,
+          "x": 920,
+          "y": 1370,
+        },
+        {
+          "cluster": 10,
+          "id": "sa-agent-i",
+          "lane": 2,
+          "shelf": 1,
+          "x": 1320,
+          "y": 1370,
+        },
+        {
+          "cluster": 11,
+          "id": "sa-agent-j",
+          "lane": 2,
+          "shelf": 1,
+          "x": 1720,
+          "y": 1370,
+        },
+        {
+          "cluster": 12,
+          "id": "sa-agent-k",
+          "lane": 2,
+          "shelf": 1,
+          "x": 2120,
+          "y": 1370,
+        },
+        {
+          "cluster": 13,
+          "id": "sa-agent-l-support",
+          "lane": 2,
+          "shelf": 1,
+          "x": 2520,
+          "y": 1370,
+        },
+      ],
+      "rowGap": 260,
+      "width": 2640,
+    },
+    "nodes": [
+      {
+        "aars": 76,
+        "aarsInput": {
+          "dataExposure": "SENSITIVE",
+          "dataFindings": [
+            {
+              "count": 1,
+              "severity": "CRITICAL",
+            },
+            {
+              "count": 1,
+              "severity": "HIGH",
+            },
+            {
+              "count": 1,
+              "severity": "MEDIUM",
+            },
+          ],
+          "gaps": [
+            {
+              "code": "LLM06",
+            },
+            {
+              "code": "ASI10",
+            },
+            {
+              "code": "NO_GUARDRAIL",
+            },
+          ],
+          "internetExposure": "NONE",
+        },
+        "aarsPillars": {
+          "compliance": 30,
+          "data": 22,
+          "exposure": 0,
+          "toxic": 24,
+        },
+        "aarsSeverity": "CRITICAL",
+        "cloudAccount": {
+          "id": "gcp-account-01",
+          "name": "gcp-account-01",
+        },
+        "cloudPlatform": "GCP",
+        "comboGroups": [
+          "gcp-managed-privileged",
+        ],
+        "discoveryMethods": [
+          "MethodCloudScanning",
+        ],
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": true,
+        "hasAccessToSensitiveData": true,
+        "hasAdminPrivileges": true,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "agent-autogen",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "kind": "AI_AGENT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "AGENT_AUTOGEN_DO_NOT_DELETE",
+        "nativeType": "aiplatform#ReasoningEngine",
+        "projects": [
+          {
+            "id": "proj-project-beta",
+            "name": "PROJECT-BETA",
+          },
+          {
+            "id": "proj-project-alpha",
+            "name": "PROJECT-ALPHA",
+          },
+        ],
+        "region": "us-west1",
+        "severity": "HIGH",
+        "status": "Active",
+        "technologyCategories": [
+          "AI Service",
+        ],
+      },
+      {
+        "aars": 71,
+        "aarsInput": {
+          "dataExposure": "SENSITIVE",
+          "dataFindings": [
+            {
+              "count": 1,
+              "severity": "CRITICAL",
+            },
+            {
+              "count": 1,
+              "severity": "MEDIUM",
+            },
+          ],
+          "gaps": [
+            {
+              "code": "LLM06",
+            },
+            {
+              "code": "LLM05",
+            },
+            {
+              "code": "NO_GUARDRAIL",
+            },
+          ],
+          "internetExposure": "CONFIRMED",
+        },
+        "aarsPillars": {
+          "compliance": 25,
+          "data": 22,
+          "exposure": 0,
+          "toxic": 24,
+        },
+        "aarsSeverity": "CRITICAL",
+        "cloudAccount": {
+          "id": "gcp-account-05",
+          "name": "gcp-account-05",
+        },
+        "cloudPlatform": "GCP",
+        "comboGroups": [
+          "gcp-hosted-privileged",
+        ],
+        "discoveryMethods": [
+          "MethodWorkloadScanning",
+        ],
+        "exposureEvidence": {
+          "hostIds": [
+            "run-agent-h",
+          ],
+          "ports": [
+            "443",
+            "80",
+          ],
+          "sourceIpRanges": [
+            "0.0.0.0/0",
+          ],
+        },
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": true,
+        "hasAccessToSensitiveData": true,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "humanAccess": {
+          "admin": true,
+          "dormantFindingCount": 1,
+          "effectiveIds": [
+            "user-ops-01",
+            "user-ops-07",
+          ],
+          "identityIds": [
+            "user-ops-01",
+            "user-ops-02",
+          ],
+          "inactiveCount": 1,
+          "noMfaCount": 1,
+          "permissionCount": 2,
+          "policyIds": [
+            "policy-ops-admin",
+            "policy-ops-reader",
+          ],
+        },
+        "id": "agent-h-chatbot",
+        "isAccessibleFromInternet": null,
+        "isOpenToAllInternet": null,
+        "kind": "AI_AGENT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "agent-H-chatbot",
+        "nativeType": "hostedAiAgent",
+        "projects": [
+          {
+            "id": "proj-project-alpha",
+            "name": "PROJECT-ALPHA",
+          },
+          {
+            "id": "proj-project-delta",
+            "name": "PROJECT-DELTA",
+          },
+          {
+            "id": "proj-project-epsilon",
+            "name": "PROJECT-EPSILON",
+          },
+        ],
+        "region": "europe-west1",
+        "severity": "HIGH",
+        "status": "Active",
+        "technologyCategories": [
+          "AI Service",
+        ],
+      },
+      {
+        "aars": 67,
+        "aarsInput": {
+          "dataExposure": "SENSITIVE",
+          "dataFindings": [
+            {
+              "count": 1,
+              "severity": "CRITICAL",
+            },
+            {
+              "count": 1,
+              "severity": "MEDIUM",
+            },
+          ],
+          "gaps": [
+            {
+              "code": "LLM04",
+            },
+            {
+              "code": "LLM06",
+            },
+            {
+              "code": "NO_GUARDRAIL",
+            },
+          ],
+          "internetExposure": "NONE",
+        },
+        "aarsPillars": {
+          "compliance": 25,
+          "data": 22,
+          "exposure": 0,
+          "toxic": 20,
+        },
+        "aarsSeverity": "HIGH",
+        "cloudAccount": {
+          "id": "gcp-account-02",
+          "name": "gcp-account-02",
+        },
+        "cloudPlatform": "GCP",
+        "comboGroups": [
+          "gcp-managed-privileged",
+        ],
+        "discoveryMethods": [
+          "MethodCloudScanning",
+        ],
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": true,
+        "hasAccessToSensitiveData": true,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "agent-d",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "kind": "AI_AGENT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "dev-agent-D",
+        "nativeType": "aiplatform#ReasoningEngine",
+        "projects": [
+          {
+            "id": "proj-project-beta",
+            "name": "PROJECT-BETA",
+          },
+          {
+            "id": "proj-project-alpha",
+            "name": "PROJECT-ALPHA",
+          },
+        ],
+        "region": "europe-west3",
+        "severity": "HIGH",
+        "status": "Active",
+        "technologyCategories": [
+          "AI Service",
+        ],
+      },
+      {
+        "aars": 67,
+        "aarsInput": {
+          "dataExposure": "SENSITIVE",
+          "dataFindings": [
+            {
+              "count": 1,
+              "severity": "CRITICAL",
+            },
+            {
+              "count": 1,
+              "severity": "MEDIUM",
+            },
+          ],
+          "gaps": [
+            {
+              "code": "LLM04",
+            },
+            {
+              "code": "LLM06",
+            },
+            {
+              "code": "NO_GUARDRAIL",
+            },
+          ],
+          "internetExposure": "NONE",
+        },
+        "aarsPillars": {
+          "compliance": 25,
+          "data": 22,
+          "exposure": 0,
+          "toxic": 20,
+        },
+        "aarsSeverity": "HIGH",
+        "cloudAccount": {
+          "id": "gcp-account-02",
+          "name": "gcp-account-02",
+        },
+        "cloudPlatform": "GCP",
+        "comboGroups": [
+          "gcp-managed-privileged",
+        ],
+        "discoveryMethods": [
+          "MethodCloudScanning",
+        ],
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": true,
+        "hasAccessToSensitiveData": true,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "agent-d-test",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "kind": "AI_AGENT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "dev-agent-D-test",
+        "nativeType": "aiplatform#ReasoningEngine",
+        "projects": [
+          {
+            "id": "proj-project-beta",
+            "name": "PROJECT-BETA",
+          },
+          {
+            "id": "proj-project-alpha",
+            "name": "PROJECT-ALPHA",
+          },
+        ],
+        "region": "europe-west3",
+        "severity": "HIGH",
+        "status": "Active",
+        "technologyCategories": [
+          "AI Service",
+        ],
+      },
+      {
+        "aars": 66,
+        "aarsInput": {
+          "dataExposure": "SENSITIVE",
+          "dataFindings": [
+            {
+              "count": 1,
+              "severity": "CRITICAL",
+            },
+            {
+              "count": 2,
+              "severity": "HIGH",
+            },
+          ],
+          "gaps": [
+            {
+              "code": "LLM06",
+            },
+            {
+              "code": "NO_GUARDRAIL",
+            },
+          ],
+          "internetExposure": "CONFIRMED",
+        },
+        "aarsPillars": {
+          "compliance": 20,
+          "data": 22,
+          "exposure": 0,
+          "toxic": 24,
+        },
+        "aarsSeverity": "HIGH",
+        "cloudAccount": {
+          "id": "gcp-account-03",
+          "name": "gcp-account-03",
+        },
+        "cloudPlatform": "GCP",
+        "comboGroups": [
+          "gcp-managed-privileged",
+          "other-ai-risk",
+        ],
+        "discoveryMethods": [
+          "MethodCloudScanning",
+        ],
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": true,
+        "hasAccessToSensitiveData": true,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "agent-e",
+        "isAccessibleFromInternet": true,
+        "isOpenToAllInternet": true,
+        "kind": "AI_AGENT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "Agent-E",
+        "nativeType": "aiplatform#ReasoningEngine",
+        "projects": [
+          {
+            "id": "proj-project-alpha",
+            "name": "PROJECT-ALPHA",
+          },
+          {
+            "id": "proj-project-gamma",
+            "name": "PROJECT-GAMMA",
+          },
+        ],
+        "region": "us-west1",
+        "severity": "HIGH",
+        "status": "Active",
+        "technologyCategories": [
+          "AI Service",
+        ],
+      },
+      {
+        "aars": 66,
+        "aarsInput": {
+          "dataExposure": "SENSITIVE",
+          "gaps": [
+            {
+              "code": "LLM06",
+            },
+            {
+              "code": "NO_GUARDRAIL",
+            },
+          ],
+          "internetExposure": "NONE",
+        },
+        "aarsPillars": {
+          "compliance": 20,
+          "data": 22,
+          "exposure": 0,
+          "toxic": 24,
+        },
+        "aarsSeverity": "HIGH",
+        "cloudPlatform": "GCP",
+        "comboGroups": [
+          "gcp-managed-privileged",
+        ],
+        "discoveryMethods": [
+          "MethodCloudScanning",
+        ],
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": true,
+        "hasAccessToSensitiveData": true,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "agent-g",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "kind": "AI_AGENT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "Agent-G",
+        "nativeType": "aiplatform#ReasoningEngine",
+        "projects": [
+          {
+            "id": "proj-project-alpha",
+            "name": "PROJECT-ALPHA",
+          },
+          {
+            "id": "proj-project-eta",
+            "name": "PROJECT-ETA",
+          },
+        ],
+        "region": "europe-west4",
+        "severity": "HIGH",
+        "status": "Active",
+        "technologyCategories": [
+          "AI Service",
+        ],
+      },
+      {
+        "aars": 66,
+        "aarsInput": {
+          "dataExposure": "SENSITIVE",
+          "dataFindings": [
+            {
+              "count": 1,
+              "severity": "CRITICAL",
+            },
+            {
+              "count": 2,
+              "severity": "HIGH",
+            },
+          ],
+          "gaps": [
+            {
+              "code": "LLM06",
+            },
+            {
+              "code": "NO_GUARDRAIL",
+            },
+          ],
+          "internetExposure": "CONFIRMED",
+        },
+        "aarsPillars": {
+          "compliance": 20,
+          "data": 22,
+          "exposure": 0,
+          "toxic": 24,
+        },
+        "aarsSeverity": "HIGH",
+        "cloudAccount": {
+          "id": "gcp-account-04",
+          "name": "gcp-account-04",
+        },
+        "cloudPlatform": "GCP",
+        "comboGroups": [
+          "gcp-hosted-privileged",
+        ],
+        "discoveryMethods": [
+          "MethodWorkloadScanning",
+        ],
+        "exposureEvidence": {
+          "endpointIds": [
+            "endpoint-agent-i",
+          ],
+          "exposureLevel": "High",
+        },
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": true,
+        "hasAccessToSensitiveData": true,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "agent-i",
+        "isAccessibleFromInternet": null,
+        "isOpenToAllInternet": null,
+        "kind": "AI_AGENT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "agent-I",
+        "nativeType": "hostedAiAgent",
+        "projects": [
+          {
+            "id": "proj-project-alpha",
+            "name": "PROJECT-ALPHA",
+          },
+          {
+            "id": "proj-project-zeta",
+            "name": "PROJECT-ZETA",
+          },
+        ],
+        "region": "europe-west4",
+        "severity": "HIGH",
+        "status": "Inactive",
+        "technologyCategories": [
+          "AI Service",
+        ],
+      },
+      {
+        "aars": 62,
+        "aarsInput": {
+          "dataExposure": "SENSITIVE",
+          "dataFindings": [
+            {
+              "count": 2,
+              "severity": "CRITICAL",
+            },
+            {
+              "count": 2,
+              "severity": "HIGH",
+            },
+            {
+              "count": 1,
+              "severity": "MEDIUM",
+            },
+          ],
+          "gaps": [
+            {
+              "code": "LLM06",
+            },
+            {
+              "code": "NO_GUARDRAIL",
+            },
+          ],
+          "internetExposure": "NONE",
+        },
+        "aarsPillars": {
+          "compliance": 20,
+          "data": 22,
+          "exposure": 0,
+          "toxic": 20,
+        },
+        "aarsSeverity": "HIGH",
+        "cloudAccount": {
+          "id": "gcp-account-01",
+          "name": "gcp-account-01",
+        },
+        "cloudPlatform": "GCP",
+        "comboGroups": [
+          "gcp-managed-privileged",
+        ],
+        "discoveryMethods": [
+          "MethodCloudScanning",
+        ],
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": true,
+        "hasAccessToSensitiveData": true,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "agent-a",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "kind": "AI_AGENT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "Agent-A",
+        "nativeType": "aiplatform#ReasoningEngine",
+        "projects": [
+          {
+            "id": "proj-project-beta",
+            "name": "PROJECT-BETA",
+          },
+          {
+            "id": "proj-project-alpha",
+            "name": "PROJECT-ALPHA",
+          },
+        ],
+        "publisher": "Platform Engineering",
+        "region": "europe-west1",
+        "severity": "HIGH",
+        "status": "Active",
+        "technologyCategories": [
+          "AI Service",
+        ],
+      },
+      {
+        "aars": 62,
+        "aarsInput": {
+          "dataExposure": "SENSITIVE",
+          "dataFindings": [
+            {
+              "count": 1,
+              "severity": "CRITICAL",
+            },
+            {
+              "count": 2,
+              "severity": "HIGH",
+            },
+          ],
+          "gaps": [
+            {
+              "code": "LLM06",
+            },
+            {
+              "code": "NO_GUARDRAIL",
+            },
+          ],
+          "internetExposure": "NONE",
+        },
+        "aarsPillars": {
+          "compliance": 20,
+          "data": 22,
+          "exposure": 0,
+          "toxic": 20,
+        },
+        "aarsSeverity": "HIGH",
+        "cloudAccount": {
+          "id": "gcp-account-01",
+          "name": "gcp-account-01",
+        },
+        "cloudPlatform": "GCP",
+        "comboGroups": [
+          "gcp-managed-privileged",
+        ],
+        "discoveryMethods": [
+          "MethodCloudScanning",
+        ],
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": true,
+        "hasAccessToSensitiveData": true,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "agent-b",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "kind": "AI_AGENT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "Agent-B",
+        "nativeType": "aiplatform#ReasoningEngine",
+        "projects": [
+          {
+            "id": "proj-project-beta",
+            "name": "PROJECT-BETA",
+          },
+          {
+            "id": "proj-project-alpha",
+            "name": "PROJECT-ALPHA",
+          },
+        ],
+        "region": "us-west1",
+        "severity": "HIGH",
+        "status": "Active",
+        "technologyCategories": [
+          "AI Service",
+        ],
+      },
+      {
+        "aars": 62,
+        "aarsInput": {
+          "dataExposure": "SENSITIVE",
+          "gaps": [
+            {
+              "code": "LLM06",
+            },
+            {
+              "code": "NO_GUARDRAIL",
+            },
+          ],
+          "internetExposure": "NONE",
+        },
+        "aarsPillars": {
+          "compliance": 20,
+          "data": 22,
+          "exposure": 0,
+          "toxic": 20,
+        },
+        "aarsSeverity": "HIGH",
+        "cloudPlatform": "GCP",
+        "comboGroups": [
+          "gcp-managed-privileged",
+        ],
+        "discoveryMethods": [
+          "MethodCloudScanning",
+        ],
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": true,
+        "hasAccessToSensitiveData": true,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "agent-f",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "kind": "AI_AGENT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "agent-F",
+        "nativeType": "aiplatform#ReasoningEngine",
+        "projects": [
+          {
+            "id": "proj-project-alpha",
+            "name": "PROJECT-ALPHA",
+          },
+        ],
+        "region": "europe-west4",
+        "severity": "HIGH",
+        "status": "Active",
+        "technologyCategories": [
+          "AI Service",
+        ],
+      },
+      {
+        "aars": 62,
+        "aarsInput": {
+          "dataExposure": "SENSITIVE",
+          "gaps": [
+            {
+              "code": "LLM06",
+            },
+            {
+              "code": "NO_GUARDRAIL",
+            },
+          ],
+          "internetExposure": "NONE",
+        },
+        "aarsPillars": {
+          "compliance": 20,
+          "data": 22,
+          "exposure": 0,
+          "toxic": 20,
+        },
+        "aarsSeverity": "HIGH",
+        "cloudPlatform": "GCP",
+        "comboGroups": [
+          "gcp-managed-privileged",
+        ],
+        "discoveryMethods": [
+          "MethodCloudScanning",
+        ],
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": true,
+        "hasAccessToSensitiveData": true,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "agent-f-preprod",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "kind": "AI_AGENT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "agent-F-preprod",
+        "nativeType": "aiplatform#ReasoningEngine",
+        "projects": [
+          {
+            "id": "proj-project-alpha",
+            "name": "PROJECT-ALPHA",
+          },
+        ],
+        "region": "europe-west4",
+        "severity": "HIGH",
+        "status": "Active",
+        "technologyCategories": [
+          "AI Service",
+        ],
+      },
+      {
+        "aars": 29,
+        "aarsInput": {
+          "dataExposure": "DATA_ACCESS",
+          "gaps": [
+            {
+              "code": "ASI03",
+            },
+          ],
+          "internetExposure": "NONE",
+        },
+        "aarsPillars": {
+          "compliance": 10,
+          "data": 11,
+          "exposure": 0,
+          "toxic": 8,
+        },
+        "aarsSeverity": "LOW",
+        "cloudAccount": {
+          "id": "gcp-account-07",
+          "name": "gcp-account-07",
+        },
+        "cloudPlatform": "GCP",
+        "comboGroups": [
+          "permissive-exec-identity",
+        ],
+        "discoveryMethods": [
+          "MethodCloudScanning",
+        ],
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": false,
+        "hasAccessToSensitiveData": false,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "agent-j",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "kind": "AI_AGENT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "agent-J",
+        "nativeType": "aiplatform#ReasoningEngine",
+        "projects": [
+          {
+            "id": "proj-project-beta",
+            "name": "PROJECT-BETA",
+          },
+          {
+            "id": "proj-project-alpha",
+            "name": "PROJECT-ALPHA",
+          },
+        ],
+        "region": "europe-west1",
+        "severity": "MEDIUM",
+        "status": "Active",
+        "technologyCategories": [
+          "AI Service",
+        ],
+      },
+      {
+        "aars": 29,
+        "aarsInput": {
+          "dataExposure": "DATA_ACCESS",
+          "gaps": [
+            {
+              "code": "ASI03",
+            },
+          ],
+          "internetExposure": "NONE",
+        },
+        "aarsPillars": {
+          "compliance": 10,
+          "data": 11,
+          "exposure": 0,
+          "toxic": 8,
+        },
+        "aarsSeverity": "LOW",
+        "cloudAccount": {
+          "id": "gcp-account-07",
+          "name": "gcp-account-07",
+        },
+        "cloudPlatform": "GCP",
+        "comboGroups": [
+          "permissive-exec-identity",
+        ],
+        "discoveryMethods": [
+          "MethodCloudScanning",
+        ],
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": false,
+        "hasAccessToSensitiveData": false,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "agent-k",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "kind": "AI_AGENT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "agent-K",
+        "nativeType": "aiplatform#ReasoningEngine",
+        "projects": [
+          {
+            "id": "proj-project-beta",
+            "name": "PROJECT-BETA",
+          },
+          {
+            "id": "proj-project-alpha",
+            "name": "PROJECT-ALPHA",
+          },
+        ],
+        "region": "europe-west1",
+        "severity": "MEDIUM",
+        "status": "Active",
+        "technologyCategories": [
+          "AI Service",
+        ],
+      },
+      {
+        "aars": 0,
+        "aarsInput": {
+          "dataExposure": "NONE",
+          "gaps": [],
+          "internetExposure": "NONE",
+        },
+        "aarsPillars": {
+          "compliance": 0,
+          "data": 0,
+          "exposure": 0,
+          "toxic": 0,
+        },
+        "aarsSeverity": "INFO",
+        "cloudAccount": {
+          "id": "gcp-account-03",
+          "name": "gcp-account-03",
+        },
+        "cloudPlatform": "GCP",
+        "discoveryMethods": [
+          "MethodCloudScanning",
+        ],
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": false,
+        "hasAccessToSensitiveData": false,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": false,
+        "hasSensitiveData": false,
+        "id": "agent-l-support",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "kind": "AI_AGENT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "Agent-L-support",
+        "nativeType": "aiplatform#ReasoningEngine",
+        "projects": [
+          {
+            "id": "proj-project-alpha",
+            "name": "PROJECT-ALPHA",
+          },
+        ],
+        "region": "europe-west1",
+        "status": "Active",
+        "technologyCategories": [
+          "AI Service",
+        ],
+      },
+      {
+        "cloudPlatform": "GCP",
+        "displayName": "Vertex AI Agent Service Account",
+        "email": "sa-agent-a@iam.gserviceaccount.com",
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": false,
+        "hasAccessToSensitiveData": true,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "sa-agent-a",
+        "identityPurpose": "AGENTIC",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "issueAnalytics": {
+          "critical": 0,
+          "high": 0,
+          "info": 0,
+          "low": 0,
+          "medium": 1,
+          "total": 1,
+        },
+        "kind": "SERVICE_ACCOUNT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "sa-agent-a@iam.gserviceaccount.com",
+        "projects": [],
+        "status": "Active",
+        "technologyCategories": [
+          "Identity",
+        ],
+      },
+      {
+        "cloudPlatform": "GCP",
+        "email": "sa-agent-autogen@iam.gserviceaccount.com",
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": false,
+        "hasAccessToSensitiveData": true,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "sa-agent-autogen",
+        "identityPurpose": "AGENTIC",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "issueAnalytics": {
+          "critical": 0,
+          "high": 0,
+          "info": 0,
+          "low": 0,
+          "medium": 1,
+          "total": 1,
+        },
+        "kind": "SERVICE_ACCOUNT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "sa-agent-autogen@iam.gserviceaccount.com",
+        "projects": [],
+        "status": "Active",
+        "technologyCategories": [
+          "Identity",
+        ],
+      },
+      {
+        "cloudPlatform": "GCP",
+        "displayName": "Vertex AI Reasoning Agent Identity",
+        "email": "sa-agent-b@iam.gserviceaccount.com",
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": false,
+        "hasAccessToSensitiveData": true,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "sa-agent-b",
+        "identityPurpose": "AGENTIC",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "issueAnalytics": {
+          "critical": 0,
+          "high": 0,
+          "info": 0,
+          "low": 0,
+          "medium": 1,
+          "total": 1,
+        },
+        "kind": "SERVICE_ACCOUNT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "sa-agent-b@iam.gserviceaccount.com",
+        "projects": [],
+        "status": "Active",
+        "technologyCategories": [
+          "Identity",
+        ],
+      },
+      {
+        "cloudPlatform": "GCP",
+        "email": "sa-agent-d-test@iam.gserviceaccount.com",
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": false,
+        "hasAccessToSensitiveData": true,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "sa-agent-d-test",
+        "identityPurpose": "AGENTIC",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "issueAnalytics": {
+          "critical": 0,
+          "high": 0,
+          "info": 0,
+          "low": 0,
+          "medium": 1,
+          "total": 1,
+        },
+        "kind": "SERVICE_ACCOUNT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "sa-agent-d-test@iam.gserviceaccount.com",
+        "projects": [],
+        "status": "Active",
+        "technologyCategories": [
+          "Identity",
+        ],
+      },
+      {
+        "cloudPlatform": "GCP",
+        "email": "sa-agent-d@iam.gserviceaccount.com",
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": false,
+        "hasAccessToSensitiveData": true,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "sa-agent-d",
+        "identityPurpose": "AGENTIC",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "issueAnalytics": {
+          "critical": 0,
+          "high": 0,
+          "info": 0,
+          "low": 0,
+          "medium": 1,
+          "total": 1,
+        },
+        "kind": "SERVICE_ACCOUNT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "sa-agent-d@iam.gserviceaccount.com",
+        "projects": [],
+        "status": "Active",
+        "technologyCategories": [
+          "Identity",
+        ],
+      },
+      {
+        "cloudPlatform": "GCP",
+        "email": "sa-agent-e@iam.gserviceaccount.com",
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": false,
+        "hasAccessToSensitiveData": true,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "sa-agent-e",
+        "identityPurpose": "AGENTIC",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "issueAnalytics": {
+          "critical": 0,
+          "high": 0,
+          "info": 0,
+          "low": 0,
+          "medium": 1,
+          "total": 1,
+        },
+        "kind": "SERVICE_ACCOUNT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "sa-agent-e@iam.gserviceaccount.com",
+        "projects": [],
+        "status": "Active",
+        "technologyCategories": [
+          "Identity",
+        ],
+      },
+      {
+        "cloudPlatform": "GCP",
+        "email": "sa-agent-f-preprod@iam.gserviceaccount.com",
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": false,
+        "hasAccessToSensitiveData": true,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "sa-agent-f-preprod",
+        "identityPurpose": "AGENTIC",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "issueAnalytics": {
+          "critical": 0,
+          "high": 0,
+          "info": 0,
+          "low": 0,
+          "medium": 1,
+          "total": 1,
+        },
+        "kind": "SERVICE_ACCOUNT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "sa-agent-f-preprod@iam.gserviceaccount.com",
+        "projects": [],
+        "status": "Active",
+        "technologyCategories": [
+          "Identity",
+        ],
+      },
+      {
+        "cloudPlatform": "GCP",
+        "email": "sa-agent-f@iam.gserviceaccount.com",
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": false,
+        "hasAccessToSensitiveData": true,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "sa-agent-f",
+        "identityPurpose": "AGENTIC",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "issueAnalytics": {
+          "critical": 0,
+          "high": 0,
+          "info": 0,
+          "low": 0,
+          "medium": 1,
+          "total": 1,
+        },
+        "kind": "SERVICE_ACCOUNT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "sa-agent-f@iam.gserviceaccount.com",
+        "projects": [],
+        "status": "Active",
+        "technologyCategories": [
+          "Identity",
+        ],
+      },
+      {
+        "cloudPlatform": "GCP",
+        "email": "sa-agent-g@iam.gserviceaccount.com",
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": false,
+        "hasAccessToSensitiveData": true,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "sa-agent-g",
+        "identityPurpose": "AGENTIC",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "issueAnalytics": {
+          "critical": 0,
+          "high": 0,
+          "info": 0,
+          "low": 0,
+          "medium": 1,
+          "total": 1,
+        },
+        "kind": "SERVICE_ACCOUNT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "sa-agent-g@iam.gserviceaccount.com",
+        "projects": [],
+        "status": "Active",
+        "technologyCategories": [
+          "Identity",
+        ],
+      },
+      {
+        "cloudPlatform": "GCP",
+        "displayName": "Support chatbot runtime identity",
+        "email": "sa-agent-h-chatbot@iam.gserviceaccount.com",
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": false,
+        "hasAccessToSensitiveData": true,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "sa-agent-h-chatbot",
+        "identityPurpose": "AGENTIC",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "issueAnalytics": {
+          "critical": 0,
+          "high": 0,
+          "info": 0,
+          "low": 0,
+          "medium": 1,
+          "total": 1,
+        },
+        "kind": "SERVICE_ACCOUNT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "sa-agent-h-chatbot@iam.gserviceaccount.com",
+        "projects": [],
+        "status": "Active",
+        "technologyCategories": [
+          "Identity",
+        ],
+      },
+      {
+        "cloudPlatform": "GCP",
+        "email": "sa-agent-i@iam.gserviceaccount.com",
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": false,
+        "hasAccessToSensitiveData": true,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "sa-agent-i",
+        "identityPurpose": "AGENTIC",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "issueAnalytics": {
+          "critical": 0,
+          "high": 0,
+          "info": 0,
+          "low": 0,
+          "medium": 1,
+          "total": 1,
+        },
+        "kind": "SERVICE_ACCOUNT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "sa-agent-i@iam.gserviceaccount.com",
+        "projects": [],
+        "status": "Active",
+        "technologyCategories": [
+          "Identity",
+        ],
+      },
+      {
+        "cloudPlatform": "GCP",
+        "email": "sa-agent-j@iam.gserviceaccount.com",
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": false,
+        "hasAccessToSensitiveData": false,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "sa-agent-j",
+        "identityPurpose": "AGENTIC",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "issueAnalytics": {
+          "critical": 0,
+          "high": 0,
+          "info": 0,
+          "low": 0,
+          "medium": 1,
+          "total": 1,
+        },
+        "kind": "SERVICE_ACCOUNT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "sa-agent-j@iam.gserviceaccount.com",
+        "projects": [],
+        "status": "Active",
+        "technologyCategories": [
+          "Identity",
+        ],
+      },
+      {
+        "cloudPlatform": "GCP",
+        "email": "sa-agent-k@iam.gserviceaccount.com",
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": false,
+        "hasAccessToSensitiveData": false,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "sa-agent-k",
+        "identityPurpose": "AGENTIC",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "issueAnalytics": {
+          "critical": 0,
+          "high": 0,
+          "info": 0,
+          "low": 0,
+          "medium": 1,
+          "total": 1,
+        },
+        "kind": "SERVICE_ACCOUNT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "sa-agent-k@iam.gserviceaccount.com",
+        "projects": [],
+        "status": "Active",
+        "technologyCategories": [
+          "Identity",
+        ],
+      },
+      {
+        "cloudPlatform": "GCP",
+        "displayName": "Support agent (read-only)",
+        "email": "sa-agent-l-support@iam.gserviceaccount.com",
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": false,
+        "hasAccessToSensitiveData": false,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": false,
+        "hasSensitiveData": false,
+        "id": "sa-agent-l-support",
+        "identityPurpose": "AGENTIC",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "issueAnalytics": {
+          "critical": 0,
+          "high": 0,
+          "info": 0,
+          "low": 0,
+          "medium": 0,
+          "total": 0,
+        },
+        "kind": "SERVICE_ACCOUNT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "sa-agent-l-support@iam.gserviceaccount.com",
+        "projects": [],
+        "status": "Active",
+        "technologyCategories": [
+          "Identity",
+        ],
+      },
+    ],
+    "options": {
+      "groupBy": "combo",
+      "layout": "rows",
+      "maxNodes": 100,
+      "sort": "smart",
+    },
+    "rows": [
+      {
+        "cells": [
+          {
+            "fields": {
+              "discoveredBy": "Cloud Scanning",
+              "name": "AGENT_AUTOGEN_DO_NOT_DELETE",
+              "publisher": null,
+            },
+            "id": "agent-autogen",
+            "kind": "AI_AGENT",
+            "name": "AGENT_AUTOGEN_DO_NOT_DELETE",
+          },
+          {
+            "fields": {
+              "displayName": null,
+              "inactive": null,
+              "name": "sa-agent-autogen@iam.gserviceaccount.com",
+            },
+            "id": "sa-agent-autogen",
+            "kind": "SERVICE_ACCOUNT",
+            "name": "sa-agent-autogen@iam.gserviceaccount.com",
+          },
+        ],
+      },
+      {
+        "cells": [
+          {
+            "fields": {
+              "discoveredBy": "Workload Scanning",
+              "name": "agent-H-chatbot",
+              "publisher": null,
+            },
+            "id": "agent-h-chatbot",
+            "kind": "AI_AGENT",
+            "name": "agent-H-chatbot",
+          },
+          {
+            "fields": {
+              "displayName": "Support chatbot runtime identity",
+              "inactive": null,
+              "name": "sa-agent-h-chatbot@iam.gserviceaccount.com",
+            },
+            "id": "sa-agent-h-chatbot",
+            "kind": "SERVICE_ACCOUNT",
+            "name": "sa-agent-h-chatbot@iam.gserviceaccount.com",
+          },
+        ],
+      },
+      {
+        "cells": [
+          {
+            "fields": {
+              "discoveredBy": "Cloud Scanning",
+              "name": "dev-agent-D",
+              "publisher": null,
+            },
+            "id": "agent-d",
+            "kind": "AI_AGENT",
+            "name": "dev-agent-D",
+          },
+          {
+            "fields": {
+              "displayName": null,
+              "inactive": null,
+              "name": "sa-agent-d@iam.gserviceaccount.com",
+            },
+            "id": "sa-agent-d",
+            "kind": "SERVICE_ACCOUNT",
+            "name": "sa-agent-d@iam.gserviceaccount.com",
+          },
+        ],
+      },
+      {
+        "cells": [
+          {
+            "fields": {
+              "discoveredBy": "Cloud Scanning",
+              "name": "dev-agent-D-test",
+              "publisher": null,
+            },
+            "id": "agent-d-test",
+            "kind": "AI_AGENT",
+            "name": "dev-agent-D-test",
+          },
+          {
+            "fields": {
+              "displayName": null,
+              "inactive": null,
+              "name": "sa-agent-d-test@iam.gserviceaccount.com",
+            },
+            "id": "sa-agent-d-test",
+            "kind": "SERVICE_ACCOUNT",
+            "name": "sa-agent-d-test@iam.gserviceaccount.com",
+          },
+        ],
+      },
+      {
+        "cells": [
+          {
+            "fields": {
+              "discoveredBy": "Cloud Scanning",
+              "name": "Agent-E",
+              "publisher": null,
+            },
+            "id": "agent-e",
+            "kind": "AI_AGENT",
+            "name": "Agent-E",
+          },
+          {
+            "fields": {
+              "displayName": null,
+              "inactive": null,
+              "name": "sa-agent-e@iam.gserviceaccount.com",
+            },
+            "id": "sa-agent-e",
+            "kind": "SERVICE_ACCOUNT",
+            "name": "sa-agent-e@iam.gserviceaccount.com",
+          },
+        ],
+      },
+      {
+        "cells": [
+          {
+            "fields": {
+              "discoveredBy": "Cloud Scanning",
+              "name": "Agent-G",
+              "publisher": null,
+            },
+            "id": "agent-g",
+            "kind": "AI_AGENT",
+            "name": "Agent-G",
+          },
+          {
+            "fields": {
+              "displayName": null,
+              "inactive": null,
+              "name": "sa-agent-g@iam.gserviceaccount.com",
+            },
+            "id": "sa-agent-g",
+            "kind": "SERVICE_ACCOUNT",
+            "name": "sa-agent-g@iam.gserviceaccount.com",
+          },
+        ],
+      },
+      {
+        "cells": [
+          {
+            "fields": {
+              "discoveredBy": "Workload Scanning",
+              "name": "agent-I",
+              "publisher": null,
+            },
+            "id": "agent-i",
+            "kind": "AI_AGENT",
+            "name": "agent-I",
+          },
+          {
+            "fields": {
+              "displayName": null,
+              "inactive": null,
+              "name": "sa-agent-i@iam.gserviceaccount.com",
+            },
+            "id": "sa-agent-i",
+            "kind": "SERVICE_ACCOUNT",
+            "name": "sa-agent-i@iam.gserviceaccount.com",
+          },
+        ],
+      },
+      {
+        "cells": [
+          {
+            "fields": {
+              "discoveredBy": "Cloud Scanning",
+              "name": "Agent-A",
+              "publisher": "Platform Engineering",
+            },
+            "id": "agent-a",
+            "kind": "AI_AGENT",
+            "name": "Agent-A",
+          },
+          {
+            "fields": {
+              "displayName": "Vertex AI Agent Service Account",
+              "inactive": null,
+              "name": "sa-agent-a@iam.gserviceaccount.com",
+            },
+            "id": "sa-agent-a",
+            "kind": "SERVICE_ACCOUNT",
+            "name": "sa-agent-a@iam.gserviceaccount.com",
+          },
+        ],
+      },
+      {
+        "cells": [
+          {
+            "fields": {
+              "discoveredBy": "Cloud Scanning",
+              "name": "Agent-B",
+              "publisher": null,
+            },
+            "id": "agent-b",
+            "kind": "AI_AGENT",
+            "name": "Agent-B",
+          },
+          {
+            "fields": {
+              "displayName": "Vertex AI Reasoning Agent Identity",
+              "inactive": null,
+              "name": "sa-agent-b@iam.gserviceaccount.com",
+            },
+            "id": "sa-agent-b",
+            "kind": "SERVICE_ACCOUNT",
+            "name": "sa-agent-b@iam.gserviceaccount.com",
+          },
+        ],
+      },
+      {
+        "cells": [
+          {
+            "fields": {
+              "discoveredBy": "Cloud Scanning",
+              "name": "agent-F",
+              "publisher": null,
+            },
+            "id": "agent-f",
+            "kind": "AI_AGENT",
+            "name": "agent-F",
+          },
+          {
+            "fields": {
+              "displayName": null,
+              "inactive": null,
+              "name": "sa-agent-f@iam.gserviceaccount.com",
+            },
+            "id": "sa-agent-f",
+            "kind": "SERVICE_ACCOUNT",
+            "name": "sa-agent-f@iam.gserviceaccount.com",
+          },
+        ],
+      },
+      {
+        "cells": [
+          {
+            "fields": {
+              "discoveredBy": "Cloud Scanning",
+              "name": "agent-F-preprod",
+              "publisher": null,
+            },
+            "id": "agent-f-preprod",
+            "kind": "AI_AGENT",
+            "name": "agent-F-preprod",
+          },
+          {
+            "fields": {
+              "displayName": null,
+              "inactive": null,
+              "name": "sa-agent-f-preprod@iam.gserviceaccount.com",
+            },
+            "id": "sa-agent-f-preprod",
+            "kind": "SERVICE_ACCOUNT",
+            "name": "sa-agent-f-preprod@iam.gserviceaccount.com",
+          },
+        ],
+      },
+      {
+        "cells": [
+          {
+            "fields": {
+              "discoveredBy": "Cloud Scanning",
+              "name": "agent-J",
+              "publisher": null,
+            },
+            "id": "agent-j",
+            "kind": "AI_AGENT",
+            "name": "agent-J",
+          },
+          {
+            "fields": {
+              "displayName": null,
+              "inactive": null,
+              "name": "sa-agent-j@iam.gserviceaccount.com",
+            },
+            "id": "sa-agent-j",
+            "kind": "SERVICE_ACCOUNT",
+            "name": "sa-agent-j@iam.gserviceaccount.com",
+          },
+        ],
+      },
+      {
+        "cells": [
+          {
+            "fields": {
+              "discoveredBy": "Cloud Scanning",
+              "name": "agent-K",
+              "publisher": null,
+            },
+            "id": "agent-k",
+            "kind": "AI_AGENT",
+            "name": "agent-K",
+          },
+          {
+            "fields": {
+              "displayName": null,
+              "inactive": null,
+              "name": "sa-agent-k@iam.gserviceaccount.com",
+            },
+            "id": "sa-agent-k",
+            "kind": "SERVICE_ACCOUNT",
+            "name": "sa-agent-k@iam.gserviceaccount.com",
+          },
+        ],
+      },
+      {
+        "cells": [
+          {
+            "fields": {
+              "discoveredBy": "Cloud Scanning",
+              "name": "Agent-L-support",
+              "publisher": null,
+            },
+            "id": "agent-l-support",
+            "kind": "AI_AGENT",
+            "name": "Agent-L-support",
+          },
+          {
+            "fields": {
+              "displayName": "Support agent (read-only)",
+              "inactive": null,
+              "name": "sa-agent-l-support@iam.gserviceaccount.com",
+            },
+            "id": "sa-agent-l-support",
+            "kind": "SERVICE_ACCOUNT",
+            "name": "sa-agent-l-support@iam.gserviceaccount.com",
+          },
+        ],
+      },
+    ],
+    "summaries": [],
+    "syncedAt": "2026-08-13T09:00:00Z",
+    "total": 14,
+    "truncated": false,
+  },
+  "ok": true,
+}
+`;
+
+exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`] = `
+{
+  "data": {
+    "capped": false,
+    "counts": {
+      "capped": false,
+      "shownEdges": 0,
+      "shownNodes": 14,
+      "totalEdges": 0,
+      "totalNodes": 14,
+    },
+    "edges": [],
+    "groups": [
+      {
+        "available": [
+          {
+            "key": "name",
+            "label": "Name",
+          },
+          {
+            "key": "kind",
+            "label": "Kind",
+          },
+          {
+            "key": "publisher",
+            "label": "Publisher",
+          },
+          {
+            "key": "discoveredBy",
+            "label": "Discovered by",
+          },
+          {
+            "key": "cloud",
+            "label": "Cloud",
+          },
+          {
+            "key": "region",
+            "label": "Region",
+          },
+          {
+            "key": "status",
+            "label": "Status",
+          },
+          {
+            "key": "severity",
+            "label": "Issue severity",
+          },
+          {
+            "key": "aars",
+            "label": "AARS",
+          },
+          {
+            "key": "aarsSeverity",
+            "label": "AARS level",
+          },
+          {
+            "key": "projects",
+            "label": "Projects",
+          },
+          {
+            "key": "guardrail",
+            "label": "Guardrail",
+          },
+          {
+            "key": "combos",
+            "label": "Toxic combinations",
+          },
+          {
+            "key": "internet",
+            "label": "Internet reachable",
+          },
+          {
+            "key": "sensitiveAccess",
+            "label": "Reaches classified data",
+          },
+        ],
+        "fields": [
+          {
+            "key": "name",
+            "label": "Name",
+            "numeric": undefined,
+          },
+          {
+            "key": "publisher",
+            "label": "Publisher",
+            "numeric": undefined,
+          },
+          {
+            "key": "discoveredBy",
+            "label": "Discovered by",
+            "numeric": undefined,
+          },
+        ],
+        "index": 0,
+        "kind": "AI_AGENT",
+        "label": "AI_AGENT",
+      },
+    ],
+    "layout": {
+      "height": 990,
+      "laneGap": 150,
+      "mode": "rows",
+      "nodes": [
+        {
+          "cluster": 0,
+          "id": "agent-autogen",
+          "lane": 1,
+          "shelf": undefined,
+          "x": 120,
+          "y": 270,
+        },
+        {
+          "cluster": 0,
+          "id": "agent-h-chatbot",
+          "lane": 1,
+          "shelf": undefined,
+          "x": 380,
+          "y": 270,
+        },
+        {
+          "cluster": 0,
+          "id": "agent-d",
+          "lane": 1,
+          "shelf": undefined,
+          "x": 640,
+          "y": 270,
+        },
+        {
+          "cluster": 0,
+          "id": "agent-d-test",
+          "lane": 1,
+          "shelf": undefined,
+          "x": 900,
+          "y": 270,
+        },
+        {
+          "cluster": 0,
+          "id": "agent-e",
+          "lane": 1,
+          "shelf": undefined,
+          "x": 1160,
+          "y": 270,
+        },
+        {
+          "cluster": 0,
+          "id": "agent-g",
+          "lane": 1,
+          "shelf": undefined,
+          "x": 1420,
+          "y": 270,
+        },
+        {
+          "cluster": 0,
+          "id": "agent-i",
+          "lane": 1,
+          "shelf": undefined,
+          "x": 1680,
+          "y": 270,
+        },
+        {
+          "cluster": 0,
+          "id": "agent-a",
+          "lane": 1,
+          "shelf": undefined,
+          "x": 1940,
+          "y": 270,
+        },
+        {
+          "cluster": 0,
+          "id": "agent-b",
+          "lane": 1,
+          "shelf": undefined,
+          "x": 2200,
+          "y": 270,
+        },
+        {
+          "cluster": 0,
+          "id": "agent-f",
+          "lane": 1,
+          "shelf": undefined,
+          "x": 2460,
+          "y": 270,
+        },
+        {
+          "cluster": 0,
+          "id": "agent-f-preprod",
+          "lane": 1,
+          "shelf": undefined,
+          "x": 2720,
+          "y": 270,
+        },
+        {
+          "cluster": 0,
+          "id": "agent-j",
+          "lane": 1,
+          "shelf": undefined,
+          "x": 2980,
+          "y": 270,
+        },
+        {
+          "cluster": 0,
+          "id": "agent-k",
+          "lane": 1,
+          "shelf": undefined,
+          "x": 3240,
+          "y": 270,
+        },
+        {
+          "cluster": 0,
+          "id": "agent-l-support",
+          "lane": 1,
+          "shelf": undefined,
+          "x": 3500,
+          "y": 270,
+        },
+      ],
+      "rowGap": 260,
+      "width": 3620,
+    },
+    "nodes": [
+      {
+        "aars": 76,
+        "aarsInput": {
+          "dataExposure": "SENSITIVE",
+          "dataFindings": [
+            {
+              "count": 1,
+              "severity": "CRITICAL",
+            },
+            {
+              "count": 1,
+              "severity": "HIGH",
+            },
+            {
+              "count": 1,
+              "severity": "MEDIUM",
+            },
+          ],
+          "gaps": [
+            {
+              "code": "LLM06",
+            },
+            {
+              "code": "ASI10",
+            },
+            {
+              "code": "NO_GUARDRAIL",
+            },
+          ],
+          "internetExposure": "NONE",
+        },
+        "aarsPillars": {
+          "compliance": 30,
+          "data": 22,
+          "exposure": 0,
+          "toxic": 24,
+        },
+        "aarsSeverity": "CRITICAL",
+        "cloudAccount": {
+          "id": "gcp-account-01",
+          "name": "gcp-account-01",
+        },
+        "cloudPlatform": "GCP",
+        "comboGroups": [
+          "gcp-managed-privileged",
+        ],
+        "discoveryMethods": [
+          "MethodCloudScanning",
+        ],
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": true,
+        "hasAccessToSensitiveData": true,
+        "hasAdminPrivileges": true,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "agent-autogen",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "kind": "AI_AGENT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "AGENT_AUTOGEN_DO_NOT_DELETE",
+        "nativeType": "aiplatform#ReasoningEngine",
+        "projects": [
+          {
+            "id": "proj-project-beta",
+            "name": "PROJECT-BETA",
+          },
+          {
+            "id": "proj-project-alpha",
+            "name": "PROJECT-ALPHA",
+          },
+        ],
+        "region": "us-west1",
+        "severity": "HIGH",
+        "status": "Active",
+        "technologyCategories": [
+          "AI Service",
+        ],
+      },
+      {
+        "aars": 71,
+        "aarsInput": {
+          "dataExposure": "SENSITIVE",
+          "dataFindings": [
+            {
+              "count": 1,
+              "severity": "CRITICAL",
+            },
+            {
+              "count": 1,
+              "severity": "MEDIUM",
+            },
+          ],
+          "gaps": [
+            {
+              "code": "LLM06",
+            },
+            {
+              "code": "LLM05",
+            },
+            {
+              "code": "NO_GUARDRAIL",
+            },
+          ],
+          "internetExposure": "CONFIRMED",
+        },
+        "aarsPillars": {
+          "compliance": 25,
+          "data": 22,
+          "exposure": 0,
+          "toxic": 24,
+        },
+        "aarsSeverity": "CRITICAL",
+        "cloudAccount": {
+          "id": "gcp-account-05",
+          "name": "gcp-account-05",
+        },
+        "cloudPlatform": "GCP",
+        "comboGroups": [
+          "gcp-hosted-privileged",
+        ],
+        "discoveryMethods": [
+          "MethodWorkloadScanning",
+        ],
+        "exposureEvidence": {
+          "hostIds": [
+            "run-agent-h",
+          ],
+          "ports": [
+            "443",
+            "80",
+          ],
+          "sourceIpRanges": [
+            "0.0.0.0/0",
+          ],
+        },
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": true,
+        "hasAccessToSensitiveData": true,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "humanAccess": {
+          "admin": true,
+          "dormantFindingCount": 1,
+          "effectiveIds": [
+            "user-ops-01",
+            "user-ops-07",
+          ],
+          "identityIds": [
+            "user-ops-01",
+            "user-ops-02",
+          ],
+          "inactiveCount": 1,
+          "noMfaCount": 1,
+          "permissionCount": 2,
+          "policyIds": [
+            "policy-ops-admin",
+            "policy-ops-reader",
+          ],
+        },
+        "id": "agent-h-chatbot",
+        "isAccessibleFromInternet": null,
+        "isOpenToAllInternet": null,
+        "kind": "AI_AGENT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "agent-H-chatbot",
+        "nativeType": "hostedAiAgent",
+        "projects": [
+          {
+            "id": "proj-project-alpha",
+            "name": "PROJECT-ALPHA",
+          },
+          {
+            "id": "proj-project-delta",
+            "name": "PROJECT-DELTA",
+          },
+          {
+            "id": "proj-project-epsilon",
+            "name": "PROJECT-EPSILON",
+          },
+        ],
+        "region": "europe-west1",
+        "severity": "HIGH",
+        "status": "Active",
+        "technologyCategories": [
+          "AI Service",
+        ],
+      },
+      {
+        "aars": 67,
+        "aarsInput": {
+          "dataExposure": "SENSITIVE",
+          "dataFindings": [
+            {
+              "count": 1,
+              "severity": "CRITICAL",
+            },
+            {
+              "count": 1,
+              "severity": "MEDIUM",
+            },
+          ],
+          "gaps": [
+            {
+              "code": "LLM04",
+            },
+            {
+              "code": "LLM06",
+            },
+            {
+              "code": "NO_GUARDRAIL",
+            },
+          ],
+          "internetExposure": "NONE",
+        },
+        "aarsPillars": {
+          "compliance": 25,
+          "data": 22,
+          "exposure": 0,
+          "toxic": 20,
+        },
+        "aarsSeverity": "HIGH",
+        "cloudAccount": {
+          "id": "gcp-account-02",
+          "name": "gcp-account-02",
+        },
+        "cloudPlatform": "GCP",
+        "comboGroups": [
+          "gcp-managed-privileged",
+        ],
+        "discoveryMethods": [
+          "MethodCloudScanning",
+        ],
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": true,
+        "hasAccessToSensitiveData": true,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "agent-d",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "kind": "AI_AGENT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "dev-agent-D",
+        "nativeType": "aiplatform#ReasoningEngine",
+        "projects": [
+          {
+            "id": "proj-project-beta",
+            "name": "PROJECT-BETA",
+          },
+          {
+            "id": "proj-project-alpha",
+            "name": "PROJECT-ALPHA",
+          },
+        ],
+        "region": "europe-west3",
+        "severity": "HIGH",
+        "status": "Active",
+        "technologyCategories": [
+          "AI Service",
+        ],
+      },
+      {
+        "aars": 67,
+        "aarsInput": {
+          "dataExposure": "SENSITIVE",
+          "dataFindings": [
+            {
+              "count": 1,
+              "severity": "CRITICAL",
+            },
+            {
+              "count": 1,
+              "severity": "MEDIUM",
+            },
+          ],
+          "gaps": [
+            {
+              "code": "LLM04",
+            },
+            {
+              "code": "LLM06",
+            },
+            {
+              "code": "NO_GUARDRAIL",
+            },
+          ],
+          "internetExposure": "NONE",
+        },
+        "aarsPillars": {
+          "compliance": 25,
+          "data": 22,
+          "exposure": 0,
+          "toxic": 20,
+        },
+        "aarsSeverity": "HIGH",
+        "cloudAccount": {
+          "id": "gcp-account-02",
+          "name": "gcp-account-02",
+        },
+        "cloudPlatform": "GCP",
+        "comboGroups": [
+          "gcp-managed-privileged",
+        ],
+        "discoveryMethods": [
+          "MethodCloudScanning",
+        ],
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": true,
+        "hasAccessToSensitiveData": true,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "agent-d-test",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "kind": "AI_AGENT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "dev-agent-D-test",
+        "nativeType": "aiplatform#ReasoningEngine",
+        "projects": [
+          {
+            "id": "proj-project-beta",
+            "name": "PROJECT-BETA",
+          },
+          {
+            "id": "proj-project-alpha",
+            "name": "PROJECT-ALPHA",
+          },
+        ],
+        "region": "europe-west3",
+        "severity": "HIGH",
+        "status": "Active",
+        "technologyCategories": [
+          "AI Service",
+        ],
+      },
+      {
+        "aars": 66,
+        "aarsInput": {
+          "dataExposure": "SENSITIVE",
+          "dataFindings": [
+            {
+              "count": 1,
+              "severity": "CRITICAL",
+            },
+            {
+              "count": 2,
+              "severity": "HIGH",
+            },
+          ],
+          "gaps": [
+            {
+              "code": "LLM06",
+            },
+            {
+              "code": "NO_GUARDRAIL",
+            },
+          ],
+          "internetExposure": "CONFIRMED",
+        },
+        "aarsPillars": {
+          "compliance": 20,
+          "data": 22,
+          "exposure": 0,
+          "toxic": 24,
+        },
+        "aarsSeverity": "HIGH",
+        "cloudAccount": {
+          "id": "gcp-account-03",
+          "name": "gcp-account-03",
+        },
+        "cloudPlatform": "GCP",
+        "comboGroups": [
+          "gcp-managed-privileged",
+          "other-ai-risk",
+        ],
+        "discoveryMethods": [
+          "MethodCloudScanning",
+        ],
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": true,
+        "hasAccessToSensitiveData": true,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "agent-e",
+        "isAccessibleFromInternet": true,
+        "isOpenToAllInternet": true,
+        "kind": "AI_AGENT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "Agent-E",
+        "nativeType": "aiplatform#ReasoningEngine",
+        "projects": [
+          {
+            "id": "proj-project-alpha",
+            "name": "PROJECT-ALPHA",
+          },
+          {
+            "id": "proj-project-gamma",
+            "name": "PROJECT-GAMMA",
+          },
+        ],
+        "region": "us-west1",
+        "severity": "HIGH",
+        "status": "Active",
+        "technologyCategories": [
+          "AI Service",
+        ],
+      },
+      {
+        "aars": 66,
+        "aarsInput": {
+          "dataExposure": "SENSITIVE",
+          "gaps": [
+            {
+              "code": "LLM06",
+            },
+            {
+              "code": "NO_GUARDRAIL",
+            },
+          ],
+          "internetExposure": "NONE",
+        },
+        "aarsPillars": {
+          "compliance": 20,
+          "data": 22,
+          "exposure": 0,
+          "toxic": 24,
+        },
+        "aarsSeverity": "HIGH",
+        "cloudPlatform": "GCP",
+        "comboGroups": [
+          "gcp-managed-privileged",
+        ],
+        "discoveryMethods": [
+          "MethodCloudScanning",
+        ],
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": true,
+        "hasAccessToSensitiveData": true,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "agent-g",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "kind": "AI_AGENT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "Agent-G",
+        "nativeType": "aiplatform#ReasoningEngine",
+        "projects": [
+          {
+            "id": "proj-project-alpha",
+            "name": "PROJECT-ALPHA",
+          },
+          {
+            "id": "proj-project-eta",
+            "name": "PROJECT-ETA",
+          },
+        ],
+        "region": "europe-west4",
+        "severity": "HIGH",
+        "status": "Active",
+        "technologyCategories": [
+          "AI Service",
+        ],
+      },
+      {
+        "aars": 66,
+        "aarsInput": {
+          "dataExposure": "SENSITIVE",
+          "dataFindings": [
+            {
+              "count": 1,
+              "severity": "CRITICAL",
+            },
+            {
+              "count": 2,
+              "severity": "HIGH",
+            },
+          ],
+          "gaps": [
+            {
+              "code": "LLM06",
+            },
+            {
+              "code": "NO_GUARDRAIL",
+            },
+          ],
+          "internetExposure": "CONFIRMED",
+        },
+        "aarsPillars": {
+          "compliance": 20,
+          "data": 22,
+          "exposure": 0,
+          "toxic": 24,
+        },
+        "aarsSeverity": "HIGH",
+        "cloudAccount": {
+          "id": "gcp-account-04",
+          "name": "gcp-account-04",
+        },
+        "cloudPlatform": "GCP",
+        "comboGroups": [
+          "gcp-hosted-privileged",
+        ],
+        "discoveryMethods": [
+          "MethodWorkloadScanning",
+        ],
+        "exposureEvidence": {
+          "endpointIds": [
+            "endpoint-agent-i",
+          ],
+          "exposureLevel": "High",
+        },
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": true,
+        "hasAccessToSensitiveData": true,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "agent-i",
+        "isAccessibleFromInternet": null,
+        "isOpenToAllInternet": null,
+        "kind": "AI_AGENT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "agent-I",
+        "nativeType": "hostedAiAgent",
+        "projects": [
+          {
+            "id": "proj-project-alpha",
+            "name": "PROJECT-ALPHA",
+          },
+          {
+            "id": "proj-project-zeta",
+            "name": "PROJECT-ZETA",
+          },
+        ],
+        "region": "europe-west4",
+        "severity": "HIGH",
+        "status": "Inactive",
+        "technologyCategories": [
+          "AI Service",
+        ],
+      },
+      {
+        "aars": 62,
+        "aarsInput": {
+          "dataExposure": "SENSITIVE",
+          "dataFindings": [
+            {
+              "count": 2,
+              "severity": "CRITICAL",
+            },
+            {
+              "count": 2,
+              "severity": "HIGH",
+            },
+            {
+              "count": 1,
+              "severity": "MEDIUM",
+            },
+          ],
+          "gaps": [
+            {
+              "code": "LLM06",
+            },
+            {
+              "code": "NO_GUARDRAIL",
+            },
+          ],
+          "internetExposure": "NONE",
+        },
+        "aarsPillars": {
+          "compliance": 20,
+          "data": 22,
+          "exposure": 0,
+          "toxic": 20,
+        },
+        "aarsSeverity": "HIGH",
+        "cloudAccount": {
+          "id": "gcp-account-01",
+          "name": "gcp-account-01",
+        },
+        "cloudPlatform": "GCP",
+        "comboGroups": [
+          "gcp-managed-privileged",
+        ],
+        "discoveryMethods": [
+          "MethodCloudScanning",
+        ],
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": true,
+        "hasAccessToSensitiveData": true,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "agent-a",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "kind": "AI_AGENT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "Agent-A",
+        "nativeType": "aiplatform#ReasoningEngine",
+        "projects": [
+          {
+            "id": "proj-project-beta",
+            "name": "PROJECT-BETA",
+          },
+          {
+            "id": "proj-project-alpha",
+            "name": "PROJECT-ALPHA",
+          },
+        ],
+        "publisher": "Platform Engineering",
+        "region": "europe-west1",
+        "severity": "HIGH",
+        "status": "Active",
+        "technologyCategories": [
+          "AI Service",
+        ],
+      },
+      {
+        "aars": 62,
+        "aarsInput": {
+          "dataExposure": "SENSITIVE",
+          "dataFindings": [
+            {
+              "count": 1,
+              "severity": "CRITICAL",
+            },
+            {
+              "count": 2,
+              "severity": "HIGH",
+            },
+          ],
+          "gaps": [
+            {
+              "code": "LLM06",
+            },
+            {
+              "code": "NO_GUARDRAIL",
+            },
+          ],
+          "internetExposure": "NONE",
+        },
+        "aarsPillars": {
+          "compliance": 20,
+          "data": 22,
+          "exposure": 0,
+          "toxic": 20,
+        },
+        "aarsSeverity": "HIGH",
+        "cloudAccount": {
+          "id": "gcp-account-01",
+          "name": "gcp-account-01",
+        },
+        "cloudPlatform": "GCP",
+        "comboGroups": [
+          "gcp-managed-privileged",
+        ],
+        "discoveryMethods": [
+          "MethodCloudScanning",
+        ],
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": true,
+        "hasAccessToSensitiveData": true,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "agent-b",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "kind": "AI_AGENT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "Agent-B",
+        "nativeType": "aiplatform#ReasoningEngine",
+        "projects": [
+          {
+            "id": "proj-project-beta",
+            "name": "PROJECT-BETA",
+          },
+          {
+            "id": "proj-project-alpha",
+            "name": "PROJECT-ALPHA",
+          },
+        ],
+        "region": "us-west1",
+        "severity": "HIGH",
+        "status": "Active",
+        "technologyCategories": [
+          "AI Service",
+        ],
+      },
+      {
+        "aars": 62,
+        "aarsInput": {
+          "dataExposure": "SENSITIVE",
+          "gaps": [
+            {
+              "code": "LLM06",
+            },
+            {
+              "code": "NO_GUARDRAIL",
+            },
+          ],
+          "internetExposure": "NONE",
+        },
+        "aarsPillars": {
+          "compliance": 20,
+          "data": 22,
+          "exposure": 0,
+          "toxic": 20,
+        },
+        "aarsSeverity": "HIGH",
+        "cloudPlatform": "GCP",
+        "comboGroups": [
+          "gcp-managed-privileged",
+        ],
+        "discoveryMethods": [
+          "MethodCloudScanning",
+        ],
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": true,
+        "hasAccessToSensitiveData": true,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "agent-f",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "kind": "AI_AGENT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "agent-F",
+        "nativeType": "aiplatform#ReasoningEngine",
+        "projects": [
+          {
+            "id": "proj-project-alpha",
+            "name": "PROJECT-ALPHA",
+          },
+        ],
+        "region": "europe-west4",
+        "severity": "HIGH",
+        "status": "Active",
+        "technologyCategories": [
+          "AI Service",
+        ],
+      },
+      {
+        "aars": 62,
+        "aarsInput": {
+          "dataExposure": "SENSITIVE",
+          "gaps": [
+            {
+              "code": "LLM06",
+            },
+            {
+              "code": "NO_GUARDRAIL",
+            },
+          ],
+          "internetExposure": "NONE",
+        },
+        "aarsPillars": {
+          "compliance": 20,
+          "data": 22,
+          "exposure": 0,
+          "toxic": 20,
+        },
+        "aarsSeverity": "HIGH",
+        "cloudPlatform": "GCP",
+        "comboGroups": [
+          "gcp-managed-privileged",
+        ],
+        "discoveryMethods": [
+          "MethodCloudScanning",
+        ],
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": true,
+        "hasAccessToSensitiveData": true,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "agent-f-preprod",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "kind": "AI_AGENT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "agent-F-preprod",
+        "nativeType": "aiplatform#ReasoningEngine",
+        "projects": [
+          {
+            "id": "proj-project-alpha",
+            "name": "PROJECT-ALPHA",
+          },
+        ],
+        "region": "europe-west4",
+        "severity": "HIGH",
+        "status": "Active",
+        "technologyCategories": [
+          "AI Service",
+        ],
+      },
+      {
+        "aars": 29,
+        "aarsInput": {
+          "dataExposure": "DATA_ACCESS",
+          "gaps": [
+            {
+              "code": "ASI03",
+            },
+          ],
+          "internetExposure": "NONE",
+        },
+        "aarsPillars": {
+          "compliance": 10,
+          "data": 11,
+          "exposure": 0,
+          "toxic": 8,
+        },
+        "aarsSeverity": "LOW",
+        "cloudAccount": {
+          "id": "gcp-account-07",
+          "name": "gcp-account-07",
+        },
+        "cloudPlatform": "GCP",
+        "comboGroups": [
+          "permissive-exec-identity",
+        ],
+        "discoveryMethods": [
+          "MethodCloudScanning",
+        ],
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": false,
+        "hasAccessToSensitiveData": false,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "agent-j",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "kind": "AI_AGENT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "agent-J",
+        "nativeType": "aiplatform#ReasoningEngine",
+        "projects": [
+          {
+            "id": "proj-project-beta",
+            "name": "PROJECT-BETA",
+          },
+          {
+            "id": "proj-project-alpha",
+            "name": "PROJECT-ALPHA",
+          },
+        ],
+        "region": "europe-west1",
+        "severity": "MEDIUM",
+        "status": "Active",
+        "technologyCategories": [
+          "AI Service",
+        ],
+      },
+      {
+        "aars": 29,
+        "aarsInput": {
+          "dataExposure": "DATA_ACCESS",
+          "gaps": [
+            {
+              "code": "ASI03",
+            },
+          ],
+          "internetExposure": "NONE",
+        },
+        "aarsPillars": {
+          "compliance": 10,
+          "data": 11,
+          "exposure": 0,
+          "toxic": 8,
+        },
+        "aarsSeverity": "LOW",
+        "cloudAccount": {
+          "id": "gcp-account-07",
+          "name": "gcp-account-07",
+        },
+        "cloudPlatform": "GCP",
+        "comboGroups": [
+          "permissive-exec-identity",
+        ],
+        "discoveryMethods": [
+          "MethodCloudScanning",
+        ],
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": false,
+        "hasAccessToSensitiveData": false,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": true,
+        "hasSensitiveData": false,
+        "id": "agent-k",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "kind": "AI_AGENT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "agent-K",
+        "nativeType": "aiplatform#ReasoningEngine",
+        "projects": [
+          {
+            "id": "proj-project-beta",
+            "name": "PROJECT-BETA",
+          },
+          {
+            "id": "proj-project-alpha",
+            "name": "PROJECT-ALPHA",
+          },
+        ],
+        "region": "europe-west1",
+        "severity": "MEDIUM",
+        "status": "Active",
+        "technologyCategories": [
+          "AI Service",
+        ],
+      },
+      {
+        "aars": 0,
+        "aarsInput": {
+          "dataExposure": "NONE",
+          "gaps": [],
+          "internetExposure": "NONE",
+        },
+        "aarsPillars": {
+          "compliance": 0,
+          "data": 0,
+          "exposure": 0,
+          "toxic": 0,
+        },
+        "aarsSeverity": "INFO",
+        "cloudAccount": {
+          "id": "gcp-account-03",
+          "name": "gcp-account-03",
+        },
+        "cloudPlatform": "GCP",
+        "discoveryMethods": [
+          "MethodCloudScanning",
+        ],
+        "firstSeen": "2026-04-02T08:00:00Z",
+        "guardrailMissing": false,
+        "hasAccessToSensitiveData": false,
+        "hasAdminPrivileges": false,
+        "hasHighPrivileges": false,
+        "hasSensitiveData": false,
+        "id": "agent-l-support",
+        "isAccessibleFromInternet": false,
+        "isOpenToAllInternet": false,
+        "kind": "AI_AGENT",
+        "lastSeen": "2026-06-28T05:00:00Z",
+        "name": "Agent-L-support",
+        "nativeType": "aiplatform#ReasoningEngine",
+        "projects": [
+          {
+            "id": "proj-project-alpha",
+            "name": "PROJECT-ALPHA",
+          },
+        ],
+        "region": "europe-west1",
+        "status": "Active",
+        "technologyCategories": [
+          "AI Service",
+        ],
+      },
+    ],
+    "options": {
+      "groupBy": "combo",
+      "layout": "rows",
+      "maxNodes": 100,
+      "sort": "smart",
+    },
+    "rows": [
+      {
+        "cells": [
+          {
+            "fields": {
+              "discoveredBy": "Cloud Scanning",
+              "name": "AGENT_AUTOGEN_DO_NOT_DELETE",
+              "publisher": null,
+            },
+            "id": "agent-autogen",
+            "kind": "AI_AGENT",
+            "name": "AGENT_AUTOGEN_DO_NOT_DELETE",
+          },
+        ],
+      },
+      {
+        "cells": [
+          {
+            "fields": {
+              "discoveredBy": "Workload Scanning",
+              "name": "agent-H-chatbot",
+              "publisher": null,
+            },
+            "id": "agent-h-chatbot",
+            "kind": "AI_AGENT",
+            "name": "agent-H-chatbot",
+          },
+        ],
+      },
+      {
+        "cells": [
+          {
+            "fields": {
+              "discoveredBy": "Cloud Scanning",
+              "name": "dev-agent-D",
+              "publisher": null,
+            },
+            "id": "agent-d",
+            "kind": "AI_AGENT",
+            "name": "dev-agent-D",
+          },
+        ],
+      },
+      {
+        "cells": [
+          {
+            "fields": {
+              "discoveredBy": "Cloud Scanning",
+              "name": "dev-agent-D-test",
+              "publisher": null,
+            },
+            "id": "agent-d-test",
+            "kind": "AI_AGENT",
+            "name": "dev-agent-D-test",
+          },
+        ],
+      },
+      {
+        "cells": [
+          {
+            "fields": {
+              "discoveredBy": "Cloud Scanning",
+              "name": "Agent-E",
+              "publisher": null,
+            },
+            "id": "agent-e",
+            "kind": "AI_AGENT",
+            "name": "Agent-E",
+          },
+        ],
+      },
+      {
+        "cells": [
+          {
+            "fields": {
+              "discoveredBy": "Cloud Scanning",
+              "name": "Agent-G",
+              "publisher": null,
+            },
+            "id": "agent-g",
+            "kind": "AI_AGENT",
+            "name": "Agent-G",
+          },
+        ],
+      },
+      {
+        "cells": [
+          {
+            "fields": {
+              "discoveredBy": "Workload Scanning",
+              "name": "agent-I",
+              "publisher": null,
+            },
+            "id": "agent-i",
+            "kind": "AI_AGENT",
+            "name": "agent-I",
+          },
+        ],
+      },
+      {
+        "cells": [
+          {
+            "fields": {
+              "discoveredBy": "Cloud Scanning",
+              "name": "Agent-A",
+              "publisher": "Platform Engineering",
+            },
+            "id": "agent-a",
+            "kind": "AI_AGENT",
+            "name": "Agent-A",
+          },
+        ],
+      },
+      {
+        "cells": [
+          {
+            "fields": {
+              "discoveredBy": "Cloud Scanning",
+              "name": "Agent-B",
+              "publisher": null,
+            },
+            "id": "agent-b",
+            "kind": "AI_AGENT",
+            "name": "Agent-B",
+          },
+        ],
+      },
+      {
+        "cells": [
+          {
+            "fields": {
+              "discoveredBy": "Cloud Scanning",
+              "name": "agent-F",
+              "publisher": null,
+            },
+            "id": "agent-f",
+            "kind": "AI_AGENT",
+            "name": "agent-F",
+          },
+        ],
+      },
+      {
+        "cells": [
+          {
+            "fields": {
+              "discoveredBy": "Cloud Scanning",
+              "name": "agent-F-preprod",
+              "publisher": null,
+            },
+            "id": "agent-f-preprod",
+            "kind": "AI_AGENT",
+            "name": "agent-F-preprod",
+          },
+        ],
+      },
+      {
+        "cells": [
+          {
+            "fields": {
+              "discoveredBy": "Cloud Scanning",
+              "name": "agent-J",
+              "publisher": null,
+            },
+            "id": "agent-j",
+            "kind": "AI_AGENT",
+            "name": "agent-J",
+          },
+        ],
+      },
+      {
+        "cells": [
+          {
+            "fields": {
+              "discoveredBy": "Cloud Scanning",
+              "name": "agent-K",
+              "publisher": null,
+            },
+            "id": "agent-k",
+            "kind": "AI_AGENT",
+            "name": "agent-K",
+          },
+        ],
+      },
+      {
+        "cells": [
+          {
+            "fields": {
+              "discoveredBy": "Cloud Scanning",
+              "name": "Agent-L-support",
+              "publisher": null,
+            },
+            "id": "agent-l-support",
+            "kind": "AI_AGENT",
+            "name": "Agent-L-support",
+          },
+        ],
+      },
+    ],
+    "summaries": [],
+    "syncedAt": "2026-08-13T09:00:00Z",
+    "total": 14,
+    "truncated": false,
+  },
+  "ok": true,
+}
+`;
+
 exports[`the persisted ledger > writes the tabs the schema declares 1`] = `
 {
   "ai_assets": 87,
@@ -11645,6 +15944,9 @@ exports[`the persisted ledger > writes the tabs the schema declares 2`] = `
     "combo_groups": "gcp-managed-privileged",
     "data_finding_count": null,
     "data_findings_json": null,
+    "discovery_methods": "MethodCloudScanning",
+    "display_name": null,
+    "email": null,
     "exposure_evidence_json": null,
     "exposure_level": null,
     "first_seen": "2026-04-02T08:00:00Z",
@@ -11664,6 +15966,7 @@ exports[`the persisted ledger > writes the tabs the schema declares 2`] = `
     "open_internet": "false",
     "port_validation": null,
     "projects_json": "["PROJECT-BETA","PROJECT-ALPHA"]",
+    "publisher": "Platform Engineering",
     "region": "europe-west1",
     "sensitive_access": "true",
     "sensitive_data": "false",

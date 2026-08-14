@@ -17,6 +17,7 @@
 @import "./styles/inventory.css";
 @import "./styles/tables.css";
 @import "./styles/graph.css";
+@import "./styles/graphQuery.css";
 @import "./styles/sheet.css";
 @import "./styles/recordSheet.css";
 @import "./styles/feedback.css";

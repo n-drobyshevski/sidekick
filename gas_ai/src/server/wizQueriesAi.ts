@@ -831,6 +831,45 @@ export function aiConfigFindingsVariables(
   return { filterBy, orderBy: { field: "SEVERITY", direction: "DESC" } };
 }
 
+// ----------------------------------------------------- AI asset properties (provenance)
+
+/**
+ * Who published an AI asset and how Wiz found it — `publisher` and `discoveryMethods`, the two
+ * columns the Security Graph's default AI-asset group reads.
+ *
+ * ITS OWN STEP, and that is the whole point. Both fields live in `graphEntity.properties`,
+ * which the mandatory `INVENTORY_AI` step does not select and must not start selecting:
+ *
+ *   - `properties` is an opaque JSON map with no sub-selection, so asking for it drags in
+ *     `snippet` — verbatim agent source code, and most of the 396 KB that
+ *     exemples/get_ai_agents_reponse.js weighs for 68 agents. `normalizeCloudResource` throws
+ *     all of that away, but the transport cost is real and belongs on a step that can be
+ *     dropped rather than on the one the whole app depends on.
+ *   - a tenant whose schema rejects `graphEntity` on this root would otherwise lose the entire
+ *     inventory, not two columns.
+ *
+ * So it follows the shape DSPM and network exposure already set here: a claim that needs its
+ * own selection set gets its own OPTIONAL step, and its absence degrades two cells rather than
+ * the sync. The selection is IDENTITY_FIELDS plus the bag — `type` is not decoration, it is
+ * what `kindFromWizType` needs to admit the row at all.
+ */
+export const Q_AI_PROPERTIES =
+  "query SidekickAiAssetProperties($first: Int, $after: String, $filterBy: CloudResourceV2Filters) {\n" +
+  "  cloudResourcesV2(first: $first, after: $after, filterBy: $filterBy) {\n" +
+  "    totalCount\n" +
+  "    pageInfo { hasNextPage endCursor }\n" +
+  "    nodes {\n" +
+  indented(IDENTITY_FIELDS, 6) +
+  "      graphEntity { properties }\n" +
+  "    }\n" +
+  "  }\n" +
+  "}\n";
+
+/** Same population as the inventory step, so the two answer about the same assets. */
+export function aiPropertiesVariables(types: readonly string[]): { filterBy: unknown } {
+  return { filterBy: { type: { equals: [...types] } } };
+}
+
 // ------------------------------------------------- agentic identities (principals)
 
 // Trimmed from exemples/agentic_idenities_request.js. Reuses the cloudResourcesV2 root

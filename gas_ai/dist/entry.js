@@ -29,6 +29,8 @@ function timedApi_(name, p) {
 }
 function api_bootstrap(p) { return timedApi_("bootstrap", p); }
 function api_getGraph(p) { return timedApi_("getGraph", p); }
+function api_getQueryVocabulary(p) { return timedApi_("getQueryVocabulary", p); }
+function api_runGraphQuery(p) { return timedApi_("runGraphQuery", p); }
 function api_getAssets(p) { return timedApi_("getAssets", p); }
 function api_getAssetOptions(p) { return timedApi_("getAssetOptions", p); }
 function api_getAssetDetail(p) { return timedApi_("getAssetDetail", p); }

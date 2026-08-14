@@ -66,6 +66,7 @@ import {
   AI_RESOURCE_TYPE_CANDIDATES,
   aiConfigFindingsVariables,
   aiInventoryVariables,
+  aiPropertiesVariables,
   aiIssuesVariables,
   aiPrincipalsVariables,
   aiIdentityHygieneVariables,
@@ -85,6 +86,7 @@ import {
   Q_IDENTITY_ACCESS,
   Q_ISSUES,
   Q_COMPLIANCE_POSTURE,
+  Q_AI_PROPERTIES,
   Q_PRINCIPALS,
   Q_RULE_ASSETS,
   Q_SA_EXCESSIVE_ACCESS,
@@ -395,6 +397,21 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       normalize: normalizeIdentityAccessPage,
       optional: true,
     },
+    // AI-asset provenance: publisher + how Wiz discovered it. Optional and separate from
+    // INVENTORY_AI on purpose — see the note on Q_AI_PROPERTIES. Losing it costs two columns.
+    {
+      id: "AI_ASSET_PROPERTIES",
+      area: "aispm",
+      writes: ["ai_assets.publisher", "ai_assets.discovery_methods"],
+      run: "cloudResources",
+      query: Q_AI_PROPERTIES,
+      extraVariables: vars("AI_ASSET_PROPERTIES", aiPropertiesVariables(types) as Rec),
+      // The same normalizer the inventory step uses. Safe because mergeParts merges
+      // field-wise and skips undefined — this step's narrower rows fill in the two provenance
+      // fields without erasing the projects, tags or analytics INVENTORY_AI established.
+      normalize: normalizeInventoryPage,
+      optional: true,
+    },
     // Agentic execution identities (cloudResourcesV2 + identityPurpose:AGENTIC).
     {
       id: "AGENTIC_IDENTITIES",
@@ -411,7 +428,8 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
 
 /** Steps whose variables embed the tenant-resolved AI resource types. */
 const TYPE_DEPENDENT_STEPS: ReadonlySet<string> = new Set([
-  "INVENTORY_AI", "HOST_EXPOSURE", "ENDPOINT_EXPOSURE", "IDENTITY_ACCESS", "EFFECTIVE_ACCESS",
+  "INVENTORY_AI", "AI_ASSET_PROPERTIES", "HOST_EXPOSURE", "ENDPOINT_EXPOSURE", "IDENTITY_ACCESS",
+  "EFFECTIVE_ACCESS",
 ]);
 
 /** The connection field a step reads its rows from — the one the response must carry. */
@@ -495,6 +513,8 @@ function defaultStepVariables(stepId: string, withOverride: Rec, aiTypes?: reado
       return aiIssuesVariables(projectScope()) as unknown as Rec;
     case "CONFIG_FINDINGS":
       return aiConfigFindingsVariables(projectScope()) as unknown as Rec;
+    case "AI_ASSET_PROPERTIES":
+      return aiPropertiesVariables(aiTypes ?? resolveAiResourceTypes().types) as unknown as Rec;
     case "AGENTIC_IDENTITIES":
       return aiPrincipalsVariables(projectScope()) as unknown as Rec;
     // Like INVENTORY_AI, these two build their `$query` from the tenant-resolved AI type

@@ -130,8 +130,12 @@
   flex: 1; min-width: 0; min-height: 0; position: relative;
   background: var(--page); overflow: hidden;
 }
-.workbench-body svg { display: block; width: 100%; height: 100%; cursor: grab; user-select: none; -webkit-user-select: none; }
-.workbench-body svg.panning { cursor: grabbing; }
+/* The DIRECT child only. This used to be `.workbench-body svg`, which was harmless while the
+   canvas was the only SVG in here — and then the table view grew per-row kind icons and every
+   one of them stretched to fill its cell. The zoom/pan sizing belongs to the canvas the
+   renderer appends, not to any glyph that happens to be inside the same pane. */
+.workbench-body > svg { display: block; width: 100%; height: 100%; cursor: grab; user-select: none; -webkit-user-select: none; }
+.workbench-body > svg.panning { cursor: grabbing; }
 .workbench-body.updating > svg,
 .workbench-body.updating > .workbench-table { opacity: 0.55; transition: opacity 120ms ease-out; }
 .workbench-table {
