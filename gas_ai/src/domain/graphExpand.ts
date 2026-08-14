@@ -28,7 +28,7 @@
 // renders it into the slot list, and a test pins the slot count against the real capture.
 
 import { type Rec } from "./util";
-import { kindFromWizType } from "./graphTypes";
+import { entityField, kindFromWizType } from "./graphTypes";
 
 /**
  * One node in the traversal. `select` defaults to TRUE — the common case in the capture,
@@ -500,19 +500,10 @@ function toExpandedNode(raw: Rec): ExpandedNode | null {
     ? (raw["projects"] as Rec[]).map((p) => str(p?.["name"]) ?? "").filter(Boolean)
     : [];
 
-  // The flat CloudResource fields, else the raw `properties` bag.
-  //
-  // Both are asked for, because neither alone covers the row. `... on CloudResource`
-  // contributes nothing to an entity that is not one, and this traversal reaches several
-  // that are not — ENDPOINT, IAM_BINDING, CONTAINER, CONFIGURATION_FINDING. `properties`
-  // is on the GraphEntity interface itself and the capture shows it populated for every
-  // entity in the row, so it is what keeps those nodes from arriving as a bare id.
-  const props = (raw["properties"] && typeof raw["properties"] === "object"
-    ? raw["properties"]
-    : {}) as Rec;
-  const pick = (key: string): unknown => (raw[key] !== undefined ? raw[key] : props[key]);
-  const pickStr = (key: string): string | null => str(pick(key)) ?? null;
-  const isTrue = (key: string): boolean => pick(key) === true;
+  // Every fact through entityField: on this root they live in the `properties` bag, not
+  // flat. The shared helper also knows the two names Wiz spells differently there.
+  const pickStr = (key: string): string | null => str(entityField(raw, key)) ?? null;
+  const isTrue = (key: string): boolean => entityField(raw, key) === true;
 
   return {
     id,
@@ -530,19 +521,8 @@ function toExpandedNode(raw: Rec): ExpandedNode | null {
     // DataFinding is the one entity here carrying its own severity; everything else is
     // inventory and gets its severity from the register, which this path does not touch.
     severity: pickStr("severity"),
-    // `openToAllInternet` / `accessibleFrom.internet` are the names the properties bag
-    // uses for the two the CloudResource fragment spells isOpenToAllInternet /
-    // isAccessibleFromInternet.
-    internet: triBool(
-      raw["isAccessibleFromInternet"] !== undefined
-        ? raw["isAccessibleFromInternet"]
-        : props["accessibleFrom.internet"],
-    ),
-    openInternet: triBool(
-      raw["isOpenToAllInternet"] !== undefined
-        ? raw["isOpenToAllInternet"]
-        : props["openToAllInternet"],
-    ),
+    internet: triBool(entityField(raw, "isAccessibleFromInternet")),
+    openInternet: triBool(entityField(raw, "isOpenToAllInternet")),
     sensitiveData: isTrue("hasSensitiveData"),
     sensitiveAccess: isTrue("hasAccessToSensitiveData"),
     highPriv: isTrue("hasHighPrivileges"),

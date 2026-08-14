@@ -12,6 +12,7 @@
 import { SEVERITY_ORDER, type Severity } from "./config";
 import {
   edgeId,
+  entityField,
   kindFromWizType,
   severityRank,
   type DataFindingRow,
@@ -56,24 +57,34 @@ export function normalizeCloudResource(raw: Rec): GNode | null {
   // enum style ("AI_AGENT") — kindFromWizType accepts both.
   const kind = kindFromWizType(raw["type"]);
   if (!id || !kind) return null;
+  // Every resource fact goes through entityField, because this function serves two roots
+  // that carry them differently: flat on a cloudResourcesV2 node, inside `properties` on a
+  // graphSearch entity. Reading raw[key] directly worked only for the first, which is why
+  // every graphSearch-fed node used to arrive with a kind and nothing else.
+  const f = (key: string): unknown => entityField(raw, key);
   const node: GNode = {
     id,
     kind,
     name: str(raw["name"]) ?? id,
-    nativeType: str(raw["nativeType"]),
-    cloudPlatform: str(raw["cloudPlatform"]),
-    region: str(raw["region"]),
-    status: str(raw["status"]),
-    firstSeen: str(raw["firstSeen"]),
-    lastSeen: str(raw["lastSeen"]),
-    externalId: str(raw["externalId"]),
-    isAccessibleFromInternet: triBool(raw["isAccessibleFromInternet"]),
-    isOpenToAllInternet: triBool(raw["isOpenToAllInternet"]),
-    hasSensitiveData: bool(raw["hasSensitiveData"]),
-    hasAccessToSensitiveData: bool(raw["hasAccessToSensitiveData"]),
-    hasHighPrivileges: bool(raw["hasHighPrivileges"]),
-    hasAdminPrivileges: bool(raw["hasAdminPrivileges"]),
+    nativeType: str(f("nativeType")),
+    cloudPlatform: str(f("cloudPlatform")),
+    region: str(f("region")),
+    status: str(f("status")),
+    firstSeen: str(f("firstSeen")),
+    lastSeen: str(f("lastSeen")),
+    externalId: str(f("externalId")),
+    isAccessibleFromInternet: triBool(f("isAccessibleFromInternet")),
+    isOpenToAllInternet: triBool(f("isOpenToAllInternet")),
+    hasSensitiveData: bool(f("hasSensitiveData")),
+    hasAccessToSensitiveData: bool(f("hasAccessToSensitiveData")),
+    hasHighPrivileges: bool(f("hasHighPrivileges")),
+    hasAdminPrivileges: bool(f("hasAdminPrivileges")),
   };
+  // Only the principals query selects this flat; on a graphSearch entity it rides in the
+  // properties bag, which is how an agentic identity reached through a traversal keeps its
+  // purpose instead of looking like an ordinary service account.
+  const purpose = str(f("identityPurpose"));
+  if (purpose) node.identityPurpose = purpose;
   const technology = raw["technology"] as Rec | null | undefined;
   if (technology && typeof technology === "object") {
     const cats = technology["categories"];
@@ -547,8 +558,8 @@ const DATA_STORE_KINDS: ReadonlySet<string> = new Set(["BUCKET", "DATABASE", "DA
 /**
  * Raw entities of a graphSearch row, untouched.
  *
- * `entitiesOf` runs each through `normalizeCloudResource`, which knows nothing about
- * `severity` — that field is on DataFinding, not on the CloudResource fragment. So the
+ * `entitiesOf` runs each through `normalizeCloudResource`, which builds a GNode and a GNode
+ * has no `severity` — that fact belongs to the finding, not to the inventory shape. So the
  * finding rows are read from the raw array instead of from the normalized nodes.
  */
 function rawEntitiesOf(row: Rec): Rec[] {
@@ -617,7 +628,9 @@ export function normalizeSensitiveDataAccessPage(rows: Rec[]): NormalizedPart {
         id,
         resourceId: storeId,
         name: str(raw["name"]) ?? id,
-        severity: normalizeDataFindingSeverity(raw["severity"]),
+        // Through entityField: on a graphSearch entity `severity` rides in the properties
+        // bag, not flat. The capture shows it there on the finding entities.
+        severity: normalizeDataFindingSeverity(entityField(raw, "severity")),
       });
     }
   }

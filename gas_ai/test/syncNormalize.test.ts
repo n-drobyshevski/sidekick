@@ -80,6 +80,71 @@ describe("normalizeCloudResource", () => {
   });
 });
 
+describe("normalizeCloudResource on a graphSearch entity", () => {
+  // Transcribed from exemples/ai_agent_expand_response.js — the AI_AGENT entity, trimmed
+  // to the keys the normalizer reads. This shape, NOT the flat one, is what a graphSearch
+  // entity actually returns: the tenant rejects `... on CloudResource` outright
+  // ("objects of type GraphEntity can never be of type CloudResource"), so the resource
+  // facts arrive only in the properties bag.
+  const ENTITY_RAW = {
+    id: "11111111-1111-5111-a111-111111111111",
+    name: "example-agent",
+    type: "AI_AGENT",
+    properties: {
+      cloudPlatform: "GCP",
+      region: "europe-west1",
+      status: "Active",
+      nativeType: "aiplatform#ReasoningEngine",
+      externalId: "projects/1/locations/europe-west1/reasoningEngines/1",
+      creationDate: "2026-08-03T13:38:32Z",
+      updatedAt: "2026-08-04T06:03:44Z",
+      hasAccessToSensitiveData: false,
+      hasAdminPrivileges: false,
+      hasHighPrivileges: false,
+      "accessibleFrom.internet": false,
+      openToAllInternet: false,
+    },
+  };
+
+  it("recovers the facts the flat shape carries on the node", () => {
+    const node = normalizeCloudResource(ENTITY_RAW)!;
+    expect(node.kind).toBe("AI_AGENT");
+    expect(node.cloudPlatform).toBe("GCP");
+    expect(node.region).toBe("europe-west1");
+    expect(node.status).toBe("Active");
+    expect(node.nativeType).toBe("aiplatform#ReasoningEngine");
+    expect(node.externalId).toBe("projects/1/locations/europe-west1/reasoningEngines/1");
+  });
+
+  it("maps the two keys the bag spells differently", () => {
+    const node = normalizeCloudResource(ENTITY_RAW)!;
+    expect(node.firstSeen).toBe("2026-08-03T13:38:32Z"); // creationDate
+    expect(node.lastSeen).toBe("2026-08-04T06:03:44Z");  // updatedAt
+    expect(node.isAccessibleFromInternet).toBe(false);   // accessibleFrom.internet
+    expect(node.isOpenToAllInternet).toBe(false);        // openToAllInternet
+  });
+
+  it("carries identityPurpose off a traversed identity", () => {
+    // The SERVICE_ACCOUNT in the capture has identityPurpose in its bag. Before this, only
+    // the principals query could set it, so an agentic identity reached through a
+    // traversal looked like any other service account.
+    const node = normalizeCloudResource({
+      id: "sa-1", name: "sa", type: "SERVICE_ACCOUNT",
+      properties: { identityPurpose: "IdentityPurposeAgentic", region: "europe-west1" },
+    })!;
+    expect(node.identityPurpose).toBe("IdentityPurposeAgentic");
+    expect(node.region).toBe("europe-west1");
+  });
+
+  it("still reads the flat shape the inventory root returns", () => {
+    // The same function serves both roots; the flat path must not regress.
+    const node = normalizeCloudResource(AGENT_RAW)!;
+    expect(node.cloudPlatform).toBe("GCP");
+    expect(node.firstSeen).toBe("2026-04-02T08:00:00Z");
+    expect(node.isAccessibleFromInternet).toBe(false);
+  });
+});
+
 describe("page normalizers", () => {
   it("inventory page → nodes only", () => {
     const part = normalizeInventoryPage([AGENT_RAW, {}, { id: "m1", type: "AI_MODEL", name: "m" }]);

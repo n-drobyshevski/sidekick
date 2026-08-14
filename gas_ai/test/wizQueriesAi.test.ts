@@ -4,7 +4,7 @@
 // { type: { equals: [...] } } operator shape.
 
 import { describe, expect, it } from "vitest";
-import { kindFromWizType } from "../src/domain/graphTypes";
+import { entityField, kindFromWizType } from "../src/domain/graphTypes";
 import {
   AI_RESOURCE_TYPE_CANDIDATES,
   Q_AGENT_RUNS_AS,
@@ -287,80 +287,62 @@ describe("query documents", () => {
     });
   }
 
-  it("asks graphSearch for every field the flat query asks for", () => {
-    // The invariant the two lists exist to satisfy, asserted rather than trusted.
-    const flatFields = Q_AI_INVENTORY.split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l && !l.includes("{") && !l.includes("}") && !l.startsWith("query")
-        && !l.startsWith("$") && !l.includes("(") && !l.includes(":"));
-    const entity = Q_AGENTS_NO_GUARDRAIL;
-    for (const f of flatFields) {
-      expect(entity, `graphSearch is missing ${f}`).toContain(f);
-    }
-    expect(flatFields.length).toBeGreaterThan(10);
-  });
-
-  it("keeps the DataFinding fragment out of every OTHER graphSearch document", () => {
-    // The blast-radius guard. ENTITY_FIELDS is shared by four steps; adding
-    // `... on DataFinding` there would make a tenant whose schema does not carry that type
-    // reject guardrail coverage, RUNS_AS, SA findings and identity access all at once — four
-    // optional steps skipped for the sake of one new one. The fragment lives in a variant
-    // used by exactly one document, whose step is itself optional.
-    expect(Q_AGENT_SENSITIVE_DATA_ACCESS).toContain("... on DataFinding");
-    // Q_AGENT_EXPANSION carries it too, and for the same reason: its traversal selects
-    // DATA_FINDING in five of its 43 slots. It is also not a sync step — a tenant that
-    // rejects the type costs one detail-sheet button, not four battery steps.
-    expect(Q_AGENT_EXPANSION).toContain("... on DataFinding");
-    for (const doc of [Q_AGENTS_NO_GUARDRAIL, Q_AGENT_RUNS_AS, Q_SA_EXCESSIVE_ACCESS,
-      Q_IDENTITY_ACCESS]) {
-      expect(doc).not.toContain("DataFinding");
-    }
-  });
-
-  it("selects nothing but id/name/type on the bare GraphEntity interface", () => {
-    // A live tenant answered every graphSearch document here with
-    //   HTTP 400 Cannot query field "nativeType" on type "GraphEntity"
-    // and the same for cloudPlatform and region. They are CloudResource fields; the
-    // interface does not carry them. Because ENTITY_FIELDS is shared by all five battery
-    // traversals and syncJobs skips an optional step on a 400, that one mistake silently
-    // dropped guardrail coverage, RUNS_AS, SA excessive access, sensitive-data access and
-    // identity access from every live sync at once.
+  it("asks a graphSearch entity for the interface fields and the properties bag, only", () => {
+    // This used to assert the opposite — that graphSearch asks for every field the flat
+    // query does. It cannot. The tenant answers `... on CloudResource` with
     //
-    // Asserted on the rendered document rather than the constant: what the tenant
-    // validates is the text, and the split between the two lists is exactly the thing
-    // that was wrong.
+    //   Fragment cannot be spread here as objects of type "GraphEntity" can never be of
+    //   type "CloudResource"
+    //
+    // and then "Cannot query field X on type CloudResource" for each field inside it. The
+    // resource facts are not reachable as fields on this root at all; they arrive in
+    // `properties`. Because ENTITY_FIELDS is shared by all five battery traversals and
+    // syncJobs skips an optional step on a 400, that one fragment silently dropped
+    // guardrail coverage, RUNS_AS, SA excessive access, sensitive-data access and identity
+    // access from every live sync at once.
     for (const [name, doc] of DOCS) {
       if (!doc.includes("graphSearch")) continue;
-      const head = doc.slice(doc.indexOf("entities {"), doc.indexOf("... on CloudResource"));
-      for (const field of ["nativeType", "cloudPlatform", "region", "status", "tags"]) {
-        expect(head, `${name} puts ${field} on the interface`).not.toContain(field);
+      const entities = doc.slice(doc.indexOf("entities {"));
+      expect(entities, `${name} still spreads a fragment on GraphEntity`)
+        .not.toContain("... on");
+      expect(entities, `${name} does not ask for properties`).toContain("properties");
+      for (const field of ["cloudPlatform", "region", "status", "firstSeen", "externalId",
+        "hasSensitiveData", "hasAdminPrivileges", "technology", "cloudAccount", "tags"]) {
+        expect(entities, `${name} selects ${field} on GraphEntity`).not.toContain(field);
       }
-      expect(head).toContain("id");
-      expect(head).toContain("name");
-      expect(head).toContain("type");
     }
   });
 
-  it("keeps every CloudResource field the flat query has, just inside the fragment", () => {
-    // Moving the three is a relocation, not a removal — the response shape is flat either
-    // way, so normalizeCloudResource keeps reading them off the top level.
-    for (const field of ["nativeType", "cloudPlatform", "region"]) {
-      expect(Q_AGENT_RUNS_AS).toContain(field);
-      expect(Q_AI_INVENTORY).toContain(field);
+  it("still asks the FLAT root for every resource field, where they do exist", () => {
+    // The split between the two lists marks which root carries what; the flat query is
+    // untouched by any of this.
+    for (const field of ["nativeType", "cloudPlatform", "region", "status", "firstSeen",
+      "lastSeen", "externalId", "isAccessibleFromInternet", "hasSensitiveData",
+      "hasAdminPrivileges"]) {
+      expect(Q_AI_INVENTORY, `flat inventory dropped ${field}`).toContain(field);
     }
   });
 
-  it("Q_AGENT_EXPANSION also asks for the raw properties bag", () => {
-    // The expansion reaches types that are not CloudResource, for which the fragment
-    // contributes nothing. `properties` is on the interface and the capture shows it
-    // populated for every entity, so it is the decoder's fallback. Deliberately NOT in
-    // ENTITY_FIELDS: the battery persists what it reads and does not need the payload.
-    expect(Q_AGENT_EXPANSION).toContain("properties");
-    for (const doc of [Q_AGENTS_NO_GUARDRAIL, Q_AGENT_RUNS_AS, Q_SA_EXCESSIVE_ACCESS,
-      Q_IDENTITY_ACCESS, Q_AGENT_SENSITIVE_DATA_ACCESS]) {
-      expect(doc).not.toContain("properties");
+  it("reaches the same facts through entityField, whichever root they came from", () => {
+    // The claim the query change rests on: a graphSearch entity's properties bag answers
+    // the same questions the flat node does, including the two Wiz spells differently.
+    const flat = { cloudPlatform: "GCP", region: "eu", isAccessibleFromInternet: true };
+    const entity = {
+      properties: {
+        cloudPlatform: "GCP", region: "eu", "accessibleFrom.internet": true,
+        creationDate: "2026-04-21T14:10:00Z", severity: "SeverityMedium",
+      },
+    };
+    for (const key of ["cloudPlatform", "region", "isAccessibleFromInternet"]) {
+      expect(entityField(entity, key)).toEqual(entityField(flat, key));
     }
+    expect(entityField(entity, "firstSeen")).toBe("2026-04-21T14:10:00Z");
+    expect(entityField(entity, "severity")).toBe("SeverityMedium");
+    // A flat value still wins over the bag, and an absent key is undefined either way.
+    expect(entityField({ region: "us", properties: { region: "eu" } }, "region")).toBe("us");
+    expect(entityField({}, "region")).toBeUndefined();
   });
+
 
   it("Q_AGENT_EXPANSION takes its traversal as a variable, not as document text", () => {
     // The one graphSearch document here whose query body is NOT inlined. It is pinned to a
