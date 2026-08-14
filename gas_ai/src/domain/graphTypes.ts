@@ -457,3 +457,93 @@ export interface DataFindingRow {
   name: string;
   severity: Severity;
 }
+
+/**
+ * Why a posture cell is empty. Wiz's own reasons, carried through verbatim.
+ *
+ * This exists so a null posture can never be read as a zero. "Nothing failed because
+ * nothing was assessed" and "everything assessed failed" are opposite facts that both
+ * arrive as an absent percentage, and PRODUCT.md's Honest-State principle makes telling
+ * them apart load-bearing rather than a nicety. `null` here means a real posture exists.
+ */
+export type EmptyPostureReason = "NO_RESOURCES" | "NO_POLICIES" | string;
+
+/** Which level of the framework tree a posture row describes. */
+export type PostureLevel = "framework" | "category" | "subcategory";
+
+/**
+ * One node of the compliance tree, flattened. `level` discriminates; the external ids
+ * rebuild the hierarchy (a category row carries only `categoryExternalId`, a subcategory
+ * row carries both).
+ *
+ * `posturePct` is Wiz's `averageCompliancePosture` / `compliancePosture` stored as sent —
+ * never recomputed. It is null exactly when `emptyPostureReason` is set.
+ */
+export interface PostureRow {
+  frameworkId: string;
+  level: PostureLevel;
+  categoryExternalId?: string;
+  subcategoryExternalId?: string;
+  /** The Wiz object id (wf-id-… / wct-id-… / wsct-id-…). */
+  nodeId?: string;
+  title: string;
+  description?: string;
+  posturePct: number | null;
+  passCount: number;
+  failCount: number;
+  passSubCategoryCount?: number;
+  failSubCategoryCount?: number;
+  emptyPostureReason: EmptyPostureReason | null;
+  assessmentScope?: string;
+  mappingRationale?: string;
+  tags?: { key: string; value: string }[];
+}
+
+/** Which of the three mutually exclusive policy shapes a policyAnalytics row carried. */
+export type PolicyKind = "CONTROL" | "CLOUD_RULE" | "HOST_RULE";
+
+/**
+ * One (framework, subcategory, policy) edge — the many-to-many mapping, as a row.
+ *
+ * The same policy appears under several subcategories (a prompt-injection control maps to
+ * ASI01, ASI02 and ASI10 in the sample tenant), so a table keyed by `policyId` alone would
+ * silently collapse three facts into one. Policy metadata therefore repeats across rows;
+ * that is the intended trade, and it is what makes the join cheap: `policyId` / `shortId`
+ * are the SAME identifiers `FindingRow.ruleId` / `ruleShortId` carry, so a failing finding
+ * can be labelled with the framework codes it actually violates instead of the ones a
+ * regex happened to find in a tag.
+ */
+export interface FrameworkPolicyRow {
+  frameworkId: string;
+  categoryExternalId: string;
+  subcategoryExternalId: string;
+  policyId: string;
+  policyKind: PolicyKind;
+  shortId?: string;
+  name: string;
+  severity: Severity;
+  enabled?: boolean;
+  builtin?: boolean;
+  /** Wiz sends null for "none", which is not the same as 0 for a policy it never ran. */
+  passCount: number;
+  failCount: number;
+  assessedCount: number;
+  rejectedCount: number;
+  noResourceToAssess: boolean;
+  targetNativeType?: string;
+  subjectEntityType?: string;
+  cloudProvider?: string;
+  hasAutoRemediation?: boolean;
+}
+
+/** One row of the framework catalogue — what the tenant has, for the Settings picker. */
+export interface FrameworkRow {
+  id: string;
+  name: string;
+  description?: string;
+  builtin: boolean;
+  enabled: boolean;
+  policyTypes: string[];
+  /** Whether this app syncs posture for it. Resolved from settings, not from Wiz. */
+  selected: boolean;
+}

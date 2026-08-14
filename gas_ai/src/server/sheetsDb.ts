@@ -17,6 +17,9 @@ export const TABS = {
   issues: "ai_issues",
   findings: "ai_findings",
   dataFindings: "ai_data_findings",
+  frameworks: "ai_frameworks",
+  frameworkPosture: "ai_framework_posture",
+  frameworkPolicies: "ai_framework_policies",
   syncHistory: "sync_history",
   settings: "settings",
   jobs: "jobs",
@@ -85,6 +88,46 @@ export const TAB_HEADERS: Record<string, string[]> = {
   // prices AARS pillar B and counts as `complianceGaps`, and a classification finding
   // folded into it would inflate both.
   [TABS.dataFindings]: ["id", "resource_id", "name", "severity"],
+  // ---- compliance framework posture (securityFramework/complianceAnalytics) ----
+  //
+  // Three tabs rather than one, because the posture tree has two genuinely different
+  // grains and a many-to-many edge between them.
+  //
+  // `ai_frameworks` is the catalogue: what the tenant has, so Settings can offer a picker
+  // instead of asking an operator to type "wf-id-275".
+  //
+  // No `selected` column. Selection is THIS APP's decision and lives in `settings`; a
+  // column here could only ever be a stale copy of it, written by a sync that has no
+  // reason to know. The API model folds the two together at read time instead.
+  [TABS.frameworks]: ["id", "name", "description", "builtin", "enabled", "policy_types"],
+  // `ai_framework_posture` is the TREE, flattened with a `level` discriminator
+  // (framework | category | subcategory) rather than split across three tabs. One read
+  // path, one wholesale rewrite, and the page rebuilds the hierarchy from external ids.
+  //
+  // `posture_pct` is stored EXACTLY as Wiz sent it and is never recomputed: it is their
+  // number, and a second locally-derived percentage sitting beside it would be two
+  // answers to one question. `empty_posture_reason` (NO_RESOURCES / NO_POLICIES) is what
+  // keeps a null posture from being read as a confident 0 — see compliancePosture.ts.
+  [TABS.frameworkPosture]: [
+    "framework_id", "level", "category_external_id", "subcategory_external_id",
+    "node_id", "title", "description",
+    "posture_pct", "pass_count", "fail_count",
+    "pass_subcategory_count", "fail_subcategory_count", "empty_posture_reason",
+    "assessment_scope", "mapping_rationale", "tags_json",
+  ],
+  // `ai_framework_policies` is the many-to-many EDGE, one row per
+  // (framework, subcategory, policy). The same control maps to several subcategories —
+  // one prompt-injection control lands under ASI01, ASI02 and ASI10 — so the mapping IS
+  // the row. Keying by policy id alone would lose it, which is exactly the join this
+  // feature exists to harvest: it is what lets a failing finding be labelled with the
+  // framework codes AARS pillar B already knows how to price.
+  [TABS.frameworkPolicies]: [
+    "framework_id", "category_external_id", "subcategory_external_id",
+    "policy_id", "policy_kind", "short_id", "name", "severity",
+    "enabled", "builtin", "pass_count", "fail_count", "assessed_count",
+    "rejected_count", "no_resource_to_assess",
+    "target_native_type", "subject_entity_type", "cloud_provider", "has_auto_remediation",
+  ],
   [TABS.syncHistory]: [
     "sync_id", "started_at", "finished_at", "status", "mode",
     "node_count", "edge_count", "issue_count", "api_calls", "snapshot_ref", "error",

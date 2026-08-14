@@ -241,6 +241,9 @@ var Server = (() => {
     issues: "ai_issues",
     findings: "ai_findings",
     dataFindings: "ai_data_findings",
+    frameworks: "ai_frameworks",
+    frameworkPosture: "ai_framework_posture",
+    frameworkPolicies: "ai_framework_policies",
     syncHistory: "sync_history",
     settings: "settings",
     jobs: "jobs",
@@ -384,6 +387,71 @@ var Server = (() => {
     // prices AARS pillar B and counts as `complianceGaps`, and a classification finding
     // folded into it would inflate both.
     [TABS.dataFindings]: ["id", "resource_id", "name", "severity"],
+    // ---- compliance framework posture (securityFramework/complianceAnalytics) ----
+    //
+    // Three tabs rather than one, because the posture tree has two genuinely different
+    // grains and a many-to-many edge between them.
+    //
+    // `ai_frameworks` is the catalogue: what the tenant has, so Settings can offer a picker
+    // instead of asking an operator to type "wf-id-275".
+    //
+    // No `selected` column. Selection is THIS APP's decision and lives in `settings`; a
+    // column here could only ever be a stale copy of it, written by a sync that has no
+    // reason to know. The API model folds the two together at read time instead.
+    [TABS.frameworks]: ["id", "name", "description", "builtin", "enabled", "policy_types"],
+    // `ai_framework_posture` is the TREE, flattened with a `level` discriminator
+    // (framework | category | subcategory) rather than split across three tabs. One read
+    // path, one wholesale rewrite, and the page rebuilds the hierarchy from external ids.
+    //
+    // `posture_pct` is stored EXACTLY as Wiz sent it and is never recomputed: it is their
+    // number, and a second locally-derived percentage sitting beside it would be two
+    // answers to one question. `empty_posture_reason` (NO_RESOURCES / NO_POLICIES) is what
+    // keeps a null posture from being read as a confident 0 — see compliancePosture.ts.
+    [TABS.frameworkPosture]: [
+      "framework_id",
+      "level",
+      "category_external_id",
+      "subcategory_external_id",
+      "node_id",
+      "title",
+      "description",
+      "posture_pct",
+      "pass_count",
+      "fail_count",
+      "pass_subcategory_count",
+      "fail_subcategory_count",
+      "empty_posture_reason",
+      "assessment_scope",
+      "mapping_rationale",
+      "tags_json"
+    ],
+    // `ai_framework_policies` is the many-to-many EDGE, one row per
+    // (framework, subcategory, policy). The same control maps to several subcategories —
+    // one prompt-injection control lands under ASI01, ASI02 and ASI10 — so the mapping IS
+    // the row. Keying by policy id alone would lose it, which is exactly the join this
+    // feature exists to harvest: it is what lets a failing finding be labelled with the
+    // framework codes AARS pillar B already knows how to price.
+    [TABS.frameworkPolicies]: [
+      "framework_id",
+      "category_external_id",
+      "subcategory_external_id",
+      "policy_id",
+      "policy_kind",
+      "short_id",
+      "name",
+      "severity",
+      "enabled",
+      "builtin",
+      "pass_count",
+      "fail_count",
+      "assessed_count",
+      "rejected_count",
+      "no_resource_to_assess",
+      "target_native_type",
+      "subject_entity_type",
+      "cloud_provider",
+      "has_auto_remediation"
+    ],
     [TABS.syncHistory]: [
       "sync_id",
       "started_at",
@@ -1559,6 +1627,16 @@ var Server = (() => {
     if (scope && scope.length) filterBy["projectId"] = scope;
     return { filterBy, orderBy: { field: "RELATED_ISSUE_SEVERITY", direction: "DESC" } };
   }
+  var Q_SECURITY_FRAMEWORKS = "query SidekickAiSecurityFrameworks($first: Int, $after: String, $filterBy: SecurityFrameworkFilters) {\n  securityFrameworks(first: $first, after: $after, filterBy: $filterBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      name\n      description\n      builtin\n      enabled\n      policyTypes\n    }\n  }\n}\n";
+  function aiSecurityFrameworksVariables() {
+    return { filterBy: { enabled: true } };
+  }
+  var Q_COMPLIANCE_POSTURE = "query SidekickAiCompliancePosture($id: ID!, $analyticsSelection: SecurityFrameworkComplianceAnalyticsSelection, $orderBy: SecurityFrameworkSelectionOrder) {\n  securityFramework(id: $id) {\n    id\n    name\n    description\n    builtin\n    enabled\n    complianceAnalytics(selection: $analyticsSelection, orderBy: $orderBy) {\n      passSubCategoryCount\n      failSubCategoryCount\n      averageCompliancePosture\n      emptyPostureReason\n      categoryAnalytics {\n        category { id name description externalId }\n        passCount\n        failCount\n        passSubCategoryCount\n        failSubCategoryCount\n        averageCompliancePosture\n        emptyPostureReason\n        subCategoryAnalytics {\n          passCount\n          failCount\n          compliancePosture\n          emptyPostureReason\n          subCategory {\n            id\n            title\n            description\n            externalId\n            assessmentScope\n            mappingRationale\n            tags { key value }\n          }\n          policyAnalytics {\n            failCount\n            passCount\n            rejectedCount\n            assessedCount\n            noResourceToAsses\n            control {\n              id\n              name\n              description\n              enabled\n              builtin\n              severity\n              scopeQuery\n            }\n            cloudConfigurationRule {\n              id\n              name\n              description\n              shortId\n              enabled\n              builtin\n              severity\n              targetNativeType\n              subjectEntityType\n              hasAutoRemediation\n              cloudProvider\n            }\n            hostConfigurationRule {\n              id\n              name\n              shortName\n              description\n              enabled\n              builtin\n              severity\n            }\n          }\n        }\n      }\n    }\n  }\n}\n";
+  function aiCompliancePostureVariables(scope) {
+    const analyticsSelection = {};
+    if (scope && scope.length) analyticsSelection["projectId"] = scope;
+    return { analyticsSelection };
+  }
 
   // src/server/wizClientAi.ts
   var WizQueryError = class extends Error {
@@ -1785,6 +1863,14 @@ var Server = (() => {
   function fetchGraphSearchPage(o) {
     return fetchPage("graphSearch", o, { quick: true });
   }
+  function fetchSingleObject(field, o) {
+    var _a5;
+    const obj = gqlPost(o.query, { ...(_a5 = o.extraVariables) != null ? _a5 : {} })[field];
+    if (!obj || typeof obj !== "object") {
+      throw new WizQueryError(`Wiz response carried no ${field} object.`);
+    }
+    return { rows: [obj], hasNextPage: false, endCursor: null, totalCount: 1 };
+  }
 
   // src/server/diagnostics.ts
   function preview(value) {
@@ -1951,6 +2037,7 @@ var Server = (() => {
     getAssetDetail: () => getAssetDetail,
     getAssetOptions: () => getAssetOptions,
     getAssets: () => getAssets,
+    getCompliance: () => getCompliance,
     getConfigFindingDetail: () => getConfigFindingDetail,
     getConfigFindings: () => getConfigFindings,
     getGraph: () => getGraph,
@@ -1969,6 +2056,7 @@ var Server = (() => {
     scoreAarsSample: () => scoreAarsSample,
     setAarsRule: () => setAarsRule2,
     setScanVars: () => setScanVars2,
+    setSelectedFrameworks: () => setSelectedFrameworks2,
     setSettings: () => setSettings,
     testScanVars: () => testScanVars
   });
@@ -2159,7 +2247,7 @@ var Server = (() => {
         }
       }
       for (const value of q[key]) if (!counts.has(value)) counts.set(value, 0);
-      out[key] = Array.from(counts, ([value, count]) => ({ value, count })).sort(facetSorter(key));
+      out[key] = Array.from(counts, ([value, count2]) => ({ value, count: count2 })).sort(facetSorter(key));
     }
     out.matched = rows.reduce((n, row) => matchesAssetQuery(row, q) ? n + 1 : n, 0);
     return out;
@@ -2195,7 +2283,12 @@ var Server = (() => {
     gapFallbackPoints: 5,
     gapAggregation: "sum",
     // Off: switching any of these on adds gaps the doc's applied table never priced.
-    gapSources: { fiveRs: false, deprecatedModel: false, inactiveAgent: false },
+    gapSources: {
+      fiveRs: false,
+      deprecatedModel: false,
+      inactiveAgent: false,
+      frameworkMapping: false
+    },
     // All 1: the spec reads a failing control as present-or-absent, never as more or less
     // severe. Kept as a knob because ai_findings.severity is already persisted and unused.
     findingSeverityWeights: { CRITICAL: 1, HIGH: 1, MEDIUM: 1, LOW: 1 },
@@ -2238,7 +2331,19 @@ var Server = (() => {
     ],
     gapFallbackPoints: 5,
     gapAggregation: "rss",
-    gapSources: { fiveRs: true, deprecatedModel: true, inactiveAgent: true },
+    // frameworkMapping stays OFF even here, where every other dormant source is on. Two
+    // reasons, and neither is timidity: ai/AARS_ASSESSMENT.md calibrated this preset before
+    // posture was collected at all, so switching it on would make the preset differ from the
+    // measurement that justifies its numbers; and its effect is DATA-DEPENDENT — it does
+    // nothing until a posture sync has run, then changes scores — so a preset carrying it
+    // would silently re-score an estate on the strength of an unrelated sync finishing.
+    // It is switched on deliberately, through the Rules page, with the same preview.
+    gapSources: {
+      fiveRs: true,
+      deprecatedModel: true,
+      inactiveAgent: true,
+      frameworkMapping: false
+    },
     findingSeverityWeights: { CRITICAL: 1.5, HIGH: 1.2, MEDIUM: 1, LOW: 0.6 },
     pillarBCap: 25,
     // Split, so the pillar takes more than two values. Reaching sensitive data is worth 6 —
@@ -2285,13 +2390,13 @@ var Server = (() => {
   function worstSeverityPoints(severities, rule) {
     return worstPoints(severities, rule.severityPoints);
   }
-  function countFactor(count, scaling, multiplier) {
-    if (count <= 1) return 1;
-    if (scaling === "log2") return 1 + (multiplier - 1) * Math.log2(count);
+  function countFactor(count2, scaling, multiplier) {
+    if (count2 <= 1) return 1;
+    if (scaling === "log2") return 1 + (multiplier - 1) * Math.log2(count2);
     return multiplier;
   }
-  function multiIssueFactor(count, rule) {
-    return countFactor(count, rule.multiIssueScaling, rule.multiIssueMultiplier);
+  function multiIssueFactor(count2, rule) {
+    return countFactor(count2, rule.multiIssueScaling, rule.multiIssueMultiplier);
   }
   function dataFindingPointsFor(severities, rule) {
     if (!severities.length) return 0;
@@ -2409,7 +2514,8 @@ var Server = (() => {
     const gapSources = {
       fiveRs: srcRaw["fiveRs"] === true,
       deprecatedModel: srcRaw["deprecatedModel"] === true,
-      inactiveAgent: srcRaw["inactiveAgent"] === true
+      inactiveAgent: srcRaw["inactiveAgent"] === true,
+      frameworkMapping: srcRaw["frameworkMapping"] === true
     };
     const fswRaw = rec(r["findingSeverityWeights"]);
     const findingSeverityWeights = {};
@@ -2555,7 +2661,9 @@ var Server = (() => {
     if (!c) return false;
     if (c === "DEPRECATED_MODEL") return rule.gapSources.deprecatedModel === true;
     if (c === "INACTIVE_AGENT") return rule.gapSources.inactiveAgent === true;
-    if (c.startsWith("5R_")) return rule.gapSources.fiveRs === true;
+    if (c.startsWith("5R_")) {
+      return rule.gapSources.fiveRs === true || rule.gapSources.frameworkMapping === true;
+    }
     if (c === "FIVE_RS") return false;
     if (DERIVABLE_EXACT.includes(c)) return true;
     return DERIVABLE_PREFIXES.some((p) => c.startsWith(p));
@@ -2563,7 +2671,7 @@ var Server = (() => {
   function unreachableGapRules(rule) {
     const dead = [];
     rule.gapPoints.forEach((row, i) => {
-      const claimsDerivedFamily = row.match === "prefix" ? row.code.startsWith("5R") && rule.gapSources.fiveRs !== true : DERIVABLE_EXACT.includes(cleanGapCode(row.code)) && !isDerivable(row.code, rule);
+      const claimsDerivedFamily = row.match === "prefix" ? row.code.startsWith("5R") && rule.gapSources.fiveRs !== true && rule.gapSources.frameworkMapping !== true : DERIVABLE_EXACT.includes(cleanGapCode(row.code)) && !isDerivable(row.code, rule);
       if (claimsDerivedFamily) dead.push(i);
     });
     return dead;
@@ -2902,7 +3010,7 @@ var Server = (() => {
         }
       }
       for (const value of q[key]) if (!counts.has(value)) counts.set(value, 0);
-      out[key] = Array.from(counts, ([value, count]) => ({ value, count })).sort(facetSorter2(key));
+      out[key] = Array.from(counts, ([value, count2]) => ({ value, count: count2 })).sort(facetSorter2(key));
     }
     out.matched = rows.reduce((n, row) => matchesConfigQuery(row, q) ? n + 1 : n, 0);
     return out;
@@ -3003,6 +3111,156 @@ var Server = (() => {
       ignored,
       iac,
       severityMix
+    };
+  }
+
+  // src/domain/compliancePosture.ts
+  function postureState(posturePct2, emptyPostureReason) {
+    const reason = String(emptyPostureReason != null ? emptyPostureReason : "").trim().toUpperCase();
+    if (reason === "NO_RESOURCES") return "noResources";
+    if (reason === "NO_POLICIES") return "noPolicies";
+    if (reason) return "unknown";
+    return posturePct2 === null ? "unknown" : "scored";
+  }
+  function titleRepeatsExternalId(externalId, title) {
+    const id = String(externalId != null ? externalId : "").trim();
+    const t = String(title != null ? title : "").trim();
+    if (!id || !t) return false;
+    if (!(t.toUpperCase().indexOf(id.toUpperCase()) === 0)) return false;
+    const next = t.charAt(id.length);
+    return next === "" || next === " " || next === "	";
+  }
+  function severityRank2(s) {
+    const i = SEVERITY_ORDER.indexOf(s);
+    return i === -1 ? SEVERITY_ORDER.length : i;
+  }
+  function emptyStateCounts() {
+    return { scored: 0, noResources: 0, noPolicies: 0, unknown: 0 };
+  }
+  function toNode(row, externalId) {
+    return {
+      frameworkId: row.frameworkId,
+      externalId,
+      // Suppressed when the title already opens with it, so an OWASP LLM row reads
+      // "1 LLM01:2025 Prompt Injection" rather than "11 LLM01:2025 Prompt Injection".
+      showExternalId: !titleRepeatsExternalId(externalId, row.title),
+      title: row.title,
+      description: row.description,
+      posturePct: row.posturePct,
+      state: postureState(row.posturePct, row.emptyPostureReason),
+      passCount: row.passCount,
+      failCount: row.failCount,
+      emptyPostureReason: row.emptyPostureReason
+    };
+  }
+  function buildFrameworkTree(frameworkId, posture, policies, frameworks = []) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o;
+    const rows = posture.filter((p) => p.frameworkId === frameworkId);
+    if (!rows.length) return null;
+    const frameworkRow = rows.find((p) => p.level === "framework");
+    const catalogue = frameworks.find((f) => f.id === frameworkId);
+    const policiesBySub = /* @__PURE__ */ new Map();
+    for (const p of policies) {
+      if (p.frameworkId !== frameworkId) continue;
+      const list2 = (_a5 = policiesBySub.get(p.subcategoryExternalId)) != null ? _a5 : [];
+      list2.push(p);
+      policiesBySub.set(p.subcategoryExternalId, list2);
+    }
+    const subsByCategory = /* @__PURE__ */ new Map();
+    for (const row of rows) {
+      if (row.level !== "subcategory") continue;
+      const externalId = (_b = row.subcategoryExternalId) != null ? _b : "";
+      const raw = (_c = policiesBySub.get(externalId)) != null ? _c : [];
+      const seen = /* @__PURE__ */ new Set();
+      const deduped = raw.filter((p) => {
+        if (seen.has(p.policyId)) return false;
+        seen.add(p.policyId);
+        return true;
+      });
+      deduped.sort(
+        (a, b) => severityRank2(a.severity) - severityRank2(b.severity) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
+      );
+      const node2 = {
+        ...toNode(row, externalId),
+        assessmentScope: row.assessmentScope,
+        mappingRationale: row.mappingRationale,
+        policies: deduped,
+        failingPolicyCount: deduped.filter((p) => p.failCount > 0).length
+      };
+      const key = (_d = row.categoryExternalId) != null ? _d : "";
+      const list2 = (_e = subsByCategory.get(key)) != null ? _e : [];
+      list2.push(node2);
+      subsByCategory.set(key, list2);
+    }
+    const categories = rows.filter((r) => r.level === "category").map((row) => {
+      var _a6, _b2;
+      const externalId = (_a6 = row.categoryExternalId) != null ? _a6 : "";
+      const subcategories = (_b2 = subsByCategory.get(externalId)) != null ? _b2 : [];
+      return {
+        ...toNode(row, externalId),
+        subcategories,
+        mirrorsCategory: subcategories.length === 1 && subcategories[0].externalId === externalId
+      };
+    });
+    const stateCounts = emptyStateCounts();
+    for (const cat of categories) {
+      for (const sub of cat.subcategories) stateCounts[sub.state] += 1;
+    }
+    const distinct = /* @__PURE__ */ new Map();
+    for (const p of policies) {
+      if (p.frameworkId !== frameworkId) continue;
+      distinct.set(p.policyId, ((_f = distinct.get(p.policyId)) != null ? _f : false) || p.failCount > 0);
+    }
+    return {
+      frameworkId,
+      name: (_h = (_g = frameworkRow == null ? void 0 : frameworkRow.title) != null ? _g : catalogue == null ? void 0 : catalogue.name) != null ? _h : frameworkId,
+      description: (_i = frameworkRow == null ? void 0 : frameworkRow.description) != null ? _i : catalogue == null ? void 0 : catalogue.description,
+      posturePct: (_j = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _j : null,
+      state: postureState(
+        (_k = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _k : null,
+        (_l = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _l : null
+      ),
+      emptyPostureReason: (_m = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _m : null,
+      passSubCategoryCount: (_n = frameworkRow == null ? void 0 : frameworkRow.passSubCategoryCount) != null ? _n : 0,
+      failSubCategoryCount: (_o = frameworkRow == null ? void 0 : frameworkRow.failSubCategoryCount) != null ? _o : 0,
+      categories,
+      stateCounts,
+      policyCount: distinct.size,
+      failingPolicyCount: [...distinct.values()].filter(Boolean).length
+    };
+  }
+  function buildAllFrameworkTrees(posture, policies, frameworks = []) {
+    const ids = [];
+    for (const p of posture) if (ids.indexOf(p.frameworkId) === -1) ids.push(p.frameworkId);
+    const trees = ids.map((id) => buildFrameworkTree(id, posture, policies, frameworks)).filter((t) => t !== null);
+    trees.sort((a, b) => {
+      if (a.posturePct === null && b.posturePct === null) return a.name < b.name ? -1 : 1;
+      if (a.posturePct === null) return 1;
+      if (b.posturePct === null) return -1;
+      return a.posturePct - b.posturePct || (a.name < b.name ? -1 : 1);
+    });
+    return trees;
+  }
+  function complianceKpis(posture, policies = []) {
+    const frameworkRows = posture.filter((p) => p.level === "framework");
+    const scored = frameworkRows.filter(
+      (p) => postureState(p.posturePct, p.emptyPostureReason) === "scored"
+    );
+    const averagePosture = scored.length ? Math.round(scored.reduce((sum, p) => {
+      var _a5;
+      return sum + ((_a5 = p.posturePct) != null ? _a5 : 0);
+    }, 0) / scored.length) : null;
+    const failingSubcategories = posture.filter(
+      (p) => p.level === "subcategory" && p.failCount > 0
+    ).length;
+    const failing = /* @__PURE__ */ new Set();
+    for (const p of policies) if (p.failCount > 0) failing.add(p.policyId);
+    return {
+      frameworks: frameworkRows.length,
+      scoredFrameworks: scored.length,
+      averagePosture,
+      failingSubcategories,
+      failingPolicies: failing.size
     };
   }
 
@@ -3130,13 +3388,35 @@ var Server = (() => {
       // move, which is a worse answer than no knob at all.
       fields: [],
       locked: "This step has no editable filter: the High/Medium bar is also applied to the endpoints the host-exposure step returns unfiltered, so moving it here would widen what is collected without moving what counts as an exposure."
+    },
+    {
+      stepId: "FRAMEWORKS_LIST",
+      // Declared with no fields rather than left out of this list entirely: an absent spec
+      // renders as the generic "no spec" fallback, which reads as an oversight, and someone
+      // will eventually "fix" it. Its only variable is a boolean, and the panel's controls
+      // are list/enum — a third field kind bought for one flag that changes nothing about
+      // what is collected is not worth the machinery.
+      fields: [],
+      locked: "This step's only filter picks whether disabled frameworks appear in the Settings picker. It does not decide what posture is collected \u2014 the framework selection does \u2014 so there is nothing here worth tuning per tenant."
+    },
+    {
+      // Matches every generated posture step (COMPLIANCE_POSTURE_wf-id-275, …) so the family
+      // shares one lock reason instead of falling through to the generic "no spec" text.
+      stepId: "COMPLIANCE_POSTURE_",
+      prefix: true,
+      fields: [],
+      locked: "This step takes no editable variable: its `id` is not a filter \u2014 it selects WHICH framework is fetched, so editing it here would make a step whose name says one framework report another. Choose frameworks in Settings instead."
     }
   ];
   var SPEC_BY_STEP = {};
   for (const spec of STEP_VAR_SPECS) SPEC_BY_STEP[spec.stepId] = spec;
   function varSpecFor(stepId) {
-    var _a5;
-    return (_a5 = SPEC_BY_STEP[stepId]) != null ? _a5 : null;
+    const exact = SPEC_BY_STEP[stepId];
+    if (exact) return exact;
+    for (const spec of STEP_VAR_SPECS) {
+      if (spec.prefix && stepId.indexOf(spec.stepId) === 0) return spec;
+    }
+    return null;
   }
   function isEditableStep(stepId) {
     const spec = varSpecFor(stepId);
@@ -3318,6 +3598,43 @@ var Server = (() => {
   function withSkippedSteps(settings, steps) {
     const list2 = Array.isArray(steps) ? steps.map((v) => String(v != null ? v : "")).filter(Boolean) : [];
     return { ...settings, last_skipped_steps: list2 };
+  }
+  var DEFAULT_FRAMEWORK_IDS = [
+    "wf-id-275",
+    // OWASP Top 10 For Agentic Applications 2026
+    "wf-id-201",
+    // OWASP LLM Security Top 10
+    "wf-id-214",
+    // 5Rs - Wiz for Data Security
+    "wf-id-106"
+    // OWASP ML Security Top 10
+  ];
+  function getSelectedFrameworks(settings) {
+    const raw = settings["selected_frameworks"];
+    if (!Array.isArray(raw)) return DEFAULT_FRAMEWORK_IDS.slice();
+    return raw.map((v) => String(v != null ? v : "")).filter(Boolean);
+  }
+  function resolveDefaultFrameworks(catalogue) {
+    var _a5;
+    const wanted = ["AGENTIC", "LLM", "5R", "ML"];
+    const picked = [];
+    for (const want of wanted) {
+      for (const f of catalogue) {
+        const n = String((_a5 = f.name) != null ? _a5 : "").toUpperCase();
+        const hit = want === "5R" ? /\b5\s?RS?\b/.test(n) : want === "ML" ? n.includes("MACHINE LEARNING") || /\bML\b/.test(n) : want === "LLM" ? n.includes("LLM") : n.includes("AGENTIC");
+        if (hit && picked.indexOf(f.id) === -1) {
+          picked.push(f.id);
+          break;
+        }
+      }
+    }
+    return picked.length ? picked : DEFAULT_FRAMEWORK_IDS.slice();
+  }
+  function withSelectedFrameworks(settings, ids) {
+    const list2 = Array.isArray(ids) ? ids.map((v) => String(v != null ? v : "").trim()).filter(Boolean) : [];
+    const seen = {};
+    const deduped = list2.filter((id) => seen[id] ? false : seen[id] = true);
+    return { ...settings, selected_frameworks: deduped };
   }
   function withScanVars(settings, stepId, vars) {
     const current = getScanVars(settings);
@@ -3749,7 +4066,7 @@ var Server = (() => {
         const r = (_a5 = rankOf.get(id)) != null ? _a5 : 0;
         perRank.set(r, ((_b = perRank.get(r)) != null ? _b : 0) + 1);
       }
-      for (const [r, count] of perRank) slots.set(r, Math.max((_c = slots.get(r)) != null ? _c : 0, count));
+      for (const [r, count2] of perRank) slots.set(r, Math.max((_c = slots.get(r)) != null ? _c : 0, count2));
     }
     const ranks = [...slots.keys()].sort((a, b) => a - b);
     if (!ranks.length) return { pos, shelfOf, extent: 0, shelves: 1 };
@@ -4469,8 +4786,8 @@ var Server = (() => {
     const findingsOf = (store) => {
       var _a5;
       const out = [];
-      for (const [severity, count] of Object.entries((_a5 = store.dataFindingSeverities) != null ? _a5 : {})) {
-        for (let i = 0; i < count; i++) out.push(severity);
+      for (const [severity, count2] of Object.entries((_a5 = store.dataFindingSeverities) != null ? _a5 : {})) {
+        for (let i = 0; i < count2; i++) out.push(severity);
       }
       return out;
     };
@@ -4538,8 +4855,8 @@ var Server = (() => {
     const addedEdges = [];
     for (const node2 of doc.nodes) {
       if (!DATASTORE_KINDS.includes(node2.kind)) continue;
-      const count = (_a5 = node2.dataFindingCount) != null ? _a5 : 0;
-      if (count <= 0) continue;
+      const count2 = (_a5 = node2.dataFindingCount) != null ? _a5 : 0;
+      if (count2 <= 0) continue;
       const id = `datafinding|${node2.id}`;
       if (existing.has(id)) continue;
       const mix = (_b = node2.dataFindingSeverities) != null ? _b : {};
@@ -4549,7 +4866,7 @@ var Server = (() => {
         name: "Data Findings",
         // summaryCount, not a bespoke field: the client already reads it for the collapse
         // stubs, so the count badge and its aria text come for free.
-        summaryCount: count,
+        summaryCount: count2,
         dataFindingSeverities: mix
       };
       const worst = Object.keys(mix).sort((a, b) => severityRank(a) - severityRank(b))[0];
@@ -4907,7 +5224,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "48b406746e4b" : "dev";
+  var BUILD_ID = true ? "ce592847c710" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -5128,6 +5445,18 @@ var Server = (() => {
     if (getSkippedSteps(next).join(" ") === before) return;
     saveSettings(next);
   }
+  function getSelectedFrameworks2(catalogue) {
+    const settings = loadSettings();
+    if (Array.isArray(settings["selected_frameworks"])) {
+      return getSelectedFrameworks(settings);
+    }
+    const rows = catalogue ? catalogue() : [];
+    return rows.length ? resolveDefaultFrameworks(rows) : getSelectedFrameworks(settings);
+  }
+  function setSelectedFrameworks(ids) {
+    saveSettings(withSelectedFrameworks(loadSettings(), ids));
+    return getSelectedFrameworks2();
+  }
   var getScanVars2 = () => getScanVars(loadSettings());
   function setScanVars(stepId, vars) {
     saveSettings(withScanVars(loadSettings(), stepId, vars));
@@ -5243,7 +5572,16 @@ var Server = (() => {
     return node2;
   }
   function emptyPart() {
-    return { nodes: [], edges: [], issues: [], findings: [], dataFindings: [] };
+    return {
+      nodes: [],
+      edges: [],
+      issues: [],
+      findings: [],
+      dataFindings: [],
+      frameworks: [],
+      posture: [],
+      frameworkPolicies: []
+    };
   }
   function appendPart(target, part) {
     target.nodes.push(...part.nodes);
@@ -5251,9 +5589,12 @@ var Server = (() => {
     target.issues.push(...part.issues);
     target.findings.push(...part.findings);
     target.dataFindings.push(...part.dataFindings);
+    target.frameworks.push(...part.frameworks);
+    target.posture.push(...part.posture);
+    target.frameworkPolicies.push(...part.frameworkPolicies);
   }
   function partIsEmpty(part) {
-    return !part.nodes.length && !part.edges.length && !part.issues.length && !part.findings.length && !part.dataFindings.length;
+    return !part.nodes.length && !part.edges.length && !part.issues.length && !part.findings.length && !part.dataFindings.length && !part.frameworks.length && !part.posture.length && !part.frameworkPolicies.length;
   }
   function normalizeInventoryPage(rows) {
     const part = emptyPart();
@@ -5520,6 +5861,232 @@ var Server = (() => {
     }
     return part;
   }
+  function count(v) {
+    return typeof v === "number" && isFinite(v) ? v : 0;
+  }
+  function posturePct(v) {
+    return typeof v === "number" && isFinite(v) ? v : null;
+  }
+  function tagsOf(raw) {
+    if (!Array.isArray(raw)) return [];
+    return raw.filter((t) => t && typeof t === "object").map((t) => {
+      var _a5, _b;
+      return { key: (_a5 = str2(t["key"])) != null ? _a5 : "", value: (_b = str2(t["value"])) != null ? _b : "" };
+    }).filter((t) => t.key !== "" || t.value !== "");
+  }
+  function normalizeFrameworksPage(rows) {
+    var _a5;
+    const part = emptyPart();
+    for (const raw of rows) {
+      if (!raw || typeof raw !== "object") continue;
+      const id = str2(raw["id"]);
+      if (!id) continue;
+      part.frameworks.push({
+        id,
+        name: (_a5 = str2(raw["name"])) != null ? _a5 : id,
+        description: str2(raw["description"]),
+        builtin: bool(raw["builtin"]),
+        enabled: bool(raw["enabled"]),
+        policyTypes: strListOf(raw["policyTypes"]),
+        selected: false
+      });
+    }
+    return part;
+  }
+  function policyOf(raw) {
+    const control = raw["control"];
+    if (control && typeof control === "object") return { kind: "CONTROL", obj: control };
+    const cloud = raw["cloudConfigurationRule"];
+    if (cloud && typeof cloud === "object") return { kind: "CLOUD_RULE", obj: cloud };
+    const host = raw["hostConfigurationRule"];
+    if (host && typeof host === "object") return { kind: "HOST_RULE", obj: host };
+    return null;
+  }
+  function normalizeCompliancePosturePage(rows) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
+    const part = emptyPart();
+    for (const raw of rows) {
+      if (!raw || typeof raw !== "object") continue;
+      const frameworkId = str2(raw["id"]);
+      if (!frameworkId) continue;
+      const analytics = raw["complianceAnalytics"];
+      if (!analytics || typeof analytics !== "object") continue;
+      const categories = Array.isArray(analytics["categoryAnalytics"]) ? analytics["categoryAnalytics"] : [];
+      part.posture.push({
+        frameworkId,
+        level: "framework",
+        nodeId: frameworkId,
+        title: (_a5 = str2(raw["name"])) != null ? _a5 : frameworkId,
+        description: str2(raw["description"]),
+        posturePct: posturePct(analytics["averageCompliancePosture"]),
+        passCount: 0,
+        failCount: 0,
+        passSubCategoryCount: count(analytics["passSubCategoryCount"]),
+        failSubCategoryCount: count(analytics["failSubCategoryCount"]),
+        emptyPostureReason: (_b = str2(analytics["emptyPostureReason"])) != null ? _b : null
+      });
+      for (const cat of categories) {
+        if (!cat || typeof cat !== "object") continue;
+        const category = cat["category"];
+        const hasCat = !!category && typeof category === "object";
+        const catExternalId = hasCat ? (_c = str2(category["externalId"])) != null ? _c : "" : "";
+        part.posture.push({
+          frameworkId,
+          level: "category",
+          categoryExternalId: catExternalId,
+          nodeId: hasCat ? str2(category["id"]) : void 0,
+          title: hasCat ? (_d = str2(category["name"])) != null ? _d : catExternalId : catExternalId,
+          description: hasCat ? str2(category["description"]) : void 0,
+          posturePct: posturePct(cat["averageCompliancePosture"]),
+          passCount: count(cat["passCount"]),
+          failCount: count(cat["failCount"]),
+          passSubCategoryCount: count(cat["passSubCategoryCount"]),
+          failSubCategoryCount: count(cat["failSubCategoryCount"]),
+          emptyPostureReason: (_e = str2(cat["emptyPostureReason"])) != null ? _e : null
+        });
+        const subs = Array.isArray(cat["subCategoryAnalytics"]) ? cat["subCategoryAnalytics"] : [];
+        for (const sub of subs) {
+          if (!sub || typeof sub !== "object") continue;
+          const subCategory = sub["subCategory"];
+          const hasSub = !!subCategory && typeof subCategory === "object";
+          const subExternalId = hasSub ? (_f = str2(subCategory["externalId"])) != null ? _f : "" : "";
+          part.posture.push({
+            frameworkId,
+            level: "subcategory",
+            categoryExternalId: catExternalId,
+            subcategoryExternalId: subExternalId,
+            nodeId: hasSub ? str2(subCategory["id"]) : void 0,
+            title: hasSub ? (_g = str2(subCategory["title"])) != null ? _g : subExternalId : subExternalId,
+            description: hasSub ? str2(subCategory["description"]) : void 0,
+            posturePct: posturePct(sub["compliancePosture"]),
+            passCount: count(sub["passCount"]),
+            failCount: count(sub["failCount"]),
+            emptyPostureReason: (_h = str2(sub["emptyPostureReason"])) != null ? _h : null,
+            assessmentScope: hasSub ? str2(subCategory["assessmentScope"]) : void 0,
+            mappingRationale: hasSub ? str2(subCategory["mappingRationale"]) : void 0,
+            tags: hasSub ? tagsOf(subCategory["tags"]) : []
+          });
+          const policies = Array.isArray(sub["policyAnalytics"]) ? sub["policyAnalytics"] : [];
+          for (const pol of policies) {
+            if (!pol || typeof pol !== "object") continue;
+            const picked = policyOf(pol);
+            if (!picked) continue;
+            const policyId = str2(picked.obj["id"]);
+            if (!policyId) continue;
+            part.frameworkPolicies.push({
+              frameworkId,
+              categoryExternalId: catExternalId,
+              subcategoryExternalId: subExternalId,
+              policyId,
+              policyKind: picked.kind,
+              // Only a CloudConfigurationRule carries shortId ("AIGuardrail-007"); a
+              // HostConfigurationRule spells its short name `shortName`, and a Control has
+              // neither. This is the field the finding join matches on when present.
+              shortId: (_i = str2(picked.obj["shortId"])) != null ? _i : str2(picked.obj["shortName"]),
+              name: (_j = str2(picked.obj["name"])) != null ? _j : policyId,
+              severity: (_k = str2(picked.obj["severity"])) != null ? _k : "UNKNOWN",
+              enabled: (_l = triBool2(picked.obj["enabled"])) != null ? _l : void 0,
+              builtin: (_m = triBool2(picked.obj["builtin"])) != null ? _m : void 0,
+              passCount: count(pol["passCount"]),
+              failCount: count(pol["failCount"]),
+              assessedCount: count(pol["assessedCount"]),
+              rejectedCount: count(pol["rejectedCount"]),
+              // Wiz's spelling, one 's'. Kept verbatim on the wire, corrected on the row.
+              noResourceToAssess: pol["noResourceToAsses"] === true,
+              targetNativeType: str2(picked.obj["targetNativeType"]),
+              subjectEntityType: str2(picked.obj["subjectEntityType"]),
+              cloudProvider: str2(picked.obj["cloudProvider"]),
+              hasAutoRemediation: (_n = triBool2(picked.obj["hasAutoRemediation"])) != null ? _n : void 0
+            });
+          }
+        }
+      }
+    }
+    return part;
+  }
+  function withFrameworkCodes(findings, lookup) {
+    if (!findings.length) return findings;
+    return findings.map((f) => {
+      var _a5, _b;
+      const extra = [];
+      for (const c of (_a5 = lookup[f.ruleShortId]) != null ? _a5 : []) extra.push(c);
+      if (f.ruleId) for (const c of (_b = lookup[f.ruleId]) != null ? _b : []) extra.push(c);
+      if (!extra.length) return f;
+      const codes = f.frameworkCodes.slice();
+      for (const c of extra) if (!codes.includes(c)) codes.push(c);
+      if (codes.length === f.frameworkCodes.length) return f;
+      return { ...f, frameworkCodes: codes };
+    });
+  }
+  function frameworkFamily(name) {
+    const n = String(name != null ? name : "").toUpperCase();
+    if (/\b5\s?RS?\b/.test(n)) return "WIZ_5RS";
+    if (n.includes("AGENTIC")) return "OWASP_ASI";
+    if (n.includes("MACHINE LEARNING") || /\bML\b/.test(n)) return "OWASP_ML";
+    if (n.includes("LLM")) return "OWASP_LLM";
+    return "OTHER";
+  }
+  function snake(label) {
+    return String(label != null ? label : "").trim().replace(/\s+/g, "_").toUpperCase();
+  }
+  function frameworkGapCode(input) {
+    var _a5, _b, _c, _d;
+    const ext = String((_a5 = input.subcategoryExternalId) != null ? _a5 : "").trim().toUpperCase();
+    if (/^(LLM|ASI)\d{2}$/.test(ext)) return ext;
+    if (input.family === "OWASP_LLM") {
+      const m = String((_b = input.categoryName) != null ? _b : "").toUpperCase().match(/\b(LLM\d{2})\b(?::(\d{4}))?/);
+      if (!m) return "";
+      if (m[2] && m[2] !== "2025") return "";
+      return m[1];
+    }
+    if (input.family === "OWASP_ML") {
+      const title = snake((_c = input.subcategoryTitle) != null ? _c : "");
+      return title ? `ML_${title}` : "";
+    }
+    if (input.family === "WIZ_5RS") {
+      const cat = snake((_d = input.categoryName) != null ? _d : "");
+      return cat ? `5R_${cat}` : "";
+    }
+    return "";
+  }
+  function frameworkCodeLookup(policies, posture, frameworks) {
+    var _a5, _b, _c;
+    const familyByFramework = {};
+    for (const f of frameworks) familyByFramework[f.id] = frameworkFamily(f.name);
+    for (const p of posture) {
+      if (p.level === "framework" && !familyByFramework[p.frameworkId]) {
+        familyByFramework[p.frameworkId] = frameworkFamily(p.title);
+      }
+    }
+    const categoryName = {};
+    const subcategoryTitle = {};
+    for (const p of posture) {
+      if (p.level === "category") {
+        categoryName[`${p.frameworkId}|${(_a5 = p.categoryExternalId) != null ? _a5 : ""}`] = p.title;
+      } else if (p.level === "subcategory") {
+        subcategoryTitle[`${p.frameworkId}|${(_b = p.subcategoryExternalId) != null ? _b : ""}`] = p.title;
+      }
+    }
+    const byKey = {};
+    const add = (key, code) => {
+      var _a6;
+      if (!key || !code) return;
+      const list2 = (_a6 = byKey[key]) != null ? _a6 : byKey[key] = [];
+      if (!list2.includes(code)) list2.push(code);
+    };
+    for (const p of policies) {
+      const code = frameworkGapCode({
+        family: (_c = familyByFramework[p.frameworkId]) != null ? _c : "OTHER",
+        categoryName: categoryName[`${p.frameworkId}|${p.categoryExternalId}`],
+        subcategoryExternalId: p.subcategoryExternalId,
+        subcategoryTitle: subcategoryTitle[`${p.frameworkId}|${p.subcategoryExternalId}`]
+      });
+      if (!code) continue;
+      add(p.policyId, code);
+      add(p.shortId, code);
+    }
+    return byKey;
+  }
   function entitiesOf(row) {
     if (!row || typeof row !== "object") return [];
     const entities = row["entities"];
@@ -5737,12 +6304,15 @@ var Server = (() => {
     return part;
   }
   function mergeParts(parts, syncedAt) {
-    var _a5, _b;
+    var _a5, _b, _c, _d, _e, _f, _g;
     const nodes = /* @__PURE__ */ new Map();
     const edges2 = /* @__PURE__ */ new Map();
     const issues2 = /* @__PURE__ */ new Map();
     const findings = /* @__PURE__ */ new Map();
     const dataFindings = /* @__PURE__ */ new Map();
+    const frameworks = /* @__PURE__ */ new Map();
+    const posture = /* @__PURE__ */ new Map();
+    const frameworkPolicies = /* @__PURE__ */ new Map();
     for (const part of parts) {
       for (const node2 of part.nodes) {
         const prev = nodes.get(node2.id);
@@ -5762,6 +6332,19 @@ var Server = (() => {
       for (const issue2 of part.issues) issues2.set(issue2.id, issue2);
       for (const finding of (_a5 = part.findings) != null ? _a5 : []) findings.set(finding.id, finding);
       for (const df of (_b = part.dataFindings) != null ? _b : []) dataFindings.set(df.id, df);
+      for (const f of (_c = part.frameworks) != null ? _c : []) frameworks.set(f.id, f);
+      for (const p of (_d = part.posture) != null ? _d : []) {
+        posture.set(
+          `${p.frameworkId}|${p.level}|${(_e = p.categoryExternalId) != null ? _e : ""}|${(_f = p.subcategoryExternalId) != null ? _f : ""}`,
+          p
+        );
+      }
+      for (const p of (_g = part.frameworkPolicies) != null ? _g : []) {
+        frameworkPolicies.set(
+          `${p.frameworkId}|${p.subcategoryExternalId}|${p.policyId}`,
+          p
+        );
+      }
     }
     return {
       doc: { nodes: [...nodes.values()], edges: [...edges2.values()], syncedAt },
@@ -5769,7 +6352,10 @@ var Server = (() => {
       findings: [...findings.values()],
       // De-duped by finding id, so the count folded from these rows is exact however the
       // battery split its pages.
-      dataFindings: [...dataFindings.values()]
+      dataFindings: [...dataFindings.values()],
+      frameworks: [...frameworks.values()],
+      posture: [...posture.values()],
+      frameworkPolicies: [...frameworkPolicies.values()]
     };
   }
 
@@ -6591,6 +7177,333 @@ var Server = (() => {
     { id: "df-core-02", resourceId: "db-customer-core", name: "PII: dates of birth", severity: "MEDIUM" },
     { id: "df-fin-01", resourceId: "bucket-finance-reports", name: "Financial: unpublished results", severity: "HIGH" }
   ];
+  var SEED_FRAMEWORKS = [
+    {
+      id: "wf-id-275",
+      name: "OWASP Top 10 For Agentic Applications 2026",
+      description: "Agentic-application risks: goal hijack, tool misuse, rogue agents.",
+      builtin: true,
+      enabled: true,
+      policyTypes: ["CLOUD_CONFIGURATION_RULE", "CONTROL"],
+      selected: true
+    },
+    {
+      id: "wf-id-214",
+      name: "5Rs - Wiz for Data Security",
+      description: "Wiz's data-security response taxonomy: Reduce, Restrict, Relabel, \u2026",
+      builtin: true,
+      enabled: true,
+      policyTypes: ["CLOUD_CONFIGURATION_RULE", "CONTROL"],
+      selected: true
+    },
+    {
+      id: "wf-id-106",
+      name: "OWASP ML Security Top 10",
+      description: "Machine-learning security risks: poisoning, inversion, model theft.",
+      builtin: true,
+      enabled: true,
+      policyTypes: ["CONTROL"],
+      selected: true
+    },
+    {
+      id: "wf-id-201",
+      name: "OWASP LLM Security Top 10",
+      description: "LLM application risks: prompt injection, disclosure, poisoning.",
+      builtin: true,
+      enabled: true,
+      policyTypes: ["CLOUD_CONFIGURATION_RULE", "CONTROL"],
+      selected: true
+    },
+    // Present in the tenant, NOT selected — so the Settings picker has something to show
+    // that is off, and the page can prove selection is this app's decision rather than a
+    // list of everything Wiz has.
+    {
+      id: "wf-id-042",
+      name: "CIS Amazon Web Services Foundations Benchmark v3.0",
+      description: "General cloud hardening. No AI vocabulary \u2014 posture is not collected.",
+      builtin: true,
+      enabled: true,
+      policyTypes: ["CLOUD_CONFIGURATION_RULE"],
+      selected: false
+    }
+  ];
+  function seedCategory(frameworkId, externalId, title, posturePct2, passCount, failCount, emptyPostureReason = null) {
+    return {
+      frameworkId,
+      level: "category",
+      categoryExternalId: externalId,
+      nodeId: `wct-seed-${frameworkId}-${externalId}`,
+      title,
+      posturePct: posturePct2,
+      passCount,
+      failCount,
+      passSubCategoryCount: posturePct2 === null ? 0 : 1,
+      failSubCategoryCount: failCount > 0 ? 1 : 0,
+      emptyPostureReason
+    };
+  }
+  function seedSubCategory(frameworkId, categoryExternalId, externalId, title, posturePct2, passCount, failCount, emptyPostureReason = null) {
+    return {
+      frameworkId,
+      level: "subcategory",
+      categoryExternalId,
+      subcategoryExternalId: externalId,
+      nodeId: `wsct-seed-${frameworkId}-${externalId}`,
+      title,
+      posturePct: posturePct2,
+      passCount,
+      failCount,
+      emptyPostureReason,
+      tags: []
+    };
+  }
+  var SEED_POSTURE = [
+    // ---- OWASP Agentic 2026 ----
+    {
+      frameworkId: "wf-id-275",
+      level: "framework",
+      nodeId: "wf-id-275",
+      title: "OWASP Top 10 For Agentic Applications 2026",
+      posturePct: 96,
+      passCount: 0,
+      failCount: 0,
+      passSubCategoryCount: 2,
+      failSubCategoryCount: 2,
+      emptyPostureReason: null
+    },
+    seedCategory("wf-id-275", "ASI01", "ASI01 Agent Goal Hijack", 93, 144, 10),
+    seedSubCategory("wf-id-275", "ASI01", "ASI01", "ASI01 Agent Goal Hijack", 93, 144, 10),
+    seedCategory("wf-id-275", "ASI03", "ASI03 Identity and Privilege Abuse", 99, 6347, 18),
+    seedSubCategory("wf-id-275", "ASI03", "ASI03", "ASI03 Identity and Privilege Abuse", 99, 6347, 18),
+    // The empty category: nothing in this estate to assess. Posture null, reason given —
+    // the case the page must never render as 0%.
+    seedCategory("wf-id-275", "ASI08", "ASI08 Cascading Failures", null, 0, 0, "NO_RESOURCES"),
+    seedSubCategory("wf-id-275", "ASI08", "ASI08", "ASI08 Cascading Failures", null, 0, 0, "NO_RESOURCES"),
+    seedCategory("wf-id-275", "ASI10", "ASI10 Rogue Agents", 99, 16703, 87),
+    seedSubCategory("wf-id-275", "ASI10", "ASI10", "ASI10 Rogue Agents", 99, 16703, 87),
+    // ---- Wiz 5Rs ----
+    {
+      frameworkId: "wf-id-214",
+      level: "framework",
+      nodeId: "wf-id-214",
+      title: "5Rs - Wiz for Data Security",
+      posturePct: 85,
+      passCount: 0,
+      failCount: 0,
+      passSubCategoryCount: 1,
+      failSubCategoryCount: 1,
+      emptyPostureReason: null
+    },
+    // NO_POLICIES is a DIFFERENT emptiness from NO_RESOURCES: nothing was written to assess,
+    // rather than nothing existing to assess against. Both must read as their own state.
+    seedCategory("wf-id-214", "1", "Reduce", null, 0, 0, "NO_RESOURCES"),
+    seedSubCategory("wf-id-214", "1", "1.1", "Stale data resources", null, 0, 0, "NO_POLICIES"),
+    seedCategory("wf-id-214", "2", "Restrict", 85, 194309, 71),
+    seedSubCategory("wf-id-214", "2", "2.1", "Public data exposure", 85, 194309, 71),
+    // ---- OWASP ML ----
+    {
+      frameworkId: "wf-id-106",
+      level: "framework",
+      nodeId: "wf-id-106",
+      title: "OWASP ML Security Top 10",
+      posturePct: 100,
+      passCount: 0,
+      failCount: 0,
+      passSubCategoryCount: 1,
+      failSubCategoryCount: 0,
+      emptyPostureReason: null
+    },
+    seedCategory("wf-id-106", "ML02", "Data Poisoning Attack", 100, 126e3, 0),
+    seedSubCategory("wf-id-106", "ML02", "ML02", "Data Poisoning Attack", 100, 126e3, 0),
+    // ---- OWASP LLM ----
+    // The awkward shape: NUMERIC external ids, with the OWASP code carried in the category
+    // NAME and stamped with its edition. Seeded so the dry run exercises the one framework
+    // whose codes cannot be read off an id.
+    {
+      frameworkId: "wf-id-201",
+      level: "framework",
+      nodeId: "wf-id-201",
+      title: "OWASP LLM Security Top 10",
+      posturePct: 95,
+      passCount: 0,
+      failCount: 0,
+      passSubCategoryCount: 1,
+      failSubCategoryCount: 1,
+      emptyPostureReason: null
+    },
+    seedCategory("wf-id-201", "1", "1 LLM01:2025 Prompt Injection", 90, 691, 70),
+    seedSubCategory("wf-id-201", "1", "1.1", "1.1  Prompt Injection", 90, 691, 70),
+    seedCategory("wf-id-201", "2", "2 LLM02:2025 Sensitive Information Disclosure", 98, 5929, 100),
+    seedSubCategory("wf-id-201", "2", "2.1", "2.1 Sensitive Information Disclosure", 98, 5929, 100)
+  ];
+  function seedPolicy(frameworkId, categoryExternalId, subcategoryExternalId, shortId, name, severity, passCount, failCount) {
+    return {
+      frameworkId,
+      categoryExternalId,
+      subcategoryExternalId,
+      policyId: `pol-${shortId}`,
+      policyKind: "CLOUD_RULE",
+      shortId,
+      name,
+      severity,
+      enabled: true,
+      builtin: true,
+      passCount,
+      failCount,
+      assessedCount: passCount + failCount,
+      rejectedCount: 0,
+      noResourceToAssess: passCount + failCount === 0,
+      cloudProvider: "AWS"
+    };
+  }
+  var SEED_FRAMEWORK_POLICIES = [
+    // SUB-082 under TWO subcategories of the same framework — the many-to-many, in the
+    // simplest form. Summing these rows as distinct policies would double-count it.
+    seedPolicy(
+      "wf-id-275",
+      "ASI01",
+      "ASI01",
+      "SUB-082",
+      "Vertex AI Metadata Store must use a customer-managed key",
+      "MEDIUM",
+      21,
+      2
+    ),
+    seedPolicy(
+      "wf-id-275",
+      "ASI10",
+      "ASI10",
+      "SUB-082",
+      "Vertex AI Metadata Store must use a customer-managed key",
+      "MEDIUM",
+      21,
+      2
+    ),
+    // IAM-236 under ASI03 *and* under 5Rs Restrict — the many-to-many ACROSS frameworks,
+    // which is why the join key is (framework, subcategory, policy) and not the policy.
+    seedPolicy(
+      "wf-id-275",
+      "ASI03",
+      "ASI03",
+      "IAM-236",
+      "Bedrock service roles must prevent confused-deputy access",
+      "HIGH",
+      1718,
+      18
+    ),
+    seedPolicy(
+      "wf-id-214",
+      "2",
+      "2.1",
+      "IAM-236",
+      "Bedrock service roles must prevent confused-deputy access",
+      "HIGH",
+      1718,
+      18
+    ),
+    seedPolicy(
+      "wf-id-275",
+      "ASI03",
+      "ASI03",
+      "IAM-267",
+      "Agent service accounts must not hold wildcard data permissions",
+      "HIGH",
+      42,
+      3
+    ),
+    // SUB-114 under ASI10 and under the ML framework — so it picks up an ASI code and an
+    // ML_ one, proving the two spellings coexist on one finding.
+    seedPolicy(
+      "wf-id-275",
+      "ASI10",
+      "ASI10",
+      "SUB-114",
+      "Agent must be attached to a guardrail",
+      "HIGH",
+      9,
+      5
+    ),
+    seedPolicy(
+      "wf-id-106",
+      "ML02",
+      "ML02",
+      "SUB-114",
+      "Agent must be attached to a guardrail",
+      "HIGH",
+      9,
+      5
+    ),
+    seedPolicy(
+      "wf-id-214",
+      "2",
+      "2.1",
+      "SUB-047",
+      "Training bucket must not allow public write",
+      "CRITICAL",
+      30,
+      1
+    ),
+    // SUB-114 also lands under LLM01, so one finding ends up carrying an ASI code, an ML_
+    // code AND an LLM code — three vocabularies on one failing control, which is the point.
+    seedPolicy(
+      "wf-id-201",
+      "1",
+      "1.1",
+      "SUB-114",
+      "Agent must be attached to a guardrail",
+      "HIGH",
+      9,
+      5
+    ),
+    seedPolicy(
+      "wf-id-201",
+      "2",
+      "2.1",
+      "IAM-267",
+      "Agent service accounts must not hold wildcard data permissions",
+      "HIGH",
+      42,
+      3
+    ),
+    // Nothing to assess: every count zero AND the flag set. Renders as its own state, never
+    // as a 0% score.
+    {
+      frameworkId: "wf-id-275",
+      categoryExternalId: "ASI08",
+      subcategoryExternalId: "ASI08",
+      policyId: "pol-AIService-009",
+      policyKind: "CLOUD_RULE",
+      shortId: "AIService-009",
+      name: "Agent orchestration must bound retry fan-out",
+      severity: "MEDIUM",
+      enabled: true,
+      builtin: true,
+      passCount: 0,
+      failCount: 0,
+      assessedCount: 0,
+      rejectedCount: 0,
+      noResourceToAssess: true,
+      cloudProvider: "Azure"
+    },
+    // A Control rather than a cloud rule — no shortId at all, so the finding join can only
+    // reach it by uuid. Both keys exist in the lookup for exactly this reason.
+    {
+      frameworkId: "wf-id-275",
+      categoryExternalId: "ASI01",
+      subcategoryExternalId: "ASI01",
+      policyId: "667e01f9-1105-42d5-a66a-e7f739fb4c4f",
+      policyKind: "CONTROL",
+      name: "Highly privileged AI agent is not protected by AI guardrails",
+      severity: "MEDIUM",
+      enabled: true,
+      builtin: true,
+      passCount: 72,
+      failCount: 0,
+      assessedCount: 72,
+      rejectedCount: 0,
+      noResourceToAssess: false
+    }
+  ];
   function seedGraphDoc(syncedAt) {
     return { nodes: SEED_NODES, edges: SEED_EDGES, syncedAt };
   }
@@ -6940,7 +7853,138 @@ var Server = (() => {
       severity: f.severity
     };
   }
-  function persistSync(rawDoc, issues2, hints, meta, now, findings = [], dataFindings = []) {
+  function frameworkToRow(f) {
+    var _a5, _b;
+    return {
+      id: f.id,
+      name: f.name,
+      description: (_a5 = f.description) != null ? _a5 : "",
+      builtin: f.builtin,
+      enabled: f.enabled,
+      policy_types: ((_b = f.policyTypes) != null ? _b : []).join(",")
+    };
+  }
+  function rowToFramework(r) {
+    var _a5, _b, _c, _d;
+    return {
+      id: String((_a5 = r["id"]) != null ? _a5 : ""),
+      name: String((_b = r["name"]) != null ? _b : ""),
+      description: String((_c = r["description"]) != null ? _c : "") || void 0,
+      builtin: r["builtin"] === true || r["builtin"] === "TRUE" || r["builtin"] === "true",
+      enabled: r["enabled"] === true || r["enabled"] === "TRUE" || r["enabled"] === "true",
+      policyTypes: String((_d = r["policy_types"]) != null ? _d : "").split(",").filter(Boolean),
+      // Never stored. Resolved against the settings selection by the API model, which is the
+      // only place that knows.
+      selected: false
+    };
+  }
+  function cellPct(v) {
+    if (v === "" || v === null || v === void 0) return null;
+    const n = Number(v);
+    return isFinite(n) ? n : null;
+  }
+  function postureToRow(p) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i;
+    return {
+      framework_id: p.frameworkId,
+      level: p.level,
+      category_external_id: (_a5 = p.categoryExternalId) != null ? _a5 : "",
+      subcategory_external_id: (_b = p.subcategoryExternalId) != null ? _b : "",
+      node_id: (_c = p.nodeId) != null ? _c : "",
+      title: p.title,
+      description: (_d = p.description) != null ? _d : "",
+      // Null stays empty rather than becoming 0 — see cellPct.
+      posture_pct: p.posturePct === null ? "" : p.posturePct,
+      pass_count: p.passCount,
+      fail_count: p.failCount,
+      pass_subcategory_count: (_e = p.passSubCategoryCount) != null ? _e : "",
+      fail_subcategory_count: (_f = p.failSubCategoryCount) != null ? _f : "",
+      empty_posture_reason: (_g = p.emptyPostureReason) != null ? _g : "",
+      assessment_scope: (_h = p.assessmentScope) != null ? _h : "",
+      mapping_rationale: (_i = p.mappingRationale) != null ? _i : "",
+      tags_json: p.tags && p.tags.length ? JSON.stringify(p.tags) : ""
+    };
+  }
+  function rowToPosture(r) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j;
+    const num = (v) => {
+      const n = Number(v != null ? v : 0);
+      return isFinite(n) ? n : 0;
+    };
+    const optNum = (v) => v === "" || v === null || v === void 0 ? void 0 : num(v);
+    return {
+      frameworkId: String((_a5 = r["framework_id"]) != null ? _a5 : ""),
+      level: String((_b = r["level"]) != null ? _b : "subcategory"),
+      categoryExternalId: String((_c = r["category_external_id"]) != null ? _c : "") || void 0,
+      subcategoryExternalId: String((_d = r["subcategory_external_id"]) != null ? _d : "") || void 0,
+      nodeId: String((_e = r["node_id"]) != null ? _e : "") || void 0,
+      title: String((_f = r["title"]) != null ? _f : ""),
+      description: String((_g = r["description"]) != null ? _g : "") || void 0,
+      posturePct: cellPct(r["posture_pct"]),
+      passCount: num(r["pass_count"]),
+      failCount: num(r["fail_count"]),
+      passSubCategoryCount: optNum(r["pass_subcategory_count"]),
+      failSubCategoryCount: optNum(r["fail_subcategory_count"]),
+      emptyPostureReason: String((_h = r["empty_posture_reason"]) != null ? _h : "") || null,
+      assessmentScope: String((_i = r["assessment_scope"]) != null ? _i : "") || void 0,
+      mappingRationale: String((_j = r["mapping_rationale"]) != null ? _j : "") || void 0,
+      tags: parseJson(r["tags_json"], [])
+    };
+  }
+  function frameworkPolicyToRow(p) {
+    var _a5, _b, _c, _d, _e, _f, _g;
+    return {
+      framework_id: p.frameworkId,
+      category_external_id: p.categoryExternalId,
+      subcategory_external_id: p.subcategoryExternalId,
+      policy_id: p.policyId,
+      policy_kind: p.policyKind,
+      short_id: (_a5 = p.shortId) != null ? _a5 : "",
+      name: p.name,
+      severity: p.severity,
+      enabled: (_b = p.enabled) != null ? _b : "",
+      builtin: (_c = p.builtin) != null ? _c : "",
+      pass_count: p.passCount,
+      fail_count: p.failCount,
+      assessed_count: p.assessedCount,
+      rejected_count: p.rejectedCount,
+      no_resource_to_assess: p.noResourceToAssess,
+      target_native_type: (_d = p.targetNativeType) != null ? _d : "",
+      subject_entity_type: (_e = p.subjectEntityType) != null ? _e : "",
+      cloud_provider: (_f = p.cloudProvider) != null ? _f : "",
+      has_auto_remediation: (_g = p.hasAutoRemediation) != null ? _g : ""
+    };
+  }
+  function rowToFrameworkPolicy(r) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
+    const num = (v) => {
+      const n = Number(v != null ? v : 0);
+      return isFinite(n) ? n : 0;
+    };
+    const optBool = (v) => v === "" || v === null || v === void 0 ? void 0 : v === true || v === "TRUE" || v === "true";
+    return {
+      frameworkId: String((_a5 = r["framework_id"]) != null ? _a5 : ""),
+      categoryExternalId: String((_b = r["category_external_id"]) != null ? _b : ""),
+      subcategoryExternalId: String((_c = r["subcategory_external_id"]) != null ? _c : ""),
+      policyId: String((_d = r["policy_id"]) != null ? _d : ""),
+      policyKind: String((_e = r["policy_kind"]) != null ? _e : "CONTROL"),
+      shortId: String((_f = r["short_id"]) != null ? _f : "") || void 0,
+      name: String((_g = r["name"]) != null ? _g : ""),
+      severity: String((_h = r["severity"]) != null ? _h : "UNKNOWN"),
+      enabled: optBool(r["enabled"]),
+      builtin: optBool(r["builtin"]),
+      passCount: num(r["pass_count"]),
+      failCount: num(r["fail_count"]),
+      assessedCount: num(r["assessed_count"]),
+      rejectedCount: num(r["rejected_count"]),
+      noResourceToAssess: r["no_resource_to_assess"] === true || r["no_resource_to_assess"] === "TRUE" || r["no_resource_to_assess"] === "true",
+      targetNativeType: String((_i = r["target_native_type"]) != null ? _i : "") || void 0,
+      subjectEntityType: String((_j = r["subject_entity_type"]) != null ? _j : "") || void 0,
+      cloudProvider: String((_k = r["cloud_provider"]) != null ? _k : "") || void 0,
+      hasAutoRemediation: optBool(r["has_auto_remediation"])
+    };
+  }
+  function persistSync(rawDoc, issues2, hints, meta, now, findings = [], dataFindings = [], frameworks = [], posture = [], frameworkPolicies = []) {
     const { version: ruleVersion, rule } = getAarsRule2();
     const counted = withDataFindingCounts(rawDoc, dataFindings);
     const exposed = withExposureEvidence(counted);
@@ -6952,6 +7996,11 @@ var Server = (() => {
     overwrite(TABS.issues, issues2.map(issueToRow));
     overwrite(TABS.findings, findings.map(findingToRow));
     overwrite(TABS.dataFindings, dataFindings.map(dataFindingToRow));
+    if (frameworks.length) overwrite(TABS.frameworks, frameworks.map(frameworkToRow));
+    if (posture.length) overwrite(TABS.frameworkPosture, posture.map(postureToRow));
+    if (frameworkPolicies.length) {
+      overwrite(TABS.frameworkPolicies, frameworkPolicies.map(frameworkPolicyToRow));
+    }
     const snapshotRef = writeGraphSnapshot(enriched);
     appendRows(TABS.syncHistory, [{
       sync_id: meta.syncId,
@@ -7034,12 +8083,18 @@ var Server = (() => {
   var issuesMemo;
   var findingsMemo;
   var dataFindingsMemo;
+  var frameworksMemo;
+  var postureMemo;
+  var frameworkPoliciesMemo;
   function invalidateReadMemos() {
     graphDocMemo = void 0;
     assetsMemo = void 0;
     issuesMemo = void 0;
     findingsMemo = void 0;
     dataFindingsMemo = void 0;
+    frameworksMemo = void 0;
+    postureMemo = void 0;
+    frameworkPoliciesMemo = void 0;
   }
   function commit() {
     bumpDataVersion();
@@ -7143,6 +8198,20 @@ var Server = (() => {
     if (findingsMemo === void 0) findingsMemo = readAll(TABS.findings).map(rowToFinding);
     return findingsMemo;
   }
+  function loadFrameworks() {
+    if (frameworksMemo === void 0) frameworksMemo = readAll(TABS.frameworks).map(rowToFramework);
+    return frameworksMemo;
+  }
+  function loadPosture() {
+    if (postureMemo === void 0) postureMemo = readAll(TABS.frameworkPosture).map(rowToPosture);
+    return postureMemo;
+  }
+  function loadFrameworkPolicies() {
+    if (frameworkPoliciesMemo === void 0) {
+      frameworkPoliciesMemo = readAll(TABS.frameworkPolicies).map(rowToFrameworkPolicy);
+    }
+    return frameworkPoliciesMemo;
+  }
   function syncHistory() {
     return readAll(TABS.syncHistory);
   }
@@ -7169,8 +8238,10 @@ var Server = (() => {
   var BUDGET_MS = 27e4;
   function syncSteps(aiTypes) {
     const types = aiTypes != null ? aiTypes : resolveAiResourceTypes().types;
+    const frameworkIds = getSelectedFrameworks2(() => loadFrameworks());
     const overrides = getScanVars2();
     const vars = (stepId, base) => effectiveStepVars(stepId, base, overrides[stepId]);
+    const selectedFrameworks = () => frameworkIds;
     return [
       {
         id: "INVENTORY_AI",
@@ -7218,6 +8289,50 @@ var Server = (() => {
         normalize: normalizeConfigFindingsPage,
         optional: true
       },
+      // The framework catalogue. Populates the Settings picker; it does NOT decide the
+      // battery — see the posture steps below for why.
+      {
+        id: "FRAMEWORKS_LIST",
+        area: "compliance",
+        writes: ["ai_frameworks"],
+        run: "connection",
+        connectionField: "securityFrameworks",
+        query: Q_SECURITY_FRAMEWORKS,
+        extraVariables: vars("FRAMEWORKS_LIST", aiSecurityFrameworksVariables()),
+        normalize: normalizeFrameworksPage,
+        optional: true
+      },
+      // Per-framework compliance posture — ONE STEP PER FRAMEWORK, because the query takes a
+      // framework id and returns one object. Generated the same way the per-rule combo steps
+      // above are, so the budget/resume machinery needs no special case.
+      //
+      // Driven by the SELECTION, not by the catalogue: posture costs a round trip per
+      // framework and a tenant can carry a hundred builtin ones this app has no vocabulary
+      // for. Each step is optional, so a framework id that is wrong on this tenant costs a
+      // recorded skip rather than a failed sync.
+      ...selectedFrameworks().map((frameworkId) => ({
+        id: `COMPLIANCE_POSTURE_${frameworkId}`,
+        area: "compliance",
+        writes: ["ai_framework_posture", "ai_framework_policies"],
+        run: "single",
+        connectionField: "securityFramework",
+        query: Q_COMPLIANCE_POSTURE,
+        // No `vars()` indirection here on purpose: these steps are LOCKED. Overrides are
+        // stored per step id, and every posture step has its own (`COMPLIANCE_POSTURE_<id>`),
+        // so reading them under a shared "COMPLIANCE_POSTURE" key would be an override slot
+        // nothing can ever write to — dead indirection that reads like a feature.
+        //
+        // They are locked because the framework id is not a filter. The existing rule is that
+        // a variable may narrow a selection set but never change it; an id that selects WHICH
+        // OBJECT the selection set is applied to is further outside that line, not inside it.
+        // Choosing frameworks is Settings' job.
+        extraVariables: {
+          ...aiCompliancePostureVariables(projectScope()),
+          id: frameworkId
+        },
+        normalize: normalizeCompliancePosturePage,
+        optional: true
+      })),
       {
         id: "GUARDRAIL_GAPS",
         area: "guardrails",
@@ -7327,6 +8442,18 @@ var Server = (() => {
     if (step.run === "graphSearch") return "graphSearch";
     return (_a5 = step.connectionField) != null ? _a5 : "";
   }
+  function fetcherFor(step) {
+    if (step.run === "graphSearch") return fetchGraphSearchPage;
+    if (step.run === "cloudResources") return fetchCloudResourcesPage;
+    if (step.run === "single") return (o) => {
+      var _a5;
+      return fetchSingleObject((_a5 = step.connectionField) != null ? _a5 : "", o);
+    };
+    return (o) => {
+      var _a5;
+      return fetchConnectionPage((_a5 = step.connectionField) != null ? _a5 : "", o);
+    };
+  }
   function describeSyncSteps() {
     const overrides = getScanVars2();
     const resolved = describeAiTypes();
@@ -7376,12 +8503,20 @@ var Server = (() => {
         return hostExposureVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
       case "ENDPOINT_EXPOSURE":
         return endpointExposureVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
+      case "FRAMEWORKS_LIST":
+        return aiSecurityFrameworksVariables();
       default:
+        if (stepId.indexOf("COMPLIANCE_POSTURE_") === 0) {
+          return {
+            ...aiCompliancePostureVariables(projectScope()),
+            id: stepId.slice("COMPLIANCE_POSTURE_".length)
+          };
+        }
         return withOverride;
     }
   }
   function testStepVariables(stepId, vars) {
-    var _a5, _b;
+    var _a5;
     const step = syncSteps().filter((s) => s.id === stepId)[0];
     if (!step) throw new Error(`No sync step called ${stepId}.`);
     const proposed = effectiveStepVars(
@@ -7392,9 +8527,7 @@ var Server = (() => {
     const opts = { query: step.query, cursor: null, extraVariables: proposed };
     let result;
     try {
-      if (step.run === "cloudResources") result = fetchCloudResourcesPage(opts);
-      else if (step.run === "graphSearch") result = fetchGraphSearchPage(opts);
-      else result = fetchConnectionPage((_b = step.connectionField) != null ? _b : "", opts);
+      result = fetcherFor(step)(opts);
     } catch (e) {
       return {
         ok: false,
@@ -7463,7 +8596,10 @@ var Server = (() => {
       { syncId, mode: "dry-run", startedAt, apiCalls: 0 },
       void 0,
       SEED_FINDINGS,
-      SEED_DATA_FINDINGS
+      SEED_DATA_FINDINGS,
+      SEED_FRAMEWORKS,
+      SEED_POSTURE,
+      SEED_FRAMEWORK_POLICIES
     );
     setSkippedSteps([]);
     return {
@@ -7562,7 +8698,7 @@ var Server = (() => {
             scheduleContinuation();
             return;
           }
-          const fetcher = step.run === "graphSearch" ? fetchGraphSearchPage : step.run === "connection" ? (a) => fetchConnectionPage(step.connectionField, a) : fetchCloudResourcesPage;
+          const fetcher = fetcherFor(step);
           let result;
           try {
             result = fetcher({
@@ -7618,7 +8754,11 @@ var Server = (() => {
       const merged = mergeParts(parts, nowIso());
       const doc = merged.doc;
       const issues2 = reconcileIssues(merged.issues);
-      const findings = merged.findings;
+      const aarsRule = getAarsRule2().rule;
+      const findings = aarsRule.gapSources.frameworkMapping === true ? withFrameworkCodes(
+        merged.findings,
+        frameworkCodeLookup(merged.frameworkPolicies, merged.posture, merged.frameworks)
+      ) : merged.findings;
       if (!doc.nodes.length) {
         updateJob(job.job_id, {
           phase: "FAILED",
@@ -7627,14 +8767,25 @@ var Server = (() => {
         return;
       }
       updateJob(job.job_id, { phase: "PERSISTING" });
-      const hints = buildAarsHintsFromFindings(findings, doc, issues2, getAarsRule2().rule);
+      const hints = buildAarsHintsFromFindings(findings, doc, issues2, aarsRule);
       const persist = () => {
-        persistSync(doc, issues2, hints, {
-          syncId,
-          mode: "live",
-          startedAt,
-          apiCalls: params.apiCalls
-        }, void 0, findings, merged.dataFindings);
+        persistSync(
+          doc,
+          issues2,
+          hints,
+          {
+            syncId,
+            mode: "live",
+            startedAt,
+            apiCalls: params.apiCalls
+          },
+          void 0,
+          findings,
+          merged.dataFindings,
+          merged.frameworks,
+          merged.posture,
+          merged.frameworkPolicies
+        );
         setSkippedSteps(params.skippedSteps);
       };
       if (opts.lockHeld) persist();
@@ -8002,6 +9153,14 @@ var Server = (() => {
         openIssues: issues2.length,
         complianceGaps: openGaps.length,
         complianceGapsUnlinked: unlinkedGaps,
+        // Framework POSTURE, which is a different axis from the two counts above: those
+        // count failing controls, this scores frameworks. Null — never 0 — when no posture
+        // has been synced, so the Wiz Scans area degrades to `partial` on its own instead of
+        // reporting a confident zero for a question this tenant was never asked.
+        frameworkPosture: complianceKpis(
+          loadPosture(),
+          loadFrameworkPolicies()
+        ),
         agenticIdentities: assets.filter((a) => a.identityPurpose === "AGENTIC").length,
         // Estate-wide counts for the two risk conditions that had no total. The flags were
         // persisted and drawn on the graph, but `assetTableRow` strips them, so nothing
@@ -8249,6 +9408,38 @@ var Server = (() => {
           asset: asset ? assetRow(asset) : null
         };
       });
+    });
+  }
+  function getCompliance(p) {
+    return run(() => {
+      var _a5;
+      const params = p != null ? p : {};
+      const requested = String((_a5 = params["frameworkId"]) != null ? _a5 : "");
+      return cached("getCompliance", { frameworkId: requested }, () => {
+        const posture = loadPosture();
+        const policies = loadFrameworkPolicies();
+        const catalogue = loadFrameworks();
+        const selected = getSelectedFrameworks2(() => catalogue);
+        const trees = buildAllFrameworkTrees(posture, policies, catalogue);
+        return {
+          trees,
+          kpis: complianceKpis(posture, policies),
+          // The catalogue with this app's selection folded in — Wiz says what exists, the
+          // settings say what is collected, and the picker needs both to render honestly.
+          catalogue: catalogue.map((f) => ({ ...f, selected: selected.indexOf(f.id) >= 0 })),
+          selected,
+          // Named so the page can open on a framework it was linked to rather than guessing.
+          // Null when the requested id has no stored posture, which the page reports as such
+          // instead of silently falling back to a different framework's numbers.
+          requested: requested && trees.some((t) => t.frameworkId === requested) ? requested : null
+        };
+      });
+    });
+  }
+  function setSelectedFrameworks2(p) {
+    return run(() => {
+      const ids = (p != null ? p : {})["ids"];
+      return { selected: setSelectedFrameworks(ids) };
     });
   }
   var EXPAND_MAX_NODES = 200;

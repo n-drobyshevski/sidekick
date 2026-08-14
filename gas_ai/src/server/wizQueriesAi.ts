@@ -852,3 +852,149 @@ export function aiPrincipalsVariables(
   if (scope && scope.length) filterBy["projectId"] = scope;
   return { filterBy, orderBy: { field: "RELATED_ISSUE_SEVERITY", direction: "DESC" } };
 }
+
+// ------------------------------------------- compliance frameworks (posture)
+
+// The framework catalogue. A plain connection like the four roots above, so it reads
+// through fetchConnectionPage with no transport change. It exists to POPULATE A PICKER,
+// not to widen the battery: posture costs one round trip per framework, and a tenant
+// carrying a hundred builtin frameworks (CIS, PCI-DSS, SOC 2) has no business spending
+// a hundred calls on frameworks this app has nothing to say about.
+export const Q_SECURITY_FRAMEWORKS =
+  "query SidekickAiSecurityFrameworks($first: Int, $after: String, $filterBy: SecurityFrameworkFilters) {\n" +
+  "  securityFrameworks(first: $first, after: $after, filterBy: $filterBy) {\n" +
+  "    totalCount\n" +
+  "    pageInfo { hasNextPage endCursor }\n" +
+  "    nodes {\n" +
+  "      id\n" +
+  "      name\n" +
+  "      description\n" +
+  "      builtin\n" +
+  "      enabled\n" +
+  "      policyTypes\n" +
+  "    }\n" +
+  "  }\n" +
+  "}\n";
+
+/** The $filterBy for Q_SECURITY_FRAMEWORKS: the frameworks this tenant has switched on. */
+export function aiSecurityFrameworksVariables(): { filterBy: unknown } {
+  return { filterBy: { enabled: true } };
+}
+
+// Per-framework compliance posture, transcribed from the console's own CompliancePageTable
+// operation. THREE deliberate departures from that capture:
+//
+//   1. `$fetchControlQuery: Boolean!` and its `@include`/`@skip` directives are gone. This
+//      app only ever wants `scopeQuery` (the console sends fetchControlQuery:false on the
+//      table view), and wizQueriesAi.test.ts asserts no document carries a directive — the
+//      config-findings capture had them and they were stripped for the same reason.
+//   2. `securityFramework(id:)` returns ONE OBJECT, not a connection. It is the only root
+//      here that does, which is why fetchSingleObject exists: readConnection on a
+//      non-connection returns rows:[] rather than throwing, and on an optional step that is
+//      indistinguishable from a tenant with nothing to report.
+//   3. `emptyPostureReason` is selected at all three levels on purpose. NO_RESOURCES and
+//      NO_POLICIES are the difference between "scored zero" and "nothing to score", and a
+//      posture page that renders them the same way is the implied confidence PRODUCT.md
+//      forbids.
+//
+// The same policy appears under many subcategories (one prompt-injection control maps to
+// ASI01, ASI02 and ASI10), so policyAnalytics is a many-to-many edge, not a list of
+// distinct policies. Summing it without deduplicating double counts.
+export const Q_COMPLIANCE_POSTURE =
+  "query SidekickAiCompliancePosture($id: ID!, $analyticsSelection: SecurityFrameworkComplianceAnalyticsSelection, $orderBy: SecurityFrameworkSelectionOrder) {\n" +
+  "  securityFramework(id: $id) {\n" +
+  "    id\n" +
+  "    name\n" +
+  "    description\n" +
+  "    builtin\n" +
+  "    enabled\n" +
+  "    complianceAnalytics(selection: $analyticsSelection, orderBy: $orderBy) {\n" +
+  "      passSubCategoryCount\n" +
+  "      failSubCategoryCount\n" +
+  "      averageCompliancePosture\n" +
+  "      emptyPostureReason\n" +
+  "      categoryAnalytics {\n" +
+  "        category { id name description externalId }\n" +
+  "        passCount\n" +
+  "        failCount\n" +
+  "        passSubCategoryCount\n" +
+  "        failSubCategoryCount\n" +
+  "        averageCompliancePosture\n" +
+  "        emptyPostureReason\n" +
+  "        subCategoryAnalytics {\n" +
+  "          passCount\n" +
+  "          failCount\n" +
+  "          compliancePosture\n" +
+  "          emptyPostureReason\n" +
+  "          subCategory {\n" +
+  "            id\n" +
+  "            title\n" +
+  "            description\n" +
+  "            externalId\n" +
+  "            assessmentScope\n" +
+  "            mappingRationale\n" +
+  "            tags { key value }\n" +
+  "          }\n" +
+  "          policyAnalytics {\n" +
+  "            failCount\n" +
+  "            passCount\n" +
+  "            rejectedCount\n" +
+  "            assessedCount\n" +
+  "            noResourceToAsses\n" +
+  "            control {\n" +
+  "              id\n" +
+  "              name\n" +
+  "              description\n" +
+  "              enabled\n" +
+  "              builtin\n" +
+  "              severity\n" +
+  "              scopeQuery\n" +
+  "            }\n" +
+  "            cloudConfigurationRule {\n" +
+  "              id\n" +
+  "              name\n" +
+  "              description\n" +
+  "              shortId\n" +
+  "              enabled\n" +
+  "              builtin\n" +
+  "              severity\n" +
+  "              targetNativeType\n" +
+  "              subjectEntityType\n" +
+  "              hasAutoRemediation\n" +
+  "              cloudProvider\n" +
+  "            }\n" +
+  "            hostConfigurationRule {\n" +
+  "              id\n" +
+  "              name\n" +
+  "              shortName\n" +
+  "              description\n" +
+  "              enabled\n" +
+  "              builtin\n" +
+  "              severity\n" +
+  "            }\n" +
+  "          }\n" +
+  "        }\n" +
+  "      }\n" +
+  "    }\n" +
+  "  }\n" +
+  "}\n";
+
+/**
+ * The $analyticsSelection / $orderBy for Q_COMPLIANCE_POSTURE. Pure — scope is a parameter.
+ *
+ * Project scope is spelled a FIFTH way here. The other four builders reach it as
+ * `filterBy.project`, `filterBy.resource.projectId`, `filterBy.projectId` and a scalar
+ * `$projectId`; this root takes `analyticsSelection.projectId`. That is why it gets its own
+ * function rather than a branch inside an existing one.
+ *
+ * The framework `id` is deliberately NOT built here. It is not a filter — it selects WHICH
+ * framework — so it belongs to the step that sends it, and to Settings, not to the
+ * editable-variables panel where a filter can be widened without changing the selection set.
+ */
+export function aiCompliancePostureVariables(
+  scope: string[] | null,
+): { analyticsSelection: unknown } {
+  const analyticsSelection: Record<string, unknown> = {};
+  if (scope && scope.length) analyticsSelection["projectId"] = scope;
+  return { analyticsSelection };
+}

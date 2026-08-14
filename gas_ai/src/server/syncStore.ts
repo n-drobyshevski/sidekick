@@ -20,7 +20,8 @@ import {
 } from "../domain/graphEnrich";
 import { withDataFindingCounts } from "../domain/syncNormalize";
 import type {
-  DataFindingRow, FindingRow, GEdge, GNode, GraphDoc, IssueRow, NodeKind,
+  DataFindingRow, FindingRow, FrameworkPolicyRow, FrameworkRow, GEdge, GNode, GraphDoc,
+  IssueRow, NodeKind, PostureRow,
 } from "../domain/graphTypes";
 import { edgeId } from "../domain/graphTypes";
 import { aarsSeverity, type AarsBands, type AarsRule } from "../domain/aars";
@@ -419,6 +420,155 @@ export function rowToDataFinding(r: Rec): DataFindingRow {
   };
 }
 
+// ------------------------------------------------- compliance framework posture
+
+export function frameworkToRow(f: FrameworkRow): Rec {
+  return {
+    id: f.id,
+    name: f.name,
+    description: f.description ?? "",
+    builtin: f.builtin,
+    enabled: f.enabled,
+    policy_types: (f.policyTypes ?? []).join(","),
+  };
+}
+
+export function rowToFramework(r: Rec): FrameworkRow {
+  return {
+    id: String(r["id"] ?? ""),
+    name: String(r["name"] ?? ""),
+    description: String(r["description"] ?? "") || undefined,
+    builtin: r["builtin"] === true || r["builtin"] === "TRUE" || r["builtin"] === "true",
+    enabled: r["enabled"] === true || r["enabled"] === "TRUE" || r["enabled"] === "true",
+    policyTypes: String(r["policy_types"] ?? "").split(",").filter(Boolean),
+    // Never stored. Resolved against the settings selection by the API model, which is the
+    // only place that knows.
+    selected: false,
+  };
+}
+
+/**
+ * A posture cell's percentage, round-tripped through a Sheets cell.
+ *
+ * The empty string is null, NOT zero. A blank cell means Wiz sent no posture — the
+ * emptyPostureReason column beside it says why — and reading it as 0 would turn "nothing
+ * to assess" into "everything failed", which is the exact inversion this whole column pair
+ * exists to prevent.
+ */
+function cellPct(v: unknown): number | null {
+  if (v === "" || v === null || v === undefined) return null;
+  const n = Number(v);
+  return isFinite(n) ? n : null;
+}
+
+export function postureToRow(p: PostureRow): Rec {
+  return {
+    framework_id: p.frameworkId,
+    level: p.level,
+    category_external_id: p.categoryExternalId ?? "",
+    subcategory_external_id: p.subcategoryExternalId ?? "",
+    node_id: p.nodeId ?? "",
+    title: p.title,
+    description: p.description ?? "",
+    // Null stays empty rather than becoming 0 — see cellPct.
+    posture_pct: p.posturePct === null ? "" : p.posturePct,
+    pass_count: p.passCount,
+    fail_count: p.failCount,
+    pass_subcategory_count: p.passSubCategoryCount ?? "",
+    fail_subcategory_count: p.failSubCategoryCount ?? "",
+    empty_posture_reason: p.emptyPostureReason ?? "",
+    assessment_scope: p.assessmentScope ?? "",
+    mapping_rationale: p.mappingRationale ?? "",
+    tags_json: p.tags && p.tags.length ? JSON.stringify(p.tags) : "",
+  };
+}
+
+export function rowToPosture(r: Rec): PostureRow {
+  const num = (v: unknown): number => {
+    const n = Number(v ?? 0);
+    return isFinite(n) ? n : 0;
+  };
+  const optNum = (v: unknown): number | undefined =>
+    v === "" || v === null || v === undefined ? undefined : num(v);
+  return {
+    frameworkId: String(r["framework_id"] ?? ""),
+    level: (String(r["level"] ?? "subcategory") as PostureRow["level"]),
+    categoryExternalId: String(r["category_external_id"] ?? "") || undefined,
+    subcategoryExternalId: String(r["subcategory_external_id"] ?? "") || undefined,
+    nodeId: String(r["node_id"] ?? "") || undefined,
+    title: String(r["title"] ?? ""),
+    description: String(r["description"] ?? "") || undefined,
+    posturePct: cellPct(r["posture_pct"]),
+    passCount: num(r["pass_count"]),
+    failCount: num(r["fail_count"]),
+    passSubCategoryCount: optNum(r["pass_subcategory_count"]),
+    failSubCategoryCount: optNum(r["fail_subcategory_count"]),
+    emptyPostureReason: String(r["empty_posture_reason"] ?? "") || null,
+    assessmentScope: String(r["assessment_scope"] ?? "") || undefined,
+    mappingRationale: String(r["mapping_rationale"] ?? "") || undefined,
+    tags: parseJson(r["tags_json"], []) as { key: string; value: string }[],
+  };
+}
+
+export function frameworkPolicyToRow(p: FrameworkPolicyRow): Rec {
+  return {
+    framework_id: p.frameworkId,
+    category_external_id: p.categoryExternalId,
+    subcategory_external_id: p.subcategoryExternalId,
+    policy_id: p.policyId,
+    policy_kind: p.policyKind,
+    short_id: p.shortId ?? "",
+    name: p.name,
+    severity: p.severity,
+    enabled: p.enabled ?? "",
+    builtin: p.builtin ?? "",
+    pass_count: p.passCount,
+    fail_count: p.failCount,
+    assessed_count: p.assessedCount,
+    rejected_count: p.rejectedCount,
+    no_resource_to_assess: p.noResourceToAssess,
+    target_native_type: p.targetNativeType ?? "",
+    subject_entity_type: p.subjectEntityType ?? "",
+    cloud_provider: p.cloudProvider ?? "",
+    has_auto_remediation: p.hasAutoRemediation ?? "",
+  };
+}
+
+export function rowToFrameworkPolicy(r: Rec): FrameworkPolicyRow {
+  const num = (v: unknown): number => {
+    const n = Number(v ?? 0);
+    return isFinite(n) ? n : 0;
+  };
+  const optBool = (v: unknown): boolean | undefined =>
+    v === "" || v === null || v === undefined
+      ? undefined
+      : v === true || v === "TRUE" || v === "true";
+  return {
+    frameworkId: String(r["framework_id"] ?? ""),
+    categoryExternalId: String(r["category_external_id"] ?? ""),
+    subcategoryExternalId: String(r["subcategory_external_id"] ?? ""),
+    policyId: String(r["policy_id"] ?? ""),
+    policyKind: (String(r["policy_kind"] ?? "CONTROL") as FrameworkPolicyRow["policyKind"]),
+    shortId: String(r["short_id"] ?? "") || undefined,
+    name: String(r["name"] ?? ""),
+    severity: String(r["severity"] ?? "UNKNOWN") as Severity,
+    enabled: optBool(r["enabled"]),
+    builtin: optBool(r["builtin"]),
+    passCount: num(r["pass_count"]),
+    failCount: num(r["fail_count"]),
+    assessedCount: num(r["assessed_count"]),
+    rejectedCount: num(r["rejected_count"]),
+    noResourceToAssess:
+      r["no_resource_to_assess"] === true ||
+      r["no_resource_to_assess"] === "TRUE" ||
+      r["no_resource_to_assess"] === "true",
+    targetNativeType: String(r["target_native_type"] ?? "") || undefined,
+    subjectEntityType: String(r["subject_entity_type"] ?? "") || undefined,
+    cloudProvider: String(r["cloud_provider"] ?? "") || undefined,
+    hasAutoRemediation: optBool(r["has_auto_remediation"]),
+  };
+}
+
 // ----------------------------------------------------------------------- persist
 
 export interface SyncMeta {
@@ -440,6 +590,9 @@ export function persistSync(
   now?: number,
   findings: FindingRow[] = [],
   dataFindings: DataFindingRow[] = [],
+  frameworks: FrameworkRow[] = [],
+  posture: PostureRow[] = [],
+  frameworkPolicies: FrameworkPolicyRow[] = [],
 ): GraphDoc {
   const { version: ruleVersion, rule } = settingsStore.getAarsRule();
   // Counts first: pillar C prices them, so they have to be on the nodes before enrichment.
@@ -460,6 +613,20 @@ export function persistSync(
   overwrite(TABS.issues, issues.map(issueToRow));
   overwrite(TABS.findings, findings.map(findingToRow));
   overwrite(TABS.dataFindings, dataFindings.map(dataFindingToRow));
+
+  // Compliance-framework posture. Written like every other data tab — wholesale, BEFORE
+  // the history row — so a sync that dies here leaves no commit record and the previous
+  // posture stands.
+  //
+  // Guarded on emptiness, unlike the tabs above: the posture steps are optional AND
+  // per-framework, so a tenant that rejects them (or an operator who has selected no
+  // framework) would otherwise have last sync's posture blanked by a battery that never
+  // asked. The other tabs are always queried, so empty there really means empty.
+  if (frameworks.length) overwrite(TABS.frameworks, frameworks.map(frameworkToRow));
+  if (posture.length) overwrite(TABS.frameworkPosture, posture.map(postureToRow));
+  if (frameworkPolicies.length) {
+    overwrite(TABS.frameworkPolicies, frameworkPolicies.map(frameworkPolicyToRow));
+  }
 
   const snapshotRef = writeGraphSnapshot(enriched);
 
@@ -589,6 +756,9 @@ let assetsMemo: GNode[] | undefined;
 let issuesMemo: IssueRow[] | undefined;
 let findingsMemo: FindingRow[] | undefined;
 let dataFindingsMemo: DataFindingRow[] | undefined;
+let frameworksMemo: FrameworkRow[] | undefined;
+let postureMemo: PostureRow[] | undefined;
+let frameworkPoliciesMemo: FrameworkPolicyRow[] | undefined;
 
 function invalidateReadMemos(): void {
   graphDocMemo = undefined;
@@ -596,6 +766,9 @@ function invalidateReadMemos(): void {
   issuesMemo = undefined;
   findingsMemo = undefined;
   dataFindingsMemo = undefined;
+  frameworksMemo = undefined;
+  postureMemo = undefined;
+  frameworkPoliciesMemo = undefined;
 }
 
 /**
@@ -759,6 +932,23 @@ export function loadDataFindings(): DataFindingRow[] {
     dataFindingsMemo = readAll(TABS.dataFindings).map(rowToDataFinding);
   }
   return dataFindingsMemo;
+}
+
+export function loadFrameworks(): FrameworkRow[] {
+  if (frameworksMemo === undefined) frameworksMemo = readAll(TABS.frameworks).map(rowToFramework);
+  return frameworksMemo;
+}
+
+export function loadPosture(): PostureRow[] {
+  if (postureMemo === undefined) postureMemo = readAll(TABS.frameworkPosture).map(rowToPosture);
+  return postureMemo;
+}
+
+export function loadFrameworkPolicies(): FrameworkPolicyRow[] {
+  if (frameworkPoliciesMemo === undefined) {
+    frameworkPoliciesMemo = readAll(TABS.frameworkPolicies).map(rowToFrameworkPolicy);
+  }
+  return frameworkPoliciesMemo;
 }
 
 export function syncHistory(): Rec[] {

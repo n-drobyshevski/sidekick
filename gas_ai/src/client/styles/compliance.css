@@ -1,0 +1,150 @@
+/* --------------------------------------------------------------- compliance posture */
+/* The framework-posture page. Deliberately NOT a gauge and NOT a donut: DESIGN.md's
+   "Don't" list and PRODUCT.md's anti-references both name gauges, and charts.js registers
+   no ArcElement anyway, so an arc here would be both off-brand and a runtime error.
+   The percentage is a headline number over the same 0–100 meter the AARS page uses.
+
+   The state family is `.comp-*`, cloned from `.cov-*` in scans.css rather than extending
+   `.sev-*`. Same reason stated there: posture state is not severity, and putting
+   "no policies" into the namespace that means exactly one thing would break the one
+   guarantee the severity tokens carry. Control severity on this page still uses sevBadge,
+   because that IS a Wiz severity. */
+
+.comp-header {
+  display: grid;
+  grid-template-columns: minmax(170px, 0.5fr) minmax(320px, 2fr);
+  gap: 20px 36px;
+  align-items: start;
+  margin: 0 0 18px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--hairline);
+}
+.comp-header .stat-list { grid-column: 1 / -1; }
+.comp-hero-value { font-size: 2rem; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.comp-hero-sub { font-size: 12px; color: var(--text-3); margin-top: 3px; }
+.comp-hero-meter { margin-top: 10px; max-width: 260px; }
+
+.comp-strip { display: flex; flex-direction: column; gap: 8px; }
+.comp-strip-note { font-size: 12px; color: var(--text-3); margin: 0; max-width: var(--measure); }
+
+.comp-bar {
+  display: flex;
+  width: 100%;
+  height: 14px;
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  background: var(--track-bg);
+}
+.comp-bar-seg { height: 100%; }
+.comp-bar-seg[data-state="scored"] { background: var(--ok); }
+.comp-bar-seg[data-state="noResources"] { background: var(--sev-info); }
+.comp-bar-seg[data-state="noPolicies"] { background: var(--warn); }
+.comp-bar-seg[data-state="unknown"] { background: var(--text-3); }
+.comp-bar-seg[data-state="empty"] { flex: 1; background: var(--track-bg); }
+
+.comp-keys { display: flex; flex-wrap: wrap; gap: 6px; }
+/* A real <button>: the strip is the page's cross-filter, so every key is operable by
+   keyboard and carries aria-pressed. A canvas chart could offer neither. */
+.comp-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 3px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-pill);
+  background: var(--page);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.comp-key:hover { border-color: var(--accent); }
+.comp-key[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--surface);
+  color: var(--ink);
+}
+.comp-key[disabled] { opacity: 0.55; cursor: default; }
+.comp-key-glyph { font-size: 10px; line-height: 1; }
+.comp-key[data-state="scored"] .comp-key-glyph { color: var(--ok); }
+.comp-key[data-state="noResources"] .comp-key-glyph { color: var(--sev-info-text); }
+.comp-key[data-state="noPolicies"] .comp-key-glyph { color: var(--warn); }
+.comp-key[data-state="unknown"] .comp-key-glyph { color: var(--text-3); }
+.comp-key-num { font-weight: 600; color: var(--ink); }
+
+/* ---------------------------------------------------------------- the register */
+
+/* Category rows and their subcategory children. The expander is a real button inside the
+   first cell, so the row stays one tab stop and the disclosure state is announced. */
+.comp-row-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.comp-row-chevron {
+  display: inline-block;
+  width: 10px;
+  color: var(--text-3);
+  transition: transform 120ms ease-out;
+}
+.comp-row-toggle[aria-expanded="true"] .comp-row-chevron { transform: rotate(90deg); }
+.comp-sub-row > td { background: var(--surface); }
+/* Indent by padding on the first cell, not by a nested table: one table keeps one set of
+   column widths, one sort model and one keyboard path. */
+.comp-sub-row .comp-sub-title { padding-left: 26px; }
+
+.comp-ext {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+  font-size: 12px;
+  margin-right: 8px;
+}
+
+/* The posture cell: meter + number, or a state pill when there is no number. Fixed width
+   so the column reads as a column rather than as ragged text. */
+.comp-posture { display: flex; align-items: center; gap: 10px; min-width: 150px; }
+.comp-posture .meter { flex: 1; }
+.comp-posture-num {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  min-width: 42px;
+  text-align: right;
+}
+/* Never a 0% meter for "nothing to score" — the whole reason this element exists. */
+.comp-posture-empty {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+.comp-posture-empty .comp-key-glyph { font-size: 9px; }
+.comp-posture-dash { color: var(--text-3); }
+
+/* Policy list inside the subcategory sheet. */
+.comp-policy-counts {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.comp-policy-counts b { color: var(--ink); font-weight: 600; }
+
+@media (max-width: 1080px) {
+  .comp-header { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 760px) {
+  .comp-header { grid-template-columns: 1fr; gap: 18px; }
+  .comp-posture { min-width: 110px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .comp-row-chevron { transition: none; }
+}

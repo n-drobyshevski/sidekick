@@ -114,6 +114,7 @@ export function cleanAarsRule(raw: unknown): AarsRule {
     fiveRs: srcRaw["fiveRs"] === true,
     deprecatedModel: srcRaw["deprecatedModel"] === true,
     inactiveAgent: srcRaw["inactiveAgent"] === true,
+    frameworkMapping: srcRaw["frameworkMapping"] === true,
   };
 
   const fswRaw = rec(r["findingSeverityWeights"]);
@@ -301,10 +302,12 @@ export function shadowedGapRules(rule: AarsRule): number[] {
 
 /**
  * Every gap code a DERIVATION can raise, as opposed to one a tenant's findings might
- * carry. Three groups, matching the three places codes are made:
+ * carry. Four groups, matching the four places codes are made:
  *   - graphEnrich.deriveAarsInput: the OWASP families off issue mappings, NO_GUARDRAIL,
  *     and the three gapSources codes
  *   - syncNormalize.frameworkCodesFromRule: the same OWASP token shapes off config rules
+ *   - syncNormalize.withFrameworkCodes: the AUTHORITATIVE mapping from synced compliance
+ *     posture, under gapSources.frameworkMapping
  * A code outside this set is not an error — tenant finding shortIds live there, and the
  * cascade's fallback exists to govern them — but a cascade ROW naming a code outside it
  * can never fire, which is a different thing from a row this tenant merely doesn't exercise.
@@ -318,9 +321,14 @@ function isDerivable(code: string, rule: AarsRule): boolean {
   if (!c) return false;
   if (c === "DEPRECATED_MODEL") return rule.gapSources.deprecatedModel === true;
   if (c === "INACTIVE_AGENT") return rule.gapSources.inactiveAgent === true;
-  if (c.startsWith("5R_")) return rule.gapSources.fiveRs === true;
-  // FIVE_RS is the UNNAMED form. Nothing raises it: the fiveRs source always names which
-  // of the five, so this code can only ever arrive on a tenant finding.
+  // The framework mapping raises 5R_ codes off a failing CONTROL, which is a second source
+  // for them and independent of the issue-mapping one. Either switch makes these rows live,
+  // so asking only about `fiveRs` would keep reporting them dead while they fire.
+  if (c.startsWith("5R_")) {
+    return rule.gapSources.fiveRs === true || rule.gapSources.frameworkMapping === true;
+  }
+  // FIVE_RS is the UNNAMED form. Nothing raises it: both 5Rs sources always name which of
+  // the five, so this code can only ever arrive on a tenant finding.
   if (c === "FIVE_RS") return false;
   if (DERIVABLE_EXACT.includes(c)) return true;
   return DERIVABLE_PREFIXES.some((p) => c.startsWith(p));
@@ -343,7 +351,9 @@ export function unreachableGapRules(rule: AarsRule): number[] {
     // prefix like "LLM" always has live members.
     const claimsDerivedFamily =
       row.match === "prefix"
-        ? row.code.startsWith("5R") && rule.gapSources.fiveRs !== true
+        ? row.code.startsWith("5R") &&
+          rule.gapSources.fiveRs !== true &&
+          rule.gapSources.frameworkMapping !== true
         : DERIVABLE_EXACT.includes(cleanGapCode(row.code)) && !isDerivable(row.code, rule);
     if (claimsDerivedFamily) dead.push(i);
   });

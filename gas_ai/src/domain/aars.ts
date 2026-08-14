@@ -134,6 +134,23 @@ export interface GapSources {
    * not maintained, and not missed if abused.
    */
   inactiveAgent?: boolean;
+  /**
+   * Label a failing config finding with the framework codes WIZ says its rule maps to,
+   * from the synced compliance-framework posture, instead of the codes a regex found in
+   * the rule's tags.
+   *
+   * This raises no new gap. Every finding keeps its id, its severity and its place in the
+   * count; only `frameworkCodes` grows, so pillar B prices the same gaps against different
+   * cascade rows. That is the fix it exists for: the rows naming ASI / ML_ / 5R_ codes have
+   * never been able to fire, because the only source of those codes was
+   * `frameworkCodesFromRule` scraping an OWASP token out of a tag value — which works only
+   * on a tenant that happens to write one there.
+   *
+   * OFF by default, following every other knob here: turning it on moves scores, so no
+   * tenant re-scores on upgrade and the change goes through the AARS Rules preview like any
+   * other rule edit. It also does nothing at all until a posture sync has run.
+   */
+  frameworkMapping?: boolean;
 }
 
 /** Score thresholds, worst first. Each must sit strictly above the next. */
@@ -230,7 +247,9 @@ export const DEFAULT_AARS_RULE: AarsRule = {
   gapFallbackPoints: 5,
   gapAggregation: "sum",
   // Off: switching any of these on adds gaps the doc's applied table never priced.
-  gapSources: { fiveRs: false, deprecatedModel: false, inactiveAgent: false },
+  gapSources: {
+    fiveRs: false, deprecatedModel: false, inactiveAgent: false, frameworkMapping: false,
+  },
   // All 1: the spec reads a failing control as present-or-absent, never as more or less
   // severe. Kept as a knob because ai_findings.severity is already persisted and unused.
   findingSeverityWeights: { CRITICAL: 1, HIGH: 1, MEDIUM: 1, LOW: 1 },
@@ -309,7 +328,16 @@ export const AARS_V2_RULE: AarsRule = {
   ],
   gapFallbackPoints: 5,
   gapAggregation: "rss",
-  gapSources: { fiveRs: true, deprecatedModel: true, inactiveAgent: true },
+  // frameworkMapping stays OFF even here, where every other dormant source is on. Two
+  // reasons, and neither is timidity: ai/AARS_ASSESSMENT.md calibrated this preset before
+  // posture was collected at all, so switching it on would make the preset differ from the
+  // measurement that justifies its numbers; and its effect is DATA-DEPENDENT — it does
+  // nothing until a posture sync has run, then changes scores — so a preset carrying it
+  // would silently re-score an estate on the strength of an unrelated sync finishing.
+  // It is switched on deliberately, through the Rules page, with the same preview.
+  gapSources: {
+    fiveRs: true, deprecatedModel: true, inactiveAgent: true, frameworkMapping: false,
+  },
   findingSeverityWeights: { CRITICAL: 1.5, HIGH: 1.2, MEDIUM: 1, LOW: 0.6 },
   pillarBCap: 25,
   // Split, so the pillar takes more than two values. Reaching sensitive data is worth 6 —

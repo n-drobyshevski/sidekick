@@ -35,6 +35,13 @@ export interface VarField {
 
 export interface StepVarSpec {
   stepId: string;
+  /**
+   * Matched as a PREFIX rather than exactly. For the generated step families, whose ids
+   * carry the thing they were generated from (`COMPLIANCE_POSTURE_wf-id-275`), so one spec
+   * covers the family. Without it those steps resolve to no spec at all and the panel shows
+   * the generic "no spec" fallback instead of the reason the lock exists.
+   */
+  prefix?: boolean;
   /** Shown when a step takes no editable variables, saying why. */
   locked?: string;
   fields: VarField[];
@@ -189,13 +196,41 @@ export const STEP_VAR_SPECS: StepVarSpec[] = [
       "endpoints the host-exposure step returns unfiltered, so moving it here would widen " +
       "what is collected without moving what counts as an exposure.",
   },
+  {
+    stepId: "FRAMEWORKS_LIST",
+    // Declared with no fields rather than left out of this list entirely: an absent spec
+    // renders as the generic "no spec" fallback, which reads as an oversight, and someone
+    // will eventually "fix" it. Its only variable is a boolean, and the panel's controls
+    // are list/enum — a third field kind bought for one flag that changes nothing about
+    // what is collected is not worth the machinery.
+    fields: [],
+    locked: "This step's only filter picks whether disabled frameworks appear in the " +
+      "Settings picker. It does not decide what posture is collected — the framework " +
+      "selection does — so there is nothing here worth tuning per tenant.",
+  },
+  {
+    // Matches every generated posture step (COMPLIANCE_POSTURE_wf-id-275, …) so the family
+    // shares one lock reason instead of falling through to the generic "no spec" text.
+    stepId: "COMPLIANCE_POSTURE_",
+    prefix: true,
+    fields: [],
+    locked: "This step takes no editable variable: its `id` is not a filter — it selects " +
+      "WHICH framework is fetched, so editing it here would make a step whose name says " +
+      "one framework report another. Choose frameworks in Settings instead.",
+  },
 ];
 
 const SPEC_BY_STEP: Record<string, StepVarSpec> = {};
 for (const spec of STEP_VAR_SPECS) SPEC_BY_STEP[spec.stepId] = spec;
 
+/** Exact first, then the prefix families — an exact spec always wins over a family one. */
 export function varSpecFor(stepId: string): StepVarSpec | null {
-  return SPEC_BY_STEP[stepId] ?? null;
+  const exact = SPEC_BY_STEP[stepId];
+  if (exact) return exact;
+  for (const spec of STEP_VAR_SPECS) {
+    if (spec.prefix && stepId.indexOf(spec.stepId) === 0) return spec;
+  }
+  return null;
 }
 
 export function isEditableStep(stepId: string): boolean {

@@ -71,6 +71,7 @@ import {
   type ConfigTotals,
   type ControlRollup,
 } from "../domain/configFindings";
+import { buildAllFrameworkTrees, complianceKpis } from "../domain/compliancePosture";
 import { graphCacheParams, resolveGraphParams, resolveLayoutParams } from "../domain/graphApiParams";
 import { conditionHolds, conditionState } from "../domain/riskConditions";
 import {
@@ -506,6 +507,14 @@ function assetsModel(): AssetsModel {
       openIssues: issues.length,
       complianceGaps: openGaps.length,
       complianceGapsUnlinked: unlinkedGaps,
+      // Framework POSTURE, which is a different axis from the two counts above: those
+      // count failing controls, this scores frameworks. Null — never 0 — when no posture
+      // has been synced, so the Wiz Scans area degrades to `partial` on its own instead of
+      // reporting a confident zero for a question this tenant was never asked.
+      frameworkPosture: complianceKpis(
+        syncStore.loadPosture(),
+        syncStore.loadFrameworkPolicies(),
+      ),
       agenticIdentities: assets.filter((a) => a.identityPurpose === "AGENTIC").length,
       // Estate-wide counts for the two risk conditions that had no total. The flags were
       // persisted and drawn on the graph, but `assetTableRow` strips them, so nothing
@@ -831,6 +840,52 @@ export function getConfigFindingDetail(p?: unknown): ApiResult {
         asset: asset ? assetRow(asset) : null,
       };
     });
+  });
+}
+
+/**
+ * The Compliance page: every synced framework as a tree, plus the catalogue for the
+ * Settings picker.
+ *
+ * Shipped whole rather than paged. The payload is bounded by the FRAMEWORK, not by the
+ * estate — ten categories of ten subcategories is the shape of a published Top-10 list,
+ * not of a tenant — so the row count cannot run away the way the inventory's or the
+ * configuration register's can, and the two-mode all/paged machinery those need would be
+ * complexity bought for nothing here.
+ */
+export function getCompliance(p?: unknown): ApiResult {
+  return run(() => {
+    const params = (p ?? {}) as Rec;
+    const requested = String(params["frameworkId"] ?? "");
+    return cached("getCompliance", { frameworkId: requested }, () => {
+      const posture = syncStore.loadPosture();
+      const policies = syncStore.loadFrameworkPolicies();
+      const catalogue = syncStore.loadFrameworks();
+      const selected = settingsStore.getSelectedFrameworks(() => catalogue);
+      const trees = buildAllFrameworkTrees(posture, policies, catalogue);
+      return {
+        trees,
+        kpis: complianceKpis(posture, policies),
+        // The catalogue with this app's selection folded in — Wiz says what exists, the
+        // settings say what is collected, and the picker needs both to render honestly.
+        catalogue: catalogue.map((f) => ({ ...f, selected: selected.indexOf(f.id) >= 0 })),
+        selected,
+        // Named so the page can open on a framework it was linked to rather than guessing.
+        // Null when the requested id has no stored posture, which the page reports as such
+        // instead of silently falling back to a different framework's numbers.
+        requested: requested && trees.some((t) => t.frameworkId === requested)
+          ? requested
+          : null,
+      };
+    });
+  });
+}
+
+/** Save which frameworks the sync collects posture for. */
+export function setSelectedFrameworks(p?: unknown): ApiResult {
+  return run(() => {
+    const ids = ((p ?? {}) as Rec)["ids"];
+    return { selected: settingsStore.setSelectedFrameworks(ids) };
   });
 }
 

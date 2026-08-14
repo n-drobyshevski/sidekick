@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_AARS_RULE } from "../src/domain/aars";
 import {
+  DEFAULT_FRAMEWORK_IDS,
   clampDepth,
   clampMaxNodes,
   getAarsRule,
@@ -11,7 +12,10 @@ import {
   getDefaultDepth,
   getMaxNodes,
   getScoredRuleVersion,
+  getSelectedFrameworks,
+  resolveDefaultFrameworks,
   withAarsRule,
+  withSelectedFrameworks,
   withAutoExpand,
   withDefaultDepth,
   withMaxNodes,
@@ -176,5 +180,59 @@ describe("scored rule version", () => {
     expect(getScoredRuleVersion(s)).toBe(getAarsRule(s).version);
     s = withAarsRule(s, { ...DEFAULT_AARS_RULE, gapFallbackPoints: 15 });
     expect(getScoredRuleVersion(s)).not.toBe(getAarsRule(s).version);
+  });
+});
+
+describe("framework selection", () => {
+  it("an unconfigured tenant falls back to the AI defaults", () => {
+    expect(getSelectedFrameworks({})).toEqual(DEFAULT_FRAMEWORK_IDS);
+  });
+
+  it("an explicit selection wins, including an explicit selection of none", () => {
+    const some = withSelectedFrameworks({}, ["wf-id-1", "wf-id-2"]);
+    expect(getSelectedFrameworks(some)).toEqual(["wf-id-1", "wf-id-2"]);
+    // "I want none" must stay distinguishable from "I have not chosen" — the stored empty
+    // array is the difference, and reading it as the defaults would make the choice
+    // impossible to express.
+    const none = withSelectedFrameworks({}, []);
+    expect(getSelectedFrameworks(none)).toEqual([]);
+  });
+
+  it("dedupes and trims what it stores", () => {
+    const s = withSelectedFrameworks({}, [" wf-id-1 ", "wf-id-1", "", "wf-id-2"]);
+    expect(getSelectedFrameworks(s)).toEqual(["wf-id-1", "wf-id-2"]);
+  });
+
+  it("resolves the defaults by NAME against a real catalogue", () => {
+    // Framework ids are tenant-local and version-scoped — a new edition mints a new id —
+    // so the shipped ids are a cold start, not an answer.
+    const catalogue = [
+      { id: "wf-9001", name: "CIS AWS Foundations Benchmark v3.0" },
+      { id: "wf-9002", name: "OWASP Top 10 For Agentic Applications 2026" },
+      { id: "wf-9003", name: "5Rs - Wiz for Data Security" },
+      { id: "wf-9004", name: "OWASP ML Security Top 10" },
+      { id: "wf-9005", name: "OWASP LLM Security Top 10" },
+    ];
+    expect(resolveDefaultFrameworks(catalogue))
+      .toEqual(["wf-9002", "wf-9005", "wf-9003", "wf-9004"]);
+  });
+
+  it("never confuses the ML framework with the LLM one", () => {
+    // `\bML\b` finds no word boundary inside "LLM", and "OWASP ML Security Top 10" holds
+    // no "LLM" substring — so each matcher claims exactly one, whichever order they sit in.
+    expect(resolveDefaultFrameworks([{ id: "a", name: "OWASP LLM Security Top 10" }]))
+      .toEqual(["a"]);
+    expect(resolveDefaultFrameworks([{ id: "b", name: "OWASP ML Security Top 10" }]))
+      .toEqual(["b"]);
+    const both = resolveDefaultFrameworks([
+      { id: "ml", name: "OWASP ML Security Top 10" },
+      { id: "llm", name: "OWASP LLM Security Top 10" },
+    ]);
+    expect(both.sort()).toEqual(["llm", "ml"]);
+  });
+
+  it("keeps the id defaults when a catalogue holds nothing it recognises", () => {
+    const catalogue = [{ id: "wf-1", name: "PCI DSS v4.0" }];
+    expect(resolveDefaultFrameworks(catalogue)).toEqual(DEFAULT_FRAMEWORK_IDS);
   });
 });
