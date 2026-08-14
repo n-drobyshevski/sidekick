@@ -231,6 +231,56 @@ function bootstrapCore(): Rec {
   };
 }
 
+/**
+ * The distinct human identities holding admin/high-privilege access to any AI asset.
+ *
+ * A set, not a sum: one operator with a binding on six agents is one person to talk to, and
+ * summing the per-asset lists would report six.
+ */
+function distinctHumanIdentities(assets: GNode[]): Set<string> {
+  const ids = new Set<string>();
+  for (const a of assets) {
+    for (const id of a.humanAccess?.identityIds ?? []) ids.add(id);
+    for (const id of a.humanAccess?.effectiveIds ?? []) ids.add(id);
+  }
+  return ids;
+}
+
+/**
+ * How many of the people who can reach an AI asset carry an open MFA or dormancy finding.
+ *
+ * Read from the identity-findings tab and intersected here rather than summed off the
+ * per-asset counts, for the reason `distinctHumanIdentities` exists. The intersection is the
+ * whole point: "how many people lack MFA" is an IAM question this app has no business
+ * answering, and "how many of the people who can reach an AI agent lack MFA" is its own.
+ */
+function identityHygieneKpis(assets: GNode[]): Rec {
+  const reachable = distinctHumanIdentities(assets);
+  if (!reachable.size) return { humanNoMfa: 0, humanDormant: 0 };
+  const noMfa = new Set<string>();
+  // ONE SET, fed by BOTH routes to dormancy. Wiz reports it twice — as
+  // `inactiveInLast90Days` on the identity and as the IAM-235 rule failing against it — and
+  // `humanAccess` keeps those apart because they are different evidence. A COUNT must not:
+  // adding them reports one dormant person as two, which is precisely what the dry run did
+  // the first time this KPI was written.
+  const dormant = new Set<string>();
+  for (const id of reachable) {
+    if (byIdIn(assets, id)?.inactive === true) dormant.add(id);
+  }
+  for (const finding of syncStore.loadIdentityFindings()) {
+    if (!isOpenGap(finding)) continue;
+    if (!reachable.has(finding.resourceId)) continue;
+    (finding.hygiene === "MFA" ? noMfa : dormant).add(finding.resourceId);
+  }
+  return { humanNoMfa: noMfa.size, humanDormant: dormant.size };
+}
+
+/** One asset row by id. Linear, and called once per reachable identity — a handful. */
+function byIdIn(assets: GNode[], id: string): GNode | undefined {
+  for (const a of assets) if (a.id === id) return a;
+  return undefined;
+}
+
 function filterOptions(assets: GNode[]): Rec {
   const kinds = new Set<string>();
   const clouds = new Set<string>();
@@ -327,6 +377,11 @@ function assetRow(n: GNode): Rec {
     // Null, not {}, when the exposure steps never reached this asset — the same "clean" vs
     // "never asked" split dataFindingCount keeps below.
     exposureEvidence: n.exposureEvidence ?? null,
+    // Identity rows carry the first two; AI assets carry the third. Null, not false/{}, for
+    // the "never reported" vs "reported clean" split the rest of this row keeps.
+    inactive: n.inactive ?? null,
+    inactiveTimeframe: n.inactiveTimeframe ?? null,
+    humanAccess: n.humanAccess ?? null,
     sensitiveAccess: n.hasAccessToSensitiveData ?? false,
     sensitiveData: n.hasSensitiveData ?? false,
     highPriv: n.hasHighPrivileges ?? false,
@@ -531,6 +586,28 @@ function assetsModel(): AssetsModel {
       internetValidated: assets.filter((a) => (a.exposureEvidence?.endpointIds ?? []).length > 0)
         .length,
       internetViaHost: assets.filter((a) => (a.exposureEvidence?.hostIds ?? []).length > 0).length,
+      // Human identity access. The Wiz Scans page declared this area partial because "nothing
+      // totals them"; these are the totals, counted off the persisted join rather than off the
+      // graph stubs, which are deliberately suppressed where a real CIEM finding exists.
+      //
+      // The unit is deliberately narrow and the page says so: the traversal only ever returns
+      // ADMIN and HIGH_PRIVILEGE bindings, so this is not "assets a person can reach" — it is
+      // "assets a person can reach with rights worth naming".
+      humanReachable: assets.filter((a) => (a.humanAccess?.identityIds ?? []).length > 0).length,
+      humanReachableAdmin: assets.filter((a) => a.humanAccess?.admin === true).length,
+      // Distinct identities across every asset, so one operator with access to six agents
+      // counts once. `humanDormant` is the join worth having: a dormant account holding admin
+      // rights on an AI asset is a low-noise backdoor, and it is the reason the identity
+      // properties are collected at all.
+      humanIdentities: distinctHumanIdentities(assets).size,
+      // Effective access: people Wiz says can actually reach an AI asset's DATA, as opposed
+      // to people holding a role that grants access. Counted separately and never added to
+      // `humanIdentities` — see the note on humanAccess.effectiveIds.
+      humanEffective: assets.filter((a) => (a.humanAccess?.effectiveIds ?? []).length > 0).length,
+      // Hygiene, counted over the DISTINCT identities rather than summed from the per-asset
+      // counts. One person with bindings on six agents is one person whose MFA is missing;
+      // summing `noMfaCount` across assets would report six.
+      ...identityHygieneKpis(assets),
       highPrivilege: assets.filter((a) => conditionHolds(a, "EXCESSIVE_PRIVILEGE")).length,
     },
     aarsSeverityCounts,

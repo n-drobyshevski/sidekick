@@ -35,6 +35,12 @@ const FULL = {
     internetValidated: 1,
     internetViaHost: 2,
     highPrivilege: 34,
+    humanReachable: 4,
+    humanReachableAdmin: 2,
+    humanIdentities: 7,
+    humanDormant: 1,
+    humanNoMfa: 3,
+    humanEffective: 2,
   },
   total: 96,
   digest: { totals: { totalOpen: 29, patternsActive: 4, patternsTotal: 4 } },
@@ -46,8 +52,11 @@ const stateOf = (ctx, id) => byId(resolveAreas(ctx)).get(id).state;
 describe("resolveAreas on a full payload", () => {
   const resolved = resolveAreas(FULL);
 
-  it("splits the ten areas 7 live / 2 partial / 1 unscanned", () => {
-    expect(coverageTally(resolved)).toEqual({ live: 7, partial: 2, unscanned: 1 });
+  it("splits the ten areas 8 live / 1 partial / 1 unscanned", () => {
+    // Human identity access moved live: the paths were always synced and only the total was
+    // missing. Compliance frameworks is the one remaining declared `partial` — it counts
+    // failing findings while its subject is framework SCORING, which no payload here carries.
+    expect(coverageTally(resolved)).toEqual({ live: 8, partial: 1, unscanned: 1 });
   });
 
   it("reports framework posture as an average over the frameworks that actually scored", () => {
@@ -246,8 +255,61 @@ describe("the fabrications are gone", () => {
     expect(prose).not.toMatch(/\d+\s?%/);
   });
 
-  it("says MFA is not collected rather than claiming it is scanned", () => {
+  it("no longer claims MFA is uncollectable, and says how it is collected", () => {
+    // This assertion has now been wrong twice, in opposite directions, which is the point of
+    // keeping it. It first read "MFA is not collected" when neither MFA nor inactivity was;
+    // then "MFA is STILL not collected" once inactivity arrived as an entity property. The
+    // rule catalogue showed the remaining half was wrong too — MFA is a RULE Wiz evaluates
+    // against each account, not a property — so the note now has to say which mechanism
+    // answers, because "collected" and "collected how" are different claims.
     const identity = SCAN_AREAS.find((a) => a.id === "identity");
-    expect(identity.note).toMatch(/not collected/i);
+    expect(identity.note).not.toMatch(/MFA is still not collected/i);
+    expect(identity.note).toMatch(/RULES rather than properties/i);
+    // And it must still admit the heuristic: the rules are matched by NAME.
+    expect(identity.note).toMatch(/matched by name/i);
+  });
+});
+
+describe("human identity access", () => {
+  const resolved = byId(resolveAreas(FULL));
+
+  it("reports a figure now instead of declaring itself partial", () => {
+    // The area was `coverage: "partial"` with the note "nothing totals them". The paths were
+    // always synced; only the KPI was missing.
+    expect(SCAN_AREAS.find((a) => a.id === "identity").coverage).toBeUndefined();
+    expect(resolved.get("identity").state).toBe("live");
+    expect(resolved.get("identity").figure.value).toBe("4");
+  });
+
+  it("names the identities, the admins and the dormant ones", () => {
+    const unit = resolved.get("identity").figure.unit;
+    expect(unit).toContain("7 identities");
+    expect(unit).toContain("2 at admin");
+    expect(unit).toContain("1 dormant");
+  });
+
+  it("drops the hygiene clauses when there is nothing to report", () => {
+    const kpis = {
+      ...FULL.kpis, humanReachableAdmin: 0, humanDormant: 0, humanNoMfa: 0,
+    };
+    const figure = byId(resolveAreas({ ...FULL, kpis })).get("identity").figure;
+    expect(figure.unit).toBe("AI assets reachable · 7 identities");
+  });
+
+  it("reports dormancy as ONE number, not the flag plus the finding", () => {
+    // Wiz reports dormancy twice — `inactiveInLast90Days` on the identity and the IAM-235
+    // rule failing against it — and the same person usually carries both. The dry run caught
+    // this the first time the figure was written: it printed "2 dormant" for one person. The
+    // evidence stays split on the asset; the KPI is deduped server-side and the figure prints
+    // it as it is given.
+    const figure = byId(resolveAreas(FULL)).get("identity").figure;
+    expect(figure.unit).toContain("1 dormant");
+    expect(figure.unit).toContain("3 without MFA");
+  });
+
+  it("steps back to partial on an older server bundle with no reach KPI", () => {
+    const kpis = { ...FULL.kpis };
+    delete kpis.humanReachable;
+    expect(stateOf({ ...FULL, kpis }, "identity")).toBe("partial");
   });
 });

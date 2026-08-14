@@ -361,6 +361,7 @@ exports[`query documents > Q_PRINCIPALS is unchanged 1`] = `
       technology { id name categories { id name } }
       cloudAccount { id name externalId cloudProvider }
       projects { id name riskProfile { businessImpact } }
+      graphEntity { properties }
       issueAnalytics {
         issueCount
         informationalSeverityCount

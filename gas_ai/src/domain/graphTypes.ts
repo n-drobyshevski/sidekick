@@ -153,14 +153,31 @@ const PROPERTY_ALIASES: Readonly<Record<string, readonly string[]>> = {
 export function entityField(raw: Rec, key: string): unknown {
   if (!raw || typeof raw !== "object") return undefined;
   if (raw[key] !== undefined) return raw[key];
-  const props = raw["properties"];
-  if (!props || typeof props !== "object") return undefined;
-  const bag = props as Rec;
+  const bag = propertyBag(raw);
+  if (!bag) return undefined;
   if (bag[key] !== undefined) return bag[key];
   for (const alias of PROPERTY_ALIASES[key] ?? []) {
     if (bag[alias] !== undefined) return bag[alias];
   }
   return undefined;
+}
+
+/**
+ * Where the properties bag sits, which is not the same place on all three roots.
+ *
+ * A graphSearch entity carries it flat as `properties`. A `cloudResourcesV2` node carries the
+ * resource fields flat and the bag one level deeper, under `graphEntity` — which is exactly
+ * why the agentic-identities step could see `hasAdminPrivileges` but not `inactiveInLast90Days`
+ * or the real `identityPurpose`, even though the tenant returns all three in the same capture
+ * (exemples/agentic_identities_response.js). One helper, three roots.
+ */
+function propertyBag(raw: Rec): Rec | null {
+  const flat = raw["properties"];
+  if (flat && typeof flat === "object") return flat as Rec;
+  const entity = raw["graphEntity"];
+  if (!entity || typeof entity !== "object") return null;
+  const nested = (entity as Rec)["properties"];
+  return nested && typeof nested === "object" ? (nested as Rec) : null;
 }
 
 export const EDGE_TYPES = [
@@ -263,6 +280,51 @@ export interface GNode {
   technologyCategories?: string[]; // Wiz technology.categories[].name (e.g. "AI Service")
   // Agentic-identity enrichment (cloudResourcesV2 + identityPurpose:AGENTIC):
   identityPurpose?: string; // "AGENTIC" for agent execution identities
+  /**
+   * Identity rows only. `inactiveInLast90Days` / `inactiveTimeframe` out of the properties
+   * bag — Wiz's own dormancy read, from cloud audit events.
+   *
+   * Absent means the identity steps never carried it, never "in use". A dormant identity
+   * holding admin access to an AI asset is the finding; a dormant one that reaches nothing is
+   * housekeeping, so the flag is only ever interesting joined to `humanAccess` below.
+   */
+  inactive?: boolean;
+  inactiveTimeframe?: string;   // e.g. "Active", "Inactive90Days"
+  /**
+   * Who can reach this AI asset, folded onto it at commit by `withHumanAccess`.
+   *
+   * HUMAN identities only (USER_ACCOUNT). An agent's own execution identity reaching it is
+   * normal operation rather than a finding — the rule `withIdentityAccessNodes` already
+   * applies to decide whether to draw a stub, applied once here so the register, the graph
+   * and the Scans figure cannot disagree about it.
+   *
+   * Absent means IDENTITY_ACCESS reached nothing, never "nobody can reach this".
+   */
+  humanAccess?: {
+    identityIds: string[];
+    /** True when at least one of them holds ADMIN rather than merely HIGH_PRIVILEGE. */
+    admin?: boolean;
+    /** How many of them Wiz reports dormant — the join that makes the flag worth having. */
+    inactiveCount?: number;
+    /** How many carry an open no-MFA finding (IDENTITY_HYGIENE). */
+    noMfaCount?: number;
+    /** How many carry an open dormancy FINDING, which is Wiz's rule rather than its flag. */
+    dormantFindingCount?: number;
+    /**
+     * Identities with EFFECTIVE access to this asset's data.
+     *
+     * A separate list from `identityIds` on purpose, and the separation is the design. That
+     * one is the binding topology, whose vocabulary is ADMIN / HIGH_PRIVILEGE; this is
+     * `entityEffectiveAccessEntries`, whose vocabulary is DATA. They are different axes that
+     * share a word, and folding them into one list would produce a count nobody could caption
+     * — see effectiveAccess.ts and the header of riskConditions.ts.
+     */
+    effectiveIds?: string[];
+    /** Distinct permission strings across those entries — the "what they can do" evidence. */
+    permissionCount?: number;
+    /** The principal/resource policies granting it: the remediation target. */
+    policyIds?: string[];
+  };
   issueAnalytics?: {        // per-identity related-issue severity rollup (display-only)
     total: number;
     info: number;
@@ -547,3 +609,61 @@ export interface FrameworkRow {
   /** Whether this app syncs posture for it. Resolved from settings, not from Wiz. */
   selected: boolean;
 }
+
+/**
+ * One rule from Wiz's cloud-configuration rule catalogue — the vocabulary, not a finding.
+ *
+ * REFERENCE DATA, and the distinction is the whole reason it has its own tab and its own
+ * refresh gate: a rule exists whether or not this tenant has a resource it applies to. The
+ * catalogue changes when Wiz ships rules; the findings change when the estate moves.
+ *
+ * It answers two questions nothing else could. `shortId → name` is the gloss for a code that
+ * otherwise reaches the AARS cascade opaque — codebook.js says so in its own header, and
+ * `SUB-082` is priced today with no way to render what it means. And `subjectEntityType` is
+ * the rule's OWN declaration of what it is evaluated against, which is a cleaner source for
+ * the Cloud Configuration page's "most of these are not on an AI asset" claim than inferring
+ * it per finding.
+ */
+export interface ConfigRuleRow {
+  id: string;
+  shortId: string;
+  name: string;
+  /** REGION, USER_ACCOUNT, DB_SERVER, IAC_BACKEND … a raw Wiz type, never a NodeKind. */
+  subjectEntityType?: string;
+  /** externalReferences[].id — CIS / AVD / CKV / Prisma cross-walk ids. */
+  externalRefs: string[];
+}
+
+/**
+ * A configuration finding on a HUMAN IDENTITY — no MFA, dormant, stale credentials.
+ *
+ * Deliberately NOT a `FindingRow` and deliberately not in the `ai_findings` tab, for the
+ * reason `DataFindingRow` gives one type up. That tab prices AARS pillar B through
+ * `buildAarsHintsFromFindings`, which keys its hints by `resourceId` — and a `USER_ACCOUNT`
+ * IS a row in `ai_assets`, reached by the identity-access traversal. Folding these in would
+ * make `enrichGraphDoc`'s `scorable` test true for a person and put an AI Asset Risk Score on
+ * a human being.
+ *
+ * `hygiene` is stamped from the matcher that resolved the rule, not read from the response —
+ * Wiz has no such concept. It is what makes the join countable without re-matching rule names
+ * at every read.
+ */
+export interface IdentityFindingRow {
+  id: string;
+  /** The identity the rule was evaluated against. */
+  resourceId: string;
+  resourceName?: string;
+  ruleId?: string;
+  ruleShortId: string;
+  ruleName?: string;
+  severity: Severity;
+  status?: string;
+  result?: string;
+  firstSeenAt?: string;
+  analyzedAt?: string;
+  remediation?: string;
+  hygiene: HygieneKind;
+}
+
+/** What an identity-hygiene rule is about. Stamped by the matcher, never returned by Wiz. */
+export type HygieneKind = "MFA" | "DORMANT";

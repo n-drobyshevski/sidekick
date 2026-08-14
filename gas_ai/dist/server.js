@@ -244,6 +244,8 @@ var Server = (() => {
     frameworks: "ai_frameworks",
     frameworkPosture: "ai_framework_posture",
     frameworkPolicies: "ai_framework_policies",
+    configRules: "ai_config_rules",
+    identityFindings: "ai_identity_findings",
     syncHistory: "sync_history",
     settings: "settings",
     jobs: "jobs",
@@ -291,7 +293,13 @@ var Server = (() => {
       // Appended for the same no-migration reason.
       "exposure_level",
       "port_validation",
-      "exposure_evidence_json"
+      "exposure_evidence_json",
+      // Human identity access. The first two belong to identity rows (Wiz's dormancy read from
+      // cloud audit events); the third is the join `withHumanAccess` folds onto an AI asset, so
+      // the register and the Scans figure can total reach without reading edges. Appended.
+      "inactive",
+      "inactive_timeframe",
+      "human_access_json"
     ],
     [TABS.edges]: ["id", "src", "dst", "type", "negated", "access_type"],
     [TABS.issues]: [
@@ -451,6 +459,35 @@ var Server = (() => {
       "subject_entity_type",
       "cloud_provider",
       "has_auto_remediation"
+    ],
+    // ---- the rule catalogue + identity hygiene (cloudConfigurationRules) ----
+    //
+    // `ai_config_rules` is Wiz's VOCABULARY, not this tenant's posture — the only tab here
+    // whose contents do not describe the estate. It is what turns an opaque `SUB-082` in the
+    // AARS cascade into "Vertex AI Metadata Store should be encrypted with a customer-managed
+    // key", and what the identity-hygiene matchers resolve MFA and dormancy rules against
+    // instead of hardcoding ids that differ per cloud. ~3,858 rows, refreshed monthly rather
+    // than daily; see the CONFIG_RULES gate in syncJobs.
+    [TABS.configRules]: ["id", "short_id", "name", "subject_entity_type", "external_refs"],
+    // `ai_identity_findings` is separate from `ai_findings` for the reason `ai_data_findings`
+    // is: that tab prices AARS pillar B through buildAarsHintsFromFindings, which keys hints by
+    // resourceId — and a USER_ACCOUNT IS a row in ai_assets, put there by the identity-access
+    // traversal. Folding a person's missing MFA in there would give a human being an AI Asset
+    // Risk Score.
+    [TABS.identityFindings]: [
+      "id",
+      "resource_id",
+      "resource_name",
+      "rule_id",
+      "rule_short_id",
+      "rule_name",
+      "severity",
+      "status",
+      "result",
+      "first_seen_at",
+      "analyzed_at",
+      "remediation",
+      "hygiene"
     ],
     [TABS.syncHistory]: [
       "sync_id",
@@ -649,6 +686,73 @@ var Server = (() => {
       notes.push(`NOTE: set Script Properties for live syncs: ${missing.join(", ")} (without them the app runs dry-run only)`);
     }
     return notes.join("\n");
+  }
+
+  // src/domain/effectiveAccess.ts
+  var EFFECTIVE_ACCESS_TYPES = ["DATA"];
+  var EFFECTIVE_GRANTED_TYPES = ["USER_ACCOUNT"];
+  function effectiveAccessFilter(types, scope) {
+    const filterBy = {
+      grantedEntity: {},
+      grantedEntityType: { equals: [...EFFECTIVE_GRANTED_TYPES] },
+      resource: {},
+      resourceType: { equals: [...types] },
+      accessTypes: { equals: [...EFFECTIVE_ACCESS_TYPES] }
+    };
+    if (scope && scope.length) filterBy["projectId"] = scope;
+    return filterBy;
+  }
+  function str(v) {
+    return v === null || v === void 0 || v === "" ? void 0 : String(v);
+  }
+  function strings(v) {
+    return Array.isArray(v) ? v.map((x) => str(x)).filter((x) => !!x) : [];
+  }
+  function addUnique(list2, value) {
+    if (value && list2.indexOf(value) < 0) list2.push(value);
+  }
+  function collectPolicies(raw, ids, names) {
+    if (!Array.isArray(raw)) return;
+    for (const entry of raw) {
+      if (!entry || typeof entry !== "object") continue;
+      const policy = entry["policy"];
+      if (!policy || typeof policy !== "object") continue;
+      addUnique(ids, str(policy["id"]));
+      addUnique(names, str(policy["name"]));
+    }
+  }
+  function toEffectiveAccessRow(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    const granted = raw["grantedEntity"];
+    const resource = raw["accessibleResource"];
+    const identityId = granted && typeof granted === "object" ? str(granted["id"]) : void 0;
+    const resourceId = resource && typeof resource === "object" ? str(resource["id"]) : void 0;
+    if (!identityId || !resourceId) return null;
+    const accessTypes = [];
+    const permissions = [];
+    const policyIds = [];
+    const policyNames = [];
+    for (const t of strings(raw["accessTypes"])) addUnique(accessTypes, t);
+    for (const p of strings(raw["permissions"])) addUnique(permissions, p);
+    const paths = raw["paths"];
+    if (Array.isArray(paths)) {
+      for (const path of paths) {
+        if (!path || typeof path !== "object") continue;
+        for (const t of strings(path["accessTypes"])) addUnique(accessTypes, t);
+        for (const p of strings(path["permissions"])) addUnique(permissions, p);
+        collectPolicies(path["principalPolicies"], policyIds, policyNames);
+        collectPolicies(path["resourcePolicies"], policyIds, policyNames);
+      }
+    }
+    return {
+      identityId,
+      identityName: str(granted["name"]),
+      resourceId,
+      accessTypes,
+      permissions,
+      policyIds,
+      policyNames
+    };
   }
 
   // src/domain/exposureQuery.ts
@@ -880,14 +984,21 @@ var Server = (() => {
     var _a5;
     if (!raw || typeof raw !== "object") return void 0;
     if (raw[key] !== void 0) return raw[key];
-    const props = raw["properties"];
-    if (!props || typeof props !== "object") return void 0;
-    const bag = props;
+    const bag = propertyBag(raw);
+    if (!bag) return void 0;
     if (bag[key] !== void 0) return bag[key];
     for (const alias of (_a5 = PROPERTY_ALIASES[key]) != null ? _a5 : []) {
       if (bag[alias] !== void 0) return bag[alias];
     }
     return void 0;
+  }
+  function propertyBag(raw) {
+    const flat = raw["properties"];
+    if (flat && typeof flat === "object") return flat;
+    const entity = raw["graphEntity"];
+    if (!entity || typeof entity !== "object") return null;
+    const nested = entity["properties"];
+    return nested && typeof nested === "object" ? nested : null;
   }
   function edgeId(src, type, dst, negated) {
     return `${src}|${type}|${dst}${negated ? "|neg" : ""}`;
@@ -1231,7 +1342,7 @@ var Server = (() => {
   function expandEdgeId(src, type, dst) {
     return `${src}|${type}|${dst}`;
   }
-  function str(v) {
+  function str2(v) {
     return v === null || v === void 0 || v === "" ? void 0 : String(v);
   }
   function triBool(v) {
@@ -1239,22 +1350,22 @@ var Server = (() => {
   }
   function toExpandedNode(raw) {
     var _a5;
-    const id = str(raw["id"]);
+    const id = str2(raw["id"]);
     if (!id) return null;
-    const rawType = str(raw["type"]);
+    const rawType = str2(raw["type"]);
     const known = kindFromWizType(rawType);
     const projects = Array.isArray(raw["projects"]) ? raw["projects"].map((p) => {
       var _a6;
-      return (_a6 = str(p == null ? void 0 : p["name"])) != null ? _a6 : "";
+      return (_a6 = str2(p == null ? void 0 : p["name"])) != null ? _a6 : "";
     }).filter(Boolean) : [];
     const pickStr = (key) => {
       var _a6;
-      return (_a6 = str(entityField(raw, key))) != null ? _a6 : null;
+      return (_a6 = str2(entityField(raw, key))) != null ? _a6 : null;
     };
     const isTrue = (key) => entityField(raw, key) === true;
     return {
       id,
-      name: (_a5 = str(raw["name"])) != null ? _a5 : id,
+      name: (_a5 = str2(raw["name"])) != null ? _a5 : id,
       kind: known != null ? known : rawType ? rawType.toUpperCase().replace(/[^A-Z0-9]+/g, "_") : "UNKNOWN",
       unmodeled: !known,
       nativeType: pickStr("nativeType"),
@@ -1313,6 +1424,42 @@ var Server = (() => {
       arityMismatches,
       rowsDecoded
     };
+  }
+
+  // src/domain/identityQuery.ts
+  var HUMAN_ACCESS_TYPES = ["ADMIN", "HIGH_PRIVILEGE"];
+  var BOUND_IDENTITY_KINDS = ["USER_ACCOUNT", "SERVICE_ACCOUNT"];
+  function identityAccessSpec(types) {
+    return {
+      type: [...types],
+      relationships: [
+        {
+          type: "ACCESS_ROLE_BINDING",
+          select: false,
+          edge: { type: "ALLOWS_ACCESS_TO", reverse: true },
+          relationships: [
+            {
+              type: [...BOUND_IDENTITY_KINDS],
+              edge: { type: "BOUND_TO" }
+            },
+            {
+              type: "ACCESS_ROLE",
+              edge: { type: "PERMITS_ACCESS_ROLE" },
+              where: { accessType: { EQUALS: [...HUMAN_ACCESS_TYPES] } }
+            }
+          ]
+        }
+      ]
+    };
+  }
+  function normalizeIdentityPurpose(v) {
+    if (typeof v !== "string" || !v.trim()) return void 0;
+    return v.trim().replace(/^IdentityPurpose/i, "").toUpperCase();
+  }
+  function normalizeAccessType(v) {
+    if (typeof v !== "string" || !v.trim()) return void 0;
+    const norm = v.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_");
+    return HUMAN_ACCESS_TYPES.indexOf(norm) >= 0 ? norm : void 0;
   }
 
   // src/domain/toxicCombos.ts
@@ -1569,10 +1716,16 @@ var Server = (() => {
     '    type: "AI_AGENT"\n    select: true\n    relationships: [{\n      type: "RUNS_AS"\n      with: {\n        type: "SERVICE_ACCOUNT"\n        select: true\n        relationships: [{\n          type: "ALLOWS_ACCESS_TO"\n          with: {\n            type: ["BUCKET", "DATABASE", "DATABASE_SERVER"]\n            select: true\n            where: { hasSensitiveData: { EQUALS: true } }\n            relationships: [{\n              type: "HAS_DATA_FINDING"\n              optional: true\n              with: { type: "DATA_FINDING", select: true }\n            }]\n          }\n        }]\n      }\n    }]\n',
     ENTITY_FIELDS
   );
-  var Q_IDENTITY_ACCESS = graphSearchQuery(
-    "SidekickAiIdentitiesWithAgentAccess",
-    '    type: "AI_AGENT"\n    select: true\n    relationships: [{\n      type: "ALLOWS_ACCESS_TO"\n      direction: INBOUND\n      with: {\n        type: "ACCESS_ROLE_BINDING"\n        select: false\n        relationships: [\n          {\n            type: "BOUND_TO"\n            with: { type: ["USER_ACCOUNT", "SERVICE_ACCOUNT"], select: true }\n          }\n          {\n            type: "PERMITS_ACCESS_ROLE"\n            with: {\n              type: "ACCESS_ROLE"\n              select: true\n              where: { accessType: { EQUALS: ["HIGH_PRIVILEGE", "ADMIN"] } }\n            }\n          }\n        ]\n      }\n    }]\n'
-  );
+  function graphSearchVarQuery(name) {
+    return "query " + name + "($quick: Boolean, $first: Int, $after: String, $query: GraphEntityQueryInput, $projectId: String) {\n  graphSearch(\n    quick: $quick\n    first: $first\n    after: $after\n    query: $query\n    projectId: $projectId\n  ) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      entities {\n" + ENTITY_FIELDS + "      }\n    }\n  }\n}\n";
+  }
+  var Q_IDENTITY_ACCESS = graphSearchVarQuery("SidekickAiIdentitiesWithAssetAccess");
+  function identityAccessVariables(types, scope) {
+    return {
+      query: toGraphEntityQuery(identityAccessSpec(types)),
+      projectId: scope && scope.length ? scope[0] : null
+    };
+  }
   var Q_AGENT_EXPANSION = "query SidekickAiAgentExpansion($quick: Boolean, $first: Int, $after: String, $query: GraphEntityQueryInput, $projectId: String) {\n  graphSearch(\n    quick: $quick\n    first: $first\n    after: $after\n    query: $query\n    projectId: $projectId\n  ) {\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      entities {\n" + ENTITY_FIELDS + "      }\n    }\n  }\n}\n";
   var Q_AI_EXPOSURE = "query SidekickAiExposure($query: GraphEntityQueryInput, $controlId: ID, $projectId: String, $first: Int, $after: String, $fetchTotalCount: Boolean = false, $quick: Boolean = true, $fetchPublicExposurePaths: Boolean = false, $fetchInternalExposurePaths: Boolean = false, $fetchIssueAnalytics: Boolean = false, $fetchThreatAnalytics: Boolean = false, $fetchLateralMovement: Boolean = false, $fetchCodeSource: Boolean = false, $fetchKubernetes: Boolean = false, $fetchCost: Boolean = false, $issueId: ID) {\n  graphSearch(\n    query: $query\n    controlId: $controlId\n    projectId: $projectId\n    first: $first\n    after: $after\n    quick: $quick\n    issueId: $issueId\n  ) {\n    totalCount @include(if: $fetchTotalCount)\n    maxCountReached @include(if: $fetchTotalCount)\n    pageInfo { endCursor hasNextPage }\n    nodes {\n      entities {\n        providerUniqueId\n        deletedAt\n        isRestricted\n        ...PathGraphEntityFragment\n        userMetadata { isInWatchlist isIgnored note }\n        technologies { id icon }\n        cost(\n          filterBy: {timestamp: {inLast: {amount: 30, unit: DurationFilterValueUnitDays}}}\n        ) @include(if: $fetchCost) {\n          amortized\n          blended\n          unblended\n          netAmortized\n          netUnblended\n          currencyCode\n        }\n        costImpact @include(if: $fetchCost) { monthly }\n        publicExposures(first: 10) @include(if: $fetchPublicExposurePaths) {\n          nodes { ...NetworkExposureFragment }\n        }\n        otherSubscriptionExposures(first: 10) @include(if: $fetchInternalExposurePaths) {\n          nodes { ...NetworkExposureFragment }\n        }\n        otherVnetExposures(first: 10) @include(if: $fetchInternalExposurePaths) {\n          nodes { ...NetworkExposureFragment }\n        }\n        lateralMovementPaths(first: 10) @include(if: $fetchLateralMovement) {\n          nodes {\n            id\n            pathEntities { entity { providerUniqueId ...PathGraphEntityFragment } }\n          }\n        }\n        codeSourcePath(first: 10) @include(if: $fetchCodeSource) {\n          totalCount\n          nodes {\n            id\n            pathEntities { providerUniqueId ...PathGraphEntityFragment }\n          }\n        }\n        kubernetesPaths(first: 10) @include(if: $fetchKubernetes) {\n          nodes { id path { providerUniqueId ...PathGraphEntityFragment } }\n        }\n      }\n      aggregateCount\n    }\n  }\n}\n\nfragment PathGraphEntityFragment on GraphEntity {\n  providerUniqueId\n  id\n  name\n  type\n  properties\n  typedProperties { ... on GEAiAgent { description } }\n  issueAnalytics: issues(\n    filterBy: {status: [IN_PROGRESS, OPEN], type: [TOXIC_COMBINATION, CLOUD_CONFIGURATION]}\n  ) @include(if: $fetchIssueAnalytics) {\n    highSeverityCount\n    criticalSeverityCount\n  }\n  threatAnalytics: issues(\n    filterBy: {status: [IN_PROGRESS, OPEN], type: [THREAT_DETECTION], createdAt: {inLast: {amount: 7, unit: DurationFilterValueUnitDays}}}\n  ) @include(if: $fetchThreatAnalytics) {\n    highSeverityCount\n    criticalSeverityCount\n  }\n}\n\nfragment NetworkExposureFragment on NetworkExposure {\n  id\n  portRange\n  sourceIpRange\n  destinationIpRange\n  path { providerUniqueId ...PathGraphEntityFragment }\n  applicationEndpoints { providerUniqueId ...PathGraphEntityFragment }\n}\n";
   var EXPOSURE_FETCH_FLAGS = {
@@ -1618,7 +1771,7 @@ var Server = (() => {
     if (scope && scope.length) filterBy["resource"] = { projectId: scope };
     return { filterBy, orderBy: { field: "SEVERITY", direction: "DESC" } };
   }
-  var Q_PRINCIPALS = "query SidekickAiPrincipals($first: Int, $after: String, $filterBy: CloudResourceV2Filters, $orderBy: CloudResourceOrder) {\n  cloudResourcesV2(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      name\n      type\n      nativeType\n      hasSensitiveData\n      hasAccessToSensitiveData\n      hasAdminPrivileges\n      hasHighPrivileges\n      technology { id name categories { id name } }\n      cloudAccount { id name externalId cloudProvider }\n      projects { id name riskProfile { businessImpact } }\n      issueAnalytics {\n        issueCount\n        informationalSeverityCount\n        lowSeverityCount\n        mediumSeverityCount\n        highSeverityCount\n        criticalSeverityCount\n      }\n    }\n  }\n}\n";
+  var Q_PRINCIPALS = "query SidekickAiPrincipals($first: Int, $after: String, $filterBy: CloudResourceV2Filters, $orderBy: CloudResourceOrder) {\n  cloudResourcesV2(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      name\n      type\n      nativeType\n      hasSensitiveData\n      hasAccessToSensitiveData\n      hasAdminPrivileges\n      hasHighPrivileges\n      technology { id name categories { id name } }\n      cloudAccount { id name externalId cloudProvider }\n      projects { id name riskProfile { businessImpact } }\n      graphEntity { properties }\n      issueAnalytics {\n        issueCount\n        informationalSeverityCount\n        lowSeverityCount\n        mediumSeverityCount\n        highSeverityCount\n        criticalSeverityCount\n      }\n    }\n  }\n}\n";
   function aiPrincipalsVariables(scope) {
     const filterBy = {
       type: { equals: ["SERVICE_ACCOUNT", "ACCESS_KEY"] },
@@ -1626,6 +1779,19 @@ var Server = (() => {
     };
     if (scope && scope.length) filterBy["projectId"] = scope;
     return { filterBy, orderBy: { field: "RELATED_ISSUE_SEVERITY", direction: "DESC" } };
+  }
+  var Q_CONFIG_RULES = "query SidekickAiConfigRules($first: Int, $after: String) {\n  cloudConfigurationRules(first: $first, after: $after) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      name\n      shortId\n      subjectEntityType\n      externalReferences { id name }\n    }\n  }\n}\n";
+  function aiIdentityHygieneVariables(ruleIds, scope) {
+    const filterBy = {
+      status: ["OPEN"],
+      rule: [...ruleIds]
+    };
+    if (scope && scope.length) filterBy["resource"] = { projectId: scope };
+    return { filterBy, orderBy: { field: "SEVERITY", direction: "DESC" } };
+  }
+  var Q_EFFECTIVE_ACCESS = "query SidekickAiEffectiveAccess($first: Int, $after: String, $filterBy: EntityEffectiveAccessFilters) {\n  entityEffectiveAccessEntries(first: $first, after: $after, filterBy: $filterBy) {\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      grantedEntity: grantedEntityV2 { id name type }\n      accessibleResource: accessibleResourceV2 { id name type }\n      accessTypes\n      permissions\n      paths {\n        accessTypes\n        permissions\n        principalPolicies { policy { id name type } }\n        resourcePolicies { policy { id name type } }\n      }\n    }\n  }\n}\n";
+  function effectiveAccessVariables(types, scope) {
+    return { filterBy: effectiveAccessFilter(types, scope) };
   }
   var Q_SECURITY_FRAMEWORKS = "query SidekickAiSecurityFrameworks($first: Int, $after: String, $filterBy: SecurityFrameworkFilters) {\n  securityFrameworks(first: $first, after: $after, filterBy: $filterBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      name\n      description\n      builtin\n      enabled\n      policyTypes\n    }\n  }\n}\n";
   function aiSecurityFrameworksVariables() {
@@ -3357,11 +3523,13 @@ var Server = (() => {
           required: true
         }
       ],
-      // Deliberately NOT offering filterBy.identityPurpose. normalizePrincipalsPage stamps
-      // identityPurpose = "AGENTIC" on every row it returns, because the API does not send the
-      // field back — the flag is a claim about the filter, not about the data. Let the filter
-      // widen and every identity in the estate is relabelled agentic, with nothing to catch it.
-      locked: "The agentic-purpose filter is fixed: the sync labels what this query returns as agentic, so widening it would mislabel every identity it collected."
+      // Still NOT offering filterBy.identityPurpose, but the reason has narrowed. Wiz DOES
+      // return the purpose — `IdentityPurposeAgentic`, in the graph entity's properties bag —
+      // and Q_PRINCIPALS now selects that bag, so a collected row normally carries its own
+      // label. The stamp survives as the fallback for a tenant whose schema rejects
+      // `graphEntity`, and that fallback is what a widened filter would turn into a mislabel:
+      // every row it collected would come back stamped AGENTIC with nothing to catch it.
+      locked: "The agentic-purpose filter is fixed: where the tenant does not return an identity's own purpose the sync falls back to labelling what this query returns as agentic, so widening it would mislabel exactly the identities it could not verify."
     },
     {
       stepId: "SENSITIVE_DATA_ACCESS",
@@ -3370,6 +3538,39 @@ var Server = (() => {
       // would be unsafe" are different facts and only the second one needs saying.
       fields: [],
       locked: "This step has no editable filter: normalizeSensitiveDataAccessPage rebuilds the chain's edges from which entity TYPES a row carries, so a changed selection set would yield confidently wrong edges rather than an error."
+    },
+    {
+      stepId: "CONFIG_RULES",
+      fields: [],
+      locked: "This step takes no variables at all: it walks Wiz's whole rule catalogue unfiltered, deliberately \u2014 the filter input's type is unverified here, and naming an input type wrong fails the document while sending none cannot."
+    },
+    {
+      stepId: "IDENTITY_HYGIENE",
+      // The rule list looks like the obvious knob and is the one thing that must not be one:
+      // it is not a preference, it is the resolution of a name match over the synced catalogue,
+      // and normalizeIdentityFindingsPage refuses any row whose rule is not in it. An operator
+      // who pasted an extra id would get the whole step aborted as an unhonoured filter.
+      fields: [],
+      locked: "This step's rule list is resolved from the synced rule catalogue by name, not chosen: the normalizer refuses any finding whose rule is not in that resolved set, so an edited list would abort the step rather than widen it."
+    },
+    {
+      stepId: "EFFECTIVE_ACCESS",
+      // `accessTypes: [DATA]` is the knob it appears to have. Withheld because the area's prose
+      // says "can reach the asset's data" — widening the filter would change what the figure
+      // means with nothing on the page to say so, which is the failure the whole Scans page is
+      // built to prevent.
+      fields: [],
+      locked: "This step has no editable filter: its access-type list is what the area's own figure claims to count, so widening it here would change what the number means without changing what the page says it means."
+    },
+    {
+      stepId: "IDENTITY_ACCESS",
+      // Its traversal is a $query variable now, so in principle the access-level list is a
+      // path an override could reach. Withheld for the reason ENDPOINT_EXPOSURE's is: those two
+      // values also live in HUMAN_ACCESS_TYPES (domain/identityQuery.ts), which is what
+      // withHumanAccess and withIdentityAccessNodes judge an edge by. Widening the filter would
+      // collect READ bindings the figure then refuses to count.
+      fields: [],
+      locked: "This step has no editable filter: the ADMIN / HIGH_PRIVILEGE bar is applied again when the reach is totalled and drawn, so widening it here would collect bindings that never reach a number."
     },
     {
       stepId: "HOST_EXPOSURE",
@@ -3579,6 +3780,24 @@ var Server = (() => {
       ...settings,
       aars_scored_version: Number.isFinite(v) && v > 0 ? Math.round(v) : 0
     };
+  }
+  var CONFIG_RULES_TTL_MS = 30 * 864e5;
+  function getConfigRulesSyncedAt(settings) {
+    const v = Number(settings["config_rules_synced_at"]);
+    return Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
+  }
+  function withConfigRulesSyncedAt(settings, at) {
+    const v = Number(at);
+    return {
+      ...settings,
+      config_rules_synced_at: Number.isFinite(v) && v > 0 ? Math.round(v) : 0
+    };
+  }
+  function configRulesAreFresh(settings, hasRows, now) {
+    if (!hasRows) return false;
+    const at = getConfigRulesSyncedAt(settings);
+    if (!at) return false;
+    return now - at < CONFIG_RULES_TTL_MS;
   }
   function getScanVars(settings) {
     const raw = settings["scan_vars"];
@@ -4900,6 +5119,77 @@ var Server = (() => {
       edgeType: "EXPOSED_TO_INTERNET"
     });
   }
+  function withHumanAccess(doc, evidence = {}) {
+    var _a5, _b, _c, _d, _e;
+    const reach = new Set(HUMAN_ACCESS_TYPES);
+    const byId = indexBy(doc.nodes, (n) => n.id);
+    const humans = new Set(doc.nodes.filter((n) => n.kind === "USER_ACCOUNT").map((n) => n.id));
+    const reachedBy = /* @__PURE__ */ new Map();
+    const admins = /* @__PURE__ */ new Set();
+    for (const edge2 of doc.edges) {
+      if (edge2.type !== "ALLOWS_ACCESS_TO") continue;
+      if (!edge2.accessType || !reach.has(edge2.accessType)) continue;
+      if (!humans.has(edge2.src)) continue;
+      const target = byId.get(edge2.dst);
+      if (!target || !AI_ASSET_KINDS.includes(target.kind)) continue;
+      pushInto(reachedBy, edge2.dst, edge2.src);
+      if (edge2.accessType === "ADMIN") admins.add(edge2.dst);
+    }
+    const effectiveBy = /* @__PURE__ */ new Map();
+    const permsBy = /* @__PURE__ */ new Map();
+    const policiesBy = /* @__PURE__ */ new Map();
+    for (const entry of (_a5 = evidence.effectiveAccess) != null ? _a5 : []) {
+      const target = byId.get(entry.resourceId);
+      if (!target || !AI_ASSET_KINDS.includes(target.kind)) continue;
+      const seen = (_b = effectiveBy.get(entry.resourceId)) != null ? _b : [];
+      if (seen.indexOf(entry.identityId) < 0) pushInto(effectiveBy, entry.resourceId, entry.identityId);
+      const perms = (_c = permsBy.get(entry.resourceId)) != null ? _c : [];
+      for (const p of entry.permissions) if (perms.indexOf(p) < 0) perms.push(p);
+      permsBy.set(entry.resourceId, perms);
+      const policies = (_d = policiesBy.get(entry.resourceId)) != null ? _d : [];
+      for (const p of entry.policyIds) if (policies.indexOf(p) < 0) policies.push(p);
+      policiesBy.set(entry.resourceId, policies);
+    }
+    if (!reachedBy.size && !effectiveBy.size) return doc;
+    const noMfa = /* @__PURE__ */ new Set();
+    const dormant = /* @__PURE__ */ new Set();
+    for (const finding of (_e = evidence.identityFindings) != null ? _e : []) {
+      if (!isOpenGap(finding)) continue;
+      if (finding.hygiene === "MFA") noMfa.add(finding.resourceId);
+      else dormant.add(finding.resourceId);
+    }
+    return {
+      nodes: doc.nodes.map((node2) => {
+        var _a6, _b2, _c2, _d2;
+        const identityIds = (_a6 = reachedBy.get(node2.id)) != null ? _a6 : [];
+        const effectiveIds = (_b2 = effectiveBy.get(node2.id)) != null ? _b2 : [];
+        if (!identityIds.length && !effectiveIds.length) return node2;
+        const access = { identityIds };
+        if (admins.has(node2.id)) access.admin = true;
+        const all = identityIds.slice();
+        for (const id of effectiveIds) if (all.indexOf(id) < 0) all.push(id);
+        const inactiveCount = all.filter((id) => {
+          var _a7;
+          return ((_a7 = byId.get(id)) == null ? void 0 : _a7.inactive) === true;
+        }).length;
+        if (inactiveCount) access.inactiveCount = inactiveCount;
+        const noMfaCount = all.filter((id) => noMfa.has(id)).length;
+        if (noMfaCount) access.noMfaCount = noMfaCount;
+        const dormantFindingCount = all.filter((id) => dormant.has(id)).length;
+        if (dormantFindingCount) access.dormantFindingCount = dormantFindingCount;
+        if (effectiveIds.length) {
+          access.effectiveIds = effectiveIds;
+          const perms = (_c2 = permsBy.get(node2.id)) != null ? _c2 : [];
+          if (perms.length) access.permissionCount = perms.length;
+          const policies = (_d2 = policiesBy.get(node2.id)) != null ? _d2 : [];
+          if (policies.length) access.policyIds = policies;
+        }
+        return { ...node2, humanAccess: access };
+      }),
+      edges: doc.edges,
+      syncedAt: doc.syncedAt
+    };
+  }
   function withExposureEvidence(doc) {
     const byId = indexBy(doc.nodes, (n) => n.id);
     const hostsOf = /* @__PURE__ */ new Map();
@@ -4971,7 +5261,7 @@ var Server = (() => {
     });
   }
   function withIdentityAccessNodes(doc) {
-    const HUMAN_REACH = /* @__PURE__ */ new Set(["ADMIN", "HIGH_PRIVILEGE"]);
+    const HUMAN_REACH = new Set(HUMAN_ACCESS_TYPES);
     const aiAssets = new Set(
       doc.nodes.filter((n) => AI_ASSET_KINDS.includes(n.kind)).map((n) => n.id)
     );
@@ -5224,7 +5514,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "ce592847c710" : "dev";
+  var BUILD_ID = true ? "ec27bcb7be88" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -5469,6 +5759,12 @@ var Server = (() => {
     if (getScoredRuleVersion(next) === getScoredRuleVersion(settings)) return;
     saveSettings(next);
   }
+  function configRulesAreFresh2(hasRows, now) {
+    return configRulesAreFresh(loadSettings(), hasRows, now);
+  }
+  function setConfigRulesSyncedAt(at) {
+    saveSettings(withConfigRulesSyncedAt(loadSettings(), at));
+  }
 
   // src/server/syncJobs.ts
   var syncJobs_exports = {};
@@ -5485,7 +5781,7 @@ var Server = (() => {
   });
 
   // src/domain/syncNormalize.ts
-  function str2(v) {
+  function str3(v) {
     const c = clean(v);
     return c === null ? void 0 : String(c);
   }
@@ -5498,21 +5794,21 @@ var Server = (() => {
   function normalizeCloudResource(raw) {
     var _a5, _b;
     if (!raw || typeof raw !== "object") return null;
-    const id = str2(raw["id"]);
+    const id = str3(raw["id"]);
     const kind = kindFromWizType(raw["type"]);
     if (!id || !kind) return null;
     const f = (key) => entityField(raw, key);
     const node2 = {
       id,
       kind,
-      name: (_a5 = str2(raw["name"])) != null ? _a5 : id,
-      nativeType: str2(f("nativeType")),
-      cloudPlatform: str2(f("cloudPlatform")),
-      region: str2(f("region")),
-      status: str2(f("status")),
-      firstSeen: str2(f("firstSeen")),
-      lastSeen: str2(f("lastSeen")),
-      externalId: str2(f("externalId")),
+      name: (_a5 = str3(raw["name"])) != null ? _a5 : id,
+      nativeType: str3(f("nativeType")),
+      cloudPlatform: str3(f("cloudPlatform")),
+      region: str3(f("region")),
+      status: str3(f("status")),
+      firstSeen: str3(f("firstSeen")),
+      lastSeen: str3(f("lastSeen")),
+      externalId: str3(f("externalId")),
       isAccessibleFromInternet: triBool2(f("isAccessibleFromInternet")),
       isOpenToAllInternet: triBool2(f("isOpenToAllInternet")),
       hasSensitiveData: bool(f("hasSensitiveData")),
@@ -5520,17 +5816,21 @@ var Server = (() => {
       hasHighPrivileges: bool(f("hasHighPrivileges")),
       hasAdminPrivileges: bool(f("hasAdminPrivileges"))
     };
-    const purpose = str2(f("identityPurpose"));
+    const purpose = normalizeIdentityPurpose(f("identityPurpose"));
     if (purpose) node2.identityPurpose = purpose;
-    const exposureLevel = str2(f("exposureLevel"));
+    const inactive = f("inactiveInLast90Days");
+    if (inactive === true || inactive === false) node2.inactive = inactive;
+    const inactiveTimeframe = str3(f("inactiveTimeframe"));
+    if (inactiveTimeframe) node2.inactiveTimeframe = inactiveTimeframe;
+    const exposureLevel = str3(f("exposureLevel"));
     if (exposureLevel) node2.exposureLevel = exposureLevel;
-    const portValidation = str2(f("portValidation"));
+    const portValidation = str3(f("portValidation"));
     if (portValidation) node2.portValidation = portValidation;
     const technology = raw["technology"];
     if (technology && typeof technology === "object") {
       const cats = technology["categories"];
       if (Array.isArray(cats)) {
-        const names = cats.map((c) => str2(c["name"])).filter((n) => Boolean(n));
+        const names = cats.map((c) => str3(c["name"])).filter((n) => Boolean(n));
         if (names.length) node2.technologyCategories = names;
       }
     }
@@ -5548,13 +5848,13 @@ var Server = (() => {
     }
     const account = raw["cloudAccount"];
     if (account && typeof account === "object") {
-      const accId = str2(account["id"]);
+      const accId = str3(account["id"]);
       if (accId) {
         node2.cloudAccount = {
           id: accId,
-          name: (_b = str2(account["name"])) != null ? _b : accId,
-          externalId: str2(account["externalId"]),
-          cloudProvider: str2(account["cloudProvider"])
+          name: (_b = str3(account["name"])) != null ? _b : accId,
+          externalId: str3(account["externalId"]),
+          cloudProvider: str3(account["cloudProvider"])
         };
       }
     }
@@ -5565,8 +5865,8 @@ var Server = (() => {
       node2.tags = tags.map((t) => {
         var _a6;
         const rec2 = t;
-        const key = str2(rec2["key"]);
-        return key ? { key, value: (_a6 = str2(rec2["value"])) != null ? _a6 : "" } : null;
+        const key = str3(rec2["key"]);
+        return key ? { key, value: (_a6 = str3(rec2["value"])) != null ? _a6 : "" } : null;
       }).filter((t) => t !== null);
     }
     return node2;
@@ -5580,7 +5880,10 @@ var Server = (() => {
       dataFindings: [],
       frameworks: [],
       posture: [],
-      frameworkPolicies: []
+      frameworkPolicies: [],
+      configRules: [],
+      identityFindings: [],
+      effectiveAccess: []
     };
   }
   function appendPart(target, part) {
@@ -5592,9 +5895,12 @@ var Server = (() => {
     target.frameworks.push(...part.frameworks);
     target.posture.push(...part.posture);
     target.frameworkPolicies.push(...part.frameworkPolicies);
+    target.configRules.push(...part.configRules);
+    target.identityFindings.push(...part.identityFindings);
+    target.effectiveAccess.push(...part.effectiveAccess);
   }
   function partIsEmpty(part) {
-    return !part.nodes.length && !part.edges.length && !part.issues.length && !part.findings.length && !part.dataFindings.length && !part.frameworks.length && !part.posture.length && !part.frameworkPolicies.length;
+    return !part.nodes.length && !part.edges.length && !part.issues.length && !part.findings.length && !part.dataFindings.length && !part.frameworks.length && !part.posture.length && !part.frameworkPolicies.length && !part.configRules.length && !part.identityFindings.length && !part.effectiveAccess.length;
   }
   function normalizeInventoryPage(rows) {
     const part = emptyPart();
@@ -5609,7 +5915,7 @@ var Server = (() => {
     for (const raw of rows) {
       const node2 = normalizeCloudResource(raw);
       if (!node2) continue;
-      node2.identityPurpose = "AGENTIC";
+      if (!node2.identityPurpose) node2.identityPurpose = "AGENTIC";
       part.nodes.push(node2);
     }
     return part;
@@ -5645,18 +5951,18 @@ var Server = (() => {
     const by = raw;
     const user = by["user"];
     if (user && typeof user === "object") {
-      const name = (_a5 = str2(user["name"])) != null ? _a5 : str2(user["email"]);
+      const name = (_a5 = str3(user["name"])) != null ? _a5 : str3(user["email"]);
       if (name) return name;
     }
     const sa = by["serviceAccount"];
-    if (sa && typeof sa === "object") return str2(sa["name"]);
+    if (sa && typeof sa === "object") return str3(sa["name"]);
     return void 0;
   }
   function ignoreRationale(raw) {
     if (!Array.isArray(raw)) return void 0;
     for (const note of raw) {
       if (!note || typeof note !== "object") continue;
-      const text = str2(note["text"]);
+      const text = str3(note["text"]);
       if (text && /^Ignored\s*\(/i.test(text)) return text;
     }
     return void 0;
@@ -5668,7 +5974,7 @@ var Server = (() => {
     for (const p of projects) {
       const profile = p["riskProfile"];
       if (!profile || typeof profile !== "object") continue;
-      const impact = str2(profile["businessImpact"]);
+      const impact = str3(profile["businessImpact"]);
       if (!impact) continue;
       const rank = BUSINESS_IMPACT_ORDER.indexOf(impact);
       if (rank >= 0 && rank < bestRank) {
@@ -5680,31 +5986,31 @@ var Server = (() => {
   }
   function ticketUrlsOf(raw) {
     if (!Array.isArray(raw)) return [];
-    return raw.map((t) => t && typeof t === "object" ? str2(t["url"]) : void 0).filter((u) => Boolean(u));
+    return raw.map((t) => t && typeof t === "object" ? str3(t["url"]) : void 0).filter((u) => Boolean(u));
   }
   function normalizeIssuesPage(rows) {
     var _a5, _b, _c, _d, _e, _f, _g, _h, _i;
     const part = emptyPart();
     for (const raw of rows) {
-      const issueId = str2(raw["id"]);
+      const issueId = str3(raw["id"]);
       const snap = raw["entitySnapshot"];
-      const assetId = snap && typeof snap === "object" ? str2(snap["id"]) : void 0;
+      const assetId = snap && typeof snap === "object" ? str3(snap["id"]) : void 0;
       if (!issueId || !assetId) continue;
       const sourceRules = Array.isArray(raw["sourceRules"]) ? raw["sourceRules"] : [];
       const first = (_a5 = sourceRules[0]) != null ? _a5 : {};
-      const ruleId = str2(first["id"]);
-      const ruleName = str2(first["name"]);
+      const ruleId = str3(first["id"]);
+      const ruleName = str3(first["name"]);
       const group = classifyIssue({ sourceRuleId: ruleId != null ? ruleId : null, ruleName: ruleName != null ? ruleName : null });
-      const nativeSeverity = (_b = str2(raw["severity"])) != null ? _b : "UNKNOWN";
+      const nativeSeverity = (_b = str3(raw["severity"])) != null ? _b : "UNKNOWN";
       const adjustedSeverity = group ? group.adjustedSeverity : nativeSeverity;
       const control = first["control"];
-      const resolutionRecommendation = (_c = str2(first["resolutionRecommendation"])) != null ? _c : control && typeof control === "object" ? str2(control["resolutionRecommendation"]) : void 0;
-      const assetName = (_d = str2(snap["name"])) != null ? _d : assetId;
+      const resolutionRecommendation = (_c = str3(first["resolutionRecommendation"])) != null ? _c : control && typeof control === "object" ? str3(control["resolutionRecommendation"]) : void 0;
+      const assetName = (_d = str3(snap["name"])) != null ? _d : assetId;
       const projectRows = Array.isArray(raw["projects"]) ? raw["projects"] : [];
-      const projects = projectRows.map((p) => str2(p["name"])).filter((n) => Boolean(n));
+      const projects = projectRows.map((p) => str3(p["name"])).filter((n) => Boolean(n));
       const assigneeRaw = raw["assignee"];
       const aiAnalysis = raw["aiRemediationAnalysis"];
-      const environments = Array.isArray(raw["environments"]) ? raw["environments"].map((e) => str2(e)).filter((e) => Boolean(e)) : void 0;
+      const environments = Array.isArray(raw["environments"]) ? raw["environments"].map((e) => str3(e)).filter((e) => Boolean(e)) : void 0;
       const ticketUrls = ticketUrlsOf(raw["serviceTickets"]);
       const issue2 = {
         id: issueId,
@@ -5713,29 +6019,29 @@ var Server = (() => {
         comboGroup: (_g = group == null ? void 0 : group.id) != null ? _g : OTHER_GROUP_ID,
         nativeSeverity,
         adjustedSeverity,
-        status: (_h = str2(raw["status"])) != null ? _h : "OPEN",
+        status: (_h = str3(raw["status"])) != null ? _h : "OPEN",
         assetId,
         assetName,
-        region: str2(snap["region"]),
-        account: str2(snap["subscriptionName"]),
+        region: str3(snap["region"]),
+        account: str3(snap["subscriptionName"]),
         projects,
         frameworks: group == null ? void 0 : group.frameworks,
-        createdAt: str2(raw["createdAt"]),
-        dueAt: str2(raw["dueAt"]),
+        createdAt: str3(raw["createdAt"]),
+        dueAt: str3(raw["dueAt"]),
         resolutionRecommendation,
-        issueType: str2(raw["type"]),
-        updatedAt: str2(raw["updatedAt"]),
-        resolvedAt: str2(raw["resolvedAt"]),
-        resolutionReason: str2(raw["resolutionReason"]),
+        issueType: str3(raw["type"]),
+        updatedAt: str3(raw["updatedAt"]),
+        resolvedAt: str3(raw["resolvedAt"]),
+        resolutionReason: str3(raw["resolutionReason"]),
         resolvedBy: resolvedByName(raw["resolvedBy"]),
-        assignee: assigneeRaw && typeof assigneeRaw === "object" ? (_i = str2(assigneeRaw["name"])) != null ? _i : str2(assigneeRaw["primaryEmail"]) : void 0,
+        assignee: assigneeRaw && typeof assigneeRaw === "object" ? (_i = str3(assigneeRaw["name"])) != null ? _i : str3(assigneeRaw["primaryEmail"]) : void 0,
         businessImpact: worstBusinessImpact(projectRows),
-        entityStatus: str2(snap["status"]),
-        subscriptionId: str2(snap["subscriptionId"]),
+        entityStatus: str3(snap["status"]),
+        subscriptionId: str3(snap["subscriptionId"]),
         ignoreNote: ignoreRationale(raw["notes"]),
-        ignoreExpiredAt: str2(raw["rejectionExpiredAt"]),
-        aiVerdict: aiAnalysis && typeof aiAnalysis === "object" ? str2(aiAnalysis["verdict"]) : void 0,
-        aiRecommendedSeverity: aiAnalysis && typeof aiAnalysis === "object" ? str2(aiAnalysis["recommendedSeverity"]) : void 0
+        ignoreExpiredAt: str3(raw["rejectionExpiredAt"]),
+        aiVerdict: aiAnalysis && typeof aiAnalysis === "object" ? str3(aiAnalysis["verdict"]) : void 0,
+        aiRecommendedSeverity: aiAnalysis && typeof aiAnalysis === "object" ? str3(aiAnalysis["recommendedSeverity"]) : void 0
       };
       if (environments && environments.length) issue2.environments = environments;
       if (ticketUrls.length) issue2.ticketUrls = ticketUrls;
@@ -5744,13 +6050,13 @@ var Server = (() => {
       const kind = kindFromWizType(snap["type"]);
       if (kind) {
         const node2 = { id: assetId, kind, name: assetName };
-        const nativeType = str2(snap["nativeType"]);
+        const nativeType = str3(snap["nativeType"]);
         if (nativeType) node2.nativeType = nativeType;
-        const cloud = str2(snap["cloudPlatform"]);
+        const cloud = str3(snap["cloudPlatform"]);
         if (cloud) node2.cloudPlatform = cloud;
-        const region = str2(snap["region"]);
+        const region = str3(snap["region"]);
         if (region) node2.region = region;
-        const externalId = str2(snap["externalId"]);
+        const externalId = str3(snap["externalId"]);
         if (externalId) node2.externalId = externalId;
         part.nodes.push(node2);
       }
@@ -5788,21 +6094,21 @@ var Server = (() => {
   }
   function idsOf(raw) {
     if (!Array.isArray(raw)) return [];
-    return raw.map((r) => r && typeof r === "object" ? str2(r["id"]) : void 0).filter((v) => !!v);
+    return raw.map((r) => r && typeof r === "object" ? str3(r["id"]) : void 0).filter((v) => !!v);
   }
   function strListOf(raw) {
     if (!Array.isArray(raw)) return [];
-    return raw.map((v) => str2(v)).filter((v) => !!v);
+    return raw.map((v) => str3(v)).filter((v) => !!v);
   }
   function projectsOf(raw) {
     if (!Array.isArray(raw)) return [];
     return raw.map((p) => {
       if (!p || typeof p !== "object") return null;
-      const id = str2(p["id"]);
-      const name = str2(p["name"]);
+      const id = str3(p["id"]);
+      const name = str3(p["name"]);
       if (!id || !name) return null;
       const profile = p["riskProfile"];
-      const businessImpact = profile && typeof profile === "object" ? str2(profile["businessImpact"]) : void 0;
+      const businessImpact = profile && typeof profile === "object" ? str3(profile["businessImpact"]) : void 0;
       return { id, name, businessImpact };
     }).filter((p) => p !== null);
   }
@@ -5810,14 +6116,14 @@ var Server = (() => {
     var _a5, _b;
     const part = emptyPart();
     for (const raw of rows) {
-      const id = str2(raw["id"]);
+      const id = str3(raw["id"]);
       if (!id) continue;
       const resource = raw["resource"];
-      const resourceId = resource && typeof resource === "object" ? str2(resource["id"]) : void 0;
+      const resourceId = resource && typeof resource === "object" ? str3(resource["id"]) : void 0;
       if (!resourceId) continue;
       const rule = raw["rule"];
       const hasRule = !!rule && typeof rule === "object";
-      const ruleShortId = hasRule ? (_a5 = str2(rule["shortId"])) != null ? _a5 : "" : "";
+      const ruleShortId = hasRule ? (_a5 = str3(rule["shortId"])) != null ? _a5 : "" : "";
       const subscription = raw["subscription"];
       const hasSub = !!subscription && typeof subscription === "object";
       const rawProjects = resource && typeof resource === "object" ? resource["projects"] : void 0;
@@ -5825,34 +6131,34 @@ var Server = (() => {
         id,
         resourceId,
         ruleShortId,
-        severity: (_b = str2(raw["severity"])) != null ? _b : "UNKNOWN",
-        remediation: str2(raw["remediation"]),
+        severity: (_b = str3(raw["severity"])) != null ? _b : "UNKNOWN",
+        remediation: str3(raw["remediation"]),
         frameworkCodes: frameworkCodesFromRule(rule, ruleShortId),
-        name: str2(raw["name"]),
-        status: str2(raw["status"]),
-        result: str2(raw["result"]),
+        name: str3(raw["name"]),
+        status: str3(raw["status"]),
+        result: str3(raw["result"]),
         // Only an explicit `true` is a tombstone. `deleted` absent from the response must
         // stay absent on the row, not become `false` — "not collected" and "collected and
         // false" are different facts, and isOpenGap reads the difference.
         deleted: raw["deleted"] === true ? true : void 0,
-        firstSeenAt: str2(raw["firstSeenAt"]),
-        analyzedAt: str2(raw["analyzedAt"]),
-        ruleId: hasRule ? str2(rule["id"]) : void 0,
-        ruleGraphId: hasRule ? str2(rule["graphId"]) : void 0,
-        ruleName: hasRule ? str2(rule["name"]) : void 0,
-        ruleDescription: hasRule ? str2(rule["description"]) : void 0,
-        remediationInstructions: hasRule ? str2(rule["remediationInstructions"]) : void 0,
-        opaPolicy: hasRule ? str2(rule["opaPolicy"]) : void 0,
+        firstSeenAt: str3(raw["firstSeenAt"]),
+        analyzedAt: str3(raw["analyzedAt"]),
+        ruleId: hasRule ? str3(rule["id"]) : void 0,
+        ruleGraphId: hasRule ? str3(rule["graphId"]) : void 0,
+        ruleName: hasRule ? str3(rule["name"]) : void 0,
+        ruleDescription: hasRule ? str3(rule["description"]) : void 0,
+        remediationInstructions: hasRule ? str3(rule["remediationInstructions"]) : void 0,
+        opaPolicy: hasRule ? str3(rule["opaPolicy"]) : void 0,
         risks: hasRule ? strListOf(rule["risks"]) : [],
         threats: hasRule ? strListOf(rule["threats"]) : [],
-        resourceName: str2(resource["name"]),
-        resourceType: str2(resource["type"]),
-        resourceStatus: str2(resource["status"]),
-        targetExternalId: str2(raw["targetExternalId"]),
-        source: str2(raw["source"]),
-        subscriptionId: hasSub ? str2(subscription["id"]) : void 0,
-        subscriptionName: hasSub ? str2(subscription["name"]) : void 0,
-        cloudProvider: hasSub ? str2(subscription["cloudProvider"]) : void 0,
+        resourceName: str3(resource["name"]),
+        resourceType: str3(resource["type"]),
+        resourceStatus: str3(resource["status"]),
+        targetExternalId: str3(raw["targetExternalId"]),
+        source: str3(raw["source"]),
+        subscriptionId: hasSub ? str3(subscription["id"]) : void 0,
+        subscriptionName: hasSub ? str3(subscription["name"]) : void 0,
+        cloudProvider: hasSub ? str3(subscription["cloudProvider"]) : void 0,
         projects: projectsOf(rawProjects),
         businessImpact: Array.isArray(rawProjects) ? worstBusinessImpact(rawProjects) : void 0,
         ignoreRuleIds: idsOf(raw["ignoreRules"]),
@@ -5871,7 +6177,7 @@ var Server = (() => {
     if (!Array.isArray(raw)) return [];
     return raw.filter((t) => t && typeof t === "object").map((t) => {
       var _a5, _b;
-      return { key: (_a5 = str2(t["key"])) != null ? _a5 : "", value: (_b = str2(t["value"])) != null ? _b : "" };
+      return { key: (_a5 = str3(t["key"])) != null ? _a5 : "", value: (_b = str3(t["value"])) != null ? _b : "" };
     }).filter((t) => t.key !== "" || t.value !== "");
   }
   function normalizeFrameworksPage(rows) {
@@ -5879,12 +6185,12 @@ var Server = (() => {
     const part = emptyPart();
     for (const raw of rows) {
       if (!raw || typeof raw !== "object") continue;
-      const id = str2(raw["id"]);
+      const id = str3(raw["id"]);
       if (!id) continue;
       part.frameworks.push({
         id,
-        name: (_a5 = str2(raw["name"])) != null ? _a5 : id,
-        description: str2(raw["description"]),
+        name: (_a5 = str3(raw["name"])) != null ? _a5 : id,
+        description: str3(raw["description"]),
         builtin: bool(raw["builtin"]),
         enabled: bool(raw["enabled"]),
         policyTypes: strListOf(raw["policyTypes"]),
@@ -5907,7 +6213,7 @@ var Server = (() => {
     const part = emptyPart();
     for (const raw of rows) {
       if (!raw || typeof raw !== "object") continue;
-      const frameworkId = str2(raw["id"]);
+      const frameworkId = str3(raw["id"]);
       if (!frameworkId) continue;
       const analytics = raw["complianceAnalytics"];
       if (!analytics || typeof analytics !== "object") continue;
@@ -5916,54 +6222,54 @@ var Server = (() => {
         frameworkId,
         level: "framework",
         nodeId: frameworkId,
-        title: (_a5 = str2(raw["name"])) != null ? _a5 : frameworkId,
-        description: str2(raw["description"]),
+        title: (_a5 = str3(raw["name"])) != null ? _a5 : frameworkId,
+        description: str3(raw["description"]),
         posturePct: posturePct(analytics["averageCompliancePosture"]),
         passCount: 0,
         failCount: 0,
         passSubCategoryCount: count(analytics["passSubCategoryCount"]),
         failSubCategoryCount: count(analytics["failSubCategoryCount"]),
-        emptyPostureReason: (_b = str2(analytics["emptyPostureReason"])) != null ? _b : null
+        emptyPostureReason: (_b = str3(analytics["emptyPostureReason"])) != null ? _b : null
       });
       for (const cat of categories) {
         if (!cat || typeof cat !== "object") continue;
         const category = cat["category"];
         const hasCat = !!category && typeof category === "object";
-        const catExternalId = hasCat ? (_c = str2(category["externalId"])) != null ? _c : "" : "";
+        const catExternalId = hasCat ? (_c = str3(category["externalId"])) != null ? _c : "" : "";
         part.posture.push({
           frameworkId,
           level: "category",
           categoryExternalId: catExternalId,
-          nodeId: hasCat ? str2(category["id"]) : void 0,
-          title: hasCat ? (_d = str2(category["name"])) != null ? _d : catExternalId : catExternalId,
-          description: hasCat ? str2(category["description"]) : void 0,
+          nodeId: hasCat ? str3(category["id"]) : void 0,
+          title: hasCat ? (_d = str3(category["name"])) != null ? _d : catExternalId : catExternalId,
+          description: hasCat ? str3(category["description"]) : void 0,
           posturePct: posturePct(cat["averageCompliancePosture"]),
           passCount: count(cat["passCount"]),
           failCount: count(cat["failCount"]),
           passSubCategoryCount: count(cat["passSubCategoryCount"]),
           failSubCategoryCount: count(cat["failSubCategoryCount"]),
-          emptyPostureReason: (_e = str2(cat["emptyPostureReason"])) != null ? _e : null
+          emptyPostureReason: (_e = str3(cat["emptyPostureReason"])) != null ? _e : null
         });
         const subs = Array.isArray(cat["subCategoryAnalytics"]) ? cat["subCategoryAnalytics"] : [];
         for (const sub of subs) {
           if (!sub || typeof sub !== "object") continue;
           const subCategory = sub["subCategory"];
           const hasSub = !!subCategory && typeof subCategory === "object";
-          const subExternalId = hasSub ? (_f = str2(subCategory["externalId"])) != null ? _f : "" : "";
+          const subExternalId = hasSub ? (_f = str3(subCategory["externalId"])) != null ? _f : "" : "";
           part.posture.push({
             frameworkId,
             level: "subcategory",
             categoryExternalId: catExternalId,
             subcategoryExternalId: subExternalId,
-            nodeId: hasSub ? str2(subCategory["id"]) : void 0,
-            title: hasSub ? (_g = str2(subCategory["title"])) != null ? _g : subExternalId : subExternalId,
-            description: hasSub ? str2(subCategory["description"]) : void 0,
+            nodeId: hasSub ? str3(subCategory["id"]) : void 0,
+            title: hasSub ? (_g = str3(subCategory["title"])) != null ? _g : subExternalId : subExternalId,
+            description: hasSub ? str3(subCategory["description"]) : void 0,
             posturePct: posturePct(sub["compliancePosture"]),
             passCount: count(sub["passCount"]),
             failCount: count(sub["failCount"]),
-            emptyPostureReason: (_h = str2(sub["emptyPostureReason"])) != null ? _h : null,
-            assessmentScope: hasSub ? str2(subCategory["assessmentScope"]) : void 0,
-            mappingRationale: hasSub ? str2(subCategory["mappingRationale"]) : void 0,
+            emptyPostureReason: (_h = str3(sub["emptyPostureReason"])) != null ? _h : null,
+            assessmentScope: hasSub ? str3(subCategory["assessmentScope"]) : void 0,
+            mappingRationale: hasSub ? str3(subCategory["mappingRationale"]) : void 0,
             tags: hasSub ? tagsOf(subCategory["tags"]) : []
           });
           const policies = Array.isArray(sub["policyAnalytics"]) ? sub["policyAnalytics"] : [];
@@ -5971,7 +6277,7 @@ var Server = (() => {
             if (!pol || typeof pol !== "object") continue;
             const picked = policyOf(pol);
             if (!picked) continue;
-            const policyId = str2(picked.obj["id"]);
+            const policyId = str3(picked.obj["id"]);
             if (!policyId) continue;
             part.frameworkPolicies.push({
               frameworkId,
@@ -5982,9 +6288,9 @@ var Server = (() => {
               // Only a CloudConfigurationRule carries shortId ("AIGuardrail-007"); a
               // HostConfigurationRule spells its short name `shortName`, and a Control has
               // neither. This is the field the finding join matches on when present.
-              shortId: (_i = str2(picked.obj["shortId"])) != null ? _i : str2(picked.obj["shortName"]),
-              name: (_j = str2(picked.obj["name"])) != null ? _j : policyId,
-              severity: (_k = str2(picked.obj["severity"])) != null ? _k : "UNKNOWN",
+              shortId: (_i = str3(picked.obj["shortId"])) != null ? _i : str3(picked.obj["shortName"]),
+              name: (_j = str3(picked.obj["name"])) != null ? _j : policyId,
+              severity: (_k = str3(picked.obj["severity"])) != null ? _k : "UNKNOWN",
               enabled: (_l = triBool2(picked.obj["enabled"])) != null ? _l : void 0,
               builtin: (_m = triBool2(picked.obj["builtin"])) != null ? _m : void 0,
               passCount: count(pol["passCount"]),
@@ -5993,9 +6299,9 @@ var Server = (() => {
               rejectedCount: count(pol["rejectedCount"]),
               // Wiz's spelling, one 's'. Kept verbatim on the wire, corrected on the row.
               noResourceToAssess: pol["noResourceToAsses"] === true,
-              targetNativeType: str2(picked.obj["targetNativeType"]),
-              subjectEntityType: str2(picked.obj["subjectEntityType"]),
-              cloudProvider: str2(picked.obj["cloudProvider"]),
+              targetNativeType: str3(picked.obj["targetNativeType"]),
+              subjectEntityType: str3(picked.obj["subjectEntityType"]),
+              cloudProvider: str3(picked.obj["cloudProvider"]),
               hasAutoRemediation: (_n = triBool2(picked.obj["hasAutoRemediation"])) != null ? _n : void 0
             });
           }
@@ -6161,12 +6467,12 @@ var Server = (() => {
       const storeId = stores[0].id;
       for (const raw of rawEntitiesOf(row)) {
         if (kindFromWizType(raw["type"]) !== "DATA_FINDING") continue;
-        const id = str2(raw["id"]);
+        const id = str3(raw["id"]);
         if (!id) continue;
         part.dataFindings.push({
           id,
           resourceId: storeId,
-          name: (_a5 = str2(raw["name"])) != null ? _a5 : id,
+          name: (_a5 = str3(raw["name"])) != null ? _a5 : id,
           // Through entityField: on a graphSearch entity `severity` rides in the properties
           // bag, not flat. The capture shows it there on the finding entities.
           severity: normalizeDataFindingSeverity(entityField(raw, "severity"))
@@ -6176,7 +6482,7 @@ var Server = (() => {
     return part;
   }
   function normalizeDataFindingSeverity(v) {
-    const raw = str2(v);
+    const raw = str3(v);
     if (!raw) return "UNKNOWN";
     const bare = raw.replace(/^DataFindingSeverity/i, "").toUpperCase();
     return SEVERITY_ORDER.includes(bare) ? bare : "UNKNOWN";
@@ -6204,6 +6510,70 @@ var Server = (() => {
       syncedAt: doc.syncedAt
     };
   }
+  function normalizeConfigRulesPage(rows) {
+    var _a5;
+    const part = emptyPart();
+    for (const raw of rows) {
+      if (!raw || typeof raw !== "object") continue;
+      const id = str3(raw["id"]);
+      const name = str3(raw["name"]);
+      if (!id || !name) continue;
+      part.configRules.push({
+        id,
+        shortId: (_a5 = str3(raw["shortId"])) != null ? _a5 : "",
+        name,
+        subjectEntityType: str3(raw["subjectEntityType"]),
+        externalRefs: idsOf(raw["externalReferences"])
+      });
+    }
+    return part;
+  }
+  var FilterNotHonouredError = class extends Error {
+  };
+  function normalizeIdentityFindingsPage(rows, ruleKinds) {
+    var _a5, _b;
+    const part = emptyPart();
+    for (const raw of rows) {
+      const id = str3(raw["id"]);
+      if (!id) continue;
+      const resource = raw["resource"];
+      const resourceId = resource && typeof resource === "object" ? str3(resource["id"]) : void 0;
+      const rule = raw["rule"];
+      const hasRule = !!rule && typeof rule === "object";
+      const ruleId = hasRule ? str3(rule["id"]) : void 0;
+      const hygiene = ruleId ? ruleKinds[ruleId] : void 0;
+      if (!hygiene) {
+        throw new FilterNotHonouredError(
+          "configurationFindings returned rule " + (ruleId != null ? ruleId : "(none)") + ", which was not among the " + Object.keys(ruleKinds).length + " identity-hygiene rules requested \u2014 the rule filter was not honoured."
+        );
+      }
+      if (!resourceId) continue;
+      part.identityFindings.push({
+        id,
+        resourceId,
+        resourceName: str3(resource["name"]),
+        ruleId,
+        ruleShortId: hasRule ? (_a5 = str3(rule["shortId"])) != null ? _a5 : "" : "",
+        ruleName: hasRule ? str3(rule["name"]) : void 0,
+        severity: (_b = str3(raw["severity"])) != null ? _b : "UNKNOWN",
+        status: str3(raw["status"]),
+        result: str3(raw["result"]),
+        firstSeenAt: str3(raw["firstSeenAt"]),
+        analyzedAt: str3(raw["analyzedAt"]),
+        remediation: str3(raw["remediation"]),
+        hygiene
+      });
+    }
+    return part;
+  }
+  function normalizeEffectiveAccessPage(rows) {
+    const part = emptyPart();
+    for (const raw of rows) {
+      const row = toEffectiveAccessRow(raw);
+      if (row) part.effectiveAccess.push(row);
+    }
+    return part;
+  }
   var HOST_KIND_SET = new Set(HOST_KINDS);
   function rawEntityOfKind(row, kinds) {
     for (const raw of rawEntitiesOf(row)) {
@@ -6212,7 +6582,7 @@ var Server = (() => {
     }
     return void 0;
   }
-  function addUnique(list2, value) {
+  function addUnique2(list2, value) {
     if (value && list2.indexOf(value) < 0) list2.push(value);
   }
   function normalizeHostExposurePage(rows) {
@@ -6239,8 +6609,8 @@ var Server = (() => {
       const sourceIpRanges = [];
       for (const exposure of exposureNodes) {
         if (!exposure || typeof exposure !== "object") continue;
-        addUnique(ports, str2(exposure["portRange"]));
-        addUnique(sourceIpRanges, str2(exposure["sourceIpRange"]));
+        addUnique2(ports, str3(exposure["portRange"]));
+        addUnique2(sourceIpRanges, str3(exposure["sourceIpRange"]));
         const endpoints = exposure["applicationEndpoints"];
         if (!Array.isArray(endpoints)) continue;
         for (const rawEndpoint of endpoints) {
@@ -6282,29 +6652,32 @@ var Server = (() => {
     return part;
   }
   function normalizeIdentityAccessPage(rows) {
+    var _a5;
     const part = emptyPart();
     for (const row of rows) {
       const entities = entitiesOf(row);
-      const agent = entities.find((e) => e.kind === "AI_AGENT");
+      const asset = entities.find((e) => AI_ASSET_KINDS.includes(e.kind));
       const identities = entities.filter(
         (e) => e.kind === "USER_ACCOUNT" || e.kind === "SERVICE_ACCOUNT" || e.kind === "ACCESS_ROLE"
       );
       part.nodes.push(...entities);
-      if (!agent) continue;
+      if (!asset) continue;
+      const rawRole = rawEntitiesOf(row).find((e) => kindFromWizType(e["type"]) === "ACCESS_ROLE");
+      const accessType = (_a5 = rawRole ? normalizeAccessType(entityField(rawRole, "accessType")) : void 0) != null ? _a5 : "HIGH_PRIVILEGE";
       for (const identity of identities) {
         part.edges.push({
-          id: edgeId(identity.id, "ALLOWS_ACCESS_TO", agent.id),
+          id: edgeId(identity.id, "ALLOWS_ACCESS_TO", asset.id),
           src: identity.id,
-          dst: agent.id,
+          dst: asset.id,
           type: "ALLOWS_ACCESS_TO",
-          accessType: "HIGH_PRIVILEGE"
+          accessType
         });
       }
     }
     return part;
   }
   function mergeParts(parts, syncedAt) {
-    var _a5, _b, _c, _d, _e, _f, _g;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j;
     const nodes = /* @__PURE__ */ new Map();
     const edges2 = /* @__PURE__ */ new Map();
     const issues2 = /* @__PURE__ */ new Map();
@@ -6313,6 +6686,9 @@ var Server = (() => {
     const frameworks = /* @__PURE__ */ new Map();
     const posture = /* @__PURE__ */ new Map();
     const frameworkPolicies = /* @__PURE__ */ new Map();
+    const configRules = /* @__PURE__ */ new Map();
+    const identityFindings = /* @__PURE__ */ new Map();
+    const effectiveAccess = /* @__PURE__ */ new Map();
     for (const part of parts) {
       for (const node2 of part.nodes) {
         const prev = nodes.get(node2.id);
@@ -6345,6 +6721,11 @@ var Server = (() => {
           p
         );
       }
+      for (const r of (_h = part.configRules) != null ? _h : []) configRules.set(r.id, r);
+      for (const f of (_i = part.identityFindings) != null ? _i : []) identityFindings.set(f.id, f);
+      for (const e of (_j = part.effectiveAccess) != null ? _j : []) {
+        effectiveAccess.set(`${e.identityId}|${e.resourceId}`, e);
+      }
     }
     return {
       doc: { nodes: [...nodes.values()], edges: [...edges2.values()], syncedAt },
@@ -6355,8 +6736,43 @@ var Server = (() => {
       dataFindings: [...dataFindings.values()],
       frameworks: [...frameworks.values()],
       posture: [...posture.values()],
-      frameworkPolicies: [...frameworkPolicies.values()]
+      frameworkPolicies: [...frameworkPolicies.values()],
+      configRules: [...configRules.values()],
+      identityFindings: [...identityFindings.values()],
+      effectiveAccess: [...effectiveAccess.values()]
     };
+  }
+
+  // src/domain/identityHygiene.ts
+  var HYGIENE_SUBJECT = "USER_ACCOUNT";
+  var MATCHERS = [
+    // "multi-factor authentication (MFA)" and bare "MFA enabled" both appear in the catalogue.
+    { kind: "MFA", test: /multi-factor|\bMFA\b/i },
+    // "should not be inactive for more than 90 days" and "should have recent login activity".
+    // Deliberately NOT a bare /inactive/ — "Uninstalled Connected App should not be inactive"
+    // is a SERVICE_ACCOUNT rule about an app, and the subject guard below already excludes it,
+    // but the phrase is specific enough not to lean on that alone.
+    { kind: "DORMANT", test: /inactive for more than|recent login activity/i }
+  ];
+  function hygieneKindOf(rule) {
+    if (rule.subjectEntityType !== HYGIENE_SUBJECT) return null;
+    for (const m of MATCHERS) {
+      if (m.test.test(rule.name)) return m.kind;
+    }
+    return null;
+  }
+  function resolveHygieneRules(catalogue) {
+    const byId = {};
+    const ids = [];
+    const shortIds = [];
+    for (const rule of catalogue) {
+      const kind = hygieneKindOf(rule);
+      if (!kind || !rule.id) continue;
+      byId[rule.id] = kind;
+      ids.push(rule.id);
+      if (rule.shortId) shortIds.push(rule.shortId);
+    }
+    return { byId, ids, shortIds };
   }
 
   // src/server/sampleData.ts
@@ -6390,7 +6806,9 @@ var Server = (() => {
       // exposed host reads back exactly as it did before these columns existed.
       exposureLevel: seed.exposureLevel,
       portValidation: seed.portValidation,
-      exposureEvidence: seed.exposureEvidence
+      exposureEvidence: seed.exposureEvidence,
+      inactive: seed.inactive,
+      inactiveTimeframe: seed.inactiveTimeframe
     };
   }
   function edge(src, type, dst, accessType) {
@@ -6719,7 +7137,20 @@ var Server = (() => {
   for (let i = 1; i <= 12; i++) {
     const n = String(i).padStart(2, "0");
     const id = `user-ops-${n}`;
-    extraNodes.push({ id, kind: "USER_ACCOUNT", name: `ops.user${n}@example.com`, cloud: "GCP" });
+    const seed = {
+      id,
+      kind: "USER_ACCOUNT",
+      name: `ops.user${n}@example.com`,
+      cloud: "GCP"
+    };
+    if (i === 2) {
+      seed.inactive = true;
+      seed.inactiveTimeframe = "Inactive90Days";
+    } else if (i === 3) {
+      seed.inactive = false;
+      seed.inactiveTimeframe = "Active";
+    }
+    extraNodes.push(seed);
     edges.push(edge(id, "ALLOWS_ACCESS_TO", "agent-h-chatbot", i <= 2 ? "ADMIN" : "READ"));
   }
   function issue(seed) {
@@ -7517,6 +7948,111 @@ var Server = (() => {
     { CRITICAL: 2, HIGH: 17, MEDIUM: 0, LOW: 3, INFO: 8 },
     { CRITICAL: 2, HIGH: 17, MEDIUM: 0, LOW: 3, INFO: 8 }
   ];
+  var SEED_CONFIG_RULES = [
+    {
+      id: "rule-iam-159",
+      shortId: "IAM-159",
+      name: "User should have MFA enabled",
+      subjectEntityType: "USER_ACCOUNT",
+      externalRefs: []
+    },
+    {
+      id: "rule-iam-208",
+      shortId: "IAM-208",
+      name: "User with password-based authentication should have multi-factor authentication (MFA) enabled",
+      subjectEntityType: "USER_ACCOUNT",
+      externalRefs: []
+    },
+    {
+      id: "rule-iam-235",
+      shortId: "IAM-235",
+      name: "User should not be inactive for more than 90 days",
+      subjectEntityType: "USER_ACCOUNT",
+      externalRefs: []
+    },
+    {
+      // The gloss the AARS cascade has always lacked: SEED_FINDINGS prices SUB-082 and the
+      // codebook has never been able to render what it means.
+      id: "rule-sub-082",
+      shortId: "SUB-082",
+      name: "Vertex AI Metadata Store should be encrypted with a customer-managed key",
+      subjectEntityType: "REGION",
+      externalRefs: ["CKV_GCP_96", "CKV2_GCP_25"]
+    },
+    {
+      id: "rule-idp-012",
+      shortId: "IDP-012",
+      name: "WorkSpaces Directory should have multi-factor authentication enabled",
+      subjectEntityType: "IDENTITY_PROVIDER",
+      externalRefs: []
+    }
+  ];
+  var SEED_IDENTITY_FINDINGS = [
+    {
+      id: "idf-001",
+      resourceId: "user-ops-01",
+      resourceName: "ops.user01@example.com",
+      ruleId: "rule-iam-159",
+      ruleShortId: "IAM-159",
+      ruleName: "User should have MFA enabled",
+      severity: "HIGH",
+      status: "OPEN",
+      result: "FAIL",
+      firstSeenAt: "2026-05-02T09:14:00Z",
+      analyzedAt: "2026-08-13T04:00:00Z",
+      remediation: "Enrol this account in multi-factor authentication.",
+      hygiene: "MFA"
+    },
+    {
+      id: "idf-002",
+      resourceId: "user-ops-02",
+      resourceName: "ops.user02@example.com",
+      ruleId: "rule-iam-235",
+      ruleShortId: "IAM-235",
+      ruleName: "User should not be inactive for more than 90 days",
+      severity: "MEDIUM",
+      status: "OPEN",
+      result: "FAIL",
+      firstSeenAt: "2026-04-18T11:02:00Z",
+      analyzedAt: "2026-08-13T04:00:00Z",
+      remediation: "Disable or remove accounts that are no longer in use.",
+      hygiene: "DORMANT"
+    },
+    {
+      id: "idf-003",
+      resourceId: "user-ops-05",
+      resourceName: "ops.user05@example.com",
+      ruleId: "rule-iam-159",
+      ruleShortId: "IAM-159",
+      ruleName: "User should have MFA enabled",
+      severity: "HIGH",
+      status: "OPEN",
+      result: "FAIL",
+      firstSeenAt: "2026-05-02T09:14:00Z",
+      analyzedAt: "2026-08-13T04:00:00Z",
+      hygiene: "MFA"
+    }
+  ];
+  var SEED_EFFECTIVE_ACCESS = [
+    {
+      identityId: "user-ops-01",
+      identityName: "ops.user01@example.com",
+      resourceId: "agent-h-chatbot",
+      accessTypes: ["DATA"],
+      permissions: ["aiplatform.endpoints.predict", "storage.objects.get"],
+      policyIds: ["policy-ops-admin"],
+      policyNames: ["ops-admin-binding"]
+    },
+    {
+      identityId: "user-ops-07",
+      identityName: "ops.user07@example.com",
+      resourceId: "agent-h-chatbot",
+      accessTypes: ["DATA"],
+      permissions: ["storage.objects.get"],
+      policyIds: ["policy-ops-reader"],
+      policyNames: ["ops-reader-binding"]
+    }
+  ];
 
   // src/server/syncStore.ts
   function boolCell(v) {
@@ -7541,7 +8077,7 @@ var Server = (() => {
     }
   }
   function assetToRow(n) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u;
     return {
       id: n.id,
       kind: n.kind,
@@ -7583,11 +8119,16 @@ var Server = (() => {
       // undefined: an asset the exposure steps never reached must not become one they reached
       // and found clean. conditionState falls through to the flags for the first and would
       // have to keep falling through for the second — but only one of them is honest about it.
-      exposure_evidence_json: n.exposureEvidence ? JSON.stringify(n.exposureEvidence) : null
+      exposure_evidence_json: n.exposureEvidence ? JSON.stringify(n.exposureEvidence) : null,
+      // `?? null`, never `?? false`: an identity row the tenant reported no dormancy for must
+      // read back as undefined. "Not reported" and "in use" are different answers.
+      inactive: n.inactive === void 0 ? null : boolCell(n.inactive),
+      inactive_timeframe: (_u = n.inactiveTimeframe) != null ? _u : null,
+      human_access_json: n.humanAccess ? JSON.stringify(n.humanAccess) : null
     };
   }
   function rowToAsset(r) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s;
     const node2 = {
       id: String((_a5 = r["id"]) != null ? _a5 : ""),
       kind: String((_b = r["kind"]) != null ? _b : "AI_AGENT"),
@@ -7645,6 +8186,12 @@ var Server = (() => {
     if (portValidation) node2.portValidation = portValidation;
     const evidence = parseJson(r["exposure_evidence_json"], null);
     if (evidence) node2.exposureEvidence = evidence;
+    const inactive = parseTri(r["inactive"]);
+    if (inactive !== null) node2.inactive = inactive;
+    const inactiveTimeframe = (_s = r["inactive_timeframe"]) != null ? _s : null;
+    if (inactiveTimeframe) node2.inactiveTimeframe = inactiveTimeframe;
+    const humanAccess = parseJson(r["human_access_json"], null);
+    if (humanAccess) node2.humanAccess = humanAccess;
     return node2;
   }
   function edgeToRow(e) {
@@ -7878,6 +8425,65 @@ var Server = (() => {
       selected: false
     };
   }
+  function configRuleToRow(r) {
+    var _a5, _b;
+    return {
+      id: r.id,
+      short_id: r.shortId,
+      name: r.name,
+      subject_entity_type: (_a5 = r.subjectEntityType) != null ? _a5 : "",
+      external_refs: ((_b = r.externalRefs) != null ? _b : []).join(",")
+    };
+  }
+  function rowToConfigRule(r) {
+    var _a5, _b, _c, _d, _e;
+    return {
+      id: String((_a5 = r["id"]) != null ? _a5 : ""),
+      shortId: String((_b = r["short_id"]) != null ? _b : ""),
+      name: String((_c = r["name"]) != null ? _c : ""),
+      subjectEntityType: String((_d = r["subject_entity_type"]) != null ? _d : "") || void 0,
+      externalRefs: String((_e = r["external_refs"]) != null ? _e : "").split(",").filter(Boolean)
+    };
+  }
+  function identityFindingToRow(f) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h;
+    return {
+      id: f.id,
+      resource_id: f.resourceId,
+      resource_name: (_a5 = f.resourceName) != null ? _a5 : null,
+      rule_id: (_b = f.ruleId) != null ? _b : null,
+      rule_short_id: f.ruleShortId,
+      rule_name: (_c = f.ruleName) != null ? _c : null,
+      severity: f.severity,
+      status: (_d = f.status) != null ? _d : null,
+      result: (_e = f.result) != null ? _e : null,
+      first_seen_at: (_f = f.firstSeenAt) != null ? _f : null,
+      analyzed_at: (_g = f.analyzedAt) != null ? _g : null,
+      remediation: (_h = f.remediation) != null ? _h : null,
+      hygiene: f.hygiene
+    };
+  }
+  function rowToIdentityFinding(r) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
+    return {
+      id: String((_a5 = r["id"]) != null ? _a5 : ""),
+      resourceId: String((_b = r["resource_id"]) != null ? _b : ""),
+      resourceName: (_c = r["resource_name"]) != null ? _c : void 0,
+      ruleId: (_d = r["rule_id"]) != null ? _d : void 0,
+      ruleShortId: String((_e = r["rule_short_id"]) != null ? _e : ""),
+      ruleName: (_f = r["rule_name"]) != null ? _f : void 0,
+      severity: String((_g = r["severity"]) != null ? _g : "UNKNOWN"),
+      status: (_h = r["status"]) != null ? _h : void 0,
+      result: (_i = r["result"]) != null ? _i : void 0,
+      firstSeenAt: (_j = r["first_seen_at"]) != null ? _j : void 0,
+      analyzedAt: (_k = r["analyzed_at"]) != null ? _k : void 0,
+      remediation: (_l = r["remediation"]) != null ? _l : void 0,
+      // Defaulted rather than validated: the column is written by this app from the matcher's
+      // verdict, so an unrecognised value means a hand-edited cell, and MFA is the reading that
+      // over-reports rather than under-reports.
+      hygiene: String((_m = r["hygiene"]) != null ? _m : "MFA") === "DORMANT" ? "DORMANT" : "MFA"
+    };
+  }
   function cellPct(v) {
     if (v === "" || v === null || v === void 0) return null;
     const n = Number(v);
@@ -7984,11 +8590,16 @@ var Server = (() => {
       hasAutoRemediation: optBool(r["has_auto_remediation"])
     };
   }
-  function persistSync(rawDoc, issues2, hints, meta, now, findings = [], dataFindings = [], frameworks = [], posture = [], frameworkPolicies = []) {
+  function persistSync(rawDoc, issues2, hints, meta, now, findings = [], dataFindings = [], frameworks = [], posture = [], frameworkPolicies = [], extras = {}) {
+    var _a5, _b, _c, _d;
     const { version: ruleVersion, rule } = getAarsRule2();
     const counted = withDataFindingCounts(rawDoc, dataFindings);
     const exposed = withExposureEvidence(counted);
-    const enriched = enrichGraphDoc(exposed, issues2, hints, rule);
+    const reachable = withHumanAccess(exposed, {
+      identityFindings: (_a5 = extras.identityFindings) != null ? _a5 : [],
+      effectiveAccess: (_b = extras.effectiveAccess) != null ? _b : []
+    });
+    const enriched = enrichGraphDoc(reachable, issues2, hints, rule);
     const assetNodes = realNodes(enriched.nodes);
     const assetEdges = enriched.edges.filter((e) => e.type !== "HAS_ISSUE");
     overwrite(TABS.assets, assetNodes.map(assetToRow));
@@ -8001,6 +8612,9 @@ var Server = (() => {
     if (frameworkPolicies.length) {
       overwrite(TABS.frameworkPolicies, frameworkPolicies.map(frameworkPolicyToRow));
     }
+    const configRules = (_c = extras.configRules) != null ? _c : [];
+    if (configRules.length) overwrite(TABS.configRules, configRules.map(configRuleToRow));
+    overwrite(TABS.identityFindings, ((_d = extras.identityFindings) != null ? _d : []).map(identityFindingToRow));
     const snapshotRef = writeGraphSnapshot(enriched);
     appendRows(TABS.syncHistory, [{
       sync_id: meta.syncId,
@@ -8086,6 +8700,8 @@ var Server = (() => {
   var frameworksMemo;
   var postureMemo;
   var frameworkPoliciesMemo;
+  var configRulesMemo;
+  var identityFindingsMemo;
   function invalidateReadMemos() {
     graphDocMemo = void 0;
     assetsMemo = void 0;
@@ -8095,6 +8711,8 @@ var Server = (() => {
     frameworksMemo = void 0;
     postureMemo = void 0;
     frameworkPoliciesMemo = void 0;
+    configRulesMemo = void 0;
+    identityFindingsMemo = void 0;
   }
   function commit() {
     bumpDataVersion();
@@ -8202,6 +8820,18 @@ var Server = (() => {
     if (frameworksMemo === void 0) frameworksMemo = readAll(TABS.frameworks).map(rowToFramework);
     return frameworksMemo;
   }
+  function loadConfigRules() {
+    if (configRulesMemo === void 0) {
+      configRulesMemo = readAll(TABS.configRules).map(rowToConfigRule);
+    }
+    return configRulesMemo;
+  }
+  function loadIdentityFindings() {
+    if (identityFindingsMemo === void 0) {
+      identityFindingsMemo = readAll(TABS.identityFindings).map(rowToIdentityFinding);
+    }
+    return identityFindingsMemo;
+  }
   function loadPosture() {
     if (postureMemo === void 0) postureMemo = readAll(TABS.frameworkPosture).map(rowToPosture);
     return postureMemo;
@@ -8242,6 +8872,9 @@ var Server = (() => {
     const overrides = getScanVars2();
     const vars = (stepId, base) => effectiveStepVars(stepId, base, overrides[stepId]);
     const selectedFrameworks = () => frameworkIds;
+    const catalogue = loadConfigRules();
+    const catalogueFresh = configRulesAreFresh2(catalogue.length > 0, Date.now());
+    const hygieneRules = resolveHygieneRules(catalogue);
     return [
       {
         id: "INVENTORY_AI",
@@ -8287,6 +8920,58 @@ var Server = (() => {
         query: Q_CONFIG_FINDINGS,
         extraVariables: vars("CONFIG_FINDINGS", aiConfigFindingsVariables(projectScope())),
         normalize: normalizeConfigFindingsPage,
+        optional: true
+      },
+      // Wiz's cloud-configuration RULE CATALOGUE — reference data, and the only step here whose
+      // contents describe the product rather than the estate. It is what glosses an opaque
+      // `SUB-082` in the AARS cascade, and what the identity-hygiene matchers resolve against
+      // instead of hardcoding MFA rule ids that differ per cloud.
+      //
+      // GATED, not unconditional. ~3,858 rules is ~39 pages against a battery that is otherwise
+      // ~10–20 calls, to re-collect a list that changes when Wiz ships rules. `catalogueFresh`
+      // is resolved once, above, and a skip here is recorded as SCHEDULED rather than joining
+      // `skippedSteps` — that list means "the tenant refused this", and a step we chose not to
+      // run must not be reported as a rejection.
+      ...catalogueFresh ? [] : [{
+        id: "CONFIG_RULES",
+        area: "compliance",
+        writes: ["ai_config_rules"],
+        run: "connection",
+        connectionField: "cloudConfigurationRules",
+        query: Q_CONFIG_RULES,
+        normalize: normalizeConfigRulesPage,
+        optional: true
+      }],
+      // MFA and dormancy on the humans who can reach an AI asset. The rules come from the
+      // catalogue, matched by name (domain/identityHygiene.ts), so this step exists only once
+      // the catalogue has been collected at least once — on a first sync it resolves to nothing
+      // and is skipped, and the following sync has it.
+      ...hygieneRules.ids.length ? [{
+        id: "IDENTITY_HYGIENE",
+        area: "identity",
+        writes: ["ai_identity_findings"],
+        run: "connection",
+        connectionField: "configurationFindings",
+        query: Q_CONFIG_FINDINGS,
+        extraVariables: aiIdentityHygieneVariables(hygieneRules.ids, projectScope()),
+        // Closed over the resolved map, the way the per-rule combo steps close over their group.
+        // It is also what lets the normalizer verify the filter was honoured at all.
+        normalize: (rows) => normalizeIdentityFindingsPage(rows, hygieneRules.byId),
+        optional: true
+      }] : [],
+      // Effective permissions on those same assets: not who holds a role, but what they can do
+      // and which policy says so. Runs BESIDE IDENTITY_ACCESS rather than replacing it — that
+      // step draws the graph's ALLOWS_ACCESS_TO edges and speaks ADMIN/HIGH_PRIVILEGE, this one
+      // speaks DATA, and withHumanAccess keeps the two in separate fields.
+      {
+        id: "EFFECTIVE_ACCESS",
+        area: "identity",
+        writes: ["ai_assets (human_access_json)"],
+        run: "connection",
+        connectionField: "entityEffectiveAccessEntries",
+        query: Q_EFFECTIVE_ACCESS,
+        extraVariables: effectiveAccessVariables(types, projectScope()),
+        normalize: normalizeEffectiveAccessPage,
         optional: true
       },
       // The framework catalogue. Populates the Settings picker; it does NOT decide the
@@ -8412,9 +9097,13 @@ var Server = (() => {
       {
         id: "IDENTITY_ACCESS",
         area: "identity",
-        writes: ["ai_edges (ALLOWS_ACCESS_TO)", "ai_assets"],
+        writes: [
+          "ai_edges (ALLOWS_ACCESS_TO)",
+          "ai_assets (USER_ACCOUNT/ACCESS_ROLE rows, inactive, human_access_json)"
+        ],
         run: "graphSearch",
         query: Q_IDENTITY_ACCESS,
+        extraVariables: identityAccessVariables(types, projectScope()),
         normalize: normalizeIdentityAccessPage,
         optional: true
       },
@@ -8434,7 +9123,9 @@ var Server = (() => {
   var TYPE_DEPENDENT_STEPS = /* @__PURE__ */ new Set([
     "INVENTORY_AI",
     "HOST_EXPOSURE",
-    "ENDPOINT_EXPOSURE"
+    "ENDPOINT_EXPOSURE",
+    "IDENTITY_ACCESS",
+    "EFFECTIVE_ACCESS"
   ]);
   function rootFieldOf(step) {
     var _a5;
@@ -8503,6 +9194,15 @@ var Server = (() => {
         return hostExposureVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
       case "ENDPOINT_EXPOSURE":
         return endpointExposureVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
+      case "IDENTITY_ACCESS":
+        return identityAccessVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
+      case "EFFECTIVE_ACCESS":
+        return effectiveAccessVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
+      case "IDENTITY_HYGIENE":
+        return aiIdentityHygieneVariables(
+          resolveHygieneRules(loadConfigRules()).ids,
+          projectScope()
+        );
       case "FRAMEWORKS_LIST":
         return aiSecurityFrameworksVariables();
       default:
@@ -8599,7 +9299,12 @@ var Server = (() => {
       SEED_DATA_FINDINGS,
       SEED_FRAMEWORKS,
       SEED_POSTURE,
-      SEED_FRAMEWORK_POLICIES
+      SEED_FRAMEWORK_POLICIES,
+      {
+        configRules: SEED_CONFIG_RULES,
+        identityFindings: SEED_IDENTITY_FINDINGS,
+        effectiveAccess: SEED_EFFECTIVE_ACCESS
+      }
     );
     setSkippedSteps([]);
     return {
@@ -8720,7 +9425,16 @@ var Server = (() => {
           page += 1;
           nodesSoFar += result.rows.length;
           writeSyncPage(syncId, stepIndex, page, result.rows);
-          appendPart(hopPart, step.normalize(result.rows));
+          try {
+            appendPart(hopPart, step.normalize(result.rows));
+          } catch (e) {
+            if (step.optional && e instanceof FilterNotHonouredError) {
+              params.skippedSteps.push(step.id);
+              console.warn(`Sync step ${step.id} skipped \u2014 ${e.message}`);
+              break;
+            }
+            throw e;
+          }
           updateJob(job.job_id, {
             step_index: stepIndex,
             cursor: result.endCursor,
@@ -8784,9 +9498,15 @@ var Server = (() => {
           merged.dataFindings,
           merged.frameworks,
           merged.posture,
-          merged.frameworkPolicies
+          merged.frameworkPolicies,
+          {
+            configRules: merged.configRules,
+            identityFindings: merged.identityFindings,
+            effectiveAccess: merged.effectiveAccess
+          }
         );
         setSkippedSteps(params.skippedSteps);
+        if (merged.configRules.length) setConfigRulesSyncedAt(Date.now());
       };
       if (opts.lockHeld) persist();
       else withScriptLock(persist);
@@ -8940,6 +9660,35 @@ var Server = (() => {
       filterOptions: filterOptions(assets)
     };
   }
+  function distinctHumanIdentities(assets) {
+    var _a5, _b, _c, _d;
+    const ids = /* @__PURE__ */ new Set();
+    for (const a of assets) {
+      for (const id of (_b = (_a5 = a.humanAccess) == null ? void 0 : _a5.identityIds) != null ? _b : []) ids.add(id);
+      for (const id of (_d = (_c = a.humanAccess) == null ? void 0 : _c.effectiveIds) != null ? _d : []) ids.add(id);
+    }
+    return ids;
+  }
+  function identityHygieneKpis(assets) {
+    var _a5;
+    const reachable = distinctHumanIdentities(assets);
+    if (!reachable.size) return { humanNoMfa: 0, humanDormant: 0 };
+    const noMfa = /* @__PURE__ */ new Set();
+    const dormant = /* @__PURE__ */ new Set();
+    for (const id of reachable) {
+      if (((_a5 = byIdIn(assets, id)) == null ? void 0 : _a5.inactive) === true) dormant.add(id);
+    }
+    for (const finding of loadIdentityFindings()) {
+      if (!isOpenGap(finding)) continue;
+      if (!reachable.has(finding.resourceId)) continue;
+      (finding.hygiene === "MFA" ? noMfa : dormant).add(finding.resourceId);
+    }
+    return { humanNoMfa: noMfa.size, humanDormant: dormant.size };
+  }
+  function byIdIn(assets, id) {
+    for (const a of assets) if (a.id === id) return a;
+    return void 0;
+  }
   function filterOptions(assets) {
     var _a5;
     const kinds = /* @__PURE__ */ new Set();
@@ -9001,7 +9750,7 @@ var Server = (() => {
     });
   }
   function assetRow(n) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G, _H, _I, _J;
     return {
       id: n.id,
       name: n.name,
@@ -9028,28 +9777,33 @@ var Server = (() => {
       // Null, not {}, when the exposure steps never reached this asset — the same "clean" vs
       // "never asked" split dataFindingCount keeps below.
       exposureEvidence: (_q = n.exposureEvidence) != null ? _q : null,
-      sensitiveAccess: (_r = n.hasAccessToSensitiveData) != null ? _r : false,
-      sensitiveData: (_s = n.hasSensitiveData) != null ? _s : false,
-      highPriv: (_t = n.hasHighPrivileges) != null ? _t : false,
-      adminPriv: (_u = n.hasAdminPrivileges) != null ? _u : false,
-      guardrailMissing: (_v = n.guardrailMissing) != null ? _v : false,
+      // Identity rows carry the first two; AI assets carry the third. Null, not false/{}, for
+      // the "never reported" vs "reported clean" split the rest of this row keeps.
+      inactive: (_r = n.inactive) != null ? _r : null,
+      inactiveTimeframe: (_s = n.inactiveTimeframe) != null ? _s : null,
+      humanAccess: (_t = n.humanAccess) != null ? _t : null,
+      sensitiveAccess: (_u = n.hasAccessToSensitiveData) != null ? _u : false,
+      sensitiveData: (_v = n.hasSensitiveData) != null ? _v : false,
+      highPriv: (_w = n.hasHighPrivileges) != null ? _w : false,
+      adminPriv: (_x = n.hasAdminPrivileges) != null ? _x : false,
+      guardrailMissing: (_y = n.guardrailMissing) != null ? _y : false,
       // Null, not 0, when the sensitive-data traversal never reached this node: the graph
       // card and the insight row both key on truthiness, and a 0 would make "we never asked"
       // render exactly like "we looked and it is clean".
-      dataFindingCount: (_w = n.dataFindingCount) != null ? _w : null,
-      dataFindingSeverities: (_x = n.dataFindingSeverities) != null ? _x : null,
+      dataFindingCount: (_z = n.dataFindingCount) != null ? _z : null,
+      dataFindingSeverities: (_A = n.dataFindingSeverities) != null ? _A : null,
       // On the aggregate node only — the count it collapses.
-      summaryCount: (_y = n.summaryCount) != null ? _y : null,
-      technologyCategories: (_z = n.technologyCategories) != null ? _z : [],
-      cloudAccount: (_B = (_A = n.cloudAccount) == null ? void 0 : _A.name) != null ? _B : null,
+      summaryCount: (_B = n.summaryCount) != null ? _B : null,
+      technologyCategories: (_C = n.technologyCategories) != null ? _C : [],
+      cloudAccount: (_E = (_D = n.cloudAccount) == null ? void 0 : _D.name) != null ? _E : null,
       // Full account object, for the detail sheet — cloudAccount above stays a bare
       // name string since existing client code already reads it as one.
-      cloudAccountRef: (_C = n.cloudAccount) != null ? _C : null,
-      tags: (_D = n.tags) != null ? _D : [],
-      identityPurpose: (_E = n.identityPurpose) != null ? _E : null,
-      issueAnalytics: (_F = n.issueAnalytics) != null ? _F : null,
+      cloudAccountRef: (_F = n.cloudAccount) != null ? _F : null,
+      tags: (_G = n.tags) != null ? _G : [],
+      identityPurpose: (_H = n.identityPurpose) != null ? _H : null,
+      issueAnalytics: (_I = n.issueAnalytics) != null ? _I : null,
       // Full project objects, for the detail sheet — projects above stays name-only.
-      projectRefs: ((_G = n.projects) != null ? _G : []).map((p) => ({
+      projectRefs: ((_J = n.projects) != null ? _J : []).map((p) => ({
         id: p.id,
         name: p.name,
         businessImpact: p.businessImpact
@@ -9182,6 +9936,37 @@ var Server = (() => {
           var _a6, _b2;
           return ((_b2 = (_a6 = a.exposureEvidence) == null ? void 0 : _a6.hostIds) != null ? _b2 : []).length > 0;
         }).length,
+        // Human identity access. The Wiz Scans page declared this area partial because "nothing
+        // totals them"; these are the totals, counted off the persisted join rather than off the
+        // graph stubs, which are deliberately suppressed where a real CIEM finding exists.
+        //
+        // The unit is deliberately narrow and the page says so: the traversal only ever returns
+        // ADMIN and HIGH_PRIVILEGE bindings, so this is not "assets a person can reach" — it is
+        // "assets a person can reach with rights worth naming".
+        humanReachable: assets.filter((a) => {
+          var _a6, _b2;
+          return ((_b2 = (_a6 = a.humanAccess) == null ? void 0 : _a6.identityIds) != null ? _b2 : []).length > 0;
+        }).length,
+        humanReachableAdmin: assets.filter((a) => {
+          var _a6;
+          return ((_a6 = a.humanAccess) == null ? void 0 : _a6.admin) === true;
+        }).length,
+        // Distinct identities across every asset, so one operator with access to six agents
+        // counts once. `humanDormant` is the join worth having: a dormant account holding admin
+        // rights on an AI asset is a low-noise backdoor, and it is the reason the identity
+        // properties are collected at all.
+        humanIdentities: distinctHumanIdentities(assets).size,
+        // Effective access: people Wiz says can actually reach an AI asset's DATA, as opposed
+        // to people holding a role that grants access. Counted separately and never added to
+        // `humanIdentities` — see the note on humanAccess.effectiveIds.
+        humanEffective: assets.filter((a) => {
+          var _a6, _b2;
+          return ((_b2 = (_a6 = a.humanAccess) == null ? void 0 : _a6.effectiveIds) != null ? _b2 : []).length > 0;
+        }).length,
+        // Hygiene, counted over the DISTINCT identities rather than summed from the per-asset
+        // counts. One person with bindings on six agents is one person whose MFA is missing;
+        // summing `noMfaCount` across assets would report six.
+        ...identityHygieneKpis(assets),
         highPrivilege: assets.filter((a) => conditionHolds(a, "EXCESSIVE_PRIVILEGE")).length
       },
       aarsSeverityCounts,

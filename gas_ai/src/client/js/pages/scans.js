@@ -49,9 +49,12 @@ export async function renderScans(main, params, ctx) {
   main.append(
     el("h1", {}, "Wiz Scans"),
     el("p", { class: "page-sub" },
-      "Every figure in this dashboard traces back to one of nine Wiz scan areas. This is " +
-      "what each one is asked for, what it reported in this tenant, and where the answer " +
-      "lands."),
+      // Counted, not typed. This sentence said "nine" while the page rendered ten areas —
+      // the exact class of drift the rest of this page exists to refuse, and it only takes
+      // one area being added anywhere for a hand-typed number to start lying.
+      "Every figure in this dashboard traces back to one of " + SCAN_AREAS.length +
+      " Wiz scan areas. This is what each one is asked for, what it reported in this " +
+      "tenant, and where the answer lands."),
   );
 
   if (!boot.latestSync) {

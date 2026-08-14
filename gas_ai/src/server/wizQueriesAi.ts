@@ -15,8 +15,10 @@
 // issuesV2 follows risk_issues_* — the tenant-wide "Risk Issues" view; toxic_combos_* is
 // the same root captured earlier under a narrower, project-scoped filter.
 
+import { effectiveAccessFilter } from "../domain/effectiveAccess";
 import { endpointExposureSpec, hostExposureSpec } from "../domain/exposureQuery";
 import { toGraphEntityQuery } from "../domain/graphExpand";
+import { identityAccessSpec } from "../domain/identityQuery";
 import { RISK_CATEGORY_ID } from "../domain/toxicCombos";
 import type { Rec } from "../domain/util";
 
@@ -325,34 +327,60 @@ export const Q_AGENT_SENSITIVE_DATA_ACCESS = graphSearchQueryWith(
   ENTITY_FIELDS,
 );
 
-/** Human/role identities with high-privilege or admin access INTO agents. */
-export const Q_IDENTITY_ACCESS = graphSearchQuery(
-  "SidekickAiIdentitiesWithAgentAccess",
-  "    type: \"AI_AGENT\"\n" +
-  "    select: true\n" +
-  "    relationships: [{\n" +
-  "      type: \"ALLOWS_ACCESS_TO\"\n" +
-  "      direction: INBOUND\n" +
-  "      with: {\n" +
-  "        type: \"ACCESS_ROLE_BINDING\"\n" +
-  "        select: false\n" +
-  "        relationships: [\n" +
-  "          {\n" +
-  "            type: \"BOUND_TO\"\n" +
-  "            with: { type: [\"USER_ACCOUNT\", \"SERVICE_ACCOUNT\"], select: true }\n" +
-  "          }\n" +
-  "          {\n" +
-  "            type: \"PERMITS_ACCESS_ROLE\"\n" +
-  "            with: {\n" +
-  "              type: \"ACCESS_ROLE\"\n" +
-  "              select: true\n" +
-  "              where: { accessType: { EQUALS: [\"HIGH_PRIVILEGE\", \"ADMIN\"] } }\n" +
-  "            }\n" +
-  "          }\n" +
-  "        ]\n" +
-  "      }\n" +
-  "    }]\n",
-);
+/**
+ * A graphSearch document whose traversal arrives as the `$query` VARIABLE rather than inline.
+ *
+ * Same shape as the inline builder above and the same shared ENTITY_FIELDS — the difference
+ * is only where the traversal comes from. A document needs this form the moment its type
+ * list is resolved at runtime: string-building the tenant's AI types into GraphQL source
+ * would hand the gateway a textually distinct document per tenant and splice resolved values
+ * into query text, which is the conclusion the note at the top of this file reached from the
+ * other direction for the inventory filter.
+ */
+function graphSearchVarQuery(name: string): string {
+  return (
+    "query " + name + "($quick: Boolean, $first: Int, $after: String, " +
+    "$query: GraphEntityQueryInput, $projectId: String) {\n" +
+    "  graphSearch(\n" +
+    "    quick: $quick\n" +
+    "    first: $first\n" +
+    "    after: $after\n" +
+    "    query: $query\n" +
+    "    projectId: $projectId\n" +
+    "  ) {\n" +
+    "    totalCount\n" +
+    "    pageInfo { hasNextPage endCursor }\n" +
+    "    nodes {\n" +
+    "      entities {\n" +
+    ENTITY_FIELDS +
+    "      }\n" +
+    "    }\n" +
+    "  }\n" +
+    "}\n"
+  );
+}
+
+/**
+ * Human/role identities with high-privilege or admin access INTO an AI asset.
+ *
+ * The traversal is `identityAccessSpec` (domain/identityQuery.ts), passed as `$query`. It
+ * used to be inline, rooted at the literal `type: "AI_AGENT"` — so a model carrying an admin
+ * binding, or an MCP server a contractor could reach, was never collected and the Scans page
+ * had no way to say which kinds it had looked at. The root is now the tenant-resolved AI type
+ * list, the same one INVENTORY_AI and the two exposure steps use.
+ */
+export const Q_IDENTITY_ACCESS = graphSearchVarQuery("SidekickAiIdentitiesWithAssetAccess");
+
+/** The `$query` / `$projectId` variables for Q_IDENTITY_ACCESS. Pure — scope is a parameter. */
+export function identityAccessVariables(
+  types: readonly string[],
+  scope: string[] | null,
+): Rec {
+  return {
+    query: toGraphEntityQuery(identityAccessSpec(types)),
+    projectId: scope && scope.length ? scope[0] : null,
+  };
+}
 
 /**
  * Per-agent neighbourhood expansion. Unlike every other graphSearch document here, the
@@ -825,6 +853,19 @@ export const Q_PRINCIPALS =
   "      technology { id name categories { id name } }\n" +
   "      cloudAccount { id name externalId cloudProvider }\n" +
   "      projects { id name riskProfile { businessImpact } }\n" +
+  // The identity facts live HERE and nowhere else on this root. `inactiveInLast90Days`,
+  // `inactiveTimeframe`, `enabled`, `userDirectory` and the real `identityPurpose` are all in
+  // the graph entity's properties bag — the capture in exemples/agentic_identities_response.js
+  // returns every one of them, one level deeper than the flat fields above.
+  //
+  // Until this line existed the app could not tell a dormant identity from an active one,
+  // and normalizePrincipalsPage had to STAMP identityPurpose because nothing in the selection
+  // set carried it. The Wiz Scans page said so in as many words: "MFA and inactivity signals
+  // on those accounts are not collected at all — no query selects them".
+  //
+  // One field, and the blast radius is contained: AGENTIC_IDENTITIES is optional, so a tenant
+  // whose schema rejects `graphEntity` skips the step and is recorded.
+  "      graphEntity { properties }\n" +
   "      issueAnalytics {\n" +
   "        issueCount\n" +
   "        informationalSeverityCount\n" +
@@ -860,6 +901,113 @@ export function aiPrincipalsVariables(
 // not to widen the battery: posture costs one round trip per framework, and a tenant
 // carrying a hundred builtin frameworks (CIS, PCI-DSS, SOC 2) has no business spending
 // a hundred calls on frameworks this app has nothing to say about.
+/**
+ * The cloud-configuration RULE CATALOGUE — Wiz's vocabulary, not this tenant's findings.
+ *
+ * Every field here is proven by the captured response
+ * (exemples/ai_config_rules_response.js): id, name, shortId, subjectEntityType and
+ * externalReferences, and nothing else.
+ *
+ * NO `filterBy`, deliberately. The filter input's type name is unverified, and naming an
+ * input type wrong is a validation error that takes the whole document down — whereas sending
+ * no filter cannot be. The capture looks unfiltered anyway (it carries Tencent, Synapse and
+ * Dockerfile-lint rules beside the AI ones), so this is what produced it.
+ *
+ * It is REFERENCE DATA and the sync treats it as such: ~3,858 rules is ~39 pages at PAGE_SIZE,
+ * against a battery that is otherwise ~10–20 calls. The step is gated on a 30-day freshness
+ * check (see syncJobs.CONFIG_RULES) because this list changes when Wiz ships rules, not when
+ * the estate moves.
+ */
+export const Q_CONFIG_RULES =
+  "query SidekickAiConfigRules($first: Int, $after: String) {\n" +
+  "  cloudConfigurationRules(first: $first, after: $after) {\n" +
+  "    totalCount\n" +
+  "    pageInfo { hasNextPage endCursor }\n" +
+  "    nodes {\n" +
+  "      id\n" +
+  "      name\n" +
+  "      shortId\n" +
+  "      subjectEntityType\n" +
+  "      externalReferences { id name }\n" +
+  "    }\n" +
+  "  }\n" +
+  "}\n";
+
+/**
+ * The $filterBy for the identity-hygiene findings step: the MFA and dormancy rules resolved
+ * from the catalogue, OPEN only.
+ *
+ * `rule` IS THE UNVERIFIED PART OF THIS FILE. The captured ConfigurationFindingFilters carries
+ * `status`, `frameworkCategory` and `resource { projectId, nameV2, region }` — no `rule`. Two
+ * things can go wrong and both are handled elsewhere, because neither can be handled here:
+ *
+ *   rejected        → HTTP 400 → the optional step skips and is recorded. Existing machinery.
+ *   silently ignored → we would walk the tenant's entire CSPM register, which is why
+ *                      normalizeIdentityFindingsPage verifies the first page against the
+ *                      requested ids and aborts rather than collecting the wrong thousand rows.
+ *
+ * No `frameworkCategory`: these rules are IAM hygiene and are not in the AI risk category, so
+ * scoping by it would return nothing. The rule list IS the scope.
+ */
+export function aiIdentityHygieneVariables(
+  ruleIds: readonly string[],
+  scope: string[] | null,
+): { filterBy: unknown; orderBy: unknown } {
+  const filterBy: Record<string, unknown> = {
+    status: ["OPEN"],
+    rule: [...ruleIds],
+  };
+  if (scope && scope.length) filterBy["resource"] = { projectId: scope };
+  return { filterBy, orderBy: { field: "SEVERITY", direction: "DESC" } };
+}
+
+/**
+ * Effective permissions: which people can actually reach an AI asset's data, and through
+ * which policy.
+ *
+ * Trimmed from the console's `IdentityEntitlementsTable` capture. FOUR things dropped, each
+ * for a reason worth keeping written down:
+ *
+ *   issueAnalytics    An `issues(filterBy: …)` join that the console leaves UNGATED here,
+ *                     unlike every other capture in this file — and the entity fragment
+ *                     spreads at six sites, so it is that join six times over. Q_ISSUES
+ *                     already carries a warning about this exact class of AI-analysis join.
+ *   userMetadata      Watchlist / ignore / note. Nothing reads them.
+ *   hasOriginalObject Nothing reads it.
+ *   paths[].path      The intermediate hop chain — the largest multiplier in the document,
+ *                     and the topology IDENTITY_ACCESS already draws as real edges.
+ *
+ * What is kept is the reason to run this at all: `permissions` as real permission strings, and
+ * the principal/resource POLICIES, which are what someone would actually go and change.
+ */
+export const Q_EFFECTIVE_ACCESS =
+  "query SidekickAiEffectiveAccess($first: Int, $after: String, " +
+  "$filterBy: EntityEffectiveAccessFilters) {\n" +
+  "  entityEffectiveAccessEntries(first: $first, after: $after, filterBy: $filterBy) {\n" +
+  "    pageInfo { hasNextPage endCursor }\n" +
+  "    nodes {\n" +
+  "      grantedEntity: grantedEntityV2 { id name type }\n" +
+  "      accessibleResource: accessibleResourceV2 { id name type }\n" +
+  "      accessTypes\n" +
+  "      permissions\n" +
+  "      paths {\n" +
+  "        accessTypes\n" +
+  "        permissions\n" +
+  "        principalPolicies { policy { id name type } }\n" +
+  "        resourcePolicies { policy { id name type } }\n" +
+  "      }\n" +
+  "    }\n" +
+  "  }\n" +
+  "}\n";
+
+/** The $filterBy for Q_EFFECTIVE_ACCESS. Pure — types and scope are parameters. */
+export function effectiveAccessVariables(
+  types: readonly string[],
+  scope: string[] | null,
+): Rec {
+  return { filterBy: effectiveAccessFilter(types, scope) };
+}
+
 export const Q_SECURITY_FRAMEWORKS =
   "query SidekickAiSecurityFrameworks($first: Int, $after: String, $filterBy: SecurityFrameworkFilters) {\n" +
   "  securityFrameworks(first: $first, after: $after, filterBy: $filterBy) {\n" +

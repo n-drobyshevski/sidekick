@@ -10,13 +10,16 @@
 // captured responses when they land in ai/queries/reponse_schemas/).
 
 import { SEVERITY_ORDER, type Severity } from "./config";
+import { toEffectiveAccessRow, type EffectiveAccessRow } from "./effectiveAccess";
 import { HOST_KINDS } from "./exposureQuery";
+import { normalizeAccessType, normalizeIdentityPurpose } from "./identityQuery";
 import {
   AI_ASSET_KINDS,
   edgeId,
   entityField,
   kindFromWizType,
   severityRank,
+  type ConfigRuleRow,
   type DataFindingRow,
   type EmptyPostureReason,
   type FindingRow,
@@ -25,6 +28,8 @@ import {
   type GEdge,
   type GNode,
   type GraphDoc,
+  type HygieneKind,
+  type IdentityFindingRow,
   type IssueRow,
   type PolicyKind,
   type PostureRow,
@@ -87,11 +92,19 @@ export function normalizeCloudResource(raw: Rec): GNode | null {
     hasHighPrivileges: bool(f("hasHighPrivileges")),
     hasAdminPrivileges: bool(f("hasAdminPrivileges")),
   };
-  // Only the principals query selects this flat; on a graphSearch entity it rides in the
-  // properties bag, which is how an agentic identity reached through a traversal keeps its
-  // purpose instead of looking like an ordinary service account.
-  const purpose = str(f("identityPurpose"));
+  // Wiz returns `IdentityPurposeAgentic`, while the FILTER takes `AGENTIC` — one enum that
+  // reads one way and filters another, exactly like DataFindingSeverity. Normalizing here is
+  // what lets an identity reached through a traversal keep its real purpose instead of
+  // looking like an ordinary service account or being stamped with the filter's value.
+  const purpose = normalizeIdentityPurpose(f("identityPurpose"));
   if (purpose) node.identityPurpose = purpose;
+  // Dormancy, on identity rows. Only when the response carried it: absent must stay absent,
+  // because "we never asked" and "in use" are different answers and a dormant identity with
+  // admin access to an agent is the whole point of collecting this.
+  const inactive = f("inactiveInLast90Days");
+  if (inactive === true || inactive === false) node.inactive = inactive;
+  const inactiveTimeframe = str(f("inactiveTimeframe"));
+  if (inactiveTimeframe) node.inactiveTimeframe = inactiveTimeframe;
   // ENDPOINT entities only (aliased to exposureLevel_name / portValidationResult in
   // graphTypes.PROPERTY_ALIASES). Set only when present, so every other kind's row stays
   // exactly as it was — and read from the payload rather than inferred from which query
@@ -165,12 +178,19 @@ export interface NormalizedPart {
   posture: PostureRow[];
   /** The (framework, subcategory, policy) many-to-many edges. */
   frameworkPolicies: FrameworkPolicyRow[];
+  /** Wiz's cloud-configuration rule catalogue (CONFIG_RULES) — reference data. */
+  configRules: ConfigRuleRow[];
+  /** MFA / dormancy findings on human identities (IDENTITY_HYGIENE). */
+  identityFindings: IdentityFindingRow[];
+  /** Effective-permission entries: who can reach an AI asset's data (EFFECTIVE_ACCESS). */
+  effectiveAccess: EffectiveAccessRow[];
 }
 
 export function emptyPart(): NormalizedPart {
   return {
     nodes: [], edges: [], issues: [], findings: [], dataFindings: [],
     frameworks: [], posture: [], frameworkPolicies: [],
+    configRules: [], identityFindings: [], effectiveAccess: [],
   };
 }
 
@@ -193,6 +213,9 @@ export function appendPart(target: NormalizedPart, part: NormalizedPart): void {
   target.frameworks.push(...part.frameworks);
   target.posture.push(...part.posture);
   target.frameworkPolicies.push(...part.frameworkPolicies);
+  target.configRules.push(...part.configRules);
+  target.identityFindings.push(...part.identityFindings);
+  target.effectiveAccess.push(...part.effectiveAccess);
 }
 
 /** True when a part carries nothing at all — on ANY arm. */
@@ -200,7 +223,8 @@ export function partIsEmpty(part: NormalizedPart): boolean {
   return (
     !part.nodes.length && !part.edges.length && !part.issues.length &&
     !part.findings.length && !part.dataFindings.length &&
-    !part.frameworks.length && !part.posture.length && !part.frameworkPolicies.length
+    !part.frameworks.length && !part.posture.length && !part.frameworkPolicies.length &&
+    !part.configRules.length && !part.identityFindings.length && !part.effectiveAccess.length
   );
 }
 
@@ -215,16 +239,28 @@ export function normalizeInventoryPage(rows: Rec[]): NormalizedPart {
 }
 
 /**
- * Agentic-identities page (cloudResourcesV2 filtered by identityPurpose:AGENTIC) →
- * identity nodes flagged AGENTIC. identityPurpose isn't returned by the API (it's a
- * filter), so it's set by construction; issueAnalytics is read by normalizeCloudResource.
+ * Agentic-identities page (cloudResourcesV2 filtered by identityPurpose:AGENTIC) → identity
+ * nodes, now carrying their own purpose and dormancy rather than a stamp.
+ *
+ * The stamp survives only as a FALLBACK, and the change of order matters. This used to read
+ * "identityPurpose isn't returned by the API (it's a filter), so it's set by construction" —
+ * which was true of the SELECTION SET, not of the API: the capture in
+ * exemples/agentic_identities_response.js returns `IdentityPurposeAgentic` in the graph
+ * entity's properties bag, one level below the flat fields this query used to ask for.
+ * Q_PRINCIPALS selects that bag now, so the real value is read where it exists.
+ *
+ * Where it does NOT exist — an older tenant, a rejected `graphEntity` selection — the stamp
+ * still applies, because these rows came back from a purpose-filtered query and dropping the
+ * label would zero `kpis.agenticIdentities` on a tenant that has plenty. That fallback is
+ * also why the filter stays locked in scanVars: it is a claim about the filter, and a widened
+ * filter would relabel every row it collected.
  */
 export function normalizePrincipalsPage(rows: Rec[]): NormalizedPart {
   const part = emptyPart();
   for (const raw of rows) {
     const node = normalizeCloudResource(raw);
     if (!node) continue;
-    node.identityPurpose = "AGENTIC";
+    if (!node.identityPurpose) node.identityPurpose = "AGENTIC";
     part.nodes.push(node);
   }
   return part;
@@ -1162,6 +1198,114 @@ export function withDataFindingCounts(doc: GraphDoc, rows: DataFindingRow[]): Gr
   };
 }
 
+// ------------------------------------------------------- rule catalogue + identity hygiene
+
+/** cloudConfigurationRules page → catalogue rows. Reference data; no nodes, no findings. */
+export function normalizeConfigRulesPage(rows: Rec[]): NormalizedPart {
+  const part = emptyPart();
+  for (const raw of rows) {
+    if (!raw || typeof raw !== "object") continue;
+    const id = str(raw["id"]);
+    const name = str(raw["name"]);
+    // A rule with no id cannot be filtered on and a rule with no name cannot be matched or
+    // glossed — the only two things this catalogue exists to do.
+    if (!id || !name) continue;
+    part.configRules.push({
+      id,
+      shortId: str(raw["shortId"]) ?? "",
+      name,
+      subjectEntityType: str(raw["subjectEntityType"]),
+      externalRefs: idsOf(raw["externalReferences"]),
+    });
+  }
+  return part;
+}
+
+/** Thrown when the tenant accepted the `rule` filter and then ignored it. */
+export class FilterNotHonouredError extends Error {}
+
+/**
+ * configurationFindings page for the identity-hygiene rules → IdentityFindingRows.
+ *
+ * THE FIRST-PAGE VERIFICATION IS THE POINT OF THIS FUNCTION, not a guard bolted onto it.
+ * `ConfigurationFindingFilters.rule` is not proven by any capture. If the tenant REJECTS it we
+ * get an HTTP 400 and the optional step skips itself, which is fine and needs nothing here.
+ * If the tenant IGNORES it we would silently walk its entire CSPM register — thousands of
+ * findings about Synapse workspaces and Dockerfiles — and write them into a tab captioned
+ * "identity hygiene". A page cap would not help: it would collect the wrong thousand rows more
+ * cheaply.
+ *
+ * So a row whose rule is not one we asked for is not skipped, it is fatal to the step: the
+ * only honest readings of that page are "the filter did nothing" and "the catalogue and the
+ * findings disagree about rule ids", and neither can be resolved by keeping a subset.
+ *
+ * `hygiene` is stamped from `ruleKinds`, which is the matcher's verdict rather than anything
+ * Wiz said — see identityHygiene.ts. That is safe here precisely BECAUSE of the check above:
+ * every row is known to have come from a rule the matcher resolved.
+ */
+export function normalizeIdentityFindingsPage(
+  rows: Rec[],
+  ruleKinds: Record<string, HygieneKind>,
+): NormalizedPart {
+  const part = emptyPart();
+  for (const raw of rows) {
+    const id = str(raw["id"]);
+    if (!id) continue;
+    const resource = raw["resource"] as Rec | null | undefined;
+    const resourceId = resource && typeof resource === "object" ? str(resource["id"]) : undefined;
+    const rule = raw["rule"] as Rec | null | undefined;
+    const hasRule = !!rule && typeof rule === "object";
+    const ruleId = hasRule ? str(rule!["id"]) : undefined;
+
+    const hygiene = ruleId ? ruleKinds[ruleId] : undefined;
+    if (!hygiene) {
+      throw new FilterNotHonouredError(
+        "configurationFindings returned rule " + (ruleId ?? "(none)") +
+        ", which was not among the " + Object.keys(ruleKinds).length +
+        " identity-hygiene rules requested — the rule filter was not honoured.",
+      );
+    }
+    // Checked AFTER the filter verification on purpose: a row with no resource still proves
+    // the filter worked, and dropping it before the check would let an unfiltered page pass
+    // whenever its first rows happened to be resource-less.
+    if (!resourceId) continue;
+
+    part.identityFindings.push({
+      id,
+      resourceId,
+      resourceName: str(resource!["name"]),
+      ruleId,
+      ruleShortId: hasRule ? str(rule!["shortId"]) ?? "" : "",
+      ruleName: hasRule ? str(rule!["name"]) : undefined,
+      severity: (str(raw["severity"]) ?? "UNKNOWN") as Severity,
+      status: str(raw["status"]),
+      result: str(raw["result"]),
+      firstSeenAt: str(raw["firstSeenAt"]),
+      analyzedAt: str(raw["analyzedAt"]),
+      remediation: str(raw["remediation"]),
+      hygiene,
+    });
+  }
+  return part;
+}
+
+/**
+ * entityEffectiveAccessEntries page → one row per (identity, AI asset) pair.
+ *
+ * No nodes and no edges. The pair is EVIDENCE about a reach the binding traversal already
+ * draws, and where it finds a pair that traversal missed, `withHumanAccess` records it in its
+ * own field rather than inventing an ALLOWS_ACCESS_TO edge whose accessType would have to be
+ * borrowed from a different vocabulary — see effectiveAccess.ts.
+ */
+export function normalizeEffectiveAccessPage(rows: Rec[]): NormalizedPart {
+  const part = emptyPart();
+  for (const raw of rows) {
+    const row = toEffectiveAccessRow(raw);
+    if (row) part.effectiveAccess.push(row);
+  }
+  return part;
+}
+
 // ---------------------------------------------------------------- network exposure
 
 const HOST_KIND_SET: ReadonlySet<string> = new Set(HOST_KINDS);
@@ -1292,26 +1436,42 @@ export function normalizeEndpointExposurePage(rows: Rec[]): NormalizedPart {
 }
 
 /**
- * graphSearch "identities with high-privilege access to agents" page → identities +
- * agents + the implied identity → ALLOWS_ACCESS_TO → agent edge.
+ * graphSearch "identities with admin or high-privilege access to an AI asset" page →
+ * identities + the asset + the implied identity → ALLOWS_ACCESS_TO → asset edge.
+ *
+ * TWO CHANGES worth knowing, both of which used to make this narrower than it read:
+ *
+ * The root is any AI asset kind, not `AI_AGENT`. The traversal was pinned to agents, so a
+ * model with an admin binding on it and an MCP server a contractor could reach were both
+ * invisible — and nothing said so, because the area had no figure to be wrong.
+ *
+ * `accessType` is READ off the ACCESS_ROLE the traversal selected, not stamped from the
+ * query's filter. Stamping HIGH_PRIVILEGE on every edge flattened ADMIN into it and made
+ * "who is admin on an agent" unanswerable from the ledger. A tenant whose bag omits the field
+ * falls back to the old constant, so nothing regresses where the value is not there.
  */
 export function normalizeIdentityAccessPage(rows: Rec[]): NormalizedPart {
   const part = emptyPart();
   for (const row of rows) {
     const entities = entitiesOf(row);
-    const agent = entities.find((e) => e.kind === "AI_AGENT");
+    const asset = entities.find((e) => (AI_ASSET_KINDS as readonly string[]).includes(e.kind));
     const identities = entities.filter(
       (e) => e.kind === "USER_ACCOUNT" || e.kind === "SERVICE_ACCOUNT" || e.kind === "ACCESS_ROLE",
     );
     part.nodes.push(...entities);
-    if (!agent) continue;
+    if (!asset) continue;
+    // One row is one binding, so one role — read from the raw entity, since a GNode has no
+    // access level of its own (it is a fact about the grant, not about the identity).
+    const rawRole = rawEntitiesOf(row).find((e) => kindFromWizType(e["type"]) === "ACCESS_ROLE");
+    const accessType = (rawRole ? normalizeAccessType(entityField(rawRole, "accessType")) : undefined)
+      ?? "HIGH_PRIVILEGE";
     for (const identity of identities) {
       part.edges.push({
-        id: edgeId(identity.id, "ALLOWS_ACCESS_TO", agent.id),
+        id: edgeId(identity.id, "ALLOWS_ACCESS_TO", asset.id),
         src: identity.id,
-        dst: agent.id,
+        dst: asset.id,
         type: "ALLOWS_ACCESS_TO",
-        accessType: "HIGH_PRIVILEGE",
+        accessType: accessType as GEdge["accessType"],
       });
     }
   }
@@ -1327,6 +1487,9 @@ export function mergeParts(parts: NormalizedPart[], syncedAt: string): {
   frameworks: FrameworkRow[];
   posture: PostureRow[];
   frameworkPolicies: FrameworkPolicyRow[];
+  configRules: ConfigRuleRow[];
+  identityFindings: IdentityFindingRow[];
+  effectiveAccess: EffectiveAccessRow[];
 } {
   const nodes = new Map<string, GNode>();
   const edges = new Map<string, GEdge>();
@@ -1340,6 +1503,11 @@ export function mergeParts(parts: NormalizedPart[], syncedAt: string): {
   // collapses, which is the one thing this whole table exists to preserve.
   const posture = new Map<string, PostureRow>();
   const frameworkPolicies = new Map<string, FrameworkPolicyRow>();
+  const configRules = new Map<string, ConfigRuleRow>();
+  const identityFindings = new Map<string, IdentityFindingRow>();
+  // Keyed by the PAIR, not by an id — an effective-access entry has none, and (identity,
+  // resource) is what it asserts. A tenant returning the same pair on two pages is one fact.
+  const effectiveAccess = new Map<string, EffectiveAccessRow>();
   for (const part of parts) {
     for (const node of part.nodes) {
       const prev = nodes.get(node.id);
@@ -1374,6 +1542,11 @@ export function mergeParts(parts: NormalizedPart[], syncedAt: string): {
         p,
       );
     }
+    for (const r of part.configRules ?? []) configRules.set(r.id, r);
+    for (const f of part.identityFindings ?? []) identityFindings.set(f.id, f);
+    for (const e of part.effectiveAccess ?? []) {
+      effectiveAccess.set(`${e.identityId}|${e.resourceId}`, e);
+    }
   }
   return {
     doc: { nodes: [...nodes.values()], edges: [...edges.values()], syncedAt },
@@ -1385,6 +1558,9 @@ export function mergeParts(parts: NormalizedPart[], syncedAt: string): {
     frameworks: [...frameworks.values()],
     posture: [...posture.values()],
     frameworkPolicies: [...frameworkPolicies.values()],
+    configRules: [...configRules.values()],
+    identityFindings: [...identityFindings.values()],
+    effectiveAccess: [...effectiveAccess.values()],
   };
 }
 

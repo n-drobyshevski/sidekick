@@ -14,9 +14,10 @@
 
 import { gap } from "../domain/aars";
 import type { AarsHints } from "../domain/graphEnrich";
+import type { EffectiveAccessRow } from "../domain/effectiveAccess";
 import type {
-  DataFindingRow, FindingRow, FrameworkPolicyRow, FrameworkRow, GEdge, GNode, GraphDoc,
-  IssueRow, NodeKind, PostureRow,
+  ConfigRuleRow, DataFindingRow, FindingRow, FrameworkPolicyRow, FrameworkRow, GEdge, GNode,
+  GraphDoc, IdentityFindingRow, IssueRow, NodeKind, PostureRow,
 } from "../domain/graphTypes";
 import { edgeId } from "../domain/graphTypes";
 import { classifyIssue, OTHER_GROUP_ID } from "../domain/toxicCombos";
@@ -47,6 +48,8 @@ interface NodeSeed {
   exposureLevel?: string;
   portValidation?: string;
   exposureEvidence?: GNode["exposureEvidence"];
+  inactive?: boolean;
+  inactiveTimeframe?: string;
 }
 
 function node(seed: NodeSeed): GNode {
@@ -77,6 +80,8 @@ function node(seed: NodeSeed): GNode {
     exposureLevel: seed.exposureLevel,
     portValidation: seed.portValidation,
     exposureEvidence: seed.exposureEvidence,
+    inactive: seed.inactive,
+    inactiveTimeframe: seed.inactiveTimeframe,
   };
 }
 
@@ -374,10 +379,30 @@ for (let i = 1; i <= 14; i++) {
   extraNodes.push({ id, kind: "BUCKET", name: `bucket-autogen-scratch-${n}`, cloud: "GCP", region: "us-west1", projects: ["PROJECT-BETA"] });
   edges.push(edge("sa-agent-autogen", "ALLOWS_ACCESS_TO", id, "WRITE"));
 }
+// Twelve operators on the customer-facing chatbot, two of them admins — and the READ ten are
+// there to be excluded. A live IDENTITY_ACCESS sync only ever returns ADMIN and
+// HIGH_PRIVILEGE bindings, so a figure that counted all twelve would read as "human reach"
+// while meaning something no tenant can reproduce.
+//
+// One admin is DORMANT. That pairing is the whole reason identity dormancy is collected: an
+// account nobody has used in ninety days that still holds admin on an internet-reachable
+// agent is a backdoor with no one watching it. `user-ops-02` is deliberately the inactive
+// one, and `user-ops-03` carries an explicit `inactive: false` so the dry run exercises
+// "reported active" as well as "reported dormant" and "never reported".
 for (let i = 1; i <= 12; i++) {
   const n = String(i).padStart(2, "0");
   const id = `user-ops-${n}`;
-  extraNodes.push({ id, kind: "USER_ACCOUNT", name: `ops.user${n}@example.com`, cloud: "GCP" });
+  const seed: NodeSeed = {
+    id, kind: "USER_ACCOUNT", name: `ops.user${n}@example.com`, cloud: "GCP",
+  };
+  if (i === 2) {
+    seed.inactive = true;
+    seed.inactiveTimeframe = "Inactive90Days";
+  } else if (i === 3) {
+    seed.inactive = false;
+    seed.inactiveTimeframe = "Active";
+  }
+  extraNodes.push(seed);
   edges.push(edge(id, "ALLOWS_ACCESS_TO", "agent-h-chatbot", i <= 2 ? "ADMIN" : "READ"));
 }
 
@@ -1220,4 +1245,142 @@ export const SEED_TREND: Array<Record<string, number>> = [
   { CRITICAL: 3, HIGH: 17, MEDIUM: 0, LOW: 3, INFO: 8 },
   { CRITICAL: 2, HIGH: 17, MEDIUM: 0, LOW: 3, INFO: 8 },
   { CRITICAL: 2, HIGH: 17, MEDIUM: 0, LOW: 3, INFO: 8 },
+];
+
+// ----------------------------------------------- rule catalogue + identity hygiene (dry-run)
+//
+// A HANDFUL of rules, not a sample of 3,858. The catalogue's job in the dry run is to prove
+// three things work — the shortId gloss, the hygiene name matchers, and the subject-type
+// guard — and each of these rows is here because it exercises one of them.
+//
+// The last row is the important one. `IDP-012` matches the MFA pattern and is evaluated
+// against an IDENTITY_PROVIDER: a real finding, and not one that says anything about whether
+// a PERSON has MFA. It is seeded precisely so the subject guard in identityHygiene.hygieneKindOf
+// has something to reject in the dry run rather than only in a unit test.
+export const SEED_CONFIG_RULES: ConfigRuleRow[] = [
+  {
+    id: "rule-iam-159",
+    shortId: "IAM-159",
+    name: "User should have MFA enabled",
+    subjectEntityType: "USER_ACCOUNT",
+    externalRefs: [],
+  },
+  {
+    id: "rule-iam-208",
+    shortId: "IAM-208",
+    name: "User with password-based authentication should have multi-factor authentication (MFA) enabled",
+    subjectEntityType: "USER_ACCOUNT",
+    externalRefs: [],
+  },
+  {
+    id: "rule-iam-235",
+    shortId: "IAM-235",
+    name: "User should not be inactive for more than 90 days",
+    subjectEntityType: "USER_ACCOUNT",
+    externalRefs: [],
+  },
+  {
+    // The gloss the AARS cascade has always lacked: SEED_FINDINGS prices SUB-082 and the
+    // codebook has never been able to render what it means.
+    id: "rule-sub-082",
+    shortId: "SUB-082",
+    name: "Vertex AI Metadata Store should be encrypted with a customer-managed key",
+    subjectEntityType: "REGION",
+    externalRefs: ["CKV_GCP_96", "CKV2_GCP_25"],
+  },
+  {
+    id: "rule-idp-012",
+    shortId: "IDP-012",
+    name: "WorkSpaces Directory should have multi-factor authentication enabled",
+    subjectEntityType: "IDENTITY_PROVIDER",
+    externalRefs: [],
+  },
+];
+
+/**
+ * Hygiene findings on two of the twelve operators who can reach agent-H-chatbot.
+ *
+ * `user-ops-01` is an ADMIN on that agent and has no MFA — the pairing the whole feature
+ * exists to surface. `user-ops-02` is the other admin and is the one already seeded dormant,
+ * so its dormancy shows up twice by two different routes (the identity's own
+ * `inactiveInLast90Days` flag and Wiz's IAM-235 rule) and the page must not double-count it.
+ *
+ * `user-ops-05` holds only READ, so it is NOT reachable by this register's definition — it is
+ * seeded to prove the intersection is real: a person with no MFA who cannot reach an AI asset
+ * is an IAM problem and must not reach this app's count.
+ */
+export const SEED_IDENTITY_FINDINGS: IdentityFindingRow[] = [
+  {
+    id: "idf-001",
+    resourceId: "user-ops-01",
+    resourceName: "ops.user01@example.com",
+    ruleId: "rule-iam-159",
+    ruleShortId: "IAM-159",
+    ruleName: "User should have MFA enabled",
+    severity: "HIGH",
+    status: "OPEN",
+    result: "FAIL",
+    firstSeenAt: "2026-05-02T09:14:00Z",
+    analyzedAt: "2026-08-13T04:00:00Z",
+    remediation: "Enrol this account in multi-factor authentication.",
+    hygiene: "MFA",
+  },
+  {
+    id: "idf-002",
+    resourceId: "user-ops-02",
+    resourceName: "ops.user02@example.com",
+    ruleId: "rule-iam-235",
+    ruleShortId: "IAM-235",
+    ruleName: "User should not be inactive for more than 90 days",
+    severity: "MEDIUM",
+    status: "OPEN",
+    result: "FAIL",
+    firstSeenAt: "2026-04-18T11:02:00Z",
+    analyzedAt: "2026-08-13T04:00:00Z",
+    remediation: "Disable or remove accounts that are no longer in use.",
+    hygiene: "DORMANT",
+  },
+  {
+    id: "idf-003",
+    resourceId: "user-ops-05",
+    resourceName: "ops.user05@example.com",
+    ruleId: "rule-iam-159",
+    ruleShortId: "IAM-159",
+    ruleName: "User should have MFA enabled",
+    severity: "HIGH",
+    status: "OPEN",
+    result: "FAIL",
+    firstSeenAt: "2026-05-02T09:14:00Z",
+    analyzedAt: "2026-08-13T04:00:00Z",
+    hygiene: "MFA",
+  },
+];
+
+/**
+ * Effective access: what those people can actually do, and through which policy.
+ *
+ * `user-ops-01` appears here AND in the binding topology — the same person by two routes, who
+ * must be counted once. `user-ops-07` appears ONLY here, holding a READ binding the
+ * identity-access traversal never returns: effective access finding a pair the binding
+ * traversal missed is the point of running it, and it still counts as reach.
+ */
+export const SEED_EFFECTIVE_ACCESS: EffectiveAccessRow[] = [
+  {
+    identityId: "user-ops-01",
+    identityName: "ops.user01@example.com",
+    resourceId: "agent-h-chatbot",
+    accessTypes: ["DATA"],
+    permissions: ["aiplatform.endpoints.predict", "storage.objects.get"],
+    policyIds: ["policy-ops-admin"],
+    policyNames: ["ops-admin-binding"],
+  },
+  {
+    identityId: "user-ops-07",
+    identityName: "ops.user07@example.com",
+    resourceId: "agent-h-chatbot",
+    accessTypes: ["DATA"],
+    permissions: ["storage.objects.get"],
+    policyIds: ["policy-ops-reader"],
+    policyNames: ["ops-reader-binding"],
+  },
 ];

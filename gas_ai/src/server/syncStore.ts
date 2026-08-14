@@ -12,6 +12,7 @@ import {
   withDataFindingNodes,
   withExcessivePrivilegeNodes,
   withExposureEvidence,
+  withHumanAccess,
   withIdentityAccessNodes,
   withInternetExposureNodes,
   withMissingGuardrailNodes,
@@ -20,9 +21,10 @@ import {
 } from "../domain/graphEnrich";
 import { withDataFindingCounts } from "../domain/syncNormalize";
 import type {
-  DataFindingRow, FindingRow, FrameworkPolicyRow, FrameworkRow, GEdge, GNode, GraphDoc,
-  IssueRow, NodeKind, PostureRow,
+  ConfigRuleRow, DataFindingRow, FindingRow, FrameworkPolicyRow, FrameworkRow, GEdge, GNode,
+  GraphDoc, IdentityFindingRow, IssueRow, NodeKind, PostureRow,
 } from "../domain/graphTypes";
+import type { EffectiveAccessRow } from "../domain/effectiveAccess";
 import { edgeId } from "../domain/graphTypes";
 import { aarsSeverity, type AarsBands, type AarsRule } from "../domain/aars";
 import { isUnresolvedIssue, normalizeAarsSeverity } from "../domain/config";
@@ -104,6 +106,11 @@ export function assetToRow(n: GNode): Rec {
     // and found clean. conditionState falls through to the flags for the first and would
     // have to keep falling through for the second — but only one of them is honest about it.
     exposure_evidence_json: n.exposureEvidence ? JSON.stringify(n.exposureEvidence) : null,
+    // `?? null`, never `?? false`: an identity row the tenant reported no dormancy for must
+    // read back as undefined. "Not reported" and "in use" are different answers.
+    inactive: n.inactive === undefined ? null : boolCell(n.inactive),
+    inactive_timeframe: n.inactiveTimeframe ?? null,
+    human_access_json: n.humanAccess ? JSON.stringify(n.humanAccess) : null,
   };
 }
 
@@ -170,6 +177,14 @@ export function rowToAsset(r: Rec): GNode {
   // as it did before the exposure steps were added.
   const evidence = parseJson<GNode["exposureEvidence"] | null>(r["exposure_evidence_json"], null);
   if (evidence) node.exposureEvidence = evidence;
+  // parseTri rather than parseBool: an empty cell is "not reported", and reading it as false
+  // would report every identity in a pre-upgrade ledger as demonstrably in use.
+  const inactive = parseTri(r["inactive"]);
+  if (inactive !== null) node.inactive = inactive;
+  const inactiveTimeframe = (r["inactive_timeframe"] as string | null) ?? null;
+  if (inactiveTimeframe) node.inactiveTimeframe = inactiveTimeframe;
+  const humanAccess = parseJson<GNode["humanAccess"] | null>(r["human_access_json"], null);
+  if (humanAccess) node.humanAccess = humanAccess;
   return node;
 }
 
@@ -447,6 +462,65 @@ export function rowToFramework(r: Rec): FrameworkRow {
   };
 }
 
+export function configRuleToRow(r: ConfigRuleRow): Rec {
+  return {
+    id: r.id,
+    short_id: r.shortId,
+    name: r.name,
+    subject_entity_type: r.subjectEntityType ?? "",
+    external_refs: (r.externalRefs ?? []).join(","),
+  };
+}
+
+export function rowToConfigRule(r: Rec): ConfigRuleRow {
+  return {
+    id: String(r["id"] ?? ""),
+    shortId: String(r["short_id"] ?? ""),
+    name: String(r["name"] ?? ""),
+    subjectEntityType: String(r["subject_entity_type"] ?? "") || undefined,
+    externalRefs: String(r["external_refs"] ?? "").split(",").filter(Boolean),
+  };
+}
+
+export function identityFindingToRow(f: IdentityFindingRow): Rec {
+  return {
+    id: f.id,
+    resource_id: f.resourceId,
+    resource_name: f.resourceName ?? null,
+    rule_id: f.ruleId ?? null,
+    rule_short_id: f.ruleShortId,
+    rule_name: f.ruleName ?? null,
+    severity: f.severity,
+    status: f.status ?? null,
+    result: f.result ?? null,
+    first_seen_at: f.firstSeenAt ?? null,
+    analyzed_at: f.analyzedAt ?? null,
+    remediation: f.remediation ?? null,
+    hygiene: f.hygiene,
+  };
+}
+
+export function rowToIdentityFinding(r: Rec): IdentityFindingRow {
+  return {
+    id: String(r["id"] ?? ""),
+    resourceId: String(r["resource_id"] ?? ""),
+    resourceName: (r["resource_name"] as string | null) ?? undefined,
+    ruleId: (r["rule_id"] as string | null) ?? undefined,
+    ruleShortId: String(r["rule_short_id"] ?? ""),
+    ruleName: (r["rule_name"] as string | null) ?? undefined,
+    severity: (String(r["severity"] ?? "UNKNOWN")) as Severity,
+    status: (r["status"] as string | null) ?? undefined,
+    result: (r["result"] as string | null) ?? undefined,
+    firstSeenAt: (r["first_seen_at"] as string | null) ?? undefined,
+    analyzedAt: (r["analyzed_at"] as string | null) ?? undefined,
+    remediation: (r["remediation"] as string | null) ?? undefined,
+    // Defaulted rather than validated: the column is written by this app from the matcher's
+    // verdict, so an unrecognised value means a hand-edited cell, and MFA is the reading that
+    // over-reports rather than under-reports.
+    hygiene: (String(r["hygiene"] ?? "MFA") === "DORMANT" ? "DORMANT" : "MFA"),
+  };
+}
+
 /**
  * A posture cell's percentage, round-tripped through a Sheets cell.
  *
@@ -593,6 +667,14 @@ export function persistSync(
   frameworks: FrameworkRow[] = [],
   posture: PostureRow[] = [],
   frameworkPolicies: FrameworkPolicyRow[] = [],
+  // One object rather than three more positionals. This signature is already ten arguments
+  // long and the next caller to get the order wrong would do it silently; these three arrived
+  // together and are read together, so they travel together.
+  extras: {
+    configRules?: ConfigRuleRow[];
+    identityFindings?: IdentityFindingRow[];
+    effectiveAccess?: EffectiveAccessRow[];
+  } = {},
 ): GraphDoc {
   const { version: ruleVersion, rule } = settingsStore.getAarsRule();
   // Counts first: pillar C prices them, so they have to be on the nodes before enrichment.
@@ -603,7 +685,16 @@ export function persistSync(
   // is computed, and a score computed from an un-joined node would price a hosted agent as
   // UNDETERMINED forever.
   const exposed = withExposureEvidence(counted);
-  const enriched = enrichGraphDoc(exposed, issues, hints, rule);
+  // Human reach, same reasoning one step further: it is an edge fact that the tab-direct read
+  // models can never see, so it is joined onto the asset before anything reads a number off
+  // one. It prices no pillar, so its position relative to enrichment is not load-bearing —
+  // it sits here to keep the "join what was synced, then enrich" order true of the whole
+  // sequence rather than of two thirds of it.
+  const reachable = withHumanAccess(exposed, {
+    identityFindings: extras.identityFindings ?? [],
+    effectiveAccess: extras.effectiveAccess ?? [],
+  });
+  const enriched = enrichGraphDoc(reachable, issues, hints, rule);
 
   // Tabs hold the real (non-synthetic) nodes; ISSUE nodes are derivable from ai_issues.
   const assetNodes = realNodes(enriched.nodes);
@@ -627,6 +718,15 @@ export function persistSync(
   if (frameworkPolicies.length) {
     overwrite(TABS.frameworkPolicies, frameworkPolicies.map(frameworkPolicyToRow));
   }
+  // Conditional for the same reason the three above are, and for one more: CONFIG_RULES is
+  // SKIPPED BY DESIGN on most syncs (the monthly freshness gate), so an unconditional
+  // overwrite would delete the catalogue every day and restore it once a month.
+  const configRules = extras.configRules ?? [];
+  if (configRules.length) overwrite(TABS.configRules, configRules.map(configRuleToRow));
+  // NOT conditional. This one is queried on every sync, so empty really does mean the tenant
+  // has no open identity-hygiene findings — and a register still saying three people lack MFA
+  // after they have all fixed it is worse than an empty one.
+  overwrite(TABS.identityFindings, (extras.identityFindings ?? []).map(identityFindingToRow));
 
   const snapshotRef = writeGraphSnapshot(enriched);
 
@@ -759,6 +859,8 @@ let dataFindingsMemo: DataFindingRow[] | undefined;
 let frameworksMemo: FrameworkRow[] | undefined;
 let postureMemo: PostureRow[] | undefined;
 let frameworkPoliciesMemo: FrameworkPolicyRow[] | undefined;
+let configRulesMemo: ConfigRuleRow[] | undefined;
+let identityFindingsMemo: IdentityFindingRow[] | undefined;
 
 function invalidateReadMemos(): void {
   graphDocMemo = undefined;
@@ -769,6 +871,8 @@ function invalidateReadMemos(): void {
   frameworksMemo = undefined;
   postureMemo = undefined;
   frameworkPoliciesMemo = undefined;
+  configRulesMemo = undefined;
+  identityFindingsMemo = undefined;
 }
 
 /**
@@ -937,6 +1041,25 @@ export function loadDataFindings(): DataFindingRow[] {
 export function loadFrameworks(): FrameworkRow[] {
   if (frameworksMemo === undefined) frameworksMemo = readAll(TABS.frameworks).map(rowToFramework);
   return frameworksMemo;
+}
+
+/**
+ * The rule catalogue. Read far more often than it is written — the hygiene matchers resolve
+ * against it at every step build, and the shortId gloss reads it on every render — which is
+ * the other half of the argument for the monthly refresh gate.
+ */
+export function loadConfigRules(): ConfigRuleRow[] {
+  if (configRulesMemo === undefined) {
+    configRulesMemo = readAll(TABS.configRules).map(rowToConfigRule);
+  }
+  return configRulesMemo;
+}
+
+export function loadIdentityFindings(): IdentityFindingRow[] {
+  if (identityFindingsMemo === undefined) {
+    identityFindingsMemo = readAll(TABS.identityFindings).map(rowToIdentityFinding);
+  }
+  return identityFindingsMemo;
 }
 
 export function loadPosture(): PostureRow[] {

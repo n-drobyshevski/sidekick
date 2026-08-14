@@ -149,3 +149,13 @@ export function setScoredRuleVersion(version: unknown): void {
   if (logic.getScoredRuleVersion(next) === logic.getScoredRuleVersion(settings)) return;
   saveSettings(next);
 }
+
+/** Whether the rule catalogue is fresh enough to skip re-collecting. */
+export function configRulesAreFresh(hasRows: boolean, now: number): boolean {
+  return logic.configRulesAreFresh(loadSettings(), hasRows, now);
+}
+
+/** Stamp the catalogue as collected. Called only when CONFIG_RULES actually ran. */
+export function setConfigRulesSyncedAt(at: number): void {
+  saveSettings(logic.withConfigRulesSyncedAt(loadSettings(), at));
+}

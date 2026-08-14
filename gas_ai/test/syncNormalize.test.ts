@@ -124,15 +124,21 @@ describe("normalizeCloudResource on a graphSearch entity", () => {
     expect(node.isOpenToAllInternet).toBe(false);        // openToAllInternet
   });
 
-  it("carries identityPurpose off a traversed identity", () => {
+  it("carries identityPurpose off a traversed identity, in the app's own spelling", () => {
     // The SERVICE_ACCOUNT in the capture has identityPurpose in its bag. Before this, only
     // the principals query could set it, so an agentic identity reached through a
     // traversal looked like any other service account.
+    //
+    // It is now NORMALIZED, and that closes a second gap this test used to pin open. Wiz
+    // returns `IdentityPurposeAgentic` while the filter takes `AGENTIC`, and every consumer
+    // compares against the short form — `kpis.agenticIdentities` is
+    // `identityPurpose === "AGENTIC"`. So a traversal-reached agentic identity carried a
+    // purpose that no reader recognised: labelled in the ledger, uncounted on the page.
     const node = normalizeCloudResource({
       id: "sa-1", name: "sa", type: "SERVICE_ACCOUNT",
       properties: { identityPurpose: "IdentityPurposeAgentic", region: "europe-west1" },
     })!;
-    expect(node.identityPurpose).toBe("IdentityPurposeAgentic");
+    expect(node.identityPurpose).toBe("AGENTIC");
     expect(node.region).toBe("europe-west1");
   });
 
