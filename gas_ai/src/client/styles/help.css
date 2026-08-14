@@ -20,28 +20,38 @@
    - `.help-glyph` / `.help-cat-swatch` take their colours from the same tokens the graph
      and the coverage page use, so a mark here and the mark it teaches cannot drift apart. */
 
-/* ------------------------------------------------- the reading column and the index rail */
-/* 1080px, not the pane. The figure is 640 wide and the entry grid is mark + definition +
-   count; past about this width the count strands itself at the far edge of the screen and
-   a row stops reading as one statement.
+/* ------------------------------------------------- the document column and the index rail */
+/* The page spans the pane, like every other page in this app. base.css:275 already made
+   this call for `main` itself — it used to stop at 1200px, "which on a wide monitor left a
+   third of the viewport empty AND clipped the inventory table's right-hand columns — dead
+   space and lost data at the same time. Line length is governed where it belongs instead:
+   on the prose itself (--measure)." Help was the one page that did not follow it, and a
+   1080px cap left ~600px of the pane unused at 1920.
 
-   The index rail then lives in width that decision was ALREADY leaving unused, so the
-   reading measure is unchanged by it. 1440px is where that is literally true rather than
-   nearly true: with the sidebar collapsed (its default, 56px) the pane offers
-   1440 - 56 - 64 = 1320px against a 1080 + 36 + 196 = 1312px layout, so the rail costs the
-   reading column nothing at all. Expanded, the column gives up width and still clears the
-   84ch measure the prose is capped at anyway. Below the breakpoint the rail is
-   display:none — which means no observer and no tab stops, and which wireIndex()'s
-   `offsetParent` guard depends on (visibility:hidden would not do).
+   Line length is still governed, in the two places that actually govern it:
 
-   help.js's matchMedia("(min-width: 1440px)") is this number's twin. Change both. */
+   1. Running text carries `max-width: var(--measure)` — the definition, the notes, the
+      lede. That is the rule DESIGN.md states and every sibling page keeps.
+   2. A ROW caps its content column at the measure and puts its right-hand cell straight
+      after it, with a trailing minmax(0, 1fr) gutter to swallow the surplus. Without that
+      gutter a `1fr` middle column grows to the pane while the text inside it stops at
+      84ch, and at 1700px the count would sit ~800px from the definition it belongs to —
+      "two facts, not one row", which is what the old page-level cap was really protecting
+      against. Capping the row rather than the page fixes it at every width, including the
+      ones the cap used to allow.
+
+   The rail appears at 1200px: with the sidebar collapsed (its default, 56px) the pane
+   offers 1200 - 56 - 64 = 1080px, leaving 1080 - 196 - 36 = 848px of document, comfortably
+   past the measure. Below that it is display:none — which means no tab stops, and which
+   wireIndex()'s `offsetParent` guard depends on: visibility:hidden would leave an
+   offsetParent and light a section nobody can see. */
 .help-page { display: grid; grid-template-columns: minmax(0, 1fr); }
-.help-doc { min-width: 0; max-width: 1080px; }
+.help-doc { min-width: 0; }
 .help-index { display: none; }
 
-@media (min-width: 1440px) {
+@media (min-width: 1200px) {
   .help-page {
-    grid-template-columns: minmax(0, 1080px) 196px;
+    grid-template-columns: minmax(0, 1fr) 196px;
     column-gap: 36px;
     align-items: start;
   }
@@ -150,7 +160,11 @@
    both a target nobody can hit and a control nested inside a row that is not one. */
 .help-map { display: flex; flex-direction: column; }
 .help-map-item {
-  display: grid; grid-template-columns: 30px minmax(0, 1fr) 16px;
+  display: grid;
+  /* The chevron rides beside the question, not at the far edge of the pane — this row's
+     own comment above names that failure, and a full-width page is exactly where it would
+     otherwise happen. */
+  grid-template-columns: 30px minmax(0, var(--measure)) 16px minmax(0, 1fr);
   gap: 14px; align-items: center;
   width: 100%; text-align: left; padding: 11px 10px; margin: 0; min-height: 0;
   background: none; border: none; box-shadow: none; border-radius: var(--radius-md);
@@ -182,7 +196,9 @@
    wears the app's own status pill — this was the one block reporting STATE without using
    the state component. */
 .help-limit-row {
-  display: grid; grid-template-columns: minmax(104px, auto) minmax(110px, 150px) 1fr;
+  display: grid;
+  grid-template-columns:
+    minmax(104px, auto) minmax(110px, 150px) minmax(0, var(--measure)) minmax(0, 1fr);
   gap: 8px 14px; align-items: baseline;
   padding: 9px 0; border-bottom: 1px solid var(--hairline);
 }
@@ -193,7 +209,9 @@
 .help-limit-row .pill::before { display: none; }
 .help-limit-row .pill { gap: 5px; }
 .help-limit-name { font-weight: 600; }
-.help-limit-note { color: var(--text-2); }
+/* The note is the longest running text on the page after a definition, and it had no cap
+   at all — in a 1fr column it already overran the measure at 1080px. */
+.help-limit-note { color: var(--text-2); max-width: var(--measure); }
 .help-limits-src { margin: 10px 0 0; font-size: 12px; color: var(--text-3); max-width: var(--measure); }
 .help-limits-none {
   display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
@@ -334,8 +352,18 @@
    never moves when a count lands. */
 .help-family-n { letter-spacing: 0; color: var(--text-3); }
 
+/* mark | definition | count | gutter. The definition column is capped at the measure and
+   the count follows it immediately, so the number stays beside the term it counts however
+   wide the pane gets; the last track swallows the surplus. Both caps are kept on purpose:
+   `ch` resolves against each element's own font-size, so --measure on this 14px grid is a
+   slightly wider box than --measure on the 12.5px definition inside it. The column bounds
+   the cell, the definition bounds its own text, and the few dozen pixels between them are
+   the difference between "beside" and the ~800px of dead space a 1fr column would open at
+   1700. */
 .help-entry {
-  display: grid; grid-template-columns: 92px minmax(0, 1fr) minmax(150px, 190px);
+  display: grid;
+  grid-template-columns:
+    92px minmax(0, var(--measure)) minmax(150px, 190px) minmax(0, 1fr);
   gap: 16px; align-items: start;
   padding: 14px 0; border-bottom: 1px solid var(--hairline);
   border-radius: var(--radius-md);
