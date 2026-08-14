@@ -19,12 +19,25 @@ import {
   clear, codeBlock, copyButton, el, openSheet, plural, sheetSection, toast,
 } from "../ui.js";
 
-/** Ledger tab → the page that reads it, for the "lands in" leg of the provenance chain. */
+/**
+ * Ledger tab → the page that reads it, for the "lands in" leg of the provenance chain.
+ *
+ * A tab missing from here degrades to no gloss rather than to a wrong one, which is why
+ * five of these were absent for a release without anything breaking: the posture steps were
+ * tagged to the configuration-findings area, so their tabs never reached this table.
+ */
 const WRITES_LABEL = {
   ai_assets: "the asset register",
   ai_edges: "the graph",
   ai_issues: "toxic combinations",
   ai_findings: "compliance findings",
+  ai_frameworks: "the Settings framework picker",
+  ai_framework_posture: "compliance posture",
+  ai_framework_policies: "compliance posture",
+  // Reference data rather than a screen: the rule catalogue is what glosses an opaque
+  // control id wherever one is shown, so it has no page of its own to name.
+  ai_config_rules: "the rule catalogue",
+  ai_identity_findings: "identity hygiene on the graph",
 };
 
 function writesLabel(writes) {

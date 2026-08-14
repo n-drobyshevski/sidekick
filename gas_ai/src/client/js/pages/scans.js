@@ -2,18 +2,21 @@
 // this tenant actually reports, and which screen each answer lands on.
 //
 // The page reads in three parts. A posture header states coverage as one number. A
-// provenance diagram draws the path — nine queries, one sync, four screens — with each
-// node carrying the state its resolver earned. A register underneath carries the auditable
-// detail, one row per area, opening a detail sheet with the prose and the query.
+// provenance diagram draws the path — every scan area, one sync, the screens they land on
+// — with each node carrying the state its resolver earned. A register underneath carries
+// the auditable detail, one row per area, opening a detail sheet with the prose and the
+// query. (Counts are deliberately absent from the prose in this file; see the note on the
+// header sentence below for what happens when they are not.)
 //
 // Two deliberate calls worth knowing before you edit this file:
 //
 // 1. THE DIAGRAM IS role="img", AND THE REGISTER IS ITS KEYBOARD PATH. The register holds
 //    every tab stop; the SVG is a labelled picture that a screen reader never enters. The
 //    graph page earns its roving-tabindex canvas because the thing it draws is unbounded
-//    and is the only view of that data. Here the whole content is nine rows that are also
-//    on screen as a table — a second, different keyboard model for the same nine facts is
-//    the invented control PRODUCT.md warns about. The link runs the other way instead:
+//    and is the only view of that data. Here the whole content is one row per area, and
+//    those rows are already on screen as a table — a second, different keyboard model for
+//    the same facts is the invented control PRODUCT.md warns about. The link runs the
+//    other way instead:
 //    hovering or focusing a register row lights its node and its edges.
 //
 // 2. COVERAGE IS NOT SEVERITY, so it does not borrow the severity components. sevSegmentBar
@@ -92,9 +95,9 @@ export async function renderScans(main, params, ctx) {
   }
   assets = settled[0].value;
 
-  // A page about coverage that blanks itself because one of its nine areas failed is
-  // telling the wrong story. The toxic area resolves to `partial` on its own, and the
-  // failure is named in its detail sheet rather than swallowed.
+  // A page about coverage that blanks itself because one of its areas failed is telling
+  // the wrong story. The toxic area resolves to `partial` on its own, and the failure is
+  // named in its detail sheet rather than swallowed.
   if (settled[1].status === "fulfilled") combos = settled[1].value;
   else combosError = String((settled[1].reason && settled[1].reason.message) || settled[1].reason);
   // The queries are drill-down detail, not the page. Losing them costs the panel its query
@@ -288,15 +291,16 @@ const DIA = {
   top: 14,
   bottom: 12,
   // One line per source. The figure sits on the title's row, right-aligned, so a node is a
-  // row rather than a card — which is what takes the height out: nine two-line cards ran
-  // 414px of node before any padding, nine rows run 230.
+  // row rather than a card — which is what takes the height out: a two-line card ran 46px
+  // of node before any padding, a row runs 22. Stated PER NODE rather than as a total,
+  // because a total is a number that goes stale the next time an area is added.
   nodeH: 22,
   gap: 4,
   destH: 40,
   // The spine is a WAIST, not a wall. It stands shorter than the run of sources and takes
-  // their edges through the middle of its face, so the picture reads as nine things
+  // their edges through the middle of its face, so the picture reads as many things
   // converging into one — which is what a sync is. Distributing the entry points across
-  // the full height instead drew nine parallel lines that happened to stop at a box.
+  // the full height instead drew a row of parallel lines that happened to stop at a box.
   spineSpan: 0.62,
   spineMinH: 92,
   inFan: 0.62,

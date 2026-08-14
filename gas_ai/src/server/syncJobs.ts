@@ -203,7 +203,7 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
     // Real compliance findings (configurationFindings) — feeds AARS pillar B.
     {
       id: "CONFIG_FINDINGS",
-      area: "compliance",
+      area: "configFindings",
       writes: ["ai_findings"],
       run: "connection",
       connectionField: "configurationFindings",
@@ -224,7 +224,7 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
     // run must not be reported as a rejection.
     ...(catalogueFresh ? [] : [{
       id: "CONFIG_RULES",
-      area: "compliance",
+      area: "configFindings",
       writes: ["ai_config_rules"],
       run: "connection" as const,
       connectionField: "cloudConfigurationRules",
@@ -266,9 +266,16 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
     },
     // The framework catalogue. Populates the Settings picker; it does NOT decide the
     // battery — see the posture steps below for why.
+    //
+    // `area` is the posture one, not the configuration-findings one. The tag is what the
+    // Wiz Scans drill-down filters on (scanSheet.js), so it decides which area DISPLAYS
+    // this document — it is a join key, not a label. Both this step and the posture steps
+    // below spent a release tagged "compliance", which left the posture area rendering
+    // "No sync step issues a query for this area" beside its own live figure. Pinned by
+    // test/scanAreaSteps.test.ts.
     {
       id: "FRAMEWORKS_LIST",
-      area: "compliance",
+      area: "posture",
       writes: ["ai_frameworks"],
       run: "connection",
       connectionField: "securityFrameworks",
@@ -287,7 +294,7 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
     // recorded skip rather than a failed sync.
     ...selectedFrameworks().map((frameworkId): SyncStepDef => ({
       id: `COMPLIANCE_POSTURE_${frameworkId}`,
-      area: "compliance",
+      area: "posture",
       writes: ["ai_framework_posture", "ai_framework_policies"],
       run: "single",
       connectionField: "securityFramework",

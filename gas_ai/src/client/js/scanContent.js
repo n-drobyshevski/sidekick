@@ -75,10 +75,13 @@ export const SCAN_AREAS = [
   {
     id: "aispm",
     title: "AI-SPM Inventory",
-    query: "cloudResourcesV2 (INVENTORY_AI)",
+    query: "cloudResourcesV2 (INVENTORY_AI) + cloudResourcesV2 · graphEntity.properties " +
+      "(AI_ASSET_PROPERTIES)",
     what: "Discovers every AI asset across clouds — agents (managed and hosted), models, " +
       "guardrails, pipelines, datasets and MCP servers — with ownership, region and " +
-      "project context.",
+      "project context. A second, optional step re-reads the same assets for the two " +
+      "provenance fields that live in the graph entity's properties bag — who published " +
+      "the asset, and how Wiz found it.",
     lands: "inventory",
     figure: (ctx) => {
       if (!ctx.kpis) return null;
@@ -230,28 +233,42 @@ export const SCAN_AREAS = [
       };
     },
   },
+  // NOT the `compliance` route. That id belongs to the Compliance Posture page in
+  // DESTINATIONS above, which the area BELOW feeds — this one lands on Cloud Configuration.
+  // It was called `compliance` / "Compliance Frameworks" until framework scoring became an
+  // area of its own, and the leftover name left two adjacent areas opening with the same
+  // two words while neither matched the page it fed.
   {
-    id: "compliance",
-    title: "Compliance Frameworks",
-    query: "configurationFindings, FAIL only (CONFIG_FINDINGS)",
+    id: "configFindings",
+    title: "Cloud Configuration Findings",
+    query: "configurationFindings, FAIL only (CONFIG_FINDINGS) + cloudConfigurationRules " +
+      "(CONFIG_RULES)",
     what: "Configuration findings against the AI security frameworks enabled in the " +
       "tenant, stored whole and listed on the Cloud Configuration page. Failing ones carry " +
       "the framework codes they violate onto the asset record.",
     lands: "config",
-    // Declared, not derived: complianceGaps resolves a real number, but the area's subject
-    // is framework SCORING and this counts findings. A live badge here would let the number
-    // stand in for the thing it is not.
-    coverage: "partial",
-    note: "This sync counts failing configuration findings, and the framework codes each one " +
-      "violates are on the asset record. Per-framework SCORES are a separate area — see " +
-      "Compliance Framework Posture below, which queries and stores them. The framework " +
-      "tags on the Toxic Combinations page remain the static taxonomy, not a measured " +
-      "score. The step also " +
+    // DERIVED, like every other area whose figure can be decided. This was declared
+    // `partial` while its own prose claimed framework SCORING as its subject and it could
+    // only count findings. Scoring is now the area below, this one is named for what it
+    // actually collects, and `complianceGaps` totals exactly that — so a live badge here no
+    // longer lets one number stand in for a different question. A tenant that rejected the
+    // optional step, or an older server bundle without the KPI, still steps back to
+    // `partial` on its own.
+    note: "The framework codes each failing finding violates are on the asset record, and " +
+      "the rule catalogue collected beside them is what glosses an opaque control id. The " +
+      "framework tags on the Toxic Combinations page remain the static taxonomy, not a " +
+      "measured score. The step also " +
       "collects RESOLVED findings and their first-seen dates: Wiz sends no resolvedAt on a " +
       "configuration finding, so a closure can only ever be dated by this app having seen " +
       "it close. Nothing reads those yet, and they are excluded from the count below.",
-    figure: (ctx) => (ctx.kpis
-      ? {
+    figure: (ctx) => {
+      // Guarded on the FIELD, not just on the payload. This resolver tested `ctx.kpis`
+      // alone, which was harmless only because the declared `partial` above overrode
+      // whatever it returned. Deriving the state makes the guard load-bearing: `n()` maps
+      // undefined to 0, so an older server bundle without the KPI would otherwise report a
+      // confident "0 failing findings" instead of admitting it cannot say.
+      if (!ctx.kpis || ctx.kpis.complianceGaps === undefined) return null;
+      return {
         value: String(n(ctx.kpis.complianceGaps)),
         // A finding is keyed to the resource evaluated, which for most AI-security rules
         // is a region, an IAM policy or an unattached identity — not an AI asset. Those
@@ -262,13 +279,14 @@ export const SCAN_AREAS = [
             : ""),
         short: n(ctx.kpis.complianceGaps) + " failing",
         source: "kpis.complianceGaps",
-      }
-      : null),
+      };
+    },
   },
   {
     id: "posture",
     title: "Compliance Framework Posture",
-    query: "securityFramework · complianceAnalytics (COMPLIANCE_POSTURE_<framework>)",
+    query: "securityFrameworks (FRAMEWORKS_LIST) + securityFramework · complianceAnalytics " +
+      "(COMPLIANCE_POSTURE_<framework>)",
     what: "The score each tracked security framework holds against this estate — OWASP " +
       "Agentic, OWASP ML, the Wiz 5Rs — broken down by category, subcategory and the " +
       "policies behind them.",
@@ -277,13 +295,16 @@ export const SCAN_AREAS = [
     // the honest thing now is to let `figure` decide: a tenant that rejected the optional
     // step, an estate with no framework selected, and an older server bundle without the
     // KPI all produce no figure and step back to `partial` on their own.
-    note: "One query per selected framework, so the battery grows with the selection " +
-      "rather than with the tenant's framework catalogue. Wiz's own percentages are stored " +
+    note: "Two queries, and only one of them scores anything. FRAMEWORKS_LIST collects the " +
+      "tenant's framework catalogue, which populates the Settings picker; the posture steps " +
+      "then run one query per SELECTED framework, so the battery grows with the selection " +
+      "rather than with the catalogue — a tenant carrying a hundred builtin frameworks costs " +
+      "one listing call, not a hundred posture ones. Wiz's own percentages are stored " +
       "verbatim and never recomputed here. A subcategory Wiz could not score — nothing in " +
       "the estate to assess, or no policy written for it — is carried as its own state and " +
-      "left OUT of the average, never counted as a zero. Which frameworks are collected is " +
-      "chosen in Settings; the framework id is not an editable step variable, because it " +
-      "selects which framework is fetched rather than filtering within one.",
+      "left OUT of the average, never counted as a zero. The framework id is not an editable " +
+      "step variable, because it selects which framework is fetched rather than filtering " +
+      "within one.",
     figure: (ctx) => {
       const p = ctx.kpis && ctx.kpis.frameworkPosture;
       // `averagePosture` is null when nothing scored, which is NOT 0% — returning null
