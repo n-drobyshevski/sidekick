@@ -3,7 +3,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
-  assetSections, issueSections, recordCursor, clampSheetWidth,
+  assetSections, configFindingSections, issueSections, recordCursor, clampSheetWidth,
 } from "../src/client/js/recordSections.js";
 
 const ASSET_IDS = [
@@ -359,5 +359,58 @@ describe("clampSheetWidth", () => {
     // minPx itself doesn't parse: it's coerced to 0, and everything else clamps normally.
     expect(clampSheetWidth(400, NaN, 45, 1200)).toBe(400); // inside [0, 540]
     expect(clampSheetWidth(-50, NaN, 45, 1200)).toBe(0); // raised up to the zero floor
+  });
+});
+
+const CONFIG_IDS = [
+  "overview", "fix", "accepted", "iac", "rule", "policy", "resource", "asset",
+  "projects", "facts",
+];
+
+describe("configFindingSections", () => {
+  it("lists every section in rail order, whatever the record carries", () => {
+    expect(configFindingSections({}).map((s) => s.id)).toEqual(CONFIG_IDS);
+  });
+
+  it("tolerates a missing detail entirely", () => {
+    expect(configFindingSections(null).map((s) => s.id)).toEqual(CONFIG_IDS);
+    expect(configFindingSections(undefined).map((s) => s.id)).toEqual(CONFIG_IDS);
+  });
+
+  it("marks everything empty for a record with nothing on it", () => {
+    const map = byId(configFindingSections({ finding: {} }));
+    for (const id of CONFIG_IDS) {
+      if (id === "overview" || id === "facts") continue;
+      expect(map[id].empty, id).toBe(true);
+    }
+  });
+
+  it("fills the remediation section from either the resource text or the rule template", () => {
+    expect(byId(configFindingSections({ finding: { remediation: "do x" } })).fix.empty).toBe(false);
+    expect(byId(configFindingSections({
+      finding: { remediationInstructions: "do {{x}}" },
+    })).fix.empty).toBe(false);
+  });
+
+  it("counts ignore rules and IaC findings", () => {
+    const map = byId(configFindingSections({
+      finding: { ignoreRuleIds: ["a", "b"], iacFindingIds: ["c"] },
+    }));
+    expect(map.accepted.count).toBe(2);
+    expect(map.accepted.empty).toBe(false);
+    expect(map.iac.count).toBe(1);
+    expect(map.iac.empty).toBe(false);
+  });
+
+  // The common case, not a defect: most AI-security rules are evaluated against a region,
+  // an IAM policy or an unattached identity, so the section shows and says so rather than
+  // disappearing and leaving the question unanswered.
+  it("keeps the affected-asset section present but empty when nothing links", () => {
+    const map = byId(configFindingSections({ finding: { resourceType: "REGION" }, asset: null }));
+    expect(map.asset).toBeDefined();
+    expect(map.asset.empty).toBe(true);
+    expect(byId(configFindingSections({
+      finding: {}, asset: { id: "agent-a" },
+    })).asset.empty).toBe(false);
   });
 });

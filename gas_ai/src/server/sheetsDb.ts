@@ -53,6 +53,27 @@ export const TAB_HEADERS: Record<string, string[]> = {
   ],
   [TABS.findings]: [
     "id", "resource_id", "rule_short_id", "severity", "remediation", "framework_codes",
+    // The Cloud Configuration register. Appended, never inserted — same contract as the
+    // ai_issues block above: ensureHeaders adds declared-but-missing headers to the right
+    // and every read maps by header NAME, so a ledger written before this change picks
+    // them up on the next sync with no migration and no re-run of setup().
+    //
+    // Rows written by the previous version carry neither `result` nor `status`. That is
+    // why isOpenGap (domain/config.ts) treats an absent field as permissive: those rows
+    // were already filtered to FAIL + OPEN at ingest, and demanding the columns would
+    // read every one of them as "not a gap".
+    "name", "status", "result", "deleted", "first_seen_at", "analyzed_at",
+    // The control. rule_description / remediation_instructions / opa_policy repeat
+    // verbatim across every finding of the same rule — sixteen identical Rego documents
+    // for one Bedrock rule in the sample tenant. Denormalized on purpose: the register
+    // reads them per row, the sync rewrites this tab wholesale, and a rules tab would buy
+    // a join to save a few hundred cells on a register the framework filter already
+    // bounds to the AI estate.
+    "rule_id", "rule_graph_id", "rule_name", "rule_description",
+    "remediation_instructions", "opa_policy", "risks_json", "threats_json",
+    "resource_name", "resource_type", "resource_status", "target_external_id", "source",
+    "subscription_id", "subscription_name", "cloud_provider", "projects_json",
+    "business_impact", "ignore_rule_ids_json", "iac_finding_ids_json",
   ],
   // DSPM findings, kept apart from the compliance findings above on purpose: that tab
   // prices AARS pillar B and counts as `complianceGaps`, and a classification finding

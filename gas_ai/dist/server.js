@@ -329,7 +329,48 @@ var Server = (() => {
       "rule_short_id",
       "severity",
       "remediation",
-      "framework_codes"
+      "framework_codes",
+      // The Cloud Configuration register. Appended, never inserted — same contract as the
+      // ai_issues block above: ensureHeaders adds declared-but-missing headers to the right
+      // and every read maps by header NAME, so a ledger written before this change picks
+      // them up on the next sync with no migration and no re-run of setup().
+      //
+      // Rows written by the previous version carry neither `result` nor `status`. That is
+      // why isOpenGap (domain/config.ts) treats an absent field as permissive: those rows
+      // were already filtered to FAIL + OPEN at ingest, and demanding the columns would
+      // read every one of them as "not a gap".
+      "name",
+      "status",
+      "result",
+      "deleted",
+      "first_seen_at",
+      "analyzed_at",
+      // The control. rule_description / remediation_instructions / opa_policy repeat
+      // verbatim across every finding of the same rule — sixteen identical Rego documents
+      // for one Bedrock rule in the sample tenant. Denormalized on purpose: the register
+      // reads them per row, the sync rewrites this tab wholesale, and a rules tab would buy
+      // a join to save a few hundred cells on a register the framework filter already
+      // bounds to the AI estate.
+      "rule_id",
+      "rule_graph_id",
+      "rule_name",
+      "rule_description",
+      "remediation_instructions",
+      "opa_policy",
+      "risks_json",
+      "threats_json",
+      "resource_name",
+      "resource_type",
+      "resource_status",
+      "target_external_id",
+      "source",
+      "subscription_id",
+      "subscription_name",
+      "cloud_provider",
+      "projects_json",
+      "business_impact",
+      "ignore_rule_ids_json",
+      "iac_finding_ids_json"
     ],
     // DSPM findings, kept apart from the compliance findings above on purpose: that tab
     // prices AARS pillar B and counts as `complianceGaps`, and a classification finding
@@ -540,6 +581,15 @@ var Server = (() => {
   function isUnresolvedIssue(issue2) {
     var _a5;
     return UNRESOLVED_ISSUE_STATUSES.includes(String((_a5 = issue2.status) != null ? _a5 : ""));
+  }
+  function isOpenGap(finding) {
+    var _a5, _b;
+    if (finding.deleted === true) return false;
+    const result = String((_a5 = finding.result) != null ? _a5 : "");
+    if (result && result !== "FAIL") return false;
+    const status = String((_b = finding.status) != null ? _b : "");
+    if (status && status !== "OPEN") return false;
+    return true;
   }
   var SEVERITY_COLORS = {
     CRITICAL: "#dc2626",
@@ -976,10 +1026,10 @@ var Server = (() => {
     if (scope && scope.length) filterBy["project"] = scope;
     return { filterBy, orderBy: { field: "SEVERITY_EXPLOITABLE", direction: "DESC" } };
   }
-  var Q_CONFIG_FINDINGS = "query SidekickAiConfigFindings($first: Int, $after: String, $filterBy: ConfigurationFindingFilters, $orderBy: ConfigurationFindingOrder) {\n  configurationFindings(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      name\n      severity\n      result\n      status\n      remediation\n      source\n      targetExternalId\n      subscription { id name externalId cloudProvider }\n      resource {\n        id\n        name\n        type\n        projects { id name riskProfile { businessImpact } }\n      }\n      rule {\n        id\n        shortId\n        name\n        description\n        remediationInstructions\n        risks\n        threats\n        tags { key value }\n        opaPolicy\n      }\n    }\n  }\n}\n";
+  var Q_CONFIG_FINDINGS = "query SidekickAiConfigFindings($first: Int, $after: String, $filterBy: ConfigurationFindingFilters, $orderBy: ConfigurationFindingOrder) {\n  configurationFindings(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      name\n      deleted\n      analyzedAt\n      firstSeenAt\n      severity\n      result\n      status\n      remediation\n      source\n      targetExternalId\n      ignoreRules { id tags { key value } }\n      subscription {\n        id\n        name\n        externalId\n        cloudProvider\n        sourceDeployments { id name status }\n      }\n      resource {\n        id\n        name\n        type\n        status\n        projects { id name riskProfile { businessImpact } }\n      }\n      sourceMappedIacFindings { id name }\n      rule {\n        id\n        shortId\n        graphId\n        name\n        description\n        remediationInstructions\n        risks\n        threats\n        tags { key value }\n        opaPolicy\n      }\n    }\n  }\n}\n";
   function aiConfigFindingsVariables(scope) {
     const filterBy = {
-      status: ["OPEN"],
+      status: ["OPEN", "RESOLVED"],
       frameworkCategory: [RISK_CATEGORY_ID]
     };
     if (scope && scope.length) filterBy["resource"] = { projectId: scope };
@@ -1386,6 +1436,8 @@ var Server = (() => {
     getAssetDetail: () => getAssetDetail,
     getAssetOptions: () => getAssetOptions,
     getAssets: () => getAssets,
+    getConfigFindingDetail: () => getConfigFindingDetail,
+    getConfigFindings: () => getConfigFindings,
     getGraph: () => getGraph,
     getIssueDetail: () => getIssueDetail,
     getIssues: () => getIssues,
@@ -2165,6 +2217,278 @@ var Server = (() => {
       if (points[i].ruleVersion !== points[i - 1].ruleVersion) marks.push(i);
     }
     return marks;
+  }
+
+  // src/domain/configFindings.ts
+  var CONFIG_SORTS = [
+    "severity",
+    "rule",
+    "resource",
+    "firstSeen",
+    "status"
+  ];
+  var DEFAULT_CONFIG_SORT_DIR = {
+    severity: "desc",
+    firstSeen: "desc",
+    rule: "asc",
+    resource: "asc",
+    status: "asc"
+  };
+  var DEFAULT_CONFIG_PAGE_SIZE = 50;
+  var MAX_CONFIG_PAGE_SIZE = 500;
+  var CONFIG_CLIENT_ALL_MAX = 1e3;
+  var CONFIG_FACET_KEYS = [
+    "severities",
+    "statuses",
+    "clouds",
+    "resourceTypes",
+    "rules",
+    "projects",
+    "linkage",
+    "flags"
+  ];
+  var LINKAGE_VALUES = ["linked", "unlinked"];
+  var CONFIG_FLAGS = ["gap", "ignored", "iac"];
+  var sevRank2 = (s) => {
+    const i = SEVERITY_ORDER.indexOf(s);
+    return i < 0 ? SEVERITY_ORDER.length : i;
+  };
+  function toConfigView(f, linked) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r;
+    return {
+      id: f.id,
+      name: (_b = (_a5 = f.name) != null ? _a5 : f.ruleName) != null ? _b : "",
+      severity: (_c = f.severity) != null ? _c : "UNKNOWN",
+      status: (_d = f.status) != null ? _d : "",
+      result: (_e = f.result) != null ? _e : "",
+      ruleShortId: (_f = f.ruleShortId) != null ? _f : "",
+      ruleName: (_g = f.ruleName) != null ? _g : "",
+      resourceId: f.resourceId,
+      resourceName: (_h = f.resourceName) != null ? _h : "",
+      resourceType: (_i = f.resourceType) != null ? _i : "",
+      cloud: (_j = f.cloudProvider) != null ? _j : "",
+      subscriptionName: (_k = f.subscriptionName) != null ? _k : "",
+      projects: ((_l = f.projects) != null ? _l : []).map((p) => p.name).filter(Boolean),
+      businessImpact: (_m = f.businessImpact) != null ? _m : "",
+      firstSeenAt: (_n = f.firstSeenAt) != null ? _n : "",
+      analyzedAt: (_o = f.analyzedAt) != null ? _o : "",
+      risks: (_p = f.risks) != null ? _p : [],
+      linked,
+      ignored: ((_q = f.ignoreRuleIds) != null ? _q : []).length > 0,
+      iac: ((_r = f.iacFindingIds) != null ? _r : []).length > 0,
+      gap: isOpenGap(f)
+    };
+  }
+  function listParam(v) {
+    if (Array.isArray(v)) return v.map((x) => String(x)).filter(Boolean);
+    const s = toStr(v);
+    return s ? s.split(",").map((x) => x.trim()).filter(Boolean) : [];
+  }
+  function resolveConfigQuery(params) {
+    var _a5;
+    return {
+      q: ((_a5 = toStr(params["q"])) != null ? _a5 : "").trim().toLowerCase(),
+      severities: listParam(params["severities"]),
+      statuses: listParam(params["statuses"]),
+      clouds: listParam(params["clouds"]),
+      resourceTypes: listParam(params["resourceTypes"]),
+      rules: listParam(params["rules"]),
+      projects: listParam(params["projects"]),
+      linkage: listParam(params["linkage"]).filter(
+        (v) => LINKAGE_VALUES.indexOf(v) >= 0
+      ),
+      flags: listParam(params["flags"]).filter(
+        (v) => CONFIG_FLAGS.indexOf(v) >= 0
+      )
+    };
+  }
+  function hasConfigFlag(row, flag) {
+    if (flag === "gap") return row.gap;
+    if (flag === "ignored") return row.ignored;
+    if (flag === "iac") return row.iac;
+    return false;
+  }
+  function anyOf(selected, value) {
+    return selected.length === 0 || selected.indexOf(value) >= 0;
+  }
+  function matchesConfigQuery(row, q) {
+    if (!anyOf(q.severities, row.severity)) return false;
+    if (!anyOf(q.statuses, row.status)) return false;
+    if (!anyOf(q.clouds, row.cloud)) return false;
+    if (!anyOf(q.resourceTypes, row.resourceType)) return false;
+    if (!anyOf(q.rules, row.ruleShortId)) return false;
+    if (q.projects.length && !row.projects.some((p) => q.projects.indexOf(p) >= 0)) return false;
+    if (q.linkage.length && !anyOf(q.linkage, row.linked ? "linked" : "unlinked")) return false;
+    for (const flag of q.flags) if (!hasConfigFlag(row, flag)) return false;
+    if (q.q) {
+      const hay = [
+        row.name,
+        row.ruleShortId,
+        row.ruleName,
+        row.resourceName,
+        row.resourceType,
+        row.subscriptionName
+      ].join(" ").toLowerCase();
+      if (hay.indexOf(q.q) < 0) return false;
+    }
+    return true;
+  }
+  function filterConfigRows(rows, q) {
+    return rows.filter((r) => matchesConfigQuery(r, q));
+  }
+  function configComparator(sort, dir) {
+    const d = (dir != null ? dir : DEFAULT_CONFIG_SORT_DIR[sort]) === "asc" ? 1 : -1;
+    const tie = (a, b) => a.id.localeCompare(b.id);
+    return (a, b) => {
+      let cmp2 = 0;
+      if (sort === "severity") cmp2 = sevRank2(b.severity) - sevRank2(a.severity);
+      else if (sort === "rule") cmp2 = a.ruleShortId.localeCompare(b.ruleShortId);
+      else if (sort === "resource") cmp2 = a.resourceName.localeCompare(b.resourceName);
+      else if (sort === "status") cmp2 = a.status.localeCompare(b.status);
+      else if (sort === "firstSeen") cmp2 = a.firstSeenAt.localeCompare(b.firstSeenAt);
+      return cmp2 !== 0 ? cmp2 * d : tie(a, b);
+    };
+  }
+  function sortConfigRows(rows, sort, dir) {
+    return rows.slice().sort(configComparator(sort, dir));
+  }
+  function facetValues2(key, row) {
+    if (key === "severities") return [row.severity].filter(Boolean);
+    if (key === "statuses") return [row.status].filter(Boolean);
+    if (key === "clouds") return [row.cloud].filter(Boolean);
+    if (key === "resourceTypes") return [row.resourceType].filter(Boolean);
+    if (key === "rules") return [row.ruleShortId].filter(Boolean);
+    if (key === "projects") return row.projects;
+    if (key === "linkage") return [row.linked ? "linked" : "unlinked"];
+    return CONFIG_FLAGS.filter((f) => hasConfigFlag(row, f));
+  }
+  function facetSorter2(key) {
+    if (key === "severities") return (a, b) => sevRank2(a.value) - sevRank2(b.value);
+    if (key === "flags") {
+      const order = CONFIG_FLAGS;
+      return (a, b) => order.indexOf(a.value) - order.indexOf(b.value);
+    }
+    if (key === "linkage") {
+      const order = LINKAGE_VALUES;
+      return (a, b) => order.indexOf(a.value) - order.indexOf(b.value);
+    }
+    return (a, b) => a.value.localeCompare(b.value);
+  }
+  function configFacetCounts(rows, q) {
+    var _a5;
+    const out = { matched: 0 };
+    for (const key of CONFIG_FACET_KEYS) {
+      const scope = key === "flags" ? q : { ...q, [key]: [] };
+      const counts = /* @__PURE__ */ new Map();
+      for (const row of rows) {
+        if (!matchesConfigQuery(row, scope)) continue;
+        for (const value of facetValues2(key, row)) {
+          counts.set(value, ((_a5 = counts.get(value)) != null ? _a5 : 0) + 1);
+        }
+      }
+      for (const value of q[key]) if (!counts.has(value)) counts.set(value, 0);
+      out[key] = Array.from(counts, ([value, count]) => ({ value, count })).sort(facetSorter2(key));
+    }
+    out.matched = rows.reduce((n, row) => matchesConfigQuery(row, q) ? n + 1 : n, 0);
+    return out;
+  }
+  function rollupByControl(rows) {
+    var _a5;
+    const byRule = /* @__PURE__ */ new Map();
+    for (const row of rows) {
+      const key = row.ruleShortId || row.ruleName || "\u2014";
+      const bucket = byRule.get(key);
+      if (bucket) bucket.push(row);
+      else byRule.set(key, [row]);
+    }
+    const out = [];
+    for (const [ruleShortId, group] of byRule) {
+      const resources = /* @__PURE__ */ new Set();
+      const gapResources = /* @__PURE__ */ new Set();
+      const unlinkedGapResources = /* @__PURE__ */ new Set();
+      const clouds = /* @__PURE__ */ new Set();
+      const projects = /* @__PURE__ */ new Set();
+      const risks = /* @__PURE__ */ new Set();
+      const severityMix = {};
+      let worst = "UNKNOWN";
+      let firstSeenAt = "";
+      let gaps = 0;
+      let linked = 0;
+      let unlinked = 0;
+      let ignored = 0;
+      let iac = 0;
+      for (const row of group) {
+        resources.add(row.resourceId);
+        if (row.cloud) clouds.add(row.cloud);
+        for (const p of row.projects) projects.add(p);
+        for (const r of row.risks) risks.add(r);
+        severityMix[row.severity] = ((_a5 = severityMix[row.severity]) != null ? _a5 : 0) + 1;
+        if (sevRank2(row.severity) < sevRank2(worst)) worst = row.severity;
+        if (row.firstSeenAt && (!firstSeenAt || row.firstSeenAt < firstSeenAt)) {
+          firstSeenAt = row.firstSeenAt;
+        }
+        if (row.gap) {
+          gaps += 1;
+          gapResources.add(row.resourceId);
+          if (!row.linked) unlinkedGapResources.add(row.resourceId);
+        }
+        if (row.linked) linked += 1;
+        else unlinked += 1;
+        if (row.ignored) ignored += 1;
+        if (row.iac) iac += 1;
+      }
+      out.push({
+        ruleShortId,
+        ruleName: group[0].ruleName || group[0].name || "",
+        severity: worst,
+        risks: [...risks].sort(),
+        findings: group.length,
+        gaps,
+        resources: resources.size,
+        gapResources: gapResources.size,
+        unlinkedGapResources: unlinkedGapResources.size,
+        linked,
+        unlinked,
+        ignored,
+        iac,
+        clouds: [...clouds].sort(),
+        projects: [...projects].sort(),
+        severityMix,
+        firstSeenAt
+      });
+    }
+    return out.sort((a, b) => sevRank2(a.severity) - sevRank2(b.severity) || b.gaps - a.gaps || b.resources - a.resources || a.ruleShortId.localeCompare(b.ruleShortId));
+  }
+  function configTotals(rows) {
+    var _a5;
+    const controls = /* @__PURE__ */ new Set();
+    const resources = /* @__PURE__ */ new Set();
+    const severityMix = {};
+    let gaps = 0;
+    let unlinkedGaps = 0;
+    let ignored = 0;
+    let iac = 0;
+    for (const row of rows) {
+      if (row.ruleShortId) controls.add(row.ruleShortId);
+      resources.add(row.resourceId);
+      if (row.gap) {
+        gaps += 1;
+        severityMix[row.severity] = ((_a5 = severityMix[row.severity]) != null ? _a5 : 0) + 1;
+        if (!row.linked) unlinkedGaps += 1;
+      }
+      if (row.ignored) ignored += 1;
+      if (row.iac) iac += 1;
+    }
+    return {
+      findings: rows.length,
+      gaps,
+      controls: controls.size,
+      resources: resources.size,
+      unlinkedGaps,
+      ignored,
+      iac,
+      severityMix
+    };
   }
 
   // src/domain/scanVars.ts
@@ -3466,7 +3790,7 @@ var Server = (() => {
     const issuesByAsset = groupBy(open, (i) => i.assetId);
     const codesByResource = /* @__PURE__ */ new Map();
     const worstByCode = /* @__PURE__ */ new Map();
-    for (const f of findings) {
+    for (const f of findings.filter(isOpenGap)) {
       pushInto(codesByResource, f.resourceId, ...f.frameworkCodes);
       for (const c of f.frameworkCodes) {
         const key = `${f.resourceId}|${c}`;
@@ -3982,7 +4306,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "0977e09297bf" : "dev";
+  var BUILD_ID = true ? "8da5cf30740a" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -4723,16 +5047,7 @@ var Server = (() => {
       }
     }
     const projects = raw["projects"];
-    if (Array.isArray(projects)) {
-      node2.projects = projects.map((p) => {
-        const rec2 = p;
-        const pid = str2(rec2["id"]);
-        const name = str2(rec2["name"]);
-        const riskProfile = rec2["riskProfile"];
-        const businessImpact = riskProfile && typeof riskProfile === "object" ? str2(riskProfile["businessImpact"]) : void 0;
-        return pid && name ? { id: pid, name, businessImpact } : null;
-      }).filter((p) => p !== null);
-    }
+    if (Array.isArray(projects)) node2.projects = projectsOf(projects);
     const tags = raw["tags"];
     if (Array.isArray(tags)) {
       node2.tags = tags.map((t) => {
@@ -4947,27 +5262,77 @@ var Server = (() => {
     }
     return codes;
   }
+  function idsOf(raw) {
+    if (!Array.isArray(raw)) return [];
+    return raw.map((r) => r && typeof r === "object" ? str2(r["id"]) : void 0).filter((v) => !!v);
+  }
+  function strListOf(raw) {
+    if (!Array.isArray(raw)) return [];
+    return raw.map((v) => str2(v)).filter((v) => !!v);
+  }
+  function projectsOf(raw) {
+    if (!Array.isArray(raw)) return [];
+    return raw.map((p) => {
+      if (!p || typeof p !== "object") return null;
+      const id = str2(p["id"]);
+      const name = str2(p["name"]);
+      if (!id || !name) return null;
+      const profile = p["riskProfile"];
+      const businessImpact = profile && typeof profile === "object" ? str2(profile["businessImpact"]) : void 0;
+      return { id, name, businessImpact };
+    }).filter((p) => p !== null);
+  }
   function normalizeConfigFindingsPage(rows) {
     var _a5, _b;
     const part = emptyPart();
     for (const raw of rows) {
       const id = str2(raw["id"]);
       if (!id) continue;
-      if (str2(raw["result"]) !== "FAIL") continue;
-      const status = str2(raw["status"]);
-      if (status && status !== "OPEN") continue;
       const resource = raw["resource"];
       const resourceId = resource && typeof resource === "object" ? str2(resource["id"]) : void 0;
       if (!resourceId) continue;
       const rule = raw["rule"];
-      const ruleShortId = rule && typeof rule === "object" ? (_a5 = str2(rule["shortId"])) != null ? _a5 : "" : "";
+      const hasRule = !!rule && typeof rule === "object";
+      const ruleShortId = hasRule ? (_a5 = str2(rule["shortId"])) != null ? _a5 : "" : "";
+      const subscription = raw["subscription"];
+      const hasSub = !!subscription && typeof subscription === "object";
+      const rawProjects = resource && typeof resource === "object" ? resource["projects"] : void 0;
       part.findings.push({
         id,
         resourceId,
         ruleShortId,
         severity: (_b = str2(raw["severity"])) != null ? _b : "UNKNOWN",
         remediation: str2(raw["remediation"]),
-        frameworkCodes: frameworkCodesFromRule(rule, ruleShortId)
+        frameworkCodes: frameworkCodesFromRule(rule, ruleShortId),
+        name: str2(raw["name"]),
+        status: str2(raw["status"]),
+        result: str2(raw["result"]),
+        // Only an explicit `true` is a tombstone. `deleted` absent from the response must
+        // stay absent on the row, not become `false` — "not collected" and "collected and
+        // false" are different facts, and isOpenGap reads the difference.
+        deleted: raw["deleted"] === true ? true : void 0,
+        firstSeenAt: str2(raw["firstSeenAt"]),
+        analyzedAt: str2(raw["analyzedAt"]),
+        ruleId: hasRule ? str2(rule["id"]) : void 0,
+        ruleGraphId: hasRule ? str2(rule["graphId"]) : void 0,
+        ruleName: hasRule ? str2(rule["name"]) : void 0,
+        ruleDescription: hasRule ? str2(rule["description"]) : void 0,
+        remediationInstructions: hasRule ? str2(rule["remediationInstructions"]) : void 0,
+        opaPolicy: hasRule ? str2(rule["opaPolicy"]) : void 0,
+        risks: hasRule ? strListOf(rule["risks"]) : [],
+        threats: hasRule ? strListOf(rule["threats"]) : [],
+        resourceName: str2(resource["name"]),
+        resourceType: str2(resource["type"]),
+        resourceStatus: str2(resource["status"]),
+        targetExternalId: str2(raw["targetExternalId"]),
+        source: str2(raw["source"]),
+        subscriptionId: hasSub ? str2(subscription["id"]) : void 0,
+        subscriptionName: hasSub ? str2(subscription["name"]) : void 0,
+        cloudProvider: hasSub ? str2(subscription["cloudProvider"]) : void 0,
+        projects: projectsOf(rawProjects),
+        businessImpact: Array.isArray(rawProjects) ? worstBusinessImpact(rawProjects) : void 0,
+        ignoreRuleIds: idsOf(raw["ignoreRules"]),
+        iacFindingIds: idsOf(raw["sourceMappedIacFindings"])
       });
     }
     return part;
@@ -5728,7 +6093,32 @@ var Server = (() => {
       ruleShortId: "SUB-082",
       severity: "MEDIUM",
       remediation: "Encrypt the Vertex AI metadata store with a customer-managed key and restrict the agent service account's access to it.",
-      frameworkCodes: ["SUB-082", "LLM06"]
+      frameworkCodes: ["SUB-082", "LLM06"],
+      name: "Vertex AI Metadata Store is not encrypted with a customer-managed key",
+      status: "OPEN",
+      result: "FAIL",
+      firstSeenAt: "2026-06-12T19:42:35Z",
+      analyzedAt: "2026-07-07T15:59:10Z",
+      ruleId: "60442ee5-452a-48cb-8694-9061c920e10d",
+      ruleName: "Vertex AI Metadata Store should be encrypted with a customer-managed key",
+      ruleDescription: "This rule checks whether the Vertex AI Metadata Store is encrypted with a customer-managed key. It fails if kms_key_name is not configured.",
+      remediationInstructions: "Delete the current Vertex AI Metadata Store, then create a new one with a customer-managed key. Encryption cannot be changed after creation.",
+      opaPolicy: 'package wiz\n\ndefault result = "pass"\n\nresult = "fail" {\n	not input.vertexAIMetadataStoreConfiguration.encryption_spec.kms_key_name\n}\n',
+      risks: ["AI_SECURITY", "UNPROTECTED_DATA"],
+      threats: [],
+      resourceName: "Agent A",
+      resourceType: "AI_AGENT",
+      resourceStatus: "Active",
+      source: "WIZ_CSPM",
+      subscriptionName: "gcp-account-01",
+      cloudProvider: "GCP",
+      projects: [
+        { id: "proj-project-beta", name: "PROJECT-BETA", businessImpact: "MBI" },
+        { id: "proj-project-alpha", name: "PROJECT-ALPHA", businessImpact: "LBI" }
+      ],
+      businessImpact: "MBI",
+      ignoreRuleIds: [],
+      iacFindingIds: []
     },
     {
       id: "cfg-002",
@@ -5736,7 +6126,27 @@ var Server = (() => {
       ruleShortId: "SUB-114",
       severity: "HIGH",
       remediation: "Disable public ingress on the Cloud Run service hosting the agent, or place it behind an authenticated load balancer.",
-      frameworkCodes: ["SUB-114"]
+      frameworkCodes: ["SUB-114"],
+      name: "AI agent host is reachable from the public internet",
+      status: "OPEN",
+      result: "FAIL",
+      firstSeenAt: "2026-05-02T08:15:00Z",
+      analyzedAt: "2026-07-13T21:52:08Z",
+      ruleName: "AI agent hosts should not be open to all internet",
+      ruleDescription: "This rule checks whether the compute hosting an AI agent accepts ingress from 0.0.0.0/0. It fails when no authenticating front end sits in front of it.",
+      risks: ["AI_SECURITY"],
+      threats: [],
+      resourceName: "agent-H-chatbot",
+      resourceType: "AI_AGENT",
+      resourceStatus: "Active",
+      source: "WIZ_CSPM",
+      subscriptionName: "gcp-account-05",
+      cloudProvider: "GCP",
+      projects: [{ id: "proj-project-alpha", name: "PROJECT-ALPHA", businessImpact: "LBI" }],
+      businessImpact: "LBI",
+      // Traced to IaC: the register's shift-left link, and the only seeded row that has one.
+      iacFindingIds: ["iac-cloudrun-ingress-1"],
+      ignoreRuleIds: []
     },
     {
       id: "cfg-003",
@@ -5744,7 +6154,146 @@ var Server = (() => {
       ruleShortId: "SUB-047",
       severity: "MEDIUM",
       remediation: "Enable audit logging for all data access performed by the agent identity.",
-      frameworkCodes: ["SUB-047"]
+      frameworkCodes: ["SUB-047"],
+      name: "Data access by the AI agent identity is not audited",
+      status: "OPEN",
+      result: "FAIL",
+      firstSeenAt: "2026-06-25T08:43:01Z",
+      analyzedAt: "2026-07-13T21:52:13Z",
+      ruleName: "AI agent identities should have data access logging enabled",
+      risks: ["AI_SECURITY"],
+      threats: [],
+      resourceName: "Agent E",
+      resourceType: "AI_AGENT",
+      resourceStatus: "Active",
+      source: "WIZ_CSPM",
+      subscriptionName: "gcp-account-03",
+      cloudProvider: "GCP",
+      projects: [{ id: "proj-project-alpha", name: "PROJECT-ALPHA", businessImpact: "LBI" }],
+      businessImpact: "LBI",
+      ignoreRuleIds: [],
+      iacFindingIds: []
+    },
+    // ---- keyed to resources the AI graph does not model ----
+    {
+      id: "cfg-004",
+      // A REGION. Not a NodeKind, so this prices no AARS score and shows as off-inventory.
+      resourceId: "region-europe-west1-packaging",
+      ruleShortId: "SUB-082",
+      severity: "MEDIUM",
+      remediation: "Delete and recreate the metadata store with a customer-managed key. Encryption cannot be changed after creation.",
+      frameworkCodes: ["SUB-082", "LLM06"],
+      name: "Vertex AI Metadata Store is not encrypted with a customer-managed key",
+      status: "OPEN",
+      result: "FAIL",
+      firstSeenAt: "2026-06-12T19:42:35Z",
+      analyzedAt: "2026-06-19T10:27:22Z",
+      ruleId: "60442ee5-452a-48cb-8694-9061c920e10d",
+      ruleName: "Vertex AI Metadata Store should be encrypted with a customer-managed key",
+      ruleDescription: "This rule checks whether the Vertex AI Metadata Store is encrypted with a customer-managed key. It fails if kms_key_name is not configured.",
+      opaPolicy: 'package wiz\n\ndefault result = "pass"\n\nresult = "fail" {\n	not input.vertexAIMetadataStoreConfiguration.encryption_spec.kms_key_name\n}\n',
+      risks: ["AI_SECURITY", "UNPROTECTED_DATA"],
+      threats: [],
+      resourceName: "europe-west1 (packaging-data)",
+      resourceType: "REGION",
+      resourceStatus: "Active",
+      targetExternalId: "packaging-data/europe-west1",
+      source: "WIZ_CSPM",
+      subscriptionName: "packaging-data",
+      cloudProvider: "GCP",
+      projects: [{ id: "proj-project-gamma", name: "PROJECT-GAMMA", businessImpact: "MBI" }],
+      businessImpact: "MBI",
+      ignoreRuleIds: [],
+      iacFindingIds: []
+    },
+    {
+      id: "cfg-005",
+      // A RAW_ACCESS_POLICY — an IAM policy document, likewise absent from the graph.
+      resourceId: "policy-bedrock-invoke-1",
+      ruleShortId: "IAM-267",
+      severity: "MEDIUM",
+      remediation: "Add a bedrock:GuardrailIdentifier condition to the policy statement that allows bedrock:InvokeModel, or add a Deny that requires one.",
+      frameworkCodes: ["IAM-267", "LLM06"],
+      name: "IAM policy allows Bedrock model invocation without guardrail condition",
+      status: "OPEN",
+      result: "FAIL",
+      firstSeenAt: "2026-07-21T16:03:20Z",
+      analyzedAt: "2026-08-03T23:20:36Z",
+      ruleId: "a1f587c5-32ac-4c08-8d91-e53d2d6db828",
+      ruleName: "IAM Policy Bedrock Model Invocation should include Guardrail Condition",
+      ruleDescription: "This rule checks whether IAM policies that allow Bedrock model invocation include guardrail conditions. Amazon Bedrock foundation models can process sensitive data and generate harmful content; guardrails enforce content filtering and usage policy.",
+      remediationInstructions: `aws iam create-policy-version --policy-arn {{policyArn}} --set-as-default --policy-document '{ \u2026 "Condition": { "StringEquals": { "bedrock:GuardrailIdentifier": "<YOUR_GUARDRAIL_ID>" } } \u2026 }'`,
+      risks: ["AI_SECURITY"],
+      threats: [],
+      resourceName: "AIFFORECASTSUPPLY-DEMANDFORECASTEU-IAM-V2-2",
+      resourceType: "RAW_ACCESS_POLICY",
+      source: "WIZ_CSPM",
+      subscriptionName: "aws-account-prod-01",
+      cloudProvider: "AWS",
+      projects: [{ id: "proj-project-alpha", name: "PROJECT-ALPHA", businessImpact: "LBI" }],
+      businessImpact: "LBI",
+      // An accepted risk that still fails: the register shows the exception rather than
+      // quietly dropping the row out of the gap count.
+      ignoreRuleIds: ["ignore-bedrock-guardrail-waiver"],
+      iacFindingIds: []
+    },
+    {
+      id: "cfg-006",
+      // A SERVICE_ACCOUNT no agent in this estate runs as, so still off-inventory.
+      resourceId: "sa-bigdata-ai-weatherforecast-pp",
+      ruleShortId: "IAM-236",
+      severity: "HIGH",
+      remediation: "Add an aws:SourceAccount or aws:SourceArn condition to the role's trust policy so only Bedrock in your own account can assume it.",
+      frameworkCodes: ["IAM-236"],
+      name: "Bedrock Service Role missing conditions to prevent confused deputy attacks",
+      status: "OPEN",
+      result: "FAIL",
+      firstSeenAt: "2026-01-06T10:48:24Z",
+      analyzedAt: "2026-08-07T07:37:39Z",
+      ruleId: "1a1b2762-dee3-434f-b5b4-41597c48052b",
+      ruleName: "Bedrock Service Roles should prevent confused deputy attacks",
+      ruleDescription: "Fails when a role trusted by bedrock.amazonaws.com has no Condition with aws:SourceAccount or aws:SourceArn. A service with access to several accounts can otherwise be tricked into acting on an unintended one.",
+      risks: ["AI_SECURITY"],
+      threats: [],
+      resourceName: "BIGDATA-AI-AIGEN-WEATHERFORECAST-PP",
+      resourceType: "SERVICE_ACCOUNT",
+      resourceStatus: "Active",
+      targetExternalId: "arn:aws:iam::614303399241:role/BIGDATA-AI-AIGEN-WEATHERFORECAST-PP",
+      source: "WIZ_CSPM",
+      subscriptionName: "aws-account-prod-01",
+      cloudProvider: "AWS",
+      projects: [{ id: "proj-project-alpha", name: "PROJECT-ALPHA", businessImpact: "LBI" }],
+      businessImpact: "LBI",
+      ignoreRuleIds: [],
+      iacFindingIds: []
+    },
+    {
+      id: "cfg-007",
+      // RESOLVED, and therefore PASS. Stored for the lifecycle clock, counted by nothing:
+      // isOpenGap keeps it out of complianceGaps, AARS pillar B and the severity strip.
+      resourceId: "agent-a",
+      ruleShortId: "SUB-114",
+      severity: "HIGH",
+      remediation: "Public ingress was removed from the service hosting this agent.",
+      frameworkCodes: ["SUB-114"],
+      name: "AI agent host is reachable from the public internet",
+      status: "RESOLVED",
+      result: "PASS",
+      firstSeenAt: "2026-03-11T09:00:00Z",
+      analyzedAt: "2026-08-07T07:37:41Z",
+      ruleName: "AI agent hosts should not be open to all internet",
+      risks: ["AI_SECURITY"],
+      threats: [],
+      resourceName: "Agent A",
+      resourceType: "AI_AGENT",
+      resourceStatus: "Active",
+      source: "WIZ_CSPM",
+      subscriptionName: "gcp-account-01",
+      cloudProvider: "GCP",
+      projects: [{ id: "proj-project-alpha", name: "PROJECT-ALPHA", businessImpact: "LBI" }],
+      businessImpact: "LBI",
+      ignoreRuleIds: [],
+      iacFindingIds: []
     }
   ];
   var SEED_NODES = [...AGENTS, ...awsRoles, ...SUPPORT, ...extraNodes].map(node);
@@ -6000,27 +6549,93 @@ var Server = (() => {
     if (parseBool(r["validated_exploitable"])) issue2.validatedAsExploitable = true;
     return issue2;
   }
+  var CELL_MAX = 5e4;
+  var CLAMP_MARKER = "\n\u2026 truncated for storage";
+  function cell(v) {
+    if (v === void 0) return null;
+    if (v.length <= CELL_MAX) return v;
+    return v.slice(0, CELL_MAX - CLAMP_MARKER.length) + CLAMP_MARKER;
+  }
+  function optional(v) {
+    return v === null || v === void 0 || v === "" ? void 0 : String(v);
+  }
   function findingToRow(f) {
-    var _a5, _b;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r;
     return {
       id: f.id,
       resource_id: f.resourceId,
       rule_short_id: f.ruleShortId,
       severity: f.severity,
-      remediation: (_a5 = f.remediation) != null ? _a5 : null,
-      framework_codes: ((_b = f.frameworkCodes) != null ? _b : []).join(",")
+      remediation: cell(f.remediation),
+      framework_codes: ((_a5 = f.frameworkCodes) != null ? _a5 : []).join(","),
+      name: (_b = f.name) != null ? _b : null,
+      status: (_c = f.status) != null ? _c : null,
+      result: (_d = f.result) != null ? _d : null,
+      // Tri-state, like the internet flag: "null" for a response that never carried the
+      // field. isOpenGap only tombstones on an explicit true, so absent must not read false.
+      deleted: triCell(f.deleted),
+      first_seen_at: (_e = f.firstSeenAt) != null ? _e : null,
+      analyzed_at: (_f = f.analyzedAt) != null ? _f : null,
+      rule_id: (_g = f.ruleId) != null ? _g : null,
+      rule_graph_id: (_h = f.ruleGraphId) != null ? _h : null,
+      rule_name: (_i = f.ruleName) != null ? _i : null,
+      rule_description: cell(f.ruleDescription),
+      remediation_instructions: cell(f.remediationInstructions),
+      opa_policy: cell(f.opaPolicy),
+      risks_json: f.risks && f.risks.length ? JSON.stringify(f.risks) : null,
+      threats_json: f.threats && f.threats.length ? JSON.stringify(f.threats) : null,
+      resource_name: (_j = f.resourceName) != null ? _j : null,
+      resource_type: (_k = f.resourceType) != null ? _k : null,
+      resource_status: (_l = f.resourceStatus) != null ? _l : null,
+      target_external_id: (_m = f.targetExternalId) != null ? _m : null,
+      source: (_n = f.source) != null ? _n : null,
+      subscription_id: (_o = f.subscriptionId) != null ? _o : null,
+      subscription_name: (_p = f.subscriptionName) != null ? _p : null,
+      cloud_provider: (_q = f.cloudProvider) != null ? _q : null,
+      projects_json: f.projects && f.projects.length ? JSON.stringify(f.projects) : null,
+      business_impact: (_r = f.businessImpact) != null ? _r : null,
+      ignore_rule_ids_json: f.ignoreRuleIds && f.ignoreRuleIds.length ? JSON.stringify(f.ignoreRuleIds) : null,
+      iac_finding_ids_json: f.iacFindingIds && f.iacFindingIds.length ? JSON.stringify(f.iacFindingIds) : null
     };
   }
   function rowToFinding(r) {
-    var _a5, _b, _c, _d, _e, _f;
-    return {
+    var _a5, _b, _c, _d, _e;
+    const finding = {
       id: String((_a5 = r["id"]) != null ? _a5 : ""),
       resourceId: String((_b = r["resource_id"]) != null ? _b : ""),
       ruleShortId: String((_c = r["rule_short_id"]) != null ? _c : ""),
       severity: String((_d = r["severity"]) != null ? _d : "UNKNOWN"),
-      remediation: (_e = r["remediation"]) != null ? _e : void 0,
-      frameworkCodes: String((_f = r["framework_codes"]) != null ? _f : "").split(",").filter(Boolean)
+      remediation: optional(r["remediation"]),
+      frameworkCodes: String((_e = r["framework_codes"]) != null ? _e : "").split(",").filter(Boolean),
+      name: optional(r["name"]),
+      status: optional(r["status"]),
+      result: optional(r["result"]),
+      firstSeenAt: optional(r["first_seen_at"]),
+      analyzedAt: optional(r["analyzed_at"]),
+      ruleId: optional(r["rule_id"]),
+      ruleGraphId: optional(r["rule_graph_id"]),
+      ruleName: optional(r["rule_name"]),
+      ruleDescription: optional(r["rule_description"]),
+      remediationInstructions: optional(r["remediation_instructions"]),
+      opaPolicy: optional(r["opa_policy"]),
+      risks: parseJson(r["risks_json"], []),
+      threats: parseJson(r["threats_json"], []),
+      resourceName: optional(r["resource_name"]),
+      resourceType: optional(r["resource_type"]),
+      resourceStatus: optional(r["resource_status"]),
+      targetExternalId: optional(r["target_external_id"]),
+      source: optional(r["source"]),
+      subscriptionId: optional(r["subscription_id"]),
+      subscriptionName: optional(r["subscription_name"]),
+      cloudProvider: optional(r["cloud_provider"]),
+      projects: parseJson(r["projects_json"], []),
+      businessImpact: optional(r["business_impact"]),
+      ignoreRuleIds: parseJson(r["ignore_rule_ids_json"], []),
+      iacFindingIds: parseJson(r["iac_finding_ids_json"], [])
     };
+    const deleted = parseTri(r["deleted"]);
+    if (deleted !== null) finding.deleted = deleted;
+    return finding;
   }
   function dataFindingToRow(f) {
     return {
@@ -6989,6 +7604,10 @@ var Server = (() => {
     const trend = aarsTrendFromHistory(syncHistory());
     const assets = loadAssets();
     const issues2 = openIssues();
+    const assetIds = {};
+    for (const a of assets) assetIds[a.id] = true;
+    const openGaps = loadFindings().filter(isOpenGap);
+    const unlinkedGaps = openGaps.filter((f) => !assetIds[f.resourceId]).length;
     const agents = assets.filter((a) => a.kind === "AI_AGENT");
     const protectedAgents = agents.filter((a) => !a.guardrailMissing).length;
     const issueRollup = issuesBySeverityByAsset(issues2);
@@ -7035,7 +7654,8 @@ var Server = (() => {
           return sum + ((_a6 = a.dataFindingCount) != null ? _a6 : 0);
         }, 0),
         openIssues: issues2.length,
-        complianceGaps: loadFindings().length,
+        complianceGaps: openGaps.length,
+        complianceGapsUnlinked: unlinkedGaps,
         agenticIdentities: assets.filter((a) => a.identityPurpose === "AGENTIC").length,
         // Estate-wide counts for the two risk conditions that had no total. The flags were
         // persisted and drawn on the graph, but `assetTableRow` strips them, so nothing
@@ -7151,7 +7771,19 @@ var Server = (() => {
             direction: edge2.src === id ? "out" : "in"
           });
         }
-        const findings = loadFindings().filter((f) => f.resourceId === id);
+        const findings = loadFindings().filter((f) => f.resourceId === id && isOpenGap(f)).map((f) => {
+          var _a7, _b2, _c;
+          return {
+            id: f.id,
+            resourceId: f.resourceId,
+            ruleShortId: f.ruleShortId,
+            ruleName: (_a7 = f.ruleName) != null ? _a7 : null,
+            name: (_b2 = f.name) != null ? _b2 : null,
+            severity: f.severity,
+            remediation: (_c = f.remediation) != null ? _c : null,
+            frameworkCodes: f.frameworkCodes
+          };
+        });
         return {
           node: {
             ...assetRow(node2),
@@ -7161,6 +7793,101 @@ var Server = (() => {
           issues: issues2,
           neighbors,
           findings
+        };
+      });
+    });
+  }
+  function configModel() {
+    const assetIds = {};
+    for (const a of loadAssets()) assetIds[a.id] = true;
+    const rows = loadFindings().map((f) => toConfigView(f, !!assetIds[f.resourceId]));
+    const severities = /* @__PURE__ */ new Set();
+    const statuses = /* @__PURE__ */ new Set();
+    const clouds = /* @__PURE__ */ new Set();
+    const resourceTypes = /* @__PURE__ */ new Set();
+    const rules = /* @__PURE__ */ new Set();
+    const projects = /* @__PURE__ */ new Set();
+    for (const r of rows) {
+      if (r.severity) severities.add(r.severity);
+      if (r.status) statuses.add(r.status);
+      if (r.cloud) clouds.add(r.cloud);
+      if (r.resourceType) resourceTypes.add(r.resourceType);
+      if (r.ruleShortId) rules.add(r.ruleShortId);
+      for (const p of r.projects) projects.add(p);
+    }
+    return {
+      rows: sortConfigRows(rows, "severity"),
+      totals: configTotals(rows),
+      facets: {
+        severities: SEVERITY_ORDER.filter((s) => severities.has(s)),
+        statuses: [...statuses].sort(),
+        clouds: [...clouds].sort(),
+        resourceTypes: [...resourceTypes].sort(),
+        rules: [...rules].sort(),
+        projects: [...projects].sort()
+      }
+    };
+  }
+  function getConfigFindings(p) {
+    return run(() => {
+      var _a5, _b, _c;
+      const params = p != null ? p : {};
+      const query = resolveConfigQuery(params);
+      const sort = CONFIG_SORTS.indexOf(String((_a5 = params["sort"]) != null ? _a5 : "")) >= 0 ? String(params["sort"]) : "severity";
+      const dir = String((_b = params["dir"]) != null ? _b : "") === "asc" ? "asc" : String((_c = params["dir"]) != null ? _c : "") === "desc" ? "desc" : DEFAULT_CONFIG_SORT_DIR[sort];
+      const pageSize = Math.min(
+        MAX_CONFIG_PAGE_SIZE,
+        Math.max(1, Number(params["pageSize"]) || DEFAULT_CONFIG_PAGE_SIZE)
+      );
+      const page = Math.max(0, Number(params["page"]) || 0);
+      const model = cached("configModel", null, configModel);
+      const head = {
+        total: model.rows.length,
+        totals: model.totals,
+        facets: model.facets,
+        pageSize,
+        sort,
+        dir
+      };
+      if (model.rows.length <= CONFIG_CLIENT_ALL_MAX) {
+        return {
+          ...head,
+          all: true,
+          rows: model.rows,
+          filtered: model.rows.length,
+          page: 0,
+          pageCount: Math.max(1, Math.ceil(model.rows.length / pageSize))
+        };
+      }
+      const filtered = sortConfigRows(filterConfigRows(model.rows, query), sort, dir);
+      const paged = pageOf(filtered, page, pageSize);
+      return {
+        ...head,
+        all: false,
+        controls: rollupByControl(filtered),
+        rows: paged.rows,
+        filtered: filtered.length,
+        page: paged.page,
+        pageCount: paged.pageCount,
+        facetCounts: configFacetCounts(model.rows, query)
+      };
+    });
+  }
+  function getConfigFindingDetail(p) {
+    return run(() => {
+      var _a5;
+      const id = String((_a5 = (p != null ? p : {})["id"]) != null ? _a5 : "");
+      return cached("getConfigFindingDetail", { id }, () => {
+        const finding = loadFindings().filter((f) => f.id === id)[0];
+        if (!finding) return null;
+        const asset = loadAssets().filter((a) => a.id === finding.resourceId)[0];
+        return {
+          finding,
+          gap: isOpenGap(finding),
+          // The asset the finding is keyed to, when the inventory holds it. Null is the
+          // common case and is not an error: most AI-security rules fail on a region, an
+          // IAM policy or an identity no agent runs as.
+          asset: asset ? assetRow(asset) : null
         };
       });
     });

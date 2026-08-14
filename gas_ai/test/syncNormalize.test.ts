@@ -563,21 +563,52 @@ describe("reconcileIssues (augment de-dup)", () => {
   });
 });
 
-// Trimmed from exemples/ai_cloud_config_findings_response.js.
+// Transcribed from exemples/ai_config_findings_response.js (the capture is truncated
+// mid-node and nothing imports it, so fixtures here are inlined by hand — same convention
+// as riskIssuesCapture.test.ts). This is the SUB-082 / REGION shape, carrying every field
+// the widened selection set asks for.
 const CONFIG_FINDING_RAW: Record<string, unknown> = {
   id: "find-1",
   name: "Vertex AI Metadata Store is not encrypted with a customer-managed key",
+  deleted: false,
+  analyzedAt: "2026-07-07T15:59:10.110596369Z",
+  firstSeenAt: "2026-07-07T15:59:28.164073Z",
   severity: "MEDIUM",
   result: "FAIL",
   status: "OPEN",
   remediation: "Delete and recreate the metadata store with a customer-managed key.",
-  resource: { id: "wiz-asset-42", name: "europe-west1", type: "REGION" },
+  source: "WIZ_CSPM",
+  targetExternalId: "vc-smp-innovation-stg-t5zy/europe-west1",
+  ignoreRules: null,
+  subscription: {
+    id: "5158ac86-8442-5dd0-baaf-fcd13456eed8",
+    name: "vc-smp-innovation-stg-t5zy",
+    externalId: "vc-smp-innovation-stg-t5zy",
+    cloudProvider: "GCP",
+    sourceDeployments: [{ id: "9fbbd355", name: "gcp-main-org", status: "ENABLED" }],
+  },
+  resource: {
+    id: "wiz-asset-42",
+    name: "europe-west1",
+    type: "REGION",
+    status: "Active",
+    projects: [
+      { id: "p-1", name: "VALUE-CHAIN", riskProfile: { businessImpact: "LBI" } },
+      { id: "p-2", name: "owner-CE-INDUS-SUPPLY-cloud", riskProfile: { businessImpact: "MBI" } },
+    ],
+  },
+  sourceMappedIacFindings: null,
   rule: {
+    id: "60442ee5-452a-48cb-8694-9061c920e10d",
     shortId: "SUB-082",
+    graphId: "d354eff1-2df7-5e21-80c5-19489a284f00",
     name: "Vertex AI Metadata Store should be encrypted with a customer-managed key",
+    description: "This rule checks whether the store is encrypted with a customer-managed key.",
     remediationInstructions: "Follow the GCP console steps.",
     risks: ["AI_SECURITY", "UNPROTECTED_DATA"],
+    threats: [],
     tags: [{ key: "owasp", value: "LLM06" }],
+    opaPolicy: "package wiz\n\ndefault result = \"pass\"\n",
   },
 };
 
@@ -592,11 +623,75 @@ describe("normalizeConfigFindingsPage", () => {
     expect(f.frameworkCodes).toEqual(["SUB-082", "LLM06"]);
   });
 
-  it("drops PASS results and findings with no resource", () => {
-    const pass = { ...CONFIG_FINDING_RAW, id: "find-2", result: "PASS" };
+  it("carries the whole record, not just the six fields AARS prices", () => {
+    const f = normalizeConfigFindingsPage([CONFIG_FINDING_RAW]).findings[0];
+    expect(f.name).toContain("Vertex AI Metadata Store");
+    expect(f.status).toBe("OPEN");
+    expect(f.result).toBe("FAIL");
+    expect(f.firstSeenAt).toBe("2026-07-07T15:59:28.164073Z");
+    expect(f.analyzedAt).toBe("2026-07-07T15:59:10.110596369Z");
+    expect(f.ruleId).toBe("60442ee5-452a-48cb-8694-9061c920e10d");
+    expect(f.ruleGraphId).toBe("d354eff1-2df7-5e21-80c5-19489a284f00");
+    expect(f.ruleName).toContain("customer-managed key");
+    expect(f.ruleDescription).toContain("encrypted");
+    expect(f.remediationInstructions).toBe("Follow the GCP console steps.");
+    expect(f.opaPolicy).toContain("package wiz");
+    expect(f.risks).toEqual(["AI_SECURITY", "UNPROTECTED_DATA"]);
+    expect(f.threats).toEqual([]);
+    expect(f.resourceName).toBe("europe-west1");
+    expect(f.resourceType).toBe("REGION");
+    expect(f.resourceStatus).toBe("Active");
+    expect(f.targetExternalId).toBe("vc-smp-innovation-stg-t5zy/europe-west1");
+    expect(f.source).toBe("WIZ_CSPM");
+    expect(f.subscriptionId).toBe("5158ac86-8442-5dd0-baaf-fcd13456eed8");
+    expect(f.subscriptionName).toBe("vc-smp-innovation-stg-t5zy");
+    expect(f.cloudProvider).toBe("GCP");
+    expect(f.projects?.map((p) => p.name)).toEqual(["VALUE-CHAIN", "owner-CE-INDUS-SUPPLY-cloud"]);
+    // Worst across the projects, not the first one's.
+    expect(f.businessImpact).toBe("MBI");
+    expect(f.ignoreRuleIds).toEqual([]);
+    expect(f.iacFindingIds).toEqual([]);
+  });
+
+  it("reads ignoreRules and sourceMappedIacFindings as id lists when present", () => {
+    const withRefs = {
+      ...CONFIG_FINDING_RAW,
+      id: "find-ref",
+      ignoreRules: [{ id: "ig-1", tags: [{ key: "why", value: "accepted" }] }],
+      sourceMappedIacFindings: [{ id: "iac-1", name: "main.tf" }],
+    };
+    const f = normalizeConfigFindingsPage([withRefs]).findings[0];
+    expect(f.ignoreRuleIds).toEqual(["ig-1"]);
+    expect(f.iacFindingIds).toEqual(["iac-1"]);
+  });
+
+  // The contract inverted here on purpose. While the step only asked Wiz for OPEN rows,
+  // dropping PASS at the door was right. Now that it also asks for RESOLVED — the only
+  // way to date a closure, since Wiz sends no resolvedAt — a fixed finding arrives as
+  // PASS, and the old gate would have discarded exactly what the widened filter is for.
+  // Storage keeps everything usable; isOpenGap decides what counts.
+  it("stores resolved and passing findings instead of dropping them", () => {
+    const resolved = { ...CONFIG_FINDING_RAW, id: "find-2", result: "PASS", status: "RESOLVED" };
+    const part = normalizeConfigFindingsPage([CONFIG_FINDING_RAW, resolved]);
+    expect(part.findings.map((f) => f.id)).toEqual(["find-1", "find-2"]);
+    expect(part.findings[1].result).toBe("PASS");
+    expect(part.findings[1].status).toBe("RESOLVED");
+  });
+
+  it("still drops rows it could not key: no id, or no resource", () => {
     const noResource = { id: "find-3", result: "FAIL", status: "OPEN" };
-    const part = normalizeConfigFindingsPage([pass, noResource]);
+    const noId = { ...CONFIG_FINDING_RAW, id: undefined };
+    const part = normalizeConfigFindingsPage([noResource, noId]);
     expect(part.findings).toHaveLength(0);
+  });
+
+  it("leaves `deleted` absent unless the response said true", () => {
+    const notDeleted = normalizeConfigFindingsPage([CONFIG_FINDING_RAW]).findings[0];
+    expect(notDeleted.deleted).toBeUndefined();
+    const tombstoned = normalizeConfigFindingsPage(
+      [{ ...CONFIG_FINDING_RAW, deleted: true }],
+    ).findings[0];
+    expect(tombstoned.deleted).toBe(true);
   });
 });
 

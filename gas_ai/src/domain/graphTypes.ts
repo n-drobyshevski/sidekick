@@ -325,10 +325,20 @@ export interface IssueRow {
 }
 
 /**
- * A failing compliance-configuration finding (configurationFindings), keyed to the
- * resource it fails on. Feeds AARS pillar B (one gap per distinct failing control)
- * and carries the human remediation text. `frameworkCodes` are the AARS gap codes the
- * finding contributes (rule shortId + any recognizable OWASP token on the rule).
+ * A compliance-configuration finding (configurationFindings), keyed to the resource it
+ * was evaluated against. Feeds AARS pillar B (one gap per distinct failing control),
+ * carries the human remediation text, and backs the Cloud Configuration register.
+ * `frameworkCodes` are the AARS gap codes the finding contributes (rule shortId + any
+ * recognizable OWASP token on the rule).
+ *
+ * NOT every row is a gap. The register stores whatever the filter returns — including
+ * RESOLVED rows, which come back with `result: "PASS"` — and `isOpenGap` in
+ * domain/config.ts is the single place that decides which of them count as a failing
+ * control. Anything that prices a score or reports a number goes through that predicate;
+ * reading `severity` off a row without it counts findings that already closed.
+ *
+ * The first six fields are the original record and keep their exact meaning, so a row
+ * written before the widening still parses.
  */
 export interface FindingRow {
   id: string;
@@ -337,6 +347,49 @@ export interface FindingRow {
   severity: Severity;
   remediation?: string;
   frameworkCodes: string[];
+
+  /** Lifecycle. Wiz sends NO resolvedAt on a configuration finding — `firstSeenAt` plus
+   *  this app's sync history is the only way to date a closure. */
+  name?: string;
+  status?: string;          // OPEN | RESOLVED | REJECTED
+  result?: string;          // PASS | FAIL | ERROR | NOT_ASSESSED
+  deleted?: boolean;
+  firstSeenAt?: string;
+  analyzedAt?: string;      // last evaluation, not last change
+
+  /** The control. One rule fails on many resources, which is why the register rolls up
+   *  by `ruleShortId` before it lists rows. */
+  ruleId?: string;
+  ruleGraphId?: string;
+  ruleName?: string;
+  ruleDescription?: string;
+  remediationInstructions?: string;  // the rule's template, with {{placeholders}}
+  opaPolicy?: string;                // the Rego the evaluation actually ran
+  risks?: string[];
+  threats?: string[];
+
+  /** The resource it was evaluated against. `resourceType` is a raw Wiz type such as
+   *  REGION or RAW_ACCESS_POLICY — deliberately NOT a NodeKind, because most of these
+   *  types are not in the graph at all and forcing them through kindFromWizType would
+   *  drop the row. */
+  resourceName?: string;
+  resourceType?: string;
+  resourceStatus?: string;
+  targetExternalId?: string;
+  source?: string;                   // e.g. WIZ_CSPM
+
+  subscriptionId?: string;
+  subscriptionName?: string;
+  cloudProvider?: string;
+  projects?: Array<{ id: string; name: string; businessImpact?: string }>;
+  businessImpact?: string;           // worst of projects[].riskProfile.businessImpact
+
+  /** An accepted-risk decision covering this finding. Present ids mean the tenant chose
+   *  to ignore it, which the register shows rather than silently counting. */
+  ignoreRuleIds?: string[];
+  /** sourceMappedIacFindings — the IaC that produced the misconfiguration, when Wiz
+   *  traced one. The finding's link back to the code that caused it. */
+  iacFindingIds?: string[];
 }
 
 /**

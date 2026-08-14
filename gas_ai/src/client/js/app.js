@@ -8,6 +8,7 @@ import { toast } from "./ui.js";
 import { renderGraphPage } from "./pages/graph.js";
 import { renderInventory } from "./pages/inventory.js";
 import { renderCombos } from "./pages/combos.js";
+import { renderConfigFindings } from "./pages/config.js";
 import { renderAarsRules } from "./pages/aars.js";
 import { renderScans } from "./pages/scans.js";
 import { renderData } from "./pages/data.js";
@@ -20,6 +21,7 @@ const PAGES = {
   graph: { title: "Security Graph", group: "Security", render: renderGraphPage, fullBleed: true },
   inventory: { title: "AI Inventory", group: "Security", render: renderInventory },
   combos: { title: "Toxic Combinations", group: "Security", render: renderCombos },
+  config: { title: "Cloud Configuration", group: "Security", render: renderConfigFindings },
   aars: { title: "AARS Rules", group: "Scoring", render: renderAarsRules, fullBleed: true },
   scans: { title: "Wiz Scans", group: "Coverage", render: renderScans },
   data: { title: "Data", group: "Data", render: renderData },

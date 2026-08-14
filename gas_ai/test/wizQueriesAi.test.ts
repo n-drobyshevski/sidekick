@@ -232,9 +232,30 @@ describe("Q_CONFIG_FINDINGS + aiConfigFindingsVariables", () => {
     expect(Q_CONFIG_FINDINGS).toContain("remediationInstructions");
   });
 
-  it("filters OPEN findings under the AI framework category; project scope nests under resource", () => {
+  it("selects the lifecycle, exception and IaC fields the register stores", () => {
+    for (const field of [
+      "deleted", "analyzedAt", "firstSeenAt", "ignoreRules",
+      "sourceDeployments", "sourceMappedIacFindings", "graphId",
+    ]) {
+      expect(Q_CONFIG_FINDINGS).toContain(field);
+    }
+  });
+
+  // resolutionReason is on Wiz's published ConfigurationFinding type but NOT in this
+  // tenant's capture. CONFIG_FINDINGS is an optional step that swallows an HTTP 400, so a
+  // field the schema rejects would empty ai_findings and look exactly like a tenant with
+  // nothing to report. Probe it through the Wiz Scans test run before selecting it.
+  it("asks for no field the capture did not prove", () => {
+    expect(Q_CONFIG_FINDINGS).not.toContain("resolutionReason");
+  });
+
+  it("collects OPEN and RESOLVED under the AI framework category; project scope nests under resource", () => {
     const v = aiConfigFindingsVariables(null) as { filterBy: Record<string, unknown> };
-    expect(v.filterBy["status"]).toEqual(["OPEN"]);
+    // RESOLVED is collected, not counted: a configuration finding carries no resolvedAt,
+    // so seeing it closed is the only way this app can ever date the closure.
+    expect(v.filterBy["status"]).toEqual(["OPEN", "RESOLVED"]);
+    // REJECTED stays out of the default — an accepted-risk decision, not a posture fact.
+    expect(v.filterBy["status"]).not.toContain("REJECTED");
     expect(v.filterBy["frameworkCategory"]).toEqual([RISK_CATEGORY_ID]);
     expect(v.filterBy["resource"]).toBeUndefined();
     const scoped = aiConfigFindingsVariables(["proj-1"]) as { filterBy: Record<string, unknown> };

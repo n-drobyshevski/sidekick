@@ -44,6 +44,7 @@ import {
 } from "../domain/aarsTrend";
 import {
   AARS_SEVERITY_ORDER,
+  isOpenGap,
   isUnresolvedIssue,
   MAX_NODES_CEILING,
   MAX_NODES_FLOOR,
@@ -52,6 +53,24 @@ import {
   SEVERITY_ORDER,
   type Severity,
 } from "../domain/config";
+import {
+  CONFIG_CLIENT_ALL_MAX,
+  CONFIG_SORTS,
+  DEFAULT_CONFIG_PAGE_SIZE,
+  DEFAULT_CONFIG_SORT_DIR,
+  MAX_CONFIG_PAGE_SIZE,
+  configFacetCounts,
+  configTotals,
+  filterConfigRows,
+  resolveConfigQuery,
+  rollupByControl,
+  sortConfigRows,
+  toConfigView,
+  type ConfigFindingView,
+  type ConfigSort,
+  type ConfigTotals,
+  type ControlRollup,
+} from "../domain/configFindings";
 import { graphCacheParams, resolveGraphParams, resolveLayoutParams } from "../domain/graphApiParams";
 import { conditionHolds, conditionState } from "../domain/riskConditions";
 import {
@@ -410,6 +429,24 @@ function assetsModel(): AssetsModel {
   const trend = aarsTrendFromHistory(syncStore.syncHistory());
   const assets = syncStore.loadAssets();
   const issues = openIssues();
+  // The two compliance numbers, computed together so they cannot drift.
+  //
+  // `complianceGaps` used to be `loadFindings().length` — every stored row, including the
+  // ones that price nothing. It now counts failing controls (isOpenGap), which is what the
+  // label always claimed, and which the widened filter makes necessary: RESOLVED rows are
+  // collected now and would otherwise inflate it.
+  //
+  // `complianceGapsUnlinked` is the part of that total no asset carries. A configuration
+  // finding is keyed to the resource it was evaluated against, and most AI-security rules
+  // fail on things the AI graph does not model — a REGION for a Vertex metadata store, a
+  // RAW_ACCESS_POLICY for a Bedrock IAM policy, a service account no agent runs as.
+  // buildAarsHintsFromFindings skips those (no node to hang a gap on), so before this they
+  // were counted in the KPI and priced into nothing. Reporting the split says so out loud
+  // rather than letting one number imply every finding reached a score.
+  const assetIds: Record<string, true> = {};
+  for (const a of assets) assetIds[a.id] = true;
+  const openGaps = syncStore.loadFindings().filter(isOpenGap);
+  const unlinkedGaps = openGaps.filter((f) => !assetIds[f.resourceId]).length;
   const agents = assets.filter((a) => a.kind === "AI_AGENT");
   const protectedAgents = agents.filter((a) => !a.guardrailMissing).length;
   const issueRollup = issuesBySeverityByAsset(issues);
@@ -459,7 +496,8 @@ function assetsModel(): AssetsModel {
       ).length,
       dataFindings: assets.reduce((sum, a) => sum + (a.dataFindingCount ?? 0), 0),
       openIssues: issues.length,
-      complianceGaps: syncStore.loadFindings().length,
+      complianceGaps: openGaps.length,
+      complianceGapsUnlinked: unlinkedGaps,
       agenticIdentities: assets.filter((a) => a.identityPurpose === "AGENTIC").length,
       // Estate-wide counts for the two risk conditions that had no total. The flags were
       // persisted and drawn on the graph, but `assetTableRow` strips them, so nothing
@@ -603,7 +641,28 @@ export function getAssetDetail(p?: unknown): ApiResult {
           direction: edge.src === id ? "out" : "in",
         });
       }
-      const findings = syncStore.loadFindings().filter((f) => f.resourceId === id);
+      // Failing controls only. The tab now also holds resolved and passing rows for the
+      // lifecycle clock, and the drill-down's Compliance pane counts what is wrong with
+      // this asset — a fixed control listed there reads as an outstanding gap.
+      //
+      // Projected, not passed through. A FindingRow now carries the rule's description,
+      // its remediation template and its full Rego policy, none of which this pane
+      // renders; shipping them would put several kilobytes per finding on the wire for a
+      // list that shows a severity, a rule id and one line of fix text. The finding sheet
+      // fetches the whole record when someone actually opens one.
+      const findings = syncStore
+        .loadFindings()
+        .filter((f) => f.resourceId === id && isOpenGap(f))
+        .map((f) => ({
+          id: f.id,
+          resourceId: f.resourceId,
+          ruleShortId: f.ruleShortId,
+          ruleName: f.ruleName ?? null,
+          name: f.name ?? null,
+          severity: f.severity,
+          remediation: f.remediation ?? null,
+          frameworkCodes: f.frameworkCodes,
+        }));
       return {
         node: {
           ...assetRow(node),
@@ -613,6 +672,147 @@ export function getAssetDetail(p?: unknown): ApiResult {
         issues,
         neighbors,
         findings,
+      };
+    });
+  });
+}
+
+// ------------------------------------------------------------ cloud configuration register
+
+/**
+ * Every stored configuration finding as a register row, plus the rollups. Cached per data
+ * version like assetsModel, because the linkage join (does this finding's resource exist
+ * in the inventory?) reads the whole assets tab and must not run per keystroke.
+ *
+ * The totals are computed over the WHOLE set on purpose — the header describes the
+ * estate, never the page or the filtered subset, the same contract the inventory keeps.
+ */
+function configModel(): {
+  rows: ConfigFindingView[];
+  totals: ConfigTotals;
+  facets: Record<string, string[]>;
+} {
+  const assetIds: Record<string, true> = {};
+  for (const a of syncStore.loadAssets()) assetIds[a.id] = true;
+  const rows = syncStore
+    .loadFindings()
+    .map((f) => toConfigView(f, !!assetIds[f.resourceId]));
+
+  const severities = new Set<string>();
+  const statuses = new Set<string>();
+  const clouds = new Set<string>();
+  const resourceTypes = new Set<string>();
+  const rules = new Set<string>();
+  const projects = new Set<string>();
+  for (const r of rows) {
+    if (r.severity) severities.add(r.severity);
+    if (r.status) statuses.add(r.status);
+    if (r.cloud) clouds.add(r.cloud);
+    if (r.resourceType) resourceTypes.add(r.resourceType);
+    if (r.ruleShortId) rules.add(r.ruleShortId);
+    for (const p of r.projects) projects.add(p);
+  }
+
+  return {
+    rows: sortConfigRows(rows, "severity"),
+    totals: configTotals(rows),
+    facets: {
+      severities: SEVERITY_ORDER.filter((s) => severities.has(s)),
+      statuses: [...statuses].sort(),
+      clouds: [...clouds].sort(),
+      resourceTypes: [...resourceTypes].sort(),
+      rules: [...rules].sort(),
+      projects: [...projects].sort(),
+    },
+  };
+}
+
+/**
+ * The Cloud Configuration register. Same two-mode shape as getAssets: under
+ * CONFIG_CLIENT_ALL_MAX the browser gets every row and filters locally, over it the
+ * filtering, sorting and paging happen here. Either way the header, the control rollup
+ * and the facet vocabulary describe the whole register.
+ */
+export function getConfigFindings(p?: unknown): ApiResult {
+  return run(() => {
+    const params = (p ?? {}) as Rec;
+    const query = resolveConfigQuery(params);
+    const sort = (CONFIG_SORTS as string[]).indexOf(String(params["sort"] ?? "")) >= 0
+      ? (String(params["sort"]) as ConfigSort)
+      : "severity";
+    const dir = String(params["dir"] ?? "") === "asc"
+      ? "asc"
+      : String(params["dir"] ?? "") === "desc"
+        ? "desc"
+        : DEFAULT_CONFIG_SORT_DIR[sort];
+    const pageSize = Math.min(
+      MAX_CONFIG_PAGE_SIZE,
+      Math.max(1, Number(params["pageSize"]) || DEFAULT_CONFIG_PAGE_SIZE),
+    );
+    const page = Math.max(0, Number(params["page"]) || 0);
+
+    const model = cached("configModel", null, configModel) as ReturnType<typeof configModel>;
+    const head = {
+      total: model.rows.length,
+      totals: model.totals,
+      facets: model.facets,
+      pageSize,
+      sort,
+      dir,
+    };
+
+    // The all path deliberately ships NO control rollup. Filtering happens in the browser
+    // there, and a rollup regroups under every filter change — a server-computed one would
+    // describe the unfiltered register while the table below it showed a filtered one.
+    // The client rebuilds it from the rows it actually holds.
+    if (model.rows.length <= CONFIG_CLIENT_ALL_MAX) {
+      return {
+        ...head,
+        all: true,
+        rows: model.rows,
+        filtered: model.rows.length,
+        page: 0,
+        pageCount: Math.max(1, Math.ceil(model.rows.length / pageSize)),
+      };
+    }
+
+    // Past the ceiling the browser never holds the whole register, so the rollup has to be
+    // computed here — over the FILTERED rows, so it still describes the table below it.
+    const filtered = sortConfigRows(filterConfigRows(model.rows, query), sort, dir);
+    const paged = pageOf(filtered as unknown as Rec[], page, pageSize);
+    return {
+      ...head,
+      all: false,
+      controls: rollupByControl(filtered),
+      rows: paged.rows,
+      filtered: filtered.length,
+      page: paged.page,
+      pageCount: paged.pageCount,
+      facetCounts: configFacetCounts(model.rows, query),
+    };
+  });
+}
+
+/**
+ * One finding, whole. The register row deliberately omits the rule description, the
+ * remediation text and the Rego policy — they repeat verbatim across every finding of the
+ * same rule, so shipping them per row would put the same multi-kilobyte document on the
+ * wire once per failing resource. The drill-down asks for them one at a time instead.
+ */
+export function getConfigFindingDetail(p?: unknown): ApiResult {
+  return run(() => {
+    const id = String(((p ?? {}) as Rec)["id"] ?? "");
+    return cached("getConfigFindingDetail", { id }, () => {
+      const finding = syncStore.loadFindings().filter((f) => f.id === id)[0];
+      if (!finding) return null;
+      const asset = syncStore.loadAssets().filter((a) => a.id === finding.resourceId)[0];
+      return {
+        finding,
+        gap: isOpenGap(finding),
+        // The asset the finding is keyed to, when the inventory holds it. Null is the
+        // common case and is not an error: most AI-security rules fail on a region, an
+        // IAM policy or an identity no agent runs as.
+        asset: asset ? assetRow(asset) : null,
       };
     });
   });

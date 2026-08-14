@@ -16,13 +16,58 @@ export type Severity = (typeof SEVERITY_ORDER)[number];
  * total read lower than the same filter in the Wiz console.
  *
  * Not for configurationFindings — their status vocabulary is OPEN/RESOLVED/REJECTED with
- * no in-progress state, and normalizeConfigFindingsPage filters on its own.
+ * no in-progress state, and they carry a second, orthogonal axis (`result`). Use
+ * isOpenGap below for those.
  */
 export const UNRESOLVED_ISSUE_STATUSES = ["OPEN", "IN_PROGRESS"] as const;
 
 /** Whether an issue is still live work: it is on the register and it is not done. */
 export function isUnresolvedIssue(issue: { status?: string }): boolean {
   return (UNRESOLVED_ISSUE_STATUSES as readonly string[]).includes(String(issue.status ?? ""));
+}
+
+/**
+ * Whether a configuration finding is a failing control right now — the one definition of
+ * "compliance gap" in this app. Everything that prices AARS pillar B, totals
+ * `kpis.complianceGaps` or counts a row on the Cloud Configuration register goes through
+ * here, so those numbers cannot drift apart.
+ *
+ * Three conditions, and each rules out a row the register still stores:
+ *
+ * - `result` is FAIL. A finding is an evaluation, and PASS/FAIL is its verdict. A
+ *   resolved finding comes back PASS, which is exactly why the gate cannot live at the
+ *   normalizer any more: filtering FAIL at ingest would discard every row the widened
+ *   status filter was added to collect.
+ * - `status` is OPEN. RESOLVED is collected for the lifecycle clock; REJECTED is an
+ *   accepted-risk decision. Neither is outstanding work, and counting either would
+ *   inflate the gap total with things nobody is going to fix.
+ * - not `deleted`. Wiz tombstones a finding whose resource is gone; the row survives so
+ *   history stays readable, but the control is not failing on anything.
+ *
+ * ABSENT IS PERMISSIVE, and that is load-bearing rather than sloppy. The ai_findings tab
+ * gained `result` and `status` columns in the same change that added this predicate, so
+ * a ledger written by the previous version has neither — and every row it holds was
+ * already filtered to FAIL + OPEN at ingest, because that was the only thing the old
+ * normalizer stored. Demanding the fields would read those rows as zero gaps and drop
+ * AARS pillar B to nothing on any rescore taken before the next sync rewrites the tab:
+ * no error, a real number silently reading 0. So the test is "contradicts the gate",
+ * not "satisfies it", which reproduces the old normalizer's behaviour exactly
+ * (`if (result !== "FAIL") skip; if (status && status !== "OPEN") skip`) and is strict
+ * for new rows, where both fields are always written.
+ *
+ * Structural parameter rather than FindingRow: graphTypes imports Severity from this
+ * module, so naming the type here would close a cycle. Same shape of argument as
+ * isUnresolvedIssue above, for the same reason.
+ */
+export function isOpenGap(
+  finding: { result?: string; status?: string; deleted?: boolean },
+): boolean {
+  if (finding.deleted === true) return false;
+  const result = String(finding.result ?? "");
+  if (result && result !== "FAIL") return false;
+  const status = String(finding.status ?? "");
+  if (status && status !== "OPEN") return false;
+  return true;
 }
 
 export const SEVERITY_COLORS: Record<string, string> = {
