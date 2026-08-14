@@ -14,6 +14,11 @@ export const ROUTE_ICONS = {
   // A cloud with a check inside it: the page is the pass/fail record of cloud controls,
   // and the cloud is what separates it at a glance from the combos triangle above it.
   config: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.3 18h9a3.7 3.7 0 0 0 .5-7.4 5.1 5.1 0 0 0-9.7-1.3A3.85 3.85 0 0 0 7.3 18z"/><path d="M9.9 13.4l1.7 1.7 3.2-3.4"/></svg>',
+  // A clipboard with a partial rule beneath it: the page scores a FRAMEWORK — a published
+  // checklist — rather than the individual cloud controls the config page records, and the
+  // short second rule reads as "partly complete" without borrowing the gauge vocabulary
+  // this app rejects everywhere else.
+  compliance: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4.5h6v2.2H9z"/><path d="M15 5.6h2.2A1.3 1.3 0 0 1 18.5 6.9v11.8a1.3 1.3 0 0 1-1.3 1.3H6.8a1.3 1.3 0 0 1-1.3-1.3V6.9a1.3 1.3 0 0 1 1.3-1.3H9"/><path d="M8.6 11.2h6.8"/><path d="M8.6 15.2h3.4"/></svg>',
   aars: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 6h14"/><path d="M5 12h14"/><path d="M5 18h14"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="11" cy="18" r="2"/></svg>',
   scans: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-4.3-7.1"/><path d="M12 12l5.2-3.2"/><circle cx="12" cy="12" r="1"/></svg>',
   data: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5.5" rx="7.3" ry="2.8"/><path d="M4.7 5.5v6c0 1.55 3.27 2.8 7.3 2.8s7.3-1.25 7.3-2.8v-6"/><path d="M4.7 11.5v6c0 1.55 3.27 2.8 7.3 2.8s7.3-1.25 7.3-2.8v-6"/></svg>',

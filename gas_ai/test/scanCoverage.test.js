@@ -22,6 +22,13 @@ const FULL = {
     dataFindings: 14,
     openIssues: 29,
     complianceGaps: 23,
+    frameworkPosture: {
+      frameworks: 3,
+      scoredFrameworks: 3,
+      averagePosture: 94,
+      failingSubcategories: 4,
+      failingPolicies: 7,
+    },
     agenticIdentities: 12,
     internetExposed: 2,
     internetUnknown: 5,
@@ -37,8 +44,18 @@ const stateOf = (ctx, id) => byId(resolveAreas(ctx)).get(id).state;
 describe("resolveAreas on a full payload", () => {
   const resolved = resolveAreas(FULL);
 
-  it("splits the nine areas 6 live / 2 partial / 1 unscanned", () => {
-    expect(coverageTally(resolved)).toEqual({ live: 6, partial: 2, unscanned: 1 });
+  it("splits the ten areas 7 live / 2 partial / 1 unscanned", () => {
+    expect(coverageTally(resolved)).toEqual({ live: 7, partial: 2, unscanned: 1 });
+  });
+
+  it("reports framework posture as an average over the frameworks that actually scored", () => {
+    const area = byId(resolved).get("posture");
+    expect(area.state).toBe("live");
+    expect(area.figure.value).toBe("94%");
+    // "3 of 3" rather than a bare 3: an average over frameworks where one was never
+    // assessed is a different claim from one where all were, and the unit has to say which.
+    expect(area.figure.unit).toContain("3 of 3 frameworks scored");
+    expect(area.figure.unit).toContain("7 failing policies");
   });
 
   it("tallies to exactly the number of areas, so the strip can never mislead", () => {
@@ -93,6 +110,27 @@ describe("degradation — an area never claims more than its payload supports", 
 
   it("steps toxic combinations back to partial when the digest is missing", () => {
     expect(stateOf({ ...FULL, digest: null }, "toxic")).toBe("partial");
+  });
+
+  it("steps framework posture back to partial on an older server bundle", () => {
+    const kpis = { ...FULL.kpis };
+    delete kpis.frameworkPosture;
+    expect(stateOf({ ...FULL, kpis }, "posture")).toBe("partial");
+  });
+
+  it("steps framework posture back to partial when nothing scored — never to 0%", () => {
+    // A tenant that rejected every posture step, and one whose selected frameworks all
+    // came back empty, both land here. `averagePosture: null` is the honest answer and the
+    // area must not turn it into a confident zero — the exact inversion this whole
+    // null-vs-zero discipline exists to prevent.
+    const kpis = {
+      ...FULL.kpis,
+      frameworkPosture: {
+        frameworks: 3, scoredFrameworks: 0, averagePosture: null,
+        failingSubcategories: 0, failingPolicies: 0,
+      },
+    };
+    expect(stateOf({ ...FULL, kpis }, "posture")).toBe("partial");
   });
 
   it("resolves every area to partial or unscanned when no payload arrived at all", () => {

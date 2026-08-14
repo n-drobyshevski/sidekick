@@ -14,14 +14,18 @@ import {
   Q_IDENTITY_ACCESS,
   Q_SA_EXCESSIVE_ACCESS,
   Q_AI_INVENTORY,
+  Q_COMPLIANCE_POSTURE,
   Q_CONFIG_FINDINGS,
   Q_ISSUES,
   Q_PRINCIPALS,
   Q_RULE_ASSETS,
+  Q_SECURITY_FRAMEWORKS,
+  aiCompliancePostureVariables,
   aiConfigFindingsVariables,
   aiInventoryVariables,
   aiIssuesVariables,
   aiPrincipalsVariables,
+  aiSecurityFrameworksVariables,
   chooseAiResourceTypes,
   isInvalidEnumValueError,
 } from "../src/server/wizQueriesAi";
@@ -434,5 +438,82 @@ describe("errorDigest", () => {
       errors: Array.from({ length: 200 }, (_, i) => ({ message: `field_${i} is not valid` })),
     });
     expect(errorDigest(many).length).toBeLessThanOrEqual(800);
+  });
+});
+
+describe("Q_SECURITY_FRAMEWORKS + Q_COMPLIANCE_POSTURE", () => {
+  it("the catalogue is an ordinary connection, so it needs no new transport", () => {
+    expect(Q_SECURITY_FRAMEWORKS).toContain("securityFrameworks");
+    expect(Q_SECURITY_FRAMEWORKS).toContain("$first: Int");
+    expect(Q_SECURITY_FRAMEWORKS).toContain("$after: String");
+    expect(Q_SECURITY_FRAMEWORKS).toContain("pageInfo { hasNextPage endCursor }");
+    expect(Q_SECURITY_FRAMEWORKS).toContain("nodes");
+    expect(Q_SECURITY_FRAMEWORKS).not.toContain("//");
+  });
+
+  it("posture takes an id and is NOT a connection — the reason fetchSingleObject exists", () => {
+    expect(Q_COMPLIANCE_POSTURE).toContain("securityFramework(id: $id)");
+    expect(Q_COMPLIANCE_POSTURE).toContain("$id: ID!");
+    // No paging variables at all: this root declares none, and fetchPage injects both.
+    expect(Q_COMPLIANCE_POSTURE).not.toContain("$first");
+    expect(Q_COMPLIANCE_POSTURE).not.toContain("$after");
+    expect(Q_COMPLIANCE_POSTURE).not.toContain("pageInfo");
+  });
+
+  it("drops the console's directives — the contract Q_CONFIG_FINDINGS already set", () => {
+    // The capture sent $fetchControlQuery: Boolean! with @include/@skip. This app always
+    // wants scopeQuery, so the variable and both directives go, exactly as they did for
+    // the config-findings document.
+    expect(Q_COMPLIANCE_POSTURE).not.toContain("@include");
+    expect(Q_COMPLIANCE_POSTURE).not.toContain("@skip");
+    expect(Q_COMPLIANCE_POSTURE).not.toContain("fetchControlQuery");
+    expect(Q_COMPLIANCE_POSTURE).toContain("scopeQuery");
+    expect(Q_COMPLIANCE_POSTURE).not.toContain("//");
+  });
+
+  it("selects the emptiness fields at every level, not just the percentages", () => {
+    // Three occurrences: framework, category, subcategory. Without all three a null
+    // posture is indistinguishable from a zero somewhere in the tree.
+    const reasons = Q_COMPLIANCE_POSTURE.match(/emptyPostureReason/g) || [];
+    expect(reasons.length).toBe(3);
+    expect(Q_COMPLIANCE_POSTURE).toContain("noResourceToAsses");
+  });
+
+  it("selects all three mutually exclusive policy shapes", () => {
+    expect(Q_COMPLIANCE_POSTURE).toContain("control {");
+    expect(Q_COMPLIANCE_POSTURE).toContain("cloudConfigurationRule {");
+    expect(Q_COMPLIANCE_POSTURE).toContain("hostConfigurationRule {");
+  });
+
+  it("asks for no field the capture did not prove", () => {
+    // Wiz's published SecurityFramework type carries more than the console operation
+    // selected. A posture step is optional and swallows an HTTP 400, so a field the
+    // schema rejects would empty the tabs and look exactly like a tenant with no
+    // frameworks — the same trap resolutionReason set for the config findings.
+    for (const field of [
+      "weightedScore", "scoreUpdatedAt", "policyTypes {",
+      "noPoliciesSubCategoryCount", "disabledSubCategoryCount",
+    ]) {
+      expect(Q_COMPLIANCE_POSTURE).not.toContain(field);
+    }
+  });
+
+  it("scopes posture by project under analyticsSelection — a fifth spelling", () => {
+    const bare = aiCompliancePostureVariables(null) as { analyticsSelection: Record<string, unknown> };
+    expect(bare.analyticsSelection).toEqual({});
+    const scoped = aiCompliancePostureVariables(["proj-1"]) as {
+      analyticsSelection: Record<string, unknown>;
+    };
+    expect(scoped.analyticsSelection["projectId"]).toEqual(["proj-1"]);
+  });
+
+  it("never builds the framework id — that is the step's, and Settings', not a filter", () => {
+    const v = aiCompliancePostureVariables(["proj-1"]) as Record<string, unknown>;
+    expect(v["id"]).toBeUndefined();
+  });
+
+  it("asks the catalogue for the frameworks the tenant switched on", () => {
+    const v = aiSecurityFrameworksVariables() as { filterBy: Record<string, unknown> };
+    expect(v.filterBy["enabled"]).toBe(true);
   });
 });

@@ -248,3 +248,33 @@ describe("path helpers", () => {
     expect(readPath(null, "a")).toBeUndefined();
   });
 });
+
+describe("the generated posture step family", () => {
+  it("resolves a per-framework step id to the family's spec by PREFIX", () => {
+    // Without prefix matching, COMPLIANCE_POSTURE_wf-id-275 resolves to no spec at all and
+    // the panel shows the generic "no spec" fallback instead of the reason for the lock —
+    // which reads as an oversight and invites someone to "fix" it.
+    const spec = varSpecFor("COMPLIANCE_POSTURE_wf-id-275");
+    expect(spec).not.toBeNull();
+    expect(spec!.locked).toContain("not a filter");
+  });
+
+  it("locks every posture step: the id selects WHICH framework, it does not filter one", () => {
+    expect(isEditableStep("COMPLIANCE_POSTURE_wf-id-275")).toBe(false);
+    expect(isEditableStep("COMPLIANCE_POSTURE_wf-id-214")).toBe(false);
+  });
+
+  it("an exact spec still wins over a prefix one", () => {
+    expect(varSpecFor("CONFIG_FINDINGS")!.stepId).toBe("CONFIG_FINDINGS");
+    expect(isEditableStep("CONFIG_FINDINGS")).toBe(true);
+  });
+
+  it("the catalogue step is locked too, with its own reason", () => {
+    expect(isEditableStep("FRAMEWORKS_LIST")).toBe(false);
+    expect(varSpecFor("FRAMEWORKS_LIST")!.locked).toContain("Settings picker");
+  });
+
+  it("a step in no spec at all still resolves to null", () => {
+    expect(varSpecFor("NOT_A_STEP")).toBeNull();
+  });
+});

@@ -16,11 +16,16 @@ import {
   kindFromWizType,
   severityRank,
   type DataFindingRow,
+  type EmptyPostureReason,
   type FindingRow,
+  type FrameworkPolicyRow,
+  type FrameworkRow,
   type GEdge,
   type GNode,
   type GraphDoc,
   type IssueRow,
+  type PolicyKind,
+  type PostureRow,
 } from "./graphTypes";
 import { classifyIssue, OTHER_GROUP_ID, type ComboGroup } from "./toxicCombos";
 import { clean, type Rec } from "./util";
@@ -144,10 +149,19 @@ export interface NormalizedPart {
   findings: FindingRow[];
   /** DSPM classification findings, keyed to the datastore they were found in. */
   dataFindings: DataFindingRow[];
+  /** The framework catalogue (FRAMEWORKS_LIST). */
+  frameworks: FrameworkRow[];
+  /** The flattened posture tree, one row per framework/category/subcategory node. */
+  posture: PostureRow[];
+  /** The (framework, subcategory, policy) many-to-many edges. */
+  frameworkPolicies: FrameworkPolicyRow[];
 }
 
 export function emptyPart(): NormalizedPart {
-  return { nodes: [], edges: [], issues: [], findings: [], dataFindings: [] };
+  return {
+    nodes: [], edges: [], issues: [], findings: [], dataFindings: [],
+    frameworks: [], posture: [], frameworkPolicies: [],
+  };
 }
 
 /**
@@ -166,13 +180,17 @@ export function appendPart(target: NormalizedPart, part: NormalizedPart): void {
   target.issues.push(...part.issues);
   target.findings.push(...part.findings);
   target.dataFindings.push(...part.dataFindings);
+  target.frameworks.push(...part.frameworks);
+  target.posture.push(...part.posture);
+  target.frameworkPolicies.push(...part.frameworkPolicies);
 }
 
 /** True when a part carries nothing at all — on ANY arm. */
 export function partIsEmpty(part: NormalizedPart): boolean {
   return (
     !part.nodes.length && !part.edges.length && !part.issues.length &&
-    !part.findings.length && !part.dataFindings.length
+    !part.findings.length && !part.dataFindings.length &&
+    !part.frameworks.length && !part.posture.length && !part.frameworkPolicies.length
   );
 }
 
@@ -575,6 +593,371 @@ export function normalizeConfigFindingsPage(rows: Rec[]): NormalizedPart {
   return part;
 }
 
+// ---------------------------------------- compliance framework posture
+
+/**
+ * A count Wiz sends as `null`.
+ *
+ * `null` here means "none", not "unknown" — the console renders these cells blank and the
+ * sibling `assessedCount` proves the policy ran. Coerced to 0 so arithmetic downstream
+ * never has to guard, which is safe ONLY because emptiness is carried separately by
+ * `noResourceToAsses` / `emptyPostureReason` rather than inferred from a zero.
+ */
+function count(v: unknown): number {
+  return typeof v === "number" && isFinite(v) ? v : 0;
+}
+
+/**
+ * A posture percentage. Kept `number | null` — NOT coerced — because null is the whole
+ * point: it is the difference between "scored 0%" and "nothing to score", and the empty
+ * reason beside it says which.
+ */
+function posturePct(v: unknown): number | null {
+  return typeof v === "number" && isFinite(v) ? v : null;
+}
+
+function tagsOf(raw: unknown): { key: string; value: string }[] {
+  if (!Array.isArray(raw)) return [];
+  return (raw as Rec[])
+    .filter((t) => t && typeof t === "object")
+    .map((t) => ({ key: str(t["key"]) ?? "", value: str(t["value"]) ?? "" }))
+    .filter((t) => t.key !== "" || t.value !== "");
+}
+
+/** securityFrameworks page → catalogue rows. `selected` is resolved from settings later. */
+export function normalizeFrameworksPage(rows: Rec[]): NormalizedPart {
+  const part = emptyPart();
+  for (const raw of rows) {
+    if (!raw || typeof raw !== "object") continue;
+    const id = str(raw["id"]);
+    if (!id) continue;
+    part.frameworks.push({
+      id,
+      name: str(raw["name"]) ?? id,
+      description: str(raw["description"]),
+      builtin: bool(raw["builtin"]),
+      enabled: bool(raw["enabled"]),
+      policyTypes: strListOf(raw["policyTypes"]),
+      selected: false,
+    });
+  }
+  return part;
+}
+
+/**
+ * The three mutually exclusive policy shapes on a policyAnalytics row.
+ *
+ * Exactly one of `control` / `cloudConfigurationRule` / `hostConfigurationRule` is
+ * non-null; the other two are null. Returning the kind alongside the object is what lets
+ * one flattener handle all three without three near-identical branches — and the kind is
+ * kept on the row because the detail sheet must not present a Control (a graph query) and
+ * a CloudConfigurationRule (a Rego evaluation) as the same sort of thing.
+ */
+function policyOf(raw: Rec): { kind: PolicyKind; obj: Rec } | null {
+  const control = raw["control"];
+  if (control && typeof control === "object") return { kind: "CONTROL", obj: control as Rec };
+  const cloud = raw["cloudConfigurationRule"];
+  if (cloud && typeof cloud === "object") return { kind: "CLOUD_RULE", obj: cloud as Rec };
+  const host = raw["hostConfigurationRule"];
+  if (host && typeof host === "object") return { kind: "HOST_RULE", obj: host as Rec };
+  return null;
+}
+
+/**
+ * securityFramework → complianceAnalytics → the flattened tree plus the policy edges.
+ *
+ * Takes the ONE object fetchSingleObject wrapped in a one-row page. Emits:
+ *   - one `posture` row per framework / category / subcategory node, level-tagged
+ *   - one `frameworkPolicies` row per (framework, subcategory, policy) pair
+ *
+ * The policy arm is a MANY-TO-MANY EDGE and is emitted once per subcategory a policy maps
+ * to, deliberately repeating the policy's metadata. In the sample tenant one
+ * prompt-injection control appears under ASI01, ASI02 and ASI10; deduplicating by policy
+ * id would destroy exactly the mapping this step exists to collect, and summing these rows
+ * as though they were distinct policies would treble-count it. Both are real bugs the row
+ * shape makes hard to write: the key is the triple, and nothing here sums.
+ *
+ * Percentages are carried through EXACTLY as Wiz sent them and never recomputed. Wiz owns
+ * the definition of posture; a second locally-derived number beside theirs would be two
+ * answers to one question, and the one on screen would depend on which code path ran.
+ */
+export function normalizeCompliancePosturePage(rows: Rec[]): NormalizedPart {
+  const part = emptyPart();
+  for (const raw of rows) {
+    if (!raw || typeof raw !== "object") continue;
+    const frameworkId = str(raw["id"]);
+    if (!frameworkId) continue;
+    const analytics = raw["complianceAnalytics"] as Rec | null | undefined;
+    if (!analytics || typeof analytics !== "object") continue;
+
+    const categories = Array.isArray(analytics["categoryAnalytics"])
+      ? (analytics["categoryAnalytics"] as Rec[])
+      : [];
+
+    // The framework row. pass/fail at this level are SUBCATEGORY counts, not policy
+    // counts — Wiz names them passSubCategoryCount — so they land in the subcategory
+    // fields and the policy-count fields stay 0 rather than borrowing a different unit.
+    part.posture.push({
+      frameworkId,
+      level: "framework",
+      nodeId: frameworkId,
+      title: str(raw["name"]) ?? frameworkId,
+      description: str(raw["description"]),
+      posturePct: posturePct(analytics["averageCompliancePosture"]),
+      passCount: 0,
+      failCount: 0,
+      passSubCategoryCount: count(analytics["passSubCategoryCount"]),
+      failSubCategoryCount: count(analytics["failSubCategoryCount"]),
+      emptyPostureReason: str(analytics["emptyPostureReason"]) ?? null,
+    });
+
+    for (const cat of categories) {
+      if (!cat || typeof cat !== "object") continue;
+      const category = cat["category"] as Rec | null | undefined;
+      const hasCat = !!category && typeof category === "object";
+      const catExternalId = hasCat ? str(category!["externalId"]) ?? "" : "";
+
+      part.posture.push({
+        frameworkId,
+        level: "category",
+        categoryExternalId: catExternalId,
+        nodeId: hasCat ? str(category!["id"]) : undefined,
+        title: hasCat ? str(category!["name"]) ?? catExternalId : catExternalId,
+        description: hasCat ? str(category!["description"]) : undefined,
+        posturePct: posturePct(cat["averageCompliancePosture"]),
+        passCount: count(cat["passCount"]),
+        failCount: count(cat["failCount"]),
+        passSubCategoryCount: count(cat["passSubCategoryCount"]),
+        failSubCategoryCount: count(cat["failSubCategoryCount"]),
+        emptyPostureReason: str(cat["emptyPostureReason"]) ?? null,
+      });
+
+      const subs = Array.isArray(cat["subCategoryAnalytics"])
+        ? (cat["subCategoryAnalytics"] as Rec[])
+        : [];
+      for (const sub of subs) {
+        if (!sub || typeof sub !== "object") continue;
+        const subCategory = sub["subCategory"] as Rec | null | undefined;
+        const hasSub = !!subCategory && typeof subCategory === "object";
+        const subExternalId = hasSub ? str(subCategory!["externalId"]) ?? "" : "";
+
+        part.posture.push({
+          frameworkId,
+          level: "subcategory",
+          categoryExternalId: catExternalId,
+          subcategoryExternalId: subExternalId,
+          nodeId: hasSub ? str(subCategory!["id"]) : undefined,
+          title: hasSub ? str(subCategory!["title"]) ?? subExternalId : subExternalId,
+          description: hasSub ? str(subCategory!["description"]) : undefined,
+          posturePct: posturePct(sub["compliancePosture"]),
+          passCount: count(sub["passCount"]),
+          failCount: count(sub["failCount"]),
+          emptyPostureReason: str(sub["emptyPostureReason"]) ?? null,
+          assessmentScope: hasSub ? str(subCategory!["assessmentScope"]) : undefined,
+          mappingRationale: hasSub ? str(subCategory!["mappingRationale"]) : undefined,
+          tags: hasSub ? tagsOf(subCategory!["tags"]) : [],
+        });
+
+        const policies = Array.isArray(sub["policyAnalytics"])
+          ? (sub["policyAnalytics"] as Rec[])
+          : [];
+        for (const pol of policies) {
+          if (!pol || typeof pol !== "object") continue;
+          const picked = policyOf(pol);
+          if (!picked) continue;
+          const policyId = str(picked.obj["id"]);
+          if (!policyId) continue;
+          part.frameworkPolicies.push({
+            frameworkId,
+            categoryExternalId: catExternalId,
+            subcategoryExternalId: subExternalId,
+            policyId,
+            policyKind: picked.kind,
+            // Only a CloudConfigurationRule carries shortId ("AIGuardrail-007"); a
+            // HostConfigurationRule spells its short name `shortName`, and a Control has
+            // neither. This is the field the finding join matches on when present.
+            shortId: str(picked.obj["shortId"]) ?? str(picked.obj["shortName"]),
+            name: str(picked.obj["name"]) ?? policyId,
+            severity: (str(picked.obj["severity"]) ?? "UNKNOWN") as Severity,
+            enabled: triBool(picked.obj["enabled"]) ?? undefined,
+            builtin: triBool(picked.obj["builtin"]) ?? undefined,
+            passCount: count(pol["passCount"]),
+            failCount: count(pol["failCount"]),
+            assessedCount: count(pol["assessedCount"]),
+            rejectedCount: count(pol["rejectedCount"]),
+            // Wiz's spelling, one 's'. Kept verbatim on the wire, corrected on the row.
+            noResourceToAssess: pol["noResourceToAsses"] === true,
+            targetNativeType: str(picked.obj["targetNativeType"]),
+            subjectEntityType: str(picked.obj["subjectEntityType"]),
+            cloudProvider: str(picked.obj["cloudProvider"]),
+            hasAutoRemediation: triBool(picked.obj["hasAutoRemediation"]) ?? undefined,
+          });
+        }
+      }
+    }
+  }
+  return part;
+}
+
+/**
+ * Relabel findings with the authoritative framework codes. THE ONLY PLACE THIS HAPPENS.
+ *
+ * Applied at COMMIT, not during normalization, and that ordering is the point: findings are
+ * normalized page by page while the battery runs, and the posture steps may not have run
+ * yet when the first config-findings page arrives. A per-page join would silently label the
+ * early pages and not the late ones — the same finding getting different codes depending on
+ * which order Wiz answered in.
+ *
+ * WHAT THIS DOES NOT DO: add or remove a gap. Every finding in, every finding out, same
+ * ids, same severities. Only `frameworkCodes` grows, and only by codes Wiz itself asserts.
+ * The gap COUNT that pillar B prices is unchanged; what changes is which cascade row
+ * matches — which is the entire point, because the rows naming ASI / ML_ / 5R_ codes have
+ * never been able to fire (see graphEnrich's note on the 5Rs mappings).
+ *
+ * Because it does change scores, the caller gates it on `gapSources.frameworkMapping`,
+ * which defaults off.
+ */
+export function withFrameworkCodes(
+  findings: FindingRow[],
+  lookup: Record<string, string[]>,
+): FindingRow[] {
+  if (!findings.length) return findings;
+  return findings.map((f) => {
+    const extra: string[] = [];
+    for (const c of lookup[f.ruleShortId] ?? []) extra.push(c);
+    if (f.ruleId) for (const c of lookup[f.ruleId] ?? []) extra.push(c);
+    if (!extra.length) return f;
+    const codes = f.frameworkCodes.slice();
+    for (const c of extra) if (!codes.includes(c)) codes.push(c);
+    if (codes.length === f.frameworkCodes.length) return f;
+    return { ...f, frameworkCodes: codes };
+  });
+}
+
+/** The codebook vocabulary a framework's codes belong to, read off its name. */
+export type CodeFamily = "OWASP_LLM" | "OWASP_ASI" | "OWASP_ML" | "WIZ_5RS" | "OTHER";
+
+/**
+ * Which codebook family a Wiz framework speaks, from its name.
+ *
+ * By name rather than by id because framework ids are tenant-local (`wf-id-275` here is
+ * not `wf-id-275` everywhere) while the names are Wiz's own product strings. A framework
+ * this app has no vocabulary for returns OTHER, and OTHER mints no codes at all — see
+ * frameworkGapCode.
+ */
+export function frameworkFamily(name: string): CodeFamily {
+  const n = String(name ?? "").toUpperCase();
+  if (/\b5\s?RS?\b/.test(n)) return "WIZ_5RS";
+  if (n.includes("AGENTIC")) return "OWASP_ASI";
+  if (n.includes("MACHINE LEARNING") || /\bML\b/.test(n)) return "OWASP_ML";
+  if (n.includes("LLM")) return "OWASP_LLM";
+  return "OTHER";
+}
+
+/** graphEnrich's existing spelling for a derived code, mirrored so the two sources agree. */
+function snake(label: string): string {
+  return String(label ?? "").trim().replace(/\s+/g, "_").toUpperCase();
+}
+
+/**
+ * One posture node → the gap code the AARS cascade prices, or "" for none.
+ *
+ * Each family spells its codes differently, and getting this wrong is silent: a code
+ * nothing recognizes still reaches the cascade and is priced by the fallback row, so it
+ * looks like it worked while pricing the wrong thing. The three spellings, from
+ * client/js/codebook.js:
+ *
+ *   - OWASP LLM / Agentic: the external id IS the code (`ASI01`, `LLM03`). Self-identifying.
+ *   - OWASP ML: `ML_` + the subcategory TITLE, not an ordinal. The codebook says so
+ *     outright — "the ML0n below is a mapping this page states, not one the data contains"
+ *     — and graphEnrich already derives them this way from issue mappings. `ML01` would be
+ *     a code nothing carries.
+ *   - Wiz 5Rs: `5R_` + the CATEGORY name (`5R_REDUCE`), not the numeric external id.
+ *     `5R_1_1` would match no codebook entry and no cascade row but the fallback.
+ *
+ * An unrecognized framework mints nothing. That is deliberate: the finding's own shortId
+ * is still raised as a gap by frameworkCodesFromRule, so the asset is not under-counted,
+ * and inventing a prefix would put a code into the cascade that no rule can be written
+ * against on purpose.
+ */
+export function frameworkGapCode(input: {
+  family: CodeFamily;
+  categoryName?: string;
+  subcategoryExternalId?: string;
+  subcategoryTitle?: string;
+}): string {
+  const ext = String(input.subcategoryExternalId ?? "").trim().toUpperCase();
+  if (/^(LLM|ASI)\d{2}$/.test(ext)) return ext;
+  if (input.family === "OWASP_ML") {
+    const title = snake(input.subcategoryTitle ?? "");
+    return title ? `ML_${title}` : "";
+  }
+  if (input.family === "WIZ_5RS") {
+    const cat = snake(input.categoryName ?? "");
+    return cat ? `5R_${cat}` : "";
+  }
+  return "";
+}
+
+/**
+ * The authoritative policy → framework-code lookup, built from the synced posture rows.
+ *
+ * This is the join the whole AARS half of this feature turns on. Before it, framework
+ * codes came from `frameworkCodesFromRule` regex-scraping a rule's tags for an OWASP
+ * token — which only ever worked if the tenant happened to write one there. Wiz knows the
+ * real mapping and states it here, per framework, per subcategory.
+ *
+ * Keyed by BOTH `policyId` and `shortId`: a configuration finding carries `rule.id` and
+ * `rule.shortId`, and which one matches depends on the policy kind.
+ *
+ * Note this ADDS NO GAP. It relabels the gaps an asset already had, so pillar B's dormant
+ * ASI / ML_ / 5R_ rows can finally match. Counting is untouched.
+ */
+export function frameworkCodeLookup(
+  policies: FrameworkPolicyRow[],
+  posture: PostureRow[],
+  frameworks: FrameworkRow[],
+): Record<string, string[]> {
+  const familyByFramework: Record<string, CodeFamily> = {};
+  for (const f of frameworks) familyByFramework[f.id] = frameworkFamily(f.name);
+  // A framework row in the posture tree also carries the name, so a lookup built from a
+  // posture-only sync (no catalogue step) still resolves its family.
+  for (const p of posture) {
+    if (p.level === "framework" && !familyByFramework[p.frameworkId]) {
+      familyByFramework[p.frameworkId] = frameworkFamily(p.title);
+    }
+  }
+
+  const categoryName: Record<string, string> = {};
+  const subcategoryTitle: Record<string, string> = {};
+  for (const p of posture) {
+    if (p.level === "category") {
+      categoryName[`${p.frameworkId}|${p.categoryExternalId ?? ""}`] = p.title;
+    } else if (p.level === "subcategory") {
+      subcategoryTitle[`${p.frameworkId}|${p.subcategoryExternalId ?? ""}`] = p.title;
+    }
+  }
+
+  const byKey: Record<string, string[]> = {};
+  const add = (key: string | undefined, code: string) => {
+    if (!key || !code) return;
+    const list = byKey[key] ?? (byKey[key] = []);
+    if (!list.includes(code)) list.push(code);
+  };
+  for (const p of policies) {
+    const code = frameworkGapCode({
+      family: familyByFramework[p.frameworkId] ?? "OTHER",
+      categoryName: categoryName[`${p.frameworkId}|${p.categoryExternalId}`],
+      subcategoryExternalId: p.subcategoryExternalId,
+      subcategoryTitle: subcategoryTitle[`${p.frameworkId}|${p.subcategoryExternalId}`],
+    });
+    if (!code) continue;
+    add(p.policyId, code);
+    add(p.shortId, code);
+  }
+  return byKey;
+}
+
 function entitiesOf(row: Rec): GNode[] {
   if (!row || typeof row !== "object") return [];
   const entities = row["entities"];
@@ -783,12 +1166,22 @@ export function mergeParts(parts: NormalizedPart[], syncedAt: string): {
   issues: IssueRow[];
   findings: FindingRow[];
   dataFindings: DataFindingRow[];
+  frameworks: FrameworkRow[];
+  posture: PostureRow[];
+  frameworkPolicies: FrameworkPolicyRow[];
 } {
   const nodes = new Map<string, GNode>();
   const edges = new Map<string, GEdge>();
   const issues = new Map<string, IssueRow>();
   const findings = new Map<string, FindingRow>();
   const dataFindings = new Map<string, DataFindingRow>();
+  const frameworks = new Map<string, FrameworkRow>();
+  // Keyed by the composite the row IS. A posture node is identified by
+  // (framework, level, category, subcategory) and a policy edge by
+  // (framework, subcategory, policy) — dedupe by anything narrower and the many-to-many
+  // collapses, which is the one thing this whole table exists to preserve.
+  const posture = new Map<string, PostureRow>();
+  const frameworkPolicies = new Map<string, FrameworkPolicyRow>();
   for (const part of parts) {
     for (const node of part.nodes) {
       const prev = nodes.get(node.id);
@@ -810,6 +1203,19 @@ export function mergeParts(parts: NormalizedPart[], syncedAt: string): {
     for (const issue of part.issues) issues.set(issue.id, issue);
     for (const finding of part.findings ?? []) findings.set(finding.id, finding);
     for (const df of part.dataFindings ?? []) dataFindings.set(df.id, df);
+    for (const f of part.frameworks ?? []) frameworks.set(f.id, f);
+    for (const p of part.posture ?? []) {
+      posture.set(
+        `${p.frameworkId}|${p.level}|${p.categoryExternalId ?? ""}|${p.subcategoryExternalId ?? ""}`,
+        p,
+      );
+    }
+    for (const p of part.frameworkPolicies ?? []) {
+      frameworkPolicies.set(
+        `${p.frameworkId}|${p.subcategoryExternalId}|${p.policyId}`,
+        p,
+      );
+    }
   }
   return {
     doc: { nodes: [...nodes.values()], edges: [...edges.values()], syncedAt },
@@ -818,6 +1224,9 @@ export function mergeParts(parts: NormalizedPart[], syncedAt: string): {
     // De-duped by finding id, so the count folded from these rows is exact however the
     // battery split its pages.
     dataFindings: [...dataFindings.values()],
+    frameworks: [...frameworks.values()],
+    posture: [...posture.values()],
+    frameworkPolicies: [...frameworkPolicies.values()],
   };
 }
 

@@ -15,7 +15,8 @@
 import { gap } from "../domain/aars";
 import type { AarsHints } from "../domain/graphEnrich";
 import type {
-  DataFindingRow, FindingRow, GEdge, GNode, GraphDoc, IssueRow, NodeKind,
+  DataFindingRow, FindingRow, FrameworkPolicyRow, FrameworkRow, GEdge, GNode, GraphDoc,
+  IssueRow, NodeKind, PostureRow,
 } from "../domain/graphTypes";
 import { edgeId } from "../domain/graphTypes";
 import { classifyIssue, OTHER_GROUP_ID } from "../domain/toxicCombos";
@@ -933,6 +934,209 @@ export const SEED_DATA_FINDINGS: DataFindingRow[] = [
   { id: "df-core-01", resourceId: "db-customer-core", name: "PII: postal addresses", severity: "CRITICAL" },
   { id: "df-core-02", resourceId: "db-customer-core", name: "PII: dates of birth", severity: "MEDIUM" },
   { id: "df-fin-01", resourceId: "bucket-finance-reports", name: "Financial: unpublished results", severity: "HIGH" },
+];
+
+// ------------------------------------------- compliance framework posture (seed)
+//
+// Three frameworks, one per codebook vocabulary, so the dry run exercises all three code
+// spellings (ASI self-identifying, ML_ from the title, 5R_ from the category name).
+//
+// The policies are keyed to the shortIds SEED_FINDINGS already uses, which is what makes
+// the dry run demonstrate the point of this feature rather than merely draw a page: three
+// of those findings (SUB-114, SUB-047, IAM-236) carry NO framework code today, because the
+// only source was a regex over rule tags and their tags have none. With posture synced and
+// gapSources.frameworkMapping on, they gain real ones — and IAM-236 gains codes from TWO
+// frameworks at once, which is the many-to-many the flat policy table exists to preserve.
+
+export const SEED_FRAMEWORKS: FrameworkRow[] = [
+  {
+    id: "wf-id-275",
+    name: "OWASP Top 10 For Agentic Applications 2026",
+    description: "Agentic-application risks: goal hijack, tool misuse, rogue agents.",
+    builtin: true,
+    enabled: true,
+    policyTypes: ["CLOUD_CONFIGURATION_RULE", "CONTROL"],
+    selected: true,
+  },
+  {
+    id: "wf-id-214",
+    name: "5Rs - Wiz for Data Security",
+    description: "Wiz's data-security response taxonomy: Reduce, Restrict, Relabel, …",
+    builtin: true,
+    enabled: true,
+    policyTypes: ["CLOUD_CONFIGURATION_RULE", "CONTROL"],
+    selected: true,
+  },
+  {
+    id: "wf-id-106",
+    name: "OWASP ML Security Top 10",
+    description: "Machine-learning security risks: poisoning, inversion, model theft.",
+    builtin: true,
+    enabled: true,
+    policyTypes: ["CONTROL"],
+    selected: true,
+  },
+  // Present in the tenant, NOT selected — so the Settings picker has something to show
+  // that is off, and the page can prove selection is this app's decision rather than a
+  // list of everything Wiz has.
+  {
+    id: "wf-id-042",
+    name: "CIS Amazon Web Services Foundations Benchmark v3.0",
+    description: "General cloud hardening. No AI vocabulary — posture is not collected.",
+    builtin: true,
+    enabled: true,
+    policyTypes: ["CLOUD_CONFIGURATION_RULE"],
+    selected: false,
+  },
+];
+
+function seedCategory(
+  frameworkId: string,
+  externalId: string,
+  title: string,
+  posturePct: number | null,
+  passCount: number,
+  failCount: number,
+  emptyPostureReason: string | null = null,
+): PostureRow {
+  return {
+    frameworkId, level: "category", categoryExternalId: externalId,
+    nodeId: `wct-seed-${frameworkId}-${externalId}`, title,
+    posturePct, passCount, failCount,
+    passSubCategoryCount: posturePct === null ? 0 : 1,
+    failSubCategoryCount: failCount > 0 ? 1 : 0,
+    emptyPostureReason,
+  };
+}
+
+function seedSubCategory(
+  frameworkId: string,
+  categoryExternalId: string,
+  externalId: string,
+  title: string,
+  posturePct: number | null,
+  passCount: number,
+  failCount: number,
+  emptyPostureReason: string | null = null,
+): PostureRow {
+  return {
+    frameworkId, level: "subcategory", categoryExternalId, subcategoryExternalId: externalId,
+    nodeId: `wsct-seed-${frameworkId}-${externalId}`, title,
+    posturePct, passCount, failCount, emptyPostureReason, tags: [],
+  };
+}
+
+export const SEED_POSTURE: PostureRow[] = [
+  // ---- OWASP Agentic 2026 ----
+  {
+    frameworkId: "wf-id-275", level: "framework", nodeId: "wf-id-275",
+    title: "OWASP Top 10 For Agentic Applications 2026",
+    posturePct: 96, passCount: 0, failCount: 0,
+    passSubCategoryCount: 2, failSubCategoryCount: 2, emptyPostureReason: null,
+  },
+  seedCategory("wf-id-275", "ASI01", "ASI01 Agent Goal Hijack", 93, 144, 10),
+  seedSubCategory("wf-id-275", "ASI01", "ASI01", "ASI01 Agent Goal Hijack", 93, 144, 10),
+  seedCategory("wf-id-275", "ASI03", "ASI03 Identity and Privilege Abuse", 99, 6347, 18),
+  seedSubCategory("wf-id-275", "ASI03", "ASI03", "ASI03 Identity and Privilege Abuse", 99, 6347, 18),
+  // The empty category: nothing in this estate to assess. Posture null, reason given —
+  // the case the page must never render as 0%.
+  seedCategory("wf-id-275", "ASI08", "ASI08 Cascading Failures", null, 0, 0, "NO_RESOURCES"),
+  seedSubCategory("wf-id-275", "ASI08", "ASI08", "ASI08 Cascading Failures", null, 0, 0, "NO_RESOURCES"),
+  seedCategory("wf-id-275", "ASI10", "ASI10 Rogue Agents", 99, 16703, 87),
+  seedSubCategory("wf-id-275", "ASI10", "ASI10", "ASI10 Rogue Agents", 99, 16703, 87),
+
+  // ---- Wiz 5Rs ----
+  {
+    frameworkId: "wf-id-214", level: "framework", nodeId: "wf-id-214",
+    title: "5Rs - Wiz for Data Security",
+    posturePct: 85, passCount: 0, failCount: 0,
+    passSubCategoryCount: 1, failSubCategoryCount: 1, emptyPostureReason: null,
+  },
+  // NO_POLICIES is a DIFFERENT emptiness from NO_RESOURCES: nothing was written to assess,
+  // rather than nothing existing to assess against. Both must read as their own state.
+  seedCategory("wf-id-214", "1", "Reduce", null, 0, 0, "NO_RESOURCES"),
+  seedSubCategory("wf-id-214", "1", "1.1", "Stale data resources", null, 0, 0, "NO_POLICIES"),
+  seedCategory("wf-id-214", "2", "Restrict", 85, 194309, 71),
+  seedSubCategory("wf-id-214", "2", "2.1", "Public data exposure", 85, 194309, 71),
+
+  // ---- OWASP ML ----
+  {
+    frameworkId: "wf-id-106", level: "framework", nodeId: "wf-id-106",
+    title: "OWASP ML Security Top 10",
+    posturePct: 100, passCount: 0, failCount: 0,
+    passSubCategoryCount: 1, failSubCategoryCount: 0, emptyPostureReason: null,
+  },
+  seedCategory("wf-id-106", "ML02", "Data Poisoning Attack", 100, 126000, 0),
+  seedSubCategory("wf-id-106", "ML02", "ML02", "Data Poisoning Attack", 100, 126000, 0),
+];
+
+function seedPolicy(
+  frameworkId: string,
+  categoryExternalId: string,
+  subcategoryExternalId: string,
+  shortId: string,
+  name: string,
+  severity: FrameworkPolicyRow["severity"],
+  passCount: number,
+  failCount: number,
+): FrameworkPolicyRow {
+  return {
+    frameworkId, categoryExternalId, subcategoryExternalId,
+    policyId: `pol-${shortId}`,
+    policyKind: "CLOUD_RULE",
+    shortId, name, severity,
+    enabled: true, builtin: true,
+    passCount, failCount,
+    assessedCount: passCount + failCount,
+    rejectedCount: 0,
+    noResourceToAssess: passCount + failCount === 0,
+    cloudProvider: "AWS",
+  };
+}
+
+export const SEED_FRAMEWORK_POLICIES: FrameworkPolicyRow[] = [
+  // SUB-082 under TWO subcategories of the same framework — the many-to-many, in the
+  // simplest form. Summing these rows as distinct policies would double-count it.
+  seedPolicy("wf-id-275", "ASI01", "ASI01", "SUB-082",
+    "Vertex AI Metadata Store must use a customer-managed key", "MEDIUM", 21, 2),
+  seedPolicy("wf-id-275", "ASI10", "ASI10", "SUB-082",
+    "Vertex AI Metadata Store must use a customer-managed key", "MEDIUM", 21, 2),
+  // IAM-236 under ASI03 *and* under 5Rs Restrict — the many-to-many ACROSS frameworks,
+  // which is why the join key is (framework, subcategory, policy) and not the policy.
+  seedPolicy("wf-id-275", "ASI03", "ASI03", "IAM-236",
+    "Bedrock service roles must prevent confused-deputy access", "HIGH", 1718, 18),
+  seedPolicy("wf-id-214", "2", "2.1", "IAM-236",
+    "Bedrock service roles must prevent confused-deputy access", "HIGH", 1718, 18),
+  seedPolicy("wf-id-275", "ASI03", "ASI03", "IAM-267",
+    "Agent service accounts must not hold wildcard data permissions", "HIGH", 42, 3),
+  // SUB-114 under ASI10 and under the ML framework — so it picks up an ASI code and an
+  // ML_ one, proving the two spellings coexist on one finding.
+  seedPolicy("wf-id-275", "ASI10", "ASI10", "SUB-114",
+    "Agent must be attached to a guardrail", "HIGH", 9, 5),
+  seedPolicy("wf-id-106", "ML02", "ML02", "SUB-114",
+    "Agent must be attached to a guardrail", "HIGH", 9, 5),
+  seedPolicy("wf-id-214", "2", "2.1", "SUB-047",
+    "Training bucket must not allow public write", "CRITICAL", 30, 1),
+  // Nothing to assess: every count zero AND the flag set. Renders as its own state, never
+  // as a 0% score.
+  {
+    frameworkId: "wf-id-275", categoryExternalId: "ASI08", subcategoryExternalId: "ASI08",
+    policyId: "pol-AIService-009", policyKind: "CLOUD_RULE", shortId: "AIService-009",
+    name: "Agent orchestration must bound retry fan-out", severity: "MEDIUM",
+    enabled: true, builtin: true,
+    passCount: 0, failCount: 0, assessedCount: 0, rejectedCount: 0,
+    noResourceToAssess: true, cloudProvider: "Azure",
+  },
+  // A Control rather than a cloud rule — no shortId at all, so the finding join can only
+  // reach it by uuid. Both keys exist in the lookup for exactly this reason.
+  {
+    frameworkId: "wf-id-275", categoryExternalId: "ASI01", subcategoryExternalId: "ASI01",
+    policyId: "667e01f9-1105-42d5-a66a-e7f739fb4c4f", policyKind: "CONTROL",
+    name: "Highly privileged AI agent is not protected by AI guardrails", severity: "MEDIUM",
+    enabled: true, builtin: true,
+    passCount: 72, failCount: 0, assessedCount: 72, rejectedCount: 0,
+    noResourceToAssess: false,
+  },
 ];
 
 /** The raw (un-enriched) seed graph; persistSync enriches it like a live sync. */

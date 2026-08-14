@@ -235,3 +235,86 @@ describe("asset round trip over a pre-rename ledger", () => {
     expect(node.aarsSeverity).toBe("INFO"); // legacy value, current name
   });
 });
+
+describe("posture round trip — the null that must not become a zero", () => {
+  it("carries a scored row through write → read unchanged", async () => {
+    const { overwrite, readAll, TABS, TAB_HEADERS } = await db();
+    const { postureToRow, rowToPosture } = await import("../src/server/syncStore");
+    sheets[TABS.frameworkPosture] = fakeSheet([TAB_HEADERS[TABS.frameworkPosture].slice(), []]);
+
+    overwrite(TABS.frameworkPosture, [postureToRow({
+      frameworkId: "wf-id-275", level: "subcategory",
+      categoryExternalId: "ASI01", subcategoryExternalId: "ASI01",
+      title: "ASI01 Agent Goal Hijack", posturePct: 93,
+      passCount: 144, failCount: 10, emptyPostureReason: null,
+    })]);
+
+    const [row] = readAll(TABS.frameworkPosture).map(rowToPosture);
+    expect(row.posturePct).toBe(93);
+    expect(row.passCount).toBe(144);
+    expect(row.failCount).toBe(10);
+    expect(row.emptyPostureReason).toBeNull();
+  });
+
+  it("keeps a null posture NULL through the sheet, with its reason", async () => {
+    const { overwrite, readAll, TABS, TAB_HEADERS } = await db();
+    const { postureToRow, rowToPosture } = await import("../src/server/syncStore");
+    sheets[TABS.frameworkPosture] = fakeSheet([TAB_HEADERS[TABS.frameworkPosture].slice(), []]);
+
+    overwrite(TABS.frameworkPosture, [postureToRow({
+      frameworkId: "wf-id-275", level: "category", categoryExternalId: "ASI08",
+      title: "ASI08 Cascading Failures", posturePct: null,
+      passCount: 0, failCount: 0, emptyPostureReason: "NO_RESOURCES",
+    })]);
+
+    const [row] = readAll(TABS.frameworkPosture).map(rowToPosture);
+    // A blank cell read as 0 would turn "nothing to assess" into "everything failed".
+    // That is the single most dangerous coercion in this feature, and it lives here.
+    expect(row.posturePct).toBeNull();
+    expect(row.posturePct).not.toBe(0);
+    expect(row.emptyPostureReason).toBe("NO_RESOURCES");
+  });
+
+  it("a real 0% survives as a zero — it is a score, not an absence", () => {
+    // The other half of the same discipline: everything assessed and everything failed is
+    // a genuine 0, and collapsing it to null would hide a total failure.
+    return db().then(async ({ overwrite, readAll, TABS, TAB_HEADERS }) => {
+      const { postureToRow, rowToPosture } = await import("../src/server/syncStore");
+      sheets[TABS.frameworkPosture] = fakeSheet([TAB_HEADERS[TABS.frameworkPosture].slice(), []]);
+      overwrite(TABS.frameworkPosture, [postureToRow({
+        frameworkId: "wf-id-275", level: "subcategory",
+        categoryExternalId: "ASI02", subcategoryExternalId: "ASI02",
+        title: "All failing", posturePct: 0,
+        passCount: 0, failCount: 12, emptyPostureReason: null,
+      })]);
+      const [row] = readAll(TABS.frameworkPosture).map(rowToPosture);
+      expect(row.posturePct).toBe(0);
+      expect(row.emptyPostureReason).toBeNull();
+    });
+  });
+
+  it("keeps the many-to-many policy triple through the sheet", async () => {
+    const { overwrite, readAll, TABS, TAB_HEADERS } = await db();
+    const { frameworkPolicyToRow, rowToFrameworkPolicy } =
+      await import("../src/server/syncStore");
+    sheets[TABS.frameworkPolicies] = fakeSheet([TAB_HEADERS[TABS.frameworkPolicies].slice(), []]);
+
+    const shared = {
+      frameworkId: "wf-id-275", policyId: "ctl-1", policyKind: "CONTROL" as const,
+      name: "Prompt injection guardrail", severity: "MEDIUM" as const,
+      passCount: 72, failCount: 0, assessedCount: 72, rejectedCount: 0,
+      noResourceToAssess: false,
+    };
+    overwrite(TABS.frameworkPolicies, [
+      frameworkPolicyToRow({ ...shared, categoryExternalId: "ASI01", subcategoryExternalId: "ASI01" }),
+      frameworkPolicyToRow({ ...shared, categoryExternalId: "ASI02", subcategoryExternalId: "ASI02" }),
+      frameworkPolicyToRow({ ...shared, categoryExternalId: "ASI10", subcategoryExternalId: "ASI10" }),
+    ]);
+
+    const rows = readAll(TABS.frameworkPolicies).map(rowToFrameworkPolicy);
+    // Three rows, one policy. Collapsing them would delete the mapping the tab exists for.
+    expect(rows).toHaveLength(3);
+    expect(new Set(rows.map((r) => r.policyId)).size).toBe(1);
+    expect(rows.map((r) => r.subcategoryExternalId).sort()).toEqual(["ASI01", "ASI02", "ASI10"]);
+  });
+});

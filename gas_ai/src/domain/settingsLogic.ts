@@ -162,6 +162,82 @@ export function withSkippedSteps(settings: Rec, steps: unknown): Rec {
   return { ...settings, last_skipped_steps: list };
 }
 
+/**
+ * The AI-relevant frameworks this app syncs posture for, out of the box.
+ *
+ * Ids observed on the tenant this was built against. They are a STARTING POINT, not a
+ * guarantee: a Wiz framework id is tenant-local, so these can be wrong somewhere else —
+ * which is the whole reason the catalogue step and the Settings picker exist. A wrong id
+ * costs one skipped optional step, recorded as a skip, not a silent empty page.
+ */
+export const DEFAULT_FRAMEWORK_IDS = [
+  "wf-id-275", // OWASP Top 10 For Agentic Applications 2026
+  "wf-id-214", // 5Rs - Wiz for Data Security
+  "wf-id-106", // OWASP ML Security Top 10
+];
+
+/**
+ * Which frameworks the sync collects posture for.
+ *
+ * Deliberately NOT "every enabled framework the tenant has". Posture costs one round trip
+ * per framework, and a tenant carrying a hundred builtin frameworks (CIS, PCI-DSS, SOC 2)
+ * would spend a hundred calls on frameworks this app has no vocabulary for and no page to
+ * show them on. The catalogue populates a picker; the picker decides the battery.
+ *
+ * An empty stored list means "never configured" and falls back to the defaults. Clearing
+ * the selection to nothing is expressed by withSelectedFrameworks storing an explicit
+ * empty marker, so "I want none" stays distinguishable from "I have not chosen".
+ */
+export function getSelectedFrameworks(settings: Rec): string[] {
+  const raw = settings["selected_frameworks"];
+  if (!Array.isArray(raw)) return DEFAULT_FRAMEWORK_IDS.slice();
+  return raw.map((v) => String(v ?? "")).filter(Boolean);
+}
+
+/**
+ * Resolve the default selection against a real catalogue, BY NAME.
+ *
+ * `DEFAULT_FRAMEWORK_IDS` is a cold start from one tenant, and a Wiz framework id is not
+ * portable — it is version-scoped, so a new edition of the same framework mints a new id
+ * and a pin quietly stops matching anything. Matching on the name family instead means the
+ * defaults survive both a different tenant and a new edition.
+ *
+ * Only used when NOTHING is stored. An operator's explicit selection is never second-
+ * guessed, including an explicit selection of none.
+ */
+export function resolveDefaultFrameworks(
+  catalogue: { id: string; name: string }[],
+): string[] {
+  const wanted = ["AGENTIC", "5R", "ML"];
+  const picked: string[] = [];
+  for (const want of wanted) {
+    for (const f of catalogue) {
+      const n = String(f.name ?? "").toUpperCase();
+      const hit = want === "5R"
+        ? /\b5\s?RS?\b/.test(n)
+        : want === "ML"
+          ? (n.includes("MACHINE LEARNING") || /\bML\b/.test(n))
+          : n.includes("AGENTIC");
+      if (hit && picked.indexOf(f.id) === -1) {
+        picked.push(f.id);
+        break;
+      }
+    }
+  }
+  // Nothing recognizable in the catalogue: keep the id defaults rather than selecting
+  // nothing, so a tenant whose framework names are localized still tries.
+  return picked.length ? picked : DEFAULT_FRAMEWORK_IDS.slice();
+}
+
+export function withSelectedFrameworks(settings: Rec, ids: unknown): Rec {
+  const list = Array.isArray(ids)
+    ? ids.map((v) => String(v ?? "").trim()).filter(Boolean)
+    : [];
+  const seen: Record<string, true> = {};
+  const deduped = list.filter((id) => (seen[id] ? false : (seen[id] = true)));
+  return { ...settings, selected_frameworks: deduped };
+}
+
 export function withScanVars(settings: Rec, stepId: string, vars: unknown): Rec {
   const current = getScanVars(settings);
   const clean = cleanStepVars(stepId, vars);

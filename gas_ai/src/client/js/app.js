@@ -9,6 +9,7 @@ import { renderGraphPage } from "./pages/graph.js";
 import { renderInventory } from "./pages/inventory.js";
 import { renderCombos } from "./pages/combos.js";
 import { renderConfigFindings } from "./pages/config.js";
+import { renderCompliance } from "./pages/compliance.js";
 import { renderAarsRules } from "./pages/aars.js";
 import { renderScans } from "./pages/scans.js";
 import { renderData } from "./pages/data.js";
@@ -22,6 +23,11 @@ const PAGES = {
   inventory: { title: "AI Inventory", group: "Security", render: renderInventory },
   combos: { title: "Toxic Combinations", group: "Security", render: renderCombos },
   config: { title: "Cloud Configuration", group: "Security", render: renderConfigFindings },
+  // After config, never first: the FIRST key is the default landing route (parseHash's
+  // fallback is coupled to it), so inserting a page at the top silently changes the app's
+  // front door. Sits beside Cloud Configuration because the two are the same subject at
+  // two grains — what is failing, and what that scores against.
+  compliance: { title: "Compliance Posture", group: "Security", render: renderCompliance },
   aars: { title: "AARS Rules", group: "Scoring", render: renderAarsRules, fullBleed: true },
   scans: { title: "Wiz Scans", group: "Coverage", render: renderScans },
   data: { title: "Data", group: "Data", render: renderData },

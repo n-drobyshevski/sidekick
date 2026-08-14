@@ -17,6 +17,9 @@ import {
   normalizeIdentityAccessPage,
   normalizeInventoryPage,
   normalizeIssuesPage,
+  frameworkCodeLookup,
+  normalizeCompliancePosturePage,
+  normalizeFrameworksPage,
   normalizeNoGuardrailPage,
   normalizePrincipalsPage,
   normalizeRuleAssetsPage,
@@ -24,6 +27,7 @@ import {
   normalizeSensitiveDataAccessPage,
   partIsEmpty,
   reconcileIssues,
+  withFrameworkCodes,
   type NormalizedPart,
 } from "../domain/syncNormalize";
 import { buildAarsHintsFromFindings } from "../domain/graphEnrich";
@@ -35,17 +39,20 @@ import { activeJob, createJob, getJob, newJobId, updateJob, type JobRow } from "
 import { withScriptLock } from "./locks";
 import { getProp, hasWizCredentials, projectScope, setProp, deleteProp } from "./props";
 import {
-  seedGraphDoc, SEED_AARS_HINTS, SEED_DATA_FINDINGS, SEED_FINDINGS, SEED_ISSUES, SEED_TREND,
+  seedGraphDoc, SEED_AARS_HINTS, SEED_DATA_FINDINGS, SEED_FINDINGS, SEED_FRAMEWORK_POLICIES,
+  SEED_FRAMEWORKS, SEED_ISSUES, SEED_POSTURE, SEED_TREND,
 } from "./sampleData";
 import * as settingsStore from "./settingsStore";
 import { appendRows, dataRowCount, TABS } from "./sheetsDb";
-import { parseJson, persistSync } from "./syncStore";
+import { loadFrameworks, parseJson, persistSync } from "./syncStore";
 import {
   fetchCloudResourcesPage,
   fetchConnectionPage,
   fetchGraphSearchPage,
+  fetchSingleObject,
   resolveAiResourceTypes,
   type FetchOptions,
+  type PageResult,
 } from "./wizClientAi";
 import {
   AI_RESOURCE_TYPE_CANDIDATES,
@@ -61,9 +68,13 @@ import {
   Q_CONFIG_FINDINGS,
   Q_IDENTITY_ACCESS,
   Q_ISSUES,
+  Q_COMPLIANCE_POSTURE,
   Q_PRINCIPALS,
   Q_RULE_ASSETS,
   Q_SA_EXCESSIVE_ACCESS,
+  Q_SECURITY_FRAMEWORKS,
+  aiCompliancePostureVariables,
+  aiSecurityFrameworksVariables,
 } from "./wizQueriesAi";
 
 export interface StartResult {
@@ -86,9 +97,14 @@ interface SyncStepDef {
   // two lists, and the Scans page states this provenance to the operator as fact.
   area: string;
   writes: string[];
-  run: "cloudResources" | "graphSearch" | "connection";
+  // "single" is the odd one out: a root that returns ONE OBJECT rather than a connection
+  // (securityFramework(id:)). It exists because readConnection on a non-connection does
+  // not throw — it returns rows:[] — and on an optional step that is indistinguishable
+  // from a tenant with nothing to report. See wizClientAi.fetchSingleObject.
+  run: "cloudResources" | "graphSearch" | "connection" | "single";
   // For run:"connection" — the top-level connection field to read (issuesV2,
-  // configurationFindings). Ignored for the other run modes.
+  // configurationFindings). For run:"single" — the object field (securityFramework).
+  // Ignored for the other run modes.
   connectionField?: string;
   query: string;
   extraVariables?: Rec;
@@ -111,11 +127,18 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
   // sync that quietly substituted a guessed type list would query the wrong estate and say
   // nothing about it.
   const types = aiTypes ?? resolveAiResourceTypes().types;
+  // Resolved against the last sync's catalogue when nothing has been chosen yet, so a
+  // tenant whose framework ids differ from the shipped defaults still collects the right
+  // three on its second sync rather than never.
+  const frameworkIds = settingsStore.getSelectedFrameworks(() => loadFrameworks());
   // Stored per-step overrides, laid over each builder's variables by path. Read once so a
   // battery of twelve steps costs one settings read, not twelve.
   const overrides = settingsStore.getScanVars();
   const vars = (stepId: string, base: Rec): Rec =>
     effectiveStepVars(stepId, base, overrides[stepId]);
+  // Read once for the same reason `overrides` is: a battery of a dozen steps should cost
+  // one settings read, not one per step.
+  const selectedFrameworks = (): string[] => frameworkIds;
 
   return [
     {
@@ -164,6 +187,50 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       normalize: normalizeConfigFindingsPage,
       optional: true,
     },
+    // The framework catalogue. Populates the Settings picker; it does NOT decide the
+    // battery — see the posture steps below for why.
+    {
+      id: "FRAMEWORKS_LIST",
+      area: "compliance",
+      writes: ["ai_frameworks"],
+      run: "connection",
+      connectionField: "securityFrameworks",
+      query: Q_SECURITY_FRAMEWORKS,
+      extraVariables: vars("FRAMEWORKS_LIST", aiSecurityFrameworksVariables() as Rec),
+      normalize: normalizeFrameworksPage,
+      optional: true,
+    },
+    // Per-framework compliance posture — ONE STEP PER FRAMEWORK, because the query takes a
+    // framework id and returns one object. Generated the same way the per-rule combo steps
+    // above are, so the budget/resume machinery needs no special case.
+    //
+    // Driven by the SELECTION, not by the catalogue: posture costs a round trip per
+    // framework and a tenant can carry a hundred builtin ones this app has no vocabulary
+    // for. Each step is optional, so a framework id that is wrong on this tenant costs a
+    // recorded skip rather than a failed sync.
+    ...selectedFrameworks().map((frameworkId): SyncStepDef => ({
+      id: `COMPLIANCE_POSTURE_${frameworkId}`,
+      area: "compliance",
+      writes: ["ai_framework_posture", "ai_framework_policies"],
+      run: "single",
+      connectionField: "securityFramework",
+      query: Q_COMPLIANCE_POSTURE,
+      // No `vars()` indirection here on purpose: these steps are LOCKED. Overrides are
+      // stored per step id, and every posture step has its own (`COMPLIANCE_POSTURE_<id>`),
+      // so reading them under a shared "COMPLIANCE_POSTURE" key would be an override slot
+      // nothing can ever write to — dead indirection that reads like a feature.
+      //
+      // They are locked because the framework id is not a filter. The existing rule is that
+      // a variable may narrow a selection set but never change it; an id that selects WHICH
+      // OBJECT the selection set is applied to is further outside that line, not inside it.
+      // Choosing frameworks is Settings' job.
+      extraVariables: {
+        ...(aiCompliancePostureVariables(projectScope()) as Rec),
+        id: frameworkId,
+      },
+      normalize: normalizeCompliancePosturePage,
+      optional: true,
+    })),
     {
       id: "GUARDRAIL_GAPS",
       area: "guardrails",
@@ -237,6 +304,14 @@ function rootFieldOf(step: SyncStepDef): string {
   return step.connectionField ?? "";
 }
 
+/** The reader for a step's run mode. One place, so the three dispatch sites cannot drift. */
+function fetcherFor(step: SyncStepDef): (o: FetchOptions) => PageResult {
+  if (step.run === "graphSearch") return fetchGraphSearchPage;
+  if (step.run === "cloudResources") return fetchCloudResourcesPage;
+  if (step.run === "single") return (o) => fetchSingleObject(step.connectionField ?? "", o);
+  return (o) => fetchConnectionPage(step.connectionField ?? "", o);
+}
+
 /**
  * Every step as data: the document it sends, the variables it sends with it, where the
  * answer lands, and whether its variables can be edited. Everything except `normalize`,
@@ -305,7 +380,18 @@ function defaultStepVariables(stepId: string, withOverride: Rec, aiTypes?: reado
       return aiConfigFindingsVariables(projectScope()) as unknown as Rec;
     case "AGENTIC_IDENTITIES":
       return aiPrincipalsVariables(projectScope()) as unknown as Rec;
+    case "FRAMEWORKS_LIST":
+      return aiSecurityFrameworksVariables() as unknown as Rec;
     default:
+      // Every posture step shares one variable spec but carries its own framework id, so
+      // the default has to keep that id — resetting a step must not point it at a
+      // different framework than the one its own id says it queried.
+      if (stepId.indexOf("COMPLIANCE_POSTURE_") === 0) {
+        return {
+          ...(aiCompliancePostureVariables(projectScope()) as unknown as Rec),
+          id: stepId.slice("COMPLIANCE_POSTURE_".length),
+        };
+      }
       // Steps with no builder take no overrides either, so what they send IS their default.
       return withOverride;
   }
@@ -333,9 +419,7 @@ export function testStepVariables(stepId: string, vars: Rec | null): Rec {
 
   let result;
   try {
-    if (step.run === "cloudResources") result = fetchCloudResourcesPage(opts);
-    else if (step.run === "graphSearch") result = fetchGraphSearchPage(opts);
-    else result = fetchConnectionPage(step.connectionField ?? "", opts);
+    result = fetcherFor(step)(opts);
   } catch (e) {
     // Surfaced as a value, not a throw: "the tenant rejected this filter" is the answer the
     // operator asked for, and it belongs beside the row counts rather than in a toast.
@@ -420,6 +504,9 @@ function dryRunSync(): StartResult {
     undefined,
     SEED_FINDINGS,
     SEED_DATA_FINDINGS,
+    SEED_FRAMEWORKS,
+    SEED_POSTURE,
+    SEED_FRAMEWORK_POLICIES,
   );
   // A dry-run issues no queries, so nothing can have been rejected. Clearing rather than
   // leaving the previous live run's list behind, which would attribute a stale skip to a
@@ -551,11 +638,7 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
           return;
         }
 
-        const fetcher = step.run === "graphSearch"
-          ? fetchGraphSearchPage
-          : step.run === "connection"
-            ? (a: FetchOptions) => fetchConnectionPage(step.connectionField!, a)
-            : fetchCloudResourcesPage;
+        const fetcher = fetcherFor(step);
         let result;
         try {
           result = fetcher({
@@ -628,7 +711,19 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
     // Augment de-dup: real issuesV2 rows supersede the synthetic per-rule rows for the
     // same (asset, combo-group), so the two batteries never double-count.
     const issues = reconcileIssues(merged.issues);
-    const findings = merged.findings;
+    // Relabel findings with the framework codes Wiz itself asserts, once the WHOLE battery
+    // has landed — see withFrameworkCodes for why this cannot happen per page.
+    //
+    // Gated, and off by default: it changes which cascade rows match, which moves scores,
+    // and every other knob in this model defaults to the documented behaviour so no tenant
+    // re-scores on upgrade. With the flag off this is exactly `merged.findings`.
+    const aarsRule = settingsStore.getAarsRule().rule;
+    const findings = aarsRule.gapSources.frameworkMapping === true
+      ? withFrameworkCodes(
+        merged.findings,
+        frameworkCodeLookup(merged.frameworkPolicies, merged.posture, merged.frameworks),
+      )
+      : merged.findings;
     if (!doc.nodes.length) {
       updateJob(job.job_id, {
         phase: "FAILED",
@@ -642,16 +737,17 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
     // hints (union with the issue-framework heuristic), so persistSync enriches with
     // them instead of undefined.
     updateJob(job.job_id, { phase: "PERSISTING" });
-    // The same rule persistSync will score under — resolved here too, so the hints and the
+    // The same rule persistSync will score under — resolved above, so the hints and the
     // enrichment can never be built under two different models.
-    const hints = buildAarsHintsFromFindings(findings, doc, issues, settingsStore.getAarsRule().rule);
+    const hints = buildAarsHintsFromFindings(findings, doc, issues, aarsRule);
     const persist = () => {
       persistSync(doc, issues, hints, {
         syncId,
         mode: "live",
         startedAt,
         apiCalls: params.apiCalls,
-      }, undefined, findings, merged.dataFindings);
+      }, undefined, findings, merged.dataFindings,
+      merged.frameworks, merged.posture, merged.frameworkPolicies);
       // Written with the commit, so what the Scans page reports as skipped always describes
       // the sync whose numbers it is showing. The job row carrying this is discarded the
       // moment the job goes terminal, which is why it could not be read back before.
