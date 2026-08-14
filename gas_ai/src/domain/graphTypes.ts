@@ -62,6 +62,15 @@ export const NODE_KINDS = [
   // individual finding. Wiz draws the same collapse ("Data Findings", count badge); a
   // bucket with 200 findings would otherwise spend the entire node budget by itself.
   "DATA_FINDING",
+  // The network-exposure traversals' far end: a validated, reachable service address such as
+  // `https://…run.app:443`. INVENTORY, not evidence — it carries a name, a region, a status
+  // and a subscription, which is why it stays out of RISK_NODE_KINDS with BUCKET and
+  // DATABASE rather than joining the derived stubs.
+  //
+  // graphExpand.toExpandedNode used to flag this kind `unmodeled`, because declaring it here
+  // "would admit them into the sync and persistence path too". That is now the intent: two
+  // sync steps collect these deliberately.
+  "ENDPOINT",
 ] as const;
 export type NodeKind = (typeof NODE_KINDS)[number];
 
@@ -119,6 +128,11 @@ const PROPERTY_ALIASES: Readonly<Record<string, readonly string[]>> = {
   lastSeen: ["updatedAt"],
   isAccessibleFromInternet: ["accessibleFrom.internet"],
   isOpenToAllInternet: ["openToAllInternet"],
+  // ENDPOINT entities only. Wiz spells the dynamic scanner's two verdicts with suffixes the
+  // rest of the model has no use for; aliasing them here is what lets the GNode field keep
+  // the name the app reads it by.
+  exposureLevel: ["exposureLevel_name"],
+  portValidation: ["portValidationResult"],
 };
 
 /**
@@ -175,6 +189,9 @@ export const EDGE_TYPES = [
   // exemples/toxic_combos_response.js echoes control wc-id-3217's query, whose "Sensitive
   // Data Access" block ends `-HAS_DATA_FINDING→ DATA_FINDING`.
   "HAS_DATA_FINDING",
+  // AI asset / compute → ENDPOINT. Wiz's own relationship name, kept verbatim — it is what
+  // the endpoint-exposure traversal walks (domain/exposureQuery.ts).
+  "SERVES",
 ] as const;
 export type EdgeType = (typeof EDGE_TYPES)[number];
 
@@ -209,6 +226,37 @@ export interface GNode {
   // edge is ABSENT. A node flag, not a negated edge — there is no real guardrail
   // endpoint to point at; the client renders it as a dashed "no guardrail" stub.
   guardrailMissing?: boolean;
+  /**
+   * ENDPOINT rows only — the Wiz dynamic scanner's two verdicts, read from the response and
+   * never stamped from a filter. That distinction is load-bearing: ENDPOINT nodes reach the
+   * ledger from BOTH exposure steps, and only the endpoint one filtered on these values.
+   * The host step returns an exposed workload's `applicationEndpoints` unfiltered, and in
+   * the capture they come back rated `Low` — so trusting the query rather than the payload
+   * would relabel a Low-rated endpoint as a validated exposure.
+   * `isRatedExposure` (domain/exposureQuery.ts) is the one place they are judged.
+   */
+  exposureLevel?: string;   // exposureLevel_name — High | Medium | Low | None
+  portValidation?: string;  // portValidationResult — Open | …
+  /**
+   * How internet reachability was established for this node beyond its own two flags.
+   *
+   * ABSENT means the exposure steps never ran (or reached nothing), never "not exposed" —
+   * the same "clean" vs "never asked" split `dataFindingCount` keeps. Folded once at commit
+   * by `withExposureEvidence`, because `mergeParts` overwrites scalars rather than
+   * accumulating them and a per-page stamp would become whatever the last page saw.
+   */
+  exposureEvidence?: {
+    /** Internet-reachable VIRTUAL_MACHINE / SERVERLESS nodes that RUN this asset. */
+    hostIds?: string[];
+    /** ENDPOINTs this asset serves (directly or via its host) that clear the rated bar. */
+    endpointIds?: string[];
+    /** Worst level across those endpoints, for the register column. */
+    exposureLevel?: string;
+    /** publicExposures[].portRange, deduped — e.g. ["80", "443"]. */
+    ports?: string[];
+    /** publicExposures[].sourceIpRange, deduped — e.g. ["0.0.0.0/0"]. */
+    sourceIpRanges?: string[];
+  };
   cloudAccount?: { id: string; name: string; externalId?: string; cloudProvider?: string };
   projects?: Array<{ id: string; name: string; businessImpact?: string }>;
   tags?: Array<{ key: string; value: string }>;

@@ -35,6 +35,12 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // DSPM classification on a datastore row. Appended, so an existing ledger picks them
     // up on the next sync with no migration (see the note on ai_issues below).
     "data_finding_count", "data_findings_json",
+    // Network exposure. The first two are the dynamic scanner's verdicts and belong to
+    // ENDPOINT rows; the third is the join `withExposureEvidence` folds onto an AI asset,
+    // and is what lets the Inventory and the combos matrix — which read this tab directly
+    // and never see the graph document — agree with the graph about what is exposed.
+    // Appended for the same no-migration reason.
+    "exposure_level", "port_validation", "exposure_evidence_json",
   ],
   [TABS.edges]: ["id", "src", "dst", "type", "negated", "access_type"],
   [TABS.issues]: [

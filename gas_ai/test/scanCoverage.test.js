@@ -25,6 +25,8 @@ const FULL = {
     agenticIdentities: 12,
     internetExposed: 2,
     internetUnknown: 5,
+    internetValidated: 1,
+    internetViaHost: 2,
     highPrivilege: 34,
   },
   total: 96,
@@ -58,12 +60,32 @@ describe("resolveAreas on a full payload", () => {
     expect(byId(resolved).get("exposure").figure.unit).toContain("5 undetermined");
   });
 
+  it("reports validated endpoints beside reachability, never instead of it", () => {
+    // Reachable and validated are different findings — a Cloud Run revision open to
+    // 0.0.0.0/0 whose endpoints redirect to SSO is the first and not the second — so the
+    // area states both rather than collapsing them into one number.
+    expect(byId(resolved).get("exposure").figure.unit).toContain("1 validated endpoint");
+  });
+
   it("drops the undetermined clause when there is nothing undetermined", () => {
-    const ctx = { ...FULL, kpis: { ...FULL.kpis, internetUnknown: 0 } };
+    const ctx = {
+      ...FULL,
+      kpis: { ...FULL.kpis, internetUnknown: 0, internetValidated: 0 },
+    };
     expect(stateOf(ctx, "exposure")).toBe("live");
     const figure = byId(resolveAreas(ctx)).get("exposure").figure;
     expect(figure.value).toBe("2");
     expect(figure.unit).toBe("reachable");
+  });
+
+  it("is step-backed now, so it no longer borrows the inventory's booleans", () => {
+    // The area used to declare `carriedBy: "INVENTORY_AI"` and read two flags that are null
+    // on every hosted asset. It has its own two steps, which is what lets the provenance
+    // panel show the documents verbatim rather than a hand-typed description of them.
+    const area = byId(resolved).get("exposure");
+    expect(area.carriedBy).toBeUndefined();
+    expect(area.query).toContain("HOST_EXPOSURE");
+    expect(area.query).toContain("ENDPOINT_EXPOSURE");
   });
 });
 

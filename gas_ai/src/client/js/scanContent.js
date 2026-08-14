@@ -193,20 +193,37 @@ export const SCAN_AREAS = [
   {
     id: "exposure",
     title: "Network Exposure",
-    query: "isAccessibleFromInternet / isOpenToAllInternet on every resource",
-    what: "Internet reachability on AI assets and their hosts. Managed agents report it " +
-      "directly; hosted agents inherit it from the VM or Cloud Run service underneath, " +
-      "which Wiz reports as undetermined until that host is checked.",
+    query: "graphSearch · RUNS reversed → VM/SERVERLESS[accessibleFrom.internet], " +
+      "SERVES → ENDPOINT[exposureLevel High|Medium, port Open] " +
+      "(HOST_EXPOSURE, ENDPOINT_EXPOSURE)",
+    what: "Two questions, asked separately. The first walks each AI asset to the VM or " +
+      "Cloud Run service underneath it and keeps the ones Wiz finds reachable from the " +
+      "internet, with the ports and source ranges that make them so. The second keeps the " +
+      "endpoints Wiz's dynamic scanner actually connected to and the tenant's exposure " +
+      "policy rates High or Medium.",
     lands: "graph",
-    carriedBy: "INVENTORY_AI",
+    note: "Reachable and exposed are different findings and this page keeps them apart. A " +
+      "Cloud Run revision open to 0.0.0.0/0 on ports 80 and 443 is reachable; if the " +
+      "endpoints it serves redirect to SSO, Wiz rates them Low and they are not a validated " +
+      "exposure. The host query is also what resolves a hosted agent at all: an agent " +
+      "carries no reachability flags of its own — they live on the compute — so before this " +
+      "step every hosted asset was undetermined and nothing could ever settle it. The " +
+      "lateral-movement and code-source paths the same document returns are archived with " +
+      "each page but not yet turned into graph edges.",
     figure: (ctx) => {
       if (!ctx.kpis || ctx.kpis.internetExposed === undefined) return null;
-      // The undetermined count rides along rather than folding into "not exposed" — the
-      // under-reporting src/domain/riskConditions.ts exists to prevent.
+      // Three numbers, because there are three grades of evidence and collapsing them is
+      // the one thing this area must not do. Undetermined still rides along rather than
+      // folding into "not exposed" — the under-reporting riskConditions.ts exists to
+      // prevent — but it is now a number that can actually go down.
+      const validated = n(ctx.kpis.internetValidated);
       const unknown = n(ctx.kpis.internetUnknown);
+      const parts = [];
+      if (validated) parts.push(validated + " validated endpoint" + (validated === 1 ? "" : "s"));
+      if (unknown) parts.push(unknown + " undetermined");
       return {
         value: String(n(ctx.kpis.internetExposed)),
-        unit: "reachable" + (unknown ? " · " + unknown + " undetermined" : ""),
+        unit: "reachable" + (parts.length ? " · " + parts.join(" · ") : ""),
         short: n(ctx.kpis.internetExposed) + " reachable",
         source: "kpis.internetExposed",
       };
@@ -271,7 +288,11 @@ export const SCAN_AREAS = [
     coverage: "unscanned",
     note: "No sync step issues this query. CONTAINER_IMAGE and REPOSITORY nodes appear on " +
       "the graph only when the app is running on the bundled sample dataset — never from " +
-      "a live tenant.",
+      "a live tenant. The two network-exposure steps do request the code-source path (it " +
+      "is part of the console document they send verbatim), and every page of it is kept " +
+      "in the Drive archive; nothing normalizes it into edges yet, and it would only ever " +
+      "cover the internet-exposed slice of the estate, so this area stays unscanned rather " +
+      "than claiming coverage from a biased sample.",
     figure: () => null,
   },
 ];

@@ -11,6 +11,7 @@ import {
   enrichGraphDoc,
   withDataFindingNodes,
   withExcessivePrivilegeNodes,
+  withExposureEvidence,
   withIdentityAccessNodes,
   withInternetExposureNodes,
   withMissingGuardrailNodes,
@@ -95,6 +96,13 @@ export function assetToRow(n: GNode): Rec {
     // pillar-C knob and the DSPM coverage state both need to tell them apart.
     data_finding_count: n.dataFindingCount ?? null,
     data_findings_json: n.dataFindingSeverities ? JSON.stringify(n.dataFindingSeverities) : null,
+    exposure_level: n.exposureLevel ?? null,
+    port_validation: n.portValidation ?? null,
+    // `null` rather than `"{}"` when there is no evidence, and rowToAsset reads it back as
+    // undefined: an asset the exposure steps never reached must not become one they reached
+    // and found clean. conditionState falls through to the flags for the first and would
+    // have to keep falling through for the second — but only one of them is honest about it.
+    exposure_evidence_json: n.exposureEvidence ? JSON.stringify(n.exposureEvidence) : null,
   };
 }
 
@@ -152,6 +160,15 @@ export function rowToAsset(r: Rec): GNode {
   }
   const findingSevs = parseJson<Record<string, number> | null>(r["data_findings_json"], null);
   if (findingSevs) node.dataFindingSeverities = findingSevs;
+  const exposureLevel = (r["exposure_level"] as string | null) ?? null;
+  if (exposureLevel) node.exposureLevel = exposureLevel;
+  const portValidation = (r["port_validation"] as string | null) ?? null;
+  if (portValidation) node.portValidation = portValidation;
+  // Only when the cell actually holds a record. A ledger written before these columns
+  // existed reads back as undefined, and conditionState falls through to the flags exactly
+  // as it did before the exposure steps were added.
+  const evidence = parseJson<GNode["exposureEvidence"] | null>(r["exposure_evidence_json"], null);
+  if (evidence) node.exposureEvidence = evidence;
   return node;
 }
 
@@ -427,7 +444,13 @@ export function persistSync(
   const { version: ruleVersion, rule } = settingsStore.getAarsRule();
   // Counts first: pillar C prices them, so they have to be on the nodes before enrichment.
   const counted = withDataFindingCounts(rawDoc, dataFindings);
-  const enriched = enrichGraphDoc(counted, issues, hints, rule);
+  // Then the exposure join, for the same reason one step further out: pillar D reads
+  // internet reachability through riskConditions, which now reads the topology this fold
+  // puts on the asset. Both run before enrichGraphDoc because enrichment is where the score
+  // is computed, and a score computed from an un-joined node would price a hosted agent as
+  // UNDETERMINED forever.
+  const exposed = withExposureEvidence(counted);
+  const enriched = enrichGraphDoc(exposed, issues, hints, rule);
 
   // Tabs hold the real (non-synthetic) nodes; ISSUE nodes are derivable from ai_issues.
   const assetNodes = realNodes(enriched.nodes);

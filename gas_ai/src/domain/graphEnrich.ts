@@ -16,6 +16,7 @@ import {
 } from "./aars";
 import { isOpenGap, isUnresolvedIssue, SEVERITY_ORDER } from "./config";
 import type { Severity } from "./config";
+import { isRatedExposure, worseExposureLevel } from "./exposureQuery";
 import { conditionHolds, conditionState } from "./riskConditions";
 import type { ConditionKey } from "./toxicCombos";
 import {
@@ -554,14 +555,115 @@ export function withDataFindingNodes(doc: GraphDoc): GraphDoc {
  * Internet exposure. Strict `=== true` (see riskConditions.ts): the flags are tri-state,
  * and null means exposure is inherited from the underlying compute and undetermined —
  * which must NOT be drawn as a definite exposure.
+ *
+ * The stub names its own evidence, because "internet exposure" is now three different
+ * findings wearing one word: a validated endpoint Wiz's scanner connected to, a reachable
+ * host the asset runs on, and the asset's own flags. A card that says which one it is can be
+ * argued with; one that says "Internet exposure" cannot.
  */
 export function withInternetExposureNodes(doc: GraphDoc): GraphDoc {
   return withDerivedNodes(doc, {
     kind: "INTERNET_EXPOSURE",
     prefix: "internet",
-    name: "Internet exposure",
+    name: (n) => {
+      const evidence = n.exposureEvidence;
+      if (evidence?.endpointIds?.length) return "Internet exposure · validated endpoint";
+      if (evidence?.hostIds?.length) return "Internet exposure · exposed host";
+      return "Internet exposure";
+    },
     edgeType: "EXPOSED_TO_INTERNET",
   });
+}
+
+/**
+ * Fold the network-exposure topology onto the assets it describes.
+ *
+ * The two exposure steps land three separate facts in the graph — an internet-reachable
+ * VM/SERVERLESS, a `HOSTED_ON` edge to it, and validated ENDPOINT nodes hanging off either
+ * the asset or its host — and none of them is on the asset, which is where every consumer
+ * looks. This is the join.
+ *
+ * DONE ONCE, AT COMMIT, for the reason `withDataFindingCounts` gives: `mergeParts` overwrites
+ * scalars rather than accumulating them, so a per-page stamp would silently become whatever
+ * the last page happened to see. Unlike the read-time `with*Nodes` builders this must also be
+ * PERSISTED, because the Inventory register and the combos matrix read `ai_assets` directly
+ * and never see the graph document at all.
+ *
+ * Two judgements worth stating:
+ *
+ *  - A host counts only if `conditionHolds` says it is exposed — read from the host's own
+ *    flags, not from the fact that a filtered query returned it. The filter and the payload
+ *    agree today; the sample dataset has an unexposed host, and so will any tenant whose
+ *    ledger predates this step.
+ *  - An endpoint is judged by `isRatedExposure` on the values Wiz returned. Endpoints reach
+ *    the ledger from BOTH steps and only one of them filtered: the host step returns an
+ *    exposed workload's `applicationEndpoints` whatever they are rated, and in the capture
+ *    they are rated `Low` — reachable, behind SSO, not an exposure. Trusting the query
+ *    instead of the payload would relabel exactly those as validated exposures, which is the
+ *    single most misleading thing this feature could do.
+ */
+export function withExposureEvidence(doc: GraphDoc): GraphDoc {
+  const byId = indexBy(doc.nodes, (n) => n.id);
+  const hostsOf = new Map<string, string[]>();   // asset id → hosts it runs on
+  const servesOf = new Map<string, string[]>();  // asset/host id → endpoints it serves
+  for (const edge of doc.edges) {
+    if (edge.type === "HOSTED_ON") pushInto(hostsOf, edge.src, edge.dst);
+    else if (edge.type === "SERVES") pushInto(servesOf, edge.src, edge.dst);
+  }
+  if (!hostsOf.size && !servesOf.size) return doc;
+
+  let touched = false;
+  const nodes = doc.nodes.map((node) => {
+    if (!AI_ASSET_KINDS.includes(node.kind)) return node;
+
+    const hostIds = (hostsOf.get(node.id) ?? []).filter((id) => {
+      const host = byId.get(id);
+      return !!host && conditionHolds(host, "INTERNET_EXPOSURE");
+    });
+
+    // Endpoints the asset serves directly, and endpoints its hosts serve. The second path is
+    // not an edge case: the capture hangs an exposed Cloud Run revision's application
+    // endpoints off the REVISION, never off the agent running inside it.
+    const endpointIds: string[] = [];
+    let worst: string | undefined;
+    const consider = (id: string): void => {
+      const endpoint = byId.get(id);
+      if (!endpoint || endpoint.kind !== "ENDPOINT") return;
+      if (!isRatedExposure(endpoint.exposureLevel, endpoint.portValidation)) return;
+      if (endpointIds.indexOf(id) < 0) endpointIds.push(id);
+      worst = worseExposureLevel(worst, endpoint.exposureLevel);
+    };
+    for (const id of servesOf.get(node.id) ?? []) consider(id);
+    // Every host, not only the reachable ones: the endpoint's own validated rating is the
+    // claim being made, and it is the stronger of the two signals.
+    for (const hostId of hostsOf.get(node.id) ?? []) {
+      for (const id of servesOf.get(hostId) ?? []) consider(id);
+    }
+
+    // Ports and source ranges are true of the HOST, so they are carried up only from the
+    // hosts that actually count as exposed.
+    const ports: string[] = [];
+    const sourceIpRanges: string[] = [];
+    for (const hostId of hostIds) {
+      const evidence = byId.get(hostId)?.exposureEvidence;
+      for (const p of evidence?.ports ?? []) if (ports.indexOf(p) < 0) ports.push(p);
+      for (const r of evidence?.sourceIpRanges ?? []) {
+        if (sourceIpRanges.indexOf(r) < 0) sourceIpRanges.push(r);
+      }
+    }
+
+    if (!hostIds.length && !endpointIds.length) return node;
+    const evidence: NonNullable<GNode["exposureEvidence"]> = {};
+    if (hostIds.length) evidence.hostIds = hostIds;
+    if (endpointIds.length) evidence.endpointIds = endpointIds;
+    if (worst) evidence.exposureLevel = worst;
+    if (ports.length) evidence.ports = ports;
+    if (sourceIpRanges.length) evidence.sourceIpRanges = sourceIpRanges;
+    touched = true;
+    return { ...node, exposureEvidence: evidence };
+  });
+
+  return touched ? { nodes, edges: doc.edges, syncedAt: doc.syncedAt } : doc;
 }
 
 /**

@@ -14,6 +14,8 @@ import {
   appendPart,
   mergeParts,
   normalizeConfigFindingsPage,
+  normalizeEndpointExposurePage,
+  normalizeHostExposurePage,
   normalizeIdentityAccessPage,
   normalizeInventoryPage,
   normalizeIssuesPage,
@@ -53,8 +55,11 @@ import {
   aiInventoryVariables,
   aiIssuesVariables,
   aiPrincipalsVariables,
+  endpointExposureVariables,
+  hostExposureVariables,
   MAX_PAGES,
   Q_AGENT_RUNS_AS,
+  Q_AI_EXPOSURE,
   Q_AGENT_SENSITIVE_DATA_ACCESS,
   Q_AGENTS_NO_GUARDRAIL,
   Q_AI_INVENTORY,
@@ -207,6 +212,39 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       normalize: normalizeSensitiveDataAccessPage,
       optional: true,
     },
+    // Network exposure, in two steps because they are two claims. HOST_EXPOSURE says the
+    // compute under an AI asset is reachable; ENDPOINT_EXPOSURE says Wiz's scanner reached a
+    // live endpoint it serves and policy rates that a real exposure. The capture proves they
+    // can disagree — a Cloud Run revision that is openToAllInternet, serving endpoints rated
+    // Low because they redirect to SSO. See domain/exposureQuery.ts.
+    //
+    // Both run AFTER the CIEM and DSPM steps for the reason SENSITIVE_DATA_ACCESS gives:
+    // they re-emit the AI asset as a thin projection, and mergeParts lets later truthy
+    // values win field-wise, so landing the richer projections first means these can only
+    // add to them.
+    {
+      id: "HOST_EXPOSURE",
+      area: "exposure",
+      writes: [
+        "ai_edges (HOSTED_ON, SERVES)",
+        "ai_assets (VM/SERVERLESS + ENDPOINT rows, exposure_evidence_json)",
+      ],
+      run: "graphSearch",
+      query: Q_AI_EXPOSURE,
+      extraVariables: hostExposureVariables(types, projectScope()),
+      normalize: normalizeHostExposurePage,
+      optional: true,
+    },
+    {
+      id: "ENDPOINT_EXPOSURE",
+      area: "exposure",
+      writes: ["ai_edges (SERVES)", "ai_assets (ENDPOINT rows, exposure_level, port_validation)"],
+      run: "graphSearch",
+      query: Q_AI_EXPOSURE,
+      extraVariables: endpointExposureVariables(types, projectScope()),
+      normalize: normalizeEndpointExposurePage,
+      optional: true,
+    },
     {
       id: "IDENTITY_ACCESS",
       area: "identity",
@@ -229,6 +267,11 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
     },
   ];
 }
+
+/** Steps whose variables embed the tenant-resolved AI resource types. */
+const TYPE_DEPENDENT_STEPS: ReadonlySet<string> = new Set([
+  "INVENTORY_AI", "HOST_EXPOSURE", "ENDPOINT_EXPOSURE",
+]);
 
 /** The connection field a step reads its rows from — the one the response must carry. */
 function rootFieldOf(step: SyncStepDef): string {
@@ -267,10 +310,10 @@ export function describeSyncSteps(): Rec[] {
       defaultVariables: base,
       editable: isEditableStep(step.id),
       overridden: changedPaths(step.id, base, overrides[step.id]),
-      // Only INVENTORY_AI's default depends on resolving types against the tenant, so it is
-      // the only step whose description can be provisional. Said out loud rather than shown
-      // as settled fact — this page's whole job is not doing that.
-      typesResolved: step.id === "INVENTORY_AI" ? resolved.resolved : true,
+      // Three steps build their filter from the tenant-resolved AI type list, so only those
+      // three can be described provisionally. Said out loud rather than shown as settled
+      // fact — this page's whole job is not doing that.
+      typesResolved: TYPE_DEPENDENT_STEPS.has(step.id) ? resolved.resolved : true,
     };
   });
 }
@@ -305,6 +348,15 @@ function defaultStepVariables(stepId: string, withOverride: Rec, aiTypes?: reado
       return aiConfigFindingsVariables(projectScope()) as unknown as Rec;
     case "AGENTIC_IDENTITIES":
       return aiPrincipalsVariables(projectScope()) as unknown as Rec;
+    // Like INVENTORY_AI, these two build their `$query` from the tenant-resolved AI type
+    // list, so their default is only fully known once types resolve. They are not editable,
+    // so this is describing the request rather than offering a reset target — but it has to
+    // go through the same builder either way, or the panel would print a default the sync
+    // does not send.
+    case "HOST_EXPOSURE":
+      return hostExposureVariables(aiTypes ?? resolveAiResourceTypes().types, projectScope());
+    case "ENDPOINT_EXPOSURE":
+      return endpointExposureVariables(aiTypes ?? resolveAiResourceTypes().types, projectScope());
     default:
       // Steps with no builder take no overrides either, so what they send IS their default.
       return withOverride;

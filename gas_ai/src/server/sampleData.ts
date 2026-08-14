@@ -43,6 +43,9 @@ interface NodeSeed {
   techCats?: string[];
   identityPurpose?: string;
   issueAnalytics?: GNode["issueAnalytics"];
+  exposureLevel?: string;
+  portValidation?: string;
+  exposureEvidence?: GNode["exposureEvidence"];
 }
 
 function node(seed: NodeSeed): GNode {
@@ -68,6 +71,11 @@ function node(seed: NodeSeed): GNode {
     technologyCategories: seed.techCats,
     identityPurpose: seed.identityPurpose,
     issueAnalytics: seed.issueAnalytics,
+    // Left undefined unless a seed sets them, so every node that is not an endpoint or an
+    // exposed host reads back exactly as it did before these columns existed.
+    exposureLevel: seed.exposureLevel,
+    portValidation: seed.portValidation,
+    exposureEvidence: seed.exposureEvidence,
   };
 }
 
@@ -226,7 +234,22 @@ const SUPPORT: NodeSeed[] = [
   { id: "db-analytics", kind: "DATABASE", name: "db-analytics", cloud: "GCP", region: "europe-west1", projects: ["PROJECT-DELTA"] },
   // Compute / supply chain for the hosted agents
   { id: "vm-agent-i-host", kind: "VIRTUAL_MACHINE", name: "vm-agent-i-host", cloud: "GCP", region: "europe-west4", internet: false, projects: ["PROJECT-ZETA"] },
-  { id: "run-agent-h", kind: "SERVERLESS", name: "cloudrun-agent-h", cloud: "GCP", region: "europe-west1", internet: true, projects: ["PROJECT-DELTA"] },
+  { id: "run-agent-h", kind: "SERVERLESS", name: "cloudrun-agent-h", cloud: "GCP", region: "europe-west1", internet: true, openInternet: true, projects: ["PROJECT-DELTA"], exposureEvidence: { ports: ["443", "80"], sourceIpRanges: ["0.0.0.0/0"] } },
+  // Network exposure, seeded to put BOTH grades of evidence on one screen and to make them
+  // visibly disagree — which is the whole reason the two queries are two steps.
+  //
+  //   endpoint-agent-h   Low  + Open, on the internet-reachable Cloud Run revision.
+  //                      This is the capture's own shape (exemples/ai_exposure_host_response.js):
+  //                      openToAllInternet, ports 80 and 443 open to 0.0.0.0/0, and both
+  //                      endpoints rated Low because they redirect to SSO. agent-h-chatbot
+  //                      is therefore exposed VIA ITS HOST and NOT validated.
+  //   endpoint-agent-i   High + Open, served directly by an agent whose VM is NOT reachable.
+  //                      The mirror image: validated, with no host exposure behind it.
+  //
+  // Between them the dry run exercises every branch of withExposureEvidence, including the
+  // one that must NOT fire.
+  { id: "endpoint-agent-h", kind: "ENDPOINT", name: "https://agent-h-chatbot.a.run.app:443", cloud: "GCP", region: "europe-west1", exposureLevel: "Low", portValidation: "Open", projects: ["PROJECT-DELTA"] },
+  { id: "endpoint-agent-i", kind: "ENDPOINT", name: "https://agent-i.internal-tools.example:8443", cloud: "GCP", region: "europe-west4", exposureLevel: "High", portValidation: "Open", projects: ["PROJECT-ZETA"] },
   { id: "img-agent-h", kind: "CONTAINER_IMAGE", name: "img-agent-h:latest", cloud: "GCP", projects: ["PROJECT-DELTA"] },
   { id: "repo-agent-h", kind: "REPOSITORY", name: "repo-agent-h", projects: ["PROJECT-DELTA"] },
   // CIEM findings
@@ -324,6 +347,12 @@ edges.push(edge("model-bedrock-claude", "ENFORCES", "guardrail-bedrock"));
 // Hosted agents: compute + supply chain.
 edges.push(edge("agent-i", "HOSTED_ON", "vm-agent-i-host"));
 edges.push(edge("agent-h-chatbot", "HOSTED_ON", "run-agent-h"));
+// Network exposure. The endpoint hangs off the HOST for the Cloud Run agent and off the
+// AGENT for the VM-hosted one, which is exactly the two shapes withExposureEvidence has to
+// walk — the live host-exposure query returns applicationEndpoints on the workload, and the
+// endpoint-exposure query returns them on the AI asset.
+edges.push(edge("run-agent-h", "SERVES", "endpoint-agent-h"));
+edges.push(edge("agent-i", "SERVES", "endpoint-agent-i"));
 edges.push(edge("agent-h-chatbot", "BUILT_FROM", "img-agent-h"));
 edges.push(edge("img-agent-h", "BUILT_FROM", "repo-agent-h"));
 

@@ -11,6 +11,7 @@ import {
   Q_AGENT_EXPANSION,
   Q_AGENT_SENSITIVE_DATA_ACCESS,
   Q_AGENTS_NO_GUARDRAIL,
+  Q_AI_EXPOSURE,
   Q_IDENTITY_ACCESS,
   Q_SA_EXCESSIVE_ACCESS,
   Q_AI_INVENTORY,
@@ -300,6 +301,7 @@ describe("query documents", () => {
     ["Q_PRINCIPALS", Q_PRINCIPALS],
     ["Q_AGENT_SENSITIVE_DATA_ACCESS", Q_AGENT_SENSITIVE_DATA_ACCESS],
     ["Q_AGENT_EXPANSION", Q_AGENT_EXPANSION],
+    ["Q_AI_EXPOSURE", Q_AI_EXPOSURE],
   ];
 
   for (const [name, doc] of DOCS) {
@@ -323,6 +325,9 @@ describe("query documents", () => {
     // access from every live sync at once.
     for (const [name, doc] of DOCS) {
       if (!doc.includes("graphSearch")) continue;
+      // Q_AI_EXPOSURE deliberately does NOT share ENTITY_FIELDS, which is the whole reason
+      // it is allowed a selection set this wide — see the next test.
+      if (name === "Q_AI_EXPOSURE") continue;
       const entities = doc.slice(doc.indexOf("entities {"));
       expect(entities, `${name} still spreads a fragment on GraphEntity`)
         .not.toContain("... on");
@@ -332,6 +337,24 @@ describe("query documents", () => {
         expect(entities, `${name} selects ${field} on GraphEntity`).not.toContain(field);
       }
     }
+  });
+
+  it("keeps the exposure document's wide selection out of the shared field set", () => {
+    // The exemption above is only safe while it stays an exemption. Q_AI_EXPOSURE is the
+    // console's operation verbatim — named fragments, @include gates, publicExposures — and
+    // the argument for sending something that large is that ONE tenant rejection skips two
+    // optional steps rather than taking the other five graphSearch traversals with it. That
+    // argument holds exactly as long as the field sets stay separate.
+    const shared = Q_AGENTS_NO_GUARDRAIL.slice(Q_AGENTS_NO_GUARDRAIL.indexOf("entities {"));
+    for (const wide of ["publicExposures", "lateralMovementPaths", "codeSourcePath",
+      "typedProperties", "technologies", "userMetadata"]) {
+      expect(shared, `the shared entity field set gained ${wide}`).not.toContain(wide);
+    }
+    // Its one fragment spread is on GEAiAgent, which IS among GraphEntity's possible types —
+    // the capture returns `"__typename": "GEAiAgent"`. CloudResource, the spread that broke
+    // every battery traversal at once, is nowhere in it.
+    expect(Q_AI_EXPOSURE).toContain("... on GEAiAgent");
+    expect(Q_AI_EXPOSURE).not.toContain("... on CloudResource");
   });
 
   it("still asks the FLAT root for every resource field, where they do exist", () => {

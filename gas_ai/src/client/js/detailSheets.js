@@ -202,6 +202,20 @@ function statusValue(status) {
 }
 
 /**
+ * The ports and source ranges behind an exposure, when the public-exposure paths carried
+ * any. Trailing clause, so the insight reads as a sentence rather than a field dump.
+ */
+function exposureDetail(evidence) {
+  if (!evidence) return "";
+  const parts = [];
+  if (evidence.ports && evidence.ports.length) parts.push("port " + evidence.ports.join(", "));
+  if (evidence.sourceIpRanges && evidence.sourceIpRanges.length) {
+    parts.push("from " + evidence.sourceIpRanges.join(", "));
+  }
+  return parts.length ? " — " + parts.join(" ") : "";
+}
+
+/**
  * What Wiz says about this asset, as words. Only the flags that are actually set: an
  * absent flag is not a finding, and a tri-state flag left null means "inherited from the
  * host, undetermined" — which is not evidence of anything.
@@ -214,8 +228,33 @@ function insightRow(node) {
       label));
   if (node.adminPriv) add("bad", "EXCESSIVE_PRIVILEGE", "Admin privileges");
   else if (node.highPriv) add("warn", "EXCESSIVE_PRIVILEGE", "High privileges");
-  if (node.openInternet) add("bad", "INTERNET_EXPOSURE", "Open to all internet");
+  // The exposure ladder, strongest evidence first. A validated endpoint is Wiz's scanner
+  // saying it connected and the tenant's policy rating what it found; a reachable host is
+  // the topology saying the compute underneath answers the internet; the two flags are what
+  // the asset says about itself, and on a hosted asset they say nothing at all. Only the
+  // best-supported one is shown — three lines all meaning "exposed" would read as three
+  // findings.
+  const evidence = node.exposureEvidence;
+  const endpointCount = (evidence && evidence.endpointIds ? evidence.endpointIds.length : 0);
+  const hostCount = (evidence && evidence.hostIds ? evidence.hostIds.length : 0);
+  if (endpointCount) {
+    add("bad", "INTERNET_EXPOSURE",
+      "Validated exposure — " + endpointCount + " endpoint" + (endpointCount === 1 ? "" : "s") +
+      (evidence.exposureLevel ? " rated " + evidence.exposureLevel : "") +
+      exposureDetail(evidence));
+  } else if (hostCount) {
+    add("bad", "INTERNET_EXPOSURE",
+      "Reachable through its host" + exposureDetail(evidence));
+  } else if (node.openInternet) add("bad", "INTERNET_EXPOSURE", "Open to all internet");
   else if (node.internet) add("warn", "INTERNET_EXPOSURE", "Internet exposed");
+  // The endpoint's own record, on the ENDPOINT row itself. Both halves, because either one
+  // alone misleads: an open port behind SSO rates Low and is not an exposure.
+  if (node.portValidation || node.exposureLevel) {
+    const rated = node.exposureLevel === "High" || node.exposureLevel === "Medium";
+    add(rated ? "bad" : "neutral", "ENDPOINT",
+      "Exposure level " + (node.exposureLevel || "unrated") +
+      (node.portValidation ? " · port " + node.portValidation.toLowerCase() : ""));
+  }
   // Above the two flags below it, because it is the stronger claim: those say Wiz
   // classified something here, this says what was actually found.
   if (node.dataFindingCount) {

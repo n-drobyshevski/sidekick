@@ -90,6 +90,102 @@ exports[`query documents > Q_AGENTS_NO_GUARDRAIL is unchanged 1`] = `
 "
 `;
 
+exports[`query documents > Q_AI_EXPOSURE is unchanged 1`] = `
+"query SidekickAiExposure($query: GraphEntityQueryInput, $controlId: ID, $projectId: String, $first: Int, $after: String, $fetchTotalCount: Boolean = false, $quick: Boolean = true, $fetchPublicExposurePaths: Boolean = false, $fetchInternalExposurePaths: Boolean = false, $fetchIssueAnalytics: Boolean = false, $fetchThreatAnalytics: Boolean = false, $fetchLateralMovement: Boolean = false, $fetchCodeSource: Boolean = false, $fetchKubernetes: Boolean = false, $fetchCost: Boolean = false, $issueId: ID) {
+  graphSearch(
+    query: $query
+    controlId: $controlId
+    projectId: $projectId
+    first: $first
+    after: $after
+    quick: $quick
+    issueId: $issueId
+  ) {
+    totalCount @include(if: $fetchTotalCount)
+    maxCountReached @include(if: $fetchTotalCount)
+    pageInfo { endCursor hasNextPage }
+    nodes {
+      entities {
+        providerUniqueId
+        deletedAt
+        isRestricted
+        ...PathGraphEntityFragment
+        userMetadata { isInWatchlist isIgnored note }
+        technologies { id icon }
+        cost(
+          filterBy: {timestamp: {inLast: {amount: 30, unit: DurationFilterValueUnitDays}}}
+        ) @include(if: $fetchCost) {
+          amortized
+          blended
+          unblended
+          netAmortized
+          netUnblended
+          currencyCode
+        }
+        costImpact @include(if: $fetchCost) { monthly }
+        publicExposures(first: 10) @include(if: $fetchPublicExposurePaths) {
+          nodes { ...NetworkExposureFragment }
+        }
+        otherSubscriptionExposures(first: 10) @include(if: $fetchInternalExposurePaths) {
+          nodes { ...NetworkExposureFragment }
+        }
+        otherVnetExposures(first: 10) @include(if: $fetchInternalExposurePaths) {
+          nodes { ...NetworkExposureFragment }
+        }
+        lateralMovementPaths(first: 10) @include(if: $fetchLateralMovement) {
+          nodes {
+            id
+            pathEntities { entity { providerUniqueId ...PathGraphEntityFragment } }
+          }
+        }
+        codeSourcePath(first: 10) @include(if: $fetchCodeSource) {
+          totalCount
+          nodes {
+            id
+            pathEntities { providerUniqueId ...PathGraphEntityFragment }
+          }
+        }
+        kubernetesPaths(first: 10) @include(if: $fetchKubernetes) {
+          nodes { id path { providerUniqueId ...PathGraphEntityFragment } }
+        }
+      }
+      aggregateCount
+    }
+  }
+}
+
+fragment PathGraphEntityFragment on GraphEntity {
+  providerUniqueId
+  id
+  name
+  type
+  properties
+  typedProperties { ... on GEAiAgent { description } }
+  issueAnalytics: issues(
+    filterBy: {status: [IN_PROGRESS, OPEN], type: [TOXIC_COMBINATION, CLOUD_CONFIGURATION]}
+  ) @include(if: $fetchIssueAnalytics) {
+    highSeverityCount
+    criticalSeverityCount
+  }
+  threatAnalytics: issues(
+    filterBy: {status: [IN_PROGRESS, OPEN], type: [THREAT_DETECTION], createdAt: {inLast: {amount: 7, unit: DurationFilterValueUnitDays}}}
+  ) @include(if: $fetchThreatAnalytics) {
+    highSeverityCount
+    criticalSeverityCount
+  }
+}
+
+fragment NetworkExposureFragment on NetworkExposure {
+  id
+  portRange
+  sourceIpRange
+  destinationIpRange
+  path { providerUniqueId ...PathGraphEntityFragment }
+  applicationEndpoints { providerUniqueId ...PathGraphEntityFragment }
+}
+"
+`;
+
 exports[`query documents > Q_AI_INVENTORY is unchanged 1`] = `
 "query SidekickAiInventory($first: Int, $after: String, $filterBy: CloudResourceV2Filters) {
   cloudResourcesV2(first: $first, after: $after, filterBy: $filterBy) {
