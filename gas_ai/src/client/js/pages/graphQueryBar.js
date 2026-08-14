@@ -151,6 +151,12 @@ export function queryBar(opts) {
     const rows = queryRows(query);
     list.textContent = "";
 
+    // An edit can delete the row that had focus — changing the FIND kind drops every step
+    // below it. A `focusPath` pointing at a row that no longer exists would leave EVERY row
+    // at tabindex="-1", taking the whole builder out of the tab order with no way back in
+    // except a mouse. Fall back to the root, which always exists.
+    if (focusPath && !rows.some((r) => rowKey(r) === focusPath)) focusPath = "";
+
     rows.forEach((row, i) => {
       const parentKind = row.path.length ? nodeAt(query, row.path.slice(0, -1)).kind : null;
       const line = el("div", {

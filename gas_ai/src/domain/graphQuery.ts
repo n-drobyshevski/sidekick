@@ -103,8 +103,8 @@ export const MAX_HOPS = 3;
 // ------------------------------------------------------------------------- fields
 //
 // ONE registry drives three things that used to drift apart on this page: which properties can
-// be filtered on, which columns a group offers, and what a cell holds. `graphTable`'s column
-// list and `inventory.js`'s were already two independent answers over the same nodes.
+// be filtered on, which columns a group offers, and what a cell holds. The graph's old table
+// fallback and `inventory.js` were already two independent column lists over the same nodes.
 
 export type FieldValue = string | number | boolean | null;
 

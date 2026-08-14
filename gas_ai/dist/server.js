@@ -3559,6 +3559,15 @@ var Server = (() => {
       locked: "The AI risk category (wct-id-1998) is fixed: it is what makes these issues AI issues, so widening it would relabel the whole register rather than extend it."
     },
     {
+      stepId: "AI_ASSET_PROPERTIES",
+      fields: [],
+      // The step exists only to fetch the properties bag for the SAME assets INVENTORY_AI
+      // already collected. Its type filter is not a knob: narrow it and some assets silently
+      // lose their publisher while others keep theirs, which looks like missing data rather
+      // than a setting. Widen it and the bag arrives for resources this app does not model.
+      locked: "This step mirrors the AI inventory's own type list \u2014 it exists to add two fields to assets already collected, so filtering it separately could only make the two disagree about which assets exist."
+    },
+    {
       stepId: "CONFIG_FINDINGS",
       fields: [
         {
@@ -6038,7 +6047,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "a1aa3c450b2b" : "dev";
+  var BUILD_ID = true ? "9fb7f7f0ca91" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }

@@ -16,7 +16,7 @@ import {
 import { openAssetSheet, openIssueSheet } from "../detailSheets.js";
 import { renderGraph } from "../graphView.js";
 import { queryTable, DEFAULT_PAGE_SIZE } from "../queryTable.js";
-import { CATEGORY_LABELS, CATEGORY_ORDER, categoryOf, kindLabel } from "../icons.js";
+import { CATEGORY_LABELS, CATEGORY_ORDER } from "../icons.js";
 import { appliedCount, filterEntries, isNarrowingSet, sectionOf } from "./graphChips.js";
 import {
   applyWhere, defaultQuery, migrateLegacyParams, parseQuery, parseWhere, serializeQuery,
@@ -54,6 +54,8 @@ const DATA_KEYS = [
 const NARROW_VIEWPORT = "(max-width: 800px)";
 
 const FILTER_PANEL_ID = "graph-filter-panel";
+/** Table-only view state: repainted from the rows already fetched, never refetched. */
+const TABLE_KEYS = ["page", "pageSize", "sortCol", "dir"];
 const VIEWS_KEY = "sidekickai.graphQueries";
 /** What a saved query remembers. The whole page state, minus transient panel/focus intent. */
 const VIEW_PARAMS = [
@@ -396,7 +398,9 @@ export async function renderGraphPage(main, params, _ctx) {
         toast("New search");
       },
     }, "New search"),
-    savedViewsControl(),
+    // May be null when the browser blocks localStorage; `append` would stringify that to the
+    // literal text "null" in the header.
+    savedViewsControl() || el("span", {}),
     helpTip(
       el("span", { class: "helptip-mark", "aria-hidden": "true" }, "?"),
       [
@@ -428,6 +432,11 @@ export async function renderGraphPage(main, params, _ctx) {
     if (DATA_KEYS.some((k) => String(prev[k]) !== String(state[k]))) {
       load();
     } else if (prev.view !== state.view) {
+      paint(lastData);
+    } else if (TABLE_KEYS.some((k) => String(prev[k]) !== String(state[k]))) {
+      // Sort, page and page size are answered from the rows already in hand — no refetch, but
+      // they DO need a repaint. `setParams` uses replaceState, which fires no hashchange, so
+      // without this branch the URL changed and the table did not.
       paint(lastData);
     } else if (prev.q !== state.q) {
       applyHighlight();

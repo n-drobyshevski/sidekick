@@ -378,9 +378,10 @@ export function migrateLegacyParams(params) {
 
   if (has("seed") && params.seedKind !== "combo") put(0, "id", [params.seed]);
   if (kinds.length > 1) put(0, "kind", kinds);
-  put(0, "severity", splitList(params.severities));
-  put(0, "cloud", splitList(params.clouds));
-  put(0, "projects", splitList(params.projects));
+  // `severities`, `clouds` and `projects` are NOT copied in. They survive as their own hash
+  // params — the filter panel still writes them and `rpcParams` still folds them onto node 0 —
+  // so duplicating them here would leave a second, invisible copy that clearing the chip does
+  // not touch, and the view would stay filtered by a filter nothing on screen admits to.
 
   // A seed meant "show me around this asset", which is a hop step now. Without a seed the old
   // page listed a whole population, and depth had nothing to walk from.

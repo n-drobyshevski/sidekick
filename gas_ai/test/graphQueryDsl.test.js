@@ -207,10 +207,14 @@ describe("migrateLegacyParams", () => {
     expect(many.where).toBe("0.kind.AI_AGENT,0.kind.AI_MODEL");
   });
 
-  it("turns the old facets into filters on the found node", () => {
+  it("leaves severity, cloud and project as their own params rather than copying them", () => {
+    // They are still live hash params that the filter panel writes and rpcParams folds onto
+    // node 0. Copying them into `where` too would leave a second, invisible filter that
+    // clearing the chip does not touch — the view would stay narrowed by something nothing on
+    // screen admits to.
     const out = migrateLegacyParams({ kinds: "AI_AGENT", severities: "CRITICAL,HIGH", clouds: "GCP" });
     expect(out.find).toBe("AI_AGENT");
-    expect(out.where).toBe("0.cloud.GCP,0.severity.CRITICAL,0.severity.HIGH");
+    expect(out.where).toBe("");
   });
 
   it("clamps a depth the builder cannot express, the way the old page did", () => {

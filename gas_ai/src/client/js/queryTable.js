@@ -3,8 +3,9 @@
 // This is the part of the Wiz screen worth copying most carefully. Its columns are grouped by
 // NODE in the query — the agent's fields, then the identity's — so an agent bound to two
 // service accounts is two rows with its name repeated, and adding a THAT step adds a column
-// group rather than a column. `graphTable` (graphView.js) answers the other question, one row
-// per node, and stays where it is as the canvas's keyboard fallback.
+// group rather than a column. It is also the canvas's keyboard fallback: everything the SVG
+// shows is reachable here, which is why the view toggle is a peer control and not a
+// progressive enhancement.
 //
 // Built on the shared `dataTable`, so sticky headers, aria-sort, the `.th-sort` buttons, the
 // in-place `setRows`/`setSort` repaint and the clickable `role="button"` rows all come for free
@@ -176,8 +177,11 @@ export function queryTable(payload, opts = {}) {
   sizeSelect.value = String(pageSize);
   sizeSelect.addEventListener("change", () => opts.onPageSize && opts.onPageSize(Number(sizeSelect.value)));
 
+  // `pager` counts from ZERO — it prints `page + 1` and disables Next at `pageCount - 1`.
+  // Our page state is one-based because that is what belongs in a shareable URL, so the two
+  // are converted at this boundary rather than left to disagree by one.
   const footer = el("div", { class: "table-footer" },
-    pager(page, pageCount, rows.length, (p) => opts.onPage && opts.onPage(p)),
+    pager(page - 1, pageCount, rows.length, (p) => opts.onPage && opts.onPage(p + 1)),
     el("label", { class: "small muted" }, "Rows ", sizeSelect),
   );
 
