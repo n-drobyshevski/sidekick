@@ -13,6 +13,7 @@ import { renderScans } from "./pages/scans.js";
 import { renderData } from "./pages/data.js";
 import { renderSettings } from "./pages/settings.js";
 import { renderHelp } from "./pages/help.js";
+import { ROUTE_ICONS } from "./routeIcons.js";
 
 const PAGES = {
   // fullBleed: the page owns the whole content pane (no main padding/max-width).
@@ -29,22 +30,7 @@ const PAGES = {
   help: { title: "Help", group: "Help", render: renderHelp },
 };
 
-// Inline nav icons (one per page) — the client has no icon system, so these are small
-// stroke SVGs drawn on currentColor, inlined (the GAS/CSP sandbox blocks icon fonts/CDNs).
-// 24-grid, rendered at 18px. Used both expanded (icon + label) and collapsed (icon only).
-const NAV_ICONS = {
-  graph: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5.5" cy="7" r="2.3"/><circle cx="18.5" cy="6" r="2.3"/><circle cx="12" cy="17.5" r="2.3"/><path d="M7.6 8.1l3 7.3"/><path d="M16.6 7.7l-3.3 8"/><path d="M7.7 7.2l8.6-0.7"/></svg>',
-  inventory: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 4-8 4-8-4z"/><path d="M4 11l8 4 8-4"/><path d="M4 15l8 4 8-4"/></svg>',
-  combos: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4.5l8 14H4z"/><path d="M12 10v4.2"/><path d="M12 16.8h.01"/></svg>',
-  aars: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 6h14"/><path d="M5 12h14"/><path d="M5 18h14"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="11" cy="18" r="2"/></svg>',
-  scans: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-4.3-7.1"/><path d="M12 12l5.2-3.2"/><circle cx="12" cy="12" r="1"/></svg>',
-  data: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5.5" rx="7.3" ry="2.8"/><path d="M4.7 5.5v6c0 1.55 3.27 2.8 7.3 2.8s7.3-1.25 7.3-2.8v-6"/><path d="M4.7 11.5v6c0 1.55 3.27 2.8 7.3 2.8s7.3-1.25 7.3-2.8v-6"/></svg>',
-  settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7.5h8"/><path d="M16 7.5h4"/><circle cx="14" cy="7.5" r="2"/><path d="M4 16.5h4"/><path d="M12 16.5h8"/><circle cx="10" cy="16.5" r="2"/></svg>',
-  // A circled question mark rather than a book or a key: the page IS a key sheet, but the
-  // nav slot has to be recognised before it is read, and "?" is the convention every
-  // reader already holds (PRODUCT.md, Earned familiarity).
-  help: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M9.5 9.4a2.6 2.6 0 1 1 3.4 2.5c-.7.3-.9.8-.9 1.5v.4"/><path d="M12 16.8h.01"/></svg>',
-};
+// Nav-route icons (ROUTE_ICONS) now live in routeIcons.js — see that module for why.
 // Circular-arrows glyph for the primary "Sync now" button; shrinks to the icon alone when
 // the rail is collapsed (its .btn-label is hidden by the collapsed CSS).
 const SYNC_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11.5a8 8 0 0 0-13.7-5L4 8.5"/><path d="M4 4.5v4h4"/><path d="M4 12.5a8 8 0 0 0 13.7 5L20 15.5"/><path d="M20 19.5v-4h-4"/></svg>';
@@ -243,7 +229,7 @@ function renderSidebar(sidebar, data) {
           target: "_self",
           "aria-current": key === active ? "page" : null,
         },
-        iconSpan(NAV_ICONS[key]),
+        iconSpan(ROUTE_ICONS[key]),
         el("span", { class: "nav-label" }, page.title),
       ),
     );

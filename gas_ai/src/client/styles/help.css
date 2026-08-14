@@ -3,57 +3,201 @@
    components.css is the hover explainer and is a different family entirely. Nothing here
    may start a descendant selector at `.help` alone.
 
-   Two families are mirrored rather than reused, for the same reason scans.css mirrors the
+   Three families are mirrored rather than reused, for the same reason scans.css mirrors the
    severity bar instead of calling sevSegmentBar:
 
    - `.help-node*` mirrors `.gnode*` from graph.css. The real one sets `cursor: pointer`
      and styles `:focus-visible`, because a graph node IS a control. This figure is a
      picture with no tab stops, so borrowing those rules would advertise a clickability it
      does not have.
+   - `.help-index-item` mirrors `.sheet-rail-item` from recordSheet.css. That one dresses a
+     real `tablist` over hidden panes; this is a nav over one scrolling document. The
+     ACTIVE-state recipe is borrowed exactly (accent bar plus weight, never a tint alone,
+     which is the app's own rule for a nav item) — the tab semantics are not.
+   - `.help-lexbar` / `.help-lexkey` mirror `.cov-bar` / `.cov-key`. A term's countedness is
+     not a scan area's coverage state, and minting `cov-fill-convention` would put a
+     second meaning into the one namespace that means exactly one thing.
    - `.help-glyph` / `.help-cat-swatch` take their colours from the same tokens the graph
      and the coverage page use, so a mark here and the mark it teaches cannot drift apart. */
 
-/* ------------------------------------------------------------------- the reading column */
+/* ------------------------------------------------- the reading column and the index rail */
 /* 1080px, not the pane. The figure is 640 wide and the entry grid is mark + definition +
    count; past about this width the count strands itself at the far edge of the screen and
-   a row stops reading as one statement. */
-.help-page { max-width: 1080px; }
+   a row stops reading as one statement.
 
-/* ------------------------------------------------------------------------ the dateline */
-.help-dateline {
-  display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
-  margin: 10px 0 0; font-size: 12px; color: var(--text-3);
-  max-width: var(--measure);
+   The index rail then lives in width that decision was ALREADY leaving unused, so the
+   reading measure is unchanged by it. 1440px is where that is literally true rather than
+   nearly true: with the sidebar collapsed (its default, 56px) the pane offers
+   1440 - 56 - 64 = 1320px against a 1080 + 36 + 196 = 1312px layout, so the rail costs the
+   reading column nothing at all. Expanded, the column gives up width and still clears the
+   84ch measure the prose is capped at anyway. Below the breakpoint the rail is
+   display:none — which means no observer and no tab stops, and which wireIndex()'s
+   `offsetParent` guard depends on (visibility:hidden would not do).
+
+   help.js's matchMedia("(min-width: 1440px)") is this number's twin. Change both. */
+.help-page { display: grid; grid-template-columns: minmax(0, 1fr); }
+.help-doc { min-width: 0; max-width: 1080px; }
+.help-index { display: none; }
+
+@media (min-width: 1440px) {
+  .help-page {
+    grid-template-columns: minmax(0, 1080px) 196px;
+    column-gap: 36px;
+    align-items: start;
+  }
+  .help-doc { grid-column: 1; grid-row: 1; }
+  .help-index {
+    display: block; grid-column: 2; grid-row: 1;
+    /* align-self is load-bearing: a stretched grid item fills its row and cannot travel,
+       so sticky would have nothing to do. */
+    position: sticky; top: 20px; align-self: start;
+    max-height: calc(100vh - 48px); overflow-y: auto; overscroll-behavior: contain;
+    padding: 2px 0 16px;
+  }
 }
+
+.help-index-label {
+  padding: 0 8px 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--text-3);
+}
+.help-index-item + .help-index-label { margin-top: 14px; }
+.help-index-item {
+  position: relative;
+  display: flex; align-items: baseline; gap: 8px; width: 100%;
+  min-height: 28px; padding: 5px 8px; margin: 1px 0;
+  font: inherit; font-size: 12.5px; line-height: 1.35; text-align: left;
+  background: none; border: none; box-shadow: none; border-radius: var(--radius-md);
+  color: var(--text-2); cursor: pointer;
+}
+.help-index-item:hover { background: var(--wash-hover); color: var(--ink); }
+.help-index-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.help-index-item-label { flex: 1 1 auto; min-width: 0; }
+.help-index-count { flex: 0 0 auto; font-size: 11px; color: var(--text-3); }
+/* The section the reader is in: the app's own rule for an active nav item — a 2px accent
+   bar plus weight, never a colour fill on its own. `aria-current` is both the hook and the
+   non-colour cue, so the state is never carried by the tint alone. */
+.help-index-item[aria-current="true"] {
+  color: var(--ink); font-weight: 600;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.help-index-item[aria-current="true"]::before {
+  content: ""; position: absolute; left: 0; top: 5px; bottom: 5px; width: 2px;
+  border-radius: var(--radius-pill); background: var(--accent);
+}
+.help-index-item[aria-current="true"] .help-index-count {
+  color: var(--accent-hover); font-weight: 600;
+}
+
+/* --------------------------------------------------------------------------- the header */
+/* The posture header shape scans.css and inventory.css both use, at two levels instead of
+   three. Hero and strip are borderless: dominance comes from size and position, never from
+   a card or a stripe. */
+.help-header {
+  display: grid; grid-template-columns: minmax(150px, 0.45fr) minmax(320px, 2fr);
+  gap: 20px 36px; align-items: start;
+  margin: 0; padding-bottom: 16px; border-bottom: 1px solid var(--hairline);
+}
+.help-hero-sub { font-size: 12px; color: var(--text-3); margin: 3px 0 9px; }
+.help-strip { display: flex; flex-direction: column; gap: 8px; }
+.help-strip-note { font-size: 12px; color: var(--text-3); margin: 0; max-width: var(--measure); }
+
+.help-lexbar {
+  display: flex; width: 100%; height: 14px;
+  border-radius: var(--radius-pill); overflow: hidden; background: var(--track-bg);
+}
+.help-lexbar-seg { height: 100%; }
+.help-lexbar-seg[data-bucket="figure"] { background: var(--ok); }
+.help-lexbar-seg[data-bucket="zero"] { background: var(--sev-info); }
+.help-lexbar-seg[data-bucket="uncounted"] { background: var(--warn); }
+/* A convention is not a quantity, so its share of the bar is hatched rather than filled:
+   the one segment that reports nothing does not look like it reports something. The hatch
+   is `.sevbar-seg--empty`'s, which is already this app's mark for "nothing here" — an
+   outline instead loses its left and right edges inside a pill-radius track. */
+.help-lexbar-seg[data-bucket="convention"] {
+  background: repeating-linear-gradient(
+    45deg, transparent, transparent 3px, rgba(0, 0, 0, 0.13) 3px, rgba(0, 0, 0, 0.13) 5px
+  );
+}
+
+.help-lexkeys { display: flex; flex-wrap: wrap; gap: 6px; }
+.help-lexkey {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 10px; font-size: 12px;
+  border: 1px solid var(--hairline); border-radius: var(--radius-pill);
+  background: var(--page); color: var(--text-2);
+}
+.help-lexkey-glyph { font-size: 10px; line-height: 1; }
+.help-lexkey[data-bucket="figure"] .help-lexkey-glyph { color: var(--ok); }
+.help-lexkey[data-bucket="zero"] .help-lexkey-glyph { color: var(--sev-info-text); }
+.help-lexkey[data-bucket="uncounted"] .help-lexkey-glyph { color: var(--warn); }
+.help-lexkey[data-bucket="convention"] .help-lexkey-glyph { color: var(--text-3); }
+.help-lexkey-num { font-weight: 600; color: var(--ink); }
+
+/* ------------------------------------------------------------------------- the sections */
+/* The structuring ink used to be inverted: every ROW carried a hairline and the four
+   sections carried none, so the page read as one undifferentiated column. This is
+   aars.css's `.rule-section` recipe — sections divide one surface with hairlines rather
+   than floating as separate cards. */
+.help-section { padding: 22px 0 4px; border-top: 1px solid var(--hairline); }
+.help-section > .section-label { margin-top: 0; }
+/* The header already closes on a hairline; a second one 22px below it is a double rule. */
+.help-head + .help-section { border-top: none; padding-top: 14px; }
+/* Jump targets clear the pane's top edge rather than tucking under it. */
+.help-section > .section-label, .help-family, .help-entry { scroll-margin-top: 16px; }
 
 /* ------------------------------------------------------------------------ the page map */
+/* The whole row is the button. A 40px "Open →" stranded at the far end of a 1000px row is
+   both a target nobody can hit and a control nested inside a row that is not one. */
 .help-map { display: flex; flex-direction: column; }
-.help-map-row {
-  display: grid; grid-template-columns: minmax(140px, 190px) 1fr auto;
-  gap: 8px 18px; align-items: baseline;
-  padding: 9px 0; border-bottom: 1px solid var(--hairline);
+.help-map-item {
+  display: grid; grid-template-columns: 30px minmax(0, 1fr) 16px;
+  gap: 14px; align-items: center;
+  width: 100%; text-align: left; padding: 11px 10px; margin: 0; min-height: 0;
+  background: none; border: none; box-shadow: none; border-radius: var(--radius-md);
+  color: inherit; font: inherit; cursor: pointer;
 }
-.help-map-row:last-child { border-bottom: none; }
-.help-map-page { font-weight: 600; }
-.help-map-q { color: var(--text-2); }
+.help-map-item + .help-map-item { border-top: 1px solid var(--hairline); }
+.help-map-item:hover { background: var(--wash-hover); }
+.help-map-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.help-map-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: var(--radius-md);
+  background: var(--surface); border: 1px solid var(--hairline); color: var(--text-2);
+}
+.help-map-icon svg { display: block; width: 17px; height: 17px; }
+/* Accent only on hover/focus, where it already means "this is the interactive state" —
+   the icon tile is neutral at rest, so five of them are not five spots of brand colour. */
+.help-map-item:hover .help-map-icon,
+.help-map-item:focus-visible .help-map-icon { color: var(--accent); border-color: var(--accent); }
+.help-map-text { min-width: 0; }
+.help-map-q { display: block; font-size: 14px; font-weight: 600; color: var(--ink); }
+.help-map-page { display: block; font-size: 12px; color: var(--text-3); margin-top: 1px; }
+.help-map-go { display: inline-flex; color: var(--text-3); }
+.help-map-item:hover .help-map-go,
+.help-map-item:focus-visible .help-map-go { color: var(--accent); }
 
 /* ---------------------------------------------------------------------- the limits block */
 /* Derived from the coverage resolvers, never authored here. A one-line row per area, the
-   same shape the coverage register uses, so the two read as the same statement. */
+   same shape the coverage register uses, so the two read as the same statement. The state
+   wears the app's own status pill — this was the one block reporting STATE without using
+   the state component. */
 .help-limit-row {
-  display: grid; grid-template-columns: 18px minmax(110px, 150px) 1fr;
+  display: grid; grid-template-columns: minmax(104px, auto) minmax(110px, 150px) 1fr;
   gap: 8px 14px; align-items: baseline;
   padding: 9px 0; border-bottom: 1px solid var(--hairline);
 }
-.help-limit-glyph { font-size: 12px; line-height: 1.4; color: var(--sev-info-text); }
-.help-limit-row[data-state="partial"] .help-limit-glyph { color: var(--warn); }
+/* The pill draws its own dot, and the coverage glyph inside the label is the SAME cue in
+   the same pill — one of them is noise. The glyph wins, because ● ◐ ○ is the vocabulary
+   Wiz Scans uses for these three states and this page teaches it. scans.css:136 retires
+   the dot the same way, for the same reason. */
+.help-limit-row .pill::before { display: none; }
+.help-limit-row .pill { gap: 5px; }
 .help-limit-name { font-weight: 600; }
 .help-limit-note { color: var(--text-2); }
-/* The state in words, so the glyph is a reinforcement rather than a code to decipher. */
-.help-limit-state { font-weight: 600; color: var(--sev-info-text); }
-.help-limit-row[data-state="partial"] .help-limit-state { color: var(--warn); }
-.help-limits-src, .help-limits-none {
-  margin: 10px 0 0; font-size: 12px; color: var(--text-3); max-width: var(--measure);
+.help-limits-src { margin: 10px 0 0; font-size: 12px; color: var(--text-3); max-width: var(--measure); }
+.help-limits-none {
+  display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
+  margin: 4px 0 0; font-size: 12px; color: var(--text-3); max-width: var(--measure);
 }
 
 /* -------------------------------------------------------------------------- the anatomy */
@@ -65,7 +209,9 @@
 /* Below its minimum the figure scrolls rather than scaling: 10px labels shrunk to fit a
    phone are not a smaller diagram, they are an unreadable one. The container is a real tab
    stop because a scrollable region needs one — it is a container, not a widget, so it adds
-   no second keyboard model to the page. */
+   no second keyboard model to the page. The card whisper makes it a card; without it, a
+   white box hairlined on a white page is the one surface state the Whisper-Or-Lift rule
+   has no name for. */
 .help-figure-scroll {
   overflow-x: auto;
   /* Hug the drawing rather than the pane: a 640px picture inside a full-width box reads
@@ -73,6 +219,7 @@
   width: fit-content; max-width: 100%;
   border: 1px solid var(--hairline); border-radius: var(--radius-xl);
   background: var(--page); padding: 8px 12px;
+  box-shadow: var(--shadow-card);
 }
 .help-figure-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .help-scene { display: block; min-width: 640px; width: 640px; height: auto; }
@@ -129,26 +276,63 @@
 @media (max-width: 900px) { .help-callouts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 560px) { .help-callouts { grid-template-columns: minmax(0, 1fr); } }
 .help-callout {
-  display: grid; grid-template-columns: 18px 1fr; gap: 10px;
+  display: grid; grid-template-columns: 20px 1fr; gap: 10px;
   width: 100%; text-align: left; align-items: start;
   padding: 8px 9px; border: 1px solid transparent; border-radius: var(--radius-md);
   background: none; color: inherit; font: inherit; cursor: pointer;
+  /* base.css:463 gives every button --shadow-button. Overriding the background and the
+     border but not the shadow left a whisper floating under a transparent surface — a card
+     shadow with no card, which is the one state the Whisper-Or-Lift rule has no name for.
+     The resting affordance is the numbered chip below, not a box around each callout. */
+  box-shadow: none;
 }
 .help-callout:hover { background: var(--wash-hover); border-color: var(--hairline); }
 .help-callout:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.help-callout-n { font-size: 11px; font-weight: 600; color: var(--text-3); padding-top: 1px; }
+/* The numeral is a real chip at rest. Six numbered marks in a grid read immediately as six
+   things you can do; six transparent rectangles read as nothing at all, which is what the
+   callouts were before — undetectable until hovered. */
+.help-callout-n {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; border-radius: var(--radius-pill);
+  background: var(--surface); border: 1px solid var(--hairline);
+  font-size: 11px; font-weight: 600; color: var(--text-2);
+}
 .help-callout:hover .help-callout-n, .help-callout:focus-visible .help-callout-n {
-  color: var(--accent);
+  background: var(--accent); border-color: var(--accent); color: #ffffff;
 }
 .help-callout-t { font-size: 12.5px; line-height: 1.45; }
 .help-callout-t b { display: block; font-weight: 600; }
 .help-callout-t span { color: var(--text-2); }
 
 /* -------------------------------------------------------------------------- the lexicon */
+/* h2 and h3 used to be the same 0.9375rem, so the page had two heading levels that looked
+   like one. They are differentiated by ROLE now, not size: h2 stays 15px sentence case on
+   a rule, h3 takes the app's group-header treatment — 12px, 0.05em, uppercase, muted, the
+   one sanctioned uppercase slot in DESIGN.md's scale, matching `.sheet-rail-label` and
+   `.nav-group`. It pins as you pass it, the way a sheet's section titles do, so a reader
+   1200px into the lexicon always has the family in view. The opaque background and the
+   z-index are both required, or the `.revealed` highlight bleeds through the pinned band. */
+/* top is NEGATIVE main's own padding-top (base.css:284). A sticky offset resolves against
+   the scrollport's CONTENT box, so `top: 0` pins the band 28px down and leaves a strip of
+   live text sliding along above it — which reads as a rendering bug rather than as a
+   pinned heading. Pulling it back by that padding lands the opaque band flush on the top
+   edge of the pane. The <=800px block resets it: there `main` is not a scroll container at
+   all, the viewport is, and a negative offset would pin the heading off-screen. */
 .help-family {
-  margin: 22px 0 2px; font-size: 0.9375rem; font-weight: 600; color: var(--ink);
+  position: sticky; top: -28px; z-index: 1;
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  margin: 22px 0 2px; padding: 8px 0 5px;
+  background: var(--page);
+  font-size: 12px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--text-3);
 }
-.help-family:first-child { margin-top: 0; }
+.help-family-block:first-child .help-family { margin-top: 0; }
+.help-family:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px;
+}
+/* A length, not a resolved figure — so it is known at the first synchronous paint and
+   never moves when a count lands. */
+.help-family-n { letter-spacing: 0; color: var(--text-3); }
 
 .help-entry {
   display: grid; grid-template-columns: 92px minmax(0, 1fr) minmax(150px, 190px);
@@ -156,35 +340,80 @@
   padding: 14px 0; border-bottom: 1px solid var(--hairline);
   border-radius: var(--radius-md);
 }
-.help-entry-mark { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; padding-top: 1px; }
+/* The row is a programmatic focus target (tabindex="-1"), never a tab stop; the ring is
+   here for the keyboard reader who arrives by a "Full definition →" link. */
+.help-entry:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Right-aligned, so the ragged edge falls on the outside of the page where nothing scans
+   it and the mark-to-term gap is a constant 16px. Left-aligned, an 8px glyph and a 78px
+   severity badge left up to 84px of white between a specimen and the word it defines —
+   on a page whose whole thesis is that the two are one unit. */
+.help-entry-mark {
+  display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap;
+  gap: 5px; padding-top: 1px;
+}
 .help-entry-term { font-size: 13px; font-weight: 600; }
 .help-entry-term em { font-style: normal; font-weight: 400; color: var(--text-3); }
 .help-entry-def { margin: 3px 0 0; font-size: 12.5px; color: var(--text-2); max-width: var(--measure); }
 .help-entry-more {
   margin: 6px 0 0; font-size: 12px; color: var(--text-3); max-width: var(--measure);
 }
-.help-entry-where { margin-top: 6px; font-size: 11.5px; color: var(--text-3); }
+/* The destinations keep their words and gain the route's own sidebar mark, so the page
+   names one set of pages in one vocabulary. Neutral ink, never accent: these are
+   references, not links. */
+.help-entry-where {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px;
+  margin-top: 7px; font-size: 11.5px; color: var(--text-3);
+}
+.help-where-lead {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+}
+.help-where-item { display: inline-flex; align-items: center; gap: 5px; }
+.help-where-icon { display: inline-flex; color: var(--text-3); }
+.help-where-icon svg { display: block; width: 13px; height: 13px; }
 
 /* The count cell, in its three states. A zero is never a link. */
+/* The figure is set at 14px against the 12.5px definition beside it — it used to be 12.5px
+   too, and smaller than the 13px term, which made the page's only quantitative column its
+   quietest element. The unit and the two non-figure states deliberately stay small: the
+   size step is now what separates "a figure" from "no figure", which is a non-colour cue,
+   and 33 rows of 18px numbers would be the wall of figures PRODUCT.md rejects. */
 .help-entry-count {
   display: flex; flex-direction: column; align-items: flex-end; gap: 2px;
-  text-align: right; padding-top: 1px;
+  min-height: 38px; text-align: right; padding-top: 1px;
 }
-.help-count-link { font-size: 12.5px; font-weight: 600; }
-.help-count-value { font-size: 12.5px; font-weight: 600; }
-.help-count-unit { font-size: 11px; color: var(--text-3); }
+.help-count-link, .help-count-value {
+  font-size: 14px; font-weight: 600; letter-spacing: -0.01em;
+}
+.help-count-unit { font-size: 11px; line-height: 1.35; color: var(--text-3); }
 .help-count-none { font-size: 12px; color: var(--text-3); }
 
 .help-lex-foot {
   margin: 18px 0 0; font-size: 12px; color: var(--text-3); max-width: var(--measure);
 }
 
-/* A term arrived at from a helpTip's link. The fade is a CSS animation, so the global
-   reduced-motion block already flattens it to an instant, static highlight. */
+/* A term arrived at from a helpTip's link, or named by a callout.
+
+   The comment that used to sit here said the global reduced-motion block "already flattens
+   it to an instant, static highlight". It does not, and never did: overrides.css:2 zeroes
+   `animation-duration`, so the animation ran straight to its 100% frame — `transparent` —
+   and the highlight was invisible to exactly the readers the rule exists to serve. Since
+   revealEntry() also moves focus now, a reduced-motion reader following "Full definition →"
+   would have had focus teleport ~1800px with nothing on screen to show where.
+
+   So the reduced-motion path is STATE-bound rather than time-bound: the tint stays until
+   the reader moves off the row, which revealEntry() clears on blur. */
 .help-entry.revealed { animation: help-reveal 1.8s ease-out 1; }
 @keyframes help-reveal {
-  0%, 45% { background: rgba(190, 18, 60, 0.09); }
+  /* Mixed from the token rather than hand-typed: the literal this replaced was a copy of
+     --accent that would have desynced silently the first time the brand moved. */
+  0%, 45% { background: color-mix(in srgb, var(--accent) 9%, transparent); }
   100% { background: transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .help-entry.revealed {
+    animation: none;
+    background: color-mix(in srgb, var(--accent) 9%, transparent);
+  }
 }
 
 /* ---------------------------------------------------------------------- inline specimens */
@@ -236,16 +465,18 @@
 .help-cat[data-category="exposure"] .help-cat-swatch { background: var(--cat-exposure-ink); }
 
 /* ------------------------------------------------------------------ narrow: one column */
-/* At the <=800px top-bar layout the two-column figure has nowhere to go, so the callouts
-   fall under the drawing and the entry grid collapses to a single column with the count
-   left-aligned under its definition rather than stranded on the right. */
+/* At the <=800px top-bar layout the header's two cells have nowhere to go, and the entry
+   grid's mark column used to collapse to 34px — which a 78px severity badge simply
+   overflowed. The mark takes its own line above the term instead. */
 @media (max-width: 800px) {
-  .help-entry { grid-template-columns: 34px minmax(0, 1fr); }
+  .help-family { top: 0; }
+  .help-header { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .help-entry { grid-template-columns: minmax(0, 1fr); }
+  .help-entry-mark { justify-content: flex-start; margin-bottom: 5px; }
   .help-entry-count {
-    grid-column: 2; align-items: flex-start; text-align: left; margin-top: 4px;
+    grid-column: 1; align-items: flex-start; text-align: left;
+    min-height: 0; margin-top: 6px;
   }
-  .help-map-row { grid-template-columns: 1fr auto; }
-  .help-map-q { grid-column: 1 / -1; }
-  .help-limit-row { grid-template-columns: 18px 1fr; }
-  .help-limit-note { grid-column: 2; }
+  .help-limit-row { grid-template-columns: auto 1fr; }
+  .help-limit-note { grid-column: 1 / -1; }
 }

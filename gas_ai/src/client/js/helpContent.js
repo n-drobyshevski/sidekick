@@ -759,6 +759,33 @@ export function resolveEntries(ctx) {
   return ENTRIES.map((entry) => resolveEntry(entry, ctx));
 }
 
+/**
+ * How the whole book currently answers, in the four states its count column has.
+ *
+ * The header's hero and its strip read this; the count cell reads each entry. The two
+ * MUST agree, so the branches below are the same branches, in the same order, that
+ * countCell() takes in pages/help.js — a term is a convention (no `count` at all, so the
+ * cell shows a destination), or its resolver could not answer, or it answered zero, or it
+ * answered a figure. Re-deriving this in the page would be a second implementation of the
+ * one question the page exists to answer, and the first sync where they disagreed would
+ * be a page arguing with itself.
+ *
+ * Deliberately a SEPARATE function rather than something folded into resolveEntry: the
+ * `fromSettings` entries are pinned by a Function.prototype.toString() check in
+ * helpContent.test.js that asserts their `count` bodies never touch ctx.kpis / ctx.digest
+ * / ctx.tally, and wrapping or generating those resolvers would defeat it silently.
+ */
+export function lexTally(resolved) {
+  const t = { figure: 0, zero: 0, uncounted: 0, convention: 0 };
+  for (const e of resolved) {
+    if (!e.count) t.convention += 1;
+    else if (!e.resolved) t.uncounted += 1;
+    else if (!e.resolved.n) t.zero += 1;
+    else t.figure += 1;
+  }
+  return t;
+}
+
 /** Entries in family order, grouped under their heading. Empty families are dropped. */
 export function groupByFamily(resolved) {
   return FAMILIES
