@@ -54,12 +54,16 @@ export function saveSettings(settings: Rec): void {
 
 export const getDefaultDepth = (): number => logic.getDefaultDepth(loadSettings());
 export const getMaxNodes = (): number => logic.getMaxNodes(loadSettings());
+export const getAutoExpand = (): boolean => logic.getAutoExpand(loadSettings());
 
 export function setDefaultDepth(depth: unknown): void {
   saveSettings(logic.withDefaultDepth(loadSettings(), depth));
 }
 export function setMaxNodes(maxNodes: unknown): void {
   saveSettings(logic.withMaxNodes(loadSettings(), maxNodes));
+}
+export function setAutoExpand(on: unknown): void {
+  saveSettings(logic.withAutoExpand(loadSettings(), on));
 }
 
 export const getAarsRule = (): logic.StoredAarsRule => logic.getAarsRule(loadSettings());

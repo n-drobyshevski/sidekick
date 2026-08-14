@@ -2373,6 +2373,12 @@ var Server = (() => {
   function withMaxNodes(settings, maxNodes) {
     return { ...settings, max_nodes: clampMaxNodes(maxNodes) };
   }
+  function getAutoExpand(settings) {
+    return settings["auto_expand"] !== false;
+  }
+  function withAutoExpand(settings, on) {
+    return { ...settings, auto_expand: on === true };
+  }
   function getAarsRule(settings) {
     const raw = settings["aars_rule"];
     if (!raw || typeof raw !== "object") {
@@ -3942,7 +3948,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "eb34d65ba045" : "dev";
+  var BUILD_ID = true ? "27ec61fc672e" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -4549,11 +4555,15 @@ var Server = (() => {
   }
   var getDefaultDepth2 = () => getDefaultDepth(loadSettings());
   var getMaxNodes2 = () => getMaxNodes(loadSettings());
+  var getAutoExpand2 = () => getAutoExpand(loadSettings());
   function setDefaultDepth(depth) {
     saveSettings(withDefaultDepth(loadSettings(), depth));
   }
   function setMaxNodes(maxNodes) {
     saveSettings(withMaxNodes(loadSettings(), maxNodes));
+  }
+  function setAutoExpand(on) {
+    saveSettings(withAutoExpand(loadSettings(), on));
   }
   var getAarsRule2 = () => getAarsRule(loadSettings());
   function setAarsRule(rule) {
@@ -6758,7 +6768,10 @@ var Server = (() => {
         // The clamp bounds, so the graph's "Load more" and the Settings input can offer
         // exactly what the server will honor instead of hardcoding it twice.
         maxNodesFloor: MAX_NODES_FLOOR,
-        maxNodesCeiling: MAX_NODES_CEILING
+        maxNodesCeiling: MAX_NODES_CEILING,
+        // Read by the asset sheet to decide whether to expand on open. It rides bootstrap
+        // rather than its own call because the sheet needs it synchronously, before any RPC.
+        autoExpand: getAutoExpand2()
       },
       // The band ranges every page's AARS copy is written from, so "score 70–100" is read
       // off the rule in force instead of being retyped wherever a level is named.
@@ -7128,9 +7141,11 @@ var Server = (() => {
       var _a5;
       const id = String((_a5 = (p != null ? p : {})["id"]) != null ? _a5 : "");
       if (!id) return null;
-      if (!hasWizCredentials()) {
-        return { source: "stored", nodes: [], edges: [], arityMismatches: 0, truncated: false };
-      }
+      const empty = { nodes: [], edges: [], arityMismatches: 0, truncated: false };
+      const doc = loadGraphDoc();
+      const node2 = doc ? doc.nodes.filter((n) => n.id === id)[0] : void 0;
+      if (node2 && node2.kind !== "AI_AGENT") return { source: "unsupported", ...empty };
+      if (!hasWizCredentials()) return { source: "stored", ...empty };
       return cached("expandAsset", { id }, () => {
         var _a6, _b;
         const slots = flattenSlots(AGENT_EXPANSION);
@@ -7316,6 +7331,7 @@ var Server = (() => {
       maxNodes: getMaxNodes2(),
       maxNodesFloor: MAX_NODES_FLOOR,
       maxNodesCeiling: MAX_NODES_CEILING,
+      autoExpand: getAutoExpand2(),
       hasCredentials: hasWizCredentials()
     }));
   }
@@ -7326,9 +7342,13 @@ var Server = (() => {
         setDefaultDepth(params["defaultDepth"]);
       }
       if (params["maxNodes"] !== void 0) setMaxNodes(params["maxNodes"]);
+      if (params["autoExpand"] !== void 0) setAutoExpand(params["autoExpand"]);
       return {
         defaultDepth: getDefaultDepth2(),
-        maxNodes: getMaxNodes2()
+        maxNodes: getMaxNodes2(),
+        // Echoed so the Settings page's paint({ ...s, ...fresh }) repaints the STORED value
+        // rather than the one it asked for.
+        autoExpand: getAutoExpand2()
       };
     });
   }

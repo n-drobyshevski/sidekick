@@ -7,10 +7,12 @@ import {
   clampDepth,
   clampMaxNodes,
   getAarsRule,
+  getAutoExpand,
   getDefaultDepth,
   getMaxNodes,
   getScoredRuleVersion,
   withAarsRule,
+  withAutoExpand,
   withDefaultDepth,
   withMaxNodes,
   withScoredRuleVersion,
@@ -72,6 +74,46 @@ describe("depth / node-budget round trip", () => {
 
   it("leaves the other keys alone", () => {
     const s = withDefaultDepth({ max_nodes: 200, other: "keep" }, 1) as Rec;
+    expect(s["max_nodes"]).toBe(200);
+    expect(s["other"]).toBe("keep");
+  });
+});
+
+describe("auto-expand", () => {
+  it("is ON unless the tenant explicitly turned it off", () => {
+    // The whole point of the flag's default. A blank cell, an absent key or a value the
+    // sheet never held must all read as on — loadSettings turns a blank value_json into
+    // null, and null reading as `false` would silently disable the feature for every
+    // deployment that predates the setting.
+    expect(getAutoExpand({})).toBe(true);
+    expect(getAutoExpand({ auto_expand: null })).toBe(true);
+    expect(getAutoExpand({ auto_expand: true })).toBe(true);
+    for (const junk of [undefined, "", 0, "off", NaN, {}]) {
+      expect(getAutoExpand({ auto_expand: junk })).toBe(true);
+    }
+  });
+
+  it("is off only for a literal false", () => {
+    expect(getAutoExpand({ auto_expand: false })).toBe(false);
+  });
+
+  it("stores a real boolean, never the value as given", () => {
+    // Strict `=== true`, matching aarsRule.ts: a source is on only when it says so. So a
+    // truthy non-boolean stores as off rather than as something that reads back
+    // differently through the getter than it did going in.
+    expect(withAutoExpand({}, true)).toEqual({ auto_expand: true });
+    expect(withAutoExpand({}, false)).toEqual({ auto_expand: false });
+    expect(withAutoExpand({}, "yes")).toEqual({ auto_expand: false });
+    expect(withAutoExpand({}, 1)).toEqual({ auto_expand: false });
+  });
+
+  it("round-trips through the getter", () => {
+    expect(getAutoExpand(withAutoExpand({}, false))).toBe(false);
+    expect(getAutoExpand(withAutoExpand(withAutoExpand({}, false), true))).toBe(true);
+  });
+
+  it("leaves the other keys alone", () => {
+    const s = withAutoExpand({ max_nodes: 200, other: "keep" }, false) as Rec;
     expect(s["max_nodes"]).toBe(200);
     expect(s["other"]).toBe("keep");
   });

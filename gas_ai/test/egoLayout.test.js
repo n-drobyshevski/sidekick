@@ -2,7 +2,9 @@
 // logic is tested here, the pixels are checked in the dev harness.
 
 import { describe, it, expect } from "vitest";
-import { EGO, mergeLiveRels, pickEgoNeighbours, egoLayout } from "../src/client/js/egoLayout.js";
+import {
+  EGO, egoLayout, mergeLiveRels, pickEgoNeighbours, shouldAutoExpand,
+} from "../src/client/js/egoLayout.js";
 
 function rel(overrides) {
   var base = {
@@ -400,5 +402,46 @@ describe("mergeLiveRels", () => {
       ],
     ));
     expect(out).toHaveLength(0);
+  });
+});
+
+describe("shouldAutoExpand", () => {
+  var agent = { id: "a", kind: "AI_AGENT" };
+  function boot(over) {
+    return Object.assign({ hasCredentials: true, settings: {} }, over || {});
+  }
+
+  it("expands an agent when credentials exist and the flag is not off", () => {
+    expect(shouldAutoExpand(agent, boot())).toBe(true);
+    expect(shouldAutoExpand(agent, boot({ settings: { autoExpand: true } }))).toBe(true);
+  });
+
+  it("defaults to ON when bootstrap has not landed yet", () => {
+    // bootstrapCached() legitimately returns null before the first bootstrap resolves, and
+    // settings may be absent from an older payload. The client default has to match the
+    // server's, or the two disagree for the length of the boot.
+    expect(shouldAutoExpand(agent, boot({ settings: undefined }))).toBe(true);
+    expect(shouldAutoExpand(agent, boot({ settings: { autoExpand: undefined } }))).toBe(true);
+  });
+
+  it("does not expand when the operator turned it off", () => {
+    expect(shouldAutoExpand(agent, boot({ settings: { autoExpand: false } }))).toBe(false);
+  });
+
+  it("does not expand without credentials", () => {
+    // The endpoint would answer "stored" locally, so firing is a pointless round trip on
+    // every sheet open in a dry-run checkout.
+    expect(shouldAutoExpand(agent, boot({ hasCredentials: false }))).toBe(false);
+    expect(shouldAutoExpand(agent, null)).toBe(false);
+  });
+
+  it("does not expand a non-agent, whatever the flag says", () => {
+    // AGENT_EXPANSION is rooted at type AI_AGENT: pinning _vertexID to anything else asks
+    // a question that cannot match, so it would spend a call to learn nothing.
+    for (var kind of ["SERVICE_ACCOUNT", "BUCKET", "AI_MODEL", "MCP_SERVER", "SUMMARY"]) {
+      expect(shouldAutoExpand({ id: "x", kind: kind }, boot())).toBe(false);
+    }
+    expect(shouldAutoExpand(null, boot())).toBe(false);
+    expect(shouldAutoExpand({ id: "x" }, boot())).toBe(false);
   });
 });
