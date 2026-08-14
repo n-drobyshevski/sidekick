@@ -177,6 +177,35 @@ export const STEP_VAR_SPECS: StepVarSpec[] = [
       "would yield confidently wrong edges rather than an error.",
   },
   {
+    stepId: "CONFIG_RULES",
+    fields: [],
+    locked: "This step takes no variables at all: it walks Wiz's whole rule catalogue " +
+      "unfiltered, deliberately — the filter input's type is unverified here, and naming an " +
+      "input type wrong fails the document while sending none cannot.",
+  },
+  {
+    stepId: "IDENTITY_HYGIENE",
+    // The rule list looks like the obvious knob and is the one thing that must not be one:
+    // it is not a preference, it is the resolution of a name match over the synced catalogue,
+    // and normalizeIdentityFindingsPage refuses any row whose rule is not in it. An operator
+    // who pasted an extra id would get the whole step aborted as an unhonoured filter.
+    fields: [],
+    locked: "This step's rule list is resolved from the synced rule catalogue by name, not " +
+      "chosen: the normalizer refuses any finding whose rule is not in that resolved set, so " +
+      "an edited list would abort the step rather than widen it.",
+  },
+  {
+    stepId: "EFFECTIVE_ACCESS",
+    // `accessTypes: [DATA]` is the knob it appears to have. Withheld because the area's prose
+    // says "can reach the asset's data" — widening the filter would change what the figure
+    // means with nothing on the page to say so, which is the failure the whole Scans page is
+    // built to prevent.
+    fields: [],
+    locked: "This step has no editable filter: its access-type list is what the area's own " +
+      "figure claims to count, so widening it here would change what the number means " +
+      "without changing what the page says it means.",
+  },
+  {
     stepId: "IDENTITY_ACCESS",
     // Its traversal is a $query variable now, so in principle the access-level list is a
     // path an override could reach. Withheld for the reason ENDPOINT_EXPOSURE's is: those two

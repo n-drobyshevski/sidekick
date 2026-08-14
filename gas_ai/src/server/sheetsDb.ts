@@ -20,6 +20,8 @@ export const TABS = {
   frameworks: "ai_frameworks",
   frameworkPosture: "ai_framework_posture",
   frameworkPolicies: "ai_framework_policies",
+  configRules: "ai_config_rules",
+  identityFindings: "ai_identity_findings",
   syncHistory: "sync_history",
   settings: "settings",
   jobs: "jobs",
@@ -131,6 +133,24 @@ export const TAB_HEADERS: Record<string, string[]> = {
     "enabled", "builtin", "pass_count", "fail_count", "assessed_count",
     "rejected_count", "no_resource_to_assess",
     "target_native_type", "subject_entity_type", "cloud_provider", "has_auto_remediation",
+  ],
+  // ---- the rule catalogue + identity hygiene (cloudConfigurationRules) ----
+  //
+  // `ai_config_rules` is Wiz's VOCABULARY, not this tenant's posture — the only tab here
+  // whose contents do not describe the estate. It is what turns an opaque `SUB-082` in the
+  // AARS cascade into "Vertex AI Metadata Store should be encrypted with a customer-managed
+  // key", and what the identity-hygiene matchers resolve MFA and dormancy rules against
+  // instead of hardcoding ids that differ per cloud. ~3,858 rows, refreshed monthly rather
+  // than daily; see the CONFIG_RULES gate in syncJobs.
+  [TABS.configRules]: ["id", "short_id", "name", "subject_entity_type", "external_refs"],
+  // `ai_identity_findings` is separate from `ai_findings` for the reason `ai_data_findings`
+  // is: that tab prices AARS pillar B through buildAarsHintsFromFindings, which keys hints by
+  // resourceId — and a USER_ACCOUNT IS a row in ai_assets, put there by the identity-access
+  // traversal. Folding a person's missing MFA in there would give a human being an AI Asset
+  // Risk Score.
+  [TABS.identityFindings]: [
+    "id", "resource_id", "resource_name", "rule_id", "rule_short_id", "rule_name",
+    "severity", "status", "result", "first_seen_at", "analyzed_at", "remediation", "hygiene",
   ],
   [TABS.syncHistory]: [
     "sync_id", "started_at", "finished_at", "status", "mode",

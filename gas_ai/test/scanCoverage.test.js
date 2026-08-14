@@ -39,6 +39,8 @@ const FULL = {
     humanReachableAdmin: 2,
     humanIdentities: 7,
     humanDormant: 1,
+    humanNoMfa: 3,
+    humanEffective: 2,
   },
   total: 96,
   digest: { totals: { totalOpen: 29, patternsActive: 4, patternsTotal: 4 } },
@@ -253,14 +255,18 @@ describe("the fabrications are gone", () => {
     expect(prose).not.toMatch(/\d+\s?%/);
   });
 
-  it("says MFA is not collected rather than claiming it is scanned", () => {
-    // Narrowed, not dropped. The note used to say MFA AND inactivity were uncollected; Wiz
-    // returns inactivity in the identity properties bag and the sync reads it now, so only
-    // the MFA half survives — Wiz reports that for IdP-sourced human identities, and every
-    // identity on this estate's AI paths is a cloud service account or role.
+  it("no longer claims MFA is uncollectable, and says how it is collected", () => {
+    // This assertion has now been wrong twice, in opposite directions, which is the point of
+    // keeping it. It first read "MFA is not collected" when neither MFA nor inactivity was;
+    // then "MFA is STILL not collected" once inactivity arrived as an entity property. The
+    // rule catalogue showed the remaining half was wrong too — MFA is a RULE Wiz evaluates
+    // against each account, not a property — so the note now has to say which mechanism
+    // answers, because "collected" and "collected how" are different claims.
     const identity = SCAN_AREAS.find((a) => a.id === "identity");
-    expect(identity.note).toMatch(/MFA is still not collected/i);
-    expect(identity.note).not.toMatch(/inactivity signals .* not collected/i);
+    expect(identity.note).not.toMatch(/MFA is still not collected/i);
+    expect(identity.note).toMatch(/RULES rather than properties/i);
+    // And it must still admit the heuristic: the rules are matched by NAME.
+    expect(identity.note).toMatch(/matched by name/i);
   });
 });
 
@@ -282,10 +288,23 @@ describe("human identity access", () => {
     expect(unit).toContain("1 dormant");
   });
 
-  it("drops the admin and dormant clauses when there are none", () => {
-    const kpis = { ...FULL.kpis, humanReachableAdmin: 0, humanDormant: 0 };
+  it("drops the hygiene clauses when there is nothing to report", () => {
+    const kpis = {
+      ...FULL.kpis, humanReachableAdmin: 0, humanDormant: 0, humanNoMfa: 0,
+    };
     const figure = byId(resolveAreas({ ...FULL, kpis })).get("identity").figure;
     expect(figure.unit).toBe("AI assets reachable · 7 identities");
+  });
+
+  it("reports dormancy as ONE number, not the flag plus the finding", () => {
+    // Wiz reports dormancy twice — `inactiveInLast90Days` on the identity and the IAM-235
+    // rule failing against it — and the same person usually carries both. The dry run caught
+    // this the first time the figure was written: it printed "2 dormant" for one person. The
+    // evidence stays split on the asset; the KPI is deduped server-side and the figure prints
+    // it as it is given.
+    const figure = byId(resolveAreas(FULL)).get("identity").figure;
+    expect(figure.unit).toContain("1 dormant");
+    expect(figure.unit).toContain("3 without MFA");
   });
 
   it("steps back to partial on an older server bundle with no reach KPI", () => {

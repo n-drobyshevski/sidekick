@@ -16,6 +16,7 @@ import {
 } from "./aars";
 import { isOpenGap, isUnresolvedIssue, SEVERITY_ORDER } from "./config";
 import type { Severity } from "./config";
+import type { EffectiveAccessRow } from "./effectiveAccess";
 import { isRatedExposure, worseExposureLevel } from "./exposureQuery";
 import { HUMAN_ACCESS_TYPES } from "./identityQuery";
 import { conditionHolds, conditionState } from "./riskConditions";
@@ -24,6 +25,7 @@ import {
   AI_ASSET_KINDS,
   edgeId,
   type FindingRow,
+  type IdentityFindingRow,
   type GEdge,
   type GNode,
   type GraphDoc,
@@ -595,11 +597,16 @@ export function withInternetExposureNodes(doc: GraphDoc): GraphDoc {
  * HUMANS ONLY, for the reason that builder gives: an agent's own execution identity reaching
  * it is normal operation, not a finding.
  */
-export function withHumanAccess(doc: GraphDoc): GraphDoc {
+export function withHumanAccess(
+  doc: GraphDoc,
+  evidence: {
+    identityFindings?: IdentityFindingRow[];
+    effectiveAccess?: EffectiveAccessRow[];
+  } = {},
+): GraphDoc {
   const reach: ReadonlySet<string> = new Set(HUMAN_ACCESS_TYPES);
   const byId = indexBy(doc.nodes, (n) => n.id);
   const humans = new Set(doc.nodes.filter((n) => n.kind === "USER_ACCOUNT").map((n) => n.id));
-  if (!humans.size) return doc;
 
   const reachedBy = new Map<string, string[]>();
   const admins = new Set<string>();
@@ -612,20 +619,71 @@ export function withHumanAccess(doc: GraphDoc): GraphDoc {
     pushInto(reachedBy, edge.dst, edge.src);
     if (edge.accessType === "ADMIN") admins.add(edge.dst);
   }
-  if (!reachedBy.size) return doc;
+
+  // Effective access, kept in its own index the whole way through. An entry here can name a
+  // pair the binding traversal never produced — that is what "effective" means — and it still
+  // counts as reach, but never by being merged into `identityIds`, whose access levels come
+  // from a vocabulary this one does not share.
+  const effectiveBy = new Map<string, string[]>();
+  const permsBy = new Map<string, string[]>();
+  const policiesBy = new Map<string, string[]>();
+  for (const entry of evidence.effectiveAccess ?? []) {
+    const target = byId.get(entry.resourceId);
+    if (!target || !AI_ASSET_KINDS.includes(target.kind)) continue;
+    const seen = effectiveBy.get(entry.resourceId) ?? [];
+    if (seen.indexOf(entry.identityId) < 0) pushInto(effectiveBy, entry.resourceId, entry.identityId);
+    const perms = permsBy.get(entry.resourceId) ?? [];
+    for (const p of entry.permissions) if (perms.indexOf(p) < 0) perms.push(p);
+    permsBy.set(entry.resourceId, perms);
+    const policies = policiesBy.get(entry.resourceId) ?? [];
+    for (const p of entry.policyIds) if (policies.indexOf(p) < 0) policies.push(p);
+    policiesBy.set(entry.resourceId, policies);
+  }
+
+  if (!reachedBy.size && !effectiveBy.size) return doc;
+
+  // Hygiene findings, indexed by the identity they were evaluated against. OPEN only —
+  // `isOpenGap` is the shared predicate for "this is still a gap", and a resolved MFA finding
+  // must stop counting the moment someone turns MFA on.
+  const noMfa = new Set<string>();
+  const dormant = new Set<string>();
+  for (const finding of evidence.identityFindings ?? []) {
+    if (!isOpenGap(finding)) continue;
+    if (finding.hygiene === "MFA") noMfa.add(finding.resourceId);
+    else dormant.add(finding.resourceId);
+  }
 
   return {
     nodes: doc.nodes.map((node) => {
-      const identityIds = reachedBy.get(node.id);
-      if (!identityIds || !identityIds.length) return node;
+      const identityIds = reachedBy.get(node.id) ?? [];
+      const effectiveIds = effectiveBy.get(node.id) ?? [];
+      if (!identityIds.length && !effectiveIds.length) return node;
+
       const access: NonNullable<GNode["humanAccess"]> = { identityIds };
       if (admins.has(node.id)) access.admin = true;
+      // Counted over every identity that reaches the asset by EITHER route, deduped: a person
+      // who holds an admin binding and also shows up in effective access is one person whose
+      // MFA is missing, not two.
+      const all = identityIds.slice();
+      for (const id of effectiveIds) if (all.indexOf(id) < 0) all.push(id);
       // Only counted when the identity rows actually carry the flag. `undefined` there means
       // the traversal never reported dormancy for that identity, which is not the same as
       // reporting it active — so an estate where nothing is known contributes 0 and reads as
       // "none known dormant" rather than manufacturing a clean bill of health.
-      const inactiveCount = identityIds.filter((id) => byId.get(id)?.inactive === true).length;
+      const inactiveCount = all.filter((id) => byId.get(id)?.inactive === true).length;
       if (inactiveCount) access.inactiveCount = inactiveCount;
+      const noMfaCount = all.filter((id) => noMfa.has(id)).length;
+      if (noMfaCount) access.noMfaCount = noMfaCount;
+      const dormantFindingCount = all.filter((id) => dormant.has(id)).length;
+      if (dormantFindingCount) access.dormantFindingCount = dormantFindingCount;
+
+      if (effectiveIds.length) {
+        access.effectiveIds = effectiveIds;
+        const perms = permsBy.get(node.id) ?? [];
+        if (perms.length) access.permissionCount = perms.length;
+        const policies = policiesBy.get(node.id) ?? [];
+        if (policies.length) access.policyIds = policies;
+      }
       return { ...node, humanAccess: access };
     }),
     edges: doc.edges,

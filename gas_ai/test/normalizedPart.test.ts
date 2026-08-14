@@ -1,4 +1,4 @@
-// The eight arms of NormalizedPart, and the accumulation the sync loop does over them.
+// The eleven arms of NormalizedPart, and the accumulation the sync loop does over them.
 //
 // These exist because of a shipped defect: the loop in syncJobs.ts wrote the accumulation
 // out by hand and carried three of the four arms. `findings` was never collected, so the
@@ -9,7 +9,8 @@
 //
 // So the arm list is asserted against the type's own keys rather than retyped here: a NEW
 // arm added to NormalizedPart fails these tests until appendPart and partIsEmpty carry it.
-// (It has already earned its keep once: the three compliance-posture arms tripped it.)
+// (It has now earned its keep twice: the three compliance-posture arms tripped it, and so
+// did the rule catalogue, identity-hygiene and effective-access arms.)
 
 import { describe, expect, it } from "vitest";
 import {
@@ -39,14 +40,23 @@ function partWithOnly(arm: keyof NormalizedPart): NormalizedPart {
       frameworkId: "wf-id-1", subcategoryExternalId: "ASI01", policyId: "p1",
     } as never);
   }
+  if (arm === "configRules") {
+    part.configRules.push({ id: "r1", shortId: "IAM-159", name: "R" } as never);
+  }
+  if (arm === "identityFindings") {
+    part.identityFindings.push({ id: "h1", resourceId: "u1", hygiene: "MFA" } as never);
+  }
+  if (arm === "effectiveAccess") {
+    part.effectiveAccess.push({ identityId: "u1", resourceId: "a" } as never);
+  }
   return part;
 }
 
 describe("the arm list", () => {
-  it("is the eight the ledger persists", () => {
+  it("is the eleven the ledger persists", () => {
     expect(ARMS.sort()).toEqual([
-      "dataFindings", "edges", "findings", "frameworkPolicies", "frameworks",
-      "issues", "nodes", "posture",
+      "configRules", "dataFindings", "edges", "effectiveAccess", "findings",
+      "frameworkPolicies", "frameworks", "identityFindings", "issues", "nodes", "posture",
     ]);
   });
 });

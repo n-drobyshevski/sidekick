@@ -13,8 +13,12 @@ import {
   emptyPart,
   appendPart,
   mergeParts,
+  FilterNotHonouredError,
   normalizeConfigFindingsPage,
+  normalizeConfigRulesPage,
+  normalizeEffectiveAccessPage,
   normalizeEndpointExposurePage,
+  normalizeIdentityFindingsPage,
   normalizeHostExposurePage,
   normalizeIdentityAccessPage,
   normalizeInventoryPage,
@@ -33,6 +37,7 @@ import {
   type NormalizedPart,
 } from "../domain/syncNormalize";
 import { buildAarsHintsFromFindings } from "../domain/graphEnrich";
+import { resolveHygieneRules } from "../domain/identityHygiene";
 import { changedPaths, effectiveStepVars, isEditableStep } from "../domain/scanVars";
 import { COMBO_GROUPS } from "../domain/toxicCombos";
 import { nowIso, type Rec } from "../domain/util";
@@ -41,12 +46,13 @@ import { activeJob, createJob, getJob, newJobId, updateJob, type JobRow } from "
 import { withScriptLock } from "./locks";
 import { getProp, hasWizCredentials, projectScope, setProp, deleteProp } from "./props";
 import {
-  seedGraphDoc, SEED_AARS_HINTS, SEED_DATA_FINDINGS, SEED_FINDINGS, SEED_FRAMEWORK_POLICIES,
-  SEED_FRAMEWORKS, SEED_ISSUES, SEED_POSTURE, SEED_TREND,
+  seedGraphDoc, SEED_AARS_HINTS, SEED_CONFIG_RULES, SEED_DATA_FINDINGS, SEED_EFFECTIVE_ACCESS,
+  SEED_FINDINGS, SEED_FRAMEWORK_POLICIES, SEED_FRAMEWORKS, SEED_IDENTITY_FINDINGS, SEED_ISSUES,
+  SEED_POSTURE, SEED_TREND,
 } from "./sampleData";
 import * as settingsStore from "./settingsStore";
 import { appendRows, dataRowCount, TABS } from "./sheetsDb";
-import { loadFrameworks, parseJson, persistSync } from "./syncStore";
+import { loadConfigRules, loadFrameworks, parseJson, persistSync } from "./syncStore";
 import {
   fetchCloudResourcesPage,
   fetchConnectionPage,
@@ -62,12 +68,16 @@ import {
   aiInventoryVariables,
   aiIssuesVariables,
   aiPrincipalsVariables,
+  aiIdentityHygieneVariables,
+  effectiveAccessVariables,
   endpointExposureVariables,
   hostExposureVariables,
   identityAccessVariables,
   MAX_PAGES,
   Q_AGENT_RUNS_AS,
   Q_AI_EXPOSURE,
+  Q_CONFIG_RULES,
+  Q_EFFECTIVE_ACCESS,
   Q_AGENT_SENSITIVE_DATA_ACCESS,
   Q_AGENTS_NO_GUARDRAIL,
   Q_AI_INVENTORY,
@@ -145,6 +155,13 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
   // Read once for the same reason `overrides` is: a battery of a dozen steps should cost
   // one settings read, not one per step.
   const selectedFrameworks = (): string[] => frameworkIds;
+  // The rule catalogue, and the two things read off it. Resolved HERE rather than inside the
+  // step so that describeSyncSteps and the battery see the same answer, and so a first sync —
+  // where the catalogue is empty and the matchers resolve nothing — simply omits the hygiene
+  // step instead of sending a filter with an empty id list.
+  const catalogue = loadConfigRules();
+  const catalogueFresh = settingsStore.configRulesAreFresh(catalogue.length > 0, Date.now());
+  const hygieneRules = resolveHygieneRules(catalogue);
 
   return [
     {
@@ -191,6 +208,58 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       query: Q_CONFIG_FINDINGS,
       extraVariables: vars("CONFIG_FINDINGS", aiConfigFindingsVariables(projectScope()) as Rec),
       normalize: normalizeConfigFindingsPage,
+      optional: true,
+    },
+    // Wiz's cloud-configuration RULE CATALOGUE — reference data, and the only step here whose
+    // contents describe the product rather than the estate. It is what glosses an opaque
+    // `SUB-082` in the AARS cascade, and what the identity-hygiene matchers resolve against
+    // instead of hardcoding MFA rule ids that differ per cloud.
+    //
+    // GATED, not unconditional. ~3,858 rules is ~39 pages against a battery that is otherwise
+    // ~10–20 calls, to re-collect a list that changes when Wiz ships rules. `catalogueFresh`
+    // is resolved once, above, and a skip here is recorded as SCHEDULED rather than joining
+    // `skippedSteps` — that list means "the tenant refused this", and a step we chose not to
+    // run must not be reported as a rejection.
+    ...(catalogueFresh ? [] : [{
+      id: "CONFIG_RULES",
+      area: "compliance",
+      writes: ["ai_config_rules"],
+      run: "connection" as const,
+      connectionField: "cloudConfigurationRules",
+      query: Q_CONFIG_RULES,
+      normalize: normalizeConfigRulesPage,
+      optional: true,
+    }]),
+    // MFA and dormancy on the humans who can reach an AI asset. The rules come from the
+    // catalogue, matched by name (domain/identityHygiene.ts), so this step exists only once
+    // the catalogue has been collected at least once — on a first sync it resolves to nothing
+    // and is skipped, and the following sync has it.
+    ...(hygieneRules.ids.length ? [{
+      id: "IDENTITY_HYGIENE",
+      area: "identity",
+      writes: ["ai_identity_findings"],
+      run: "connection" as const,
+      connectionField: "configurationFindings",
+      query: Q_CONFIG_FINDINGS,
+      extraVariables: aiIdentityHygieneVariables(hygieneRules.ids, projectScope()) as Rec,
+      // Closed over the resolved map, the way the per-rule combo steps close over their group.
+      // It is also what lets the normalizer verify the filter was honoured at all.
+      normalize: (rows: Rec[]) => normalizeIdentityFindingsPage(rows, hygieneRules.byId),
+      optional: true,
+    }] : []),
+    // Effective permissions on those same assets: not who holds a role, but what they can do
+    // and which policy says so. Runs BESIDE IDENTITY_ACCESS rather than replacing it — that
+    // step draws the graph's ALLOWS_ACCESS_TO edges and speaks ADMIN/HIGH_PRIVILEGE, this one
+    // speaks DATA, and withHumanAccess keeps the two in separate fields.
+    {
+      id: "EFFECTIVE_ACCESS",
+      area: "identity",
+      writes: ["ai_assets (human_access_json)"],
+      run: "connection",
+      connectionField: "entityEffectiveAccessEntries",
+      query: Q_EFFECTIVE_ACCESS,
+      extraVariables: effectiveAccessVariables(types, projectScope()),
+      normalize: normalizeEffectiveAccessPage,
       optional: true,
     },
     // The framework catalogue. Populates the Settings picker; it does NOT decide the
@@ -342,7 +411,7 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
 
 /** Steps whose variables embed the tenant-resolved AI resource types. */
 const TYPE_DEPENDENT_STEPS: ReadonlySet<string> = new Set([
-  "INVENTORY_AI", "HOST_EXPOSURE", "ENDPOINT_EXPOSURE", "IDENTITY_ACCESS",
+  "INVENTORY_AI", "HOST_EXPOSURE", "ENDPOINT_EXPOSURE", "IDENTITY_ACCESS", "EFFECTIVE_ACCESS",
 ]);
 
 /** The connection field a step reads its rows from — the one the response must carry. */
@@ -439,6 +508,15 @@ function defaultStepVariables(stepId: string, withOverride: Rec, aiTypes?: reado
       return endpointExposureVariables(aiTypes ?? resolveAiResourceTypes().types, projectScope());
     case "IDENTITY_ACCESS":
       return identityAccessVariables(aiTypes ?? resolveAiResourceTypes().types, projectScope());
+    case "EFFECTIVE_ACCESS":
+      return effectiveAccessVariables(aiTypes ?? resolveAiResourceTypes().types, projectScope());
+    case "IDENTITY_HYGIENE":
+      // Resolved from the catalogue, exactly as the step itself is, so the panel shows the
+      // rule ids the sync would actually send rather than an empty list.
+      return aiIdentityHygieneVariables(
+        resolveHygieneRules(loadConfigRules()).ids,
+        projectScope(),
+      ) as unknown as Rec;
     case "FRAMEWORKS_LIST":
       return aiSecurityFrameworksVariables() as unknown as Rec;
     default:
@@ -566,6 +644,11 @@ function dryRunSync(): StartResult {
     SEED_FRAMEWORKS,
     SEED_POSTURE,
     SEED_FRAMEWORK_POLICIES,
+    {
+      configRules: SEED_CONFIG_RULES,
+      identityFindings: SEED_IDENTITY_FINDINGS,
+      effectiveAccess: SEED_EFFECTIVE_ACCESS,
+    },
   );
   // A dry-run issues no queries, so nothing can have been rejected. Clearing rather than
   // leaving the previous live run's list behind, which would attribute a stale skip to a
@@ -728,7 +811,22 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
 
         // One operation over all four arms. Written out by hand here, this carried three:
         // findings were fetched, archived, normalized and dropped on every live sync.
-        appendPart(hopPart, step.normalize(result.rows));
+        //
+        // A normalizer can also REFUSE a page. IDENTITY_HYGIENE filters on a `rule` key no
+        // capture proves, and a tenant that accepts the filter and then ignores it would hand
+        // us its entire CSPM register to file under "identity hygiene". That verdict can only
+        // be reached with the rows in hand, so it arrives as a throw and is treated exactly
+        // like the tenant rejecting the query: skip the step, record it, keep the rest.
+        try {
+          appendPart(hopPart, step.normalize(result.rows));
+        } catch (e) {
+          if (step.optional && e instanceof FilterNotHonouredError) {
+            params.skippedSteps.push(step.id);
+            console.warn(`Sync step ${step.id} skipped — ${e.message}`);
+            break;
+          }
+          throw e;
+        }
 
         updateJob(job.job_id, {
           step_index: stepIndex,
@@ -806,11 +904,20 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
         startedAt,
         apiCalls: params.apiCalls,
       }, undefined, findings, merged.dataFindings,
-      merged.frameworks, merged.posture, merged.frameworkPolicies);
+      merged.frameworks, merged.posture, merged.frameworkPolicies, {
+        configRules: merged.configRules,
+        identityFindings: merged.identityFindings,
+        effectiveAccess: merged.effectiveAccess,
+      });
       // Written with the commit, so what the Scans page reports as skipped always describes
       // the sync whose numbers it is showing. The job row carrying this is discarded the
       // moment the job goes terminal, which is why it could not be read back before.
       settingsStore.setSkippedSteps(params.skippedSteps);
+      // Stamped only when the catalogue actually came back with rows, which is what starts
+      // the 30-day clock. A run that skipped the step (fresh) or had it rejected leaves the
+      // old timestamp alone, so a rejection retries tomorrow rather than being remembered as
+      // a successful collection for a month.
+      if (merged.configRules.length) settingsStore.setConfigRulesSyncedAt(Date.now());
     };
     if (opts.lockHeld) persist();
     else withScriptLock(persist);

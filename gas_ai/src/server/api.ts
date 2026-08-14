@@ -241,8 +241,44 @@ function distinctHumanIdentities(assets: GNode[]): Set<string> {
   const ids = new Set<string>();
   for (const a of assets) {
     for (const id of a.humanAccess?.identityIds ?? []) ids.add(id);
+    for (const id of a.humanAccess?.effectiveIds ?? []) ids.add(id);
   }
   return ids;
+}
+
+/**
+ * How many of the people who can reach an AI asset carry an open MFA or dormancy finding.
+ *
+ * Read from the identity-findings tab and intersected here rather than summed off the
+ * per-asset counts, for the reason `distinctHumanIdentities` exists. The intersection is the
+ * whole point: "how many people lack MFA" is an IAM question this app has no business
+ * answering, and "how many of the people who can reach an AI agent lack MFA" is its own.
+ */
+function identityHygieneKpis(assets: GNode[]): Rec {
+  const reachable = distinctHumanIdentities(assets);
+  if (!reachable.size) return { humanNoMfa: 0, humanDormant: 0 };
+  const noMfa = new Set<string>();
+  // ONE SET, fed by BOTH routes to dormancy. Wiz reports it twice — as
+  // `inactiveInLast90Days` on the identity and as the IAM-235 rule failing against it — and
+  // `humanAccess` keeps those apart because they are different evidence. A COUNT must not:
+  // adding them reports one dormant person as two, which is precisely what the dry run did
+  // the first time this KPI was written.
+  const dormant = new Set<string>();
+  for (const id of reachable) {
+    if (byIdIn(assets, id)?.inactive === true) dormant.add(id);
+  }
+  for (const finding of syncStore.loadIdentityFindings()) {
+    if (!isOpenGap(finding)) continue;
+    if (!reachable.has(finding.resourceId)) continue;
+    (finding.hygiene === "MFA" ? noMfa : dormant).add(finding.resourceId);
+  }
+  return { humanNoMfa: noMfa.size, humanDormant: dormant.size };
+}
+
+/** One asset row by id. Linear, and called once per reachable identity — a handful. */
+function byIdIn(assets: GNode[], id: string): GNode | undefined {
+  for (const a of assets) if (a.id === id) return a;
+  return undefined;
 }
 
 function filterOptions(assets: GNode[]): Rec {
@@ -564,7 +600,14 @@ function assetsModel(): AssetsModel {
       // rights on an AI asset is a low-noise backdoor, and it is the reason the identity
       // properties are collected at all.
       humanIdentities: distinctHumanIdentities(assets).size,
-      humanDormant: assets.reduce((sum, a) => sum + (a.humanAccess?.inactiveCount ?? 0), 0),
+      // Effective access: people Wiz says can actually reach an AI asset's DATA, as opposed
+      // to people holding a role that grants access. Counted separately and never added to
+      // `humanIdentities` — see the note on humanAccess.effectiveIds.
+      humanEffective: assets.filter((a) => (a.humanAccess?.effectiveIds ?? []).length > 0).length,
+      // Hygiene, counted over the DISTINCT identities rather than summed from the per-asset
+      // counts. One person with bindings on six agents is one person whose MFA is missing;
+      // summing `noMfaCount` across assets would report six.
+      ...identityHygieneKpis(assets),
       highPrivilege: assets.filter((a) => conditionHolds(a, "EXCESSIVE_PRIVILEGE")).length,
     },
     aarsSeverityCounts,

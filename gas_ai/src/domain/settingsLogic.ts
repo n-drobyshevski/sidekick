@@ -123,6 +123,40 @@ export function withScoredRuleVersion(settings: Rec, version: unknown): Rec {
   };
 }
 
+/** How long the cloud-configuration rule catalogue is considered fresh. */
+export const CONFIG_RULES_TTL_MS = 30 * 86_400_000;
+
+/**
+ * When the rule catalogue was last collected, as epoch ms; 0 when never.
+ *
+ * The catalogue is ~3,858 rules — about 39 pages against a battery that is otherwise 10–20
+ * calls — and it describes Wiz's rule vocabulary rather than this tenant's estate. Re-walking
+ * it daily would triple the sync to re-collect a list that changes when Wiz ships rules.
+ */
+export function getConfigRulesSyncedAt(settings: Rec): number {
+  const v = Number(settings["config_rules_synced_at"]);
+  return Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
+}
+
+export function withConfigRulesSyncedAt(settings: Rec, at: unknown): Rec {
+  const v = Number(at);
+  return {
+    ...settings,
+    config_rules_synced_at: Number.isFinite(v) && v > 0 ? Math.round(v) : 0,
+  };
+}
+
+/**
+ * Whether the catalogue needs re-collecting. `hasRows` is passed rather than read, so this
+ * stays pure and a deployment whose tab was cleared re-syncs even inside the TTL.
+ */
+export function configRulesAreFresh(settings: Rec, hasRows: boolean, now: number): boolean {
+  if (!hasRows) return false;
+  const at = getConfigRulesSyncedAt(settings);
+  if (!at) return false;
+  return now - at < CONFIG_RULES_TTL_MS;
+}
+
 /**
  * Per-step Wiz query variable overrides, keyed by sync-step id. Absent or unreadable means
  * every step uses its builder's own variables — the shape a deployment that has never

@@ -573,7 +573,9 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
         "highAars": 0,
         "highPrivilege": 0,
         "humanDormant": 0,
+        "humanEffective": 0,
         "humanIdentities": 0,
+        "humanNoMfa": 0,
         "humanReachable": 0,
         "humanReachableAdmin": 0,
         "internetExposed": 0,
@@ -661,7 +663,7 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
   "getStorageStats": {
     "data": {
       "archiveBytes": 0,
-      "cellCount": 33700,
+      "cellCount": 38900,
       "rows": {
         "assets": 0,
         "dataFindings": 0,
@@ -2844,11 +2846,22 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
       "highPriv": true,
       "humanAccess": {
         "admin": true,
+        "dormantFindingCount": 1,
+        "effectiveIds": [
+          "user-ops-01",
+          "user-ops-07",
+        ],
         "identityIds": [
           "user-ops-01",
           "user-ops-02",
         ],
         "inactiveCount": 1,
+        "noMfaCount": 1,
+        "permissionCount": 2,
+        "policyIds": [
+          "policy-ops-admin",
+          "policy-ops-reader",
+        ],
       },
       "id": "agent-h-chatbot",
       "identityPurpose": null,
@@ -3540,7 +3553,9 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       "highAars": 17,
       "highPrivilege": 34,
       "humanDormant": 1,
-      "humanIdentities": 2,
+      "humanEffective": 1,
+      "humanIdentities": 3,
+      "humanNoMfa": 1,
       "humanReachable": 1,
       "humanReachableAdmin": 1,
       "internetExposed": 4,
@@ -7385,11 +7400,22 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "hasSensitiveData": false,
         "humanAccess": {
           "admin": true,
+          "dormantFindingCount": 1,
+          "effectiveIds": [
+            "user-ops-01",
+            "user-ops-07",
+          ],
           "identityIds": [
             "user-ops-01",
             "user-ops-02",
           ],
           "inactiveCount": 1,
+          "noMfaCount": 1,
+          "permissionCount": 2,
+          "policyIds": [
+            "policy-ops-admin",
+            "policy-ops-reader",
+          ],
         },
         "id": "agent-h-chatbot",
         "isAccessibleFromInternet": null,
@@ -10875,8 +10901,8 @@ exports[`read endpoints > getSettings answers the same shape 1`] = `
 exports[`read endpoints > getStorageStats answers the same shape 1`] = `
 {
   "data": {
-    "archiveBytes": 73411,
-    "cellCount": 33700,
+    "archiveBytes": 73568,
+    "cellCount": 38900,
     "rows": {
       "assets": 87,
       "dataFindings": 6,
@@ -11589,12 +11615,14 @@ exports[`read endpoints > getToxicCombos answers the same shape 1`] = `
 exports[`the persisted ledger > writes the tabs the schema declares 1`] = `
 {
   "ai_assets": 87,
+  "ai_config_rules": 5,
   "ai_data_findings": 6,
   "ai_edges": 85,
   "ai_findings": 7,
   "ai_framework_policies": 12,
   "ai_framework_posture": 22,
   "ai_frameworks": 5,
+  "ai_identity_findings": 3,
   "ai_issues": 32,
   "jobs": 0,
   "meta": 0,
@@ -11643,6 +11671,13 @@ exports[`the persisted ledger > writes the tabs the schema declares 2`] = `
     "status": "Active",
     "tags_json": null,
     "technology_categories": "AI Service",
+  },
+  "ai_config_rules": {
+    "external_refs": null,
+    "id": "rule-iam-159",
+    "name": "User should have MFA enabled",
+    "short_id": "IAM-159",
+    "subject_entity_type": "USER_ACCOUNT",
   },
   "ai_data_findings": {
     "id": "df-pii-01",
@@ -11745,6 +11780,21 @@ result = "fail" {
     "id": "wf-id-275",
     "name": "OWASP Top 10 For Agentic Applications 2026",
     "policy_types": "CLOUD_CONFIGURATION_RULE,CONTROL",
+  },
+  "ai_identity_findings": {
+    "analyzed_at": "2026-08-13T04:00:00Z",
+    "first_seen_at": "2026-05-02T09:14:00Z",
+    "hygiene": "MFA",
+    "id": "idf-001",
+    "remediation": "Enrol this account in multi-factor authentication.",
+    "resource_id": "user-ops-01",
+    "resource_name": "ops.user01@example.com",
+    "result": "FAIL",
+    "rule_id": "rule-iam-159",
+    "rule_name": "User should have MFA enabled",
+    "rule_short_id": "IAM-159",
+    "severity": "HIGH",
+    "status": "OPEN",
   },
   "ai_issues": {
     "account": "aws-account-prod-01",

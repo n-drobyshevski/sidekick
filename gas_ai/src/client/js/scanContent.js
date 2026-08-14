@@ -304,25 +304,40 @@ export const SCAN_AREAS = [
     id: "identity",
     title: "Human Identity Access",
     query: "graphSearch · ALLOWS_ACCESS_TO reversed → ACCESS_ROLE[accessType Admin|High] " +
-      "(IDENTITY_ACCESS)",
-    what: "Which people and roles hold admin or high-privilege bindings on AI assets, and " +
-      "whether those accounts are still in use. The access paths are drawn on the graph " +
-      "beside the asset they reach.",
+      "(IDENTITY_ACCESS) + entityEffectiveAccessEntries (EFFECTIVE_ACCESS) + " +
+      "configurationFindings on the IAM hygiene rules (IDENTITY_HYGIENE)",
+    what: "Which people hold admin or high-privilege bindings on AI assets, which of them " +
+      "Wiz says can actually reach those assets' data, and whether those accounts are " +
+      "healthy — MFA on, still in use. The access paths are drawn on the graph beside the " +
+      "asset they reach.",
     lands: "graph",
-    note: "The figure counts assets reachable at ADMIN or HIGH_PRIVILEGE, because those are " +
-      "the only bindings the traversal asks for — a read-only grant on an agent is real and " +
-      "is not collected here. Dormancy is Wiz's own inactive-in-last-90-days read, from cloud " +
-      "audit events; an identity the tenant reports nothing for stays unknown rather than " +
-      "counting as in use. MFA is still not collected: Wiz reports it for human identities " +
-      "sourced from a connected IdP, and every identity in this estate's AI paths is a cloud " +
-      "service account or role, which has none.",
+    note: "Two questions, kept apart. A binding says someone holds a role that grants " +
+      "access; effective access says Wiz computed that they can reach the data. Their access " +
+      "vocabularies differ — ADMIN and HIGH_PRIVILEGE against DATA — so the figure names " +
+      "which it has rather than adding them together. Only those two binding levels are " +
+      "asked for, so a read-only grant on an agent is real and is not counted here. " +
+      "MFA and dormancy are RULES rather than properties: Wiz evaluates " +
+      "“User should have MFA enabled” against each account, and this reports the " +
+      "failures on the people who can reach an AI asset — not the tenant-wide count, " +
+      "which is an IAM problem rather than this register's. The rules are matched by name " +
+      "against the synced rule catalogue and the matched set is listed below, because a " +
+      "name match is a heuristic and an operator should be able to see what it caught.",
     figure: (ctx) => {
       if (!ctx.kpis || ctx.kpis.humanReachable === undefined) return null;
       const identities = n(ctx.kpis.humanIdentities);
-      const dormant = n(ctx.kpis.humanDormant);
-      const admin = n(ctx.kpis.humanReachableAdmin);
       const parts = [identities + " identit" + (identities === 1 ? "y" : "ies")];
+      const admin = n(ctx.kpis.humanReachableAdmin);
       if (admin) parts.push(admin + " at admin");
+      // The hygiene clauses go last and only when they fire: they are findings about the
+      // people rather than facts about the reach, and a clean estate should not be made to
+      // carry two zeroes to say so.
+      const noMfa = n(ctx.kpis.humanNoMfa);
+      if (noMfa) parts.push(noMfa + " without MFA");
+      // ONE number, already deduped server-side. Wiz reports dormancy twice — the identity's
+      // own inactive flag and the IAM-235 rule failing against it — and adding the two counts
+      // reports one dormant person as two. The evidence stays split on the asset; the figure
+      // does not.
+      const dormant = n(ctx.kpis.humanDormant);
       if (dormant) parts.push(dormant + " dormant");
       return {
         value: String(n(ctx.kpis.humanReachable)),

@@ -43,7 +43,14 @@ palette is deliberately identical across both tools.
    (`ALLOWS_ACCESS_TO` reversed into `ACCESS_ROLE[accessType Admin|High]` — rooted at
    the resolved AI types rather than at `AI_AGENT` alone, and reading the role's own
    access level instead of stamping the filter's, so ADMIN stops being reported as
-   HIGH_PRIVILEGE), and the **data-exposure chain** (`RUNS_AS` →
+   HIGH_PRIVILEGE), **effective permissions** (`entityEffectiveAccessEntries`: not who
+   holds a role but what it confers, with the granting policy — kept in its own field
+   because its `DATA` access type is a different axis from the binding traversal's
+   `ADMIN`/`HIGH_PRIVILEGE`, not a wider setting of the same one), **identity hygiene**
+   (`configurationFindings` on the MFA and dormancy rules, because Wiz models those as
+   RULES rather than as properties on an account — the rules are matched by name against
+   a synced `cloudConfigurationRules` catalogue rather than hardcoded, since there are
+   several MFA rules and they are cloud-specific), and the **data-exposure chain** (`RUNS_AS` →
    `ALLOWS_ACCESS_TO` into a `hasSensitiveData` bucket/database → `HAS_DATA_FINDING`,
    the last leg optional so a classified store with nothing found in it still draws).
    That last step selects `severity` behind a `... on DataFinding` fragment, which is
