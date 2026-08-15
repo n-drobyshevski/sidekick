@@ -88,6 +88,7 @@ import {
   DEFAULT_QUERY,
   fieldValuesFor,
   fieldsForKind,
+  type QueryKind,
   queryVocabulary,
   runQuery,
   validateQuery,
@@ -378,8 +379,13 @@ export function getQueryVocabulary(p?: unknown): ApiResult {
   const params = (p ?? {}) as Rec;
   // One kind's filter values, when asked for. The relationship vocabulary is small and rides
   // every page load; the value lists are not, and only ever one kind's worth is read at a time.
-  const kind = typeof params["kind"] === "string" && (NODE_KINDS as readonly string[]).includes(params["kind"])
-    ? (params["kind"] as NodeKind)
+  // "ANY" is a real query kind — the wildcard root, and what every ANY-hops step lands on. It
+  // is not in NODE_KINDS, so requiring membership left the palette's Properties tab
+  // permanently empty for exactly the nodes a "focus in graph" link creates, while
+  // `fieldsForKind("ANY")` had sixteen kind-agnostic fields the evaluator honours.
+  const raw = params["kind"];
+  const kind = typeof raw === "string" && (raw === "ANY" || (NODE_KINDS as readonly string[]).includes(raw))
+    ? (raw as QueryKind)
     : null;
   return run(() =>
     cached("queryVocabulary", { kind }, () => {
@@ -391,7 +397,9 @@ export function getQueryVocabulary(p?: unknown): ApiResult {
       if (!kind) return vocab;
       return {
         ...vocab,
-        valuesFor: { [kind]: fieldValuesFor(doc, kind) },
+        // ANY has no value lists: they are keyed by kind, and "every kind at once" would be a
+        // picker offering the union of things that do not co-occur. Its fields still come.
+        valuesFor: kind === "ANY" ? {} : { [kind]: fieldValuesFor(doc, kind as NodeKind) },
         // What the palette's Properties tab lists, and the type that decides which control each
         // field gets. Per-kind for the same reason the value lists are.
         fieldsFor: {

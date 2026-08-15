@@ -5460,7 +5460,7 @@ var Server = (() => {
       const sub = solveStep(step, node2, adj, scan);
       if (sub === null) return [];
       acc = crossProduct(acc, sub, scan);
-      if (scan.truncated) return acc;
+      if (scan.truncated) return [];
     }
     return acc;
   }
@@ -5506,7 +5506,7 @@ var Server = (() => {
           return group.optional ? [nullSolution(total(widths))] : null;
         }
         acc = crossProduct(acc, sub, scan);
-        if (scan.truncated) return acc;
+        if (scan.truncated) return [];
       }
       return acc;
     }
@@ -6297,7 +6297,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "d233c7717b4c" : "dev";
+  var BUILD_ID = true ? "64073435590a" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -10606,7 +10606,8 @@ var Server = (() => {
   }
   function getQueryVocabulary(p) {
     const params = p != null ? p : {};
-    const kind = typeof params["kind"] === "string" && NODE_KINDS.includes(params["kind"]) ? params["kind"] : null;
+    const raw = params["kind"];
+    const kind = typeof raw === "string" && (raw === "ANY" || NODE_KINDS.includes(raw)) ? raw : null;
     return run(
       () => cached("queryVocabulary", { kind }, () => {
         const doc = loadGraphDoc();
@@ -10617,7 +10618,9 @@ var Server = (() => {
         if (!kind) return vocab;
         return {
           ...vocab,
-          valuesFor: { [kind]: fieldValuesFor(doc, kind) },
+          // ANY has no value lists: they are keyed by kind, and "every kind at once" would be a
+          // picker offering the union of things that do not co-occur. Its fields still come.
+          valuesFor: kind === "ANY" ? {} : { [kind]: fieldValuesFor(doc, kind) },
           // What the palette's Properties tab lists, and the type that decides which control each
           // field gets. Per-kind for the same reason the value lists are.
           fieldsFor: {

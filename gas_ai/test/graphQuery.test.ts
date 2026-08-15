@@ -270,6 +270,43 @@ describe("runQuery", () => {
     const res = runQuery(DOC, validateQuery(AGENT_RUNS_AS_SA), { scanMax: 2 });
     expect(res.truncated).toBe(true);
   });
+
+  it("ships no row it did not check to the END, however the budget runs out", () => {
+    // Truncating mid-way used to return the accumulator built so far — a PREFIX that had been
+    // through the first steps and not the rest. Those rows reached the table short of cells,
+    // each one claiming a path nothing had verified: a three-group query answered with
+    // two-cell rows, and `total` counted them. Under-reporting is the honest failure here;
+    // over-reporting unchecked paths is not.
+    // The WIDE step first: an agent with several issues exhausts the budget inside step one,
+    // leaving step two unevaluated. Ordered the other way the budget happens to run out after
+    // the last step, and the prefix never forms — which is why this case is written by hand
+    // rather than trusted to whichever query came to mind.
+    const deep: QueryNode = {
+      kind: "AI_AGENT",
+      steps: [
+        { edge: "HAS_ISSUE", node: { kind: "ISSUE" } },
+        { edge: "RUNS_AS", node: { kind: "SERVICE_ACCOUNT" } },
+      ],
+    };
+    const width = queryColumnGroups(validateQuery(deep)).length;
+    expect(width).toBe(3);
+    const uncapped = runQuery(DOC, validateQuery(deep));
+    for (const scanMax of [1, 2, 3, 5, 10, 25, 50]) {
+      const res = runQuery(DOC, validateQuery(deep), { scanMax });
+      expect(res.rows.length, "scanMax " + scanMax).toBe(res.total);
+      expect(res.total, "scanMax " + scanMax).toBeLessThanOrEqual(uncapped.total);
+      for (const row of res.rows) {
+        expect(row.cells.length, "scanMax " + scanMax).toBe(width);
+        // NEITHER step is optional, so every group on a returned row must be BOUND. A blank
+        // one is a step the evaluator never got to, on a row it counted anyway — the exact
+        // shape of the bug: `toCells` pads a short binding out to the column count, so the
+        // row looks whole and only the blank cell says the path was never checked.
+        for (let i = 0; i < width; i++) {
+          expect(row.cells[i], "scanMax " + scanMax + ", group " + i).toBeTruthy();
+        }
+      }
+    }
+  });
 });
 
 describe("columns", () => {

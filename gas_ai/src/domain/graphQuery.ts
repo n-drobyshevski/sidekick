@@ -1043,7 +1043,12 @@ function solutions(q: QueryNode, node: GNode, adj: Adjacency, scan: ScanState): 
     // held), and must not be confused with it.
     if (sub === null) return [];
     acc = crossProduct(acc, sub, scan);
-    if (scan.truncated) return acc;
+    // Truncated mid-way, so `acc` is a PREFIX: it has been through the steps so far and not
+    // the rest, and every solution in it is short by the remaining steps' slots. Shipping
+    // those would put rows in the table with fewer cells than the header has columns, each
+    // one claiming a path that was never checked to the end. The budget is spent, so this
+    // root contributes nothing; `truncated` is what tells the reader the count is a floor.
+    if (scan.truncated) return [];
   }
   return acc;
 }
@@ -1118,7 +1123,7 @@ function solveGroup(group: GroupStep, from: GNode, adj: Adjacency, scan: ScanSta
         return group.optional ? [nullSolution(total(widths))] : null;
       }
       acc = crossProduct(acc, sub, scan);
-      if (scan.truncated) return acc;
+      if (scan.truncated) return [];   // a prefix, not an answer — see `solutions`
     }
     return acc;
   }

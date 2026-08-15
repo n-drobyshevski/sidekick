@@ -429,3 +429,15 @@ describe("remapWhere", () => {
       .toEqual(["1:inactive", "2:name"]);
   });
 });
+
+describe("parseWhere is unbreakable by a mangled link", () => {
+  it("skips a truncated percent-escape instead of throwing", () => {
+    // It runs on the first line of the page's render, so a throw here is not a lost filter —
+    // it is a blank workbench. `where` is the half a link most often loses to a chat client.
+    expect(() => parseWhere("0.name~prod%2")).not.toThrow();
+    const parsed = parseWhere("0.cloud.GCP,0.name~prod%2,1.inactive.true");
+    expect([...parsed.keys()].sort()).toEqual([0, 1]);
+    expect(parsed.get(0).get("cloud")).toEqual({ values: ["GCP"], op: "eq" });
+    expect(parsed.get(0).get("name")).toBeUndefined();
+  });
+});

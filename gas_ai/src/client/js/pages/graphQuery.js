@@ -199,7 +199,16 @@ export function parseWhere(text) {
     const index = Number(entry.slice(0, dot1));
     const key = entry.slice(dot1 + 1, at);
     const op = entry[at] === "~" ? "contains" : "eq";
-    const value = decodeURIComponent(entry.slice(at + 1));
+    // A truncated percent-escape THROWS rather than returning garbage, and this runs on the
+    // first line of the page's render. Unguarded, `where=0.name~prod%2` replaced the whole
+    // workbench with a load failure — which is the opposite of this function's stated
+    // contract, and the same guard `parseOffsets` already carries one page over.
+    let value;
+    try {
+      value = decodeURIComponent(entry.slice(at + 1));
+    } catch {
+      continue;
+    }
     if (!Number.isInteger(index) || index < 0 || !key || !value) continue;
     if (!byIndex.has(index)) byIndex.set(index, new Map());
     const forNode = byIndex.get(index);

@@ -66,6 +66,14 @@ export function queryBar(opts) {
     // Remapping here rather than at each call site means no edit can forget to.
     const extra = opts2 || {};
     const where = remapWhere(opts.getQuery(), next, currentWhere(), extra.movePath);
+    // A node whose KIND changed keeps its path and therefore its slot, so the remap happily
+    // carries its filters onto the new kind — where they name fields it does not have. The
+    // query then answers zero and the chip degrades to a raw key, with nothing saying why.
+    // `setKind` already drops the steps below for the same reason; this is the other half.
+    if (extra.dropAt) {
+      const gone = slotOfPath(next, extra.dropAt);
+      if (gone !== null) where.delete(gone);
+    }
     // Added filters arrive as PATHS, because the caller knows where in the tree it just put a
     // node but not what slot number that node ended up with — which is the whole reason
     // remapWhere exists. Resolved here, against the tree the edit produced.
@@ -411,7 +419,8 @@ export function queryBar(opts) {
       const kindOpts = (row.path.length ? targetKinds(parentKind, row.edge === "ANY" ? "ANY" : (row.reverse ? "~" : "") + row.edge)
         : ((opts.getVocab() || { kinds: [] }).kinds || []).map((k) => k.kind).concat(["ANY"]))
         .map(kindOption);
-      line.append(chipPicker(row.kind, kindOpts, (v) => commit(setKind(query, row.path, v)),
+      line.append(chipPicker(row.kind, kindOpts,
+        (v) => commit(setKind(query, row.path, v), undefined, { dropAt: row.path }),
         (row.path.length ? "Related entity: " : "Find entity: ") + kindLabel(row.kind), row.kind));
       // `append(null)` writes the literal text "null" — the trap graph.js's savedViewsControl
       // already carries a comment about. `el()` skips nulls; `append` does not.
