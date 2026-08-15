@@ -10,21 +10,25 @@
 // result of every toggle has to be visible as it happens. Below 800px, where there is no
 // room to dock, it falls back to the modal sheet.
 
-import { bootstrap, listJoin, listSplit, parseHash, setParams, swrCall } from "../store.js";
+import {
+  bootstrap, listJoin, listSplit, navigate, parseHash, setParams, swrCall,
+} from "../store.js";
 import { openAssetSheet, openIssueSheet } from "../detailSheets.js";
-import { graphTable, renderGraph } from "../graphView.js";
-import { CATEGORY_LABELS, CATEGORY_ORDER, categoryOf, kindLabel } from "../icons.js";
+import { renderGraph } from "../graphView.js";
+import { queryTable, DEFAULT_PAGE_SIZE } from "../queryTable.js";
+import {
+  CATEGORY_LABELS, CATEGORY_ORDER, categoryOf, kindIconSvg, kindLabel,
+} from "../icons.js";
 import { appliedCount, filterEntries, isNarrowingSet, sectionOf } from "./graphChips.js";
 import {
-  clear, debounce, el, emptyState, filterChipRow, filterCombobox, helpTip, openSheet, segmented,
-  selectField, sevBadge, skeleton, togglePills,
+  applyWhere, defaultQuery, migrateLegacyParams, parseQuery, parseWhere, queryRows,
+  serializeQuery, serializeWhere,
+} from "./graphQuery.js";
+import { queryBar } from "./graphQueryBar.js";
+import {
+  clear, confirmDialog, debounce, el, emptyState, filterChipRow, helpTip, openPopover, openSheet,
+  segmented, selectField, sevBadge, skeleton, toast, togglePills, uiIcon,
 } from "../ui.js";
-
-const DEPTH_TEXT = {
-  1: "Depth 1: seeds and their direct relationships",
-  2: "Depth 2: assets, identities and findings",
-  3: "Depth 3: full reach — data, compute and supply chain",
-};
 
 const GROUP_LABELS = {
   asset: "asset",
@@ -42,56 +46,55 @@ let legendOpen = false;
 
 // Params that change the server payload (vs. client-only view/q/panel).
 const DATA_KEYS = [
-  "seed", "seedKind", "depth", "expand", "maxNodes",
-  "severities", "kinds", "projects", "clouds",
-  "layout", "groupBy", "sort",
+  "find", "where", "maxNodes",
+  "severities", "projects", "clouds",
+  "layout", "groupBy", "sort", "columns",
 ];
-
-const MIN_DEPTH = 1;
-const MAX_DEPTH = 3;
 
 // The filter panel docks beside the canvas on desktop. Below this the canvas is already
 // capped at 70vh inside a scrolling page (see the <=800px block in styles.css), so there
 // is nothing to dock beside and the panel falls back to the modal sheet.
 const NARROW_VIEWPORT = "(max-width: 800px)";
 
-// What a fresh visit seeds into the hash — the product's primary lens. Named here so the
-// chip layer can label those chips as defaults rather than counting them as filters the
-// user applied.
-const DEFAULT_SEED_KIND = "scored";
-const DEFAULT_KINDS = "AI_AGENT";
 const FILTER_PANEL_ID = "graph-filter-panel";
+/** Table-only view state: repainted from the rows already fetched, never refetched. */
+const TABLE_KEYS = ["page", "pageSize", "sortCol", "dir"];
+const VIEWS_KEY = "sidekickai.graphQueries";
+/** Per-KIND column preferences, beside the saved queries. See readColumnDefaults. */
+const COLS_KEY = "sidekickai.graphColumns";
+/** What a saved query remembers. The whole page state, minus transient panel/focus intent. */
+const VIEW_PARAMS = [
+  "find", "where", "columns", "view", "severities", "projects", "clouds",
+  "layout", "groupBy", "sort", "sortCol", "dir", "pageSize", "maxNodes",
+];
 
 function isNarrowViewport() {
   return window.matchMedia(NARROW_VIEWPORT).matches;
 }
 
-function clampDepth(n) {
-  return Math.min(MAX_DEPTH, Math.max(MIN_DEPTH, Math.round(n) || MIN_DEPTH));
-}
-
 function graphParams(params, defaults) {
   return {
-    seed: params.seed || "",
-    seedKind: params.seedKind || "",
-    // Clamped to the range the UI can express. The server clamps its own copy, but the
-    // client's used to run free: a hash carrying depth=7 left the depth control with no
-    // stop selected and DEPTH_TEXT[7] undefined.
-    depth: clampDepth(Number(params.depth) || defaults.defaultDepth || 2),
-    depthRaw: params.depth == null ? "" : String(params.depth),
+    // The question. `find` is the structure and `where` the per-node property filters; see
+    // graphQuery.js for the grammar of both.
+    find: params.find || "",
+    where: params.where || "",
     // This view's node budget: "" means the deployment's configured one. "Load more"
     // writes the next step here, so a widened view is shareable like any other.
     maxNodes: Number(params.maxNodes) || defaults.maxNodes || 0,
     maxNodesRaw: params.maxNodes == null ? "" : String(params.maxNodes),
-    expand: params.expand || "",
     severities: params.severities || "",
-    kinds: params.kinds || "",
     projects: params.projects || "",
     clouds: params.clouds || "",
+    // Table view state. In the hash like everything else, so a configured table is a link.
+    columns: params.columns || "",
+    page: Math.max(1, Number(params.page) || 1),
+    pageSize: Number(params.pageSize) || DEFAULT_PAGE_SIZE,
+    sortCol: params.sortCol || "",
+    dir: params.dir === "desc" ? "desc" : "asc",
     layout: (params.layout === "grouped" || params.layout === "lanes") ? params.layout : "",
     groupBy: params.groupBy || "",
     sort: params.sort || "",
-    view: params.view || "graph",
+    view: params.view === "table" ? "table" : "graph",
     q: params.q || "",
     pos: params.pos || "",
   };
@@ -129,48 +132,141 @@ function encodeOffsets(map) {
   return parts.join(",");
 }
 
-function rpcParams(p) {
+/**
+ * The hash, as the endpoint's parameters.
+ *
+ * The two halves of the question are separate in the URL — `find` is rewritten by the builder,
+ * `where` by the filter panel, and neither should churn the other — and one object on the
+ * wire, because the server validates and evaluates a single tree.
+ *
+ * The filter panel's three dimensions fold onto node 0: they narrow what was FOUND, which is
+ * the node the panel has always been about.
+ */
+function rpcParams(p, columnDefaults) {
+  const where = parseWhere(p.where);
+  const put = (key, values) => {
+    if (!values.length) return;
+    if (!where.has(0)) where.set(0, new Map());
+    // The panel's three dimensions are whole-value multi-selects, always.
+    where.get(0).set(key, { values, op: "eq" });
+  };
+  put("severity", listSplit(p.severities));
+  put("cloud", listSplit(p.clouds));
+  put("projects", listSplit(p.projects));
   return {
-    seed: p.seed,
-    seedKind: p.seedKind,
-    // Raw hash value; "" = use the server-configured default. Keeping the RPC
-    // params free of bootstrap-derived values lets the initial graph fetch run
-    // in parallel with bootstrap (same cache key either way).
-    depth: p.depthRaw,
+    query: applyWhere(queryOf(p), where),
+    columns: columnsFor(p, columnDefaults),
+    // Raw hash value; "" = use the server-configured default. Keeping the RPC params free of
+    // bootstrap-derived values lets the initial fetch run in parallel with bootstrap.
     maxNodes: p.maxNodesRaw,
-    expand: listSplit(p.expand),
-    severities: listSplit(p.severities),
-    kinds: listSplit(p.kinds),
-    projects: listSplit(p.projects),
-    clouds: listSplit(p.clouds),
     layout: p.layout,
     groupBy: p.groupBy,
     sort: p.sort,
   };
 }
 
+/**
+ * The query in the hash, or the default lens if it cannot be read.
+ *
+ * A truncated or hand-edited `find` must not blank the workbench — the page draws the default
+ * and says so. `queryOf` is called from the render path as well as the RPC path, so it stays
+ * silent here and the notice is raised once, where the page can see it.
+ */
+function queryOf(p) {
+  try {
+    return parseQuery(p.find);
+  } catch {
+    return defaultQuery();
+  }
+}
+
+function queryIsBroken(p) {
+  if (!p.find) return false;
+  try {
+    parseQuery(p.find);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+/** `columns` is "0:name.publisher,1:name" — per shown node, in pre-order. */
+function parseColumns(text) {
+  if (!text) return undefined;
+  const out = [];
+  for (const part of String(text).split(",")) {
+    const at = part.indexOf(":");
+    if (at <= 0) continue;
+    const index = Number(part.slice(0, at));
+    if (!Number.isInteger(index) || index < 0) continue;
+    out[index] = part.slice(at + 1).split(".").filter(Boolean);
+  }
+  return out.length ? [...out].map((v) => v || null) : undefined;
+}
+
+/**
+ * The column selection to send: the URL's if it has one, otherwise this browser's per-kind
+ * preferences mapped onto THIS query's groups.
+ *
+ * The URL always wins, so a shared link opens the table its author configured rather than the
+ * reader's habits. The mapping is possible without a round trip because the client can derive
+ * the group order itself — `queryRows` is the same pre-order walk the server binds against, so
+ * "the third shown node" means the same thing on both sides. That is what lets the preference
+ * be a client-side one with no server change at all.
+ */
+function storedColumnDefaults() {
+  try {
+    const raw = window.localStorage.getItem(COLS_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null; // storage refused — fall through to the domain defaults
+  }
+}
+
+function columnsFor(p, defaults) {
+  const explicit = parseColumns(p.columns);
+  if (explicit) return explicit;
+  if (!defaults) return undefined;
+  const shown = queryRows(queryOf(p))
+    .filter((r) => !r.group && !r.hidden && r.index !== null);
+  const out = shown.map((r) => defaults[r.kind] || null);
+  return out.some(Boolean) ? out : undefined;
+}
+
+function serializeColumns(groups) {
+  return groups
+    .map((g, i) => (g && g.length ? i + ":" + g.join(".") : ""))
+    .filter(Boolean)
+    .join(",");
+}
+
 export async function renderGraphPage(main, params, _ctx) {
-  // A fresh visit opens on a default view: the Start-from set to all scored
-  // assets (AARS > 0) plus the node-type filter set to AI agents — the product's
-  // primary lens. Each default is independent and only fills in when its own
-  // control is unset; a deep-link (which carries a seed) suppresses both so the
-  // linked asset's own neighborhood shows unfiltered. Written into the hash so
-  // the defaults are explicit, shareable, and clearable (clearing shows all
-  // until the next fresh visit). Applied before the prefetch so the first load
-  // still takes a single round trip.
-  if (params.seed == null) {
-    const next = { ...params };
-    if (params.seedKind == null) next.seedKind = DEFAULT_SEED_KIND;
-    if (params.kinds == null) next.kinds = DEFAULT_KINDS;
-    if (next.seedKind !== params.seedKind || next.kinds !== params.kinds) {
-      params = next;
-      setParams(params);
-    }
+  // Links written against the old page still arrive: inventory.js navigates with
+  // `{seed: row.id}`, the asset sheet with `{seed, seedKind}`, and anything saved months ago
+  // with `depth` / `kinds` / the three facets. They are translated once, here, into the query
+  // that means the same thing and written back canonically — no caller has to change, and a
+  // saved link still opens the view it described.
+  const migrated = migrateLegacyParams(params);
+  if (migrated) {
+    params = { ...params, ...migrated };
+    for (const k of ["seed", "seedKind", "depth", "expand", "kinds"]) delete params[k];
+    setParams(params);
+  }
+  // A fresh visit opens on the product's primary lens — the same AI-agent view it always did,
+  // now spelled out in the builder as `FIND AI Agent` rather than hidden in two facets.
+  // Written into the hash so it is explicit, shareable and editable.
+  if (params.find == null) {
+    params = { ...params, find: serializeQuery(defaultQuery()) };
+    setParams(params);
   }
 
-  // Prefetch the graph in parallel with bootstrap: two serial round trips
-  // become one. swrCall shares the in-flight promise with load() below.
-  swrCall("api_getGraph", rpcParams(graphParams(params, {}))).catch(() => {});
+  // Prefetch in parallel with bootstrap: two serial round trips become one. swrCall shares
+  // the in-flight promise with load() below, and the vocabulary the builder needs rides along
+  // beside it rather than costing a third.
+  swrCall("api_runGraphQuery", rpcParams(graphParams(params, {}), storedColumnDefaults()))
+    .catch(() => {});
+  swrCall("api_getQueryVocabulary", {}).catch(() => {});
 
   const boot = await bootstrap();
   const defaults = boot.settings || {};
@@ -188,8 +284,15 @@ export async function renderGraphPage(main, params, _ctx) {
   const metaActions = el("div", { class: "workbench-meta-actions" });
   const meta = el("div", { class: "workbench-meta overlay is-empty" }, metaStatus, metaActions);
   let lastStatusText = "";
-  const controls = el("div", { class: "workbench-controls" });
-  const bar = el("div", { class: "workbench-bar" }, title, controls);
+  const headActions = el("div", { class: "gq-head-actions" });
+  const bar = el("div", { class: "workbench-bar" }, title, headActions);
+  // The result count sits on the builder's first line, right-aligned, the way Wiz puts it:
+  // it describes the question above it, not the picture below.
+  const countText = el("span", { class: "num", role: "status" });
+  const countNote = el("span", {});
+  const countBox = el("div", { class: "gq-count" }, countText, countNote);
+  const viewbar = el("div", { class: "gq-viewbar" });
+  const controls = el("div", { class: "gq-viewbar-end" });
   // Two hit targets per chip: the label opens the panel at that filter's own section, only
   // the ✕ clears. `emptyText` keeps the band's height when nothing is applied — it sits
   // between the bar and the canvas, and showing/hiding it moved the whole picture the
@@ -209,7 +312,8 @@ export async function renderGraphPage(main, params, _ctx) {
   // The panel host is DOM-ordered after the canvas, matching its position on screen.
   const panelHost = el("div", { class: "filter-panel-host" });
   const split = el("div", { class: "workbench-split" }, body, panelHost);
-  const root = el("div", { class: "workbench" }, bar, chipsRow, split);
+  const barHost = el("div", {});
+  const root = el("div", { class: "workbench" }, bar, barHost, viewbar, chipsRow, split);
   main.append(root);
 
   if (!boot.latestSync) {
@@ -222,6 +326,10 @@ export async function renderGraphPage(main, params, _ctx) {
 
   // ---------------------------------------------------------------- controls
   let lastData = null;
+  // The kinds and relationships this tenant's graph actually holds. Fetched beside the first
+  // query rather than folded into bootstrap, and the builder renders from whatever it has —
+  // an empty vocabulary offers "any node" and "is related to", which is still a usable query.
+  let vocab = { kinds: [], stepsFrom: {} };
   let graphApi = null;
   let matchIds = null;
   // The open panel, whichever way it is hosted: { close, docked }. Docked is the desktop
@@ -285,25 +393,88 @@ export async function renderGraphPage(main, params, _ctx) {
 
   // Graph | Table as two always-visible segments rather than one button whose label named
   // the destination while aria-pressed named the origin — and whose width changed on every
-  // toggle, shifting the whole right-aligned row.
+  // toggle, shifting the whole right-aligned row. It moves onto its own labelled VIEW row,
+  // where the reference screen puts it, but Graph stays the default: this page's canvas is
+  // the product's centrepiece, and the toggle is one key away.
   const viewToggle = segmented({
-    options: [{ value: "graph", label: "Graph" }, { value: "table", label: "Table" }],
+    options: [
+      { value: "table", label: "Table", icon: "table" },
+      { value: "graph", label: "Graph", icon: "graph" },
+    ].map((o) => ({
+      value: o.value,
+      label: el("span", {}, el("span", { class: "gq-view-icon" }, uiIcon(o.icon, 13)), o.label),
+    })),
     value: state.view,
     onChange: (v) => update({ view: v }),
     ariaLabel: "View",
   });
 
+  // Column chooser — table view only, since it configures the table.
+  const columnsBtn = el("button", {
+    "aria-haspopup": "dialog",
+    onclick: () => openColumns(),
+  }, uiIcon("columns", 14), el("span", { style: "margin-left:6px" }, "Columns"));
+
   // The chip row is built above the trigger it falls back to, so the reference is set here.
   chipsRow.fallbackFocus = filterBtn;
 
-  // Three zones, hairline-ruled: what to draw, how to narrow it, how to read it. Five
-  // identical controls in one uniform gap was density without hierarchy.
-  controls.append(
-    el("div", { class: "workbench-controls__group" },
-      searchField, selectField("Arrange", arrangeSel), selectField("Order", orderSel)),
-    el("div", { class: "workbench-controls__group" }, filterBtn),
-    el("div", { class: "workbench-controls__group" }, viewToggle),
+  // The builder owns the question; this row owns how the answer is read.
+  viewbar.append(
+    el("span", { class: "gq-kw" }, "View"),
+    viewToggle,
+    controls,
   );
+  controls.append(searchField, selectField("Arrange", arrangeSel), selectField("Order", orderSel),
+    columnsBtn, filterBtn);
+
+  // ------------------------------------------------------------- header actions
+  headActions.append(
+    el("button", {
+      onclick: () => {
+        update({ find: serializeQuery(defaultQuery()), where: "", columns: "", page: "", sortCol: "" });
+        toast("New search");
+      },
+    }, "New search"),
+    // May be null when the browser blocks localStorage; `append` would stringify that to the
+    // literal text "null" in the header.
+    savedViewsControl() || el("span", {}),
+    helpTip(
+      el("span", { class: "helptip-mark", "aria-hidden": "true" }, "?"),
+      [
+        "A query reads FIND <entity> THAT <relationship> <entity>.",
+        "Each row adds a step along the graph, and each shown step adds a group of columns to the table — so a row is one PATH, not one asset.",
+        "The eye keeps a step in the traversal but drops its columns; NOT asserts the relationship is absent.",
+      ],
+      { label: "How the query builder works", term: "graph-query" },
+    ),
+  );
+
+  // ------------------------------------------------------------- query builder
+  const builder = queryBar({
+    getQuery: () => queryOf(state),
+    getVocab: () => vocab,
+    getWhere: () => parseWhere(state.where),
+    // The column groups the last answer carried, which is where a field's human label lives —
+    // the builder's filter chips read it from there rather than keeping a second copy of the
+    // field table on the client.
+    getGroups: () => (lastData && lastData.groups) || [],
+    // One round trip per kind per session — `swrCall` keys on the params, and the palette only
+    // asks when someone opens its Properties tab. Every kind's fields and value lists together
+    // were 22 KB of a 28 KB vocabulary, unread until then and then only for the one kind.
+    loadFields: (k) => swrCall("api_getQueryVocabulary", { kind: k }).then((v) => ({
+      fields: (v && v.fieldsFor && v.fieldsFor[k]) || [],
+      values: (v && v.valuesFor && v.valuesFor[k]) || [],
+    })),
+    onChange: (next, where) => {
+      const patch = { find: serializeQuery(next), columns: "", page: "" };
+      // Only written when the builder actually touched it. `where` is otherwise the filter
+      // panel's to own, and rewriting it on every structural edit would fight that.
+      if (where) patch.where = serializeWhere(where);
+      update(patch);
+    },
+    countNode: countBox,
+  });
+  barHost.append(builder.node);
 
   // ------------------------------------------------------------ update cycle
   function update(patch) {
@@ -316,6 +487,11 @@ export async function renderGraphPage(main, params, _ctx) {
     if (DATA_KEYS.some((k) => String(prev[k]) !== String(state[k]))) {
       load();
     } else if (prev.view !== state.view) {
+      paint(lastData);
+    } else if (TABLE_KEYS.some((k) => String(prev[k]) !== String(state[k]))) {
+      // Sort, page and page size are answered from the rows already in hand — no refetch, but
+      // they DO need a repaint. `setParams` uses replaceState, which fires no hashchange, so
+      // without this branch the URL changed and the table did not.
       paint(lastData);
     } else if (prev.q !== state.q) {
       applyHighlight();
@@ -331,15 +507,17 @@ export async function renderGraphPage(main, params, _ctx) {
     const mySeq = ++seq;
     body.classList.add("updating");
     try {
-      const data = await swrCall("api_getGraph", rpcParams(state), (fresh) => {
+      const data = await swrCall("api_runGraphQuery", rpcParams(state, readColumnDefaults()), (fresh) => {
         if (mySeq === seq) paint(fresh);
       });
       if (mySeq === seq) paint(data);
     } catch (e) {
       if (mySeq !== seq) return;
       body.classList.remove("updating");
+      // A rejected query is the common case here now, and its message names the offending
+      // kind or relationship — far more use than "couldn't load".
       clear(body).append(el("div", { class: "workbench-empty" },
-        emptyState("Couldn't load the graph.", String(e.message || e))));
+        emptyState("This query didn't run.", String(e.message || e))));
     }
   }
 
@@ -373,21 +551,18 @@ export async function renderGraphPage(main, params, _ctx) {
       openAssetSheet(node.id, {
         seed: node,
         records,
-        onFocusGraph: (id) => update({ seed: id, seedKind: "asset", expand: "" }),
-        onExpand: (id) => {
-          const expanded = new Set(listSplit(state.expand));
-          expanded.add(id);
-          update({ expand: listJoin([...expanded]) });
-        },
+        // "Focus in graph" is a query now: everything within two hops of this asset. Both
+        // callbacks land on the same place — with the projection built from matched paths
+        // rather than a BFS horizon, "expand" and "focus" are the same request.
+        onFocusGraph: (id) => focusAsset(id),
+        onExpand: (id) => focusAsset(id),
       });
     },
-    onSummaryExpand: (node) => {
-      // Expanding a summary lifts its parent's caps.
-      const parentId = node.id.split("|")[1];
-      const expanded = new Set(listSplit(state.expand));
-      expanded.add(parentId);
-      update({ expand: listJoin([...expanded]) });
-    },
+    // A query's projection is the set of matched paths, so it emits no "+N more" stubs and
+    // this never fires. Kept as a no-op rather than removed: renderGraph calls it
+    // unconditionally, and a missing handler would throw where a summary can still arrive
+    // from a cached payload written by an older bundle.
+    onSummaryExpand: () => {},
     onNodeMove: (id, dx, dy) => {
       const map = parseOffsets(state.pos);
       if (dx || dy) map.set(id, { dx, dy });
@@ -428,15 +603,15 @@ export async function renderGraphPage(main, params, _ctx) {
           el("button", { onclick: () => clearAllFilters() }, "Clear all filters")),
       );
     } else {
-      const deeper = state.depth < MAX_DEPTH;
+      // A query that matches nothing is the ordinary outcome of asking a precise question, and
+      // it is a real answer — the estate holds no such path. Say that, and offer the way back.
       host.append(
-        emptyState(`This starting point has no connections at depth ${state.depth}.`,
-          deeper ? "Nothing reaches it within that many hops." : null),
-        deeper
-          ? el("div", { class: "workbench-empty-action" },
-              el("button", { onclick: () => update({ depth: String(state.depth + 1), expand: "" }) },
-                `Try depth ${state.depth + 1}`))
-          : null,
+        emptyState("No paths match this query.",
+          "Every step has to match for a row to exist. Remove the last relationship, or mark it optional to keep the rows it would drop."),
+        el("div", { class: "workbench-empty-action" },
+          el("button", {
+            onclick: () => update({ find: serializeQuery(defaultQuery()), where: "", columns: "", page: "" }),
+          }, "Start a new search")),
       );
     }
     body.append(host, meta);
@@ -447,7 +622,12 @@ export async function renderGraphPage(main, params, _ctx) {
     if (!payload) return;
     lastData = payload;
     body.classList.remove("updating");
-    if (payload.empty || !(payload.nodes || []).length) {
+    // The builder's filter chips read their field LABELS off the answer's column groups, and
+    // the answer lands after the repaint that added the filter. Without this the chip shows
+    // the raw key ("inactive") until the next unrelated edit. `sync` is idempotent and the
+    // focus hand-off it can do is one-shot, so re-running it here costs nothing.
+    builder.sync();
+    if (payload.empty || (!(payload.nodes || []).length && !(payload.rows || []).length)) {
       emptyCanvas(payload);
       return;
     }
@@ -456,13 +636,29 @@ export async function renderGraphPage(main, params, _ctx) {
     releaseCanvas();
     clear(body);
     if (state.view === "table") {
-      body.append(el("div", { class: "workbench-table" }, graphTable(payload, handlers)));
+      body.append(el("div", { class: "workbench-table" }, queryTable(payload, {
+        page: state.page,
+        pageSize: state.pageSize,
+        sort: state.sortCol,
+        dir: state.dir,
+        onPage: (p) => update({ page: p === 1 ? "" : String(p) }),
+        onPageSize: (n) => update({ pageSize: String(n), page: "" }),
+        onSort: (key) => update({
+          sortCol: key,
+          dir: state.sortCol === key && state.dir === "asc" ? "desc" : "asc",
+          page: "",
+        }),
+        onOpen: (cell) => handlers.onNodeOpen({ id: cell.id, kind: cell.kind, name: cell.name }),
+      })));
     } else {
       graphApi = renderGraph(body, payload, handlers);
       body.append(buildLegend(boot, payload));
       applyHighlight();
     }
-    body.append(meta);
+    // The counts overlay describes the CANVAS — how much of the match set it managed to
+    // draw. In table view it would float over the table's own footer saying nothing the
+    // result count above has not already said, so it stays with the picture it is about.
+    if (state.view !== "table") body.append(meta);
     updateMeta(payload);
   }
 
@@ -516,9 +712,11 @@ export async function renderGraphPage(main, params, _ctx) {
       lastStatusText = "";
       clear(metaActions);
       meta.classList.add("is-empty");
+      updateCount(payload);
       return;
     }
     meta.classList.remove("is-empty");
+    updateCount(payload);
     const c = payload.counts;
     const parts = [
       `${c.shownNodes.toLocaleString()} of ${c.totalNodes.toLocaleString()} nodes`,
@@ -563,6 +761,295 @@ export async function renderGraphPage(main, params, _ctx) {
     return parseOffsets(state.pos).size;
   }
 
+  // ------------------------------------------------------------- result count
+  /**
+   * "41 results" — the number of matched PATHS, which is the number of rows the table holds
+   * and not the number of nodes on the canvas. The two genuinely differ (fourteen agents and
+   * fourteen identities are fourteen results over twenty-eight nodes), so the count sits with
+   * the query that produced it and the node/edge counts stay in the overlay on the canvas.
+   *
+   * Both caveats are stated rather than implied: a capped row list still reports the true
+   * total, and a truncated enumeration says the total is a floor instead of quietly printing
+   * a number it cannot stand behind.
+   */
+  function updateCount(payload) {
+    if (!payload || payload.empty) {
+      countText.textContent = "";
+      countNote.textContent = "";
+      return;
+    }
+    const total = Number(payload.total) || 0;
+    const prefix = payload.truncated ? "over " : "";
+    countText.textContent = prefix + total.toLocaleString() + (total === 1 ? " result" : " results");
+    clear(countNote);
+    if (payload.truncated) {
+      countNote.append(helpTip(el("span", { class: "pill warn" }, "partial"), [
+        "This query has more matches than one pass can enumerate.",
+        "The count is a floor, not a total. Narrow a step — or mark one optional — to get an exact answer.",
+      ], { label: "Why the count is approximate" }));
+    } else if (payload.capped) {
+      countNote.append(helpTip(el("span", { class: "pill neutral" }, "showing first " + (payload.rows || []).length), [
+        "Every match is counted, but only the first rows are shown.",
+        "They are ordered worst-first, so the top of the list is the interesting end.",
+      ], { label: "Why some rows are not listed" }));
+    }
+  }
+
+  // ------------------------------------------------------------- saved views
+  /** Saved views live per browser; a sandboxed iframe or private mode may refuse. */
+  function readViews() {
+    try {
+      const raw = window.localStorage.getItem(VIEWS_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed.filter((v) => v && v.name) : [];
+    } catch {
+      return null; // storage refused — the caller offers nothing rather than a broken control
+    }
+  }
+
+  function savedViewsControl() {
+    const views = readViews();
+    if (views === null) return null;
+
+    const sel = el("select", { "aria-label": "Saved queries" },
+      el("option", { value: "" }, views.length ? "Saved queries…" : "No saved queries"),
+      ...views.map((v, i) => el("option", { value: String(i) }, v.name)),
+    );
+    sel.addEventListener("change", () => {
+      const v = views[Number(sel.value)];
+      sel.value = "";
+      if (!v) return;
+      // A wholesale state change deserves a history entry, so Back returns to the query the
+      // reader was on. Same call inventory.js makes for the same reason.
+      navigate("graph", v.params);
+    });
+
+    const save = el("button", {
+      onclick: async () => {
+        const input = el("input", {
+          type: "text", placeholder: "e.g. Agents running as a dormant identity",
+          "aria-label": "Query name", style: "width:100%; margin-bottom:4px",
+        });
+        const ok = await confirmDialog({
+          title: "Save this query",
+          body: el("div", {},
+            el("p", { class: "muted small" },
+              "Saves the query, its columns and its filters in this browser. "
+              + "To share it, copy the page link instead — the URL already carries all of it."),
+            input),
+          confirmLabel: "Save",
+        });
+        const name = input.value.trim();
+        if (!ok || !name) return;
+        const { params: hash } = parseHash();
+        const params = {};
+        for (const k of VIEW_PARAMS) if (hash[k]) params[k] = hash[k];
+        const next = (readViews() || []).filter((v) => v.name !== name);
+        next.unshift({ name, params });
+        try {
+          window.localStorage.setItem(VIEWS_KEY, JSON.stringify(next.slice(0, 12)));
+        } catch {
+          toast("Couldn't save — this browser is blocking local storage.", "error");
+          return;
+        }
+        const rebuilt = savedViewsControl();
+        if (rebuilt) headActions.replaceChild(rebuilt, headActions.children[1]);
+        toast("Saved “" + name + "”");
+      },
+    }, "Save query");
+
+    return el("div", { class: "saved-views" }, sel, save);
+  }
+
+  // ----------------------------------------------------------- column chooser
+  /**
+   * Which fields each column group shows. One toggle set per group, because a column belongs
+   * to a NODE of the query — "Name" on its own would be ambiguous the moment a second group
+   * exists, which is the same reason the table carries a two-level header.
+   */
+  /**
+   * Which fields each column group shows — a compact popover, anchored to the button.
+   *
+   *   [x] Enable custom column selection
+   *   ┌────────────────────────────────────────────┐
+   *   │ (icon) AI Agent                            │
+   *   │        Name, Publisher, Discovered by  ▾   │
+   *   └────────────────────────────────────────────┘
+   *   Save as defaults          Reset defaults
+   *
+   * A column belongs to a NODE of the query, not to the table — "Name" on its own would be
+   * ambiguous the moment a second group exists, which is the same reason the table carries a
+   * two-level header. So one row per group, each expanding INLINE rather than into a second
+   * panel: the reference opens a nested dialog, and a dialog over a popover is a stack nobody
+   * can Escape out of predictably.
+   *
+   * THE MASTER SWITCH is not decoration. Off means the domain's per-kind defaults and NOTHING
+   * in the URL, so a shared link carries a question rather than a table layout; on means an
+   * explicit choice, in the URL, that travels with the link. Those are genuinely different
+   * states and the old panel could not express the first one — any click put columns in the URL
+   * forever.
+   */
+  function openColumns() {
+    const groups = (lastData && lastData.groups) || [];
+    if (!groups.length) return;
+
+    // The name column is ALWAYS on, and is not offered as a toggle. This deletes the old
+    // "a group can never go to zero columns" special case rather than working around it: the
+    // reason a group must keep one column is that it would otherwise vanish with no way back,
+    // and the column it should keep is the one that says which node the group is.
+    const PINNED = "name";
+    let custom = !!state.columns;
+    const chosen = groups.map((g) => g.fields.map((f) => f.key).filter((k) => k !== PINNED));
+
+    function apply() {
+      if (!custom) {
+        update({ columns: "", page: "" });
+        return;
+      }
+      update({
+        columns: serializeColumns(chosen.map((keys) => [PINNED].concat(keys))),
+        page: "",
+      });
+    }
+
+    function optionsFor(group) {
+      return group.available.filter((f) => f.key !== PINNED);
+    }
+
+    /** What a group currently shows, as prose — the reference's own summary line. */
+    function summary(gi) {
+      const labels = optionsFor(groups[gi])
+        .filter((f) => chosen[gi].indexOf(f.key) !== -1)
+        .map((f) => f.label);
+      if (!labels.length) return "Name only";
+      return "Name, " + labels.join(", ");
+    }
+
+    let master = null;
+    const panel = openPopover({
+      anchor: columnsBtn,
+      className: "gq-cols-pop",
+      ariaLabel: "Choose columns",
+      position: { width: 380, minWidth: 320, maxHeight: 460, minHeight: 220 },
+      build: (api) => {
+        const body2 = el("div", { class: "gq-cols" });
+
+        master = el("input", { type: "checkbox", id: "gq-cols-master" });
+        master.checked = custom;
+        const rowsHost = el("div", { class: "gq-cols-list" });
+        // Declared before the master handler, which enables and disables it — "Save as
+        // defaults" means nothing while the defaults are what is already in force.
+        const saveBtn = el("button", { class: "link" }, "Save as defaults");
+        function setEnabled() {
+          rowsHost.classList.toggle("is-off", !custom);
+          for (const control of rowsHost.querySelectorAll("button, input")) {
+            control.disabled = !custom;
+          }
+          saveBtn.disabled = !custom;
+        }
+        master.addEventListener("change", () => {
+          custom = master.checked;
+          setEnabled();
+          apply();
+          api.reposition();
+        });
+        body2.append(el("label", { class: "gq-cols-master", for: "gq-cols-master" },
+          master, el("span", {}, "Enable custom column selection")));
+
+        groups.forEach((group, gi) => {
+          // The domain labels a group with the raw enum — it has no label table, which lives
+          // in icons.js on the client. The table header already resolves it; so does this, or
+          // the panel and the header would name the same group two different ways.
+          const heading = group.kind === "ANY" ? "Any node" : kindLabel(group.kind);
+          const summaryEl = el("span", { class: "gq-cols-summary" }, summary(gi));
+          const pills = togglePills({
+            options: optionsFor(group).map((f) => ({ value: f.key, label: f.label })),
+            selected: chosen[gi],
+            ariaLabel: heading + " columns",
+            pillClass: "kind-pill",
+            sevClass: false,
+            onToggle: (key) => {
+              const at = chosen[gi].indexOf(key);
+              if (at === -1) chosen[gi].push(key);
+              else chosen[gi].splice(at, 1);
+              pills.set(chosen[gi]);
+              summaryEl.textContent = summary(gi);
+              apply();
+            },
+          });
+          const icon = kindIconSvg(group.kind === "ANY" ? "UNKNOWN" : group.kind, 14);
+          icon.setAttribute("class", "gq-cols-icon");
+          // A native <details>, so the disclosure keyboard contract is the browser's — the
+          // sheet's `.disclosure` recipe is the same bargain one layer up.
+          rowsHost.append(el("details", { class: "gq-cols-group" },
+            el("summary", { class: "gq-cols-head" },
+              el("span", { class: "gq-cols-tile", "data-category": categoryOf(group.kind) }, icon),
+              el("span", { class: "gq-cols-text" },
+                el("span", { class: "gq-cols-kind" }, heading),
+                summaryEl)),
+            pills));
+        });
+        body2.append(rowsHost);
+
+        saveBtn.addEventListener("click", () => {
+          writeColumnDefaults(chosen.map((keys, gi) => ({
+            kind: groups[gi].kind, keys: [PINNED].concat(keys),
+          })));
+          toast("Saved as your defaults");
+        });
+        body2.append(el("div", { class: "gq-cols-foot" },
+          saveBtn,
+          el("button", {
+            class: "link",
+            onclick: () => {
+              clearColumnDefaults();
+              custom = false;
+              master.checked = false;
+              apply();
+              api.close(true);
+              toast("Back to the standard columns");
+            },
+          }, "Reset defaults"),
+        ));
+        setEnabled();
+        return body2;
+      },
+    });
+    // Focus goes INTO the panel, or Tab walks straight past it into the page behind — the
+    // popover is portaled to the end of <body>, so "the next control" is not what it looks
+    // like from the button. The master switch first: it is the one that decides whether the
+    // rest of the panel does anything.
+    if (master && panel.isOpen()) master.focus();
+  }
+
+  /**
+   * Per-kind column choices, remembered per browser beside the saved queries.
+   *
+   * Keyed by KIND rather than by position, because "show me the publisher on every AI asset" is
+   * a preference about a kind; which slot that kind occupies changes with every query. Applied
+   * by the client only when the URL carries no `columns`, so a shared link still wins and the
+   * server needs to know nothing about any of it.
+   */
+  const readColumnDefaults = storedColumnDefaults;
+
+  function writeColumnDefaults(perGroup) {
+    const stored = readColumnDefaults() || {};
+    for (const entry of perGroup) stored[entry.kind] = entry.keys;
+    try {
+      window.localStorage.setItem(COLS_KEY, JSON.stringify(stored));
+    } catch {
+      toast("This browser refused to save the preference", "warn");
+    }
+  }
+
+  function clearColumnDefaults() {
+    try {
+      window.localStorage.removeItem(COLS_KEY);
+    } catch {
+      // Nothing to undo — the write never landed either.
+    }
+  }
+
   // ------------------------------------------------------------------ search
   function applyHighlight() {
     const q = state.q.trim().toLowerCase();
@@ -585,11 +1072,7 @@ export async function renderGraphPage(main, params, _ctx) {
 
   // ------------------------------------------------------------------- chips
   function chipEntries() {
-    return filterEntries(state, defaults, {
-      comboLegend: boot.comboLegend,
-      defaultSeedKind: DEFAULT_SEED_KIND,
-      defaultKinds: DEFAULT_KINDS,
-    });
+    return filterEntries(state, defaults);
   }
 
   /** Is anything constraining the query — including the defaults the page seeded itself? */
@@ -606,8 +1089,15 @@ export async function renderGraphPage(main, params, _ctx) {
     if (document.activeElement !== searchInput && searchInput.value !== state.q) {
       searchInput.value = state.q;
     }
-    searchField.style.display = state.view === "table" ? "none" : "";
+    // Search highlights nodes on the canvas, and Arrange/Order lay them out. None of the
+    // three means anything to a table of paths, so they are hidden there rather than left
+    // sitting inert beside a control that does work.
+    const graphOnly = state.view === "table" ? "none" : "";
+    searchField.style.display = graphOnly;
+    for (const f of controls.querySelectorAll(".select-field")) f.style.display = graphOnly;
+    columnsBtn.style.display = state.view === "table" ? "" : "none";
     viewToggle.set(state.view);
+    builder.sync();
 
     // Chips + count badge. The badge counts what the USER applied — the AI-agent lens the
     // page seeds on a fresh visit is shown as a chip and clearable, but it is not a filter
@@ -621,13 +1111,23 @@ export async function renderGraphPage(main, params, _ctx) {
     if (panelSync) panelSync();
   }
 
+  /**
+   * Clears the FILTERS, not the question. The query in the builder is the thing the user
+   * typed; wiping it from a control labelled "clear all filters" would throw away work that
+   * the chip row never claimed to own.
+   */
   function clearAllFilters() {
-    update({
-      seed: "", seedKind: "", expand: "", maxNodes: "",
-      severities: "", kinds: "", projects: "", clouds: "",
-      depth: String(defaults.defaultDepth || 2),
-    });
+    update({ maxNodes: "", severities: "", projects: "", clouds: "", page: "" });
     filterBtn.focus();
+  }
+
+  /** Everything within two hops of one asset — the old seed-and-depth view, as a query. */
+  function focusAsset(id) {
+    update({
+      find: "ANY(*ANY2.ANY)",
+      where: "0.id." + encodeURIComponent(id),
+      columns: "", page: "", sortCol: "",
+    });
   }
 
   // --------------------------------------------------------- filters panel
@@ -758,66 +1258,6 @@ export async function renderGraphPage(main, params, _ctx) {
   function buildFilterControls() {
     const fields = el("div", { class: "filter-fields" });
 
-    // Start from: two presets, then one row per toxic combination, then every asset in
-    // the estate. This was a native <select> carrying one <option> per asset — the page's
-    // most important control and its least usable one at any real tenant size.
-    const comboOptions = (boot.comboLegend || []).map((g) => ({
-      value: `combo:${g.id}`, label: g.shortLabel, group: "Toxic combinations",
-    }));
-    const seedBox = filterCombobox({
-      value: seedValue(),
-      pinnedRows: [
-        { value: "", label: "All toxic combinations" },
-        { value: "scored", label: "All scored assets (AARS > 0)" },
-      ],
-      options: comboOptions,
-      // A graph seeded from a derived risk node (via "Focus graph here") has an id the
-      // asset options endpoint never returns, so the list cannot name it. Show the id
-      // rather than reading as "nothing selected".
-      fallbackLabel: state.seed || "",
-      defaultLabel: "All toxic combinations",
-      ariaLabel: "Graph starting point",
-      searchPlaceholder: "Search assets and combinations…",
-      onChange: (v) => {
-        if (v === "scored") update({ seed: "", seedKind: "scored", expand: "" });
-        else if (!v) update({ seed: "", seedKind: "", expand: "" });
-        else if (v.startsWith("combo:")) update({ seed: v.slice(6), seedKind: "combo", expand: "" });
-        else update({ seed: v.slice(6), seedKind: "asset", expand: "" });
-      },
-    });
-    // Lazily fill the asset list so the panel opens without waiting on inventory. The
-    // picker needs every asset but only its id/name/kind, so it asks for the slim option
-    // list rather than the inventory table's rows (which arrive one page at a time).
-    // setOptions keeps any open popover usable — no focus move, no onChange.
-    swrCall("api_getAssetOptions", {}).then((inv) => {
-      seedBox.setOptions([
-        ...comboOptions,
-        ...inv.rows.map((row) => ({
-          value: `asset:${row.id}`, label: row.name, hint: kindLabel(row.kind), group: "Assets",
-        })),
-      ]);
-    }).catch(() => {});
-
-    // Depth: three stops and the sentence that explains the one you picked. A three-stop
-    // slider is a segmented control in costume, and DEPTH_TEXT existed only as
-    // aria-valuetext — written, and invisible to everyone who could see the screen.
-    const depthHintId = "graph-depth-hint";
-    const depthHint = el("div", { class: "field-hint small muted", id: depthHintId },
-      DEPTH_TEXT[state.depth]);
-    const depthBtns = new Map();
-    const depthGroup = el("div", {
-      class: "segmented", role: "group",
-      "aria-label": "Visualization depth", "aria-describedby": depthHintId,
-    });
-    for (let d = MIN_DEPTH; d <= MAX_DEPTH; d += 1) {
-      const btn = el("button", {
-        "aria-pressed": state.depth === d ? "true" : "false",
-        onclick: () => update({ depth: String(d), expand: "" }),
-      }, String(d));
-      depthBtns.set(d, btn);
-      depthGroup.append(btn);
-    }
-
     // Severity chips.
     const sevRow = togglePills({
       options: (boot.palette?.order || []).filter((x) => x !== "UNKNOWN"),
@@ -832,60 +1272,7 @@ export async function renderGraphPage(main, params, _ctx) {
     });
     const sevBtns = sevRow.buttons;
 
-    // Node type: multi-select toggle pills grouped by semantic category, mirroring
-    // the severity pill pattern above (as opposed to project/cloud, which stay
-    // single-value quick filters below).
     const opts = boot.filterOptions || { kinds: [], clouds: [], projects: [] };
-    const kindBtns = new Map();
-    const kindFilterRoot = el("div", { class: "kind-filter" });
-    const byCategory = new Map();
-    for (const k of opts.kinds) {
-      const cat = categoryOf(k);
-      if (!byCategory.has(cat)) byCategory.set(cat, []);
-      byCategory.get(cat).push(k);
-    }
-    const cats = [...CATEGORY_ORDER, ...[...byCategory.keys()].filter((c) => !CATEGORY_ORDER.includes(c))];
-    // One collapsible group per category, each summary counting its own selection, so the
-    // longest facet in the panel stops being an undifferentiated wall of pills. Native
-    // <details> — the legend already proves the pattern, and it costs no keyboard wiring.
-    const kindGroups = [];
-    for (const cat of cats) {
-      const kinds = byCategory.get(cat);
-      if (!kinds || !kinds.length) continue;
-      kinds.sort((a, b) => kindLabel(a).localeCompare(kindLabel(b)));
-      const label = CATEGORY_LABELS[cat] || cat;
-      const pillRow = togglePills({
-        options: kinds.map((k) => ({ value: k, label: kindLabel(k) })),
-        selected: listSplit(state.kinds),
-        ariaLabel: label + " node types",
-        // Neutral base, crimson when selected: a chosen "AI Agent" must not look like a
-        // chosen severity level, which is what the shared sev- tint would make it.
-        pillClass: "kind-pill",
-        sevClass: false,
-        onToggle: (k) => {
-          const active = new Set(listSplit(state.kinds));
-          if (active.has(k)) active.delete(k); else active.add(k);
-          update({ kinds: listJoin([...active]) });
-        },
-      });
-      for (const [k, btn] of pillRow.buttons) kindBtns.set(k, btn);
-      const count = el("span", { class: "pill-group-count" });
-      const box = el("details", { class: "disclosure pill-group" },
-        el("summary", { class: "disclosure-toggle" },
-          el("span", { class: "pill-group-label" }, label), count),
-        pillRow);
-      // A user who opens a group by hand keeps it open: sync() may force a group OPEN
-      // (a selection must never hide inside a collapsed section) but never force it shut.
-      box.addEventListener("toggle", () => { if (box.open) box.dataset.userOpened = "1"; });
-      kindGroups.push({ kinds, box, count });
-      kindFilterRoot.append(box);
-    }
-    // Always rendered, enabled only when there is something to clear. Inserting and
-    // removing it on a filter change would delete the control under the pointer that just
-    // used it, and drop focus to the body.
-    const clearKinds = el("button", {
-      class: "link", onclick: () => update({ kinds: "" }),
-    }, "Clear node types");
 
     // Project / cloud selects (single-value quick filters; "" = all).
     const projSel = plainSelect("Project", opts.projects);
@@ -894,12 +1281,8 @@ export async function renderGraphPage(main, params, _ctx) {
     cloudSel.addEventListener("change", () => update({ clouds: cloudSel.value }));
 
     const sevCount = el("span", { class: "filter-section-count" });
-    const kindCount = el("span", { class: "filter-section-count" });
     fields.append(
-      section("start", "Start from", seedBox),
-      section("depth", "Depth", el("div", { class: "depth-field" }, depthGroup, depthHint)),
       section("severity", "Severity", sevRow, null, sevCount),
-      section("kinds", "Node type", kindFilterRoot, clearKinds, kindCount),
       section("projects", "Project", projSel),
       section("clouds", "Cloud", cloudSel),
       el("div", { class: "filter-fields-footer" },
@@ -910,29 +1293,11 @@ export async function renderGraphPage(main, params, _ctx) {
     // shows about state is written here — nothing is left to build time, or it goes stale
     // the moment a chip is cleared from the other side of the page.
     function sync() {
-      seedBox.setValue(seedValue());
-      for (const [d, btn] of depthBtns) {
-        btn.setAttribute("aria-pressed", state.depth === d ? "true" : "false");
-      }
-      depthHint.textContent = DEPTH_TEXT[state.depth];
-
       const active = new Set(listSplit(state.severities));
       for (const [s, btn] of sevBtns) {
         btn.setAttribute("aria-pressed", active.has(s) ? "true" : "false");
       }
       sevCount.textContent = active.size ? String(active.size) : "";
-
-      const activeKinds = new Set(listSplit(state.kinds));
-      for (const [k, btn] of kindBtns) {
-        btn.setAttribute("aria-pressed", activeKinds.has(k) ? "true" : "false");
-      }
-      kindCount.textContent = activeKinds.size ? String(activeKinds.size) : "";
-      clearKinds.disabled = !activeKinds.size;
-      for (const g of kindGroups) {
-        const picked = g.kinds.filter((k) => activeKinds.has(k)).length;
-        g.count.textContent = picked ? `${picked} of ${g.kinds.length}` : String(g.kinds.length);
-        if (picked && !g.box.open) g.box.open = true; // open-only: never collapse by hand
-      }
 
       projSel.value = state.projects;
       cloudSel.value = state.clouds;
@@ -940,13 +1305,6 @@ export async function renderGraphPage(main, params, _ctx) {
     sync();
 
     return { root: fields, sync };
-  }
-
-  /** The seed as one combobox value: "" | "scored" | "combo:<id>" | "asset:<id>". */
-  function seedValue() {
-    if (state.seedKind === "scored") return "scored";
-    if (!state.seed) return "";
-    return state.seedKind === "combo" ? `combo:${state.seed}` : `asset:${state.seed}`;
   }
 
   function plainSelect(labelText, options, format) {
@@ -969,6 +1327,20 @@ export async function renderGraphPage(main, params, _ctx) {
     class: "graph-skeleton", role: "status", "aria-label": "Loading graph",
     style: "position:absolute; inset:12px; border-radius:var(--radius-lg); overflow:hidden",
   }, skeleton("chart")));
+  // The builder renders immediately from whatever vocabulary it has and re-renders when the
+  // real one lands, so a slow tenant never blocks the first paint.
+  swrCall("api_getQueryVocabulary", {}).then((v) => {
+    if (!root.isConnected || !v || v.empty) return;
+    vocab = v;
+    builder.sync();
+  }).catch(() => {});
+
+  // A `find` that could not be parsed has already fallen back to the default lens. Say so once
+  // — a link that quietly opens a different query than it names is worse than an error.
+  if (queryIsBroken(state)) {
+    toast("That link's query couldn't be read — showing the default search instead.", "warn");
+  }
+
   syncControls();
   await load();
   if (params.panel === "filters") openFilters(false);

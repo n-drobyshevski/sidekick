@@ -50,6 +50,10 @@ interface NodeSeed {
   exposureEvidence?: GNode["exposureEvidence"];
   inactive?: boolean;
   inactiveTimeframe?: string;
+  displayName?: string;
+  email?: string;
+  publisher?: string;
+  discoveryMethods?: string[];
 }
 
 function node(seed: NodeSeed): GNode {
@@ -82,6 +86,10 @@ function node(seed: NodeSeed): GNode {
     exposureEvidence: seed.exposureEvidence,
     inactive: seed.inactive,
     inactiveTimeframe: seed.inactiveTimeframe,
+    displayName: seed.displayName,
+    email: seed.email,
+    publisher: seed.publisher,
+    discoveryMethods: seed.discoveryMethods,
   };
 }
 
@@ -99,12 +107,19 @@ const GCP_MANAGED = "aiplatform#ReasoningEngine";
 const GCP_HOSTED = "hostedAiAgent";
 
 function gcpAgent(seed: AgentSeed): NodeSeed {
+  const nativeType = seed.nativeType ?? GCP_MANAGED;
   return {
     ...seed,
     kind: "AI_AGENT",
     cloud: seed.cloud ?? "GCP",
-    nativeType: seed.nativeType ?? GCP_MANAGED,
+    nativeType,
     techCats: seed.techCats ?? ["AI Service"],
+    // How Wiz found it, mirroring the tenant capture: a managed ReasoningEngine comes from the
+    // cloud API, a hosted agent from scanning the workload it runs in. `publisher` is
+    // deliberately NOT defaulted — it is null on most agents in that same capture, and the
+    // register has to render that honestly rather than showing a value for everything.
+    discoveryMethods: seed.discoveryMethods
+      ?? [nativeType === GCP_HOSTED ? "MethodWorkloadScanning" : "MethodCloudScanning"],
   };
 }
 
@@ -114,6 +129,10 @@ const AGENTS: NodeSeed[] = [
     account: { id: "gcp-account-01", name: "gcp-account-01" },
     projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
     sensitiveAccess: true, highPriv: true, guardrailMissing: true,
+    // Two of the fourteen carry a publisher, matching the shape of the real tenant, where the
+    // field is populated for a handful of hand-built agents and null for the rest. The dry run
+    // has to exercise BOTH paths or the "—" cell never gets looked at.
+    publisher: "Platform Engineering",
   }),
   gcpAgent({
     id: "agent-b", name: "Agent-B", region: "us-west1",
@@ -275,6 +294,16 @@ const GCP_AGENT_IDS = [
   "agent-f", "agent-f-preprod", "agent-g", "agent-h-chatbot", "agent-i",
   "agent-j", "agent-k", "agent-l-support",
 ];
+// The human title an operator gave the account, where one was given. Deliberately partial:
+// Wiz returns `displayName` for accounts somebody named and nothing for the rest, and a
+// register that showed a friendly name for every row would be describing a tenant nobody has.
+const SA_DISPLAY_NAMES: Record<string, string> = {
+  "agent-a": "Vertex AI Agent Service Account",
+  "agent-b": "Vertex AI Reasoning Agent Identity",
+  "agent-h-chatbot": "Support chatbot runtime identity",
+  "agent-l-support": "Support agent (read-only)",
+};
+
 for (const agentId of GCP_AGENT_IDS) {
   const saId = `sa-${agentId}`;
   const highPriv = agentId !== "agent-l-support";
@@ -282,6 +311,8 @@ for (const agentId of GCP_AGENT_IDS) {
     id: saId,
     kind: "SERVICE_ACCOUNT",
     name: `${saId}@iam.gserviceaccount.com`,
+    displayName: SA_DISPLAY_NAMES[agentId],
+    email: `${saId}@iam.gserviceaccount.com`,
     cloud: "GCP",
     highPriv,
     sensitiveAccess: !["agent-j", "agent-k", "agent-l-support"].includes(agentId),

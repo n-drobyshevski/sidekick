@@ -114,7 +114,10 @@ export function filterUI(opts) {
  * @param spec.onToggle (value) => void
  */
 export function facetGroup(spec) {
-  const { label, hint = "", searchThreshold = 8, onToggle } = spec;
+  // `noun` names what the counts count, for the row's accessible label. The inventory counts
+  // assets; the query palette counts nodes of one kind, and calling those assets would be a
+  // screen reader saying something the page does not.
+  const { label, hint = "", searchThreshold = 8, noun = "asset", onToggle } = spec;
   const labelId = "facet-" + label.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 
   const head = el("div", { class: "facet-group-head" },
@@ -220,7 +223,7 @@ export function facetGroup(spec) {
       const dead = !on && !opt.count;
       row.btn.setAttribute("aria-disabled", dead ? "true" : "false");
       row.btn.setAttribute("aria-label",
-        `${opt.label}, ${plural(opt.count, "asset")}` +
+        `${opt.label}, ${plural(opt.count, noun)}` +
         (dead ? ", no matches" : ""));
 
       if (opt.group && opt.group !== lastGroup) {

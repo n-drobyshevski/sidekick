@@ -3,20 +3,25 @@
 // `tsc --noEmit` — and `npm run check` is typecheck && test && build, so vitest would
 // never run. Vitest picks up **/*.test.{js,ts} either way, and the module is pure, so
 // this needs no jsdom and no new devDependency.
+//
+// The seed, the depth and the node-type lens used to be chips here and are now the QUERY,
+// spelled out in the builder above the row. The `isDefault` machinery went with them: it
+// existed so the page could show a lens it had seeded itself without claiming the user had
+// applied two filters, and a builder reading `FIND [AI Agent]` needs no such apology. What is
+// left is what narrows the ANSWER rather than shaping the question.
 
 import { describe, expect, it } from "vitest";
 import {
   appliedCount, filterEntries, isNarrowingSet, sectionOf,
 } from "../src/client/js/pages/graphChips.js";
 
-const DEFAULTS = { defaultDepth: 2, maxNodes: 100 };
-const CTX = { comboLegend: [], defaultSeedKind: "scored", defaultKinds: "AI_AGENT" };
+const DEFAULTS = { maxNodes: 100 };
 
 /** The resolved state a fresh visit produces, with `over` applied on top. */
 function stateOf(over = {}) {
   return {
-    seed: "", seedKind: "", depth: 2, maxNodes: 100, maxNodesRaw: "",
-    severities: "", kinds: "", projects: "", clouds: "",
+    maxNodes: 100, maxNodesRaw: "",
+    severities: "", projects: "", clouds: "",
     ...over,
   };
 }
@@ -26,144 +31,72 @@ const byKey = (entries, k) => entries.find((e) => e.key === k);
 
 describe("filterEntries", () => {
   it("reports nothing on a wide-open view", () => {
-    const entries = filterEntries(stateOf(), DEFAULTS, CTX);
+    const entries = filterEntries(stateOf(), DEFAULTS);
     expect(entries).toEqual([]);
     expect(appliedCount(entries)).toBe(0);
     expect(isNarrowingSet(entries)).toBe(false);
   });
 
+  it("says nothing about the query — that is the builder's job, not a chip's", () => {
+    // A state carrying a three-step query still has no filters applied. Restating the query
+    // as chips would be two controls answering one question.
+    const entries = filterEntries(
+      stateOf({ find: "AI_AGENT(RUNS_AS.SERVICE_ACCOUNT)", where: "0.id.agent-a" }),
+      DEFAULTS,
+    );
+    expect(entries).toEqual([]);
+  });
+
   it("carries the severity token on a severity chip, one chip per level", () => {
-    const entries = filterEntries(stateOf({ severities: "CRITICAL,HIGH" }), DEFAULTS, CTX);
+    const entries = filterEntries(stateOf({ severities: "CRITICAL,HIGH" }), DEFAULTS);
     expect(keys(entries)).toEqual(["sev-CRITICAL", "sev-HIGH"]);
     expect(entries.map((e) => e.sev)).toEqual(["CRITICAL", "HIGH"]);
     expect(entries.every((e) => e.isNarrowing)).toBe(true);
+    expect(appliedCount(entries)).toBe(2);
   });
 
-  describe("the lens a fresh visit seeds itself", () => {
-    // The page writes seedKind=scored and kinds=AI_AGENT into the hash on first visit.
-    // Both are real chips — visible, clearable — but neither is a filter the user chose,
-    // so the count badge must not report them. The page used to open announcing
-    // "2 filters applied" that nobody had applied.
-    const fresh = filterEntries(
-      stateOf({ seedKind: "scored", kinds: "AI_AGENT" }), DEFAULTS, CTX,
-    );
-
-    it("shows both as chips", () => {
-      expect(keys(fresh)).toEqual(["seed", "kind-AI_AGENT"]);
-    });
-
-    it("marks both as defaults and counts neither", () => {
-      expect(fresh.every((e) => e.isDefault)).toBe(true);
-      expect(appliedCount(fresh)).toBe(0);
-    });
-
-    it("still reports the view as narrowed, because it is", () => {
-      // The empty state reads this, not the badge: a default-narrowed view that comes
-      // back with no nodes is an empty FILTERED view, and must say so rather than
-      // blaming the starting point for having no connections.
-      expect(isNarrowingSet(fresh)).toBe(true);
-    });
-
-    it("stops calling a kind a default once the user adds another", () => {
-      const widened = filterEntries(
-        stateOf({ seedKind: "scored", kinds: "AI_AGENT,AI_MODEL" }), DEFAULTS, CTX,
-      );
-      expect(byKey(widened, "kind-AI_AGENT").isDefault).toBe(false);
-      expect(appliedCount(widened)).toBe(2);
-    });
-
-    it("treats a seed the user chose as a real filter", () => {
-      const seeded = filterEntries(
-        stateOf({ seed: "asset-1", seedKind: "asset" }), DEFAULTS, CTX,
-      );
-      expect(byKey(seeded, "seed").isDefault).toBeFalsy();
-      expect(appliedCount(seeded)).toBe(1);
-    });
+  it("chips a widened node budget, and does not call it narrowing", () => {
+    // Raising the budget can only ever show more, so an empty view is never its fault.
+    const entries = filterEntries(stateOf({ maxNodes: 200, maxNodesRaw: "200" }), DEFAULTS);
+    expect(keys(entries)).toEqual(["maxNodes"]);
+    expect(byKey(entries, "maxNodes").value).toBe("200 nodes");
+    expect(isNarrowingSet(entries)).toBe(false);
   });
 
-  it("names a combo seed from the legend, and falls back to the id", () => {
-    const ctx = { ...CTX, comboLegend: [{ id: "c1", shortLabel: "Privileged agent" }] };
-    const named = filterEntries(stateOf({ seed: "c1", seedKind: "combo" }), DEFAULTS, ctx);
-    expect(byKey(named, "seed").value).toBe("Privileged agent");
-
-    const unknown = filterEntries(stateOf({ seed: "c9", seedKind: "combo" }), DEFAULTS, ctx);
-    expect(byKey(unknown, "seed").value).toBe("c9");
+  it("leaves the budget unchipped when it matches the deployment default", () => {
+    expect(filterEntries(stateOf({ maxNodesRaw: "100" }), DEFAULTS)).toEqual([]);
   });
 
-  it("chips depth only when it differs from the deployment default", () => {
-    expect(keys(filterEntries(stateOf({ depth: 2 }), DEFAULTS, CTX))).toEqual([]);
-    const deep = filterEntries(stateOf({ depth: 3 }), DEFAULTS, CTX);
-    expect(byKey(deep, "depth").value).toBe("3");
-    // Depth is a reach, not a narrowing — an empty view at depth 3 is not "over-filtered".
-    expect(byKey(deep, "depth").isNarrowing).toBeFalsy();
-  });
-
-  it("treats a widened node budget as view state, not a filter on the data", () => {
-    const wide = filterEntries(
-      stateOf({ maxNodes: 200, maxNodesRaw: "200" }), DEFAULTS, CTX,
-    );
-    expect(byKey(wide, "maxNodes").value).toBe("200 nodes");
-    // Raising the budget can only ever show MORE, so it must never make the empty state
-    // read "nothing matches these filters".
-    expect(isNarrowingSet(wide)).toBe(false);
-  });
-
-  it("omits the budget chip when the view is on the configured budget", () => {
-    const same = filterEntries(stateOf({ maxNodes: 100, maxNodesRaw: "100" }), DEFAULTS, CTX);
-    expect(keys(same)).toEqual([]);
+  it("chips project and cloud, both narrowing", () => {
+    const entries = filterEntries(stateOf({ projects: "PROJECT-ALPHA", clouds: "GCP" }), DEFAULTS);
+    expect(keys(entries)).toEqual(["projects", "clouds"]);
+    expect(isNarrowingSet(entries)).toBe(true);
   });
 
   describe("each patch clears exactly its own filter", () => {
-    const state = stateOf({
-      seed: "asset-1", seedKind: "asset", depth: 3,
-      severities: "CRITICAL,HIGH", kinds: "AI_AGENT,VM",
-      projects: "prod", clouds: "AWS",
-    });
-    const entries = filterEntries(state, DEFAULTS, CTX);
-
     it("covers every set filter", () => {
-      expect(keys(entries)).toEqual([
-        "seed", "depth", "sev-CRITICAL", "sev-HIGH",
-        "kind-AI_AGENT", "kind-VM", "projects", "clouds",
-      ]);
+      const state = stateOf({
+        severities: "CRITICAL,HIGH", projects: "PROJECT-ALPHA", clouds: "GCP",
+        maxNodes: 200, maxNodesRaw: "200",
+      });
+      const entries = filterEntries(state, DEFAULTS);
+      const touched = new Set();
+      for (const e of entries) for (const k of Object.keys(e.patch)) touched.add(k);
+      expect([...touched].sort()).toEqual(["clouds", "maxNodes", "projects", "severities"]);
     });
 
     it("removes one severity and leaves the other standing", () => {
+      const entries = filterEntries(stateOf({ severities: "CRITICAL,HIGH" }), DEFAULTS);
       expect(byKey(entries, "sev-CRITICAL").patch).toEqual({ severities: "HIGH" });
       expect(byKey(entries, "sev-HIGH").patch).toEqual({ severities: "CRITICAL" });
-    });
-
-    it("removes one kind and leaves the other standing", () => {
-      expect(byKey(entries, "kind-AI_AGENT").patch).toEqual({ kinds: "VM" });
-      expect(byKey(entries, "kind-VM").patch).toEqual({ kinds: "AI_AGENT" });
-    });
-
-    it("returns depth to the default rather than blanking it", () => {
-      expect(byKey(entries, "depth").patch).toEqual({ depth: "2", expand: "" });
-    });
-
-    it("drops the expansion set along with the seed it was expanded from", () => {
-      expect(byKey(entries, "seed").patch).toEqual({ seed: "", seedKind: "", expand: "" });
-    });
-
-    it("touches nothing else", () => {
-      const touched = new Set(entries.flatMap((e) => Object.keys(e.patch)));
-      expect([...touched].sort()).toEqual([
-        "clouds", "depth", "expand", "kinds", "projects", "seed", "seedKind", "severities",
-      ]);
     });
   });
 });
 
 describe("sectionOf", () => {
-  it("routes each chip to the field group that owns it", () => {
-    const cases = {
-      seed: "start", maxNodes: "start",
-      "sev-CRITICAL": "severity", "kind-VM": "kinds",
-      depth: "depth", projects: "projects", clouds: "clouds",
-    };
-    for (const [key, expected] of Object.entries(cases)) {
-      expect(sectionOf({ key })).toBe(expected);
-    }
+  it("routes a chip to the panel section that owns it", () => {
+    expect(sectionOf({ key: "sev-CRITICAL" })).toBe("severity");
+    expect(sectionOf({ key: "projects" })).toBe("projects");
+    expect(sectionOf({ key: "clouds" })).toBe("clouds");
   });
 });

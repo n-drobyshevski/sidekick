@@ -1,0 +1,456 @@
+/* ------------------------------------------------- security graph query builder */
+/* The FIND / THAT rows above the canvas, the VIEW row under them, and the path table.
+   New classes only — nothing here reaches into a shared recipe, so the inventory, combos
+   and compliance registers are untouched by any of it.
+
+   Colour follows the existing tokens rather than the reference screenshot's blue chrome:
+   an entity chip is tinted by its graph CATEGORY, which is where the reader already learned
+   that purple means an identity and blue means an AI asset. The tint is redundant with the
+   kind icon and the kind label beside it, never the only cue. */
+
+.gq {
+  display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 16px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--surface);
+}
+.gq-rows { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.gq-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  border-radius: var(--radius-md);
+  padding: 2px 4px 2px 0;
+}
+/* One tab stop for the tree; arrows move within it. The ring is the base recipe's, never
+   overridden — a roving-tabindex widget is exactly where a missing focus ring strands
+   someone. */
+.gq-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* A hidden node still constrains the query, so it stays legible rather than being greyed
+   into looking disabled — the struck-through eye carries the state. */
+.gq-row.is-hidden .gq-chip { border-style: dashed; }
+
+/* FIND / THAT / VIEW: the DESIGN.md label role, in a neutral pill so the keyword reads as
+   grammar rather than as another control. */
+.gq-kw {
+  flex: 0 0 auto;
+  min-width: 42px; text-align: center;
+  padding: 2px 7px; border-radius: var(--radius-sm);
+  background: var(--track-bg);
+  font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+/* Negation is a word, not a colour: "NOT" spelled out beside the relationship it inverts. */
+.gq-not {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+  color: var(--sev-high-text);
+}
+
+/* The chip IS the combobox's own trigger, restyled — see chipPicker() for why. Everything
+   below therefore has to win against the .combobox-trigger recipe rather than replace it. */
+.gq-chip-wrap { display: inline-flex; }
+.gq-chip-wrap .combobox-trigger-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gq-chip-wrap .combobox-caret { color: var(--text-3); font-size: 10px; margin-left: 2px; }
+.gq-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-height: 28px; padding: 2px 8px 2px 7px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--hairline);
+  background: var(--page);
+  box-shadow: none;
+  font-size: 13px; font-weight: 600;
+  color: var(--ink);
+  max-width: 320px;
+}
+.gq-chip-icon { flex: 0 0 auto; }
+/* THE TINT HAS TO REACH THE INNER <g>. `kindIconSvg` returns an <svg> wrapping a `.gnode-icon`
+   group, and graph.css paints that group a fixed grey — a colour set on the <svg> is inherited
+   and LOSES to it. Every one of these three surfaces set the ink on the wrapper and rendered
+   grey anyway, while the comments beside them described a tint nobody was seeing. The canvas
+   (`.gnode[data-category] .gnode-icon`) and combos.css both already do it this way.
+   `color: inherit` matters as well as `stroke`: a solid glyph path fills with currentColor. */
+.gq-chip-icon .gnode-icon,
+.gq-cell-icon .gnode-icon,
+.gq-cols-icon .gnode-icon,
+.gq-pal-glyph .gnode-icon { stroke: currentColor; color: inherit; }
+/* A relationship is a verb: neutral ground and lighter weight, so the two ENTITIES are what
+   the eye picks out of the line. */
+.gq-chip--edge {
+  background: var(--surface);
+  font-weight: 500;
+  color: var(--text-2);
+}
+.gq-chip--edge:hover { color: var(--ink); }
+
+/* Category tinting, matching the canvas medallions exactly: pale ground, saturated ink on the
+   icon (a graphical mark, >=3:1), the darkened text token on the label (>=4.5:1 on that
+   ground). The two-token rule, applied to a chip. */
+.gq-chip[data-category="asset"] {
+  background: var(--cat-asset-tint); border-color: var(--cat-asset-ink);
+  color: var(--cat-asset-text);
+}
+.gq-chip[data-category="asset"] .gq-chip-icon { color: var(--cat-asset-ink); }
+.gq-chip[data-category="data"] {
+  background: var(--cat-data-tint); border-color: var(--cat-data-ink);
+  color: var(--cat-data-text);
+}
+.gq-chip[data-category="data"] .gq-chip-icon { color: var(--cat-data-ink); }
+.gq-chip[data-category="iam"] {
+  background: var(--cat-iam-tint); border-color: var(--cat-iam-ink);
+  color: var(--cat-iam-text);
+}
+.gq-chip[data-category="iam"] .gq-chip-icon { color: var(--cat-iam-ink); }
+.gq-chip[data-category="vuln"] {
+  background: var(--cat-vuln-tint); border-color: var(--cat-vuln-ink);
+  color: var(--cat-vuln-text);
+}
+.gq-chip[data-category="vuln"] .gq-chip-icon { color: var(--cat-vuln-ink); }
+.gq-chip[data-category="exposure"] {
+  background: var(--cat-exposure-tint); border-color: var(--cat-exposure-ink);
+  color: var(--cat-exposure-text);
+}
+.gq-chip[data-category="exposure"] .gq-chip-icon { color: var(--cat-exposure-ink); }
+
+/* Row actions: flat 26px squares. They reset the 36px bordered global button recipe the same
+   way .filter-chip-body does — left alone, three shadowed surfaces would sit in a 28px line. */
+.gq-row-actions { display: inline-flex; align-items: center; gap: 2px; margin-left: 2px; }
+.gq-iconbtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; min-height: 0; padding: 0;
+  border: none; background: none; box-shadow: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+}
+.gq-iconbtn:hover { background: var(--wash-hover); color: var(--ink); border-color: transparent; }
+.gq-iconbtn[aria-pressed="false"] { color: var(--text-3); }
+
+/* Result count: right-aligned on the first row's line, tabular so it does not jitter as the
+   number changes under a live filter. */
+.gq-count {
+  margin-left: auto; align-self: flex-start;
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  padding-top: 4px;
+}
+
+/* ------------------------------------------------------------------- header actions */
+.gq-head-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.gq-head-actions button { min-height: 30px; padding: 4px 10px; font-size: 13px; }
+
+/* ------------------------------------------------------------------------ view row */
+.gq-viewbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--hairline);
+}
+.gq-viewbar-end { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.gq-viewbar .segmented > button { min-height: 30px; }
+.gq-view-icon { display: inline-flex; margin-right: 6px; vertical-align: -2px; }
+
+/* --------------------------------------------------------------------- path table */
+.gq-results { padding-bottom: 8px; }
+/* The group header row: quieter than the column row beneath it, and ruled off so the reader
+   sees which columns belong to which node in the query. */
+.gq-table table.data thead .th-groups th {
+  font-size: 11px; letter-spacing: 0.06em;
+  color: var(--text-2);
+  background: var(--surface);
+  border-bottom: 1px solid var(--hairline);
+  padding-top: 7px; padding-bottom: 5px;
+}
+.gq-table table.data thead .th-groups th + th,
+.gq-table table.data th.gq-group-start,
+.gq-table table.data td.gq-group-start { border-left: 1px solid var(--hairline); }
+/* Two header rows, so the second one sticks below the first rather than on top of it. */
+.gq-table table.data thead .th-groups th { top: 0; }
+.gq-table table.data thead tr:last-child th { top: 27px; }
+
+.gq-name { display: inline-flex; align-items: center; gap: 7px; max-width: 100%; }
+.gq-name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The kind icon in a tinted tile, the same category cue the canvas medallion carries. */
+.gq-cell-icon {
+  flex: 0 0 auto; width: 18px; height: 18px; padding: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--track-bg);
+  color: var(--text-2);
+}
+.gq-name[data-category="asset"] .gq-cell-icon { background: var(--cat-asset-tint); color: var(--cat-asset-ink); }
+.gq-name[data-category="data"] .gq-cell-icon { background: var(--cat-data-tint); color: var(--cat-data-ink); }
+.gq-name[data-category="iam"] .gq-cell-icon { background: var(--cat-iam-tint); color: var(--cat-iam-ink); }
+.gq-name[data-category="vuln"] .gq-cell-icon { background: var(--cat-vuln-tint); color: var(--cat-vuln-ink); }
+.gq-name[data-category="exposure"] .gq-cell-icon { background: var(--cat-exposure-tint); color: var(--cat-exposure-ink); }
+
+/* ----------------------------------------------------------------- column chooser */
+.gq-columns { display: flex; flex-direction: column; gap: 14px; min-width: 220px; }
+.gq-columns-group { display: flex; flex-direction: column; gap: 6px; }
+.gq-columns-group > .label { margin: 0; }
+
+@media (max-width: 800px) {
+  .gq { gap: 6px 10px; }
+  .gq-count { margin-left: 0; padding-top: 0; }
+  .gq-chip { max-width: 190px; }
+}
+
+/* A boolean block's row: the keyword pill IS the control, so the row carries only the branch
+   count beside it. Ruled on the left so the branches beneath read as belonging to it. */
+.gq-row.is-group { border-left: 2px solid var(--hairline); }
+.gq-group-note { margin-left: 2px; }
+
+/* ------------------------------------------------------------------------- the + palette */
+/* Three panes: the category rail, the listbox, and the detail pane that explains whatever the
+   list has focused. Portaled onto <body> by openPopover, so it sits above the sheet and the
+   canvas alike and nothing that scrolls can clip it.
+
+   The rail borrows the record sheet's VISUAL recipe (2px accent bar, tabular count, no tinted
+   fill carrying state on its own) without its tablist ARIA — see openQueryPalette for why a
+   tablist cannot own a combobox's listbox. */
+
+.gq-pal { display: flex; flex-direction: column; min-height: 0; }
+.gq-pal-head {
+  padding: 8px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--surface);
+}
+/* A real bordered field rather than a bare line across the bar. The palette autofocuses this
+   on open, so whatever carries the focus ring is lit from the first frame — on the bar that
+   read as a full-width alert box; on a field it reads as "ready to type", which is what it is. */
+.gq-pal-field {
+  display: flex; align-items: center; gap: 7px;
+  padding: 4px 9px;
+  border-radius: var(--radius-md);
+  background: var(--track-bg);
+}
+/* The app's one focus recipe (base.css: 2px accent outline, 2px offset), moved onto the
+   wrapper — the input inside has `outline: none` so exactly one ring is drawn, and it is the
+   same ring every other focused control on the page draws. */
+.gq-pal-field:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.gq-pal-search-icon { display: inline-flex; color: var(--text-3); flex: 0 0 auto; }
+.gq-pal-search {
+  flex: 1 1 auto; min-width: 0;
+  border: none; background: none; box-shadow: none; outline: none;
+  min-height: 24px; padding: 0;
+  font-size: 14px; color: var(--ink);
+}
+.gq-pal-search::placeholder { color: var(--text-3); }
+
+.gq-pal-panes { display: flex; min-height: 0; align-items: stretch; }
+
+/* -- rail */
+.gq-pal-rail {
+  flex: 0 0 168px; width: 168px;
+  padding: 8px 6px; overflow-y: auto; overscroll-behavior: contain;
+  border-right: 1px solid var(--hairline);
+  background: var(--surface);
+}
+.gq-pal-rail-item {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  min-height: 30px; padding: 5px 8px; margin: 1px 0;
+  font-size: 13px; text-align: left;
+  background: none; border: none; box-shadow: none; border-radius: var(--radius-md);
+  color: var(--text-2);
+}
+.gq-pal-rail-item:hover { background: var(--wash-hover); border-color: transparent; color: var(--ink); }
+.gq-pal-rail-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.gq-pal-rail-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gq-pal-rail-count { flex: 0 0 auto; font-size: 11px; font-variant-numeric: tabular-nums; color: var(--text-3); }
+.gq-pal-rail-item.is-active {
+  position: relative; color: var(--ink); font-weight: 600;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.gq-pal-rail-item.is-active::before {
+  content: ""; position: absolute; left: 0; top: 5px; bottom: 5px; width: 2px;
+  border-radius: var(--radius-pill); background: var(--accent);
+}
+.gq-pal-rail-item.is-active .gq-pal-rail-count { color: var(--accent-hover); font-weight: 600; }
+
+/* -- list */
+.gq-pal-list {
+  flex: 1 1 auto; min-width: 0;
+  margin: 0; padding: 6px; list-style: none;
+  overflow-y: auto; overscroll-behavior: contain;
+}
+.gq-pal-section {
+  padding: 8px 8px 4px;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--text-3);
+}
+.gq-pal-option {
+  display: flex; align-items: center; gap: 9px;
+  padding: 6px 8px; border-radius: var(--radius-md);
+  cursor: pointer;
+}
+/* The active row is what Enter will insert, so it is marked by a ring as well as a wash —
+   a wash alone is a colour-only cue, and this row is the one the keyboard is standing on. */
+.gq-pal-option.is-active {
+  background: var(--wash-hover);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.gq-pal-glyph-wrap {
+  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; border-radius: var(--radius-sm);
+  background: var(--track-bg); color: var(--text-2);
+}
+.gq-pal-option[data-category="asset"] .gq-pal-glyph-wrap { background: var(--cat-asset-tint); color: var(--cat-asset-ink); }
+.gq-pal-option[data-category="data"] .gq-pal-glyph-wrap { background: var(--cat-data-tint); color: var(--cat-data-ink); }
+.gq-pal-option[data-category="iam"] .gq-pal-glyph-wrap { background: var(--cat-iam-tint); color: var(--cat-iam-ink); }
+.gq-pal-option[data-category="vuln"] .gq-pal-glyph-wrap { background: var(--cat-vuln-tint); color: var(--cat-vuln-ink); }
+.gq-pal-option[data-category="exposure"] .gq-pal-glyph-wrap { background: var(--cat-exposure-tint); color: var(--cat-exposure-ink); }
+.gq-pal-option-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.gq-pal-option-label {
+  font-size: 13px; font-weight: 600; color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.gq-pal-option-sub {
+  font-size: 12px; color: var(--text-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* The edge count: how many such relationships this tenant actually holds, so a reader can tell
+   a well-travelled relationship from one with a single instance before picking it. */
+.gq-pal-option-count {
+  flex: 0 0 auto; font-size: 12px; color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.gq-pal-empty { padding: 14px 10px; font-size: 13px; color: var(--text-3); }
+
+/* -- detail */
+.gq-pal-detail {
+  flex: 0 0 232px; width: 232px;
+  padding: 12px 14px; overflow-y: auto; overscroll-behavior: contain;
+  border-left: 1px solid var(--hairline);
+  background: var(--surface);
+}
+.gq-pal-detail-title { margin: 0 0 2px; font-size: 14px; font-weight: 650; color: var(--ink); }
+.gq-pal-detail-type {
+  margin: 0 0 8px;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--text-3);
+}
+.gq-pal-detail-blurb { margin: 0; font-size: 12px; line-height: 1.5; color: var(--text-2); }
+.gq-pal-detail-blurb + .gq-pal-detail-blurb { margin-top: 8px; }
+
+/* A node's property filters, on its builder row. The `.filter-chip` recipe, tightened to sit
+   in a 28px line beside the entity chips rather than in the chip row under the header. */
+.gq-chips { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.gq-filter-chip { min-height: 26px; font-size: 12px; }
+.gq-filter-key { color: var(--text-3); }
+/* The literal expansion. Prose says what a pick means; this says what it DOES — the same
+   fragment that ends up in the shareable link, built by the real serializer. */
+.gq-pal-detail-lit {
+  margin-top: 10px; padding-top: 10px;
+  border-top: 1px solid var(--hairline);
+  display: flex; flex-direction: column; gap: 4px;
+}
+.gq-pal-detail-lit code {
+  font-size: 11px; word-break: break-all;
+  color: var(--ink); background: var(--track-bg);
+  padding: 4px 6px; border-radius: var(--radius-sm);
+}
+
+/* Below the breakpoint the palette is hosted in a modal sheet, where it is one column: the
+   rail becomes a wrapping row of filters and the detail pane follows the list. */
+@media (max-width: 800px) {
+  .gq-pal-panes { flex-direction: column; height: auto !important; }
+  .gq-pal-rail {
+    flex: 0 0 auto; width: auto;
+    display: flex; flex-wrap: wrap; gap: 4px;
+    border-right: none; border-bottom: 1px solid var(--hairline);
+  }
+  .gq-pal-rail-item { width: auto; }
+  .gq-pal-rail-item.is-active::before { display: none; }
+  .gq-pal-rail-item.is-active { box-shadow: inset 0 0 0 1px var(--accent); }
+  .gq-pal-list { max-height: 40vh; }
+  .gq-pal-detail {
+    flex: 0 0 auto; width: auto;
+    border-left: none; border-top: 1px solid var(--hairline);
+  }
+}
+
+/* An OR branch's column group. The rule between alternatives is solid where the rule between
+   sequential groups is a hairline, and the word carries the meaning — a border alone would be
+   a colour-free but still purely visual cue, which is no better. */
+.gq-table table.data thead .th-groups th.is-alt { border-left: 1px solid rgba(0, 0, 0, 0.28); }
+.gq-table table.data th.is-alt + tr th { border-left-color: rgba(0, 0, 0, 0.28); }
+.gq-alt-kw {
+  display: inline-block; margin-right: 6px;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-3);
+}
+
+/* -- the properties drill-in: one field's values, in place of the list */
+.gq-pal-drill-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 6px 8px; border-bottom: 1px solid var(--hairline); margin-bottom: 6px;
+}
+.gq-pal-back {
+  display: inline-flex; align-items: center; gap: 4px;
+  min-height: 26px; padding: 2px 8px 2px 5px;
+  border: none; background: none; box-shadow: none; border-radius: var(--radius-sm);
+  font-size: 12px; color: var(--text-2);
+}
+.gq-pal-back:hover { background: var(--wash-hover); border-color: transparent; color: var(--ink); }
+.gq-pal-drill-title { font-size: 13px; font-weight: 600; color: var(--ink); }
+.gq-pal-drill-body { display: block; padding: 0 4px 4px; }
+.gq-pal-text { width: 100%; margin: 0; }
+.gq-pal-hint { margin: 6px 2px 0; }
+
+/* ------------------------------------------------------------------ column panel */
+/* A compact popover on the Columns button, not a sheet: choosing columns is an adjustment to
+   the table you are looking at, and a full-height overlay to make it hides the thing being
+   adjusted. One row per node of the query, expanding inline. */
+.gq-cols { display: flex; flex-direction: column; min-height: 0; }
+.gq-cols-master {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px; border-bottom: 1px solid var(--hairline);
+  background: var(--surface);
+  font-size: 13px; font-weight: 600; color: var(--ink);
+}
+.gq-cols-master input { margin: 0; }
+.gq-cols-list { padding: 6px; overflow-y: auto; overscroll-behavior: contain; }
+/* Off is not greyed-out-and-mysterious: the rows stay readable and say what the defaults are,
+   they just cannot be edited. The controls inside carry `disabled`, which is the real signal. */
+.gq-cols-list.is-off { opacity: 0.72; }
+.gq-cols-group { border-radius: var(--radius-md); }
+.gq-cols-group + .gq-cols-group { margin-top: 2px; }
+.gq-cols-head {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 8px; border-radius: var(--radius-md);
+  cursor: pointer; list-style: none;
+}
+.gq-cols-head::-webkit-details-marker { display: none; }
+.gq-cols-head:hover { background: var(--wash-hover); }
+.gq-cols-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.gq-cols-tile {
+  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; border-radius: var(--radius-sm);
+  background: var(--track-bg); color: var(--text-2);
+}
+.gq-cols-tile[data-category="asset"] { background: var(--cat-asset-tint); color: var(--cat-asset-ink); }
+.gq-cols-tile[data-category="data"] { background: var(--cat-data-tint); color: var(--cat-data-ink); }
+.gq-cols-tile[data-category="iam"] { background: var(--cat-iam-tint); color: var(--cat-iam-ink); }
+.gq-cols-tile[data-category="vuln"] { background: var(--cat-vuln-tint); color: var(--cat-vuln-ink); }
+.gq-cols-tile[data-category="exposure"] { background: var(--cat-exposure-tint); color: var(--cat-exposure-ink); }
+.gq-cols-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.gq-cols-kind { font-size: 13px; font-weight: 600; color: var(--ink); }
+/* The current columns as prose — the reference's summary line, and the reason a row does not
+   have to be expanded to be understood. */
+.gq-cols-summary {
+  font-size: 12px; color: var(--text-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* The disclosure caret, drawn by the same rotate the sheet's `.disclosure` uses. */
+.gq-cols-head::after {
+  content: ""; flex: 0 0 auto; width: 7px; height: 7px; margin-right: 2px;
+  border-right: 1.5px solid var(--text-3); border-bottom: 1.5px solid var(--text-3);
+  transform: rotate(45deg) translate(-2px, -2px);
+  transition: transform 150ms ease-out;
+}
+.gq-cols-group[open] > .gq-cols-head::after { transform: rotate(-135deg); }
+@media (prefers-reduced-motion: reduce) {
+  .gq-cols-head::after { transition: none; }
+}
+.gq-cols-group > .pill-row { padding: 2px 8px 10px 41px; }
+.gq-cols-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 9px 12px; border-top: 1px solid var(--hairline);
+  background: var(--surface);
+}

@@ -158,17 +158,17 @@ var Server = (() => {
     while (files.hasNext()) files.next().setTrashed(true);
   }
   function archiveBytes() {
-    let total = 0;
+    let total2 = 0;
     for (const name of SUBFOLDERS) {
       const walk = (folder) => {
         const files = folder.getFiles();
-        while (files.hasNext()) total += files.next().getSize();
+        while (files.hasNext()) total2 += files.next().getSize();
         const folders = folder.getFolders();
         while (folders.hasNext()) walk(folders.next());
       };
       walk(subfolder(name));
     }
-    return total;
+    return total2;
   }
 
   // src/domain/util.ts
@@ -299,7 +299,16 @@ var Server = (() => {
       // the register and the Scans figure can total reach without reading edges. Appended.
       "inactive",
       "inactive_timeframe",
-      "human_access_json"
+      "human_access_json",
+      // Identity display fields (the human title and address an operator gave the account) and
+      // the two AI-asset provenance fields the Security Graph's default columns read. All four
+      // come out of the graph entity's properties bag. Appended for the usual no-migration
+      // reason: ensureHeaders adds declared-but-missing headers to the right of whatever a tab
+      // already has, and every read maps by header NAME.
+      "display_name",
+      "email",
+      "publisher",
+      "discovery_methods"
     ],
     [TABS.edges]: ["id", "src", "dst", "type", "negated", "access_type"],
     [TABS.issues]: [
@@ -1000,6 +1009,57 @@ var Server = (() => {
     const nested = entity["properties"];
     return nested && typeof nested === "object" ? nested : null;
   }
+  var EDGE_TYPES = [
+    "HAS_ISSUE",
+    // asset → ISSUE
+    "PROTECTED_BY",
+    // AI_AGENT → AI_GUARDRAIL (negated = guardrail MISSING)
+    "RUNS_AS",
+    // AI_AGENT → SERVICE_ACCOUNT (execution identity)
+    "ALLOWS_ACCESS_TO",
+    // identity → resource (IAM; carries accessType)
+    "HAS_FINDING",
+    // identity → EXCESSIVE_ACCESS/LATERAL_MOVEMENT finding
+    "USES",
+    // generic dependency
+    "USES_TOOL",
+    // AI_AGENT → SERVERLESS / tool
+    "INVOKES_TOOL",
+    // AI_AGENT → MCP_SERVER / AI_AGENT
+    "USES_MODEL",
+    // AI_AGENT → AI_MODEL
+    "USES_DATASET",
+    // AI_AGENT → AI_DATASET
+    "STORED_IN",
+    // AI_DATASET → BUCKET
+    "HOSTED_ON",
+    // hosted AI_AGENT → VIRTUAL_MACHINE / SERVERLESS
+    "BUILT_FROM",
+    // AI_AGENT → CONTAINER_IMAGE → REPOSITORY
+    "CAN_INVOKE",
+    // ACCESS_ROLE → AI_MODEL (Bedrock)
+    "ENFORCES",
+    // AI_MODEL → AI_GUARDRAIL
+    "BOUND_TO",
+    // ACCESS_ROLE_BINDING → identity
+    "PERMITS_ACCESS_ROLE",
+    // ACCESS_ROLE_BINDING → ACCESS_ROLE
+    "HAS_SENSITIVE_DATA",
+    // asset → SENSITIVE_DATA (holds sensitive data)
+    "HAS_ACCESS_TO_SENSITIVE_DATA",
+    // identity/agent → SENSITIVE_DATA (can reach it)
+    "EXPOSED_TO_INTERNET",
+    // asset → INTERNET_EXPOSURE (reachable from the internet)
+    "HAS_EXCESSIVE_PRIVILEGE",
+    // asset/identity → EXCESSIVE_PRIVILEGE (admin or high rights)
+    // BUCKET/DATABASE → DATA_FINDING. Wiz's own vocabulary, not ours: the tenant capture in
+    // exemples/toxic_combos_response.js echoes control wc-id-3217's query, whose "Sensitive
+    // Data Access" block ends `-HAS_DATA_FINDING→ DATA_FINDING`.
+    "HAS_DATA_FINDING",
+    // AI asset / compute → ENDPOINT. Wiz's own relationship name, kept verbatim — it is what
+    // the endpoint-exposure traversal walks (domain/exposureQuery.ts).
+    "SERVES"
+  ];
   function edgeId(src, type, dst, negated) {
     return `${src}|${type}|${dst}${negated ? "|neg" : ""}`;
   }
@@ -1771,6 +1831,10 @@ var Server = (() => {
     if (scope && scope.length) filterBy["resource"] = { projectId: scope };
     return { filterBy, orderBy: { field: "SEVERITY", direction: "DESC" } };
   }
+  var Q_AI_PROPERTIES = "query SidekickAiAssetProperties($first: Int, $after: String, $filterBy: CloudResourceV2Filters) {\n  cloudResourcesV2(first: $first, after: $after, filterBy: $filterBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n" + indented(IDENTITY_FIELDS, 6) + "      graphEntity { properties }\n    }\n  }\n}\n";
+  function aiPropertiesVariables(types) {
+    return { filterBy: { type: { equals: [...types] } } };
+  }
   var Q_PRINCIPALS = "query SidekickAiPrincipals($first: Int, $after: String, $filterBy: CloudResourceV2Filters, $orderBy: CloudResourceOrder) {\n  cloudResourcesV2(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      name\n      type\n      nativeType\n      hasSensitiveData\n      hasAccessToSensitiveData\n      hasAdminPrivileges\n      hasHighPrivileges\n      technology { id name categories { id name } }\n      cloudAccount { id name externalId cloudProvider }\n      projects { id name riskProfile { businessImpact } }\n      graphEntity { properties }\n      issueAnalytics {\n        issueCount\n        informationalSeverityCount\n        lowSeverityCount\n        mediumSeverityCount\n        highSeverityCount\n        criticalSeverityCount\n      }\n    }\n  }\n}\n";
   function aiPrincipalsVariables(scope) {
     const filterBy = {
@@ -2210,6 +2274,7 @@ var Server = (() => {
     getIssueDetail: () => getIssueDetail,
     getIssues: () => getIssues,
     getJobStatus: () => getJobStatus,
+    getQueryVocabulary: () => getQueryVocabulary,
     getScanQueries: () => getScanQueries,
     getSettings: () => getSettings,
     getStorageStats: () => getStorageStats,
@@ -2218,6 +2283,7 @@ var Server = (() => {
     previewAarsRule: () => previewAarsRule,
     rescoreAars: () => rescoreAars,
     resetData: () => resetData2,
+    runGraphQuery: () => runGraphQuery,
     runSync: () => runSync,
     scoreAarsSample: () => scoreAarsSample,
     setAarsRule: () => setAarsRule2,
@@ -2894,7 +2960,7 @@ var Server = (() => {
     const perRule = rule.gapPoints.map(() => 0);
     const byCode = {};
     let fallback = 0;
-    let total = 0;
+    let total2 = 0;
     for (const list2 of codeLists != null ? codeLists : []) {
       if (!Array.isArray(list2)) continue;
       const seen = /* @__PURE__ */ new Set();
@@ -2903,7 +2969,7 @@ var Server = (() => {
         if (!code || seen.has(code)) continue;
         seen.add(code);
         byCode[code] = ((_a5 = byCode[code]) != null ? _a5 : 0) + 1;
-        total++;
+        total2++;
         let matched = false;
         for (let i = 0; i < rule.gapPoints.length; i++) {
           const row = rule.gapPoints[i];
@@ -2917,7 +2983,7 @@ var Server = (() => {
         if (!matched) fallback++;
       }
     }
-    return { perRule, fallback, total, byCode };
+    return { perRule, fallback, total: total2, byCode };
   }
   function pointsPhrase(n) {
     return n === 1 ? "1 point" : `${n} points`;
@@ -3491,6 +3557,15 @@ var Server = (() => {
       // and "AI issues" silently means "all issues", with no field to catch it. Same reason
       // AGENTIC_IDENTITIES locks its purpose filter.
       locked: "The AI risk category (wct-id-1998) is fixed: it is what makes these issues AI issues, so widening it would relabel the whole register rather than extend it."
+    },
+    {
+      stepId: "AI_ASSET_PROPERTIES",
+      fields: [],
+      // The step exists only to fetch the properties bag for the SAME assets INVENTORY_AI
+      // already collected. Its type filter is not a knob: narrow it and some assets silently
+      // lose their publisher while others keep theirs, which looks like missing data rather
+      // than a setting. Widen it and the bag arrives for resources this app does not model.
+      locked: "This step mirrors the AI inventory's own type list \u2014 it exists to add two fields to assets already collected, so filtering it separately could only make the two disagree about which assets exist."
     },
     {
       stepId: "CONFIG_FINDINGS",
@@ -4799,16 +4874,724 @@ var Server = (() => {
           const endpoints = (_b = evidence.endpointIds) != null ? _b : [];
           if (hosts.length > 0 || endpoints.length > 0) return true;
         }
-        const reachable = node2.isAccessibleFromInternet;
+        const reachable2 = node2.isAccessibleFromInternet;
         const openToAll = node2.isOpenToAllInternet;
-        if (reachable === true || openToAll === true) return true;
+        if (reachable2 === true || openToAll === true) return true;
         const unknown = (v) => v === null || v === void 0;
-        return unknown(reachable) || unknown(openToAll) ? null : false;
+        return unknown(reachable2) || unknown(openToAll) ? null : false;
       }
     }
   }
   function conditionHolds(node2, key) {
     return conditionState(node2, key) === true;
+  }
+
+  // src/domain/graphQuery.ts
+  function isGroup(step) {
+    return step.op !== void 0;
+  }
+  var DEFAULT_QUERY = { kind: "AI_AGENT" };
+  var QUERY_ROW_MAX = 2e3;
+  var QUERY_SCAN_MAX = 1e5;
+  var MAX_QUERY_NODES = 12;
+  var MAX_QUERY_DEPTH = 6;
+  var MAX_HOPS = 3;
+  var IDENTITY_KINDS = [
+    "SERVICE_ACCOUNT",
+    "USER_ACCOUNT",
+    "ACCESS_ROLE",
+    "ACCESS_ROLE_BINDING",
+    "ACCESS_KEY"
+  ];
+  function orNull(v) {
+    if (v === void 0 || v === null || v === "") return null;
+    if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") return v;
+    return String(v);
+  }
+  function humanDiscoveryMethod(raw) {
+    const body = raw.replace(/^Method/, "");
+    const spaced = body.replace(/([a-z0-9])([A-Z])/g, "$1 $2").trim();
+    return spaced || raw;
+  }
+  var QUERY_FIELDS = [
+    { key: "name", label: "Name", type: "text", get: (n) => n.name },
+    { key: "kind", label: "Kind", type: "choice", get: (n) => n.kind },
+    {
+      key: "publisher",
+      label: "Publisher",
+      type: "text",
+      kinds: AI_ASSET_KINDS,
+      get: (n) => orNull(n.publisher)
+    },
+    {
+      key: "discoveredBy",
+      label: "Discovered by",
+      type: "choice",
+      kinds: AI_ASSET_KINDS,
+      get: (n) => {
+        var _a5;
+        const m = (_a5 = n.discoveryMethods) != null ? _a5 : [];
+        return m.length ? m.map(humanDiscoveryMethod).join(", ") : null;
+      }
+    },
+    {
+      key: "displayName",
+      label: "Display name",
+      type: "text",
+      kinds: IDENTITY_KINDS,
+      get: (n) => orNull(n.displayName)
+    },
+    { key: "email", label: "Email", type: "text", kinds: IDENTITY_KINDS, get: (n) => orNull(n.email) },
+    {
+      // Three states, not two. Absent means the identity steps never carried a dormancy read;
+      // rendering that as "No" would assert the opposite of what is known.
+      key: "inactive",
+      label: "Inactive for the last 90 days",
+      type: "boolean",
+      kinds: IDENTITY_KINDS,
+      get: (n) => n.inactive === void 0 ? null : n.inactive
+    },
+    {
+      key: "identityPurpose",
+      label: "Purpose",
+      type: "choice",
+      kinds: IDENTITY_KINDS,
+      get: (n) => orNull(n.identityPurpose)
+    },
+    { key: "cloud", label: "Cloud", type: "choice", get: (n) => orNull(n.cloudPlatform) },
+    { key: "region", label: "Region", type: "choice", get: (n) => orNull(n.region) },
+    { key: "status", label: "Status", type: "choice", get: (n) => orNull(n.status) },
+    { key: "severity", label: "Issue severity", type: "choice", get: (n) => orNull(n.severity) },
+    { key: "aars", label: "AARS", type: "number", numeric: true, get: (n) => {
+      var _a5;
+      return (_a5 = n.aars) != null ? _a5 : null;
+    } },
+    { key: "aarsSeverity", label: "AARS level", type: "choice", get: (n) => orNull(n.aarsSeverity) },
+    {
+      key: "projects",
+      label: "Projects",
+      type: "choice",
+      get: (n) => {
+        var _a5;
+        const names = ((_a5 = n.projects) != null ? _a5 : []).map((p) => p.name).filter(Boolean);
+        return names.length ? names.join(", ") : null;
+      }
+    },
+    {
+      key: "guardrail",
+      label: "Guardrail",
+      type: "choice",
+      kinds: AI_ASSET_KINDS,
+      get: (n) => n.guardrailMissing === void 0 ? null : n.guardrailMissing ? "missing" : "present"
+    },
+    {
+      key: "combos",
+      label: "Toxic combinations",
+      type: "number",
+      numeric: true,
+      get: (n) => {
+        var _a5;
+        const g = (_a5 = n.comboGroups) != null ? _a5 : [];
+        return g.length ? g.length : null;
+      }
+    },
+    {
+      // The combination patterns BY NAME, where `combos` only ever counted them. "Show me the
+      // members of the privileged managed-agent pattern" is the question the register is built
+      // around, and a count cannot answer it.
+      key: "comboGroup",
+      label: "Toxic combination",
+      type: "choice",
+      get: (n) => {
+        var _a5;
+        const g = (_a5 = n.comboGroups) != null ? _a5 : [];
+        return g.length ? g.join(", ") : null;
+      }
+    },
+    {
+      // Read through the SAME predicate the canvas draws from. Reading only
+      // `isAccessibleFromInternet` — which is what this did — disagreed with the graph on a node
+      // that is open to all internet but not flagged accessible: the table said no while an
+      // INTERNET_EXPOSURE node hung off it two panes away. One reading, one answer.
+      key: "internet",
+      label: "Internet reachable",
+      type: "boolean",
+      get: (n) => conditionState(n, "INTERNET_EXPOSURE")
+    },
+    {
+      key: "sensitiveAccess",
+      label: "Reaches classified data",
+      type: "boolean",
+      get: (n) => n.hasAccessToSensitiveData === void 0 ? null : n.hasAccessToSensitiveData
+    },
+    {
+      // HOLDS classified data, which is a different claim from reaching it — a bucket holds, an
+      // agent reaches. The pair is what makes the data-exposure path readable from either end.
+      key: "sensitiveData",
+      label: "Holds classified data",
+      type: "boolean",
+      get: (n) => n.hasSensitiveData === void 0 ? null : n.hasSensitiveData
+    },
+    {
+      // Kept apart rather than folded into one "privileged" flag: ADMIN is the stronger claim,
+      // and `withExcessivePrivilegeNodes` names its stub differently for it. EXCESSIVE_PRIVILEGE
+      // is their disjunction, so anyone wanting that reads the risk condition instead.
+      key: "highPriv",
+      label: "High privileges",
+      type: "boolean",
+      get: (n) => n.hasHighPrivileges === void 0 ? null : n.hasHighPrivileges
+    },
+    {
+      key: "adminPriv",
+      label: "Admin privileges",
+      type: "boolean",
+      get: (n) => n.hasAdminPrivileges === void 0 ? null : n.hasAdminPrivileges
+    }
+  ];
+  var FIELD_BY_KEY = new Map(QUERY_FIELDS.map((f) => [f.key, f]));
+  function fieldsForKind(kind) {
+    return QUERY_FIELDS.filter((f) => {
+      if (!f.kinds) return true;
+      if (kind === "ANY") return false;
+      return f.kinds.includes(kind);
+    });
+  }
+  function defaultFieldsForKind(kind) {
+    if (kind !== "ANY" && AI_ASSET_KINDS.includes(kind)) {
+      return ["name", "publisher", "discoveredBy"];
+    }
+    if (kind !== "ANY" && IDENTITY_KINDS.includes(kind)) {
+      return ["name", "displayName", "inactive"];
+    }
+    return ["name", "kind", "cloud"];
+  }
+  var QueryError = class extends Error {
+  };
+  function fail(msg) {
+    throw new QueryError(msg);
+  }
+  var KIND_SET = new Set(NODE_KINDS);
+  var EDGE_SET = new Set(EDGE_TYPES);
+  function validateQuery(raw) {
+    const counter = { nodes: 0 };
+    const q = readNode(raw, 1, counter);
+    return q;
+  }
+  function readNode(raw, depth, counter) {
+    if (!raw || typeof raw !== "object") fail("query node must be an object");
+    if (depth > MAX_QUERY_DEPTH) fail(`query nests deeper than ${MAX_QUERY_DEPTH} levels`);
+    if (++counter.nodes > MAX_QUERY_NODES) fail(`query has more than ${MAX_QUERY_NODES} nodes`);
+    const r = raw;
+    const kind = r["kind"];
+    if (typeof kind !== "string" || kind !== "ANY" && !KIND_SET.has(kind)) {
+      fail(`unknown node kind: ${String(kind)}`);
+    }
+    const node2 = { kind };
+    if (r["show"] === false) node2.show = false;
+    const where = r["where"];
+    if (where !== void 0) {
+      if (!Array.isArray(where)) fail("where must be an array");
+      const filters = [];
+      for (const f of where) {
+        if (!f || typeof f !== "object") fail("filter must be an object");
+        const key = f["key"];
+        const values = f["values"];
+        if (typeof key !== "string" || key !== "id" && !FIELD_BY_KEY.has(key)) {
+          fail(`unknown filter field: ${String(key)}`);
+        }
+        if (!Array.isArray(values) || !values.length) fail(`filter ${key} has no values`);
+        const op = f["op"];
+        if (op !== void 0 && op !== "eq" && op !== "contains") {
+          fail(`unknown filter operator: ${String(op)}`);
+        }
+        const filter = { key, values: values.map((v) => String(v)) };
+        if (op === "contains") filter.op = "contains";
+        filters.push(filter);
+      }
+      if (filters.length) node2.where = filters;
+    }
+    const steps = r["steps"];
+    if (steps !== void 0) {
+      if (!Array.isArray(steps)) fail("steps must be an array");
+      const out = [];
+      for (const s of steps) out.push(readStep(s, depth + 1, counter));
+      if (out.length) node2.steps = out;
+    }
+    return node2;
+  }
+  function readStep(raw, depth, counter) {
+    var _a5;
+    if (!raw || typeof raw !== "object") fail("step must be an object");
+    const r = raw;
+    if (r["op"] !== void 0) return readGroup(r, depth, counter);
+    const edge2 = r["edge"];
+    if (typeof edge2 !== "string" || edge2 !== "ANY" && !EDGE_SET.has(edge2)) {
+      fail(`unknown relationship: ${String(edge2)}`);
+    }
+    const step = { edge: edge2, node: readNode(r["node"], depth, counter) };
+    if (r["reverse"] === true) step.reverse = true;
+    if (r["negate"] === true) step.negate = true;
+    if (r["optional"] === true) step.optional = true;
+    if (edge2 === "ANY") {
+      const hops = Number(r["hops"]);
+      step.hops = Number.isFinite(hops) ? Math.min(MAX_HOPS, Math.max(1, Math.round(hops))) : 1;
+    }
+    if (step.negate && ((_a5 = step.node.steps) == null ? void 0 : _a5.length)) {
+      fail("a negated relationship cannot carry further steps \u2014 there is nothing to walk from");
+    }
+    if (step.negate && step.optional) fail("a relationship cannot be both negated and optional");
+    return step;
+  }
+  function readGroup(r, depth, counter) {
+    const op = r["op"];
+    if (op !== "and" && op !== "or") fail(`unknown group operator: ${String(op)}`);
+    if (depth > MAX_QUERY_DEPTH) fail(`query nests deeper than ${MAX_QUERY_DEPTH} levels`);
+    const steps = r["steps"];
+    if (!Array.isArray(steps) || !steps.length) {
+      fail(`an ${op.toUpperCase()} group needs at least one branch`);
+    }
+    const group = { op, steps: steps.map((s) => readStep(s, depth + 1, counter)) };
+    if (r["optional"] === true) group.optional = true;
+    return group;
+  }
+  var VALUE_CARDINALITY_MAX = 40;
+  function queryVocabulary(doc) {
+    var _a5;
+    const byId = new Map(doc.nodes.map((n) => [n.id, n]));
+    const kindCounts = /* @__PURE__ */ new Map();
+    for (const n of doc.nodes) kindCounts.set(n.kind, ((_a5 = kindCounts.get(n.kind)) != null ? _a5 : 0) + 1);
+    const stepsFrom = {};
+    const seen = /* @__PURE__ */ new Map();
+    const note = (from, edge2, reverse, to) => {
+      var _a6;
+      const key = `${from}|${edge2}|${reverse ? "r" : "f"}|${to}`;
+      const hit = seen.get(key);
+      if (hit) {
+        hit.count += 1;
+        return;
+      }
+      const entry = { edge: edge2, reverse, kind: to, count: 1 };
+      seen.set(key, entry);
+      ((_a6 = stepsFrom[from]) != null ? _a6 : stepsFrom[from] = []).push(entry);
+    };
+    for (const e of doc.edges) {
+      if (e.negated) continue;
+      const src = byId.get(e.src);
+      const dst = byId.get(e.dst);
+      if (!src || !dst) continue;
+      note(src.kind, e.type, false, dst.kind);
+      note(dst.kind, e.type, true, src.kind);
+    }
+    for (const list2 of Object.values(stepsFrom)) {
+      list2.sort((a, b) => b.count - a.count || cmp(a.reverse, b.reverse) || cmp(a.edge, b.edge) || cmp(a.kind, b.kind));
+    }
+    const kinds = NODE_KINDS.filter((k) => kindCounts.has(k)).map((kind) => {
+      var _a6;
+      return { kind, count: (_a6 = kindCounts.get(kind)) != null ? _a6 : 0 };
+    });
+    const base = { kinds, stepsFrom, valuesFor: {}, fieldsFor: {}, shortcuts: [] };
+    const shortcuts = [];
+    for (const shortcut of QUERY_SHORTCUTS) {
+      const answerable = shortcut.kinds.filter((k) => shortcutsFor(k, base).some((s) => s.id === shortcut.id));
+      if (answerable.length) shortcuts.push({ ...shortcut, kinds: answerable });
+    }
+    return { ...base, shortcuts };
+  }
+  function fieldValuesFor(doc, kind) {
+    var _a5;
+    const nodes = doc.nodes.filter((n) => n.kind === kind);
+    const perField = [];
+    for (const spec of QUERY_FIELDS) {
+      if (spec.type !== "choice" && spec.type !== "boolean") continue;
+      if (spec.kinds && !spec.kinds.includes(kind)) continue;
+      if (spec.key === "kind") continue;
+      const counts = /* @__PURE__ */ new Map();
+      let overflow = false;
+      for (const node2 of nodes) {
+        const raw = spec.get(node2);
+        const parts = raw === null ? ["unknown"] : spec.type === "choice" ? String(raw).split(", ") : [String(raw)];
+        for (const part of parts) {
+          if (!part) continue;
+          if (!counts.has(part) && counts.size >= VALUE_CARDINALITY_MAX) {
+            overflow = true;
+            continue;
+          }
+          counts.set(part, ((_a5 = counts.get(part)) != null ? _a5 : 0) + 1);
+        }
+      }
+      if (overflow || !counts.size) continue;
+      perField.push({
+        key: spec.key,
+        values: [...counts.entries()].map(([value, count2]) => ({ value, count: count2 })).sort((a, b) => b.count - a.count || cmp(a.value, b.value))
+      });
+    }
+    return perField;
+  }
+  var QUERY_SHORTCUTS = [
+    {
+      id: "no-guardrail",
+      label: "Has no guardrail",
+      phrase: "Wiz reports the guardrail missing",
+      blurb: "Reads the asset's own guardrail flag, which is what the canvas draws its MISSING_GUARDRAIL stub from \u2014 so the two always agree.\n\nDeliberately not the \u201CNOT protected by a guardrail\u201D traversal, which answers a wider question: it counts every asset with no guardrail relationship in the graph, including ones Wiz reports as protected without naming the guardrail. Add a NOT on a PROTECTED_BY step if that wider question is the one you want.",
+      helpId: "missing-guardrail",
+      kinds: AI_ASSET_KINDS,
+      steps: [],
+      filters: [{ path: [], key: "guardrail", values: ["missing"] }]
+    },
+    {
+      id: "runs-as-privileged",
+      label: "Runs as a privileged identity",
+      phrase: "its service account holds high privileges",
+      blurb: "Reads the identity's own privilege flag rather than walking to the EXCESSIVE_PRIVILEGE stub, which is suppressed wherever a real access finding exists \u2014 walking to it would quietly answer with the leftovers. Admin privilege is the stronger claim and has its own field.",
+      helpId: "excessive-privilege",
+      kinds: AI_ASSET_KINDS,
+      steps: [{ edge: "RUNS_AS", node: { kind: "SERVICE_ACCOUNT" } }],
+      filters: [{ path: [0], key: "highPriv", values: ["true"] }]
+    },
+    {
+      id: "runs-as-dormant",
+      label: "Runs as a dormant identity",
+      phrase: "its service account has been idle 90 days",
+      blurb: "An identity nobody has used in ninety days, still able to act on the asset's behalf. The dormancy is a field Wiz reports, not something derived here.",
+      helpId: "agentic-identity",
+      kinds: AI_ASSET_KINDS,
+      steps: [{ edge: "RUNS_AS", node: { kind: "SERVICE_ACCOUNT" } }],
+      filters: [{ path: [0], key: "inactive", values: ["true"] }]
+    },
+    {
+      id: "reaches-classified",
+      label: "Reaches classified data",
+      phrase: "through its identity, to a bucket",
+      blurb: "The real path \u2014 asset to identity to bucket \u2014 with the identity hidden, so the table reads asset beside data. Deliberately NOT the SENSITIVE_DATA stub, which graphEnrich suppresses exactly where this chain exists: walking to the stub would return only the assets whose path could not be traced.",
+      helpId: "sensitive-data",
+      kinds: AI_ASSET_KINDS,
+      steps: [{
+        edge: "RUNS_AS",
+        node: {
+          kind: "SERVICE_ACCOUNT",
+          show: false,
+          steps: [{ edge: "ALLOWS_ACCESS_TO", node: { kind: "BUCKET" } }]
+        }
+      }]
+    },
+    {
+      id: "internet-reachable",
+      label: "Reachable from the internet",
+      phrase: "an exposure path reaches it",
+      blurb: "Assets carrying an internet exposure node. Exposure is inherited from the compute underneath, so this is the topology answer rather than a flag read off the asset.",
+      helpId: "internet-exposure",
+      kinds: AI_ASSET_KINDS,
+      steps: [{ edge: "EXPOSED_TO_INTERNET", node: { kind: "INTERNET_EXPOSURE" } }]
+    },
+    {
+      id: "dormant-human-access",
+      label: "A dormant person can reach it",
+      phrase: "a human account, idle 90 days, still has access",
+      blurb: "Human access read backwards: the accounts that ALLOW_ACCESS_TO this asset, narrowed to the ones nobody has signed into in ninety days. Standing access that no longer has a person behind it.",
+      kinds: AI_ASSET_KINDS,
+      steps: [{ edge: "ALLOWS_ACCESS_TO", reverse: true, node: { kind: "USER_ACCOUNT" } }],
+      filters: [{ path: [0], key: "inactive", values: ["true"] }]
+    }
+  ];
+  function shortcutsFor(kind, vocab) {
+    if (kind === "ANY") return [];
+    if (!vocab.kinds.some((k) => k.kind === kind)) return [];
+    return QUERY_SHORTCUTS.filter((s) => {
+      if (!s.kinds.includes(kind)) return false;
+      return s.steps.every((step) => reachable(kind, step, vocab));
+    });
+  }
+  function reachable(from, step, vocab) {
+    var _a5, _b;
+    if (isGroup(step)) return step.steps.every((s) => reachable(from, s, vocab));
+    if (step.negate) return true;
+    if (step.edge === "ANY") return true;
+    const target = step.node.kind;
+    const hit = ((_a5 = vocab.stepsFrom[from]) != null ? _a5 : []).some((e) => e.edge === step.edge && e.reverse === !!step.reverse && e.kind === target);
+    if (!hit) return false;
+    if (target === "ANY") return true;
+    return ((_b = step.node.steps) != null ? _b : []).every((s) => reachable(target, s, vocab));
+  }
+  function queryColumnGroups(query, selected) {
+    var _a5;
+    const groups = [];
+    for (const slot of bindingSlots(query)) {
+      const node2 = slot.node;
+      if (node2.show === false) continue;
+      const index = groups.length;
+      const offered = fieldsForKind(node2.kind);
+      const offeredKeys = new Set(offered.map((f) => f.key));
+      const picked = ((_a5 = selected == null ? void 0 : selected[index]) != null ? _a5 : []).filter((k) => offeredKeys.has(k));
+      const keys = picked.length ? picked : defaultFieldsForKind(node2.kind).filter((k) => offeredKeys.has(k));
+      groups.push({
+        index,
+        kind: node2.kind,
+        label: node2.kind === "ANY" ? "Any node" : node2.kind,
+        fields: keys.map((k) => {
+          const f = FIELD_BY_KEY.get(k);
+          return { key: f.key, label: f.label, numeric: f.numeric };
+        }),
+        available: offered.map((f) => ({ key: f.key, label: f.label })),
+        // Only when the group IS an alternative. Most queries have no OR in them, and stamping
+        // every column group with two undefined keys would put them in the wire payload and in
+        // the golden snapshot, where they read as a fact about the group rather than an absence.
+        ...slot.altOf === void 0 ? {} : { altOf: slot.altOf, altIndex: slot.altIndex }
+      });
+    }
+    return groups;
+  }
+  function bindingSlots(node2, path = "", alt) {
+    var _a5;
+    const out = [{ node: node2, altOf: alt == null ? void 0 : alt.of, altIndex: alt == null ? void 0 : alt.index }];
+    ((_a5 = node2.steps) != null ? _a5 : []).forEach((step, i) => out.push(...stepSlots(step, path + "." + i, alt)));
+    return out;
+  }
+  function stepSlots(step, path, alt) {
+    if (isGroup(step)) {
+      const out = [];
+      step.steps.forEach((child, i) => {
+        const inner = step.op === "or" ? { of: path, index: i } : alt;
+        out.push(...stepSlots(child, path + "." + i, inner));
+      });
+      return out;
+    }
+    if (step.negate) return [];
+    return bindingSlots(step.node, path, alt);
+  }
+  function buildAdjacency(doc) {
+    const byId = new Map(doc.nodes.map((n) => [n.id, n]));
+    const out = /* @__PURE__ */ new Map();
+    const inn = /* @__PURE__ */ new Map();
+    for (const e of doc.edges) {
+      if (!byId.has(e.src) || !byId.has(e.dst)) continue;
+      pushInto(out, e.src, e);
+      pushInto(inn, e.dst, e);
+    }
+    return { byId, out, in: inn };
+  }
+  function fieldValue(node2, key) {
+    if (key === "id") return node2.id;
+    const spec = FIELD_BY_KEY.get(key);
+    return spec ? spec.get(node2) : null;
+  }
+  function matchesFilter(node2, f) {
+    const v = fieldValue(node2, f.key);
+    if (v === null) {
+      return f.values.some((x) => x === "unknown" || x === "");
+    }
+    const s = String(v).toLowerCase();
+    if (f.op === "contains") {
+      return f.values.some((x) => s.indexOf(String(x).toLowerCase()) !== -1);
+    }
+    return f.values.some((x) => {
+      const want = String(x).toLowerCase();
+      if (want === s) return true;
+      return s.split(", ").includes(want);
+    });
+  }
+  function matchesNode(node2, q) {
+    var _a5;
+    if (q.kind !== "ANY" && node2.kind !== q.kind) return false;
+    for (const f of (_a5 = q.where) != null ? _a5 : []) {
+      if (!matchesFilter(node2, f)) return false;
+    }
+    return true;
+  }
+  function stepTargets(from, step, adj) {
+    var _a5;
+    if (step.edge === "ANY") return anyHopTargets(from, step, adj);
+    const edges2 = (_a5 = step.reverse ? adj.in.get(from.id) : adj.out.get(from.id)) != null ? _a5 : [];
+    const seen = /* @__PURE__ */ new Set();
+    const hits = [];
+    for (const e of edges2) {
+      if (e.type !== step.edge) continue;
+      if (e.negated) continue;
+      const other = adj.byId.get(step.reverse ? e.src : e.dst);
+      if (!other || seen.has(other.id)) continue;
+      if (!matchesNode(other, step.node)) continue;
+      seen.add(other.id);
+      hits.push({ node: other, edges: [e] });
+    }
+    return hits;
+  }
+  function anyHopTargets(from, step, adj) {
+    var _a5, _b, _c;
+    const limit = Math.min(MAX_HOPS, Math.max(1, (_a5 = step.hops) != null ? _a5 : 1));
+    const prev = /* @__PURE__ */ new Map();
+    const seen = /* @__PURE__ */ new Set([from.id]);
+    let frontier = [from.id];
+    const hits = [];
+    for (let depth = 0; depth < limit && frontier.length; depth++) {
+      const next = [];
+      for (const id of frontier) {
+        const touching = [...(_b = adj.out.get(id)) != null ? _b : [], ...(_c = adj.in.get(id)) != null ? _c : []];
+        for (const e of touching) {
+          if (e.negated) continue;
+          const otherId = e.src === id ? e.dst : e.src;
+          if (seen.has(otherId)) continue;
+          seen.add(otherId);
+          prev.set(otherId, { via: e, from: id });
+          next.push(otherId);
+          const other = adj.byId.get(otherId);
+          if (other && matchesNode(other, step.node)) {
+            hits.push({ node: other, edges: pathEdges(otherId, from.id, prev) });
+          }
+        }
+      }
+      frontier = next;
+    }
+    return hits;
+  }
+  function pathEdges(toId, rootId, prev) {
+    const edges2 = [];
+    let cursor = toId;
+    while (cursor !== rootId) {
+      const hop = prev.get(cursor);
+      if (!hop) break;
+      edges2.push(hop.via);
+      cursor = hop.from;
+    }
+    return edges2.reverse();
+  }
+  function solutions(q, node2, adj, scan) {
+    var _a5;
+    let acc = [{ slots: [node2], edges: [] }];
+    for (const step of (_a5 = q.steps) != null ? _a5 : []) {
+      const sub = solveStep(step, node2, adj, scan);
+      if (sub === null) return [];
+      acc = crossProduct(acc, sub, scan);
+      if (scan.truncated) return [];
+    }
+    return acc;
+  }
+  function crossProduct(left, right, scan) {
+    const out = [];
+    for (const a of left) {
+      for (const b of right) {
+        if (++scan.scanned > scan.max) {
+          scan.truncated = true;
+          return out;
+        }
+        out.push({ slots: a.slots.concat(b.slots), edges: a.edges.concat(b.edges) });
+      }
+    }
+    return out;
+  }
+  function nullSolution(width) {
+    return { slots: new Array(width).fill(null), edges: [] };
+  }
+  function solveStep(step, from, adj, scan) {
+    if (isGroup(step)) return solveGroup(step, from, adj, scan);
+    const targets = stepTargets(from, step, adj);
+    if (step.negate) {
+      return targets.length ? null : [{ slots: [], edges: [] }];
+    }
+    const out = [];
+    for (const t of targets) {
+      for (const sub of solutions(step.node, t.node, adj, scan)) {
+        out.push({ slots: sub.slots, edges: t.edges.concat(sub.edges) });
+      }
+      if (scan.truncated) break;
+    }
+    if (out.length) return out;
+    return step.optional ? [nullSolution(stepSlots(step, "").length)] : null;
+  }
+  function solveGroup(group, from, adj, scan) {
+    const widths = group.steps.map((s) => stepSlots(s, "").length);
+    if (group.op === "and") {
+      let acc = [{ slots: [], edges: [] }];
+      for (const child of group.steps) {
+        const sub = solveStep(child, from, adj, scan);
+        if (sub === null) {
+          return group.optional ? [nullSolution(total(widths))] : null;
+        }
+        acc = crossProduct(acc, sub, scan);
+        if (scan.truncated) return [];
+      }
+      return acc;
+    }
+    const bound = [];
+    const empty = [];
+    for (let i = 0; i < group.steps.length; i++) {
+      if (scan.truncated) break;
+      const sub = solveStep(group.steps[i], from, adj, scan);
+      if (sub === null) continue;
+      const before = total(widths.slice(0, i));
+      const after = total(widths.slice(i + 1));
+      for (const s of sub) {
+        const solution = {
+          slots: new Array(before).fill(null).concat(s.slots, new Array(after).fill(null)),
+          edges: s.edges
+        };
+        (s.slots.some((n) => n !== null) ? bound : empty).push(solution);
+      }
+    }
+    if (bound.length) return bound;
+    if (empty.length) return [empty[0]];
+    return group.optional ? [nullSolution(total(widths))] : null;
+  }
+  function total(ns) {
+    let sum = 0;
+    for (const n of ns) sum += n;
+    return sum;
+  }
+  function runQuery(doc, query, opts = {}) {
+    var _a5, _b;
+    const rowMax = (_a5 = opts.rowMax) != null ? _a5 : QUERY_ROW_MAX;
+    const scan = { scanned: 0, max: (_b = opts.scanMax) != null ? _b : QUERY_SCAN_MAX, truncated: false };
+    const adj = buildAdjacency(doc);
+    const groups = queryColumnGroups(query, opts.columns);
+    const shownMask = bindingSlots(query).map((slot) => slot.node.show !== false);
+    const groupFields = groups.map((g) => g.fields.map((f) => f.key));
+    const roots = doc.nodes.filter((n) => matchesNode(n, query)).sort((a, b) => {
+      var _a6, _b2;
+      return severityRank(a.severity) - severityRank(b.severity) || ((_a6 = b.aars) != null ? _a6 : -1) - ((_b2 = a.aars) != null ? _b2 : -1) || cmp(a.name, b.name);
+    });
+    const rows = [];
+    const nodeIds = /* @__PURE__ */ new Set();
+    const edgeIds = /* @__PURE__ */ new Set();
+    let total2 = 0;
+    for (const root of roots) {
+      for (const sol of solutions(query, root, adj, scan)) {
+        total2 += 1;
+        if (rows.length < rowMax) {
+          rows.push({ cells: toCells(sol.slots, shownMask, groupFields) });
+          for (const n of sol.slots) if (n) nodeIds.add(n.id);
+          for (const e of sol.edges) {
+            edgeIds.add(e.id);
+            nodeIds.add(e.src);
+            nodeIds.add(e.dst);
+          }
+        }
+      }
+      if (scan.truncated) break;
+    }
+    return {
+      rows,
+      groups,
+      total: total2,
+      capped: total2 > rows.length,
+      truncated: scan.truncated,
+      nodeIds: [...nodeIds],
+      edgeIds: [...edgeIds]
+    };
+  }
+  function toCells(slots, shownMask, groupFields) {
+    var _a5;
+    const cells = [];
+    for (let i = 0; i < slots.length; i++) {
+      if (!shownMask[i]) continue;
+      const node2 = slots[i];
+      const keys = (_a5 = groupFields[cells.length]) != null ? _a5 : [];
+      if (!node2) {
+        cells.push(null);
+        continue;
+      }
+      const fields = {};
+      for (const key of keys) fields[key] = fieldValue(node2, key);
+      cells.push({ id: node2.id, kind: node2.kind, name: node2.name, fields });
+    }
+    return cells;
   }
 
   // src/domain/graphEnrich.ts
@@ -5514,7 +6297,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "7f44f0678195" : "dev";
+  var BUILD_ID = true ? "64073435590a" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -5791,6 +6574,11 @@ var Server = (() => {
   function triBool2(v) {
     return v === true ? true : v === false ? false : null;
   }
+  function discoveryMethodList(v) {
+    if (typeof v === "string") return v.trim() ? [v.trim()] : [];
+    if (!Array.isArray(v)) return [];
+    return v.map((x) => String(x).trim()).filter(Boolean);
+  }
   function normalizeCloudResource(raw) {
     var _a5, _b;
     if (!raw || typeof raw !== "object") return null;
@@ -5822,6 +6610,14 @@ var Server = (() => {
     if (inactive === true || inactive === false) node2.inactive = inactive;
     const inactiveTimeframe = str3(f("inactiveTimeframe"));
     if (inactiveTimeframe) node2.inactiveTimeframe = inactiveTimeframe;
+    const displayName = str3(f("displayName"));
+    if (displayName) node2.displayName = displayName;
+    const email = str3(f("email"));
+    if (email) node2.email = email;
+    const publisher = str3(f("publisher"));
+    if (publisher) node2.publisher = publisher;
+    const methods = discoveryMethodList(f("discoveryMethods"));
+    if (methods.length) node2.discoveryMethods = methods;
     const exposureLevel = str3(f("exposureLevel"));
     if (exposureLevel) node2.exposureLevel = exposureLevel;
     const portValidation = str3(f("portValidation"));
@@ -6808,7 +7604,11 @@ var Server = (() => {
       portValidation: seed.portValidation,
       exposureEvidence: seed.exposureEvidence,
       inactive: seed.inactive,
-      inactiveTimeframe: seed.inactiveTimeframe
+      inactiveTimeframe: seed.inactiveTimeframe,
+      displayName: seed.displayName,
+      email: seed.email,
+      publisher: seed.publisher,
+      discoveryMethods: seed.discoveryMethods
     };
   }
   function edge(src, type, dst, accessType) {
@@ -6817,13 +7617,19 @@ var Server = (() => {
   var GCP_MANAGED = "aiplatform#ReasoningEngine";
   var GCP_HOSTED = "hostedAiAgent";
   function gcpAgent(seed) {
-    var _a5, _b, _c;
+    var _a5, _b, _c, _d;
+    const nativeType = (_a5 = seed.nativeType) != null ? _a5 : GCP_MANAGED;
     return {
       ...seed,
       kind: "AI_AGENT",
-      cloud: (_a5 = seed.cloud) != null ? _a5 : "GCP",
-      nativeType: (_b = seed.nativeType) != null ? _b : GCP_MANAGED,
-      techCats: (_c = seed.techCats) != null ? _c : ["AI Service"]
+      cloud: (_b = seed.cloud) != null ? _b : "GCP",
+      nativeType,
+      techCats: (_c = seed.techCats) != null ? _c : ["AI Service"],
+      // How Wiz found it, mirroring the tenant capture: a managed ReasoningEngine comes from the
+      // cloud API, a hosted agent from scanning the workload it runs in. `publisher` is
+      // deliberately NOT defaulted — it is null on most agents in that same capture, and the
+      // register has to render that honestly rather than showing a value for everything.
+      discoveryMethods: (_d = seed.discoveryMethods) != null ? _d : [nativeType === GCP_HOSTED ? "MethodWorkloadScanning" : "MethodCloudScanning"]
     };
   }
   var AGENTS = [
@@ -6835,7 +7641,11 @@ var Server = (() => {
       projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
       sensitiveAccess: true,
       highPriv: true,
-      guardrailMissing: true
+      guardrailMissing: true,
+      // Two of the fourteen carry a publisher, matching the shape of the real tenant, where the
+      // field is populated for a handful of hand-built agents and null for the rest. The dry run
+      // has to exercise BOTH paths or the "—" cell never gets looked at.
+      publisher: "Platform Engineering"
     }),
     gcpAgent({
       id: "agent-b",
@@ -7055,6 +7865,12 @@ var Server = (() => {
     "agent-k",
     "agent-l-support"
   ];
+  var SA_DISPLAY_NAMES = {
+    "agent-a": "Vertex AI Agent Service Account",
+    "agent-b": "Vertex AI Reasoning Agent Identity",
+    "agent-h-chatbot": "Support chatbot runtime identity",
+    "agent-l-support": "Support agent (read-only)"
+  };
   for (const agentId of GCP_AGENT_IDS) {
     const saId = `sa-${agentId}`;
     const highPriv = agentId !== "agent-l-support";
@@ -7062,6 +7878,8 @@ var Server = (() => {
       id: saId,
       kind: "SERVICE_ACCOUNT",
       name: `${saId}@iam.gserviceaccount.com`,
+      displayName: SA_DISPLAY_NAMES[agentId],
+      email: `${saId}@iam.gserviceaccount.com`,
       cloud: "GCP",
       highPriv,
       sensitiveAccess: !["agent-j", "agent-k", "agent-l-support"].includes(agentId),
@@ -8077,7 +8895,7 @@ var Server = (() => {
     }
   }
   function assetToRow(n) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y;
     return {
       id: n.id,
       kind: n.kind,
@@ -8124,11 +8942,15 @@ var Server = (() => {
       // read back as undefined. "Not reported" and "in use" are different answers.
       inactive: n.inactive === void 0 ? null : boolCell(n.inactive),
       inactive_timeframe: (_u = n.inactiveTimeframe) != null ? _u : null,
-      human_access_json: n.humanAccess ? JSON.stringify(n.humanAccess) : null
+      human_access_json: n.humanAccess ? JSON.stringify(n.humanAccess) : null,
+      display_name: (_v = n.displayName) != null ? _v : null,
+      email: (_w = n.email) != null ? _w : null,
+      publisher: (_x = n.publisher) != null ? _x : null,
+      discovery_methods: ((_y = n.discoveryMethods) != null ? _y : []).join(",")
     };
   }
   function rowToAsset(r) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w;
     const node2 = {
       id: String((_a5 = r["id"]) != null ? _a5 : ""),
       kind: String((_b = r["kind"]) != null ? _b : "AI_AGENT"),
@@ -8192,6 +9014,14 @@ var Server = (() => {
     if (inactiveTimeframe) node2.inactiveTimeframe = inactiveTimeframe;
     const humanAccess = parseJson(r["human_access_json"], null);
     if (humanAccess) node2.humanAccess = humanAccess;
+    const displayName = (_t = r["display_name"]) != null ? _t : null;
+    if (displayName) node2.displayName = displayName;
+    const email = (_u = r["email"]) != null ? _u : null;
+    if (email) node2.email = email;
+    const publisher = (_v = r["publisher"]) != null ? _v : null;
+    if (publisher) node2.publisher = publisher;
+    const methods = String((_w = r["discovery_methods"]) != null ? _w : "").split(",").filter(Boolean);
+    if (methods.length) node2.discoveryMethods = methods;
     return node2;
   }
   function edgeToRow(e) {
@@ -8595,11 +9425,11 @@ var Server = (() => {
     const { version: ruleVersion, rule } = getAarsRule2();
     const counted = withDataFindingCounts(rawDoc, dataFindings);
     const exposed = withExposureEvidence(counted);
-    const reachable = withHumanAccess(exposed, {
+    const reachable2 = withHumanAccess(exposed, {
       identityFindings: (_a5 = extras.identityFindings) != null ? _a5 : [],
       effectiveAccess: (_b = extras.effectiveAccess) != null ? _b : []
     });
-    const enriched = enrichGraphDoc(reachable, issues2, hints, rule);
+    const enriched = enrichGraphDoc(reachable2, issues2, hints, rule);
     const assetNodes = realNodes(enriched.nodes);
     const assetEdges = enriched.edges.filter((e) => e.type !== "HAS_ISSUE");
     overwrite(TABS.assets, assetNodes.map(assetToRow));
@@ -9114,6 +9944,21 @@ var Server = (() => {
         normalize: normalizeIdentityAccessPage,
         optional: true
       },
+      // AI-asset provenance: publisher + how Wiz discovered it. Optional and separate from
+      // INVENTORY_AI on purpose — see the note on Q_AI_PROPERTIES. Losing it costs two columns.
+      {
+        id: "AI_ASSET_PROPERTIES",
+        area: "aispm",
+        writes: ["ai_assets.publisher", "ai_assets.discovery_methods"],
+        run: "cloudResources",
+        query: Q_AI_PROPERTIES,
+        extraVariables: vars("AI_ASSET_PROPERTIES", aiPropertiesVariables(types)),
+        // The same normalizer the inventory step uses. Safe because mergeParts merges
+        // field-wise and skips undefined — this step's narrower rows fill in the two provenance
+        // fields without erasing the projects, tags or analytics INVENTORY_AI established.
+        normalize: normalizeInventoryPage,
+        optional: true
+      },
       // Agentic execution identities (cloudResourcesV2 + identityPurpose:AGENTIC).
       {
         id: "AGENTIC_IDENTITIES",
@@ -9129,6 +9974,7 @@ var Server = (() => {
   }
   var TYPE_DEPENDENT_STEPS = /* @__PURE__ */ new Set([
     "INVENTORY_AI",
+    "AI_ASSET_PROPERTIES",
     "HOST_EXPOSURE",
     "ENDPOINT_EXPOSURE",
     "IDENTITY_ACCESS",
@@ -9195,6 +10041,8 @@ var Server = (() => {
         return aiIssuesVariables(projectScope());
       case "CONFIG_FINDINGS":
         return aiConfigFindingsVariables(projectScope());
+      case "AI_ASSET_PROPERTIES":
+        return aiPropertiesVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types);
       case "AGENTIC_IDENTITIES":
         return aiPrincipalsVariables(projectScope());
       case "HOST_EXPOSURE":
@@ -9678,16 +10526,16 @@ var Server = (() => {
   }
   function identityHygieneKpis(assets) {
     var _a5;
-    const reachable = distinctHumanIdentities(assets);
-    if (!reachable.size) return { humanNoMfa: 0, humanDormant: 0 };
+    const reachable2 = distinctHumanIdentities(assets);
+    if (!reachable2.size) return { humanNoMfa: 0, humanDormant: 0 };
     const noMfa = /* @__PURE__ */ new Set();
     const dormant = /* @__PURE__ */ new Set();
-    for (const id of reachable) {
+    for (const id of reachable2) {
       if (((_a5 = byIdIn(assets, id)) == null ? void 0 : _a5.inactive) === true) dormant.add(id);
     }
     for (const finding of loadIdentityFindings()) {
       if (!isOpenGap(finding)) continue;
-      if (!reachable.has(finding.resourceId)) continue;
+      if (!reachable2.has(finding.resourceId)) continue;
       (finding.hygiene === "MFA" ? noMfa : dormant).add(finding.resourceId);
     }
     return { humanNoMfa: noMfa.size, humanDormant: dormant.size };
@@ -9755,6 +10603,92 @@ var Server = (() => {
         };
       });
     });
+  }
+  function getQueryVocabulary(p) {
+    const params = p != null ? p : {};
+    const raw = params["kind"];
+    const kind = typeof raw === "string" && (raw === "ANY" || NODE_KINDS.includes(raw)) ? raw : null;
+    return run(
+      () => cached("queryVocabulary", { kind }, () => {
+        const doc = loadGraphDoc();
+        if (!doc) {
+          return { empty: true, kinds: [], stepsFrom: {}, valuesFor: {}, fieldsFor: {}, shortcuts: [] };
+        }
+        const vocab = queryVocabulary(doc);
+        if (!kind) return vocab;
+        return {
+          ...vocab,
+          // ANY has no value lists: they are keyed by kind, and "every kind at once" would be a
+          // picker offering the union of things that do not co-occur. Its fields still come.
+          valuesFor: kind === "ANY" ? {} : { [kind]: fieldValuesFor(doc, kind) },
+          // What the palette's Properties tab lists, and the type that decides which control each
+          // field gets. Per-kind for the same reason the value lists are.
+          fieldsFor: {
+            [kind]: fieldsForKind(kind).map((f) => ({ key: f.key, label: f.label, type: f.type }))
+          }
+        };
+      })
+    );
+  }
+  function runGraphQuery(p) {
+    return run(() => {
+      var _a5;
+      const params = p != null ? p : {};
+      const query = validateQuery((_a5 = params["query"]) != null ? _a5 : DEFAULT_QUERY);
+      const columns = readColumnSelection(params["columns"]);
+      const view = resolveLayoutParams(params);
+      const maxNodes = clampInt(
+        params["maxNodes"],
+        getMaxNodes2(),
+        MAX_NODES_FLOOR,
+        MAX_NODES_CEILING
+      );
+      return cached("graphQuery", { query, columns, view, maxNodes }, () => {
+        const doc = loadGraphDoc();
+        if (!doc) return { empty: true };
+        const result = runQuery(doc, query, { columns });
+        const projection = inducedProjection(doc, result.nodeIds, result.edgeIds, maxNodes);
+        return {
+          rows: result.rows,
+          groups: result.groups,
+          total: result.total,
+          capped: result.capped,
+          truncated: result.truncated,
+          nodes: projection.nodes,
+          edges: projection.edges,
+          summaries: projection.summaries,
+          counts: projection.counts,
+          layout: layoutGraph(projection, view),
+          options: { maxNodes, layout: view.mode, groupBy: view.groupBy, sort: view.sort },
+          syncedAt: doc.syncedAt
+        };
+      });
+    });
+  }
+  function readColumnSelection(raw) {
+    if (!Array.isArray(raw)) return void 0;
+    return raw.map((entry) => Array.isArray(entry) ? entry.map((k) => String(k)) : null);
+  }
+  function inducedProjection(doc, nodeIds, edgeIds, maxNodes) {
+    const wantNodes = new Set(nodeIds);
+    const wantEdges = new Set(edgeIds);
+    const all = doc.nodes.filter((n) => wantNodes.has(n.id)).sort(nodeOrder);
+    const nodes = all.slice(0, maxNodes);
+    const admitted = new Set(nodes.map((n) => n.id));
+    const allEdges = doc.edges.filter((e) => wantEdges.has(e.id));
+    const edges2 = allEdges.filter((e) => admitted.has(e.src) && admitted.has(e.dst));
+    return {
+      nodes,
+      edges: edges2,
+      summaries: [],
+      counts: {
+        totalNodes: all.length,
+        shownNodes: nodes.length,
+        totalEdges: allEdges.length,
+        shownEdges: edges2.length,
+        capped: nodes.length < all.length
+      }
+    };
   }
   function assetRow(n) {
     var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G, _H, _I, _J;

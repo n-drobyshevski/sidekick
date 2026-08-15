@@ -111,6 +111,10 @@ export function assetToRow(n: GNode): Rec {
     inactive: n.inactive === undefined ? null : boolCell(n.inactive),
     inactive_timeframe: n.inactiveTimeframe ?? null,
     human_access_json: n.humanAccess ? JSON.stringify(n.humanAccess) : null,
+    display_name: n.displayName ?? null,
+    email: n.email ?? null,
+    publisher: n.publisher ?? null,
+    discovery_methods: (n.discoveryMethods ?? []).join(","),
   };
 }
 
@@ -185,6 +189,17 @@ export function rowToAsset(r: Rec): GNode {
   if (inactiveTimeframe) node.inactiveTimeframe = inactiveTimeframe;
   const humanAccess = parseJson<GNode["humanAccess"] | null>(r["human_access_json"], null);
   if (humanAccess) node.humanAccess = humanAccess;
+  // Set only when the cell holds something, like every other appended column: a ledger written
+  // before these headers existed reads back as undefined, and the register prints "—" rather
+  // than an empty-looking value that would read as "Wiz says there is no publisher".
+  const displayName = (r["display_name"] as string | null) ?? null;
+  if (displayName) node.displayName = displayName;
+  const email = (r["email"] as string | null) ?? null;
+  if (email) node.email = email;
+  const publisher = (r["publisher"] as string | null) ?? null;
+  if (publisher) node.publisher = publisher;
+  const methods = String(r["discovery_methods"] ?? "").split(",").filter(Boolean);
+  if (methods.length) node.discoveryMethods = methods;
   return node;
 }
 

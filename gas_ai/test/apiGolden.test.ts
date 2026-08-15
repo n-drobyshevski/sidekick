@@ -72,8 +72,8 @@ describe("dry-run sync", () => {
 });
 
 describe("read endpoints", () => {
-  for (const [name, params] of READ_APIS) {
-    it(`${name} answers the same shape`, () => {
+  for (const [name, params, label] of READ_APIS) {
+    it(`${label ?? name} answers the same shape`, () => {
       const fn = (server.api as unknown as Record<string, (p: unknown) => unknown>)[name];
       expect(fn, `api.${name} is missing`).toBeTypeOf("function");
       const res = fn(params) as { ok: boolean; error?: string };

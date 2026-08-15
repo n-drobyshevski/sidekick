@@ -91,6 +91,12 @@ export function dataTable(spec) {
     // columns and one keyboard path, and differ only in how they are dressed. Returning
     // nothing leaves the row exactly as it was.
     rowClass = null,
+    // Optional two-level header: `[{label, span, className}]`, one entry per group of
+    // adjacent columns, spans summing to columns.length. The Security Graph's path table needs
+    // it — its columns belong to different NODES of the query, and a flat header would present
+    // "Name" twice with nothing saying which is the agent and which the identity.
+    // Opt-in, so every existing caller renders byte-identically.
+    groups = null,
   } = spec;
 
   const headCells = new Map();
@@ -155,8 +161,21 @@ export function dataTable(spec) {
   paintSort(sort);
   paintRows(rows);
 
+  // `scope="colgroup"` is what makes the grouping real rather than visual: a screen reader
+  // announces "AI Agent, Name" for the cell instead of leaving the reader to infer the owner
+  // of the third "Name" column from its position.
+  const groupRow = groups && groups.length
+    ? el("tr", { class: "th-groups" }, ...groups.map((g) => el("th", {
+        scope: "colgroup",
+        colspan: String(g.span),
+        class: g.className || null,
+      }, g.label)))
+    : null;
+
   const wrap = el("div", { class: `table-wrap${className ? " " + className : ""}` },
-    el("table", { class: "data" }, el("thead", {}, headRow), tbody));
+    el("table", { class: "data" },
+      el("thead", {}, ...(groupRow ? [groupRow, headRow] : [headRow])),
+      tbody));
   wrap.setRows = paintRows;
   wrap.setSort = paintSort;
   return wrap;

@@ -75,10 +75,13 @@ export const SCAN_AREAS = [
   {
     id: "aispm",
     title: "AI-SPM Inventory",
-    query: "cloudResourcesV2 (INVENTORY_AI)",
+    query: "cloudResourcesV2 (INVENTORY_AI) + cloudResourcesV2 · graphEntity.properties " +
+      "(AI_ASSET_PROPERTIES)",
     what: "Discovers every AI asset across clouds — agents (managed and hosted), models, " +
       "guardrails, pipelines, datasets and MCP servers — with ownership, region and " +
-      "project context.",
+      "project context. A second, optional step re-reads the same assets for the two " +
+      "provenance fields that live in the graph entity's properties bag — who published " +
+      "the asset, and how Wiz found it.",
     lands: "inventory",
     figure: (ctx) => {
       if (!ctx.kpis) return null;

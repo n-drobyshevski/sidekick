@@ -61,9 +61,24 @@ export function teardownServer(): void {
  * rescoreAars, resetData) change state and are driven explicitly by the tests that want
  * them, not swept over.
  */
-export const READ_APIS: Array<[name: string, params: unknown]> = [
+export const READ_APIS: Array<[name: string, params: unknown, label?: string]> = [
   ["bootstrap", {}],
   ["getGraph", {}],
+  // Bare, then asked for one kind's value lists. The two shapes differ on purpose — every
+  // kind's lists together were 22 KB of a 28 KB payload, so `valuesFor` is filled only for
+  // the kind the palette is actually about, and the bare answer must stay empty of them.
+  ["getQueryVocabulary", {}, "getQueryVocabulary (bare)"],
+  ["getQueryVocabulary", { kind: "AI_AGENT" }, "getQueryVocabulary (values for AI Agent)"],
+  // The default lens, and then the screenshot's query. The second is the one that proves a row
+  // is a PATH rather than an entity, so the golden carries both shapes. They need distinct
+  // LABELS: the snapshot is keyed by test name, and two cases called `runGraphQuery` would
+  // write to one key and silently record only the last.
+  ["runGraphQuery", {}, "runGraphQuery (default lens)"],
+  [
+    "runGraphQuery",
+    { query: { kind: "AI_AGENT", steps: [{ edge: "RUNS_AS", node: { kind: "SERVICE_ACCOUNT" } }] } },
+    "runGraphQuery (agent runs as service account)",
+  ],
   ["getAssets", {}],
   ["getAssetOptions", {}],
   ["getIssues", {}],

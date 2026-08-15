@@ -198,6 +198,24 @@ export const ENTRIES = [
     link: { label: "Open the graph", route: "graph", params: {} },
   },
   {
+    id: "graph-query",
+    term: "The query builder",
+    aka: "FIND … THAT …",
+    family: "graph",
+    blurb:
+      "A query reads FIND <entity> THAT <relationship> <entity>, and each further step walks " +
+      "one more hop along the graph. In the table a ROW IS A PATH, not an asset: an agent " +
+      "bound to two service accounts is two rows carrying the same name, and every shown step " +
+      "adds a group of columns rather than a column. The eye keeps a step in the traversal " +
+      "but drops its columns, an optional step keeps rows that would otherwise be dropped " +
+      "with the group left empty, and NOT asserts the relationship is absent — which is how " +
+      "you ask for an agent with no guardrail. The pickers only offer relationships this " +
+      "tenant's graph actually holds, so a query that can match nothing is hard to build.",
+    drawnOn: ["graph"],
+    mark: () => el("span", { class: "pill neutral" }, "FIND"),
+    link: { label: "Open the graph", route: "graph", params: {} },
+  },
+  {
     id: "depth-budget",
     term: "Depth and node budget",
     aka: "what bounds a view",

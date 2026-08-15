@@ -15,6 +15,7 @@
 //   code.js      a monospace block, and copying out of a sandboxed iframe
 //   uiIcons.js   chrome glyphs (close, chevrons, grip) — icons.js does node kinds
 //   rail.js      one value drawn on the shared 0–100 axis, and edited on it
+//   popover.js   where a portaled popover sits, and the one contract for closing it
 //   portals.js   the open-portal count the sheet's focus trap defers to
 
 export { clear, downloadText, el, motionOk } from "./ui/dom.js";
@@ -34,6 +35,7 @@ export {
   closeActiveSheet, openSheet, sectionLabel, sheetRow, sheetSection,
 } from "./ui/sheet.js";
 export { filterCombobox } from "./ui/combobox.js";
+export { openPopover, popoverDismiss, positionPopover } from "./ui/popover.js";
 export { codeBlock, copyButton, copyText } from "./ui/code.js";
 export { uiIcon } from "./ui/uiIcons.js";
 export { pointRail, railScale } from "./ui/rail.js";

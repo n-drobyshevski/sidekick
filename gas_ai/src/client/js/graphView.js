@@ -7,8 +7,8 @@
 // dot + label chip. Kind = icon + text label.
 
 import { kindLabel, svgEl } from "./icons.js";
-import { dataTable, el, sevRank } from "./ui.js";
-import { NODE_H, NODE_W, drawNodeCard, nodeAriaLabel, truncate } from "./graphNode.js";
+import { el } from "./ui.js";
+import { NODE_H, NODE_W, drawNodeCard, truncate } from "./graphNode.js";
 
 /**
  * Render the projection into `container`. `data` is the getGraph payload
@@ -563,102 +563,4 @@ export function renderGraph(container, data, handlers = {}) {
      */
     destroy() { ro.disconnect(); },
   };
-}
-
-/**
- * Accessible fallback: the same projection as a sortable table (name, kind,
- * severity, AARS, toxic-combo membership, connection count). Column headers
- * toggle ascending/descending; severity sorts by rank, ties break on name.
- */
-export function graphTable(data, handlers = {}) {
-  const { nodes, edges } = data;
-  const sevOrder = (data.palette && data.palette.order) || [];
-  const rank = (s) => sevRank(s, sevOrder);
-  const degree = new Map();
-  for (const e of edges) {
-    degree.set(e.src, (degree.get(e.src) || 0) + 1);
-    degree.set(e.dst, (degree.get(e.dst) || 0) + 1);
-  }
-  const rows = nodes
-    .filter((n) => n.kind !== "SUMMARY")
-    .map((n) => ({
-      node: n,
-      degree: degree.get(n.id) || 0,
-    }));
-
-  // dir: 1 = the column's natural first-click order (worst severity / highest
-  // score first, names A-first); -1 flips it. `desc: true` marks columns whose
-  // natural order reads as descending (for aria-sort and the glyph).
-  const COLS = [
-    { key: "name", label: "Name", value: (r) => r.node.name, cell: (r) => r.node.name },
-    { key: "kind", label: "Kind", value: (r) => kindLabel(r.node.kind),
-      cell: (r) => kindLabel(r.node.kind) },
-    { key: "severity", label: "Severity", value: (r) => rank(r.node.severity), desc: true,
-      cell: (r) => r.node.severity || "—" },
-    { key: "aars", label: "AARS", value: (r) => -(r.node.aars ?? -1), desc: true,
-      className: "num",
-      cell: (r) => (r.node.aars !== undefined && r.node.aars !== null
-        ? `${r.node.aars} ${r.node.aarsSeverity || ""}` : "—") },
-    { key: "combo", label: "Toxic combo", value: (r) => ((r.node.comboGroups || []).length ? 0 : 1),
-      cell: (r) => ((r.node.comboGroups || []).length ? "TC member" : "—") },
-    { key: "guardrail", label: "Guardrail", value: (r) => (r.node.guardrailMissing ? 0 : 1),
-      cell: (r) => (r.node.guardrailMissing ? "missing" : "—") },
-    // The count lives on the DATASTORE row as well as on the aggregate, which is what makes
-    // it survive here: an aggregate that the projection collapsed, or a store whose
-    // findings the node budget never admitted, still reports its number in the fallback the
-    // keyboard path uses.
-    { key: "datafindings", label: "Data findings", desc: true, className: "num",
-      value: (r) => -(r.node.dataFindingCount ?? r.node.summaryCount ?? -1),
-      cell: (r) => {
-        const n = r.node.kind === "DATA_FINDING" ? r.node.summaryCount : r.node.dataFindingCount;
-        return n ? String(n) : "—";
-      } },
-    { key: "degree", label: "Connections", value: (r) => -r.degree, desc: true,
-      className: "num", cell: (r) => String(r.degree) },
-  ];
-  let sortKey = null;
-  let sortDir = 1;
-
-  function paintRows() {
-    let list = rows;
-    if (sortKey) {
-      const col = COLS.find((c) => c.key === sortKey);
-      list = [...rows].sort((a, b) => {
-        const va = col.value(a);
-        const vb = col.value(b);
-        const d = (va < vb ? -1 : va > vb ? 1 : 0) * sortDir;
-        if (d !== 0) return d;
-        return a.node.name < b.node.name ? -1 : a.node.name > b.node.name ? 1 : 0;
-      });
-    }
-    // Repaint in place rather than rebuilding: the header button that was just pressed has
-    // to keep keyboard focus, so the table is built once and only its rows and sort marks
-    // are refreshed.
-    table.setRows(list);
-    if (!sortKey) {
-      table.setSort(null);
-      return;
-    }
-    const col = COLS.find((c) => c.key === sortKey);
-    table.setSort({ key: sortKey, descending: col.desc ? sortDir === 1 : sortDir === -1 });
-  }
-
-  const table = dataTable({
-    columns: COLS.map((c) => ({
-      key: c.key, label: c.label, sortable: true, cell: c.cell, className: c.className,
-    })),
-    rows: [],
-    onSort: (key) => {
-      if (sortKey === key) sortDir = -sortDir;
-      else {
-        sortKey = key;
-        sortDir = 1;
-      }
-      paintRows();
-    },
-    onRowOpen: (r) => handlers.onNodeOpen && handlers.onNodeOpen(r.node),
-    rowLabel: (r) => nodeAriaLabel(r.node),
-  });
-  paintRows();
-  return table;
 }

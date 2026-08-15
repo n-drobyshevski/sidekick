@@ -43,10 +43,46 @@ const PATHS = {
     "M4.6 10.9 L7.4 6.1",
     "M8.7 6.1 L11.3 9.9",
   ],
+  // The Security Graph's query builder. `plus` adds a relationship or a filter; the two eyes
+  // are the show/hide toggle on a node's column group; `table` and `columns` dress the VIEW
+  // control and the column chooser beside it.
+  plus: ["M8 3.5 V12.5", "M3.5 8 H12.5"],
+  eye: [
+    "M1.8 8 C3.6 4.8 5.7 3.2 8 3.2 C10.3 3.2 12.4 4.8 14.2 8 " +
+      "C12.4 11.2 10.3 12.8 8 12.8 C5.7 12.8 3.6 11.2 1.8 8 Z",
+    "M8 6.2 a1.8 1.8 0 1 0 0 3.6 a1.8 1.8 0 0 0 0 -3.6",
+  ],
+  // Hidden is not the same glyph dimmed: colour and opacity are not signals on their own, so
+  // the struck-through eye carries the state in its shape.
+  "eye-off": [
+    "M3.1 5.4 C2.6 6.1 2.1 7 1.8 8 C3.6 11.2 5.7 12.8 8 12.8 C9 12.8 9.9 12.6 10.8 12.1",
+    "M13.2 10.4 C13.6 9.7 13.9 8.9 14.2 8 C12.4 4.8 10.3 3.2 8 3.2 C7.5 3.2 7 3.3 6.5 3.4",
+    "M2.5 2.5 L13.5 13.5",
+  ],
+  table: ["M2.5 3.5 h11 v9 h-11 z", "M2.5 6.5 H13.5", "M6.5 6.5 V12.5"],
+  columns: ["M2.5 3.5 h11 v9 h-11 z", "M6.5 3.5 V12.5", "M10.5 3.5 V12.5"],
+  // The `+` palette. `search` heads its field; `property` marks a filterable field in the list
+  // and `check` a choice already made; `not` is the negation operator — a slashed circle, the
+  // one shape that reads as "absent" rather than as "wrong".
+  search: ["M7.2 2.7 a4.5 4.5 0 1 0 0 9 a4.5 4.5 0 0 0 0 -9", "M10.6 10.6 L13.5 13.5"],
+  // A funnel — what a query shortcut and a property filter both do to a result set.
+  filter: ["M2.5 3.5 H13.5 L9.5 8.2 V13 L6.5 11.4 V8.2 Z"],
+  property: ["M2.5 4 H13.5", "M4.5 8 H11.5", "M6.5 12 H9.5"],
+  check: ["M3 8.4 L6.4 11.8 L13 5.2"],
+  not: ["M8 2.2 a5.8 5.8 0 1 0 0 11.6 a5.8 5.8 0 0 0 0 -11.6", "M4 12 L12 4"],
+  // A boolean block: one path arriving, two leaving. A fork is the shape of a choice, which is
+  // what both OR and AND insert — the keyword beside it says which.
+  branch: ["M8 13.5 V8", "M8 8 L3.8 3.5", "M8 8 L12.2 3.5"],
 };
 
 // Same fallback posture as kindIcon(): an unknown name reads as "more" rather than throwing.
+// Deliberate — a typo must not blank a page — and precisely why a typo is otherwise invisible.
+// `UI_ICON_NAMES` is what test/icons.test.js holds every `uiIcon("…")` in the client against,
+// so a name nothing draws fails the build instead of rendering an empty square.
 const FALLBACK = ["M8 8 h0.01"];
+
+/** Every glyph this set draws. */
+export const UI_ICON_NAMES = Object.keys(PATHS);
 
 /** A standalone 16x16 stroke <svg> for UI chrome (buttons, actions) — decorative only;
  * the caller supplies the accessible name (button aria-label/title), not this icon. */

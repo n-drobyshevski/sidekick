@@ -278,8 +278,34 @@ export interface GNode {
   projects?: Array<{ id: string; name: string; businessImpact?: string }>;
   tags?: Array<{ key: string; value: string }>;
   technologyCategories?: string[]; // Wiz technology.categories[].name (e.g. "AI Service")
+  /**
+   * Who published the AI asset, and how Wiz found it — both out of the properties bag, both
+   * on AI assets rather than identities.
+   *
+   * `publisher` is frequently null in the real tenant (14 of the 20 agents in
+   * exemples/get_ai_agents_reponse.js carry no publisher at all), so absent means "Wiz did not
+   * report one", never "unpublished". `discoveryMethods` takes `MethodCloudScanning` or
+   * `MethodWorkloadScanning` in that same capture; it is a list because the field is plural in
+   * Wiz's schema even where the tenant only ever sends one.
+   *
+   * These reach the ledger from their own OPTIONAL sync step. The mandatory inventory query
+   * cannot carry them: `properties` is an opaque map that cannot be sub-selected, so asking for
+   * it there would drag in `snippet` — verbatim agent source code, and most of the 396 KB that
+   * capture weighs — and would put the one step the whole app depends on at risk of rejection.
+   */
+  publisher?: string;
+  discoveryMethods?: string[];
   // Agentic-identity enrichment (cloudResourcesV2 + identityPurpose:AGENTIC):
   identityPurpose?: string; // "AGENTIC" for agent execution identities
+  /**
+   * Identity rows only, both from the properties bag the agentic-identities step already asks
+   * for. `displayName` is the human title an operator gave the account ("Vertex AI Agent
+   * Service Account"); `name` is the resource path, which is the machine's answer to the same
+   * question and unreadable in a table cell. Neither is derived from the other — a tenant that
+   * left the display name blank gets an absent field, not a guess at one.
+   */
+  displayName?: string;
+  email?: string;
   /**
    * Identity rows only. `inactiveInLast90Days` / `inactiveTimeframe` out of the properties
    * bag — Wiz's own dormancy read, from cloud audit events.

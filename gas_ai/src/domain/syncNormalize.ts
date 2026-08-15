@@ -62,6 +62,17 @@ function triBool(v: unknown): boolean | null {
  * as a skip. Q_AGENT_SENSITIVE_DATA_ACCESS marks HAS_DATA_FINDING optional, so any
  * classified store with no data finding reaches here.
  */
+/**
+ * `discoveryMethods` arrives as a bare string in every captured payload
+ * (`"MethodCloudScanning"`), but the field is plural and a resource found two ways would
+ * presumably say so. Accept both rather than storing `["M","e","t"…]` the day it changes.
+ */
+function discoveryMethodList(v: unknown): string[] {
+  if (typeof v === "string") return v.trim() ? [v.trim()] : [];
+  if (!Array.isArray(v)) return [];
+  return v.map((x) => String(x).trim()).filter(Boolean);
+}
+
 export function normalizeCloudResource(raw: Rec): GNode | null {
   if (!raw || typeof raw !== "object") return null;
   const id = str(raw["id"]);
@@ -105,6 +116,22 @@ export function normalizeCloudResource(raw: Rec): GNode | null {
   if (inactive === true || inactive === false) node.inactive = inactive;
   const inactiveTimeframe = str(f("inactiveTimeframe"));
   if (inactiveTimeframe) node.inactiveTimeframe = inactiveTimeframe;
+  // The human title an operator gave the account, and its address. Identity rows in practice,
+  // but read unconditionally through `f` for the same reason everything else here is: the
+  // field is in the properties bag, and which ROOT delivered the row is not this function's
+  // business. Both are frequently absent, and absent stays absent — the register prints the
+  // resource path rather than inventing a friendly name for it.
+  const displayName = str(f("displayName"));
+  if (displayName) node.displayName = displayName;
+  const email = str(f("email"));
+  if (email) node.email = email;
+  // AI assets. `publisher` is null on most agents in the tenant capture, so its absence is a
+  // fact about Wiz's answer rather than about the agent. `discoveryMethods` is plural in the
+  // schema and singular in every observed payload, so read either shape.
+  const publisher = str(f("publisher"));
+  if (publisher) node.publisher = publisher;
+  const methods = discoveryMethodList(f("discoveryMethods"));
+  if (methods.length) node.discoveryMethods = methods;
   // ENDPOINT entities only (aliased to exposureLevel_name / portValidationResult in
   // graphTypes.PROPERTY_ALIASES). Set only when present, so every other kind's row stays
   // exactly as it was — and read from the payload rather than inferred from which query
