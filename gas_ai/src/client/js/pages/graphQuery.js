@@ -148,7 +148,8 @@ export function serializeQuery(node) {
   return out;
 }
 
-function serializeStep(step) {
+/** One step as DSL text. Exported so the palette can PRINT what a pick will insert. */
+export function serializeStep(step) {
   if (isGroup(step)) {
     return (step.optional ? "*" : "") + step.op.toUpperCase()
       + "(" + step.steps.map(serializeStep).join(SEP_SIBLING) + ")";

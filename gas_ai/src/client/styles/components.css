@@ -309,6 +309,19 @@
 .combobox-trigger:hover { background: #f1f1f4; }
 .combobox-trigger-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .combobox-caret { font-size: 0.7rem; color: var(--text-3); flex: 0 0 auto; }
+/* The generic portaled popover — openPopover's own surface, which callers dress from the
+   inside. Same ground, radius and shadow as the combobox's list, because they are the same
+   kind of thing floating over the same page; only the padding differs, since a palette owns
+   its own panes right to the edge. */
+.popover {
+  position: fixed; z-index: var(--z-popover);
+  background: var(--page); color: var(--ink);
+  border: 1px solid var(--hairline); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sheet);
+  font-family: var(--font);
+  overflow: hidden;
+}
+
 .combobox-pop {
   position: fixed; z-index: var(--z-popover);
   display: flex; flex-direction: column; gap: 6px;

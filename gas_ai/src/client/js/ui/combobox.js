@@ -1,6 +1,7 @@
 // The searchable combobox: a trigger plus a listbox popover portaled to <body>.
 
 import { clear, el } from "./dom.js";
+import { popoverDismiss, positionPopover } from "./popover.js";
 import { portalClosed, portalOpened } from "./portals.js";
 import { debounce } from "./timing.js";
 
@@ -144,6 +145,7 @@ export function filterCombobox({
 
   let open = false;
   let pop = null;
+  let release = null;   // the open popover's listener teardown
   let searchEl = null;
   let listEl = null;
   let query = "";
@@ -275,28 +277,13 @@ export function filterCombobox({
     if (onChange) onChange(current);
   }
 
-  // Positioned against the live trigger rect, opening downward (these triggers sit at the
-  // top of a panel, not at the bottom of a rail), clamped to the viewport, with the list's
-  // max-height capped to the room actually below so the LIST scrolls rather than the
-  // popover running off screen.
+  // Width comes from the trigger (floored at 240px) so the list lines up under the control it
+  // belongs to; the room left below caps the LIST's height, so the list scrolls rather than the
+  // popover running off screen. Both are `positionPopover`'s defaults — see ui/popover.js.
   function position() {
-    const rect = trigger.getBoundingClientRect();
-    const popWidth = Math.min(Math.max(rect.width, 240), window.innerWidth - 16);
-    const left = Math.max(8, Math.min(rect.left, window.innerWidth - popWidth - 8));
-    const below = window.innerHeight - rect.bottom - 16;
-    const above = rect.top - 16;
-    const flip = below < 200 && above > below;
-    pop.style.width = `${popWidth}px`;
-    pop.style.left = `${left}px`;
-    if (flip) {
-      pop.style.top = "";
-      pop.style.bottom = `${window.innerHeight - rect.top + 6}px`;
-      listEl.style.maxHeight = `${Math.min(320, Math.max(120, above))}px`;
-    } else {
-      pop.style.bottom = "";
-      pop.style.top = `${rect.bottom + 6}px`;
-      listEl.style.maxHeight = `${Math.min(320, Math.max(120, below))}px`;
-    }
+    positionPopover(pop, trigger, {
+      onRoom: (room) => { listEl.style.maxHeight = room + "px"; },
+    });
   }
 
   const onSearchInput = debounce(() => {
@@ -353,16 +340,18 @@ export function filterCombobox({
     buildRows();
     position();
 
-    // pointerdown as well as click: the graph canvas takes a pointer capture to pan
-    // (graphView.js), so a pan that ends outside the window never delivers the click that
-    // would otherwise dismiss this.
-    document.addEventListener("pointerdown", onDocPointer, true);
-    document.addEventListener("click", onDocClick, true);
-    document.addEventListener("keydown", onKey, true);
-    window.addEventListener("scroll", onScrollOrResize, true);
-    window.addEventListener("resize", onScrollOrResize);
-    wrap.addEventListener("focusout", onFocusOut);
-    pop.addEventListener("focusout", onFocusOut);
+    // Outside click, Escape, focus leaving, scroll and resize — the shared contract, so this
+    // control and the query palette cannot drift apart on what "dismissed" means.
+    release = popoverDismiss({
+      pop,
+      anchor: trigger,
+      isInside,
+      close,
+      onEscape,
+      onFocusOut,
+      onReposition: position,
+      hosts: [wrap, pop],
+    });
 
     if (editable) editInput.focus();
     else if (searchEl) searchEl.focus();
@@ -376,45 +365,25 @@ export function filterCombobox({
     onTypeInput.cancel();
     (editable ? editInput : trigger).setAttribute("aria-expanded", "false");
     if (editable) editInput.removeAttribute("aria-activedescendant");
-    document.removeEventListener("pointerdown", onDocPointer, true);
-    document.removeEventListener("click", onDocClick, true);
-    document.removeEventListener("keydown", onKey, true);
-    window.removeEventListener("scroll", onScrollOrResize, true);
-    window.removeEventListener("resize", onScrollOrResize);
-    wrap.removeEventListener("focusout", onFocusOut);
-    if (pop) { pop.removeEventListener("focusout", onFocusOut); pop.remove(); }
+    if (release) { release(); release = null; }
+    if (pop) pop.remove();
     portalClosed();
     pop = null; searchEl = null; listEl = null; rows = [];
   }
 
   function isInside(node) { return node && (wrap.contains(node) || (pop && pop.contains(node))); }
-  function onDocPointer(e) { if (!isInside(e.target)) close(); }
-  function onDocClick(e) { if (!isInside(e.target)) close(); }
-  function onFocusOut(e) {
-    if (isInside(e.relatedTarget)) return;
+  function onFocusOut() {
     close();
     // Leaving the field IS a way of finishing what you typed. Committing here is what
     // makes tabbing out of a half-entered code do the obvious thing rather than lose it.
     if (editable) commitTyped();
   }
-  function onKey(e) {
-    if (e.key !== "Escape") return;
-    e.stopPropagation();
+  function onEscape() {
     close();
     // Escape dismisses the LIST. It deliberately does not revert the field: someone who
     // typed SUB-082 and pressed Escape to get the popover out of the way has not asked to
     // lose what they typed.
     (editable ? editInput : trigger).focus();
-  }
-
-  // Reposition rather than close. The panel this lives in scrolls, so closing on scroll
-  // would dismiss the popover the moment someone scrolled down to reach its list. Only a
-  // trigger that has left the viewport entirely closes.
-  function onScrollOrResize(e) {
-    if (e && e.target && pop && pop.contains(e.target)) return; // the list's own scrolling
-    const rect = trigger.getBoundingClientRect();
-    if (rect.bottom < 0 || rect.top > window.innerHeight) close();
-    else position();
   }
 
   function onListKey(e) {

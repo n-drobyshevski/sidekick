@@ -186,6 +186,168 @@
 .gq-row.is-group { border-left: 2px solid var(--hairline); }
 .gq-group-note { margin-left: 2px; }
 
+/* ------------------------------------------------------------------------- the + palette */
+/* Three panes: the category rail, the listbox, and the detail pane that explains whatever the
+   list has focused. Portaled onto <body> by openPopover, so it sits above the sheet and the
+   canvas alike and nothing that scrolls can clip it.
+
+   The rail borrows the record sheet's VISUAL recipe (2px accent bar, tabular count, no tinted
+   fill carrying state on its own) without its tablist ARIA — see openQueryPalette for why a
+   tablist cannot own a combobox's listbox. */
+
+.gq-pal { display: flex; flex-direction: column; min-height: 0; }
+.gq-pal-head {
+  padding: 8px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--surface);
+}
+/* A real bordered field rather than a bare line across the bar. The palette autofocuses this
+   on open, so whatever carries the focus ring is lit from the first frame — on the bar that
+   read as a full-width alert box; on a field it reads as "ready to type", which is what it is. */
+.gq-pal-field {
+  display: flex; align-items: center; gap: 7px;
+  padding: 4px 9px;
+  border-radius: var(--radius-md);
+  background: var(--track-bg);
+}
+/* The app's one focus recipe (base.css: 2px accent outline, 2px offset), moved onto the
+   wrapper — the input inside has `outline: none` so exactly one ring is drawn, and it is the
+   same ring every other focused control on the page draws. */
+.gq-pal-field:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.gq-pal-search-icon { display: inline-flex; color: var(--text-3); flex: 0 0 auto; }
+.gq-pal-search {
+  flex: 1 1 auto; min-width: 0;
+  border: none; background: none; box-shadow: none; outline: none;
+  min-height: 24px; padding: 0;
+  font-size: 14px; color: var(--ink);
+}
+.gq-pal-search::placeholder { color: var(--text-3); }
+
+.gq-pal-panes { display: flex; min-height: 0; align-items: stretch; }
+
+/* -- rail */
+.gq-pal-rail {
+  flex: 0 0 168px; width: 168px;
+  padding: 8px 6px; overflow-y: auto; overscroll-behavior: contain;
+  border-right: 1px solid var(--hairline);
+  background: var(--surface);
+}
+.gq-pal-rail-item {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  min-height: 30px; padding: 5px 8px; margin: 1px 0;
+  font-size: 13px; text-align: left;
+  background: none; border: none; box-shadow: none; border-radius: var(--radius-md);
+  color: var(--text-2);
+}
+.gq-pal-rail-item:hover { background: var(--wash-hover); border-color: transparent; color: var(--ink); }
+.gq-pal-rail-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.gq-pal-rail-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gq-pal-rail-count { flex: 0 0 auto; font-size: 11px; font-variant-numeric: tabular-nums; color: var(--text-3); }
+.gq-pal-rail-item.is-active {
+  position: relative; color: var(--ink); font-weight: 600;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.gq-pal-rail-item.is-active::before {
+  content: ""; position: absolute; left: 0; top: 5px; bottom: 5px; width: 2px;
+  border-radius: var(--radius-pill); background: var(--accent);
+}
+.gq-pal-rail-item.is-active .gq-pal-rail-count { color: var(--accent-hover); font-weight: 600; }
+
+/* -- list */
+.gq-pal-list {
+  flex: 1 1 auto; min-width: 0;
+  margin: 0; padding: 6px; list-style: none;
+  overflow-y: auto; overscroll-behavior: contain;
+}
+.gq-pal-section {
+  padding: 8px 8px 4px;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--text-3);
+}
+.gq-pal-option {
+  display: flex; align-items: center; gap: 9px;
+  padding: 6px 8px; border-radius: var(--radius-md);
+  cursor: pointer;
+}
+/* The active row is what Enter will insert, so it is marked by a ring as well as a wash —
+   a wash alone is a colour-only cue, and this row is the one the keyboard is standing on. */
+.gq-pal-option.is-active {
+  background: var(--wash-hover);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.gq-pal-glyph-wrap {
+  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; border-radius: var(--radius-sm);
+  background: var(--track-bg); color: var(--text-2);
+}
+.gq-pal-option[data-category="asset"] .gq-pal-glyph-wrap { background: var(--cat-asset-tint); color: var(--cat-asset-ink); stroke: var(--cat-asset-ink); }
+.gq-pal-option[data-category="data"] .gq-pal-glyph-wrap { background: var(--cat-data-tint); color: var(--cat-data-ink); stroke: var(--cat-data-ink); }
+.gq-pal-option[data-category="iam"] .gq-pal-glyph-wrap { background: var(--cat-iam-tint); color: var(--cat-iam-ink); stroke: var(--cat-iam-ink); }
+.gq-pal-option[data-category="vuln"] .gq-pal-glyph-wrap { background: var(--cat-vuln-tint); color: var(--cat-vuln-ink); stroke: var(--cat-vuln-ink); }
+.gq-pal-option[data-category="exposure"] .gq-pal-glyph-wrap { background: var(--cat-exposure-tint); color: var(--cat-exposure-ink); stroke: var(--cat-exposure-ink); }
+.gq-pal-option-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.gq-pal-option-label {
+  font-size: 13px; font-weight: 600; color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.gq-pal-option-sub {
+  font-size: 12px; color: var(--text-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* The edge count: how many such relationships this tenant actually holds, so a reader can tell
+   a well-travelled relationship from one with a single instance before picking it. */
+.gq-pal-option-count {
+  flex: 0 0 auto; font-size: 12px; color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.gq-pal-empty { padding: 14px 10px; font-size: 13px; color: var(--text-3); }
+
+/* -- detail */
+.gq-pal-detail {
+  flex: 0 0 232px; width: 232px;
+  padding: 12px 14px; overflow-y: auto; overscroll-behavior: contain;
+  border-left: 1px solid var(--hairline);
+  background: var(--surface);
+}
+.gq-pal-detail-title { margin: 0 0 2px; font-size: 14px; font-weight: 650; color: var(--ink); }
+.gq-pal-detail-type {
+  margin: 0 0 8px;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--text-3);
+}
+.gq-pal-detail-blurb { margin: 0; font-size: 12px; line-height: 1.5; color: var(--text-2); }
+/* The literal expansion. Prose says what a pick means; this says what it DOES — the same
+   fragment that ends up in the shareable link, built by the real serializer. */
+.gq-pal-detail-lit {
+  margin-top: 10px; padding-top: 10px;
+  border-top: 1px solid var(--hairline);
+  display: flex; flex-direction: column; gap: 4px;
+}
+.gq-pal-detail-lit code {
+  font-size: 11px; word-break: break-all;
+  color: var(--ink); background: var(--track-bg);
+  padding: 4px 6px; border-radius: var(--radius-sm);
+}
+
+/* Below the breakpoint the palette is hosted in a modal sheet, where it is one column: the
+   rail becomes a wrapping row of filters and the detail pane follows the list. */
+@media (max-width: 800px) {
+  .gq-pal-panes { flex-direction: column; height: auto !important; }
+  .gq-pal-rail {
+    flex: 0 0 auto; width: auto;
+    display: flex; flex-wrap: wrap; gap: 4px;
+    border-right: none; border-bottom: 1px solid var(--hairline);
+  }
+  .gq-pal-rail-item { width: auto; }
+  .gq-pal-rail-item.is-active::before { display: none; }
+  .gq-pal-rail-item.is-active { box-shadow: inset 0 0 0 1px var(--accent); }
+  .gq-pal-list { max-height: 40vh; }
+  .gq-pal-detail {
+    flex: 0 0 auto; width: auto;
+    border-left: none; border-top: 1px solid var(--hairline);
+  }
+}
+
 /* An OR branch's column group. The rule between alternatives is solid where the rule between
    sequential groups is a hairline, and the word carries the meaning — a border alone would be
    a colour-free but still purely visual cue, which is no better. */

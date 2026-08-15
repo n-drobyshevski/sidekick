@@ -12,7 +12,7 @@
 // every route a real page, every `term` a real entry. Renaming any of those becomes a
 // build failure here instead of a rotting page nobody reads.
 
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -58,19 +58,30 @@ function namedKinds() {
   return [...HELP_CONTENT_JS.matchAll(/kind(?:Mark|IconSvg)\("([A-Z0-9_]+)"/g)].map((m) => m[1]);
 }
 
-/** Every `term: "x"` a helpTip call site or a figure callout points at. */
+/**
+ * Every entry id a page points at — `term: "x"` on a helpTip or a figure callout, and
+ * `findEntry("x")` where a page reads the book directly (the query palette's detail pane).
+ *
+ * EVERY page is read, not a hand-kept list of them. The list this replaces named six files and
+ * had not grown since; a seventh page could point at a term that did not exist and the coverage
+ * assertion would pass by simply never looking. Reading the directory means a new page is
+ * covered by existing there.
+ */
 function namedTerms() {
-  const files = [
-    "src/client/js/pages/graph.js",
-    "src/client/js/pages/aars.js",
-    "src/client/js/pages/inventory.js",
-    "src/client/js/pages/combos.js",
-    "src/client/js/pages/scans.js",
-    "src/client/js/pages/help.js",
-  ];
+  const dir = join(root, "src/client/js/pages");
   const terms = new Set();
-  for (const f of files) {
-    for (const m of read(f).matchAll(/\bterm: "([a-z0-9-]+)"/g)) terms.add(m[1]);
+  for (const name of readdirSync(dir)) {
+    if (!name.endsWith(".js")) continue;
+    const src = readFileSync(join(dir, name), "utf8");
+    for (const m of src.matchAll(/\bterm: "([a-z0-9-]+)"/g)) terms.add(m[1]);
+    for (const m of src.matchAll(/\bfindEntry\("([a-z0-9-]+)"\)/g)) terms.add(m[1]);
+    // `findEntry(MAP[key])` — the id lives in a lookup object beside the call, so the values of
+    // any `*: "kebab-id",` line in the file are checked too. Over-broad by design: a false
+    // positive here is a term someone has to add to the book, which is the right direction to
+    // fail in for an anti-rot spec.
+    if (src.includes("findEntry(")) {
+      for (const m of src.matchAll(/^\s{2}[A-Z0-9_]+: "([a-z0-9-]+)",$/gm)) terms.add(m[1]);
+    }
   }
   return [...terms];
 }

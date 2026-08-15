@@ -61,6 +61,16 @@ const PATHS = {
   ],
   table: ["M2.5 3.5 h11 v9 h-11 z", "M2.5 6.5 H13.5", "M6.5 6.5 V12.5"],
   columns: ["M2.5 3.5 h11 v9 h-11 z", "M6.5 3.5 V12.5", "M10.5 3.5 V12.5"],
+  // The `+` palette. `search` heads its field; `property` marks a filterable field in the list
+  // and `check` a choice already made; `not` is the negation operator — a slashed circle, the
+  // one shape that reads as "absent" rather than as "wrong".
+  search: ["M7.2 2.7 a4.5 4.5 0 1 0 0 9 a4.5 4.5 0 0 0 0 -9", "M10.6 10.6 L13.5 13.5"],
+  property: ["M2.5 4 H13.5", "M4.5 8 H11.5", "M6.5 12 H9.5"],
+  check: ["M3 8.4 L6.4 11.8 L13 5.2"],
+  not: ["M8 2.2 a5.8 5.8 0 1 0 0 11.6 a5.8 5.8 0 0 0 0 -11.6", "M4 12 L12 4"],
+  // A boolean block: one path arriving, two leaving. A fork is the shape of a choice, which is
+  // what both OR and AND insert — the keyword beside it says which.
+  branch: ["M8 13.5 V8", "M8 8 L3.8 3.5", "M8 8 L12.2 3.5"],
 };
 
 // Same fallback posture as kindIcon(): an unknown name reads as "more" rather than throwing.

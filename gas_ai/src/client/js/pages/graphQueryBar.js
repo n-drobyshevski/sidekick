@@ -18,16 +18,16 @@ import { el, filterCombobox, uiIcon } from "../ui.js";
 import { categoryOf, edgeLabel, kindIconSvg, kindLabel } from "../icons.js";
 import {
   addStep,
+  isGroup,
   nodeAt,
   queryRows,
   removeStep,
   setEdge,
   setHidden,
   setKind,
+  stepAt,
 } from "./graphQuery.js";
-
-/** Relationships offered when the tenant's graph has nothing to say about a kind. */
-const ANY_STEP = { edge: "ANY", reverse: false, hops: 1 };
+import { openQueryPalette, stepForPick } from "./queryPalette.js";
 
 /**
  * @param {object} opts {getQuery, getVocab, onChange(nextQuery), countNode}
@@ -41,9 +41,61 @@ export function queryBar(opts) {
   });
   const root = el("div", { class: "gq" }, list, opts.countNode || null);
   let focusPath = "";
+  /** Set by an edit that knows where focus should land; consumed by the next render. */
+  let takeFocus = false;
 
-  function commit(next) {
+  /**
+   * Apply an edit. `focusKey` is the row that should hold focus once the bar has rebuilt.
+   *
+   * Every edit rebuilds every row, so the button that was clicked is detached by the time the
+   * edit lands and DOM focus falls to `<body>`. Harmless with a mouse; with a keyboard it is
+   * the end of the interaction — nothing to Tab from, nothing to arrow through. Naming the row
+   * here and focusing it in `render` is what keeps a keyboard-driven edit continuable.
+   */
+  function commit(next, focusKey) {
+    if (focusKey !== undefined) {
+      focusPath = focusKey;
+      takeFocus = true;
+    }
     opts.onChange(next);
+  }
+
+  /** How many steps hang off the container at `path` — where an appended step will land. */
+  function childCount(query, path) {
+    if (!path.length) return (query.steps || []).length;
+    const step = stepAt(query, path);
+    if (!step) return 0;
+    const container = isGroup(step) ? step : step.node;
+    return ((container && container.steps) || []).length;
+  }
+
+  function pathKey(path) {
+    return path.join("-") || "root";
+  }
+
+  /**
+   * The `+`: everything this node can be asked next, in one searchable place.
+   *
+   * It used to guess — first outbound relationship in the vocabulary, appended, no questions —
+   * which meant the builder offered exactly one next step and never said what the others were.
+   * A pick comes back as one of three payloads; where each one goes is the whole of this
+   * function, and the palette knows nothing about the tree.
+   */
+  function openPalette(anchor, query, row, fromKind) {
+    openQueryPalette({
+      anchor,
+      kind: fromKind || "ANY",
+      vocab: opts.getVocab() || { kinds: [], stepsFrom: {} },
+      row,
+      onPick: (pick) => {
+        if (pick.type === "flag") {
+          commit(setEdge(query, row.path, { [pick.flag]: pick.value }), pathKey(row.path));
+          return;
+        }
+        const at = row.path.concat(childCount(query, row.path));
+        commit(addStep(query, row.path, stepForPick(pick)), pathKey(at));
+      },
+    });
   }
 
   /** Every relationship the tenant's graph actually offers from this kind. */
@@ -185,12 +237,8 @@ export function queryBar(opts) {
             ? "1 branch"
             : row.branches + (row.op === "or" ? " alternatives" : " conditions")));
         const groupActions = el("span", { class: "gq-row-actions" });
-        groupActions.append(iconButton("plus", "Add a branch to this " + row.keyword + " block", () => {
-          const first = stepsFrom(enclosingKind(query, row.path))[0];
-          commit(addStep(query, row.path, first
-            ? { edge: first.edge, reverse: first.reverse, node: { kind: first.kind } }
-            : { ...ANY_STEP, node: { kind: "ANY" } }));
-        }));
+        groupActions.append(iconButton("plus", "Add a branch to this " + row.keyword + " block",
+          (e) => openPalette(e.currentTarget, query, row, parentKind)));
         groupActions.append(iconButton("close", "Remove this " + row.keyword + " block",
           () => commit(removeStep(query, row.path))));
         line.append(groupActions);
@@ -226,17 +274,8 @@ export function queryBar(opts) {
         (row.path.length ? "Related entity: " : "Find entity: ") + kindLabel(row.kind), row.kind));
 
       const actions = el("span", { class: "gq-row-actions" });
-      actions.append(iconButton("plus", "Add a relationship from " + kindLabel(row.kind), () => {
-        // The commonest OUTBOUND relationship, falling back to the commonest of any direction.
-        // An outbound step reads the way the sentence does — "an agent runs as an identity" —
-        // so it is the better first guess even when an inbound one is marginally more common.
-        const from = stepsFrom(row.kind);
-        const first = from.find((e) => !e.reverse) || from[0];
-        const step = first
-          ? { edge: first.edge, reverse: first.reverse, node: { kind: first.kind } }
-          : { ...ANY_STEP, node: { kind: "ANY" } };
-        commit(addStep(query, row.path, step));
-      }));
+      actions.append(iconButton("plus", "Add to " + kindLabel(row.kind),
+        (e) => openPalette(e.currentTarget, query, row, row.kind)));
       if (row.canHide) {
         actions.append(iconButton(row.hidden ? "eye-off" : "eye",
           (row.hidden ? "Show " : "Hide ") + kindLabel(row.kind) + " columns",
@@ -249,10 +288,19 @@ export function queryBar(opts) {
       line.append(actions);
       list.append(line);
     });
+
+    // Only ever after an edit that named a row — never on a plain repaint, which would steal
+    // focus from whatever the reader was doing when the query happened to reload.
+    if (takeFocus) {
+      takeFocus = false;
+      const at = rows.findIndex((r) => rowKey(r) === focusPath);
+      const line = at >= 0 ? list.children[at] : null;
+      if (line) line.focus();
+    }
   }
 
   function rowKey(row) {
-    return row.path.join("-") || "root";
+    return pathKey(row.path);
   }
 
   /**
