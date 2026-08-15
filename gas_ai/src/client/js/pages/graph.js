@@ -16,16 +16,18 @@ import {
 import { openAssetSheet, openIssueSheet } from "../detailSheets.js";
 import { renderGraph } from "../graphView.js";
 import { queryTable, DEFAULT_PAGE_SIZE } from "../queryTable.js";
-import { CATEGORY_LABELS, CATEGORY_ORDER } from "../icons.js";
+import {
+  CATEGORY_LABELS, CATEGORY_ORDER, categoryOf, kindIconSvg, kindLabel,
+} from "../icons.js";
 import { appliedCount, filterEntries, isNarrowingSet, sectionOf } from "./graphChips.js";
 import {
-  applyWhere, defaultQuery, migrateLegacyParams, parseQuery, parseWhere, serializeQuery,
-  serializeWhere,
+  applyWhere, defaultQuery, migrateLegacyParams, parseQuery, parseWhere, queryRows,
+  serializeQuery, serializeWhere,
 } from "./graphQuery.js";
 import { queryBar } from "./graphQueryBar.js";
 import {
-  clear, confirmDialog, debounce, el, emptyState, filterChipRow, helpTip, openSheet, segmented,
-  selectField, sevBadge, skeleton, toast, togglePills, uiIcon,
+  clear, confirmDialog, debounce, el, emptyState, filterChipRow, helpTip, openPopover, openSheet,
+  segmented, selectField, sevBadge, skeleton, toast, togglePills, uiIcon,
 } from "../ui.js";
 
 const GROUP_LABELS = {
@@ -58,6 +60,8 @@ const FILTER_PANEL_ID = "graph-filter-panel";
 /** Table-only view state: repainted from the rows already fetched, never refetched. */
 const TABLE_KEYS = ["page", "pageSize", "sortCol", "dir"];
 const VIEWS_KEY = "sidekickai.graphQueries";
+/** Per-KIND column preferences, beside the saved queries. See readColumnDefaults. */
+const COLS_KEY = "sidekickai.graphColumns";
 /** What a saved query remembers. The whole page state, minus transient panel/focus intent. */
 const VIEW_PARAMS = [
   "find", "where", "columns", "view", "severities", "projects", "clouds",
@@ -138,19 +142,20 @@ function encodeOffsets(map) {
  * The filter panel's three dimensions fold onto node 0: they narrow what was FOUND, which is
  * the node the panel has always been about.
  */
-function rpcParams(p) {
+function rpcParams(p, columnDefaults) {
   const where = parseWhere(p.where);
   const put = (key, values) => {
     if (!values.length) return;
     if (!where.has(0)) where.set(0, new Map());
-    where.get(0).set(key, values);
+    // The panel's three dimensions are whole-value multi-selects, always.
+    where.get(0).set(key, { values, op: "eq" });
   };
   put("severity", listSplit(p.severities));
   put("cloud", listSplit(p.clouds));
   put("projects", listSplit(p.projects));
   return {
     query: applyWhere(queryOf(p), where),
-    columns: parseColumns(p.columns),
+    columns: columnsFor(p, columnDefaults),
     // Raw hash value; "" = use the server-configured default. Keeping the RPC params free of
     // bootstrap-derived values lets the initial fetch run in parallel with bootstrap.
     maxNodes: p.maxNodesRaw,
@@ -199,6 +204,36 @@ function parseColumns(text) {
   return out.length ? [...out].map((v) => v || null) : undefined;
 }
 
+/**
+ * The column selection to send: the URL's if it has one, otherwise this browser's per-kind
+ * preferences mapped onto THIS query's groups.
+ *
+ * The URL always wins, so a shared link opens the table its author configured rather than the
+ * reader's habits. The mapping is possible without a round trip because the client can derive
+ * the group order itself — `queryRows` is the same pre-order walk the server binds against, so
+ * "the third shown node" means the same thing on both sides. That is what lets the preference
+ * be a client-side one with no server change at all.
+ */
+function storedColumnDefaults() {
+  try {
+    const raw = window.localStorage.getItem(COLS_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null; // storage refused — fall through to the domain defaults
+  }
+}
+
+function columnsFor(p, defaults) {
+  const explicit = parseColumns(p.columns);
+  if (explicit) return explicit;
+  if (!defaults) return undefined;
+  const shown = queryRows(queryOf(p))
+    .filter((r) => !r.group && !r.hidden && r.index !== null);
+  const out = shown.map((r) => defaults[r.kind] || null);
+  return out.some(Boolean) ? out : undefined;
+}
+
 function serializeColumns(groups) {
   return groups
     .map((g, i) => (g && g.length ? i + ":" + g.join(".") : ""))
@@ -229,7 +264,8 @@ export async function renderGraphPage(main, params, _ctx) {
   // Prefetch in parallel with bootstrap: two serial round trips become one. swrCall shares
   // the in-flight promise with load() below, and the vocabulary the builder needs rides along
   // beside it rather than costing a third.
-  swrCall("api_runGraphQuery", rpcParams(graphParams(params, {}))).catch(() => {});
+  swrCall("api_runGraphQuery", rpcParams(graphParams(params, {}), storedColumnDefaults()))
+    .catch(() => {});
   swrCall("api_getQueryVocabulary", {}).catch(() => {});
 
   const boot = await bootstrap();
@@ -422,6 +458,13 @@ export async function renderGraphPage(main, params, _ctx) {
     // the builder's filter chips read it from there rather than keeping a second copy of the
     // field table on the client.
     getGroups: () => (lastData && lastData.groups) || [],
+    // One round trip per kind per session — `swrCall` keys on the params, and the palette only
+    // asks when someone opens its Properties tab. Every kind's fields and value lists together
+    // were 22 KB of a 28 KB vocabulary, unread until then and then only for the one kind.
+    loadFields: (k) => swrCall("api_getQueryVocabulary", { kind: k }).then((v) => ({
+      fields: (v && v.fieldsFor && v.fieldsFor[k]) || [],
+      values: (v && v.valuesFor && v.valuesFor[k]) || [],
+    })),
     onChange: (next, where) => {
       const patch = { find: serializeQuery(next), columns: "", page: "" };
       // Only written when the builder actually touched it. `where` is otherwise the filter
@@ -464,7 +507,7 @@ export async function renderGraphPage(main, params, _ctx) {
     const mySeq = ++seq;
     body.classList.add("updating");
     try {
-      const data = await swrCall("api_runGraphQuery", rpcParams(state), (fresh) => {
+      const data = await swrCall("api_runGraphQuery", rpcParams(state, readColumnDefaults()), (fresh) => {
         if (mySeq === seq) paint(fresh);
       });
       if (mySeq === seq) paint(data);
@@ -824,37 +867,187 @@ export async function renderGraphPage(main, params, _ctx) {
    * to a NODE of the query — "Name" on its own would be ambiguous the moment a second group
    * exists, which is the same reason the table carries a two-level header.
    */
+  /**
+   * Which fields each column group shows — a compact popover, anchored to the button.
+   *
+   *   [x] Enable custom column selection
+   *   ┌────────────────────────────────────────────┐
+   *   │ (icon) AI Agent                            │
+   *   │        Name, Publisher, Discovered by  ▾   │
+   *   └────────────────────────────────────────────┘
+   *   Save as defaults          Reset defaults
+   *
+   * A column belongs to a NODE of the query, not to the table — "Name" on its own would be
+   * ambiguous the moment a second group exists, which is the same reason the table carries a
+   * two-level header. So one row per group, each expanding INLINE rather than into a second
+   * panel: the reference opens a nested dialog, and a dialog over a popover is a stack nobody
+   * can Escape out of predictably.
+   *
+   * THE MASTER SWITCH is not decoration. Off means the domain's per-kind defaults and NOTHING
+   * in the URL, so a shared link carries a question rather than a table layout; on means an
+   * explicit choice, in the URL, that travels with the link. Those are genuinely different
+   * states and the old panel could not express the first one — any click put columns in the URL
+   * forever.
+   */
   function openColumns() {
     const groups = (lastData && lastData.groups) || [];
     if (!groups.length) return;
-    const chosen = groups.map((g) => g.fields.map((f) => f.key));
-    openSheet((body2, close) => {
-      const host = el("div", { class: "gq-columns" });
-      groups.forEach((group, gi) => {
-        const pills = togglePills({
-          options: group.available.map((f) => ({ value: f.key, label: f.label })),
-          selected: chosen[gi],
-          ariaLabel: group.label + " columns",
-          pillClass: "kind-pill",
-          sevClass: false,
-          onToggle: (key) => {
-            const at = chosen[gi].indexOf(key);
-            if (at === -1) chosen[gi].push(key);
-            // Never all the way to nothing: a group with no columns is a group that vanishes
-            // from the table with no way to bring it back.
-            else if (chosen[gi].length > 1) chosen[gi].splice(at, 1);
-            pills.set(chosen[gi]);
-            update({ columns: serializeColumns(chosen), page: "" });
-          },
-        });
-        host.append(el("div", { class: "gq-columns-group" },
-          el("h3", { class: "label" }, group.label), pills));
+
+    // The name column is ALWAYS on, and is not offered as a toggle. This deletes the old
+    // "a group can never go to zero columns" special case rather than working around it: the
+    // reason a group must keep one column is that it would otherwise vanish with no way back,
+    // and the column it should keep is the one that says which node the group is.
+    const PINNED = "name";
+    let custom = !!state.columns;
+    const chosen = groups.map((g) => g.fields.map((f) => f.key).filter((k) => k !== PINNED));
+
+    function apply() {
+      if (!custom) {
+        update({ columns: "", page: "" });
+        return;
+      }
+      update({
+        columns: serializeColumns(chosen.map((keys) => [PINNED].concat(keys))),
+        page: "",
       });
-      host.append(el("div", {},
-        el("button", { class: "link", onclick: () => { update({ columns: "", page: "" }); close(); } },
-          "Reset to defaults")));
-      body2.append(host);
-    }, { title: "Columns", ariaLabel: "Choose columns", width: "min(420px, 94vw)" });
+    }
+
+    function optionsFor(group) {
+      return group.available.filter((f) => f.key !== PINNED);
+    }
+
+    /** What a group currently shows, as prose — the reference's own summary line. */
+    function summary(gi) {
+      const labels = optionsFor(groups[gi])
+        .filter((f) => chosen[gi].indexOf(f.key) !== -1)
+        .map((f) => f.label);
+      if (!labels.length) return "Name only";
+      return "Name, " + labels.join(", ");
+    }
+
+    let master = null;
+    const panel = openPopover({
+      anchor: columnsBtn,
+      className: "gq-cols-pop",
+      ariaLabel: "Choose columns",
+      position: { width: 380, minWidth: 320, maxHeight: 460, minHeight: 220 },
+      build: (api) => {
+        const body2 = el("div", { class: "gq-cols" });
+
+        master = el("input", { type: "checkbox", id: "gq-cols-master" });
+        master.checked = custom;
+        const rowsHost = el("div", { class: "gq-cols-list" });
+        // Declared before the master handler, which enables and disables it — "Save as
+        // defaults" means nothing while the defaults are what is already in force.
+        const saveBtn = el("button", { class: "link" }, "Save as defaults");
+        function setEnabled() {
+          rowsHost.classList.toggle("is-off", !custom);
+          for (const control of rowsHost.querySelectorAll("button, input")) {
+            control.disabled = !custom;
+          }
+          saveBtn.disabled = !custom;
+        }
+        master.addEventListener("change", () => {
+          custom = master.checked;
+          setEnabled();
+          apply();
+          api.reposition();
+        });
+        body2.append(el("label", { class: "gq-cols-master", for: "gq-cols-master" },
+          master, el("span", {}, "Enable custom column selection")));
+
+        groups.forEach((group, gi) => {
+          // The domain labels a group with the raw enum — it has no label table, which lives
+          // in icons.js on the client. The table header already resolves it; so does this, or
+          // the panel and the header would name the same group two different ways.
+          const heading = group.kind === "ANY" ? "Any node" : kindLabel(group.kind);
+          const summaryEl = el("span", { class: "gq-cols-summary" }, summary(gi));
+          const pills = togglePills({
+            options: optionsFor(group).map((f) => ({ value: f.key, label: f.label })),
+            selected: chosen[gi],
+            ariaLabel: heading + " columns",
+            pillClass: "kind-pill",
+            sevClass: false,
+            onToggle: (key) => {
+              const at = chosen[gi].indexOf(key);
+              if (at === -1) chosen[gi].push(key);
+              else chosen[gi].splice(at, 1);
+              pills.set(chosen[gi]);
+              summaryEl.textContent = summary(gi);
+              apply();
+            },
+          });
+          const icon = kindIconSvg(group.kind === "ANY" ? "UNKNOWN" : group.kind, 14);
+          icon.setAttribute("class", "gq-cols-icon");
+          // A native <details>, so the disclosure keyboard contract is the browser's — the
+          // sheet's `.disclosure` recipe is the same bargain one layer up.
+          rowsHost.append(el("details", { class: "gq-cols-group" },
+            el("summary", { class: "gq-cols-head" },
+              el("span", { class: "gq-cols-tile", "data-category": categoryOf(group.kind) }, icon),
+              el("span", { class: "gq-cols-text" },
+                el("span", { class: "gq-cols-kind" }, heading),
+                summaryEl)),
+            pills));
+        });
+        body2.append(rowsHost);
+
+        saveBtn.addEventListener("click", () => {
+          writeColumnDefaults(chosen.map((keys, gi) => ({
+            kind: groups[gi].kind, keys: [PINNED].concat(keys),
+          })));
+          toast("Saved as your defaults");
+        });
+        body2.append(el("div", { class: "gq-cols-foot" },
+          saveBtn,
+          el("button", {
+            class: "link",
+            onclick: () => {
+              clearColumnDefaults();
+              custom = false;
+              master.checked = false;
+              apply();
+              api.close(true);
+              toast("Back to the standard columns");
+            },
+          }, "Reset defaults"),
+        ));
+        setEnabled();
+        return body2;
+      },
+    });
+    // Focus goes INTO the panel, or Tab walks straight past it into the page behind — the
+    // popover is portaled to the end of <body>, so "the next control" is not what it looks
+    // like from the button. The master switch first: it is the one that decides whether the
+    // rest of the panel does anything.
+    if (master && panel.isOpen()) master.focus();
+  }
+
+  /**
+   * Per-kind column choices, remembered per browser beside the saved queries.
+   *
+   * Keyed by KIND rather than by position, because "show me the publisher on every AI asset" is
+   * a preference about a kind; which slot that kind occupies changes with every query. Applied
+   * by the client only when the URL carries no `columns`, so a shared link still wins and the
+   * server needs to know nothing about any of it.
+   */
+  const readColumnDefaults = storedColumnDefaults;
+
+  function writeColumnDefaults(perGroup) {
+    const stored = readColumnDefaults() || {};
+    for (const entry of perGroup) stored[entry.kind] = entry.keys;
+    try {
+      window.localStorage.setItem(COLS_KEY, JSON.stringify(stored));
+    } catch {
+      toast("This browser refused to save the preference", "warn");
+    }
+  }
+
+  function clearColumnDefaults() {
+    try {
+      window.localStorage.removeItem(COLS_KEY);
+    } catch {
+      // Nothing to undo — the write never landed either.
+    }
   }
 
   // ------------------------------------------------------------------ search

@@ -91,16 +91,35 @@ function normalizeFlags(s) {
 describe("where", () => {
   it("round-trips, ORs repeats of one key, and sorts deterministically", () => {
     const parsed = parseWhere("0.cloud.GCP,0.cloud.AWS,1.inactive.true");
-    expect(parsed.get(0).get("cloud")).toEqual(["GCP", "AWS"]);
-    expect(parsed.get(1).get("inactive")).toEqual(["true"]);
+    expect(parsed.get(0).get("cloud")).toEqual({ values: ["GCP", "AWS"], op: "eq" });
+    expect(parsed.get(1).get("inactive")).toEqual({ values: ["true"], op: "eq" });
     expect(serializeWhere(parsed)).toBe("0.cloud.GCP,0.cloud.AWS,1.inactive.true");
   });
 
+  it("reads the separator as the OPERATOR, and round-trips it", () => {
+    // `.` is whole-value equality, `~` is a substring. It has to be in the grammar rather than
+    // inferred from the field's type: `id` is a text field too, and a deep link to one asset
+    // must not also open every asset whose id contains it.
+    const parsed = parseWhere("0.name~prod,0.id.agent-h-chatbot");
+    expect(parsed.get(0).get("name")).toEqual({ values: ["prod"], op: "contains" });
+    expect(parsed.get(0).get("id")).toEqual({ values: ["agent-h-chatbot"], op: "eq" });
+    expect(serializeWhere(parsed)).toBe("0.id.agent-h-chatbot,0.name~prod");
+  });
+
+  it("carries `contains` onto the tree, and omits `op` where it is the default", () => {
+    const wire = applyWhere({ kind: "AI_AGENT" }, parseWhere("0.name~prod,0.cloud.GCP"));
+    expect(wire.where).toEqual([
+      { key: "cloud", values: ["GCP"] },
+      { key: "name", values: ["prod"], op: "contains" },
+    ]);
+  });
+
   it("encodes values that would otherwise re-split wrong", () => {
-    const m = new Map([[0, new Map([["projects", ["CE-DPCP, PORTAL"]]])]]);
+    const m = new Map([[0, new Map([["projects", { values: ["CE-DPCP, PORTAL"], op: "eq" }]])]]);
     const text = serializeWhere(m);
     expect(text).not.toContain(", ");
-    expect(parseWhere(text).get(0).get("projects")).toEqual(["CE-DPCP, PORTAL"]);
+    expect(parseWhere(text).get(0).get("projects"))
+      .toEqual({ values: ["CE-DPCP, PORTAL"], op: "eq" });
   });
 
   it("skips an unreadable entry instead of losing the whole query", () => {

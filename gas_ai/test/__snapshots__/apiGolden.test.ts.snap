@@ -652,6 +652,7 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
   "getQueryVocabulary": {
     "data": {
       "empty": true,
+      "fieldsFor": {},
       "kinds": [],
       "shortcuts": [],
       "stepsFrom": {},
@@ -10957,6 +10958,7 @@ Ignored until: Feb 1, 2026",
 exports[`read endpoints > getQueryVocabulary (bare) answers the same shape 1`] = `
 {
   "data": {
+    "fieldsFor": {},
     "kinds": [
       {
         "count": 14,
@@ -11693,6 +11695,105 @@ Deliberately not the “NOT protected by a guardrail” traversal, which answers
 exports[`read endpoints > getQueryVocabulary (values for AI Agent) answers the same shape 1`] = `
 {
   "data": {
+    "fieldsFor": {
+      "AI_AGENT": [
+        {
+          "key": "name",
+          "label": "Name",
+          "type": "text",
+        },
+        {
+          "key": "kind",
+          "label": "Kind",
+          "type": "choice",
+        },
+        {
+          "key": "publisher",
+          "label": "Publisher",
+          "type": "text",
+        },
+        {
+          "key": "discoveredBy",
+          "label": "Discovered by",
+          "type": "choice",
+        },
+        {
+          "key": "cloud",
+          "label": "Cloud",
+          "type": "choice",
+        },
+        {
+          "key": "region",
+          "label": "Region",
+          "type": "choice",
+        },
+        {
+          "key": "status",
+          "label": "Status",
+          "type": "choice",
+        },
+        {
+          "key": "severity",
+          "label": "Issue severity",
+          "type": "choice",
+        },
+        {
+          "key": "aars",
+          "label": "AARS",
+          "type": "number",
+        },
+        {
+          "key": "aarsSeverity",
+          "label": "AARS level",
+          "type": "choice",
+        },
+        {
+          "key": "projects",
+          "label": "Projects",
+          "type": "choice",
+        },
+        {
+          "key": "guardrail",
+          "label": "Guardrail",
+          "type": "choice",
+        },
+        {
+          "key": "combos",
+          "label": "Toxic combinations",
+          "type": "number",
+        },
+        {
+          "key": "comboGroup",
+          "label": "Toxic combination",
+          "type": "choice",
+        },
+        {
+          "key": "internet",
+          "label": "Internet reachable",
+          "type": "boolean",
+        },
+        {
+          "key": "sensitiveAccess",
+          "label": "Reaches classified data",
+          "type": "boolean",
+        },
+        {
+          "key": "sensitiveData",
+          "label": "Holds classified data",
+          "type": "boolean",
+        },
+        {
+          "key": "highPriv",
+          "label": "High privileges",
+          "type": "boolean",
+        },
+        {
+          "key": "adminPriv",
+          "label": "Admin privileges",
+          "type": "boolean",
+        },
+      ],
+    },
     "kinds": [
       {
         "count": 14,

@@ -62,6 +62,16 @@
   max-width: 320px;
 }
 .gq-chip-icon { flex: 0 0 auto; }
+/* THE TINT HAS TO REACH THE INNER <g>. `kindIconSvg` returns an <svg> wrapping a `.gnode-icon`
+   group, and graph.css paints that group a fixed grey — a colour set on the <svg> is inherited
+   and LOSES to it. Every one of these three surfaces set the ink on the wrapper and rendered
+   grey anyway, while the comments beside them described a tint nobody was seeing. The canvas
+   (`.gnode[data-category] .gnode-icon`) and combos.css both already do it this way.
+   `color: inherit` matters as well as `stroke`: a solid glyph path fills with currentColor. */
+.gq-chip-icon .gnode-icon,
+.gq-cell-icon .gnode-icon,
+.gq-cols-icon .gnode-icon,
+.gq-pal-glyph .gnode-icon { stroke: currentColor; color: inherit; }
 /* A relationship is a verb: neutral ground and lighter weight, so the two ENTITIES are what
    the eye picks out of the line. */
 .gq-chip--edge {
@@ -78,27 +88,27 @@
   background: var(--cat-asset-tint); border-color: var(--cat-asset-ink);
   color: var(--cat-asset-text);
 }
-.gq-chip[data-category="asset"] .gq-chip-icon { color: var(--cat-asset-ink); stroke: var(--cat-asset-ink); }
+.gq-chip[data-category="asset"] .gq-chip-icon { color: var(--cat-asset-ink); }
 .gq-chip[data-category="data"] {
   background: var(--cat-data-tint); border-color: var(--cat-data-ink);
   color: var(--cat-data-text);
 }
-.gq-chip[data-category="data"] .gq-chip-icon { color: var(--cat-data-ink); stroke: var(--cat-data-ink); }
+.gq-chip[data-category="data"] .gq-chip-icon { color: var(--cat-data-ink); }
 .gq-chip[data-category="iam"] {
   background: var(--cat-iam-tint); border-color: var(--cat-iam-ink);
   color: var(--cat-iam-text);
 }
-.gq-chip[data-category="iam"] .gq-chip-icon { color: var(--cat-iam-ink); stroke: var(--cat-iam-ink); }
+.gq-chip[data-category="iam"] .gq-chip-icon { color: var(--cat-iam-ink); }
 .gq-chip[data-category="vuln"] {
   background: var(--cat-vuln-tint); border-color: var(--cat-vuln-ink);
   color: var(--cat-vuln-text);
 }
-.gq-chip[data-category="vuln"] .gq-chip-icon { color: var(--cat-vuln-ink); stroke: var(--cat-vuln-ink); }
+.gq-chip[data-category="vuln"] .gq-chip-icon { color: var(--cat-vuln-ink); }
 .gq-chip[data-category="exposure"] {
   background: var(--cat-exposure-tint); border-color: var(--cat-exposure-ink);
   color: var(--cat-exposure-text);
 }
-.gq-chip[data-category="exposure"] .gq-chip-icon { color: var(--cat-exposure-ink); stroke: var(--cat-exposure-ink); }
+.gq-chip[data-category="exposure"] .gq-chip-icon { color: var(--cat-exposure-ink); }
 
 /* Row actions: flat 26px squares. They reset the 36px bordered global button recipe the same
    way .filter-chip-body does — left alone, three shadowed surfaces would sit in a 28px line. */
@@ -164,11 +174,11 @@
   background: var(--track-bg);
   color: var(--text-2);
 }
-.gq-name[data-category="asset"] .gq-cell-icon { background: var(--cat-asset-tint); color: var(--cat-asset-ink); stroke: var(--cat-asset-ink); }
-.gq-name[data-category="data"] .gq-cell-icon { background: var(--cat-data-tint); color: var(--cat-data-ink); stroke: var(--cat-data-ink); }
-.gq-name[data-category="iam"] .gq-cell-icon { background: var(--cat-iam-tint); color: var(--cat-iam-ink); stroke: var(--cat-iam-ink); }
-.gq-name[data-category="vuln"] .gq-cell-icon { background: var(--cat-vuln-tint); color: var(--cat-vuln-ink); stroke: var(--cat-vuln-ink); }
-.gq-name[data-category="exposure"] .gq-cell-icon { background: var(--cat-exposure-tint); color: var(--cat-exposure-ink); stroke: var(--cat-exposure-ink); }
+.gq-name[data-category="asset"] .gq-cell-icon { background: var(--cat-asset-tint); color: var(--cat-asset-ink); }
+.gq-name[data-category="data"] .gq-cell-icon { background: var(--cat-data-tint); color: var(--cat-data-ink); }
+.gq-name[data-category="iam"] .gq-cell-icon { background: var(--cat-iam-tint); color: var(--cat-iam-ink); }
+.gq-name[data-category="vuln"] .gq-cell-icon { background: var(--cat-vuln-tint); color: var(--cat-vuln-ink); }
+.gq-name[data-category="exposure"] .gq-cell-icon { background: var(--cat-exposure-tint); color: var(--cat-exposure-ink); }
 
 /* ----------------------------------------------------------------- column chooser */
 .gq-columns { display: flex; flex-direction: column; gap: 14px; min-width: 220px; }
@@ -280,11 +290,11 @@
   width: 24px; height: 24px; border-radius: var(--radius-sm);
   background: var(--track-bg); color: var(--text-2);
 }
-.gq-pal-option[data-category="asset"] .gq-pal-glyph-wrap { background: var(--cat-asset-tint); color: var(--cat-asset-ink); stroke: var(--cat-asset-ink); }
-.gq-pal-option[data-category="data"] .gq-pal-glyph-wrap { background: var(--cat-data-tint); color: var(--cat-data-ink); stroke: var(--cat-data-ink); }
-.gq-pal-option[data-category="iam"] .gq-pal-glyph-wrap { background: var(--cat-iam-tint); color: var(--cat-iam-ink); stroke: var(--cat-iam-ink); }
-.gq-pal-option[data-category="vuln"] .gq-pal-glyph-wrap { background: var(--cat-vuln-tint); color: var(--cat-vuln-ink); stroke: var(--cat-vuln-ink); }
-.gq-pal-option[data-category="exposure"] .gq-pal-glyph-wrap { background: var(--cat-exposure-tint); color: var(--cat-exposure-ink); stroke: var(--cat-exposure-ink); }
+.gq-pal-option[data-category="asset"] .gq-pal-glyph-wrap { background: var(--cat-asset-tint); color: var(--cat-asset-ink); }
+.gq-pal-option[data-category="data"] .gq-pal-glyph-wrap { background: var(--cat-data-tint); color: var(--cat-data-ink); }
+.gq-pal-option[data-category="iam"] .gq-pal-glyph-wrap { background: var(--cat-iam-tint); color: var(--cat-iam-ink); }
+.gq-pal-option[data-category="vuln"] .gq-pal-glyph-wrap { background: var(--cat-vuln-tint); color: var(--cat-vuln-ink); }
+.gq-pal-option[data-category="exposure"] .gq-pal-glyph-wrap { background: var(--cat-exposure-tint); color: var(--cat-exposure-ink); }
 .gq-pal-option-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .gq-pal-option-label {
   font-size: 13px; font-weight: 600; color: var(--ink);
@@ -364,4 +374,83 @@
   display: inline-block; margin-right: 6px;
   font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--text-3);
+}
+
+/* -- the properties drill-in: one field's values, in place of the list */
+.gq-pal-drill-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 6px 8px; border-bottom: 1px solid var(--hairline); margin-bottom: 6px;
+}
+.gq-pal-back {
+  display: inline-flex; align-items: center; gap: 4px;
+  min-height: 26px; padding: 2px 8px 2px 5px;
+  border: none; background: none; box-shadow: none; border-radius: var(--radius-sm);
+  font-size: 12px; color: var(--text-2);
+}
+.gq-pal-back:hover { background: var(--wash-hover); border-color: transparent; color: var(--ink); }
+.gq-pal-drill-title { font-size: 13px; font-weight: 600; color: var(--ink); }
+.gq-pal-drill-body { display: block; padding: 0 4px 4px; }
+.gq-pal-text { width: 100%; margin: 0; }
+.gq-pal-hint { margin: 6px 2px 0; }
+
+/* ------------------------------------------------------------------ column panel */
+/* A compact popover on the Columns button, not a sheet: choosing columns is an adjustment to
+   the table you are looking at, and a full-height overlay to make it hides the thing being
+   adjusted. One row per node of the query, expanding inline. */
+.gq-cols { display: flex; flex-direction: column; min-height: 0; }
+.gq-cols-master {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px; border-bottom: 1px solid var(--hairline);
+  background: var(--surface);
+  font-size: 13px; font-weight: 600; color: var(--ink);
+}
+.gq-cols-master input { margin: 0; }
+.gq-cols-list { padding: 6px; overflow-y: auto; overscroll-behavior: contain; }
+/* Off is not greyed-out-and-mysterious: the rows stay readable and say what the defaults are,
+   they just cannot be edited. The controls inside carry `disabled`, which is the real signal. */
+.gq-cols-list.is-off { opacity: 0.72; }
+.gq-cols-group { border-radius: var(--radius-md); }
+.gq-cols-group + .gq-cols-group { margin-top: 2px; }
+.gq-cols-head {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 8px; border-radius: var(--radius-md);
+  cursor: pointer; list-style: none;
+}
+.gq-cols-head::-webkit-details-marker { display: none; }
+.gq-cols-head:hover { background: var(--wash-hover); }
+.gq-cols-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.gq-cols-tile {
+  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; border-radius: var(--radius-sm);
+  background: var(--track-bg); color: var(--text-2);
+}
+.gq-cols-tile[data-category="asset"] { background: var(--cat-asset-tint); color: var(--cat-asset-ink); }
+.gq-cols-tile[data-category="data"] { background: var(--cat-data-tint); color: var(--cat-data-ink); }
+.gq-cols-tile[data-category="iam"] { background: var(--cat-iam-tint); color: var(--cat-iam-ink); }
+.gq-cols-tile[data-category="vuln"] { background: var(--cat-vuln-tint); color: var(--cat-vuln-ink); }
+.gq-cols-tile[data-category="exposure"] { background: var(--cat-exposure-tint); color: var(--cat-exposure-ink); }
+.gq-cols-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.gq-cols-kind { font-size: 13px; font-weight: 600; color: var(--ink); }
+/* The current columns as prose — the reference's summary line, and the reason a row does not
+   have to be expanded to be understood. */
+.gq-cols-summary {
+  font-size: 12px; color: var(--text-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* The disclosure caret, drawn by the same rotate the sheet's `.disclosure` uses. */
+.gq-cols-head::after {
+  content: ""; flex: 0 0 auto; width: 7px; height: 7px; margin-right: 2px;
+  border-right: 1.5px solid var(--text-3); border-bottom: 1.5px solid var(--text-3);
+  transform: rotate(45deg) translate(-2px, -2px);
+  transition: transform 150ms ease-out;
+}
+.gq-cols-group[open] > .gq-cols-head::after { transform: rotate(-135deg); }
+@media (prefers-reduced-motion: reduce) {
+  .gq-cols-head::after { transition: none; }
+}
+.gq-cols-group > .pill-row { padding: 2px 8px 10px 41px; }
+.gq-cols-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 9px 12px; border-top: 1px solid var(--hairline);
+  background: var(--surface);
 }

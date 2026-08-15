@@ -87,6 +87,7 @@ import { nodeOrder, projectGraph, type Projection } from "../domain/graphProject
 import {
   DEFAULT_QUERY,
   fieldValuesFor,
+  fieldsForKind,
   queryVocabulary,
   runQuery,
   validateQuery,
@@ -383,10 +384,20 @@ export function getQueryVocabulary(p?: unknown): ApiResult {
   return run(() =>
     cached("queryVocabulary", { kind }, () => {
       const doc = syncStore.loadGraphDoc();
-      if (!doc) return { empty: true, kinds: [], stepsFrom: {}, valuesFor: {}, shortcuts: [] };
+      if (!doc) {
+        return { empty: true, kinds: [], stepsFrom: {}, valuesFor: {}, fieldsFor: {}, shortcuts: [] };
+      }
       const vocab = queryVocabulary(doc);
       if (!kind) return vocab;
-      return { ...vocab, valuesFor: { [kind]: fieldValuesFor(doc, kind) } };
+      return {
+        ...vocab,
+        valuesFor: { [kind]: fieldValuesFor(doc, kind) },
+        // What the palette's Properties tab lists, and the type that decides which control each
+        // field gets. Per-kind for the same reason the value lists are.
+        fieldsFor: {
+          [kind]: fieldsForKind(kind).map((f) => ({ key: f.key, label: f.label, type: f.type })),
+        },
+      };
     }),
   );
 }

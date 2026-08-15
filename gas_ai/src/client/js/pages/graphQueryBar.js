@@ -73,7 +73,7 @@ export function queryBar(opts) {
       const index = slotOfPath(next, add.path);
       if (index === null) continue;
       if (!where.has(index)) where.set(index, new Map());
-      where.get(index).set(add.key, add.values);
+      where.get(index).set(add.key, { values: add.values, op: add.op || "eq" });
     }
     opts.onChange(next, where);
   }
@@ -116,7 +116,31 @@ export function queryBar(opts) {
       kind: fromKind || "ANY",
       vocab: opts.getVocab() || { kinds: [], stepsFrom: {} },
       row,
+      loadFields: opts.loadFields,
+      // What this node is already filtered on, so reopening a field shows its values pressed
+      // rather than presenting an empty picker over a filter that is plainly on the row.
+      currentValues: (key) => {
+        const forNode = currentWhere().get(row.index);
+        const filter = forNode && forNode.get(key);
+        return (filter && filter.values) || [];
+      },
       onPick: (pick) => {
+        if (pick.type === "property") {
+          // A node that binds nothing has no slot to hang a filter on — a negated step is the
+          // case, and the palette does not offer properties there, but a hand-edited link can.
+          if (row.index === null || row.index === undefined) return;
+          const where = currentWhere();
+          const next = new Map(where);
+          const forNode = new Map(next.get(row.index) || []);
+          if (pick.values.length) forNode.set(pick.key, { values: pick.values, op: pick.op || "eq" });
+          else forNode.delete(pick.key);
+          if (forNode.size) next.set(row.index, forNode);
+          else next.delete(row.index);
+          focusPath = pathKey(row.path);
+          takeFocus = true;
+          opts.onChange(query, next);
+          return;
+        }
         if (pick.type === "flag") {
           commit(setEdge(query, row.path, { [pick.flag]: pick.value }), pathKey(row.path));
           return;
@@ -186,9 +210,11 @@ export function queryBar(opts) {
     if (!forNode || !forNode.size) return null;
     const wrap = el("span", { class: "gq-chips" });
     for (const key of [...forNode.keys()].sort()) {
-      const values = forNode.get(key) || [];
+      const filter = forNode.get(key) || { values: [] };
       const label = fieldLabel(row.kind, key);
-      const text = values.join(", ");
+      // "contains" is stated, not implied: the same chip text under two different readings
+      // would be the query answering a question the row does not admit to asking.
+      const text = (filter.op === "contains" ? "contains " : "") + filter.values.join(", ");
       wrap.append(el("span", { class: "filter-chip gq-filter-chip" },
         el("span", { class: "filter-chip-body" },
           el("span", { class: "gq-filter-key" }, label), " ", text),
@@ -468,6 +494,11 @@ export function queryBar(opts) {
       }
       return;
     }
+    // Enter and Delete are the ROW's shortcuts, and only the row's. A keydown from a button
+    // inside it bubbles here too, and preventDefault on that was eating the button's own
+    // native Enter-to-click: Enter on `+` opened the entity picker instead of the palette,
+    // and Backspace anywhere in the row deleted the row out from under the control being used.
+    if (e.target !== e.currentTarget) return;
     if (e.key === "Enter") {
       const chip = e.currentTarget.querySelector(".gq-chip:not(.gq-chip--edge)");
       if (chip) {

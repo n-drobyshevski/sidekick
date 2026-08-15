@@ -23,6 +23,7 @@ import { el, openPopover, openSheet, uiIcon } from "../ui.js";
 import {
   CATEGORY_LABELS, CATEGORY_ORDER, categoryOf, edgeLabel, kindIconSvg, kindLabel,
 } from "../icons.js";
+import { facetGroup } from "../filters.js";
 import { findEntry } from "../helpContent.js";
 import { serializeStep } from "./graphQuery.js";
 
@@ -33,7 +34,25 @@ const SECTION_LABELS = {
   popular: "Popular",
   shortcuts: "Query shortcuts",
   operators: "Operators",
+  properties: "Properties",
   relations: "Relationships",
+};
+
+/** What a field's type is called, and what it means for how you filter on it. */
+const TYPE_WORDS = {
+  text: "Text property",
+  choice: "Choice property",
+  boolean: "Yes / no property",
+  number: "Number property",
+};
+const TYPE_BLURBS = {
+  text: "Matched as a SUBSTRING, so “prod” finds “prod-agent-01”. Case is ignored.",
+  choice: "Pick from the values this estate actually holds — the list is the graph's, not the "
+    + "schema's, and each value says how many nodes carry it.",
+  boolean: "Three states, not two: yes, no, and unknown. Wiz not reporting a property is a "
+    + "different answer from reporting it false, and the filter keeps them apart.",
+  number: "Matched exactly. A range comparison is not offered yet — where a band is the useful "
+    + "question, there is usually a choice field beside this one that asks it better.",
 };
 
 /** How many relationships the Popular section leads with before you go to a category. */
@@ -54,10 +73,16 @@ const POPULAR_RELATIONS = 6;
  *            fragment the pick inserts, so a reader can see what a choice does before doing it
  *   pick     the payload handed back to the caller — see the three shapes below
  *
- * The three pick shapes, all applied by graphQueryBar:
+ * The pick shapes, all applied by graphQueryBar:
  *   {type: "relation", edge, reverse, hops, target}   append a step under this node
  *   {type: "group", op, steps}                        append a boolean block
  *   {type: "flag", flag, value}                       set negate/optional on THIS row's step
+ *   {type: "shortcut", steps, filters}                a curated question, steps and filters
+ *   {type: "property", key, values, op}               filter this node on a field
+ *
+ * A `field` pick never reaches the caller — it drills into that field's values inside the
+ * palette, and what comes back is the `property` above. A property with no value chosen would
+ * be a filter nobody asked for.
  */
 export function paletteEntries(ctx) {
   const { kind, vocab, row } = ctx || {};
@@ -142,6 +167,32 @@ export function paletteEntries(ctx) {
         literal: literalFor({ type: "relation", edge: "ANY", reverse: false, hops, target: "ANY" }),
       },
       pick: { type: "relation", edge: "ANY", reverse: false, hops, target: "ANY" },
+    });
+  }
+
+  // ------------------------------------------------------------------ properties
+  // Filled once the per-kind field list has arrived — the palette asks for it when the tab is
+  // first opened rather than dragging every kind's fields into the bootstrap payload.
+  for (const f of (ctx.fields || [])) {
+    // Filtering a thing by what it already is. The kind is chosen one chip to the left.
+    if (f.key === "kind") continue;
+    out.push({
+      id: "prop-" + f.key,
+      section: "properties",
+      category: null,
+      glyph: "property",
+      label: f.label,
+      sub: TYPE_WORDS[f.type] || "Property",
+      count: null,
+      popular: false,
+      field: f,
+      detail: {
+        title: f.label,
+        type: TYPE_WORDS[f.type] || "Property",
+        blurb: TYPE_BLURBS[f.type] || "",
+        literal: "",
+      },
+      pick: { type: "field", key: f.key, fieldType: f.type, label: f.label },
     });
   }
 
@@ -266,6 +317,13 @@ export function paletteRail(entries) {
     label: SECTION_LABELS.operators,
     count: entries.filter((e) => e.section === "operators").length,
   });
+  // Always present, even before the field list has landed — a tab that appears a beat after the
+  // palette opens is a tab nobody finds. Its count fills in when the fetch answers.
+  rail.push({
+    key: "properties",
+    label: SECTION_LABELS.properties,
+    count: entries.filter((e) => e.section === "properties").length,
+  });
   for (const cat of CATEGORY_ORDER) {
     const n = entries.filter((e) => e.category === cat).length;
     // Ours has five categories where the reference has twelve. Showing an empty one anyway
@@ -282,6 +340,7 @@ export function entriesForTab(entries, tabKey) {
   if (tabKey === "popular") return entries.filter((e) => e.popular);
   if (tabKey === "shortcuts") return entries.filter((e) => e.section === "shortcuts");
   if (tabKey === "operators") return entries.filter((e) => e.section === "operators");
+  if (tabKey === "properties") return entries.filter((e) => e.section === "properties");
   if (tabKey === "cat-any") {
     return entries.filter((e) => e.section === "relations" && !e.category);
   }
@@ -412,11 +471,13 @@ let _paletteSeq = 0;
  * cannot be edited.
  */
 export function openQueryPalette(spec) {
-  const { anchor, kind, vocab, row, onPick, title } = spec;
+  const { anchor, kind, vocab, row, onPick, title, loadFields, currentValues } = spec;
   const seq = ++_paletteSeq;
   const listId = "gq-palette-list-" + seq;
-  const entries = paletteEntries({ kind, vocab, row });
-  const rail = paletteRail(entries);
+  let fields = null;    // per-kind field list, once fetched
+  let values = null;    // per-kind value lists, once fetched
+  let entries = paletteEntries({ kind, vocab, row, fields });
+  let rail = paletteRail(entries);
 
   let tab = rail[0] ? rail[0].key : "popular";
   let query = "";
@@ -424,6 +485,9 @@ export function openQueryPalette(spec) {
   let activeIndex = 0;
   let rowNodes = [];
   let host = null;      // {close} — the popover or the sheet
+  /** Non-null while drilled into one field's values. */
+  let drill = null;
+  let loading = false;
 
   const search = el("input", {
     type: "text",
@@ -467,6 +531,8 @@ export function openQueryPalette(spec) {
           query = "";
           search.value = "";
           tab = t.key;
+          drill = null;
+          if (t.key === "properties") ensureFields();
           paint();
           // Focus goes back to the field, so ArrowDown walks the list this click just changed
           // rather than the rail the reader has finished with.
@@ -478,6 +544,35 @@ export function openQueryPalette(spec) {
         el("span", { class: "gq-pal-rail-count" }, String(t.count)),
       ));
     });
+  }
+
+  /**
+   * The field list and its value lists, fetched the first time the Properties tab is opened.
+   *
+   * Every kind's fields and values together were most of a 28 KB vocabulary, none of it read
+   * unless someone goes looking for a property — and then only for the one kind. `swrCall` keys
+   * on the params, so this is one round trip per kind per session.
+   */
+  function ensureFields() {
+    if (fields || loading || !loadFields) return;
+    loading = true;
+    paint();
+    Promise.resolve(loadFields(kind)).then((got) => {
+      loading = false;
+      if (!got || !host) return;
+      fields = got.fields || [];
+      values = got.values || [];
+      entries = paletteEntries({ kind, vocab, row, fields });
+      // The rail is built once, so only its counts change — the Properties tab was already
+      // there, promising a list it could not yet draw.
+      rail = paletteRail(entries);
+      for (const btn of railEl.children) {
+        const t = rail.find((x) => x.key === btn.getAttribute("data-tab"));
+        const countEl = btn.querySelector(".gq-pal-rail-count");
+        if (t && countEl) countEl.textContent = String(t.count);
+      }
+      paint();
+    }).catch(() => { loading = false; paint(); });
   }
 
   /** A search spanning every tab belongs to none of them, so nothing reads as selected. */
@@ -527,10 +622,18 @@ export function openQueryPalette(spec) {
 
   function paint() {
     paintRail();
+    if (drill) { paintDrill(); return; }
     const found = searchEntries(entries, query);
     shown = found === null ? entriesForTab(entries, tab) : found;
     listEl.textContent = "";
     rowNodes = [];
+    if (loading && tab === "properties" && !shown.length) {
+      listEl.append(el("li", { role: "presentation", class: "gq-pal-empty" },
+        "Reading this kind's properties…"));
+      activeIndex = 0;
+      paintDetail(null);
+      return;
+    }
     if (!shown.length) {
       listEl.append(el("li", { role: "presentation", class: "gq-pal-empty" },
         query ? "No matches" : "Nothing to add from here"));
@@ -591,9 +694,111 @@ export function openQueryPalette(spec) {
     }
   }
 
+  /**
+   * One field's values, in place of the list — a drill-in rather than a second popover.
+   *
+   * The value control is `facetGroup` from filters.js, unchanged: it already draws proportion
+   * bars, keeps a zero-yield option focusable-but-disabled rather than removing it, and
+   * reconciles by value so focus survives a recount. A second value picker written here would
+   * be a worse copy of a control this app has already got right.
+   *
+   * A text field gets an input and a `contains` match instead, because a list of every distinct
+   * name is not a control — it is the table again.
+   */
+  function paintDrill() {
+    listEl.textContent = "";
+    rowNodes = [];
+    activeIndex = 0;
+    search.removeAttribute("aria-activedescendant");
+
+    const back = el("button", {
+      type: "button", class: "gq-pal-back",
+      onclick: () => { drill = null; paint(); search.focus(); },
+    }, uiIcon("chevron-left", 13), el("span", {}, "All properties"));
+    listEl.append(el("li", { role: "presentation", class: "gq-pal-drill-head" },
+      back, el("span", { class: "gq-pal-drill-title" }, drill.field.label)));
+
+    const holder = el("li", { role: "presentation", class: "gq-pal-drill-body" });
+    listEl.append(holder);
+
+    if (drill.field.type === "text" || drill.field.type === "number") {
+      const input = el("input", {
+        type: "text", class: "gq-pal-text",
+        "aria-label": drill.field.label + (drill.field.type === "text" ? " contains" : " equals"),
+        placeholder: drill.field.type === "text" ? "contains…" : "exactly…",
+        value: (drill.selected[0] || ""),
+      });
+      input.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        e.stopPropagation();
+        const v = input.value.trim();
+        commitProperty(v ? [v] : []);
+      });
+      holder.append(input, el("p", { class: "gq-pal-hint small muted" },
+        drill.field.type === "text"
+          ? "Press Enter to add. Matched as a substring, case ignored."
+          : "Press Enter to add. Matched exactly."));
+      // Focus the value field, not the search box — this pane IS the question now.
+      setTimeout(() => input.focus(), 0);
+      paintDetail(drill.entry);
+      return;
+    }
+
+    const options = (drill.values || []).map((v) => ({
+      value: v.value,
+      label: v.value === "unknown" ? "Not reported" : v.value,
+      count: v.count,
+    }));
+    if (!options.length) {
+      holder.append(el("p", { class: "gq-pal-empty" },
+        "No values to choose from — this estate reports none, or there are too many to list."));
+      paintDetail(drill.entry);
+      return;
+    }
+    const group = facetGroup({
+      label: drill.field.label,
+      noun: "node",
+      onToggle: (value) => {
+        const at = drill.selected.indexOf(value);
+        const next = at === -1
+          ? drill.selected.concat([value])
+          : drill.selected.filter((v) => v !== value);
+        commitProperty(next);
+      },
+    });
+    group.update(options, drill.selected);
+    holder.append(group.root);
+    paintDetail(drill.entry);
+  }
+
+  /** Write the field's values onto this node, and close — the same contract every pick has. */
+  function commitProperty(vals) {
+    if (host) host.close(true);
+    onPick({
+      type: "property",
+      key: drill.field.key,
+      values: vals,
+      op: drill.field.type === "text" ? "contains" : "eq",
+    });
+  }
+
   function choose(idx) {
     const entry = shown[idx];
     if (!entry) return;
+    // A property is a question in two halves. Picking the field drills into its values rather
+    // than committing something nobody has chosen a value for yet.
+    if (entry.pick && entry.pick.type === "field") {
+      const forField = (values || []).find((v) => v.key === entry.field.key);
+      drill = {
+        field: entry.field,
+        entry,
+        values: forField ? forField.values : [],
+        selected: ((currentValues && currentValues(entry.field.key)) || []).slice(),
+      };
+      paint();
+      return;
+    }
     if (host) host.close(true);
     onPick(entry.pick);
   }

@@ -5189,7 +5189,7 @@ var Server = (() => {
       var _a6;
       return { kind, count: (_a6 = kindCounts.get(kind)) != null ? _a6 : 0 };
     });
-    const base = { kinds, stepsFrom, valuesFor: {}, shortcuts: [] };
+    const base = { kinds, stepsFrom, valuesFor: {}, fieldsFor: {}, shortcuts: [] };
     const shortcuts = [];
     for (const shortcut of QUERY_SHORTCUTS) {
       const answerable = shortcut.kinds.filter((k) => shortcutsFor(k, base).some((s) => s.id === shortcut.id));
@@ -6297,7 +6297,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "14d48a291ab0" : "dev";
+  var BUILD_ID = true ? "d233c7717b4c" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -10610,10 +10610,20 @@ var Server = (() => {
     return run(
       () => cached("queryVocabulary", { kind }, () => {
         const doc = loadGraphDoc();
-        if (!doc) return { empty: true, kinds: [], stepsFrom: {}, valuesFor: {}, shortcuts: [] };
+        if (!doc) {
+          return { empty: true, kinds: [], stepsFrom: {}, valuesFor: {}, fieldsFor: {}, shortcuts: [] };
+        }
         const vocab = queryVocabulary(doc);
         if (!kind) return vocab;
-        return { ...vocab, valuesFor: { [kind]: fieldValuesFor(doc, kind) } };
+        return {
+          ...vocab,
+          valuesFor: { [kind]: fieldValuesFor(doc, kind) },
+          // What the palette's Properties tab lists, and the type that decides which control each
+          // field gets. Per-kind for the same reason the value lists are.
+          fieldsFor: {
+            [kind]: fieldsForKind(kind).map((f) => ({ key: f.key, label: f.label, type: f.type }))
+          }
+        };
       })
     );
   }

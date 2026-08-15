@@ -24,6 +24,7 @@
 // the structure unreadable at exactly the moment someone is trying to read it:
 //
 //   where=0.cloud.GCP,0.severity.CRITICAL,1.inactive.true
+//   where=0.name~prod          the separator IS the operator: `.` equals, `~` contains
 //
 // The leading number is the node's PRE-ORDER INDEX over every traversed node — the same walk
 // the domain evaluator uses for its binding slots, so index 1 means the same node on both
@@ -170,10 +171,15 @@ export function isGroup(step) {
 // ------------------------------------------------------------------------- where
 
 /**
- * `0.cloud.GCP,0.cloud.AWS,1.inactive.true` → per-node filters, keyed by pre-order index.
+ * `0.cloud.GCP,0.cloud.AWS,1.inactive.true,0.name~prod` → per-node filters, keyed by pre-order
+ * index. The value is `{values, op}`; repeating a (node, key) pair ORs its values, which is how
+ * the filter panel's multi-select dimensions already behave everywhere else in this app.
  *
- * Repeating a (node, key) pair ORs its values, which is how the filter panel's multi-select
- * dimensions already behave everywhere else in this app.
+ * THE SEPARATOR BEFORE THE VALUE IS THE OPERATOR. `.` is whole-value equality; `~` is a
+ * substring, which is the only useful reading of a filter on a name — "prod" should find
+ * "prod-agent-01". It has to be in the grammar rather than inferred from the field's type,
+ * because `id` is a text field too and a deep link to one asset must not also open every asset
+ * whose id contains it. `~` is unreserved, so the URL stays readable.
  *
  * Unreadable entries are SKIPPED rather than thrown: `where` is the half a link most often
  * loses to a chat client's line wrapping, and dropping one filter is a far better failure than
@@ -184,16 +190,25 @@ export function parseWhere(text) {
   for (const entry of String(text || "").split(",")) {
     if (!entry) continue;
     const dot1 = entry.indexOf(".");
-    const dot2 = entry.indexOf(".", dot1 + 1);
-    if (dot1 <= 0 || dot2 <= dot1) continue;
+    if (dot1 <= 0) continue;
+    // Whichever operator comes first after the key ends the key.
+    const eq = entry.indexOf(".", dot1 + 1);
+    const tilde = entry.indexOf("~", dot1 + 1);
+    const at = eq === -1 ? tilde : (tilde === -1 ? eq : Math.min(eq, tilde));
+    if (at <= dot1) continue;
     const index = Number(entry.slice(0, dot1));
-    const key = entry.slice(dot1 + 1, dot2);
-    const value = decodeURIComponent(entry.slice(dot2 + 1));
+    const key = entry.slice(dot1 + 1, at);
+    const op = entry[at] === "~" ? "contains" : "eq";
+    const value = decodeURIComponent(entry.slice(at + 1));
     if (!Number.isInteger(index) || index < 0 || !key || !value) continue;
     if (!byIndex.has(index)) byIndex.set(index, new Map());
     const forNode = byIndex.get(index);
-    if (!forNode.has(key)) forNode.set(key, []);
-    if (!forNode.get(key).includes(value)) forNode.get(key).push(value);
+    if (!forNode.has(key)) forNode.set(key, { values: [], op });
+    const filter = forNode.get(key);
+    // One operator per (node, key). A link carrying both readings of one field is malformed;
+    // the first one wins rather than the entry being dropped, so the filter still does
+    // something the chip can describe.
+    if (!filter.values.includes(value)) filter.values.push(value);
   }
   return byIndex;
 }
@@ -203,10 +218,12 @@ export function serializeWhere(byIndex) {
   for (const index of [...byIndex.keys()].sort((a, b) => a - b)) {
     const forNode = byIndex.get(index);
     for (const key of [...forNode.keys()].sort()) {
-      for (const value of forNode.get(key)) {
+      const filter = forNode.get(key);
+      const sep = filter.op === "contains" ? "~" : ".";
+      for (const value of filter.values) {
         // A value can hold a comma (a project name) or a dot (a region), either of which would
         // re-split wrong on the way back in.
-        parts.push(index + "." + key + "." + encodeURIComponent(value));
+        parts.push(index + "." + key + sep + encodeURIComponent(value));
       }
     }
   }
@@ -274,7 +291,12 @@ export function applyWhere(query, byIndex) {
     if (index === null || !node) return;
     const filters = byIndex.get(index);
     if (!filters || !filters.size) return;
-    node.where = [...filters.keys()].sort().map((key) => ({ key, values: filters.get(key) }));
+    node.where = [...filters.keys()].sort().map((key) => {
+      const f = filters.get(key);
+      // `op` is omitted where it is the default, so the wire payload and the golden snapshot
+      // carry it only when it is doing something.
+      return f.op === "contains" ? { key, values: f.values, op: "contains" } : { key, values: f.values };
+    });
   });
   return copy;
 }
@@ -562,7 +584,8 @@ export function migrateLegacyParams(params) {
   const put = (index, key, values) => {
     if (!values.length) return;
     if (!where.has(index)) where.set(index, new Map());
-    where.get(index).set(key, values);
+    // Whole-value equality: a legacy link named an exact id or an exact kind, never a substring.
+    where.get(index).set(key, { values, op: "eq" });
   };
 
   if (has("seed") && params.seedKind !== "combo") put(0, "id", [params.seed]);

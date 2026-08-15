@@ -474,6 +474,11 @@ export interface Vocabulary {
    * implementation on the other side of the wire. Six entries; the palette filters by kind.
    */
   shortcuts: QueryShortcut[];
+  /**
+   * The fields a kind can be filtered on, with the type that decides which control to draw.
+   * Filled for ONE kind at a time, beside `valuesFor` and for the same reason.
+   */
+  fieldsFor: Record<string, Array<{ key: string; label: string; type: FieldType }>>;
 }
 
 /**
@@ -529,7 +534,7 @@ export function queryVocabulary(doc: GraphDoc): Vocabulary {
     .filter((k) => kindCounts.has(k))
     .map((kind) => ({ kind, count: kindCounts.get(kind) ?? 0 }));
 
-  const base: Vocabulary = { kinds, stepsFrom, valuesFor: {}, shortcuts: [] };
+  const base: Vocabulary = { kinds, stepsFrom, valuesFor: {}, fieldsFor: {}, shortcuts: [] };
   const shortcuts: QueryShortcut[] = [];
   for (const shortcut of QUERY_SHORTCUTS) {
     const answerable = shortcut.kinds.filter((k) => shortcutsFor(k, base).some((s) => s.id === shortcut.id));
