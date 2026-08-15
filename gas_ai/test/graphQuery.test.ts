@@ -7,6 +7,7 @@ import {
   MAX_QUERY_NODES,
   QueryError,
   QUERY_FIELDS,
+  QUERY_SHORTCUTS,
   VALUE_CARDINALITY_MAX,
   type QueryNode,
   type QueryStep,
@@ -19,11 +20,15 @@ import {
   queryColumnGroups,
   queryVocabulary,
   runQuery,
+  shortcutsFor,
   validateQuery,
+  type QueryShortcut,
 } from "../src/domain/graphQuery";
+import { EDGE_TYPES, NODE_KINDS } from "../src/domain/graphTypes";
+import { conditionHolds } from "../src/domain/riskConditions";
 import { enrichGraphDoc, withMissingGuardrailNodes } from "../src/domain/graphEnrich";
 import { SEED_AARS_HINTS, SEED_ISSUES, seedGraphDoc } from "../src/server/sampleData";
-import type { GraphDoc } from "../src/domain/graphTypes";
+import type { GraphDoc, NodeKind } from "../src/domain/graphTypes";
 
 const DOC: GraphDoc = enrichGraphDoc(seedGraphDoc("2026-06-28T05:00:00Z"), SEED_ISSUES, SEED_AARS_HINTS);
 
@@ -534,6 +539,22 @@ describe("filter vocabulary", () => {
     }
   });
 
+  it("narrows each shortcut to the kinds this tenant can answer it from", () => {
+    const vocab = queryVocabulary(DOC);
+    expect(vocab.shortcuts.length).toBeGreaterThan(0);
+    for (const shortcut of vocab.shortcuts) {
+      expect(shortcut.kinds.length, shortcut.id).toBeGreaterThan(0);
+      for (const kind of shortcut.kinds) {
+        expect(shortcutsFor(kind, vocab).map((s) => s.id), shortcut.id + " on " + kind)
+          .toContain(shortcut.id);
+      }
+    }
+    // The seed's AI assets are agents; nothing runs as a service account from a BUCKET.
+    const runsAs = vocab.shortcuts.find((s) => s.id === "runs-as-dormant");
+    expect(runsAs?.kinds).toContain("AI_AGENT");
+    expect(runsAs?.kinds).not.toContain("BUCKET");
+  });
+
   it("keeps the value lists off the bare vocabulary, to be asked for per kind", () => {
     // Every kind's lists together were 22 KB of a 28 KB vocabulary, none of it read until the
     // palette opens and then only for one kind. The page fetches the vocabulary bare.
@@ -578,5 +599,136 @@ describe("filter vocabulary", () => {
       edges: [],
     };
     expect(fieldValuesFor(many, "AI_AGENT").find((f) => f.key === "region")).toBeUndefined();
+  });
+});
+
+/**
+ * The curated shortcuts, held to the model.
+ *
+ * A shortcut is a promise printed on a button, and its failure mode is silence: a
+ * relationship the model dropped turns it into a query that can no longer match, and nothing
+ * says so — the palette still offers it and it answers zero. So each one is validated, run
+ * against the seed, and where the app asserts the same thing another way, the two answers are
+ * required to agree.
+ */
+describe("QUERY_SHORTCUTS", () => {
+  const VOCAB = queryVocabulary(DOC);
+
+  /** The shortcut as a whole query, rooted at `kind` — what the palette builds. */
+  function asQuery(shortcut: QueryShortcut, kind: NodeKind): QueryNode {
+    const root: QueryNode = { kind, steps: shortcut.steps };
+    for (const f of shortcut.filters ?? []) {
+      const node = nodeAtPath(root, f.path);
+      node.where = [...(node.where ?? []), { key: f.key, values: f.values }];
+    }
+    return validateQuery(JSON.parse(JSON.stringify(root)));
+  }
+
+  /** `[0]` is the first appended step's target node; `[0, 1]` its second child's target. */
+  function nodeAtPath(root: QueryNode, path: number[]): QueryNode {
+    let at = root;
+    for (const i of path) {
+      const step = (at.steps ?? [])[i];
+      if (!step || isGroup(step)) throw new Error("shortcut filter path misses a node: " + path);
+      at = step.node;
+    }
+    return at;
+  }
+
+  it("every shortcut validates and runs, on every kind it claims", () => {
+    for (const shortcut of QUERY_SHORTCUTS) {
+      for (const kind of shortcut.kinds) {
+        const query = asQuery(shortcut, kind);
+        // A throw here is the build failing rather than the palette failing at 3pm.
+        const res = runQuery(DOC, query);
+        expect(res.total, shortcut.id + " on " + kind).toBeGreaterThanOrEqual(0);
+      }
+    }
+  });
+
+  it("names only relationships and kinds the model still has", () => {
+    for (const shortcut of QUERY_SHORTCUTS) {
+      for (const step of shortcut.steps) walkStep(step);
+    }
+    function walkStep(step: QueryStep) {
+      if (isGroup(step)) { step.steps.forEach(walkStep); return; }
+      expect(EDGE_TYPES as readonly string[], shortcut(step)).toContain(step.edge);
+      expect(NODE_KINDS as readonly string[]).toContain(step.node.kind);
+      (step.node.steps ?? []).forEach(walkStep);
+    }
+    function shortcut(step: RelationStep) { return "unknown edge " + step.edge; }
+  });
+
+  it("filters name fields the target kind can actually answer", () => {
+    for (const s of QUERY_SHORTCUTS) {
+      for (const f of s.filters ?? []) {
+        const node = nodeAtPath({ kind: s.kinds[0], steps: s.steps }, f.path);
+        const keys = fieldsForKind(node.kind).map((x) => x.key);
+        expect(keys, s.id + ": " + f.key + " on " + node.kind).toContain(f.key);
+      }
+    }
+  });
+
+  it("agrees with the condition the canvas draws, where the app asserts it twice", () => {
+    // MISSING_GUARDRAIL is never suppressed, so the stub count IS the population and the two
+    // must match exactly. If they ever diverge, one of them is lying.
+    const shortcut = QUERY_SHORTCUTS.find((s) => s.id === "no-guardrail");
+    if (!shortcut) throw new Error("no-guardrail went missing");
+    const res = runQuery(DOC, asQuery(shortcut, "AI_AGENT"));
+    const drawn = DOC.nodes.filter((n) =>
+      n.kind === "AI_AGENT" && conditionHolds(n, "MISSING_GUARDRAIL")).length;
+    expect(res.total).toBe(drawn);
+    expect(drawn).toBeGreaterThan(0);
+  });
+
+  it("does not use the NOT traversal for the guardrail question, which answers wider", () => {
+    // This is why `no-guardrail` is a property filter and not `!PROTECTED_BY.AI_GUARDRAIL`.
+    //
+    // The two disagree because the FLAG and the TOPOLOGY are not the same claim: Wiz reports
+    // some assets as protected without the graph carrying a PROTECTED_BY edge to name the
+    // guardrail. The traversal counts those as unguarded; the flag does not, and the canvas
+    // draws the flag. Locked in — a future simplification back to the negated step would
+    // over-report, and quietly.
+    const viaTraversal = runQuery(DOC, validateQuery({
+      kind: "AI_AGENT",
+      steps: [{ edge: "PROTECTED_BY", negate: true, node: { kind: "AI_GUARDRAIL" } }],
+    }));
+    const drawn = DOC.nodes.filter((n) =>
+      n.kind === "AI_AGENT" && conditionHolds(n, "MISSING_GUARDRAIL")).length;
+    expect(viaTraversal.total).toBeGreaterThan(drawn);
+
+    const withEdge = new Set(DOC.edges
+      .filter((e) => e.type === "PROTECTED_BY" && !e.negated)
+      .map((e) => e.src));
+    const flaggedProtectedWithoutEdge = DOC.nodes.filter((n) =>
+      n.kind === "AI_AGENT" && n.guardrailMissing === false && !withEdge.has(n.id)).length;
+    expect(flaggedProtectedWithoutEdge).toBeGreaterThan(0);
+    expect(viaTraversal.total).toBe(drawn + flaggedProtectedWithoutEdge);
+  });
+
+  it("reaches classified data by the real chain, not the suppressed stub", () => {
+    const shortcut = QUERY_SHORTCUTS.find((s) => s.id === "reaches-classified");
+    if (!shortcut) throw new Error("reaches-classified went missing");
+    const res = runQuery(DOC, asQuery(shortcut, "AI_AGENT"));
+    expect(res.total).toBeGreaterThan(0);
+    // The waypoint is hidden, so the table reads asset beside data: two column groups, not
+    // three. That is the whole point of `show: false` on the identity.
+    expect(res.groups).toHaveLength(2);
+    expect(res.groups.map((g) => g.kind)).toEqual(["AI_AGENT", "BUCKET"]);
+    // And it must NOT be the stub: a SENSITIVE_DATA walk would answer with the residue.
+    const viaStub = runQuery(DOC, validateQuery({
+      kind: "AI_AGENT",
+      steps: [{ edge: "HAS_SENSITIVE_DATA", node: { kind: "SENSITIVE_DATA" } }],
+    }));
+    expect(res.total).not.toBe(viaStub.total);
+  });
+
+  it("is offered only where the tenant's graph can answer it", () => {
+    // A kind with nothing in the graph gets nothing offered, rather than six dead buttons.
+    const empty = queryVocabulary({ syncedAt: DOC.syncedAt, nodes: [], edges: [] });
+    expect(empty.shortcuts).toEqual([]);
+    expect(shortcutsFor("AI_AGENT", empty)).toEqual([]);
+    // ANY is a wildcard root, not a kind — no shortcut is written against it.
+    expect(shortcutsFor("ANY", VOCAB)).toEqual([]);
   });
 });

@@ -65,6 +65,8 @@ const PATHS = {
   // and `check` a choice already made; `not` is the negation operator — a slashed circle, the
   // one shape that reads as "absent" rather than as "wrong".
   search: ["M7.2 2.7 a4.5 4.5 0 1 0 0 9 a4.5 4.5 0 0 0 0 -9", "M10.6 10.6 L13.5 13.5"],
+  // A funnel — what a query shortcut and a property filter both do to a result set.
+  filter: ["M2.5 3.5 H13.5 L9.5 8.2 V13 L6.5 11.4 V8.2 Z"],
   property: ["M2.5 4 H13.5", "M4.5 8 H11.5", "M6.5 12 H9.5"],
   check: ["M3 8.4 L6.4 11.8 L13 5.2"],
   not: ["M8 2.2 a5.8 5.8 0 1 0 0 11.6 a5.8 5.8 0 0 0 0 -11.6", "M4 12 L12 4"],
@@ -74,7 +76,13 @@ const PATHS = {
 };
 
 // Same fallback posture as kindIcon(): an unknown name reads as "more" rather than throwing.
+// Deliberate — a typo must not blank a page — and precisely why a typo is otherwise invisible.
+// `UI_ICON_NAMES` is what test/icons.test.js holds every `uiIcon("…")` in the client against,
+// so a name nothing draws fails the build instead of rendering an empty square.
 const FALLBACK = ["M8 8 h0.01"];
+
+/** Every glyph this set draws. */
+export const UI_ICON_NAMES = Object.keys(PATHS);
 
 /** A standalone 16x16 stroke <svg> for UI chrome (buttons, actions) — decorative only;
  * the caller supplies the accessible name (button aria-label/title), not this icon. */

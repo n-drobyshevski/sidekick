@@ -13,7 +13,9 @@ import {
   nodeAt,
   parseQuery,
   parseWhere,
+  pathAfterRemoval,
   queryRows,
+  remapWhere,
   removeStep,
   serializeQuery,
   serializeWhere,
@@ -335,5 +337,76 @@ describe("group rows and edits", () => {
     expect(wire.where).toEqual([{ key: "cloud", values: ["GCP"] }]);
     expect(wire.steps[0].steps[0].node.where).toBeUndefined();
     expect(wire.steps[0].steps[1].node.where).toEqual([{ key: "name", values: ["gpt"] }]);
+  });
+});
+
+/**
+ * `where` is keyed by pre-order SLOT, and almost every structural edit renumbers slots. These
+ * are the cases where a filter would otherwise slide onto a node nobody put it on — which is
+ * the worst failure this param has, because every chip still reads correctly while the query
+ * answers something else.
+ */
+describe("remapWhere", () => {
+  const w = (text) => parseWhere(text);
+  const flat = (map) => [...map.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([i, m]) => i + ":" + [...m.keys()].sort().join("+"));
+
+  it("holds a filter on its node when a step is inserted ABOVE it", () => {
+    // slots: 0 agent, 1 model. Add a step under the agent BEFORE the model? Appends land last,
+    // so the interesting case is a step added under an EARLIER node, which pushes the later
+    // node's slot up.
+    const before = parseQuery("AI_AGENT(RUNS_AS.SERVICE_ACCOUNT'USES_MODEL.AI_MODEL)");
+    expect(flat(w("2.name.gpt"))).toEqual(["2:name"]);          // the model is slot 2
+    const after = addStep(before, [0], { edge: "ALLOWS_ACCESS_TO", node: { kind: "BUCKET" } });
+    // The bucket takes slot 2 and the model moves to 3; the filter has to follow the model.
+    expect(flat(remapWhere(before, after, w("2.name.gpt")))).toEqual(["3:name"]);
+  });
+
+  it("follows a node when an earlier step is negated and its slot disappears", () => {
+    const before = parseQuery("AI_AGENT(RUNS_AS.SERVICE_ACCOUNT'USES_MODEL.AI_MODEL)");
+    const after = setEdge(before, [0], { negate: true });
+    // A negated step binds nothing, so the service account's slot goes and the model drops
+    // from 2 to 1. The filter on the service account itself has nowhere to live and is dropped.
+    expect(flat(remapWhere(before, after, w("2.name.gpt")))).toEqual(["1:name"]);
+    expect(flat(remapWhere(before, after, w("1.inactive.true")))).toEqual([]);
+  });
+
+  it("drops a removed subtree's filters and shifts its later siblings' down", () => {
+    const before = parseQuery("AI_AGENT(RUNS_AS.SERVICE_ACCOUNT'USES_MODEL.AI_MODEL)");
+    const after = removeStep(before, [0]);
+    const moved = remapWhere(before, after, w("0.cloud.GCP,1.inactive.true,2.name.gpt"),
+      pathAfterRemoval([0]));
+    // The agent keeps slot 0, the removed identity's filter goes, the model lands on 1.
+    expect(flat(moved)).toEqual(["0:cloud", "1:name"]);
+  });
+
+  it("keeps a filter on the root through every edit", () => {
+    const before = parseQuery("AI_AGENT(RUNS_AS.SERVICE_ACCOUNT)");
+    for (const after of [
+      addStep(before, [], { edge: "USES_MODEL", node: { kind: "AI_MODEL" } }),
+      setEdge(before, [0], { negate: true }),
+      removeStep(before, [0]),
+    ]) {
+      expect(flat(remapWhere(before, after, w("0.cloud.GCP"), pathAfterRemoval([0]))))
+        .toEqual(["0:cloud"]);
+    }
+  });
+
+  it("drops rather than guesses when a path cannot be placed", () => {
+    // Changing a node's kind drops its steps, so anything filtered below it is gone. Dropping
+    // is the safe direction: the chip disappears, which is visible, where a filter silently
+    // re-pointed at another node is not.
+    const before = parseQuery("AI_AGENT(RUNS_AS.SERVICE_ACCOUNT)");
+    const after = setKind(before, [], "BUCKET");
+    expect(flat(remapWhere(before, after, w("0.cloud.GCP,1.inactive.true")))).toEqual(["0:cloud"]);
+  });
+
+  it("survives a hidden node, which still binds and still takes a slot", () => {
+    const before = parseQuery("AI_AGENT(RUNS_AS.!SERVICE_ACCOUNT(ALLOWS_ACCESS_TO.BUCKET))");
+    const after = addStep(before, [], { edge: "USES_MODEL", node: { kind: "AI_MODEL" } });
+    // Hidden drops COLUMNS, not the binding — slots 0/1/2 are agent, identity, bucket.
+    expect(flat(remapWhere(before, after, w("1.inactive.true,2.name.logs"))))
+      .toEqual(["1:inactive", "2:name"]);
   });
 });

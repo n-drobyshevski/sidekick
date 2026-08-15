@@ -316,6 +316,13 @@
   color: var(--text-3);
 }
 .gq-pal-detail-blurb { margin: 0; font-size: 12px; line-height: 1.5; color: var(--text-2); }
+.gq-pal-detail-blurb + .gq-pal-detail-blurb { margin-top: 8px; }
+
+/* A node's property filters, on its builder row. The `.filter-chip` recipe, tightened to sit
+   in a 28px line beside the entity chips rather than in the chip row under the header. */
+.gq-chips { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.gq-filter-chip { min-height: 26px; font-size: 12px; }
+.gq-filter-key { color: var(--text-3); }
 /* The literal expansion. Prose says what a pick means; this says what it DOES — the same
    fragment that ends up in the shareable link, built by the real serializer. */
 .gq-pal-detail-lit {

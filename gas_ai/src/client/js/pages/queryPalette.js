@@ -31,6 +31,7 @@ const NARROW_PALETTE = "(max-width: 800px)";
 
 const SECTION_LABELS = {
   popular: "Popular",
+  shortcuts: "Query shortcuts",
   operators: "Operators",
   relations: "Relationships",
 };
@@ -62,6 +63,32 @@ export function paletteEntries(ctx) {
   const { kind, vocab, row } = ctx || {};
   const steps = ((vocab || {}).stepsFrom || {})[kind] || [];
   const out = [];
+
+  // ------------------------------------------------------------------ shortcuts
+  // Curated questions, defined in the DOMAIN so a test can hold each to the model, and shipped
+  // with `kinds` already narrowed to what this tenant's graph can answer — see QUERY_SHORTCUTS.
+  // They lead the Popular tab because they are the fastest route from "open the page" to a
+  // question worth asking.
+  for (const s of ((vocab || {}).shortcuts || [])) {
+    if (!(s.kinds || []).includes(kind)) continue;
+    out.push({
+      id: "sc-" + s.id,
+      section: "shortcuts",
+      category: null,
+      glyph: "filter",
+      label: s.label,
+      sub: s.phrase,
+      count: null,
+      popular: true,
+      detail: {
+        title: s.label,
+        type: "Query shortcut",
+        blurb: s.blurb,
+        literal: shortcutLiteral(s),
+      },
+      pick: { type: "shortcut", id: s.id, steps: s.steps, filters: s.filters || [] },
+    });
+  }
 
   // ------------------------------------------------------------------ relationships
   // One entry per (edge, direction, target kind) — the same triple a step carries, so picking
@@ -231,8 +258,14 @@ export function paletteEntries(ctx) {
 export function paletteRail(entries) {
   const rail = [
     { key: "popular", label: SECTION_LABELS.popular, count: entries.filter((e) => e.popular).length },
-    { key: "operators", label: SECTION_LABELS.operators, count: entries.filter((e) => e.section === "operators").length },
   ];
+  const shortcuts = entries.filter((e) => e.section === "shortcuts").length;
+  if (shortcuts) rail.push({ key: "shortcuts", label: SECTION_LABELS.shortcuts, count: shortcuts });
+  rail.push({
+    key: "operators",
+    label: SECTION_LABELS.operators,
+    count: entries.filter((e) => e.section === "operators").length,
+  });
   for (const cat of CATEGORY_ORDER) {
     const n = entries.filter((e) => e.category === cat).length;
     // Ours has five categories where the reference has twelve. Showing an empty one anyway
@@ -247,6 +280,7 @@ export function paletteRail(entries) {
 /** Which entries a rail tab shows, in the order they were derived (commonest first). */
 export function entriesForTab(entries, tabKey) {
   if (tabKey === "popular") return entries.filter((e) => e.popular);
+  if (tabKey === "shortcuts") return entries.filter((e) => e.section === "shortcuts");
   if (tabKey === "operators") return entries.filter((e) => e.section === "operators");
   if (tabKey === "cat-any") {
     return entries.filter((e) => e.section === "relations" && !e.category);
@@ -294,8 +328,25 @@ export function stepForPick(pick) {
  * the same grammar.
  */
 export function literalFor(pick) {
-  if (pick.type === "flag") return "";
+  if (pick.type === "flag" || pick.type === "shortcut") return "";
   return serializeStep(stepForPick(pick));
+}
+
+/**
+ * A shortcut's expansion, steps and filters together.
+ *
+ * The filters are written in `where=` notation with the path standing in for the slot number,
+ * because the real slot depends on where in the tree the shortcut lands and the pane is read
+ * before that is decided. It still shows both halves — a shortcut that narrows by a property
+ * and says only which relationship it walks would be describing half of what it does.
+ */
+export function shortcutLiteral(shortcut) {
+  const parts = (shortcut.steps || []).map(serializeStep);
+  for (const f of (shortcut.filters || [])) {
+    const at = f.path.length ? "+" + f.path.join(".") : "this";
+    parts.push(at + "." + f.key + "." + f.values.join("|"));
+  }
+  return parts.join("  ");
 }
 
 /** "runs as", "runs as (incoming)" — the direction is stated, never conjugated backwards. */
@@ -528,7 +579,11 @@ export function openQueryPalette(spec) {
     }
     detailEl.append(el("h3", { class: "gq-pal-detail-title" }, entry.detail.title));
     detailEl.append(el("p", { class: "gq-pal-detail-type" }, entry.detail.type));
-    detailEl.append(el("p", { class: "gq-pal-detail-blurb" }, entry.detail.blurb));
+    // Blank-line-separated paragraphs, kept as paragraphs. A shortcut's second paragraph is
+    // usually the one saying what it deliberately does NOT do, which is the half worth reading.
+    for (const para of String(entry.detail.blurb).split("\n\n")) {
+      detailEl.append(el("p", { class: "gq-pal-detail-blurb" }, para));
+    }
     if (entry.detail.literal) {
       detailEl.append(el("div", { class: "gq-pal-detail-lit" },
         el("span", { class: "label" }, "Adds"),

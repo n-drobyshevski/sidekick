@@ -20,6 +20,7 @@ import { CATEGORY_LABELS, CATEGORY_ORDER } from "../icons.js";
 import { appliedCount, filterEntries, isNarrowingSet, sectionOf } from "./graphChips.js";
 import {
   applyWhere, defaultQuery, migrateLegacyParams, parseQuery, parseWhere, serializeQuery,
+  serializeWhere,
 } from "./graphQuery.js";
 import { queryBar } from "./graphQueryBar.js";
 import {
@@ -416,7 +417,18 @@ export async function renderGraphPage(main, params, _ctx) {
   const builder = queryBar({
     getQuery: () => queryOf(state),
     getVocab: () => vocab,
-    onChange: (next) => update({ find: serializeQuery(next), columns: "", page: "" }),
+    getWhere: () => parseWhere(state.where),
+    // The column groups the last answer carried, which is where a field's human label lives —
+    // the builder's filter chips read it from there rather than keeping a second copy of the
+    // field table on the client.
+    getGroups: () => (lastData && lastData.groups) || [],
+    onChange: (next, where) => {
+      const patch = { find: serializeQuery(next), columns: "", page: "" };
+      // Only written when the builder actually touched it. `where` is otherwise the filter
+      // panel's to own, and rewriting it on every structural edit would fight that.
+      if (where) patch.where = serializeWhere(where);
+      update(patch);
+    },
     countNode: countBox,
   });
   barHost.append(builder.node);
@@ -567,6 +579,11 @@ export async function renderGraphPage(main, params, _ctx) {
     if (!payload) return;
     lastData = payload;
     body.classList.remove("updating");
+    // The builder's filter chips read their field LABELS off the answer's column groups, and
+    // the answer lands after the repaint that added the filter. Without this the chip shows
+    // the raw key ("inactive") until the next unrelated edit. `sync` is idempotent and the
+    // focus hand-off it can do is one-shot, so re-running it here costs nothing.
+    builder.sync();
     if (payload.empty || (!(payload.nodes || []).length && !(payload.rows || []).length)) {
       emptyCanvas(payload);
       return;

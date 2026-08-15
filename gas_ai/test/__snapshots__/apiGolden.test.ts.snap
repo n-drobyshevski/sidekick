@@ -653,6 +653,7 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
     "data": {
       "empty": true,
       "kinds": [],
+      "shortcuts": [],
       "stepsFrom": {},
       "valuesFor": {},
     },
@@ -11062,6 +11063,167 @@ exports[`read endpoints > getQueryVocabulary (bare) answers the same shape 1`] =
         "kind": "ENDPOINT",
       },
     ],
+    "shortcuts": [
+      {
+        "blurb": "Reads the asset's own guardrail flag, which is what the canvas draws its MISSING_GUARDRAIL stub from — so the two always agree.
+
+Deliberately not the “NOT protected by a guardrail” traversal, which answers a wider question: it counts every asset with no guardrail relationship in the graph, including ones Wiz reports as protected without naming the guardrail. Add a NOT on a PROTECTED_BY step if that wider question is the one you want.",
+        "filters": [
+          {
+            "key": "guardrail",
+            "path": [],
+            "values": [
+              "missing",
+            ],
+          },
+        ],
+        "helpId": "missing-guardrail",
+        "id": "no-guardrail",
+        "kinds": [
+          "AI_AGENT",
+          "AI_MODEL",
+          "AI_GUARDRAIL",
+          "AI_PIPELINE",
+          "AI_DATASET",
+          "MCP_SERVER",
+        ],
+        "label": "Has no guardrail",
+        "phrase": "Wiz reports the guardrail missing",
+        "steps": [],
+      },
+      {
+        "blurb": "Reads the identity's own privilege flag rather than walking to the EXCESSIVE_PRIVILEGE stub, which is suppressed wherever a real access finding exists — walking to it would quietly answer with the leftovers. Admin privilege is the stronger claim and has its own field.",
+        "filters": [
+          {
+            "key": "highPriv",
+            "path": [
+              0,
+            ],
+            "values": [
+              "true",
+            ],
+          },
+        ],
+        "helpId": "excessive-privilege",
+        "id": "runs-as-privileged",
+        "kinds": [
+          "AI_AGENT",
+        ],
+        "label": "Runs as a privileged identity",
+        "phrase": "its service account holds high privileges",
+        "steps": [
+          {
+            "edge": "RUNS_AS",
+            "node": {
+              "kind": "SERVICE_ACCOUNT",
+            },
+          },
+        ],
+      },
+      {
+        "blurb": "An identity nobody has used in ninety days, still able to act on the asset's behalf. The dormancy is a field Wiz reports, not something derived here.",
+        "filters": [
+          {
+            "key": "inactive",
+            "path": [
+              0,
+            ],
+            "values": [
+              "true",
+            ],
+          },
+        ],
+        "helpId": "agentic-identity",
+        "id": "runs-as-dormant",
+        "kinds": [
+          "AI_AGENT",
+        ],
+        "label": "Runs as a dormant identity",
+        "phrase": "its service account has been idle 90 days",
+        "steps": [
+          {
+            "edge": "RUNS_AS",
+            "node": {
+              "kind": "SERVICE_ACCOUNT",
+            },
+          },
+        ],
+      },
+      {
+        "blurb": "The real path — asset to identity to bucket — with the identity hidden, so the table reads asset beside data. Deliberately NOT the SENSITIVE_DATA stub, which graphEnrich suppresses exactly where this chain exists: walking to the stub would return only the assets whose path could not be traced.",
+        "helpId": "sensitive-data",
+        "id": "reaches-classified",
+        "kinds": [
+          "AI_AGENT",
+        ],
+        "label": "Reaches classified data",
+        "phrase": "through its identity, to a bucket",
+        "steps": [
+          {
+            "edge": "RUNS_AS",
+            "node": {
+              "kind": "SERVICE_ACCOUNT",
+              "show": false,
+              "steps": [
+                {
+                  "edge": "ALLOWS_ACCESS_TO",
+                  "node": {
+                    "kind": "BUCKET",
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+      {
+        "blurb": "Assets carrying an internet exposure node. Exposure is inherited from the compute underneath, so this is the topology answer rather than a flag read off the asset.",
+        "helpId": "internet-exposure",
+        "id": "internet-reachable",
+        "kinds": [
+          "AI_AGENT",
+        ],
+        "label": "Reachable from the internet",
+        "phrase": "an exposure path reaches it",
+        "steps": [
+          {
+            "edge": "EXPOSED_TO_INTERNET",
+            "node": {
+              "kind": "INTERNET_EXPOSURE",
+            },
+          },
+        ],
+      },
+      {
+        "blurb": "Human access read backwards: the accounts that ALLOW_ACCESS_TO this asset, narrowed to the ones nobody has signed into in ninety days. Standing access that no longer has a person behind it.",
+        "filters": [
+          {
+            "key": "inactive",
+            "path": [
+              0,
+            ],
+            "values": [
+              "true",
+            ],
+          },
+        ],
+        "id": "dormant-human-access",
+        "kinds": [
+          "AI_AGENT",
+        ],
+        "label": "A dormant person can reach it",
+        "phrase": "a human account, idle 90 days, still has access",
+        "steps": [
+          {
+            "edge": "ALLOWS_ACCESS_TO",
+            "node": {
+              "kind": "USER_ACCOUNT",
+            },
+            "reverse": true,
+          },
+        ],
+      },
+    ],
     "stepsFrom": {
       "ACCESS_KEY": [
         {
@@ -11635,6 +11797,167 @@ exports[`read endpoints > getQueryVocabulary (values for AI Agent) answers the s
       {
         "count": 2,
         "kind": "ENDPOINT",
+      },
+    ],
+    "shortcuts": [
+      {
+        "blurb": "Reads the asset's own guardrail flag, which is what the canvas draws its MISSING_GUARDRAIL stub from — so the two always agree.
+
+Deliberately not the “NOT protected by a guardrail” traversal, which answers a wider question: it counts every asset with no guardrail relationship in the graph, including ones Wiz reports as protected without naming the guardrail. Add a NOT on a PROTECTED_BY step if that wider question is the one you want.",
+        "filters": [
+          {
+            "key": "guardrail",
+            "path": [],
+            "values": [
+              "missing",
+            ],
+          },
+        ],
+        "helpId": "missing-guardrail",
+        "id": "no-guardrail",
+        "kinds": [
+          "AI_AGENT",
+          "AI_MODEL",
+          "AI_GUARDRAIL",
+          "AI_PIPELINE",
+          "AI_DATASET",
+          "MCP_SERVER",
+        ],
+        "label": "Has no guardrail",
+        "phrase": "Wiz reports the guardrail missing",
+        "steps": [],
+      },
+      {
+        "blurb": "Reads the identity's own privilege flag rather than walking to the EXCESSIVE_PRIVILEGE stub, which is suppressed wherever a real access finding exists — walking to it would quietly answer with the leftovers. Admin privilege is the stronger claim and has its own field.",
+        "filters": [
+          {
+            "key": "highPriv",
+            "path": [
+              0,
+            ],
+            "values": [
+              "true",
+            ],
+          },
+        ],
+        "helpId": "excessive-privilege",
+        "id": "runs-as-privileged",
+        "kinds": [
+          "AI_AGENT",
+        ],
+        "label": "Runs as a privileged identity",
+        "phrase": "its service account holds high privileges",
+        "steps": [
+          {
+            "edge": "RUNS_AS",
+            "node": {
+              "kind": "SERVICE_ACCOUNT",
+            },
+          },
+        ],
+      },
+      {
+        "blurb": "An identity nobody has used in ninety days, still able to act on the asset's behalf. The dormancy is a field Wiz reports, not something derived here.",
+        "filters": [
+          {
+            "key": "inactive",
+            "path": [
+              0,
+            ],
+            "values": [
+              "true",
+            ],
+          },
+        ],
+        "helpId": "agentic-identity",
+        "id": "runs-as-dormant",
+        "kinds": [
+          "AI_AGENT",
+        ],
+        "label": "Runs as a dormant identity",
+        "phrase": "its service account has been idle 90 days",
+        "steps": [
+          {
+            "edge": "RUNS_AS",
+            "node": {
+              "kind": "SERVICE_ACCOUNT",
+            },
+          },
+        ],
+      },
+      {
+        "blurb": "The real path — asset to identity to bucket — with the identity hidden, so the table reads asset beside data. Deliberately NOT the SENSITIVE_DATA stub, which graphEnrich suppresses exactly where this chain exists: walking to the stub would return only the assets whose path could not be traced.",
+        "helpId": "sensitive-data",
+        "id": "reaches-classified",
+        "kinds": [
+          "AI_AGENT",
+        ],
+        "label": "Reaches classified data",
+        "phrase": "through its identity, to a bucket",
+        "steps": [
+          {
+            "edge": "RUNS_AS",
+            "node": {
+              "kind": "SERVICE_ACCOUNT",
+              "show": false,
+              "steps": [
+                {
+                  "edge": "ALLOWS_ACCESS_TO",
+                  "node": {
+                    "kind": "BUCKET",
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+      {
+        "blurb": "Assets carrying an internet exposure node. Exposure is inherited from the compute underneath, so this is the topology answer rather than a flag read off the asset.",
+        "helpId": "internet-exposure",
+        "id": "internet-reachable",
+        "kinds": [
+          "AI_AGENT",
+        ],
+        "label": "Reachable from the internet",
+        "phrase": "an exposure path reaches it",
+        "steps": [
+          {
+            "edge": "EXPOSED_TO_INTERNET",
+            "node": {
+              "kind": "INTERNET_EXPOSURE",
+            },
+          },
+        ],
+      },
+      {
+        "blurb": "Human access read backwards: the accounts that ALLOW_ACCESS_TO this asset, narrowed to the ones nobody has signed into in ninety days. Standing access that no longer has a person behind it.",
+        "filters": [
+          {
+            "key": "inactive",
+            "path": [
+              0,
+            ],
+            "values": [
+              "true",
+            ],
+          },
+        ],
+        "id": "dormant-human-access",
+        "kinds": [
+          "AI_AGENT",
+        ],
+        "label": "A dormant person can reach it",
+        "phrase": "a human account, idle 90 days, still has access",
+        "steps": [
+          {
+            "edge": "ALLOWS_ACCESS_TO",
+            "node": {
+              "kind": "USER_ACCOUNT",
+            },
+            "reverse": true,
+          },
+        ],
       },
     ],
     "stepsFrom": {

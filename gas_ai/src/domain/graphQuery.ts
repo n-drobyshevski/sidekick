@@ -465,6 +465,15 @@ export interface Vocabulary {
    * is fetched once per session.
    */
   valuesFor: Record<string, FieldValues[]>;
+  /**
+   * The curated questions, each with `kinds` NARROWED to the root kinds this tenant's graph
+   * can actually answer it from. A shortcut no kind can answer is dropped.
+   *
+   * They ride the vocabulary because the client is vanilla JS and cannot import this module —
+   * and because the reachability rule belongs next to the shortcuts it judges, not in a second
+   * implementation on the other side of the wire. Six entries; the palette filters by kind.
+   */
+  shortcuts: QueryShortcut[];
 }
 
 /**
@@ -520,7 +529,13 @@ export function queryVocabulary(doc: GraphDoc): Vocabulary {
     .filter((k) => kindCounts.has(k))
     .map((kind) => ({ kind, count: kindCounts.get(kind) ?? 0 }));
 
-  return { kinds, stepsFrom, valuesFor: {} };
+  const base: Vocabulary = { kinds, stepsFrom, valuesFor: {}, shortcuts: [] };
+  const shortcuts: QueryShortcut[] = [];
+  for (const shortcut of QUERY_SHORTCUTS) {
+    const answerable = shortcut.kinds.filter((k) => shortcutsFor(k, base).some((s) => s.id === shortcut.id));
+    if (answerable.length) shortcuts.push({ ...shortcut, kinds: answerable });
+  }
+  return { ...base, shortcuts };
 }
 
 /**
@@ -568,6 +583,165 @@ export function fieldValuesFor(doc: GraphDoc, kind: NodeKind): FieldValues[] {
     });
   }
   return perField;
+}
+
+// ------------------------------------------------------------------------- shortcuts
+
+/**
+ * A named question, expanded into a real subtree.
+ *
+ *   steps    appended under the node the palette was opened from
+ *   filters  property filters on nodes INSIDE those steps, addressed by a path relative to
+ *            the first appended step — `[0]` is that step's target node, `[0, 0]` is the
+ *            target of its first child step. The client turns those into `where=` entries at
+ *            the right slot numbers, so a shortcut's filters land in the URL where anyone can
+ *            see them and take them off again; a filter baked invisibly into the tree would be
+ *            a query narrowed by something nothing on screen admits to.
+ *   kinds    the root kinds the question means anything for. Reachability in THIS tenant is
+ *            checked separately, by `shortcutsFor`.
+ *
+ * WHY THESE SIX, AND NOT THE OBVIOUS ONES. `graphEnrich.withDerivedNodes` SUPPRESSES a risk
+ * stub wherever the real thing exists — `SENSITIVE_DATA` where a walkable data path exists,
+ * `EXCESSIVE_PRIVILEGE` where a real EXCESSIVE_ACCESS_FINDING exists. A shortcut that walked to
+ * either stub would return the RESIDUE and report it as the population, which is the worst kind
+ * of wrong: a confident number nobody can tell is short. So each of these reads either a flag
+ * on the node, or the real chain, and never a suppressed stub. `MISSING_GUARDRAIL` and
+ * `INTERNET_EXPOSURE` are the two that are never suppressed, and both are used directly.
+ */
+export interface QueryShortcut {
+  id: string;
+  label: string;
+  /** The line under the label — what it asks, in the app's own words. */
+  phrase: string;
+  blurb: string;
+  /** An entry in the help book, where one covers this. */
+  helpId?: string;
+  kinds: readonly NodeKind[];
+  steps: QueryStep[];
+  filters?: Array<{ path: number[]; key: string; values: string[] }>;
+}
+
+export const QUERY_SHORTCUTS: readonly QueryShortcut[] = [
+  {
+    id: "no-guardrail",
+    label: "Has no guardrail",
+    phrase: "Wiz reports the guardrail missing",
+    blurb:
+      "Reads the asset's own guardrail flag, which is what the canvas draws its "
+      + "MISSING_GUARDRAIL stub from — so the two always agree.\n\n"
+      + "Deliberately not the “NOT protected by a guardrail” traversal, which answers a wider "
+      + "question: it counts every asset with no guardrail relationship in the graph, "
+      + "including ones Wiz reports as protected without naming the guardrail. Add a NOT on a "
+      + "PROTECTED_BY step if that wider question is the one you want.",
+    helpId: "missing-guardrail",
+    kinds: AI_ASSET_KINDS,
+    steps: [],
+    filters: [{ path: [], key: "guardrail", values: ["missing"] }],
+  },
+  {
+    id: "runs-as-privileged",
+    label: "Runs as a privileged identity",
+    phrase: "its service account holds high privileges",
+    blurb:
+      "Reads the identity's own privilege flag rather than walking to the EXCESSIVE_PRIVILEGE "
+      + "stub, which is suppressed wherever a real access finding exists — walking to it would "
+      + "quietly answer with the leftovers. Admin privilege is the stronger claim and has its "
+      + "own field.",
+    helpId: "excessive-privilege",
+    kinds: AI_ASSET_KINDS,
+    steps: [{ edge: "RUNS_AS", node: { kind: "SERVICE_ACCOUNT" } }],
+    filters: [{ path: [0], key: "highPriv", values: ["true"] }],
+  },
+  {
+    id: "runs-as-dormant",
+    label: "Runs as a dormant identity",
+    phrase: "its service account has been idle 90 days",
+    blurb:
+      "An identity nobody has used in ninety days, still able to act on the asset's behalf. "
+      + "The dormancy is a field Wiz reports, not something derived here.",
+    helpId: "agentic-identity",
+    kinds: AI_ASSET_KINDS,
+    steps: [{ edge: "RUNS_AS", node: { kind: "SERVICE_ACCOUNT" } }],
+    filters: [{ path: [0], key: "inactive", values: ["true"] }],
+  },
+  {
+    id: "reaches-classified",
+    label: "Reaches classified data",
+    phrase: "through its identity, to a bucket",
+    blurb:
+      "The real path — asset to identity to bucket — with the identity hidden, so the table "
+      + "reads asset beside data. Deliberately NOT the SENSITIVE_DATA stub, which "
+      + "graphEnrich suppresses exactly where this chain exists: walking to the stub would "
+      + "return only the assets whose path could not be traced.",
+    helpId: "sensitive-data",
+    kinds: AI_ASSET_KINDS,
+    steps: [{
+      edge: "RUNS_AS",
+      node: {
+        kind: "SERVICE_ACCOUNT",
+        show: false,
+        steps: [{ edge: "ALLOWS_ACCESS_TO", node: { kind: "BUCKET" } }],
+      },
+    }],
+  },
+  {
+    id: "internet-reachable",
+    label: "Reachable from the internet",
+    phrase: "an exposure path reaches it",
+    blurb:
+      "Assets carrying an internet exposure node. Exposure is inherited from the compute "
+      + "underneath, so this is the topology answer rather than a flag read off the asset.",
+    helpId: "internet-exposure",
+    kinds: AI_ASSET_KINDS,
+    steps: [{ edge: "EXPOSED_TO_INTERNET", node: { kind: "INTERNET_EXPOSURE" } }],
+  },
+  {
+    id: "dormant-human-access",
+    label: "A dormant person can reach it",
+    phrase: "a human account, idle 90 days, still has access",
+    blurb:
+      "Human access read backwards: the accounts that ALLOW_ACCESS_TO this asset, narrowed to "
+      + "the ones nobody has signed into in ninety days. Standing access that no longer has a "
+      + "person behind it.",
+    kinds: AI_ASSET_KINDS,
+    steps: [{ edge: "ALLOWS_ACCESS_TO", reverse: true, node: { kind: "USER_ACCOUNT" } }],
+    filters: [{ path: [0], key: "inactive", values: ["true"] }],
+  },
+];
+
+/**
+ * The shortcuts this tenant's graph can actually answer from `kind`.
+ *
+ * Semantic scope comes from the shortcut (`kinds`); whether the relationships exist HERE comes
+ * from the vocabulary. Offering "reaches classified data" to an estate whose identities touch
+ * no buckets would be a button that always answers nothing.
+ *
+ * Negated steps are exempt from the reachability check, and have to be: "has no guardrail" is
+ * most worth offering in an estate where NOTHING is protected — which is exactly the estate
+ * whose vocabulary carries no PROTECTED_BY edge to require.
+ */
+export function shortcutsFor(kind: QueryKind, vocab: Vocabulary): QueryShortcut[] {
+  if (kind === "ANY") return [];
+  // The kind has to be IN the estate. Without this, a shortcut whose every step is negated —
+  // or which is a bare property filter — passes the reachability check against a graph with
+  // nothing in it at all, and an unsynced tenant is offered six buttons that answer nothing.
+  if (!vocab.kinds.some((k) => k.kind === kind)) return [];
+  return QUERY_SHORTCUTS.filter((s) => {
+    if (!s.kinds.includes(kind as NodeKind)) return false;
+    return s.steps.every((step) => reachable(kind as NodeKind, step, vocab));
+  });
+}
+
+function reachable(from: NodeKind, step: QueryStep, vocab: Vocabulary): boolean {
+  if (isGroup(step)) return step.steps.every((s) => reachable(from, s, vocab));
+  if (step.negate) return true;
+  if (step.edge === "ANY") return true;
+  const target = step.node.kind;
+  const hit = (vocab.stepsFrom[from] ?? []).some((e) =>
+    e.edge === step.edge && e.reverse === !!step.reverse && e.kind === target);
+  if (!hit) return false;
+  if (target === "ANY") return true;
+  return (step.node.steps ?? []).every((s) => reachable(target as NodeKind, s, vocab));
 }
 
 // ------------------------------------------------------------------------- columns

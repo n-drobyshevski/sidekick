@@ -279,6 +279,68 @@ export function applyWhere(query, byIndex) {
   return copy;
 }
 
+/**
+ * Move `where` entries across a structural edit, so a filter keeps naming the node it was put
+ * on rather than whichever node inherits its slot number.
+ *
+ * `where` addresses nodes by PRE-ORDER SLOT, which is what makes the param short and shareable
+ * — and what makes it fragile: inserting a step in the middle of the tree renumbers everything
+ * after it, and negating a step deletes a slot outright. Without this, adding one relationship
+ * would slide every filter below it onto a different node, and the query would quietly answer a
+ * different question with every chip still reading correctly.
+ *
+ * PATHS are the stable identity across an edit; slots are not. So this reads old slot → old
+ * path, applies whatever the edit did to paths (`movePath`, identity for an append), and looks
+ * the path up in the new tree for its new slot.
+ *
+ * Anything that cannot be placed is DROPPED, never guessed. A filter that vanishes is visible —
+ * the chip goes with it — where a filter silently re-pointed at another node is not.
+ */
+export function remapWhere(oldQuery, newQuery, byIndex, movePath) {
+  const pathOfIndex = new Map();
+  walkQuery(oldQuery, ({ path, index }) => {
+    if (index !== null) pathOfIndex.set(index, path.join("."));
+  });
+  const indexOfPath = new Map();
+  walkQuery(newQuery, ({ path, index }) => {
+    if (index !== null) indexOfPath.set(path.join("."), index);
+  });
+
+  const out = new Map();
+  for (const [index, filters] of byIndex) {
+    const was = pathOfIndex.get(index);
+    if (was === undefined) continue;
+    const now = movePath ? movePath(was) : was;
+    if (now === null || now === undefined) continue;
+    const at = indexOfPath.get(now);
+    if (at === undefined) continue;
+    out.set(at, filters);
+  }
+  return out;
+}
+
+/**
+ * The `movePath` for a removal: the removed subtree's filters go, and its later siblings shift
+ * down one. A removal that also prunes an emptied group moves paths this cannot predict — those
+ * filters fail the lookup in `remapWhere` and are dropped, which is the safe direction.
+ */
+export function pathAfterRemoval(removed) {
+  const prefix = removed.slice(0, -1);
+  const at = removed[removed.length - 1];
+  const removedKey = removed.join(".");
+  const prefixKey = prefix.join(".");
+  return (key) => {
+    if (key === removedKey || key.indexOf(removedKey + ".") === 0) return null;
+    const parts = key ? key.split(".") : [];
+    if (parts.length <= prefix.length) return key;
+    if (parts.slice(0, prefix.length).join(".") !== prefixKey) return key;
+    const seg = Number(parts[prefix.length]);
+    if (!(seg > at)) return key;
+    parts[prefix.length] = String(seg - 1);
+    return parts.join(".");
+  };
+}
+
 // ------------------------------------------------------------------------- builder rows
 
 /**

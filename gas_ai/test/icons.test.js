@@ -12,7 +12,7 @@
 // nine kinds were aliases onto another kind's paths; and ISSUE and EXCESSIVE_ACCESS_FINDING
 // were byte-identical warning triangles. None of it failed a test, because no test looked.
 
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -20,6 +20,7 @@ import { describe, expect, it } from "vitest";
 import {
   CATEGORY_LABELS, CATEGORY_ORDER, KIND_CATEGORY, KIND_LABELS, glyphPaths,
 } from "../src/client/js/icons.js";
+import { UI_ICON_NAMES } from "../src/client/js/ui/uiIcons.js";
 import { NODE_KINDS } from "../src/domain/graphTypes";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -200,4 +201,51 @@ describe("the Help specimen", () => {
       .map((m) => m[1]);
     expect(suspects, "these look like glyph paths — render the mark instead").toEqual([]);
   });
+});
+
+/**
+ * The chrome glyphs, held to the same rule.
+ *
+ * `uiIcon` falls back to a one-pixel dot on an unknown name rather than throwing — deliberate,
+ * so a typo cannot blank a whole page, and precisely why a typo is invisible. The query
+ * palette shipped `uiIcon("filter")` against a set that had no `filter` in it, and the only
+ * symptom was an empty square nobody would think to describe as a bug. So: every name any
+ * client module asks for must exist.
+ */
+describe("chrome icon coverage", () => {
+  /** Every literal `uiIcon("name")` in the client, wherever it lives. */
+  function namedGlyphs() {
+    const out = new Map();
+    const walk = (dir) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) { walk(full); continue; }
+        if (!entry.name.endsWith(".js")) continue;
+        const src = readFileSync(full, "utf8");
+        for (const m of src.matchAll(/\buiIcon\("([a-z0-9-]+)"/g)) {
+          if (!out.has(m[1])) out.set(m[1], []);
+          out.get(m[1]).push(entry.name);
+        }
+        // `icon: "table"` — the segmented control's option spec, resolved through uiIcon.
+        for (const m of src.matchAll(/\bicon: "([a-z0-9-]+)"/g)) {
+          if (!out.has(m[1])) out.set(m[1], []);
+          out.get(m[1]).push(entry.name);
+        }
+      }
+    };
+    walk(join(root, "src/client/js"));
+    return out;
+  }
+
+  it("draws every glyph the client asks for", () => {
+    const asked = namedGlyphs();
+    expect(asked.size).toBeGreaterThan(8);
+    for (const [name, files] of asked) {
+      expect(UI_ICON_NAMES, name + " (used in " + files.join(", ") + ")").toContain(name);
+    }
+  });
+
+  // Deliberately ONE direction. The reverse — every glyph is used by something — cannot be
+  // asserted from a source scan: a name reaching uiIcon through a variable is invisible to it,
+  // so the check would fail the build over a glyph that is drawn on every page.
 });

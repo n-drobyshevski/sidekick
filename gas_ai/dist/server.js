@@ -4874,11 +4874,11 @@ var Server = (() => {
           const endpoints = (_b = evidence.endpointIds) != null ? _b : [];
           if (hosts.length > 0 || endpoints.length > 0) return true;
         }
-        const reachable = node2.isAccessibleFromInternet;
+        const reachable2 = node2.isAccessibleFromInternet;
         const openToAll = node2.isOpenToAllInternet;
-        if (reachable === true || openToAll === true) return true;
+        if (reachable2 === true || openToAll === true) return true;
         const unknown = (v) => v === null || v === void 0;
-        return unknown(reachable) || unknown(openToAll) ? null : false;
+        return unknown(reachable2) || unknown(openToAll) ? null : false;
       }
     }
   }
@@ -5189,7 +5189,13 @@ var Server = (() => {
       var _a6;
       return { kind, count: (_a6 = kindCounts.get(kind)) != null ? _a6 : 0 };
     });
-    return { kinds, stepsFrom, valuesFor: {} };
+    const base = { kinds, stepsFrom, valuesFor: {}, shortcuts: [] };
+    const shortcuts = [];
+    for (const shortcut of QUERY_SHORTCUTS) {
+      const answerable = shortcut.kinds.filter((k) => shortcutsFor(k, base).some((s) => s.id === shortcut.id));
+      if (answerable.length) shortcuts.push({ ...shortcut, kinds: answerable });
+    }
+    return { ...base, shortcuts };
   }
   function fieldValuesFor(doc, kind) {
     var _a5;
@@ -5220,6 +5226,91 @@ var Server = (() => {
       });
     }
     return perField;
+  }
+  var QUERY_SHORTCUTS = [
+    {
+      id: "no-guardrail",
+      label: "Has no guardrail",
+      phrase: "Wiz reports the guardrail missing",
+      blurb: "Reads the asset's own guardrail flag, which is what the canvas draws its MISSING_GUARDRAIL stub from \u2014 so the two always agree.\n\nDeliberately not the \u201CNOT protected by a guardrail\u201D traversal, which answers a wider question: it counts every asset with no guardrail relationship in the graph, including ones Wiz reports as protected without naming the guardrail. Add a NOT on a PROTECTED_BY step if that wider question is the one you want.",
+      helpId: "missing-guardrail",
+      kinds: AI_ASSET_KINDS,
+      steps: [],
+      filters: [{ path: [], key: "guardrail", values: ["missing"] }]
+    },
+    {
+      id: "runs-as-privileged",
+      label: "Runs as a privileged identity",
+      phrase: "its service account holds high privileges",
+      blurb: "Reads the identity's own privilege flag rather than walking to the EXCESSIVE_PRIVILEGE stub, which is suppressed wherever a real access finding exists \u2014 walking to it would quietly answer with the leftovers. Admin privilege is the stronger claim and has its own field.",
+      helpId: "excessive-privilege",
+      kinds: AI_ASSET_KINDS,
+      steps: [{ edge: "RUNS_AS", node: { kind: "SERVICE_ACCOUNT" } }],
+      filters: [{ path: [0], key: "highPriv", values: ["true"] }]
+    },
+    {
+      id: "runs-as-dormant",
+      label: "Runs as a dormant identity",
+      phrase: "its service account has been idle 90 days",
+      blurb: "An identity nobody has used in ninety days, still able to act on the asset's behalf. The dormancy is a field Wiz reports, not something derived here.",
+      helpId: "agentic-identity",
+      kinds: AI_ASSET_KINDS,
+      steps: [{ edge: "RUNS_AS", node: { kind: "SERVICE_ACCOUNT" } }],
+      filters: [{ path: [0], key: "inactive", values: ["true"] }]
+    },
+    {
+      id: "reaches-classified",
+      label: "Reaches classified data",
+      phrase: "through its identity, to a bucket",
+      blurb: "The real path \u2014 asset to identity to bucket \u2014 with the identity hidden, so the table reads asset beside data. Deliberately NOT the SENSITIVE_DATA stub, which graphEnrich suppresses exactly where this chain exists: walking to the stub would return only the assets whose path could not be traced.",
+      helpId: "sensitive-data",
+      kinds: AI_ASSET_KINDS,
+      steps: [{
+        edge: "RUNS_AS",
+        node: {
+          kind: "SERVICE_ACCOUNT",
+          show: false,
+          steps: [{ edge: "ALLOWS_ACCESS_TO", node: { kind: "BUCKET" } }]
+        }
+      }]
+    },
+    {
+      id: "internet-reachable",
+      label: "Reachable from the internet",
+      phrase: "an exposure path reaches it",
+      blurb: "Assets carrying an internet exposure node. Exposure is inherited from the compute underneath, so this is the topology answer rather than a flag read off the asset.",
+      helpId: "internet-exposure",
+      kinds: AI_ASSET_KINDS,
+      steps: [{ edge: "EXPOSED_TO_INTERNET", node: { kind: "INTERNET_EXPOSURE" } }]
+    },
+    {
+      id: "dormant-human-access",
+      label: "A dormant person can reach it",
+      phrase: "a human account, idle 90 days, still has access",
+      blurb: "Human access read backwards: the accounts that ALLOW_ACCESS_TO this asset, narrowed to the ones nobody has signed into in ninety days. Standing access that no longer has a person behind it.",
+      kinds: AI_ASSET_KINDS,
+      steps: [{ edge: "ALLOWS_ACCESS_TO", reverse: true, node: { kind: "USER_ACCOUNT" } }],
+      filters: [{ path: [0], key: "inactive", values: ["true"] }]
+    }
+  ];
+  function shortcutsFor(kind, vocab) {
+    if (kind === "ANY") return [];
+    if (!vocab.kinds.some((k) => k.kind === kind)) return [];
+    return QUERY_SHORTCUTS.filter((s) => {
+      if (!s.kinds.includes(kind)) return false;
+      return s.steps.every((step) => reachable(kind, step, vocab));
+    });
+  }
+  function reachable(from, step, vocab) {
+    var _a5, _b;
+    if (isGroup(step)) return step.steps.every((s) => reachable(from, s, vocab));
+    if (step.negate) return true;
+    if (step.edge === "ANY") return true;
+    const target = step.node.kind;
+    const hit = ((_a5 = vocab.stepsFrom[from]) != null ? _a5 : []).some((e) => e.edge === step.edge && e.reverse === !!step.reverse && e.kind === target);
+    if (!hit) return false;
+    if (target === "ANY") return true;
+    return ((_b = step.node.steps) != null ? _b : []).every((s) => reachable(target, s, vocab));
   }
   function queryColumnGroups(query, selected) {
     var _a5;
@@ -6206,7 +6297,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "03290fd1756f" : "dev";
+  var BUILD_ID = true ? "14d48a291ab0" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -9334,11 +9425,11 @@ var Server = (() => {
     const { version: ruleVersion, rule } = getAarsRule2();
     const counted = withDataFindingCounts(rawDoc, dataFindings);
     const exposed = withExposureEvidence(counted);
-    const reachable = withHumanAccess(exposed, {
+    const reachable2 = withHumanAccess(exposed, {
       identityFindings: (_a5 = extras.identityFindings) != null ? _a5 : [],
       effectiveAccess: (_b = extras.effectiveAccess) != null ? _b : []
     });
-    const enriched = enrichGraphDoc(reachable, issues2, hints, rule);
+    const enriched = enrichGraphDoc(reachable2, issues2, hints, rule);
     const assetNodes = realNodes(enriched.nodes);
     const assetEdges = enriched.edges.filter((e) => e.type !== "HAS_ISSUE");
     overwrite(TABS.assets, assetNodes.map(assetToRow));
@@ -10435,16 +10526,16 @@ var Server = (() => {
   }
   function identityHygieneKpis(assets) {
     var _a5;
-    const reachable = distinctHumanIdentities(assets);
-    if (!reachable.size) return { humanNoMfa: 0, humanDormant: 0 };
+    const reachable2 = distinctHumanIdentities(assets);
+    if (!reachable2.size) return { humanNoMfa: 0, humanDormant: 0 };
     const noMfa = /* @__PURE__ */ new Set();
     const dormant = /* @__PURE__ */ new Set();
-    for (const id of reachable) {
+    for (const id of reachable2) {
       if (((_a5 = byIdIn(assets, id)) == null ? void 0 : _a5.inactive) === true) dormant.add(id);
     }
     for (const finding of loadIdentityFindings()) {
       if (!isOpenGap(finding)) continue;
-      if (!reachable.has(finding.resourceId)) continue;
+      if (!reachable2.has(finding.resourceId)) continue;
       (finding.hygiene === "MFA" ? noMfa : dormant).add(finding.resourceId);
     }
     return { humanNoMfa: noMfa.size, humanDormant: dormant.size };
@@ -10519,7 +10610,7 @@ var Server = (() => {
     return run(
       () => cached("queryVocabulary", { kind }, () => {
         const doc = loadGraphDoc();
-        if (!doc) return { empty: true, kinds: [], stepsFrom: {}, valuesFor: {} };
+        if (!doc) return { empty: true, kinds: [], stepsFrom: {}, valuesFor: {}, shortcuts: [] };
         const vocab = queryVocabulary(doc);
         if (!kind) return vocab;
         return { ...vocab, valuesFor: { [kind]: fieldValuesFor(doc, kind) } };

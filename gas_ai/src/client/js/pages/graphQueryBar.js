@@ -20,7 +20,9 @@ import {
   addStep,
   isGroup,
   nodeAt,
+  pathAfterRemoval,
   queryRows,
+  remapWhere,
   removeStep,
   setEdge,
   setHidden,
@@ -30,7 +32,10 @@ import {
 import { openQueryPalette, stepForPick } from "./queryPalette.js";
 
 /**
- * @param {object} opts {getQuery, getVocab, onChange(nextQuery), countNode}
+ * @param {object} opts
+ *   {getQuery, getVocab, getWhere, onChange(nextQuery, nextWhere), countNode}
+ *   `getWhere` returns the parsed `where` map (slot index -> key -> values); `onChange`'s
+ *   second argument is the map after the edit, which the page serializes back into the URL.
  * @returns {{node: HTMLElement, sync: function}}
  */
 export function queryBar(opts) {
@@ -52,12 +57,36 @@ export function queryBar(opts) {
    * the end of the interaction — nothing to Tab from, nothing to arrow through. Naming the row
    * here and focusing it in `render` is what keeps a keyboard-driven edit continuable.
    */
-  function commit(next, focusKey) {
+  function commit(next, focusKey, opts2) {
     if (focusKey !== undefined) {
       focusPath = focusKey;
       takeFocus = true;
     }
-    opts.onChange(next);
+    // Filters are addressed by slot number, and almost every structural edit renumbers slots.
+    // Remapping here rather than at each call site means no edit can forget to.
+    const extra = opts2 || {};
+    const where = remapWhere(opts.getQuery(), next, currentWhere(), extra.movePath);
+    // Added filters arrive as PATHS, because the caller knows where in the tree it just put a
+    // node but not what slot number that node ended up with — which is the whole reason
+    // remapWhere exists. Resolved here, against the tree the edit produced.
+    for (const add of (extra.addFilters || [])) {
+      const index = slotOfPath(next, add.path);
+      if (index === null) continue;
+      if (!where.has(index)) where.set(index, new Map());
+      where.get(index).set(add.key, add.values);
+    }
+    opts.onChange(next, where);
+  }
+
+  function currentWhere() {
+    return (opts.getWhere && opts.getWhere()) || new Map();
+  }
+
+  /** The pre-order slot a path holds in `query`, or null where it binds nothing. */
+  function slotOfPath(query, path) {
+    const want = path.join(".");
+    const hit = queryRows(query).find((r) => r.path.join(".") === want);
+    return hit && hit.index !== null && hit.index !== undefined ? hit.index : null;
   }
 
   /** How many steps hang off the container at `path` — where an appended step will land. */
@@ -92,10 +121,96 @@ export function queryBar(opts) {
           commit(setEdge(query, row.path, { [pick.flag]: pick.value }), pathKey(row.path));
           return;
         }
-        const at = row.path.concat(childCount(query, row.path));
+        const base = childCount(query, row.path);
+        if (pick.type === "shortcut") {
+          // A named question, expanded. Its steps append under this row and its filters land on
+          // nodes INSIDE them, addressed relative to the first appended step — so they arrive
+          // in `where` as ordinary chips anyone can see and take off again.
+          let next = query;
+          for (const step of pick.steps) next = addStep(next, row.path, step);
+          const absolute = (rel) => (rel.length
+            ? row.path.concat(base + rel[0], ...rel.slice(1))
+            : row.path);
+          commit(next, pathKey(pick.steps.length ? absolute([0]) : row.path), {
+            addFilters: (pick.filters || []).map((f) => ({
+              path: absolute(f.path), key: f.key, values: f.values,
+            })),
+          });
+          return;
+        }
+        const at = row.path.concat(base);
         commit(addStep(query, row.path, stepForPick(pick)), pathKey(at));
       },
     });
+  }
+
+  /**
+   * Drop a row, taking its filters with it and shifting its later siblings' filters down.
+   *
+   * Focus lands on the parent row, which is where the removed step hung from — the one place
+   * the reader can be sure still exists.
+   */
+  function removeRow(query, row) {
+    commit(removeStep(query, row.path), pathKey(row.path.slice(0, -1)), {
+      movePath: pathAfterRemoval(row.path),
+    });
+  }
+
+  /** Drop one property filter from a node, leaving the rest of its filters alone. */
+  function removeFilter(query, row, key) {
+    const where = currentWhere();
+    const forNode = where.get(row.index);
+    if (!forNode) return;
+    const next = new Map(where);
+    const copy = new Map(forNode);
+    copy.delete(key);
+    if (copy.size) next.set(row.index, copy);
+    else next.delete(row.index);
+    focusPath = pathKey(row.path);
+    takeFocus = true;
+    opts.onChange(query, next);
+  }
+
+  /**
+   * A node's property filters, as dismissible chips on its builder row.
+   *
+   *   FIND [AI Agent] [Guardrail: missing ×]
+   *
+   * They live in the `where` param rather than in the query tree, and this is what makes that
+   * honest: a filter narrowing the result with nothing on screen admitting to it is the failure
+   * mode `migrateLegacyParams` already carries a comment about. A shortcut that writes one
+   * writes a chip.
+   */
+  function filterChips(query, row) {
+    const forNode = currentWhere().get(row.index);
+    if (!forNode || !forNode.size) return null;
+    const wrap = el("span", { class: "gq-chips" });
+    for (const key of [...forNode.keys()].sort()) {
+      const values = forNode.get(key) || [];
+      const label = fieldLabel(row.kind, key);
+      const text = values.join(", ");
+      wrap.append(el("span", { class: "filter-chip gq-filter-chip" },
+        el("span", { class: "filter-chip-body" },
+          el("span", { class: "gq-filter-key" }, label), " ", text),
+        el("button", {
+          class: "filter-chip-x",
+          "aria-label": "Remove filter " + label + " " + text
+            + " from " + kindLabel(row.kind),
+          onclick: () => removeFilter(query, row, key),
+        }, "×"),
+      ));
+    }
+    return wrap;
+  }
+
+  /** A field's human label, from whatever the column chooser already offers for this kind. */
+  function fieldLabel(kind, key) {
+    for (const group of (opts.getGroups ? opts.getGroups() : [])) {
+      if (group.kind !== kind) continue;
+      const hit = (group.available || []).find((f) => f.key === key);
+      if (hit) return hit.label;
+    }
+    return key;
   }
 
   /** Every relationship the tenant's graph actually offers from this kind. */
@@ -240,7 +355,7 @@ export function queryBar(opts) {
         groupActions.append(iconButton("plus", "Add a branch to this " + row.keyword + " block",
           (e) => openPalette(e.currentTarget, query, row, parentKind)));
         groupActions.append(iconButton("close", "Remove this " + row.keyword + " block",
-          () => commit(removeStep(query, row.path))));
+          () => removeRow(query, row)));
         line.append(groupActions);
         list.append(line);
         return;
@@ -272,6 +387,10 @@ export function queryBar(opts) {
         .map(kindOption);
       line.append(chipPicker(row.kind, kindOpts, (v) => commit(setKind(query, row.path, v)),
         (row.path.length ? "Related entity: " : "Find entity: ") + kindLabel(row.kind), row.kind));
+      // `append(null)` writes the literal text "null" — the trap graph.js's savedViewsControl
+      // already carries a comment about. `el()` skips nulls; `append` does not.
+      const chips = filterChips(query, row);
+      if (chips) line.append(chips);
 
       const actions = el("span", { class: "gq-row-actions" });
       actions.append(iconButton("plus", "Add to " + kindLabel(row.kind),
@@ -283,7 +402,7 @@ export function queryBar(opts) {
       }
       if (row.canRemove) {
         actions.append(iconButton("close", "Remove this relationship",
-          () => commit(removeStep(query, row.path))));
+          () => removeRow(query, row)));
       }
       line.append(actions);
       list.append(line);
@@ -362,7 +481,7 @@ export function queryBar(opts) {
       // Focus lands on the parent row, which is where the removed step hung from — the one
       // place the reader can be sure still exists.
       focusPath = row.path.slice(0, -1).join("-") || "root";
-      commit(removeStep(query, row.path));
+      removeRow(query, row);
     }
   }
 

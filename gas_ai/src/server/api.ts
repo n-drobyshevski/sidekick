@@ -383,7 +383,7 @@ export function getQueryVocabulary(p?: unknown): ApiResult {
   return run(() =>
     cached("queryVocabulary", { kind }, () => {
       const doc = syncStore.loadGraphDoc();
-      if (!doc) return { empty: true, kinds: [], stepsFrom: {}, valuesFor: {} };
+      if (!doc) return { empty: true, kinds: [], stepsFrom: {}, valuesFor: {}, shortcuts: [] };
       const vocab = queryVocabulary(doc);
       if (!kind) return vocab;
       return { ...vocab, valuesFor: { [kind]: fieldValuesFor(doc, kind) } };
