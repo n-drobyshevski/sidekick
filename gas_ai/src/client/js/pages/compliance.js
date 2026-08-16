@@ -228,6 +228,16 @@ export async function renderCompliance(main, params, ctx) {
 
     // ---- header ----
     const scored = tree.state === "scored" && tree.posturePct !== null;
+    // The 5Rs is the one framework this app scopes down to its AI-relevant rules (Settings
+    // → "5Rs — Wiz for Data Security"). When some of its rules are pinned or derived out,
+    // the register below this hero only lists what is in scope — but the score IN the hero
+    // is still Wiz's, computed against every rule the framework has. The existing sub-line
+    // already carries the first half of that ("carried through unchanged"); this only adds
+    // the half that says what changed underneath it, so a reader watching the register
+    // shrink does not read that as the hero quietly moving too.
+    const fiveRs = data.fiveRsScope;
+    const scopedHere = scored && fiveRs && fiveRs.frameworkId === tree.frameworkId &&
+      fiveRs.selected < fiveRs.total;
     const hero = el("div", {},
       el("div", { class: "label" }, "Compliance posture"),
       scored
@@ -240,7 +250,11 @@ export async function renderCompliance(main, params, ctx) {
         }))
         : null,
       el("div", { class: "comp-hero-sub" }, scored
-        ? `${tree.name} · Wiz's own score, carried through unchanged`
+        ? `${tree.name} · Wiz's own score, carried through unchanged` +
+          (scopedHere
+            ? ` — the register below is scoped to ${fiveRs.selected} of ${fiveRs.total} ` +
+              "AI-relevant rules; this percentage is not"
+            : "")
         : `${tree.name} · ${(STATES[tree.state] || STATES.unknown).label}`),
     );
 

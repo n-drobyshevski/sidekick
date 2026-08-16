@@ -378,3 +378,126 @@
   }
   .comp-cov-cell:first-child { border-top: none; padding-top: 0; }
 }
+
+/* =================================================================== the .scope- family */
+/* Everything to do with scoping the 5Rs framework down to its AI-relevant rules — the
+   Settings card that edits the scope (pages/settings.js's fiveRsCard) and the marker on
+   this page's rail row (band B above) that tells a reader the framework's percentage is
+   NOT what the scope changed. A new family rather than growing `.comp-*`: `.comp-*` names
+   POSTURE — a framework's own scored/unscored state, which is Wiz's fact — and this is a
+   different fact this app layers on top, decided locally and never fed back into posture.
+   Reusing `.sev-*` for it was ruled out for the identical reason DESIGN.md gives for
+   keeping posture state out of that namespace: severity means exactly one thing, and
+   "in scope" is not it. */
+
+/* ----------------------------------------------------- band B companion: the rail marker */
+/* Sits beside the framework name in a rail row (railRow() in complianceOverview.js), only
+   for the 5Rs and only once some of its rules are scoped out. THE ENTIRE REASON THIS
+   EXISTS: Wiz's posture math is opaque and this app cannot recompute it — a 5Rs category
+   can report 194,309/71 checks against an 85% posture, and that 85 is not a ratio of any
+   pair of numbers held anywhere in this codebase — so scoping rules in or out of the AI
+   register changes what band C/D/E and the register below count, and never this
+   percentage. Without this marker, a reader who scopes a rule out and watches the register
+   shrink while the number up top holds steady would read that as staleness, not honesty.
+   Glyph plus words, matching every other state cue on this page, so the fact never rides
+   on colour alone — and it is dropped at the same 760px step `.comp-fw-meta` already gives
+   up its line at, for the same reason: the name and the score are the two facts a narrow
+   rail keeps, everything else is the first to go. */
+.scope-rail-note {
+  display: flex; align-items: center; gap: 5px;
+  margin-top: 2px; font-size: 10.5px; color: var(--text-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.scope-rail-glyph { font-size: 9px; color: var(--warn); }
+
+@media (max-width: 760px) {
+  .scope-rail-note { display: none; }
+}
+
+/* ------------------------------------------------------- the Settings scope card itself */
+/* One block per subcategory, each holding its own rules — the grouping the settings card
+   asks for so a reader can act on "this subcategory" rather than scrolling a flat list of
+   however many policies the 5Rs has. Hairlines between groups, no card-in-card nesting:
+   this already lives inside one `.card`, and a second surface per group would be the
+   Whisper-Or-Lift violation DESIGN.md warns against. */
+.scope-groups { display: flex; flex-direction: column; }
+.scope-group { padding: 14px 0; border-top: 1px solid var(--hairline); }
+.scope-group:first-child { padding-top: 0; border-top: none; }
+.scope-group-head {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 14px;
+  margin-bottom: 6px;
+}
+.scope-group-title { flex: 1 1 200px; font-weight: 600; font-size: 13px; color: var(--ink); }
+.scope-group-count { font-size: 12px; color: var(--text-3); white-space: nowrap; }
+/* A command, not a state pill: its label already says what pressing it does ("Select all" /
+   "Deselect all"), so it does not need `aria-pressed` on top of that to be understood —
+   unlike `.scope-toggle` below, which IS a persistent per-rule state and carries one. */
+.scope-bulk {
+  flex: none; font-size: 12px; padding: 3px 10px;
+  border: 1px solid var(--hairline); border-radius: var(--radius-pill);
+  background: var(--page); color: var(--text-2);
+}
+.scope-bulk:hover { border-color: var(--accent); }
+
+.scope-rows { display: flex; flex-direction: column; }
+.scope-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+  padding: 8px 0; border-bottom: 1px solid var(--hairline);
+  transition: opacity 120ms ease-out;
+}
+.scope-row:last-child { border-bottom: none; }
+/* Dimmed, not removed: a rule scoped out stays in its group (pulling it from the list
+   would mean re-deriving which subcategory it lived under just to put it back), it only
+   reads as background information until toggled in again. Never colour alone for the
+   fact itself — `.scope-toggle`'s own "Selected" / "Not selected" label already carries
+   it in words; this is reinforcement, not the only cue. */
+.scope-row[data-selected="false"] { opacity: 0.58; }
+.scope-row-main { flex: 1 1 220px; min-width: 0; }
+.scope-row-name { font-size: 13px; color: var(--ink); }
+.scope-row-meta { margin-top: 2px; }
+.scope-reason { flex: 0 1 auto; font-size: 12px; color: var(--text-3); text-align: right; }
+/* Pinned means a person decided this, not that the estate did — a different kind of fact
+   from crossMapped/linkedFindings/noAiLink, and it earns its own tint so a reader scanning
+   the column can tell "derived" from "somebody's call" without reading every word. */
+.scope-reason--pinned { color: var(--accent); font-weight: 600; }
+
+/* The row's control. A drawn checkbox-shaped glyph rather than an actual `<input
+   type=checkbox>` — filters.js's facet rows (sheet.css's `.facet-box`) set this precedent
+   already: the stylesheet defines no checkbox vocabulary, and every binary control in this
+   app is a pressed button, so a lone real checkbox here would read as a different kind of
+   control planted in the middle of a page that has none. */
+.scope-toggle {
+  display: inline-flex; align-items: center; gap: 7px; flex: none;
+  padding: 4px 10px 4px 6px; font-size: 12.5px; font-weight: 500;
+  border: 1px solid var(--hairline); border-radius: var(--radius-pill);
+  background: var(--page); color: var(--text-2);
+}
+.scope-toggle:hover { border-color: var(--accent); }
+.scope-box {
+  width: 14px; height: 14px; border: 1px solid var(--hairline); border-radius: 4px;
+  background: var(--page);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 9px; line-height: 1; color: transparent;
+}
+.scope-box::before { content: "✓"; }
+.scope-toggle[aria-pressed="true"] {
+  border-color: var(--accent); color: var(--ink); font-weight: 600;
+}
+.scope-toggle[aria-pressed="true"] .scope-box {
+  background: var(--accent); border-color: var(--accent); color: #ffffff;
+}
+
+/* The Save/Revert/Reset bar: scans.css's `.vars-bar`/`.vars-state` recipe, copied rather
+   than shared across a scans.css → compliance.css import neither file otherwise needs,
+   because scanSheet.js's varsEditor is exactly the vocabulary this card borrows (see the
+   comment above fiveRsCard() in pages/settings.js) and the two bars should keep reading
+   as the same control if either is ever touched again. */
+.scope-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--hairline);
+}
+.scope-state { margin-right: auto; }
+
+@media (prefers-reduced-motion: reduce) {
+  .scope-row { transition: none; }
+}

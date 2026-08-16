@@ -150,28 +150,59 @@ function railMetaText(row) {
 }
 
 /**
+ * Whether THIS row is the 5Rs and some of its rules are scoped out right now — the one
+ * fact that has to reach both the visible marker and the aria-label below, computed once
+ * so the two can never disagree about when to show it.
+ */
+function fiveRsScopeNote(row, fiveRsScope) {
+  if (!fiveRsScope || !fiveRsScope.frameworkId) return null;
+  if (fiveRsScope.frameworkId !== row.frameworkId) return null;
+  if (fiveRsScope.selected >= fiveRsScope.total) return null;
+  return fiveRsScope;
+}
+
+/**
  * The button's one accessible name, standing in for everything drawn inside it (which is
  * all `aria-hidden`) — otherwise the name, the percentage and the bar each get announced
  * on their own and the framework's name is read out twice.
  */
-function railAriaLabel(row, meanPct) {
+function railAriaLabel(row, meanPct, scopeNote) {
   if (row.state === "scored" && row.posturePct !== null) {
     const sentence = [
       `${row.name}, ${row.posturePct} percent compliant.`,
       `${row.failingPolicyCount} of ${row.policyCount} ${policyNoun(row.policyCount)} failing.`,
     ];
     if (meanPct !== null) sentence.push(`Estate mean ${meanPct} percent.`);
+    // THE LOAD-BEARING HONESTY POINT of the whole 5Rs feature: this percentage is Wiz's
+    // own, computed against every rule the framework has — Wiz's posture math is opaque
+    // and cannot be recomputed here (a 5Rs category can report 194,309/71 checks against
+    // an 85% posture; that 85 is not a ratio of any pair of numbers this app holds), so
+    // scoping rules in or out of the AI register never touches this number. Say so, or a
+    // reader watching the register below shrink while this percentage stays put reads it
+    // as the app forgetting to update the bar rather than the bar telling the truth.
+    if (scopeNote) {
+      sentence.push(
+        `This percentage is Wiz's own, computed against all ${scopeNote.total} rules in ` +
+        `the framework, including the ${scopeNote.total - scopeNote.selected} scoped out ` +
+        "of the AI register below it.");
+    }
     return sentence.join(" ");
   }
   const state = STATES[row.state] || STATES.unknown;
   return `${row.name}, not scored: ${state.label.toLowerCase()}. ${reasonBlurb(row)}`;
 }
 
-function railRow(row, meanPct, actions) {
+function railRow(row, meanPct, actions, fiveRsScope) {
   const scored = row.state === "scored" && row.posturePct !== null;
+  const scopeNote = fiveRsScopeNote(row, fiveRsScope);
 
   const nameMeta = el("div", { class: "comp-fw-head", "aria-hidden": "true" },
     el("span", { class: "comp-fw-name" }, row.name),
+    scopeNote
+      ? el("span", { class: "scope-rail-note" },
+          el("span", { class: "scope-rail-glyph", "aria-hidden": "true" }, "◒"),
+          "Scope active — Wiz % unaffected")
+      : null,
     el("span", { class: "comp-fw-meta" }, railMetaText(row)));
 
   const laneEl = el("div", {
@@ -218,7 +249,7 @@ function railRow(row, meanPct, actions) {
   return el("button", {
     type: "button",
     class: "comp-fw-row",
-    "aria-label": railAriaLabel(row, meanPct),
+    "aria-label": railAriaLabel(row, meanPct, scopeNote),
     onclick: () => actions.openFramework(row.frameworkId),
   }, ...kids);
 }
@@ -239,12 +270,15 @@ function renderRail(host, data, actions) {
   const rows = data.rail || [];
   const kpis = data.kpis || {};
   const meanPct = kpis.averagePosture === undefined ? null : kpis.averagePosture;
+  // Absent on a stale SWR payload from before this shipped — fiveRsScopeNote() already
+  // treats that the same as "no scope active", so nothing downstream has to branch on it.
+  const fiveRsScope = data.fiveRsScope || null;
 
   // Already worst-first with unscored last, from the server — re-sorting here would
   // second-guess a ranking the read model owns and is tested against.
   const rail = el("div", { class: "comp-rail" },
     railAxis(),
-    ...rows.map((row) => railRow(row, meanPct, actions)));
+    ...rows.map((row) => railRow(row, meanPct, actions, fiveRsScope)));
 
   const key = meanPct !== null
     ? el("p", { class: "comp-rail-key" },
@@ -383,6 +417,9 @@ function renderCoverage(host, data) {
   const uncollected = coverage.uncollected || [];
   const selected = data.selected || [];
   const stateCounts = coverage.stateCounts || {};
+  // Absent on a stale SWR payload from before this shipped — the cell below degrades to
+  // not rendering at all, same as a tenant with no 5Rs framework collected.
+  const fiveRsScope = data.fiveRsScope || null;
 
   // Two different facts hide inside "this framework has no posture stored", and they send
   // an operator to completely different places. A framework nobody selected is a decision
@@ -430,6 +467,17 @@ function renderCoverage(host, data) {
       el("div", { class: "mini-value num" }, String(stateCounts.noResources || 0)),
       el("p", { class: "small muted" },
         "There is nothing in this estate for these checks to evaluate — also not a failure.")),
+    // Only when a 5Rs framework is actually collected — this is the same band saying what
+    // is not being measured, and "not measured" has no meaning to report against nothing.
+    fiveRsScope && fiveRsScope.frameworkId
+      ? el("div", { class: "comp-cov-cell" },
+          el("div", { class: "label" }, "5Rs AI scope"),
+          el("div", { class: "mini-value num" }, `${fiveRsScope.selected} of ${fiveRsScope.total}`),
+          el("p", { class: "small muted" },
+            `${plural(fiveRsScope.total - fiveRsScope.selected, "rule")} out of scope — the ` +
+            "5Rs percentage above still covers all of them."),
+          el("a", { href: "#/settings", target: "_self" }, "Open Settings →"))
+      : null,
     el("div", { class: "comp-cov-cell" },
       el("div", { class: "label" }, "Collection"),
       el("p", { class: "small muted" }, "Choose which frameworks Wiz scores posture against."),

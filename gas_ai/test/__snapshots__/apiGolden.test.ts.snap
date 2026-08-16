@@ -664,6 +664,10 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
     "data": {
       "autoExpand": true,
       "defaultDepth": 2,
+      "fiveRsPins": {
+        "in": [],
+        "out": [],
+      },
       "hasCredentials": false,
       "maxNodes": 100,
       "maxNodesCeiling": 400,
@@ -12761,6 +12765,10 @@ exports[`read endpoints > getSettings answers the same shape 1`] = `
   "data": {
     "autoExpand": true,
     "defaultDepth": 2,
+    "fiveRsPins": {
+      "in": [],
+      "out": [],
+    },
     "hasCredentials": false,
     "maxNodes": 100,
     "maxNodesCeiling": 400,

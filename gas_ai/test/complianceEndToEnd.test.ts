@@ -144,6 +144,37 @@ describe("getCompliance after a dry-run sync", () => {
     expect(fiveRs.policyCount).toBe(3);
   });
 
+  it("round-trips a pin through setSettings and back into the scope", () => {
+    // The gap a browser found and this suite did not: settingsStore grew getFiveRsPins /
+    // setFiveRsPins and getCompliance grew fiveRsScope, but setSettings was never taught
+    // the parameter, so the Settings card posted pins into a handler that ignored unknown
+    // keys and reported success. Every unit passed, every payload was correct, and the
+    // save did nothing. This case exists so the wire is asserted rather than assumed.
+    const write = server.api.setSettings({
+      fiveRsPins: { in: ["pol-DATA-311"], out: [] },
+    }) as { ok: boolean; data?: any };
+    expect(write.ok).toBe(true);
+    expect(write.data.fiveRsPins.in).toEqual(["pol-DATA-311"]);
+
+    const read = server.api.getSettings({}) as { ok: boolean; data?: any };
+    expect(read.data.fiveRsPins.in).toEqual(["pol-DATA-311"]);
+
+    // Only the WRITE path is asserted here, for the reason this file's closing note gives:
+    // getCompliance goes through cached() keyed on dataVersion(), which is String(Date.now())
+    // against a frozen clock, so a payload cached by an earlier case in this describe can
+    // never be invalidated mid-run. That a pin beats the derivation and reports `pinnedIn`
+    // rather than borrowing a derived reason is pinned in complianceScope.test.ts, where
+    // there is no cache at all.
+
+    // An id the tenant does not carry is dropped rather than stored forever.
+    const cleaned = server.api.setSettings({
+      fiveRsPins: { in: ["pol-DATA-311", "pol-does-not-exist"], out: [] },
+    }) as { ok: boolean; data?: any };
+    expect(cleaned.data.fiveRsPins.in).toEqual(["pol-DATA-311"]);
+
+    server.api.setSettings({ fiveRsPins: { in: [], out: [] } });
+  });
+
   it("keeps a scoped-out rule under the AI framework that also claims it", () => {
     const data = compliance();
     // SUB-082 is mapped by the 5Rs and by OWASP Agentic. Dropping 5Rs rows by policy id

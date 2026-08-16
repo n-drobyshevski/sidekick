@@ -4694,156 +4694,6 @@ var Server = (() => {
     return scope.policies.filter((p) => !p.selected).map((p) => p.policyId);
   }
 
-  // src/domain/compliancePosture.ts
-  function postureState(posturePct2, emptyPostureReason) {
-    const reason = String(emptyPostureReason != null ? emptyPostureReason : "").trim().toUpperCase();
-    if (reason === "NO_RESOURCES") return "noResources";
-    if (reason === "NO_POLICIES") return "noPolicies";
-    if (reason) return "unknown";
-    return posturePct2 === null ? "unknown" : "scored";
-  }
-  function titleRepeatsExternalId(externalId, title) {
-    const id = String(externalId != null ? externalId : "").trim();
-    const t = String(title != null ? title : "").trim();
-    if (!id || !t) return false;
-    if (!(t.toUpperCase().indexOf(id.toUpperCase()) === 0)) return false;
-    const next = t.charAt(id.length);
-    return next === "" || next === " " || next === "	";
-  }
-  function severityRank4(s) {
-    const i = SEVERITY_ORDER.indexOf(s);
-    return i === -1 ? SEVERITY_ORDER.length : i;
-  }
-  function emptyStateCounts() {
-    return { scored: 0, noResources: 0, noPolicies: 0, unknown: 0 };
-  }
-  function toNode(row, externalId) {
-    return {
-      frameworkId: row.frameworkId,
-      externalId,
-      // Suppressed when the title already opens with it, so an OWASP LLM row reads
-      // "1 LLM01:2025 Prompt Injection" rather than "11 LLM01:2025 Prompt Injection".
-      showExternalId: !titleRepeatsExternalId(externalId, row.title),
-      title: row.title,
-      description: row.description,
-      posturePct: row.posturePct,
-      state: postureState(row.posturePct, row.emptyPostureReason),
-      passCount: row.passCount,
-      failCount: row.failCount,
-      emptyPostureReason: row.emptyPostureReason
-    };
-  }
-  function buildFrameworkTree(frameworkId, posture, policies, frameworks = []) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o;
-    const rows = posture.filter((p) => p.frameworkId === frameworkId);
-    if (!rows.length) return null;
-    const frameworkRow = rows.find((p) => p.level === "framework");
-    const catalogue = frameworks.find((f) => f.id === frameworkId);
-    const policiesBySub = /* @__PURE__ */ new Map();
-    for (const p of policies) {
-      if (p.frameworkId !== frameworkId) continue;
-      const list2 = (_a5 = policiesBySub.get(p.subcategoryExternalId)) != null ? _a5 : [];
-      list2.push(p);
-      policiesBySub.set(p.subcategoryExternalId, list2);
-    }
-    const subsByCategory = /* @__PURE__ */ new Map();
-    for (const row of rows) {
-      if (row.level !== "subcategory") continue;
-      const externalId = (_b = row.subcategoryExternalId) != null ? _b : "";
-      const raw = (_c = policiesBySub.get(externalId)) != null ? _c : [];
-      const seen = /* @__PURE__ */ new Set();
-      const deduped = raw.filter((p) => {
-        if (seen.has(p.policyId)) return false;
-        seen.add(p.policyId);
-        return true;
-      });
-      deduped.sort(
-        (a, b) => severityRank4(a.severity) - severityRank4(b.severity) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
-      );
-      const node2 = {
-        ...toNode(row, externalId),
-        assessmentScope: row.assessmentScope,
-        mappingRationale: row.mappingRationale,
-        policies: deduped,
-        failingPolicyCount: deduped.filter((p) => p.failCount > 0).length
-      };
-      const key = (_d = row.categoryExternalId) != null ? _d : "";
-      const list2 = (_e = subsByCategory.get(key)) != null ? _e : [];
-      list2.push(node2);
-      subsByCategory.set(key, list2);
-    }
-    const categories = rows.filter((r) => r.level === "category").map((row) => {
-      var _a6, _b2;
-      const externalId = (_a6 = row.categoryExternalId) != null ? _a6 : "";
-      const subcategories = (_b2 = subsByCategory.get(externalId)) != null ? _b2 : [];
-      return {
-        ...toNode(row, externalId),
-        subcategories,
-        mirrorsCategory: subcategories.length === 1 && subcategories[0].externalId === externalId
-      };
-    });
-    const stateCounts = emptyStateCounts();
-    for (const cat of categories) {
-      for (const sub of cat.subcategories) stateCounts[sub.state] += 1;
-    }
-    const distinct = /* @__PURE__ */ new Map();
-    for (const p of policies) {
-      if (p.frameworkId !== frameworkId) continue;
-      distinct.set(p.policyId, ((_f = distinct.get(p.policyId)) != null ? _f : false) || p.failCount > 0);
-    }
-    return {
-      frameworkId,
-      name: (_h = (_g = frameworkRow == null ? void 0 : frameworkRow.title) != null ? _g : catalogue == null ? void 0 : catalogue.name) != null ? _h : frameworkId,
-      description: (_i = frameworkRow == null ? void 0 : frameworkRow.description) != null ? _i : catalogue == null ? void 0 : catalogue.description,
-      posturePct: (_j = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _j : null,
-      state: postureState(
-        (_k = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _k : null,
-        (_l = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _l : null
-      ),
-      emptyPostureReason: (_m = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _m : null,
-      passSubCategoryCount: (_n = frameworkRow == null ? void 0 : frameworkRow.passSubCategoryCount) != null ? _n : 0,
-      failSubCategoryCount: (_o = frameworkRow == null ? void 0 : frameworkRow.failSubCategoryCount) != null ? _o : 0,
-      categories,
-      stateCounts,
-      policyCount: distinct.size,
-      failingPolicyCount: [...distinct.values()].filter(Boolean).length
-    };
-  }
-  function buildAllFrameworkTrees(posture, policies, frameworks = []) {
-    const ids = [];
-    for (const p of posture) if (ids.indexOf(p.frameworkId) === -1) ids.push(p.frameworkId);
-    const trees = ids.map((id) => buildFrameworkTree(id, posture, policies, frameworks)).filter((t) => t !== null);
-    trees.sort((a, b) => {
-      if (a.posturePct === null && b.posturePct === null) return a.name < b.name ? -1 : 1;
-      if (a.posturePct === null) return 1;
-      if (b.posturePct === null) return -1;
-      return a.posturePct - b.posturePct || (a.name < b.name ? -1 : 1);
-    });
-    return trees;
-  }
-  function complianceKpis(posture, policies = []) {
-    const frameworkRows = posture.filter((p) => p.level === "framework");
-    const scored = frameworkRows.filter(
-      (p) => postureState(p.posturePct, p.emptyPostureReason) === "scored"
-    );
-    const averagePosture = scored.length ? Math.round(scored.reduce((sum, p) => {
-      var _a5;
-      return sum + ((_a5 = p.posturePct) != null ? _a5 : 0);
-    }, 0) / scored.length) : null;
-    const failingSubcategories = posture.filter(
-      (p) => p.level === "subcategory" && p.failCount > 0
-    ).length;
-    const failing = /* @__PURE__ */ new Set();
-    for (const p of policies) if (p.failCount > 0) failing.add(p.policyId);
-    return {
-      frameworks: frameworkRows.length,
-      scoredFrameworks: scored.length,
-      averagePosture,
-      failingSubcategories,
-      failingPolicies: failing.size
-    };
-  }
-
   // src/domain/scanVars.ts
   var MAX_LIST_VALUES = 40;
   var MAX_VALUE_LEN = 120;
@@ -5313,6 +5163,167 @@ var Server = (() => {
   }
   function getFiveRsPins(settings) {
     return coercePins(settings["five_rs_policy_pins"]);
+  }
+  function withFiveRsPins(settings, pins) {
+    return { ...settings, five_rs_policy_pins: coercePins(pins) };
+  }
+  function cleanFiveRsPins(pins, knownPolicyIds) {
+    const known = new Set(knownPolicyIds);
+    const base = coercePins(pins);
+    return {
+      in: base.in.filter((id) => known.has(id)),
+      out: base.out.filter((id) => known.has(id))
+    };
+  }
+
+  // src/domain/compliancePosture.ts
+  function postureState(posturePct2, emptyPostureReason) {
+    const reason = String(emptyPostureReason != null ? emptyPostureReason : "").trim().toUpperCase();
+    if (reason === "NO_RESOURCES") return "noResources";
+    if (reason === "NO_POLICIES") return "noPolicies";
+    if (reason) return "unknown";
+    return posturePct2 === null ? "unknown" : "scored";
+  }
+  function titleRepeatsExternalId(externalId, title) {
+    const id = String(externalId != null ? externalId : "").trim();
+    const t = String(title != null ? title : "").trim();
+    if (!id || !t) return false;
+    if (!(t.toUpperCase().indexOf(id.toUpperCase()) === 0)) return false;
+    const next = t.charAt(id.length);
+    return next === "" || next === " " || next === "	";
+  }
+  function severityRank4(s) {
+    const i = SEVERITY_ORDER.indexOf(s);
+    return i === -1 ? SEVERITY_ORDER.length : i;
+  }
+  function emptyStateCounts() {
+    return { scored: 0, noResources: 0, noPolicies: 0, unknown: 0 };
+  }
+  function toNode(row, externalId) {
+    return {
+      frameworkId: row.frameworkId,
+      externalId,
+      // Suppressed when the title already opens with it, so an OWASP LLM row reads
+      // "1 LLM01:2025 Prompt Injection" rather than "11 LLM01:2025 Prompt Injection".
+      showExternalId: !titleRepeatsExternalId(externalId, row.title),
+      title: row.title,
+      description: row.description,
+      posturePct: row.posturePct,
+      state: postureState(row.posturePct, row.emptyPostureReason),
+      passCount: row.passCount,
+      failCount: row.failCount,
+      emptyPostureReason: row.emptyPostureReason
+    };
+  }
+  function buildFrameworkTree(frameworkId, posture, policies, frameworks = []) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o;
+    const rows = posture.filter((p) => p.frameworkId === frameworkId);
+    if (!rows.length) return null;
+    const frameworkRow = rows.find((p) => p.level === "framework");
+    const catalogue = frameworks.find((f) => f.id === frameworkId);
+    const policiesBySub = /* @__PURE__ */ new Map();
+    for (const p of policies) {
+      if (p.frameworkId !== frameworkId) continue;
+      const list2 = (_a5 = policiesBySub.get(p.subcategoryExternalId)) != null ? _a5 : [];
+      list2.push(p);
+      policiesBySub.set(p.subcategoryExternalId, list2);
+    }
+    const subsByCategory = /* @__PURE__ */ new Map();
+    for (const row of rows) {
+      if (row.level !== "subcategory") continue;
+      const externalId = (_b = row.subcategoryExternalId) != null ? _b : "";
+      const raw = (_c = policiesBySub.get(externalId)) != null ? _c : [];
+      const seen = /* @__PURE__ */ new Set();
+      const deduped = raw.filter((p) => {
+        if (seen.has(p.policyId)) return false;
+        seen.add(p.policyId);
+        return true;
+      });
+      deduped.sort(
+        (a, b) => severityRank4(a.severity) - severityRank4(b.severity) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
+      );
+      const node2 = {
+        ...toNode(row, externalId),
+        assessmentScope: row.assessmentScope,
+        mappingRationale: row.mappingRationale,
+        policies: deduped,
+        failingPolicyCount: deduped.filter((p) => p.failCount > 0).length
+      };
+      const key = (_d = row.categoryExternalId) != null ? _d : "";
+      const list2 = (_e = subsByCategory.get(key)) != null ? _e : [];
+      list2.push(node2);
+      subsByCategory.set(key, list2);
+    }
+    const categories = rows.filter((r) => r.level === "category").map((row) => {
+      var _a6, _b2;
+      const externalId = (_a6 = row.categoryExternalId) != null ? _a6 : "";
+      const subcategories = (_b2 = subsByCategory.get(externalId)) != null ? _b2 : [];
+      return {
+        ...toNode(row, externalId),
+        subcategories,
+        mirrorsCategory: subcategories.length === 1 && subcategories[0].externalId === externalId
+      };
+    });
+    const stateCounts = emptyStateCounts();
+    for (const cat of categories) {
+      for (const sub of cat.subcategories) stateCounts[sub.state] += 1;
+    }
+    const distinct = /* @__PURE__ */ new Map();
+    for (const p of policies) {
+      if (p.frameworkId !== frameworkId) continue;
+      distinct.set(p.policyId, ((_f = distinct.get(p.policyId)) != null ? _f : false) || p.failCount > 0);
+    }
+    return {
+      frameworkId,
+      name: (_h = (_g = frameworkRow == null ? void 0 : frameworkRow.title) != null ? _g : catalogue == null ? void 0 : catalogue.name) != null ? _h : frameworkId,
+      description: (_i = frameworkRow == null ? void 0 : frameworkRow.description) != null ? _i : catalogue == null ? void 0 : catalogue.description,
+      posturePct: (_j = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _j : null,
+      state: postureState(
+        (_k = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _k : null,
+        (_l = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _l : null
+      ),
+      emptyPostureReason: (_m = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _m : null,
+      passSubCategoryCount: (_n = frameworkRow == null ? void 0 : frameworkRow.passSubCategoryCount) != null ? _n : 0,
+      failSubCategoryCount: (_o = frameworkRow == null ? void 0 : frameworkRow.failSubCategoryCount) != null ? _o : 0,
+      categories,
+      stateCounts,
+      policyCount: distinct.size,
+      failingPolicyCount: [...distinct.values()].filter(Boolean).length
+    };
+  }
+  function buildAllFrameworkTrees(posture, policies, frameworks = []) {
+    const ids = [];
+    for (const p of posture) if (ids.indexOf(p.frameworkId) === -1) ids.push(p.frameworkId);
+    const trees = ids.map((id) => buildFrameworkTree(id, posture, policies, frameworks)).filter((t) => t !== null);
+    trees.sort((a, b) => {
+      if (a.posturePct === null && b.posturePct === null) return a.name < b.name ? -1 : 1;
+      if (a.posturePct === null) return 1;
+      if (b.posturePct === null) return -1;
+      return a.posturePct - b.posturePct || (a.name < b.name ? -1 : 1);
+    });
+    return trees;
+  }
+  function complianceKpis(posture, policies = []) {
+    const frameworkRows = posture.filter((p) => p.level === "framework");
+    const scored = frameworkRows.filter(
+      (p) => postureState(p.posturePct, p.emptyPostureReason) === "scored"
+    );
+    const averagePosture = scored.length ? Math.round(scored.reduce((sum, p) => {
+      var _a5;
+      return sum + ((_a5 = p.posturePct) != null ? _a5 : 0);
+    }, 0) / scored.length) : null;
+    const failingSubcategories = posture.filter(
+      (p) => p.level === "subcategory" && p.failCount > 0
+    ).length;
+    const failing = /* @__PURE__ */ new Set();
+    for (const p of policies) if (p.failCount > 0) failing.add(p.policyId);
+    return {
+      frameworks: frameworkRows.length,
+      scoredFrameworks: scored.length,
+      averagePosture,
+      failingSubcategories,
+      failingPolicies: failing.size
+    };
   }
 
   // src/domain/graphProject.ts
@@ -7673,7 +7684,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "e17fbc39db45" : "dev";
+  var BUILD_ID = true ? "aa5c16cb1ea5" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -7923,6 +7934,16 @@ var Server = (() => {
     return getSelectedFrameworks2();
   }
   var getFiveRsPins2 = () => getFiveRsPins(loadSettings());
+  function setFiveRsPins(pins) {
+    const settings = loadSettings();
+    const next = withFiveRsPins(settings, pins);
+    const key = (p) => `${p.in.join(" ")}|${p.out.join(" ")}`;
+    if (key(getFiveRsPins(next)) === key(getFiveRsPins(settings))) {
+      return getFiveRsPins(settings);
+    }
+    saveSettings(next);
+    return getFiveRsPins2();
+  }
   var getScanVars2 = () => getScanVars(loadSettings());
   function setScanVars(stepId, vars) {
     saveSettings(withScanVars(loadSettings(), stepId, vars));
@@ -11941,7 +11962,10 @@ var Server = (() => {
       maxNodesFloor: MAX_NODES_FLOOR,
       maxNodesCeiling: MAX_NODES_CEILING,
       autoExpand: getAutoExpand2(),
-      hasCredentials: hasWizCredentials()
+      hasCredentials: hasWizCredentials(),
+      // The operator's overrides on the 5Rs scope. Only the pins: the derived default is
+      // computed in getCompliance, where the trees and findings it needs already are.
+      fiveRsPins: getFiveRsPins2()
     }));
   }
   function setSettings(p) {
@@ -11952,12 +11976,21 @@ var Server = (() => {
       }
       if (params["maxNodes"] !== void 0) setMaxNodes(params["maxNodes"]);
       if (params["autoExpand"] !== void 0) setAutoExpand(params["autoExpand"]);
+      if (params["fiveRsPins"] !== void 0) {
+        setFiveRsPins(
+          cleanFiveRsPins(
+            params["fiveRsPins"],
+            loadFrameworkPolicies().map((pol) => pol.policyId)
+          )
+        );
+      }
       return {
         defaultDepth: getDefaultDepth2(),
         maxNodes: getMaxNodes2(),
         // Echoed so the Settings page's paint({ ...s, ...fresh }) repaints the STORED value
         // rather than the one it asked for.
-        autoExpand: getAutoExpand2()
+        autoExpand: getAutoExpand2(),
+        fiveRsPins: getFiveRsPins2()
       };
     });
   }

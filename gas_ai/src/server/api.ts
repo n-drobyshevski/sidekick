@@ -78,6 +78,7 @@ import {
   weakestAreas,
 } from "../domain/complianceOverview";
 import { scopeFiveRs, unselectedPolicyIds } from "../domain/complianceScope";
+import { cleanFiveRsPins } from "../domain/settingsLogic";
 import { buildAllFrameworkTrees, complianceKpis } from "../domain/compliancePosture";
 import { graphCacheParams, resolveGraphParams, resolveLayoutParams } from "../domain/graphApiParams";
 import { conditionHolds, conditionState } from "../domain/riskConditions";
@@ -1485,6 +1486,9 @@ export function getSettings(_p?: unknown): ApiResult {
     maxNodesCeiling: MAX_NODES_CEILING,
     autoExpand: settingsStore.getAutoExpand(),
     hasCredentials: hasWizCredentials(),
+    // The operator's overrides on the 5Rs scope. Only the pins: the derived default is
+    // computed in getCompliance, where the trees and findings it needs already are.
+    fiveRsPins: settingsStore.getFiveRsPins(),
   }));
 }
 
@@ -1498,12 +1502,23 @@ export function setSettings(p?: unknown): ApiResult {
     // `!== undefined`, not truthiness: `false` is a value the caller must be able to send,
     // and `if (params["autoExpand"])` would make the flag impossible to turn off.
     if (params["autoExpand"] !== undefined) settingsStore.setAutoExpand(params["autoExpand"]);
+    // Cleaned against the policies actually synced, so a pin on a rule the tenant no longer
+    // carries is dropped rather than accumulating forever in a settings row nothing reads.
+    if (params["fiveRsPins"] !== undefined) {
+      settingsStore.setFiveRsPins(
+        cleanFiveRsPins(
+          params["fiveRsPins"],
+          syncStore.loadFrameworkPolicies().map((pol) => pol.policyId),
+        ),
+      );
+    }
     return {
       defaultDepth: settingsStore.getDefaultDepth(),
       maxNodes: settingsStore.getMaxNodes(),
       // Echoed so the Settings page's paint({ ...s, ...fresh }) repaints the STORED value
       // rather than the one it asked for.
       autoExpand: settingsStore.getAutoExpand(),
+      fiveRsPins: settingsStore.getFiveRsPins(),
     };
   });
 }
