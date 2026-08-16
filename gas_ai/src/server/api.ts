@@ -71,6 +71,12 @@ import {
   type ConfigTotals,
   type ControlRollup,
 } from "../domain/configFindings";
+import {
+  coverageSummary,
+  frameworkRail,
+  sharedControls,
+  weakestAreas,
+} from "../domain/complianceOverview";
 import { buildAllFrameworkTrees, complianceKpis } from "../domain/compliancePosture";
 import { graphCacheParams, resolveGraphParams, resolveLayoutParams } from "../domain/graphApiParams";
 import { conditionHolds, conditionState } from "../domain/riskConditions";
@@ -1096,13 +1102,29 @@ export function getCompliance(p?: unknown): ApiResult {
       const catalogue = syncStore.loadFrameworks();
       const selected = settingsStore.getSelectedFrameworks(() => catalogue);
       const trees = buildAllFrameworkTrees(posture, policies, catalogue);
+      // The catalogue with this app's selection folded in — Wiz says what exists, the
+      // settings say what is collected, and the picker needs both to render honestly.
+      // Built once and shared: `coverageSummary` reads `selected` off these rows, and the
+      // raw catalogue does not carry it (FrameworkRow.selected is resolved from settings,
+      // never from Wiz), so passing the unmerged array would silently report every
+      // framework as uncollected.
+      const merged = catalogue.map((f) => ({ ...f, selected: selected.indexOf(f.id) >= 0 }));
       return {
         trees,
         kpis: complianceKpis(posture, policies),
-        // The catalogue with this app's selection folded in — Wiz says what exists, the
-        // settings say what is collected, and the picker needs both to render honestly.
-        catalogue: catalogue.map((f) => ({ ...f, selected: selected.indexOf(f.id) >= 0 })),
+        catalogue: merged,
         selected,
+        // The Overview's four bands. Computed here rather than in the browser because the
+        // client bundle cannot import the domain layer at all — every client-side copy of
+        // domain logic in this app is a hand-kept mirror with a test holding the two
+        // together (assetQuery.js, configView.js), and that machinery exists to reconcile
+        // a client filtering a PAGE against a server filtering the WHOLE set. This payload
+        // is already shipped whole and cached, so there is no second scope to reconcile —
+        // a mirror here would be duplicated risk buying nothing.
+        rail: frameworkRail(trees),
+        weakestAreas: weakestAreas(trees),
+        sharedControls: sharedControls(trees),
+        coverage: coverageSummary(trees, merged, selected),
         // Named so the page can open on a framework it was linked to rather than guessing.
         // Null when the requested id has no stored posture, which the page reports as such
         // instead of silently falling back to a different framework's numbers.

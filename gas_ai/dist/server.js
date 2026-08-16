@@ -3442,6 +3442,156 @@ var Server = (() => {
     };
   }
 
+  // src/domain/complianceOverview.ts
+  function severityRank2(s) {
+    const i = SEVERITY_ORDER.indexOf(s);
+    return i === -1 ? SEVERITY_ORDER.length : i;
+  }
+  function frameworkRail(trees) {
+    return trees.map((tree) => ({
+      frameworkId: tree.frameworkId,
+      name: tree.name,
+      posturePct: tree.posturePct,
+      state: tree.state,
+      emptyPostureReason: tree.emptyPostureReason,
+      categoryCount: tree.categories.length,
+      subcategoryCount: tree.categories.reduce((sum, c) => sum + c.subcategories.length, 0),
+      policyCount: tree.policyCount,
+      failingPolicyCount: tree.failingPolicyCount,
+      // Copied rather than aliased: a caller holding this row must not be able to mutate
+      // the FrameworkTree it was built from by mutating what looks like its own object.
+      stateCounts: { ...tree.stateCounts }
+    }));
+  }
+  function isScoredRow(row) {
+    return row.state === "scored";
+  }
+  function weakestAreas(trees, limit) {
+    const rows = [];
+    for (const tree of trees) {
+      for (const category of tree.categories) {
+        for (const sub of category.subcategories) {
+          rows.push({
+            frameworkId: tree.frameworkId,
+            frameworkName: tree.name,
+            categoryExternalId: category.externalId,
+            categoryTitle: category.title,
+            externalId: sub.externalId,
+            showExternalId: sub.showExternalId,
+            title: sub.title,
+            posturePct: sub.posturePct,
+            state: sub.state,
+            emptyPostureReason: sub.emptyPostureReason,
+            passCount: sub.passCount,
+            failCount: sub.failCount,
+            // Distinct policies THIS subcategory carries. buildFrameworkTree already
+            // deduped `policies` to that scope (compliancePosture.ts:190), so re-deduping
+            // here would be the wrong scope all over again — count the list as given.
+            policyCount: sub.policies.length,
+            failingPolicyCount: sub.failingPolicyCount
+          });
+        }
+      }
+    }
+    const scored = [];
+    const unscored = [];
+    for (const row of rows) {
+      if (isScoredRow(row)) scored.push(row);
+      else unscored.push(row);
+    }
+    scored.sort((a, b) => a.posturePct - b.posturePct || b.failingPolicyCount - a.failingPolicyCount || (a.frameworkName < b.frameworkName ? -1 : a.frameworkName > b.frameworkName ? 1 : 0) || (a.title < b.title ? -1 : a.title > b.title ? 1 : 0));
+    const ordered = [...scored, ...unscored];
+    return typeof limit === "number" ? ordered.slice(0, limit) : ordered;
+  }
+  function sharedControls(trees) {
+    const byPolicy = /* @__PURE__ */ new Map();
+    for (const tree of trees) {
+      for (const category of tree.categories) {
+        for (const sub of category.subcategories) {
+          for (const p of sub.policies) {
+            let acc = byPolicy.get(p.policyId);
+            if (!acc) {
+              acc = {
+                policyId: p.policyId,
+                shortId: p.shortId,
+                name: p.name,
+                policyKind: p.policyKind,
+                severity: p.severity,
+                severityRank: severityRank2(p.severity),
+                hasAutoRemediation: p.hasAutoRemediation === true,
+                frameworkIds: [],
+                frameworkNames: [],
+                subcategoryKeys: /* @__PURE__ */ new Set(),
+                failCount: 0
+              };
+              byPolicy.set(p.policyId, acc);
+            }
+            const rank = severityRank2(p.severity);
+            if (rank < acc.severityRank) {
+              acc.severityRank = rank;
+              acc.severity = p.severity;
+              acc.shortId = p.shortId;
+              acc.name = p.name;
+              acc.policyKind = p.policyKind;
+              acc.hasAutoRemediation = p.hasAutoRemediation === true;
+            }
+            if (acc.frameworkIds.indexOf(tree.frameworkId) === -1) {
+              acc.frameworkIds.push(tree.frameworkId);
+              acc.frameworkNames.push(tree.name);
+            }
+            acc.subcategoryKeys.add(`${tree.frameworkId}|${sub.externalId}`);
+            if (p.failCount > acc.failCount) acc.failCount = p.failCount;
+          }
+        }
+      }
+    }
+    const rows = [];
+    for (const acc of byPolicy.values()) {
+      if (acc.failCount <= 0) continue;
+      rows.push({
+        policyId: acc.policyId,
+        shortId: acc.shortId,
+        name: acc.name,
+        policyKind: acc.policyKind,
+        severity: acc.severity,
+        hasAutoRemediation: acc.hasAutoRemediation,
+        frameworkIds: acc.frameworkIds,
+        frameworkNames: acc.frameworkNames,
+        frameworkCount: acc.frameworkIds.length,
+        subcategoryCount: acc.subcategoryKeys.size,
+        failCount: acc.failCount
+      });
+    }
+    rows.sort((a, b) => b.frameworkCount - a.frameworkCount || severityRank2(a.severity) - severityRank2(b.severity) || b.failCount - a.failCount || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    return rows;
+  }
+  function coverageSummary(trees, catalogue, selected) {
+    const treeIds = new Set(trees.map((t) => t.frameworkId));
+    const uncollected = catalogue.filter((f) => !treeIds.has(f.id)).map((f) => ({ id: f.id, name: f.name }));
+    const stateCounts = {
+      scored: 0,
+      noResources: 0,
+      noPolicies: 0,
+      unknown: 0
+    };
+    let subcategoryCount = 0;
+    for (const tree of trees) {
+      stateCounts.scored += tree.stateCounts.scored;
+      stateCounts.noResources += tree.stateCounts.noResources;
+      stateCounts.noPolicies += tree.stateCounts.noPolicies;
+      stateCounts.unknown += tree.stateCounts.unknown;
+      for (const category of tree.categories) subcategoryCount += category.subcategories.length;
+    }
+    return {
+      collected: trees.length,
+      catalogued: catalogue.length,
+      scoredFrameworks: trees.filter((t) => t.state === "scored").length,
+      uncollected,
+      stateCounts,
+      subcategoryCount
+    };
+  }
+
   // src/domain/compliancePosture.ts
   function postureState(posturePct2, emptyPostureReason) {
     const reason = String(emptyPostureReason != null ? emptyPostureReason : "").trim().toUpperCase();
@@ -3458,7 +3608,7 @@ var Server = (() => {
     const next = t.charAt(id.length);
     return next === "" || next === " " || next === "	";
   }
-  function severityRank2(s) {
+  function severityRank3(s) {
     const i = SEVERITY_ORDER.indexOf(s);
     return i === -1 ? SEVERITY_ORDER.length : i;
   }
@@ -3506,7 +3656,7 @@ var Server = (() => {
         return true;
       });
       deduped.sort(
-        (a, b) => severityRank2(a.severity) - severityRank2(b.severity) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
+        (a, b) => severityRank3(a.severity) - severityRank3(b.severity) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
       );
       const node2 = {
         ...toNode(row, externalId),
@@ -6402,7 +6552,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "7af9e1136c63" : "dev";
+  var BUILD_ID = true ? "f71b1e5d4968" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -11307,13 +11457,23 @@ var Server = (() => {
         const catalogue = loadFrameworks();
         const selected = getSelectedFrameworks2(() => catalogue);
         const trees = buildAllFrameworkTrees(posture, policies, catalogue);
+        const merged = catalogue.map((f) => ({ ...f, selected: selected.indexOf(f.id) >= 0 }));
         return {
           trees,
           kpis: complianceKpis(posture, policies),
-          // The catalogue with this app's selection folded in — Wiz says what exists, the
-          // settings say what is collected, and the picker needs both to render honestly.
-          catalogue: catalogue.map((f) => ({ ...f, selected: selected.indexOf(f.id) >= 0 })),
+          catalogue: merged,
           selected,
+          // The Overview's four bands. Computed here rather than in the browser because the
+          // client bundle cannot import the domain layer at all — every client-side copy of
+          // domain logic in this app is a hand-kept mirror with a test holding the two
+          // together (assetQuery.js, configView.js), and that machinery exists to reconcile
+          // a client filtering a PAGE against a server filtering the WHOLE set. This payload
+          // is already shipped whole and cached, so there is no second scope to reconcile —
+          // a mirror here would be duplicated risk buying nothing.
+          rail: frameworkRail(trees),
+          weakestAreas: weakestAreas(trees),
+          sharedControls: sharedControls(trees),
+          coverage: coverageSummary(trees, merged, selected),
           // Named so the page can open on a framework it was linked to rather than guessing.
           // Null when the requested id has no stored posture, which the page reports as such
           // instead of silently falling back to a different framework's numbers.

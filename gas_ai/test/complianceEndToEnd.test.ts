@@ -99,6 +99,71 @@ describe("getCompliance after a dry-run sync", () => {
   });
 });
 
+// The Overview's four bands, against the seeded estate rather than the unit fixture. The
+// unit tests prove each rollup in isolation; these prove they are actually WIRED into the
+// endpoint the page calls — the same gap complianceEndToEnd exists to close for the trees.
+describe("the Overview bands getCompliance ships beside the trees", () => {
+  it("rails every framework in the trees' own order", () => {
+    const data = compliance();
+    // A projection, never a re-sort: if these two ever disagree, the rail is telling a
+    // different story about "worst first" than the register it links into.
+    expect(data.rail.map((r: any) => r.frameworkId))
+      .toEqual(data.trees.map((t: any) => t.frameworkId));
+    expect(data.rail.map((r: any) => r.posturePct)).toEqual([85, 95, 96, 100]);
+  });
+
+  it("ranks the weakest areas across frameworks, and ranks no unscored one", () => {
+    const rows = compliance().weakestAreas;
+    const scored = rows.filter((r: any) => r.state === "scored");
+    const unscored = rows.filter((r: any) => r.state !== "scored");
+
+    expect(scored.map((r: any) => r.posturePct))
+      .toEqual([...scored.map((r: any) => r.posturePct)].sort((a: number, b: number) => a - b));
+
+    // The invariant, at estate scope: a subcategory with no posture is LISTED, because
+    // "no check is written for this" is a finding about the programme — but it is never
+    // ranked, because `posturePct ?? 0` would file it as the worst thing in the estate.
+    for (const r of unscored) expect(r.posturePct).toBeNull();
+    expect(unscored.length).toBeGreaterThan(0);
+    expect(rows.indexOf(unscored[0]))
+      .toBeGreaterThan(rows.indexOf(scored[scored.length - 1]));
+
+    // Flattened rows carry the framework they came from; the register does not have to.
+    expect(new Set(rows.map((r: any) => r.frameworkId)).size).toBeGreaterThan(1);
+  });
+
+  it("counts one failing control once, however many frameworks raise it", () => {
+    const data = compliance();
+    // Two dedupes over the same question. If they drift, the header and the band below it
+    // report different totals for one estate.
+    expect(data.sharedControls).toHaveLength(data.kpis.failingPolicies);
+
+    for (const c of data.sharedControls) {
+      expect(c.failCount).toBeGreaterThan(0);
+      expect(c.frameworkCount).toBe(new Set(c.frameworkIds).size);
+      // A control mapped under two subcategories of one framework is still one framework.
+      expect(c.subcategoryCount).toBeGreaterThanOrEqual(c.frameworkCount);
+    }
+
+    // Leverage first — the band's whole reason to exist is that the top row is the fix
+    // that closes the most obligations.
+    const counts = data.sharedControls.map((c: any) => c.frameworkCount);
+    expect(counts).toEqual([...counts].sort((a: number, b: number) => b - a));
+  });
+
+  it("names the framework this tenant has but does not collect", () => {
+    const cov = compliance().coverage;
+    expect(cov.collected).toBe(4);
+    expect(cov.catalogued).toBe(5);
+    expect(cov.uncollected.map((f: any) => f.id)).toEqual(["wf-id-042"]);
+
+    // Every subcategory lands in exactly one state — no row is counted twice and none is
+    // dropped, which is what makes the coverage band an accounting rather than a summary.
+    const total = Object.values(cov.stateCounts).reduce((a: any, b: any) => a + b, 0);
+    expect(total).toBe(cov.subcategoryCount);
+  });
+});
+
 // NOTE ON WHAT IS *NOT* ASSERTED HERE. `getCompliance` goes through `cached()`, whose key
 // carries `dataVersion()` — and `bumpDataVersion()` is `String(Date.now())`. This harness
 // freezes the clock (gasEnv.FROZEN_NOW) so sync ids and timestamps stay stable, which

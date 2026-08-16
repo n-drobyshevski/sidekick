@@ -148,3 +148,214 @@
 @media (prefers-reduced-motion: reduce) {
   .comp-row-chevron { transition: none; }
 }
+
+/* =============================================================== overview sub-view */
+/* The cross-framework Overview: one surface, five bands, divided by hairlines rather
+   than stacked as cards — the same document-not-boxes grammar as `.rule-section`
+   (aars.css:42) and `.help-section` (help.css:151). Band A is the existing hero +
+   `.comp-strip` + `.comp-bar` + `.comp-keys` + `.stat-list`; nothing new is defined for
+   it, and a fourth stat cell needs nothing either, since `.stat-list` is already an
+   auto-fit grid. Bands B, D and E follow below, each named for the letter it fills. */
+.comp-ov-section { padding: 22px 0 4px; border-top: 1px solid var(--hairline); }
+.comp-ov-section:first-child { border-top: none; padding-top: 0; }
+
+/* --------------------------------------------------------- band B: the framework rail */
+/* Small-multiple bullet rows sharing ONE 0-100 axis, so a reader compares frameworks by
+   reading down the percentage column rather than by eyeballing independently-scaled
+   bars — the same reasoning the AARS pillar rails give for sharing the model's axis
+   (aars.css:139-143). `--rail-cols` is set once on the container and read by both the
+   axis header and every row, so the two responsive steps below only have to change it
+   in one place instead of repeating the column list per breakpoint. */
+.comp-rail { display: flex; flex-direction: column; margin-top: 6px; --rail-cols: 210px 1fr 58px; }
+
+/* The tick header. It sits on `--rail-cols` too, but only its middle cell is styled —
+   `.comp-axis-ticks` is pinned to grid-column 2 explicitly (rather than left to fall
+   there by DOM order) so it always lines up over the lane column regardless of what,
+   if anything, the page puts in the header's outer two cells. */
+.comp-rail-axis {
+  display: grid; grid-template-columns: var(--rail-cols); gap: 18px;
+  margin-bottom: 2px;
+}
+.comp-axis-ticks {
+  grid-column: 2;
+  position: relative; height: 18px;
+  border-bottom: 1px solid var(--hairline);
+}
+/* Anchored by `data-pos` rather than by DOM order or nth-child, so the 0 and 100 labels
+   can sit flush with the axis ends (no half-clipped digit) while the interior three
+   center on their tick — a mix nth-child can't express without also encoding position
+   into selector order. */
+.comp-axis-tick {
+  position: absolute; bottom: 3px;
+  font-size: 10px; color: var(--text-3); font-variant-numeric: tabular-nums;
+}
+.comp-axis-tick[data-pos="0"] { left: 0; }
+.comp-axis-tick[data-pos="25"] { left: 25%; transform: translateX(-50%); }
+.comp-axis-tick[data-pos="50"] { left: 50%; transform: translateX(-50%); }
+.comp-axis-tick[data-pos="75"] { left: 75%; transform: translateX(-50%); }
+.comp-axis-tick[data-pos="100"] { left: 100%; transform: translateX(-100%); }
+
+/* One framework per row, and the row itself is the disclosure trigger (opens the
+   framework's register) rather than carrying a separate "Open" control at the far
+   edge — the failure `.help-map-item` names at help.css:159 for exactly this shape of
+   row. `position: relative` is not decorative: it makes this button the containing
+   block that gives `.comp-fw-mean` below a coordinate space to anchor into. */
+.comp-fw-row {
+  display: grid; grid-template-columns: var(--rail-cols); gap: 18px; align-items: center;
+  position: relative; width: 100%; min-height: 0; margin: 0; padding: 9px 0;
+  border: none; border-bottom: 1px solid var(--hairline); border-radius: 0;
+  background: none; box-shadow: none; font: inherit; color: inherit;
+  text-align: left; cursor: pointer;
+}
+.comp-fw-row:last-child { border-bottom: none; }
+.comp-fw-row:hover { background: rgba(0, 0, 0, 0.025); }
+/* Outset would clip against the next row's hairline one pixel away; inset is the
+   `.segmented > button` precedent (components.css:418) for a row button in a bordered
+   lane. */
+.comp-fw-row:focus-visible { outline-offset: -2px; z-index: 1; }
+
+.comp-fw-name {
+  font-size: 13.5px; font-weight: 600; color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.comp-fw-meta {
+  margin-top: 2px; font-size: 11px; color: var(--text-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.comp-fw-lane {
+  position: relative; height: 22px;
+  background: var(--track-bg); border-radius: 4px; overflow: hidden;
+}
+/* Neutral graphite, not a posture tint: fifty frameworks is fifty bars, and coloring
+   each by its own score is the wall-of-color PRODUCT.md rejects and components.css's
+   `.meter-fill` comment (components.css:116-117) already refuses for the same reason.
+   One accent line (the mean marker below) is the estate's one earned splash of color;
+   the bars themselves stay the record, not the verdict. Width is set inline per row. */
+.comp-fw-bar { position: absolute; inset: 0 auto 0 0; background: var(--graphite); }
+
+/* The honest-state lane: an unscored framework gets NO bar, not a bar at zero — a
+   sliver still reads as "very little" where the fact is "not measured", and those are
+   different claims. The hatch is `.sevbar-seg--empty`'s own 45deg recipe
+   (components.css:163-164) at a touch lower alpha for this taller lane, chosen because
+   it has to look like the OPPOSITE of a full bar — a texture that could never be
+   mistaken for a low value — never like a lane that merely reads low. Layout switches
+   to a flex row so the state's glyph and its reason in words both fit beside each
+   other, in the same lane a scored framework's bar would otherwise fill. */
+.comp-fw-lane--empty {
+  display: flex; align-items: center; gap: 6px; padding: 0 10px;
+  background: repeating-linear-gradient(
+    45deg, rgba(0, 0, 0, 0.055) 0 4px, transparent 4px 8px);
+  font-size: 11px; color: var(--text-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Reuses `.comp-key-glyph` (components.css glyph, already sized for this row height)
+   rather than minting a second glyph class, and tints it by the SAME four states
+   `.comp-bar-seg[data-state]` above already carries — so the strip at the top of the
+   page and a single row's empty lane never disagree about what a state's color is.
+   `noResources` takes the *-text swap `.comp-key` already uses (line 69): the plain
+   `--sev-info` fill is legible as a bar but not as small text. */
+.comp-fw-lane--empty[data-state="noResources"] .comp-key-glyph { color: var(--sev-info-text); }
+.comp-fw-lane--empty[data-state="noPolicies"] .comp-key-glyph { color: var(--warn); }
+.comp-fw-lane--empty[data-state="unknown"] .comp-key-glyph { color: var(--text-3); }
+
+/* The estate mean: a statistic ABOUT the rows, not a value belonging to any one of
+   them, so it draws as a rule crossing the axis rather than a second bar that could be
+   mistaken for a framework's own score. It shares the lane's grid-column (2) as an
+   independent grid item instead of living inside `.comp-fw-lane`, because an
+   absolutely-positioned descendant of the lane would be cut by the very
+   `overflow: hidden` that keeps the bar's corners rounded. An out-of-flow grid item
+   placed by `grid-column`/`grid-row` takes that cell as its containing block (the row
+   button above is the nearest positioned ancestor), so `left` still resolves against
+   the lane's own width and the marker still lands on the same 0-100 axis the ticks and
+   bars use — solving the clip without touching the lane's own overflow. */
+/* Sized and centred against the LANE, not against the grid area. The area is as tall as
+   the row's tallest cell — the name over its meta line, ~38px — while the lane is 22px
+   and `align-items: center` floats it in the middle of that. Anchoring the marker to the
+   area's own edges (top/bottom: -3px) therefore drew a rule most of a row high, standing
+   8px proud at each end instead of 3, and put the triangle cap level with the framework's
+   NAME rather than with the axis it marks. A fixed height centred with a negative margin
+   pins it to the lane's geometry, which is the thing the percentage actually refers to. */
+.comp-fw-mean {
+  position: absolute; grid-column: 2; grid-row: 1;
+  top: 50%; margin-top: -14px; height: 28px; width: 2px;
+  background: var(--accent); z-index: 2; pointer-events: none;
+}
+.comp-fw-mean::after {
+  content: ""; position: absolute; top: -4px; left: 50%; transform: translateX(-50%);
+  width: 0; height: 0;
+  border-left: 3px solid transparent; border-right: 3px solid transparent;
+  border-top: 4px solid var(--accent);
+}
+
+.comp-fw-pct { font-size: 15px; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+.comp-fw-pct--dash { color: var(--text-3); font-weight: 400; }
+
+.comp-rail-key { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 11px; color: var(--text-3); }
+.comp-rail-key-swatch { display: inline-block; width: 14px; height: 2px; background: var(--accent); }
+
+@media (max-width: 1080px) {
+  .comp-rail { --rail-cols: 160px 1fr 52px; }
+}
+@media (max-width: 760px) {
+  /* The meta line is the cheaper thing to lose: the name and the score are the two
+     facts a narrow screen has to keep, and dropping the subtitle buys the lane back
+     the width a shrunken name column would otherwise take from it. The rail must never
+     force the page to scroll sideways, so the name column shrinks too rather than
+     holding 210px on a phone. */
+  .comp-rail { --rail-cols: 112px 1fr 42px; }
+  .comp-rail-axis, .comp-fw-row { gap: 10px; }
+  .comp-fw-meta { display: none; }
+}
+
+/* ------------------------------------------------- band D: framework membership dots */
+/* Which frameworks a single failing control raises, as filled/hollow dots rather than
+   framework-name chips: a control can belong to five-plus frameworks, and five chips
+   is a line-wrapping paragraph while five dots is a glance. Filled vs hollow is a
+   shape difference, not just a color one — `.comp-dots-n` beside it is the
+   belt-and-braces text count non-color readers and this app's own rule (DESIGN.md's
+   Two-Token / never-color-alone rule) both require. */
+.comp-dots { display: inline-flex; align-items: center; gap: 5px; }
+.comp-dot { width: 9px; height: 9px; border-radius: 50%; box-sizing: border-box; }
+.comp-dot--on { background: var(--accent); }
+.comp-dot--off { background: none; border: 1.5px solid rgba(0, 0, 0, 0.22); }
+.comp-dots-n { font-size: 12px; color: var(--text-2); white-space: nowrap; }
+
+/* Auto-remediation chip: a small code-like mark (mono, like `.step-id` / `.prov-mono`)
+   rather than a status pill, because "this control fixes itself" is closer to a
+   capability flag than to a severity or an SLA verdict, and giving it the pill
+   vocabulary would make it compete with `.comp-bar-seg`'s actual states for the same
+   visual register. */
+.comp-auto {
+  display: inline-flex; align-items: center;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px; font-weight: 600;
+  color: var(--ok); background: rgba(21, 128, 61, 0.10);
+  border-radius: var(--radius-sm); padding: 1px 6px;
+}
+
+/* ------------------------------------------------------------------ band E: coverage */
+/* Equal cells divided by hairlines, exactly `.stat-list` / `.stat-row`'s recipe
+   (components.css:50-57) reused rather than re-invented, because this is the same
+   statement — a strip of facts belonging to one header — one section lower on the
+   page. The 620px collapse to a stacked, top-ruled list is the same breakpoint and the
+   same rule for the same reason: a border-left has nothing to sit against once the
+   cells stop being side by side. */
+.comp-cov {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+}
+.comp-cov-cell { padding: 0 18px; border-left: 1px solid var(--hairline); }
+.comp-cov-cell:first-child { border-left: none; }
+.comp-cov-list {
+  list-style: none; margin: 8px 0 0; padding: 0;
+  display: flex; flex-direction: column; gap: 5px;
+  font-size: 12.5px; color: var(--text-2);
+}
+.comp-cov-list li { display: flex; align-items: center; gap: 7px; }
+
+@media (max-width: 620px) {
+  .comp-cov-cell {
+    padding: 10px 0; border-left: none; border-top: 1px solid var(--hairline);
+  }
+  .comp-cov-cell:first-child { border-top: none; padding-top: 0; }
+}
