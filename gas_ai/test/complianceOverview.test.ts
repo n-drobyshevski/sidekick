@@ -194,7 +194,7 @@ describe("sharedControls — estate-wide dedupe, failCount is MAX not sum", () =
 });
 
 describe("coverageSummary — what the estate is and is not measuring", () => {
-  it("stateCounts sums to subcategoryCount, and uncollected lists exactly the missing catalogue entries", () => {
+  it("counts a catalogue entry with no tree as catalogued but not collected", () => {
     const extendedCatalogue: FrameworkRow[] = [
       ...frameworks,
       {
@@ -202,15 +202,15 @@ describe("coverageSummary — what the estate is and is not measuring", () => {
         policyTypes: [], selected: true,
       },
     ];
-    const coverage = coverageSummary(trees, extendedCatalogue, ["wf-id-999"]);
+    const coverage = coverageSummary(trees, extendedCatalogue);
 
+    // PCI DSS is `selected` yet has no tree, so it counts toward `catalogued` and not
+    // toward `collected`. The gap between the two numbers IS the report — this used to
+    // name the missing frameworks as well, until a real tenant turned that into a
+    // thirty-seven-item transcription of its own catalogue.
     expect(coverage.collected).toBe(2); // trees: wf-id-275, wf-id-214
     expect(coverage.catalogued).toBe(3); // catalogue: those two plus PCI DSS
     expect(coverage.scoredFrameworks).toBe(2); // both collected frameworks scored (97, 75)
-
-    // PCI DSS is `selected` yet has no tree — it is the uncollected one, named for the
-    // page to report, regardless of what `selected` says about intent.
-    expect(coverage.uncollected).toEqual([{ id: "wf-id-999", name: "PCI DSS v4.0" }]);
 
     const summed = Object.values(coverage.stateCounts).reduce((a, b) => a + b, 0);
     expect(summed).toBe(coverage.subcategoryCount);
@@ -221,18 +221,19 @@ describe("coverageSummary — what the estate is and is not measuring", () => {
     });
   });
 
-  it("a catalogue entry WITH a tree is never reported as uncollected, selected or not", () => {
-    const coverage = coverageSummary(trees, frameworks, []);
-    expect(coverage.uncollected).toEqual([]);
+  it("counts a framework by its TREE, not by whether it was selected", () => {
+    // Every catalogue entry here has a tree, so nothing is missing however the selection
+    // reads — what was asked for and what has landed are different questions.
+    const coverage = coverageSummary(trees, frameworks);
+    expect(coverage.collected).toBe(coverage.catalogued);
   });
 
   it("is safe on an empty estate — nothing collected, nothing to sum a division by zero into", () => {
-    const coverage = coverageSummary([], [], []);
+    const coverage = coverageSummary([], []);
     expect(coverage).toEqual({
       collected: 0,
       catalogued: 0,
       scoredFrameworks: 0,
-      uncollected: [],
       stateCounts: {
         scored: 0, noResources: 0, noPolicies: 0, unknown: 0,
       },

@@ -1,8 +1,18 @@
-// The "All frameworks" sub-view of Compliance Posture: five bands answering, in order,
-// "where do we stand", "which framework is worst", "which subcategory is worst", "which
-// control costs us across more than one framework", and "what haven't we even looked at
-// yet". Every number on this page is assembled HERE, client-side, from rollups the server
-// computed once — this file draws them and asks nothing else of the network.
+// The "All frameworks" sub-view of Compliance Posture: four bands answering, in order,
+// "where do we stand", "which framework is worst", "which subcategory is worst", and
+// "which control costs us across more than one framework". Every number on this page is
+// assembled HERE, client-side, from rollups the server computed once — this file draws
+// them and asks nothing else of the network.
+//
+// THERE WAS A FIFTH BAND, "Coverage", and what killed it is worth keeping: it enumerated
+// the frameworks in the tenant's catalogue that the sync does not collect. On the sample
+// estate that was one name. On a real tenant it was thirty-seven, printed inline in a
+// warning banner AND again as a list — the catalogue transcribed, not a finding. The fact
+// it existed to state is already in the headline strip as "Frameworks 4 of 41", which is
+// the same claim in five characters. The band's one irreplaceable part, the 5Rs scope and
+// its link into Settings, moved to the rail footnote below. Any band that reads well
+// against seeded data and collapses against a real estate has the same defect; count the
+// rows a real tenant would produce before adding another.
 //
 // THE HEADLINE NUMBER IS OURS, NOT WIZ'S, AND SAYS SO. Wiz scores a framework; it does not
 // score an estate. kpis.averagePosture is a mean this app takes across the frameworks that
@@ -86,7 +96,6 @@ export function renderOverview(host, data, view, actions) {
   renderRail(host, data, actions);
   renderWeakestAreas(host, data, view);
   renderSharedControls(host, data);
-  renderCoverage(host, data);
 }
 
 // -------------------------------------------------------------------- A. headline
@@ -288,7 +297,31 @@ function renderRail(host, data, actions) {
     : el("p", { class: "comp-rail-key" },
         "No estate mean yet — no framework has a compliance posture to average.");
 
-  host.append(el("div", { class: "comp-ov-section" }, sectionLabel("Frameworks"), rail, key));
+  // The 5Rs scope, as a footnote to the rail rather than a control inside it.
+  //
+  // A rail row is a <button> with everything inside it aria-hidden behind one label, so a
+  // link cannot live there: that nests an interactive element in an interactive element —
+  // two tab stops for one visual row, a link announced inside a button — which is the same
+  // failure compliance.js refuses for the register's disclosure controls. Here, after the
+  // rail and outside every button, it is one tab stop in its own right.
+  //
+  // Same `selected < total` condition the in-row marker uses (fiveRsScopeNote), so the
+  // footnote and the marker appear and disappear together rather than drifting into a state
+  // where one claims a scope the other does not.
+  const scoped = rows.map((row) => fiveRsScopeNote(row, fiveRsScope)).filter(Boolean)[0];
+  const scopeKey = scoped
+    ? el("p", { class: "comp-rail-key comp-rail-key--scope" },
+        el("b", {}, `${scoped.frameworkName}: `),
+        `${scoped.selected} of ${scoped.total} rules in scope. `,
+        // Restated here and not only in the row's aria-label, because this is the line a
+        // sighted reader lands on when the register below shrinks and the percentage above
+        // does not — without it that reads as the bar failing to update.
+        `The percentage above is Wiz's own and still covers all ${scoped.total}. `,
+        el("a", { href: "#/settings", target: "_self" }, "Choose which rules →"))
+    : null;
+
+  host.append(el("div", { class: "comp-ov-section" },
+    sectionLabel("Frameworks"), rail, key, scopeKey));
 }
 
 // --------------------------------------------------------------- C. weakest areas
@@ -410,80 +443,3 @@ function renderSharedControls(host, data) {
       : null));
 }
 
-// --------------------------------------------------------------------- E. coverage
-
-function renderCoverage(host, data) {
-  const coverage = data.coverage || {};
-  const uncollected = coverage.uncollected || [];
-  const selected = data.selected || [];
-  const stateCounts = coverage.stateCounts || {};
-  // Absent on a stale SWR payload from before this shipped — the cell below degrades to
-  // not rendering at all, same as a tenant with no 5Rs framework collected.
-  const fiveRsScope = data.fiveRsScope || null;
-
-  // Two different facts hide inside "this framework has no posture stored", and they send
-  // an operator to completely different places. A framework nobody selected is a decision
-  // not yet made — the fix is in Settings. A framework that IS selected and still has
-  // nothing stored is a sync that did not deliver — the fix is the Wiz Scans page's
-  // skipped-step report. The register's own empty state has always drawn this distinction
-  // (it says which of the two reasons it is); this band said "selected for collection but
-  // not synced yet" about every row, which was the wrong sentence for the common case and
-  // sent readers hunting a sync failure that had not happened.
-  const notDelivered = uncollected.filter((f) => selected.indexOf(f.id) >= 0);
-  const notChosen = uncollected.filter((f) => selected.indexOf(f.id) === -1);
-
-  const section = el("div", { class: "comp-ov-section" }, sectionLabel("Coverage"));
-
-  if (notDelivered.length) {
-    section.append(el("div", { class: "notice warn" },
-      `${plural(notDelivered.length, "framework")} selected for collection but carrying no ` +
-      "stored posture: " + notDelivered.map((f) => f.name).join(", ") +
-      ". Check the Wiz Scans page for a skipped step."));
-  }
-  if (notChosen.length) {
-    section.append(el("div", { class: "notice warn" },
-      `${plural(notChosen.length, "framework")} in this tenant's catalogue ` +
-      (notChosen.length === 1 ? "is" : "are") + " not collected: " +
-      notChosen.map((f) => f.name).join(", ") + ". Nothing on this page reports on " +
-      (notChosen.length === 1 ? "it" : "them") + "."));
-  }
-
-  section.append(el("div", { class: "comp-cov" },
-    el("div", { class: "comp-cov-cell" },
-      el("div", { class: "label" }, "Not collected"),
-      uncollected.length
-        ? el("ul", { class: "comp-cov-list" },
-            ...uncollected.map((f) => el("li", {},
-              el("span", { class: "comp-key-glyph", "aria-hidden": "true" }, STATES.unknown.glyph),
-              f.name)))
-        : el("p", { class: "small muted" }, "Every catalogued framework has been collected.")),
-    el("div", { class: "comp-cov-cell" },
-      el("div", { class: "label" }, "No policies"),
-      el("div", { class: "mini-value num" }, String(stateCounts.noPolicies || 0)),
-      el("p", { class: "small muted" },
-        "No check is written for these — not a pass and not a failure.")),
-    el("div", { class: "comp-cov-cell" },
-      el("div", { class: "label" }, "No resources"),
-      el("div", { class: "mini-value num" }, String(stateCounts.noResources || 0)),
-      el("p", { class: "small muted" },
-        "There is nothing in this estate for these checks to evaluate — also not a failure.")),
-    // Only when a 5Rs framework is actually collected — this is the same band saying what
-    // is not being measured, and "not measured" has no meaning to report against nothing.
-    fiveRsScope && fiveRsScope.frameworkId
-      ? el("div", { class: "comp-cov-cell" },
-          el("div", { class: "label" }, "5Rs AI scope"),
-          el("div", { class: "mini-value num" }, `${fiveRsScope.selected} of ${fiveRsScope.total}`),
-          el("p", { class: "small muted" },
-            `${plural(fiveRsScope.total - fiveRsScope.selected, "rule")} out of scope — the ` +
-            "5Rs percentage above still covers all of them."),
-          el("a", { href: "#/settings", target: "_self" }, "Open Settings →"))
-      : null,
-    el("div", { class: "comp-cov-cell" },
-      el("div", { class: "label" }, "Collection"),
-      el("p", { class: "small muted" }, "Choose which frameworks Wiz scores posture against."),
-      // index.html sets <base target="_top">, which would escape the GAS sandbox iframe;
-      // _self keeps hash routing in-frame, as every other in-app link does.
-      el("a", { href: "#/settings", target: "_self" }, "Open Settings →"))));
-
-  host.append(section);
-}

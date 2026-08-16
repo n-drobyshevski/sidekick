@@ -150,12 +150,17 @@
 }
 
 /* =============================================================== overview sub-view */
-/* The cross-framework Overview: one surface, five bands, divided by hairlines rather
+/* The cross-framework Overview: one surface, four bands, divided by hairlines rather
    than stacked as cards — the same document-not-boxes grammar as `.rule-section`
    (aars.css:42) and `.help-section` (help.css:151). Band A is the existing hero +
    `.comp-strip` + `.comp-bar` + `.comp-keys` + `.stat-list`; nothing new is defined for
    it, and a fourth stat cell needs nothing either, since `.stat-list` is already an
-   auto-fit grid. Bands B, D and E follow below, each named for the letter it fills. */
+   auto-fit grid. Bands B and D follow below, each named for the letter it fills.
+
+   There was a band E, "Coverage", and its rules are gone with it. It listed the tenant's
+   uncollected frameworks: one row against seeded data, thirty-seven against a real estate,
+   at which point it was a catalogue transcribed rather than a finding. Its one surviving
+   part, the 5Rs scope, is now a footnote under the rail. */
 .comp-ov-section { padding: 22px 0 4px; border-top: 1px solid var(--hairline); }
 .comp-ov-section:first-child { border-top: none; padding-top: 0; }
 
@@ -305,6 +310,20 @@
 .comp-rail-key { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 11px; color: var(--text-3); }
 .comp-rail-key-swatch { display: inline-block; width: 14px; height: 2px; background: var(--accent); }
 
+/* The 5Rs scope footnote. Back to block flow, because the base key is a flex row built for
+   one swatch beside one clause — and flex makes every text node its own item, so a real
+   sentence with a bold lead and a trailing link would lay out as three unwrapping columns
+   rather than as prose. The link sits here rather than inside a rail row because a row is a
+   <button>, and a link inside a button is two tab stops for one control. */
+.comp-rail-key--scope {
+  display: block;
+  margin-top: 6px;
+  max-width: var(--measure);
+  line-height: 1.5;
+}
+.comp-rail-key--scope b { color: var(--ink); font-weight: 600; }
+.comp-rail-key--scope a { color: var(--accent); }
+
 @media (max-width: 1080px) {
   .comp-rail { --rail-cols: 160px 1fr 52px; }
 }
@@ -351,32 +370,6 @@
   font-size: 10px; font-weight: 600;
   color: var(--ok); background: rgba(21, 128, 61, 0.10);
   border-radius: var(--radius-sm); padding: 1px 6px;
-}
-
-/* ------------------------------------------------------------------ band E: coverage */
-/* Equal cells divided by hairlines, exactly `.stat-list` / `.stat-row`'s recipe
-   (components.css:50-57) reused rather than re-invented, because this is the same
-   statement — a strip of facts belonging to one header — one section lower on the
-   page. The 620px collapse to a stacked, top-ruled list is the same breakpoint and the
-   same rule for the same reason: a border-left has nothing to sit against once the
-   cells stop being side by side. */
-.comp-cov {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-}
-.comp-cov-cell { padding: 0 18px; border-left: 1px solid var(--hairline); }
-.comp-cov-cell:first-child { border-left: none; }
-.comp-cov-list {
-  list-style: none; margin: 8px 0 0; padding: 0;
-  display: flex; flex-direction: column; gap: 5px;
-  font-size: 12.5px; color: var(--text-2);
-}
-.comp-cov-list li { display: flex; align-items: center; gap: 7px; }
-
-@media (max-width: 620px) {
-  .comp-cov-cell {
-    padding: 10px 0; border-left: none; border-top: 1px solid var(--hairline);
-  }
-  .comp-cov-cell:first-child { border-top: none; padding-top: 0; }
 }
 
 /* =================================================================== the .scope- family */
