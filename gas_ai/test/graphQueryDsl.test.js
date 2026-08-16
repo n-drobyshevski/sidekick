@@ -23,7 +23,9 @@ import {
   setHidden,
   setKind,
   isGroup,
-  wrapInGroup,
+  pathAfterRegroup,
+  replaceStep,
+  setConjunction,
 } from "../src/client/js/pages/graphQuery.js";
 
 const AGENT_RUNS_AS_SA = {
@@ -296,20 +298,60 @@ describe("groups in the DSL", () => {
 describe("group rows and edits", () => {
   const OR_Q = parseQuery("AI_AGENT(OR(RUNS_AS.SERVICE_ACCOUNT'USES_MODEL.AI_MODEL))");
 
-  it("gives the group its own row, taking no slot, with its branches beneath it", () => {
+  it("writes a run down the rows instead of giving it a header and indenting under it", () => {
+    // The group keeps its place in the TREE — it is what the server evaluates and what `find=`
+    // carries — but it gets no row, and its branches rise to the level it occupied so they line
+    // up with the ordinary conditions around them.
     const rows = queryRows(OR_Q);
-    expect(rows.map((r) => [r.keyword, r.level, r.index])).toEqual([
-      ["FIND", 0, 0],
-      ["OR", 1, null],
-      ["THAT", 2, 1],
-      ["THAT", 2, 2],
+    expect(rows.map((r) => [r.keyword, r.conj, r.level, r.index])).toEqual([
+      ["FIND", null, 0, 0],
+      ["THAT", null, 1, 1],
+      ["THAT", "or", 1, 2],
     ]);
-    expect(rows[1].group).toBe(true);
-    expect(rows[1].branches).toBe(2);
+    expect(rows.some((r) => r.group)).toBe(false);
+    // Both branches name the run they belong to, so the bar can bracket them together.
+    expect(rows.slice(1).map((r) => r.runOf)).toEqual(["0", "0"]);
+    // The first branch joins nothing above it; the second joins the first.
+    expect(rows.map((r) => r.canJoin)).toEqual([false, false, true]);
+  });
+
+  it("reads a conjunction off each row, and lets the runs be read straight down", () => {
+    const conj = (text) => queryRows(parseQuery(text)).map((r) => r.conj);
+    // Plain siblings are ANDed — the domain says so and the evaluator agrees.
+    expect(conj("AI_AGENT(RUNS_AS.SERVICE_ACCOUNT'USES_MODEL.AI_MODEL)"))
+      .toEqual([null, null, "and"]);
+    // `(A OR B) AND C` reads exactly as written, top to bottom, with no precedence to know.
+    expect(conj("AI_AGENT(OR(RUNS_AS.SERVICE_ACCOUNT'USES_MODEL.AI_MODEL)'HAS_ISSUE.ISSUE)"))
+      .toEqual([null, null, "or", "and"]);
+    // A run's FIRST branch stands where the run stands, so it inherits the run's own join.
+    expect(conj("AI_AGENT(HAS_ISSUE.ISSUE'OR(RUNS_AS.SERVICE_ACCOUNT'USES_MODEL.AI_MODEL))"))
+      .toEqual([null, null, "and", "or"]);
+    // A nested hop starts a new level: its first step is the first thing said about that
+    // entity, and joins nothing above it.
+    expect(conj("AI_AGENT(RUNS_AS.SERVICE_ACCOUNT(ALLOWS_ACCESS_TO.BUCKET'HAS_ISSUE.ISSUE))"))
+      .toEqual([null, null, null, "and"]);
+  });
+
+  it("keeps drawing a block for the two shapes a run cannot say", () => {
+    // `optional` is about the SET — "match one of these, or keep the row anyway" — and a run has
+    // no line of its own to carry it.
+    const opt = queryRows(parseQuery("AI_AGENT(*OR(RUNS_AS.SERVICE_ACCOUNT'USES_MODEL.AI_MODEL))"));
+    expect(opt.map((r) => [r.keyword, r.level])).toEqual([
+      ["FIND", 0], ["OR", 1], ["THAT", 2], ["THAT", 2],
+    ]);
+    expect(opt[1]).toMatchObject({ group: true, branches: 2, optional: true });
+    // Nesting is the one thing a flat column of AND/OR prefixes genuinely cannot say without
+    // precedence rules, so it stays indented, where the nesting is visible.
+    const nested = queryRows(parseQuery(
+      "AI_AGENT(OR(AND(RUNS_AS.SERVICE_ACCOUNT'USES_MODEL.AI_MODEL)'HAS_ISSUE.ISSUE))"));
+    expect(nested.map((r) => [r.keyword, r.level])).toEqual([
+      ["FIND", 0], ["OR", 1], ["AND", 2], ["THAT", 3], ["THAT", 3], ["THAT", 2],
+    ]);
+    expect(nested.every((r) => r.runOf === null)).toBe(true);
   });
 
   it("marks OR branches as alternatives and leaves AND children alone", () => {
-    expect(queryRows(OR_Q).slice(2).map((r) => r.alt.index)).toEqual([0, 1]);
+    expect(queryRows(OR_Q).slice(1).map((r) => r.alt.index)).toEqual([0, 1]);
     const andRows = queryRows(parseQuery("AI_AGENT(AND(RUNS_AS.SERVICE_ACCOUNT'USES_MODEL.AI_MODEL))"));
     expect(andRows.every((r) => !r.alt)).toBe(true);
   });
@@ -327,28 +369,148 @@ describe("group rows and edits", () => {
       .toBe("AI_AGENT(OR(RUNS_AS.SERVICE_ACCOUNT'USES_MODEL.AI_MODEL'HOSTED_ON.SERVERLESS))");
   });
 
-  it("prunes a group left with no branches instead of leaving empty punctuation", () => {
+  it("unwraps a group down to one branch, and prunes one down to none", () => {
+    // `OR(a)` matches exactly what `a` matches, and costs a level of the depth budget to say so.
+    // It used to be left standing because a block was built empty and filled afterwards; nothing
+    // builds one that way now, so a leftover would put a run on screen that reads as a single
+    // plain condition.
     let q = removeStep(OR_Q, [0, 1]);
-    expect(serializeQuery(q)).toBe("AI_AGENT(OR(RUNS_AS.SERVICE_ACCOUNT))");
-    q = removeStep(q, [0, 0]);
+    expect(serializeQuery(q)).toBe("AI_AGENT(RUNS_AS.SERVICE_ACCOUNT)");
+    q = removeStep(q, [0]);
     expect(serializeQuery(q)).toBe("AI_AGENT");
-  });
-
-  it("wraps an existing step so a second branch can join it", () => {
-    const plain = parseQuery("AI_AGENT(RUNS_AS.SERVICE_ACCOUNT)");
-    const wrapped = wrapInGroup(plain, [0], "or");
-    expect(serializeQuery(wrapped)).toBe("AI_AGENT(OR(RUNS_AS.SERVICE_ACCOUNT))");
-    expect(serializeQuery(addStep(wrapped, [0], { edge: "USES_MODEL", node: { kind: "AI_MODEL" } })))
-      .toBe("AI_AGENT(OR(RUNS_AS.SERVICE_ACCOUNT'USES_MODEL.AI_MODEL))");
+    // An optional block is the exception: the flag is the reason it exists, and unwrapping it
+    // would throw the flag away.
+    expect(serializeQuery(removeStep(
+      parseQuery("AI_AGENT(*OR(RUNS_AS.SERVICE_ACCOUNT'USES_MODEL.AI_MODEL))"), [0, 1])))
+      .toBe("AI_AGENT(*OR(RUNS_AS.SERVICE_ACCOUNT))");
   });
 
   it("never mutates the tree it was given", () => {
     const before = JSON.stringify(OR_Q);
     addStep(OR_Q, [0], { edge: "HOSTED_ON", node: { kind: "SERVERLESS" } });
     removeStep(OR_Q, [0, 0]);
-    wrapInGroup(OR_Q, [0], "and");
+    setConjunction(OR_Q, [0, 1], "and");
     setKind(OR_Q, [0, 0], "ACCESS_KEY");
+    replaceStep(OR_Q, [0, 0], { edge: "USES", node: { kind: "AI_TOOL" } });
     expect(JSON.stringify(OR_Q)).toBe(before);
+  });
+
+  // The term pill's edit. It stands in for the two dropdowns the builder used to carry, and
+  // the thing those got wrong is exactly what these pin: a relationship and its target are one
+  // choice, so changing them is one edit with one rule about what survives it.
+  describe("replaceStep", () => {
+    const NESTED = "AI_AGENT(RUNS_AS.SERVICE_ACCOUNT(ALLOWS_ACCESS_TO.BUCKET))";
+
+    it("keeps the steps below when the target kind is unchanged", () => {
+      const next = replaceStep(parseQuery(NESTED), [0],
+        { edge: "USES", node: { kind: "SERVICE_ACCOUNT" } });
+      expect(serializeQuery(next))
+        .toBe("AI_AGENT(USES.SERVICE_ACCOUNT(ALLOWS_ACCESS_TO.BUCKET))");
+    });
+
+    it("drops them when it changes, for the reason setKind drops them", () => {
+      // They were chosen against a vocabulary that no longer applies; keeping them would build
+      // a query that cannot match and give no hint why.
+      const next = replaceStep(parseQuery(NESTED), [0],
+        { edge: "USES_TOOL", node: { kind: "AI_TOOL" } });
+      expect(serializeQuery(next)).toBe("AI_AGENT(USES_TOOL.AI_TOOL)");
+    });
+
+    it("carries the row's own modifiers across, rather than silently undoing them", () => {
+      const q = parseQuery("AI_AGENT(*!RUNS_AS.SERVICE_ACCOUNT)");
+      const next = replaceStep(q, [0], { edge: "USES", node: { kind: "SERVICE_ACCOUNT" } });
+      // NOT and optional were the reader's assertions about this row, not part of which
+      // relationship it names — changing the relationship must not also un-negate it.
+      expect(serializeQuery(next)).toBe("AI_AGENT(!*USES.SERVICE_ACCOUNT)");
+      // The eye's state belongs to the node and survives the same way.
+      const hidden = replaceStep(parseQuery("AI_AGENT(RUNS_AS.!SERVICE_ACCOUNT)"), [0],
+        { edge: "USES", node: { kind: "SERVICE_ACCOUNT" } });
+      expect(serializeQuery(hidden)).toBe("AI_AGENT(USES.!SERVICE_ACCOUNT)");
+    });
+
+    it("leaves no key behind that the parser would not have produced", () => {
+      // `parseQuery(serializeQuery(q))` deep-equals `q` is a documented property of this tree.
+      // A merging edit would leave the old ANY step's `hops` on a named relationship; this
+      // builds the step fresh, so the round trip still holds on the in-memory tree.
+      const next = replaceStep(parseQuery("AI_AGENT(ANY3.BUCKET)"), [0],
+        { edge: "USES_MODEL", node: { kind: "AI_MODEL" } });
+      expect(next.steps[0].hops).toBeUndefined();
+      expect(parseQuery(serializeQuery(next))).toEqual(next);
+    });
+
+    it("leaves the root and a boolean block alone — neither is a relationship", () => {
+      const q = parseQuery(NESTED);
+      expect(replaceStep(q, [], { edge: "USES", node: { kind: "AI_TOOL" } })).toBe(q);
+      expect(serializeQuery(replaceStep(OR_Q, [0], { edge: "USES", node: { kind: "AI_TOOL" } })))
+        .toBe(serializeQuery(OR_Q));
+    });
+  });
+
+  // The keyword pill's edit. One level of a query is a sequence of conditions, each joined to
+  // the previous by AND or OR; consecutive ORs form a run of alternatives and runs are ANDed.
+  // These pin that reading both ways: what the rows say, and what the tree does.
+  describe("setConjunction", () => {
+    const AB = "AI_AGENT(RUNS_AS.SERVICE_ACCOUNT'USES_MODEL.AI_MODEL)";
+    const ABC = "AI_AGENT(OR(RUNS_AS.SERVICE_ACCOUNT'USES_MODEL.AI_MODEL'HAS_ISSUE.ISSUE))";
+
+    it("joins a row to the one above it, and lets go again", () => {
+      const or = setConjunction(parseQuery(AB), [1], "or");
+      expect(serializeQuery(or))
+        .toBe("AI_AGENT(OR(RUNS_AS.SERVICE_ACCOUNT'USES_MODEL.AI_MODEL))");
+      // The path moved with the wrap, so letting go again addresses the branch, not the step.
+      expect(serializeQuery(setConjunction(or, [0, 1], "and"))).toBe(AB);
+    });
+
+    it("splits a run where the AND lands, keeping what was ORed below it", () => {
+      // `c` was joined to `b` by OR and still is — so `A|B|C` with `b` set to AND is
+      // `A AND (B OR C)`, which is what the rows read top to bottom.
+      const split = setConjunction(parseQuery(ABC), [0, 1], "and");
+      expect(serializeQuery(split))
+        .toBe("AI_AGENT(RUNS_AS.SERVICE_ACCOUNT'OR(USES_MODEL.AI_MODEL'HAS_ISSUE.ISSUE))");
+      expect(queryRows(split).map((r) => r.conj)).toEqual([null, null, "and", "or"]);
+      // And back: the third row rejoins the first run.
+      expect(serializeQuery(setConjunction(split, [1, 0], "or"))).toBe(ABC);
+    });
+
+    it("extends an existing run rather than nesting a second one", () => {
+      const q = parseQuery("AI_AGENT(OR(RUNS_AS.SERVICE_ACCOUNT'USES_MODEL.AI_MODEL)'HAS_ISSUE.ISSUE)");
+      expect(serializeQuery(setConjunction(q, [1], "or"))).toBe(ABC);
+    });
+
+    it("leaves alone a row that joins nothing", () => {
+      const q = parseQuery(AB);
+      // The first condition at its level has nothing above it to be an alternative to.
+      expect(setConjunction(q, [0], "or")).toBe(q);
+      expect(setConjunction(q, [], "or")).toBe(q);
+    });
+
+    it("round-trips through the DSL, leaving no key the parser would not produce", () => {
+      for (const text of [AB, ABC]) {
+        for (const path of [[1], [0, 1], [0, 2]]) {
+          for (const conj of ["and", "or"]) {
+            const next = setConjunction(parseQuery(text), path, conj);
+            expect(parseQuery(serializeQuery(next)), text + " " + path + " " + conj).toEqual(next);
+          }
+        }
+      }
+    });
+  });
+
+  describe("pathAfterRegroup", () => {
+    it("carries a filter across a wrap and a dissolve, rather than dropping it", () => {
+      // Wrapping moves no SLOT — a group binds nothing — but it does move PATHS, and `where` is
+      // remapped by path. Without this the filter would silently vanish on the way through.
+      const q = parseQuery("AI_AGENT(RUNS_AS.SERVICE_ACCOUNT'USES_MODEL.AI_MODEL)");
+      const where = parseWhere("2.name.gpt");
+      const or = setConjunction(q, [1], "or");
+      expect(serializeWhere(remapWhere(q, or, where, pathAfterRegroup(q, or))))
+        .toBe("2.name.gpt");
+      const back = setConjunction(or, [0, 1], "and");
+      expect(serializeWhere(remapWhere(or, back, where, pathAfterRegroup(or, back))))
+        .toBe("2.name.gpt");
+      // The proof that the guard is load-bearing: without it the path lookup misses.
+      expect(serializeWhere(remapWhere(q, or, where))).toBe("");
+    });
   });
 
   it("folds where onto branch nodes by their slot, skipping the group", () => {

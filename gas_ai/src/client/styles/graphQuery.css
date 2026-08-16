@@ -16,9 +16,13 @@
 }
 .gq-rows { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .gq-row {
+  position: relative;
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
   border-radius: var(--radius-md);
   padding: 2px 4px 2px 0;
+  /* Set per row by the bar. The indent is a variable rather than a flat padding so the run
+     bracket below can be drawn AT the row's own indent instead of at the container's edge. */
+  padding-inline-start: var(--gq-indent, 0);
 }
 /* One tab stop for the tree; arrows move within it. The ring is the base recipe's, never
    overridden — a roving-tabindex widget is exactly where a missing focus ring strands
@@ -39,28 +43,95 @@
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
-/* Negation is a word, not a colour: "NOT" spelled out beside the relationship it inverts. */
+/* The keyword, where it is a CONTROL: the row's join and its assertion, cycled in place.
+   A modifier, never a change to `.gq-kw` itself — graph.js reuses that class for the static
+   "View" label on the bar below, which is a label and must stay one. Resets off the 36px
+   bordered global button recipe the way .gq-iconbtn and .gq-term do. */
+.gq-kw--btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  min-height: 22px; border: 1px solid transparent; box-shadow: none;
+  /* "AND THAT NOT" is the widest state; sizing to it stops the row reflowing mid-cycle. */
+  min-width: 92px;
+  cursor: pointer;
+}
+.gq-kw--btn:hover { background: var(--wash-hover); border-color: var(--hairline); color: var(--ink); }
+/* Never overridden. With no caret, this is the only thing that says the pill can be reached. */
+.gq-kw--btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Negation is a word, not a colour: "NOT" spelled out, inside the control that sets it. */
 .gq-not {
   font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
   color: var(--sev-high-text);
 }
 
-/* The chip IS the combobox's own trigger, restyled — see chipPicker() for why. Everything
-   below therefore has to win against the .combobox-trigger recipe rather than replace it. */
-.gq-chip-wrap { display: inline-flex; }
-.gq-chip-wrap .combobox-trigger-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gq-chip-wrap .combobox-caret { color: var(--text-3); font-size: 10px; margin-left: 2px; }
+/* A RUN — conditions that are alternatives to one another — bracketed down its leading edge.
+   Without it `THAT a / OR THAT b / AND THAT c` could be read as `a OR (b AND c)` instead of the
+   `(a OR b) AND c` it is. The rule is drawn on the rows themselves rather than round a wrapper
+   because the row index and `list.children` index have to stay 1:1 for the arrow keys. */
+.gq-row.is-run::before {
+  content: ""; position: absolute;
+  left: calc(var(--gq-indent, 0px) - 7px);
+  top: 0; bottom: 0; width: 2px;
+  /* A neutral, deliberately. Every other colour in this bar means something — the five category
+     tints, the severity ink on NOT — and a run is not one of those things. The bracket carries
+     its meaning by being a shape next to rows that already say OR in words. */
+  background: color-mix(in srgb, var(--text-3) 45%, transparent);
+}
+.gq-row.is-run-start::before { top: 3px; border-start-start-radius: 2px; border-start-end-radius: 2px; }
+.gq-row.is-run-end::before { bottom: 3px; border-end-start-radius: 2px; border-end-end-radius: 2px; }
+
+/* THE TERM: the row's one editable thing, and the only control that opens the palette to change
+   it. On FIND that is an entity; on THAT it is a relationship AND its entity, in one pill,
+   because that is one choice — see the graphQueryBar.js header for the two dropdowns this
+   replaced and why neither was pulling its weight.
+
+   No caret, matching the reference. The affordance is hover and focus, which means both have to
+   be unmistakable: this is the one place in this file where the CSS is load-bearing rather than
+   cosmetic. It resets off the 36px bordered global button recipe the way .gq-iconbtn does. */
+.gq-term {
+  display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  min-height: 30px; min-width: 0; padding: 1px 4px 1px 10px;
+  border: 1px solid var(--hairline); background: var(--page); box-shadow: none;
+  border-radius: var(--radius-pill);
+  font: inherit; text-align: left;
+  max-width: 100%;
+}
+.gq-term:hover { background: var(--wash-hover); }
+/* Never overridden. A control with no caret leans on this ring to be findable at all. */
+.gq-term:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* A FIND row's term is the entity alone, and a capsule drawn around a single token would be a
+   second border saying nothing. So the button keeps the hit target and the focus ring and draws
+   nothing itself — which is also how the reference renders that row. */
+.gq-term--solo { border-color: transparent; background: none; padding: 1px; }
+.gq-term--solo:hover { background: none; }
+/* Five of the six chips are tinted, and repainting the ground on hover would take the category
+   cue off the very control being pointed at. An inset ring in the chip's own ink adds the
+   affordance without touching the fill. */
+.gq-term--solo:hover > .gq-chip { box-shadow: inset 0 0 0 1px currentColor; }
+/* A relationship is a verb, not an entity: neutral ground, lighter weight, so the two ENTITIES
+   are what the eye picks out of the line. */
+.gq-term-edge {
+  flex: 0 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13px; font-weight: 500;
+  color: var(--text-2);
+}
+.gq-term:hover .gq-term-edge { color: var(--ink); }
+
+/* The entity chip. A <button> cannot nest a <button>, so this is a <span> inside the term and
+   carries no interactive state of its own — only the category tint and the kind glyph. */
 .gq-chip {
   display: inline-flex; align-items: center; gap: 6px;
-  min-height: 28px; padding: 2px 8px 2px 7px;
+  min-height: 26px; padding: 2px 8px 2px 7px;
   border-radius: var(--radius-pill);
   border: 1px solid var(--hairline);
   background: var(--page);
   box-shadow: none;
   font-size: 13px; font-weight: 600;
   color: var(--ink);
-  max-width: 320px;
+  max-width: 260px;
 }
+.gq-chip-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gq-chip-icon { flex: 0 0 auto; }
 /* THE TINT HAS TO REACH THE INNER <g>. `kindIconSvg` returns an <svg> wrapping a `.gnode-icon`
    group, and graph.css paints that group a fixed grey — a colour set on the <svg> is inherited
@@ -72,15 +143,6 @@
 .gq-cell-icon .gnode-icon,
 .gq-cols-icon .gnode-icon,
 .gq-pal-glyph .gnode-icon { stroke: currentColor; color: inherit; }
-/* A relationship is a verb: neutral ground and lighter weight, so the two ENTITIES are what
-   the eye picks out of the line. */
-.gq-chip--edge {
-  background: var(--surface);
-  font-weight: 500;
-  color: var(--text-2);
-}
-.gq-chip--edge:hover { color: var(--ink); }
-
 /* Category tinting, matching the canvas medallions exactly: pale ground, saturated ink on the
    icon (a graphical mark, >=3:1), the darkened text token on the label (>=4.5:1 on that
    ground). The two-token rule, applied to a chip. */
@@ -188,7 +250,10 @@
 @media (max-width: 800px) {
   .gq { gap: 6px 10px; }
   .gq-count { margin-left: 0; padding-top: 0; }
-  .gq-chip { max-width: 190px; }
+  /* The term is what has to fit; the chip inside it shrinks with it. Both are capped, so a
+     long relationship gloss cannot push the row's buttons off the edge. */
+  .gq-term { max-width: 100%; }
+  .gq-chip { max-width: 150px; }
 }
 
 /* A boolean block's row: the keyword pill IS the control, so the row carries only the branch
@@ -217,27 +282,50 @@
 .gq-pal-field {
   display: flex; align-items: center; gap: 7px;
   padding: 4px 9px;
+  border: 1px solid var(--hairline);
   border-radius: var(--radius-md);
   background: var(--track-bg);
 }
-/* The app's one focus recipe (base.css: 2px accent outline, 2px offset), moved onto the
-   wrapper — the input inside has `outline: none` so exactly one ring is drawn, and it is the
-   same ring every other focused control on the page draws. */
-.gq-pal-field:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* THE FOCUSED STATE IS THE RESTING STATE HERE. The palette autofocuses this field on open and
+   focus only ever leaves it for a rail button, so whatever marks it is lit essentially all the
+   time — which is why the app's standard detached crimson outline was the wrong instrument. A
+   2px alert-coloured rectangle that is always on stops reading as "focus" and starts reading as
+   "something is wrong", and it was drawing TWICE (see the specificity note below).
+
+   So the field is marked the way a focused field is marked: it lifts to the page ground, its
+   own border takes the accent, and a soft accent glow sits outside it. Still unmistakable, and
+   still telling this apart from a focused rail tab — which is the only distinction the
+   indicator has to carry — without shouting. */
+.gq-pal-field:focus-within {
+  background: var(--page);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+/* A glow is a shadow, and forced-colors mode throws shadows away — so the one environment that
+   needs the indicator most would be left with a 1px border change. The real outline comes back
+   there, offset and all. */
+@media (forced-colors: active) {
+  .gq-pal-field:focus-within { outline: 2px solid Highlight; outline-offset: 1px; }
+}
 .gq-pal-search-icon { display: inline-flex; color: var(--text-3); flex: 0 0 auto; }
 .gq-pal-search {
   flex: 1 1 auto; min-width: 0;
-  border: none; background: none; box-shadow: none; outline: none;
+  border: none; background: none; box-shadow: none;
   min-height: 24px; padding: 0;
   font-size: 14px; color: var(--ink);
 }
+/* MUST carry the pseudo-class to win. A plain `.gq-pal-search { outline: none }` scores 0,1,0
+   and loses to base.css's `input:focus-visible` at 0,1,1 — so the input drew the global ring
+   INSIDE the wrapper's, and the field wore two concentric red rectangles. The rule above has
+   said "exactly one ring is drawn" since it was written; this is what makes that true. */
+.gq-pal-search:focus-visible { outline: none; }
 .gq-pal-search::placeholder { color: var(--text-3); }
 
 .gq-pal-panes { display: flex; min-height: 0; align-items: stretch; }
 
 /* -- rail */
 .gq-pal-rail {
-  flex: 0 0 168px; width: 168px;
+  flex: 0 0 180px; width: 180px;
   padding: 8px 6px; overflow-y: auto; overscroll-behavior: contain;
   border-right: 1px solid var(--hairline);
   background: var(--surface);
@@ -276,14 +364,37 @@
 }
 .gq-pal-option {
   display: flex; align-items: center; gap: 9px;
-  padding: 6px 8px; border-radius: var(--radius-md);
+  padding: 6px 8px 6px 11px; border-radius: var(--radius-md);
   cursor: pointer;
 }
-/* The active row is what Enter will insert, so it is marked by a ring as well as a wash —
-   a wash alone is a colour-only cue, and this row is the one the keyboard is standing on. */
+/* The row the keyboard is standing on — what Enter will act on.
+   A BAR DOWN THE LEADING EDGE, not a ring around the whole row. The full crimson rectangle this
+   replaces was the same instrument, at the same alert weight, as the one the search field used
+   to wear; with both lit at once the palette read as though it were reporting errors rather
+   than offering choices. The bar is the cue the rail two inches to the left already uses for
+   exactly this idea, so the component now marks "you are here" one way instead of two.
+   It stays a SHAPE rather than becoming a wash alone, because the wash is 4.5% black — colour
+   doing the work by itself, and invisible to anyone it fails. */
 .gq-pal-option.is-active {
+  position: relative;
   background: var(--wash-hover);
-  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.gq-pal-option.is-active::before {
+  content: ""; position: absolute; left: 3px; top: 5px; bottom: 5px; width: 3px;
+  border-radius: var(--radius-pill); background: var(--accent);
+}
+/* Shadows are dropped in forced-colors mode and so are backgrounds — the bar survives as a
+   real border there, so the cursor never becomes invisible in the mode that needs it most. */
+@media (forced-colors: active) {
+  .gq-pal-option.is-active::before { background: Highlight; forced-color-adjust: none; }
+}
+/* What the row ALREADY says, in a palette opened to change it. The tick is the cue and the
+   faint ground is only its echo — the tinted row alone would be a colour-only signal, and this
+   one sits beside four others in the same category tint. */
+.gq-pal-option.is-current .gq-pal-option-label { font-weight: 600; }
+.gq-pal-option-current {
+  flex: 0 0 auto; display: inline-flex; align-items: center;
+  color: var(--accent);
 }
 .gq-pal-glyph-wrap {
   flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
@@ -313,8 +424,12 @@
 .gq-pal-empty { padding: 14px 10px; font-size: 13px; color: var(--text-3); }
 
 /* -- detail */
+/* The two side panes take fixed shares and the LIST gets the rest, so every pixel the popover
+   gains lands on the pane being read. The rail widened just enough to stop clipping its longest
+   tab ("AI assets & compute"); the detail just enough to stop its prose setting at six words a
+   line. */
 .gq-pal-detail {
-  flex: 0 0 232px; width: 232px;
+  flex: 0 0 252px; width: 252px;
   padding: 12px 14px; overflow-y: auto; overscroll-behavior: contain;
   border-left: 1px solid var(--hairline);
   background: var(--surface);

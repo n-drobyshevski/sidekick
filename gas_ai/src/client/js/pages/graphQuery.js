@@ -40,6 +40,37 @@ export function defaultQuery() {
   return { kind: "AI_AGENT" };
 }
 
+/** How deep a group may sit before the server refuses it — `MAX_QUERY_DEPTH` in the domain. */
+export const MAX_DEPTH = 6;
+
+/**
+ * Can this row legally be negated?
+ *
+ * The domain rejects two combinations outright — a negated step carrying further steps ("there
+ * is nothing to walk from") and a step both negated and optional. Both are reachable today: the
+ * palette offers NOT on any relationship, so negating a row that has a hop under it builds a
+ * query the server throws on, and the page shows a load failure for something the builder
+ * offered. Asked here so the two controls that can set it agree on one answer.
+ */
+export function canNegate(row) {
+  if (!row || row.group || !row.path || !row.path.length) return false;
+  return !row.optional && !row.hasSteps;
+}
+
+/**
+ * How deep the tree goes, counted the way the domain's `validateQuery` counts it: the root is 1,
+ * each hop adds one, and A GROUP ADDS ONE TOO. That last part is why this exists — joining two
+ * rows with OR wraps them, and a wrap inside a long enough chain turns a legal query into one the
+ * server refuses. Cheaper to not offer the join than to explain the rejection afterwards.
+ */
+export function depthOf(query) {
+  const atNode = (node, d) => Math.max(d, ...(node.steps || []).map((s) => atStep(s, d + 1)));
+  const atStep = (step, d) => (isGroup(step)
+    ? Math.max(d, ...step.steps.map((c) => atStep(c, d + 1)))
+    : atNode(step.node, d));
+  return atNode(query, 1);
+}
+
 const SEP_SIBLING = "'";
 const SEP_EDGE = ".";
 const TOKEN = /^[A-Z0-9_]+$/;
@@ -375,21 +406,100 @@ export function pathAfterRemoval(removed) {
 // ------------------------------------------------------------------------- builder rows
 
 /**
+ * Can this group be read as a RUN — a set of alternatives written down the rows themselves,
+ * rather than as a block with a header row and indented children?
+ *
+ * A run is `THAT a / OR THAT b`: the conjunction rides on each row, which is how the reference
+ * writes it and how our own results TABLE has always written it (`queryTable` puts an "or"
+ * before an alternative column group). Two shapes cannot be written that way and keep their
+ * meaning, so they keep the block rendering:
+ *
+ *   - a group carrying `optional`. That flag is about the SET — "match one of these or keep the
+ *     row anyway" — and a run has no line of its own to hang it on. Only a hand-edited link or
+ *     an old shared one produces these now, and they must still round-trip.
+ *   - a group holding another group. Nesting is the one thing a flat list of AND/OR prefixes
+ *     genuinely cannot say without precedence rules, so it stays indented, where the nesting is
+ *     visible.
+ */
+function isRun(step) {
+  return isGroup(step) && !step.optional && step.steps.every((s) => !isGroup(s));
+}
+
+/**
+ * Does the group at `path` get written as a run, rather than drawn as a block?
+ *
+ * `isRun` asks whether the group's own shape can be written down a column of rows. This adds the
+ * other half: it must also sit directly under a NODE. A group nested inside a block belongs to
+ * that block's branch structure, and opening it up there would put both notations on screen at
+ * once — a header row saying OR above rows saying AND, each describing a different join.
+ */
+function foldsAt(query, path) {
+  if (!isRun(stepAt(query, path))) return false;
+  const parent = containerAt(query, path.slice(0, -1));
+  return !!parent && parent.kind !== undefined;
+}
+
+/**
+ * How the step at `path` joins the one before it AT ITS OWN LEVEL: null, "and" or "or".
+ *
+ * Sibling steps under a node are ANDed — the domain says so, and `solveGroup`'s `and` branch
+ * cross-products exactly the way the node's own sibling loop does. Branches of a run are joined
+ * by the run's operator. And the FIRST branch of a run has no join of its own, so it inherits
+ * the run's: `[OR(a'b), c]` reads `THAT a / OR THAT b / AND THAT c`, where `a`'s blank and `c`'s
+ * "and" both come from the position their container holds among ITS siblings.
+ */
+function conjunctionAt(query, path) {
+  if (!path.length) return null;
+  const up = path.slice(0, -1);
+  const parent = containerAt(query, up);
+  const inRun = !!parent && parent.kind === undefined && foldsAt(query, up);
+  if (path[path.length - 1] > 0) {
+    // A branch of a BLOCK — one the bar still draws with a header row — is already announced by
+    // that header. Saying it twice would be the row and the block disagreeing about who owns it.
+    if (parent && parent.kind === undefined) return inRun ? parent.op : null;
+    return "and";
+  }
+  // First in its container. Only a RUN hands its own join down, because its first branch stands
+  // exactly where the run stands. A NODE does not: the first step on an entity is the first
+  // thing said about that entity, and joins nothing above it.
+  return inRun ? conjunctionAt(query, up) : null;
+}
+
+/**
  * The query as a flat list of builder rows — one per line in the bar.
  *
  * Each row carries its keyword (FIND for the root, THAT for a relationship, OR / AND for a
- * boolean block), its nesting level, the node's pre-order index (so a filter chip knows which
- * node it belongs to), and a `path` the page uses to address the row when patching.
+ * boolean block that is still drawn as one), its nesting level, the node's pre-order index (so a
+ * filter chip knows which node it belongs to), and a `path` the page uses to address the row.
+ *
+ * A RUN IS FOLDED AWAY HERE, and only here. The group keeps its place in the tree — it is what
+ * the server evaluates and what `find=` carries — but it gets no row of its own, and its branches
+ * rise to the level it occupied so they line up with the ordinary steps around them. That fold
+ * is why this is a rendering change and not a model one: `walkQuery` still visits the group, still
+ * counts slots the same way, and every consumer of `where=` slot numbers is untouched.
  */
 export function queryRows(query) {
   const rows = [];
+  /** Path strings of the runs folded so far — each one costs its descendants a level. */
+  const folded = new Set();
+  const foldedAbove = (path) => {
+    let n = 0;
+    for (let i = 0; i < path.length; i++) {
+      if (folded.has(path.slice(0, i).join("."))) n++;
+    }
+    return n;
+  };
   walkQuery(query, ({ node, step, path, level, index, group, alt }) => {
     if (group) {
+      if (foldsAt(query, path)) {
+        folded.add(path.join("."));
+        return;
+      }
       rows.push({
         keyword: step.op.toUpperCase(),
         group: true,
         op: step.op,
-        level,
+        level: level - foldedAbove(path),
         path,
         index: null,
         optional: !!step.optional,
@@ -397,14 +507,20 @@ export function queryRows(query) {
         branches: step.steps.length,
         canHide: false,
         canRemove: true,
+        conj: null,
+        runOf: null,
+        canJoin: false,
         alt,
       });
       return;
     }
+    const parentPath = path.slice(0, -1);
+    const inRun = path.length && folded.has(parentPath.join("."));
+    const conj = conjunctionAt(query, path);
     rows.push({
       keyword: path.length ? "THAT" : "FIND",
       group: false,
-      level,
+      level: level - foldedAbove(path),
       path,
       index,
       kind: node.kind,
@@ -414,9 +530,16 @@ export function queryRows(query) {
       reverse: !!(step && step.reverse),
       negate: !!(step && step.negate),
       optional: !!(step && step.optional),
+      /** How this row joins the one above it, and the run it belongs to if it is in one. */
+      conj,
+      runOf: inRun ? parentPath.join(".") : null,
+      /** There is a row above at this level to be joined to — so AND / OR mean something here. */
+      canJoin: conj !== null,
       /** A negated step binds nothing, so there is nothing to show or hide. */
       canHide: !(step && step.negate) && !!path.length,
       canRemove: !!path.length,
+      /** Whether anything hangs off this row's entity — `canNegate` turns on it. */
+      hasSteps: !!(node.steps && node.steps.length),
       alt,
     });
   });
@@ -504,14 +627,24 @@ export function removeStep(query, path) {
 function pruneEmptyGroups(query) {
   const prune = (container) => {
     if (!container.steps) return;
-    container.steps = container.steps.filter((step) => {
+    const kept = [];
+    for (const step of container.steps) {
       if (!isGroup(step)) {
         prune(step.node);
-        return true;
+        kept.push(step);
+        continue;
       }
       prune(step);
-      return step.steps.length > 0;
-    });
+      if (!step.steps.length) continue;
+      // A group down to ONE branch is punctuation around nothing: `OR(a)` matches exactly what
+      // `a` matches, and it costs a level of the depth budget to say so. It used to be left
+      // standing because a block was built empty and filled afterwards, so the one-branch state
+      // was a step on the way somewhere — nothing builds a block that way now, and leaving it
+      // would put a run on screen that reads as a single plain condition.
+      if (step.steps.length === 1 && !step.optional) kept.push(step.steps[0]);
+      else kept.push(step);
+    }
+    container.steps = kept;
     if (!container.steps.length && container.kind !== undefined) delete container.steps;
   };
   const copy = copyNode(query);
@@ -545,24 +678,178 @@ export function setHidden(query, path, hidden) {
   });
 }
 
-/** Merge a patch into the step at `path` — its relationship, or a group's `optional`. */
+/**
+ * Merge a patch into the step at `path` — its relationship, or a group's `optional`.
+ *
+ * A patched key that lands FALSE or undefined is deleted rather than written. Every flag here is
+ * an absence when it is off, and the parser never produces `negate: false` — writing one would
+ * break `parseQuery(serializeQuery(q))` deep-equals `q`, which this module documents as a
+ * property and the palette's own tests lean on. Turning a flag off has to leave the tree looking
+ * like one that never had it.
+ */
 export function setEdge(query, path, patch) {
   if (!path.length) return query;
   const parentPath = path.slice(0, -1);
   const at = path[path.length - 1];
   return editQuery(query, parentPath, (parent) => {
-    parent.steps = (parent.steps || []).map((s, i) => (i === at ? { ...s, ...patch } : s));
+    parent.steps = (parent.steps || []).map((s, i) => {
+      if (i !== at) return s;
+      const next = { ...s, ...patch };
+      for (const key of Object.keys(patch)) {
+        if (next[key] === false || next[key] === undefined) delete next[key];
+      }
+      return next;
+    });
   });
 }
 
-/** Wrap the step at `path` in a new boolean group, so a second branch can join it. */
-export function wrapInGroup(query, path, op) {
-  if (!path.length) return query;
+/**
+ * Swap the relationship at `path` for another one, keeping what still applies.
+ *
+ * The builder's term pill offers a relationship and its target as ONE choice — which is what
+ * they are — so applying that choice is one edit.
+ *
+ * `setEdge` then `setKind` very nearly composes into this (`setKind` no-ops on an unchanged
+ * kind, so the steps below already survive an edge-only change). What it does not do is come
+ * out CLEAN: `setEdge` merges, so swapping ANY2 for a named edge leaves a stale `hops` behind
+ * and writes a `reverse: false` the parser never produces — and `parseQuery(serializeQuery(q))`
+ * deep-equals `q` is a documented property of this tree. This builds the step from the pick and
+ * adds back only what should survive, so the property holds without anyone having to remember
+ * which keys the previous relationship left lying around.
+ *
+ * The row's MODIFIERS survive. `negate`, `optional` and the hidden flag were set by the reader
+ * on this row, not chosen as part of the relationship, and silently clearing them would make
+ * changing a relationship also un-negate it — an edit nothing on screen asked for.
+ *
+ * The steps BELOW survive only where the target kind is unchanged. A different kind and they
+ * were chosen against a vocabulary that no longer applies: exactly the rule `setKind` already
+ * carries, for exactly its reason — keeping them builds a query that cannot match and gives no
+ * hint why.
+ *
+ * A boolean block is not a relationship and has nothing to swap, so a path naming one is left
+ * alone rather than half-converted into a relation step.
+ */
+export function replaceStep(query, path, step) {
+  if (!path.length || isGroup(step)) return query;
   const parentPath = path.slice(0, -1);
   const at = path[path.length - 1];
   return editQuery(query, parentPath, (parent) => {
-    parent.steps = (parent.steps || []).map((s, i) => (i === at ? { op, steps: [s] } : s));
+    parent.steps = (parent.steps || []).map((s, i) => {
+      if (i !== at || isGroup(s)) return s;
+      // `editQuery` copied the whole tree before this ran, so anything carried over from `s` is
+      // already this tree's own and needs no second copy. `step` is the CALLER's, though, and
+      // every edit here returns a new tree without touching its inputs — so its node is copied
+      // before anything is written onto it.
+      const next = { ...step, node: { ...step.node } };
+      if (s.negate) next.negate = true;
+      if (s.optional) next.optional = true;
+      if (s.node && s.node.kind === next.node.kind) {
+        if (s.node.show === false) next.node.show = false;
+        if (s.node.steps) next.node.steps = s.node.steps;
+      }
+      return next;
+    });
   });
+}
+
+// ------------------------------------------------------------------- conjunctions
+
+/**
+ * The node whose step list the row at `path` really belongs to, and the row's ordinal in it.
+ *
+ * A run is punctuation around a stretch of one level's conditions, so "the row above me" is a
+ * question about the LEVEL, not about the tree shape. This flattens the level back out: the
+ * container is the nearest enclosing node, and the leaves are its steps with every run opened up
+ * in place.
+ */
+function levelOf(query, path) {
+  let nodePath = path.slice(0, -1);
+  while (nodePath.length && !nodeAt(query, nodePath)) nodePath = nodePath.slice(0, -1);
+  const node = nodeAt(query, nodePath);
+  if (!node) return null;
+  const leaves = [];
+  (node.steps || []).forEach((step, i) => {
+    if (foldsAt(query, nodePath.concat(i))) {
+      step.steps.forEach((branch, j) => leaves.push({ step: branch, path: nodePath.concat(i, j) }));
+    } else {
+      leaves.push({ step, path: nodePath.concat(i) });
+    }
+  });
+  const want = path.join(".");
+  const at = leaves.findIndex((l) => l.path.join(".") === want);
+  return at === -1 ? null : { nodePath, node, leaves, at };
+}
+
+/**
+ * Join the row at `path` to the one above it with `conj` — "and" or "or".
+ *
+ * THE MODEL IS RUNS. One level is a sequence of conditions, each joined to the previous by AND
+ * or OR; consecutive ORs form a run of alternatives, and runs are ANDed together. That is
+ * AND-of-ORs, the normal form, and the existing tree holds it with no nesting at all: a node's
+ * steps become a sequence of bare steps and `or` groups of bare steps.
+ *
+ * Which is why this does not edit the tree shape directly. It flattens the level to its leaves,
+ * writes the one conjunction it was asked to write, and rebuilds — so every case falls out of one
+ * rule instead of being enumerated. `OR(a'b'c)` with `b` set to AND becomes `[a, OR(b'c)]`,
+ * because `c` was joined to `b` by OR and still is. Reading the rows top to bottom gives back
+ * exactly the query, with no precedence to know: the runs are written down.
+ *
+ * A row that joins nothing — the first condition at its level — is left alone.
+ */
+export function setConjunction(query, path, conj) {
+  const level = levelOf(query, path);
+  if (!level || level.at === 0) return query;
+  const conjs = level.leaves.map((leaf, i) => (i === 0 ? null : conjunctionAt(query, leaf.path)));
+  conjs[level.at] = conj;
+  return editQuery(query, level.nodePath, (node) => {
+    const steps = [];
+    /** The run being extended, or null between runs. Tracked rather than read back off the tail:
+     *  a BLOCK sitting at this level is also a group, and appending an alternative into one would
+     *  quietly rewrite a set the reader grouped on purpose. */
+    let open = null;
+    level.leaves.forEach((leaf, i) => {
+      // Copied, never reattached: `editQuery` already cloned the tree, and handing back a live
+      // reference into the caller's would break the immutability every edit here promises.
+      const step = copyStep(leaf.step);
+      if (i > 0 && conjs[i] === "or") {
+        if (!open) {
+          open = { op: "or", steps: [steps.pop()] };
+          steps.push(open);
+        }
+        open.steps.push(step);
+        return;
+      }
+      open = null;
+      steps.push(step);
+    });
+    node.steps = steps;
+  });
+}
+
+/**
+ * The `movePath` for a regroup.
+ *
+ * Wrapping steps into a run and dissolving one back both leave the pre-order of the nodes exactly
+ * as it was — a group binds nothing, so no slot moves. PATHS move, though, and `where` is remapped
+ * by path, so without this every filter under the edited stretch would be dropped on the way
+ * through `remapWhere`.
+ *
+ * Mapped by ORDINAL over the same walk both sides use, which is the whole argument for why it is
+ * right: if the nth thing visited before is the nth thing visited after, it is the same thing.
+ * A length mismatch leaves a path unmapped and its filter is dropped — the safe direction, and
+ * the one this module takes everywhere else.
+ */
+export function pathAfterRegroup(oldQuery, newQuery) {
+  const seq = (q) => {
+    const out = [];
+    walkQuery(q, ({ path, group }) => { if (!group) out.push(path.join(".")); });
+    return out;
+  };
+  const before = seq(oldQuery);
+  const after = seq(newQuery);
+  const moved = new Map();
+  before.forEach((was, i) => { if (after[i] !== undefined) moved.set(was, after[i]); });
+  return (key) => (moved.has(key) ? moved.get(key) : null);
 }
 
 // ------------------------------------------------------------------------- legacy links

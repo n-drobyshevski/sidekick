@@ -106,8 +106,15 @@ export function queryTable(payload, opts = {}) {
     // Two groups belonging to the same OR are ALTERNATIVES: no row fills both. Saying so in
     // the header is the difference between "an agent, its identity and its model" and "an
     // agent, and either its identity or its model" — the second is what the query asked.
+    //
+    // SAME OR, DIFFERENT BRANCH. Comparing `altOf` alone was enough while a branch was always one
+    // node, but a branch whose entity carries its own hop produces two column groups inside ONE
+    // branch — same `altOf`, same `altIndex` — and the second was getting an "or" that claimed
+    // its own branch had alternated with itself. Those two are conjunctive; only a change of
+    // `altIndex` is an alternation.
     const prev = groups[gi - 1];
-    const alternative = group.altOf !== undefined && prev && prev.altOf === group.altOf;
+    const alternative = group.altOf !== undefined && prev && prev.altOf === group.altOf
+      && prev.altIndex !== group.altIndex;
     headerGroups.push({
       label: alternative
         ? el("span", {}, el("span", { class: "gq-alt-kw" }, "or"), groupLabel(group, gi, groups))
