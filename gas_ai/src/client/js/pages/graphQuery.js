@@ -555,6 +555,55 @@ export function setEdge(query, path, patch) {
   });
 }
 
+/**
+ * Swap the relationship at `path` for another one, keeping what still applies.
+ *
+ * The builder's term pill offers a relationship and its target as ONE choice — which is what
+ * they are — so applying that choice is one edit.
+ *
+ * `setEdge` then `setKind` very nearly composes into this (`setKind` no-ops on an unchanged
+ * kind, so the steps below already survive an edge-only change). What it does not do is come
+ * out CLEAN: `setEdge` merges, so swapping ANY2 for a named edge leaves a stale `hops` behind
+ * and writes a `reverse: false` the parser never produces — and `parseQuery(serializeQuery(q))`
+ * deep-equals `q` is a documented property of this tree. This builds the step from the pick and
+ * adds back only what should survive, so the property holds without anyone having to remember
+ * which keys the previous relationship left lying around.
+ *
+ * The row's MODIFIERS survive. `negate`, `optional` and the hidden flag were set by the reader
+ * on this row, not chosen as part of the relationship, and silently clearing them would make
+ * changing a relationship also un-negate it — an edit nothing on screen asked for.
+ *
+ * The steps BELOW survive only where the target kind is unchanged. A different kind and they
+ * were chosen against a vocabulary that no longer applies: exactly the rule `setKind` already
+ * carries, for exactly its reason — keeping them builds a query that cannot match and gives no
+ * hint why.
+ *
+ * A boolean block is not a relationship and has nothing to swap, so a path naming one is left
+ * alone rather than half-converted into a relation step.
+ */
+export function replaceStep(query, path, step) {
+  if (!path.length || isGroup(step)) return query;
+  const parentPath = path.slice(0, -1);
+  const at = path[path.length - 1];
+  return editQuery(query, parentPath, (parent) => {
+    parent.steps = (parent.steps || []).map((s, i) => {
+      if (i !== at || isGroup(s)) return s;
+      // `editQuery` copied the whole tree before this ran, so anything carried over from `s` is
+      // already this tree's own and needs no second copy. `step` is the CALLER's, though, and
+      // every edit here returns a new tree without touching its inputs — so its node is copied
+      // before anything is written onto it.
+      const next = { ...step, node: { ...step.node } };
+      if (s.negate) next.negate = true;
+      if (s.optional) next.optional = true;
+      if (s.node && s.node.kind === next.node.kind) {
+        if (s.node.show === false) next.node.show = false;
+        if (s.node.steps) next.node.steps = s.node.steps;
+      }
+      return next;
+    });
+  });
+}
+
 /** Wrap the step at `path` in a new boolean group, so a second branch can join it. */
 export function wrapInGroup(query, path, op) {
   if (!path.length) return query;

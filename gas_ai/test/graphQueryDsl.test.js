@@ -23,6 +23,7 @@ import {
   setHidden,
   setKind,
   isGroup,
+  replaceStep,
   wrapInGroup,
 } from "../src/client/js/pages/graphQuery.js";
 
@@ -348,7 +349,59 @@ describe("group rows and edits", () => {
     removeStep(OR_Q, [0, 0]);
     wrapInGroup(OR_Q, [0], "and");
     setKind(OR_Q, [0, 0], "ACCESS_KEY");
+    replaceStep(OR_Q, [0, 0], { edge: "USES", node: { kind: "AI_TOOL" } });
     expect(JSON.stringify(OR_Q)).toBe(before);
+  });
+
+  // The term pill's edit. It stands in for the two dropdowns the builder used to carry, and
+  // the thing those got wrong is exactly what these pin: a relationship and its target are one
+  // choice, so changing them is one edit with one rule about what survives it.
+  describe("replaceStep", () => {
+    const NESTED = "AI_AGENT(RUNS_AS.SERVICE_ACCOUNT(ALLOWS_ACCESS_TO.BUCKET))";
+
+    it("keeps the steps below when the target kind is unchanged", () => {
+      const next = replaceStep(parseQuery(NESTED), [0],
+        { edge: "USES", node: { kind: "SERVICE_ACCOUNT" } });
+      expect(serializeQuery(next))
+        .toBe("AI_AGENT(USES.SERVICE_ACCOUNT(ALLOWS_ACCESS_TO.BUCKET))");
+    });
+
+    it("drops them when it changes, for the reason setKind drops them", () => {
+      // They were chosen against a vocabulary that no longer applies; keeping them would build
+      // a query that cannot match and give no hint why.
+      const next = replaceStep(parseQuery(NESTED), [0],
+        { edge: "USES_TOOL", node: { kind: "AI_TOOL" } });
+      expect(serializeQuery(next)).toBe("AI_AGENT(USES_TOOL.AI_TOOL)");
+    });
+
+    it("carries the row's own modifiers across, rather than silently undoing them", () => {
+      const q = parseQuery("AI_AGENT(*!RUNS_AS.SERVICE_ACCOUNT)");
+      const next = replaceStep(q, [0], { edge: "USES", node: { kind: "SERVICE_ACCOUNT" } });
+      // NOT and optional were the reader's assertions about this row, not part of which
+      // relationship it names — changing the relationship must not also un-negate it.
+      expect(serializeQuery(next)).toBe("AI_AGENT(!*USES.SERVICE_ACCOUNT)");
+      // The eye's state belongs to the node and survives the same way.
+      const hidden = replaceStep(parseQuery("AI_AGENT(RUNS_AS.!SERVICE_ACCOUNT)"), [0],
+        { edge: "USES", node: { kind: "SERVICE_ACCOUNT" } });
+      expect(serializeQuery(hidden)).toBe("AI_AGENT(USES.!SERVICE_ACCOUNT)");
+    });
+
+    it("leaves no key behind that the parser would not have produced", () => {
+      // `parseQuery(serializeQuery(q))` deep-equals `q` is a documented property of this tree.
+      // A merging edit would leave the old ANY step's `hops` on a named relationship; this
+      // builds the step fresh, so the round trip still holds on the in-memory tree.
+      const next = replaceStep(parseQuery("AI_AGENT(ANY3.BUCKET)"), [0],
+        { edge: "USES_MODEL", node: { kind: "AI_MODEL" } });
+      expect(next.steps[0].hops).toBeUndefined();
+      expect(parseQuery(serializeQuery(next))).toEqual(next);
+    });
+
+    it("leaves the root and a boolean block alone — neither is a relationship", () => {
+      const q = parseQuery(NESTED);
+      expect(replaceStep(q, [], { edge: "USES", node: { kind: "AI_TOOL" } })).toBe(q);
+      expect(serializeQuery(replaceStep(OR_Q, [0], { edge: "USES", node: { kind: "AI_TOOL" } })))
+        .toBe(serializeQuery(OR_Q));
+    });
   });
 
   it("folds where onto branch nodes by their slot, skipping the group", () => {

@@ -45,22 +45,58 @@
   color: var(--sev-high-text);
 }
 
-/* The chip IS the combobox's own trigger, restyled — see chipPicker() for why. Everything
-   below therefore has to win against the .combobox-trigger recipe rather than replace it. */
-.gq-chip-wrap { display: inline-flex; }
-.gq-chip-wrap .combobox-trigger-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gq-chip-wrap .combobox-caret { color: var(--text-3); font-size: 10px; margin-left: 2px; }
+/* THE TERM: the row's one editable thing, and the only control that opens the palette to change
+   it. On FIND that is an entity; on THAT it is a relationship AND its entity, in one pill,
+   because that is one choice — see the graphQueryBar.js header for the two dropdowns this
+   replaced and why neither was pulling its weight.
+
+   No caret, matching the reference. The affordance is hover and focus, which means both have to
+   be unmistakable: this is the one place in this file where the CSS is load-bearing rather than
+   cosmetic. It resets off the 36px bordered global button recipe the way .gq-iconbtn does. */
+.gq-term {
+  display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  min-height: 30px; min-width: 0; padding: 1px 4px 1px 10px;
+  border: 1px solid var(--hairline); background: var(--page); box-shadow: none;
+  border-radius: var(--radius-pill);
+  font: inherit; text-align: left;
+  max-width: 100%;
+}
+.gq-term:hover { background: var(--wash-hover); }
+/* Never overridden. A control with no caret leans on this ring to be findable at all. */
+.gq-term:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* A FIND row's term is the entity alone, and a capsule drawn around a single token would be a
+   second border saying nothing. So the button keeps the hit target and the focus ring and draws
+   nothing itself — which is also how the reference renders that row. */
+.gq-term--solo { border-color: transparent; background: none; padding: 1px; }
+.gq-term--solo:hover { background: none; }
+/* Five of the six chips are tinted, and repainting the ground on hover would take the category
+   cue off the very control being pointed at. An inset ring in the chip's own ink adds the
+   affordance without touching the fill. */
+.gq-term--solo:hover > .gq-chip { box-shadow: inset 0 0 0 1px currentColor; }
+/* A relationship is a verb, not an entity: neutral ground, lighter weight, so the two ENTITIES
+   are what the eye picks out of the line. */
+.gq-term-edge {
+  flex: 0 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13px; font-weight: 500;
+  color: var(--text-2);
+}
+.gq-term:hover .gq-term-edge { color: var(--ink); }
+
+/* The entity chip. A <button> cannot nest a <button>, so this is a <span> inside the term and
+   carries no interactive state of its own — only the category tint and the kind glyph. */
 .gq-chip {
   display: inline-flex; align-items: center; gap: 6px;
-  min-height: 28px; padding: 2px 8px 2px 7px;
+  min-height: 26px; padding: 2px 8px 2px 7px;
   border-radius: var(--radius-pill);
   border: 1px solid var(--hairline);
   background: var(--page);
   box-shadow: none;
   font-size: 13px; font-weight: 600;
   color: var(--ink);
-  max-width: 320px;
+  max-width: 260px;
 }
+.gq-chip-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gq-chip-icon { flex: 0 0 auto; }
 /* THE TINT HAS TO REACH THE INNER <g>. `kindIconSvg` returns an <svg> wrapping a `.gnode-icon`
    group, and graph.css paints that group a fixed grey — a colour set on the <svg> is inherited
@@ -72,15 +108,6 @@
 .gq-cell-icon .gnode-icon,
 .gq-cols-icon .gnode-icon,
 .gq-pal-glyph .gnode-icon { stroke: currentColor; color: inherit; }
-/* A relationship is a verb: neutral ground and lighter weight, so the two ENTITIES are what
-   the eye picks out of the line. */
-.gq-chip--edge {
-  background: var(--surface);
-  font-weight: 500;
-  color: var(--text-2);
-}
-.gq-chip--edge:hover { color: var(--ink); }
-
 /* Category tinting, matching the canvas medallions exactly: pale ground, saturated ink on the
    icon (a graphical mark, >=3:1), the darkened text token on the label (>=4.5:1 on that
    ground). The two-token rule, applied to a chip. */
@@ -188,7 +215,10 @@
 @media (max-width: 800px) {
   .gq { gap: 6px 10px; }
   .gq-count { margin-left: 0; padding-top: 0; }
-  .gq-chip { max-width: 190px; }
+  /* The term is what has to fit; the chip inside it shrinks with it. Both are capped, so a
+     long relationship gloss cannot push the row's buttons off the edge. */
+  .gq-term { max-width: 100%; }
+  .gq-chip { max-width: 150px; }
 }
 
 /* A boolean block's row: the keyword pill IS the control, so the row carries only the branch
@@ -284,6 +314,14 @@
 .gq-pal-option.is-active {
   background: var(--wash-hover);
   box-shadow: inset 0 0 0 1px var(--accent);
+}
+/* What the row ALREADY says, in a palette opened to change it. The tick is the cue and the
+   faint ground is only its echo — the tinted row alone would be a colour-only signal, and this
+   one sits beside four others in the same category tint. */
+.gq-pal-option.is-current .gq-pal-option-label { font-weight: 600; }
+.gq-pal-option-current {
+  flex: 0 0 auto; display: inline-flex; align-items: center;
+  color: var(--accent);
 }
 .gq-pal-glyph-wrap {
   flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;

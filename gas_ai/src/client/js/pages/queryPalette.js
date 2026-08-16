@@ -1,4 +1,4 @@
-// The `+` palette: everything a query step can be, in one searchable place.
+// The palette: everything a query step can be, in one searchable place.
 //
 //   ┌───────────────────────────────────────────────────────────────┐
 //   │ [search…                                                    ] │
@@ -14,6 +14,21 @@
 // what the others were. Everything it offers still comes from the TENANT's own vocabulary — a
 // palette that lets you build a query guaranteed to match nothing wastes an afternoon.
 //
+// THREE MODES, one control. The builder used to carry a second, weaker editing model beside
+// this one: a caret dropdown on the relationship and another on the entity beside it. They were
+// a worse answer to a question this file already answers correctly — a relationship and its
+// target are ONE choice, and every `relations` entry below is one (edge, direction, target)
+// triple. Split back into two dropdowns, picking a relationship whose target did not match
+// silently rewrote the entity chip, and most entity dropdowns opened on a menu of one. So the
+// dropdowns are gone and the palette does all three jobs:
+//
+//   "add"      the `+` — relationships, operators, properties, shortcuts. Appends.
+//   "replace"  the THAT row's term pill — relationships only. Swaps this step.
+//   "entity"   the FIND row's entity chip — node kinds only. Swaps what is being looked for.
+//
+// The mode decides only WHAT IS OFFERED. What a pick DOES is the caller's business: the payloads
+// are identical in every mode, and this file still knows nothing about the query tree.
+//
 // PURE / DOM SPLIT. `paletteEntries` is a plain function of plain values, and the rest of the
 // file paints what it returns. Vitest here runs in node with no jsdom (see graphChips.test.js
 // for why one is not being added), so that split is the difference between the entry model
@@ -25,10 +40,35 @@ import {
 } from "../icons.js";
 import { facetGroup } from "../filters.js";
 import { findEntry } from "../helpContent.js";
-import { serializeStep } from "./graphQuery.js";
+import { serializeQuery, serializeStep } from "./graphQuery.js";
 
 /** Below this the popover is unusable at three panes wide; it becomes a modal sheet instead. */
 const NARROW_PALETTE = "(max-width: 800px)";
+
+/** Per-mode copy. The palette does three jobs, and a control that names the wrong one is a
+ *  control the reader has to open to understand. */
+const SEARCH_LABELS = {
+  add: "Search relationships and operators",
+  replace: "Search relationships",
+  entity: "Search entity types",
+};
+const EMPTY_LABELS = {
+  add: "Nothing to add from here",
+  replace: "No relationship leaves this entity",
+  entity: "No entity types in this graph",
+};
+const LIST_LABELS = {
+  add: "Add to the query",
+  replace: "Change this relationship",
+  entity: "Choose what to find",
+};
+/** What the detail pane's literal block promises — the verb has to match the mode's effect. */
+const LITERAL_VERBS = { add: "Adds", replace: "Becomes", entity: "Finds" };
+const PROMPTS = {
+  add: "Pick a relationship to add a step, or an operator to change how this one is read.",
+  replace: "Pick the relationship this step should follow, and where it lands.",
+  entity: "Pick the kind of thing this query looks for.",
+};
 
 const SECTION_LABELS = {
   popular: "Popular",
@@ -36,6 +76,7 @@ const SECTION_LABELS = {
   operators: "Operators",
   properties: "Properties",
   relations: "Relationships",
+  entities: "Entities",
 };
 
 /** What a field's type is called, and what it means for how you filter on it. */
@@ -58,14 +99,21 @@ const TYPE_BLURBS = {
 /** How many relationships the Popular section leads with before you go to a category. */
 const POPULAR_RELATIONS = 6;
 
+/** The same, for entity kinds — the commonest in the estate, since the vocabulary has no other
+ *  ranking to offer and alphabetical would just promote whatever begins with A. */
+const POPULAR_KINDS = 6;
+
 // ------------------------------------------------------------------------- the entry model
 
 /**
  * Everything this palette can offer, given where it was opened from.
  *
- *   kind   the node the `+` hangs off — whose relationships and properties are on offer
+ *   kind   the node the palette hangs off — whose relationships and properties are on offer.
+ *          In "replace" that is the step's PARENT, not its target: the question is what this
+ *          hop can be, and a hop's options come from where it starts.
  *   vocab  {kinds, stepsFrom} as the server derived it from this tenant's graph
- *   row    the builder row the `+` belongs to, or null for a bare list
+ *   row    the builder row the palette belongs to, or null for a bare list
+ *   mode   "add" (default) | "replace" | "entity" — see the header
  *
  * An entry is `{id, section, category, glyph, label, sub, count, detail, pick}`:
  *   section  which rail tab it belongs to — "popular" doubles as a second home
@@ -79,22 +127,94 @@ const POPULAR_RELATIONS = 6;
  *   {type: "flag", flag, value}                       set negate/optional on THIS row's step
  *   {type: "shortcut", steps, filters}                a curated question, steps and filters
  *   {type: "property", key, values, op}               filter this node on a field
+ *   {type: "kind", kind}                              this node IS that kind — entity mode
  *
  * A `field` pick never reaches the caller — it drills into that field's values inside the
  * palette, and what comes back is the `property` above. A property with no value chosen would
  * be a filter nobody asked for.
+ *
+ * `relation` is emitted identically in "add" and "replace"; the caller appends it in one and
+ * swaps it in for the current step in the other. Keeping the payload the same in both is what
+ * lets this file stay ignorant of the tree.
  */
 export function paletteEntries(ctx) {
   const { kind, vocab, row } = ctx || {};
+  const mode = (ctx && ctx.mode) || "add";
   const steps = ((vocab || {}).stepsFrom || {})[kind] || [];
   const out = [];
+
+  // ------------------------------------------------------------------ entities
+  // What to look FOR, rather than where to go next. Only the kinds this tenant's graph actually
+  // holds, in the vocabulary's declaration order so the picker reads the way the legend does —
+  // and each one says how many there are, so an empty corner of the estate is visible before
+  // you build a query around it.
+  if (mode === "entity") {
+    const kinds = ((vocab || {}).kinds || []);
+    const popular = new Set(
+      [...kinds].sort((a, b) => b.count - a.count).slice(0, POPULAR_KINDS).map((k) => k.kind),
+    );
+    for (const entry of kinds) {
+      out.push({
+        id: "kind-" + entry.kind,
+        section: "entities",
+        category: categoryOf(entry.kind),
+        glyph: null,
+        targetKind: entry.kind,
+        label: kindLabel(entry.kind),
+        // The CATEGORY, not the tally — `rowFor` already prints the count down the right-hand
+        // edge, and a row reading "Bucket / 19 nodes … 19" says one thing twice and the useful
+        // thing not at all. The category is what tells two similarly-named kinds apart, and it
+        // names the rail tab this row also lives under.
+        sub: CATEGORY_LABELS[categoryOf(entry.kind)] || "",
+        count: entry.count,
+        popular: popular.has(entry.kind),
+        detail: {
+          title: kindLabel(entry.kind),
+          type: "Entity",
+          blurb: kindBlurb(entry.kind, entry.count),
+          // What the `find=` param carries for a root, produced by the real serializer.
+          literal: serializeQuery({ kind: entry.kind }),
+        },
+        pick: { type: "kind", kind: entry.kind },
+      });
+    }
+    // The wildcard is not in the vocabulary — it is every kind at once — and it is the honest
+    // starting point for "show me everything that ...", so it is always offered and always
+    // near the top.
+    out.push({
+      id: "kind-ANY",
+      section: "entities",
+      category: null,
+      glyph: "graph",
+      targetKind: "ANY",
+      label: "Any node",
+      sub: "every kind in the graph",
+      count: null,
+      popular: true,
+      detail: {
+        title: "Any node",
+        type: "Entity",
+        blurb: "Matches every node this tenant's graph holds, whatever its kind. Useful as the "
+          + "far end of a relationship — “what does this agent reach?” — and as a starting "
+          + "point when the question is about a property rather than a type. It is the widest "
+          + "possible match, so expect to narrow it with a filter or a relationship.",
+        literal: serializeQuery({ kind: "ANY" }),
+      },
+      pick: { type: "kind", kind: "ANY" },
+    });
+    return out;
+  }
 
   // ------------------------------------------------------------------ shortcuts
   // Curated questions, defined in the DOMAIN so a test can hold each to the model, and shipped
   // with `kinds` already narrowed to what this tenant's graph can answer — see QUERY_SHORTCUTS.
   // They lead the Popular tab because they are the fastest route from "open the page" to a
   // question worth asking.
-  for (const s of ((vocab || {}).shortcuts || [])) {
+  //
+  // ADD ONLY, like the properties and operators below. A shortcut expands into several steps
+  // and a replace has one step to give it, so offering one here would either drop the rest or
+  // quietly rewrite the row into something the reader did not ask for.
+  for (const s of (mode === "add" ? ((vocab || {}).shortcuts || []) : [])) {
     if (!(s.kinds || []).includes(kind)) continue;
     out.push({
       id: "sc-" + s.id,
@@ -146,34 +266,58 @@ export function paletteEntries(ctx) {
   // "Related to, within N hops" is always offered: it is the neighbourhood question, and the
   // graph can answer it even where no single named edge fits. It is not in the vocabulary
   // because it is not an edge — it is every edge.
+  //
+  // A hop step can also name where it LANDS: `ANY2.BUCKET` is "a bucket somewhere within two
+  // hops", a query this DSL has carried since it was written down and the retired dropdowns
+  // could build (their target picker went wide for any ANY edge). The `+` never offered it and
+  // still does not — from there nothing has been chosen to keep. But a REPLACE starts from a
+  // step that already names a target, and loosening a relationship without losing what it was
+  // aimed at is the whole reason someone reaches for this row. Offering only ANY→ANY here
+  // would quietly retire a documented query.
+  const hopTargets = (mode === "replace" && row && row.kind && row.kind !== "ANY")
+    ? ["ANY", row.kind]
+    : ["ANY"];
   for (const hops of [1, 2, 3]) {
-    out.push({
-      id: "rel-any-" + hops,
-      section: "relations",
-      category: null,
-      glyph: "graph",
-      targetKind: "ANY",
-      label: hops === 1 ? "Any node" : "Any node, " + hops + " hops out",
-      sub: "is related to" + (hops > 1 ? ", within " + hops + " hops" : ""),
-      count: null,
-      popular: hops === 1,
-      detail: {
-        title: hops === 1 ? "Any related node" : "Any node within " + hops + " hops",
-        type: "Relationship",
-        blurb: "Follows every relationship this tenant's graph holds, in either direction, "
-          + (hops === 1 ? "one hop out" : "up to " + hops + " hops out")
-          + ". The neighbourhood question, for when no single named relationship is the one "
-          + "you mean. More hops reach further and match more loosely.",
-        literal: literalFor({ type: "relation", edge: "ANY", reverse: false, hops, target: "ANY" }),
-      },
-      pick: { type: "relation", edge: "ANY", reverse: false, hops, target: "ANY" },
-    });
+    for (const target of hopTargets) {
+      const wide = target === "ANY";
+      const reach = hops === 1 ? "one hop out" : "up to " + hops + " hops out";
+      out.push({
+        id: "rel-any-" + hops + (wide ? "" : "-" + target),
+        section: "relations",
+        category: wide ? null : categoryOf(target),
+        glyph: "graph",
+        targetKind: target,
+        label: wide
+          ? (hops === 1 ? "Any node" : "Any node, " + hops + " hops out")
+          : kindLabel(target),
+        sub: "is related to" + (hops > 1 ? ", within " + hops + " hops" : ""),
+        count: null,
+        popular: hops === 1 && wide,
+        detail: {
+          title: wide
+            ? (hops === 1 ? "Any related node" : "Any node within " + hops + " hops")
+            : kindLabel(target) + " within " + hops + (hops === 1 ? " hop" : " hops"),
+          type: "Relationship",
+          blurb: "Follows every relationship this tenant's graph holds, in either direction, "
+            + reach
+            + (wide
+              ? ". The neighbourhood question, for when no single named relationship is the one "
+                + "you mean. More hops reach further and match more loosely."
+              : ", and keeps only the " + kindLabel(target) + " nodes it reaches. The "
+                + "neighbourhood question aimed at one kind — for when you know WHAT you are "
+                + "looking for but not which relationship gets you there."),
+          literal: literalFor({ type: "relation", edge: "ANY", reverse: false, hops, target }),
+        },
+        pick: { type: "relation", edge: "ANY", reverse: false, hops, target },
+      });
+    }
   }
 
   // ------------------------------------------------------------------ properties
   // Filled once the per-kind field list has arrived — the palette asks for it when the tab is
   // first opened rather than dragging every kind's fields into the bootstrap payload.
-  for (const f of (ctx.fields || [])) {
+  // A property NARROWS a node rather than replacing a step, so it belongs to the `+`.
+  for (const f of (mode === "add" ? (ctx.fields || []) : [])) {
     // Filtering a thing by what it already is. The kind is chosen one chip to the left.
     if (f.key === "kind") continue;
     out.push({
@@ -197,6 +341,12 @@ export function paletteEntries(ctx) {
   }
 
   // ------------------------------------------------------------------ operators
+  // The `+`'s alone. A term pill answers one question — what relationship is this — and the
+  // whole point of routing it here was to stop one control quietly doing another's job. NOT,
+  // Optional and the two blocks are one button to the right, where the header's `?` already
+  // says they are.
+  if (mode !== "add") return out;
+
   // A block is pre-filled with real relationships rather than opened empty: this builder has no
   // empty-branch row to fill in afterwards, and an OR of nothing is a query that cannot run.
   const branchSteps = steps.slice(0, 2).map((e) => stepForPick({
@@ -305,34 +455,46 @@ export function paletteEntries(ctx) {
   return out;
 }
 
-/** The rail: the fixed tabs, then one per category that actually has something under it. */
-export function paletteRail(entries) {
+/**
+ * The rail: the fixed tabs, then one per category that actually has something under it.
+ *
+ * `mode` matches the one `paletteEntries` was given. Only the Properties tab needs it: that tab
+ * is drawn BEFORE its list has been fetched, so it cannot be inferred from the entries the way
+ * every other tab can, and outside "add" it would promise a list that will never arrive.
+ */
+export function paletteRail(entries, mode) {
   const rail = [
     { key: "popular", label: SECTION_LABELS.popular, count: entries.filter((e) => e.popular).length },
   ];
   const shortcuts = entries.filter((e) => e.section === "shortcuts").length;
   if (shortcuts) rail.push({ key: "shortcuts", label: SECTION_LABELS.shortcuts, count: shortcuts });
-  rail.push({
-    key: "operators",
-    label: SECTION_LABELS.operators,
-    count: entries.filter((e) => e.section === "operators").length,
-  });
-  // Always present, even before the field list has landed — a tab that appears a beat after the
-  // palette opens is a tab nobody finds. Its count fills in when the fetch answers.
-  rail.push({
-    key: "properties",
-    label: SECTION_LABELS.properties,
-    count: entries.filter((e) => e.section === "properties").length,
-  });
+  const operators = entries.filter((e) => e.section === "operators").length;
+  if (operators) {
+    rail.push({ key: "operators", label: SECTION_LABELS.operators, count: operators });
+  }
+  // Always present in "add", even before the field list has landed — a tab that appears a beat
+  // after the palette opens is a tab nobody finds. Its count fills in when the fetch answers.
+  if ((mode || "add") === "add") {
+    rail.push({
+      key: "properties",
+      label: SECTION_LABELS.properties,
+      count: entries.filter((e) => e.section === "properties").length,
+    });
+  }
   for (const cat of CATEGORY_ORDER) {
     const n = entries.filter((e) => e.category === cat).length;
     // Ours has five categories where the reference has twelve. Showing an empty one anyway
     // would be theatre — a tab that promises relationships this kind does not have.
     if (n) rail.push({ key: "cat-" + cat, label: CATEGORY_LABELS[cat], count: n, category: cat });
   }
-  const loose = entries.filter((e) => e.section === "relations" && !e.category).length;
+  const loose = entries.filter(isLoose).length;
   if (loose) rail.push({ key: "cat-any", label: "Any node", count: loose, category: null, loose: true });
   return rail;
+}
+
+/** An entry no category claims: the hop wildcards, and the "Any node" entity beside them. */
+function isLoose(entry) {
+  return !entry.category && (entry.section === "relations" || entry.section === "entities");
 }
 
 /** Which entries a rail tab shows, in the order they were derived (commonest first). */
@@ -341,9 +503,7 @@ export function entriesForTab(entries, tabKey) {
   if (tabKey === "shortcuts") return entries.filter((e) => e.section === "shortcuts");
   if (tabKey === "operators") return entries.filter((e) => e.section === "operators");
   if (tabKey === "properties") return entries.filter((e) => e.section === "properties");
-  if (tabKey === "cat-any") {
-    return entries.filter((e) => e.section === "relations" && !e.category);
-  }
+  if (tabKey === "cat-any") return entries.filter(isLoose);
   if (tabKey.indexOf("cat-") === 0) {
     const cat = tabKey.slice(4);
     return entries.filter((e) => e.category === cat);
@@ -388,7 +548,30 @@ export function stepForPick(pick) {
  */
 export function literalFor(pick) {
   if (pick.type === "flag" || pick.type === "shortcut") return "";
+  if (pick.type === "kind") return serializeQuery({ kind: pick.kind });
   return serializeStep(stepForPick(pick));
+}
+
+/**
+ * Which entry a row's CURRENT choice is, so the palette can open on it rather than at the top
+ * of a list the reader has to search for what the row already says.
+ *
+ * The id scheme lives here, beside the ids `paletteEntries` mints, and nowhere else. Spelled out
+ * a second time at the call site it would drift the first time an id gained a segment, and the
+ * failure would be silent: a palette that opens on the wrong row still works, so nothing would
+ * report it. `test/queryPalette.test.js` holds this to an id `paletteEntries` actually produces.
+ */
+export function currentEntryId(mode, row) {
+  if (!row) return "";
+  if (mode === "entity") return "kind-" + (row.kind || "ANY");
+  if (!row.edge) return "";
+  if (row.edge === "ANY") {
+    // A hop step that names where it lands has its target in the id, the same way a named
+    // relationship does — `ANY2.BUCKET` and `ANY2.ANY` are two different questions.
+    const wide = !row.kind || row.kind === "ANY";
+    return "rel-any-" + (row.hops || 1) + (wide ? "" : "-" + row.kind);
+  }
+  return "rel-" + (row.reverse ? "in-" : "out-") + row.edge + "-" + row.kind;
 }
 
 /**
@@ -442,23 +625,47 @@ function relationBlurb(fromKind, entry) {
   return sentence + tally + (help ? " " + help.blurb : "");
 }
 
-/** Target kinds whose meaning the help book already explains. */
+/** Kinds whose meaning the help book already explains, in the app's own words. */
 const HELP_FOR_KIND = {
   MISSING_GUARDRAIL: "missing-guardrail",
   SENSITIVE_DATA: "sensitive-data",
   INTERNET_EXPOSURE: "internet-exposure",
   EXCESSIVE_PRIVILEGE: "excessive-privilege",
   SERVICE_ACCOUNT: "agentic-identity",
+  DATA_FINDING: "data-finding",
 };
+
+/**
+ * What an entity kind is, for the entity palette's detail pane.
+ *
+ * The TALLY leads, because it is the half that is about this estate rather than about the model:
+ * a kind the graph holds four of is a different proposition from one it holds four hundred of,
+ * and a kind it holds none of is a query that will answer nothing. Then the help book's prose
+ * where it has an entry — the same words the `?` tips and the Reference page carry, so the
+ * palette teaches the app's vocabulary rather than a second one written here.
+ */
+function kindBlurb(kind, count) {
+  const label = kindLabel(kind);
+  const tally = count
+    ? count.toLocaleString() + " " + label + (count === 1 ? " node" : " nodes") + " in this tenant."
+    : "No " + label + " nodes in this tenant — a query starting here will answer nothing.";
+  const help = findEntry(HELP_FOR_KIND[kind] || "");
+  return tally + (help ? " " + help.blurb : "");
+}
 
 // ------------------------------------------------------------------------- the palette
 
 let _paletteSeq = 0;
 
 /**
- * Open the palette against `anchor`. `onPick(pick)` receives one of the three payloads.
+ * Open the palette against `anchor`. `onPick(pick)` receives one of the payloads above.
  *
  * Returns the popover handle (or the sheet's, on a narrow viewport) so a caller can close it.
+ *
+ * `spec.mode` picks what is offered — "add" (default), "replace" or "entity". `spec.currentId`
+ * names the entry the row already holds, from `currentEntryId`: the palette opens on ITS tab
+ * with it highlighted and marked, so a control that edits an existing choice starts at that
+ * choice rather than making the reader find it again.
  *
  * ACCESSIBILITY. The search field is the combobox and the middle pane is its listbox: the
  * active row travels as `aria-activedescendant` and DOM focus never leaves the input, which is
@@ -471,15 +678,21 @@ let _paletteSeq = 0;
  * cannot be edited.
  */
 export function openQueryPalette(spec) {
-  const { anchor, kind, vocab, row, onPick, title, loadFields, currentValues } = spec;
+  const { anchor, kind, vocab, row, onPick, title, loadFields, currentValues, currentId } = spec;
+  const mode = spec.mode || "add";
   const seq = ++_paletteSeq;
   const listId = "gq-palette-list-" + seq;
   let fields = null;    // per-kind field list, once fetched
   let values = null;    // per-kind value lists, once fetched
-  let entries = paletteEntries({ kind, vocab, row, fields });
-  let rail = paletteRail(entries);
+  let entries = paletteEntries({ kind, vocab, row, fields, mode });
+  let rail = paletteRail(entries, mode);
 
-  let tab = rail[0] ? rail[0].key : "popular";
+  // The tab holding the row's current choice, so an edit starts where the row already is.
+  // Popular is preferred where it has it, because that is the tab a fresh palette would open on
+  // anyway — landing in a category tab when the entry is also two rows up in Popular would make
+  // the palette look like it opened somewhere unrelated.
+  const startTab = rail.find((t) => entriesForTab(entries, t.key).some((e) => e.id === currentId));
+  let tab = (startTab && startTab.key) || (rail[0] ? rail[0].key : "popular");
   let query = "";
   let shown = [];
   let activeIndex = 0;
@@ -488,6 +701,8 @@ export function openQueryPalette(spec) {
   /** Non-null while drilled into one field's values. */
   let drill = null;
   let loading = false;
+  /** Consumed by the first paint: put the cursor on what the row already holds. */
+  let seekCurrent = !!currentId;
 
   const search = el("input", {
     type: "text",
@@ -496,14 +711,14 @@ export function openQueryPalette(spec) {
     "aria-expanded": "true",
     "aria-controls": listId,
     "aria-autocomplete": "list",
-    "aria-label": "Search relationships and operators",
+    "aria-label": SEARCH_LABELS[mode] || SEARCH_LABELS.add,
     placeholder: "Search…",
     autocomplete: "off",
     spellcheck: "false",
   });
   const listEl = el("ul", {
     id: listId, class: "gq-pal-list", role: "listbox",
-    "aria-label": "Add to the query",
+    "aria-label": LIST_LABELS[mode] || LIST_LABELS.add,
   });
   const railEl = el("div", {
     class: "gq-pal-rail", role: "group", "aria-label": "Categories",
@@ -562,10 +777,10 @@ export function openQueryPalette(spec) {
       if (!got || !host) return;
       fields = got.fields || [];
       values = got.values || [];
-      entries = paletteEntries({ kind, vocab, row, fields });
+      entries = paletteEntries({ kind, vocab, row, fields, mode });
       // The rail is built once, so only its counts change — the Properties tab was already
       // there, promising a list it could not yet draw.
-      rail = paletteRail(entries);
+      rail = paletteRail(entries, mode);
       for (const btn of railEl.children) {
         const t = rail.find((x) => x.key === btn.getAttribute("data-tab"));
         const countEl = btn.querySelector(".gq-pal-rail-count");
@@ -603,14 +818,24 @@ export function openQueryPalette(spec) {
       ? kindIconSvg(entry.targetKind, 14)
       : uiIcon(entry.glyph || "plus", 14);
     glyph.setAttribute("class", "gq-pal-glyph");
+    // What the row ALREADY says, in a palette opened to change it. `aria-selected` is spoken for
+    // — it carries the keyboard cursor in this listbox — so the state travels as `aria-current`,
+    // and a tick renders beside it so it is never the tinted ground alone saying so.
+    const isCurrent = !!currentId && entry.id === currentId;
     const node = el("li", {
-      id: optId, role: "option", class: "gq-pal-option", "aria-selected": "false",
+      id: optId, role: "option", class: "gq-pal-option" + (isCurrent ? " is-current" : ""),
+      "aria-selected": "false",
+      "aria-current": isCurrent ? "true" : null,
       "data-category": entry.category || null,
     },
       el("span", { class: "gq-pal-glyph-wrap" }, glyph),
       el("span", { class: "gq-pal-option-text" },
         el("span", { class: "gq-pal-option-label" }, entry.label),
         el("span", { class: "gq-pal-option-sub" }, entry.sub)),
+      isCurrent
+        ? el("span", { class: "gq-pal-option-current", title: "Currently selected" },
+          uiIcon("check", 13))
+        : null,
       entry.count ? el("span", { class: "gq-pal-option-count" }, entry.count.toLocaleString()) : null,
     );
     // mousedown, not click: a click blurs the search input first, and the focusout handler
@@ -636,7 +861,7 @@ export function openQueryPalette(spec) {
     }
     if (!shown.length) {
       listEl.append(el("li", { role: "presentation", class: "gq-pal-empty" },
-        query ? "No matches" : "Nothing to add from here"));
+        query ? "No matches" : (EMPTY_LABELS[mode] || EMPTY_LABELS.add)));
       activeIndex = 0;
       paintDetail(null);
       return;
@@ -657,6 +882,13 @@ export function openQueryPalette(spec) {
       rowNodes.push(node);
       listEl.append(node);
     });
+    // ONCE, on the way in. After that the cursor belongs to whoever is driving it — snapping it
+    // back to the current choice on every tab change or keystroke would make the list unusable.
+    if (seekCurrent) {
+      seekCurrent = false;
+      const at = shown.findIndex((e) => e.id === currentId);
+      if (at >= 0) activeIndex = at;
+    }
     activeIndex = Math.min(activeIndex, shown.length - 1);
     highlight();
   }
@@ -676,8 +908,7 @@ export function openQueryPalette(spec) {
   function paintDetail(entry) {
     detailEl.textContent = "";
     if (!entry) {
-      detailEl.append(el("p", { class: "muted small" },
-        "Pick a relationship to add a step, or an operator to change how this one is read."));
+      detailEl.append(el("p", { class: "muted small" }, PROMPTS[mode] || PROMPTS.add));
       return;
     }
     detailEl.append(el("h3", { class: "gq-pal-detail-title" }, entry.detail.title));
@@ -688,8 +919,11 @@ export function openQueryPalette(spec) {
       detailEl.append(el("p", { class: "gq-pal-detail-blurb" }, para));
     }
     if (entry.detail.literal) {
+      // The verb has to match what the pick will DO. This pane exists so a reader can see the
+      // effect before causing it, and "Adds AI_AGENT" over a control that replaces the root
+      // would be the pane describing a different palette.
       detailEl.append(el("div", { class: "gq-pal-detail-lit" },
-        el("span", { class: "label" }, "Adds"),
+        el("span", { class: "label" }, LITERAL_VERBS[mode] || LITERAL_VERBS.add),
         el("code", {}, entry.detail.literal)));
     }
   }
@@ -839,7 +1073,9 @@ export function openQueryPalette(spec) {
   railButtons();
   paint();
 
-  const heading = title || ("Add to " + kindLabel(kind));
+  const heading = title || (mode === "entity"
+    ? "What to find"
+    : mode === "replace" ? "Change this relationship" : "Add to " + kindLabel(kind));
 
   if (window.matchMedia && window.matchMedia(NARROW_PALETTE).matches) {
     // The same modal fallback the filter panel takes below 800px: three panes do not fit, and a

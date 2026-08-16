@@ -1,20 +1,36 @@
 // The query builder, as chrome.
 //
-//   FIND   [AI Agent]                                    41 results
-//     THAT [runs as] [Service Account]  [+] [eye] [x]
+//   FIND   ⟨AI Agent⟩                                        41 results
+//     THAT ⟨runs as  Service Account⟩       [+] [eye] [x]
 //
-// Structure and state come from graphQuery.js (pure, tested); this file turns them into
-// buttons. The pickers are the app's existing portaled `filterCombobox`, and every option they
-// offer comes from the tenant's own vocabulary — a builder that lets you construct a query
-// guaranteed to match nothing is a builder that wastes an afternoon, which is why Wiz's own
-// only offers "the filters and connections that are valid for the selected node type".
+// Structure and state come from graphQuery.js (pure, tested); this file turns them into buttons.
+// Every option comes from the tenant's own vocabulary — a builder that lets you construct a query
+// guaranteed to match nothing is a builder that wastes an afternoon, which is why Wiz's own only
+// offers "the filters and connections that are valid for the selected node type".
+//
+// ONE TERM PER ROW, ONE PALETTE. This file used to carry a second editing model: a caret dropdown
+// on the relationship and another on the entity beside it. Both are gone, and the reasons are
+// worth keeping, because both were the same mistake seen from two ends.
+//
+// A relationship and its target are ONE choice. `queryPalette` has always modelled them that way
+// — every `relations` entry is one (edge, direction, target) triple drawn from `stepsFrom`. Split
+// back into two independent-looking dropdowns they could disagree, and the code resolved the
+// disagreement by silently rewriting the entity chip: choosing "has issue" while the row said
+// "Sensitive Data" moved the target to Issue with nothing on screen admitting it. Meanwhile the
+// entity dropdown was usually a menu of one, because most relationships reach exactly one kind —
+// HAS_ACCESS_TO_SENSITIVE_DATA only ever lands on SENSITIVE_DATA. A control that cannot disagree
+// with itself and a control that offers nothing are the same bug: the pair was never two choices.
+//
+// So a row now carries ONE term pill, and clicking it opens the palette — the FIND row's in
+// "entity" mode, a THAT row's in "replace" mode, scoped to the step's PARENT kind. The `+` is
+// unchanged and still owns everything additive: more steps, properties, NOT, optional, blocks.
 //
 // ACCESSIBILITY. The rows are a real `tree`: the nesting is meaning, not indentation, and a
 // screen-reader user gets `aria-level` rather than a guess from the left margin. One tab stop
 // for the whole tree with a roving tabindex, arrows to move between rows, Enter to open the
 // focused row's entity picker, Delete to remove a row.
 
-import { el, filterCombobox, uiIcon } from "../ui.js";
+import { el, uiIcon } from "../ui.js";
 import { categoryOf, edgeLabel, kindIconSvg, kindLabel } from "../icons.js";
 import {
   addStep,
@@ -24,12 +40,13 @@ import {
   queryRows,
   remapWhere,
   removeStep,
+  replaceStep,
   setEdge,
   setHidden,
   setKind,
   stepAt,
 } from "./graphQuery.js";
-import { openQueryPalette, stepForPick } from "./queryPalette.js";
+import { currentEntryId, openQueryPalette, stepForPick } from "./queryPalette.js";
 
 /**
  * @param {object} opts
@@ -111,19 +128,26 @@ export function queryBar(opts) {
   }
 
   /**
-   * The `+`: everything this node can be asked next, in one searchable place.
+   * The palette, in whichever of its three modes this control wants.
    *
-   * It used to guess — first outbound relationship in the vocabulary, appended, no questions —
-   * which meant the builder offered exactly one next step and never said what the others were.
-   * A pick comes back as one of three payloads; where each one goes is the whole of this
-   * function, and the palette knows nothing about the tree.
+   * The `+` (mode "add") used to guess — first outbound relationship in the vocabulary, appended,
+   * no questions — which meant the builder offered exactly one next step and never said what the
+   * others were. The term pill's two modes replaced the dropdowns for the reason in the header.
+   *
+   * A pick comes back as one of seven payloads; where each one goes is the whole of this
+   * function, and the palette knows nothing about the tree. Two of them differ by MODE rather
+   * than by shape: a `relation` is appended under this node from the `+`, and swapped in for
+   * this step from the pill. That asymmetry lives here, on the side of the wire that owns the
+   * tree, rather than being pushed into the palette as a second payload type.
    */
-  function openPalette(anchor, query, row, fromKind) {
+  function openPalette(anchor, query, row, fromKind, mode) {
     openQueryPalette({
       anchor,
+      mode,
       kind: fromKind || "ANY",
       vocab: opts.getVocab() || { kinds: [], stepsFrom: {} },
       row,
+      currentId: currentEntryId(mode, row),
       loadFields: opts.loadFields,
       // What this node is already filtered on, so reopening a field shows its values pressed
       // rather than presenting an empty picker over a filter that is plainly on the row.
@@ -133,6 +157,28 @@ export function queryBar(opts) {
         return (filter && filter.values) || [];
       },
       onPick: (pick) => {
+        if (pick.type === "kind") {
+          // Re-picking what the row already says is NOT an edit, and has to return before
+          // `commit` rather than committing an identical tree: `dropAt` would take this node's
+          // filter chips off, and the page's `onChange` clears `columns` and `page` on every
+          // patch — so confirming the current answer would reset the table to arrive back at
+          // the query already on screen.
+          if (pick.kind === row.kind) return;
+          // `setKind` drops the steps below (they were chosen against the old kind's
+          // vocabulary) and `dropAt` drops this node's filters with them, for the same reason:
+          // they name fields the new kind does not have, and a query answering zero with every
+          // chip still reading correctly says nothing about why.
+          commit(setKind(query, row.path, pick.kind), pathKey(row.path), { dropAt: row.path });
+          return;
+        }
+        if (pick.type === "relation" && mode === "replace") {
+          // The pill's own job: this hop becomes that hop. `replaceStep` keeps the row's NOT /
+          // optional / hidden flags and — where the target kind is unchanged — the steps hanging
+          // off it, so swapping a relationship does not silently demolish the query below it.
+          commit(replaceStep(query, row.path, stepForPick(pick)), pathKey(row.path),
+            pick.target !== row.kind ? { dropAt: row.path } : undefined);
+          return;
+        }
         if (pick.type === "property") {
           // A node that binds nothing has no slot to hang a filter on — a negated step is the
           // case, and the palette does not offer properties there, but a hand-edited link can.
@@ -247,93 +293,57 @@ export function queryBar(opts) {
     return key;
   }
 
-  /** Every relationship the tenant's graph actually offers from this kind. */
-  function stepsFrom(kind) {
-    const vocab = opts.getVocab() || { stepsFrom: {} };
-    return (vocab.stepsFrom || {})[kind] || [];
-  }
-
-  /** Distinct edge+direction options from a kind, each remembering where it can land. */
-  function edgeOptions(kind) {
-    const seen = new Map();
-    for (const entry of stepsFrom(kind)) {
-      const value = (entry.reverse ? "~" : "") + entry.edge;
-      if (!seen.has(value)) {
-        seen.set(value, {
-          value,
-          // EDGE_LABELS are active-voice glosses written for the subject end ("runs as",
-          // "allows access to"). Read backwards they need a passive that English does not
-          // reliably supply — "is allows access to by" is what a naive template produces — so
-          // the direction is stated instead of conjugated. Precise beats fluent here.
-          label: entry.reverse ? edgeLabel(entry.edge) + " (incoming)" : edgeLabel(entry.edge),
-          hint: "",
-          kinds: [],
-        });
-      }
-      seen.get(value).kinds.push(entry.kind);
-    }
-    const out = [...seen.values()];
-    for (const o of out) {
-      o.hint = o.kinds.length === 1 ? kindLabel(o.kinds[0]) : o.kinds.length + " kinds";
-    }
-    // "related to, within N hops" is always available: it is the neighbourhood question, and
-    // the graph can always answer it even where no single named edge fits.
-    out.push({ value: "ANY", label: "is related to", hint: "any relationship", kinds: [] });
-    out.push({ value: "ANY2", label: "is related to (2 hops)", hint: "any relationship", kinds: [] });
-    out.push({ value: "ANY3", label: "is related to (3 hops)", hint: "any relationship", kinds: [] });
-    return out;
-  }
-
-  /** Kinds reachable from `kind` along `edgeValue`; every kind in the graph for ANY. */
-  function targetKinds(kind, edgeValue) {
-    const vocab = opts.getVocab() || { kinds: [] };
-    if (edgeValue.indexOf("ANY") === 0) {
-      return (vocab.kinds || []).map((k) => k.kind).concat(["ANY"]);
-    }
-    const reverse = edgeValue[0] === "~";
-    const edge = reverse ? edgeValue.slice(1) : edgeValue;
-    const kinds = stepsFrom(kind)
-      .filter((e) => e.edge === edge && e.reverse === reverse)
-      .map((e) => e.kind);
-    return kinds.length ? kinds : ["ANY"];
-  }
-
-  function kindOption(kind) {
-    return { value: kind, label: kind === "ANY" ? "Any node" : kindLabel(kind) };
+  /**
+   * An entity, as a tinted chip: the kind's glyph and its label, in its category's colours.
+   *
+   * ANY is spelled out here because it is not a kind and the shared helpers do not know that:
+   * `kindLabel` has no entry so it echoes the token back as "ANY", `kindIconSvg` falls through
+   * to the summary-stub glyph, and `categoryOf` answers "asset" for anything it does not
+   * recognise — which painted the wildcard in the AI-asset tint and said something untrue about
+   * it. The retired picker special-cased the label and nothing else.
+   */
+  function entityChip(kind) {
+    const any = kind === "ANY";
+    const icon = any ? uiIcon("graph", 14) : kindIconSvg(kind, 14);
+    icon.setAttribute("class", "gq-chip-icon");
+    return el("span", { class: "gq-chip", "data-category": any ? null : categoryOf(kind) },
+      icon, el("span", { class: "gq-chip-text" }, any ? "Any node" : kindLabel(kind)));
   }
 
   /**
-   * A chip that IS the shared searchable listbox's own trigger, restyled.
+   * The row's editable term, and the only thing on the row that opens the palette to change it.
    *
-   * The first cut mounted a decorative chip beside a hidden combobox and clicked through to
-   * it. That worked with a mouse and lied to everyone else: `aria-expanded` lived on the
-   * button nobody could reach, and the page carried two buttons for one control. Restyling
-   * the real trigger keeps ONE listbox implementation — the portaled one that already handles
-   * search, grouping, keyboard and the popover-above-sheet z-order — and its ARIA with it.
+   * On FIND it is one entity. On THAT it is a relationship AND its entity, in one pill with one
+   * hit target — because that is one choice, for the reason the header sets out at length. There
+   * is no caret: the reference has none, the row already carries three explicit icon buttons
+   * doing the visible work, and a pill that reveals itself on hover and announces itself through
+   * `aria-haspopup` is a quieter line than two carets that lied about being independent.
+   *
+   * A <button> cannot contain a <button>, so the entity is a <span> and the whole term is the
+   * control. That is the same trade the reference makes, and it is why the category tint lives
+   * on a chip that is no longer interactive.
+   *
+   * NO `aria-label`. The name is computed from the button's own contents plus a hidden tail, so
+   * the visible words are part of the spoken ones by construction rather than by two strings
+   * being kept in step — and the gloss stays written in exactly one place. `aria-haspopup` is
+   * "dialog" rather than the combobox's `aria-expanded`: the palette is a dialog (`openPopover`
+   * builds one) and it is not this button's listbox, so the old vocabulary would be a lie about
+   * a control that no longer exists.
    */
-  function chipPicker(value, options, onPick, label, kind) {
-    const box = filterCombobox({
-      value,
-      options,
-      ariaLabel: label,
-      searchThreshold: 8,
-      onChange: (v) => onPick(v),
-    });
-    box.classList.add("gq-chip-wrap");
-    const trigger = box.querySelector(".combobox-trigger");
-    if (trigger) {
-      trigger.classList.add("gq-chip");
-      if (kind) {
-        trigger.setAttribute("data-category", categoryOf(kind));
-        const icon = kindIconSvg(kind, 14);
-        icon.setAttribute("class", "gq-chip-icon");
-        trigger.prepend(icon);
-      } else {
-        // A relationship is a verb, not an entity: no icon, no tint, lighter weight.
-        trigger.classList.add("gq-chip--edge");
-      }
+  function termButton(row, onOpen) {
+    const parts = [];
+    if (row.path.length) {
+      parts.push(el("span", { class: "gq-term-edge" }, describeEdge(row)));
     }
-    return box;
+    parts.push(entityChip(row.kind));
+    parts.push(el("span", { class: "sr-only" },
+      row.path.length ? ", change this relationship" : ", change what this query finds"));
+    return el("button", {
+      type: "button",
+      class: "gq-term" + (row.path.length ? "" : " gq-term--solo"),
+      "aria-haspopup": "dialog",
+      onclick: (e) => onOpen(e.currentTarget),
+    }, ...parts);
   }
 
   function iconButton(name, label, onClick, pressed) {
@@ -387,7 +397,7 @@ export function queryBar(opts) {
             : row.branches + (row.op === "or" ? " alternatives" : " conditions")));
         const groupActions = el("span", { class: "gq-row-actions" });
         groupActions.append(iconButton("plus", "Add a branch to this " + row.keyword + " block",
-          (e) => openPalette(e.currentTarget, query, row, parentKind)));
+          (e) => openPalette(e.currentTarget, query, row, parentKind, "add")));
         groupActions.append(iconButton("close", "Remove this " + row.keyword + " block",
           () => removeRow(query, row)));
         line.append(groupActions);
@@ -395,33 +405,17 @@ export function queryBar(opts) {
         return;
       }
 
-      if (row.path.length) {
-        const options = edgeOptions(parentKind);
-        const current = (row.reverse ? "~" : "")
-          + (row.edge === "ANY" ? "ANY" + (row.hops > 1 ? String(row.hops) : "") : row.edge);
-        if (row.negate) line.append(el("span", { class: "gq-not" }, "NOT"));
-        line.append(chipPicker(current, options, (v) => {
-          const isAny = v.indexOf("ANY") === 0;
-          const patch = {
-            edge: isAny ? "ANY" : (v[0] === "~" ? v.slice(1) : v),
-            reverse: !isAny && v[0] === "~",
-            hops: isAny ? (Number(v.slice(3)) || 1) : undefined,
-          };
-          // The kind below was chosen against the old relationship; if it is no longer
-          // reachable the query would silently match nothing, so it moves to one that is.
-          const allowed = targetKinds(parentKind, v);
-          let next = setEdge(query, row.path, patch);
-          if (allowed.indexOf(row.kind) === -1) next = setKind(next, row.path, allowed[0]);
-          commit(next);
-        }, "Relationship: " + describeEdge(row), null));
-      }
+      // NOT is a word, outside the pill: it is the reader's assertion about the relationship,
+      // not part of which relationship this is, and the pill's palette does not offer it.
+      if (row.negate) line.append(el("span", { class: "gq-not" }, "NOT"));
 
-      const kindOpts = (row.path.length ? targetKinds(parentKind, row.edge === "ANY" ? "ANY" : (row.reverse ? "~" : "") + row.edge)
-        : ((opts.getVocab() || { kinds: [] }).kinds || []).map((k) => k.kind).concat(["ANY"]))
-        .map(kindOption);
-      line.append(chipPicker(row.kind, kindOpts,
-        (v) => commit(setKind(query, row.path, v), undefined, { dropAt: row.path }),
-        (row.path.length ? "Related entity: " : "Find entity: ") + kindLabel(row.kind), row.kind));
+      // A THAT row's relationships come from the node the step hangs OFF, not from its target —
+      // "what can this hop be" is a question about where the hop starts. The FIND row has no
+      // step, so its pill picks an entity instead.
+      line.append(row.path.length
+        ? termButton(row, (anchor) => openPalette(anchor, query, row, parentKind, "replace"))
+        : termButton(row, (anchor) => openPalette(anchor, query, row, row.kind, "entity")));
+
       // `append(null)` writes the literal text "null" — the trap graph.js's savedViewsControl
       // already carries a comment about. `el()` skips nulls; `append` does not.
       const chips = filterChips(query, row);
@@ -429,7 +423,7 @@ export function queryBar(opts) {
 
       const actions = el("span", { class: "gq-row-actions" });
       actions.append(iconButton("plus", "Add to " + kindLabel(row.kind),
-        (e) => openPalette(e.currentTarget, query, row, row.kind)));
+        (e) => openPalette(e.currentTarget, query, row, row.kind, "add")));
       if (row.canHide) {
         actions.append(iconButton(row.hidden ? "eye-off" : "eye",
           (row.hidden ? "Show " : "Hide ") + kindLabel(row.kind) + " columns",
@@ -482,8 +476,21 @@ export function queryBar(opts) {
       + (row.hidden ? ", columns hidden" : "");
   }
 
+  /**
+   * The relationship, in words. This is READ OFF THE ROW now, not just spoken by a screen
+   * reader, so the wording has to survive being looked at: the old text said "is related to
+   * within 1 hops" whenever the hop count was one, which was invisible while it lived in an
+   * `aria-label` and is not any more. One hop is the plain neighbourhood question and says so.
+   *
+   * The palette's `describeRelation` glosses the same relationships for its own rows; the two
+   * agree on the named edges by both going through EDGE_LABELS, which is where that vocabulary
+   * belongs.
+   */
   function describeEdge(row) {
-    if (row.edge === "ANY") return "is related to within " + (row.hops || 1) + " hops";
+    if (row.edge === "ANY") {
+      const hops = row.hops || 1;
+      return "is related to" + (hops > 1 ? ", within " + hops + " hops" : "");
+    }
     const base = edgeLabel(row.edge);
     return (row.negate ? "does not " : "") + base + (row.reverse ? ", incoming" : "");
   }
@@ -509,10 +516,11 @@ export function queryBar(opts) {
     // and Backspace anywhere in the row deleted the row out from under the control being used.
     if (e.target !== e.currentTarget) return;
     if (e.key === "Enter") {
-      const chip = e.currentTarget.querySelector(".gq-chip:not(.gq-chip--edge)");
-      if (chip) {
+      // A row has exactly one term now, so this no longer has to say which chip it means.
+      const term = e.currentTarget.querySelector(".gq-term");
+      if (term) {
         e.preventDefault();
-        chip.click();
+        term.click();
       }
       return;
     }
