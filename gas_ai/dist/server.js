@@ -2015,7 +2015,26 @@ var Server = (() => {
     } catch {
     }
   }
+  var PROBE_SENTINEL = "AI_SIDEKICK_NEGATIVE_CONTROL";
+  function probeOracleWorks(say) {
+    try {
+      fetchCloudResourcesPage({
+        query: Q_AI_INVENTORY,
+        first: 1,
+        extraVariables: aiInventoryVariables([PROBE_SENTINEL])
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (isInvalidEnumValueError(msg)) return true;
+      throw e;
+    }
+    say(
+      `  \u26A0 negative control (${PROBE_SENTINEL}) was ACCEPTED \u2014 this gateway does not reject unknown type values, so the per-candidate probe cannot tell which types this tenant really has. Every candidate below will read as accepted. Set WIZ_AI_RESOURCE_TYPES to the types you actually want queried.`
+    );
+    return false;
+  }
   function probeCandidateTypes(candidates, say) {
+    const verified = probeOracleWorks(say);
     const accepted = [];
     for (const t of candidates) {
       try {
@@ -2025,7 +2044,7 @@ var Server = (() => {
           extraVariables: aiInventoryVariables([t])
         });
         accepted.push(t);
-        say(`  ${t}: accepted`);
+        say(`  ${t}: accepted${verified ? "" : " (unverified \u2014 see the warning above)"}`);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         if (isInvalidEnumValueError(msg)) {
@@ -2035,7 +2054,7 @@ var Server = (() => {
         throw e;
       }
     }
-    return accepted;
+    return { accepted, verified };
   }
   function resolveAiResourceTypes(log) {
     const say = log != null ? log : () => void 0;
@@ -2079,13 +2098,17 @@ var Server = (() => {
       chosen = picked;
     } else {
       say("Introspection unavailable \u2014 probing candidate types one by one:");
-      const accepted = probeCandidateTypes(AI_RESOURCE_TYPE_CANDIDATES, say);
+      const { accepted, verified } = probeCandidateTypes(AI_RESOURCE_TYPE_CANDIDATES, say);
       if (!accepted.length) {
         throw new WizQueryError(
           "None of the candidate AI resource types (" + AI_RESOURCE_TYPE_CANDIDATES.join(", ") + ") exist in this tenant's CloudResourceTypeFilter enum, and introspection is unavailable. Find the tenant's AI type names (Wiz docs \u2192 GraphQL schema, or the Wiz UI's inventory filter) and set the WIZ_AI_RESOURCE_TYPES Script Property."
         );
       }
-      chosen = { types: accepted, source: "probe", aiLooking: [] };
+      chosen = {
+        types: accepted,
+        source: verified ? "probe" : "probe (unverified)",
+        aiLooking: []
+      };
     }
     say(`Inventory will query types (${chosen.source}): ${chosen.types.join(", ")}.`);
     try {
@@ -6379,7 +6402,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "e439a680b38f" : "dev";
+  var BUILD_ID = true ? "7af9e1136c63" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
