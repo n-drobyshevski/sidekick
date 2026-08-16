@@ -16,9 +16,13 @@
 }
 .gq-rows { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .gq-row {
+  position: relative;
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
   border-radius: var(--radius-md);
   padding: 2px 4px 2px 0;
+  /* Set per row by the bar. The indent is a variable rather than a flat padding so the run
+     bracket below can be drawn AT the row's own indent instead of at the container's edge. */
+  padding-inline-start: var(--gq-indent, 0);
 }
 /* One tab stop for the tree; arrows move within it. The ring is the base recipe's, never
    overridden — a roving-tabindex widget is exactly where a missing focus ring strands
@@ -39,11 +43,42 @@
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
-/* Negation is a word, not a colour: "NOT" spelled out beside the relationship it inverts. */
+/* The keyword, where it is a CONTROL: the row's join and its assertion, cycled in place.
+   A modifier, never a change to `.gq-kw` itself — graph.js reuses that class for the static
+   "View" label on the bar below, which is a label and must stay one. Resets off the 36px
+   bordered global button recipe the way .gq-iconbtn and .gq-term do. */
+.gq-kw--btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  min-height: 22px; border: 1px solid transparent; box-shadow: none;
+  /* "AND THAT NOT" is the widest state; sizing to it stops the row reflowing mid-cycle. */
+  min-width: 92px;
+  cursor: pointer;
+}
+.gq-kw--btn:hover { background: var(--wash-hover); border-color: var(--hairline); color: var(--ink); }
+/* Never overridden. With no caret, this is the only thing that says the pill can be reached. */
+.gq-kw--btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Negation is a word, not a colour: "NOT" spelled out, inside the control that sets it. */
 .gq-not {
   font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
   color: var(--sev-high-text);
 }
+
+/* A RUN — conditions that are alternatives to one another — bracketed down its leading edge.
+   Without it `THAT a / OR THAT b / AND THAT c` could be read as `a OR (b AND c)` instead of the
+   `(a OR b) AND c` it is. The rule is drawn on the rows themselves rather than round a wrapper
+   because the row index and `list.children` index have to stay 1:1 for the arrow keys. */
+.gq-row.is-run::before {
+  content: ""; position: absolute;
+  left: calc(var(--gq-indent, 0px) - 7px);
+  top: 0; bottom: 0; width: 2px;
+  /* A neutral, deliberately. Every other colour in this bar means something — the five category
+     tints, the severity ink on NOT — and a run is not one of those things. The bracket carries
+     its meaning by being a shape next to rows that already say OR in words. */
+  background: color-mix(in srgb, var(--text-3) 45%, transparent);
+}
+.gq-row.is-run-start::before { top: 3px; border-start-start-radius: 2px; border-start-end-radius: 2px; }
+.gq-row.is-run-end::before { bottom: 3px; border-end-start-radius: 2px; border-end-end-radius: 2px; }
 
 /* THE TERM: the row's one editable thing, and the only control that opens the palette to change
    it. On FIND that is an entity; on THAT it is a relationship AND its entity, in one pill,

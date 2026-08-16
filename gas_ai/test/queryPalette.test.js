@@ -81,16 +81,6 @@ describe("paletteEntries", () => {
     expect(any.every((e) => e.pick.target === "ANY")).toBe(true);
   });
 
-  it("seeds a boolean block with real relationships, never an empty one", () => {
-    const or = entries("AI_AGENT").find((e) => e.id === "op-or");
-    expect(or.pick.op).toBe("or");
-    expect(or.pick.steps).toHaveLength(2);
-    expect(or.pick.steps.map((s) => s.edge)).toEqual(["RUNS_AS", "USES_MODEL"]);
-    // This builder has no empty-branch row, so an OR of nothing would be unfinishable.
-    const thin = entries("LONE_KIND").find((e) => e.id === "op-or");
-    expect(thin.pick.steps).toEqual([{ edge: "ANY", hops: 1, node: { kind: "ANY" } }]);
-  });
-
   it("offers the two step modifiers only where there is a step to modify", () => {
     const onRoot = entries("AI_AGENT", ROOT_ROW).map((e) => e.id);
     // FIND is a starting point, not a relationship: neither flag means anything on it.
@@ -119,6 +109,35 @@ describe("paletteEntries", () => {
     expect(onGroup.map((e) => e.id)).not.toContain("op-negate");
     // Optional DOES apply to a group — it is the reason to group a set rather than each member.
     expect(onGroup.find((e) => e.id === "op-optional").sub).toContain("keep the row");
+  });
+
+  it("offers NOT only where the domain would accept it", () => {
+    // `validateQuery` refuses a negated step that carries further steps ("nothing to walk from")
+    // and one that is also optional. This used to offer NOT on any relationship at all, so
+    // negating a row with a hop under it built a query the server threw on — a load failure for
+    // something the builder had just offered.
+    const withHop = { ...STEP_ROW, hasSteps: true };
+    expect(entries("SERVICE_ACCOUNT", withHop).map((e) => e.id)).not.toContain("op-negate");
+    const opt = { ...STEP_ROW, optional: true };
+    expect(entries("SERVICE_ACCOUNT", opt).map((e) => e.id)).not.toContain("op-negate");
+    // Taking it back OFF stays reachable, or a row negated by an older link would be stuck.
+    const stuck = { ...STEP_ROW, negate: true, hasSteps: true };
+    expect(entries("SERVICE_ACCOUNT", stuck).find((e) => e.id === "op-negate").pick)
+      .toEqual({ type: "flag", flag: "negate", value: false });
+  });
+
+  it("no longer offers a boolean block — the row's keyword owns that now", () => {
+    // "Either of — OR" appended a group seeded with two BRAND-NEW relationships, which is not
+    // what anyone wants when they want an OR: they want two conditions already on screen to
+    // become alternatives. The keyword pill does that, on the row it describes.
+    for (const mode of ["add", "replace", "entity"]) {
+      const ids = inMode(mode, "AI_AGENT", STEP_ROW).map((e) => e.id);
+      expect(ids, mode).not.toContain("op-or");
+      expect(ids, mode).not.toContain("op-and");
+    }
+    // `stepForPick` keeps its group branch regardless: a block from an older shared link still
+    // has to render, and a hand-edited one still has to parse.
+    expect(stepForPick({ type: "group", op: "or", steps: [] })).toEqual({ op: "or", steps: [] });
   });
 });
 
@@ -245,7 +264,9 @@ describe("the rail", () => {
   it("carries only categories that have something under them", () => {
     const rail = paletteRail(entries("AI_AGENT"));
     const keys = rail.map((t) => t.key);
-    expect(keys.slice(0, 2)).toEqual(["popular", "operators"]);
+    // No Operators tab on the ROOT: the blocks are gone and the two step modifiers need a step.
+    expect(keys.slice(0, 2)).toEqual(["popular", "properties"]);
+    expect(paletteRail(entries("AI_AGENT", STEP_ROW)).map((t) => t.key)).toContain("operators");
     // Five categories exist; a tab promising relationships this kind does not have would be
     // theatre, so only the ones with entries appear.
     expect(keys).toContain("cat-asset");

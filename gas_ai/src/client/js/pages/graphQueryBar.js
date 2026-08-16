@@ -33,14 +33,19 @@
 import { el, uiIcon } from "../ui.js";
 import { categoryOf, edgeLabel, kindIconSvg, kindLabel } from "../icons.js";
 import {
+  MAX_DEPTH,
   addStep,
+  canNegate,
+  depthOf,
   isGroup,
   nodeAt,
+  pathAfterRegroup,
   pathAfterRemoval,
   queryRows,
   remapWhere,
   removeStep,
   replaceStep,
+  setConjunction,
   setEdge,
   setHidden,
   setKind,
@@ -346,6 +351,117 @@ export function queryBar(opts) {
     }, ...parts);
   }
 
+  // ------------------------------------------------------------------- the keyword
+
+  /**
+   * The states the keyword pill walks, for a row that has a condition above it.
+   *
+   * TWO AXES, ONE LOOP: how this condition joins the one above it, and whether it is asserted
+   * absent. Bare `THAT` is not among them, because a second condition is ALREADY ANDed — the
+   * domain's `and` group cross-products exactly the way a node's own sibling loop does, so
+   * `THAT` and `AND THAT` would be the same query written twice, and one whole click of the loop
+   * would appear to do nothing.
+   */
+  const JOINED_STATES = [
+    { conj: "and", negate: false },
+    { conj: "and", negate: true },
+    { conj: "or", negate: false },
+    { conj: "or", negate: true },
+  ];
+  /** A row with nothing above it at its level joins nothing; only the assertion is left. */
+  const FIRST_STATES = [{ negate: false }, { negate: true }];
+
+  /** `THAT` / `AND THAT` / `OR THAT` — the row's join, read as the grammar it is. */
+  function keywordOf(row) {
+    if (!row.conj) return row.keyword;
+    return (row.conj === "or" ? "OR " : "AND ") + row.keyword;
+  }
+
+  /**
+   * The states this row may actually take, in loop order.
+   *
+   * Two are skipped rather than offered and then rejected. NOT is dropped where the domain would
+   * refuse it — a negated step binds nothing, so it can carry no further steps and cannot also be
+   * optional. And OR is dropped where the wrap it needs would push the tree past the depth the
+   * server accepts; a group costs a level, and a long enough chain has none to spare.
+   */
+  function statesFor(query, row) {
+    const all = row.canJoin ? JOINED_STATES : FIRST_STATES;
+    return all.filter((s) => {
+      if (s.negate && !canNegate(row)) return false;
+      if (s.conj === "or" && row.conj !== "or"
+        && depthOf(setConjunction(query, row.path, "or")) > MAX_DEPTH) return false;
+      return true;
+    });
+  }
+
+  /** Why a state is missing, for the pill's tooltip — an absence with no reason is a bug report. */
+  function cycleHint(query, row, states) {
+    const full = row.canJoin ? JOINED_STATES : FIRST_STATES;
+    if (states.length === full.length) return null;
+    if (!canNegate(row)) {
+      return row.optional
+        ? "NOT is unavailable: this step is optional, and a step cannot be both."
+        : "NOT is unavailable: something hangs off this entity, and a negated step has nothing "
+          + "to walk from.";
+    }
+    return "OR is unavailable: grouping these would nest the query deeper than "
+      + MAX_DEPTH + " levels.";
+  }
+
+  /**
+   * The keyword, as a control where it is one.
+   *
+   * FIND keeps a plain span: there is nothing above it to join and a starting point cannot be
+   * asserted absent, so a button there would be a control with one state. A block's header keeps
+   * one too — its own row already says OR or AND, and the pill is about a row's join, not a
+   * block's contents. That leaves the pill interactive exactly where it means something, which
+   * is the only affordance a caret-less control has.
+   */
+  function keywordControl(query, row) {
+    const states = row.group || !row.path.length ? [] : statesFor(query, row);
+    if (states.length < 2) return el("span", { class: "gq-kw" }, keywordOf(row));
+    const hint = cycleHint(query, row, states);
+    return el("button", {
+      type: "button",
+      class: "gq-kw gq-kw--btn",
+      // The name states what the row says NOW and what pressing does. The row itself takes focus
+      // after the edit and its `aria-label` restates the whole condition, so the new reading is
+      // announced without a live region.
+      "aria-label": keywordOf(row) + (row.negate ? " NOT" : "") + " — change how this condition joins",
+      title: (hint ? hint + "\n" : "") + "Cycle: "
+        + states.map((s) => (s.conj ? s.conj.toUpperCase() + " " : "") + "THAT"
+          + (s.negate ? " NOT" : "")).join(" → "),
+      onclick: () => cycleRow(query, row),
+    },
+      keywordOf(row),
+      // Negation is a word, not a colour, and it belongs INSIDE the control that sets it — a red
+      // NOT sitting next to the pill would be state the reader cannot reach from the thing
+      // showing it.
+      row.negate ? el("span", { class: "gq-not" }, "NOT") : null);
+  }
+
+  /** Advance one place around the loop and write both halves of the new state. */
+  function cycleRow(query, row) {
+    const states = statesFor(query, row);
+    if (states.length < 2) return;
+    const at = states.findIndex((s) => !!s.negate === row.negate
+      && (row.canJoin ? s.conj === row.conj : true));
+    const next = states[(at + 1) % states.length];
+    let tree = query;
+    let movePath;
+    if (row.canJoin && next.conj !== row.conj) {
+      tree = setConjunction(tree, row.path, next.conj);
+      // The wrap or the dissolve moved this row's own path, so the negate patch below has to be
+      // written at the path it moved TO, and the filters carried across with it.
+      movePath = pathAfterRegroup(query, tree);
+    }
+    const nowAt = movePath ? movePath(row.path.join(".")) : row.path.join(".");
+    const path = nowAt ? nowAt.split(".").map(Number) : row.path;
+    if (next.negate !== row.negate) tree = setEdge(tree, path, { negate: next.negate });
+    commit(tree, pathKey(path), { movePath });
+  }
+
   function iconButton(name, label, onClick, pressed) {
     const attrs = {
       class: "gq-iconbtn",
@@ -373,19 +489,28 @@ export function queryBar(opts) {
       // and the relationships a step can offer come from the node the step hangs off, not from
       // the punctuation in between.
       const parentKind = enclosingKind(query, row.path);
+      // Rows of one RUN are consecutive, so the bracket is drawn by marking its ends — no wrapper
+      // element, because the row index and `list.children` index must stay 1:1 for the arrow keys
+      // and the post-edit focus restore.
+      const runStart = row.runOf !== null && (i === 0 || rows[i - 1].runOf !== row.runOf);
+      const runEnd = row.runOf !== null && (i === rows.length - 1 || rows[i + 1].runOf !== row.runOf);
       const line = el("div", {
         class: "gq-row" + (row.hidden ? " is-hidden" : "") + (row.negate ? " is-negated" : "")
-          + (row.group ? " is-group" : ""),
+          + (row.group ? " is-group" : "")
+          + (row.runOf !== null ? " is-run" : "")
+          + (runStart ? " is-run-start" : "") + (runEnd ? " is-run-end" : ""),
         role: "treeitem",
         "aria-level": String(row.level + 1),
         "aria-label": rowLabel(row),
         tabindex: rowKey(row) === focusPath || (!focusPath && i === 0) ? "0" : "-1",
-        style: row.level ? "padding-inline-start:" + (row.level * 20) + "px" : null,
+        // Driven by a custom property rather than the padding directly, so the run bracket can
+        // be drawn at the row's own indent instead of at the container's edge.
+        style: "--gq-indent:" + (row.level * 20) + "px",
         onkeydown: (e) => onRowKey(e, rows, i, row, query),
         onfocus: () => { focusPath = rowKey(row); },
       });
 
-      line.append(el("span", { class: "gq-kw" }, row.keyword));
+      line.append(keywordControl(query, row));
 
       // A boolean block: the keyword IS the control, plus the branch count and a remove. The
       // palette builds these (and offers to add branches); this renders whatever the query
@@ -404,10 +529,6 @@ export function queryBar(opts) {
         list.append(line);
         return;
       }
-
-      // NOT is a word, outside the pill: it is the reader's assertion about the relationship,
-      // not part of which relationship this is, and the pill's palette does not offer it.
-      if (row.negate) line.append(el("span", { class: "gq-not" }, "NOT"));
 
       // A THAT row's relationships come from the node the step hangs OFF, not from its target —
       // "what can this hop be" is a question about where the hop starts. The FIND row has no
@@ -472,7 +593,14 @@ export function queryBar(opts) {
         + (row.branches === 1 ? " branch" : " branches");
     }
     if (!row.path.length) return "Find " + kindLabel(row.kind);
-    return "That " + describeEdge(row) + " " + kindLabel(row.kind)
+    // The join leads, because it is the first thing the row now says and the thing the keyword
+    // pill just changed — the row takes focus after that edit, so this string IS the readback.
+    const join = row.conj === "or" ? "Or that " : row.conj === "and" ? "And that " : "That ";
+    // The negation is spoken exactly where the row shows it, as the same word. EDGE_LABELS are
+    // finite verb phrases, so no auxiliary can be prefixed grammatically — "does not has issue"
+    // was the old attempt. Mirroring the visible "AND THAT NOT" instead is both readable and the
+    // thing WCAG asks for: the name a control is called by contains the words on it.
+    return join + (row.negate ? "not " : "") + describeEdge(row) + " " + kindLabel(row.kind)
       + (row.hidden ? ", columns hidden" : "");
   }
 
@@ -485,14 +613,17 @@ export function queryBar(opts) {
    * The palette's `describeRelation` glosses the same relationships for its own rows; the two
    * agree on the named edges by both going through EDGE_LABELS, which is where that vocabulary
    * belongs.
+   *
+   * NEGATION IS NOT IN HERE. EDGE_LABELS are finite verb phrases — "has issue", "runs as" — and
+   * prefixing one produced "does not has issue", which was ungrammatical before the keyword pill
+   * existed and is redundant now that the pill says NOT in its own word beside it.
    */
   function describeEdge(row) {
     if (row.edge === "ANY") {
       const hops = row.hops || 1;
       return "is related to" + (hops > 1 ? ", within " + hops + " hops" : "");
     }
-    const base = edgeLabel(row.edge);
-    return (row.negate ? "does not " : "") + base + (row.reverse ? ", incoming" : "");
+    return edgeLabel(row.edge) + (row.reverse ? ", incoming" : "");
   }
 
   /** Arrow keys walk the rows; Enter opens the entity picker; Delete removes the row. */

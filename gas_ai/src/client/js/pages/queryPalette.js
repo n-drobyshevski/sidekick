@@ -40,7 +40,7 @@ import {
 } from "../icons.js";
 import { facetGroup } from "../filters.js";
 import { findEntry } from "../helpContent.js";
-import { serializeQuery, serializeStep } from "./graphQuery.js";
+import { canNegate, serializeQuery, serializeStep } from "./graphQuery.js";
 
 /** Below this the popover is unusable at three panes wide; it becomes a modal sheet instead. */
 const NARROW_PALETTE = "(max-width: 800px)";
@@ -341,61 +341,19 @@ export function paletteEntries(ctx) {
   }
 
   // ------------------------------------------------------------------ operators
-  // The `+`'s alone. A term pill answers one question — what relationship is this — and the
-  // whole point of routing it here was to stop one control quietly doing another's job. NOT,
-  // Optional and the two blocks are one button to the right, where the header's `?` already
-  // says they are.
+  // The `+`'s alone. A term pill answers one question — what relationship is this — and the whole
+  // point of routing it here was to stop one control quietly doing another's job.
   if (mode !== "add") return out;
 
-  // A block is pre-filled with real relationships rather than opened empty: this builder has no
-  // empty-branch row to fill in afterwards, and an OR of nothing is a query that cannot run.
-  const branchSteps = steps.slice(0, 2).map((e) => stepForPick({
-    type: "relation", edge: e.edge, reverse: e.reverse, hops: 1, target: e.kind,
-  }));
-  const seeded = branchSteps.length
-    ? branchSteps
-    : [stepForPick({ type: "relation", edge: "ANY", reverse: false, hops: 1, target: "ANY" })];
-
-  out.push({
-    id: "op-or",
-    section: "operators",
-    category: null,
-    glyph: "branch",
-    label: "Either of — OR",
-    sub: "a match on any one branch is a match",
-    count: null,
-    popular: true,
-    detail: {
-      title: "OR block",
-      type: "Operator",
-      blurb: "Branches that are ALTERNATIVES. A path matching any one of them is kept, and the "
-        + "columns belonging to the branches it did not match read as blank — so a row still "
-        + "says which way it matched. The table rules between them and says OR, because "
-        + "presenting alternatives as consecutive column groups would read as though all of "
-        + "them happened.",
-      literal: literalFor({ type: "group", op: "or", steps: seeded }),
-    },
-    pick: { type: "group", op: "or", steps: seeded },
-  });
-  out.push({
-    id: "op-and",
-    section: "operators",
-    category: null,
-    glyph: "branch",
-    label: "All of — AND",
-    sub: "every branch must match",
-    count: null,
-    popular: false,
-    detail: {
-      title: "AND block",
-      type: "Operator",
-      blurb: "Branches that must ALL match, grouped so the whole group can be made optional at "
-        + "once. Steps hanging off one node already behave this way; a block is worth adding "
-        + "when you want to negate or optional the set rather than each member.",
-      literal: literalFor({ type: "group", op: "and", steps: seeded }),
-    },
-    pick: { type: "group", op: "and", steps: seeded },
-  });
+  // THE TWO BLOCK ENTRIES ARE GONE. "Either of — OR" appended a group seeded with two BRAND-NEW
+  // relationships, which is not the thing anyone wants when they want an OR: what they want is to
+  // make two conditions already on screen into alternatives. The keyword pill does that now, on
+  // the row it describes. Leaving these here would be the second editing model this bar just
+  // shed, in a different costume — and the AND block was the weaker half anyway, since an `and`
+  // group cross-products exactly the way plain sibling steps already do.
+  //
+  // `stepForPick` keeps its `group` branch: a block from an older shared link still has to render,
+  // and a hand-edited one still has to parse.
 
   // Negate and optional modify the step the `+` hangs off, so they are only on offer when there
   // IS one — the FIND root is a starting point, not a relationship, and neither flag means
@@ -404,7 +362,11 @@ export function paletteEntries(ctx) {
     const named = row.group
       ? (row.op === "or" ? "this OR block" : "this AND block")
       : "this relationship";
-    if (!row.group) {
+    // Offered only where the domain would accept it. `validateQuery` refuses a negated step that
+    // carries further steps and one that is also optional; this palette used to offer NOT on any
+    // relationship at all, so negating a row with a hop under it built a query the server threw
+    // on and the page reported as a load failure — for something the builder had just offered.
+    if (canNegate(row) || row.negate) {
       out.push({
         id: "op-negate",
         section: "operators",
