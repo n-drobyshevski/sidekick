@@ -148,3 +148,356 @@
 @media (prefers-reduced-motion: reduce) {
   .comp-row-chevron { transition: none; }
 }
+
+/* =============================================================== overview sub-view */
+/* The cross-framework Overview: one surface, five bands, divided by hairlines rather
+   than stacked as cards — the same document-not-boxes grammar as `.rule-section`
+   (aars.css:42) and `.help-section` (help.css:151). Band A is the existing hero +
+   `.comp-strip` + `.comp-bar` + `.comp-keys` + `.stat-list`; nothing new is defined for
+   it, and a fourth stat cell needs nothing either, since `.stat-list` is already an
+   auto-fit grid. Bands B, D and E follow below, each named for the letter it fills. */
+.comp-ov-section { padding: 22px 0 4px; border-top: 1px solid var(--hairline); }
+.comp-ov-section:first-child { border-top: none; padding-top: 0; }
+
+/* --------------------------------------------------------- band B: the framework rail */
+/* Small-multiple bullet rows sharing ONE 0-100 axis, so a reader compares frameworks by
+   reading down the percentage column rather than by eyeballing independently-scaled
+   bars — the same reasoning the AARS pillar rails give for sharing the model's axis
+   (aars.css:139-143). `--rail-cols` is set once on the container and read by both the
+   axis header and every row, so the two responsive steps below only have to change it
+   in one place instead of repeating the column list per breakpoint. */
+.comp-rail { display: flex; flex-direction: column; margin-top: 6px; --rail-cols: 210px 1fr 58px; }
+
+/* The tick header. It sits on `--rail-cols` too, but only its middle cell is styled —
+   `.comp-axis-ticks` is pinned to grid-column 2 explicitly (rather than left to fall
+   there by DOM order) so it always lines up over the lane column regardless of what,
+   if anything, the page puts in the header's outer two cells. */
+.comp-rail-axis {
+  display: grid; grid-template-columns: var(--rail-cols); gap: 18px;
+  margin-bottom: 2px;
+}
+.comp-axis-ticks {
+  grid-column: 2;
+  position: relative; height: 18px;
+  border-bottom: 1px solid var(--hairline);
+}
+/* Anchored by `data-pos` rather than by DOM order or nth-child, so the 0 and 100 labels
+   can sit flush with the axis ends (no half-clipped digit) while the interior three
+   center on their tick — a mix nth-child can't express without also encoding position
+   into selector order. */
+.comp-axis-tick {
+  position: absolute; bottom: 3px;
+  font-size: 10px; color: var(--text-3); font-variant-numeric: tabular-nums;
+}
+.comp-axis-tick[data-pos="0"] { left: 0; }
+.comp-axis-tick[data-pos="25"] { left: 25%; transform: translateX(-50%); }
+.comp-axis-tick[data-pos="50"] { left: 50%; transform: translateX(-50%); }
+.comp-axis-tick[data-pos="75"] { left: 75%; transform: translateX(-50%); }
+.comp-axis-tick[data-pos="100"] { left: 100%; transform: translateX(-100%); }
+
+/* One framework per row, and the row itself is the disclosure trigger (opens the
+   framework's register) rather than carrying a separate "Open" control at the far
+   edge — the failure `.help-map-item` names at help.css:159 for exactly this shape of
+   row. `position: relative` is not decorative: it makes this button the containing
+   block that gives `.comp-fw-mean` below a coordinate space to anchor into. */
+.comp-fw-row {
+  display: grid; grid-template-columns: var(--rail-cols); gap: 18px; align-items: center;
+  position: relative; width: 100%; min-height: 0; margin: 0; padding: 9px 0;
+  border: none; border-bottom: 1px solid var(--hairline); border-radius: 0;
+  background: none; box-shadow: none; font: inherit; color: inherit;
+  text-align: left; cursor: pointer;
+}
+.comp-fw-row:last-child { border-bottom: none; }
+.comp-fw-row:hover { background: rgba(0, 0, 0, 0.025); }
+/* Outset would clip against the next row's hairline one pixel away; inset is the
+   `.segmented > button` precedent (components.css:418) for a row button in a bordered
+   lane. */
+.comp-fw-row:focus-visible { outline-offset: -2px; z-index: 1; }
+
+/* A column, explicitly. The two children are spans, and a span's `margin-top` does nothing
+   while it is still inline — they sat on one line and the run overflowed the 210px track
+   into the lane, so the framework's name ran straight through its own bar. `min-width: 0`
+   is the other half: a grid track's items default to `min-width: auto`, which refuses to
+   shrink below the content's intrinsic width, and `text-overflow: ellipsis` below can
+   never fire on a box that is never allowed to be too small. */
+.comp-fw-head { display: flex; flex-direction: column; min-width: 0; }
+.comp-fw-name {
+  font-size: 13.5px; font-weight: 600; color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.comp-fw-meta {
+  margin-top: 2px; font-size: 11px; color: var(--text-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* The grid item, and the box the mean marker measures its percentage against — so it is
+   exactly as wide as the lane and nothing else. `min-width: 0` for the same reason the
+   name column needs it: an auto-minimum here would let a long empty-lane sentence widen
+   the track and push the axis out from under its own tick labels. */
+.comp-fw-lane-wrap { position: relative; min-width: 0; }
+.comp-fw-lane {
+  position: relative; height: 22px;
+  background: var(--track-bg); border-radius: 4px; overflow: hidden;
+}
+/* Neutral graphite, not a posture tint: fifty frameworks is fifty bars, and coloring
+   each by its own score is the wall-of-color PRODUCT.md rejects and components.css's
+   `.meter-fill` comment (components.css:116-117) already refuses for the same reason.
+   One accent line (the mean marker below) is the estate's one earned splash of color;
+   the bars themselves stay the record, not the verdict. Width is set inline per row. */
+.comp-fw-bar { position: absolute; inset: 0 auto 0 0; background: var(--graphite); }
+
+/* The honest-state lane: an unscored framework gets NO bar, not a bar at zero — a
+   sliver still reads as "very little" where the fact is "not measured", and those are
+   different claims. The hatch is `.sevbar-seg--empty`'s own 45deg recipe
+   (components.css:163-164) at a touch lower alpha for this taller lane, chosen because
+   it has to look like the OPPOSITE of a full bar — a texture that could never be
+   mistaken for a low value — never like a lane that merely reads low. Layout switches
+   to a flex row so the state's glyph and its reason in words both fit beside each
+   other, in the same lane a scored framework's bar would otherwise fill. */
+.comp-fw-lane--empty {
+  display: flex; align-items: center; gap: 6px; padding: 0 10px;
+  background: repeating-linear-gradient(
+    45deg, rgba(0, 0, 0, 0.055) 0 4px, transparent 4px 8px);
+  font-size: 11px; color: var(--text-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Reuses `.comp-key-glyph` (components.css glyph, already sized for this row height)
+   rather than minting a second glyph class, and tints it by the SAME four states
+   `.comp-bar-seg[data-state]` above already carries — so the strip at the top of the
+   page and a single row's empty lane never disagree about what a state's color is.
+   `noResources` takes the *-text swap `.comp-key` already uses (line 69): the plain
+   `--sev-info` fill is legible as a bar but not as small text. */
+.comp-fw-lane--empty[data-state="noResources"] .comp-key-glyph { color: var(--sev-info-text); }
+.comp-fw-lane--empty[data-state="noPolicies"] .comp-key-glyph { color: var(--warn); }
+.comp-fw-lane--empty[data-state="unknown"] .comp-key-glyph { color: var(--text-3); }
+
+/* The estate mean: a statistic ABOUT the rows, not a value belonging to any one of
+   them, so it draws as a rule crossing the axis rather than a second bar that could be
+   mistaken for a framework's own score. It shares the lane's grid-column (2) as an
+   independent grid item instead of living inside `.comp-fw-lane`, because an
+   absolutely-positioned descendant of the lane would be cut by the very
+   `overflow: hidden` that keeps the bar's corners rounded. An out-of-flow grid item
+   placed by `grid-column`/`grid-row` takes that cell as its containing block (the row
+   button above is the nearest positioned ancestor), so `left` still resolves against
+   the lane's own width and the marker still lands on the same 0-100 axis the ticks and
+   bars use — solving the clip without touching the lane's own overflow. */
+/* Sized and centred against the LANE, not against the grid area. The area is as tall as
+   the row's tallest cell — the name over its meta line, ~38px — while the lane is 22px
+   and `align-items: center` floats it in the middle of that. Anchoring the marker to the
+   area's own edges (top/bottom: -3px) therefore drew a rule most of a row high, standing
+   8px proud at each end instead of 3, and put the triangle cap level with the framework's
+   NAME rather than with the axis it marks. A fixed height centred with a negative margin
+   pins it to the lane's geometry, which is the thing the percentage actually refers to. */
+.comp-fw-mean {
+  position: absolute; top: 50%; margin-top: -14px; height: 28px; width: 2px;
+  background: var(--accent); z-index: 2; pointer-events: none;
+}
+.comp-fw-mean::after {
+  content: ""; position: absolute; top: -4px; left: 50%; transform: translateX(-50%);
+  width: 0; height: 0;
+  border-left: 3px solid transparent; border-right: 3px solid transparent;
+  border-top: 4px solid var(--accent);
+}
+
+.comp-fw-pct { font-size: 15px; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+.comp-fw-pct--dash { color: var(--text-3); font-weight: 400; }
+
+.comp-rail-key { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 11px; color: var(--text-3); }
+.comp-rail-key-swatch { display: inline-block; width: 14px; height: 2px; background: var(--accent); }
+
+@media (max-width: 1080px) {
+  .comp-rail { --rail-cols: 160px 1fr 52px; }
+}
+@media (max-width: 760px) {
+  /* The meta line is the cheaper thing to lose: the name and the score are the two
+     facts a narrow screen has to keep, and dropping the subtitle buys the lane back
+     the width a shrunken name column would otherwise take from it. The rail must never
+     force the page to scroll sideways, so the name column shrinks too rather than
+     holding 210px on a phone. */
+  .comp-rail { --rail-cols: 112px 1fr 42px; }
+  .comp-rail-axis, .comp-fw-row { gap: 10px; }
+  .comp-fw-meta { display: none; }
+}
+
+/* ------------------------------------------------- band D: framework membership dots */
+/* Which frameworks a single failing control raises, as filled/hollow dots rather than
+   framework-name chips: a control can belong to five-plus frameworks, and five chips
+   is a line-wrapping paragraph while five dots is a glance. Filled vs hollow is a
+   shape difference, not just a color one — `.comp-dots-n` beside it is the
+   belt-and-braces text count non-color readers and this app's own rule (DESIGN.md's
+   Two-Token / never-color-alone rule) both require. */
+/* Two elements, not one, and the split is an accessibility requirement rather than a
+   layout convenience: `.comp-dots-pic` is the `role="img"` whose aria-label names the
+   frameworks in and out, and the visible count has to sit OUTSIDE it. Inside, the label
+   replaces the element's whole subtree, so the "3 of 4" a sighted reader sees would be
+   swallowed and never announced — the redundant cue would exist visually and vanish for
+   exactly the reader it is there for. The outer gap separates picture from count; the
+   inner one separates the dots. */
+.comp-dots { display: inline-flex; align-items: center; gap: 7px; }
+.comp-dots-pic { display: inline-flex; align-items: center; gap: 5px; }
+.comp-dot { width: 9px; height: 9px; border-radius: 50%; box-sizing: border-box; }
+.comp-dot--on { background: var(--accent); }
+.comp-dot--off { background: none; border: 1.5px solid rgba(0, 0, 0, 0.22); }
+.comp-dots-n { font-size: 12px; color: var(--text-2); white-space: nowrap; }
+
+/* Auto-remediation chip: a small code-like mark (mono, like `.step-id` / `.prov-mono`)
+   rather than a status pill, because "this control fixes itself" is closer to a
+   capability flag than to a severity or an SLA verdict, and giving it the pill
+   vocabulary would make it compete with `.comp-bar-seg`'s actual states for the same
+   visual register. */
+.comp-auto {
+  display: inline-flex; align-items: center;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px; font-weight: 600;
+  color: var(--ok); background: rgba(21, 128, 61, 0.10);
+  border-radius: var(--radius-sm); padding: 1px 6px;
+}
+
+/* ------------------------------------------------------------------ band E: coverage */
+/* Equal cells divided by hairlines, exactly `.stat-list` / `.stat-row`'s recipe
+   (components.css:50-57) reused rather than re-invented, because this is the same
+   statement — a strip of facts belonging to one header — one section lower on the
+   page. The 620px collapse to a stacked, top-ruled list is the same breakpoint and the
+   same rule for the same reason: a border-left has nothing to sit against once the
+   cells stop being side by side. */
+.comp-cov {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+}
+.comp-cov-cell { padding: 0 18px; border-left: 1px solid var(--hairline); }
+.comp-cov-cell:first-child { border-left: none; }
+.comp-cov-list {
+  list-style: none; margin: 8px 0 0; padding: 0;
+  display: flex; flex-direction: column; gap: 5px;
+  font-size: 12.5px; color: var(--text-2);
+}
+.comp-cov-list li { display: flex; align-items: center; gap: 7px; }
+
+@media (max-width: 620px) {
+  .comp-cov-cell {
+    padding: 10px 0; border-left: none; border-top: 1px solid var(--hairline);
+  }
+  .comp-cov-cell:first-child { border-top: none; padding-top: 0; }
+}
+
+/* =================================================================== the .scope- family */
+/* Everything to do with scoping the 5Rs framework down to its AI-relevant rules — the
+   Settings card that edits the scope (pages/settings.js's fiveRsCard) and the marker on
+   this page's rail row (band B above) that tells a reader the framework's percentage is
+   NOT what the scope changed. A new family rather than growing `.comp-*`: `.comp-*` names
+   POSTURE — a framework's own scored/unscored state, which is Wiz's fact — and this is a
+   different fact this app layers on top, decided locally and never fed back into posture.
+   Reusing `.sev-*` for it was ruled out for the identical reason DESIGN.md gives for
+   keeping posture state out of that namespace: severity means exactly one thing, and
+   "in scope" is not it. */
+
+/* ----------------------------------------------------- band B companion: the rail marker */
+/* Sits beside the framework name in a rail row (railRow() in complianceOverview.js), only
+   for the 5Rs and only once some of its rules are scoped out. THE ENTIRE REASON THIS
+   EXISTS: Wiz's posture math is opaque and this app cannot recompute it — a 5Rs category
+   can report 194,309/71 checks against an 85% posture, and that 85 is not a ratio of any
+   pair of numbers held anywhere in this codebase — so scoping rules in or out of the AI
+   register changes what band C/D/E and the register below count, and never this
+   percentage. Without this marker, a reader who scopes a rule out and watches the register
+   shrink while the number up top holds steady would read that as staleness, not honesty.
+   Glyph plus words, matching every other state cue on this page, so the fact never rides
+   on colour alone — and it is dropped at the same 760px step `.comp-fw-meta` already gives
+   up its line at, for the same reason: the name and the score are the two facts a narrow
+   rail keeps, everything else is the first to go. */
+.scope-rail-note {
+  display: flex; align-items: center; gap: 5px;
+  margin-top: 2px; font-size: 10.5px; color: var(--text-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.scope-rail-glyph { font-size: 9px; color: var(--warn); }
+
+@media (max-width: 760px) {
+  .scope-rail-note { display: none; }
+}
+
+/* ------------------------------------------------------- the Settings scope card itself */
+/* One block per subcategory, each holding its own rules — the grouping the settings card
+   asks for so a reader can act on "this subcategory" rather than scrolling a flat list of
+   however many policies the 5Rs has. Hairlines between groups, no card-in-card nesting:
+   this already lives inside one `.card`, and a second surface per group would be the
+   Whisper-Or-Lift violation DESIGN.md warns against. */
+.scope-groups { display: flex; flex-direction: column; }
+.scope-group { padding: 14px 0; border-top: 1px solid var(--hairline); }
+.scope-group:first-child { padding-top: 0; border-top: none; }
+.scope-group-head {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 14px;
+  margin-bottom: 6px;
+}
+.scope-group-title { flex: 1 1 200px; font-weight: 600; font-size: 13px; color: var(--ink); }
+.scope-group-count { font-size: 12px; color: var(--text-3); white-space: nowrap; }
+/* A command, not a state pill: its label already says what pressing it does ("Select all" /
+   "Deselect all"), so it does not need `aria-pressed` on top of that to be understood —
+   unlike `.scope-toggle` below, which IS a persistent per-rule state and carries one. */
+.scope-bulk {
+  flex: none; font-size: 12px; padding: 3px 10px;
+  border: 1px solid var(--hairline); border-radius: var(--radius-pill);
+  background: var(--page); color: var(--text-2);
+}
+.scope-bulk:hover { border-color: var(--accent); }
+
+.scope-rows { display: flex; flex-direction: column; }
+.scope-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+  padding: 8px 0; border-bottom: 1px solid var(--hairline);
+  transition: opacity 120ms ease-out;
+}
+.scope-row:last-child { border-bottom: none; }
+/* Dimmed, not removed: a rule scoped out stays in its group (pulling it from the list
+   would mean re-deriving which subcategory it lived under just to put it back), it only
+   reads as background information until toggled in again. Never colour alone for the
+   fact itself — `.scope-toggle`'s own "Selected" / "Not selected" label already carries
+   it in words; this is reinforcement, not the only cue. */
+.scope-row[data-selected="false"] { opacity: 0.58; }
+.scope-row-main { flex: 1 1 220px; min-width: 0; }
+.scope-row-name { font-size: 13px; color: var(--ink); }
+.scope-row-meta { margin-top: 2px; }
+.scope-reason { flex: 0 1 auto; font-size: 12px; color: var(--text-3); text-align: right; }
+/* Pinned means a person decided this, not that the estate did — a different kind of fact
+   from crossMapped/linkedFindings/noAiLink, and it earns its own tint so a reader scanning
+   the column can tell "derived" from "somebody's call" without reading every word. */
+.scope-reason--pinned { color: var(--accent); font-weight: 600; }
+
+/* The row's control. A drawn checkbox-shaped glyph rather than an actual `<input
+   type=checkbox>` — filters.js's facet rows (sheet.css's `.facet-box`) set this precedent
+   already: the stylesheet defines no checkbox vocabulary, and every binary control in this
+   app is a pressed button, so a lone real checkbox here would read as a different kind of
+   control planted in the middle of a page that has none. */
+.scope-toggle {
+  display: inline-flex; align-items: center; gap: 7px; flex: none;
+  padding: 4px 10px 4px 6px; font-size: 12.5px; font-weight: 500;
+  border: 1px solid var(--hairline); border-radius: var(--radius-pill);
+  background: var(--page); color: var(--text-2);
+}
+.scope-toggle:hover { border-color: var(--accent); }
+.scope-box {
+  width: 14px; height: 14px; border: 1px solid var(--hairline); border-radius: 4px;
+  background: var(--page);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 9px; line-height: 1; color: transparent;
+}
+.scope-box::before { content: "✓"; }
+.scope-toggle[aria-pressed="true"] {
+  border-color: var(--accent); color: var(--ink); font-weight: 600;
+}
+.scope-toggle[aria-pressed="true"] .scope-box {
+  background: var(--accent); border-color: var(--accent); color: #ffffff;
+}
+
+/* The Save/Revert/Reset bar: scans.css's `.vars-bar`/`.vars-state` recipe, copied rather
+   than shared across a scans.css → compliance.css import neither file otherwise needs,
+   because scanSheet.js's varsEditor is exactly the vocabulary this card borrows (see the
+   comment above fiveRsCard() in pages/settings.js) and the two bars should keep reading
+   as the same control if either is ever touched again. */
+.scope-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--hairline);
+}
+.scope-state { margin-right: auto; }
+
+@media (prefers-reduced-motion: reduce) {
+  .scope-row { transition: none; }
+}

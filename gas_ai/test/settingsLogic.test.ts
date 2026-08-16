@@ -7,14 +7,17 @@ import {
   DEFAULT_FRAMEWORK_IDS,
   clampDepth,
   clampMaxNodes,
+  cleanFiveRsPins,
   getAarsRule,
   getAutoExpand,
   getDefaultDepth,
+  getFiveRsPins,
   getMaxNodes,
   getScoredRuleVersion,
   getSelectedFrameworks,
   resolveDefaultFrameworks,
   withAarsRule,
+  withFiveRsPins,
   withSelectedFrameworks,
   withAutoExpand,
   withDefaultDepth,
@@ -234,5 +237,59 @@ describe("framework selection", () => {
   it("keeps the id defaults when a catalogue holds nothing it recognises", () => {
     const catalogue = [{ id: "wf-1", name: "PCI DSS v4.0" }];
     expect(resolveDefaultFrameworks(catalogue)).toEqual(DEFAULT_FRAMEWORK_IDS);
+  });
+});
+
+describe("five rs pins", () => {
+  it("defaults to no overrides when unset — the non-empty default lives in scopeFiveRs, not here", () => {
+    expect(getFiveRsPins({})).toEqual({ in: [], out: [] });
+  });
+
+  it("an explicit set of pins wins", () => {
+    const s = withFiveRsPins({}, { in: ["policy-a"], out: ["policy-b"] });
+    expect(getFiveRsPins(s)).toEqual({ in: ["policy-a"], out: ["policy-b"] });
+  });
+
+  it("repairs junk instead of throwing, reading it as no overrides", () => {
+    for (const junk of [null, undefined, "nonsense", 7, [], { in: "not-a-list", out: 3 }]) {
+      expect(getFiveRsPins({ five_rs_policy_pins: junk })).toEqual({ in: [], out: [] });
+    }
+  });
+
+  it("leaves the other settings alone", () => {
+    const s = withFiveRsPins({ default_depth: 3, other: "keep" }, { in: ["policy-a"], out: [] }) as Rec;
+    expect(s["default_depth"]).toBe(3);
+    expect(s["other"]).toBe("keep");
+  });
+
+  it("trims and dedupes what it stores, and out wins a policyId pinned both ways", () => {
+    const s = withFiveRsPins({}, {
+      in: [" policy-a ", "policy-a", "policy-b", ""],
+      out: ["policy-b", "policy-b"],
+    });
+    // policy-a: kept in `in`. policy-b: appears in both lists, so it survives only in `out`.
+    expect(getFiveRsPins(s)).toEqual({ in: ["policy-a"], out: ["policy-b"] });
+  });
+
+  it("cleanFiveRsPins drops ids the synced policy catalogue no longer knows", () => {
+    const clean = cleanFiveRsPins(
+      { in: ["policy-a", "policy-ghost"], out: ["policy-b", "policy-also-ghost"] },
+      ["policy-a", "policy-b"],
+    );
+    expect(clean).toEqual({ in: ["policy-a"], out: ["policy-b"] });
+  });
+
+  it("cleanFiveRsPins also resolves the both-lists contradiction, out winning", () => {
+    const clean = cleanFiveRsPins(
+      { in: ["policy-a"], out: ["policy-a"] },
+      ["policy-a"],
+    );
+    expect(clean).toEqual({ in: [], out: ["policy-a"] });
+  });
+
+  it("cleanFiveRsPins never throws on junk, degrading to no pins", () => {
+    for (const junk of [null, undefined, "nonsense", 7, [1, 2, 3]]) {
+      expect(cleanFiveRsPins(junk, ["policy-a"])).toEqual({ in: [], out: [] });
+    }
   });
 });

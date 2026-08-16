@@ -417,6 +417,12 @@
 }
 .segmented > button:focus-visible { outline-offset: -2px; z-index: 1; }
 
+/* Sub-view toolbar row: spaces a switcher (a `.segmented`, a select, a button cluster)
+   above a body of content. Used by the compliance and config pages' framework/section
+   switchers (pages/compliance.js, pages/config.js) — both reference this class already
+   but it matched no rule anywhere in styles/, so the switchers rendered unspaced. */
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 16px; }
+
 /* A column of placeholder lines (ui/feedback.js skeletonStack). Every loading stub had
    written this out as an inline flex-column style. */
 .skeleton-stack { display: flex; flex-direction: column; gap: 10px; }

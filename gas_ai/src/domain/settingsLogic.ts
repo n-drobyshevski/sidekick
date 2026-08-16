@@ -4,6 +4,7 @@
 
 import { DEFAULT_AARS_RULE, type AarsRule } from "./aars";
 import { cleanAarsRule } from "./aarsRule";
+import type { ScopePins } from "./complianceScope";
 import { cleanStepVars } from "./scanVars";
 import {
   DEPTH_DEFAULT,
@@ -310,4 +311,83 @@ export function withScanVars(settings: Rec, stepId: string, vars: unknown): Rec 
   if (clean) next[stepId] = clean;
   else delete next[stepId];
   return { ...settings, scan_vars: next };
+}
+
+// ------------------------------------------------------------------ 5Rs AI-scope pins
+
+function coercePinList(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  const out: string[] = [];
+  for (const raw of v) {
+    const s = String(raw ?? "").trim();
+    if (s && out.indexOf(s) === -1) out.push(s);
+  }
+  return out;
+}
+
+/**
+ * Reduce whatever is stored under `five_rs_policy_pins` to the {in, out} shape: arrays of
+ * trimmed, deduped ids, with `out` winning a contradiction.
+ *
+ * Shared by getFiveRsPins/withFiveRsPins (store-time, no synced catalogue in scope to
+ * validate ids against) and cleanFiveRsPins below (which additionally drops ids the
+ * catalogue no longer knows). Kept as one function so the "out wins a contradiction" rule
+ * has exactly one implementation — two independent copies of the same tie-break is exactly
+ * how they quietly drift apart.
+ */
+function coercePins(raw: unknown): ScopePins {
+  const rec = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Rec) : {};
+  const inList = coercePinList(rec["in"]);
+  const outList = coercePinList(rec["out"]);
+  const outSet = new Set(outList);
+  // A policyId pinned both in and out is not a third state — it is a contradiction, and
+  // `out` is the conservative resolution: erring toward removing a control from AI review
+  // is safer than erring toward keeping one in that the operator also asked to drop.
+  return { in: inList.filter((id) => !outSet.has(id)), out: outList };
+}
+
+/**
+ * Explicit operator overrides for which 5Rs policies are in AI scope, keyed by policyId.
+ * Store ONLY the decisions an operator actually made — never the resolved selection.
+ *
+ * scopeFiveRs (complianceScope.ts) re-derives the default every time from the estate's own
+ * hard facts (a cross-mapped policyId, an open gap finding on a synced AI asset), so a
+ * policy that starts or stops meeting that derivation as the estate changes keeps tracking
+ * it automatically — persisting the resolved list instead would freeze today's answer and
+ * silently stop following the sync, which is the exact failure DEFAULT_FRAMEWORK_IDS above
+ * exists to avoid for framework selection, one section up.
+ *
+ * No `Array.isArray` "never configured" sentinel here, unlike `selected_frameworks` right
+ * above it — and that asymmetry is deliberate, not an oversight a later edit should "fix"
+ * by adding one. `selected_frameworks` needs the sentinel because an empty stored array is
+ * genuinely ambiguous: it could mean "never configured, use the shipped defaults" or "the
+ * operator explicitly chose zero frameworks", and only a sentinel lets those two read
+ * apart. There is no equivalent ambiguity here: the non-empty default lives entirely in
+ * scopeFiveRs's derivation, never in this stored value, so an absent or empty pin list
+ * means exactly one thing — no overrides — whether the operator never opened the scope
+ * picker or opened it and pinned nothing. Both cases are the same state and behave
+ * identically, so there is nothing for a sentinel to distinguish.
+ */
+export function getFiveRsPins(settings: Rec): ScopePins {
+  return coercePins(settings["five_rs_policy_pins"]);
+}
+
+export function withFiveRsPins(settings: Rec, pins: unknown): Rec {
+  return { ...settings, five_rs_policy_pins: coercePins(pins) };
+}
+
+/**
+ * `coercePins` plus the containment rule `cleanStepVars` (scanVars.ts) established: an id
+ * absent from the synced policy catalogue is dropped rather than carried forward forever,
+ * junk is coerced rather than thrown on, and the result is deduped with `out` winning an
+ * in/out contradiction. Never throws — a hand-edited cell degrades to fewer pins, not to a
+ * broken settings load.
+ */
+export function cleanFiveRsPins(pins: unknown, knownPolicyIds: string[]): ScopePins {
+  const known = new Set(knownPolicyIds);
+  const base = coercePins(pins);
+  return {
+    in: base.in.filter((id) => known.has(id)),
+    out: base.out.filter((id) => known.has(id)),
+  };
 }

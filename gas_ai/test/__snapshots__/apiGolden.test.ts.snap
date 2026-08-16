@@ -664,6 +664,10 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
     "data": {
       "autoExpand": true,
       "defaultDepth": 2,
+      "fiveRsPins": {
+        "in": [],
+        "out": [],
+      },
       "hasCredentials": false,
       "maxNodes": 100,
       "maxNodesCeiling": 400,
@@ -3562,7 +3566,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       "frameworkPosture": {
         "averagePosture": 94,
         "failingPolicies": 5,
-        "failingSubcategories": 6,
+        "failingSubcategories": 9,
         "frameworks": 4,
         "scoredFrameworks": 4,
       },
@@ -12761,6 +12765,10 @@ exports[`read endpoints > getSettings answers the same shape 1`] = `
   "data": {
     "autoExpand": true,
     "defaultDepth": 2,
+    "fiveRsPins": {
+      "in": [],
+      "out": [],
+    },
     "hasCredentials": false,
     "maxNodes": 100,
     "maxNodesCeiling": 400,
@@ -17196,8 +17204,8 @@ exports[`the persisted ledger > writes the tabs the schema declares 1`] = `
   "ai_data_findings": 6,
   "ai_edges": 85,
   "ai_findings": 7,
-  "ai_framework_policies": 12,
-  "ai_framework_posture": 22,
+  "ai_framework_policies": 17,
+  "ai_framework_posture": 28,
   "ai_frameworks": 5,
   "ai_identity_findings": 3,
   "ai_issues": 32,

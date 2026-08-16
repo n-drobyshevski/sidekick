@@ -4,7 +4,9 @@
 import { call } from "../api.js";
 import { bootstrap } from "../store.js";
 import { clientBuild, describeBuild } from "../buildInfo.js";
-import { clear, el, emptyState, segmented, skeleton, statusPill, toast } from "../ui.js";
+import {
+  clear, el, emptyState, segmented, sevBadge, skeleton, statusPill, toast,
+} from "../ui.js";
 
 export async function renderSettings(main, _params, ctx) {
   main.append(
@@ -27,17 +29,41 @@ export async function renderSettings(main, _params, ctx) {
 
   let settings;
   let boot = null;
+  // Closed over by fiveRsCard() below, the same way `boot` is closed over by buildCard().
+  let fiveRsState = { scope: null, error: "" };
   try {
     boot = await bootstrap();
   } catch (e) {
     boot = null; // the build card degrades to client-only rather than failing the page
   }
-  try {
-    settings = await call("api_getSettings", {});
-  } catch (e) {
-    host.append(emptyState("Couldn't load settings.", String(e.message || e)));
+
+  // The 5Rs policy list belongs to api_getCompliance, not api_getSettings — computing it
+  // needs posture, findings and assets, which api_getSettings has no business loading. So
+  // the two RPCs are fetched side by side (scans.js:80-106's idiom) and degraded on their
+  // own terms: losing settings fails the whole page, since nothing below can render
+  // without it, but losing compliance only costs the 5Rs card its rule list, which says so
+  // in a line of its own instead of taking the rest of Settings down with it.
+  const settled = await Promise.allSettled([
+    call("api_getSettings", {}),
+    call("api_getCompliance", {}),
+  ]);
+
+  if (settled[0].status === "rejected") {
+    const e = settled[0].reason;
+    host.append(emptyState("Couldn't load settings.", String((e && e.message) || e)));
     return;
   }
+  settings = settled[0].value;
+
+  if (settled[1].status === "fulfilled") {
+    // A stale payload cached from before fiveRsScope shipped carries no such key at all —
+    // that degrades to "no 5Rs framework collected" below, not to an error.
+    fiveRsState = { scope: (settled[1].value && settled[1].value.fiveRsScope) || null, error: "" };
+  } else {
+    const e = settled[1].reason;
+    fiveRsState = { scope: null, error: String((e && e.message) || e) };
+  }
+
   paint(settings);
 
   function paint(s) {
@@ -154,7 +180,255 @@ export async function renderSettings(main, _params, ctx) {
       ),
     );
 
+    host.append(fiveRsCard(s));
+
     host.append(buildCard());
+  }
+
+  /**
+   * The 5Rs — Wiz for Data Security scope card: which of that framework's policies count
+   * as AI-relevant, edited here as a batch of pins, not saved on change like the toggle
+   * above — see this file's own rule at the top: a second Save button on one page reads as
+   * ambiguous scope, and a control in this card driven by a button in another one is worse.
+   *
+   * The dirty/Save/Revert vocabulary below is scanSheet.js's varsEditor, copied on purpose:
+   * a stable `box` container whose `.draft` property is reassigned (never `box` itself, so
+   * every row/group control below keeps reading and writing the same live value instead of
+   * a snapshot), an "Unsaved" `pill warn`, and Save that stays enabled even though there is
+   * nothing here to invalidate — a disabled control cannot explain itself.
+   *
+   * THE CORE IDEA, which every row's toggle and the group bulk-toggle both funnel through:
+   * editing a rule changes the PIN, never the derived value directly. Turning a
+   * derived-out rule ON adds its id to `in`; turning a derived-in rule OFF adds it to
+   * `out`; and putting a rule back to whatever its own derivation already says removes it
+   * from both lists, rather than leaving a pin that merely restates the default. That keeps
+   * the stored decision exactly as large as the real overrides, and it is what lets the
+   * derivation keep tracking the estate afterwards: a rule pinned in because it once had AI
+   * findings falls back out of the pin set the instant someone returns it to "as derived",
+   * instead of staying stuck at whatever was true on the day someone touched it. A flat
+   * "here is every rule's chosen state" list could not do that — it would have to be pinned
+   * to KEEP tracking the estate, which is exactly backwards.
+   */
+  function fiveRsCard(s) {
+    const scope = fiveRsState.scope;
+    const scopeError = fiveRsState.error;
+
+    if (scopeError) {
+      return el("div", { class: "card", style: "margin-top:14px" },
+        el("h3", {}, "5Rs — Wiz for Data Security"),
+        el("p", { class: "small muted", style: "margin:10px 0 0" },
+          "Couldn't load the 5Rs rules. " + scopeError));
+    }
+    if (!scope || !scope.frameworkId) {
+      // Covers both a tenant with no 5Rs framework collected and the stale-payload case —
+      // the two are indistinguishable here and both get the same one-line card rather
+      // than an empty control with nothing to operate on.
+      return el("div", { class: "card", style: "margin-top:14px" },
+        el("h3", {}, "5Rs — Wiz for Data Security"),
+        el("p", { class: "small muted", style: "margin:10px 0 0" },
+          "No 5Rs framework is collected."));
+    }
+    if (!scope.policies || !scope.policies.length) {
+      return el("div", { class: "card", style: "margin-top:14px" },
+        el("h3", {}, "5Rs — Wiz for Data Security"),
+        el("p", { class: "small muted", style: "margin:10px 0 0" },
+          `${scope.frameworkName} has no policies mapped yet.`));
+    }
+
+    // Grouped by subcategory, in first-seen order — the payload does not promise the list
+    // arrives pre-grouped, only that every row carries its subcategory's id and title.
+    const groups = [];
+    const byKey = new Map();
+    for (const row of scope.policies) {
+      const key = row.categoryExternalId + " " + row.subcategoryExternalId;
+      let g = byKey.get(key);
+      if (!g) {
+        g = {
+          key,
+          subcategoryExternalId: row.subcategoryExternalId,
+          subcategoryTitle: row.subcategoryTitle,
+          rows: [],
+        };
+        byKey.set(key, g);
+        groups.push(g);
+      }
+      g.rows.push(row);
+    }
+    // The GROUPS sort by external id; the ROWS inside them do not. The two orders answer
+    // different questions and neither should borrow the other's. Rows arrive
+    // out-of-scope-first, which is what an operator reviewing a derivation wants to read
+    // — but letting the groups inherit that emits them in whatever sequence the first
+    // out-of-scope rule happened to fall in (4.1, 5.1, 3.1, 2.1 on the seeded estate),
+    // which reads as arbitrary and does not match the register on the Compliance page, so
+    // the same framework would have two different shapes in two places. Sorted on the
+    // composite key so the category orders before the subcategory within it.
+    groups.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+
+    const savedPins = s.fiveRsPins || { in: [], out: [] };
+    const saved = { in: [...(savedPins.in || [])], out: [...(savedPins.out || [])] };
+    // NOT a reassignable local — see the comment above fiveRsCard(). Every row and group
+    // control closes over `box` and reads/writes `box.draft`, so Revert and Reset only ever
+    // replace the property's value, never this container.
+    const box = { draft: { in: [...saved.in], out: [...saved.out] } };
+    let busy = false;
+
+    const normPins = (p) => JSON.stringify({ in: [...p.in].sort(), out: [...p.out].sort() });
+    const dirty = () => normPins(box.draft) !== normPins(saved);
+
+    /** What this rule would be with no pin at all — the value setDraft() diffs against. */
+    function derivedSelected(row) {
+      if (row.reason === "pinnedIn") return false;
+      if (row.reason === "pinnedOut") return true;
+      return row.selected;
+    }
+
+    function draftSelected(row) {
+      if (box.draft.in.indexOf(row.policyId) >= 0) return true;
+      if (box.draft.out.indexOf(row.policyId) >= 0) return false;
+      return derivedSelected(row);
+    }
+
+    /** The diff-against-derived write described in the comment above fiveRsCard(). */
+    function setDraft(row, value) {
+      const derived = derivedSelected(row);
+      const addTo = value ? box.draft.in : box.draft.out;
+      const removeFrom = value ? box.draft.out : box.draft.in;
+      const ri = removeFrom.indexOf(row.policyId);
+      if (ri >= 0) removeFrom.splice(ri, 1);
+      const ai = addTo.indexOf(row.policyId);
+      if (value === derived) {
+        if (ai >= 0) addTo.splice(ai, 1);
+      } else if (ai === -1) {
+        addTo.push(row.policyId);
+      }
+    }
+
+    const stateEl = el("span", { class: "scope-state" });
+    const saveBtn = el("button", { class: "primary" }, "Save");
+    const revertBtn = el("button", {}, "Revert");
+    const resetBtn = el("button", {}, "Reset to derived");
+    const bar = el("div", { class: "scope-bar" }, stateEl, resetBtn, revertBtn, saveBtn);
+
+    function buildRow(row) {
+      const boxGlyph = el("span", { class: "scope-box", "aria-hidden": "true" });
+      const labelEl = el("span", {}, "");
+      const toggle = el("button", { type: "button", class: "scope-toggle" }, boxGlyph, labelEl);
+      toggle.addEventListener("click", () => {
+        setDraft(row, !draftSelected(row));
+        syncAll();
+      });
+
+      // "pinned" here means a human chose this, not that this app derived it — that is a
+      // different kind of fact from crossMapped/linkedFindings/noAiLink, and the row says
+      // so with its own tint rather than folding both into one grey "reason" line.
+      const pinned = row.reason === "pinnedIn" || row.reason === "pinnedOut";
+      const reasonEl = el("span", {
+        class: "scope-reason" + (pinned ? " scope-reason--pinned" : ""),
+      }, reasonText(row));
+
+      const node = el("div", { class: "scope-row" },
+        el("div", { class: "scope-row-main" },
+          el("div", { class: "scope-row-name" }, row.name),
+          el("div", { class: "scope-row-meta small muted" },
+            [row.shortId, policyKindLabel(row.policyKind)].filter(Boolean).join(" · "))),
+        sevBadge(row.severity),
+        reasonEl,
+        toggle);
+
+      function sync() {
+        const sel = draftSelected(row);
+        node.setAttribute("data-selected", sel ? "true" : "false");
+        toggle.setAttribute("aria-pressed", sel ? "true" : "false");
+        toggle.setAttribute("aria-label", `${row.name} — ${sel ? "Selected" : "Not selected"}`);
+        labelEl.textContent = sel ? "Selected" : "Not selected";
+      }
+
+      return { node, sync };
+    }
+
+    function buildGroup(group) {
+      const rowCtrls = group.rows.map(buildRow);
+      const countEl = el("span", { class: "scope-group-count" });
+      const bulkBtn = el("button", { type: "button", class: "scope-bulk" });
+      bulkBtn.addEventListener("click", () => {
+        const allIn = group.rows.every((r) => draftSelected(r));
+        for (const r of group.rows) setDraft(r, !allIn);
+        syncAll();
+      });
+
+      const node = el("div", { class: "scope-group" },
+        el("div", { class: "scope-group-head" },
+          el("div", { class: "scope-group-title" },
+            el("span", { class: "comp-ext" }, group.subcategoryExternalId),
+            group.subcategoryTitle),
+          countEl,
+          bulkBtn),
+        el("div", { class: "scope-rows" }, ...rowCtrls.map((c) => c.node)));
+
+      function sync() {
+        const n = group.rows.filter((r) => draftSelected(r)).length;
+        countEl.textContent = `${n} of ${group.rows.length} in scope`;
+        const allIn = n === group.rows.length;
+        bulkBtn.textContent = allIn ? "Deselect all" : "Select all";
+        bulkBtn.setAttribute("aria-label",
+          `${allIn ? "Deselect" : "Select"} all — ${group.subcategoryTitle}`);
+        for (const c of rowCtrls) c.sync();
+      }
+
+      return { node, sync };
+    }
+
+    const groupCtrls = groups.map(buildGroup);
+
+    function syncAll() {
+      for (const g of groupCtrls) g.sync();
+      clear(stateEl);
+      if (busy) stateEl.append(el("span", { class: "pill neutral" }, "Working…"));
+      else if (dirty()) stateEl.append(el("span", { class: "pill warn" }, "Unsaved"));
+      revertBtn.disabled = !dirty() || busy;
+      // Save stays enabled regardless: there is no invalid state here for a disabled
+      // button to be silently protecting the reader from.
+      saveBtn.disabled = busy;
+      resetBtn.disabled = busy;
+    }
+
+    saveBtn.addEventListener("click", async () => {
+      busy = true; syncAll();
+      try {
+        await call("api_setSettings", {
+          fiveRsPins: { in: [...box.draft.in], out: [...box.draft.out] },
+        });
+        toast("5Rs scope saved.");
+        busy = false;
+        // swrCall's in-page cache is not version-aware — without this, navigating back to
+        // Compliance would still serve the payload computed against the pins just replaced.
+        ctx.refresh();
+      } catch (e) {
+        busy = false; syncAll();
+        toast(String((e && e.message) || e), "error");
+      }
+    });
+
+    revertBtn.addEventListener("click", () => {
+      box.draft = { in: [...saved.in], out: [...saved.out] };
+      syncAll();
+    });
+
+    resetBtn.addEventListener("click", () => {
+      box.draft = { in: [], out: [] };
+      syncAll();
+    });
+
+    syncAll();
+
+    return el("div", { class: "card", style: "margin-top:14px" },
+      el("h3", {}, "5Rs — Wiz for Data Security"),
+      el("p", { class: "small muted", style: "margin:6px 0 14px" },
+        `${scope.frameworkName} · ${scope.selected} of ${scope.total} rules in scope now. ` +
+        "Toggling a rule pins it; toggling it back to what is shown below clears the pin " +
+        "and lets the estate keep deciding it."),
+      el("div", { class: "scope-groups" }, ...groupCtrls.map((g) => g.node)),
+      bar);
   }
 
   /**
@@ -201,4 +475,40 @@ export async function renderSettings(main, _params, ctx) {
         "deploy a new one."),
     );
   }
+}
+
+// --------------------------------------------------------- 5Rs scope card: pure helpers
+
+/**
+ * Labels the PolicyScope.policyKind carries — the same three-way split complianceOverview.js
+ * and complianceShared.js already spell out for the same reason each time: a Control is a
+ * graph query over the estate, a cloud rule a Rego evaluation against one resource type, and
+ * a host rule something that runs on the machine, so presenting them as one kind of thing
+ * would misdescribe what a row actually checks. Kept local rather than shared because it is
+ * three lines of presentation, not logic — duplicating it costs less than a shared import
+ * across three files that would otherwise need to agree on nothing beyond these three labels.
+ */
+function policyKindLabel(kind) {
+  if (kind === "CONTROL") return "Control";
+  if (kind === "HOST_RULE") return "Host rule";
+  return "Cloud rule";
+}
+
+/**
+ * The reason gloss for one PolicyScope row. `crossMapped` and `linkedFindings` are Wiz's own
+ * derivation talking; `pinnedIn`/`pinnedOut` are this reader's own choice talking, and say so
+ * in those words rather than reusing "selected"/"not selected" a second time in the same row.
+ */
+function reasonText(row) {
+  if (row.reason === "crossMapped") {
+    const names = (row.mappedBy || []).filter(Boolean);
+    return `Mapped by ${names.length ? names.join(", ") : "another AI framework"}`;
+  }
+  if (row.reason === "linkedFindings") {
+    const n = row.aiFindingCount || 0;
+    return `${n} ${n === 1 ? "finding" : "findings"} on AI assets`;
+  }
+  if (row.reason === "pinnedIn") return "Pinned in";
+  if (row.reason === "pinnedOut") return "Pinned out";
+  return "No AI link"; // noAiLink
 }

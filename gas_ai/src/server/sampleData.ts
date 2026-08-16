@@ -1144,7 +1144,11 @@ export const SEED_POSTURE: PostureRow[] = [
     frameworkId: "wf-id-214", level: "framework", nodeId: "wf-id-214",
     title: "5Rs - Wiz for Data Security",
     posturePct: 85, passCount: 0, failCount: 0,
-    passSubCategoryCount: 1, failSubCategoryCount: 1, emptyPostureReason: null,
+    // Five categories now, one of which reports nothing. The framework percentage stays
+    // 85 and is deliberately NOT the mean of its categories (62/91/78/85/null averages to
+    // 79) — Wiz's aggregation is undocumented and this row exists partly to keep a
+    // recomputation from ever looking correct.
+    passSubCategoryCount: 1, failSubCategoryCount: 4, emptyPostureReason: null,
   },
   // NO_POLICIES is a DIFFERENT emptiness from NO_RESOURCES: nothing was written to assess,
   // rather than nothing existing to assess against. Both must read as their own state.
@@ -1152,6 +1156,22 @@ export const SEED_POSTURE: PostureRow[] = [
   seedSubCategory("wf-id-214", "1", "1.1", "Stale data resources", null, 0, 0, "NO_POLICIES"),
   seedCategory("wf-id-214", "2", "Restrict", 85, 194309, 71),
   seedSubCategory("wf-id-214", "2", "2.1", "Public data exposure", 85, 194309, 71),
+  // The other three Rs, and the reason they are seeded at all: this is a DATA-security
+  // framework collected by an AI product, and until now the sample carried only the two
+  // categories whose rules happen to be about AI (a Bedrock trust policy, a training
+  // bucket). An estate that agrees with the product's focus cannot demonstrate the scope
+  // feature, and worse, cannot catch it silently excluding nothing.
+  //
+  // Note the check counts. 2.1 reports 194,309 passing against ASI01's 144 — three orders
+  // of magnitude, because Wiz is scoring the WHOLE data estate here, not the AI slice of
+  // it. That gap is the framework's non-AI character showing up in the numbers, and these
+  // rows keep it visible.
+  seedCategory("wf-id-214", "3", "Relabel", 62, 88412, 1204),
+  seedSubCategory("wf-id-214", "3", "3.1", "Unlabelled sensitive data", 62, 88412, 1204),
+  seedCategory("wf-id-214", "4", "Relocate", 91, 40210, 331),
+  seedSubCategory("wf-id-214", "4", "4.1", "Data residency", 91, 40210, 331),
+  seedCategory("wf-id-214", "5", "Reconfigure", 78, 120044, 2210),
+  seedSubCategory("wf-id-214", "5", "5.1", "Encryption and retention", 78, 120044, 2210),
 
   // ---- OWASP ML ----
   {
@@ -1226,6 +1246,25 @@ export const SEED_FRAMEWORK_POLICIES: FrameworkPolicyRow[] = [
     "Agent must be attached to a guardrail", "HIGH", 9, 5),
   seedPolicy("wf-id-214", "2", "2.1", "SUB-047",
     "Training bucket must not allow public write", "CRITICAL", 30, 1),
+  // The 5Rs rules this product has no use for: general cloud data governance, evaluated
+  // against the whole estate. None is mapped into an OWASP framework and none has a
+  // finding on an AI asset, so the derived scope files all four out — which is the point
+  // of seeding them. Without these the scope excludes nothing and a broken filter looks
+  // exactly like a working one.
+  seedPolicy("wf-id-214", "3", "3.1", "DATA-311",
+    "Object storage buckets must carry a data-sensitivity label", "MEDIUM", 62108, 1204),
+  seedPolicy("wf-id-214", "3", "3.1", "DATA-318",
+    "Managed databases must declare a classification tag", "LOW", 26304, 486),
+  seedPolicy("wf-id-214", "4", "4.1", "DATA-402",
+    "Customer data must not leave its declared residency region", "HIGH", 40210, 331),
+  seedPolicy("wf-id-214", "5", "5.1", "DATA-514",
+    "Object storage must define a retention policy", "MEDIUM", 98720, 2210),
+  // ...and one that stays. SUB-082 already sits under ASI01 and ASI10, so Wiz itself
+  // files it under an AI framework and the cross-mapping signal keeps it in scope. It is
+  // here so that "Reconfigure" cannot be read as "a category that is entirely off":
+  // scope is a property of a rule, not of the R it happens to live under.
+  seedPolicy("wf-id-214", "5", "5.1", "SUB-082",
+    "Vertex AI Metadata Store must use a customer-managed key", "MEDIUM", 21, 2),
   // SUB-114 also lands under LLM01, so one finding ends up carrying an ASI code, an ML_
   // code AND an LLM code — three vocabularies on one failing control, which is the point.
   seedPolicy("wf-id-201", "1", "1.1", "SUB-114",

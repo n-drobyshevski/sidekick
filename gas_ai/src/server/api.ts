@@ -71,6 +71,14 @@ import {
   type ConfigTotals,
   type ControlRollup,
 } from "../domain/configFindings";
+import {
+  coverageSummary,
+  frameworkRail,
+  sharedControls,
+  weakestAreas,
+} from "../domain/complianceOverview";
+import { scopeFiveRs, unselectedPolicyIds } from "../domain/complianceScope";
+import { cleanFiveRsPins } from "../domain/settingsLogic";
 import { buildAllFrameworkTrees, complianceKpis } from "../domain/compliancePosture";
 import { graphCacheParams, resolveGraphParams, resolveLayoutParams } from "../domain/graphApiParams";
 import { conditionHolds, conditionState } from "../domain/riskConditions";
@@ -96,6 +104,7 @@ import {
 import {
   AI_ASSET_KINDS,
   NODE_KINDS,
+  type FrameworkPolicyRow,
   type GEdge,
   type GNode,
   type GraphDoc,
@@ -722,9 +731,12 @@ function assetsModel(): AssetsModel {
       // count failing controls, this scores frameworks. Null — never 0 — when no posture
       // has been synced, so the Wiz Scans area degrades to `partial` on its own instead of
       // reporting a confident zero for a question this tenant was never asked.
+      // Scoped the same way the Compliance page scopes it. Not an optimisation — the two
+      // pages would otherwise report different failing-control totals for one estate, and
+      // this KPI is the number the Wiz Scans coverage area prints beside the other one.
       frameworkPosture: complianceKpis(
         syncStore.loadPosture(),
-        syncStore.loadFrameworkPolicies(),
+        scopedFrameworkPolicies().policies,
       ),
       agenticIdentities: assets.filter((a) => a.identityPurpose === "AGENTIC").length,
       // Estate-wide counts for the two risk conditions that had no total. The flags were
@@ -945,13 +957,69 @@ export function getAssetDetail(p?: unknown): ApiResult {
  * The totals are computed over the WHOLE set on purpose — the header describes the
  * estate, never the page or the filtered subset, the same contract the inventory keeps.
  */
+/**
+ * The synced AI assets, as an id set — "did this finding land on something the AI graph
+ * models". `loadAssets` is memoized, so calling this more than once per execution costs a
+ * map build and nothing else.
+ */
+function aiAssetIdSet(): Record<string, true> {
+  const ids: Record<string, true> = {};
+  for (const a of syncStore.loadAssets()) ids[a.id] = true;
+  return ids;
+}
+
+/**
+ * The framework policy rows this app looks at, with the 5Rs scoped to its AI-relevant
+ * rules — and the scope itself, so a caller can explain the filter it just applied.
+ *
+ * ONE definition, called from both readers. `getCompliance` and `getAssets` each count
+ * failing controls off these rows, and a filter applied to one and not the other is not a
+ * cosmetic difference: the Compliance page and the Wiz Scans coverage area would print
+ * different totals for the same estate, which is exactly the "two answers to one question"
+ * failure this codebase spends its comments avoiding.
+ *
+ * The scope has to be derived from the FULL tree before it can be applied to a filtered
+ * one — a 5Rs rule is in scope partly because some OTHER framework maps it, so the trees
+ * must exist before the question can be asked. Hence a build to decide and a build to
+ * render. The payload is bounded by the framework rather than the estate, so that is cheap.
+ */
+function scopedFrameworkPolicies(): {
+  policies: FrameworkPolicyRow[];
+  scope: ReturnType<typeof scopeFiveRs>;
+} {
+  const posture = syncStore.loadPosture();
+  const allPolicies = syncStore.loadFrameworkPolicies();
+  const catalogue = syncStore.loadFrameworks();
+
+  const scope = scopeFiveRs(
+    buildAllFrameworkTrees(posture, allPolicies, catalogue),
+    syncStore.loadFindings(),
+    aiAssetIdSet(),
+    settingsStore.getFiveRsPins(),
+  );
+
+  // Dropped from the 5Rs FRAMEWORK's rows only, never globally by policy id. A rule can be
+  // mapped by the 5Rs and by OWASP Agentic at once — that is what the cross-mapping signal
+  // is built on — and an operator who pins such a rule out is saying "not under the
+  // data-security framework", not "not anywhere". Filtering on the id alone would delete it
+  // from the AI framework that legitimately claims it, and the shared-controls band would
+  // lose the very crosswalk it exists to show.
+  const dropped = new Set(unselectedPolicyIds(scope));
+  const policies = dropped.size
+    ? allPolicies.filter(
+      (pol) => pol.frameworkId !== scope.frameworkId || !dropped.has(pol.policyId),
+    )
+    : allPolicies;
+
+  return { policies, scope };
+}
+
 function configModel(): {
   rows: ConfigFindingView[];
   totals: ConfigTotals;
   facets: Record<string, string[]>;
 } {
-  const assetIds: Record<string, true> = {};
-  for (const a of syncStore.loadAssets()) assetIds[a.id] = true;
+  const assetIds = aiAssetIdSet();
   const rows = syncStore
     .loadFindings()
     .map((f) => toConfigView(f, !!assetIds[f.resourceId]));
@@ -1092,17 +1160,37 @@ export function getCompliance(p?: unknown): ApiResult {
     const requested = String(params["frameworkId"] ?? "");
     return cached("getCompliance", { frameworkId: requested }, () => {
       const posture = syncStore.loadPosture();
-      const policies = syncStore.loadFrameworkPolicies();
       const catalogue = syncStore.loadFrameworks();
       const selected = settingsStore.getSelectedFrameworks(() => catalogue);
+      const { policies, scope: fiveRsScope } = scopedFrameworkPolicies();
       const trees = buildAllFrameworkTrees(posture, policies, catalogue);
+      // The catalogue with this app's selection folded in — Wiz says what exists, the
+      // settings say what is collected, and the picker needs both to render honestly.
+      // Built once and shared: `coverageSummary` reads `selected` off these rows, and the
+      // raw catalogue does not carry it (FrameworkRow.selected is resolved from settings,
+      // never from Wiz), so passing the unmerged array would silently report every
+      // framework as uncollected.
+      const merged = catalogue.map((f) => ({ ...f, selected: selected.indexOf(f.id) >= 0 }));
       return {
         trees,
         kpis: complianceKpis(posture, policies),
-        // The catalogue with this app's selection folded in — Wiz says what exists, the
-        // settings say what is collected, and the picker needs both to render honestly.
-        catalogue: catalogue.map((f) => ({ ...f, selected: selected.indexOf(f.id) >= 0 })),
+        catalogue: merged,
         selected,
+        // The Overview's four bands. Computed here rather than in the browser because the
+        // client bundle cannot import the domain layer at all — every client-side copy of
+        // domain logic in this app is a hand-kept mirror with a test holding the two
+        // together (assetQuery.js, configView.js), and that machinery exists to reconcile
+        // a client filtering a PAGE against a server filtering the WHOLE set. This payload
+        // is already shipped whole and cached, so there is no second scope to reconcile —
+        // a mirror here would be duplicated risk buying nothing.
+        rail: frameworkRail(trees),
+        weakestAreas: weakestAreas(trees),
+        sharedControls: sharedControls(trees),
+        // Every rule the 5Rs maps, in or out, with the reason. Shipped whole rather than
+        // as a count because the Settings card is the place an operator overturns a
+        // derivation, and it cannot argue with a verdict it cannot see.
+        fiveRsScope,
+        coverage: coverageSummary(trees, merged, selected),
         // Named so the page can open on a framework it was linked to rather than guessing.
         // Null when the requested id has no stored posture, which the page reports as such
         // instead of silently falling back to a different framework's numbers.
@@ -1398,6 +1486,9 @@ export function getSettings(_p?: unknown): ApiResult {
     maxNodesCeiling: MAX_NODES_CEILING,
     autoExpand: settingsStore.getAutoExpand(),
     hasCredentials: hasWizCredentials(),
+    // The operator's overrides on the 5Rs scope. Only the pins: the derived default is
+    // computed in getCompliance, where the trees and findings it needs already are.
+    fiveRsPins: settingsStore.getFiveRsPins(),
   }));
 }
 
@@ -1411,12 +1502,23 @@ export function setSettings(p?: unknown): ApiResult {
     // `!== undefined`, not truthiness: `false` is a value the caller must be able to send,
     // and `if (params["autoExpand"])` would make the flag impossible to turn off.
     if (params["autoExpand"] !== undefined) settingsStore.setAutoExpand(params["autoExpand"]);
+    // Cleaned against the policies actually synced, so a pin on a rule the tenant no longer
+    // carries is dropped rather than accumulating forever in a settings row nothing reads.
+    if (params["fiveRsPins"] !== undefined) {
+      settingsStore.setFiveRsPins(
+        cleanFiveRsPins(
+          params["fiveRsPins"],
+          syncStore.loadFrameworkPolicies().map((pol) => pol.policyId),
+        ),
+      );
+    }
     return {
       defaultDepth: settingsStore.getDefaultDepth(),
       maxNodes: settingsStore.getMaxNodes(),
       // Echoed so the Settings page's paint({ ...s, ...fresh }) repaints the STORED value
       // rather than the one it asked for.
       autoExpand: settingsStore.getAutoExpand(),
+      fiveRsPins: settingsStore.getFiveRsPins(),
     };
   });
 }
