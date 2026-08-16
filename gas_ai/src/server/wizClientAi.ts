@@ -191,15 +191,56 @@ function writeStoredAiTypes(chosen: AiTypeResolution, now: number): void {
 }
 
 /**
+ * A type name no tenant can carry — the NEGATIVE CONTROL for the probe below.
+ *
+ * The probe's whole premise is that the gateway rejects an enum value it does not know. If
+ * it does not — if it accepts anything and answers with an empty page — then every candidate
+ * comes back "accepted" and the resolution is not a measurement, it is the candidate list
+ * read back. That failure looks exactly like a tenant that genuinely carries all fourteen,
+ * which is the shape this codebase refuses to leave undetectable.
+ */
+const PROBE_SENTINEL = "AI_SIDEKICK_NEGATIVE_CONTROL";
+
+/** Whether the tenant rejects a type it cannot possibly have. */
+function probeOracleWorks(say: (m: string) => void): boolean {
+  try {
+    fetchCloudResourcesPage({
+      query: Q_AI_INVENTORY,
+      first: 1,
+      extraVariables: aiInventoryVariables([PROBE_SENTINEL]),
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // Rejected, as it must be: the oracle discriminates and the probe below means something.
+    if (isInvalidEnumValueError(msg)) return true;
+    throw e; // auth, transport, anything else — a real failure, not a verdict
+  }
+  say(
+    `  ⚠ negative control (${PROBE_SENTINEL}) was ACCEPTED — this gateway does not reject ` +
+      "unknown type values, so the per-candidate probe cannot tell which types this tenant " +
+      "really has. Every candidate below will read as accepted. Set WIZ_AI_RESOURCE_TYPES " +
+      "to the types you actually want queried.",
+  );
+  return false;
+}
+
+/**
  * Empirical fallback when introspection is blocked: ask the tenant about each
  * candidate type with a 1-row query — its own "cannot represent value"
  * rejection is the oracle. Anything else (auth, transport, other validation)
  * is a real failure and rethrows.
+ *
+ * Runs a negative control first, because an oracle that never says no is not an oracle.
+ * A broken control does not change WHICH types are queried — the list still works, and
+ * breaking a running sync over a diagnostic finding would be the worse trade — but it is
+ * reported, and it changes the recorded `source` so the Scans panel cannot present a
+ * guess as a measurement.
  */
 function probeCandidateTypes(
   candidates: readonly string[],
   say: (m: string) => void,
-): string[] {
+): { accepted: string[]; verified: boolean } {
+  const verified = probeOracleWorks(say);
   const accepted: string[] = [];
   for (const t of candidates) {
     try {
@@ -209,7 +250,7 @@ function probeCandidateTypes(
         extraVariables: aiInventoryVariables([t]),
       });
       accepted.push(t);
-      say(`  ${t}: accepted`);
+      say(`  ${t}: accepted${verified ? "" : " (unverified — see the warning above)"}`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (isInvalidEnumValueError(msg)) {
@@ -219,7 +260,7 @@ function probeCandidateTypes(
       throw e;
     }
   }
-  return accepted;
+  return { accepted, verified };
 }
 
 /**
@@ -289,7 +330,7 @@ export function resolveAiResourceTypes(log?: (m: string) => void): AiTypeResolut
     // Introspection blocked (Wiz gateways commonly refuse it) — probe each
     // candidate empirically instead.
     say("Introspection unavailable — probing candidate types one by one:");
-    const accepted = probeCandidateTypes(AI_RESOURCE_TYPE_CANDIDATES, say);
+    const { accepted, verified } = probeCandidateTypes(AI_RESOURCE_TYPE_CANDIDATES, say);
     if (!accepted.length) {
       throw new WizQueryError(
         "None of the candidate AI resource types (" +
@@ -299,7 +340,13 @@ export function resolveAiResourceTypes(log?: (m: string) => void): AiTypeResolut
           "Wiz UI's inventory filter) and set the WIZ_AI_RESOURCE_TYPES Script Property.",
       );
     }
-    chosen = { types: accepted, source: "probe", aiLooking: [] };
+    // The source carries the verdict, so every reader of it — the Scans panel included —
+    // gets the caveat along with the list rather than the list alone.
+    chosen = {
+      types: accepted,
+      source: verified ? "probe" : "probe (unverified)",
+      aiLooking: [],
+    };
   }
 
   say(`Inventory will query types (${chosen.source}): ${chosen.types.join(", ")}.`);

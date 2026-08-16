@@ -20,8 +20,10 @@ interface Harness {
 /**
  * @param introspects whether the tenant serves __type introspection; when false every
  *   candidate is probed one by one and only AI_AGENT is accepted.
+ * @param acceptAnything models a gateway that does NOT reject unknown enum values — the
+ *   case the negative control exists to catch, where the probe stops being a measurement.
  */
-function stubWiz(introspects: boolean): Harness {
+function stubWiz(introspects: boolean, acceptAnything = false): Harness {
   const h: Harness = { posts: [], props: {}, cache: {} };
   (globalThis as Record<string, unknown>).PropertiesService = {
     getScriptProperties: () => ({
@@ -69,7 +71,7 @@ function stubWiz(introspects: boolean): Harness {
       // the HTTP-200 errors-only form.
       // Quoted, so AI_AGENT_REGISTRY does not read as AI_AGENT.
       const types = JSON.stringify(sent.variables["filterBy"] ?? {});
-      const ok = /"AI_AGENT"/.test(types);
+      const ok = acceptAnything || /"AI_AGENT"/.test(types);
       return {
         getResponseCode: () => 200,
         getContentText: () =>
@@ -116,14 +118,42 @@ describe("resolveAiResourceTypes durability", () => {
     const { AI_RESOURCE_TYPE_CANDIDATES } = await import("../src/server/wizQueriesAi");
 
     expect(resolveAiResourceTypes().types).toEqual(["AI_AGENT"]);
-    // One failed introspection + one probe per candidate. Before the narrowed size-fallback
-    // each rejected candidate cost two, so this number also pins that fix.
-    expect(h.posts).toHaveLength(1 + AI_RESOURCE_TYPE_CANDIDATES.length);
+    // One failed introspection + the negative control + one probe per candidate. Before the
+    // narrowed size-fallback each rejected candidate cost two, so this also pins that fix.
+    expect(h.posts).toHaveLength(2 + AI_RESOURCE_TYPE_CANDIDATES.length);
 
     h.cache = {};
     const before = h.posts.length;
     expect(resolveAiResourceTypes().types).toEqual(["AI_AGENT"]);
     expect(h.posts).toHaveLength(before);
+  });
+
+  it("runs a negative control before trusting the probe at all", async () => {
+    const h = stubWiz(false);
+    const { resolveAiResourceTypes } = await import("../src/server/wizClientAi");
+    const lines: string[] = [];
+    const got = resolveAiResourceTypes((m) => lines.push(m));
+    // The sentinel is rejected, so the oracle discriminates and the answer is a measurement.
+    expect(got.source).toBe("probe");
+    expect(lines.join("\n")).not.toMatch(/negative control/);
+  });
+
+  it("says so when the gateway accepts anything, instead of reporting a guess as a list", async () => {
+    // A gateway that never rejects an unknown type makes every candidate read as accepted —
+    // indistinguishable, in the log, from a tenant that genuinely carries all fourteen.
+    const h = stubWiz(false, true);
+    const { resolveAiResourceTypes } = await import("../src/server/wizClientAi");
+    const { AI_RESOURCE_TYPE_CANDIDATES } = await import("../src/server/wizQueriesAi");
+    const lines: string[] = [];
+    const got = resolveAiResourceTypes((m) => lines.push(m));
+
+    expect(lines.join("\n")).toMatch(/negative control .* was ACCEPTED/);
+    expect(lines.join("\n")).toMatch(/WIZ_AI_RESOURCE_TYPES/);
+    expect(got.source).toBe("probe (unverified)");
+    // The list is still used — breaking a running sync over a diagnostic finding would be
+    // the worse trade — it is just no longer presented as a measurement.
+    expect(got.types).toEqual([...AI_RESOURCE_TYPE_CANDIDATES]);
+    expect(h.posts.length).toBeGreaterThan(0);
   });
 
   it("expires after the 7-day window rather than pinning a stale schema forever", async () => {
