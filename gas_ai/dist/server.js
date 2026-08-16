@@ -3458,6 +3458,7 @@ var Server = (() => {
       subcategoryCount: tree.categories.reduce((sum, c) => sum + c.subcategories.length, 0),
       policyCount: tree.policyCount,
       failingPolicyCount: tree.failingPolicyCount,
+      worstFailingSeverity: tree.worstFailingSeverity,
       // Copied rather than aliased: a caller holding this row must not be able to mutate
       // the FrameworkTree it was built from by mutating what looks like its own object.
       stateCounts: { ...tree.stateCounts }
@@ -3566,9 +3567,7 @@ var Server = (() => {
     rows.sort((a, b) => b.frameworkCount - a.frameworkCount || severityRank2(a.severity) - severityRank2(b.severity) || b.failCount - a.failCount || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     return rows;
   }
-  function coverageSummary(trees, catalogue, selected) {
-    const treeIds = new Set(trees.map((t) => t.frameworkId));
-    const uncollected = catalogue.filter((f) => !treeIds.has(f.id)).map((f) => ({ id: f.id, name: f.name }));
+  function coverageSummary(trees, catalogue) {
     const stateCounts = {
       scored: 0,
       noResources: 0,
@@ -3587,7 +3586,6 @@ var Server = (() => {
       collected: trees.length,
       catalogued: catalogue.length,
       scoredFrameworks: trees.filter((t) => t.state === "scored").length,
-      uncollected,
       stateCounts,
       subcategoryCount
     };
@@ -5269,9 +5267,18 @@ var Server = (() => {
       for (const sub of cat.subcategories) stateCounts[sub.state] += 1;
     }
     const distinct = /* @__PURE__ */ new Map();
+    let worstFailingSeverity = null;
+    let worstFailingRank = Infinity;
     for (const p of policies) {
       if (p.frameworkId !== frameworkId) continue;
       distinct.set(p.policyId, ((_f = distinct.get(p.policyId)) != null ? _f : false) || p.failCount > 0);
+      if (p.failCount > 0) {
+        const rank = severityRank4(p.severity);
+        if (rank < worstFailingRank) {
+          worstFailingRank = rank;
+          worstFailingSeverity = p.severity;
+        }
+      }
     }
     return {
       frameworkId,
@@ -5288,7 +5295,8 @@ var Server = (() => {
       categories,
       stateCounts,
       policyCount: distinct.size,
-      failingPolicyCount: [...distinct.values()].filter(Boolean).length
+      failingPolicyCount: [...distinct.values()].filter(Boolean).length,
+      worstFailingSeverity
     };
   }
   function buildAllFrameworkTrees(posture, policies, frameworks = []) {
@@ -7684,7 +7692,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "aa5c16cb1ea5" : "dev";
+  var BUILD_ID = true ? "558172e4fe0a" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -11746,7 +11754,7 @@ var Server = (() => {
           // as a count because the Settings card is the place an operator overturns a
           // derivation, and it cannot argue with a verdict it cannot see.
           fiveRsScope,
-          coverage: coverageSummary(trees, merged, selected),
+          coverage: coverageSummary(trees, merged),
           // Named so the page can open on a framework it was linked to rather than guessing.
           // Null when the requested id has no stored posture, which the page reports as such
           // instead of silently falling back to a different framework's numbers.

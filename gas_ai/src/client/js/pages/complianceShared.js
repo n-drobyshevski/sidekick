@@ -1,8 +1,8 @@
-// One rendering of "what does a posture cell look like" and "what happens when you open a
-// subcategory" — split out of compliance.js so the per-framework register and the
+// One rendering of "what does a posture cell look like" and "what does a subcategory's own
+// detail look like" — split out of compliance.js so the per-framework register and the
 // cross-framework overview (complianceOverview.js) call the SAME code instead of carrying
-// two copies of the same four state pills and the same drill-down sheet that drift the
-// next time either page is touched.
+// two copies of the same four state pills and the same detail panel that drift the next
+// time either page is touched.
 //
 // Nothing here fetches or shapes data; every function is a pure transform of a node the
 // server already sent. postureCell() and checksCell() only read {state, posturePct, title,
@@ -14,7 +14,7 @@
 // and glyphs belong in the view, the classification itself always comes from the server
 // (`node.state`), so the two cannot disagree about which state a row is IN.
 
-import { el, meter, openSheet, sevBadge, sheetRow, sheetSection } from "../ui.js";
+import { el, meter, sevBadge } from "../ui.js";
 
 /**
  * The four posture states, mirroring domain/compliancePosture.POSTURE_STATES.
@@ -142,70 +142,118 @@ export function stateStrip(tree, active, onToggle) {
       "percentage rather than counted as zero."));
 }
 
-/** The detail sheet for one subcategory: what it means, and every policy behind it. */
-export function openSubcategorySheet(tree, category, sub) {
-  openSheet((body) => {
-    body.append(sheetSection("Posture",
-      el("div", { class: "comp-posture" }, postureCell(sub)),
-      el("div", { class: "comp-policy-counts" },
-        el("span", {}, el("b", {}, String(sub.passCount)), " passing checks"),
-        el("span", {}, el("b", {}, String(sub.failCount)), " failing checks"),
-        el("span", {}, el("b", {}, String(sub.policies.length)), " policies mapped")),
-      sub.emptyPostureReason
-        ? el("p", { class: "comp-strip-note" },
-          sub.emptyPostureReason === "NO_POLICIES"
-            ? "Wiz has no check written for this subcategory, so nothing was evaluated. " +
-              "This is a gap in the framework's coverage, not in this estate."
-            : "There is nothing in this estate for these checks to evaluate.")
-        : null));
-
-    if (sub.description) {
-      body.append(sheetSection("What this covers", el("p", {}, sub.description)));
-    }
-    if (sub.mappingRationale) {
-      body.append(sheetSection("Why these policies map here", el("p", {}, sub.mappingRationale)));
-    }
-    if (sub.assessmentScope) {
-      body.append(sheetSection("Assessment scope", el("p", {}, sub.assessmentScope)));
-    }
-
-    if (sub.policies.length) {
-      body.append(sheetSection(
-        // Not plural(): its -s rule would render "1 policys". The one irregular label on
-        // this page is spelled out rather than teaching the helper an exception.
-        `${sub.policies.length} ${sub.policies.length === 1 ? "policy" : "policies"}`,
-        ...sub.policies.map((p) => sheetRow({
-          badge: sevBadge(p.severity),
-          meta: [
-            // The kind matters and is not decoration: a Control is a graph query over the
-            // estate, a cloud rule is a Rego evaluation against one resource type, and a
-            // host rule runs on the machine. Presenting them as one sort of thing would
-            // misdescribe what failed.
-            el("span", { class: "comp-ext" },
-              p.policyKind === "CONTROL" ? "Control"
-                : p.policyKind === "HOST_RULE" ? "Host rule" : "Cloud rule"),
-            p.shortId ? el("span", { class: "comp-ext" }, p.shortId) : null,
-            p.cloudProvider ? el("span", { class: "comp-ext" }, p.cloudProvider) : null,
-          ],
-          title: p.name,
-          note: p.noResourceToAssess
-            ? "Nothing in this estate to evaluate — neither passing nor failing."
-            : `${p.passCount} passed · ${p.failCount} failed · ${p.assessedCount} assessed`,
-        })),
-      ));
-    }
-  }, {
-    title: sub.title,
-    subtitle: `${tree.name} · ${category.title}`,
-    ariaLabel: `${sub.title} compliance detail`,
-  });
+/** A Control is a graph query over the estate, a cloud rule is a Rego evaluation against one
+ *  resource type, and a host rule runs on the machine — presenting them as one sort of thing
+ *  would misdescribe what failed. */
+function policyKindLabel(kind) {
+  if (kind === "CONTROL") return "Control";
+  if (kind === "HOST_RULE") return "Host rule";
+  return "Cloud rule";
 }
 
 /**
- * The full nodes behind a flattened weak-area row, for the sheet the register already
- * builds. The overview's WeakAreaRow is a server-side flattening of the same tree the
- * register walks — this walks back the other way so openSubcategorySheet() (which wants
- * the tree/category/sub triple, not a flat row) never has to be taught a second shape.
+ * A small local heading over a block of prose or a table — `sectionLabel()`/`sheetSection()`
+ * are sheet vocabulary (a right-anchored overlay's own section chrome), and this panel is
+ * not one, so it gets its own tiny header rather than borrowing theirs.
+ */
+function detailBlock(label, ...children) {
+  return el("div", { class: "comp-detail-block" },
+    el("h4", { class: "comp-detail-heading" }, label),
+    ...children);
+}
+
+/**
+ * Every policy behind a subcategory, as a plain table nested inside the detail row.
+ *
+ * Hand-built rather than `dataTable()`: that component brings sticky `th`, a sort model and
+ * `.table-wrap`'s own border into a table cell, none of which a small panel nested inside
+ * another table's row wants. A plain `<table>` with one header row is the honest shape here.
+ */
+function policyTable(policies) {
+  return el("div", { class: "comp-policy-wrap" },
+    el("table", { class: "comp-policy-table" },
+      el("thead", {},
+        el("tr", {},
+          el("th", { scope: "col" }, "Severity"),
+          el("th", { scope: "col" }, "Control"),
+          el("th", { scope: "col", class: "num" }, "Checks"))),
+      el("tbody", {},
+        ...policies.map((p) => el("tr", {},
+          el("td", {}, sevBadge(p.severity)),
+          el("td", {},
+            el("div", {}, p.name),
+            el("div", { class: "small muted" },
+              [p.shortId, policyKindLabel(p.policyKind), p.cloudProvider]
+                .filter(Boolean).join(" · "))),
+          // Grouped, like the summary line above it and the register's Checks column.
+          // Ungrouped here they read as a different quantity from the same numbers three
+          // lines up — "1718" beside "194,309" looks like two ways of counting, not two
+          // scopes of one count.
+          el("td", { class: "num" }, p.noResourceToAssess
+            ? "Nothing in this estate to evaluate — neither passing nor failing."
+            : `${p.passCount.toLocaleString()} passed · ${p.failCount.toLocaleString()} failed` +
+              ` · ${p.assessedCount.toLocaleString()} assessed`))))));
+}
+
+/**
+ * The subcategory's own detail, as a node for an inline detail row.
+ *
+ * Takes only `sub` — the sheet this replaces needed `tree`/`category` too, for its title and
+ * subtitle, but an inline row does not: the row it hangs under already says which
+ * subcategory it is, so repeating the framework and category inside it would be chrome the
+ * sheet needed only because it floated free of the table. The posture cell the sheet also
+ * opened with is dropped for the same reason — the row's own Posture column already drew it.
+ */
+export function subcategoryDetail(sub) {
+  const kids = [
+    el("div", { class: "comp-policy-counts" },
+      // Grouped, for the reason checksCell() states one function up: these run to six
+      // figures on a real estate, and 120044 is not a number anyone reads. The sheet
+      // printed them ungrouped; on the page, beside a Checks column that IS grouped, the
+      // mismatch would read as two different quantities.
+      el("span", {}, el("b", {}, sub.passCount.toLocaleString()), " passing checks"),
+      el("span", {}, el("b", {}, sub.failCount.toLocaleString()), " failing checks"),
+      // "1 policy mapped", not "1 policies mapped". plural()'s -s rule would give
+      // "policys", which is why the heading below spells the irregular out by hand too —
+      // this line was reading wrong in the sheet as well, where fewer people saw it.
+      el("span", {}, el("b", {}, String(sub.policies.length)),
+        sub.policies.length === 1 ? " policy mapped" : " policies mapped")),
+  ];
+
+  if (sub.emptyPostureReason) {
+    kids.push(el("p", { class: "comp-strip-note" },
+      sub.emptyPostureReason === "NO_POLICIES"
+        ? "Wiz has no check written for this subcategory, so nothing was evaluated. " +
+          "This is a gap in the framework's coverage, not in this estate."
+        : "There is nothing in this estate for these checks to evaluate."));
+  }
+
+  if (sub.description) {
+    kids.push(detailBlock("What this covers", el("p", {}, sub.description)));
+  }
+  if (sub.mappingRationale) {
+    kids.push(detailBlock("Why these policies map here", el("p", {}, sub.mappingRationale)));
+  }
+  if (sub.assessmentScope) {
+    kids.push(detailBlock("Assessment scope", el("p", {}, sub.assessmentScope)));
+  }
+
+  if (sub.policies.length) {
+    kids.push(detailBlock(
+      // Not plural(): its -s rule would render "1 policys". The one irregular label on
+      // this page is spelled out rather than teaching the helper an exception.
+      `${sub.policies.length} ${sub.policies.length === 1 ? "policy" : "policies"}`,
+      policyTable(sub.policies)));
+  }
+
+  return el("div", { class: "comp-detail" }, ...kids);
+}
+
+/**
+ * The full nodes behind a flattened weak-area row. The overview's WeakAreaRow is a
+ * server-side flattening of the same tree the register walks — this walks back the other
+ * way so subcategoryDetail() (which wants the full subcategory node — its description,
+ * its policies — not the flat row's summary fields) never has to be taught a second shape.
  * Three nested `.find()`s over data already in hand; nothing here is a fetch.
  */
 export function findSubcategory(trees, frameworkId, categoryExternalId, externalId) {

@@ -1,8 +1,18 @@
-// The "All frameworks" sub-view of Compliance Posture: five bands answering, in order,
-// "where do we stand", "which framework is worst", "which subcategory is worst", "which
-// control costs us across more than one framework", and "what haven't we even looked at
-// yet". Every number on this page is assembled HERE, client-side, from rollups the server
-// computed once — this file draws them and asks nothing else of the network.
+// The "All frameworks" sub-view of Compliance Posture: four bands answering, in order,
+// "where do we stand", "which framework is worst", "which subcategory is worst", and
+// "which control costs us across more than one framework". Every number on this page is
+// assembled HERE, client-side, from rollups the server computed once — this file draws
+// them and asks nothing else of the network.
+//
+// THERE WAS A FIFTH BAND, "Coverage", and what killed it is worth keeping: it enumerated
+// the frameworks in the tenant's catalogue that the sync does not collect. On the sample
+// estate that was one name. On a real tenant it was thirty-seven, printed inline in a
+// warning banner AND again as a list — the catalogue transcribed, not a finding. The fact
+// it existed to state is already in the headline strip as "Frameworks 4 of 41", which is
+// the same claim in five characters. The band's one irreplaceable part, the 5Rs scope and
+// its link into Settings, moved to the rail footnote below. Any band that reads well
+// against seeded data and collapses against a real estate has the same defect; count the
+// rows a real tenant would produce before adding another.
 //
 // THE HEADLINE NUMBER IS OURS, NOT WIZ'S, AND SAYS SO. Wiz scores a framework; it does not
 // score an estate. kpis.averagePosture is a mean this app takes across the frameworks that
@@ -27,21 +37,30 @@
 // `aria-label` on itself — but the visible "3 of 4" count sits OUTSIDE that labelled
 // picture, or a sighted-plus-screen-reader user would see one thing and hear another.
 //
-// postureCell(), checksCell(), stateStrip() and openSubcategorySheet() all come from
-// complianceShared.js — the same cells and the same sheet the per-framework register uses,
-// not a second implementation of either.
+// postureCell(), checksCell(), stateStrip() and subcategoryDetail() all come from
+// complianceShared.js — the same cells and the same detail panel the per-framework register
+// uses, not a second implementation of either.
 
 import {
-  checksCell, extChip, findSubcategory, openSubcategorySheet, postureCell, STATES, stateStrip,
+  checksCell, extChip, findSubcategory, postureCell, STATES, stateStrip, subcategoryDetail,
 } from "./complianceShared.js";
 import {
-  dataTable, el, emptyState, meter, plural, sectionLabel, sevBadge, statRow,
+  dataTable, el, emptyState, meter, plural, sectionLabel, sevBadge, sevRank, statRow,
 } from "../ui.js";
 
 /**
+ * Worst-first severity order, lower index = worse — the domain's SEVERITY_ORDER
+ * (src/domain/config.ts), re-declared here rather than imported: nothing under
+ * src/client/js/ imports the domain layer, each page keeps its own small copy (config.js's
+ * own sevRank note explains why), and sevRank()'s "lower = worse" contract is exactly this
+ * array's own order.
+ */
+const SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
+
+/**
  * plural()'s -s rule mangles "policy" into "policys" — the same irregular case
- * compliance.js's openSubcategorySheet already spells out by hand rather than teaching the
- * helper an exception for one word.
+ * complianceShared.js's subcategoryDetail() already spells out by hand rather than teaching
+ * the helper an exception for one word.
  */
 function policyNoun(n) {
   return n === 1 ? "policy" : "policies";
@@ -67,6 +86,23 @@ function reasonWords(row) {
   return reasonBlurb(row).replace(/\.$/, "").replace(/^./, (c) => c.toLowerCase());
 }
 
+/**
+ * The worst severity across every framework's OWN worst-failing-policy field — a reduce
+ * over data already in hand (each row's `worstFailingSeverity`, projected straight off
+ * FrameworkTree by frameworkRail() in domain/complianceOverview.ts), not a new rollup and
+ * not a re-walk of any policy list. Null when nothing anywhere is failing.
+ */
+function worstFailingSeverityAcross(rail) {
+  let worst = null;
+  for (const row of rail) {
+    if (!row.worstFailingSeverity) continue;
+    if (!worst || sevRank(row.worstFailingSeverity, SEVERITY_ORDER) < sevRank(worst, SEVERITY_ORDER)) {
+      worst = row.worstFailingSeverity;
+    }
+  }
+  return worst;
+}
+
 export function renderOverview(host, data, view, actions) {
   // A stale SWR cache from before this band shipped degrades to `rail: undefined` rather
   // than throwing (the payload contract's defensive-coding note) — and that is genuinely
@@ -84,9 +120,8 @@ export function renderOverview(host, data, view, actions) {
 
   renderHeadline(host, data, view, actions);
   renderRail(host, data, actions);
-  renderWeakestAreas(host, data, view);
+  renderWeakestAreas(host, data, view, actions);
   renderSharedControls(host, data);
-  renderCoverage(host, data);
 }
 
 // -------------------------------------------------------------------- A. headline
@@ -95,6 +130,31 @@ function renderHeadline(host, data, view, actions) {
   const kpis = data.kpis || {};
   const coverage = data.coverage || {};
   const scored = kpis.averagePosture !== null && kpis.averagePosture !== undefined;
+  // Estate-wide worst — see worstFailingSeverityAcross(). Only meaningful (and only ever
+  // drawn) alongside a scored mean; an unscored estate has no bar to tint either.
+  const worstSeverity = scored ? worstFailingSeverityAcross(data.rail || []) : null;
+
+  // ONE OF THREE MARKS ON THIS WHOLE PAGE ALLOWED TO CARRY SEVERITY COLOUR — see the
+  // matching comment on the rail bar below for why the register, the weakest-areas table
+  // and the subcategory detail rows all stay neutral graphite on purpose.
+  const heroMeter = scored
+    ? meter(kpis.averagePosture, {
+        max: 100,
+        label: `Estate compliance posture, ${kpis.averagePosture} percent` +
+          (worstSeverity ? `, worst failing severity ${worstSeverity}` : ""),
+      })
+    : null;
+  if (heroMeter && worstSeverity) heroMeter.fill.dataset.sev = worstSeverity;
+
+  // The sub-line is the hero's one prose slot, so the severity mark folds into it rather
+  // than opening a new one — a sevBadge beside the sentence that already explains the
+  // number, never colour without the word next to it.
+  const subKids = [scored
+    ? `Derived here — the mean of ${plural(kpis.scoredFrameworks || 0, "scored framework")}. ` +
+      "Wiz publishes no cross-framework figure."
+    : "Derived here — no framework has a compliance posture to average yet. " +
+      "Wiz publishes no cross-framework figure."];
+  if (worstSeverity) subKids.push(sevBadge(worstSeverity));
 
   const hero = el("div", {},
     el("div", { class: "label" }, "Compliance posture"),
@@ -102,18 +162,11 @@ function renderHeadline(host, data, view, actions) {
       ? el("div", { class: "comp-hero-value num" }, `${kpis.averagePosture}%`)
       : el("div", { class: "comp-hero-value" }, "—"),
     scored
-      ? el("div", { class: "comp-hero-meter" }, meter(kpis.averagePosture, {
-          max: 100,
-          label: `Estate compliance posture, ${kpis.averagePosture} percent`,
-        }))
+      ? el("div", { class: "comp-hero-meter" }, heroMeter)
       : null,
     // The one number on this page Wiz did not hand us — it names its own denominator so it
     // is never mistaken for a vendor figure.
-    el("div", { class: "comp-hero-sub" }, scored
-      ? `Derived here — the mean of ${plural(kpis.scoredFrameworks || 0, "scored framework")}. ` +
-        "Wiz publishes no cross-framework figure."
-      : "Derived here — no framework has a compliance posture to average yet. " +
-        "Wiz publishes no cross-framework figure."),
+    el("div", { class: "comp-hero-sub" }, ...subKids),
   );
 
   // The shared strip only ever reads `.stateCounts`, so the estate-wide roll-up — which is
@@ -168,9 +221,16 @@ function fiveRsScopeNote(row, fiveRsScope) {
  */
 function railAriaLabel(row, meanPct, scopeNote) {
   if (row.state === "scored" && row.posturePct !== null) {
+    // The one sentence stating what is failing carries the worst severity too, rather than
+    // a second sentence — a screen reader hears "4 of 6 policies failing, worst severity
+    // HIGH" as one fact, which is what it is.
+    const failingClause = row.worstFailingSeverity
+      ? `${row.failingPolicyCount} of ${row.policyCount} ${policyNoun(row.policyCount)} ` +
+        `failing, worst severity ${row.worstFailingSeverity}.`
+      : `${row.failingPolicyCount} of ${row.policyCount} ${policyNoun(row.policyCount)} failing.`;
     const sentence = [
       `${row.name}, ${row.posturePct} percent compliant.`,
-      `${row.failingPolicyCount} of ${row.policyCount} ${policyNoun(row.policyCount)} failing.`,
+      failingClause,
     ];
     if (meanPct !== null) sentence.push(`Estate mean ${meanPct} percent.`);
     // THE LOAD-BEARING HONESTY POINT of the whole 5Rs feature: this percentage is Wiz's
@@ -196,6 +256,10 @@ function railRow(row, meanPct, actions, fiveRsScope) {
   const scored = row.state === "scored" && row.posturePct !== null;
   const scopeNote = fiveRsScopeNote(row, fiveRsScope);
 
+  // The badge pairs with the bar's colour below, so it only draws when the bar itself is
+  // going to be tinted — a row with nothing failing gets neither.
+  const barBadge = scored && row.worstFailingSeverity ? sevBadge(row.worstFailingSeverity) : null;
+
   const nameMeta = el("div", { class: "comp-fw-head", "aria-hidden": "true" },
     el("span", { class: "comp-fw-name" }, row.name),
     scopeNote
@@ -203,7 +267,9 @@ function railRow(row, meanPct, actions, fiveRsScope) {
           el("span", { class: "scope-rail-glyph", "aria-hidden": "true" }, "◒"),
           "Scope active — Wiz % unaffected")
       : null,
-    el("span", { class: "comp-fw-meta" }, railMetaText(row)));
+    el("div", { class: "comp-fw-meta-row" },
+      el("span", { class: "comp-fw-meta" }, railMetaText(row)),
+      barBadge));
 
   const laneEl = el("div", {
     class: `comp-fw-lane${scored ? "" : " comp-fw-lane--empty"}`,
@@ -212,6 +278,13 @@ function railRow(row, meanPct, actions, fiveRsScope) {
   });
   if (scored) {
     const bar = el("div", { class: "comp-fw-bar" });
+    // ONE OF THREE MARKS ON THIS WHOLE PAGE ALLOWED TO CARRY SEVERITY COLOUR (the other
+    // two are both hero meters). DESIGN.md's Rationed Ink Rule sanctions this because the
+    // rail is a handful of prominent rows, not a column — the register below, the
+    // weakest-areas table and the subcategory detail rows all stay neutral graphite on
+    // purpose. Do not extend this tint to those; that is the wall of colour the rule
+    // forbids.
+    if (row.worstFailingSeverity) bar.dataset.sev = row.worstFailingSeverity;
     bar.style.width = `${row.posturePct}%`;
     laneEl.append(bar);
   } else {
@@ -288,16 +361,50 @@ function renderRail(host, data, actions) {
     : el("p", { class: "comp-rail-key" },
         "No estate mean yet — no framework has a compliance posture to average.");
 
-  host.append(el("div", { class: "comp-ov-section" }, sectionLabel("Frameworks"), rail, key));
+  // The 5Rs scope, as a footnote to the rail rather than a control inside it.
+  //
+  // A rail row is a <button> with everything inside it aria-hidden behind one label, so a
+  // link cannot live there: that nests an interactive element in an interactive element —
+  // two tab stops for one visual row, a link announced inside a button — which is the same
+  // failure compliance.js refuses for the register's disclosure controls. Here, after the
+  // rail and outside every button, it is one tab stop in its own right.
+  //
+  // Same `selected < total` condition the in-row marker uses (fiveRsScopeNote), so the
+  // footnote and the marker appear and disappear together rather than drifting into a state
+  // where one claims a scope the other does not.
+  const scoped = rows.map((row) => fiveRsScopeNote(row, fiveRsScope)).filter(Boolean)[0];
+  const scopeKey = scoped
+    ? el("p", { class: "comp-rail-key comp-rail-key--scope" },
+        el("b", {}, `${scoped.frameworkName}: `),
+        `${scoped.selected} of ${scoped.total} rules in scope. `,
+        // Restated here and not only in the row's aria-label, because this is the line a
+        // sighted reader lands on when the register below shrinks and the percentage above
+        // does not — without it that reads as the bar failing to update.
+        `The percentage above is Wiz's own and still covers all ${scoped.total}. `,
+        el("a", { href: "#/settings", target: "_self" }, "Choose which rules →"))
+    : null;
+
+  host.append(el("div", { class: "comp-ov-section" },
+    sectionLabel("Frameworks"), rail, key, scopeKey));
 }
 
 // --------------------------------------------------------------- C. weakest areas
 
-function renderWeakestAreas(host, data, view) {
+function renderWeakestAreas(host, data, view, actions) {
   const all = data.weakestAreas || [];
   // The only band the estate-wide state strip cross-filters — see the comment on band D
   // for why that filter stops here instead of reaching into the shared-controls table too.
   const rows = view.state ? all.filter((r) => r.state === view.state) : all;
+
+  // Which rows are expanded, held on `view` — like the register's own `expanded` Set in
+  // compliance.js — but deliberately NOT mirrored into the URL. pushParams() already nulls
+  // `state` outside framework mode even though the overview reads it as its own
+  // cross-filter, so overview-local view state is already ephemeral by this page's design;
+  // a URL param for one more band would be the odd one out. Keyed by the same
+  // frameworkId/categoryExternalId/externalId triple findSubcategory() takes, because this
+  // band is cross-framework and two frameworks can both carry a subcategory called "2.1".
+  const open = view.weakOpen || (view.weakOpen = new Set());
+  const rowKey = (r) => `${r.frameworkId}/${r.categoryExternalId}/${r.externalId}`;
 
   const table = dataTable({
     className: "comp-table",
@@ -320,12 +427,23 @@ function renderWeakestAreas(host, data, view) {
       (r.posturePct !== null
         ? `${r.posturePct} percent compliant`
         : (STATES[r.state] || STATES.unknown).label),
-    // Opens the same sheet the register opens — findSubcategory() walks the flat row back
-    // to the tree/category/sub triple the sheet wants, rather than teaching the sheet a
-    // second, flatter shape.
+    // Toggles the row's own detail open in place, where this used to open the sheet.
+    // actions.repaint() re-runs compliance.js's paint(), the same round-trip the register's
+    // own toggles use.
     onRowOpen: (r) => {
+      const key = rowKey(r);
+      if (open.has(key)) open.delete(key);
+      else open.add(key);
+      actions.repaint();
+    },
+    rowExpanded: (r) => open.has(rowKey(r)),
+    // findSubcategory() walks the flat row back to the full subcategory node
+    // subcategoryDetail() wants, rather than teaching it a second, flatter shape. A row
+    // whose subcategory cannot be found (a stale payload) simply does not expand.
+    rowDetail: (r) => {
+      if (!open.has(rowKey(r))) return null;
       const found = findSubcategory(data.trees, r.frameworkId, r.categoryExternalId, r.externalId);
-      if (found) openSubcategorySheet(found.tree, found.category, found.sub);
+      return found ? subcategoryDetail(found.sub) : null;
     },
     emptyText: view.state
       ? `No weak area is ${(STATES[view.state] || {}).label || "shown"}.`
@@ -410,80 +528,3 @@ function renderSharedControls(host, data) {
       : null));
 }
 
-// --------------------------------------------------------------------- E. coverage
-
-function renderCoverage(host, data) {
-  const coverage = data.coverage || {};
-  const uncollected = coverage.uncollected || [];
-  const selected = data.selected || [];
-  const stateCounts = coverage.stateCounts || {};
-  // Absent on a stale SWR payload from before this shipped — the cell below degrades to
-  // not rendering at all, same as a tenant with no 5Rs framework collected.
-  const fiveRsScope = data.fiveRsScope || null;
-
-  // Two different facts hide inside "this framework has no posture stored", and they send
-  // an operator to completely different places. A framework nobody selected is a decision
-  // not yet made — the fix is in Settings. A framework that IS selected and still has
-  // nothing stored is a sync that did not deliver — the fix is the Wiz Scans page's
-  // skipped-step report. The register's own empty state has always drawn this distinction
-  // (it says which of the two reasons it is); this band said "selected for collection but
-  // not synced yet" about every row, which was the wrong sentence for the common case and
-  // sent readers hunting a sync failure that had not happened.
-  const notDelivered = uncollected.filter((f) => selected.indexOf(f.id) >= 0);
-  const notChosen = uncollected.filter((f) => selected.indexOf(f.id) === -1);
-
-  const section = el("div", { class: "comp-ov-section" }, sectionLabel("Coverage"));
-
-  if (notDelivered.length) {
-    section.append(el("div", { class: "notice warn" },
-      `${plural(notDelivered.length, "framework")} selected for collection but carrying no ` +
-      "stored posture: " + notDelivered.map((f) => f.name).join(", ") +
-      ". Check the Wiz Scans page for a skipped step."));
-  }
-  if (notChosen.length) {
-    section.append(el("div", { class: "notice warn" },
-      `${plural(notChosen.length, "framework")} in this tenant's catalogue ` +
-      (notChosen.length === 1 ? "is" : "are") + " not collected: " +
-      notChosen.map((f) => f.name).join(", ") + ". Nothing on this page reports on " +
-      (notChosen.length === 1 ? "it" : "them") + "."));
-  }
-
-  section.append(el("div", { class: "comp-cov" },
-    el("div", { class: "comp-cov-cell" },
-      el("div", { class: "label" }, "Not collected"),
-      uncollected.length
-        ? el("ul", { class: "comp-cov-list" },
-            ...uncollected.map((f) => el("li", {},
-              el("span", { class: "comp-key-glyph", "aria-hidden": "true" }, STATES.unknown.glyph),
-              f.name)))
-        : el("p", { class: "small muted" }, "Every catalogued framework has been collected.")),
-    el("div", { class: "comp-cov-cell" },
-      el("div", { class: "label" }, "No policies"),
-      el("div", { class: "mini-value num" }, String(stateCounts.noPolicies || 0)),
-      el("p", { class: "small muted" },
-        "No check is written for these — not a pass and not a failure.")),
-    el("div", { class: "comp-cov-cell" },
-      el("div", { class: "label" }, "No resources"),
-      el("div", { class: "mini-value num" }, String(stateCounts.noResources || 0)),
-      el("p", { class: "small muted" },
-        "There is nothing in this estate for these checks to evaluate — also not a failure.")),
-    // Only when a 5Rs framework is actually collected — this is the same band saying what
-    // is not being measured, and "not measured" has no meaning to report against nothing.
-    fiveRsScope && fiveRsScope.frameworkId
-      ? el("div", { class: "comp-cov-cell" },
-          el("div", { class: "label" }, "5Rs AI scope"),
-          el("div", { class: "mini-value num" }, `${fiveRsScope.selected} of ${fiveRsScope.total}`),
-          el("p", { class: "small muted" },
-            `${plural(fiveRsScope.total - fiveRsScope.selected, "rule")} out of scope — the ` +
-            "5Rs percentage above still covers all of them."),
-          el("a", { href: "#/settings", target: "_self" }, "Open Settings →"))
-      : null,
-    el("div", { class: "comp-cov-cell" },
-      el("div", { class: "label" }, "Collection"),
-      el("p", { class: "small muted" }, "Choose which frameworks Wiz scores posture against."),
-      // index.html sets <base target="_top">, which would escape the GAS sandbox iframe;
-      // _self keeps hash routing in-frame, as every other in-app link does.
-      el("a", { href: "#/settings", target: "_self" }, "Open Settings →"))));
-
-  host.append(section);
-}
