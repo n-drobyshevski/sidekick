@@ -5,7 +5,7 @@
 // readers differ (cloudResourcesV2 + graphSearch instead of vulnerabilityFindings).
 
 import type { Rec } from "../domain/util";
-import { DEFAULT_WIZ_AUTH_URL, getProp, PROP_KEYS, requireProp } from "./props";
+import { DEFAULT_WIZ_AUTH_URL, getProp, PROP_KEYS, requireProp, setProp } from "./props";
 import {
   AI_RESOURCE_TYPE_CANDIDATES,
   aiInventoryVariables,
@@ -146,6 +146,51 @@ export interface AiTypeResolution {
 const AI_TYPES_CACHE_KEY = "wiz_ai_resource_types_v2";
 
 /**
+ * How long the DURABLE copy of the resolution stays authoritative.
+ *
+ * CacheService is the hot layer and it is evictable — 6 h is its ceiling, and its 1,000-item
+ * FIFO can drop an entry well before that. Every eviction costs a fresh resolution, which is
+ * 1 POST on a tenant that allows introspection but one `first: 1` probe PER CANDIDATE (14 of
+ * them) on a tenant that refuses it. That is up to ~15 POSTs to re-learn a list that changes
+ * when Wiz ships a resource type, i.e. approximately never.
+ *
+ * So the answer is also written to a Script Property, which does not evict, and is trusted
+ * for a week. Long enough to make eviction free, short enough that a tenant gaining a type
+ * is picked up without an operator doing anything — and `wizDiagnostic()` bypasses both
+ * layers, so there is always a way to see the tenant's live answer on demand.
+ */
+const AI_TYPES_PROP_TTL_MS = 7 * 86_400_000;
+
+interface StoredAiTypes extends AiTypeResolution {
+  resolvedAt: number;
+}
+
+/** The durable resolution, if one is stored and still inside its window. */
+function readStoredAiTypes(now: number): AiTypeResolution | null {
+  const raw = getProp(PROP_KEYS.wizAiResourceTypesResolved);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as StoredAiTypes;
+    if (!parsed || !Array.isArray(parsed.types) || !parsed.types.length) return null;
+    if (!(now - Number(parsed.resolvedAt) < AI_TYPES_PROP_TTL_MS)) return null;
+    return { types: parsed.types, source: parsed.source, aiLooking: parsed.aiLooking ?? [] };
+  } catch {
+    return null; // a hand-edited or pre-upgrade value simply re-resolves
+  }
+}
+
+function writeStoredAiTypes(chosen: AiTypeResolution, now: number): void {
+  try {
+    setProp(
+      PROP_KEYS.wizAiResourceTypesResolved,
+      JSON.stringify({ ...chosen, resolvedAt: now } satisfies StoredAiTypes),
+    );
+  } catch {
+    /* durability is an optimization, exactly like the cache below it */
+  }
+}
+
+/**
  * Empirical fallback when introspection is blocked: ask the tenant about each
  * candidate type with a 1-row query — its own "cannot represent value"
  * rejection is the oracle. Anything else (auth, transport, other validation)
@@ -179,12 +224,13 @@ function probeCandidateTypes(
 
 /**
  * The AI resource types to query in THIS tenant, resolved once and cached.
- * Precedence: WIZ_AI_RESOURCE_TYPES override → introspected
+ * Precedence: WIZ_AI_RESOURCE_TYPES override → CacheService (hot) →
+ * WIZ_AI_RESOURCE_TYPES_RESOLVED Script Property (durable, 7 days) → introspected
  * CloudResourceTypeFilter members (see chooseAiResourceTypes) → per-candidate
  * empirical probing when introspection is unavailable. Throws with the
  * discovered vocabulary when nothing works, so the operator knows what to set.
- * Pass `log` (the diagnostic does) for a verbose trace; that also bypasses the
- * cache read so the report reflects the tenant's current schema.
+ * Pass `log` (the diagnostic does) for a verbose trace; that also bypasses BOTH
+ * stored layers so the report reflects the tenant's current schema.
  */
 export function resolveAiResourceTypes(log?: (m: string) => void): AiTypeResolution {
   const say = log ?? (() => undefined);
@@ -197,7 +243,11 @@ export function resolveAiResourceTypes(log?: (m: string) => void): AiTypeResolut
     return { types: override, source: "override", aiLooking: [] };
   }
 
+  const now = Date.now();
   const cache = CacheService.getScriptCache();
+  // Both stored layers are gated on the same `!log`, and that gate is the diagnostic's
+  // contract: wizDiagnostic step 2 exists to show what the tenant says NOW. A durable
+  // layer that answered it would make the report a mirror of its own last answer.
   if (!log) {
     const hit = cache.get(AI_TYPES_CACHE_KEY);
     if (hit) {
@@ -206,6 +256,16 @@ export function resolveAiResourceTypes(log?: (m: string) => void): AiTypeResolut
       } catch {
         /* recompute */
       }
+    }
+    const stored = readStoredAiTypes(now);
+    if (stored) {
+      // Re-warm the hot layer so the next eviction is the only cost this pays.
+      try {
+        cache.put(AI_TYPES_CACHE_KEY, JSON.stringify(stored), 21_600);
+      } catch {
+        /* cache is an optimization */
+      }
+      return stored;
     }
   }
 
@@ -248,6 +308,9 @@ export function resolveAiResourceTypes(log?: (m: string) => void): AiTypeResolut
   } catch {
     /* cache is an optimization */
   }
+  // Written even on the diagnostic path: a live resolution is the freshest answer there is,
+  // and the diagnostic having just paid for it is a reason to keep it, not to discard it.
+  writeStoredAiTypes(chosen, now);
   return chosen;
 }
 
@@ -314,11 +377,45 @@ export interface FetchOptions {
 }
 
 /**
+ * Whether re-asking at a smaller page size could plausibly change the answer.
+ *
+ * This used to be "anything that is not a 4xx", which retried three failures a smaller page
+ * cannot fix — and each retry is a fresh gqlPost, i.e. up to four more POSTs on top of the
+ * four the first attempt already burned:
+ *
+ *   - `HTTP 429` after retries. The tenant is rate-limiting us; asking again for less of the
+ *     same thing spends four more POSTs into the same throttle. This is the amplification
+ *     that turns one throttled page into eight requests.
+ *   - `Wiz response carried no data` — an HTTP-200 errors-only envelope. That is a semantic
+ *     verdict about the DOCUMENT (a rejected enum value, an unknown field), and it is the
+ *     second form `isInvalidEnumValueError` matches, so every 200-shaped rejection during
+ *     per-candidate type probing was costing two calls instead of one.
+ *   - `Wiz response carried no <field> connection` — a shape mismatch. Same reasoning.
+ *
+ * What IS worth a smaller retry: a gateway 5xx (a 504 on a page too heavy to assemble in
+ * time is exactly the failure the fallback exists for) and anything that is not a
+ * WizQueryError at all — a UrlFetchApp transport error or timeout, or a parse failure on a
+ * truncated body. Those are the "the response was too big / took too long" bucket.
+ *
+ * A 4xx stays rethrown, as before: the schema saying no does not become yes at 50 rows.
+ */
+export function smallerPageCouldHelp(e: unknown): boolean {
+  if (!(e instanceof WizQueryError)) return true; // transport / timeout / parse
+  const m = e.message;
+  if (/HTTP 4\d\d/.test(m)) return false; // schema said no
+  if (/HTTP 429/.test(m)) return false; // rate limited, not oversized
+  if (/carried no data/.test(m)) return false; // GraphQL error envelope
+  if (/carried no .* connection/.test(m)) return false; // shape mismatch
+  return true; // 5xx after retries, and anything else unrecognized
+}
+
+/**
  * Read one page from a top-level connection.
  *
- * The size fallback is the point: a tenant that rejects the requested page size with a
- * 5xx or a transport error gets one retry at the smaller size, but a 4xx is the schema
- * saying no and is rethrown untouched — retrying it smaller would just fail again slower.
+ * The size fallback is the point: a tenant that could not assemble the requested page size
+ * gets one retry at the smaller size. See smallerPageCouldHelp for which failures qualify —
+ * the ones that cannot be fixed by asking for less are rethrown untouched rather than
+ * doubling their cost.
  *
  * `extra` is merged into the variables, which is how graphSearch sends its mandatory
  * `quick: true` without needing a reader of its own.
@@ -334,10 +431,13 @@ function fetchPage(field: string, o: FetchOptions, extra?: Rec): PageResult {
       })[field] as Rec,
       field,
     );
+  const first = o.first ?? PAGE_SIZE;
   try {
-    return run(o.first ?? PAGE_SIZE);
+    return run(first);
   } catch (e) {
-    if (e instanceof WizQueryError && /HTTP 4\d\d/.test(e.message)) throw e;
+    if (!smallerPageCouldHelp(e)) throw e;
+    // Already at or below the fallback: a second identical ask buys nothing.
+    if (first <= PAGE_SIZE_FALLBACK) throw e;
     return run(PAGE_SIZE_FALLBACK);
   }
 }

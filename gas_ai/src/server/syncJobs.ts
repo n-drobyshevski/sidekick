@@ -75,6 +75,8 @@ import {
   hostExposureVariables,
   identityAccessVariables,
   MAX_PAGES,
+  PAGE_SIZE,
+  PAGE_SIZE_WIDE,
   Q_AGENT_RUNS_AS,
   Q_AI_EXPOSURE,
   Q_CONFIG_RULES,
@@ -107,6 +109,10 @@ const CONTINUE_DELAY_MS = 30_000;
 // execution ceiling on trigger hops.
 const FIRST_STEP_BUDGET_MS = 45_000;
 const BUDGET_MS = 270_000;
+// How often the page loop writes its position back to the jobs tab. Well under the client's
+// STALL_MS (src/client/js/syncProgress.js, 15 s), because `updated_at` is what tells the sync
+// card the job is alive — a longer gap makes it report "Waiting for next step…" mid-fetch.
+const CHECKPOINT_MS = 8_000;
 
 interface SyncStepDef {
   id: string;
@@ -132,6 +138,14 @@ interface SyncStepDef {
   // skipped and recorded instead of failing the whole sync. The inventory
   // step is the core dataset and stays fatal.
   optional?: boolean;
+  // Rows per page for THIS step, when the default is leaving calls on the table.
+  //
+  // Opt-in rather than a raised default, because the right page size is a property of the
+  // DOCUMENT, not of the battery: a step selecting twenty flat scalars and a step spreading
+  // three ten-wide nested sub-connections per entity do not want the same number. Set it to
+  // PAGE_SIZE_WIDE only where the selection set is provably narrow — the wide documents and
+  // the interactive reader in api.ts both keep PAGE_SIZE.
+  pageSize?: number;
 }
 
 /**
@@ -174,6 +188,7 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       query: Q_AI_INVENTORY,
       extraVariables: vars("INVENTORY_AI", aiInventoryVariables(types)),
       normalize: normalizeInventoryPage,
+      pageSize: PAGE_SIZE_WIDE,
     },
     // One cursor walk per toxic-combination source rule: the assets carrying an OPEN
     // issue for that rule (issue rows are reconstructed one-per-asset).
@@ -186,6 +201,7 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       extraVariables: { ruleIds: [group.ruleId] },
       normalize: (rows) => normalizeRuleAssetsPage(rows, group),
       optional: true,
+      pageSize: PAGE_SIZE_WIDE,
     })),
     // Real toxic-combination issues (issuesV2). Runs alongside the per-rule steps
     // above; reconcileIssues drops the synthetic per-rule rows these supersede.
@@ -231,6 +247,9 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       query: Q_CONFIG_RULES,
       normalize: normalizeConfigRulesPage,
       optional: true,
+      // The big one: ~3,858 rules is 39 pages at PAGE_SIZE and 8 at PAGE_SIZE_WIDE, and
+      // the document is five flat scalars per node.
+      pageSize: PAGE_SIZE_WIDE,
     }]),
     // MFA and dormancy on the humans who can reach an AI asset. The rules come from the
     // catalogue, matched by name (domain/identityHygiene.ts), so this step exists only once
@@ -263,6 +282,7 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       extraVariables: effectiveAccessVariables(types, projectScope()),
       normalize: normalizeEffectiveAccessPage,
       optional: true,
+      pageSize: PAGE_SIZE_WIDE,
     },
     // The framework catalogue. Populates the Settings picker; it does NOT decide the
     // battery — see the posture steps below for why.
@@ -283,6 +303,7 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       extraVariables: vars("FRAMEWORKS_LIST", aiSecurityFrameworksVariables() as Rec),
       normalize: normalizeFrameworksPage,
       optional: true,
+      pageSize: PAGE_SIZE_WIDE,
     },
     // Per-framework compliance posture — ONE STEP PER FRAMEWORK, because the query takes a
     // framework id and returns one object. Generated the same way the per-rule combo steps
@@ -418,6 +439,7 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       // fields without erasing the projects, tags or analytics INVENTORY_AI established.
       normalize: normalizeInventoryPage,
       optional: true,
+      pageSize: PAGE_SIZE_WIDE,
     },
     // Agentic execution identities (cloudResourcesV2 + identityPurpose:AGENTIC).
     {
@@ -429,6 +451,7 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       extraVariables: vars("AGENTIC_IDENTITIES", aiPrincipalsVariables(projectScope()) as Rec),
       normalize: normalizePrincipalsPage,
       optional: true,
+      pageSize: PAGE_SIZE_WIDE,
     },
   ];
 }
@@ -481,6 +504,10 @@ export function describeSyncSteps(): Rec[] {
       // graphSearch) `quick` are added by the transport on every request and are named in
       // the panel rather than folded in here, so what is shown is what is configured.
       variables: step.extraVariables ?? {},
+      // The `first` the transport will send for THIS step. Named because it is no longer one
+      // number for the whole battery: the panel would otherwise list `first` as a transport
+      // variable whose value the operator cannot see and cannot predict.
+      pageSize: step.pageSize ?? PAGE_SIZE,
       defaultVariables: base,
       editable: isEditableStep(step.id),
       overridden: changedPaths(step.id, base, overrides[step.id]),
@@ -681,6 +708,7 @@ function dryRunSync(): StartResult {
   // leaving the previous live run's list behind, which would attribute a stale skip to a
   // sync that never called Wiz at all.
   settingsStore.setSkippedSteps([]);
+  settingsStore.setTruncatedSteps([]);
   return {
     jobId: null,
     message: `Dry-run sync complete: ${doc.nodes.length} nodes, ` +
@@ -693,6 +721,7 @@ function dryRunSync(): StartResult {
 interface JobParams {
   apiCalls: number;
   skippedSteps: string[];
+  truncatedSteps: string[];
 }
 
 /** Strings out of a parsed blob — a checkpoint field can be anything after a schema change. */
@@ -705,6 +734,7 @@ function jobParams(job: JobRow): JobParams {
   return {
     apiCalls: Number(parsed["apiCalls"] ?? 0),
     skippedSteps: strList(parsed["skippedSteps"]),
+    truncatedSteps: strList(parsed["truncatedSteps"]),
   };
 }
 
@@ -774,6 +804,7 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
   let page = job.page;
   let nodesSoFar = job.nodes_so_far;
   let hopPart = emptyPart();
+  let lastCheckpoint = Date.now();
 
   const spillHopPart = (): void => {
     if (partIsEmpty(hopPart)) return;
@@ -814,6 +845,7 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
             query: step.query,
             cursor,
             extraVariables: step.extraVariables,
+            first: step.pageSize,
           });
         } catch (e) {
           // A 400 on an OPTIONAL step means this tenant's schema rejects that
@@ -855,16 +887,47 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
           throw e;
         }
 
-        updateJob(job.job_id, {
-          step_index: stepIndex,
-          cursor: result.endCursor,
-          page,
-          nodes_so_far: nodesSoFar,
-          total_count: result.totalCount ?? 0,
-          params_json: JSON.stringify(params),
-        });
+        // Checkpointed on ELAPSED TIME, not on every page.
+        //
+        // `updateJob` goes through sheetsDb.updateWhere, which reads the whole append-only
+        // jobs tab before writing one row — three Sheets service calls to record progress
+        // that only the sync card reads. Paying that per page is what made a wide step's
+        // pages slow enough to need an extra resume hop.
+        //
+        // Time-based rather than every-Nth-page, and strictly under the client's
+        // STALL_MS (syncProgress.js: 15 s): `updated_at` is a LIVENESS signal, and a card
+        // that stops seeing it declares the sync to be waiting between hops while it is
+        // actually fetching. A page count cannot bound that — one slow page would.
+        //
+        // Skipping a write is also safer than it looks. `part_refs_json` is only written on
+        // a spill, so advancing the stored cursor without spilling was never durable in the
+        // first place: a hard kill mid-step already loses the unspilled rows and resumes
+        // past them. Writing the cursor less often narrows that window rather than widening
+        // it. The deadline branch above, the step boundary below and the terminal phases all
+        // still write unconditionally.
+        if (page === 1 || Date.now() - lastCheckpoint >= CHECKPOINT_MS) {
+          updateJob(job.job_id, {
+            step_index: stepIndex,
+            cursor: result.endCursor,
+            page,
+            nodes_so_far: nodesSoFar,
+            total_count: result.totalCount ?? 0,
+            params_json: JSON.stringify(params),
+          });
+          lastCheckpoint = Date.now();
+        }
 
-        if (!result.hasNextPage || page >= MAX_PAGES) break;
+        if (!result.hasNextPage) break;
+        if (page >= MAX_PAGES) {
+          // The cursor is still open and we are the ones who stopped. Recorded, because a
+          // bare break here reports a prefix of the estate as the whole of it — and the
+          // resulting undercount is indistinguishable from a tenant that simply has less.
+          params.truncatedSteps.push(step.id);
+          console.warn(
+            `Sync step ${step.id} stopped at the ${MAX_PAGES}-page cap with more rows available.`,
+          );
+          break;
+        }
         cursor = result.endCursor;
       }
 
@@ -877,9 +940,13 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
         step_index: stepIndex,
         cursor: null,
         page: 0,
+        // Carried here because the page loop no longer writes it on every page: without it a
+        // throttled tail would leave the row reporting the count from the last checkpoint.
+        nodes_so_far: nodesSoFar,
         part_refs_json: JSON.stringify(refs),
         params_json: JSON.stringify(params),
       });
+      lastCheckpoint = Date.now();
     }
 
     // ------------------------------------------------------------- reconcile
@@ -940,6 +1007,7 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
       // the sync whose numbers it is showing. The job row carrying this is discarded the
       // moment the job goes terminal, which is why it could not be read back before.
       settingsStore.setSkippedSteps(params.skippedSteps);
+      settingsStore.setTruncatedSteps(params.truncatedSteps);
       // Stamped only when the catalogue actually came back with rows, which is what starts
       // the 30-day clock. A run that skipped the step (fresh) or had it rejected leaves the
       // old timestamp alone, so a rejection retries tomorrow rather than being remembered as

@@ -15,6 +15,11 @@ export const PROP_KEYS = {
   // Optional comma-separated override of the AI resource-type enum values to
   // query (e.g. "AI_AGENT,AI_MODEL") for tenants whose schema names differ.
   wizAiResourceTypes: "WIZ_AI_RESOURCE_TYPES",
+  // The DERIVED resolution, written by resolveAiResourceTypes — never by an operator.
+  // Deliberately a different key from the override above: one is an instruction and the
+  // other is a memo, and conflating them would let a cached answer masquerade as a
+  // configured one (and survive the operator clearing the override).
+  wizAiResourceTypesResolved: "WIZ_AI_RESOURCE_TYPES_RESOLVED",
 } as const;
 
 export const DEFAULT_WIZ_AUTH_URL = "https://auth.app.wiz.io/oauth/token";

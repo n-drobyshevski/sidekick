@@ -197,6 +197,29 @@ export function withSkippedSteps(settings: Rec, steps: unknown): Rec {
 }
 
 /**
+ * Steps whose last run stopped at MAX_PAGES with the cursor still open.
+ *
+ * A DIFFERENT list from the skipped one, and the difference is whose decision it was.
+ * `last_skipped_steps` means the tenant refused the query; this means we stopped asking
+ * while it was still answering, so the step's rows are a prefix of the truth. Folding the
+ * two together would report a partial dataset as a rejection and send whoever reads it to
+ * check permissions that are fine.
+ *
+ * It exists because the cap used to be a bare `break`: the sync reported success and the
+ * missing rows were indistinguishable from an estate that does not have them.
+ */
+export function getTruncatedSteps(settings: Rec): string[] {
+  const raw = settings["last_truncated_steps"];
+  if (!Array.isArray(raw)) return [];
+  return raw.map((v) => String(v ?? "")).filter(Boolean);
+}
+
+export function withTruncatedSteps(settings: Rec, steps: unknown): Rec {
+  const list = Array.isArray(steps) ? steps.map((v) => String(v ?? "")).filter(Boolean) : [];
+  return { ...settings, last_truncated_steps: list };
+}
+
+/**
  * The AI-relevant frameworks this app syncs posture for, out of the box.
  *
  * Ids observed on the tenant this was built against. They are a STARTING POINT, not a
