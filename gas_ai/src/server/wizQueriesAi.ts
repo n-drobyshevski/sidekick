@@ -44,6 +44,21 @@ export const PAGE_SIZE_FALLBACK = 50;
 export const PAGE_SIZE_WIDE = 500;
 
 /**
+ * The page size for the graphSearch traversals — between the default and the wide one,
+ * because a graphSearch row is a PATH and not a record.
+ *
+ * Their field set is narrow (ENTITY_FIELDS: id, name, type, properties) but each row carries
+ * two to four entities, and `properties` is an opaque bag whose size nothing here bounds. So
+ * 500 rows of graphSearch is not comparable to 500 flat resource rows, and the middle size
+ * is the honest answer until a live run says otherwise. It is also the size the sibling
+ * OS-vulns tool falls back to against this same tenant.
+ *
+ * Not applied to the two Q_AI_EXPOSURE steps: that document spreads three ten-wide nested
+ * sub-connections per entity and is the widest thing the battery sends.
+ */
+export const PAGE_SIZE_TRAVERSAL = 250;
+
+/**
  * Hard ceiling on pages per step — a runaway-cursor backstop, not a budget.
  *
  * Raised from 200 alongside per-step page sizes. At 200 x PAGE_SIZE this capped every step

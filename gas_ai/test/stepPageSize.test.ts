@@ -15,7 +15,12 @@ import {
   withSkippedSteps,
   withTruncatedSteps,
 } from "../src/domain/settingsLogic";
-import { PAGE_SIZE, PAGE_SIZE_WIDE, MAX_PAGES } from "../src/server/wizQueriesAi";
+import {
+  PAGE_SIZE,
+  PAGE_SIZE_TRAVERSAL,
+  PAGE_SIZE_WIDE,
+  MAX_PAGES,
+} from "../src/server/wizQueriesAi";
 
 interface Step {
   id: string;
@@ -47,7 +52,9 @@ describe("per-step page size", () => {
   it("every step reports the `first` it will actually send", () => {
     // The panel names `first` as a transport variable; without this it could not say what
     // the value is, and the value is no longer one number.
-    for (const s of steps) expect([PAGE_SIZE, PAGE_SIZE_WIDE]).toContain(s.pageSize);
+    for (const s of steps) {
+      expect([PAGE_SIZE, PAGE_SIZE_TRAVERSAL, PAGE_SIZE_WIDE]).toContain(s.pageSize);
+    }
   });
 
   it("puts the narrow documents on the wide page — CONFIG_RULES above all", () => {
@@ -72,11 +79,16 @@ describe("per-step page size", () => {
     expect(byId("ENDPOINT_EXPOSURE").pageSize).toBe(PAGE_SIZE);
   });
 
-  it("leaves the graphSearch traversals on the small page", () => {
+  it("puts the graphSearch traversals in the middle, not on either extreme", () => {
+    // A graphSearch row is a PATH: narrow field set, but two to four entities per row, each
+    // with an unbounded `properties` bag. Not comparable to 500 flat resource rows — and at
+    // a 13,842-asset estate, not something to leave at 100 either.
     for (const id of ["GUARDRAIL_GAPS", "RUNS_AS", "SA_FINDINGS", "SENSITIVE_DATA_ACCESS",
       "IDENTITY_ACCESS"]) {
-      expect(byId(id).pageSize).toBe(PAGE_SIZE);
+      expect(byId(id).pageSize).toBe(PAGE_SIZE_TRAVERSAL);
     }
+    expect(PAGE_SIZE_TRAVERSAL).toBeGreaterThan(PAGE_SIZE);
+    expect(PAGE_SIZE_TRAVERSAL).toBeLessThan(PAGE_SIZE_WIDE);
   });
 
   it("does not touch the interactive reader, which takes the default", () => {

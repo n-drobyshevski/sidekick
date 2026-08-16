@@ -76,6 +76,7 @@ import {
   identityAccessVariables,
   MAX_PAGES,
   PAGE_SIZE,
+  PAGE_SIZE_TRAVERSAL,
   PAGE_SIZE_WIDE,
   Q_AGENT_RUNS_AS,
   Q_AI_EXPOSURE,
@@ -344,6 +345,7 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       query: Q_AGENTS_NO_GUARDRAIL,
       normalize: normalizeNoGuardrailPage,
       optional: true,
+      pageSize: PAGE_SIZE_TRAVERSAL,
     },
     {
       id: "RUNS_AS",
@@ -353,6 +355,7 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       query: Q_AGENT_RUNS_AS,
       normalize: normalizeRunsAsPage,
       optional: true,
+      pageSize: PAGE_SIZE_TRAVERSAL,
     },
     {
       id: "SA_FINDINGS",
@@ -362,6 +365,7 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       query: Q_SA_EXCESSIVE_ACCESS,
       normalize: normalizeRunsAsPage,
       optional: true,
+      pageSize: PAGE_SIZE_TRAVERSAL,
     },
     // The data-exposure chain. Runs AFTER the two CIEM steps on purpose: it re-emits the
     // agent and its service account, and mergeParts lets later truthy values win field-wise,
@@ -378,6 +382,7 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       query: Q_AGENT_SENSITIVE_DATA_ACCESS,
       normalize: normalizeSensitiveDataAccessPage,
       optional: true,
+      pageSize: PAGE_SIZE_TRAVERSAL,
     },
     // Network exposure, in two steps because they are two claims. HOST_EXPOSURE says the
     // compute under an AI asset is reachable; ENDPOINT_EXPOSURE says Wiz's scanner reached a
@@ -424,6 +429,7 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       extraVariables: identityAccessVariables(types, projectScope()),
       normalize: normalizeIdentityAccessPage,
       optional: true,
+      pageSize: PAGE_SIZE_TRAVERSAL,
     },
     // AI-asset provenance: publisher + how Wiz discovered it. Optional and separate from
     // INVENTORY_AI on purpose — see the note on Q_AI_PROPERTIES. Losing it costs two columns.
