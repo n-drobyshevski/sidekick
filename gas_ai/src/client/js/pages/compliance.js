@@ -18,46 +18,38 @@
 // null percentage with a reason (NO_RESOURCES, NO_POLICIES), and both are the opposite of
 // "we checked and everything failed". Every cell here goes through postureCell(), which
 // renders a state pill rather than a 0% meter — the Honest-State principle, and the reason
-// the strip has four segments instead of two.
+// the strip has four segments instead of two. postureCell(), checksCell(), stateStrip() and
+// openSubcategorySheet() now live in complianceShared.js, so this file and
+// complianceOverview.js call the same code rather than drifting into two.
+//
+// TWO SUB-VIEWS, ONE FETCH, ONE URL. `view.mode` is "overview" (the cross-framework rollup
+// — every framework at once) or "framework" (this file's original register, one framework
+// at a time), read from `?view=` and mirrored back into the hash by pushParams() exactly
+// as config.js does for its controls/findings toggle. Overview is the default: a bare
+// `?view=` is absent on a first visit, not a wrong value, so its fallback is "overview".
+// BACK-COMPAT: a URL written before this split carries `?framework=<id>` with no `?view` at
+// all — every existing deep-link and the compliance help-tip's "Full definition →` links —
+// and those must keep landing on the per-framework register, not the new default. So the
+// mode fallback checks for a bare `framework` param before defaulting to "overview".
+//
+// The register (which framework, which state filter, which rows are expanded) is invisible
+// while the overview is showing, so pushParams() drops those three params from the URL in
+// overview mode — the same "don't carry state the reader can't see" rule config.js applies
+// to its own defaults. The in-memory `view` fields are untouched by the mode switch, so
+// flipping back to "By framework" restores exactly where the reader left it.
 
 import { setParams, swrCall } from "../store.js";
 import {
   clear, dataTable, el, emptyState, errorState, filterCombobox, meter, plural,
-  openSheet, sectionLabel, segmented, sevBadge, sheetRow, sheetSection, skeletonStack,
-  statRow,
+  sectionLabel, segmented, skeletonStack, statRow,
 } from "../ui.js";
-
-/**
- * The four posture states, mirroring domain/compliancePosture.POSTURE_STATES.
- *
- * Duplicated deliberately rather than shipped down the wire: these are labels and glyphs,
- * the server's copy is the classifier, and a page that cannot name a state without an RPC
- * cannot render an empty state at all. The classification itself always comes from the
- * server — `node.state` — so the two cannot disagree about which state a row is IN.
- */
-const STATES = {
-  scored: { glyph: "●", label: "Scored" },
-  noResources: { glyph: "○", label: "No resources" },
-  noPolicies: { glyph: "◌", label: "No policies" },
-  unknown: { glyph: "◐", label: "Not reported" },
-};
-const STATE_ORDER = ["scored", "noResources", "noPolicies", "unknown"];
+import {
+  checksCell, extChip, openSubcategorySheet, postureCell, STATES, STATE_ORDER, stateStrip,
+} from "./complianceShared.js";
+import { renderOverview } from "./complianceOverview.js";
 
 /** Frameworks past this get a searchable combobox instead of a segmented control. */
 const SEGMENTED_MAX = 4;
-
-/**
- * The leading external-id chip, or nothing when the title already opens with it.
- *
- * OWASP LLM names its categories "1 LLM01:2025 Prompt Injection" while numbering them "1",
- * so an unconditional chip renders "11 LLM01:2025 …". The predicate lives in the read
- * model, where it is tested — compliancePosture.titleRepeatsExternalId.
- */
-function extChip(node) {
-  return node.showExternalId
-    ? el("span", { class: "comp-ext" }, node.externalId)
-    : null;
-}
 
 /**
  * The register's columns.
@@ -75,163 +67,12 @@ const COLUMNS = [
   { key: "policies", label: "Policies", cell: (r) => r.policies, className: "num" },
 ];
 
-/**
- * The posture cell. The whole point of the page's honesty lives here.
- *
- * A scored node gets the meter + number. An unscored one gets an em-dash and its reason,
- * with a glyph as well as text, because these four states are exactly the kind of thing
- * PRODUCT.md forbids carrying by colour alone.
- */
-function postureCell(node) {
-  if (node.state === "scored" && node.posturePct !== null) {
-    return el("div", { class: "comp-posture" },
-      meter(node.posturePct, {
-        max: 100,
-        label: `${node.title}, ${node.posturePct} percent compliant`,
-      }),
-      el("span", { class: "comp-posture-num" }, `${node.posturePct}%`));
-  }
-  const state = STATES[node.state] || STATES.unknown;
-  return el("div", { class: "comp-posture" },
-    el("span", { class: "comp-posture-dash", "aria-hidden": "true" }, "—"),
-    el("span", { class: "comp-posture-empty", "data-state": node.state },
-      el("span", { class: "comp-key-glyph", "aria-hidden": "true" }, state.glyph),
-      state.label));
-}
-
-/**
- * Passing checks over assessed checks — or the absence of any evaluation at all.
- *
- * Grouped, because these run to six figures on a real estate (194309 is not a number
- * anyone reads; 194,309 is) and the column's job is to be scanned, not decoded.
- */
-function checksCell(node) {
-  const total = node.passCount + node.failCount;
-  if (!total) return el("span", { class: "comp-posture-dash" }, "—");
-  return el("span", { class: "num" },
-    `${node.passCount.toLocaleString()} / ${total.toLocaleString()}`);
-}
-
-/**
- * The subcategory-state strip: the header's distribution AND the register's filter.
- *
- * A row of real buttons rather than a chart. The states are four, they are categorical,
- * and the reader's next action is "show me only those" — which a canvas cannot offer a
- * keyboard user at all.
- */
-function stateStrip(tree, active, onToggle) {
-  const total = STATE_ORDER.reduce((sum, k) => sum + (tree.stateCounts[k] || 0), 0);
-  const bar = el("div", {
-    class: "comp-bar",
-    role: "img",
-    "aria-label": total
-      ? STATE_ORDER
-        .filter((k) => tree.stateCounts[k])
-        .map((k) => `${tree.stateCounts[k]} ${STATES[k].label}`)
-        .join(", ")
-      : "No subcategories",
-  });
-  if (!total) {
-    bar.append(el("span", { class: "comp-bar-seg", "data-state": "empty" }));
-  } else {
-    for (const key of STATE_ORDER) {
-      const n = tree.stateCounts[key] || 0;
-      if (!n) continue;
-      const seg = el("span", { class: "comp-bar-seg", "data-state": key });
-      seg.style.width = `${(n / total) * 100}%`;
-      bar.append(seg);
-    }
-  }
-
-  const keys = el("div", { class: "comp-keys" });
-  for (const key of STATE_ORDER) {
-    const n = tree.stateCounts[key] || 0;
-    const btn = el("button", {
-      type: "button",
-      class: "comp-key",
-      "data-state": key,
-      "aria-pressed": active === key ? "true" : "false",
-      // Zero-count states stay focusable and readable rather than disappearing: "no
-      // subcategory is unscored" is information, and a vanishing key hides it.
-      disabled: n === 0 ? "" : null,
-      onclick: () => onToggle(key),
-    },
-      el("span", { class: "comp-key-glyph", "aria-hidden": "true" }, STATES[key].glyph),
-      STATES[key].label,
-      el("span", { class: "comp-key-num" }, String(n)));
-    keys.append(btn);
-  }
-
-  return el("div", { class: "comp-strip" },
-    bar,
-    keys,
-    el("p", { class: "comp-strip-note" },
-      "Subcategories by state. A subcategory with no resources or no policies is not a " +
-      "failure and not a pass — it is not scored, and it is left out of the framework " +
-      "percentage rather than counted as zero."));
-}
-
-/** The detail sheet for one subcategory: what it means, and every policy behind it. */
-function openSubcategorySheet(tree, category, sub) {
-  openSheet((body) => {
-    body.append(sheetSection("Posture",
-      el("div", { class: "comp-posture" }, postureCell(sub)),
-      el("div", { class: "comp-policy-counts" },
-        el("span", {}, el("b", {}, String(sub.passCount)), " passing checks"),
-        el("span", {}, el("b", {}, String(sub.failCount)), " failing checks"),
-        el("span", {}, el("b", {}, String(sub.policies.length)), " policies mapped")),
-      sub.emptyPostureReason
-        ? el("p", { class: "comp-strip-note" },
-          sub.emptyPostureReason === "NO_POLICIES"
-            ? "Wiz has no check written for this subcategory, so nothing was evaluated. " +
-              "This is a gap in the framework's coverage, not in this estate."
-            : "There is nothing in this estate for these checks to evaluate.")
-        : null));
-
-    if (sub.description) {
-      body.append(sheetSection("What this covers", el("p", {}, sub.description)));
-    }
-    if (sub.mappingRationale) {
-      body.append(sheetSection("Why these policies map here", el("p", {}, sub.mappingRationale)));
-    }
-    if (sub.assessmentScope) {
-      body.append(sheetSection("Assessment scope", el("p", {}, sub.assessmentScope)));
-    }
-
-    if (sub.policies.length) {
-      body.append(sheetSection(
-        // Not plural(): its -s rule would render "1 policys". The one irregular label on
-        // this page is spelled out rather than teaching the helper an exception.
-        `${sub.policies.length} ${sub.policies.length === 1 ? "policy" : "policies"}`,
-        ...sub.policies.map((p) => sheetRow({
-          badge: sevBadge(p.severity),
-          meta: [
-            // The kind matters and is not decoration: a Control is a graph query over the
-            // estate, a cloud rule is a Rego evaluation against one resource type, and a
-            // host rule runs on the machine. Presenting them as one sort of thing would
-            // misdescribe what failed.
-            el("span", { class: "comp-ext" },
-              p.policyKind === "CONTROL" ? "Control"
-                : p.policyKind === "HOST_RULE" ? "Host rule" : "Cloud rule"),
-            p.shortId ? el("span", { class: "comp-ext" }, p.shortId) : null,
-            p.cloudProvider ? el("span", { class: "comp-ext" }, p.cloudProvider) : null,
-          ],
-          title: p.name,
-          note: p.noResourceToAssess
-            ? "Nothing in this estate to evaluate — neither passing nor failing."
-            : `${p.passCount} passed · ${p.failCount} failed · ${p.assessedCount} assessed`,
-        })),
-      ));
-    }
-  }, {
-    title: sub.title,
-    subtitle: `${tree.name} · ${category.title}`,
-    ariaLabel: `${sub.title} compliance detail`,
-  });
-}
-
 export async function renderCompliance(main, params, ctx) {
+  const requestedMode = params.view === "framework" ? "framework"
+    : params.view === "overview" ? "overview" : "";
   const view = {
+    // See the back-compat paragraph in the header comment above.
+    mode: requestedMode || (params.framework ? "framework" : "overview"),
     frameworkId: params.framework || "",
     state: STATE_ORDER.indexOf(params.state) >= 0 ? params.state : "",
     expanded: new Set(String(params.open || "").split(",").filter(Boolean)),
@@ -265,12 +106,39 @@ export async function renderCompliance(main, params, ctx) {
   paint();
 
   function pushParams(patch) {
+    const inOverview = view.mode === "overview";
     setParams(Object.assign({
-      framework: view.frameworkId || null,
-      state: view.state || null,
-      open: view.expanded.size ? [...view.expanded].join(",") : null,
+      view: inOverview ? null : view.mode,
+      framework: inOverview ? null : (view.frameworkId || null),
+      state: inOverview ? null : (view.state || null),
+      open: inOverview ? null : (view.expanded.size ? [...view.expanded].join(",") : null),
     }, patch || {}));
   }
+
+  // The small callback surface the overview reaches back through — it never touches `view`
+  // or setParams itself, so it stays a pure function of the payload it is handed.
+  const actions = {
+    /** The rail (and anything else in the overview that names a framework) hands off here. */
+    openFramework(frameworkId) {
+      view.mode = "framework";
+      view.frameworkId = frameworkId;
+      // A different framework is a different register; carrying the open rows over would
+      // expand categories that belong to something else. `state` is left alone, the same
+      // way the framework switcher below leaves it alone on its own onChange.
+      view.expanded = new Set();
+      pushParams();
+      paint();
+    },
+    /** Press the active key again to clear it — the same toggle the register's own strip uses. */
+    setState(key) {
+      view.state = view.state === key ? "" : key;
+      pushParams();
+      paint();
+    },
+    repaint() {
+      paint();
+    },
+  };
 
   function paint() {
     clear(host);
@@ -281,15 +149,34 @@ export async function renderCompliance(main, params, ctx) {
         "No compliance posture has been synced yet.",
         // Says which of the two reasons it is, because "we never asked" and "we asked and
         // the tenant said nothing" send an operator to completely different places.
-        {
-          detail: (data && data.selected && data.selected.length)
-            ? "The sync is configured to collect " +
-              plural(data.selected.length, "framework") +
-              ", but no posture has been stored yet. Run a sync, then check the Wiz Scans " +
-              "page for a skipped step if this stays empty."
-            : "No frameworks are selected for posture collection. Choose them in Settings.",
-        },
+        (data && data.selected && data.selected.length)
+          ? "The sync is configured to collect " + plural(data.selected.length, "framework") +
+            ", but no posture has been stored yet. Run a sync, then check the Wiz Scans " +
+            "page for a skipped step if this stays empty."
+          : "No frameworks are selected for posture collection. Choose them in Settings.",
       ));
+      return;
+    }
+
+    // ---- view switch: All frameworks (the overview) vs By framework (the register) ----
+    const toolbar = el("div", { class: "toolbar" },
+      segmented({
+        options: [
+          { value: "overview", label: "All frameworks" },
+          { value: "framework", label: "By framework" },
+        ],
+        value: view.mode,
+        ariaLabel: "Compliance view",
+        onChange: (v) => {
+          view.mode = v;
+          pushParams();
+          paint();
+        },
+      }));
+    host.append(toolbar);
+
+    if (view.mode === "overview") {
+      renderOverview(host, data, view, actions);
       return;
     }
 
@@ -297,14 +184,14 @@ export async function renderCompliance(main, params, ctx) {
     const tree = trees.find((t) => t.frameworkId === view.frameworkId) || trees[0];
     view.frameworkId = tree.frameworkId;
 
-    // ---- framework switcher ----
+    // ---- framework switcher, beside the mode switch in the same toolbar ----
     if (trees.length > 1) {
       const options = trees.map((t) => ({
         value: t.frameworkId,
         label: t.name,
         title: t.posturePct === null ? "Not scored" : `${t.posturePct}% compliant`,
       }));
-      host.append(el("div", { class: "toolbar" }, trees.length <= SEGMENTED_MAX
+      toolbar.append(trees.length <= SEGMENTED_MAX
         ? segmented({
           options,
           value: tree.frameworkId,
@@ -329,7 +216,7 @@ export async function renderCompliance(main, params, ctx) {
             pushParams();
             paint();
           },
-        })));
+        }));
     }
 
     // ---- header ----
@@ -352,11 +239,7 @@ export async function renderCompliance(main, params, ctx) {
 
     host.append(el("div", { class: "comp-header" },
       hero,
-      stateStrip(tree, view.state, (key) => {
-        view.state = view.state === key ? "" : key;
-        pushParams();
-        paint();
-      }),
+      stateStrip(tree, view.state, (key) => actions.setState(key)),
       el("div", { class: "stat-list" },
         statRow("Categories", String(tree.categories.length), "in this framework"),
         statRow(
@@ -453,9 +336,8 @@ export async function renderCompliance(main, params, ctx) {
 
     host.append(sectionLabel("Categories"));
     if (!rows.length) {
-      host.append(emptyState(`No subcategory is ${(STATES[view.state] || {}).label || "shown"}.`, {
-        detail: "Clear the state filter above to see the whole framework.",
-      }));
+      host.append(emptyState(`No subcategory is ${(STATES[view.state] || {}).label || "shown"}.`,
+        "Clear the state filter above to see the whole framework."));
       return;
     }
 

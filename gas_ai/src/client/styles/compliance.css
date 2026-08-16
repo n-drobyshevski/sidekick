@@ -315,7 +315,15 @@
    shape difference, not just a color one — `.comp-dots-n` beside it is the
    belt-and-braces text count non-color readers and this app's own rule (DESIGN.md's
    Two-Token / never-color-alone rule) both require. */
-.comp-dots { display: inline-flex; align-items: center; gap: 5px; }
+/* Two elements, not one, and the split is an accessibility requirement rather than a
+   layout convenience: `.comp-dots-pic` is the `role="img"` whose aria-label names the
+   frameworks in and out, and the visible count has to sit OUTSIDE it. Inside, the label
+   replaces the element's whole subtree, so the "3 of 4" a sighted reader sees would be
+   swallowed and never announced — the redundant cue would exist visually and vanish for
+   exactly the reader it is there for. The outer gap separates picture from count; the
+   inner one separates the dots. */
+.comp-dots { display: inline-flex; align-items: center; gap: 7px; }
+.comp-dots-pic { display: inline-flex; align-items: center; gap: 5px; }
 .comp-dot { width: 9px; height: 9px; border-radius: 50%; box-sizing: border-box; }
 .comp-dot--on { background: var(--accent); }
 .comp-dot--off { background: none; border: 1.5px solid rgba(0, 0, 0, 0.22); }
