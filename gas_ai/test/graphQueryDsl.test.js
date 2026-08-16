@@ -268,14 +268,37 @@ describe("migrateLegacyParams", () => {
     expect(many.where).toBe("0.kind.AI_AGENT,0.kind.AI_MODEL");
   });
 
-  it("leaves severity, cloud and project as their own params rather than copying them", () => {
-    // They are still live hash params that the filter panel writes and rpcParams folds onto
-    // node 0. Copying them into `where` too would leave a second, invisible filter that
-    // clearing the chip does not touch — the view would stay narrowed by something nothing on
-    // screen admits to.
+  it("folds the retired panel's params into where, where they always belonged", () => {
+    // They were never anything but `where` filters on node 0 — `rpcParams` folded them onto it
+    // on every request, from their own hash params. With the panel gone they are folded once,
+    // here, so there is one copy of the question and it is the one the builder shows.
     const out = migrateLegacyParams({ kinds: "AI_AGENT", severities: "CRITICAL,HIGH", clouds: "GCP" });
     expect(out.find).toBe("AI_AGENT");
-    expect(out.where).toBe("");
+    expect(out.where).toBe("0.cloud.GCP,0.severity.CRITICAL,0.severity.HIGH");
+  });
+
+  it("folds them even when the link already carries a query", () => {
+    // THE GUARD THAT USED TO STOP THIS. Every saved view carries `find`, so an early return on
+    // it left the panel's params behind — and with nothing folding them any more, a saved view
+    // would have silently reopened WIDER than it was saved, with nothing on screen saying so.
+    const out = migrateLegacyParams({ find: "AI_AGENT(RUNS_AS.SERVICE_ACCOUNT)", severities: "HIGH" });
+    expect(out.find).toBeUndefined();          // the query it already had is left alone
+    expect(out.where).toBe("0.severity.HIGH");
+    // Nothing to fold and a query already present: nothing to do at all.
+    expect(migrateLegacyParams({ find: "AI_AGENT", where: "0.cloud.GCP" })).toBeNull();
+  });
+
+  it("folds ONTO an existing where rather than over it", () => {
+    const out = migrateLegacyParams({ find: "AI_AGENT", where: "0.name~prod", clouds: "GCP" });
+    expect(out.where).toBe("0.cloud.GCP,0.name~prod");
+  });
+
+  it("lets the visible filter win where both name one field", () => {
+    // A filter written in the builder is on screen and editable; a panel param was neither.
+    // The old `rpcParams` fold went the other way and silently overwrote the visible one, so
+    // the bar displayed a filter that was not the one being applied.
+    const out = migrateLegacyParams({ find: "AI_AGENT", where: "0.!severity.HIGH", severities: "CRITICAL" });
+    expect(out.where).toBe("0.!severity.HIGH");
   });
 
   it("clamps a depth the builder cannot express, the way the old page did", () => {

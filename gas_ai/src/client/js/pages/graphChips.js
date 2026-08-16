@@ -1,54 +1,37 @@
-// The applied-filter chip layer of the Security Graph, as a pure function of state.
+// The applied-chip layer of the Security Graph, as a pure function of state.
 //
-// Split out of graph.js because it answers three questions the page keeps getting
-// subtly wrong — what is applied, what did the *user* apply, and is anything actually
-// narrowing the query — and because it is the one part of that page testable without a
-// DOM. `filterEntries` takes plain values and returns plain objects; the page turns them
-// into buttons.
+// Split out of graph.js because it is the one part of that page testable without a DOM:
+// `filterEntries` takes plain values and returns plain objects; the page turns them into
+// buttons.
 //
-// The three notions are not the same, and conflating them is the bug this replaces:
+// WHAT IS LEFT HERE IS ONE CHIP, and the history of that is the point.
 //
-//   - every entry is a chip, so the user can see and clear it;
-//   - `isDefault` marks the ones the page wrote into the hash itself on a fresh visit
-//     (the AI-agent lens). They are chips, but they are not "filters you applied", so
-//     they stay out of the count badge — a page that opens announcing "2 filters
-//     applied" that nobody applied is lying about its own state;
-//   - `isNarrowing` marks the ones that constrain the server query, defaults included.
-//     A default-narrowed view that comes back empty is still an empty *filtered* view,
-//     and the empty state has to say so rather than blaming the starting point.
-
-import { listJoin, listSplit } from "../store.js";
+// The seed, the depth and the node-type lens went first: they are not filters, they are the
+// QUERY, spelled out in the builder above this row where the user can see and edit them. A chip
+// restating "Type: AI Agent" beside a bar already reading `FIND [AI Agent]` would be a second
+// control answering one question.
+//
+// Severity, cloud and project followed, for exactly the same reason once the builder grew a
+// WHERE segment. They were never anything but `where` filters on node 0 — `rpcParams` folded
+// them onto it — so they now live there openly, as chips on the row they narrow, with counts and
+// operators the panel never had. `migrateLegacyParams` folds the old hash params in on entry, so
+// a saved view or a shared link keeps meaning what it meant.
+//
+// The node budget stays, because it is the one thing here that was never part of the question.
 
 /**
- * The starting point, the depth and the node-type lens used to be chips here. They are not
- * filters any more — they are the QUERY, spelled out in the builder above this row, where the
- * user can see and edit them directly. A chip restating "Type: AI Agent" beside a bar already
- * reading `FIND [AI Agent]` would be the second control answering one question that the
- * `isDefault` machinery below was invented to apologise for.
- *
- * What remains is what genuinely narrows the ANSWER rather than shaping the question.
- *
  * @param {object} state    the resolved graph params (see graphParams in graph.js)
  * @param {object} defaults the deployment settings ({maxNodes})
- * @returns {Array<{key, label, sev?, isDefault?, isNarrowing?, patch}>}
+ * @returns {Array<{key, label, value, isNarrowing?, patch}>}
  */
 export function filterEntries(state, defaults) {
   const entries = [];
 
-  for (const s of listSplit(state.severities)) {
-    entries.push({
-      key: "sev-" + s,
-      label: "Severity",
-      value: s,
-      sev: s,
-      isNarrowing: true,
-      patch: { severities: listJoin(listSplit(state.severities).filter((x) => x !== s)) },
-    });
-  }
-
-  // A widened budget is view state like any other: visible as a chip, clearable back to
-  // the configured one, and carried in a shared link. It is not narrowing — raising the
-  // budget can only ever show more.
+  // A widened budget is view state like any other: visible as a chip, clearable back to the
+  // configured one, and carried in a shared link. It is NOT narrowing — raising the budget can
+  // only ever show more of a match set, never change what matches. That distinction is why the
+  // empty state asks `graph.js`'s `isNarrowing`, which reads the query's `where` half, rather
+  // than asking whether this row has anything on it.
   if (state.maxNodesRaw && state.maxNodes !== (defaults.maxNodes || 0)) {
     entries.push({
       key: "maxNodes",
@@ -58,33 +41,5 @@ export function filterEntries(state, defaults) {
     });
   }
 
-  if (state.projects) {
-    entries.push({
-      key: "projects", label: "Project", value: state.projects,
-      isNarrowing: true, patch: { projects: "" },
-    });
-  }
-  if (state.clouds) {
-    entries.push({
-      key: "clouds", label: "Cloud", value: state.clouds,
-      isNarrowing: true, patch: { clouds: "" },
-    });
-  }
   return entries;
-}
-
-/** How many filters the *user* applied — what the count badge on the button reports. */
-export function appliedCount(entries) {
-  return entries.filter((e) => !e.isDefault).length;
-}
-
-/** Whether anything is constraining the query, defaults included. */
-export function isNarrowingSet(entries) {
-  return entries.some((e) => e.isNarrowing);
-}
-
-/** Which field group in the filter panel a chip belongs to. */
-export function sectionOf(entry) {
-  if (entry.key.startsWith("sev-")) return "severity";
-  return entry.key;
 }

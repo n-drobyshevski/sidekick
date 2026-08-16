@@ -900,31 +900,46 @@ export function pathAfterRegroup(oldQuery, newQuery) {
  *
  * Returns null when there is nothing to migrate.
  */
+/** The retired filter panel's params, and the query field each one was always about. */
+export const PANEL_PARAMS = [
+  ["severities", "severity"],
+  ["clouds", "cloud"],
+  ["projects", "projects"],
+];
+
 export function migrateLegacyParams(params) {
   const has = (k) => typeof params[k] === "string" && params[k] !== "";
-  const legacy = ["seed", "seedKind", "depth", "kinds", "severities", "projects", "clouds"];
-  if (params.find != null || !legacy.some(has)) return null;
+  const panel = PANEL_PARAMS.filter(([p]) => has(p));
+  const structural = ["seed", "seedKind", "depth", "kinds"].some(has);
+  if (!panel.length && !structural) return null;
+  // A link that already carries a query KEEPS it — there is nothing to rebuild. But the panel's
+  // three params still have to be folded, and this is the guard that used to stop that: every
+  // saved view carries `find`, so returning early here left them behind. With the panel gone
+  // they narrow nothing, and a view would have silently reopened wider than it was saved.
+  if (params.find != null && !panel.length) return null;
+
+  // Folded ONTO what the URL already says, never over it. A filter written in the builder is
+  // visible and editable where a panel param was neither, so where both name one field the
+  // visible one wins — the opposite of the old `rpcParams` fold, which silently overwrote it.
+  const where = parseWhere(params.where);
+  const put = (index, key, values) => {
+    if (!values.length) return;
+    if (!where.has(index)) where.set(index, new Map());
+    if (where.get(index).has(key)) return;
+    // Whole-value equality: these named exact values, never a substring.
+    where.get(index).set(key, { values, op: "eq" });
+  };
+  for (const [param, key] of panel) put(0, key, splitList(params[param]));
+
+  const out = { where: serializeWhere(where) };
+  if (params.find != null) return out;
 
   const kinds = splitList(params.kinds);
   // One kind is a root; several cannot be, so the root goes wild and the kinds become a filter
   // on it — which is what the old node-type facet meant anyway.
-  const rootKind = kinds.length === 1 ? kinds[0] : "ANY";
-  const query = { kind: rootKind };
-
-  const where = new Map();
-  const put = (index, key, values) => {
-    if (!values.length) return;
-    if (!where.has(index)) where.set(index, new Map());
-    // Whole-value equality: a legacy link named an exact id or an exact kind, never a substring.
-    where.get(index).set(key, { values, op: "eq" });
-  };
-
+  const query = { kind: kinds.length === 1 ? kinds[0] : "ANY" };
   if (has("seed") && params.seedKind !== "combo") put(0, "id", [params.seed]);
   if (kinds.length > 1) put(0, "kind", kinds);
-  // `severities`, `clouds` and `projects` are NOT copied in. They survive as their own hash
-  // params — the filter panel still writes them and `rpcParams` still folds them onto node 0 —
-  // so duplicating them here would leave a second, invisible copy that clearing the chip does
-  // not touch, and the view would stay filtered by a filter nothing on screen admits to.
 
   // A seed meant "show me around this asset", which is a hop step now. Without a seed the old
   // page listed a whole population, and depth had nothing to walk from.
