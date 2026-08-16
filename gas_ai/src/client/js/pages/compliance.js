@@ -89,22 +89,6 @@ export async function renderCompliance(main, params, ctx) {
   main.append(host);
   host.append(skeletonStack(4, { height: "58px" }));
 
-  let data;
-  try {
-    data = await swrCall("api_getCompliance", {}, (fresh) => {
-      data = fresh;
-      paint();
-    });
-  } catch (e) {
-    clear(host).append(errorState("Couldn't load compliance posture.", {
-      detail: e && e.message ? e.message : e,
-      onRetry: () => ctx.refresh(),
-    }));
-    return;
-  }
-
-  paint();
-
   function pushParams(patch) {
     const inOverview = view.mode === "overview";
     setParams(Object.assign({
@@ -139,6 +123,29 @@ export async function renderCompliance(main, params, ctx) {
       paint();
     },
   };
+
+  // The fetch sits BELOW `actions`, not above it, and the ordering is load-bearing rather
+  // than stylistic. `paint()` is a hoisted function declaration, so it can be referenced
+  // from anywhere in this scope — but it closes over `actions`, which is a `const`, and a
+  // const is in its temporal dead zone until its own line runs. Calling paint() before
+  // that line threw "Cannot access 'actions' before initialization" on every load, caught
+  // by app.js's route guard and rendered as the generic "This page failed to load." card.
+  // Nothing static could have caught it: the reference is legal, only the timing was not.
+  let data;
+  try {
+    data = await swrCall("api_getCompliance", {}, (fresh) => {
+      data = fresh;
+      paint();
+    });
+  } catch (e) {
+    clear(host).append(errorState("Couldn't load compliance posture.", {
+      detail: e && e.message ? e.message : e,
+      onRetry: () => ctx.refresh(),
+    }));
+    return;
+  }
+
+  paint();
 
   function paint() {
     clear(host);

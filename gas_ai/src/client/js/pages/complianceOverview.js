@@ -170,7 +170,7 @@ function railAriaLabel(row, meanPct) {
 function railRow(row, meanPct, actions) {
   const scored = row.state === "scored" && row.posturePct !== null;
 
-  const nameMeta = el("div", { "aria-hidden": "true" },
+  const nameMeta = el("div", { class: "comp-fw-head", "aria-hidden": "true" },
     el("span", { class: "comp-fw-name" }, row.name),
     el("span", { class: "comp-fw-meta" }, railMetaText(row)));
 
@@ -193,16 +193,23 @@ function railRow(row, meanPct, actions) {
       `${state.label} — ${reasonWords(row)}`);
   }
 
-  // Row children, in order: the name/meta wrapper, the lane, the mean marker (only when
-  // there is a mean to mark), the percentage. The marker is a SIBLING of the lane rather
-  // than a child of it — the lane clips overflow, and a marker sitting on the boundary
-  // between two adjacent frameworks would be cut in half.
-  const kids = [nameMeta, laneEl];
+  // The lane and its mean marker share a positioned wrapper, and that wrapper is the grid
+  // item — not the lane itself. Two constraints pull against each other: the lane must clip
+  // (its bar has rounded corners), and the marker must NOT be clipped (it stands proud of
+  // the lane at both ends). Making the marker a sibling solves the clipping, but it then
+  // needs something to measure its `left: N%` against, and that something has to be exactly
+  // the lane's width or the mark lands somewhere that is not the percentage it claims.
+  // A relatively-positioned wrapper is that box. Anchoring to the grid area instead looks
+  // equivalent and is not: it resolved against the whole row here, putting the 94% mark
+  // past the end of the axis.
+  const laneWrap = el("div", { class: "comp-fw-lane-wrap", "aria-hidden": "true" }, laneEl);
   if (meanPct !== null) {
-    const marker = el("span", { class: "comp-fw-mean", "aria-hidden": "true" });
+    const marker = el("span", { class: "comp-fw-mean" });
     marker.style.left = `${meanPct}%`;
-    kids.push(marker);
+    laneWrap.append(marker);
   }
+
+  const kids = [nameMeta, laneWrap];
   kids.push(el("span", {
     class: `comp-fw-pct${scored ? "" : " comp-fw-pct--dash"}`,
     "aria-hidden": "true",
@@ -374,14 +381,34 @@ function renderSharedControls(host, data) {
 function renderCoverage(host, data) {
   const coverage = data.coverage || {};
   const uncollected = coverage.uncollected || [];
+  const selected = data.selected || [];
   const stateCounts = coverage.stateCounts || {};
+
+  // Two different facts hide inside "this framework has no posture stored", and they send
+  // an operator to completely different places. A framework nobody selected is a decision
+  // not yet made — the fix is in Settings. A framework that IS selected and still has
+  // nothing stored is a sync that did not deliver — the fix is the Wiz Scans page's
+  // skipped-step report. The register's own empty state has always drawn this distinction
+  // (it says which of the two reasons it is); this band said "selected for collection but
+  // not synced yet" about every row, which was the wrong sentence for the common case and
+  // sent readers hunting a sync failure that had not happened.
+  const notDelivered = uncollected.filter((f) => selected.indexOf(f.id) >= 0);
+  const notChosen = uncollected.filter((f) => selected.indexOf(f.id) === -1);
 
   const section = el("div", { class: "comp-ov-section" }, sectionLabel("Coverage"));
 
-  if (uncollected.length) {
+  if (notDelivered.length) {
     section.append(el("div", { class: "notice warn" },
-      `${plural(uncollected.length, "framework")} selected for collection but not synced ` +
-      "yet: " + uncollected.map((f) => f.name).join(", ") + "."));
+      `${plural(notDelivered.length, "framework")} selected for collection but carrying no ` +
+      "stored posture: " + notDelivered.map((f) => f.name).join(", ") +
+      ". Check the Wiz Scans page for a skipped step."));
+  }
+  if (notChosen.length) {
+    section.append(el("div", { class: "notice warn" },
+      `${plural(notChosen.length, "framework")} in this tenant's catalogue ` +
+      (notChosen.length === 1 ? "is" : "are") + " not collected: " +
+      notChosen.map((f) => f.name).join(", ") + ". Nothing on this page reports on " +
+      (notChosen.length === 1 ? "it" : "them") + "."));
   }
 
   section.append(el("div", { class: "comp-cov" },

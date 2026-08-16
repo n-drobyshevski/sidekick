@@ -214,6 +214,13 @@
    lane. */
 .comp-fw-row:focus-visible { outline-offset: -2px; z-index: 1; }
 
+/* A column, explicitly. The two children are spans, and a span's `margin-top` does nothing
+   while it is still inline — they sat on one line and the run overflowed the 210px track
+   into the lane, so the framework's name ran straight through its own bar. `min-width: 0`
+   is the other half: a grid track's items default to `min-width: auto`, which refuses to
+   shrink below the content's intrinsic width, and `text-overflow: ellipsis` below can
+   never fire on a box that is never allowed to be too small. */
+.comp-fw-head { display: flex; flex-direction: column; min-width: 0; }
 .comp-fw-name {
   font-size: 13.5px; font-weight: 600; color: var(--ink);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -223,6 +230,11 @@
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
+/* The grid item, and the box the mean marker measures its percentage against — so it is
+   exactly as wide as the lane and nothing else. `min-width: 0` for the same reason the
+   name column needs it: an auto-minimum here would let a long empty-lane sentence widen
+   the track and push the axis out from under its own tick labels. */
+.comp-fw-lane-wrap { position: relative; min-width: 0; }
 .comp-fw-lane {
   position: relative; height: 22px;
   background: var(--track-bg); border-radius: 4px; overflow: hidden;
@@ -277,8 +289,7 @@
    NAME rather than with the axis it marks. A fixed height centred with a negative margin
    pins it to the lane's geometry, which is the thing the percentage actually refers to. */
 .comp-fw-mean {
-  position: absolute; grid-column: 2; grid-row: 1;
-  top: 50%; margin-top: -14px; height: 28px; width: 2px;
+  position: absolute; top: 50%; margin-top: -14px; height: 28px; width: 2px;
   background: var(--accent); z-index: 2; pointer-events: none;
 }
 .comp-fw-mean::after {
