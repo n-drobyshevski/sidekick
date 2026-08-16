@@ -225,7 +225,13 @@
 .gq-table table.data td.gq-group-start { border-left: 1px solid var(--hairline); }
 /* Two header rows, so the second one sticks below the first rather than on top of it. */
 .gq-table table.data thead .th-groups th { top: 0; }
-.gq-table table.data thead tr:last-child th { top: 27px; }
+/* ONLY when there are two. `queryTable` renders the group row for more than one column group, so
+   a single-node query — `FIND AI Agent` with no steps, which is the default lens — has one header
+   row and no group row above it. Offsetting that row by 27px anyway stuck it 27px BELOW the top
+   of the scroll box, where it painted over the first result: the table said "2 rows", showed one,
+   and left a header-coloured band where the other should have been. The base recipe's `top: 0`
+   (tables.css) is right for that case, so it is simply left alone. */
+.gq-table table.data thead:has(.th-groups) tr:last-child th { top: 27px; }
 
 .gq-name { display: inline-flex; align-items: center; gap: 7px; max-width: 100%; }
 .gq-name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
