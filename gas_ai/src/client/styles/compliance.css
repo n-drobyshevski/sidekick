@@ -22,6 +22,10 @@
 .comp-header .stat-list { grid-column: 1 / -1; }
 .comp-hero-value { font-size: 2rem; line-height: 1.1; font-variant-numeric: tabular-nums; }
 .comp-hero-sub { font-size: 12px; color: var(--text-3); margin-top: 3px; }
+/* The hero's severity mark rides in this existing prose slot rather than a new one — see
+   the tint comment on `.comp-fw-bar` below for the full rule this and the rail bar both
+   follow. A small left margin only, since the badge follows running text inline. */
+.comp-hero-sub .sev-badge { margin-left: 6px; vertical-align: -1px; }
 .comp-hero-meter { margin-top: 10px; max-width: 260px; }
 
 .comp-strip { display: flex; flex-direction: column; gap: 8px; }
@@ -234,6 +238,13 @@
   margin-top: 2px; font-size: 11px; color: var(--text-3);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* The meta line and its severity badge share a row, so the "N of M failing" text and the
+   worst-severity mark read as one clause rather than stacking into two. Only present when
+   a badge is actually drawn (worstFailingSeverity is null on a clean framework), so an
+   empty gap never opens up on a row with nothing to flag. */
+.comp-fw-meta-row { display: flex; align-items: center; gap: 6px; min-width: 0; margin-top: 2px; }
+.comp-fw-meta-row .comp-fw-meta { flex: 1 1 auto; min-width: 0; margin-top: 0; }
+.comp-fw-meta-row .sev-badge { flex: none; }
 
 /* The grid item, and the box the mean marker measures its percentage against — so it is
    exactly as wide as the lane and nothing else. `min-width: 0` for the same reason the
@@ -244,12 +255,47 @@
   position: relative; height: 22px;
   background: var(--track-bg); border-radius: 4px; overflow: hidden;
 }
-/* Neutral graphite, not a posture tint: fifty frameworks is fifty bars, and coloring
-   each by its own score is the wall-of-color PRODUCT.md rejects and components.css's
-   `.meter-fill` comment (components.css:116-117) already refuses for the same reason.
-   One accent line (the mean marker below) is the estate's one earned splash of color;
-   the bars themselves stay the record, not the verdict. Width is set inline per row. */
+/* Graphite is the DEFAULT, and what the bar's two dimensions each carry is the whole
+   design: LENGTH is Wiz's posture percentage and never carries colour (a threshold-band
+   red/amber/green on that number would be a scale this app invented — the wall-of-colour
+   PRODUCT.md and components.css:116-117 both refuse), while HUE carries the worst severity
+   among the framework's failing policies. DESIGN.md's Rationed Ink Rule sanctions severity
+   specifically, and this is one of only three marks on the page allowed to spend it — the
+   other two being the two hero meters. Width is set inline per row.
+
+   A WASH, NOT THE FILL TOKEN, AND THE REASON IS POLARITY. The first cut painted the bar
+   the saturated `.sev-fill-*` token, and the sample estate showed what that does: OWASP ML
+   sits at 100% — the BEST framework here — so its bar is full width, and at full
+   saturation it became the loudest thing on the page. Fill area scales with the good news
+   while hue carries the bad news, so the two encodings pull against each other and the
+   healthiest row shouts. Mixing toward the page ground keeps the hue legible and keeps
+   length readable against the track without letting a long bar turn into an alarm. The
+   saturated mark stays where its area is fixed regardless of the number: the sevBadge
+   beside the row, which also carries the severity in WORDS, since colour alone is never
+   sufficient.
+
+   `data-sev` rather than the shared `.sev-fill-*` classes on purpose. Those mean "a
+   saturated severity mark" everywhere else in both apps; re-pointing them at a wash here
+   would quietly redefine them for every other caller. Same reason `.comp-bar-seg` keys its
+   four posture states off `data-state` a few rules up. */
 .comp-fw-bar { position: absolute; inset: 0 auto 0 0; background: var(--graphite); }
+.comp-fw-bar[data-sev="CRITICAL"] { background: color-mix(in srgb, var(--sev-critical) 38%, white); }
+.comp-fw-bar[data-sev="HIGH"] { background: color-mix(in srgb, var(--sev-high) 38%, white); }
+.comp-fw-bar[data-sev="MEDIUM"] { background: color-mix(in srgb, var(--sev-medium) 38%, white); }
+.comp-fw-bar[data-sev="LOW"] { background: color-mix(in srgb, var(--sev-low) 38%, white); }
+.comp-fw-bar[data-sev="INFO"] { background: color-mix(in srgb, var(--sev-info) 38%, white); }
+.comp-fw-bar[data-sev="UNKNOWN"] { background: color-mix(in srgb, var(--sev-unknown) 38%, white); }
+
+/* The hero meters take the same wash. `.meter-fill` is a shared class, so this is scoped
+   to the two hero slots rather than restyling every meter in the app — the register's own
+   posture cells stay graphite, which is what keeps a long framework from becoming a column
+   of tinted bars. */
+.comp-hero-meter .meter-fill[data-sev="CRITICAL"] { background: color-mix(in srgb, var(--sev-critical) 38%, white); }
+.comp-hero-meter .meter-fill[data-sev="HIGH"] { background: color-mix(in srgb, var(--sev-high) 38%, white); }
+.comp-hero-meter .meter-fill[data-sev="MEDIUM"] { background: color-mix(in srgb, var(--sev-medium) 38%, white); }
+.comp-hero-meter .meter-fill[data-sev="LOW"] { background: color-mix(in srgb, var(--sev-low) 38%, white); }
+.comp-hero-meter .meter-fill[data-sev="INFO"] { background: color-mix(in srgb, var(--sev-info) 38%, white); }
+.comp-hero-meter .meter-fill[data-sev="UNKNOWN"] { background: color-mix(in srgb, var(--sev-unknown) 38%, white); }
 
 /* The honest-state lane: an unscored framework gets NO bar, not a bar at zero — a
    sliver still reads as "very little" where the fact is "not measured", and those are

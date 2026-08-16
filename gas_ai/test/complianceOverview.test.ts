@@ -90,6 +90,36 @@ describe("frameworkRail — the rail never re-sorts, and unscored is never a zer
     expect(agenticRow.subcategoryCount).toBe(4); // one subcategory per ASI category
     expect(agenticRow.policyCount).toBe(3); // distinct policies, not policy rows
   });
+
+  it("carries worstFailingSeverity through unchanged, for every row — a projection, not a rollup", () => {
+    const rail = frameworkRail(trees);
+    // Every row present, and every one of them equal to the SAME tree's own field — not
+    // recomputed here, not defaulted, not dropped for the unscored case.
+    expect(rail).toHaveLength(trees.length);
+    for (const tree of trees) {
+      const row = rail.find((r) => r.frameworkId === tree.frameworkId)!;
+      expect(row.worstFailingSeverity).toBe(tree.worstFailingSeverity);
+    }
+    // Both fixture frameworks' only failing control is MEDIUM — pinned concretely too, so
+    // a projection that silently coerced the field (e.g. to null or "UNKNOWN") still fails
+    // this test even if the loop above were somehow satisfied by accident.
+    expect(rail.find((r) => r.frameworkId === "wf-id-275")!.worstFailingSeverity).toBe("MEDIUM");
+    expect(rail.find((r) => r.frameworkId === "wf-id-214")!.worstFailingSeverity).toBe("MEDIUM");
+  });
+
+  it("carries a null worstFailingSeverity through unchanged for an unscored framework", () => {
+    const withUnscored = [
+      ...posture,
+      {
+        frameworkId: "wf-id-000", level: "framework" as const, title: "Never assessed",
+        posturePct: null, passCount: 0, failCount: 0, emptyPostureReason: "NO_RESOURCES",
+      },
+    ];
+    const treesWithUnscored = buildAllFrameworkTrees(withUnscored, policies, frameworks);
+    const rail = frameworkRail(treesWithUnscored);
+    const row = rail.find((r) => r.frameworkId === "wf-id-000")!;
+    expect(row.worstFailingSeverity).toBeNull();
+  });
 });
 
 describe("weakestAreas — scored ascending, unscored after and unranked", () => {

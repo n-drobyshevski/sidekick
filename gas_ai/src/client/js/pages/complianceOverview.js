@@ -45,8 +45,17 @@ import {
   checksCell, extChip, findSubcategory, postureCell, STATES, stateStrip, subcategoryDetail,
 } from "./complianceShared.js";
 import {
-  dataTable, el, emptyState, meter, plural, sectionLabel, sevBadge, statRow,
+  dataTable, el, emptyState, meter, plural, sectionLabel, sevBadge, sevRank, statRow,
 } from "../ui.js";
+
+/**
+ * Worst-first severity order, lower index = worse — the domain's SEVERITY_ORDER
+ * (src/domain/config.ts), re-declared here rather than imported: nothing under
+ * src/client/js/ imports the domain layer, each page keeps its own small copy (config.js's
+ * own sevRank note explains why), and sevRank()'s "lower = worse" contract is exactly this
+ * array's own order.
+ */
+const SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
 
 /**
  * plural()'s -s rule mangles "policy" into "policys" — the same irregular case
@@ -77,6 +86,23 @@ function reasonWords(row) {
   return reasonBlurb(row).replace(/\.$/, "").replace(/^./, (c) => c.toLowerCase());
 }
 
+/**
+ * The worst severity across every framework's OWN worst-failing-policy field — a reduce
+ * over data already in hand (each row's `worstFailingSeverity`, projected straight off
+ * FrameworkTree by frameworkRail() in domain/complianceOverview.ts), not a new rollup and
+ * not a re-walk of any policy list. Null when nothing anywhere is failing.
+ */
+function worstFailingSeverityAcross(rail) {
+  let worst = null;
+  for (const row of rail) {
+    if (!row.worstFailingSeverity) continue;
+    if (!worst || sevRank(row.worstFailingSeverity, SEVERITY_ORDER) < sevRank(worst, SEVERITY_ORDER)) {
+      worst = row.worstFailingSeverity;
+    }
+  }
+  return worst;
+}
+
 export function renderOverview(host, data, view, actions) {
   // A stale SWR cache from before this band shipped degrades to `rail: undefined` rather
   // than throwing (the payload contract's defensive-coding note) — and that is genuinely
@@ -104,6 +130,31 @@ function renderHeadline(host, data, view, actions) {
   const kpis = data.kpis || {};
   const coverage = data.coverage || {};
   const scored = kpis.averagePosture !== null && kpis.averagePosture !== undefined;
+  // Estate-wide worst — see worstFailingSeverityAcross(). Only meaningful (and only ever
+  // drawn) alongside a scored mean; an unscored estate has no bar to tint either.
+  const worstSeverity = scored ? worstFailingSeverityAcross(data.rail || []) : null;
+
+  // ONE OF THREE MARKS ON THIS WHOLE PAGE ALLOWED TO CARRY SEVERITY COLOUR — see the
+  // matching comment on the rail bar below for why the register, the weakest-areas table
+  // and the subcategory detail rows all stay neutral graphite on purpose.
+  const heroMeter = scored
+    ? meter(kpis.averagePosture, {
+        max: 100,
+        label: `Estate compliance posture, ${kpis.averagePosture} percent` +
+          (worstSeverity ? `, worst failing severity ${worstSeverity}` : ""),
+      })
+    : null;
+  if (heroMeter && worstSeverity) heroMeter.fill.dataset.sev = worstSeverity;
+
+  // The sub-line is the hero's one prose slot, so the severity mark folds into it rather
+  // than opening a new one — a sevBadge beside the sentence that already explains the
+  // number, never colour without the word next to it.
+  const subKids = [scored
+    ? `Derived here — the mean of ${plural(kpis.scoredFrameworks || 0, "scored framework")}. ` +
+      "Wiz publishes no cross-framework figure."
+    : "Derived here — no framework has a compliance posture to average yet. " +
+      "Wiz publishes no cross-framework figure."];
+  if (worstSeverity) subKids.push(sevBadge(worstSeverity));
 
   const hero = el("div", {},
     el("div", { class: "label" }, "Compliance posture"),
@@ -111,18 +162,11 @@ function renderHeadline(host, data, view, actions) {
       ? el("div", { class: "comp-hero-value num" }, `${kpis.averagePosture}%`)
       : el("div", { class: "comp-hero-value" }, "—"),
     scored
-      ? el("div", { class: "comp-hero-meter" }, meter(kpis.averagePosture, {
-          max: 100,
-          label: `Estate compliance posture, ${kpis.averagePosture} percent`,
-        }))
+      ? el("div", { class: "comp-hero-meter" }, heroMeter)
       : null,
     // The one number on this page Wiz did not hand us — it names its own denominator so it
     // is never mistaken for a vendor figure.
-    el("div", { class: "comp-hero-sub" }, scored
-      ? `Derived here — the mean of ${plural(kpis.scoredFrameworks || 0, "scored framework")}. ` +
-        "Wiz publishes no cross-framework figure."
-      : "Derived here — no framework has a compliance posture to average yet. " +
-        "Wiz publishes no cross-framework figure."),
+    el("div", { class: "comp-hero-sub" }, ...subKids),
   );
 
   // The shared strip only ever reads `.stateCounts`, so the estate-wide roll-up — which is
@@ -177,9 +221,16 @@ function fiveRsScopeNote(row, fiveRsScope) {
  */
 function railAriaLabel(row, meanPct, scopeNote) {
   if (row.state === "scored" && row.posturePct !== null) {
+    // The one sentence stating what is failing carries the worst severity too, rather than
+    // a second sentence — a screen reader hears "4 of 6 policies failing, worst severity
+    // HIGH" as one fact, which is what it is.
+    const failingClause = row.worstFailingSeverity
+      ? `${row.failingPolicyCount} of ${row.policyCount} ${policyNoun(row.policyCount)} ` +
+        `failing, worst severity ${row.worstFailingSeverity}.`
+      : `${row.failingPolicyCount} of ${row.policyCount} ${policyNoun(row.policyCount)} failing.`;
     const sentence = [
       `${row.name}, ${row.posturePct} percent compliant.`,
-      `${row.failingPolicyCount} of ${row.policyCount} ${policyNoun(row.policyCount)} failing.`,
+      failingClause,
     ];
     if (meanPct !== null) sentence.push(`Estate mean ${meanPct} percent.`);
     // THE LOAD-BEARING HONESTY POINT of the whole 5Rs feature: this percentage is Wiz's
@@ -205,6 +256,10 @@ function railRow(row, meanPct, actions, fiveRsScope) {
   const scored = row.state === "scored" && row.posturePct !== null;
   const scopeNote = fiveRsScopeNote(row, fiveRsScope);
 
+  // The badge pairs with the bar's colour below, so it only draws when the bar itself is
+  // going to be tinted — a row with nothing failing gets neither.
+  const barBadge = scored && row.worstFailingSeverity ? sevBadge(row.worstFailingSeverity) : null;
+
   const nameMeta = el("div", { class: "comp-fw-head", "aria-hidden": "true" },
     el("span", { class: "comp-fw-name" }, row.name),
     scopeNote
@@ -212,7 +267,9 @@ function railRow(row, meanPct, actions, fiveRsScope) {
           el("span", { class: "scope-rail-glyph", "aria-hidden": "true" }, "◒"),
           "Scope active — Wiz % unaffected")
       : null,
-    el("span", { class: "comp-fw-meta" }, railMetaText(row)));
+    el("div", { class: "comp-fw-meta-row" },
+      el("span", { class: "comp-fw-meta" }, railMetaText(row)),
+      barBadge));
 
   const laneEl = el("div", {
     class: `comp-fw-lane${scored ? "" : " comp-fw-lane--empty"}`,
@@ -221,6 +278,13 @@ function railRow(row, meanPct, actions, fiveRsScope) {
   });
   if (scored) {
     const bar = el("div", { class: "comp-fw-bar" });
+    // ONE OF THREE MARKS ON THIS WHOLE PAGE ALLOWED TO CARRY SEVERITY COLOUR (the other
+    // two are both hero meters). DESIGN.md's Rationed Ink Rule sanctions this because the
+    // rail is a handful of prominent rows, not a column — the register below, the
+    // weakest-areas table and the subcategory detail rows all stay neutral graphite on
+    // purpose. Do not extend this tint to those; that is the wall of colour the rule
+    // forbids.
+    if (row.worstFailingSeverity) bar.dataset.sev = row.worstFailingSeverity;
     bar.style.width = `${row.posturePct}%`;
     laneEl.append(bar);
   } else {

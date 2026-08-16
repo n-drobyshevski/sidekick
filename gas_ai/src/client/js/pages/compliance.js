@@ -41,7 +41,7 @@
 import { setParams, swrCall } from "../store.js";
 import {
   clear, dataTable, el, emptyState, errorState, filterCombobox, meter, plural,
-  sectionLabel, segmented, skeletonStack, statRow,
+  sectionLabel, segmented, sevBadge, skeletonStack, statRow,
 } from "../ui.js";
 import {
   checksCell, extChip, postureCell, STATES, STATE_ORDER, stateStrip, subcategoryDetail,
@@ -242,24 +242,39 @@ export async function renderCompliance(main, params, ctx) {
     const fiveRs = data.fiveRsScope;
     const scopedHere = scored && fiveRs && fiveRs.frameworkId === tree.frameworkId &&
       fiveRs.selected < fiveRs.total;
+
+    // ONE OF THREE MARKS ON THIS WHOLE PAGE ALLOWED TO CARRY SEVERITY COLOUR — see the
+    // matching comment on `.comp-fw-bar` in compliance.css. Null when nothing under this
+    // framework is failing, and the meter stays plain graphite.
+    const worstSeverity = scored ? tree.worstFailingSeverity : null;
+    const heroMeter = scored
+      ? meter(tree.posturePct, {
+        max: 100,
+        label: `${tree.name}, ${tree.posturePct} percent compliant` +
+          (worstSeverity ? `, worst failing severity ${worstSeverity}` : ""),
+      })
+      : null;
+    if (heroMeter && worstSeverity) heroMeter.fill.dataset.sev = worstSeverity;
+
+    // The severity mark folds into the sub-line's existing sentence rather than a new slot.
+    const heroSubKids = [scored
+      ? `${tree.name} · Wiz's own score, carried through unchanged` +
+        (scopedHere
+          ? ` — the register below is scoped to ${fiveRs.selected} of ${fiveRs.total} ` +
+            "AI-relevant rules; this percentage is not."
+          : "")
+      : `${tree.name} · ${(STATES[tree.state] || STATES.unknown).label}`];
+    if (worstSeverity) heroSubKids.push(sevBadge(worstSeverity));
+
     const hero = el("div", {},
       el("div", { class: "label" }, "Compliance posture"),
       scored
         ? el("div", { class: "comp-hero-value num" }, `${tree.posturePct}%`)
         : el("div", { class: "comp-hero-value" }, "—"),
       scored
-        ? el("div", { class: "comp-hero-meter" }, meter(tree.posturePct, {
-          max: 100,
-          label: `${tree.name}, ${tree.posturePct} percent compliant`,
-        }))
+        ? el("div", { class: "comp-hero-meter" }, heroMeter)
         : null,
-      el("div", { class: "comp-hero-sub" }, scored
-        ? `${tree.name} · Wiz's own score, carried through unchanged` +
-          (scopedHere
-            ? ` — the register below is scoped to ${fiveRs.selected} of ${fiveRs.total} ` +
-              "AI-relevant rules; this percentage is not."
-            : "")
-        : `${tree.name} · ${(STATES[tree.state] || STATES.unknown).label}`),
+      el("div", { class: "comp-hero-sub" }, ...heroSubKids),
     );
 
     host.append(el("div", { class: "comp-header" },

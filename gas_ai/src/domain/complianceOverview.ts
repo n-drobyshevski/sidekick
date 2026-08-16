@@ -45,6 +45,8 @@ export interface FrameworkRailRow {
   subcategoryCount: number;
   policyCount: number;
   failingPolicyCount: number;
+  /** Worst severity among this framework's FAILING policies. Null when none are failing. */
+  worstFailingSeverity: Severity | null;
   stateCounts: Record<PostureState, number>;
 }
 
@@ -66,6 +68,7 @@ export function frameworkRail(trees: FrameworkTree[]): FrameworkRailRow[] {
     subcategoryCount: tree.categories.reduce((sum, c) => sum + c.subcategories.length, 0),
     policyCount: tree.policyCount,
     failingPolicyCount: tree.failingPolicyCount,
+    worstFailingSeverity: tree.worstFailingSeverity,
     // Copied rather than aliased: a caller holding this row must not be able to mutate
     // the FrameworkTree it was built from by mutating what looks like its own object.
     stateCounts: { ...tree.stateCounts },

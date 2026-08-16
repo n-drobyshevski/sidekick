@@ -3458,6 +3458,7 @@ var Server = (() => {
       subcategoryCount: tree.categories.reduce((sum, c) => sum + c.subcategories.length, 0),
       policyCount: tree.policyCount,
       failingPolicyCount: tree.failingPolicyCount,
+      worstFailingSeverity: tree.worstFailingSeverity,
       // Copied rather than aliased: a caller holding this row must not be able to mutate
       // the FrameworkTree it was built from by mutating what looks like its own object.
       stateCounts: { ...tree.stateCounts }
@@ -5266,9 +5267,18 @@ var Server = (() => {
       for (const sub of cat.subcategories) stateCounts[sub.state] += 1;
     }
     const distinct = /* @__PURE__ */ new Map();
+    let worstFailingSeverity = null;
+    let worstFailingRank = Infinity;
     for (const p of policies) {
       if (p.frameworkId !== frameworkId) continue;
       distinct.set(p.policyId, ((_f = distinct.get(p.policyId)) != null ? _f : false) || p.failCount > 0);
+      if (p.failCount > 0) {
+        const rank = severityRank4(p.severity);
+        if (rank < worstFailingRank) {
+          worstFailingRank = rank;
+          worstFailingSeverity = p.severity;
+        }
+      }
     }
     return {
       frameworkId,
@@ -5285,7 +5295,8 @@ var Server = (() => {
       categories,
       stateCounts,
       policyCount: distinct.size,
-      failingPolicyCount: [...distinct.values()].filter(Boolean).length
+      failingPolicyCount: [...distinct.values()].filter(Boolean).length,
+      worstFailingSeverity
     };
   }
   function buildAllFrameworkTrees(posture, policies, frameworks = []) {
@@ -7681,7 +7692,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "70e01d4369d6" : "dev";
+  var BUILD_ID = true ? "558172e4fe0a" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
