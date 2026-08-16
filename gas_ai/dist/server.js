@@ -1707,6 +1707,7 @@ var Server = (() => {
   var PAGE_SIZE = 100;
   var PAGE_SIZE_FALLBACK = 50;
   var PAGE_SIZE_WIDE = 500;
+  var PAGE_SIZE_TRAVERSAL = 250;
   var MAX_PAGES = 1e3;
   var IDENTITY_FIELDS = [
     "id",
@@ -6378,7 +6379,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "9b374dff800d" : "dev";
+  var BUILD_ID = true ? "e439a680b38f" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -9968,7 +9969,8 @@ var Server = (() => {
         run: "graphSearch",
         query: Q_AGENTS_NO_GUARDRAIL,
         normalize: normalizeNoGuardrailPage,
-        optional: true
+        optional: true,
+        pageSize: PAGE_SIZE_TRAVERSAL
       },
       {
         id: "RUNS_AS",
@@ -9977,7 +9979,8 @@ var Server = (() => {
         run: "graphSearch",
         query: Q_AGENT_RUNS_AS,
         normalize: normalizeRunsAsPage,
-        optional: true
+        optional: true,
+        pageSize: PAGE_SIZE_TRAVERSAL
       },
       {
         id: "SA_FINDINGS",
@@ -9986,7 +9989,8 @@ var Server = (() => {
         run: "graphSearch",
         query: Q_SA_EXCESSIVE_ACCESS,
         normalize: normalizeRunsAsPage,
-        optional: true
+        optional: true,
+        pageSize: PAGE_SIZE_TRAVERSAL
       },
       // The data-exposure chain. Runs AFTER the two CIEM steps on purpose: it re-emits the
       // agent and its service account, and mergeParts lets later truthy values win field-wise,
@@ -10002,7 +10006,8 @@ var Server = (() => {
         run: "graphSearch",
         query: Q_AGENT_SENSITIVE_DATA_ACCESS,
         normalize: normalizeSensitiveDataAccessPage,
-        optional: true
+        optional: true,
+        pageSize: PAGE_SIZE_TRAVERSAL
       },
       // Network exposure, in two steps because they are two claims. HOST_EXPOSURE says the
       // compute under an AI asset is reachable; ENDPOINT_EXPOSURE says Wiz's scanner reached a
@@ -10048,7 +10053,8 @@ var Server = (() => {
         query: Q_IDENTITY_ACCESS,
         extraVariables: identityAccessVariables(types, projectScope()),
         normalize: normalizeIdentityAccessPage,
-        optional: true
+        optional: true,
+        pageSize: PAGE_SIZE_TRAVERSAL
       },
       // AI-asset provenance: publisher + how Wiz discovered it. Optional and separate from
       // INVENTORY_AI on purpose — see the note on Q_AI_PROPERTIES. Losing it costs two columns.
