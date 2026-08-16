@@ -16,6 +16,12 @@ import { BUILD_ID } from "./buildInfo";
 import { getProp, setProp } from "./props";
 
 const VERSION_PROP = "DATA_VERSION";
+// A SECOND version, for entries whose freshness is a fact about WIZ rather than about this
+// sheet. DATA_VERSION is bumped by settingsStore.saveSettings as well as by a sync, which is
+// right for every derived read-model — a band threshold moving really does change the
+// bootstrap payload — and wrong for a cached Wiz response, which does not go stale because
+// someone saved an AARS rule. See `wizDataVersion` and syncStore.commit().
+const WIZ_VERSION_PROP = "WIZ_DATA_VERSION";
 // The build stamp is part of every key. DATA_VERSION only bumps on data MUTATIONS, so
 // without this a code deploy would keep serving payloads computed by the old code until
 // the TTL expires (6h) or someone syncs — the "I deployed the fix but still see the bug"
@@ -32,6 +38,19 @@ export function dataVersion(): string {
 /** Call after every mutation commit (persist/delete/compact/settings/snapshot). */
 export function bumpDataVersion(): void {
   setProp(VERSION_PROP, String(Date.now()));
+}
+
+/**
+ * Stamp of the last time this app's picture of the tenant changed — a sync, a rescore, or a
+ * wipe. Bumped from syncStore.commit() only, which is deliberately NOT where saveSettings
+ * bumps: settings write through bumpDataVersion alone.
+ */
+export function wizDataVersion(): string {
+  return getProp(WIZ_VERSION_PROP) ?? "0";
+}
+
+export function bumpWizDataVersion(): void {
+  setProp(WIZ_VERSION_PROP, String(Date.now()));
 }
 
 /** Deterministic short key: params are hashed so keys stay under the 250-char cap. */
@@ -90,16 +109,25 @@ export function cacheGetJson(key: string): unknown | undefined {
 /**
  * Version-keyed read-through cache. Any cache-layer error falls back to compute() —
  * caching is an optimization, never a correctness dependency.
+ *
+ * `version` selects WHAT this entry's freshness depends on. The default — DATA_VERSION —
+ * is right for anything derived from the sheet, because a settings change really can move
+ * those numbers. Pass `wizDataVersion()` for an entry that holds a Wiz response: those
+ * cost a UrlFetchApp call to refill and are not made stale by a local edit.
  */
 export function cached<T>(
   name: string,
   params: unknown,
   compute: () => T,
   ttlSec = DEFAULT_TTL_SEC,
+  version?: string,
 ): T {
   let key: string | null = null;
   try {
-    key = cacheKey(name, params, dataVersion());
+    // Resolved INSIDE the try, not as a default parameter: reading the version is a
+    // PropertiesService call, and the contract here is that no cache-layer failure can stop
+    // compute() from running.
+    key = cacheKey(name, params, version ?? dataVersion());
     const hit = cacheGetJson(key);
     if (hit !== undefined) return hit as T;
   } catch (e) {

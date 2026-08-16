@@ -111,7 +111,7 @@ import { activeJob } from "./jobsStore";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
 import { buildInfo } from "./buildInfo";
 import { hasWizCredentials, projectScope } from "./props";
-import { cached, dataVersion } from "./serverCache";
+import { cached, dataVersion, wizDataVersion } from "./serverCache";
 import {
   AGENT_EXPANSION,
   decodeExpansion,
@@ -1163,15 +1163,27 @@ export function expandAsset(p?: unknown): ApiResult {
     const node = doc ? doc.nodes.filter((n) => n.id === id)[0] : undefined;
     if (node && node.kind !== "AI_AGENT") return { source: "unsupported", ...empty };
     if (!hasWizCredentials()) return { source: "stored", ...empty };
-    // Cached: reopening the same sheet must not spend another UrlFetchApp call. The key
-    // carries the data version, so a sync invalidates it along with everything else.
-    return cached("expandAsset", { id }, () => {
+    // Cached: reopening the same sheet must not spend another UrlFetchApp call.
+    //
+    // Keyed on the WIZ data version, not DATA_VERSION. The two differ in exactly the case
+    // that matters: settingsStore.saveSettings bumps DATA_VERSION, so saving an AARS rule,
+    // a depth default, a node budget or a scan-var override used to throw away every cached
+    // expansion in the tenant. A Wiz graph response does not go stale because a local band
+    // threshold moved, and each one thrown away costs a live call the next time someone
+    // opens that agent. A sync, a rescore and a reset all still invalidate it.
+    //
+    // `projectId` is in the KEY as well as in the query. It is a live input read from a
+    // Script Property, so an operator narrowing the project scope has to reach the cache —
+    // otherwise the tenant-wide answer keeps being served for a scope that no longer asks
+    // for it.
+    const projectId = projectScope()?.[0] ?? null;
+    return cached("expandAsset", { id, projectId }, () => {
       const slots = flattenSlots(AGENT_EXPANSION);
       const page = wizClientAi.fetchGraphSearchPage({
         query: Q_AGENT_EXPANSION,
         extraVariables: {
           query: toGraphEntityQuery(AGENT_EXPANSION, id),
-          projectId: projectScope()?.[0] ?? null,
+          projectId,
         },
       });
       const decoded = decodeExpansion(slots, page.rows);
@@ -1195,7 +1207,7 @@ export function expandAsset(p?: unknown): ApiResult {
           decoded.edges.length > edges.length ||
           page.hasNextPage,
       };
-    });
+    }, undefined, wizDataVersion());
   });
 }
 
@@ -1321,6 +1333,9 @@ export function getScanQueries(_p?: unknown): ApiResult {
     steps: syncJobs.describeSyncSteps(),
     specs: STEP_VAR_SPECS,
     skippedSteps: settingsStore.getSkippedSteps(),
+    // Reported separately from the skips: these steps ran and were answered, we just
+    // stopped asking at the page cap, so their rows are a prefix rather than an absence.
+    truncatedSteps: settingsStore.getTruncatedSteps(),
     hasCredentials: hasWizCredentials(),
     limits: { maxListValues: MAX_LIST_VALUES, maxValueLen: MAX_VALUE_LEN },
     // Named rather than folded into `variables`: the transport adds these to every request,

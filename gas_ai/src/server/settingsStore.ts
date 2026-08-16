@@ -99,6 +99,17 @@ export function setSkippedSteps(steps: unknown): void {
   saveSettings(next);
 }
 
+export const getTruncatedSteps = (): string[] => logic.getTruncatedSteps(loadSettings());
+
+/** Record which steps hit the page cap. Same no-op-on-unchanged guard as the skip list. */
+export function setTruncatedSteps(steps: unknown): void {
+  const settings = loadSettings();
+  const next = logic.withTruncatedSteps(settings, steps);
+  const before = logic.getTruncatedSteps(settings).join(" ");
+  if (logic.getTruncatedSteps(next).join(" ") === before) return;
+  saveSettings(next);
+}
+
 /**
  * The framework selection, resolved against the synced catalogue on first use.
  *

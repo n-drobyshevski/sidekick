@@ -51,7 +51,12 @@ var Server = (() => {
     archiveFolderId: "ARCHIVE_FOLDER_ID",
     // Optional comma-separated override of the AI resource-type enum values to
     // query (e.g. "AI_AGENT,AI_MODEL") for tenants whose schema names differ.
-    wizAiResourceTypes: "WIZ_AI_RESOURCE_TYPES"
+    wizAiResourceTypes: "WIZ_AI_RESOURCE_TYPES",
+    // The DERIVED resolution, written by resolveAiResourceTypes — never by an operator.
+    // Deliberately a different key from the override above: one is an instruction and the
+    // other is a memo, and conflating them would let a cached answer masquerade as a
+    // configured one (and survive the operator clearing the override).
+    wizAiResourceTypesResolved: "WIZ_AI_RESOURCE_TYPES_RESOLVED"
   };
   var DEFAULT_WIZ_AUTH_URL = "https://auth.app.wiz.io/oauth/token";
   function getProp(key) {
@@ -89,19 +94,36 @@ var Server = (() => {
 
   // src/server/archiveStore.ts
   var SUBFOLDERS = ["syncs", "snapshots"];
+  var rootFolderMemo;
+  var subfolderMemo = /* @__PURE__ */ new Map();
+  var syncFolderMemo = /* @__PURE__ */ new Map();
+  function forgetFolders() {
+    rootFolderMemo = void 0;
+    subfolderMemo.clear();
+    syncFolderMemo.clear();
+  }
   function rootFolder() {
-    return DriveApp.getFolderById(requireProp(PROP_KEYS.archiveFolderId));
+    if (!rootFolderMemo) {
+      rootFolderMemo = DriveApp.getFolderById(requireProp(PROP_KEYS.archiveFolderId));
+    }
+    return rootFolderMemo;
   }
   function childFolder(parent, name) {
     const it = parent.getFoldersByName(name);
     return it.hasNext() ? it.next() : parent.createFolder(name);
   }
   function subfolder(name) {
-    return childFolder(rootFolder(), name);
+    const hit = subfolderMemo.get(name);
+    if (hit) return hit;
+    const folder = childFolder(rootFolder(), name);
+    subfolderMemo.set(name, folder);
+    return folder;
   }
   function ensureFolders(rootId) {
+    forgetFolders();
     const root = rootId ? DriveApp.getFolderById(rootId) : rootFolder();
     for (const name of SUBFOLDERS) childFolder(root, name);
+    forgetFolders();
     return root.getId();
   }
   function safeName(id) {
@@ -135,7 +157,12 @@ var Server = (() => {
     }
   }
   function syncFolder(syncId) {
-    return childFolder(subfolder("syncs"), safeName(syncId));
+    const key = safeName(syncId);
+    const hit = syncFolderMemo.get(key);
+    if (hit) return hit;
+    const folder = childFolder(subfolder("syncs"), key);
+    syncFolderMemo.set(key, folder);
+    return folder;
   }
   function writeSyncPage(syncId, stepIndex, pageNumber, payload) {
     const name = `step-${stepIndex}-page-${String(pageNumber).padStart(4, "0")}.json.gz`;
@@ -1679,7 +1706,8 @@ var Server = (() => {
   // src/server/wizQueriesAi.ts
   var PAGE_SIZE = 100;
   var PAGE_SIZE_FALLBACK = 50;
-  var MAX_PAGES = 200;
+  var PAGE_SIZE_WIDE = 500;
+  var MAX_PAGES = 1e3;
   var IDENTITY_FIELDS = [
     "id",
     "name",
@@ -1963,6 +1991,29 @@ var Server = (() => {
     }
   }
   var AI_TYPES_CACHE_KEY = "wiz_ai_resource_types_v2";
+  var AI_TYPES_PROP_TTL_MS = 7 * 864e5;
+  function readStoredAiTypes(now) {
+    var _a5;
+    const raw = getProp(PROP_KEYS.wizAiResourceTypesResolved);
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed || !Array.isArray(parsed.types) || !parsed.types.length) return null;
+      if (!(now - Number(parsed.resolvedAt) < AI_TYPES_PROP_TTL_MS)) return null;
+      return { types: parsed.types, source: parsed.source, aiLooking: (_a5 = parsed.aiLooking) != null ? _a5 : [] };
+    } catch {
+      return null;
+    }
+  }
+  function writeStoredAiTypes(chosen, now) {
+    try {
+      setProp(
+        PROP_KEYS.wizAiResourceTypesResolved,
+        JSON.stringify({ ...chosen, resolvedAt: now })
+      );
+    } catch {
+    }
+  }
   function probeCandidateTypes(candidates, say) {
     const accepted = [];
     for (const t of candidates) {
@@ -1993,6 +2044,7 @@ var Server = (() => {
       say(`AI resource types: WIZ_AI_RESOURCE_TYPES override \u2014 ${override.join(", ")}.`);
       return { types: override, source: "override", aiLooking: [] };
     }
+    const now = Date.now();
     const cache = CacheService.getScriptCache();
     if (!log) {
       const hit = cache.get(AI_TYPES_CACHE_KEY);
@@ -2001,6 +2053,14 @@ var Server = (() => {
           return JSON.parse(hit);
         } catch {
         }
+      }
+      const stored = readStoredAiTypes(now);
+      if (stored) {
+        try {
+          cache.put(AI_TYPES_CACHE_KEY, JSON.stringify(stored), 21600);
+        } catch {
+        }
+        return stored;
       }
     }
     let chosen;
@@ -2031,6 +2091,7 @@ var Server = (() => {
       cache.put(AI_TYPES_CACHE_KEY, JSON.stringify(chosen), 21600);
     } catch {
     }
+    writeStoredAiTypes(chosen, now);
     return chosen;
   }
   var ERROR_BODY_MAX = 800;
@@ -2063,24 +2124,35 @@ var Server = (() => {
       totalCount: typeof rawTotal === "number" ? rawTotal : null
     };
   }
+  function smallerPageCouldHelp(e) {
+    if (!(e instanceof WizQueryError)) return true;
+    const m = e.message;
+    if (/HTTP 4\d\d/.test(m)) return false;
+    if (/HTTP 429/.test(m)) return false;
+    if (/carried no data/.test(m)) return false;
+    if (/carried no .* connection/.test(m)) return false;
+    return true;
+  }
   function fetchPage(field, o, extra) {
     var _a5;
-    const run2 = (first) => {
+    const run2 = (first2) => {
       var _a6, _b;
       return readConnection(
         gqlPost(o.query, {
           ...extra != null ? extra : {},
-          first,
+          first: first2,
           after: (_a6 = o.cursor) != null ? _a6 : null,
           ...(_b = o.extraVariables) != null ? _b : {}
         })[field],
         field
       );
     };
+    const first = (_a5 = o.first) != null ? _a5 : PAGE_SIZE;
     try {
-      return run2((_a5 = o.first) != null ? _a5 : PAGE_SIZE);
+      return run2(first);
     } catch (e) {
-      if (e instanceof WizQueryError && /HTTP 4\d\d/.test(e.message)) throw e;
+      if (!smallerPageCouldHelp(e)) throw e;
+      if (first <= PAGE_SIZE_FALLBACK) throw e;
       return run2(PAGE_SIZE_FALLBACK);
     }
   }
@@ -3892,6 +3964,15 @@ var Server = (() => {
   function withSkippedSteps(settings, steps) {
     const list2 = Array.isArray(steps) ? steps.map((v) => String(v != null ? v : "")).filter(Boolean) : [];
     return { ...settings, last_skipped_steps: list2 };
+  }
+  function getTruncatedSteps(settings) {
+    const raw = settings["last_truncated_steps"];
+    if (!Array.isArray(raw)) return [];
+    return raw.map((v) => String(v != null ? v : "")).filter(Boolean);
+  }
+  function withTruncatedSteps(settings, steps) {
+    const list2 = Array.isArray(steps) ? steps.map((v) => String(v != null ? v : "")).filter(Boolean) : [];
+    return { ...settings, last_truncated_steps: list2 };
   }
   var DEFAULT_FRAMEWORK_IDS = [
     "wf-id-275",
@@ -6297,7 +6378,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "64073435590a" : "dev";
+  var BUILD_ID = true ? "9b374dff800d" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -6380,6 +6461,7 @@ var Server = (() => {
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
+  var WIZ_VERSION_PROP = "WIZ_DATA_VERSION";
   var KEY_PREFIX = `wsk.${BUILD_ID}`;
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
@@ -6389,6 +6471,13 @@ var Server = (() => {
   }
   function bumpDataVersion() {
     setProp(VERSION_PROP, String(Date.now()));
+  }
+  function wizDataVersion() {
+    var _a5;
+    return (_a5 = getProp(WIZ_VERSION_PROP)) != null ? _a5 : "0";
+  }
+  function bumpWizDataVersion() {
+    setProp(WIZ_VERSION_PROP, String(Date.now()));
   }
   function cacheKey(name, params, version) {
     const paramsHash = sha1Hex(JSON.stringify(params != null ? params : null)).slice(0, 12);
@@ -6431,10 +6520,10 @@ var Server = (() => {
     ).getDataAsString("UTF-8");
     return JSON.parse(json);
   }
-  function cached(name, params, compute, ttlSec = DEFAULT_TTL_SEC) {
+  function cached(name, params, compute, ttlSec = DEFAULT_TTL_SEC, version) {
     let key = null;
     try {
-      key = cacheKey(name, params, dataVersion());
+      key = cacheKey(name, params, version != null ? version : dataVersion());
       const hit = cacheGetJson(key);
       if (hit !== void 0) return hit;
     } catch (e) {
@@ -6516,6 +6605,14 @@ var Server = (() => {
     const next = withSkippedSteps(settings, steps);
     const before = getSkippedSteps(settings).join(" ");
     if (getSkippedSteps(next).join(" ") === before) return;
+    saveSettings(next);
+  }
+  var getTruncatedSteps2 = () => getTruncatedSteps(loadSettings());
+  function setTruncatedSteps(steps) {
+    const settings = loadSettings();
+    const next = withTruncatedSteps(settings, steps);
+    const before = getTruncatedSteps(settings).join(" ");
+    if (getTruncatedSteps(next).join(" ") === before) return;
     saveSettings(next);
   }
   function getSelectedFrameworks2(catalogue) {
@@ -9546,6 +9643,7 @@ var Server = (() => {
   }
   function commit() {
     bumpDataVersion();
+    bumpWizDataVersion();
     invalidateReadMemos();
   }
   function realNodes(nodes) {
@@ -9696,6 +9794,7 @@ var Server = (() => {
   var CONTINUE_DELAY_MS = 3e4;
   var FIRST_STEP_BUDGET_MS = 45e3;
   var BUDGET_MS = 27e4;
+  var CHECKPOINT_MS = 8e3;
   function syncSteps(aiTypes) {
     const types = aiTypes != null ? aiTypes : resolveAiResourceTypes().types;
     const frameworkIds = getSelectedFrameworks2(() => loadFrameworks());
@@ -9713,7 +9812,8 @@ var Server = (() => {
         run: "cloudResources",
         query: Q_AI_INVENTORY,
         extraVariables: vars("INVENTORY_AI", aiInventoryVariables(types)),
-        normalize: normalizeInventoryPage
+        normalize: normalizeInventoryPage,
+        pageSize: PAGE_SIZE_WIDE
       },
       // One cursor walk per toxic-combination source rule: the assets carrying an OPEN
       // issue for that rule (issue rows are reconstructed one-per-asset).
@@ -9725,7 +9825,8 @@ var Server = (() => {
         query: Q_RULE_ASSETS,
         extraVariables: { ruleIds: [group.ruleId] },
         normalize: (rows) => normalizeRuleAssetsPage(rows, group),
-        optional: true
+        optional: true,
+        pageSize: PAGE_SIZE_WIDE
       })),
       // Real toxic-combination issues (issuesV2). Runs alongside the per-rule steps
       // above; reconcileIssues drops the synthetic per-rule rows these supersede.
@@ -9770,7 +9871,10 @@ var Server = (() => {
         connectionField: "cloudConfigurationRules",
         query: Q_CONFIG_RULES,
         normalize: normalizeConfigRulesPage,
-        optional: true
+        optional: true,
+        // The big one: ~3,858 rules is 39 pages at PAGE_SIZE and 8 at PAGE_SIZE_WIDE, and
+        // the document is five flat scalars per node.
+        pageSize: PAGE_SIZE_WIDE
       }],
       // MFA and dormancy on the humans who can reach an AI asset. The rules come from the
       // catalogue, matched by name (domain/identityHygiene.ts), so this step exists only once
@@ -9802,7 +9906,8 @@ var Server = (() => {
         query: Q_EFFECTIVE_ACCESS,
         extraVariables: effectiveAccessVariables(types, projectScope()),
         normalize: normalizeEffectiveAccessPage,
-        optional: true
+        optional: true,
+        pageSize: PAGE_SIZE_WIDE
       },
       // The framework catalogue. Populates the Settings picker; it does NOT decide the
       // battery — see the posture steps below for why.
@@ -9822,7 +9927,8 @@ var Server = (() => {
         query: Q_SECURITY_FRAMEWORKS,
         extraVariables: vars("FRAMEWORKS_LIST", aiSecurityFrameworksVariables()),
         normalize: normalizeFrameworksPage,
-        optional: true
+        optional: true,
+        pageSize: PAGE_SIZE_WIDE
       },
       // Per-framework compliance posture — ONE STEP PER FRAMEWORK, because the query takes a
       // framework id and returns one object. Generated the same way the per-rule combo steps
@@ -9957,7 +10063,8 @@ var Server = (() => {
         // field-wise and skips undefined — this step's narrower rows fill in the two provenance
         // fields without erasing the projects, tags or analytics INVENTORY_AI established.
         normalize: normalizeInventoryPage,
-        optional: true
+        optional: true,
+        pageSize: PAGE_SIZE_WIDE
       },
       // Agentic execution identities (cloudResourcesV2 + identityPurpose:AGENTIC).
       {
@@ -9968,7 +10075,8 @@ var Server = (() => {
         query: Q_PRINCIPALS,
         extraVariables: vars("AGENTIC_IDENTITIES", aiPrincipalsVariables(projectScope())),
         normalize: normalizePrincipalsPage,
-        optional: true
+        optional: true,
+        pageSize: PAGE_SIZE_WIDE
       }
     ];
   }
@@ -10002,7 +10110,7 @@ var Server = (() => {
     const overrides = getScanVars2();
     const resolved = describeAiTypes();
     return syncSteps(resolved.types).map((step) => {
-      var _a5, _b;
+      var _a5, _b, _c;
       const base = defaultStepVariables(step.id, (_a5 = step.extraVariables) != null ? _a5 : {}, resolved.types);
       return {
         id: step.id,
@@ -10016,6 +10124,10 @@ var Server = (() => {
         // graphSearch) `quick` are added by the transport on every request and are named in
         // the panel rather than folded in here, so what is shown is what is configured.
         variables: (_b = step.extraVariables) != null ? _b : {},
+        // The `first` the transport will send for THIS step. Named because it is no longer one
+        // number for the whole battery: the panel would otherwise list `first` as a transport
+        // variable whose value the operator cannot see and cannot predict.
+        pageSize: (_c = step.pageSize) != null ? _c : PAGE_SIZE,
         defaultVariables: base,
         editable: isEditableStep(step.id),
         overridden: changedPaths(step.id, base, overrides[step.id]),
@@ -10162,6 +10274,7 @@ var Server = (() => {
       }
     );
     setSkippedSteps([]);
+    setTruncatedSteps([]);
     return {
       jobId: null,
       message: `Dry-run sync complete: ${doc.nodes.length} nodes, ${doc.edges.length} edges, ${SEED_ISSUES.length} issues (sample data).`
@@ -10175,7 +10288,8 @@ var Server = (() => {
     const parsed = parseJson(job.params_json, {});
     return {
       apiCalls: Number((_a5 = parsed["apiCalls"]) != null ? _a5 : 0),
-      skippedSteps: strList(parsed["skippedSteps"])
+      skippedSteps: strList(parsed["skippedSteps"]),
+      truncatedSteps: strList(parsed["truncatedSteps"])
     };
   }
   function partRefs(job) {
@@ -10229,6 +10343,7 @@ var Server = (() => {
     let page = job.page;
     let nodesSoFar = job.nodes_so_far;
     let hopPart = emptyPart();
+    let lastCheckpoint = Date.now();
     const spillHopPart = () => {
       if (partIsEmpty(hopPart)) return;
       const name = `normalized-part-${String(refs.length + 1).padStart(3, "0")}.json.gz`;
@@ -10264,7 +10379,8 @@ var Server = (() => {
             result = fetcher({
               query: step.query,
               cursor,
-              extraVariables: step.extraVariables
+              extraVariables: step.extraVariables,
+              first: step.pageSize
             });
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
@@ -10290,15 +10406,25 @@ var Server = (() => {
             }
             throw e;
           }
-          updateJob(job.job_id, {
-            step_index: stepIndex,
-            cursor: result.endCursor,
-            page,
-            nodes_so_far: nodesSoFar,
-            total_count: (_b = result.totalCount) != null ? _b : 0,
-            params_json: JSON.stringify(params)
-          });
-          if (!result.hasNextPage || page >= MAX_PAGES) break;
+          if (page === 1 || Date.now() - lastCheckpoint >= CHECKPOINT_MS) {
+            updateJob(job.job_id, {
+              step_index: stepIndex,
+              cursor: result.endCursor,
+              page,
+              nodes_so_far: nodesSoFar,
+              total_count: (_b = result.totalCount) != null ? _b : 0,
+              params_json: JSON.stringify(params)
+            });
+            lastCheckpoint = Date.now();
+          }
+          if (!result.hasNextPage) break;
+          if (page >= MAX_PAGES) {
+            params.truncatedSteps.push(step.id);
+            console.warn(
+              `Sync step ${step.id} stopped at the ${MAX_PAGES}-page cap with more rows available.`
+            );
+            break;
+          }
           cursor = result.endCursor;
         }
         spillHopPart();
@@ -10309,9 +10435,13 @@ var Server = (() => {
           step_index: stepIndex,
           cursor: null,
           page: 0,
+          // Carried here because the page loop no longer writes it on every page: without it a
+          // throttled tail would leave the row reporting the count from the last checkpoint.
+          nodes_so_far: nodesSoFar,
           part_refs_json: JSON.stringify(refs),
           params_json: JSON.stringify(params)
         });
+        lastCheckpoint = Date.now();
       }
       updateJob(job.job_id, { phase: "RECONCILING" });
       const parts = [];
@@ -10361,6 +10491,7 @@ var Server = (() => {
           }
         );
         setSkippedSteps(params.skippedSteps);
+        setTruncatedSteps(params.truncatedSteps);
         if (merged.configRules.length) setConfigRulesSyncedAt(Date.now());
       };
       if (opts.lockHeld) persist();
@@ -11172,7 +11303,7 @@ var Server = (() => {
   var EXPAND_MAX_EDGES = 400;
   function expandAsset(p) {
     return run(() => {
-      var _a5;
+      var _a5, _b, _c;
       const id = String((_a5 = (p != null ? p : {})["id"]) != null ? _a5 : "");
       if (!id) return null;
       const empty = { nodes: [], edges: [], arityMismatches: 0, truncated: false };
@@ -11180,14 +11311,14 @@ var Server = (() => {
       const node2 = doc ? doc.nodes.filter((n) => n.id === id)[0] : void 0;
       if (node2 && node2.kind !== "AI_AGENT") return { source: "unsupported", ...empty };
       if (!hasWizCredentials()) return { source: "stored", ...empty };
-      return cached("expandAsset", { id }, () => {
-        var _a6, _b;
+      const projectId = (_c = (_b = projectScope()) == null ? void 0 : _b[0]) != null ? _c : null;
+      return cached("expandAsset", { id, projectId }, () => {
         const slots = flattenSlots(AGENT_EXPANSION);
         const page = fetchGraphSearchPage({
           query: Q_AGENT_EXPANSION,
           extraVariables: {
             query: toGraphEntityQuery(AGENT_EXPANSION, id),
-            projectId: (_b = (_a6 = projectScope()) == null ? void 0 : _a6[0]) != null ? _b : null
+            projectId
           }
         });
         const decoded = decodeExpansion(slots, page.rows);
@@ -11206,7 +11337,7 @@ var Server = (() => {
           arityMismatches: decoded.arityMismatches,
           truncated: decoded.nodes.length > nodes.length || decoded.edges.length > edges2.length || page.hasNextPage
         };
-      });
+      }, void 0, wizDataVersion());
     });
   }
   function getIssues(p) {
@@ -11318,6 +11449,9 @@ var Server = (() => {
       steps: describeSyncSteps(),
       specs: STEP_VAR_SPECS,
       skippedSteps: getSkippedSteps2(),
+      // Reported separately from the skips: these steps ran and were answered, we just
+      // stopped asking at the page cap, so their rows are a prefix rather than an absence.
+      truncatedSteps: getTruncatedSteps2(),
       hasCredentials: hasWizCredentials(),
       limits: { maxListValues: MAX_LIST_VALUES, maxValueLen: MAX_VALUE_LEN },
       // Named rather than folded into `variables`: the transport adds these to every request,

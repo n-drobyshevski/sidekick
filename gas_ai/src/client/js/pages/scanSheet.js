@@ -55,13 +55,18 @@ export function openAreaSheet(area, ctx) {
   const meta = COVERAGE[area.state];
   const steps = (ctx.steps || []).filter((s) => s.area === area.id);
   const skipped = new Set(ctx.skippedSteps || []);
+  // A different list from the skips, and the difference is whose decision it was: a skip is
+  // the tenant refusing the query, a truncation is the sync stopping at the page cap while
+  // the tenant was still answering. Shown apart so a partial dataset is not read as a
+  // rejection and sent to whoever checks permissions.
+  const truncated = new Set(ctx.truncatedSteps || []);
 
   openSheet((body) => {
     const sections = [
       sheetSection("What Wiz does here", el("p", { class: "cov-para" }, area.what)),
       reportedSection(area, meta, ctx),
       provenanceSection(area, steps, ctx),
-      ...steps.map((step) => stepSection(step, skipped, ctx)),
+      ...steps.map((step) => stepSection(step, skipped, truncated, ctx)),
       steps.length ? null : noStepSection(area, ctx),
       destinationSection(area, ctx),
     ];
@@ -136,13 +141,15 @@ function uniq(list) {
 
 // ------------------------------------------------------------------ one step's query
 
-function stepSection(step, skipped, ctx) {
+function stepSection(step, skipped, truncated, ctx) {
   const wasSkipped = skipped.has(step.id);
+  const wasTruncated = truncated.has(step.id);
   const head = el("div", { class: "step-head" },
     el("span", { class: "step-id" }, step.id),
     wasSkipped
       ? el("span", { class: "pill warn" }, "Skipped last sync")
       : el("span", { class: "pill neutral" }, step.optional ? "Optional" : "Required"),
+    wasTruncated ? el("span", { class: "pill warn" }, "Stopped at the page cap") : null,
     step.overridden && step.overridden.length
       ? el("span", { class: "pill ok" }, plural(step.overridden.length, "override"))
       : null,
@@ -154,6 +161,13 @@ function stepSection(step, skipped, ctx) {
     kids.push(el("p", { class: "cov-note" },
       "The tenant rejected this query on the last sync, so the step was skipped rather " +
       "than failing the run. Everything this step feeds is missing from the figures above."));
+  }
+
+  if (wasTruncated) {
+    kids.push(el("p", { class: "cov-note" },
+      "The last sync hit its page ceiling on this step with the cursor still open, so what " +
+      "it collected is the first part of the answer rather than all of it. The figures " +
+      "above undercount by an unknown amount."));
   }
 
   kids.push(
@@ -168,7 +182,8 @@ function stepSection(step, skipped, ctx) {
     el("p", { class: "q-cap" },
       "The transport adds " +
       (ctx.transportVariables || ["first", "after"]).join(", ") +
-      " to every request; they are not configuration and are not shown above."),
+      " to every request; they are not configuration and are not shown above. This step " +
+      "reads " + (step.pageSize || 100) + " rows per page."),
   );
 
   const spec = (ctx.specs || []).filter((s) => s.stepId === step.id)[0];

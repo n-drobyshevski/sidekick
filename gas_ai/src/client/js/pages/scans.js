@@ -270,6 +270,7 @@ export async function renderScans(main, params, ctx) {
       steps: (queries && queries.steps) || [],
       specs: (queries && queries.specs) || [],
       skippedSteps: (queries && queries.skippedSteps) || [],
+      truncatedSteps: (queries && queries.truncatedSteps) || [],
       transportVariables: (queries && queries.transportVariables) || [],
       hasCredentials: queries ? queries.hasCredentials : boot.hasCredentials,
       combosError,

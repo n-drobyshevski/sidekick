@@ -33,7 +33,7 @@ import type { Severity } from "../domain/config";
 import { countAarsSeverities } from "../domain/aarsTrend";
 import { nowIso, type Rec } from "../domain/util";
 import { readGraphSnapshot, trashGraphSnapshot, writeGraphSnapshot } from "./archiveStore";
-import { bumpDataVersion } from "./serverCache";
+import { bumpDataVersion, bumpWizDataVersion } from "./serverCache";
 import * as settingsStore from "./settingsStore";
 import { appendRows, overwrite, readAll, TABS } from "./sheetsDb";
 
@@ -900,6 +900,12 @@ function invalidateReadMemos(): void {
  */
 export function commit(): void {
   bumpDataVersion();
+  // The Wiz-facing half. Bumped HERE rather than in persistSync so that all three callers
+  // reach it — a rescore and, more importantly, resetData(). A version that only a sync
+  // moved would let a cached live expansion outlive a full data wipe by up to six hours,
+  // and expandAsset's guard cannot catch that: with the graph gone it finds no node, skips
+  // the kind check, and serves the stale answer.
+  bumpWizDataVersion();
   invalidateReadMemos();
 }
 

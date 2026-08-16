@@ -24,7 +24,34 @@ import type { Rec } from "../domain/util";
 
 export const PAGE_SIZE = 100;
 export const PAGE_SIZE_FALLBACK = 50;
-export const MAX_PAGES = 200;
+
+/**
+ * The page size for steps whose selection set is provably narrow — see `pageSize` on
+ * SyncStepDef, which is the only thing that applies it.
+ *
+ * 500 is Wiz's documented cursor-pagination maximum, and the sibling OS-vulns tool
+ * (`gas/src/server/wizQuery.ts`) has run at 500 against this tenant since it shipped, which
+ * is better evidence than the documentation. It is NOT the default here, deliberately, for
+ * two reasons the default would get wrong:
+ *
+ *   - `api.expandAsset` reads a page without passing `first`, so it takes PAGE_SIZE. That is
+ *     the interactive Connections fetch, and it discards past EXPAND_MAX_NODES — making it
+ *     five times heavier would spend the latency where a user is waiting for it.
+ *   - The two widest documents (Q_CONFIG_FINDINGS, whose `opaPolicy` Rego has no bound, and
+ *     Q_AI_EXPOSURE, which spreads three ten-wide nested sub-connections per entity) are the
+ *     ones a gateway is most likely to time out on at 500. They keep the smaller page.
+ */
+export const PAGE_SIZE_WIDE = 500;
+
+/**
+ * Hard ceiling on pages per step — a runaway-cursor backstop, not a budget.
+ *
+ * Raised from 200 alongside per-step page sizes. At 200 x PAGE_SIZE this capped every step
+ * at 20,000 rows and dropped the rest with a bare `break` and no record: a tenant with 50k
+ * configuration findings silently synced 40% of them and reported success. The cap is now
+ * recorded (see `truncatedSteps`) so hitting it is visible rather than inferred.
+ */
+export const MAX_PAGES = 1000;
 
 // Shared CloudResource field selection (flat inventory shape).
 // NOTE: `businessImpact` lives under `Project.riskProfile`, not directly on

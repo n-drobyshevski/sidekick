@@ -71,7 +71,9 @@ palette is deliberately identical across both tools.
    is the widest selection set the app sends, and a rejection must cost two optional
    steps rather than all seven traversals. Each execution runs under a wall-clock budget and
    resumes via a one-shot trigger if it runs long (at the documented tenant scale the
-   whole battery is ~10–20 API calls and finishes in one hop).
+   whole battery is ~10–20 API calls and finishes in one hop). Steps whose selection set is
+   narrow page at 500 rather than 100 — see the page-size note under *Constraints worth
+   knowing* — which mostly matters on the runs that refresh the rule catalogue.
 2. **Normalize + enrich** (once per sync, persisted): responses become typed
    nodes/edges/issues; each asset gets its worst adjusted severity, combo membership,
    and an AARS score (4 pillars: toxic-combination participation 0–50, compliance
@@ -209,6 +211,32 @@ window during which that build is live, and the `git merge-base --is-ancestor` c
 
 ### Constraints worth knowing
 
+- **Page size is a property of the STEP, not of the battery.** `PAGE_SIZE` (100) is the
+  default; `PAGE_SIZE_WIDE` (500, Wiz's documented cursor maximum) is opted into per step via
+  `SyncStepDef.pageSize`, and the Wiz Scans panel reports the effective `first` for each. The
+  default is deliberately not raised: `api.expandAsset` reads a page without passing `first`,
+  and it is the one call a user waits on; and the two widest documents (`Q_CONFIG_FINDINGS`,
+  whose `opaPolicy` Rego is unbounded, and `Q_AI_EXPOSURE`, three ten-wide nested
+  sub-connections per entity) are the likeliest to time out at 500. `CONFIG_RULES` is the
+  step this exists for — ~3,858 rules is 39 calls at 100 and 8 at 500.
+- **A page cap is recorded, not silent.** `MAX_PAGES` used to stop a step with a bare
+  `break`, so a step that ran out of pages was indistinguishable from an estate that has
+  less. Hitting it now lands in `last_truncated_steps`, kept **separate** from
+  `last_skipped_steps`: a skip means the tenant refused the query, a truncation means we
+  stopped asking while it was still answering.
+- **Retrying smaller only helps some failures.** `fetchPage` re-asks at
+  `PAGE_SIZE_FALLBACK` for a gateway 5xx or a transport/parse error, and rethrows a 429, an
+  HTTP-200 GraphQL error envelope and a connection-shape mismatch untouched — none of which
+  a smaller page can change. It used to retry all of them, on top of the four attempts
+  `gqlPost` had already spent, which is how one throttled page cost eight POSTs and every
+  200-shaped enum rejection during type probing cost two. It also never retries *up*.
+- **Two cache versions, and the difference is whose freshness it is.** `DATA_VERSION` is
+  bumped by `settingsStore.saveSettings` as well as by a sync, which is right for every
+  derived read-model and wrong for a cached Wiz response — saving an AARS rule does not make
+  a graph answer from Wiz stale. `WIZ_DATA_VERSION` is bumped from `syncStore.commit()` only
+  (so a sync, a rescore and `resetData` all reach it) and keys `expandAsset`, the one
+  endpoint that spends a live call on a click. Its key also carries `projectId`, which is a
+  live input to the query.
 - **No template literals / no `//` inside client strings.** The build lowers template
   literals and a "middlebox guard" fails if a bare `//` survives comment-stripping —
   a corporate SSL-inspection proxy corrupts them in transit. Split URLs like
