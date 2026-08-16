@@ -151,6 +151,8 @@ export interface FrameworkTree {
   /** Distinct policies across the whole framework. Deduped: the same control maps many times. */
   policyCount: number;
   failingPolicyCount: number;
+  /** Worst severity among this framework's FAILING policies. Null when none are failing. */
+  worstFailingSeverity: Severity | null;
 }
 
 function severityRank(s: Severity): number {
@@ -258,10 +260,24 @@ export function buildFrameworkTree(
   // Distinct across the framework — the same control under three subcategories is ONE
   // policy that this framework covers, and reporting three would inflate every count on
   // the header.
+  //
+  // worstFailingSeverity rides the same walk rather than a second one: it only ever looks
+  // at a policy the moment it is confirmed failing here, so a policy that never fails
+  // (however severe) can never set it, and one that fails under several subcategories is
+  // only ever compared by its severity, never by how many rows it appears on.
   const distinct = new Map<string, boolean>();
+  let worstFailingSeverity: Severity | null = null;
+  let worstFailingRank = Infinity;
   for (const p of policies) {
     if (p.frameworkId !== frameworkId) continue;
     distinct.set(p.policyId, (distinct.get(p.policyId) ?? false) || p.failCount > 0);
+    if (p.failCount > 0) {
+      const rank = severityRank(p.severity);
+      if (rank < worstFailingRank) {
+        worstFailingRank = rank;
+        worstFailingSeverity = p.severity;
+      }
+    }
   }
 
   return {
@@ -280,6 +296,7 @@ export function buildFrameworkTree(
     stateCounts,
     policyCount: distinct.size,
     failingPolicyCount: [...distinct.values()].filter(Boolean).length,
+    worstFailingSeverity,
   };
 }
 

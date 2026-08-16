@@ -18,6 +18,8 @@ import {
   postureState,
   titleRepeatsExternalId,
 } from "../src/domain/compliancePosture";
+import type { Severity } from "../src/domain/config";
+import type { FrameworkPolicyRow, PostureRow } from "../src/domain/graphTypes";
 import {
   normalizeCompliancePosturePage,
   normalizeFrameworksPage,
@@ -92,6 +94,14 @@ describe("buildFrameworkTree", () => {
     // 5 would say the framework covers five things when it covers three.
     expect(tree.policyCount).toBe(3);
     expect(tree.failingPolicyCount).toBe(1);
+  });
+
+  it("carries the worst failing severity — here the framework's one failing control, MEDIUM", () => {
+    // The only policy that actually fails in this fixture (AIService-003) is MEDIUM. The
+    // shared CONTROL is MEDIUM too but never fails (failCount null → 0), so it must not be
+    // ABLE to move this even though it shares the same severity here — see the synthetic
+    // "worstFailingSeverity" cases below for that distinction pinned on purpose.
+    expect(tree.worstFailingSeverity).toBe("MEDIUM");
   });
 
   it("keeps the same policy under EVERY subcategory it maps to", () => {
@@ -246,6 +256,82 @@ describe("mirrorsCategory — the one-level frameworks", () => {
     ];
     const tree = buildFrameworkTree("wf-id-777", orphan, [], [])!;
     expect(tree.categories[0].mirrorsCategory).toBe(false);
+  });
+});
+
+describe("worstFailingSeverity — what colours the posture bar", () => {
+  // A minimal single-framework fixture, built by hand rather than through the fixture file
+  // — none of the three cases below (a naive first-wins bug, a severe-but-passing policy,
+  // an all-clean framework) exist in frameworkPosture.fixture.ts, and the file is not to be
+  // edited. Only ONE posture row is needed: the worst-failing-severity walk iterates the
+  // `policies` argument directly (compliancePosture.ts's `distinct` loop), never the
+  // category/subcategory tree, so nothing here needs to join back to it.
+  const frameworkId = "wf-id-worst";
+  const framework: PostureRow[] = [
+    {
+      frameworkId, level: "framework", title: "Worst-severity fixture",
+      posturePct: 80, passCount: 8, failCount: 2, emptyPostureReason: null,
+    },
+  ];
+
+  function policy(policyId: string, severity: Severity, failCount: number): FrameworkPolicyRow {
+    return {
+      frameworkId,
+      categoryExternalId: "C1",
+      subcategoryExternalId: "C1.1",
+      policyId,
+      policyKind: "CONTROL",
+      name: policyId,
+      severity,
+      passCount: failCount > 0 ? 0 : 1,
+      failCount,
+      assessedCount: 1,
+      rejectedCount: 0,
+      noResourceToAssess: false,
+    };
+  }
+
+  it("is the WORST rank across every failing policy, not the first one the loop visits", () => {
+    // LOW is listed first; a "first failing policy wins" bug would report LOW even though
+    // CRITICAL, listed second, is strictly worse.
+    const policies = [
+      policy("p-low", "LOW", 3),
+      policy("p-critical", "CRITICAL", 1),
+    ];
+    const tree = buildFrameworkTree(frameworkId, framework, policies)!;
+    expect(tree.worstFailingSeverity).toBe("CRITICAL");
+  });
+
+  it("never lets a PASSING policy's severity contribute, however severe", () => {
+    // The CRITICAL policy here has failCount 0 — it passed. If failCount were ignored, the
+    // framework would read CRITICAL for a control that raised nothing; only the LOW policy
+    // actually failed, so LOW is the honest answer.
+    const policies = [
+      policy("p-critical-passing", "CRITICAL", 0),
+      policy("p-low-failing", "LOW", 5),
+    ];
+    const tree = buildFrameworkTree(frameworkId, framework, policies)!;
+    expect(tree.worstFailingSeverity).toBe("LOW");
+    expect(tree.worstFailingSeverity).not.toBe("CRITICAL");
+  });
+
+  it("is null when nothing is failing — and null, never 'UNKNOWN' or 'INFO', stands in for it", () => {
+    const policies = [
+      policy("p-passing-critical", "CRITICAL", 0),
+      policy("p-passing-info", "INFO", 0),
+    ];
+    const tree = buildFrameworkTree(frameworkId, framework, policies)!;
+    expect(tree.worstFailingSeverity).toBeNull();
+    // Loud on purpose: coercing the empty case to a real severity level is the exact class
+    // of mistake `posture ?? 0` is for a percentage — painting a mark for a fact that does
+    // not exist.
+    expect(tree.worstFailingSeverity).not.toBe("UNKNOWN");
+    expect(tree.worstFailingSeverity).not.toBe("INFO");
+  });
+
+  it("is null on a framework with no policies mapped to it at all", () => {
+    const tree = buildFrameworkTree(frameworkId, framework, [])!;
+    expect(tree.worstFailingSeverity).toBeNull();
   });
 });
 

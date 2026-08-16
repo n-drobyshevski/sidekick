@@ -68,3 +68,24 @@ a { color: var(--accent); }
 /* The "nothing matched" row inside a table, so an empty result still sits in the
    structure it belongs to rather than replacing it. */
 .table-empty { color: var(--text-3); white-space: normal; text-align: center; }
+
+/* dataTable()'s optional rowDetail() row: a full-width `<td colspan>` immediately under
+   its trigger row. It inherits every `table.data td` rule above — including the 320px clip
+   built for a normal cell's worth of text — which would clip a whole detail panel behind an
+   ellipsis. `.table-empty` above resets `white-space` for the same reason; this resets the
+   rest of the same trap (`max-width`, `overflow`, `text-overflow`) for a cell that can hold
+   a panel rather than a sentence. Generic and unscoped deliberately: any dataTable() caller
+   that opts into rowDetail needs this, not only the compliance register. */
+/* Undoes the row-cell clamp above for a dataTable() `rowDetail` cell, which holds a panel
+   rather than one line of a column.
+ *
+ * `table.data` is in the selector to WIN, not to scope: `table.data td` above is (0,0,1,2)
+ * and a bare `.detail-row > td` is (0,0,1,1), so the reset loses on specificity no matter
+ * how far down the file it sits — and loses silently, because a colspan cell in a
+ * width:100% table still lays out full-width, so `max-width` looks obeyed while
+ * `white-space: nowrap` quietly puts a paragraph on one line and `overflow: hidden` cuts
+ * it off. Seeded data has no prose in these panels, so nothing shows until a real tenant's
+ * assessment scope arrives. */
+table.data .detail-row > td {
+  white-space: normal; max-width: none; overflow: visible; text-overflow: clip;
+}

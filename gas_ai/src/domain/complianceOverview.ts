@@ -45,6 +45,8 @@ export interface FrameworkRailRow {
   subcategoryCount: number;
   policyCount: number;
   failingPolicyCount: number;
+  /** Worst severity among this framework's FAILING policies. Null when none are failing. */
+  worstFailingSeverity: Severity | null;
   stateCounts: Record<PostureState, number>;
 }
 
@@ -66,6 +68,7 @@ export function frameworkRail(trees: FrameworkTree[]): FrameworkRailRow[] {
     subcategoryCount: tree.categories.reduce((sum, c) => sum + c.subcategories.length, 0),
     policyCount: tree.policyCount,
     failingPolicyCount: tree.failingPolicyCount,
+    worstFailingSeverity: tree.worstFailingSeverity,
     // Copied rather than aliased: a caller holding this row must not be able to mutate
     // the FrameworkTree it was built from by mutating what looks like its own object.
     stateCounts: { ...tree.stateCounts },
@@ -317,34 +320,36 @@ export interface CoverageSummary {
   /** Frameworks in the tenant catalogue. */
   catalogued: number;
   scoredFrameworks: number;
-  /** Catalogue entries with no stored posture, by name. */
-  uncollected: { id: string; name: string }[];
   /** Every subcategory across every framework, by state. */
   stateCounts: Record<PostureState, number>;
   subcategoryCount: number;
 }
 
 /**
- * `uncollected` is read off the ABSENCE of a tree, not off `selected`. A framework this
- * tenant later disabled still has a tree if `posture` mentions it (buildFrameworkTree
- * builds one for every id it sees, regardless of the catalogue's `enabled`/`selected`
- * flags) and is rightly reported as collected; a framework this app was told to sync but
- * nothing has come back for yet has no tree, and THAT absence is the gap this page exists
- * to name. `selected` stays in the signature — the page can use it to say WHY a catalogue
- * entry is uncollected ("chosen, not yet synced" reads differently from "never chosen")
- * — but it does not change which rows are returned here, because what was and was not
- * asked for is a different question from what has and has not actually landed.
+ * Counts, not names.
+ *
+ * This used to return `uncollected` — every catalogue entry with no stored posture, by
+ * name — for a Coverage band that listed them. On the sample estate that was one row; on a
+ * real tenant it was thirty-seven, and the band was deleted for printing a framework
+ * catalogue where a finding belonged. With the band went the only reader, and a payload
+ * carrying thirty-seven objects nothing renders is not neutral: it ships on every read of
+ * a page that is already sent whole.
+ *
+ * `collected` vs `catalogued` still states the same fact, and the headline strip draws it
+ * as "Frameworks 4 of 41". The difference between those two numbers is the count that was
+ * ever worth reporting; which particular frameworks make it up is a question for Settings,
+ * where the answer is actionable rather than merely long.
+ *
+ * `collected` counts TREES, not selections. A framework the tenant later disabled still has
+ * a tree if `posture` mentions it — buildFrameworkTree builds one for every id it sees,
+ * regardless of the catalogue's flags — and is rightly counted; a framework this app was
+ * told to sync but nothing has come back for yet has none. What was asked for and what has
+ * landed are different questions, and this one answers the second.
  */
 export function coverageSummary(
   trees: FrameworkTree[],
   catalogue: FrameworkRow[],
-  selected: string[],
 ): CoverageSummary {
-  const treeIds = new Set(trees.map((t) => t.frameworkId));
-  const uncollected = catalogue
-    .filter((f) => !treeIds.has(f.id))
-    .map((f) => ({ id: f.id, name: f.name }));
-
   const stateCounts: Record<PostureState, number> = {
     scored: 0, noResources: 0, noPolicies: 0, unknown: 0,
   };
@@ -361,7 +366,6 @@ export function coverageSummary(
     collected: trees.length,
     catalogued: catalogue.length,
     scoredFrameworks: trees.filter((t) => t.state === "scored").length,
-    uncollected,
     stateCounts,
     subcategoryCount,
   };

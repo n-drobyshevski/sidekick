@@ -241,14 +241,16 @@ describe("the Overview bands getCompliance ships beside the trees", () => {
     expect(counts).toEqual([...counts].sort((a: number, b: number) => b - a));
   });
 
-  it("names the framework this tenant has but does not collect", () => {
+  it("counts what is collected against what the tenant catalogues", () => {
     const cov = compliance().coverage;
+    // Five frameworks exist in the seed tenant and four are collected — the CIS one is
+    // deliberately left out. The headline strip draws this as "Frameworks 4 of 5"; naming
+    // the missing one is Settings' job, not this payload's.
     expect(cov.collected).toBe(4);
     expect(cov.catalogued).toBe(5);
-    expect(cov.uncollected.map((f: any) => f.id)).toEqual(["wf-id-042"]);
 
     // Every subcategory lands in exactly one state — no row is counted twice and none is
-    // dropped, which is what makes the coverage band an accounting rather than a summary.
+    // dropped, which is what makes the state strip an accounting rather than a summary.
     const total = Object.values(cov.stateCounts).reduce((a: any, b: any) => a + b, 0);
     expect(total).toBe(cov.subcategoryCount);
   });
