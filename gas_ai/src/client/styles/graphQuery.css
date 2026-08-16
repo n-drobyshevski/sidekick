@@ -445,9 +445,61 @@
 
 /* A node's property filters, on its builder row. The `.filter-chip` recipe, tightened to sit
    in a 28px line beside the entity chips rather than in the chip row under the header. */
+/* The WHERE segment: the keyword, then one chip per filter. A filter narrows which nodes bind at
+   this step, so it belongs in the sentence beside FIND and THAT rather than trailing the row as
+   though it were something done to the answer afterwards. */
 .gq-chips { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .gq-filter-chip { min-height: 26px; font-size: 12px; }
 .gq-filter-key { color: var(--text-3); }
+/* The operator is the word that makes the chip unambiguous, so it is weighted, not muted. */
+.gq-filter-op { color: var(--text-2); font-weight: 600; }
+/* The body is a real button now — the chip is editable, where it used to be only dismissible.
+   It resets off the global button recipe the way every other control in this bar does. */
+.gq-filter-chip .filter-chip-body {
+  border: none; box-shadow: none; min-height: 0;
+  font: inherit; text-align: left; cursor: pointer;
+}
+.gq-filter-chip .filter-chip-body:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* ------------------------------------------------------------------- the filter editor */
+/* One control, two frames: in the palette's drill-in pane when a filter is being created, and in
+   a popover off the chip when one is being changed. Only the frame differs, so only the frame is
+   styled per host. */
+.gq-fe { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.gq-fe-pop { padding: 10px; }
+.gq-fe-host { min-width: 0; }
+.gq-fe-op { width: 100%; }
+.gq-fe-body { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.gq-fe-text { width: 100%; }
+.gq-fe-hint { margin: 0; }
+
+/* Key/value rows, for a field whose values are pairs. A two-column grid rather than a flex line
+   so the labels stack with their inputs at any width, and the remove button keeps its own column
+   instead of wrapping under the value it removes. */
+.gq-fe-pairs { display: flex; flex-direction: column; gap: 8px; }
+.gq-fe-pair {
+  display: grid; grid-template-columns: auto 1fr 26px; align-items: center; gap: 5px 7px;
+  padding: 7px; border: 1px solid var(--hairline); border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.gq-fe-pair-label {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--text-3);
+}
+.gq-fe-pair input { min-width: 0; }
+/* The remove sits in the third column and spans both rows, beside the pair it drops. */
+.gq-fe-drop {
+  grid-column: 3; grid-row: 1 / span 2;
+  width: 24px; height: 24px; min-height: 0; padding: 0;
+  border: none; background: none; box-shadow: none; border-radius: var(--radius-sm);
+  color: var(--text-3);
+}
+.gq-fe-drop:hover { background: var(--wash-hover); color: var(--ink); border-color: transparent; }
+.gq-fe-add {
+  align-self: flex-start;
+  display: inline-flex; align-items: center; gap: 6px;
+  min-height: 28px; padding: 3px 9px; font-size: 12px;
+}
 /* The literal expansion. Prose says what a pick means; this says what it DOES — the same
    fragment that ends up in the shareable link, built by the real serializer. */
 .gq-pal-detail-lit {

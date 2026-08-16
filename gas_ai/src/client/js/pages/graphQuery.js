@@ -25,6 +25,12 @@
 //
 //   where=0.cloud.GCP,0.severity.CRITICAL,1.inactive.true
 //   where=0.name~prod          the separator IS the operator: `.` equals, `~` contains
+//   where=0.!cloud.GCP         `!` on the KEY negates: keep exactly what this would drop
+//   where=0.*tags.env:prod     `*` on the key: EVERY value must match, not just one
+//   where=0.!*projects.A       both, order-free — "does not hold all of these"
+//
+// The flags are the same two characters, in the same order-free prefix set, that a step carries
+// in `find=`. One grammar to learn, and no flags is what every link written before them means.
 //
 // The leading number is the node's PRE-ORDER INDEX over every traversed node — the same walk
 // the domain evaluator uses for its binding slots, so index 1 means the same node on both
@@ -228,7 +234,17 @@ export function parseWhere(text) {
     const at = eq === -1 ? tilde : (tilde === -1 ? eq : Math.min(eq, tilde));
     if (at <= dot1) continue;
     const index = Number(entry.slice(0, dot1));
-    const key = entry.slice(dot1 + 1, at);
+    // Quantifier flags ride as an order-free PREFIX on the key — the same idiom, and the same
+    // two characters, the `find=` grammar already uses on a step. No flags is the reading every
+    // link written before they existed carries, so those keep meaning exactly what they meant.
+    let key = entry.slice(dot1 + 1, at);
+    let all = false;
+    let negate = false;
+    for (;;) {
+      if (key[0] === "!") { negate = true; key = key.slice(1); continue; }
+      if (key[0] === "*") { all = true; key = key.slice(1); continue; }
+      break;
+    }
     const op = entry[at] === "~" ? "contains" : "eq";
     // A truncated percent-escape THROWS rather than returning garbage, and this runs on the
     // first line of the page's render. Unguarded, `where=0.name~prod%2` replaced the whole
@@ -243,11 +259,19 @@ export function parseWhere(text) {
     if (!Number.isInteger(index) || index < 0 || !key || !value) continue;
     if (!byIndex.has(index)) byIndex.set(index, new Map());
     const forNode = byIndex.get(index);
-    if (!forNode.has(key)) forNode.set(key, { values: [], op });
+    if (!forNode.has(key)) {
+      // Omitted where false, the way `op` omits its default and `applyWhere` omits it again on
+      // the wire — so a plain filter is the same plain object it has always been, and a flag
+      // present in one of these maps always means something.
+      const made = { values: [], op };
+      if (all) made.all = true;
+      if (negate) made.negate = true;
+      forNode.set(key, made);
+    }
     const filter = forNode.get(key);
-    // One operator per (node, key). A link carrying both readings of one field is malformed;
-    // the first one wins rather than the entry being dropped, so the filter still does
-    // something the chip can describe.
+    // One reading per (node, key) — operator and flags alike. A link carrying two readings of
+    // one field is malformed; the first wins rather than the entry being dropped, so the filter
+    // still does something the chip can describe.
     if (!filter.values.includes(value)) filter.values.push(value);
   }
   return byIndex;
@@ -260,10 +284,13 @@ export function serializeWhere(byIndex) {
     for (const key of [...forNode.keys()].sort()) {
       const filter = forNode.get(key);
       const sep = filter.op === "contains" ? "~" : ".";
+      // Written in one fixed order so the same filter always produces the same string — a link
+      // that differs only in flag order would defeat every `===` this page does on the hash.
+      const flags = (filter.negate ? "!" : "") + (filter.all ? "*" : "");
       for (const value of filter.values) {
         // A value can hold a comma (a project name) or a dot (a region), either of which would
         // re-split wrong on the way back in.
-        parts.push(index + "." + key + sep + encodeURIComponent(value));
+        parts.push(index + "." + flags + key + sep + encodeURIComponent(value));
       }
     }
   }
@@ -333,9 +360,17 @@ export function applyWhere(query, byIndex) {
     if (!filters || !filters.size) return;
     node.where = [...filters.keys()].sort().map((key) => {
       const f = filters.get(key);
-      // `op` is omitted where it is the default, so the wire payload and the golden snapshot
+      // Each key is omitted where it is the default, so the wire payload and the golden snapshot
       // carry it only when it is doing something.
-      return f.op === "contains" ? { key, values: f.values, op: "contains" } : { key, values: f.values };
+      //
+      // THIS IS WHERE A NEW FLAG GOES TO DIE. The payload is rebuilt field by field, so anything
+      // parsed out of the URL and not named here is dropped between the two — no error, no
+      // warning, just a query that quietly answers a different question than the chip describes.
+      const out = { key, values: f.values };
+      if (f.op === "contains") out.op = "contains";
+      if (f.all) out.all = true;
+      if (f.negate) out.negate = true;
+      return out;
     });
   });
   return copy;

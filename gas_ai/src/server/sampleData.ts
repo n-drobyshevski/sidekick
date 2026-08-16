@@ -54,6 +54,7 @@ interface NodeSeed {
   email?: string;
   publisher?: string;
   discoveryMethods?: string[];
+  tags?: Array<{ key: string; value: string }>;
 }
 
 function node(seed: NodeSeed): GNode {
@@ -63,6 +64,10 @@ function node(seed: NodeSeed): GNode {
     name: seed.name,
     nativeType: seed.nativeType,
     cloudPlatform: seed.cloud,
+    // The cloud tags. Only some seeds carry them, and the ones that do carry DIFFERENT sets —
+    // a dry run has to be able to tell "contains any" from "contains all", and it cannot if
+    // every node is tagged the same way or none is tagged at all.
+    tags: seed.tags,
     region: seed.region,
     status: seed.status ?? "Active",
     firstSeen: T0,
@@ -126,6 +131,7 @@ function gcpAgent(seed: AgentSeed): NodeSeed {
 const AGENTS: NodeSeed[] = [
   gcpAgent({
     id: "agent-a", name: "Agent-A", region: "europe-west1",
+    tags: [{ key: "env", value: "prod" }, { key: "team", value: "ml" }, { key: "owner", value: "platform" }],
     account: { id: "gcp-account-01", name: "gcp-account-01" },
     projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
     sensitiveAccess: true, highPriv: true, guardrailMissing: true,
@@ -136,6 +142,7 @@ const AGENTS: NodeSeed[] = [
   }),
   gcpAgent({
     id: "agent-b", name: "Agent-B", region: "us-west1",
+    tags: [{ key: "env", value: "prod" }, { key: "team", value: "search" }],
     account: { id: "gcp-account-01", name: "gcp-account-01" },
     projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
     sensitiveAccess: true, highPriv: true, guardrailMissing: true,
@@ -154,6 +161,7 @@ const AGENTS: NodeSeed[] = [
   }),
   gcpAgent({
     id: "agent-d", name: "dev-agent-D", region: "europe-west3",
+    tags: [{ key: "env", value: "staging" }, { key: "team", value: "ml" }],
     account: { id: "gcp-account-02", name: "gcp-account-02" },
     projects: ["PROJECT-BETA", "PROJECT-ALPHA"],
     sensitiveAccess: true, highPriv: true, guardrailMissing: true,

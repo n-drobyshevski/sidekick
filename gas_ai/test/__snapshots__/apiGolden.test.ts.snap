@@ -6843,6 +6843,20 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "region": "europe-west1",
         "severity": "HIGH",
         "status": "Active",
+        "tags": [
+          {
+            "key": "env",
+            "value": "prod",
+          },
+          {
+            "key": "team",
+            "value": "ml",
+          },
+          {
+            "key": "owner",
+            "value": "platform",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -6915,6 +6929,16 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "region": "us-west1",
         "severity": "HIGH",
         "status": "Active",
+        "tags": [
+          {
+            "key": "env",
+            "value": "prod",
+          },
+          {
+            "key": "team",
+            "value": "search",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -7144,6 +7168,16 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "region": "europe-west3",
         "severity": "HIGH",
         "status": "Active",
+        "tags": [
+          {
+            "key": "env",
+            "value": "staging",
+          },
+          {
+            "key": "team",
+            "value": "ml",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -11719,6 +11753,7 @@ exports[`read endpoints > getQueryVocabulary (values for AI Agent) answers the s
         {
           "key": "discoveredBy",
           "label": "Discovered by",
+          "multi": true,
           "type": "choice",
         },
         {
@@ -11730,6 +11765,12 @@ exports[`read endpoints > getQueryVocabulary (values for AI Agent) answers the s
           "key": "region",
           "label": "Region",
           "type": "choice",
+        },
+        {
+          "key": "tags",
+          "label": "Tags",
+          "multi": true,
+          "type": "pairs",
         },
         {
           "key": "status",
@@ -11754,6 +11795,7 @@ exports[`read endpoints > getQueryVocabulary (values for AI Agent) answers the s
         {
           "key": "projects",
           "label": "Projects",
+          "multi": true,
           "type": "choice",
         },
         {
@@ -11769,6 +11811,7 @@ exports[`read endpoints > getQueryVocabulary (values for AI Agent) answers the s
         {
           "key": "comboGroup",
           "label": "Toxic combination",
+          "multi": true,
           "type": "choice",
         },
         {
@@ -12781,7 +12824,7 @@ exports[`read endpoints > getSettings answers the same shape 1`] = `
 exports[`read endpoints > getStorageStats answers the same shape 1`] = `
 {
   "data": {
-    "archiveBytes": 75066,
+    "archiveBytes": 75306,
     "cellCount": 39300,
     "rows": {
       "assets": 87,
@@ -13617,6 +13660,10 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
             "label": "Region",
           },
           {
+            "key": "tags",
+            "label": "Tags",
+          },
+          {
             "key": "status",
             "label": "Status",
           },
@@ -13723,6 +13770,10 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
           {
             "key": "region",
             "label": "Region",
+          },
+          {
+            "key": "tags",
+            "label": "Tags",
           },
           {
             "key": "status",
@@ -14289,6 +14340,16 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "region": "europe-west3",
         "severity": "HIGH",
         "status": "Active",
+        "tags": [
+          {
+            "key": "env",
+            "value": "staging",
+          },
+          {
+            "key": "team",
+            "value": "ml",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -14650,6 +14711,20 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "region": "europe-west1",
         "severity": "HIGH",
         "status": "Active",
+        "tags": [
+          {
+            "key": "env",
+            "value": "prod",
+          },
+          {
+            "key": "team",
+            "value": "ml",
+          },
+          {
+            "key": "owner",
+            "value": "platform",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -14722,6 +14797,16 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "region": "us-west1",
         "severity": "HIGH",
         "status": "Active",
+        "tags": [
+          {
+            "key": "env",
+            "value": "prod",
+          },
+          {
+            "key": "team",
+            "value": "search",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -15817,6 +15902,10 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
             "label": "Region",
           },
           {
+            "key": "tags",
+            "label": "Tags",
+          },
+          {
             "key": "status",
             "label": "Status",
           },
@@ -16273,6 +16362,16 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "region": "europe-west3",
         "severity": "HIGH",
         "status": "Active",
+        "tags": [
+          {
+            "key": "env",
+            "value": "staging",
+          },
+          {
+            "key": "team",
+            "value": "ml",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -16634,6 +16733,20 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "region": "europe-west1",
         "severity": "HIGH",
         "status": "Active",
+        "tags": [
+          {
+            "key": "env",
+            "value": "prod",
+          },
+          {
+            "key": "team",
+            "value": "ml",
+          },
+          {
+            "key": "owner",
+            "value": "platform",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -16706,6 +16819,16 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "region": "us-west1",
         "severity": "HIGH",
         "status": "Active",
+        "tags": [
+          {
+            "key": "env",
+            "value": "prod",
+          },
+          {
+            "key": "team",
+            "value": "search",
+          },
+        ],
         "technologyCategories": [
           "AI Service",
         ],
@@ -17258,7 +17381,7 @@ exports[`the persisted ledger > writes the tabs the schema declares 2`] = `
     "sensitive_data": "false",
     "severity": "HIGH",
     "status": "Active",
-    "tags_json": null,
+    "tags_json": "[{"key":"env","value":"prod"},{"key":"team","value":"ml"},{"key":"owner","value":"platform"}]",
     "technology_categories": "AI Service",
   },
   "ai_config_rules": {

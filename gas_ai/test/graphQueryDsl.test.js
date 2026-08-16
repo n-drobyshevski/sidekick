@@ -116,6 +116,42 @@ describe("where", () => {
     ]);
   });
 
+  it("reads the quantifier flags off the key, and round-trips them in one order", () => {
+    // The same two characters `find=` puts on a step, in the same order-free prefix set.
+    const parsed = parseWhere("0.!cloud.GCP,0.*projects.A,1.!*tags.env:prod,1.!name~x");
+    expect(parsed.get(0).get("cloud")).toEqual({ values: ["GCP"], op: "eq", negate: true });
+    expect(parsed.get(0).get("projects")).toEqual({ values: ["A"], op: "eq", all: true });
+    expect(parsed.get(1).get("tags"))
+      .toEqual({ values: ["env:prod"], op: "eq", all: true, negate: true });
+    // Orthogonal to the separator: a substring match negates the same way.
+    expect(parsed.get(1).get("name")).toEqual({ values: ["x"], op: "contains", negate: true });
+    // Written back in ONE fixed order, so a link that differs only in flag order cannot exist.
+    expect(serializeWhere(parsed))
+      .toBe("0.!cloud.GCP,0.*projects.A,1.!name~x,1.!*tags.env%3Aprod");
+    expect(serializeWhere(parseWhere("0.*!cloud.GCP"))).toBe("0.!*cloud.GCP");
+  });
+
+  it("leaves a link written before the flags existed meaning what it meant", () => {
+    // The guarantee that matters most: no flags is the old reading, everywhere.
+    const parsed = parseWhere("0.cloud.GCP,0.cloud.AWS,0.name~prod");
+    expect(parsed.get(0).get("cloud")).toEqual({ values: ["GCP", "AWS"], op: "eq" });
+    expect(parsed.get(0).get("name")).toEqual({ values: ["prod"], op: "contains" });
+    expect(applyWhere({ kind: "AI_AGENT" }, parsed).where).toEqual([
+      { key: "cloud", values: ["GCP", "AWS"] },
+      { key: "name", values: ["prod"], op: "contains" },
+    ]);
+  });
+
+  it("carries the flags onto the tree instead of dropping them at the wire", () => {
+    // `applyWhere` rebuilds the payload field by field, so a flag parsed out of the URL and not
+    // named there vanishes silently — the query answers a different question than the chip says.
+    const wire = applyWhere({ kind: "AI_AGENT" }, parseWhere("0.!*projects.A,0.*tags.env:prod"));
+    expect(wire.where).toEqual([
+      { key: "projects", values: ["A"], all: true, negate: true },
+      { key: "tags", values: ["env:prod"], all: true },
+    ]);
+  });
+
   it("encodes values that would otherwise re-split wrong", () => {
     const m = new Map([[0, new Map([["projects", { values: ["CE-DPCP, PORTAL"], op: "eq" }]])]]);
     const text = serializeWhere(m);
