@@ -116,6 +116,19 @@ export function weakestAreas(trees: FrameworkTree[], limit?: number): WeakAreaRo
   for (const tree of trees) {
     for (const category of tree.categories) {
       for (const sub of category.subcategories) {
+        // A scored subcategory with no policies behind it is not a focus target, and this
+        // band is nothing but a focus list. Two different things produce that shape and
+        // neither is actionable: Wiz wrote no check that maps here, or this app scoped
+        // every rule that does out of its view. The second is the sharper case — the 5Rs'
+        // "Unlabelled sensitive data" carries Wiz's 62% whether or not we look at its
+        // rules, so without this it sorts to the TOP of the estate's weakest areas while
+        // offering nothing to fix. The percentage stays true and stays visible in the
+        // register; it just stops being advice.
+        //
+        // Unscored subcategories are exempt: they are already listed rather than ranked
+        // (see the partition below), and dropping them here would delete the honest-state
+        // rows this band exists to keep visible.
+        if (sub.state === "scored" && !sub.policies.length) continue;
         rows.push({
           frameworkId: tree.frameworkId,
           frameworkName: tree.name,

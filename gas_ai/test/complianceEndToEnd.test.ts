@@ -95,7 +95,13 @@ describe("getCompliance after a dry-run sync", () => {
     expect(kpis.frameworks).toBe(4);
     expect(kpis.scoredFrameworks).toBe(4);
     expect(kpis.averagePosture).toBe(94); // mean(96, 85, 100, 95), rounded
-    expect(kpis.failingPolicies).toBe(5);
+    // Nine, and four of them are the 5Rs' general data-governance rules — labelling,
+    // classification, residency, retention. They are real failing controls and this KPI
+    // is right to count them; they are simply not what an AI-asset product acts on. The
+    // scope feature is what brings this back to five, and doing that in a later commit
+    // rather than seeding and filtering in one is deliberate: a filter that removes
+    // nothing and a filter that is broken produce identical numbers.
+    expect(kpis.failingPolicies).toBe(9);
   });
 });
 
