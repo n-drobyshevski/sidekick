@@ -329,14 +329,29 @@
 }
 .gq-pal-option {
   display: flex; align-items: center; gap: 9px;
-  padding: 6px 8px; border-radius: var(--radius-md);
+  padding: 6px 8px 6px 11px; border-radius: var(--radius-md);
   cursor: pointer;
 }
-/* The active row is what Enter will insert, so it is marked by a ring as well as a wash —
-   a wash alone is a colour-only cue, and this row is the one the keyboard is standing on. */
+/* The row the keyboard is standing on — what Enter will act on.
+   A BAR DOWN THE LEADING EDGE, not a ring around the whole row. The full crimson rectangle this
+   replaces was the same instrument, at the same alert weight, as the one the search field used
+   to wear; with both lit at once the palette read as though it were reporting errors rather
+   than offering choices. The bar is the cue the rail two inches to the left already uses for
+   exactly this idea, so the component now marks "you are here" one way instead of two.
+   It stays a SHAPE rather than becoming a wash alone, because the wash is 4.5% black — colour
+   doing the work by itself, and invisible to anyone it fails. */
 .gq-pal-option.is-active {
+  position: relative;
   background: var(--wash-hover);
-  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.gq-pal-option.is-active::before {
+  content: ""; position: absolute; left: 3px; top: 5px; bottom: 5px; width: 3px;
+  border-radius: var(--radius-pill); background: var(--accent);
+}
+/* Shadows are dropped in forced-colors mode and so are backgrounds — the bar survives as a
+   real border there, so the cursor never becomes invisible in the mode that needs it most. */
+@media (forced-colors: active) {
+  .gq-pal-option.is-active::before { background: Highlight; forced-color-adjust: none; }
 }
 /* What the row ALREADY says, in a palette opened to change it. The tick is the cue and the
    faint ground is only its echo — the tinted row alone would be a colour-only signal, and this
