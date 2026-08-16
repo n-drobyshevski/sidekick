@@ -247,27 +247,50 @@
 .gq-pal-field {
   display: flex; align-items: center; gap: 7px;
   padding: 4px 9px;
+  border: 1px solid var(--hairline);
   border-radius: var(--radius-md);
   background: var(--track-bg);
 }
-/* The app's one focus recipe (base.css: 2px accent outline, 2px offset), moved onto the
-   wrapper — the input inside has `outline: none` so exactly one ring is drawn, and it is the
-   same ring every other focused control on the page draws. */
-.gq-pal-field:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* THE FOCUSED STATE IS THE RESTING STATE HERE. The palette autofocuses this field on open and
+   focus only ever leaves it for a rail button, so whatever marks it is lit essentially all the
+   time — which is why the app's standard detached crimson outline was the wrong instrument. A
+   2px alert-coloured rectangle that is always on stops reading as "focus" and starts reading as
+   "something is wrong", and it was drawing TWICE (see the specificity note below).
+
+   So the field is marked the way a focused field is marked: it lifts to the page ground, its
+   own border takes the accent, and a soft accent glow sits outside it. Still unmistakable, and
+   still telling this apart from a focused rail tab — which is the only distinction the
+   indicator has to carry — without shouting. */
+.gq-pal-field:focus-within {
+  background: var(--page);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+/* A glow is a shadow, and forced-colors mode throws shadows away — so the one environment that
+   needs the indicator most would be left with a 1px border change. The real outline comes back
+   there, offset and all. */
+@media (forced-colors: active) {
+  .gq-pal-field:focus-within { outline: 2px solid Highlight; outline-offset: 1px; }
+}
 .gq-pal-search-icon { display: inline-flex; color: var(--text-3); flex: 0 0 auto; }
 .gq-pal-search {
   flex: 1 1 auto; min-width: 0;
-  border: none; background: none; box-shadow: none; outline: none;
+  border: none; background: none; box-shadow: none;
   min-height: 24px; padding: 0;
   font-size: 14px; color: var(--ink);
 }
+/* MUST carry the pseudo-class to win. A plain `.gq-pal-search { outline: none }` scores 0,1,0
+   and loses to base.css's `input:focus-visible` at 0,1,1 — so the input drew the global ring
+   INSIDE the wrapper's, and the field wore two concentric red rectangles. The rule above has
+   said "exactly one ring is drawn" since it was written; this is what makes that true. */
+.gq-pal-search:focus-visible { outline: none; }
 .gq-pal-search::placeholder { color: var(--text-3); }
 
 .gq-pal-panes { display: flex; min-height: 0; align-items: stretch; }
 
 /* -- rail */
 .gq-pal-rail {
-  flex: 0 0 168px; width: 168px;
+  flex: 0 0 180px; width: 180px;
   padding: 8px 6px; overflow-y: auto; overscroll-behavior: contain;
   border-right: 1px solid var(--hairline);
   background: var(--surface);
@@ -351,8 +374,12 @@
 .gq-pal-empty { padding: 14px 10px; font-size: 13px; color: var(--text-3); }
 
 /* -- detail */
+/* The two side panes take fixed shares and the LIST gets the rest, so every pixel the popover
+   gains lands on the pane being read. The rail widened just enough to stop clipping its longest
+   tab ("AI assets & compute"); the detail just enough to stop its prose setting at six words a
+   line. */
 .gq-pal-detail {
-  flex: 0 0 232px; width: 232px;
+  flex: 0 0 252px; width: 252px;
   padding: 12px 14px; overflow-y: auto; overscroll-behavior: contain;
   border-left: 1px solid var(--hairline);
   background: var(--surface);

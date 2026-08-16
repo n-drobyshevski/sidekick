@@ -1095,7 +1095,11 @@ export function openQueryPalette(spec) {
     anchor,
     className: "gq-pal-pop",
     ariaLabel: heading,
-    position: { width: 620, minWidth: 620, maxHeight: 420, minHeight: 260, flipBelow: 300,
+    // Three panes need room. At 620 the middle one — the list, the pane anyone actually reads —
+    // was left ~218px after the rail and the detail took their fixed shares, which is where
+    // "Excessive Rights" and "AI assets & comp…" ran out of line. `positionPopover` clamps to
+    // the viewport, and below 800px this is a sheet anyway, so the wider box cannot overflow.
+    position: { width: 780, minWidth: 780, maxHeight: 460, minHeight: 260, flipBelow: 300,
       onRoom: (room) => {
         panes.style.height = Math.max(240, room) + "px";
       } },
