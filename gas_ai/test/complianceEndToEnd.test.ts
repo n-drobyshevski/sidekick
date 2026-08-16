@@ -95,13 +95,66 @@ describe("getCompliance after a dry-run sync", () => {
     expect(kpis.frameworks).toBe(4);
     expect(kpis.scoredFrameworks).toBe(4);
     expect(kpis.averagePosture).toBe(94); // mean(96, 85, 100, 95), rounded
-    // Nine, and four of them are the 5Rs' general data-governance rules — labelling,
-    // classification, residency, retention. They are real failing controls and this KPI
-    // is right to count them; they are simply not what an AI-asset product acts on. The
-    // scope feature is what brings this back to five, and doing that in a later commit
-    // rather than seeding and filtering in one is deliberate: a filter that removes
-    // nothing and a filter that is broken produce identical numbers.
-    expect(kpis.failingPolicies).toBe(9);
+    // Five, from a seeded estate that holds NINE failing controls. The four missing ones
+    // are the 5Rs' general data-governance rules — labelling, classification, residency,
+    // retention — which the derived scope files out because no OWASP framework maps them
+    // and none of their findings land on an AI asset. The previous commit pinned this at
+    // nine on purpose, so the drop is visible in the history rather than asserted into
+    // existence: a filter that removes nothing and a filter that is broken produce
+    // identical numbers, and only the diff tells them apart.
+    expect(kpis.failingPolicies).toBe(5);
+  });
+
+  it("scopes the 5Rs to its AI-relevant rules, and says why for each", () => {
+    const scope = compliance().fiveRsScope;
+    expect(scope.frameworkId).toBe("wf-id-214");
+    expect(scope.total).toBe(7);
+    expect(scope.selected).toBe(3);
+
+    const by = (shortId: string) => scope.policies.find((p: any) => p.shortId === shortId);
+
+    // Wiz files SUB-082 under ASI01 and ASI10, so the cross-mapping signal keeps it —
+    // and it is the case that proves "Reconfigure" is not a category that is simply off.
+    expect(by("SUB-082").selected).toBe(true);
+    expect(by("SUB-082").reason).toBe("crossMapped");
+    expect(by("SUB-082").mappedBy).toContain("OWASP Top 10 For Agentic Applications 2026");
+
+    // The four this product does not act on, each for the same stated reason.
+    for (const id of ["DATA-311", "DATA-318", "DATA-402", "DATA-514"]) {
+      expect(by(id).selected).toBe(false);
+      expect(by(id).reason).toBe("noAiLink");
+    }
+  });
+
+  it("scopes the 5Rs without touching any percentage", () => {
+    const data = compliance();
+    const fiveRs = data.trees.find((t: any) => t.frameworkId === "wf-id-214");
+
+    // THE invariant. Wiz's posture is opaque — this framework reports 85 while its
+    // Restrict category reports 194,309 passing checks against 71 failing, a ratio of
+    // 99.96% — so it is derivable from nothing this app holds and a scope can never
+    // honestly move it. Scoping changes the registers beneath the number, never the
+    // number. If this ever fails, something has started recomputing a score.
+    expect(fiveRs.posturePct).toBe(85);
+    expect(fiveRs.categories.map((c: any) => c.posturePct))
+      .toEqual([null, 85, 62, 91, 78]);
+    expect(data.kpis.averagePosture).toBe(94);
+
+    // And the counts the scope DOES own moved: 7 policies map, 3 survive.
+    expect(fiveRs.policyCount).toBe(3);
+  });
+
+  it("keeps a scoped-out rule under the AI framework that also claims it", () => {
+    const data = compliance();
+    // SUB-082 is mapped by the 5Rs and by OWASP Agentic. Dropping 5Rs rows by policy id
+    // alone would delete it from Agentic too, and the shared-controls band would lose the
+    // crosswalk it exists to show.
+    const agentic = data.trees.find((t: any) => t.frameworkId === "wf-id-275");
+    const ids = agentic.categories
+      .flatMap((c: any) => c.subcategories)
+      .flatMap((s: any) => s.policies)
+      .map((p: any) => p.shortId);
+    expect(ids).toContain("SUB-082");
   });
 });
 

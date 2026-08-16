@@ -2,6 +2,7 @@
 // live in domain/settingsLogic.ts; this layer only loads/saves the settings dict.
 
 import { scoringEqual } from "../domain/aarsRule";
+import type { ScopePins } from "../domain/complianceScope";
 import * as logic from "../domain/settingsLogic";
 import type { Rec } from "../domain/util";
 import { bumpDataVersion } from "./serverCache";
@@ -137,6 +138,29 @@ export function getSelectedFrameworks(
 export function setSelectedFrameworks(ids: unknown): string[] {
   saveSettings(logic.withSelectedFrameworks(loadSettings(), ids));
   return getSelectedFrameworks();
+}
+
+/**
+ * The operator's overrides on which 5Rs rules this app looks at.
+ *
+ * Only the pins are stored, never the resolved selection: the default is DERIVED from the
+ * estate (does an OWASP framework map this rule, do its findings land on an AI asset), and
+ * freezing that derivation into a stored list would stop it tracking a tenant whose rules
+ * and findings move under it. What an operator decided is a decision; what the app worked
+ * out is not, and only the first is worth persisting.
+ */
+export const getFiveRsPins = (): ScopePins => logic.getFiveRsPins(loadSettings());
+
+/** Save the pins. Same no-op-on-unchanged guard as the skip list, for the same reason. */
+export function setFiveRsPins(pins: unknown): ScopePins {
+  const settings = loadSettings();
+  const next = logic.withFiveRsPins(settings, pins);
+  const key = (p: ScopePins) => `${p.in.join(" ")}|${p.out.join(" ")}`;
+  if (key(logic.getFiveRsPins(next)) === key(logic.getFiveRsPins(settings))) {
+    return logic.getFiveRsPins(settings);
+  }
+  saveSettings(next);
+  return getFiveRsPins();
 }
 
 export const getScanVars = (): Rec => logic.getScanVars(loadSettings());

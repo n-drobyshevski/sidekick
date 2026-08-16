@@ -3561,7 +3561,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       "dataFindings": 6,
       "frameworkPosture": {
         "averagePosture": 94,
-        "failingPolicies": 9,
+        "failingPolicies": 5,
         "failingSubcategories": 9,
         "frameworks": 4,
         "scoredFrameworks": 4,
