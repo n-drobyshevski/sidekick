@@ -290,10 +290,14 @@ export function queryBar(opts) {
     for (const key of [...forNode.keys()].sort()) {
       const filter = forNode.get(key) || { values: [] };
       const field = fieldSpec(row.kind, key);
+      // The chip must read the operator the EDITOR will show. Over the cardinality cap a choice
+      // field has no list, and the menu it gets there is a different one — without this the chip
+      // and its own editor would name the same filter differently.
+      const listed = hasValuesFor(row.kind, key);
       // The operator is STATED, always. It used to be written only for `contains`, so a filter
       // holding two values read "Projects A, B" — which is either alternative or both, and on a
       // field whose values can themselves contain a comma, not even reliably two values.
-      const text = describeFilter(field, filter, field.label);
+      const text = describeFilter(field, filter, field.label, listed);
       wrap.append(el("span", { class: "filter-chip gq-filter-chip" },
         el("button", {
           type: "button",
@@ -302,7 +306,7 @@ export function queryBar(opts) {
           "aria-label": "Edit filter " + text + " on " + kindLabel(row.kind),
           onclick: (e) => openFilterEditor(e.currentTarget, query, row, field, filter),
         }, el("span", { class: "gq-filter-key" }, field.label), " ",
-          el("span", { class: "gq-filter-op" }, operatorOf(field, filter).label), " ",
+          el("span", { class: "gq-filter-op" }, operatorOf(field, filter, listed).label), " ",
           valuesText(filter)),
         el("button", {
           class: "filter-chip-x",
@@ -400,6 +404,14 @@ export function queryBar(opts) {
 
   const EMPTY_FIELDS = { fields: [], values: [] };
   const fieldIn = (got, key) => ((got && got.fields) || []).find((f) => f.key === key) || null;
+  /** Whether the estate offered a value list for this field — undefined until the fetch lands. */
+  const hasValuesFor = (kind, key) => {
+    const got = fieldCache.get(kind);
+    if (!got) return undefined;
+    const spec = fieldIn(got, key);
+    if (!spec || (spec.type !== "choice" && spec.type !== "boolean")) return undefined;
+    return valuesIn(got, key).length > 0;
+  };
   const valuesIn = (got, key) => {
     const hit = ((got && got.values) || []).find((v) => v.key === key);
     return (hit && hit.values) || [];

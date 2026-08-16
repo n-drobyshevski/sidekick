@@ -902,3 +902,29 @@ describe("QUERY_SHORTCUTS", () => {
     expect(shortcutsFor("ANY", VOCAB)).toEqual([]);
   });
 });
+
+// A wildcard node used to get no value lists at all, which made every choice filter on it a
+// bare text box. `FIND ANY(…)` is a shape the app writes for itself when someone focuses an
+// asset, so that was the common case, not a corner.
+describe("value lists for a wildcard node", () => {
+  it("counts across the whole estate, not one kind", () => {
+    const any = fieldValuesFor(DOC, "ANY").find((v) => v.key === "cloud");
+    const agent = fieldValuesFor(DOC, "AI_AGENT").find((v) => v.key === "cloud");
+    expect(any).toBeDefined();
+    const total = (f?: { values: Array<{ count: number }> }) =>
+      (f?.values ?? []).reduce((n, v) => n + v.count, 0);
+    expect(total(any)).toBeGreaterThan(total(agent));
+  });
+
+  it("offers only fields a wildcard node actually has", () => {
+    // The worry that kept this empty was a picker "offering the union of things that do not
+    // co-occur". It cannot happen: `fieldsForKind("ANY")` drops every kind-specific spec first,
+    // and these two lists have to agree or the palette lists a field with no values.
+    const offered = new Set(fieldsForKind("ANY").map((f) => f.key));
+    for (const v of fieldValuesFor(DOC, "ANY")) expect(offered).toContain(v.key);
+    // `publisher` and `email` are kind-specific, so neither may appear.
+    const keys = fieldValuesFor(DOC, "ANY").map((v) => v.key);
+    expect(keys).not.toContain("identityPurpose");
+    expect(keys).not.toContain("guardrail");
+  });
+});

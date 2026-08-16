@@ -31,8 +31,23 @@ import { facetGroup } from "../filters.js";
  * is loaded. Where a node holds one value, "all of these" would be asking for nothing, so it is
  * not offered rather than offered and useless.
  */
-export function operatorsFor(field) {
+export function operatorsFor(field, hasValues) {
   const type = (field && field.type) || "text";
+  // A choice field the estate holds more of than VALUE_CARDINALITY_MAX gets no list — a
+  // truncated one "looks complete and is not", so the domain offers none. That leaves a text
+  // box, and demanding an EXACT value from someone who cannot see the list is asking them to
+  // guess. Substring gets them there; the whole-value readings stay, for a value they know.
+  if ((type === "choice" || type === "boolean") && hasValues === false) {
+    return [
+      { value: "contains", label: "contains", op: "contains" },
+      { value: "!contains", label: "does not contain", op: "contains", negate: true },
+      ...(field && field.multi
+        ? [{ value: "all", label: "contains all", op: "eq", all: true }]
+        : []),
+      { value: "eq", label: "is", op: "eq" },
+      { value: "!eq", label: "is not", op: "eq", negate: true },
+    ];
+  }
   if (type === "text") {
     return [
       { value: "contains", label: "contains", op: "contains" },
@@ -56,8 +71,8 @@ export function operatorsFor(field) {
 }
 
 /** Which of them a filter is currently under. Falls back to the first, which is the default. */
-export function operatorOf(field, filter) {
-  const list = operatorsFor(field);
+export function operatorOf(field, filter, hasValues) {
+  const list = operatorsFor(field, hasValues);
   const f = filter || {};
   const want = (o) => (o.op || "eq") === (f.op || "eq")
     && !!o.all === !!f.all && !!o.negate === !!f.negate;
@@ -71,9 +86,9 @@ export function operatorOf(field, filter) {
  * says are one string built once. The OR between values used to be left unwritten entirely,
  * which on a field whose values can hold commas was genuinely ambiguous.
  */
-export function describeFilter(field, filter, label) {
+export function describeFilter(field, filter, label, hasValues) {
   const name = label || (field && field.label) || (filter && filter.key) || "";
-  const op = operatorOf(field, filter);
+  const op = operatorOf(field, filter, hasValues);
   return (name + " " + op.label + " " + valuesText(filter)).trim();
 }
 
@@ -101,8 +116,12 @@ export function valuesText(filter) {
 export function filterEditor(spec) {
   const { field, values = [], onChange } = spec;
   const filter = spec.filter || { values: [] };
+  // Whether the estate actually offered a list. It decides both the operator menu and which
+  // value control is drawn, so it is computed ONCE here rather than asked twice and answered
+  // differently — the menu promising "is" over a box that cannot show you what "is" means.
+  const hasValues = !((field.type === "choice" || field.type === "boolean") && !values.length);
   let chosen = (filter.values || []).slice();
-  let op = operatorOf(field, filter);
+  let op = operatorOf(field, filter, hasValues);
 
   const emit = () => onChange({
     values: chosen.slice(),
@@ -113,11 +132,11 @@ export function filterEditor(spec) {
 
   const opBox = filterCombobox({
     value: op.value,
-    options: operatorsFor(field).map((o) => ({ value: o.value, label: o.label })),
+    options: operatorsFor(field, hasValues).map((o) => ({ value: o.value, label: o.label })),
     ariaLabel: (field.label || "Filter") + " operator",
     searchThreshold: 99, // four options at most; a search box over them is furniture
     onChange: (v) => {
-      op = operatorsFor(field).find((o) => o.value === v) || op;
+      op = operatorsFor(field, hasValues).find((o) => o.value === v) || op;
       // Only once values exist. Choosing "contains all" on an empty filter has nothing to apply
       // to, and committing it would write a filter nobody has finished describing.
       if (chosen.length) emit();
@@ -190,8 +209,9 @@ export function filterEditor(spec) {
     label: v.value === "unknown" ? "Not reported" : v.value,
     count: v.count,
   }));
-  const listable = (field.type === "choice" || field.type === "boolean") && options.length;
-  if (listable) {
+  // The SAME answer the operator menu was built from. Asked twice and answered differently, the
+  // menu would promise "is" over a box that cannot show what there is to be.
+  if (hasValues && options.length) {
     const group = facetGroup({
       label: field.label,
       noun: "node",
@@ -211,7 +231,7 @@ export function filterEditor(spec) {
   // Also where a CHOICE field lands when the estate holds more distinct values than
   // `VALUE_CARDINALITY_MAX` — the domain has always said such a field "falls back to a contains
   // search", and until now it fell back to a dead end reading "No values to choose from".
-  const overCap = field.type === "choice" || field.type === "boolean";
+  const overCap = !hasValues;
   const input = el("input", {
     type: "text", class: "gq-fe-text",
     "aria-label": field.label + " " + op.label,

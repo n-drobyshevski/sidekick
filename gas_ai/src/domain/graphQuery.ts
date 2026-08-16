@@ -614,13 +614,24 @@ export function queryVocabulary(doc: GraphDoc): Vocabulary {
  * to both, because "how many assets are in PROJECT-ALPHA" is the question the number answers.
  * A `null` becomes the literal "unknown" bucket, which `matchesFilter` already accepts as a
  * filter value — "Wiz never told us" is a real answer and has to be selectable.
+ *
+ * ANY IS A REAL KIND HERE, over every node in the graph. The worry that stopped it before was a
+ * picker "offering the union of things that do not co-occur" — but that cannot happen, because
+ * `fieldsForKind("ANY")` already drops every spec carrying a `kinds` list. What survives is the
+ * kind-agnostic set: cloud, region, status, severity, the AARS level, projects, tags. Every node
+ * answers those, so their union is exactly the question "which clouds does this estate use".
+ * Without this a wildcard node got no lists at all, and `FIND ANY(…)` is a shape the app writes
+ * for itself whenever someone focuses an asset from the inventory.
  */
-export function fieldValuesFor(doc: GraphDoc, kind: NodeKind): FieldValues[] {
-  const nodes = doc.nodes.filter((n) => n.kind === kind);
+export function fieldValuesFor(doc: GraphDoc, kind: QueryKind): FieldValues[] {
+  const nodes = kind === "ANY" ? doc.nodes : doc.nodes.filter((n) => n.kind === kind);
   const perField: FieldValues[] = [];
   for (const spec of QUERY_FIELDS) {
     if (spec.type !== "choice" && spec.type !== "boolean") continue;
-    if (spec.kinds && !spec.kinds.includes(kind)) continue;
+    // A kind-specific field on a wildcard node is not offered at all — the same rule
+    // `fieldsForKind` applies, so the values and the field list cannot disagree about what
+    // exists.
+    if (spec.kinds && (kind === "ANY" || !spec.kinds.includes(kind))) continue;
     // `kind` is a no-op here: this list is keyed BY kind, so it could only ever offer the one
     // value, filtering a thing by what it already is. A node asking for ANY kind gets its
     // options from `vocab.kinds`, which carries every kind with a count already.

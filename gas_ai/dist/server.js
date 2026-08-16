@@ -6625,11 +6625,11 @@ var Server = (() => {
   }
   function fieldValuesFor(doc, kind) {
     var _a5;
-    const nodes = doc.nodes.filter((n) => n.kind === kind);
+    const nodes = kind === "ANY" ? doc.nodes : doc.nodes.filter((n) => n.kind === kind);
     const perField = [];
     for (const spec of QUERY_FIELDS) {
       if (spec.type !== "choice" && spec.type !== "boolean") continue;
-      if (spec.kinds && !spec.kinds.includes(kind)) continue;
+      if (spec.kinds && (kind === "ANY" || !spec.kinds.includes(kind))) continue;
       if (spec.key === "kind") continue;
       const counts = /* @__PURE__ */ new Map();
       let overflow = false;
@@ -7741,7 +7741,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "7318051b10e2" : "dev";
+  var BUILD_ID = true ? "3f67ada3d2d0" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -11238,9 +11238,10 @@ var Server = (() => {
         if (!kind) return vocab;
         return {
           ...vocab,
-          // ANY has no value lists: they are keyed by kind, and "every kind at once" would be a
-          // picker offering the union of things that do not co-occur. Its fields still come.
-          valuesFor: kind === "ANY" ? {} : { [kind]: fieldValuesFor(doc, kind) },
+          // ANY gets them too, over every node in the graph. `fieldsForKind("ANY")` already keeps
+          // only the kind-agnostic fields, so the union is never one of things that cannot
+          // co-occur — it is "which clouds does this estate use", which is the question.
+          valuesFor: { [kind]: fieldValuesFor(doc, kind) },
           // What the palette's Properties tab lists, and the type that decides which control each
           // field gets. Per-kind for the same reason the value lists are.
           fieldsFor: {
