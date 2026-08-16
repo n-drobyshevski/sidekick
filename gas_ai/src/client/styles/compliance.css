@@ -494,3 +494,41 @@
 @media (prefers-reduced-motion: reduce) {
   .scope-row { transition: none; }
 }
+
+/* ============================================================ inline subcategory detail */
+/* Replaces the old drill-down sheet: subcategoryDetail() (complianceShared.js) reads on the
+   page, in a `.detail-row` under the subcategory (or mirrored category) row it belongs to.
+   `.detail-row` itself and its clipping-trap reset are tables.css's — generic to any
+   dataTable() caller. Everything below is scoped to `.comp-table`, and gives the cell a
+   `--surface` ground + padding so it reads as a nested region rather than a stray row. */
+.comp-table .detail-row > td { background: var(--surface); padding: 14px 20px 18px; }
+
+.comp-detail { display: flex; flex-direction: column; gap: 14px; }
+.comp-detail-block { display: flex; flex-direction: column; gap: 4px; }
+/* A small local heading, not sectionLabel()/sheetSection() — both are vocabulary for their
+   own overlay chrome, and this panel isn't one. Same look as `.label` (base.css) so it
+   still reads as this app's one "small caps heading" idiom. */
+.comp-detail-heading {
+  font-size: 12px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--text-3); margin: 0;
+}
+.comp-detail-block p { margin: 0; max-width: var(--measure); }
+
+/* The policy list nested inside the detail cell. Its own small table, not dataTable(): that
+   component's sticky th, sort model and `.table-wrap` border are all built for a page-level
+   register, not a panel inside a row. Scrolls in its own wrapper so a long Control name or
+   a narrow viewport widens this box and never the page around it. */
+.comp-policy-wrap { overflow-x: auto; }
+.comp-policy-table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+.comp-policy-table th {
+  text-align: left; font-size: 11px; font-weight: 600; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--text-3);
+  padding: 6px 10px; border-bottom: 1px solid var(--hairline);
+}
+.comp-policy-table td {
+  padding: 6px 10px; border-bottom: 1px solid var(--hairline); vertical-align: top;
+}
+.comp-policy-table tbody tr:last-child td { border-bottom: none; }
+.comp-policy-table th.num, .comp-policy-table td.num {
+  text-align: right; font-variant-numeric: tabular-nums;
+}

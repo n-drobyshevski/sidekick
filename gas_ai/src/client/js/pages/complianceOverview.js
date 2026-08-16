@@ -37,12 +37,12 @@
 // `aria-label` on itself — but the visible "3 of 4" count sits OUTSIDE that labelled
 // picture, or a sighted-plus-screen-reader user would see one thing and hear another.
 //
-// postureCell(), checksCell(), stateStrip() and openSubcategorySheet() all come from
-// complianceShared.js — the same cells and the same sheet the per-framework register uses,
-// not a second implementation of either.
+// postureCell(), checksCell(), stateStrip() and subcategoryDetail() all come from
+// complianceShared.js — the same cells and the same detail panel the per-framework register
+// uses, not a second implementation of either.
 
 import {
-  checksCell, extChip, findSubcategory, openSubcategorySheet, postureCell, STATES, stateStrip,
+  checksCell, extChip, findSubcategory, postureCell, STATES, stateStrip, subcategoryDetail,
 } from "./complianceShared.js";
 import {
   dataTable, el, emptyState, meter, plural, sectionLabel, sevBadge, statRow,
@@ -50,8 +50,8 @@ import {
 
 /**
  * plural()'s -s rule mangles "policy" into "policys" — the same irregular case
- * compliance.js's openSubcategorySheet already spells out by hand rather than teaching the
- * helper an exception for one word.
+ * complianceShared.js's subcategoryDetail() already spells out by hand rather than teaching
+ * the helper an exception for one word.
  */
 function policyNoun(n) {
   return n === 1 ? "policy" : "policies";
@@ -94,7 +94,7 @@ export function renderOverview(host, data, view, actions) {
 
   renderHeadline(host, data, view, actions);
   renderRail(host, data, actions);
-  renderWeakestAreas(host, data, view);
+  renderWeakestAreas(host, data, view, actions);
   renderSharedControls(host, data);
 }
 
@@ -326,11 +326,21 @@ function renderRail(host, data, actions) {
 
 // --------------------------------------------------------------- C. weakest areas
 
-function renderWeakestAreas(host, data, view) {
+function renderWeakestAreas(host, data, view, actions) {
   const all = data.weakestAreas || [];
   // The only band the estate-wide state strip cross-filters — see the comment on band D
   // for why that filter stops here instead of reaching into the shared-controls table too.
   const rows = view.state ? all.filter((r) => r.state === view.state) : all;
+
+  // Which rows are expanded, held on `view` — like the register's own `expanded` Set in
+  // compliance.js — but deliberately NOT mirrored into the URL. pushParams() already nulls
+  // `state` outside framework mode even though the overview reads it as its own
+  // cross-filter, so overview-local view state is already ephemeral by this page's design;
+  // a URL param for one more band would be the odd one out. Keyed by the same
+  // frameworkId/categoryExternalId/externalId triple findSubcategory() takes, because this
+  // band is cross-framework and two frameworks can both carry a subcategory called "2.1".
+  const open = view.weakOpen || (view.weakOpen = new Set());
+  const rowKey = (r) => `${r.frameworkId}/${r.categoryExternalId}/${r.externalId}`;
 
   const table = dataTable({
     className: "comp-table",
@@ -353,12 +363,23 @@ function renderWeakestAreas(host, data, view) {
       (r.posturePct !== null
         ? `${r.posturePct} percent compliant`
         : (STATES[r.state] || STATES.unknown).label),
-    // Opens the same sheet the register opens — findSubcategory() walks the flat row back
-    // to the tree/category/sub triple the sheet wants, rather than teaching the sheet a
-    // second, flatter shape.
+    // Toggles the row's own detail open in place, where this used to open the sheet.
+    // actions.repaint() re-runs compliance.js's paint(), the same round-trip the register's
+    // own toggles use.
     onRowOpen: (r) => {
+      const key = rowKey(r);
+      if (open.has(key)) open.delete(key);
+      else open.add(key);
+      actions.repaint();
+    },
+    rowExpanded: (r) => open.has(rowKey(r)),
+    // findSubcategory() walks the flat row back to the full subcategory node
+    // subcategoryDetail() wants, rather than teaching it a second, flatter shape. A row
+    // whose subcategory cannot be found (a stale payload) simply does not expand.
+    rowDetail: (r) => {
+      if (!open.has(rowKey(r))) return null;
       const found = findSubcategory(data.trees, r.frameworkId, r.categoryExternalId, r.externalId);
-      if (found) openSubcategorySheet(found.tree, found.category, found.sub);
+      return found ? subcategoryDetail(found.sub) : null;
     },
     emptyText: view.state
       ? `No weak area is ${(STATES[view.state] || {}).label || "shown"}.`

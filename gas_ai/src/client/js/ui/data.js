@@ -97,6 +97,12 @@ export function dataTable(spec) {
     // "Name" twice with nothing saying which is the agent and which the identity.
     // Opt-in, so every existing caller renders byte-identically.
     groups = null,
+    // (row) => Node | null. Non-null appends a full-width detail <tr> immediately after the
+    // row, one <td colspan={columns.length}>. Return null to render nothing — the CALLER owns
+    // expansion state, so a collapsed row simply has no detail to draw.
+    rowDetail = null,
+    // (row) => boolean. Sets aria-expanded on a clickable row. Only meaningful with onRowOpen.
+    rowExpanded = null,
   } = spec;
 
   const headCells = new Map();
@@ -141,16 +147,26 @@ export function dataTable(spec) {
       const extra = rowClass ? rowClass(row) : "";
       if (!onRowOpen) {
         tbody.append(el("tr", { class: extra || null }, ...cells));
-        continue;
+      } else {
+        tbody.append(el("tr", {
+          class: `clickable${extra ? " " + extra : ""}`,
+          tabindex: "0",
+          role: "button",
+          "aria-label": rowLabel ? rowLabel(row) : null,
+          "aria-expanded": rowExpanded ? String(rowExpanded(row)) : null,
+          onclick: () => onRowOpen(row),
+          onkeydown: (e) => { if (e.key === "Enter") onRowOpen(row); },
+        }, ...cells));
       }
-      tbody.append(el("tr", {
-        class: `clickable${extra ? " " + extra : ""}`,
-        tabindex: "0",
-        role: "button",
-        "aria-label": rowLabel ? rowLabel(row) : null,
-        onclick: () => onRowOpen(row),
-        onkeydown: (e) => { if (e.key === "Enter") onRowOpen(row); },
-      }, ...cells));
+      // No `aria-controls`: the detail row immediately follows its trigger in DOM order,
+      // which is the same disclosure shape compliance.js's category toggle already ships
+      // (`aria-expanded`, no `aria-controls`, children following in DOM order). Matching it
+      // beats inventing a second convention.
+      const detail = rowDetail ? rowDetail(row) : null;
+      if (detail) {
+        tbody.append(el("tr", { class: "detail-row" },
+          el("td", { colspan: String(columns.length) }, detail)));
+      }
     }
     if (!list.length && emptyText) {
       tbody.append(el("tr", {},

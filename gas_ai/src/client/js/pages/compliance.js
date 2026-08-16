@@ -19,7 +19,7 @@
 // "we checked and everything failed". Every cell here goes through postureCell(), which
 // renders a state pill rather than a 0% meter — the Honest-State principle, and the reason
 // the strip has four segments instead of two. postureCell(), checksCell(), stateStrip() and
-// openSubcategorySheet() now live in complianceShared.js, so this file and
+// subcategoryDetail() now live in complianceShared.js, so this file and
 // complianceOverview.js call the same code rather than drifting into two.
 //
 // TWO SUB-VIEWS, ONE FETCH, ONE URL. `view.mode` is "overview" (the cross-framework rollup
@@ -44,7 +44,7 @@ import {
   sectionLabel, segmented, skeletonStack, statRow,
 } from "../ui.js";
 import {
-  checksCell, extChip, openSubcategorySheet, postureCell, STATES, STATE_ORDER, stateStrip,
+  checksCell, extChip, postureCell, STATES, STATE_ORDER, stateStrip, subcategoryDetail,
 } from "./complianceShared.js";
 import { renderOverview } from "./complianceOverview.js";
 
@@ -57,8 +57,10 @@ const SEGMENTED_MAX = 4;
  * No `onRowOpen` on this table, deliberately. A category row already carries a disclosure
  * button, and making the row itself a `role="button"` too would nest one interactive
  * element inside another — two tab stops for one visual row, and a screen reader announcing
- * a button inside a button. So the affordance lives in the first CELL: the category's is a
- * toggle, the subcategory's opens its sheet. One actionable element per row, either way.
+ * a button inside a button. So the affordance lives in the first CELL: a category's toggle
+ * reveals its subcategory ROWS; a subcategory's (and a mirrored category's, which has none
+ * to reveal) toggles its own detail row open via `rowDetail` instead. One actionable
+ * element per row, either way.
  */
 const COLUMNS = [
   { key: "name", label: "Category", cell: (r) => r.name },
@@ -108,7 +110,9 @@ export async function renderCompliance(main, params, ctx) {
       view.frameworkId = frameworkId;
       // A different framework is a different register; carrying the open rows over would
       // expand categories that belong to something else. `state` is left alone, the same
-      // way the framework switcher below leaves it alone on its own onChange.
+      // way the framework switcher below leaves it alone on its own onChange. Subcategory
+      // keys (prefixed "s:", see below) live in this same Set, so this one reset clears
+      // both levels — there is nothing framework-specific left to separately forget.
       view.expanded = new Set();
       pushParams();
       paint();
@@ -253,7 +257,7 @@ export async function renderCompliance(main, params, ctx) {
         ? `${tree.name} · Wiz's own score, carried through unchanged` +
           (scopedHere
             ? ` — the register below is scoped to ${fiveRs.selected} of ${fiveRs.total} ` +
-              "AI-relevant rules; this percentage is not"
+              "AI-relevant rules; this percentage is not."
             : "")
         : `${tree.name} · ${(STATES[tree.state] || STATES.unknown).label}`),
     );
@@ -289,21 +293,33 @@ export async function renderCompliance(main, params, ctx) {
       if (view.state && !subs.length) continue;
 
       // A category whose only subcategory restates it (OWASP's Top 10 lists arrive that
-      // way) is drawn as ONE row that opens the detail directly, rather than a disclosure
-      // that reveals the row you just read. The predicate lives in the read model, where
-      // it is tested — see compliancePosture.CategoryNode.mirrorsCategory.
+      // way) is drawn as ONE row that expands its own detail directly, rather than a
+      // disclosure that reveals the row you just read. The predicate lives in the read
+      // model, where it is tested — see compliancePosture.CategoryNode.mirrorsCategory.
       if (cat.mirrorsCategory) {
         const only = cat.subcategories[0];
+        // The bare category key, reused rather than minting a subcategory key: a mirrored
+        // category has no subcategory children of its own, so "expand this category" is
+        // already an unambiguous "reveal its one subcategory's detail".
+        const key = cat.externalId;
+        const open = view.expanded.has(key);
         rows.push({
           _key: `cat-${cat.externalId}`,
           _class: "",
+          _detail: open ? subcategoryDetail(only) : null,
           name: el("button", {
             type: "button",
             class: "comp-row-toggle",
-            onclick: () => openSubcategorySheet(tree, cat, only),
+            "aria-expanded": open ? "true" : "false",
+            onclick: () => {
+              if (open) view.expanded.delete(key);
+              else view.expanded.add(key);
+              pushParams();
+              paint();
+            },
           },
-            extChip(cat),
-            cat.title),
+            el("span", { class: "comp-row-chevron", "aria-hidden": "true" }, "›"),
+            el("span", {}, extChip(cat), cat.title)),
           posture: postureCell(cat),
           checks: checksCell(cat),
           policies: el("span", { class: "num" }, String(only.policies.length)),
@@ -338,14 +354,29 @@ export async function renderCompliance(main, params, ctx) {
 
       if (!open) continue;
       for (const sub of subs) {
+        // Prefixed "s:" so a subcategory key can share `view.expanded` — and its `?open=`
+        // URL param — with the bare category externalIds above without ever colliding with
+        // one. That back-compat requirement is the whole reason for the prefix: a
+        // `?open=ASI01` link written before subcategories were expandable must keep
+        // expanding exactly the category it always did, not a same-named subcategory.
+        const subKey = `s:${cat.externalId}/${sub.externalId}`;
+        const subOpen = view.expanded.has(subKey);
         rows.push({
           _key: `sub-${cat.externalId}-${sub.externalId}`,
           _class: "comp-sub-row",
+          _detail: subOpen ? subcategoryDetail(sub) : null,
           name: el("button", {
             type: "button",
             class: "comp-row-toggle comp-sub-title",
-            onclick: () => openSubcategorySheet(tree, cat, sub),
+            "aria-expanded": subOpen ? "true" : "false",
+            onclick: () => {
+              if (subOpen) view.expanded.delete(subKey);
+              else view.expanded.add(subKey);
+              pushParams();
+              paint();
+            },
           },
+            el("span", { class: "comp-row-chevron", "aria-hidden": "true" }, "›"),
             extChip(sub),
             sub.title),
           posture: postureCell(sub),
@@ -367,6 +398,7 @@ export async function renderCompliance(main, params, ctx) {
       rows,
       className: "comp-table",
       rowClass: (row) => row._class,
+      rowDetail: (row) => row._detail || null,
     }));
   }
 }
