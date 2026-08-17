@@ -6,6 +6,7 @@ import { DEFAULT_AARS_RULE, type AarsRule } from "./aars";
 import { cleanAarsRule } from "./aarsRule";
 import type { ScopePins } from "./complianceScope";
 import { cleanProblemRule, DEFAULT_PROBLEM_RULE, type ProblemRule } from "./problemRule";
+import { cleanPostureRule, DEFAULT_POSTURE_RULE, type PostureRule } from "./postureRule";
 import { cleanStepVars } from "./scanVars";
 import {
   DEPTH_DEFAULT,
@@ -192,6 +193,66 @@ export function withDecidedRuleVersion(settings: Rec, version: unknown): Rec {
   return {
     ...settings,
     problem_decided_version: Number.isFinite(v) && v > 0 ? Math.round(v) : 0,
+  };
+}
+
+// ---------------------------------------------------------------------- posture rule
+//
+// `posture_rule` is a THIRD, SEPARATE settings key from `aars_rule` and `problem_rule`
+// above — never merged into either, for the same three reasons `problem_rule`'s own
+// header gives for staying apart from `aars_rule`: `tierEqual` (postureRule.ts) has its own
+// no-op guard shape, the version counters move independently (a posture-cascade edit must
+// not mark a single AARS score or problem verdict stale, and vice versa), and keeping the
+// three rule blobs apart keeps the bootstrap snapshot from growing for features a given
+// edit does not touch.
+
+export interface StoredPostureRule {
+  version: number;
+  rule: PostureRule;
+}
+
+/** Version 0 = never edited, i.e. the model is exactly `DEFAULT_POSTURE_RULE`. */
+export function getPostureRule(settings: Rec): StoredPostureRule {
+  const raw = settings["posture_rule"];
+  if (!raw || typeof raw !== "object") {
+    return { version: 0, rule: cleanPostureRule(DEFAULT_POSTURE_RULE) };
+  }
+  const stored = raw as Rec;
+  const version = Number(stored["version"]);
+  return {
+    version: Number.isFinite(version) && version > 0 ? Math.round(version) : 0,
+    // cleanPostureRule on every read IS the migration mechanism — see getProblemRule's
+    // identical comment for why.
+    rule: cleanPostureRule(stored["rule"]),
+  };
+}
+
+/**
+ * Store a rule and bump its version. The version is the cache/staleness token: derived
+ * views key on it, and tiers persisted under an older version are known to be stale.
+ */
+export function withPostureRule(settings: Rec, rule: unknown): Rec {
+  const current = getPostureRule(settings);
+  return {
+    ...settings,
+    posture_rule: { version: current.version + 1, rule: cleanPostureRule(rule) },
+  };
+}
+
+/**
+ * The rule version the persisted posture tiers were computed under. Compared against
+ * `getPostureRule().version` to decide whether the register needs a recompute.
+ */
+export function getComputedPostureVersion(settings: Rec): number {
+  const v = Number(settings["posture_computed_version"]);
+  return Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
+}
+
+export function withComputedPostureVersion(settings: Rec, version: unknown): Rec {
+  const v = Number(version);
+  return {
+    ...settings,
+    posture_computed_version: Number.isFinite(v) && v > 0 ? Math.round(v) : 0,
   };
 }
 

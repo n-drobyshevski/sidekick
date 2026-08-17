@@ -342,7 +342,13 @@ var Server = (() => {
       // ensureHeaders adds declared-but-missing headers to the right of whatever a tab
       // already has, and every read maps by header NAME, so an existing ledger picks this up
       // on its next sync with no migration.
-      "business_impact"
+      "business_impact",
+      // Phase 6: the Asset Posture Tier (posture.ts, postureRule.ts) — a capability envelope
+      // against a containment, folded BESIDE the AARS score above by graphEnrich.withPostureTiers,
+      // never blended into it. Appended, same no-migration contract as every block above.
+      "posture_tier",
+      "posture_input_json",
+      "worst_open_problem"
     ],
     [TABS.edges]: ["id", "src", "dst", "type", "negated", "access_type"],
     [TABS.issues]: [
@@ -2403,6 +2409,7 @@ var Server = (() => {
     getIssueDetail: () => getIssueDetail,
     getIssues: () => getIssues,
     getJobStatus: () => getJobStatus,
+    getPostureRule: () => getPostureRule3,
     getProblemRule: () => getProblemRule3,
     getQueryVocabulary: () => getQueryVocabulary,
     getScanQueries: () => getScanQueries,
@@ -2411,7 +2418,9 @@ var Server = (() => {
     getSyncHistory: () => getSyncHistory,
     getToxicCombos: () => getToxicCombos,
     previewAarsRule: () => previewAarsRule,
+    previewPostureRule: () => previewPostureRule,
     previewProblemRule: () => previewProblemRule,
+    recomputePostures: () => recomputePostures2,
     recomputeProblems: () => recomputeProblems,
     rescoreAars: () => rescoreAars,
     resetData: () => resetData2,
@@ -2419,6 +2428,7 @@ var Server = (() => {
     runSync: () => runSync,
     scoreAarsSample: () => scoreAarsSample,
     setAarsRule: () => setAarsRule2,
+    setPostureRule: () => setPostureRule2,
     setProblemRule: () => setProblemRule2,
     setScanVars: () => setScanVars2,
     setSelectedFrameworks: () => setSelectedFrameworks2,
@@ -2429,6 +2439,7 @@ var Server = (() => {
   // src/domain/assetTable.ts
   var ASSET_SORTS = [
     "aars",
+    "postureTier",
     "name",
     "kind",
     "cloud",
@@ -2438,6 +2449,7 @@ var Server = (() => {
   ];
   var DEFAULT_SORT_DIR = {
     aars: "desc",
+    postureTier: "desc",
     severity: "desc",
     combos: "desc",
     name: "asc",
@@ -2553,6 +2565,11 @@ var Server = (() => {
   }
   var PRIMARY = {
     aars: (a, b) => score(a["aars"]) - score(b["aars"]),
+    // Same "missing sorts last" convention as `aars`: `score()` reads a missing tier as -1,
+    // and 4 (worst) already sorts above 1 (best) under the ascending primary, matching AARS's
+    // own "higher number is worse" direction — so `desc` (this column's default) reads worst
+    // tier first, exactly like `aars` reads worst score first.
+    postureTier: (a, b) => score(a["postureTier"]) - score(b["postureTier"]),
     name: (a, b) => toStr(a["name"]).localeCompare(toStr(b["name"])),
     kind: (a, b) => toStr(a["kind"]).localeCompare(toStr(b["kind"])),
     cloud: (a, b) => toStr(a["cloud"]).localeCompare(toStr(b["cloud"])),
@@ -3653,6 +3670,291 @@ var Server = (() => {
     return withoutCeiling(a) === withoutCeiling(b);
   }
 
+  // src/domain/posture.ts
+  var CAPABILITY_VALUES = ["BROAD", "SCOPED", "MINIMAL"];
+  var CONTAINMENT_VALUES = ["WEAK", "PARTIAL", "STRONG"];
+  var CONSEQUENCE_VALUES = ["SEVERE", "MODERATE", "LIMITED"];
+  var TIER_VALUES = [1, 2, 3, 4];
+  function enumeratePostureVectors() {
+    const out = [];
+    for (const capability of CAPABILITY_VALUES) {
+      for (const containment of CONTAINMENT_VALUES) {
+        for (const consequence of CONSEQUENCE_VALUES) {
+          out.push({ capability, containment, consequence });
+        }
+      }
+    }
+    return out;
+  }
+  function postureKey(v) {
+    return `${v.capability}|${v.containment}|${v.consequence}`;
+  }
+  function postureVectorMatches(vector, when) {
+    if (when.capability !== void 0 && when.capability !== vector.capability) return false;
+    if (when.containment !== void 0 && when.containment !== vector.containment) return false;
+    if (when.consequence !== void 0 && when.consequence !== vector.consequence) return false;
+    if (when.privateData !== void 0 && when.privateData !== vector.privateData) return false;
+    if (when.untrustedIngress !== void 0 && when.untrustedIngress !== vector.untrustedIngress) return false;
+    if (when.externalEgress !== void 0 && when.externalEgress !== vector.externalEgress) return false;
+    return true;
+  }
+  function decidePosture(vector, rule) {
+    for (let i = 0; i < rule.tierRules.length; i++) {
+      const row = rule.tierRules[i];
+      if (postureVectorMatches(vector, row.when)) return { tier: row.tier, matchedRuleIndex: i };
+    }
+    return { tier: rule.fallbackTier, matchedRuleIndex: -1 };
+  }
+  function capabilityOf(node2) {
+    var _a5;
+    const admin = node2 == null ? void 0 : node2.hasAdminPrivileges;
+    const highPriv = node2 == null ? void 0 : node2.hasHighPrivileges;
+    const sensitiveAccess = node2 == null ? void 0 : node2.hasAccessToSensitiveData;
+    const humanAdmin = (_a5 = node2 == null ? void 0 : node2.humanAccess) == null ? void 0 : _a5.admin;
+    const broad = admin === true || humanAdmin === true || highPriv === true && sensitiveAccess === true;
+    const scoped = highPriv === true || sensitiveAccess === true;
+    const capability = broad ? "BROAD" : scoped ? "SCOPED" : "MINIMAL";
+    const unknown = admin === void 0 && highPriv === void 0 && sensitiveAccess === void 0 && !(node2 == null ? void 0 : node2.humanAccess);
+    return { capability, unknown };
+  }
+  function containmentOf(node2) {
+    const missing = node2 == null ? void 0 : node2.guardrailMissing;
+    if (missing === true) return { containment: "WEAK", unknown: false };
+    const notExposed = node2 !== void 0 && conditionState(node2, "INTERNET_EXPOSURE") === false;
+    const confirmedContained = missing === false && notExposed;
+    return { containment: confirmedContained ? "STRONG" : "PARTIAL", unknown: missing === void 0 };
+  }
+  function consequenceOf(node2) {
+    var _a5, _b, _c;
+    const businessImpact = node2 == null ? void 0 : node2.businessImpact;
+    const severities = (_a5 = node2 == null ? void 0 : node2.dataFindingSeverities) != null ? _a5 : {};
+    const worstCritical = ((_b = severities["CRITICAL"]) != null ? _b : 0) > 0;
+    const anyFinding = ((_c = node2 == null ? void 0 : node2.dataFindingCount) != null ? _c : 0) > 0 || Object.values(severities).some((c) => c > 0);
+    const severe = businessImpact === "HBI" || worstCritical;
+    const moderate = businessImpact === "MBI" || anyFinding;
+    const consequence = severe ? "SEVERE" : moderate ? "MODERATE" : "LIMITED";
+    const unknown = businessImpact === void 0 && (node2 == null ? void 0 : node2.dataFindingCount) === void 0;
+    return { consequence, unknown };
+  }
+  function derivePostureInput(node2, rule) {
+    const unknowns = [];
+    const { capability, unknown: capabilityUnknown } = capabilityOf(node2);
+    if (capabilityUnknown) unknowns.push("capability");
+    const { containment, unknown: containmentUnknown } = containmentOf(node2);
+    if (containmentUnknown) unknowns.push("containment");
+    const { consequence, unknown: consequenceUnknown } = consequenceOf(node2);
+    if (consequenceUnknown) unknowns.push("consequence");
+    return { vector: { capability, containment, consequence }, unknowns };
+  }
+  function countPostureTiers(nodes) {
+    const counts = { 1: 0, 2: 0, 3: 0, 4: 0 };
+    for (const n of nodes) {
+      const t = n.postureTier;
+      if (t === 1 || t === 2 || t === 3 || t === 4) counts[t]++;
+    }
+    return counts;
+  }
+  function worstOpenProblem(outcomes) {
+    let worstIndex = -1;
+    let worst;
+    for (const o of outcomes) {
+      const idx = OUTCOME_VALUES.indexOf(o);
+      if (idx === -1) continue;
+      if (worstIndex === -1 || idx < worstIndex) {
+        worstIndex = idx;
+        worst = o;
+      }
+    }
+    return worst;
+  }
+
+  // src/domain/postureRule.ts
+  var AXIS_KEYS2 = ["capability", "containment", "consequence"];
+  var TRIFECTA_KEYS = ["privateData", "untrustedIngress", "externalEgress"];
+  var WHEN_KEYS = [...AXIS_KEYS2, ...TRIFECTA_KEYS];
+  var MAX_TIER_RULES = 40;
+  var TIER_CEILING_FLOOR = 1e-3;
+  function rec3(v) {
+    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+  }
+  var DEFAULT_POSTURE_RULE = {
+    tierRules: [
+      // The lethal-trifecta row — UNREACHABLE by construction. See this const's own comment.
+      { when: { privateData: true, untrustedIngress: true, externalEgress: true }, tier: 4 },
+      { when: { capability: "BROAD", containment: "WEAK", consequence: "SEVERE" }, tier: 4 },
+      { when: { capability: "BROAD", containment: "WEAK" }, tier: 3 },
+      { when: { capability: "BROAD", consequence: "SEVERE" }, tier: 3 },
+      { when: { containment: "WEAK", consequence: "SEVERE" }, tier: 3 },
+      { when: { capability: "BROAD" }, tier: 2 },
+      { when: { containment: "WEAK" }, tier: 2 },
+      { when: { consequence: "SEVERE" }, tier: 2 },
+      { when: { capability: "MINIMAL", containment: "STRONG" }, tier: 1 }
+    ],
+    fallbackTier: 2,
+    topTierCeiling: 0.15
+  };
+  function cleanTier(v, fallback) {
+    const n = Number(v);
+    return n === 1 || n === 2 || n === 3 || n === 4 ? n : fallback;
+  }
+  function cleanWhen2(v) {
+    const raw = rec3(v);
+    const when = {};
+    if (CAPABILITY_VALUES.includes(raw["capability"])) {
+      when.capability = raw["capability"];
+    }
+    if (CONTAINMENT_VALUES.includes(raw["containment"])) {
+      when.containment = raw["containment"];
+    }
+    if (CONSEQUENCE_VALUES.includes(raw["consequence"])) {
+      when.consequence = raw["consequence"];
+    }
+    for (const key of TRIFECTA_KEYS) {
+      if (typeof raw[key] === "boolean") when[key] = raw[key];
+    }
+    return when;
+  }
+  function cleanTierRule(v, fallback) {
+    const raw = rec3(v);
+    return { when: cleanWhen2(raw["when"]), tier: cleanTier(raw["tier"], fallback) };
+  }
+  function cleanPostureRule(raw) {
+    const r = rec3(raw);
+    const fallbackTier = cleanTier(r["fallbackTier"], DEFAULT_POSTURE_RULE.fallbackTier);
+    const rowsRaw = Array.isArray(r["tierRules"]) ? r["tierRules"] : null;
+    const tierRules = rowsRaw ? rowsRaw.slice(0, MAX_TIER_RULES).map((row) => cleanTierRule(row, fallbackTier)) : DEFAULT_POSTURE_RULE.tierRules.map((row) => ({ when: { ...row.when }, tier: row.tier }));
+    const ceilingRaw = Number(r["topTierCeiling"]);
+    const topTierCeiling = Number.isFinite(ceilingRaw) ? Math.min(1, Math.max(TIER_CEILING_FLOOR, ceilingRaw)) : DEFAULT_POSTURE_RULE.topTierCeiling;
+    return { tierRules, fallbackTier, topTierCeiling };
+  }
+  function pct2(share) {
+    return `${(share * 100).toFixed(1)}%`;
+  }
+  function validatePostureRule(rule) {
+    const errors = [];
+    if (!rule.tierRules.length) {
+      errors.push(
+        "The tier cascade has no rules; every vector would route to the fallback tier. Add a rule or accept the fallback deliberately."
+      );
+    }
+    if (rule.tierRules.length > MAX_TIER_RULES) {
+      errors.push(`The tier cascade is limited to ${MAX_TIER_RULES} rules.`);
+    }
+    rule.tierRules.forEach((row, i) => {
+      const isEmpty = WHEN_KEYS.every((k) => row.when[k] === void 0);
+      if (isEmpty && i !== rule.tierRules.length - 1) {
+        errors.push(
+          `Tier rule ${i + 1} has no conditions, so it matches every remaining vector and swallows every rule after it. Move it last or give it a condition.`
+        );
+      }
+    });
+    const seen = /* @__PURE__ */ new Map();
+    rule.tierRules.forEach((row, i) => {
+      const isEmpty = WHEN_KEYS.every((k) => row.when[k] === void 0);
+      if (isEmpty) return;
+      const key = WHEN_KEYS.filter((k) => row.when[k] !== void 0).map((k) => `${k}:${row.when[k]}`).join("|");
+      const earlier = seen.get(key);
+      if (earlier !== void 0) {
+        errors.push(`Tier rule ${i + 1} repeats the same condition as rule ${earlier + 1}.`);
+      } else {
+        seen.set(key, i);
+      }
+    });
+    const coverage = cellCoverage(rule);
+    const tier4Share = coverage.total ? coverage.byTier[4] / coverage.total : 0;
+    if (tier4Share > rule.topTierCeiling) {
+      errors.push(
+        `This rule sends ${coverage.byTier[4]} of ${coverage.total} cells to tier 4 (${pct2(tier4Share)}) \u2014 above the ${pct2(rule.topTierCeiling)} ceiling.`
+      );
+    }
+    return errors;
+  }
+  function shadowedTierRules(rule) {
+    const leaves = enumeratePostureVectors();
+    const dead = [];
+    rule.tierRules.forEach((row, i) => {
+      const rowLeaves = leaves.filter((v) => postureVectorMatches(v, row.when));
+      if (!rowLeaves.length) return;
+      const allClaimedEarlier = rowLeaves.every(
+        (v) => rule.tierRules.slice(0, i).some((earlier) => postureVectorMatches(v, earlier.when))
+      );
+      if (allClaimedEarlier) dead.push(i);
+    });
+    return dead;
+  }
+  function unreachableTierRules(rule) {
+    const leaves = enumeratePostureVectors();
+    const dead = [];
+    rule.tierRules.forEach((row, i) => {
+      const matchesAny = leaves.some((v) => postureVectorMatches(v, row.when));
+      if (!matchesAny) dead.push(i);
+    });
+    return dead;
+  }
+  function cellCoverage(rule) {
+    const leaves = enumeratePostureVectors();
+    const byRow = rule.tierRules.map(() => 0);
+    const byTier = { 1: 0, 2: 0, 3: 0, 4: 0 };
+    let byFallback = 0;
+    for (const v of leaves) {
+      const { tier, matchedRuleIndex } = decidePosture(v, rule);
+      if (matchedRuleIndex === -1) byFallback++;
+      else byRow[matchedRuleIndex] += 1;
+      byTier[tier]++;
+    }
+    return { total: leaves.length, byRow, byFallback, byTier };
+  }
+  function postureDiscrimination(decided) {
+    var _a5;
+    const tierOccupancy = { 1: 0, 2: 0, 3: 0, 4: 0 };
+    const cellOccupancy = {};
+    const unknownCounts = {
+      capability: 0,
+      containment: 0,
+      consequence: 0
+    };
+    for (const d of decided) {
+      tierOccupancy[d.tier]++;
+      const key = postureKey(d.vector);
+      cellOccupancy[key] = ((_a5 = cellOccupancy[key]) != null ? _a5 : 0) + 1;
+      for (const u of d.unknowns) {
+        if (u === "capability" || u === "containment" || u === "consequence") unknownCounts[u]++;
+      }
+    }
+    const n = decided.length;
+    const rate = (count2) => n ? count2 / n : 0;
+    return {
+      decided,
+      tierOccupancy,
+      cellsReached: Object.keys(cellOccupancy).length,
+      cellOccupancy,
+      unknownRate: {
+        capability: rate(unknownCounts.capability),
+        containment: rate(unknownCounts.containment),
+        consequence: rate(unknownCounts.consequence)
+      }
+    };
+  }
+  function postureRuleSummary(rule) {
+    const coverage = cellCoverage(rule);
+    const tier4Share = coverage.total ? coverage.byTier[4] / coverage.total : 0;
+    const unreachable = unreachableTierRules(rule);
+    return [
+      `${rule.tierRules.length} tier rules are tried in order, first match wins; a vector matching none of them falls back to tier ${rule.fallbackTier}.`,
+      `Tier 4 claims ${coverage.byTier[4]} of ${coverage.total} cells (${pct2(tier4Share)}), against a ceiling of ${pct2(rule.topTierCeiling)}.`,
+      unreachable.length ? `${unreachable.length} row(s) can never fire against any cell this app can derive \u2014 the lethal-trifecta row, kept as a documented gap rather than fed a guess.` : `Every row can fire against at least one of the 27 cells.`,
+      `Posture is a capability envelope against a containment, not a sum of open problems: an asset with zero open findings can still sit at a high tier.`
+    ];
+  }
+  function tierEqual(a, b) {
+    const withoutCeiling = (r) => {
+      const c = cleanPostureRule(r);
+      delete c.topTierCeiling;
+      return JSON.stringify(c);
+    };
+    return withoutCeiling(a) === withoutCeiling(b);
+  }
+
   // src/domain/configFindings.ts
   var CONFIG_SORTS = [
     "severity",
@@ -4187,9 +4489,9 @@ var Server = (() => {
     if (Array.isArray(tags)) {
       node2.tags = tags.map((t) => {
         var _a6;
-        const rec3 = t;
-        const key = str3(rec3["key"]);
-        return key ? { key, value: (_a6 = str3(rec3["value"])) != null ? _a6 : "" } : null;
+        const rec4 = t;
+        const key = str3(rec4["key"]);
+        return key ? { key, value: (_a6 = str3(rec4["value"])) != null ? _a6 : "" } : null;
       }).filter((t) => t !== null);
     }
     return node2;
@@ -5584,6 +5886,38 @@ var Server = (() => {
       problem_decided_version: Number.isFinite(v) && v > 0 ? Math.round(v) : 0
     };
   }
+  function getPostureRule(settings) {
+    const raw = settings["posture_rule"];
+    if (!raw || typeof raw !== "object") {
+      return { version: 0, rule: cleanPostureRule(DEFAULT_POSTURE_RULE) };
+    }
+    const stored = raw;
+    const version = Number(stored["version"]);
+    return {
+      version: Number.isFinite(version) && version > 0 ? Math.round(version) : 0,
+      // cleanPostureRule on every read IS the migration mechanism — see getProblemRule's
+      // identical comment for why.
+      rule: cleanPostureRule(stored["rule"])
+    };
+  }
+  function withPostureRule(settings, rule) {
+    const current = getPostureRule(settings);
+    return {
+      ...settings,
+      posture_rule: { version: current.version + 1, rule: cleanPostureRule(rule) }
+    };
+  }
+  function getComputedPostureVersion(settings) {
+    const v = Number(settings["posture_computed_version"]);
+    return Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
+  }
+  function withComputedPostureVersion(settings, version) {
+    const v = Number(version);
+    return {
+      ...settings,
+      posture_computed_version: Number.isFinite(v) && v > 0 ? Math.round(v) : 0
+    };
+  }
   var CONFIG_RULES_TTL_MS = 30 * 864e5;
   function getConfigRulesSyncedAt(settings) {
     const v = Number(settings["config_rules_synced_at"]);
@@ -5685,9 +6019,9 @@ var Server = (() => {
     return out;
   }
   function coercePins(raw) {
-    const rec3 = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
-    const inList = coercePinList(rec3["in"]);
-    const outList = coercePinList(rec3["out"]);
+    const rec4 = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+    const inList = coercePinList(rec4["in"]);
+    const outList = coercePinList(rec4["out"]);
     const outSet = new Set(outList);
     return { in: inList.filter((id) => !outSet.has(id)), out: outList };
   }
@@ -7878,6 +8212,31 @@ var Server = (() => {
     });
     return { issues: decidedIssues, findings: decidedFindings };
   }
+  function withPostureTiers(doc, issues2, findings, rule) {
+    const outcomesByAsset = /* @__PURE__ */ new Map();
+    for (const issue2 of issues2) {
+      if (issue2.problemOutcome) pushInto(outcomesByAsset, issue2.assetId, issue2.problemOutcome);
+    }
+    for (const finding of findings) {
+      if (finding.problemOutcome) pushInto(outcomesByAsset, finding.resourceId, finding.problemOutcome);
+    }
+    const nodes = doc.nodes.map((node2) => {
+      var _a5;
+      if (node2.kind === "ISSUE" || node2.kind === "SUMMARY") return node2;
+      const { vector, unknowns } = derivePostureInput(node2, rule);
+      const { tier } = decidePosture(vector, rule);
+      const worst = worstOpenProblem((_a5 = outcomesByAsset.get(node2.id)) != null ? _a5 : []);
+      const next = {
+        ...node2,
+        postureTier: tier,
+        postureInput: unknowns.length ? { ...vector, unknowns } : { ...vector }
+      };
+      if (worst) next.worstOpenProblem = worst;
+      else delete next.worstOpenProblem;
+      return next;
+    });
+    return { ...doc, nodes };
+  }
   function withDerivedNodes(doc, spec) {
     const existing = new Set(doc.nodes.filter((n) => n.kind === spec.kind).map((n) => n.id));
     const suppressed = spec.suppress ? spec.suppress(doc) : null;
@@ -8238,8 +8597,8 @@ var Server = (() => {
     var _a5;
     if (!records.length || !records.some((r) => "severity" in r)) return {};
     const counts = {};
-    for (const rec3 of records) {
-      const sev = normalizeSeverity(rec3["severity"]);
+    for (const rec4 of records) {
+      const sev = normalizeSeverity(rec4["severity"]);
       counts[sev] = ((_a5 = counts[sev]) != null ? _a5 : 0) + 1;
     }
     return counts;
@@ -8427,7 +8786,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "0a37a6fcc6a5" : "dev";
+  var BUILD_ID = true ? "a1d4968d6e8e" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -8661,6 +9020,19 @@ var Server = (() => {
     saveSettings(next);
     return stored;
   }
+  var getPostureRule2 = () => getPostureRule(loadSettings());
+  function setPostureRule(rule) {
+    const settings = loadSettings();
+    const before = getPostureRule(settings);
+    const tiersWereCurrent = getComputedPostureVersion(settings) === before.version;
+    let next = withPostureRule(settings, rule);
+    const stored = getPostureRule(next);
+    if (tiersWereCurrent && tierEqual(before.rule, stored.rule)) {
+      next = withComputedPostureVersion(next, stored.version);
+    }
+    saveSettings(next);
+    return stored;
+  }
   var getSkippedSteps2 = () => getSkippedSteps(loadSettings());
   function setSkippedSteps(steps) {
     const settings = loadSettings();
@@ -8717,6 +9089,13 @@ var Server = (() => {
     const settings = loadSettings();
     const next = withDecidedRuleVersion(settings, version);
     if (getDecidedRuleVersion(next) === getDecidedRuleVersion(settings)) return;
+    saveSettings(next);
+  }
+  var getComputedPostureVersion2 = () => getComputedPostureVersion(loadSettings());
+  function setComputedPostureVersion(version) {
+    const settings = loadSettings();
+    const next = withComputedPostureVersion(settings, version);
+    if (getComputedPostureVersion(next) === getComputedPostureVersion(settings)) return;
     saveSettings(next);
   }
   function configRulesAreFresh2(hasRows, now) {
@@ -10192,7 +10571,7 @@ var Server = (() => {
     return raw;
   }
   function assetToRow(n) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B;
     return {
       id: n.id,
       kind: n.kind,
@@ -10253,11 +10632,16 @@ var Server = (() => {
       display_name: (_w = n.displayName) != null ? _w : null,
       email: (_x = n.email) != null ? _x : null,
       publisher: (_y = n.publisher) != null ? _y : null,
-      discovery_methods: ((_z = n.discoveryMethods) != null ? _z : []).join(",")
+      discovery_methods: ((_z = n.discoveryMethods) != null ? _z : []).join(","),
+      // Phase 6: the Asset Posture Tier — `?? null`, never a default: a synthetic node, or a
+      // real one the fold never reached, must read back as undefined rather than as tier 0.
+      posture_tier: (_A = n.postureTier) != null ? _A : null,
+      posture_input_json: n.postureInput ? JSON.stringify(n.postureInput) : null,
+      worst_open_problem: (_B = n.worstOpenProblem) != null ? _B : null
     };
   }
   function rowToAsset(r) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y;
     const node2 = {
       id: String((_a5 = r["id"]) != null ? _a5 : ""),
       kind: String((_b = r["kind"]) != null ? _b : "AI_AGENT"),
@@ -10328,6 +10712,14 @@ var Server = (() => {
     if (publisher) node2.publisher = publisher;
     const methods = String((_x = r["discovery_methods"]) != null ? _x : "").split(",").filter(Boolean);
     if (methods.length) node2.discoveryMethods = methods;
+    const postureTier = r["posture_tier"];
+    if (postureTier !== null && postureTier !== void 0 && String(postureTier) !== "") {
+      node2.postureTier = Number(postureTier);
+    }
+    const postureInput = parseJson(r["posture_input_json"], null);
+    if (postureInput) node2.postureInput = postureInput;
+    const worstOpenProblem2 = (_y = r["worst_open_problem"]) != null ? _y : null;
+    if (worstOpenProblem2) node2.worstOpenProblem = worstOpenProblem2;
     return node2;
   }
   function edgeToRow(e) {
@@ -10771,8 +11163,10 @@ var Server = (() => {
       problemRule,
       problemRuleVersion
     );
-    const assetNodes = realNodes(enriched.nodes);
-    const assetEdges = enriched.edges.filter((e) => e.type !== "HAS_ISSUE");
+    const { version: postureRuleVersion, rule: postureRule } = getPostureRule2();
+    const postured = withPostureTiers(enriched, decidedIssues, decidedFindings, postureRule);
+    const assetNodes = realNodes(postured.nodes);
+    const assetEdges = postured.edges.filter((e) => e.type !== "HAS_ISSUE");
     overwrite(TABS.assets, assetNodes.map(assetToRow));
     overwrite(TABS.edges, assetEdges.map(edgeToRow));
     overwrite(TABS.issues, decidedIssues.map(issueToRow));
@@ -10786,22 +11180,22 @@ var Server = (() => {
     const configRules = (_c = extras.configRules) != null ? _c : [];
     if (configRules.length) overwrite(TABS.configRules, configRules.map(configRuleToRow));
     overwrite(TABS.identityFindings, ((_d = extras.identityFindings) != null ? _d : []).map(identityFindingToRow));
-    const snapshotRef = writeGraphSnapshot(enriched);
+    const snapshotRef = writeGraphSnapshot(postured);
     appendRows(TABS.syncHistory, [{
       sync_id: meta.syncId,
       started_at: meta.startedAt,
       finished_at: nowIso(now),
       status: "SUCCESS",
       mode: meta.mode,
-      node_count: enriched.nodes.length,
-      edge_count: enriched.edges.length,
+      node_count: postured.nodes.length,
+      edge_count: postured.edges.length,
       issue_count: issues2.length,
       api_calls: meta.apiCalls,
       snapshot_ref: snapshotRef,
       error: null,
       // The AARS distribution at this sync — the only record of it, since the snapshot
       // this row points at is overwritten by the next sync. Feeds the inventory trend.
-      aars_severity_json: JSON.stringify(countAarsSeverities(enriched.nodes)),
+      aars_severity_json: JSON.stringify(countAarsSeverities(postured.nodes)),
       // Which scoring model produced that distribution: counts from two versions are not
       // on the same scale, and the trend chart says so rather than drawing a false step.
       aars_rule_version: ruleVersion,
@@ -10814,8 +11208,9 @@ var Server = (() => {
     }]);
     setScoredRuleVersion(ruleVersion);
     setDecidedRuleVersion(problemRuleVersion);
+    setComputedPostureVersion(postureRuleVersion);
     commit();
-    return enriched;
+    return postured;
   }
   function rescoreInventory() {
     const { version, rule } = getAarsRule2();
@@ -10903,6 +11298,23 @@ var Server = (() => {
   }
   function decideProblemsWith(rule) {
     return redecideFromTabs(rule, void 0);
+  }
+  function postureFromTabs(rule) {
+    const nodes = loadAssetsRaw();
+    if (!nodes.length) return [];
+    const doc = { nodes, edges: [], syncedAt: "" };
+    return withPostureTiers(doc, loadIssues(), loadFindings(), rule).nodes;
+  }
+  function posturesWith(rule) {
+    return postureFromTabs(rule);
+  }
+  function recomputePostures() {
+    const { version, rule } = getPostureRule2();
+    const nodes = postureFromTabs(rule);
+    overwrite(TABS.assets, nodes.map(assetToRow));
+    setComputedPostureVersion(version);
+    commit();
+    return { version, assetCount: nodes.length, tierCounts: countPostureTiers(nodes) };
   }
   function loadRawGraph() {
     var _a5;
@@ -12141,7 +12553,7 @@ var Server = (() => {
     };
   }
   function assetRow(n) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G, _H, _I, _J;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G, _H, _I, _J, _K, _L, _M;
     return {
       id: n.id,
       name: n.name,
@@ -12157,44 +12569,49 @@ var Server = (() => {
       severity: (_i = n.severity) != null ? _i : null,
       aars: (_j = n.aars) != null ? _j : null,
       aarsSeverity: (_k = n.aarsSeverity) != null ? _k : null,
-      comboGroups: (_l = n.comboGroups) != null ? _l : [],
-      internet: (_m = n.isAccessibleFromInternet) != null ? _m : null,
-      openInternet: (_n = n.isOpenToAllInternet) != null ? _n : null,
+      // Phase 6: the posture tier, BESIDE the AARS score above, never blended into it — see
+      // posture.ts's own header for why a tier is not an aggregate of what has been found.
+      postureTier: (_l = n.postureTier) != null ? _l : null,
+      postureInput: (_m = n.postureInput) != null ? _m : null,
+      worstOpenProblem: (_n = n.worstOpenProblem) != null ? _n : null,
+      comboGroups: (_o = n.comboGroups) != null ? _o : [],
+      internet: (_p = n.isAccessibleFromInternet) != null ? _p : null,
+      openInternet: (_q = n.isOpenToAllInternet) != null ? _q : null,
       // ENDPOINT rows only; null everywhere else. The pair is the dynamic scanner's verdict,
       // and the detail sheet prints both because either alone is misleading — an open port
       // behind SSO rates Low and is not an exposure.
-      exposureLevel: (_o = n.exposureLevel) != null ? _o : null,
-      portValidation: (_p = n.portValidation) != null ? _p : null,
+      exposureLevel: (_r = n.exposureLevel) != null ? _r : null,
+      portValidation: (_s = n.portValidation) != null ? _s : null,
       // Null, not {}, when the exposure steps never reached this asset — the same "clean" vs
       // "never asked" split dataFindingCount keeps below.
-      exposureEvidence: (_q = n.exposureEvidence) != null ? _q : null,
+      exposureEvidence: (_t = n.exposureEvidence) != null ? _t : null,
       // Identity rows carry the first two; AI assets carry the third. Null, not false/{}, for
       // the "never reported" vs "reported clean" split the rest of this row keeps.
-      inactive: (_r = n.inactive) != null ? _r : null,
-      inactiveTimeframe: (_s = n.inactiveTimeframe) != null ? _s : null,
-      humanAccess: (_t = n.humanAccess) != null ? _t : null,
-      sensitiveAccess: (_u = n.hasAccessToSensitiveData) != null ? _u : false,
-      sensitiveData: (_v = n.hasSensitiveData) != null ? _v : false,
-      highPriv: (_w = n.hasHighPrivileges) != null ? _w : false,
-      adminPriv: (_x = n.hasAdminPrivileges) != null ? _x : false,
-      guardrailMissing: (_y = n.guardrailMissing) != null ? _y : false,
+      inactive: (_u = n.inactive) != null ? _u : null,
+      inactiveTimeframe: (_v = n.inactiveTimeframe) != null ? _v : null,
+      humanAccess: (_w = n.humanAccess) != null ? _w : null,
+      sensitiveAccess: (_x = n.hasAccessToSensitiveData) != null ? _x : false,
+      sensitiveData: (_y = n.hasSensitiveData) != null ? _y : false,
+      highPriv: (_z = n.hasHighPrivileges) != null ? _z : false,
+      adminPriv: (_A = n.hasAdminPrivileges) != null ? _A : false,
+      guardrailMissing: (_B = n.guardrailMissing) != null ? _B : false,
       // Null, not 0, when the sensitive-data traversal never reached this node: the graph
       // card and the insight row both key on truthiness, and a 0 would make "we never asked"
       // render exactly like "we looked and it is clean".
-      dataFindingCount: (_z = n.dataFindingCount) != null ? _z : null,
-      dataFindingSeverities: (_A = n.dataFindingSeverities) != null ? _A : null,
+      dataFindingCount: (_C = n.dataFindingCount) != null ? _C : null,
+      dataFindingSeverities: (_D = n.dataFindingSeverities) != null ? _D : null,
       // On the aggregate node only — the count it collapses.
-      summaryCount: (_B = n.summaryCount) != null ? _B : null,
-      technologyCategories: (_C = n.technologyCategories) != null ? _C : [],
-      cloudAccount: (_E = (_D = n.cloudAccount) == null ? void 0 : _D.name) != null ? _E : null,
+      summaryCount: (_E = n.summaryCount) != null ? _E : null,
+      technologyCategories: (_F = n.technologyCategories) != null ? _F : [],
+      cloudAccount: (_H = (_G = n.cloudAccount) == null ? void 0 : _G.name) != null ? _H : null,
       // Full account object, for the detail sheet — cloudAccount above stays a bare
       // name string since existing client code already reads it as one.
-      cloudAccountRef: (_F = n.cloudAccount) != null ? _F : null,
-      tags: (_G = n.tags) != null ? _G : [],
-      identityPurpose: (_H = n.identityPurpose) != null ? _H : null,
-      issueAnalytics: (_I = n.issueAnalytics) != null ? _I : null,
+      cloudAccountRef: (_I = n.cloudAccount) != null ? _I : null,
+      tags: (_J = n.tags) != null ? _J : [],
+      identityPurpose: (_K = n.identityPurpose) != null ? _K : null,
+      issueAnalytics: (_L = n.issueAnalytics) != null ? _L : null,
       // Full project objects, for the detail sheet — projects above stays name-only.
-      projectRefs: ((_J = n.projects) != null ? _J : []).map((p) => ({
+      projectRefs: ((_M = n.projects) != null ? _M : []).map((p) => ({
         id: p.id,
         name: p.name,
         businessImpact: p.businessImpact
@@ -12202,7 +12619,7 @@ var Server = (() => {
     };
   }
   function assetTableRow(n, issuesBySeverity) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
     const row = {
       id: n.id,
       name: n.name,
@@ -12212,8 +12629,11 @@ var Server = (() => {
       severity: (_c = n.severity) != null ? _c : null,
       aars: (_d = n.aars) != null ? _d : null,
       aarsSeverity: (_e = n.aarsSeverity) != null ? _e : null,
-      combos: ((_f = n.comboGroups) != null ? _f : []).length,
-      guardrailMissing: (_g = n.guardrailMissing) != null ? _g : false,
+      // Phase 6: BESIDE aars — the two must be visibly independent columns, never merged.
+      postureTier: (_f = n.postureTier) != null ? _f : null,
+      worstOpenProblem: (_g = n.worstOpenProblem) != null ? _g : null,
+      combos: ((_h = n.comboGroups) != null ? _h : []).length,
+      guardrailMissing: (_i = n.guardrailMissing) != null ? _i : false,
       agentic: n.identityPurpose === "AGENTIC",
       // How many classified findings this asset can REACH — its own if it is a datastore,
       // whatever its execution identity can read if it is an agent.
@@ -12223,8 +12643,8 @@ var Server = (() => {
       // holding three findings would otherwise report 0 in the register while the graph drew
       // them. Identities fall in the same gap and stay uncovered here — service accounts are
       // unscored for reasons that predate this chain, so nothing persists their reach.
-      dataFindings: ((_i = (_h = n.aarsInput) == null ? void 0 : _h.dataFindings) != null ? _i : []).reduce((sum, f) => sum + f.count, 0) || ((_j = n.dataFindingCount) != null ? _j : 0),
-      projects: ((_k = n.projects) != null ? _k : []).map((p) => p.name)
+      dataFindings: ((_k = (_j = n.aarsInput) == null ? void 0 : _j.dataFindings) != null ? _k : []).reduce((sum, f) => sum + f.count, 0) || ((_l = n.dataFindingCount) != null ? _l : 0),
+      projects: ((_m = n.projects) != null ? _m : []).map((p) => p.name)
     };
     if (issuesBySeverity) row["issuesBySeverity"] = issuesBySeverity;
     return row;
@@ -13126,6 +13546,101 @@ var Server = (() => {
   }
   function recomputeProblems(_p) {
     return mutate(() => ({ ...redecideProblems(), ...problemRuleState() }));
+  }
+  function postureRuleState() {
+    const stored = getPostureRule2();
+    const computedVersion = getComputedPostureVersion2();
+    return {
+      version: stored.version,
+      rule: stored.rule,
+      computedVersion,
+      stale: computedVersion !== stored.version,
+      summary: postureRuleSummary(stored.rule),
+      cellCoverage: cellCoverage(stored.rule),
+      validation: validatePostureRule(stored.rule),
+      shadowed: shadowedTierRules(stored.rule),
+      unreachable: unreachableTierRules(stored.rule),
+      limits: { maxTierRules: MAX_TIER_RULES }
+    };
+  }
+  function getPostureRule3(_p) {
+    return run(() => postureRuleState());
+  }
+  function setPostureRule2(p) {
+    return mutate(() => {
+      const params = p != null ? p : {};
+      const proposed = cleanPostureRule(params["rule"]);
+      const errors = validatePostureRule(proposed);
+      if (errors.length) throw new Error(errors.join(" "));
+      setPostureRule(proposed);
+      return postureRuleState();
+    });
+  }
+  function decidedForPostureDiscrimination(nodes) {
+    var _a5;
+    const out = [];
+    for (const node2 of nodes) {
+      const tier = node2.postureTier;
+      const input = node2.postureInput;
+      if (!input || !TIER_VALUES.includes(tier)) continue;
+      out.push({
+        tier,
+        vector: {
+          capability: input.capability,
+          containment: input.containment,
+          consequence: input.consequence
+        },
+        unknowns: (_a5 = input.unknowns) != null ? _a5 : []
+      });
+    }
+    return out;
+  }
+  function previewPostureRule(p) {
+    return run(() => {
+      var _a5, _b;
+      const params = p != null ? p : {};
+      const proposed = cleanPostureRule(params["rule"]);
+      const errors = validatePostureRule(proposed);
+      if (errors.length) throw new Error(errors.join(" "));
+      const before = loadAssets();
+      const beforeById = new Map(before.map((n) => [n.id, n.postureTier]));
+      const after = posturesWith(proposed);
+      const movers = [];
+      for (const node2 of after) {
+        const fromTier = (_a5 = beforeById.get(node2.id)) != null ? _a5 : null;
+        const toTier = (_b = node2.postureTier) != null ? _b : null;
+        if (fromTier === toTier) continue;
+        movers.push({
+          id: node2.id,
+          name: node2.name,
+          kind: node2.kind,
+          fromTier,
+          toTier
+        });
+      }
+      movers.sort((a, b) => {
+        var _a6, _b2;
+        const r = Number((_a6 = b["toTier"]) != null ? _a6 : 0) - Number((_b2 = a["toTier"]) != null ? _b2 : 0);
+        return r !== 0 ? r : String(a["id"]).localeCompare(String(b["id"]));
+      });
+      return {
+        total: after.length,
+        current: countPostureTiers(before),
+        proposed: countPostureTiers(after),
+        summary: postureRuleSummary(proposed),
+        cellCoverage: cellCoverage(proposed),
+        shadowed: shadowedTierRules(proposed),
+        unreachable: unreachableTierRules(proposed),
+        validation: validatePostureRule(proposed),
+        postureDiscrimination: postureDiscrimination(decidedForPostureDiscrimination(after)),
+        movers: movers.slice(0, PREVIEW_MOVERS_MAX),
+        moverCount: movers.length,
+        truncated: movers.length > PREVIEW_MOVERS_MAX
+      };
+    });
+  }
+  function recomputePostures2(_p) {
+    return mutate(() => ({ ...recomputePostures(), ...postureRuleState() }));
   }
   function resetData2(_p) {
     return mutate(() => {

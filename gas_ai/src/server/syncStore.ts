@@ -16,6 +16,7 @@ import {
   withIdentityAccessNodes,
   withInternetExposureNodes,
   withMissingGuardrailNodes,
+  withPostureTiers,
   withProblemVerdicts,
   withSensitiveDataNodes,
   type AarsHints,
@@ -38,6 +39,8 @@ import {
   type ProblemVerdictInput,
 } from "../domain/problem";
 import { vectorSignature, type ProblemRule } from "../domain/problemRule";
+import { countPostureTiers, type Tier as PostureTier } from "../domain/posture";
+import type { PostureRule } from "../domain/postureRule";
 import { OTHER_GROUP_ID } from "../domain/toxicCombos";
 import type { Severity } from "../domain/config";
 import { countAarsSeverities } from "../domain/aarsTrend";
@@ -158,6 +161,11 @@ export function assetToRow(n: GNode): Rec {
     email: n.email ?? null,
     publisher: n.publisher ?? null,
     discovery_methods: (n.discoveryMethods ?? []).join(","),
+    // Phase 6: the Asset Posture Tier — `?? null`, never a default: a synthetic node, or a
+    // real one the fold never reached, must read back as undefined rather than as tier 0.
+    posture_tier: n.postureTier ?? null,
+    posture_input_json: n.postureInput ? JSON.stringify(n.postureInput) : null,
+    worst_open_problem: n.worstOpenProblem ?? null,
   };
 }
 
@@ -244,6 +252,16 @@ export function rowToAsset(r: Rec): GNode {
   if (publisher) node.publisher = publisher;
   const methods = String(r["discovery_methods"] ?? "").split(",").filter(Boolean);
   if (methods.length) node.discoveryMethods = methods;
+  // Phase 6: absent reads as undefined, never a default — a synthetic node, or a row
+  // written before this phase, must not read as tier 0 or as posture-decided.
+  const postureTier = r["posture_tier"];
+  if (postureTier !== null && postureTier !== undefined && String(postureTier) !== "") {
+    node.postureTier = Number(postureTier);
+  }
+  const postureInput = parseJson<GNode["postureInput"] | null>(r["posture_input_json"], null);
+  if (postureInput) node.postureInput = postureInput;
+  const worstOpenProblem = (r["worst_open_problem"] as string | null) ?? null;
+  if (worstOpenProblem) node.worstOpenProblem = worstOpenProblem;
   return node;
 }
 
@@ -809,9 +827,17 @@ export function persistSync(
     problemRuleVersion,
   );
 
+  // Phase 6: the Asset Posture Tier, a THIRD independent fold — see withPostureTiers's own
+  // comment. Runs against the already-DECIDED issues/findings (not the raw synced ones), so
+  // `worstOpenProblem` folds from the same verdicts the register shows, and against
+  // `enriched.nodes` for the same "freshest businessImpact / exposure join" reason
+  // `withProblemVerdicts` does above it.
+  const { version: postureRuleVersion, rule: postureRule } = settingsStore.getPostureRule();
+  const postured = withPostureTiers(enriched, decidedIssues, decidedFindings, postureRule);
+
   // Tabs hold the real (non-synthetic) nodes; ISSUE nodes are derivable from ai_issues.
-  const assetNodes = realNodes(enriched.nodes);
-  const assetEdges = enriched.edges.filter((e) => e.type !== "HAS_ISSUE");
+  const assetNodes = realNodes(postured.nodes);
+  const assetEdges = postured.edges.filter((e) => e.type !== "HAS_ISSUE");
   overwrite(TABS.assets, assetNodes.map(assetToRow));
   overwrite(TABS.edges, assetEdges.map(edgeToRow));
   overwrite(TABS.issues, decidedIssues.map(issueToRow));
@@ -841,7 +867,7 @@ export function persistSync(
   // after they have all fixed it is worse than an empty one.
   overwrite(TABS.identityFindings, (extras.identityFindings ?? []).map(identityFindingToRow));
 
-  const snapshotRef = writeGraphSnapshot(enriched);
+  const snapshotRef = writeGraphSnapshot(postured);
 
   // Commit record LAST.
   appendRows(TABS.syncHistory, [{
@@ -850,15 +876,15 @@ export function persistSync(
     finished_at: nowIso(now),
     status: "SUCCESS",
     mode: meta.mode,
-    node_count: enriched.nodes.length,
-    edge_count: enriched.edges.length,
+    node_count: postured.nodes.length,
+    edge_count: postured.edges.length,
     issue_count: issues.length,
     api_calls: meta.apiCalls,
     snapshot_ref: snapshotRef,
     error: null,
     // The AARS distribution at this sync — the only record of it, since the snapshot
     // this row points at is overwritten by the next sync. Feeds the inventory trend.
-    aars_severity_json: JSON.stringify(countAarsSeverities(enriched.nodes)),
+    aars_severity_json: JSON.stringify(countAarsSeverities(postured.nodes)),
     // Which scoring model produced that distribution: counts from two versions are not
     // on the same scale, and the trend chart says so rather than drawing a false step.
     aars_rule_version: ruleVersion,
@@ -871,8 +897,9 @@ export function persistSync(
   }]);
   settingsStore.setScoredRuleVersion(ruleVersion);
   settingsStore.setDecidedRuleVersion(problemRuleVersion);
+  settingsStore.setComputedPostureVersion(postureRuleVersion);
   commit();
-  return enriched;
+  return postured;
 }
 
 /**
@@ -1075,6 +1102,65 @@ export function redecideProblems(): {
  */
 export function decideProblemsWith(rule: ProblemRule): { issues: IssueRow[]; findings: FindingRow[] } {
   return redecideFromTabs(rule, undefined);
+}
+
+/**
+ * Fold posture tiers over the persisted assets under an arbitrary `rule`, reading the
+ * persisted `problemOutcome`s off `ai_issues` / `ai_findings` exactly as they stand (no
+ * re-derivation needed there — `derivePostureInput` never reads a problem verdict, only
+ * `worstOpenProblem` does, and that fold is a pure read of an already-decided field).
+ * Costs zero Wiz calls: every input `withPostureTiers` needs is already on the tabs. Shared
+ * by `recomputePostures` (writes) and `previewPostureRule` (does not) — the same
+ * one-function-two-callers shape `decideProblemsWith` / `redecideProblems` share.
+ */
+function postureFromTabs(rule: PostureRule): GNode[] {
+  const nodes = loadAssetsRaw();
+  if (!nodes.length) return [];
+  const doc: GraphDoc = { nodes, edges: [], syncedAt: "" };
+  return withPostureTiers(doc, loadIssues(), loadFindings(), rule).nodes;
+}
+
+/**
+ * Score every persisted asset's posture tier under an ARBITRARY rule and return the result
+ * WITHOUT writing anything — what the AARS Rules page's Posture tab previews before
+ * committing to it. Shares `postureFromTabs` with the real recompute, so the preview is
+ * the recompute, minus the writes.
+ */
+export function posturesWith(rule: PostureRule): GNode[] {
+  return postureFromTabs(rule);
+}
+
+/**
+ * Re-tier every persisted asset under the current posture rule, and rewrite the assets
+ * tab. Same non-negotiable as `rescoreInventory` / `redecideProblems`: NOT a sync — zero
+ * Wiz calls, and no `sync_history` row, because inventing a commit record would put a
+ * point on a trend for an estate that never moved.
+ *
+ * Does NOT rewrite the Drive snapshot — mirrors `redecideProblems`'s choice, not
+ * `rescoreInventory`'s: `postureFromTabs` builds its working doc from `loadAssetsRaw()`
+ * alone (no ISSUE nodes, unlike `enrichFromTabs`'s call into `enrichGraphDoc`), so writing
+ * it back to Drive would silently drop every ISSUE node from the cached graph until the
+ * next real sync. `TABS.assets` is the read model every consumer of a posture tier
+ * actually reads (`loadAssets` — Inventory's tier column never goes through
+ * `loadGraphDoc`), so the Security Graph page carrying a stale `postureTier` on its copy
+ * of a node until the next sync is the same accepted trade-off `redecideProblems` already
+ * makes for `problemOutcome` on ISSUE nodes.
+ *
+ * Caller holds the script lock.
+ */
+export function recomputePostures(): {
+  version: number;
+  assetCount: number;
+  tierCounts: Record<PostureTier, number>;
+} {
+  const { version, rule } = settingsStore.getPostureRule();
+  const nodes = postureFromTabs(rule);
+
+  overwrite(TABS.assets, nodes.map(assetToRow));
+  settingsStore.setComputedPostureVersion(version);
+  commit();
+
+  return { version, assetCount: nodes.length, tierCounts: countPostureTiers(nodes) };
 }
 
 /**

@@ -60,5 +60,9 @@ function api_getProblemRule(p) { return timedApi_("getProblemRule", p); }
 function api_setProblemRule(p) { return timedApi_("setProblemRule", p); }
 function api_previewProblemRule(p) { return timedApi_("previewProblemRule", p); }
 function api_recomputeProblems(p) { return timedApi_("recomputeProblems", p); }
+function api_getPostureRule(p) { return timedApi_("getPostureRule", p); }
+function api_setPostureRule(p) { return timedApi_("setPostureRule", p); }
+function api_previewPostureRule(p) { return timedApi_("previewPostureRule", p); }
+function api_recomputePostures(p) { return timedApi_("recomputePostures", p); }
 function api_resetData(p) { return timedApi_("resetData", p); }
 function api_getStorageStats(p) { return timedApi_("getStorageStats", p); }

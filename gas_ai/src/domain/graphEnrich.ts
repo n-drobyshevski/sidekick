@@ -27,6 +27,8 @@ import {
   stripProblemFields,
 } from "./problem";
 import { vectorSignature, type ProblemRule } from "./problemRule";
+import { decidePosture, derivePostureInput, worstOpenProblem } from "./posture";
+import type { PostureRule } from "./postureRule";
 import { conditionHolds, conditionState } from "./riskConditions";
 import { worstBusinessImpact } from "./syncNormalize";
 import type { ConditionKey } from "./toxicCombos";
@@ -411,6 +413,60 @@ export function withProblemVerdicts(
   });
 
   return { issues: decidedIssues, findings: decidedFindings };
+}
+
+/**
+ * Phase 6: fold the Asset Posture Tier onto every real node, BESIDE the AARS enrichment
+ * and the problem-verdict fold above — a THIRD independent fold, never merged into either
+ * of the other two, for the same independent-rerunnability reason `withProblemVerdicts` is
+ * already separate from `enrichGraphDoc`: an operator who edits only `posture_rule` must be
+ * able to re-decide every tier without re-scoring AARS or re-deciding a single problem
+ * verdict, and vice versa. See posture.ts's own header for why a tier is computed from the
+ * node's OWN fields rather than from what has been found on it.
+ *
+ * `issues` / `findings` here are the ALREADY-DECIDED rows (`withProblemVerdicts`'s return),
+ * not the raw synced ones — this fold reads their `problemOutcome`, never their severity or
+ * status directly, and folds `worstOpenProblem` per asset from exactly that field. Passing
+ * the raw rows would leave every asset's `worstOpenProblem` undefined (no row carries the
+ * field until it has been decided), which is why the doc comment on `GNode.worstOpenProblem`
+ * calls it "folded here FROM the Phase 4/5 verdicts" rather than derived independently.
+ *
+ * Runs over EVERY real node (`kind` outside {ISSUE, SUMMARY}), not only the AI-asset kinds
+ * `enrichGraphDoc`'s `scorable` check restricts AARS to: a bucket or a service account has
+ * a capability envelope and a containment reading just as much as an agent does, and the
+ * Inventory's tier column is meant to sit beside a possibly-blank AARS score on exactly
+ * those rows, not to be blank itself wherever AARS is.
+ */
+export function withPostureTiers(
+  doc: GraphDoc,
+  issues: IssueRow[],
+  findings: FindingRow[],
+  rule: PostureRule,
+): GraphDoc {
+  const outcomesByAsset = new Map<string, string[]>();
+  for (const issue of issues) {
+    if (issue.problemOutcome) pushInto(outcomesByAsset, issue.assetId, issue.problemOutcome);
+  }
+  for (const finding of findings) {
+    if (finding.problemOutcome) pushInto(outcomesByAsset, finding.resourceId, finding.problemOutcome);
+  }
+
+  const nodes = doc.nodes.map((node) => {
+    if (node.kind === "ISSUE" || node.kind === "SUMMARY") return node;
+    const { vector, unknowns } = derivePostureInput(node, rule);
+    const { tier } = decidePosture(vector, rule);
+    const worst = worstOpenProblem(outcomesByAsset.get(node.id) ?? []);
+    const next: GNode = {
+      ...node,
+      postureTier: tier,
+      postureInput: unknowns.length ? { ...vector, unknowns } : { ...vector },
+    };
+    if (worst) next.worstOpenProblem = worst;
+    else delete next.worstOpenProblem;
+    return next;
+  });
+
+  return { ...doc, nodes };
 }
 
 /**

@@ -34,7 +34,7 @@
 
 import { CODEBOOK, FAMILY_GROUP } from "./codebook.js";
 import { CATEGORY_LABELS, CATEGORY_ORDER, kindIconSvg } from "./icons.js";
-import { aarsChip, el, outcomeBadge, pluralize, sevBadge, statusPill } from "./ui.js";
+import { aarsChip, el, outcomeBadge, pluralize, sevBadge, statusPill, tierBadge } from "./ui.js";
 
 /** The six headings, in reading order. Six headings and find-in-page beat a search box. */
 export const FAMILIES = [
@@ -594,6 +594,41 @@ export const ENTRIES = [
     drawnOn: ["aars"],
     mark: () => outcomeBadge("ACT"),
     link: { label: "Open the Problem tree tab", route: "aars", params: {} },
+  },
+  {
+    id: "posture-tier",
+    term: "Posture tier",
+    aka: "a capability envelope, not a sum of problems",
+    family: "score",
+    blurb:
+      "1 to 4, 4 worst — a first-match cascade over capability × containment × " +
+      "consequence, the same mechanism the Problem tree uses, aimed at a different " +
+      "question: not what has been FOUND on an asset, but what it could DO and what " +
+      "stands in its way. An agent with zero open issues and unrestricted access to " +
+      "sensitive data is not a low tier just because nothing has been found yet — this is " +
+      "the one reading on the Inventory that is not an aggregate of AARS or of the " +
+      "Problem tree's outcomes, deliberately drawn beside them rather than blended in.",
+    drawnOn: ["aars", "inventory"],
+    mark: () => tierBadge(4),
+    link: { label: "Open the Posture tab", route: "aars", params: {} },
+  },
+  {
+    id: "posture-axes",
+    term: "Capability · containment · consequence",
+    aka: "the posture lattice's three axes",
+    family: "score",
+    blurb:
+      "Capability: identity power and data reach (BROAD/SCOPED/MINIMAL). Containment: how " +
+      "much stands between the asset and the outside world (WEAK/PARTIAL/STRONG) — a clear " +
+      "guardrail scan alone reads PARTIAL, never STRONG, until a confirmed non-exposure " +
+      "corroborates it. Consequence: what a realized failure would cost " +
+      "(SEVERE/MODERATE/LIMITED). 27 cells; a lethal-trifecta row (private data reach ∧ " +
+      "untrusted-content ingress ∧ external egress) sits first in the default cascade and " +
+      "is reported UNREACHABLE rather than fed a guess — this app has no live signal for " +
+      "two of its three legs.",
+    drawnOn: ["aars"],
+    mark: () => el("span", { class: "pill neutral" }, "27"),
+    link: { label: "Open the Posture tab", route: "aars", params: {} },
   },
 
   // ---------------------------------------------------------------------- severity

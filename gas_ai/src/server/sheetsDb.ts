@@ -63,6 +63,10 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // already has, and every read maps by header NAME, so an existing ledger picks this up
     // on its next sync with no migration.
     "business_impact",
+    // Phase 6: the Asset Posture Tier (posture.ts, postureRule.ts) — a capability envelope
+    // against a containment, folded BESIDE the AARS score above by graphEnrich.withPostureTiers,
+    // never blended into it. Appended, same no-migration contract as every block above.
+    "posture_tier", "posture_input_json", "worst_open_problem",
   ],
   [TABS.edges]: ["id", "src", "dst", "type", "negated", "access_type"],
   [TABS.issues]: [

@@ -418,6 +418,33 @@ export interface GNode {
     derivedUnder?: string;
   };
   comboGroups?: string[];   // toxic-combination group ids this node participates in
+
+  // ---- Phase 6: the Asset Posture Tier (posture.ts, postureRule.ts) ----
+  //
+  // A CAPABILITY ENVELOPE, NOT AN AGGREGATE OF `problemOutcome`s. Folded onto every real
+  // asset node by `graphEnrich.withPostureTiers`, a fold SEPARATE from both `enrichGraphDoc`
+  // (AARS) and `withProblemVerdicts` (the decision tree) — same independent-rerunnability
+  // reason those two are separate from each other. See posture.ts's own header for why a
+  // posture tier is deliberately not derived from what has been FOUND on the asset.
+  /** 1–4, 4 = worst. Absent on a node the fold never reached (a synthetic node) or one never enriched. */
+  postureTier?: number;
+  /**
+   * What the tier was decided FROM — `PostureVector` plus which axes came back UNKNOWN.
+   * Persisted for the same reason `aarsInput` is: a rule change can RE-DECIDE this exact
+   * vector without re-deriving it (posture derivation is rule-independent — see
+   * `derivePostureInput`'s own comment for why it therefore carries no `derivedUnder`
+   * signature the way `problemInput` does).
+   */
+  postureInput?: { capability: string; containment: string; consequence: string; unknowns?: string[] };
+  /**
+   * The worst `problemOutcome` across this asset's own open issues and failing findings —
+   * folded here from the Phase 4/5 verdicts, and read BESIDE `postureTier`, never blended
+   * into it: the whole argument for a tier is that it is not a summary of problems. Absent
+   * for an asset with no open issues or findings, which is a real state (`posture.ts`'s own
+   * header: "zero open findings" is not "zero risk"), not an unscored placeholder.
+   */
+  worstOpenProblem?: string;
+
   // SUMMARY nodes only:
   summaryOf?: NodeKind;
   summaryCount?: number;

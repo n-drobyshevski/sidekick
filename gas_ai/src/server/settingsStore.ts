@@ -4,6 +4,7 @@
 import { scoringEqual } from "../domain/aarsRule";
 import type { ScopePins } from "../domain/complianceScope";
 import { decisionEqual } from "../domain/problemRule";
+import { tierEqual } from "../domain/postureRule";
 import * as logic from "../domain/settingsLogic";
 import type { Rec } from "../domain/util";
 import { bumpDataVersion } from "./serverCache";
@@ -109,6 +110,29 @@ export function setProblemRule(rule: unknown): logic.StoredProblemRule {
   const stored = logic.getProblemRule(next);
   if (verdictsWereCurrent && decisionEqual(before.rule, stored.rule)) {
     next = logic.withDecidedRuleVersion(next, stored.version);
+  }
+  saveSettings(next);
+  return stored;
+}
+
+export const getPostureRule = (): logic.StoredPostureRule => logic.getPostureRule(loadSettings());
+
+/**
+ * Save a rule and return it as stored — clamped, and with its new version. Mirrors
+ * `setProblemRule`'s no-op guard exactly, over `tierEqual` instead of `decisionEqual`: when
+ * the persisted tiers were current AND the edit changed nothing that could alter a TIER
+ * (only `topTierCeiling` moved, say), the computed-version marker moves forward with it
+ * rather than prompting for a recompute that would change nothing.
+ */
+export function setPostureRule(rule: unknown): logic.StoredPostureRule {
+  const settings = loadSettings();
+  const before = logic.getPostureRule(settings);
+  const tiersWereCurrent = logic.getComputedPostureVersion(settings) === before.version;
+
+  let next = logic.withPostureRule(settings, rule);
+  const stored = logic.getPostureRule(next);
+  if (tiersWereCurrent && tierEqual(before.rule, stored.rule)) {
+    next = logic.withComputedPostureVersion(next, stored.version);
   }
   saveSettings(next);
   return stored;
@@ -222,6 +246,20 @@ export function setDecidedRuleVersion(version: unknown): void {
   const settings = loadSettings();
   const next = logic.withDecidedRuleVersion(settings, version);
   if (logic.getDecidedRuleVersion(next) === logic.getDecidedRuleVersion(settings)) return;
+  saveSettings(next);
+}
+
+export const getComputedPostureVersion = (): number => logic.getComputedPostureVersion(loadSettings());
+
+/**
+ * Mark which posture-rule version the persisted tiers were computed under. Every sync and
+ * every recompute calls this, and almost every call is a no-op — same guard as
+ * `setDecidedRuleVersion`, for the same reason.
+ */
+export function setComputedPostureVersion(version: unknown): void {
+  const settings = loadSettings();
+  const next = logic.withComputedPostureVersion(settings, version);
+  if (logic.getComputedPostureVersion(next) === logic.getComputedPostureVersion(settings)) return;
   saveSettings(next);
 }
 

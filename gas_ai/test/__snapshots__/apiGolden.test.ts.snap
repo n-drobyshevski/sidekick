@@ -650,6 +650,117 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
     },
     "ok": true,
   },
+  "getPostureRule": {
+    "data": {
+      "cellCoverage": {
+        "byFallback": 6,
+        "byRow": [
+          0,
+          1,
+          2,
+          2,
+          2,
+          4,
+          4,
+          4,
+          2,
+        ],
+        "byTier": {
+          "1": 2,
+          "2": 18,
+          "3": 6,
+          "4": 1,
+        },
+        "total": 27,
+      },
+      "computedVersion": 0,
+      "limits": {
+        "maxTierRules": 40,
+      },
+      "rule": {
+        "fallbackTier": 2,
+        "tierRules": [
+          {
+            "tier": 4,
+            "when": {
+              "externalEgress": true,
+              "privateData": true,
+              "untrustedIngress": true,
+            },
+          },
+          {
+            "tier": 4,
+            "when": {
+              "capability": "BROAD",
+              "consequence": "SEVERE",
+              "containment": "WEAK",
+            },
+          },
+          {
+            "tier": 3,
+            "when": {
+              "capability": "BROAD",
+              "containment": "WEAK",
+            },
+          },
+          {
+            "tier": 3,
+            "when": {
+              "capability": "BROAD",
+              "consequence": "SEVERE",
+            },
+          },
+          {
+            "tier": 3,
+            "when": {
+              "consequence": "SEVERE",
+              "containment": "WEAK",
+            },
+          },
+          {
+            "tier": 2,
+            "when": {
+              "capability": "BROAD",
+            },
+          },
+          {
+            "tier": 2,
+            "when": {
+              "containment": "WEAK",
+            },
+          },
+          {
+            "tier": 2,
+            "when": {
+              "consequence": "SEVERE",
+            },
+          },
+          {
+            "tier": 1,
+            "when": {
+              "capability": "MINIMAL",
+              "containment": "STRONG",
+            },
+          },
+        ],
+        "topTierCeiling": 0.15,
+      },
+      "shadowed": [],
+      "stale": false,
+      "summary": [
+        "9 tier rules are tried in order, first match wins; a vector matching none of them falls back to tier 2.",
+        "Tier 4 claims 1 of 27 cells (3.7%), against a ceiling of 15.0%.",
+        "1 row(s) can never fire against any cell this app can derive — the lethal-trifecta row, kept as a documented gap rather than fed a guess.",
+        "Posture is a capability envelope against a containment, not a sum of open problems: an asset with zero open findings can still sit at a high tier.",
+      ],
+      "unreachable": [
+        0,
+      ],
+      "validation": [],
+      "version": 0,
+    },
+    "ok": true,
+  },
   "getProblemRule": {
     "data": {
       "decidedVersion": 0,
@@ -790,7 +901,7 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
   "getStorageStats": {
     "data": {
       "archiveBytes": 0,
-      "cellCount": 40000,
+      "cellCount": 40300,
       "rows": {
         "assets": 0,
         "dataFindings": 0,
@@ -1959,6 +2070,15 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "nativeType": null,
           "openInternet": false,
           "portValidation": null,
+          "postureInput": {
+            "capability": "BROAD",
+            "consequence": "LIMITED",
+            "containment": "STRONG",
+            "unknowns": [
+              "consequence",
+            ],
+          },
+          "postureTier": 2,
           "projectRefs": [],
           "projects": [],
           "region": null,
@@ -1971,6 +2091,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "technologyCategories": [
             "Identity",
           ],
+          "worstOpenProblem": null,
         },
       },
       {
@@ -2018,6 +2139,15 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "nativeType": null,
           "openInternet": true,
           "portValidation": null,
+          "postureInput": {
+            "capability": "MINIMAL",
+            "consequence": "LIMITED",
+            "containment": "PARTIAL",
+            "unknowns": [
+              "consequence",
+            ],
+          },
+          "postureTier": 2,
           "projectRefs": [
             {
               "businessImpact": undefined,
@@ -2036,6 +2166,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "summaryCount": null,
           "tags": [],
           "technologyCategories": [],
+          "worstOpenProblem": null,
         },
       },
       {
@@ -2075,6 +2206,15 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "nativeType": null,
           "openInternet": false,
           "portValidation": null,
+          "postureInput": {
+            "capability": "MINIMAL",
+            "consequence": "LIMITED",
+            "containment": "STRONG",
+            "unknowns": [
+              "consequence",
+            ],
+          },
+          "postureTier": 1,
           "projectRefs": [
             {
               "businessImpact": undefined,
@@ -2093,6 +2233,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "summaryCount": null,
           "tags": [],
           "technologyCategories": [],
+          "worstOpenProblem": null,
         },
       },
       {
@@ -2132,6 +2273,15 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "nativeType": null,
           "openInternet": false,
           "portValidation": null,
+          "postureInput": {
+            "capability": "MINIMAL",
+            "consequence": "LIMITED",
+            "containment": "STRONG",
+            "unknowns": [
+              "consequence",
+            ],
+          },
+          "postureTier": 1,
           "projectRefs": [
             {
               "businessImpact": undefined,
@@ -2150,6 +2300,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "summaryCount": null,
           "tags": [],
           "technologyCategories": [],
+          "worstOpenProblem": null,
         },
       },
       {
@@ -2190,6 +2341,15 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "nativeType": null,
           "openInternet": false,
           "portValidation": null,
+          "postureInput": {
+            "capability": "MINIMAL",
+            "consequence": "LIMITED",
+            "containment": "STRONG",
+            "unknowns": [
+              "consequence",
+            ],
+          },
+          "postureTier": 1,
           "projectRefs": [],
           "projects": [],
           "region": null,
@@ -2200,6 +2360,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "summaryCount": null,
           "tags": [],
           "technologyCategories": [],
+          "worstOpenProblem": null,
         },
       },
       {
@@ -2240,6 +2401,15 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "nativeType": null,
           "openInternet": false,
           "portValidation": null,
+          "postureInput": {
+            "capability": "MINIMAL",
+            "consequence": "LIMITED",
+            "containment": "STRONG",
+            "unknowns": [
+              "consequence",
+            ],
+          },
+          "postureTier": 1,
           "projectRefs": [],
           "projects": [],
           "region": null,
@@ -2250,6 +2420,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "summaryCount": null,
           "tags": [],
           "technologyCategories": [],
+          "worstOpenProblem": null,
         },
       },
       {
@@ -2290,6 +2461,15 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "nativeType": null,
           "openInternet": false,
           "portValidation": null,
+          "postureInput": {
+            "capability": "MINIMAL",
+            "consequence": "LIMITED",
+            "containment": "STRONG",
+            "unknowns": [
+              "consequence",
+            ],
+          },
+          "postureTier": 1,
           "projectRefs": [],
           "projects": [],
           "region": null,
@@ -2300,6 +2480,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "summaryCount": null,
           "tags": [],
           "technologyCategories": [],
+          "worstOpenProblem": null,
         },
       },
       {
@@ -2340,6 +2521,15 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "nativeType": null,
           "openInternet": false,
           "portValidation": null,
+          "postureInput": {
+            "capability": "MINIMAL",
+            "consequence": "LIMITED",
+            "containment": "STRONG",
+            "unknowns": [
+              "consequence",
+            ],
+          },
+          "postureTier": 1,
           "projectRefs": [],
           "projects": [],
           "region": null,
@@ -2350,6 +2540,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "summaryCount": null,
           "tags": [],
           "technologyCategories": [],
+          "worstOpenProblem": null,
         },
       },
       {
@@ -2390,6 +2581,15 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "nativeType": null,
           "openInternet": false,
           "portValidation": null,
+          "postureInput": {
+            "capability": "MINIMAL",
+            "consequence": "LIMITED",
+            "containment": "STRONG",
+            "unknowns": [
+              "consequence",
+            ],
+          },
+          "postureTier": 1,
           "projectRefs": [],
           "projects": [],
           "region": null,
@@ -2400,6 +2600,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "summaryCount": null,
           "tags": [],
           "technologyCategories": [],
+          "worstOpenProblem": null,
         },
       },
       {
@@ -2440,6 +2641,15 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "nativeType": null,
           "openInternet": false,
           "portValidation": null,
+          "postureInput": {
+            "capability": "MINIMAL",
+            "consequence": "LIMITED",
+            "containment": "STRONG",
+            "unknowns": [
+              "consequence",
+            ],
+          },
+          "postureTier": 1,
           "projectRefs": [],
           "projects": [],
           "region": null,
@@ -2450,6 +2660,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "summaryCount": null,
           "tags": [],
           "technologyCategories": [],
+          "worstOpenProblem": null,
         },
       },
       {
@@ -2490,6 +2701,15 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "nativeType": null,
           "openInternet": false,
           "portValidation": null,
+          "postureInput": {
+            "capability": "MINIMAL",
+            "consequence": "LIMITED",
+            "containment": "STRONG",
+            "unknowns": [
+              "consequence",
+            ],
+          },
+          "postureTier": 1,
           "projectRefs": [],
           "projects": [],
           "region": null,
@@ -2500,6 +2720,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "summaryCount": null,
           "tags": [],
           "technologyCategories": [],
+          "worstOpenProblem": null,
         },
       },
       {
@@ -2540,6 +2761,15 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "nativeType": null,
           "openInternet": false,
           "portValidation": null,
+          "postureInput": {
+            "capability": "MINIMAL",
+            "consequence": "LIMITED",
+            "containment": "STRONG",
+            "unknowns": [
+              "consequence",
+            ],
+          },
+          "postureTier": 1,
           "projectRefs": [],
           "projects": [],
           "region": null,
@@ -2550,6 +2780,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "summaryCount": null,
           "tags": [],
           "technologyCategories": [],
+          "worstOpenProblem": null,
         },
       },
       {
@@ -2590,6 +2821,15 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "nativeType": null,
           "openInternet": false,
           "portValidation": null,
+          "postureInput": {
+            "capability": "MINIMAL",
+            "consequence": "LIMITED",
+            "containment": "STRONG",
+            "unknowns": [
+              "consequence",
+            ],
+          },
+          "postureTier": 1,
           "projectRefs": [],
           "projects": [],
           "region": null,
@@ -2600,6 +2840,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "summaryCount": null,
           "tags": [],
           "technologyCategories": [],
+          "worstOpenProblem": null,
         },
       },
       {
@@ -2640,6 +2881,15 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "nativeType": null,
           "openInternet": false,
           "portValidation": null,
+          "postureInput": {
+            "capability": "MINIMAL",
+            "consequence": "LIMITED",
+            "containment": "STRONG",
+            "unknowns": [
+              "consequence",
+            ],
+          },
+          "postureTier": 1,
           "projectRefs": [],
           "projects": [],
           "region": null,
@@ -2650,6 +2900,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "summaryCount": null,
           "tags": [],
           "technologyCategories": [],
+          "worstOpenProblem": null,
         },
       },
       {
@@ -2690,6 +2941,15 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "nativeType": null,
           "openInternet": false,
           "portValidation": null,
+          "postureInput": {
+            "capability": "MINIMAL",
+            "consequence": "LIMITED",
+            "containment": "STRONG",
+            "unknowns": [
+              "consequence",
+            ],
+          },
+          "postureTier": 1,
           "projectRefs": [],
           "projects": [],
           "region": null,
@@ -2700,6 +2960,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "summaryCount": null,
           "tags": [],
           "technologyCategories": [],
+          "worstOpenProblem": null,
         },
       },
       {
@@ -2740,6 +3001,15 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "nativeType": null,
           "openInternet": false,
           "portValidation": null,
+          "postureInput": {
+            "capability": "MINIMAL",
+            "consequence": "LIMITED",
+            "containment": "STRONG",
+            "unknowns": [
+              "consequence",
+            ],
+          },
+          "postureTier": 1,
           "projectRefs": [],
           "projects": [],
           "region": null,
@@ -2750,6 +3020,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "summaryCount": null,
           "tags": [],
           "technologyCategories": [],
+          "worstOpenProblem": null,
         },
       },
       {
@@ -2789,6 +3060,8 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "nativeType": null,
           "openInternet": null,
           "portValidation": null,
+          "postureInput": null,
+          "postureTier": null,
           "projectRefs": [],
           "projects": [],
           "region": null,
@@ -2799,6 +3072,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "summaryCount": null,
           "tags": [],
           "technologyCategories": [],
+          "worstOpenProblem": null,
         },
       },
       {
@@ -2838,6 +3112,8 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "nativeType": null,
           "openInternet": null,
           "portValidation": null,
+          "postureInput": null,
+          "postureTier": null,
           "projectRefs": [],
           "projects": [],
           "region": null,
@@ -2848,6 +3124,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "summaryCount": null,
           "tags": [],
           "technologyCategories": [],
+          "worstOpenProblem": null,
         },
       },
       {
@@ -2887,6 +3164,8 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "nativeType": null,
           "openInternet": null,
           "portValidation": null,
+          "postureInput": null,
+          "postureTier": null,
           "projectRefs": [],
           "projects": [],
           "region": null,
@@ -2897,6 +3176,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "summaryCount": null,
           "tags": [],
           "technologyCategories": [],
+          "worstOpenProblem": null,
         },
       },
       {
@@ -2937,6 +3217,8 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "nativeType": null,
           "openInternet": null,
           "portValidation": null,
+          "postureInput": null,
+          "postureTier": null,
           "projectRefs": [],
           "projects": [],
           "region": null,
@@ -2947,6 +3229,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
           "summaryCount": null,
           "tags": [],
           "technologyCategories": [],
+          "worstOpenProblem": null,
         },
       },
     ],
@@ -3044,6 +3327,15 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
       "nativeType": "hostedAiAgent",
       "openInternet": null,
       "portValidation": null,
+      "postureInput": {
+        "capability": "BROAD",
+        "consequence": "LIMITED",
+        "containment": "WEAK",
+        "unknowns": [
+          "consequence",
+        ],
+      },
+      "postureTier": 3,
       "projectRefs": [
         {
           "businessImpact": undefined,
@@ -3076,6 +3368,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
       "technologyCategories": [
         "AI Service",
       ],
+      "worstOpenProblem": "TRACK",
     },
   },
   "ok": true,
@@ -3755,12 +4048,14 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         },
         "kind": "AI_AGENT",
         "name": "AGENT_AUTOGEN_DO_NOT_DELETE",
+        "postureTier": 3,
         "projects": [
           "PROJECT-BETA",
           "PROJECT-ALPHA",
         ],
         "region": "us-west1",
         "severity": "HIGH",
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 71,
@@ -3776,6 +4071,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         },
         "kind": "AI_AGENT",
         "name": "agent-H-chatbot",
+        "postureTier": 3,
         "projects": [
           "PROJECT-ALPHA",
           "PROJECT-DELTA",
@@ -3783,6 +4079,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         ],
         "region": "europe-west1",
         "severity": "HIGH",
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 67,
@@ -3798,12 +4095,14 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         },
         "kind": "AI_AGENT",
         "name": "dev-agent-D-test",
+        "postureTier": 3,
         "projects": [
           "PROJECT-BETA",
           "PROJECT-ALPHA",
         ],
         "region": "europe-west3",
         "severity": "HIGH",
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 67,
@@ -3819,12 +4118,14 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         },
         "kind": "AI_AGENT",
         "name": "dev-agent-D",
+        "postureTier": 3,
         "projects": [
           "PROJECT-BETA",
           "PROJECT-ALPHA",
         ],
         "region": "europe-west3",
         "severity": "HIGH",
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 66,
@@ -3842,12 +4143,14 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         },
         "kind": "AI_AGENT",
         "name": "Agent-E",
+        "postureTier": 3,
         "projects": [
           "PROJECT-ALPHA",
           "PROJECT-GAMMA",
         ],
         "region": "us-west1",
         "severity": "HIGH",
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 66,
@@ -3863,12 +4166,14 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         },
         "kind": "AI_AGENT",
         "name": "Agent-G",
+        "postureTier": 3,
         "projects": [
           "PROJECT-ALPHA",
           "PROJECT-ETA",
         ],
         "region": "europe-west4",
         "severity": "HIGH",
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 66,
@@ -3884,12 +4189,14 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         },
         "kind": "AI_AGENT",
         "name": "agent-I",
+        "postureTier": 3,
         "projects": [
           "PROJECT-ALPHA",
           "PROJECT-ZETA",
         ],
         "region": "europe-west4",
         "severity": "HIGH",
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 62,
@@ -3905,12 +4212,14 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         },
         "kind": "AI_AGENT",
         "name": "Agent-A",
+        "postureTier": 3,
         "projects": [
           "PROJECT-BETA",
           "PROJECT-ALPHA",
         ],
         "region": "europe-west1",
         "severity": "HIGH",
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 62,
@@ -3926,12 +4235,14 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         },
         "kind": "AI_AGENT",
         "name": "Agent-B",
+        "postureTier": 3,
         "projects": [
           "PROJECT-BETA",
           "PROJECT-ALPHA",
         ],
         "region": "us-west1",
         "severity": "HIGH",
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 62,
@@ -3947,11 +4258,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         },
         "kind": "AI_AGENT",
         "name": "agent-F",
+        "postureTier": 3,
         "projects": [
           "PROJECT-ALPHA",
         ],
         "region": "europe-west4",
         "severity": "HIGH",
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 62,
@@ -3967,11 +4280,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         },
         "kind": "AI_AGENT",
         "name": "agent-F-preprod",
+        "postureTier": 3,
         "projects": [
           "PROJECT-ALPHA",
         ],
         "region": "europe-west4",
         "severity": "HIGH",
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 61,
@@ -3987,11 +4302,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         },
         "kind": "ACCESS_ROLE",
         "name": "AWSReservedSSO_FinanceAdmin_01",
+        "postureTier": 3,
         "projects": [
           "PROJECT-ALPHA",
         ],
         "region": null,
         "severity": "HIGH",
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 61,
@@ -4007,11 +4324,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         },
         "kind": "ACCESS_ROLE",
         "name": "AWSReservedSSO_FinanceAdmin_02",
+        "postureTier": 3,
         "projects": [
           "PROJECT-ALPHA",
         ],
         "region": null,
         "severity": "HIGH",
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 61,
@@ -4027,11 +4346,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         },
         "kind": "ACCESS_ROLE",
         "name": "AWSReservedSSO_FinanceAdmin_03",
+        "postureTier": 3,
         "projects": [
           "PROJECT-ALPHA",
         ],
         "region": null,
         "severity": "HIGH",
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 61,
@@ -4047,11 +4368,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         },
         "kind": "ACCESS_ROLE",
         "name": "AWSReservedSSO_FinanceAdmin_04",
+        "postureTier": 3,
         "projects": [
           "PROJECT-ALPHA",
         ],
         "region": null,
         "severity": "HIGH",
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 61,
@@ -4067,11 +4390,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         },
         "kind": "ACCESS_ROLE",
         "name": "AWSReservedSSO_FinanceAdmin_05",
+        "postureTier": 3,
         "projects": [
           "PROJECT-ALPHA",
         ],
         "region": null,
         "severity": "HIGH",
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 61,
@@ -4087,11 +4412,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         },
         "kind": "ACCESS_ROLE",
         "name": "AWSReservedSSO_FinanceAdmin_06",
+        "postureTier": 3,
         "projects": [
           "PROJECT-ALPHA",
         ],
         "region": null,
         "severity": "HIGH",
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 61,
@@ -4107,11 +4434,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         },
         "kind": "ACCESS_ROLE",
         "name": "AWSReservedSSO_FinanceAdmin_07",
+        "postureTier": 3,
         "projects": [
           "PROJECT-ALPHA",
         ],
         "region": null,
         "severity": "HIGH",
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 61,
@@ -4127,11 +4456,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         },
         "kind": "ACCESS_ROLE",
         "name": "AWSReservedSSO_FinanceAdmin_08",
+        "postureTier": 3,
         "projects": [
           "PROJECT-ALPHA",
         ],
         "region": null,
         "severity": "HIGH",
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 29,
@@ -4147,12 +4478,14 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         },
         "kind": "AI_AGENT",
         "name": "agent-J",
+        "postureTier": 2,
         "projects": [
           "PROJECT-BETA",
           "PROJECT-ALPHA",
         ],
         "region": "europe-west1",
         "severity": "MEDIUM",
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 29,
@@ -4168,12 +4501,14 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         },
         "kind": "AI_AGENT",
         "name": "agent-K",
+        "postureTier": 2,
         "projects": [
           "PROJECT-BETA",
           "PROJECT-ALPHA",
         ],
         "region": "europe-west1",
         "severity": "MEDIUM",
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 22,
@@ -4186,11 +4521,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "dataset-support-transcripts",
         "kind": "AI_DATASET",
         "name": "dataset-support-transcripts",
+        "postureTier": 1,
         "projects": [
           "PROJECT-ALPHA",
         ],
         "region": "europe-west1",
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": 5,
@@ -4203,11 +4540,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "model-text-embedding-005",
         "kind": "AI_MODEL",
         "name": "text-embedding-005",
+        "postureTier": 1,
         "projects": [
           "PROJECT-ALPHA",
         ],
         "region": "us-west1",
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": 0,
@@ -4220,11 +4559,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "agent-l-support",
         "kind": "AI_AGENT",
         "name": "Agent-L-support",
+        "postureTier": 1,
         "projects": [
           "PROJECT-ALPHA",
         ],
         "region": "europe-west1",
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": 0,
@@ -4237,11 +4578,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "guardrail-alpha",
         "kind": "AI_GUARDRAIL",
         "name": "guardrail-alpha",
+        "postureTier": 1,
         "projects": [
           "PROJECT-ALPHA",
         ],
         "region": "europe-west1",
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": 0,
@@ -4254,11 +4597,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "guardrail-beta",
         "kind": "AI_GUARDRAIL",
         "name": "guardrail-beta",
+        "postureTier": 1,
         "projects": [
           "PROJECT-ALPHA",
         ],
         "region": "europe-west4",
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": 0,
@@ -4271,11 +4616,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "guardrail-bedrock",
         "kind": "AI_GUARDRAIL",
         "name": "bedrock-guardrail-default",
+        "postureTier": 1,
         "projects": [
           "PROJECT-ALPHA",
         ],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": 0,
@@ -4288,11 +4635,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "model-bedrock-claude",
         "kind": "AI_MODEL",
         "name": "anthropic.claude-3-5-sonnet",
+        "postureTier": 1,
         "projects": [
           "PROJECT-ALPHA",
         ],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": 0,
@@ -4305,11 +4654,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "mcp-internal-tools",
         "kind": "MCP_SERVER",
         "name": "mcp-internal-tools",
+        "postureTier": 1,
         "projects": [
           "PROJECT-ALPHA",
         ],
         "region": "europe-west1",
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": 0,
@@ -4322,11 +4673,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "pipeline-training-01",
         "kind": "AI_PIPELINE",
         "name": "pipeline-training-01",
+        "postureTier": 1,
         "projects": [
           "PROJECT-ALPHA",
         ],
         "region": "us-west1",
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4339,11 +4692,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "bucket-customer-pii",
         "kind": "BUCKET",
         "name": "bucket-customer-pii",
+        "postureTier": 2,
         "projects": [
           "PROJECT-ALPHA",
         ],
         "region": "europe-west1",
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4356,11 +4711,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "bucket-finance-reports",
         "kind": "BUCKET",
         "name": "bucket-finance-reports",
+        "postureTier": 1,
         "projects": [
           "PROJECT-BETA",
         ],
         "region": "europe-west1",
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4373,11 +4730,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "bucket-partner-data",
         "kind": "BUCKET",
         "name": "bucket-partner-data",
+        "postureTier": 1,
         "projects": [
           "PROJECT-ETA",
         ],
         "region": "europe-west4",
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4390,11 +4749,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "bucket-pricing-models",
         "kind": "BUCKET",
         "name": "bucket-pricing-models",
+        "postureTier": 1,
         "projects": [
           "PROJECT-ALPHA",
         ],
         "region": "europe-west4",
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4407,11 +4768,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "bucket-training-data",
         "kind": "BUCKET",
         "name": "bucket-training-data",
+        "postureTier": 1,
         "projects": [
           "PROJECT-ALPHA",
         ],
         "region": "us-west1",
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4424,11 +4787,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "db-customer-core",
         "kind": "DATABASE",
         "name": "db-customer-core",
+        "postureTier": 2,
         "projects": [
           "PROJECT-ALPHA",
         ],
         "region": "europe-west1",
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4441,11 +4806,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "db-analytics",
         "kind": "DATABASE",
         "name": "db-analytics",
+        "postureTier": 1,
         "projects": [
           "PROJECT-DELTA",
         ],
         "region": "europe-west1",
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4458,11 +4825,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "vm-agent-i-host",
         "kind": "VIRTUAL_MACHINE",
         "name": "vm-agent-i-host",
+        "postureTier": 1,
         "projects": [
           "PROJECT-ZETA",
         ],
         "region": "europe-west4",
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4475,11 +4844,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "run-agent-h",
         "kind": "SERVERLESS",
         "name": "cloudrun-agent-h",
+        "postureTier": 2,
         "projects": [
           "PROJECT-DELTA",
         ],
         "region": "europe-west1",
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4492,11 +4863,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "endpoint-agent-h",
         "kind": "ENDPOINT",
         "name": "https://agent-h-chatbot.a.run.app:443",
+        "postureTier": 1,
         "projects": [
           "PROJECT-DELTA",
         ],
         "region": "europe-west1",
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4509,11 +4882,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "endpoint-agent-i",
         "kind": "ENDPOINT",
         "name": "https://agent-i.internal-tools.example:8443",
+        "postureTier": 1,
         "projects": [
           "PROJECT-ZETA",
         ],
         "region": "europe-west4",
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4526,11 +4901,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "img-agent-h",
         "kind": "CONTAINER_IMAGE",
         "name": "img-agent-h:latest",
+        "postureTier": 1,
         "projects": [
           "PROJECT-DELTA",
         ],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4543,11 +4920,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "repo-agent-h",
         "kind": "REPOSITORY",
         "name": "repo-agent-h",
+        "postureTier": 1,
         "projects": [
           "PROJECT-DELTA",
         ],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4560,9 +4939,11 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "finding-ea-autogen",
         "kind": "EXCESSIVE_ACCESS_FINDING",
         "name": "Excessive access: sa-agent-autogen",
+        "postureTier": 1,
         "projects": [],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4575,9 +4956,11 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "finding-ea-agent-h",
         "kind": "EXCESSIVE_ACCESS_FINDING",
         "name": "Excessive access: sa-agent-h",
+        "postureTier": 1,
         "projects": [],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4590,9 +4973,11 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "finding-lm-agent-i",
         "kind": "LATERAL_MOVEMENT_FINDING",
         "name": "Lateral movement: sa-agent-i",
+        "postureTier": 1,
         "projects": [],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4605,9 +4990,11 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "sa-agent-a",
         "kind": "SERVICE_ACCOUNT",
         "name": "sa-agent-a@iam.gserviceaccount.com",
+        "postureTier": 2,
         "projects": [],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4620,9 +5007,11 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "sa-agent-b",
         "kind": "SERVICE_ACCOUNT",
         "name": "sa-agent-b@iam.gserviceaccount.com",
+        "postureTier": 2,
         "projects": [],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4635,9 +5024,11 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "sa-agent-autogen",
         "kind": "SERVICE_ACCOUNT",
         "name": "sa-agent-autogen@iam.gserviceaccount.com",
+        "postureTier": 2,
         "projects": [],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4650,9 +5041,11 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "sa-agent-d-test",
         "kind": "SERVICE_ACCOUNT",
         "name": "sa-agent-d-test@iam.gserviceaccount.com",
+        "postureTier": 2,
         "projects": [],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4665,9 +5058,11 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "sa-agent-d",
         "kind": "SERVICE_ACCOUNT",
         "name": "sa-agent-d@iam.gserviceaccount.com",
+        "postureTier": 2,
         "projects": [],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4680,9 +5075,11 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "sa-agent-e",
         "kind": "SERVICE_ACCOUNT",
         "name": "sa-agent-e@iam.gserviceaccount.com",
+        "postureTier": 2,
         "projects": [],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4695,9 +5092,11 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "sa-agent-f",
         "kind": "SERVICE_ACCOUNT",
         "name": "sa-agent-f@iam.gserviceaccount.com",
+        "postureTier": 2,
         "projects": [],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4710,9 +5109,11 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "sa-agent-f-preprod",
         "kind": "SERVICE_ACCOUNT",
         "name": "sa-agent-f-preprod@iam.gserviceaccount.com",
+        "postureTier": 2,
         "projects": [],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4725,9 +5126,11 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "sa-agent-g",
         "kind": "SERVICE_ACCOUNT",
         "name": "sa-agent-g@iam.gserviceaccount.com",
+        "postureTier": 2,
         "projects": [],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4740,9 +5143,11 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "sa-agent-h-chatbot",
         "kind": "SERVICE_ACCOUNT",
         "name": "sa-agent-h-chatbot@iam.gserviceaccount.com",
+        "postureTier": 2,
         "projects": [],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4755,9 +5160,11 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "sa-agent-i",
         "kind": "SERVICE_ACCOUNT",
         "name": "sa-agent-i@iam.gserviceaccount.com",
+        "postureTier": 2,
         "projects": [],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4770,9 +5177,11 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "sa-agent-j",
         "kind": "SERVICE_ACCOUNT",
         "name": "sa-agent-j@iam.gserviceaccount.com",
+        "postureTier": 2,
         "projects": [],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4785,9 +5194,11 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "sa-agent-k",
         "kind": "SERVICE_ACCOUNT",
         "name": "sa-agent-k@iam.gserviceaccount.com",
+        "postureTier": 2,
         "projects": [],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4800,9 +5211,11 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "sa-agent-l-support",
         "kind": "SERVICE_ACCOUNT",
         "name": "sa-agent-l-support@iam.gserviceaccount.com",
+        "postureTier": 1,
         "projects": [],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4815,9 +5228,11 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "key-agent-autogen",
         "kind": "ACCESS_KEY",
         "name": "AKIA-AUTOGEN-AGENT-KEY",
+        "postureTier": 2,
         "projects": [],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4830,11 +5245,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "bucket-autogen-scratch-01",
         "kind": "BUCKET",
         "name": "bucket-autogen-scratch-01",
+        "postureTier": 1,
         "projects": [
           "PROJECT-BETA",
         ],
         "region": "us-west1",
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4847,11 +5264,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "bucket-autogen-scratch-02",
         "kind": "BUCKET",
         "name": "bucket-autogen-scratch-02",
+        "postureTier": 1,
         "projects": [
           "PROJECT-BETA",
         ],
         "region": "us-west1",
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4864,11 +5283,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "bucket-autogen-scratch-03",
         "kind": "BUCKET",
         "name": "bucket-autogen-scratch-03",
+        "postureTier": 1,
         "projects": [
           "PROJECT-BETA",
         ],
         "region": "us-west1",
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4881,11 +5302,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "bucket-autogen-scratch-04",
         "kind": "BUCKET",
         "name": "bucket-autogen-scratch-04",
+        "postureTier": 1,
         "projects": [
           "PROJECT-BETA",
         ],
         "region": "us-west1",
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4898,11 +5321,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "bucket-autogen-scratch-05",
         "kind": "BUCKET",
         "name": "bucket-autogen-scratch-05",
+        "postureTier": 1,
         "projects": [
           "PROJECT-BETA",
         ],
         "region": "us-west1",
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4915,11 +5340,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "bucket-autogen-scratch-06",
         "kind": "BUCKET",
         "name": "bucket-autogen-scratch-06",
+        "postureTier": 1,
         "projects": [
           "PROJECT-BETA",
         ],
         "region": "us-west1",
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4932,11 +5359,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "bucket-autogen-scratch-07",
         "kind": "BUCKET",
         "name": "bucket-autogen-scratch-07",
+        "postureTier": 1,
         "projects": [
           "PROJECT-BETA",
         ],
         "region": "us-west1",
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4949,11 +5378,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "bucket-autogen-scratch-08",
         "kind": "BUCKET",
         "name": "bucket-autogen-scratch-08",
+        "postureTier": 1,
         "projects": [
           "PROJECT-BETA",
         ],
         "region": "us-west1",
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4966,11 +5397,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "bucket-autogen-scratch-09",
         "kind": "BUCKET",
         "name": "bucket-autogen-scratch-09",
+        "postureTier": 1,
         "projects": [
           "PROJECT-BETA",
         ],
         "region": "us-west1",
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -4983,11 +5416,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "bucket-autogen-scratch-10",
         "kind": "BUCKET",
         "name": "bucket-autogen-scratch-10",
+        "postureTier": 1,
         "projects": [
           "PROJECT-BETA",
         ],
         "region": "us-west1",
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -5000,11 +5435,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "bucket-autogen-scratch-11",
         "kind": "BUCKET",
         "name": "bucket-autogen-scratch-11",
+        "postureTier": 1,
         "projects": [
           "PROJECT-BETA",
         ],
         "region": "us-west1",
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -5017,11 +5454,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "bucket-autogen-scratch-12",
         "kind": "BUCKET",
         "name": "bucket-autogen-scratch-12",
+        "postureTier": 1,
         "projects": [
           "PROJECT-BETA",
         ],
         "region": "us-west1",
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -5034,11 +5473,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "bucket-autogen-scratch-13",
         "kind": "BUCKET",
         "name": "bucket-autogen-scratch-13",
+        "postureTier": 1,
         "projects": [
           "PROJECT-BETA",
         ],
         "region": "us-west1",
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -5051,11 +5492,13 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "bucket-autogen-scratch-14",
         "kind": "BUCKET",
         "name": "bucket-autogen-scratch-14",
+        "postureTier": 1,
         "projects": [
           "PROJECT-BETA",
         ],
         "region": "us-west1",
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -5068,9 +5511,11 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "user-ops-01",
         "kind": "USER_ACCOUNT",
         "name": "ops.user01@example.com",
+        "postureTier": 1,
         "projects": [],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -5083,9 +5528,11 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "user-ops-02",
         "kind": "USER_ACCOUNT",
         "name": "ops.user02@example.com",
+        "postureTier": 1,
         "projects": [],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -5098,9 +5545,11 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "user-ops-03",
         "kind": "USER_ACCOUNT",
         "name": "ops.user03@example.com",
+        "postureTier": 1,
         "projects": [],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -5113,9 +5562,11 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "user-ops-04",
         "kind": "USER_ACCOUNT",
         "name": "ops.user04@example.com",
+        "postureTier": 1,
         "projects": [],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -5128,9 +5579,11 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "user-ops-05",
         "kind": "USER_ACCOUNT",
         "name": "ops.user05@example.com",
+        "postureTier": 1,
         "projects": [],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -5143,9 +5596,11 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "user-ops-06",
         "kind": "USER_ACCOUNT",
         "name": "ops.user06@example.com",
+        "postureTier": 1,
         "projects": [],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -5158,9 +5613,11 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "user-ops-07",
         "kind": "USER_ACCOUNT",
         "name": "ops.user07@example.com",
+        "postureTier": 1,
         "projects": [],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -5173,9 +5630,11 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "user-ops-08",
         "kind": "USER_ACCOUNT",
         "name": "ops.user08@example.com",
+        "postureTier": 1,
         "projects": [],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -5188,9 +5647,11 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "user-ops-09",
         "kind": "USER_ACCOUNT",
         "name": "ops.user09@example.com",
+        "postureTier": 1,
         "projects": [],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -5203,9 +5664,11 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "user-ops-10",
         "kind": "USER_ACCOUNT",
         "name": "ops.user10@example.com",
+        "postureTier": 1,
         "projects": [],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -5218,9 +5681,11 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "user-ops-11",
         "kind": "USER_ACCOUNT",
         "name": "ops.user11@example.com",
+        "postureTier": 1,
         "projects": [],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
       {
         "aars": null,
@@ -5233,9 +5698,11 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "id": "user-ops-12",
         "kind": "USER_ACCOUNT",
         "name": "ops.user12@example.com",
+        "postureTier": 1,
         "projects": [],
         "region": null,
         "severity": null,
+        "worstOpenProblem": null,
       },
     ],
     "sort": "aars",
@@ -7003,6 +7470,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "Agent-A",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-beta",
@@ -7034,6 +7510,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 62,
@@ -7090,6 +7567,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "Agent-B",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-beta",
@@ -7116,6 +7602,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 76,
@@ -7179,6 +7666,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "AGENT_AUTOGEN_DO_NOT_DELETE",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-beta",
@@ -7195,6 +7691,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 67,
@@ -7254,6 +7751,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "dev-agent-D-test",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-beta",
@@ -7270,6 +7776,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 67,
@@ -7329,6 +7836,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "dev-agent-D",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-beta",
@@ -7355,6 +7871,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 66,
@@ -7412,6 +7929,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "Agent-E",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-alpha",
@@ -7428,6 +7954,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 62,
@@ -7470,6 +7997,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "agent-F",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-alpha",
@@ -7482,6 +8018,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 62,
@@ -7524,6 +8061,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "agent-F-preprod",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-alpha",
@@ -7536,6 +8082,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 66,
@@ -7578,6 +8125,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "Agent-G",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-alpha",
@@ -7594,6 +8150,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 71,
@@ -7684,6 +8241,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "agent-H-chatbot",
         "nativeType": "hostedAiAgent",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-alpha",
@@ -7704,6 +8270,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 66,
@@ -7766,6 +8333,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "agent-I",
         "nativeType": "hostedAiAgent",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-alpha",
@@ -7782,6 +8358,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 29,
@@ -7825,6 +8402,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "agent-J",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "SCOPED",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 2,
         "projects": [
           {
             "id": "proj-project-beta",
@@ -7841,6 +8427,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 29,
@@ -7884,6 +8471,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "agent-K",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "SCOPED",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 2,
         "projects": [
           {
             "id": "proj-project-beta",
@@ -7900,6 +8496,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 61,
@@ -7946,6 +8543,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "AWSReservedSSO_FinanceAdmin_01",
         "nativeType": "role",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-alpha",
@@ -7954,6 +8560,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
         "severity": "HIGH",
         "status": "Active",
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 61,
@@ -8000,6 +8607,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "AWSReservedSSO_FinanceAdmin_02",
         "nativeType": "role",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-alpha",
@@ -8008,6 +8624,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
         "severity": "HIGH",
         "status": "Active",
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 61,
@@ -8054,6 +8671,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "AWSReservedSSO_FinanceAdmin_03",
         "nativeType": "role",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-alpha",
@@ -8062,6 +8688,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
         "severity": "HIGH",
         "status": "Active",
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 61,
@@ -8108,6 +8735,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "AWSReservedSSO_FinanceAdmin_04",
         "nativeType": "role",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-alpha",
@@ -8116,6 +8752,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
         "severity": "HIGH",
         "status": "Active",
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 61,
@@ -8162,6 +8799,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "AWSReservedSSO_FinanceAdmin_05",
         "nativeType": "role",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-alpha",
@@ -8170,6 +8816,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
         "severity": "HIGH",
         "status": "Active",
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 61,
@@ -8216,6 +8863,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "AWSReservedSSO_FinanceAdmin_06",
         "nativeType": "role",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-alpha",
@@ -8224,6 +8880,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
         "severity": "HIGH",
         "status": "Active",
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 61,
@@ -8270,6 +8927,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "AWSReservedSSO_FinanceAdmin_07",
         "nativeType": "role",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-alpha",
@@ -8278,6 +8944,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
         "severity": "HIGH",
         "status": "Active",
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 61,
@@ -8324,6 +8991,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "AWSReservedSSO_FinanceAdmin_08",
         "nativeType": "role",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-alpha",
@@ -8332,6 +9008,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         ],
         "severity": "HIGH",
         "status": "Active",
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 0,
@@ -8366,6 +9043,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "anthropic.claude-3-5-sonnet",
         "nativeType": "bedrock#foundationModel",
+        "postureInput": {
+          "capability": "MINIMAL",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 1,
         "projects": [
           {
             "id": "proj-project-alpha",
@@ -8406,6 +9092,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "text-embedding-005",
         "nativeType": "aiplatform#model",
+        "postureInput": {
+          "capability": "MINIMAL",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 1,
         "projects": [
           {
             "id": "proj-project-alpha",
@@ -8443,6 +9138,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "kind": "MCP_SERVER",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "mcp-internal-tools",
+        "postureInput": {
+          "capability": "MINIMAL",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 1,
         "projects": [
           {
             "id": "proj-project-alpha",
@@ -8480,6 +9184,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "kind": "AI_DATASET",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "dataset-support-transcripts",
+        "postureInput": {
+          "capability": "MINIMAL",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 1,
         "projects": [
           {
             "id": "proj-project-alpha",
@@ -8503,6 +9216,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "kind": "VIRTUAL_MACHINE",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "vm-agent-i-host",
+        "postureInput": {
+          "capability": "MINIMAL",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 1,
         "projects": [
           {
             "id": "proj-project-zeta",
@@ -8535,6 +9257,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "kind": "SERVERLESS",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "cloudrun-agent-h",
+        "postureInput": {
+          "capability": "MINIMAL",
+          "consequence": "LIMITED",
+          "containment": "PARTIAL",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 2,
         "projects": [
           {
             "id": "proj-project-delta",
@@ -8560,6 +9291,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "https://agent-i.internal-tools.example:8443",
         "portValidation": "Open",
+        "postureInput": {
+          "capability": "MINIMAL",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 1,
         "projects": [
           {
             "id": "proj-project-zeta",
@@ -8583,6 +9323,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "kind": "CONTAINER_IMAGE",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "img-agent-h:latest",
+        "postureInput": {
+          "capability": "MINIMAL",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 1,
         "projects": [
           {
             "id": "proj-project-delta",
@@ -8616,6 +9365,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "kind": "SERVICE_ACCOUNT",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "sa-agent-a@iam.gserviceaccount.com",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 2,
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -8647,6 +9405,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "kind": "SERVICE_ACCOUNT",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "sa-agent-b@iam.gserviceaccount.com",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 2,
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -8677,6 +9444,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "kind": "SERVICE_ACCOUNT",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "sa-agent-autogen@iam.gserviceaccount.com",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 2,
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -8707,6 +9483,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "kind": "SERVICE_ACCOUNT",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "sa-agent-d-test@iam.gserviceaccount.com",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 2,
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -8737,6 +9522,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "kind": "SERVICE_ACCOUNT",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "sa-agent-d@iam.gserviceaccount.com",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 2,
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -8767,6 +9561,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "kind": "SERVICE_ACCOUNT",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "sa-agent-e@iam.gserviceaccount.com",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 2,
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -8797,6 +9600,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "kind": "SERVICE_ACCOUNT",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "sa-agent-f@iam.gserviceaccount.com",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 2,
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -8827,6 +9639,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "kind": "SERVICE_ACCOUNT",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "sa-agent-f-preprod@iam.gserviceaccount.com",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 2,
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -8857,6 +9678,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "kind": "SERVICE_ACCOUNT",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "sa-agent-g@iam.gserviceaccount.com",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 2,
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -8888,6 +9718,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "kind": "SERVICE_ACCOUNT",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "sa-agent-h-chatbot@iam.gserviceaccount.com",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 2,
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -8918,6 +9757,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "kind": "SERVICE_ACCOUNT",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "sa-agent-i@iam.gserviceaccount.com",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 2,
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -8947,6 +9795,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "kind": "ACCESS_KEY",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "AKIA-AUTOGEN-AGENT-KEY",
+        "postureInput": {
+          "capability": "SCOPED",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 2,
         "projects": [],
         "status": "Active",
       },
@@ -8964,6 +9821,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "kind": "USER_ACCOUNT",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "ops.user01@example.com",
+        "postureInput": {
+          "capability": "MINIMAL",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 1,
         "projects": [],
         "status": "Active",
       },
@@ -8983,6 +9849,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "kind": "USER_ACCOUNT",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "ops.user02@example.com",
+        "postureInput": {
+          "capability": "MINIMAL",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 1,
         "projects": [],
         "status": "Active",
       },
@@ -9002,6 +9877,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "kind": "USER_ACCOUNT",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "ops.user03@example.com",
+        "postureInput": {
+          "capability": "MINIMAL",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 1,
         "projects": [],
         "status": "Active",
       },
@@ -9019,6 +9903,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "kind": "USER_ACCOUNT",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "ops.user04@example.com",
+        "postureInput": {
+          "capability": "MINIMAL",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 1,
         "projects": [],
         "status": "Active",
       },
@@ -9036,6 +9929,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "kind": "USER_ACCOUNT",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "ops.user05@example.com",
+        "postureInput": {
+          "capability": "MINIMAL",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 1,
         "projects": [],
         "status": "Active",
       },
@@ -9053,6 +9955,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "kind": "USER_ACCOUNT",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "ops.user06@example.com",
+        "postureInput": {
+          "capability": "MINIMAL",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 1,
         "projects": [],
         "status": "Active",
       },
@@ -9070,6 +9981,15 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "kind": "USER_ACCOUNT",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "ops.user07@example.com",
+        "postureInput": {
+          "capability": "MINIMAL",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 1,
         "projects": [],
         "status": "Active",
       },
@@ -11720,6 +12640,120 @@ Ignored until: Feb 1, 2026",
 }
 `;
 
+exports[`read endpoints > getPostureRule answers the same shape 1`] = `
+{
+  "data": {
+    "cellCoverage": {
+      "byFallback": 6,
+      "byRow": [
+        0,
+        1,
+        2,
+        2,
+        2,
+        4,
+        4,
+        4,
+        2,
+      ],
+      "byTier": {
+        "1": 2,
+        "2": 18,
+        "3": 6,
+        "4": 1,
+      },
+      "total": 27,
+    },
+    "computedVersion": 0,
+    "limits": {
+      "maxTierRules": 40,
+    },
+    "rule": {
+      "fallbackTier": 2,
+      "tierRules": [
+        {
+          "tier": 4,
+          "when": {
+            "externalEgress": true,
+            "privateData": true,
+            "untrustedIngress": true,
+          },
+        },
+        {
+          "tier": 4,
+          "when": {
+            "capability": "BROAD",
+            "consequence": "SEVERE",
+            "containment": "WEAK",
+          },
+        },
+        {
+          "tier": 3,
+          "when": {
+            "capability": "BROAD",
+            "containment": "WEAK",
+          },
+        },
+        {
+          "tier": 3,
+          "when": {
+            "capability": "BROAD",
+            "consequence": "SEVERE",
+          },
+        },
+        {
+          "tier": 3,
+          "when": {
+            "consequence": "SEVERE",
+            "containment": "WEAK",
+          },
+        },
+        {
+          "tier": 2,
+          "when": {
+            "capability": "BROAD",
+          },
+        },
+        {
+          "tier": 2,
+          "when": {
+            "containment": "WEAK",
+          },
+        },
+        {
+          "tier": 2,
+          "when": {
+            "consequence": "SEVERE",
+          },
+        },
+        {
+          "tier": 1,
+          "when": {
+            "capability": "MINIMAL",
+            "containment": "STRONG",
+          },
+        },
+      ],
+      "topTierCeiling": 0.15,
+    },
+    "shadowed": [],
+    "stale": false,
+    "summary": [
+      "9 tier rules are tried in order, first match wins; a vector matching none of them falls back to tier 2.",
+      "Tier 4 claims 1 of 27 cells (3.7%), against a ceiling of 15.0%.",
+      "1 row(s) can never fire against any cell this app can derive — the lethal-trifecta row, kept as a documented gap rather than fed a guess.",
+      "Posture is a capability envelope against a containment, not a sum of open problems: an asset with zero open findings can still sit at a high tier.",
+    ],
+    "unreachable": [
+      0,
+    ],
+    "validation": [],
+    "version": 0,
+  },
+  "ok": true,
+}
+`;
+
 exports[`read endpoints > getProblemRule answers the same shape 1`] = `
 {
   "data": {
@@ -13665,8 +14699,8 @@ exports[`read endpoints > getSettings answers the same shape 1`] = `
 exports[`read endpoints > getStorageStats answers the same shape 1`] = `
 {
   "data": {
-    "archiveBytes": 75938,
-    "cellCount": 40000,
+    "archiveBytes": 87631,
+    "cellCount": 40300,
     "rows": {
       "assets": 87,
       "dataFindings": 6,
@@ -15001,6 +16035,15 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "AGENT_AUTOGEN_DO_NOT_DELETE",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-beta",
@@ -15017,6 +16060,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 71,
@@ -15107,6 +16151,15 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "agent-H-chatbot",
         "nativeType": "hostedAiAgent",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-alpha",
@@ -15127,6 +16180,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 67,
@@ -15186,6 +16240,15 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "dev-agent-D",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-beta",
@@ -15212,6 +16275,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 67,
@@ -15271,6 +16335,15 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "dev-agent-D-test",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-beta",
@@ -15287,6 +16360,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 66,
@@ -15344,6 +16418,15 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "Agent-E",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-alpha",
@@ -15360,6 +16443,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 66,
@@ -15402,6 +16486,15 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "Agent-G",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-alpha",
@@ -15418,6 +16511,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 66,
@@ -15480,6 +16574,15 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "agent-I",
         "nativeType": "hostedAiAgent",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-alpha",
@@ -15496,6 +16599,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 62,
@@ -15556,6 +16660,15 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "Agent-A",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-beta",
@@ -15587,6 +16700,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 62,
@@ -15643,6 +16757,15 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "Agent-B",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-beta",
@@ -15669,6 +16792,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 62,
@@ -15711,6 +16835,15 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "agent-F",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-alpha",
@@ -15723,6 +16856,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 62,
@@ -15765,6 +16899,15 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "agent-F-preprod",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-alpha",
@@ -15777,6 +16920,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 29,
@@ -15820,6 +16964,15 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "agent-J",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "SCOPED",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 2,
         "projects": [
           {
             "id": "proj-project-beta",
@@ -15836,6 +16989,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 29,
@@ -15879,6 +17033,15 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "agent-K",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "SCOPED",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 2,
         "projects": [
           {
             "id": "proj-project-beta",
@@ -15895,6 +17058,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 0,
@@ -15932,6 +17096,15 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "Agent-L-support",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "MINIMAL",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 1,
         "projects": [
           {
             "id": "proj-project-alpha",
@@ -15969,6 +17142,15 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "kind": "SERVICE_ACCOUNT",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "sa-agent-a@iam.gserviceaccount.com",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 2,
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -15999,6 +17181,15 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "kind": "SERVICE_ACCOUNT",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "sa-agent-autogen@iam.gserviceaccount.com",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 2,
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -16030,6 +17221,15 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "kind": "SERVICE_ACCOUNT",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "sa-agent-b@iam.gserviceaccount.com",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 2,
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -16060,6 +17260,15 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "kind": "SERVICE_ACCOUNT",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "sa-agent-d-test@iam.gserviceaccount.com",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 2,
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -16090,6 +17299,15 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "kind": "SERVICE_ACCOUNT",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "sa-agent-d@iam.gserviceaccount.com",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 2,
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -16120,6 +17338,15 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "kind": "SERVICE_ACCOUNT",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "sa-agent-e@iam.gserviceaccount.com",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 2,
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -16150,6 +17377,15 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "kind": "SERVICE_ACCOUNT",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "sa-agent-f-preprod@iam.gserviceaccount.com",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 2,
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -16180,6 +17416,15 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "kind": "SERVICE_ACCOUNT",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "sa-agent-f@iam.gserviceaccount.com",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 2,
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -16210,6 +17455,15 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "kind": "SERVICE_ACCOUNT",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "sa-agent-g@iam.gserviceaccount.com",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 2,
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -16241,6 +17495,15 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "kind": "SERVICE_ACCOUNT",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "sa-agent-h-chatbot@iam.gserviceaccount.com",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 2,
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -16271,6 +17534,15 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "kind": "SERVICE_ACCOUNT",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "sa-agent-i@iam.gserviceaccount.com",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 2,
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -16301,6 +17573,15 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "kind": "SERVICE_ACCOUNT",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "sa-agent-j@iam.gserviceaccount.com",
+        "postureInput": {
+          "capability": "SCOPED",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 2,
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -16331,6 +17612,15 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "kind": "SERVICE_ACCOUNT",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "sa-agent-k@iam.gserviceaccount.com",
+        "postureInput": {
+          "capability": "SCOPED",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 2,
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -16362,6 +17652,15 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "kind": "SERVICE_ACCOUNT",
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "sa-agent-l-support@iam.gserviceaccount.com",
+        "postureInput": {
+          "capability": "MINIMAL",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 1,
         "projects": [],
         "status": "Active",
         "technologyCategories": [
@@ -17026,6 +18325,15 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "AGENT_AUTOGEN_DO_NOT_DELETE",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-beta",
@@ -17042,6 +18350,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 71,
@@ -17132,6 +18441,15 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "agent-H-chatbot",
         "nativeType": "hostedAiAgent",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-alpha",
@@ -17152,6 +18470,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 67,
@@ -17211,6 +18530,15 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "dev-agent-D",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-beta",
@@ -17237,6 +18565,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 67,
@@ -17296,6 +18625,15 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "dev-agent-D-test",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-beta",
@@ -17312,6 +18650,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 66,
@@ -17369,6 +18708,15 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "Agent-E",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-alpha",
@@ -17385,6 +18733,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 66,
@@ -17427,6 +18776,15 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "Agent-G",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-alpha",
@@ -17443,6 +18801,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 66,
@@ -17505,6 +18864,15 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "agent-I",
         "nativeType": "hostedAiAgent",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-alpha",
@@ -17521,6 +18889,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 62,
@@ -17581,6 +18950,15 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "Agent-A",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-beta",
@@ -17612,6 +18990,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 62,
@@ -17668,6 +19047,15 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "Agent-B",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-beta",
@@ -17694,6 +19082,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 62,
@@ -17736,6 +19125,15 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "agent-F",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-alpha",
@@ -17748,6 +19146,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 62,
@@ -17790,6 +19189,15 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "agent-F-preprod",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "BROAD",
+          "consequence": "LIMITED",
+          "containment": "WEAK",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 3,
         "projects": [
           {
             "id": "proj-project-alpha",
@@ -17802,6 +19210,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 29,
@@ -17845,6 +19254,15 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "agent-J",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "SCOPED",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 2,
         "projects": [
           {
             "id": "proj-project-beta",
@@ -17861,6 +19279,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 29,
@@ -17904,6 +19323,15 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "agent-K",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "SCOPED",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 2,
         "projects": [
           {
             "id": "proj-project-beta",
@@ -17920,6 +19348,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "technologyCategories": [
           "AI Service",
         ],
+        "worstOpenProblem": "TRACK",
       },
       {
         "aars": 0,
@@ -17957,6 +19386,15 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "lastSeen": "2026-06-28T05:00:00Z",
         "name": "Agent-L-support",
         "nativeType": "aiplatform#ReasoningEngine",
+        "postureInput": {
+          "capability": "MINIMAL",
+          "consequence": "LIMITED",
+          "containment": "STRONG",
+          "unknowns": [
+            "consequence",
+          ],
+        },
+        "postureTier": 1,
         "projects": [
           {
             "id": "proj-project-alpha",
@@ -18240,6 +19678,8 @@ exports[`the persisted ledger > writes the tabs the schema declares 2`] = `
     "native_type": "aiplatform#ReasoningEngine",
     "open_internet": "false",
     "port_validation": null,
+    "posture_input_json": "{"capability":"BROAD","containment":"WEAK","consequence":"LIMITED","unknowns":["consequence"]}",
+    "posture_tier": 3,
     "projects_json": "[{"id":"proj-project-beta","name":"PROJECT-BETA"},{"id":"proj-project-alpha","name":"PROJECT-ALPHA"}]",
     "publisher": "Platform Engineering",
     "region": "europe-west1",
@@ -18249,6 +19689,7 @@ exports[`the persisted ledger > writes the tabs the schema declares 2`] = `
     "status": "Active",
     "tags_json": "[{"key":"env","value":"prod"},{"key":"team","value":"ml"},{"key":"owner","value":"platform"}]",
     "technology_categories": "AI Service",
+    "worst_open_problem": "TRACK",
   },
   "ai_config_rules": {
     "external_refs": null,

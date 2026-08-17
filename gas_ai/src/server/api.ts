@@ -57,6 +57,17 @@ import {
   treeDiscrimination,
   validateProblemRule,
 } from "../domain/problemRule";
+import { countPostureTiers, TIER_VALUES, type PostureVector, type Tier } from "../domain/posture";
+import {
+  cellCoverage,
+  cleanPostureRule,
+  MAX_TIER_RULES,
+  postureDiscrimination,
+  postureRuleSummary,
+  shadowedTierRules,
+  unreachableTierRules,
+  validatePostureRule,
+} from "../domain/postureRule";
 import {
   AARS_SEVERITY_ORDER,
   isOpenGap,
@@ -553,6 +564,11 @@ function assetRow(n: GNode): Rec {
     severity: n.severity ?? null,
     aars: n.aars ?? null,
     aarsSeverity: n.aarsSeverity ?? null,
+    // Phase 6: the posture tier, BESIDE the AARS score above, never blended into it — see
+    // posture.ts's own header for why a tier is not an aggregate of what has been found.
+    postureTier: n.postureTier ?? null,
+    postureInput: n.postureInput ?? null,
+    worstOpenProblem: n.worstOpenProblem ?? null,
     comboGroups: n.comboGroups ?? [],
     internet: n.isAccessibleFromInternet ?? null,
     openInternet: n.isOpenToAllInternet ?? null,
@@ -613,6 +629,9 @@ function assetTableRow(n: GNode, issuesBySeverity?: Record<string, number>): Rec
     severity: n.severity ?? null,
     aars: n.aars ?? null,
     aarsSeverity: n.aarsSeverity ?? null,
+    // Phase 6: BESIDE aars — the two must be visibly independent columns, never merged.
+    postureTier: n.postureTier ?? null,
+    worstOpenProblem: n.worstOpenProblem ?? null,
     combos: (n.comboGroups ?? []).length,
     guardrailMissing: n.guardrailMissing ?? false,
     agentic: n.identityPurpose === "AGENTIC",
@@ -1870,6 +1889,135 @@ export function previewProblemRule(p?: unknown): ApiResult {
 
 export function recomputeProblems(_p?: unknown): ApiResult {
   return mutate(() => ({ ...syncStore.redecideProblems(), ...problemRuleState() }));
+}
+
+// ------------------------------------------------------------------------ posture rule
+//
+// Phase 6's lattice (domain/posture.ts, domain/postureRule.ts) exposed: same four
+// endpoints as the AARS rule and the problem rule above, same shapes, mirrored rather than
+// shared for the reason each of those own header comments gives — three genuinely
+// different models (a continuous score, a 4-outcome tree, a 4-tier lattice) that happen to
+// share an editor idiom, not one model wearing three costumes.
+
+/**
+ * The same {version, rule, computedVersion, stale, summary, cellCoverage, validation,
+ * shadowed, unreachable} shape `problemRuleState()` assembles for the tree, mirrored onto
+ * the lattice. `getPostureRule` and `setPostureRule` share it so the two can never
+ * disagree about what "the current state" means.
+ */
+function postureRuleState(): Rec {
+  const stored = settingsStore.getPostureRule();
+  const computedVersion = settingsStore.getComputedPostureVersion();
+  return {
+    version: stored.version,
+    rule: stored.rule,
+    computedVersion,
+    stale: computedVersion !== stored.version,
+    summary: postureRuleSummary(stored.rule),
+    cellCoverage: cellCoverage(stored.rule),
+    validation: validatePostureRule(stored.rule),
+    shadowed: shadowedTierRules(stored.rule),
+    unreachable: unreachableTierRules(stored.rule),
+    limits: { maxTierRules: MAX_TIER_RULES },
+  };
+}
+
+export function getPostureRule(_p?: unknown): ApiResult {
+  return run(() => postureRuleState());
+}
+
+export function setPostureRule(p?: unknown): ApiResult {
+  return mutate(() => {
+    const params = (p ?? {}) as Rec;
+    const proposed = cleanPostureRule(params["rule"]);
+    const errors = validatePostureRule(proposed);
+    if (errors.length) throw new Error(errors.join(" "));
+    settingsStore.setPostureRule(proposed);
+    return postureRuleState();
+  });
+}
+
+/**
+ * The decided population `postureDiscrimination` wants: tier + vector + unknowns, read off
+ * whichever nodes a preview actually folded a tier onto. Mirrors `decidedForDiscrimination`
+ * (the problem-rule preview's identical filter) — a node with no `postureInput` (never
+ * folded, or a synthetic node the fold skipped) is excluded rather than guessed at.
+ */
+function decidedForPostureDiscrimination(
+  nodes: ReadonlyArray<{ postureTier?: number; postureInput?: { capability: string; containment: string; consequence: string; unknowns?: string[] } }>,
+): Array<{ tier: Tier; vector: PostureVector; unknowns: string[] }> {
+  const out: Array<{ tier: Tier; vector: PostureVector; unknowns: string[] }> = [];
+  for (const node of nodes) {
+    const tier = node.postureTier;
+    const input = node.postureInput;
+    if (!input || !(TIER_VALUES as readonly number[]).includes(tier as number)) continue;
+    out.push({
+      tier: tier as Tier,
+      vector: {
+        capability: input.capability as PostureVector["capability"],
+        containment: input.containment as PostureVector["containment"],
+        consequence: input.consequence as PostureVector["consequence"],
+      },
+      unknowns: input.unknowns ?? [],
+    });
+  }
+  return out;
+}
+
+/**
+ * What saving this rule would do to every persisted asset's tier as it reads right now —
+ * `previewProblemRule`'s counterpart, built the same way: `syncStore.posturesWith(draft)`
+ * costs ZERO Wiz calls (posture derivation reads only the node's own already-persisted
+ * fields plus the already-decided problem verdicts), and the result is diffed against what
+ * the Inventory shows today.
+ */
+export function previewPostureRule(p?: unknown): ApiResult {
+  return run(() => {
+    const params = (p ?? {}) as Rec;
+    const proposed = cleanPostureRule(params["rule"]);
+    const errors = validatePostureRule(proposed);
+    if (errors.length) throw new Error(errors.join(" "));
+
+    const before = syncStore.loadAssets();
+    const beforeById = new Map(before.map((n) => [n.id, n.postureTier]));
+
+    const after = syncStore.posturesWith(proposed);
+
+    const movers: Rec[] = [];
+    for (const node of after) {
+      const fromTier = beforeById.get(node.id) ?? null;
+      const toTier = node.postureTier ?? null;
+      if (fromTier === toTier) continue;
+      movers.push({
+        id: node.id, name: node.name, kind: node.kind, fromTier, toTier,
+      });
+    }
+    // Worst proposed tier first (4 → 1) — the queue an operator would actually triage —
+    // then id for a stable order across an otherwise-tied pair.
+    movers.sort((a, b) => {
+      const r = Number(b["toTier"] ?? 0) - Number(a["toTier"] ?? 0);
+      return r !== 0 ? r : String(a["id"]).localeCompare(String(b["id"]));
+    });
+
+    return {
+      total: after.length,
+      current: countPostureTiers(before),
+      proposed: countPostureTiers(after),
+      summary: postureRuleSummary(proposed),
+      cellCoverage: cellCoverage(proposed),
+      shadowed: shadowedTierRules(proposed),
+      unreachable: unreachableTierRules(proposed),
+      validation: validatePostureRule(proposed),
+      postureDiscrimination: postureDiscrimination(decidedForPostureDiscrimination(after)),
+      movers: movers.slice(0, PREVIEW_MOVERS_MAX),
+      moverCount: movers.length,
+      truncated: movers.length > PREVIEW_MOVERS_MAX,
+    };
+  });
+}
+
+export function recomputePostures(_p?: unknown): ApiResult {
+  return mutate(() => ({ ...syncStore.recomputePostures(), ...postureRuleState() }));
 }
 
 // ----------------------------------------------------------------------------- data

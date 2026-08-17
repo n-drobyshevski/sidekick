@@ -43,6 +43,7 @@ import {
   sheetSection,
   skeleton,
   statusPill,
+  tierBadge,
   toast,
 } from "../ui.js";
 import {
@@ -193,43 +194,55 @@ export async function renderAarsRules(main, _params, ctx) {
   const root = el("div", { class: "workbench" }, bar, body);
   main.append(root);
 
-  // Two tabs over one route (help.js's ROUTE_TITLES / ROUTE_ICONS still name "aars"
-  // alone): the AARS point score this file has always edited, and the Problem tree —
-  // Phase 3/4's decision cascade — added here as a SECOND workbench sharing the page
-  // rather than a new route. `aarsPane` and `problemPane` are both mounted from the
-  // start; only `hidden` moves, so switching tabs never re-fetches or re-builds a pane
-  // that has already loaded. Each is `.tab-pane` (position:absolute; inset:0) rather than
-  // a second `.workbench-body` — `body` is already the positioned ancestor both tabs
-  // share, and stacking two `flex:1` boxes inside a plain block parent would collapse
-  // them to zero height instead of filling it.
+  // Three tabs over one route (help.js's ROUTE_TITLES / ROUTE_ICONS still name "aars"
+  // alone): the AARS point score this file has always edited, the Problem tree —
+  // Phase 3/4's decision cascade — and the Posture lattice — Phase 6's capability-envelope
+  // tiers — each a SEPARATE workbench sharing the page rather than a new route.
+  // `aarsPane`, `problemPane` and `posturePane` are all mounted from the start; only
+  // `hidden` moves, so switching tabs never re-fetches or re-builds a pane that has
+  // already loaded. Each is `.tab-pane` (position:absolute; inset:0) rather than its own
+  // `.workbench-body` — `body` is already the positioned ancestor all three tabs share,
+  // and stacking three `flex:1` boxes inside a plain block parent would collapse them to
+  // zero height instead of filling it.
   const aarsPane = el("div", { class: "tab-pane" });
   const problemPane = el("div", { class: "tab-pane", hidden: true });
-  body.append(aarsPane, problemPane);
+  const posturePane = el("div", { class: "tab-pane", hidden: true });
+  body.append(aarsPane, problemPane, posturePane);
 
   const modelTabs = segmented({
-    options: [{ value: "aars", label: "AARS" }, { value: "problem", label: "Problem tree" }],
+    options: [
+      { value: "aars", label: "AARS" },
+      { value: "problem", label: "Problem tree" },
+      { value: "posture", label: "Posture" },
+    ],
     value: "aars",
     ariaLabel: "Scoring model",
     onChange: (v) => selectModelTab(v),
   });
   bar.append(el("h1", { class: "workbench-title" }, "AARS Rules"), modelTabs);
 
-  // Assigned once the AARS rule loads (below) and once the Problem tab has loaded at
-  // least once — `let`, not `const`, so this closure can reach them however far either
-  // load has gotten, including "never" if the AARS rule itself failed to load.
+  // Assigned once the AARS rule loads (below) and once the Problem/Posture tabs have each
+  // loaded at least once — `let`, not `const`, so this closure can reach them however far
+  // any load has gotten, including "never" if the AARS rule itself failed to load.
   let aarsControls = null;
   let problemControls = null;
+  let postureControls = null;
   let activeModelTab = "aars"; // which tab is showing, so an async load can't unhide the wrong one
 
   function selectModelTab(which) {
     activeModelTab = which;
     const isAars = which === "aars";
+    const isProblem = which === "problem";
+    const isPosture = which === "posture";
     aarsPane.hidden = !isAars;
-    problemPane.hidden = isAars;
+    problemPane.hidden = !isProblem;
+    posturePane.hidden = !isPosture;
     if (aarsControls) aarsControls.hidden = !isAars;
-    if (problemControls) problemControls.hidden = isAars;
+    if (problemControls) problemControls.hidden = !isProblem;
+    if (postureControls) postureControls.hidden = !isPosture;
     modelTabs.set(which);
-    if (!isAars) loadProblemPane();
+    if (isProblem) loadProblemPane();
+    if (isPosture) loadPosturePane();
   }
 
   aarsPane.append(
@@ -1828,13 +1841,13 @@ export async function renderAarsRules(main, _params, ctx) {
       return;
     }
     const link = e.target.closest && e.target.closest(".nav-link");
-    if (!link || leaving || !(isDirty() || isProblemDirty())) return;
+    if (!link || leaving || !(isDirty() || isProblemDirty() || isPostureDirty())) return;
     e.preventDefault();
     e.stopPropagation();
     const ok = await confirmDialog({
       title: "Discard unsaved changes?",
-      body: "This page has edits — to the AARS rule, the Problem tree rule, or both — that " +
-        "have not been saved. Leaving discards them.",
+      body: "This page has edits — to the AARS rule, the Problem tree rule, or the Posture " +
+        "rule — that have not been saved. Leaving discards them.",
       confirmLabel: "Discard & leave",
       danger: true,
     });
@@ -1849,7 +1862,7 @@ export async function renderAarsRules(main, _params, ctx) {
       window.removeEventListener("beforeunload", onBeforeUnload);
       return;
     }
-    if (leaving || !(isDirty() || isProblemDirty())) return;
+    if (leaving || !(isDirty() || isProblemDirty() || isPostureDirty())) return;
     e.preventDefault();
     e.returnValue = "";
   };
@@ -2647,6 +2660,682 @@ export async function renderAarsRules(main, _params, ctx) {
     syncProblem();
     paintProblemImpact();
     scheduleProblemPreview();
+  }
+
+  // ============================================================================
+  // Posture — Phase 6. Same rule 1 as the AARS and Problem-tree panes: the client NEVER
+  // decides. Every outcome shown below — the tier occupancy strip, the movers, the cell
+  // counts, the per-axis unknown rates — comes from api_previewPostureRule, which runs the
+  // real cascade server-side (syncStore.posturesWith) at zero Wiz cost. Nothing here calls
+  // decidePosture or reimplements first-match-wins.
+  //
+  // Deliberately a SMALLER editor than the Problem tree's: posture derivation reads only
+  // the node's own already-persisted fields (see posture.ts's derivePostureInput comment —
+  // `rule` is accepted but unread), so there is no derivation-knobs section here the way
+  // the Problem tab has one for missingMission / remediateVerdicts / totalImpactGroups.
+  // Only the cascade itself and its two validation-only knobs (fallback tier, top-tier
+  // ceiling) are editable.
+
+  const POSTURE_AXIS_DEFS = [
+    { key: "capability", label: "Capability", values: ["BROAD", "SCOPED", "MINIMAL"] },
+    { key: "containment", label: "Containment", values: ["WEAK", "PARTIAL", "STRONG"] },
+    { key: "consequence", label: "Consequence", values: ["SEVERE", "MODERATE", "LIMITED"] },
+  ];
+  // Every key a `when` can carry — the three axes plus the three lethal-trifecta legs. The
+  // editor never writes the trifecta legs itself (see DEFAULT_POSTURE_RULE row 0's own
+  // comment for why that stays true even for a hand-added row), but a loaded rule can carry
+  // them, and the empty/duplicate `when` checks below must see the whole shape or a
+  // trifecta-only row would misread as empty.
+  const POSTURE_WHEN_KEYS = [
+    "capability", "containment", "consequence", "privateData", "untrustedIngress", "externalEgress",
+  ];
+  // Worst first — 4 down to 1 — mirrors TIER_VALUES (src/domain/posture.ts) reversed, the
+  // same "worst end of the scale leads" convention OUTCOME_OPTIONS keeps for the tree.
+  const TIER_OPTIONS = [
+    { value: "4", label: "Tier 4" },
+    { value: "3", label: "Tier 3" },
+    { value: "2", label: "Tier 2" },
+    { value: "1", label: "Tier 1" },
+  ];
+  const POSTURE_AXIS_LABELS = { capability: "Capability", containment: "Containment", consequence: "Consequence" };
+  const POSTURE_UNKNOWN_WARN_THRESHOLD = 0.5;
+  const POSTURE_MOVERS_INLINE = 8;
+
+  let postureState = null;
+  let postureSaved = null;
+  let postureDraft = null;
+  let posturePreview = null;
+  let posturePreviewError = "";
+  let posturePreviewSeq = 0;
+  let postureSaving = false;
+  let postureLoading = false;
+  let postureLoaded = false;
+
+  function isPostureDirty() {
+    return postureLoaded && JSON.stringify(postureDraft) !== JSON.stringify(postureSaved);
+  }
+
+  /**
+   * The cheap structural checks only — no cell enumeration, which would mean re-running
+   * the cascade client-side. The top-tier-ceiling check (validatePostureRule's other half)
+   * stays server-only, same contract `problemDraftErrors` keeps for the tree.
+   */
+  function postureDraftErrors(rule) {
+    const max = (postureState && postureState.limits && postureState.limits.maxTierRules) || 40;
+    const list = [];
+    if (!rule.tierRules.length) {
+      list.push("The tier cascade has no rules; every asset would route to the fallback tier.");
+    }
+    if (rule.tierRules.length > max) list.push(`The tier cascade is limited to ${max} rules.`);
+    rule.tierRules.forEach((row, i) => {
+      const empty = POSTURE_WHEN_KEYS.every((k) => row.when[k] === undefined);
+      if (empty && i !== rule.tierRules.length - 1) {
+        list.push(`Tier rule ${i + 1} has no conditions, so it swallows every rule after it.`);
+      }
+    });
+    return list;
+  }
+
+  async function loadPosturePane() {
+    if (postureLoaded || postureLoading) return;
+    postureLoading = true;
+    posturePane.append(
+      el(
+        "div",
+        {
+          role: "status",
+          "aria-label": "Loading the posture rule",
+          style: "position:absolute; inset:20px; display:flex; flex-direction:column; gap:14px",
+        },
+        skeleton("title", { width: "220px" }),
+        skeleton("chart", { height: "120px" }),
+        skeleton("line", { width: "70%" }),
+      ),
+    );
+    try {
+      postureState = await call("api_getPostureRule", {});
+    } catch (e) {
+      clear(posturePane).append(
+        el(
+          "div",
+          { class: "workbench-empty" },
+          emptyState("Couldn't load the Posture rule.", String(e.message || e)),
+        ),
+      );
+      postureLoading = false;
+      return;
+    }
+    postureLoading = false;
+    postureSaved = cloneRule(postureState.rule);
+    postureDraft = cloneRule(postureState.rule);
+    postureLoaded = true;
+    buildPosturePane();
+  }
+
+  function buildPosturePane() {
+    // ---------------------------------------------------------------------- toolbar
+    const uVersionPill = el("span", { class: "pill neutral" });
+    const uStalePill = el("span", { class: "pill" });
+    const uDirtyHost = el("span", {});
+    const uSaveBtn = el("button", { class: "primary" }, "Save rule");
+    const uRevertBtn = el("button", {}, "Revert");
+    const uRecomputeHost = el("span", {});
+    postureControls = el(
+      "div",
+      { class: "workbench-controls" },
+      el("div", { class: "rule-bar-state" }, uVersionPill, uStalePill, uDirtyHost),
+      uRecomputeHost,
+      uRevertBtn,
+      uSaveBtn,
+    );
+    postureControls.hidden = activeModelTab !== "posture";
+    bar.append(postureControls);
+
+    // ---------------------------------------------------------------- cascade (editor)
+    const uCascadeBody = el("tbody", {});
+    const uClaimsTh = el("th", { class: "rule-prices", hidden: true }, "Cells");
+    const uCascadeTable = el(
+      "div",
+      { class: "table-wrap" },
+      el(
+        "table",
+        { class: "data rule-table" },
+        el("caption", { class: "visually-hidden" }, "Posture tier rules, tried in order"),
+        el(
+          "thead",
+          {},
+          el(
+            "tr",
+            {},
+            el("th", {}, "#"),
+            ...POSTURE_AXIS_DEFS.map((a) => el("th", {}, a.label)),
+            el("th", {}, "Tier"),
+            uClaimsTh,
+            el("th", { class: "rule-noteh" }, "Note"),
+            el("th", {}, el("span", { class: "visually-hidden" }, "Actions")),
+          ),
+        ),
+        uCascadeBody,
+      ),
+    );
+
+    const uAddBtn = el("button", {}, "Add rule");
+    uAddBtn.addEventListener("click", () => {
+      // New rules go on TOP — a first-match cascade, same reasoning as the other two.
+      postureDraft.tierRules.unshift({ when: {}, tier: 2 });
+      renderPostureCascade();
+      focusPostureRow(0);
+      onPostureEdit();
+    });
+
+    function focusPostureRow(i) {
+      const tr = uCascadeBody.querySelector(`tr[data-idx="${i}"]`);
+      const sel = tr && tr.querySelector("select");
+      if (sel) sel.focus();
+    }
+
+    function renderPostureCascade() {
+      clear(uCascadeBody);
+      const max = (postureState.limits && postureState.limits.maxTierRules) || 40;
+      postureDraft.tierRules.forEach((row, i) => {
+        const axisCells = POSTURE_AXIS_DEFS.map((axis) => {
+          const sel = select({
+            options: axis.values,
+            value: row.when[axis.key] || "",
+            ariaLabel: `${axis.label}, rule ${i + 1}`,
+            placeholder: "any",
+            onChange: (v) => {
+              if (v) row.when[axis.key] = v;
+              else delete row.when[axis.key];
+              onPostureEdit();
+            },
+          });
+          return el("td", {}, sel);
+        });
+        const tierSel = select({
+          options: TIER_OPTIONS,
+          value: String(row.tier),
+          ariaLabel: `Tier, rule ${i + 1}`,
+          onChange: (v) => {
+            row.tier = Number(v);
+            onPostureEdit();
+          },
+        });
+
+        const move = (delta) => {
+          const to = i + delta;
+          if (to < 0 || to >= postureDraft.tierRules.length) return;
+          const other = postureDraft.tierRules[to];
+          postureDraft.tierRules[to] = row;
+          postureDraft.tierRules[i] = other;
+          renderPostureCascade();
+          const moved = uCascadeBody.querySelector(`tr[data-idx="${to}"]`);
+          const btn = moved && moved.querySelector(delta < 0 ? ".js-up" : ".js-down");
+          if (btn) btn.focus();
+          onPostureEdit();
+        };
+        const up = el("button", { class: "link js-up", "aria-label": `Move rule ${i + 1} up` }, "↑");
+        up.disabled = i === 0;
+        up.addEventListener("click", () => move(-1));
+        const down = el(
+          "button", { class: "link js-down", "aria-label": `Move rule ${i + 1} down` }, "↓");
+        down.disabled = i === postureDraft.tierRules.length - 1;
+        down.addEventListener("click", () => move(1));
+        const del = el("button", { class: "link danger", "aria-label": `Remove rule ${i + 1}` }, "✕");
+        del.addEventListener("click", () => {
+          postureDraft.tierRules.splice(i, 1);
+          renderPostureCascade();
+          const rows = uCascadeBody.querySelectorAll("tr[data-idx]");
+          const next = rows[Math.min(i, rows.length - 1)];
+          const btn = next && next.querySelector(".link.danger");
+          (btn || uAddBtn).focus();
+          onPostureEdit();
+        });
+
+        const meta = el("td", { class: "rule-rowmeta small muted" });
+        const claims = el("td", { class: "rule-prices num", hidden: true });
+        const tr = el(
+          "tr",
+          { "data-idx": String(i) },
+          el("td", { class: "num muted small" }, String(i + 1)),
+          ...axisCells,
+          el("td", {}, tierSel),
+          claims,
+          meta,
+          el("td", { class: "rule-rowbtns" }, up, down, del),
+        );
+        uCascadeBody.append(tr);
+      });
+
+      // The cascade's terminal step, drawn as the table's last row — same idiom as the
+      // other two cascades' fallback rows.
+      const fbSel = select({
+        options: TIER_OPTIONS,
+        value: String(postureDraft.fallbackTier),
+        ariaLabel: "Fallback tier",
+        onChange: (v) => {
+          postureDraft.fallbackTier = Number(v);
+          onPostureEdit();
+        },
+      });
+      uCascadeBody.append(
+        el(
+          "tr",
+          { class: "rule-fallback" },
+          el("td", { class: "num muted small", "aria-hidden": "true" }, "↳"),
+          el("td", { colspan: String(POSTURE_AXIS_DEFS.length) }, "Matches no rule above"),
+          el("td", {}, fbSel),
+          el("td", { class: "rule-prices num", hidden: true }),
+          el("td", { class: "rule-rowmeta small muted" }, "the lattice's fallback tier"),
+          el("td", {}),
+        ),
+      );
+
+      uAddBtn.disabled = postureDraft.tierRules.length >= max;
+      uAddBtn.title = uAddBtn.disabled ? `The cascade is limited to ${max} rules.` : "";
+    }
+
+    // -------------------------------------------------------- validation-only knob (editor)
+    const uCeilingId = nextId("uceil");
+    const uCeilingInput = numberInput(uCeilingId, {
+      value: Math.round(postureDraft.topTierCeiling * 1000) / 10, min: 0.1, max: 100, step: 0.1,
+    });
+    uCeilingInput.addEventListener("input", () => {
+      const pct = num(uCeilingInput.value, postureDraft.topTierCeiling * 100);
+      postureDraft.topTierCeiling = clamp(pct, 0.1, 100) / 100;
+      onPostureEdit();
+    });
+    const uCeilingField = {
+      ...field(uCeilingId, "Tier 4 ceiling", uCeilingInput, "% of the 27 cells"),
+      input: uCeilingInput,
+    };
+
+    const uEditor = el(
+      "div",
+      { class: "rule-editor" },
+      section(
+        "Tier cascade",
+        "Each row is tried in order; the first whose conditions ALL match wins. An axis " +
+          "left on “any” is a wildcard, not a value — a row with no conditions at all " +
+          "matches every remaining vector. A capability envelope, not an aggregate of open " +
+          "issues: nothing here reads a problem verdict.",
+        [uCascadeTable, el("div", { class: "rule-row", style: "margin-top:10px" }, uAddBtn)],
+      ),
+      section(
+        "Validation only",
+        "Moving this never changes which tier a vector receives — only whether the cascade " +
+          "as a whole still validates.",
+        [el("div", { class: "rule-row" }, uCeilingField.node)],
+      ),
+    );
+
+    // ---------------------------------------------------------------- impact (preview)
+    const uImpactStrip = el("div", { class: "impact-strip" });
+    const uImpactHeadline = el("p", { class: "impact-headline small muted" });
+    const uCellsLine = el("p", { class: "small muted", style: "margin:0 0 12px" });
+    const uImpactState = el("div", {});
+    const uLiveNote = el("span", { role: "status", "aria-live": "polite", class: "visually-hidden" });
+
+    const uUnknownList = el("div", { class: "diag-list" });
+    const uUnknownWarn = el("div", {});
+    const uUnknownSection = el(
+      "div",
+      {},
+      el("h2", { class: "section-label", style: "margin-top:18px" }, "Per-axis unknown rate"),
+      el(
+        "p", { class: "small muted", style: "margin:0 0 6px" },
+        "How often each axis could not be established, over the assets this draft actually " +
+          "tiered. A high rate here — not the tier counts above — is usually the real finding."),
+      uUnknownList,
+      uUnknownWarn,
+    );
+
+    const uMoverList = el("div", { class: "mover-list" });
+    const uMoverMore = el("div", { style: "margin-top:8px" });
+    const uMoverSection = el(
+      "div", {},
+      el("h2", { class: "section-label", style: "margin-top:18px" }, "What moves"),
+      uMoverList, uMoverMore,
+    );
+
+    const uImpact = el(
+      "div",
+      { class: "rule-impact" },
+      uLiveNote,
+      el("h2", { class: "section-label" }, "Impact on the persisted estate"),
+      uImpactState,
+      uImpactStrip,
+      uImpactHeadline,
+      uCellsLine,
+      uUnknownSection,
+      uMoverSection,
+    );
+
+    // postureControls lives in `bar`, appended above — the toolbar's own home is next to
+    // the other two toolbars it mirrors, not inside the scrollable pane. `posturePane`
+    // gets only the two-pane grid below it.
+    clear(posturePane).append(el("div", { class: "rule-panes" }, uEditor, uImpact));
+
+    function postureMoverRow(m) {
+      return el(
+        "div",
+        { class: "mover-row" },
+        el("span", { class: "mover-row__name" }, `${m.name} — ${m.kind}`),
+        el(
+          "div",
+          { class: "mover-row__move" },
+          tierBadge(m.fromTier),
+          el("span", { class: "mover-arrow", "aria-hidden": "true" }, "→"),
+          tierBadge(m.toTier),
+        ),
+      );
+    }
+
+    function paintPostureUnknownRates(disc) {
+      clear(uUnknownList);
+      clear(uUnknownWarn);
+      uUnknownSection.hidden = !disc;
+      if (!disc) return;
+      setText(
+        uCellsLine,
+        `${disc.cellsReached} of 27 cells reached, across ${disc.decided.length} tiered assets.`,
+      );
+      for (const key of ["capability", "containment", "consequence"]) {
+        const rate = disc.unknownRate[key] || 0;
+        const pct = Math.round(rate * 1000) / 10;
+        const high = rate >= POSTURE_UNKNOWN_WARN_THRESHOLD;
+        uUnknownList.append(
+          el(
+            "div", { class: "diag-row" },
+            el("span", { class: "diag-row__label" }, POSTURE_AXIS_LABELS[key]),
+            el("span", { class: "diag-row__value" }, `${pct}% unknown`),
+            high
+              ? el("span", { class: "diag-row__hint small muted" },
+                "most reads on this axis could not be established")
+              : null,
+          ),
+        );
+        if (high) {
+          uUnknownWarn.append(
+            el(
+              "p", { class: "diag-warn small" },
+              el("span", { class: "diag-warn__mark", "aria-hidden": "true" }, "▲"),
+              `${POSTURE_AXIS_LABELS[key]} reads UNKNOWN on ${pct}% of tiered assets. This ` +
+                "axis is not populated on this tenant, and every rule keyed on it is " +
+                "deciding on the minority it could actually read.",
+            ),
+          );
+        }
+      }
+    }
+
+    function paintPostureImpact() {
+      const errs = postureDraftErrors(postureDraft);
+      clear(uImpactState);
+
+      if (errs.length) {
+        clear(uImpactStrip);
+        clear(uMoverList);
+        clear(uMoverMore);
+        uMoverSection.hidden = true;
+        paintPostureUnknownRates(null);
+        setText(uImpactHeadline, "");
+        setText(uCellsLine, "");
+        uImpactState.append(emptyState("Fix the highlighted fields to preview.", errs[0]));
+        return;
+      }
+      if (posturePreviewError) {
+        clear(uImpactStrip);
+        uMoverSection.hidden = true;
+        paintPostureUnknownRates(null);
+        setText(uImpactHeadline, "");
+        setText(uCellsLine, "");
+        const retry = el("button", { style: "margin-top:10px" }, "Try again");
+        retry.addEventListener("click", () => {
+          posturePreviewError = "";
+          schedulePosturePreview();
+          paintPostureImpact();
+        });
+        uImpactState.append(emptyState("Couldn't preview this rule.", posturePreviewError), retry);
+        return;
+      }
+      if (!posturePreview) {
+        uMoverSection.hidden = true;
+        paintPostureUnknownRates(null);
+        setText(uImpactHeadline, "");
+        setText(uCellsLine, "");
+        clear(uImpactStrip).append(
+          skeleton("line", { width: "80%" }), skeleton("line", { width: "60%" }));
+        return;
+      }
+      if (!posturePreview.total) {
+        clear(uImpactStrip);
+        uMoverSection.hidden = true;
+        paintPostureUnknownRates(null);
+        setText(uImpactHeadline, "");
+        setText(uCellsLine, "");
+        uImpactState.append(
+          emptyState(
+            "No persisted asset to compare against.",
+            "Run a sync first; the rule still saves and applies to the next one."));
+        return;
+      }
+
+      clear(uImpactStrip);
+      for (const opt of TIER_OPTIONS) {
+        const now = posturePreview.current[Number(opt.value)] || 0;
+        const next = posturePreview.proposed[Number(opt.value)] || 0;
+        const delta = next - now;
+        uImpactStrip.append(
+          el(
+            "div", { class: "impact-row" },
+            tierBadge(Number(opt.value)),
+            el("span", { class: "impact-row__nums" }, `${now} → ${next}`),
+            el(
+              "span", { class: "impact-row__delta" },
+              delta === 0
+                ? el("span", { class: "muted" }, "—")
+                : el(
+                  "span", { class: delta > 0 ? "delta-up" : "delta-down" },
+                  (delta > 0 ? "+" : "") + String(delta)),
+            ),
+          ),
+        );
+      }
+
+      const headline = posturePreview.moverCount
+        ? `Of ${posturePreview.total} assets, ${posturePreview.moverCount} change tier.`
+        : `Nothing changes across ${posturePreview.total} assets.`;
+      setText(uImpactHeadline, headline);
+      setText(uLiveNote, `Impact updated. ${headline}`);
+
+      paintPostureUnknownRates(posturePreview.postureDiscrimination);
+
+      clear(uMoverList);
+      clear(uMoverMore);
+      uMoverSection.hidden = !posturePreview.movers.length;
+      for (const m of posturePreview.movers.slice(0, POSTURE_MOVERS_INLINE)) {
+        uMoverList.append(postureMoverRow(m));
+      }
+      if (posturePreview.moverCount > POSTURE_MOVERS_INLINE) {
+        const more = el("button", { class: "link" }, `View all ${posturePreview.moverCount}`);
+        more.addEventListener("click", () => {
+          openSheet(
+            (sheetBody) => {
+              const list = el("div", { class: "mover-list" });
+              for (const m of posturePreview.movers) list.append(postureMoverRow(m));
+              sheetBody.append(list);
+              if (posturePreview.truncated) {
+                sheetBody.append(
+                  el(
+                    "p", { class: "small muted", style: "margin-top:10px" },
+                    `Showing the ${posturePreview.movers.length} most consequential of ` +
+                      `${posturePreview.moverCount} — worst proposed tier first.`),
+                );
+              }
+            },
+            { title: "What moves", subtitle: headline, ariaLabel: "Assets that change tier" },
+          );
+        });
+        uMoverMore.append(more);
+      }
+    }
+
+    // -------------------------------------------------------------------------- sync
+    function onPostureEdit() {
+      syncPosture();
+      schedulePosturePreview();
+    }
+
+    function syncPosture() {
+      setText(uVersionPill, postureState.version === 0 ? "Spec defaults" : `Model v${postureState.version}`);
+      uStalePill.className = `pill ${postureState.stale ? "warn" : "ok"}`;
+      setText(uStalePill, postureState.stale ? "Tiers stale" : "Tiers current");
+      clear(uDirtyHost);
+      if (isPostureDirty()) uDirtyHost.append(statusPill("warn", "Unsaved changes"));
+      uRevertBtn.disabled = !isPostureDirty() || postureSaving;
+      uSaveBtn.disabled = postureSaving;
+
+      setValue(uCeilingInput, Math.round(postureDraft.topTierCeiling * 1000) / 10);
+
+      // Cascade row notes: shadowed or unreachable, and how many cells each row claims —
+      // both come from the preview, which walks the DRAFT, exactly like the other two
+      // cascades' own coverage.
+      const shadowed = (posturePreview && posturePreview.shadowed) || [];
+      const unreachable = (posturePreview && posturePreview.unreachable) || [];
+      const coverage = (posturePreview && posturePreview.cellCoverage) || null;
+      const rows = uCascadeBody.querySelectorAll("tr[data-idx]");
+      rows.forEach((tr, i) => {
+        const meta = tr.querySelector(".rule-rowmeta");
+        const isShadow = shadowed.indexOf(i) >= 0;
+        const isUnreachable = !isShadow && unreachable.indexOf(i) >= 0;
+        tr.classList.toggle("rule-dead", isShadow || isUnreachable);
+        setText(
+          meta,
+          isShadow
+            ? "never fires — an earlier rule already claims every cell it could match"
+            : isUnreachable
+              ? "never fires — names something no live signal can produce (see this rule's own header)"
+              : "",
+        );
+        paintPrices(tr.querySelector(".rule-prices"), coverage ? coverage.byRow[i] || 0 : null, coverage ? coverage.total : 0);
+      });
+      const fbRow = uCascadeBody.querySelector("tr.rule-fallback");
+      if (fbRow) {
+        paintPrices(
+          fbRow.querySelector(".rule-prices"),
+          coverage ? coverage.byFallback : null,
+          coverage ? coverage.total : 0);
+      }
+      uClaimsTh.hidden = !coverage;
+
+      syncPostureRecompute();
+    }
+
+    function syncPostureRecompute() {
+      const want = postureState.stale ? "1" : "0";
+      if (uRecomputeHost.dataset.sig === want) return;
+      uRecomputeHost.dataset.sig = want;
+      clear(uRecomputeHost);
+      if (!postureState.stale) return;
+      const btn = el("button", {}, "Recompute tiers");
+      btn.addEventListener("click", async () => {
+        const ok = await confirmDialog({
+          title: "Recompute every posture tier?",
+          body:
+            "Re-tiers every persisted asset under the saved rule and rewrites the assets " +
+            "tab. No sync-history row is written, so no trend is affected.",
+          confirmLabel: "Recompute",
+        });
+        if (!ok) return;
+        btn.disabled = true;
+        setText(btn, "Recomputing…");
+        try {
+          const fresh = await call("api_recomputePostures", {});
+          postureState = { ...postureState, ...fresh };
+          postureSaved = cloneRule(postureState.rule);
+          toast(`Retiered ${fresh.assetCount} assets.`);
+          syncPosture();
+          schedulePosturePreview();
+          ctx.refresh();
+        } catch (e) {
+          toast(String(e.message || e), "error");
+          btn.disabled = false;
+          setText(btn, "Recompute tiers");
+        }
+      });
+      uRecomputeHost.append(btn);
+    }
+
+    // ----------------------------------------------------------------------- preview
+    const schedulePosturePreviewRun = debounce(() => runPosturePreview(), PREVIEW_DEBOUNCE_MS);
+    function schedulePosturePreview() {
+      schedulePosturePreviewRun.cancel();
+      if (postureDraftErrors(postureDraft).length) {
+        posturePreview = null;
+        posturePreviewError = "";
+        uImpact.classList.remove("updating");
+        paintPostureImpact();
+        return;
+      }
+      uImpact.classList.add("updating");
+      schedulePosturePreviewRun();
+    }
+
+    async function runPosturePreview() {
+      const seq = ++posturePreviewSeq;
+      try {
+        const data = await call("api_previewPostureRule", { rule: postureDraft });
+        if (seq !== posturePreviewSeq) return;
+        posturePreview = data;
+        posturePreviewError = "";
+      } catch (e) {
+        if (seq !== posturePreviewSeq) return;
+        posturePreview = null;
+        posturePreviewError = String(e.message || e);
+      }
+      uImpact.classList.remove("updating");
+      paintPostureImpact();
+      syncPosture(); // row notes and cell counts come from the preview
+    }
+
+    // -------------------------------------------------------------------------- save
+    uRevertBtn.addEventListener("click", () => {
+      postureDraft = cloneRule(postureSaved);
+      renderPostureCascade();
+      onPostureEdit();
+    });
+
+    uSaveBtn.addEventListener("click", async () => {
+      const errs = postureDraftErrors(postureDraft);
+      if (errs.length) {
+        toast(errs[0], "warn");
+        return;
+      }
+      postureSaving = true;
+      syncPosture();
+      try {
+        const fresh = await call("api_setPostureRule", { rule: postureDraft });
+        postureState = fresh;
+        postureSaved = cloneRule(fresh.rule);
+        postureDraft = cloneRule(fresh.rule);
+        toast("Posture rule saved.");
+        renderPostureCascade();
+        postureSaving = false;
+        onPostureEdit();
+        ctx.refresh();
+      } catch (e) {
+        postureSaving = false;
+        syncPosture();
+        toast(String(e.message || e), "error");
+      }
+    });
+
+    // --------------------------------------------------------------------- first paint
+    renderPostureCascade();
+    syncPosture();
+    paintPostureImpact();
+    schedulePosturePreview();
   }
 
   // --------------------------------------------------------------------- first paint

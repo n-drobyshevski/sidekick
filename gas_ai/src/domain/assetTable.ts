@@ -9,10 +9,11 @@ import { AARS_SEVERITY_ORDER, SEVERITY_ORDER, normalizeAarsSeverity } from "./co
 import { toNum as num, toStr as str } from "./util";
 import type { Rec } from "./util";
 
-export type AssetSort = "aars" | "name" | "kind" | "cloud" | "region" | "severity" | "combos";
+export type AssetSort =
+  | "aars" | "postureTier" | "name" | "kind" | "cloud" | "region" | "severity" | "combos";
 
 export const ASSET_SORTS: AssetSort[] = [
-  "aars", "name", "kind", "cloud", "region", "severity", "combos",
+  "aars", "postureTier", "name", "kind", "cloud", "region", "severity", "combos",
 ];
 
 export type SortDir = "asc" | "desc";
@@ -23,7 +24,7 @@ export type SortDir = "asc" | "desc";
  * also preserves the pre-direction meaning of a `?sort=` deep link, which had no `dir`.
  */
 export const DEFAULT_SORT_DIR: Record<AssetSort, SortDir> = {
-  aars: "desc", severity: "desc", combos: "desc",
+  aars: "desc", postureTier: "desc", severity: "desc", combos: "desc",
   name: "asc", kind: "asc", cloud: "asc", region: "asc",
 };
 
@@ -208,6 +209,11 @@ type Cmp = (a: Rec, b: Rec) => number;
 /** Every primary key is written ascending; `dir` flips it. */
 const PRIMARY: Record<AssetSort, Cmp> = {
   aars: (a, b) => score(a["aars"]) - score(b["aars"]),
+  // Same "missing sorts last" convention as `aars`: `score()` reads a missing tier as -1,
+  // and 4 (worst) already sorts above 1 (best) under the ascending primary, matching AARS's
+  // own "higher number is worse" direction — so `desc` (this column's default) reads worst
+  // tier first, exactly like `aars` reads worst score first.
+  postureTier: (a, b) => score(a["postureTier"]) - score(b["postureTier"]),
   name: (a, b) => str(a["name"]).localeCompare(str(b["name"])),
   kind: (a, b) => str(a["kind"]).localeCompare(str(b["kind"])),
   cloud: (a, b) => str(a["cloud"]).localeCompare(str(b["cloud"])),
