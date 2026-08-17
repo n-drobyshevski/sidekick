@@ -18,6 +18,12 @@
 //   find=AI_AGENT(RUNS_AS.SERVICE_ACCOUNT'HOSTED_ON.SERVERLESS)     two steps off one node
 //   find=AI_AGENT(OR(RUNS_AS.SERVICE_ACCOUNT'!PROTECTED_BY.AI_GUARDRAIL))   either one
 //   find=AI_AGENT(USES_MODEL.AI_MODEL'OR(A.X'B.Y))                  one AND, then either
+//   find=AI_AGENT-AI_DEPLOYMENT(RUNS_AS.SERVICE_ACCOUNT)   one node, EITHER kind
+//
+// `-` between kinds, and it is the only character it could have been. The invariant above spends
+// `.` `'` `(` `)` `!` `~` `*` already, `_` lives inside tokens, and lowercase has to stay a parse
+// error — which leaves the hyphen as the one thing encodeURIComponent spares and this grammar has
+// not claimed. (`,` would read better and is not spared: it becomes %2C.)
 //
 // Property filters ride in a separate `where` param rather than inside the tree, because they
 // are the half that changes most (every click in the filter panel) and nesting them would make
@@ -79,6 +85,7 @@ export function depthOf(query) {
 
 const SEP_SIBLING = "'";
 const SEP_EDGE = ".";
+const SEP_KIND = "-";
 const TOKEN = /^[A-Z0-9_]+$/;
 
 /**
@@ -102,8 +109,15 @@ function readNode(c) {
     hidden = true;
     c.i++;
   }
-  const kind = readToken(c);
-  const node = { kind };
+  // One kind, or several joined by `-` — "AI agents and AI deployments" is one node asking for
+  // either, not two queries. `readToken` already halts at the first non-token character, so the
+  // list needs no lookahead beyond checking for the separator.
+  const kinds = [readToken(c)];
+  while (c.s[c.i] === SEP_KIND) {
+    c.i++;
+    kinds.push(readToken(c));
+  }
+  const node = { kind: kinds.length === 1 ? kinds[0] : kinds };
   if (hidden) node.show = false;
   if (c.s[c.i] === "(") {
     c.i++;
@@ -176,9 +190,56 @@ function readToken(c) {
   return tok;
 }
 
+/**
+ * The kinds a node names, always as a list — the client's twin of the domain's `kindsOf`.
+ *
+ * One kind is stored as a bare string so that an existing query is the object it always was;
+ * this is the single place anything narrows the two spellings.
+ */
+export function kindsOf(node) {
+  return Array.isArray(node.kind) ? node.kind : [node.kind];
+}
+
+/**
+ * A node's kinds as one string — `"AI_AGENT"`, `"AI_AGENT-AI_DEPLOYMENT"`.
+ *
+ * The IDENTITY, not the label: the server derives `ColumnGroup.kind` the same way and
+ * test/graphQueryWalk.test.js compares the two by value, so the pair has to agree character for
+ * character. Also the key per-kind column preferences are stored under.
+ */
+export function kindKey(node) {
+  return kindsOf(node).join(SEP_KIND);
+}
+
+/** Do two nodes ask for the same kinds? Order-insensitive, so a re-pick is still a no-op. */
+export function sameKinds(a, b) {
+  const x = kindsOf(a);
+  const y = kindsOf(b);
+  return x.length === y.length && x.every((k) => y.includes(k));
+}
+
+/**
+ * Do two kind selections share anything? The one rule the "keeps or drops" decisions read.
+ *
+ * ANY OVERLAPS EVERYTHING, as a set-theoretic fact rather than a special case: it is the union of
+ * every kind, so `AI_AGENT` is inside it. By tokens alone `["ANY"]` and `["AI_AGENT"]` look
+ * disjoint, and treating them that way meant switching a query to "Any node" deleted the steps
+ * below it — which is wrong twice over, because widening a question should never lose work, and
+ * `FIND ANY THAT runs as Service Account` is a query the app writes for itself.
+ *
+ * Exported so `setKinds` and the builder decide by the same rule; two copies would drift, and the
+ * failure is silent — one half keeping a filter the other half just dropped.
+ */
+export function kindsOverlap(a, b) {
+  const x = Array.isArray(a) ? a : [a];
+  const y = Array.isArray(b) ? b : [b];
+  if (x.includes("ANY") || y.includes("ANY")) return true;
+  return x.some((k) => y.includes(k));
+}
+
 /** The inverse. Round-trips: parseQuery(serializeQuery(q)) deep-equals q. */
 export function serializeQuery(node) {
-  let out = (node.show === false ? "!" : "") + node.kind;
+  let out = (node.show === false ? "!" : "") + kindsOf(node).join(SEP_KIND);
   const steps = node.steps || [];
   if (steps.length) {
     out += "(" + steps.map(serializeStep).join(SEP_SIBLING) + ")";
@@ -558,7 +619,14 @@ export function queryRows(query) {
       level: level - foldedAbove(path),
       path,
       index,
-      kind: node.kind,
+      /**
+       * TWO readings of the same thing, on purpose. `kinds` is what the bar renders — a chip
+       * each. `kind` is the IDENTITY: the server derives `ColumnGroup.kind` with the same
+       * `kindKey`, graphQueryWalk.test.js compares the pair by value, and the column-preference
+       * store is keyed by it. A one-kind row answers the bare kind for both.
+       */
+      kinds: kindsOf(node),
+      kind: kindKey(node),
       hidden: node.show === false,
       edge: step ? step.edge : null,
       hops: step ? step.hops || 0 : 0,
@@ -694,15 +762,37 @@ export function addStep(query, path, step) {
   });
 }
 
-/** Replace the node at `path`, dropping steps the new kind cannot carry. */
-export function setKind(query, path, kind) {
+/**
+ * Set what the node at `path` looks for — one kind or several.
+ *
+ * THE STEPS BELOW SURVIVE AN OVERLAP. They were chosen against the old kinds' vocabulary, so a
+ * change to something unrelated leaves a query that cannot match and gives no hint why — which
+ * is why any change used to drop them. But adding a second kind to a selection is the common
+ * edit now, and wiping the query every time someone widens it would make the multi-select
+ * unusable: the relationships already there are still traversable by the kinds still there.
+ *
+ * So: overlap keeps, disjoint drops. Widening and narrowing both keep, and only trading the
+ * selection for a different one starts over.
+ *
+ * `kinds` is normalised the same way the parser and the validator do it — one kind as a bare
+ * string, several as a list — so no edit can produce a tree the DSL would not round-trip.
+ */
+export function setKinds(query, path, kinds) {
+  const list = (Array.isArray(kinds) ? kinds : [kinds]).filter(Boolean);
+  if (!list.length) return query;
+  const next = list.includes("ANY") ? ["ANY"] : list.filter((k, i) => list.indexOf(k) === i);
   return editQuery(query, path, (node) => {
-    if (node.kind === undefined || node.kind === kind) return;
-    node.kind = kind;
-    // The steps below were chosen against the old kind's vocabulary; keeping them would build a
-    // query that cannot match and give no hint why.
-    delete node.steps;
+    if (node.kind === undefined) return;
+    const was = kindsOf(node);
+    if (was.length === next.length && was.every((k) => next.includes(k))) return;
+    node.kind = next.length === 1 ? next[0] : next;
+    if (!kindsOverlap(was, next)) delete node.steps;
   });
+}
+
+/** One kind, the shape most callers want. `setKinds` is the general form. */
+export function setKind(query, path, kind) {
+  return setKinds(query, path, [kind]);
 }
 
 export function setHidden(query, path, hidden) {
@@ -778,7 +868,7 @@ export function replaceStep(query, path, step) {
       const next = { ...step, node: { ...step.node } };
       if (s.negate) next.negate = true;
       if (s.optional) next.optional = true;
-      if (s.node && s.node.kind === next.node.kind) {
+      if (s.node && sameKinds(s.node, next.node)) {
         if (s.node.show === false) next.node.show = false;
         if (s.node.steps) next.node.steps = s.node.steps;
       }

@@ -79,6 +79,16 @@ export const READ_APIS: Array<[name: string, params: unknown, label?: string]> =
     { query: { kind: "AI_AGENT", steps: [{ edge: "RUNS_AS", node: { kind: "SERVICE_ACCOUNT" } }] } },
     "runGraphQuery (agent runs as service account)",
   ],
+  // A FILTERED query, which draws more than it was asked for: a filter naming a risk property
+  // also names the subgraph that proves it, so this payload carries the identity, the store and
+  // the data findings behind "reaches classified data" while the rows stay one per agent. The
+  // node/edge asymmetry with the case above is the whole point and is what this golden pins —
+  // the two cases above carry no filter and so must stay byte-identical to what they were.
+  [
+    "runGraphQuery",
+    { query: { kind: "AI_AGENT", where: [{ key: "sensitiveAccess", values: ["true"] }] } },
+    "runGraphQuery (agents reaching classified data, with the evidence)",
+  ],
   ["getAssets", {}],
   ["getAssetOptions", {}],
   ["getIssues", {}],

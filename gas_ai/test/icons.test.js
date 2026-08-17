@@ -18,7 +18,7 @@ import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
-  CATEGORY_LABELS, CATEGORY_ORDER, KIND_CATEGORY, KIND_LABELS, glyphPaths,
+  CATEGORY_LABELS, CATEGORY_ORDER, KIND_CATEGORY, KIND_LABELS, glyphPaths, kindsLabel,
 } from "../src/client/js/icons.js";
 import { UI_ICON_NAMES } from "../src/client/js/ui/uiIcons.js";
 import { NODE_KINDS } from "../src/domain/graphTypes";
@@ -248,4 +248,40 @@ describe("chrome icon coverage", () => {
   // Deliberately ONE direction. The reverse — every glyph is used by something — cannot be
   // asserted from a source scan: a name reaching uiIcon through a variable is invisible to it,
   // so the check would fail the build over a glyph that is drawn on every page.
+});
+
+// A query node can name SEVERAL kinds, and its identity is the list joined by `-`. That string
+// reaches the table's group heading and the builder's row labels, where `kindLabel` finds no entry
+// and echoes the raw "AI_AGENT-BUCKET" back at the reader — which is what this glosses instead.
+describe("kindsLabel", () => {
+  it("glosses a joined identity, an array, and one bare kind alike", () => {
+    expect(kindsLabel("AI_AGENT-BUCKET")).toBe("AI Agent or Bucket");
+    expect(kindsLabel(["AI_AGENT", "BUCKET"])).toBe("AI Agent or Bucket");
+    expect(kindsLabel("AI_AGENT")).toBe("AI Agent");
+    expect(kindsLabel(["AI_AGENT"])).toBe("AI Agent");
+  });
+
+  it("commas the middle and reserves `or` for the last, never `and`", () => {
+    // A node matches any ONE of them; "AI Agent and Bucket" promises a node that is both.
+    expect(kindsLabel("AI_AGENT-BUCKET-SERVICE_ACCOUNT"))
+      .toBe("AI Agent, Bucket or Service Account");
+  });
+
+  it("names the wildcard, which is not a kind and has no KIND_LABELS entry", () => {
+    expect(kindsLabel("ANY")).toBe("Any node");
+    expect(KIND_LABELS.ANY).toBeUndefined();
+  });
+
+  it("answers nothing for nothing, rather than a stray separator", () => {
+    expect(kindsLabel("")).toBe("");
+    expect(kindsLabel([])).toBe("");
+    expect(kindsLabel(null)).toBe("");
+  });
+
+  it("glosses every kind it can be handed", () => {
+    // The joined form is built from NODE_KINDS members, so any of them may turn up in a pair.
+    for (const k of NODE_KINDS) {
+      expect(kindsLabel(k + "-BUCKET"), k).toBe(KIND_LABELS[k] + " or Bucket");
+    }
+  });
 });

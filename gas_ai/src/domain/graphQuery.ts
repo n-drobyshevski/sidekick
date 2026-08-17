@@ -31,6 +31,31 @@ import { cmp, pushInto, type Rec } from "./util";
 
 /** A kind slot in a query. "ANY" matches every kind — the wildcard the ANY-hops step needs. */
 export type QueryKind = NodeKind | "ANY";
+
+/**
+ * The kinds a node names, always as a list. THE one narrowing point for `QueryNode.kind`.
+ *
+ * Everything downstream reads kinds through this, so nothing else has to know that a single
+ * kind is stored as a bare string — and adding a reader that forgets is a type error rather
+ * than a branch that quietly works for one shape and not the other.
+ */
+export function kindsOf(node: QueryNode): QueryKind[] {
+  return Array.isArray(node.kind) ? node.kind : [node.kind];
+}
+
+/** The character between kinds in `find=`. See the grammar note in the client's graphQuery.js. */
+export const KIND_SEP = "-";
+
+/**
+ * A node's kinds as one stable string — `"AI_AGENT"`, `"AI_AGENT-AI_DEPLOYMENT"`.
+ *
+ * The identity two sides of the wire compare (`ColumnGroup.kind` here, the builder row's `kind`
+ * there) and the key per-kind column preferences are stored under. A one-kind node answers the
+ * bare kind, which is why nothing about an existing payload moves.
+ */
+export function kindKey(node: QueryNode): string {
+  return kindsOf(node).join(KIND_SEP);
+}
 /** An edge slot. "ANY" means "related somehow", walked undirected up to `hops`. */
 export type QueryEdge = EdgeType | "ANY";
 
@@ -75,7 +100,16 @@ export interface PropFilter {
 }
 
 export interface QueryNode {
-  kind: QueryKind;
+  /**
+   * What this node is looking for. An array names SEVERAL kinds and matches any of them —
+   * "AI agents and AI deployments that reach classified data" is one node, not two queries.
+   *
+   * Scalar-or-array rather than always-array so that a one-kind node stays the object it has
+   * always been on the wire, which keeps every existing link, saved view and golden payload
+   * byte-identical. `validateQuery` canonicalises the two spellings into one, and `kindsOf` is
+   * the single place anything narrows them — no reader below this line asks which it got.
+   */
+  kind: QueryKind | QueryKind[];
   where?: PropFilter[];
   /**
    * Whether this node contributes rows and a column group — the eye toggle in the builder.
@@ -103,6 +137,20 @@ export interface RelationStep {
   optional?: boolean;
   /** ANY edges only: how far to walk. 1–MAX_HOPS. This is where the old depth slider landed. */
   hops?: number;
+  /**
+   * Follow the edge that RECORDS AN ABSENCE rather than the ones that record a relationship —
+   * the negated `PROTECTED_BY` that a MISSING_GUARDRAIL stub hangs off.
+   *
+   * INTERNAL, and it has to be: `THAT is PROTECTED_BY a guardrail` must not match an asset whose
+   * only such edge is the absence marker, which is exactly why `stepTargets` skips negated edges
+   * for every ordinary step. Witnesses are the one caller that wants precisely that edge, because
+   * for them the absence IS the evidence — "no guardrail" is a node in this graph, and the only
+   * way to it is the edge saying it is not there.
+   *
+   * `readStep` copies a whitelist of fields onto a fresh object, so a client cannot set this by
+   * sending it; the flag exists only for the witnesses built in this file.
+   */
+  viaAbsence?: boolean;
   node: QueryNode;
 }
 
@@ -325,12 +373,179 @@ export const QUERY_FIELDS: readonly FieldSpec[] = [
 
 const FIELD_BY_KEY = new Map(QUERY_FIELDS.map((f) => [f.key, f]));
 
-/** Every field a node of this kind can answer. "ANY" offers only the kind-agnostic ones. */
-export function fieldsForKind(kind: QueryKind): FieldSpec[] {
+// ------------------------------------------------------------------- witnesses
+//
+// THE EVIDENCE FOR A FILTER, AS A PATH.
+//
+// A filtered query used to answer with bare cards. "AI agents that reach classified data" is
+// `FIND AI_AGENT WHERE sensitiveAccess is true` — a node with no steps — so `solutions` bound
+// one slot per agent and the canvas drew 11 agents, 0 edges, 11 isolated components: the answer
+// to a question about a PATH, drawn with no path in it. Meanwhile the shortcut carrying the very
+// same label ("Reaches classified data", QUERY_SHORTCUTS below) spelled the path out and drew
+// 39 nodes in 5 clusters. One name, two pictures.
+//
+// The fix is that a filter naming a risk property also names, implicitly, the subgraph that
+// PROVES it — and that subgraph is drawn even though the question never asked for it as a step.
+//
+// WHY THIS IS A `QueryStep[]` AND NOT A TRAVERSAL. Every edge below is already in `EDGE_TYPES`,
+// so a witness is expressible in the grammar this file already evaluates: `solutions` starts
+// from `[{slots:[node]}]` without re-matching its root, handles `optional`, collects the edges
+// it walks, and honours the scan budget. So there is no new walker here — a witness is a query,
+// run from an already-bound node, and the engine is the one that was already here.
+//
+// WHY NOT GRAFT THESE ONTO THE USER'S QUERY, which would be less code still: A ROW IS A PATH.
+// The shortcut above returns 24 rows for 10 agents, because an agent reaching three buckets is
+// three paths. Grafting the witness would multiply the table the same way — and would rewrite
+// the question showing in the builder. So the witness rides the CANVAS half only: `runQuery`
+// keeps it in its own id sets, and `rows`, `groups` and `total` never see it.
+//
+// TWO SPELLINGS PER ROW, deliberately. `graphEnrich` draws the derived stub only where the real
+// chain could not be traced (its own comment: "stub wherever the real thing exists"), so which
+// of the two exists is a per-asset fact and a witness that named one would miss half the estate.
+// They are sibling steps, both optional, so whichever is present binds and the other null-binds.
+interface Witness {
+  /** The `QUERY_FIELDS` key whose filter arms this. */
+  key: string;
+  /**
+   * The field values that arm it, lowercased. Only the AFFIRMATIVE reading gets a witness:
+   * "is false" and "is unknown" are answers about the absence of a path, and there is no path
+   * to draw for them. `negate` disarms too — see `witnessFor`.
+   */
+  when: string[];
+  /** What proves it, from the node the filter is on. */
+  steps: QueryStep[];
+}
+
+/** Every node in a witness is hidden: it is evidence on the canvas, never a table column. */
+function ev(kind: QueryKind | QueryKind[], steps?: QueryStep[]): QueryNode {
+  return steps ? { kind, show: false, steps } : { kind, show: false };
+}
+
+const WITNESSES: Witness[] = [
+  {
+    // The four-hop chain, which is why "one hop of evidence" was never an option: the data end
+    // sits at RUNS_AS → ALLOWS_ACCESS_TO → BUCKET → HAS_DATA_FINDING. Same shape as the
+    // `reaches-classified` shortcut, carried one hop further to the findings — the shortcut stops
+    // at the bucket because that is where its table column wants to stop, and a canvas does not.
+    key: "sensitiveAccess",
+    when: ["true"],
+    steps: [
+      {
+        edge: "RUNS_AS",
+        optional: true,
+        node: ev("SERVICE_ACCOUNT", [{
+          edge: "ALLOWS_ACCESS_TO",
+          optional: true,
+          node: ev(["BUCKET", "DATABASE"], [
+            { edge: "HAS_DATA_FINDING", optional: true, node: ev("DATA_FINDING") },
+          ]),
+        }]),
+      },
+      { edge: "HAS_ACCESS_TO_SENSITIVE_DATA", optional: true, node: ev("SENSITIVE_DATA") },
+    ],
+  },
+  {
+    // Holding it rather than reaching it — the other end of the same chain, read from the store.
+    key: "sensitiveData",
+    when: ["true"],
+    steps: [
+      { edge: "HAS_DATA_FINDING", optional: true, node: ev("DATA_FINDING") },
+      { edge: "HAS_SENSITIVE_DATA", optional: true, node: ev("SENSITIVE_DATA") },
+    ],
+  },
+  {
+    key: "internet",
+    when: ["true"],
+    steps: [{ edge: "EXPOSED_TO_INTERNET", optional: true, node: ev("INTERNET_EXPOSURE") }],
+  },
+  {
+    // A choice field, not a boolean: "missing" is the affirmative here and "present" is the
+    // absence of a finding, so only one of its two values arms anything.
+    //
+    // `viaAbsence` because the edge is a NEGATED `PROTECTED_BY` — enrich's own words — and every
+    // ordinary step skips negated edges on purpose. This witness is the one thing that wants it:
+    // the stub is only reachable by the edge that says the guardrail is not there. Without the
+    // flag this row armed correctly and then drew nothing, which is how it was caught.
+    key: "guardrail",
+    when: ["missing"],
+    steps: [{
+      edge: "PROTECTED_BY", optional: true, viaAbsence: true, node: ev("MISSING_GUARDRAIL"),
+    }],
+  },
+  ...(["highPriv", "adminPriv"] as const).map((key) => ({
+    // Both flags are witnessed by one stub — `conditionState` reads EXCESSIVE_PRIVILEGE as their
+    // disjunction — and `HAS_FINDING` is the second spelling: enrich suppresses its own stub on
+    // an asset already carrying Wiz's real EXCESSIVE_ACCESS_FINDING.
+    //
+    // The two land on different nodes rather than being alternatives for the same one:
+    // `HAS_FINDING` runs identity → finding, so it fires when the filter is on a SERVICE_ACCOUNT,
+    // while the stub is what an AI asset carries. Both listed, so either end of the same claim
+    // draws its evidence.
+    key,
+    when: ["true"],
+    steps: [
+      { edge: "HAS_EXCESSIVE_PRIVILEGE", optional: true, node: ev("EXCESSIVE_PRIVILEGE") },
+      { edge: "HAS_FINDING", optional: true, node: ev("EXCESSIVE_ACCESS_FINDING") },
+    ] as QueryStep[],
+  })),
+];
+
+const WITNESS_BY_KEY = new Map(WITNESSES.map((w) => [w.key, w]));
+
+/**
+ * How many witness bindings one bound node contributes. An agent reaching forty buckets would
+ * otherwise spend a whole canvas on one cluster.
+ *
+ * 6, matching the `BUCKET` / `DATABASE` entries in `graphProject.DEFAULT_PER_KIND_CAP` — the same
+ * judgement about the same fan-out, made in the other projection. No "+N more" stub goes with it:
+ * `inducedProjection` draws none by design, and the capped indicator is what says rows are
+ * missing.
+ */
+export const WITNESS_FANOUT_CAP = 6;
+
+/**
+ * The evidence subgraph a node's filters ask for, as a query to run FROM that node — or null.
+ *
+ * Every armed filter contributes, so two of them on one node draw both witnesses. The arming
+ * rules are the load-bearing part: get them wrong and the canvas contradicts the question.
+ *
+ *   - `negate` disarms. "does NOT reach classified data" is a claim about an absent path, and
+ *     drawing the chain would assert the opposite of what was asked.
+ *   - only `when` values arm. `is false` and `is unknown` are the same case as negation.
+ *   - values are compared lowercased, because `matchesFilter` compares them lowercased — a
+ *     filter written `TRUE` matches nodes and so must arm the witness that explains them.
+ */
+function witnessFor(node: QueryNode): QueryNode | null {
+  const steps: QueryStep[] = [];
+  for (const f of node.where ?? []) {
+    if (f.negate) continue;
+    const w = WITNESS_BY_KEY.get(f.key);
+    if (!w) continue;
+    if (!f.values.some((v) => w.when.includes(String(v).toLowerCase()))) continue;
+    steps.push(...w.steps);
+  }
+  // `kind: "ANY"` is not a wildcard match here — `solutions` never re-matches its root — it is
+  // just the honest kind for "whatever node this was bound to".
+  return steps.length ? { kind: "ANY", show: false, steps } : null;
+}
+
+/**
+ * Every field a node of these kinds can answer — the INTERSECTION where there are several.
+ *
+ * Intersect rather than union, and the asymmetry with the union used for relationships is
+ * deliberate: a filter on a field only some of the kinds carry would read as narrowing and
+ * actually EXCLUDE the rest, since a node that cannot answer a field matches only "unknown". A
+ * relationship is a step you take on purpose with a count beside it; a field is a promise the
+ * whole set has to keep.
+ *
+ * "ANY" offering only the kind-agnostic specs is the same rule, not an exception to it — the
+ * wildcard is the intersection over every kind there is.
+ */
+export function fieldsForKind(kind: QueryKind | QueryKind[]): FieldSpec[] {
+  const kinds = Array.isArray(kind) ? kind : [kind];
   return QUERY_FIELDS.filter((f) => {
     if (!f.kinds) return true;
-    if (kind === "ANY") return false;
-    return f.kinds.includes(kind);
+    return kinds.every((k) => k !== "ANY" && f.kinds!.includes(k));
   });
 }
 
@@ -340,14 +555,18 @@ export function fieldsForKind(kind: QueryKind): FieldSpec[] {
  * These three sets are the screenshot: an AI-asset group reads name / publisher / discovered
  * by, an identity group reads name / display name / inactive-for-90-days. Everything else gets
  * the columns that are true of any node.
+ *
+ * EVERY member has to be in a family for that family's columns, which is the same intersection
+ * rule `fieldsForKind` applies — asking for AI agents and deployments together keeps the
+ * AI-asset columns, asking for agents and buckets falls back to the generic three, because
+ * `publisher` is not a column a bucket can fill.
  */
-export function defaultFieldsForKind(kind: QueryKind): string[] {
-  if (kind !== "ANY" && (AI_ASSET_KINDS as readonly string[]).includes(kind)) {
-    return ["name", "publisher", "discoveredBy"];
-  }
-  if (kind !== "ANY" && (IDENTITY_KINDS as readonly string[]).includes(kind)) {
-    return ["name", "displayName", "inactive"];
-  }
+export function defaultFieldsForKind(kind: QueryKind | QueryKind[]): string[] {
+  const kinds = Array.isArray(kind) ? kind : [kind];
+  const all = (family: readonly string[]) =>
+    kinds.every((k) => k !== "ANY" && family.includes(k));
+  if (all(AI_ASSET_KINDS as readonly string[])) return ["name", "publisher", "discoveredBy"];
+  if (all(IDENTITY_KINDS as readonly string[])) return ["name", "displayName", "inactive"];
   return ["name", "kind", "cloud"];
 }
 
@@ -377,17 +596,45 @@ export function validateQuery(raw: unknown): QueryNode {
   return q;
 }
 
+/**
+ * The kinds one node names, canonicalised so a selection has exactly one spelling.
+ *
+ * One kind collapses to the bare string, which is what keeps a single-kind query the same object
+ * it has always been. Duplicates drop. A set holding "ANY" collapses to "ANY" alone, because the
+ * union of everything with anything is everything — offering both would be a query that reads as
+ * narrower than it is.
+ *
+ * THE ORDER IS LEFT AS WRITTEN, and that is deliberate. Sorting into NODE_KINDS order here would
+ * be the obvious canonicalisation, but `kindKey` — the joined string — is compared ACROSS THE
+ * WIRE by value: the client derives a row's identity from its own parsed tree and looks up this
+ * node's `ColumnGroup` by it (test/graphQueryWalk.test.js pins the pair). The client's parser and
+ * `setKinds` keep the order they were given, so reordering on this side alone would make a link
+ * written `AI_DEPLOYMENT-AI_AGENT` describe two different nodes to the two halves of the app —
+ * losing the row's field specs and its saved columns, silently. Agreement by construction is
+ * worth more than a normalised spelling for a hand-edited URL, and the palette already emits its
+ * selection in the vocabulary's order, so anything built in the UI has one spelling anyway.
+ */
+function readKinds(raw: unknown): QueryKind | QueryKind[] {
+  const list = Array.isArray(raw) ? raw : [raw];
+  if (!list.length) fail("node names no kind");
+  const out: QueryKind[] = [];
+  for (const one of list) {
+    if (typeof one !== "string" || (one !== "ANY" && !KIND_SET.has(one))) {
+      fail(`unknown node kind: ${String(one)}`);
+    }
+    if (!out.includes(one as QueryKind)) out.push(one as QueryKind);
+  }
+  if (out.includes("ANY")) return "ANY";
+  return out.length === 1 ? out[0] : out;
+}
+
 function readNode(raw: unknown, depth: number, counter: { nodes: number }): QueryNode {
   if (!raw || typeof raw !== "object") fail("query node must be an object");
   if (depth > MAX_QUERY_DEPTH) fail(`query nests deeper than ${MAX_QUERY_DEPTH} levels`);
   if (++counter.nodes > MAX_QUERY_NODES) fail(`query has more than ${MAX_QUERY_NODES} nodes`);
 
   const r = raw as Rec;
-  const kind = r["kind"];
-  if (typeof kind !== "string" || (kind !== "ANY" && !KIND_SET.has(kind))) {
-    fail(`unknown node kind: ${String(kind)}`);
-  }
-  const node: QueryNode = { kind: kind as QueryKind };
+  const node: QueryNode = { kind: readKinds(r["kind"]) };
 
   if (r["show"] === false) node.show = false;
 
@@ -800,28 +1047,42 @@ export const QUERY_SHORTCUTS: readonly QueryShortcut[] = [
  * most worth offering in an estate where NOTHING is protected — which is exactly the estate
  * whose vocabulary carries no PROTECTED_BY edge to require.
  */
-export function shortcutsFor(kind: QueryKind, vocab: Vocabulary): QueryShortcut[] {
-  if (kind === "ANY") return [];
+export function shortcutsFor(kind: QueryKind | QueryKind[], vocab: Vocabulary): QueryShortcut[] {
+  // SEVERAL KINDS UNION, where the fields a set offers intersect — and the asymmetry is the
+  // point. A field has to be answerable by every kind or filtering on it silently excludes the
+  // ones that cannot; a shortcut is a step someone takes deliberately, so offering one that only
+  // part of the selection can walk is a choice with a visible consequence (the other kinds drop
+  // out of the results) rather than a hidden narrowing of the question already asked.
+  const from = kindsOf({ kind } as QueryNode).filter((k) => k !== "ANY") as NodeKind[];
+  // The wildcard is not a kind and has no relationships of its own; `stepsFrom` has no "ANY" key
+  // at all, so there is nothing to check reachability against.
+  if (!from.length) return [];
   // The kind has to be IN the estate. Without this, a shortcut whose every step is negated —
   // or which is a bare property filter — passes the reachability check against a graph with
   // nothing in it at all, and an unsynced tenant is offered six buttons that answer nothing.
-  if (!vocab.kinds.some((k) => k.kind === kind)) return [];
-  return QUERY_SHORTCUTS.filter((s) => {
-    if (!s.kinds.includes(kind as NodeKind)) return false;
-    return s.steps.every((step) => reachable(kind as NodeKind, step, vocab));
-  });
+  const present = from.filter((k) => vocab.kinds.some((v) => v.kind === k));
+  if (!present.length) return [];
+  return QUERY_SHORTCUTS.filter((s) => present.some((k) =>
+    s.kinds.includes(k) && s.steps.every((step) => reachable(k, step, vocab))));
 }
 
 function reachable(from: NodeKind, step: QueryStep, vocab: Vocabulary): boolean {
   if (isGroup(step)) return step.steps.every((s) => reachable(from, s, vocab));
   if (step.negate) return true;
   if (step.edge === "ANY") return true;
-  const target = step.node.kind;
-  const hit = (vocab.stepsFrom[from] ?? []).some((e) =>
-    e.edge === step.edge && e.reverse === !!step.reverse && e.kind === target);
-  if (!hit) return false;
-  if (target === "ANY") return true;
-  return (step.node.steps ?? []).every((s) => reachable(target as NodeKind, s, vocab));
+  // A step naming several target kinds is reachable if ANY of them is — the same union the
+  // palette offers relationships by. Shortcuts are all authored single-kind, so this only ever
+  // runs one way today; written as a fold because `e.kind === step.node.kind` against an array
+  // is type-legal and silently false, which would judge such a shortcut unanswerable.
+  const targets = kindsOf(step.node);
+  const from2 = vocab.stepsFrom[from] ?? [];
+  return targets.some((target) => {
+    const hit = from2.some((e) =>
+      e.edge === step.edge && e.reverse === !!step.reverse && e.kind === target);
+    if (!hit) return false;
+    if (target === "ANY") return true;
+    return (step.node.steps ?? []).every((s) => reachable(target as NodeKind, s, vocab));
+  });
 }
 
 // ------------------------------------------------------------------------- columns
@@ -829,7 +1090,12 @@ function reachable(from: NodeKind, step: QueryStep, vocab: Vocabulary): boolean 
 export interface ColumnGroup {
   /** Pre-order index among SHOWN nodes — the row's cell index. */
   index: number;
-  kind: QueryKind;
+  /**
+   * `kindKey` of the node this group describes — one kind, or several joined by KIND_SEP.
+   * A string rather than a QueryKind because it is an IDENTITY, compared across the wire
+   * against the builder row's own and used as the per-kind column-preference key.
+   */
+  kind: string;
   label: string;
   fields: Array<{ key: string; label: string; numeric?: boolean }>;
   /** Every field this kind could show, for the column chooser. */
@@ -860,8 +1126,11 @@ export function queryColumnGroups(query: QueryNode, selected?: Array<string[] | 
     const keys = picked.length ? picked : defaultFieldsForKind(node.kind).filter((k) => offeredKeys.has(k));
     groups.push({
       index,
-      kind: node.kind,
-      label: node.kind === "ANY" ? "Any node" : node.kind,
+      // `kindKey`, not `node.kind`: the builder row derives its own identity the same way, and
+      // graphQueryWalk.test.js compares the two by value across the wire. A one-kind node
+      // answers the bare kind, so no existing payload moves.
+      kind: kindKey(node),
+      label: kindsOf(node).map((k) => (k === "ANY" ? "Any node" : k)).join(" or "),
       fields: keys.map((k) => {
         const f = FIELD_BY_KEY.get(k) as FieldSpec;
         return { key: f.key, label: f.label, numeric: f.numeric };
@@ -956,6 +1225,23 @@ export interface QueryResult {
   nodeIds: string[];
   /** Every edge actually traversed by a surviving path. */
   edgeIds: string[];
+  /**
+   * The evidence for the query's own filters — see `WITNESSES`. Nodes and edges the question did
+   * not name as steps, but which prove the properties it filtered on: the bucket chain behind
+   * "reaches classified data", the exposure node behind "internet reachable".
+   *
+   * SEPARATE FROM `nodeIds`, not folded in, for one reason: the canvas budget must never drop a
+   * MATCHED node to make room for an attachment. The two sets say different things — one is the
+   * answer, the other is why — and `inducedProjection` spends the budget accordingly.
+   *
+   * `paths` is what makes that spending possible at all: one entry per surviving binding, holding
+   * that binding's nodes AND its evidence, so the projection can admit a cluster whole or not at
+   * all instead of slicing a flat list and decapitating every path in it.
+   */
+  witnessNodeIds: string[];
+  witnessEdgeIds: string[];
+  /** One per surviving binding, in row order: every node id that binding put on the canvas. */
+  paths: string[][];
 }
 
 export interface RunOptions {
@@ -1054,7 +1340,9 @@ function matchesTag(node: GNode, want: string): boolean {
 }
 
 function matchesNode(node: GNode, q: QueryNode): boolean {
-  if (q.kind !== "ANY" && node.kind !== q.kind) return false;
+  // Several kinds match ANY of them — the whole evaluator cost of multi-kind is this line.
+  const kinds = kindsOf(q);
+  if (!kinds.includes("ANY") && !(kinds as string[]).includes(node.kind)) return false;
   for (const f of q.where ?? []) {
     if (!matchesFilter(node, f)) return false;
   }
@@ -1071,8 +1359,10 @@ function stepTargets(from: GNode, step: RelationStep, adj: Adjacency): Array<{ n
   for (const e of edges) {
     if (e.type !== step.edge) continue;
     // A negated edge is an absence, not a relationship. Walking one would answer
-    // "protected by" with a guardrail that is specifically NOT attached.
-    if (e.negated) continue;
+    // "protected by" with a guardrail that is specifically NOT attached — so an ordinary step
+    // skips them, and a `viaAbsence` witness takes ONLY them. Not a union of the two: a step
+    // asking for the absence marker would be lying if it matched a real relationship as well.
+    if (Boolean(e.negated) !== Boolean(step.viaAbsence)) continue;
     const other = adj.byId.get(step.reverse ? e.src : e.dst);
     if (!other || seen.has(other.id)) continue;
     if (!matchesNode(other, step.node)) continue;
@@ -1288,7 +1578,13 @@ export function runQuery(doc: GraphDoc, query: QueryNode, opts: RunOptions = {})
 
   // Which slots are shown, as a mask over the pre-order slot list. Built once: the binder emits
   // every traversed node (the Graph view wants the waypoints) and only the table drops them.
-  const shownMask = bindingSlots(query).map((slot) => slot.node.show !== false);
+  const slots = bindingSlots(query);
+  const shownMask = slots.map((slot) => slot.node.show !== false);
+  // The evidence each slot's own filters ask for, over the SAME pre-order — so slot i's witness
+  // runs from slot i's bound node and a filter on a non-root node hangs its evidence off that
+  // node, not off the root. Built once beside `shownMask` because it is the same walk.
+  const witnessOf = slots.map((slot) => witnessFor(slot.node));
+  const anyWitness = witnessOf.some(Boolean);
   const groupFields = groups.map((g) => g.fields.map((f) => f.key));
 
   const roots = doc.nodes
@@ -1300,6 +1596,9 @@ export function runQuery(doc: GraphDoc, query: QueryNode, opts: RunOptions = {})
   const rows: QueryRow[] = [];
   const nodeIds = new Set<string>();
   const edgeIds = new Set<string>();
+  const witnessNodeIds = new Set<string>();
+  const witnessEdgeIds = new Set<string>();
+  const paths: string[][] = [];
   let total = 0;
 
   for (const root of roots) {
@@ -1307,10 +1606,16 @@ export function runQuery(doc: GraphDoc, query: QueryNode, opts: RunOptions = {})
       total += 1;
       if (rows.length < rowMax) {
         rows.push({ cells: toCells(sol.slots, shownMask, groupFields) });
+        // This binding's own nodes, kept as a group as well as merged into the flat set. The
+        // group is what lets the canvas budget admit a path whole — see `QueryResult.paths`.
+        const mine: string[] = [];
+        const mineAdd = (id: string) => {
+          if (!mine.includes(id)) mine.push(id);
+        };
         // Only surviving, SHIPPED paths contribute to the canvas. A path counted past the row
         // cap is real, but drawing nodes the table cannot show would put the two views out of
         // step with no way for the reader to tell which one to believe.
-        for (const n of sol.slots) if (n) nodeIds.add(n.id);
+        for (const n of sol.slots) if (n) { nodeIds.add(n.id); mineAdd(n.id); }
         for (const e of sol.edges) {
           edgeIds.add(e.id);
           // Both endpoints, not just the bound slots. A multi-hop ANY step walks THROUGH nodes
@@ -1319,7 +1624,37 @@ export function runQuery(doc: GraphDoc, query: QueryNode, opts: RunOptions = {})
           // pointing at nothing.
           nodeIds.add(e.src);
           nodeIds.add(e.dst);
+          mineAdd(e.src);
+          mineAdd(e.dst);
         }
+        // THE EVIDENCE, if any filter armed one. Run from each bound node rather than from the
+        // root, so slot i's filter explains slot i. Same engine, same scan budget: a witness is
+        // a query, and this is the query engine.
+        if (anyWitness) {
+          sol.slots.forEach((bound, i) => {
+            const witness = witnessOf[i];
+            if (!bound || !witness) return;
+            let taken = 0;
+            for (const found of solutions(witness, bound, adj, scan)) {
+              if (taken++ >= WITNESS_FANOUT_CAP) break;
+              // The witness root IS `bound`, already counted above — `solutions` seeds its first
+              // slot with the node it was handed. Only what it reached is evidence.
+              for (const n of found.slots) {
+                if (!n || n.id === bound.id) continue;
+                witnessNodeIds.add(n.id);
+                mineAdd(n.id);
+              }
+              for (const e of found.edges) {
+                witnessEdgeIds.add(e.id);
+                for (const end of [e.src, e.dst]) {
+                  if (end !== bound.id) witnessNodeIds.add(end);
+                  mineAdd(end);
+                }
+              }
+            }
+          });
+        }
+        paths.push(mine);
       }
     }
     if (scan.truncated) break;
@@ -1333,6 +1668,9 @@ export function runQuery(doc: GraphDoc, query: QueryNode, opts: RunOptions = {})
     truncated: scan.truncated,
     nodeIds: [...nodeIds],
     edgeIds: [...edgeIds],
+    witnessNodeIds: [...witnessNodeIds],
+    witnessEdgeIds: [...witnessEdgeIds],
+    paths,
   };
 }
 

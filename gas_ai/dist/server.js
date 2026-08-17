@@ -485,6 +485,9 @@ var Server = (() => {
     // number, and a second locally-derived percentage sitting beside it would be two
     // answers to one question. `empty_posture_reason` (NO_RESOURCES / NO_POLICIES) is what
     // keeps a null posture from being read as a confident 0 — see compliancePosture.ts.
+    // The 5Rs AI-scoped posture (fiveRsPosture.ts) does not break this rule: it is derived
+    // at read time from PolicyScope's own counts and shipped as a separate payload field,
+    // never written back over this column.
     [TABS.frameworkPosture]: [
       "framework_id",
       "level",
@@ -5602,11 +5605,16 @@ var Server = (() => {
               categoryExternalId: category.externalId,
               subcategoryExternalId: sub.externalId,
               subcategoryTitle: sub.title,
-              failCount: 0
+              failCount: 0,
+              passCount: 0,
+              // Sticky-false's INITIAL reading — see the PolicyScope.enabled doc comment.
+              enabled: p.enabled
             };
             byPolicy.set(p.policyId, acc);
           }
           if (p.failCount > acc.failCount) acc.failCount = p.failCount;
+          if (p.passCount > acc.passCount) acc.passCount = p.passCount;
+          if (p.enabled === false) acc.enabled = false;
         }
       }
     }
@@ -5651,7 +5659,9 @@ var Server = (() => {
         reason,
         mappedBy,
         aiFindingCount,
-        failCount: acc.failCount
+        failCount: acc.failCount,
+        passCount: acc.passCount,
+        enabled: acc.enabled
       });
     }
     policies.sort((a, b) => (a.selected === b.selected ? 0 : a.selected ? 1 : -1) || severityRank3(a.severity) - severityRank3(b.severity) || b.failCount - a.failCount || cmp(a.name, b.name));
@@ -5665,6 +5675,265 @@ var Server = (() => {
   }
   function unselectedPolicyIds(scope) {
     return scope.policies.filter((p) => !p.selected).map((p) => p.policyId);
+  }
+
+  // src/domain/compliancePosture.ts
+  var POSTURE_BANDS = {
+    strong: { min: 90, label: "Strong" },
+    fair: { min: 70, label: "Work to do" },
+    weak: { min: 0, label: "Materially failing" }
+  };
+  function postureBandOf(posturePct2) {
+    if (posturePct2 === null || posturePct2 === void 0) return null;
+    if (posturePct2 >= POSTURE_BANDS.strong.min) return "strong";
+    if (posturePct2 >= POSTURE_BANDS.fair.min) return "fair";
+    return "weak";
+  }
+  function postureState(posturePct2, emptyPostureReason) {
+    const reason = String(emptyPostureReason != null ? emptyPostureReason : "").trim().toUpperCase();
+    if (reason === "NO_RESOURCES") return "noResources";
+    if (reason === "NO_POLICIES") return "noPolicies";
+    if (reason) return "unknown";
+    return posturePct2 === null ? "unknown" : "scored";
+  }
+  function titleRepeatsExternalId(externalId, title) {
+    const id = String(externalId != null ? externalId : "").trim();
+    const t = String(title != null ? title : "").trim();
+    if (!id || !t) return false;
+    if (!(t.toUpperCase().indexOf(id.toUpperCase()) === 0)) return false;
+    const next = t.charAt(id.length);
+    return next === "" || next === " " || next === "	";
+  }
+  function severityRank4(s) {
+    const i = SEVERITY_ORDER.indexOf(s);
+    return i === -1 ? SEVERITY_ORDER.length : i;
+  }
+  function worstOf(a, b) {
+    if (a === null) return b;
+    if (b === null) return a;
+    return severityRank4(b) < severityRank4(a) ? b : a;
+  }
+  function worstFailingSeverityOf(policies) {
+    let worst = null;
+    for (const p of policies) if (p.failCount > 0) worst = worstOf(worst, p.severity);
+    return worst;
+  }
+  function emptyStateCounts() {
+    return { scored: 0, noResources: 0, noPolicies: 0, unknown: 0 };
+  }
+  function isAssessedPolicy(p) {
+    return p.assessedCount > 0 || p.passCount > 0 || p.failCount > 0 || p.rejectedCount > 0;
+  }
+  function toNode(row, externalId) {
+    return {
+      frameworkId: row.frameworkId,
+      externalId,
+      // Suppressed when the title already opens with it, so an OWASP LLM row reads
+      // "1 LLM01:2025 Prompt Injection" rather than "11 LLM01:2025 Prompt Injection".
+      showExternalId: !titleRepeatsExternalId(externalId, row.title),
+      title: row.title,
+      description: row.description,
+      posturePct: row.posturePct,
+      state: postureState(row.posturePct, row.emptyPostureReason),
+      // Read off the state, not off the number: a row carrying both a percentage and an
+      // emptyPostureReason is one postureState declines to score, and banding the number it
+      // just disowned would put a colour back on a row that has no posture.
+      postureBand: postureState(row.posturePct, row.emptyPostureReason) === "scored" ? postureBandOf(row.posturePct) : null,
+      passCount: row.passCount,
+      failCount: row.failCount,
+      emptyPostureReason: row.emptyPostureReason
+    };
+  }
+  function buildFrameworkTree(frameworkId, posture, policies, frameworks = []) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
+    const rows = posture.filter((p) => p.frameworkId === frameworkId);
+    if (!rows.length) return null;
+    const frameworkRow = rows.find((p) => p.level === "framework");
+    const catalogue = frameworks.find((f) => f.id === frameworkId);
+    const policiesBySub = /* @__PURE__ */ new Map();
+    for (const p of policies) {
+      if (p.frameworkId !== frameworkId) continue;
+      const list2 = (_a5 = policiesBySub.get(p.subcategoryExternalId)) != null ? _a5 : [];
+      list2.push(p);
+      policiesBySub.set(p.subcategoryExternalId, list2);
+    }
+    const stateCounts = emptyStateCounts();
+    const unassessedIds = /* @__PURE__ */ new Set();
+    const subsByCategory = /* @__PURE__ */ new Map();
+    for (const row of rows) {
+      if (row.level !== "subcategory") continue;
+      const externalId = (_b = row.subcategoryExternalId) != null ? _b : "";
+      const raw = (_c = policiesBySub.get(externalId)) != null ? _c : [];
+      const seen = /* @__PURE__ */ new Set();
+      const deduped = raw.filter((p) => {
+        if (seen.has(p.policyId)) return false;
+        seen.add(p.policyId);
+        return true;
+      });
+      deduped.sort(
+        (a, b) => severityRank4(a.severity) - severityRank4(b.severity) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
+      );
+      const assessed = [];
+      for (const p of deduped) {
+        if (isAssessedPolicy(p)) assessed.push(p);
+        else unassessedIds.add(p.policyId);
+      }
+      const node2 = {
+        ...toNode(row, externalId),
+        assessmentScope: row.assessmentScope,
+        mappingRationale: row.mappingRationale,
+        policies: assessed,
+        failingPolicyCount: assessed.filter((p) => p.failCount > 0).length,
+        unassessedPolicyCount: deduped.length - assessed.length,
+        // From the LISTED policies, so the tint on this row and the rules the row expands to
+        // show can never name different severities.
+        worstFailingSeverity: worstFailingSeverityOf(assessed)
+      };
+      stateCounts[node2.state] += 1;
+      if (node2.state !== "scored") continue;
+      const key = (_d = row.categoryExternalId) != null ? _d : "";
+      const list2 = (_e = subsByCategory.get(key)) != null ? _e : [];
+      list2.push(node2);
+      subsByCategory.set(key, list2);
+    }
+    const categories = rows.filter((r) => r.level === "category").map((row) => {
+      var _a6, _b2;
+      const externalId = (_a6 = row.categoryExternalId) != null ? _a6 : "";
+      const subcategories = (_b2 = subsByCategory.get(externalId)) != null ? _b2 : [];
+      return {
+        ...toNode(row, externalId),
+        subcategories,
+        mirrorsCategory: subcategories.length === 1 && subcategories[0].externalId === externalId,
+        worstFailingSeverity: subcategories.reduce(
+          (worst, sub) => worstOf(worst, sub.worstFailingSeverity),
+          null
+        )
+      };
+    }).filter((cat) => cat.subcategories.length > 0);
+    const distinct = /* @__PURE__ */ new Map();
+    for (const cat of categories) {
+      for (const sub of cat.subcategories) {
+        for (const p of sub.policies) {
+          distinct.set(p.policyId, ((_f = distinct.get(p.policyId)) != null ? _f : false) || p.failCount > 0);
+        }
+      }
+    }
+    const worstFailingSeverity = categories.reduce(
+      (worst, cat) => worstOf(worst, cat.worstFailingSeverity),
+      null
+    );
+    const frameworkState = postureState(
+      (_g = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _g : null,
+      (_h = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _h : null
+    );
+    return {
+      frameworkId,
+      name: (_j = (_i = frameworkRow == null ? void 0 : frameworkRow.title) != null ? _i : catalogue == null ? void 0 : catalogue.name) != null ? _j : frameworkId,
+      description: (_k = frameworkRow == null ? void 0 : frameworkRow.description) != null ? _k : catalogue == null ? void 0 : catalogue.description,
+      posturePct: (_l = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _l : null,
+      state: frameworkState,
+      // Same guard toNode applies one level down: only a row that actually scored gets a
+      // band, so an unscored framework's hero draws no bar rather than a failing-coloured one.
+      postureBand: frameworkState === "scored" ? postureBandOf((_m = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _m : null) : null,
+      emptyPostureReason: (_n = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _n : null,
+      passSubCategoryCount: (_o = frameworkRow == null ? void 0 : frameworkRow.passSubCategoryCount) != null ? _o : 0,
+      failSubCategoryCount: (_p = frameworkRow == null ? void 0 : frameworkRow.failSubCategoryCount) != null ? _p : 0,
+      categories,
+      stateCounts,
+      policyCount: distinct.size,
+      failingPolicyCount: [...distinct.values()].filter(Boolean).length,
+      // Only ids that appear NOWHERE in the listed tree. A control mapped under six
+      // subcategories and evaluated under one of them is a listed policy, not a dropped one,
+      // and counting it in both places would describe the same rule twice.
+      unassessedPolicyCount: [...unassessedIds].filter((id) => !distinct.has(id)).length,
+      worstFailingSeverity
+    };
+  }
+  function buildAllFrameworkTrees(posture, policies, frameworks = []) {
+    const ids = [];
+    for (const p of posture) if (ids.indexOf(p.frameworkId) === -1) ids.push(p.frameworkId);
+    const trees = ids.map((id) => buildFrameworkTree(id, posture, policies, frameworks)).filter((t) => t !== null);
+    trees.sort((a, b) => {
+      if (a.posturePct === null && b.posturePct === null) return a.name < b.name ? -1 : 1;
+      if (a.posturePct === null) return 1;
+      if (b.posturePct === null) return -1;
+      return a.posturePct - b.posturePct || (a.name < b.name ? -1 : 1);
+    });
+    return trees;
+  }
+  function complianceKpis(posture, policies = []) {
+    const frameworkRows = posture.filter((p) => p.level === "framework");
+    const scored = frameworkRows.filter(
+      (p) => postureState(p.posturePct, p.emptyPostureReason) === "scored"
+    );
+    const averagePosture = scored.length ? Math.round(scored.reduce((sum, p) => {
+      var _a5;
+      return sum + ((_a5 = p.posturePct) != null ? _a5 : 0);
+    }, 0) / scored.length) : null;
+    const failingSubcategories = posture.filter(
+      (p) => p.level === "subcategory" && p.failCount > 0
+    ).length;
+    const failing = /* @__PURE__ */ new Set();
+    for (const p of policies) if (p.failCount > 0) failing.add(p.policyId);
+    return {
+      frameworks: frameworkRows.length,
+      scoredFrameworks: scored.length,
+      averagePosture,
+      averagePostureBand: postureBandOf(averagePosture),
+      failingSubcategories,
+      failingPolicies: failing.size
+    };
+  }
+
+  // src/domain/fiveRsPosture.ts
+  function isActiveFiveRsPolicy(p) {
+    return p.selected && p.enabled !== false;
+  }
+  function clampAwayFromFalseExtreme(rounded, hasFailing, hasPassing) {
+    if (rounded === 100 && hasFailing) return 99;
+    if (rounded === 0 && hasPassing) return 1;
+    return rounded;
+  }
+  function fiveRsDerivedPosture(scope, wizPosturePct) {
+    if (scope.frameworkId === null) return null;
+    let passCount = 0;
+    let failCount = 0;
+    let cleanPolicyCount = 0;
+    let failingPolicyCount = 0;
+    let activePolicyCount = 0;
+    let disabledPolicyCount = 0;
+    for (const p of scope.policies) {
+      if (p.selected && p.enabled === false) disabledPolicyCount += 1;
+      if (!isActiveFiveRsPolicy(p)) continue;
+      activePolicyCount += 1;
+      passCount += p.passCount;
+      failCount += p.failCount;
+      if (p.failCount === 0) cleanPolicyCount += 1;
+      else failingPolicyCount += 1;
+    }
+    const posturePct2 = activePolicyCount === 0 || passCount + failCount === 0 ? null : clampAwayFromFalseExtreme(
+      Math.round(100 * passCount / (passCount + failCount)),
+      failCount > 0,
+      passCount > 0
+    );
+    const controlPassPct = activePolicyCount === 0 ? null : clampAwayFromFalseExtreme(
+      Math.round(100 * cleanPolicyCount / activePolicyCount),
+      failingPolicyCount > 0,
+      cleanPolicyCount > 0
+    );
+    return {
+      frameworkId: scope.frameworkId,
+      posturePct: posturePct2,
+      postureBand: postureBandOf(posturePct2),
+      controlPassPct,
+      cleanPolicyCount,
+      failingPolicyCount,
+      activePolicyCount,
+      disabledPolicyCount,
+      passCount,
+      failCount,
+      wizPosturePct
+    };
   }
 
   // src/domain/scanVars.ts
@@ -6215,214 +6484,6 @@ var Server = (() => {
     };
   }
 
-  // src/domain/compliancePosture.ts
-  var POSTURE_BANDS = {
-    strong: { min: 90, label: "Strong" },
-    fair: { min: 70, label: "Work to do" },
-    weak: { min: 0, label: "Materially failing" }
-  };
-  function postureBandOf(posturePct2) {
-    if (posturePct2 === null || posturePct2 === void 0) return null;
-    if (posturePct2 >= POSTURE_BANDS.strong.min) return "strong";
-    if (posturePct2 >= POSTURE_BANDS.fair.min) return "fair";
-    return "weak";
-  }
-  function postureState(posturePct2, emptyPostureReason) {
-    const reason = String(emptyPostureReason != null ? emptyPostureReason : "").trim().toUpperCase();
-    if (reason === "NO_RESOURCES") return "noResources";
-    if (reason === "NO_POLICIES") return "noPolicies";
-    if (reason) return "unknown";
-    return posturePct2 === null ? "unknown" : "scored";
-  }
-  function titleRepeatsExternalId(externalId, title) {
-    const id = String(externalId != null ? externalId : "").trim();
-    const t = String(title != null ? title : "").trim();
-    if (!id || !t) return false;
-    if (!(t.toUpperCase().indexOf(id.toUpperCase()) === 0)) return false;
-    const next = t.charAt(id.length);
-    return next === "" || next === " " || next === "	";
-  }
-  function severityRank4(s) {
-    const i = SEVERITY_ORDER.indexOf(s);
-    return i === -1 ? SEVERITY_ORDER.length : i;
-  }
-  function worstOf(a, b) {
-    if (a === null) return b;
-    if (b === null) return a;
-    return severityRank4(b) < severityRank4(a) ? b : a;
-  }
-  function worstFailingSeverityOf(policies) {
-    let worst = null;
-    for (const p of policies) if (p.failCount > 0) worst = worstOf(worst, p.severity);
-    return worst;
-  }
-  function emptyStateCounts() {
-    return { scored: 0, noResources: 0, noPolicies: 0, unknown: 0 };
-  }
-  function isAssessedPolicy(p) {
-    return p.assessedCount > 0 || p.passCount > 0 || p.failCount > 0 || p.rejectedCount > 0;
-  }
-  function toNode(row, externalId) {
-    return {
-      frameworkId: row.frameworkId,
-      externalId,
-      // Suppressed when the title already opens with it, so an OWASP LLM row reads
-      // "1 LLM01:2025 Prompt Injection" rather than "11 LLM01:2025 Prompt Injection".
-      showExternalId: !titleRepeatsExternalId(externalId, row.title),
-      title: row.title,
-      description: row.description,
-      posturePct: row.posturePct,
-      state: postureState(row.posturePct, row.emptyPostureReason),
-      // Read off the state, not off the number: a row carrying both a percentage and an
-      // emptyPostureReason is one postureState declines to score, and banding the number it
-      // just disowned would put a colour back on a row that has no posture.
-      postureBand: postureState(row.posturePct, row.emptyPostureReason) === "scored" ? postureBandOf(row.posturePct) : null,
-      passCount: row.passCount,
-      failCount: row.failCount,
-      emptyPostureReason: row.emptyPostureReason
-    };
-  }
-  function buildFrameworkTree(frameworkId, posture, policies, frameworks = []) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
-    const rows = posture.filter((p) => p.frameworkId === frameworkId);
-    if (!rows.length) return null;
-    const frameworkRow = rows.find((p) => p.level === "framework");
-    const catalogue = frameworks.find((f) => f.id === frameworkId);
-    const policiesBySub = /* @__PURE__ */ new Map();
-    for (const p of policies) {
-      if (p.frameworkId !== frameworkId) continue;
-      const list2 = (_a5 = policiesBySub.get(p.subcategoryExternalId)) != null ? _a5 : [];
-      list2.push(p);
-      policiesBySub.set(p.subcategoryExternalId, list2);
-    }
-    const stateCounts = emptyStateCounts();
-    const unassessedIds = /* @__PURE__ */ new Set();
-    const subsByCategory = /* @__PURE__ */ new Map();
-    for (const row of rows) {
-      if (row.level !== "subcategory") continue;
-      const externalId = (_b = row.subcategoryExternalId) != null ? _b : "";
-      const raw = (_c = policiesBySub.get(externalId)) != null ? _c : [];
-      const seen = /* @__PURE__ */ new Set();
-      const deduped = raw.filter((p) => {
-        if (seen.has(p.policyId)) return false;
-        seen.add(p.policyId);
-        return true;
-      });
-      deduped.sort(
-        (a, b) => severityRank4(a.severity) - severityRank4(b.severity) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
-      );
-      const assessed = [];
-      for (const p of deduped) {
-        if (isAssessedPolicy(p)) assessed.push(p);
-        else unassessedIds.add(p.policyId);
-      }
-      const node2 = {
-        ...toNode(row, externalId),
-        assessmentScope: row.assessmentScope,
-        mappingRationale: row.mappingRationale,
-        policies: assessed,
-        failingPolicyCount: assessed.filter((p) => p.failCount > 0).length,
-        unassessedPolicyCount: deduped.length - assessed.length,
-        // From the LISTED policies, so the tint on this row and the rules the row expands to
-        // show can never name different severities.
-        worstFailingSeverity: worstFailingSeverityOf(assessed)
-      };
-      stateCounts[node2.state] += 1;
-      if (node2.state !== "scored") continue;
-      const key = (_d = row.categoryExternalId) != null ? _d : "";
-      const list2 = (_e = subsByCategory.get(key)) != null ? _e : [];
-      list2.push(node2);
-      subsByCategory.set(key, list2);
-    }
-    const categories = rows.filter((r) => r.level === "category").map((row) => {
-      var _a6, _b2;
-      const externalId = (_a6 = row.categoryExternalId) != null ? _a6 : "";
-      const subcategories = (_b2 = subsByCategory.get(externalId)) != null ? _b2 : [];
-      return {
-        ...toNode(row, externalId),
-        subcategories,
-        mirrorsCategory: subcategories.length === 1 && subcategories[0].externalId === externalId,
-        worstFailingSeverity: subcategories.reduce(
-          (worst, sub) => worstOf(worst, sub.worstFailingSeverity),
-          null
-        )
-      };
-    }).filter((cat) => cat.subcategories.length > 0);
-    const distinct = /* @__PURE__ */ new Map();
-    for (const cat of categories) {
-      for (const sub of cat.subcategories) {
-        for (const p of sub.policies) {
-          distinct.set(p.policyId, ((_f = distinct.get(p.policyId)) != null ? _f : false) || p.failCount > 0);
-        }
-      }
-    }
-    const worstFailingSeverity = categories.reduce(
-      (worst, cat) => worstOf(worst, cat.worstFailingSeverity),
-      null
-    );
-    const frameworkState = postureState(
-      (_g = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _g : null,
-      (_h = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _h : null
-    );
-    return {
-      frameworkId,
-      name: (_j = (_i = frameworkRow == null ? void 0 : frameworkRow.title) != null ? _i : catalogue == null ? void 0 : catalogue.name) != null ? _j : frameworkId,
-      description: (_k = frameworkRow == null ? void 0 : frameworkRow.description) != null ? _k : catalogue == null ? void 0 : catalogue.description,
-      posturePct: (_l = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _l : null,
-      state: frameworkState,
-      // Same guard toNode applies one level down: only a row that actually scored gets a
-      // band, so an unscored framework's hero draws no bar rather than a failing-coloured one.
-      postureBand: frameworkState === "scored" ? postureBandOf((_m = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _m : null) : null,
-      emptyPostureReason: (_n = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _n : null,
-      passSubCategoryCount: (_o = frameworkRow == null ? void 0 : frameworkRow.passSubCategoryCount) != null ? _o : 0,
-      failSubCategoryCount: (_p = frameworkRow == null ? void 0 : frameworkRow.failSubCategoryCount) != null ? _p : 0,
-      categories,
-      stateCounts,
-      policyCount: distinct.size,
-      failingPolicyCount: [...distinct.values()].filter(Boolean).length,
-      // Only ids that appear NOWHERE in the listed tree. A control mapped under six
-      // subcategories and evaluated under one of them is a listed policy, not a dropped one,
-      // and counting it in both places would describe the same rule twice.
-      unassessedPolicyCount: [...unassessedIds].filter((id) => !distinct.has(id)).length,
-      worstFailingSeverity
-    };
-  }
-  function buildAllFrameworkTrees(posture, policies, frameworks = []) {
-    const ids = [];
-    for (const p of posture) if (ids.indexOf(p.frameworkId) === -1) ids.push(p.frameworkId);
-    const trees = ids.map((id) => buildFrameworkTree(id, posture, policies, frameworks)).filter((t) => t !== null);
-    trees.sort((a, b) => {
-      if (a.posturePct === null && b.posturePct === null) return a.name < b.name ? -1 : 1;
-      if (a.posturePct === null) return 1;
-      if (b.posturePct === null) return -1;
-      return a.posturePct - b.posturePct || (a.name < b.name ? -1 : 1);
-    });
-    return trees;
-  }
-  function complianceKpis(posture, policies = []) {
-    const frameworkRows = posture.filter((p) => p.level === "framework");
-    const scored = frameworkRows.filter(
-      (p) => postureState(p.posturePct, p.emptyPostureReason) === "scored"
-    );
-    const averagePosture = scored.length ? Math.round(scored.reduce((sum, p) => {
-      var _a5;
-      return sum + ((_a5 = p.posturePct) != null ? _a5 : 0);
-    }, 0) / scored.length) : null;
-    const failingSubcategories = posture.filter(
-      (p) => p.level === "subcategory" && p.failCount > 0
-    ).length;
-    const failing = /* @__PURE__ */ new Set();
-    for (const p of policies) if (p.failCount > 0) failing.add(p.policyId);
-    return {
-      frameworks: frameworkRows.length,
-      scoredFrameworks: scored.length,
-      averagePosture,
-      averagePostureBand: postureBandOf(averagePosture),
-      failingSubcategories,
-      failingPolicies: failing.size
-    };
-  }
-
   // src/domain/graphProject.ts
   var DEFAULT_PER_KIND_CAP = {
     USER_ACCOUNT: 8,
@@ -6458,14 +6519,14 @@ var Server = (() => {
   function projectGraph(doc, opts) {
     var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j;
     const byId = indexBy(doc.nodes, (n) => n.id);
-    const adjacency = /* @__PURE__ */ new Map();
+    const adjacency2 = /* @__PURE__ */ new Map();
     const sortedEdges = [...doc.edges].sort(cmpBy((e) => e.id));
     for (const edge2 of sortedEdges) {
       if (!byId.has(edge2.src) || !byId.has(edge2.dst)) continue;
-      if (!adjacency.has(edge2.src)) adjacency.set(edge2.src, []);
-      if (!adjacency.has(edge2.dst)) adjacency.set(edge2.dst, []);
-      adjacency.get(edge2.src).push({ edge: edge2, otherId: edge2.dst });
-      adjacency.get(edge2.dst).push({ edge: edge2, otherId: edge2.src });
+      if (!adjacency2.has(edge2.src)) adjacency2.set(edge2.src, []);
+      if (!adjacency2.has(edge2.dst)) adjacency2.set(edge2.dst, []);
+      adjacency2.get(edge2.src).push({ edge: edge2, otherId: edge2.dst });
+      adjacency2.get(edge2.dst).push({ edge: edge2, otherId: edge2.src });
     }
     const maxNodes = (_a5 = opts.maxNodes) != null ? _a5 : MAX_NODES_DEFAULT;
     const maxEdges = (_b = opts.maxEdges) != null ? _b : MAX_EDGES_DEFAULT;
@@ -6501,7 +6562,7 @@ var Server = (() => {
         const { id, depth } = queue.shift();
         if (depth >= opts.depth && !expand.has(id)) continue;
         const groups = /* @__PURE__ */ new Map();
-        for (const { otherId } of (_d = adjacency.get(id)) != null ? _d : []) {
+        for (const { otherId } of (_d = adjacency2.get(id)) != null ? _d : []) {
           if (shown.has(otherId)) continue;
           const other = byId.get(otherId);
           if (!passesFilters(other, opts.filters)) continue;
@@ -6551,7 +6612,7 @@ var Server = (() => {
               summaryCount: hidden.length,
               memberIds: hidden.map((m) => m.id)
             });
-            const viaEdge = (_i = ((_h = adjacency.get(id)) != null ? _h : []).find(
+            const viaEdge = (_i = ((_h = adjacency2.get(id)) != null ? _h : []).find(
               (a) => a.otherId === hidden[0].id
             )) == null ? void 0 : _i.edge;
             summaryEdges.push({
@@ -6594,7 +6655,8 @@ var Server = (() => {
   }
 
   // src/domain/graphLayout.ts
-  var LAYOUT_MODES = ["lanes", "grouped", "rows"];
+  var LAYOUT_MODES = ["lanes", "rows", "grid", "organic", "radial"];
+  var DEFAULT_LAYOUT = "grid";
   var GROUP_KEYS = ["asset", "combo", "project", "cloud", "kind", "severity"];
   var SORT_KEYS = ["smart", "severity", "aars", "name"];
   var GROUP_NONE = "__none__";
@@ -6698,6 +6760,45 @@ var Server = (() => {
       if (parent) parentOf.set(s.id, parent);
     }
     return parentOf;
+  }
+  function adjacency(p) {
+    const adj = /* @__PURE__ */ new Map();
+    for (const e of [...p.edges].sort((a, b) => a.id < b.id ? -1 : 1)) {
+      if (!adj.has(e.src)) adj.set(e.src, []);
+      if (!adj.has(e.dst)) adj.set(e.dst, []);
+      adj.get(e.src).push(e.dst);
+      adj.get(e.dst).push(e.src);
+    }
+    return adj;
+  }
+  function hopDepth(p) {
+    var _a5, _b, _c;
+    const { hubs } = assignToHubs(p, parentIndex(p));
+    const root = (_b = (_a5 = hubs[0]) != null ? _a5 : p.nodes[0]) != null ? _b : null;
+    const depth = /* @__PURE__ */ new Map();
+    if (!root) return { depth, root: null, max: 0 };
+    const adj = adjacency(p);
+    depth.set(root.id, 0);
+    const queue = [root.id];
+    let max = 0;
+    for (let head = 0; head < queue.length; head++) {
+      const id = queue[head];
+      const d = depth.get(id) + 1;
+      for (const next of (_c = adj.get(id)) != null ? _c : []) {
+        if (depth.has(next)) continue;
+        depth.set(next, d);
+        max = Math.max(max, d);
+        queue.push(next);
+      }
+    }
+    const orphanRing = max + 1;
+    let used = max;
+    for (const n of p.nodes) {
+      if (depth.has(n.id)) continue;
+      depth.set(n.id, orphanRing);
+      used = orphanRing;
+    }
+    return { depth, root, max: used };
   }
   function componentRoots(p) {
     const parent = /* @__PURE__ */ new Map();
@@ -6904,9 +7005,15 @@ var Server = (() => {
     return { start, shelfOfRank, shelves: shelf + 1, longest };
   }
   function layoutGraph(p, opts = {}) {
-    var _a5;
-    const mode = (_a5 = opts.mode) != null ? _a5 : "rows";
-    if (mode === "grouped") return layoutGrouped(p, opts);
+    var _a5, _b;
+    const laid = ((_a5 = opts.groupBy) != null ? _a5 : []).length ? layoutGrouped(p, opts) : layoutWhole(p, opts, (_b = opts.mode) != null ? _b : DEFAULT_LAYOUT);
+    const clusters = clusterHulls(p, laid);
+    return clusters.length ? { ...laid, clusters } : laid;
+  }
+  function layoutWhole(p, opts, mode) {
+    if (mode === "radial") return layoutRadial(p, opts);
+    if (mode === "organic") return layoutOrganic(p, opts);
+    if (mode === "grid") return layoutGrid(p, opts);
     return layoutLanes(p, opts, mode !== "lanes");
   }
   function layoutLanes(p, opts, horizontal) {
@@ -6979,7 +7086,10 @@ var Server = (() => {
     const step = horizontal ? ROW_COL_STEP : rowGap;
     const gap2 = horizontal ? ROW_CLUSTER_GAP : LANE_CLUSTER_GAP;
     const bandGap = horizontal ? ROW_BAND_GAP : laneGap;
-    const bandSpan = (LANE_COUNT - 1) * bandGap;
+    const occupied = lanes.map((lane, i) => lane.length ? i : -1).filter((i) => i >= 0);
+    const slotOfBand = (i) => opts.compactBands ? occupied.indexOf(i) : i;
+    const bandCount = opts.compactBands ? Math.max(occupied.length, 1) : LANE_COUNT;
+    const bandSpan = (bandCount - 1) * bandGap;
     const shelfPitch = bandSpan + (horizontal ? ROW_SHELF_GAP : LANE_SHELF_GAP);
     const { pos, shelfOf, extent, shelves } = packLanes(
       lanes,
@@ -6997,7 +7107,7 @@ var Server = (() => {
         for (const id of lane) {
           if (shelfOf.get(id) !== shelf) continue;
           const along = margin + pos.get(id);
-          const across = margin + shelf * shelfPitch + laneIdx * bandGap;
+          const across = margin + shelf * shelfPitch + slotOfBand(laneIdx) * bandGap;
           nodes.push({
             id,
             lane: laneIdx,
@@ -7149,8 +7259,47 @@ var Server = (() => {
       height: packed.height + GROUP_PAD
     };
   }
-  function gridBlock(key, label, list2) {
-    const cols = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(list2.length))));
+  function subProjection(p, list2) {
+    const ids = new Set(list2.map((n) => n.id));
+    return {
+      nodes: list2,
+      edges: p.edges.filter((e) => ids.has(e.src) && ids.has(e.dst)),
+      summaries: p.summaries.filter((s) => ids.has(s.id)),
+      counts: p.counts
+    };
+  }
+  function blockOf(key, label, layout) {
+    const pts = layout.nodes;
+    const minX = Math.min(...pts.map((n) => n.x));
+    const minY = Math.min(...pts.map((n) => n.y));
+    const maxX = Math.max(...pts.map((n) => n.x));
+    const maxY = Math.max(...pts.map((n) => n.y));
+    const originX = GROUP_PAD + CELL_W / 2;
+    const originY = HEADER_H + GROUP_PAD + CELL_H / 2;
+    return {
+      key,
+      label,
+      width: GROUP_PAD * 2 + CELL_W + (maxX - minX),
+      height: HEADER_H + GROUP_PAD * 2 + CELL_H + (maxY - minY),
+      cells: pts.map((n) => ({
+        id: n.id,
+        x: round2(originX + n.x - minX),
+        y: round2(originY + n.y - minY)
+      }))
+    };
+  }
+  function blockFor(mode, key, label, list2, p, opts, hub) {
+    if (!list2.length || mode === "grid") return gridBlock(key, label, list2);
+    if (mode === "radial") {
+      const centre = hub != null ? hub : list2[0];
+      return radialBlock(key, label, centre, list2.filter((n) => n.id !== centre.id));
+    }
+    const sub = subProjection(p, list2);
+    const inner = { ...opts, margin: 0, groupBy: [], compactBands: true };
+    return blockOf(key, label, layoutWhole(sub, inner, mode));
+  }
+  function gridBlock(key, label, list2, columns) {
+    const cols = columns != null ? columns : Math.min(4, Math.max(1, Math.ceil(Math.sqrt(list2.length))));
     const rows = Math.ceil(list2.length / cols);
     return {
       key,
@@ -7201,14 +7350,7 @@ var Server = (() => {
       hubs = p.nodes.filter((n) => AI_ASSET_KINDS.includes(n.kind));
     }
     hubs = [...hubs].sort(cmp2);
-    const adj = /* @__PURE__ */ new Map();
-    const sortedEdges = [...p.edges].sort((a, b) => a.id < b.id ? -1 : 1);
-    for (const e of sortedEdges) {
-      if (!adj.has(e.src)) adj.set(e.src, []);
-      if (!adj.has(e.dst)) adj.set(e.dst, []);
-      adj.get(e.src).push(e.dst);
-      adj.get(e.dst).push(e.src);
-    }
+    const adj = adjacency(p);
     const hubOf = /* @__PURE__ */ new Map();
     const queue = [];
     for (const h of hubs) {
@@ -7230,15 +7372,17 @@ var Server = (() => {
     return { hubOf, hubs };
   }
   function layoutGrouped(p, opts) {
-    var _a5, _b, _c, _d, _e, _f, _g;
+    var _a5, _b, _c, _d, _e, _f, _g, _h;
     const margin = (_a5 = opts.margin) != null ? _a5 : 120;
-    const levels = ((_b = opts.groupBy) != null ? _b : []).length ? opts.groupBy : ["combo"];
+    const levels = (_b = opts.groupBy) != null ? _b : [];
     const groupBy2 = levels[0];
     const second = (_c = levels[1]) != null ? _c : null;
     const inner = groupBy2 === "asset" || second === "asset" || second === groupBy2 ? null : second;
     const sort = (_d = opts.sort) != null ? _d : "smart";
+    const mode = (_e = opts.mode) != null ? _e : DEFAULT_LAYOUT;
     const parentOf = parentIndex(p);
-    const cmp2 = comparator(sort);
+    const cmp2 = memberOrder(p, sort);
+    const block = (key, label, list2, hub) => blockFor(mode, key, label, [...list2].sort(cmp2), p, opts, hub);
     const specs = [];
     if (groupBy2 === "asset") {
       const { hubOf, hubs } = assignToHubs(p, parentOf);
@@ -7249,11 +7393,8 @@ var Server = (() => {
         if (key) members.get(key).push(node2);
         else strays.push(node2);
       }
-      for (const hub of hubs) {
-        const sats = members.get(hub.id).filter((n) => n.id !== hub.id).sort(cmp2);
-        specs.push(radialBlock(hub.id, hub.name, hub, sats));
-      }
-      if (strays.length) specs.push(gridBlock(GROUP_NONE, "Ungrouped", [...strays].sort(cmp2)));
+      for (const hub of hubs) specs.push(block(hub.id, hub.name, members.get(hub.id), hub));
+      if (strays.length) specs.push(block(GROUP_NONE, "Ungrouped", strays));
     } else {
       const members = /* @__PURE__ */ new Map();
       for (const node2 of p.nodes) {
@@ -7265,7 +7406,7 @@ var Server = (() => {
         const list2 = members.get(key);
         const label = groupLabel(key, groupBy2);
         if (!inner) {
-          specs.push(gridBlock(key, label, [...list2].sort(cmp2)));
+          specs.push(block(key, label, list2));
           continue;
         }
         const subs = /* @__PURE__ */ new Map();
@@ -7274,7 +7415,7 @@ var Server = (() => {
           if (!subs.has(k2)) subs.set(k2, []);
           subs.get(k2).push(node2);
         }
-        const children = orderGroups([...subs.keys()], inner, subs).map((k2) => gridBlock(k2, groupLabel(k2, inner), [...subs.get(k2)].sort(cmp2)));
+        const children = orderGroups([...subs.keys()], inner, subs).map((k2) => block(k2, groupLabel(k2, inner), subs.get(k2)));
         specs.push(nestBlock(key, label, children));
       }
     }
@@ -7295,7 +7436,7 @@ var Server = (() => {
         by: groupBy2,
         depth: 0
       });
-      for (const sub of (_e = spec.subs) != null ? _e : []) {
+      for (const sub of (_f = spec.subs) != null ? _f : []) {
         groups.push({
           id: `${groupBy2}:${spec.key}/${inner}:${sub.key}`,
           key: sub.key,
@@ -7314,7 +7455,7 @@ var Server = (() => {
         const px = gx + c.x;
         const py = gy + c.y;
         let lane = parentIdx;
-        for (let i = 0; i < ((_g = (_f = spec.subs) == null ? void 0 : _f.length) != null ? _g : 0); i++) {
+        for (let i = 0; i < ((_h = (_g = spec.subs) == null ? void 0 : _g.length) != null ? _h : 0); i++) {
           const sub = spec.subs[i];
           if (c.x >= sub.x && c.x <= sub.x + sub.width && c.y >= sub.y && c.y <= sub.y + sub.height) {
             lane = parentIdx + 1 + i;
@@ -7330,9 +7471,368 @@ var Server = (() => {
       height: packed.height + margin,
       laneGap: CELL_W,
       rowGap: CELL_H,
-      mode: "grouped",
+      // The ARRANGEMENT, which is what `mode` means everywhere now — a grouped layout used to
+      // report "grouped" and swallow the arrangement with it. `groups` being present is what says
+      // this picture is grouped, and the renderer reads it that way.
+      mode,
       groups
     };
+  }
+  function layoutGrid(p, opts) {
+    var _a5, _b;
+    const margin = (_a5 = opts.margin) != null ? _a5 : 120;
+    const cmp2 = memberOrder(p, (_b = opts.sort) != null ? _b : "smart");
+    const cols = Math.max(1, Math.round(Math.sqrt(VIEWPORT_ASPECT * CELL_H * p.nodes.length / CELL_W)));
+    const spec = gridBlock("", "", [...p.nodes].sort(cmp2), cols);
+    const rows = [...new Set(spec.cells.map((c) => c.y))].sort((a, b) => a - b);
+    return {
+      nodes: spec.cells.map((c) => ({
+        id: c.id,
+        // No header to clear and no box to sit inside: the block's own header offset is subtracted
+        // back off so the grid starts at the margin like every other ungrouped layout.
+        x: round2(margin + c.x - GROUP_PAD),
+        y: round2(margin + c.y - GROUP_PAD - HEADER_H),
+        lane: rows.indexOf(c.y)
+      })),
+      width: round2(margin * 2 + spec.width - GROUP_PAD * 2),
+      height: round2(margin * 2 + spec.height - GROUP_PAD * 2 - HEADER_H),
+      laneGap: CELL_W,
+      rowGap: CELL_H,
+      mode: "grid"
+    };
+  }
+  var FREE_W = CELL_W;
+  var FREE_H = CELL_H;
+  var RING_STEP = 220;
+  var FR_PAIR_BUDGET = 6e3;
+  var FR_MIN_STEPS = 30;
+  var FR_MAX_STEPS = 120;
+  var FR_GRAVITY = 0.06;
+  var FR_COHESION = 0.1;
+  var SEPARATE_PASSES = 24;
+  function layoutRadial(p, opts) {
+    var _a5, _b, _c, _d;
+    const margin = (_a5 = opts.margin) != null ? _a5 : 120;
+    const cmp2 = memberOrder(p, (_b = opts.sort) != null ? _b : "smart");
+    const { depth, max } = hopDepth(p);
+    const rings = Array.from({ length: max + 1 }, () => []);
+    for (const node2 of p.nodes) rings[(_c = depth.get(node2.id)) != null ? _c : 0].push(node2);
+    for (const ring of rings) ring.sort(cmp2);
+    const fits = (count2) => count2 < 2 ? 0 : FREE_W / (2 * Math.sin(Math.PI / count2));
+    const radii = [];
+    let prev = 0;
+    for (let d = 0; d < rings.length; d++) {
+      if (d === 0) {
+        prev = fits(rings[0].length);
+        radii.push(round2(prev));
+        continue;
+      }
+      prev = Math.max(prev + RING_STEP, fits(rings[d].length));
+      radii.push(round2(prev));
+    }
+    const outer = (_d = radii[radii.length - 1]) != null ? _d : 0;
+    const half = outer + FREE_W / 2;
+    const cx = round2(margin + half);
+    const cy = round2(margin + outer + FREE_H / 2);
+    const nodes = [];
+    rings.forEach((ring, d) => {
+      if (!ring.length) return;
+      if (d === 0 && ring.length === 1) {
+        nodes.push({ id: ring[0].id, x: cx, y: cy, lane: 0 });
+        return;
+      }
+      const r = radii[d];
+      const step = Math.PI * 2 / ring.length;
+      ring.forEach((node2, k) => {
+        const a = -Math.PI / 2 + k * step;
+        nodes.push({
+          id: node2.id,
+          x: round2(cx + r * Math.cos(a)),
+          y: round2(cy + r * Math.sin(a)),
+          lane: d
+        });
+      });
+    });
+    return {
+      nodes,
+      width: round2(cx + half + margin),
+      height: round2(cy + outer + FREE_H / 2 + margin),
+      // Reported for the renderer's edge routing and keyboard steps, not used for placement here.
+      laneGap: RING_STEP,
+      rowGap: FREE_H,
+      mode: "radial"
+    };
+  }
+  function layoutOrganic(p, opts) {
+    var _a5, _b;
+    const margin = (_a5 = opts.margin) != null ? _a5 : 120;
+    const n = p.nodes.length;
+    const seed = layoutRadial(p, { ...opts, margin: 0 });
+    const component = componentRoots(p);
+    const at = new Map(seed.nodes.map((s) => [s.id, { x: s.x, y: s.y }]));
+    const lane = new Map(seed.nodes.map((s) => [s.id, s.lane]));
+    const ids = p.nodes.map((node2) => node2.id).filter((id) => at.has(id));
+    if (ids.length > 1) {
+      const area = Math.max(seed.width, 1) * Math.max(seed.height, 1);
+      const k = Math.sqrt(area / ids.length);
+      const cx = seed.width / 2;
+      const cy = seed.height / 2;
+      const steps = Math.min(FR_MAX_STEPS, Math.max(FR_MIN_STEPS, Math.round(FR_PAIR_BUDGET / n)));
+      const disp = new Map(ids.map((id) => [id, { x: 0, y: 0 }]));
+      const springs = p.edges.filter((e) => at.has(e.src) && at.has(e.dst) && e.src !== e.dst).map((e) => [e.src, e.dst]);
+      for (let step = 0; step < steps; step++) {
+        const temp = k / 10 * (1 - step / steps);
+        for (const d of disp.values()) {
+          d.x = 0;
+          d.y = 0;
+        }
+        for (let i = 0; i < ids.length; i++) {
+          const a = at.get(ids[i]);
+          const da = disp.get(ids[i]);
+          for (let j = i + 1; j < ids.length; j++) {
+            const b = at.get(ids[j]);
+            let dx = a.x - b.x;
+            let dy = a.y - b.y;
+            let dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < 0.01) {
+              dx = i - j || 1;
+              dy = 1;
+              dist = Math.sqrt(dx * dx + dy * dy);
+            }
+            const force = k * k / dist;
+            const ux = dx / dist * force;
+            const uy = dy / dist * force;
+            da.x += ux;
+            da.y += uy;
+            const db = disp.get(ids[j]);
+            db.x -= ux;
+            db.y -= uy;
+          }
+        }
+        for (const [src, dst] of springs) {
+          const a = at.get(src);
+          const b = at.get(dst);
+          const dx = a.x - b.x;
+          const dy = a.y - b.y;
+          const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 0.01);
+          const force = dist * dist / k;
+          const ux = dx / dist * force;
+          const uy = dy / dist * force;
+          disp.get(src).x -= ux;
+          disp.get(src).y -= uy;
+          disp.get(dst).x += ux;
+          disp.get(dst).y += uy;
+        }
+        const hub = /* @__PURE__ */ new Map();
+        for (const id of ids) {
+          const key = component.get(id);
+          const acc = (_b = hub.get(key)) != null ? _b : { x: 0, y: 0, n: 0 };
+          const a = at.get(id);
+          acc.x += a.x;
+          acc.y += a.y;
+          acc.n += 1;
+          hub.set(key, acc);
+        }
+        for (const id of ids) {
+          const a = at.get(id);
+          const d = disp.get(id);
+          const own = hub.get(component.get(id));
+          d.x += (own.x / own.n - a.x) * FR_COHESION * k;
+          d.y += (own.y / own.n - a.y) * FR_COHESION * k;
+          d.x += (cx - a.x) * FR_GRAVITY * k;
+          d.y += (cy - a.y) * FR_GRAVITY * k;
+          const len = Math.sqrt(d.x * d.x + d.y * d.y);
+          if (len < 0.01) continue;
+          const travel = Math.min(len, temp);
+          a.x += d.x / len * travel;
+          a.y += d.y / len * travel;
+        }
+      }
+    }
+    separate(ids, at);
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const id of ids) {
+      const a = at.get(id);
+      minX = Math.min(minX, a.x);
+      minY = Math.min(minY, a.y);
+      maxX = Math.max(maxX, a.x);
+      maxY = Math.max(maxY, a.y);
+    }
+    if (!ids.length) {
+      minX = 0;
+      minY = 0;
+      maxX = 0;
+      maxY = 0;
+    }
+    const offX = margin + FREE_W / 2 - minX;
+    const offY = margin + FREE_H / 2 - minY;
+    return {
+      nodes: ids.map((id) => {
+        var _a6;
+        return {
+          id,
+          x: round2(at.get(id).x + offX),
+          y: round2(at.get(id).y + offY),
+          lane: (_a6 = lane.get(id)) != null ? _a6 : 0
+        };
+      }),
+      width: round2(maxX - minX + FREE_W + margin * 2),
+      height: round2(maxY - minY + FREE_H + margin * 2),
+      laneGap: RING_STEP,
+      rowGap: FREE_H,
+      mode: "organic"
+    };
+  }
+  function separate(ids, at) {
+    for (let pass = 0; pass < SEPARATE_PASSES; pass++) {
+      let moved = false;
+      for (let i = 0; i < ids.length; i++) {
+        const a = at.get(ids[i]);
+        for (let j = i + 1; j < ids.length; j++) {
+          const b = at.get(ids[j]);
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const overlapX = FREE_W - Math.abs(dx);
+          const overlapY = FREE_H - Math.abs(dy);
+          if (overlapX <= 0 || overlapY <= 0) continue;
+          moved = true;
+          if (overlapX / FREE_W < overlapY / FREE_H) {
+            const push = overlapX / 2 * (dx < 0 ? -1 : 1);
+            a.x -= push;
+            b.x += push;
+          } else {
+            const push = overlapY / 2 * (dy < 0 ? -1 : 1);
+            a.y -= push;
+            b.y += push;
+          }
+        }
+      }
+      if (!moved) return;
+    }
+  }
+  var CLUSTER_PAD = 12;
+  function clusterHulls(p, laid) {
+    var _a5, _b, _c, _d;
+    if (laid.nodes.length < 2) return [];
+    const roots = componentRoots(p);
+    const boxes = (_a5 = laid.groups) != null ? _a5 : [];
+    const nested = boxes.some((g) => g.depth === 1);
+    const leaves = boxes.map((g, i) => ({ g, i })).filter(({ g }) => nested ? g.depth === 1 : g.depth === 0);
+    const boxOf = (n) => {
+      for (const { g, i } of leaves) {
+        if (n.x >= g.x && n.x <= g.x + g.width && n.y >= g.y && n.y <= g.y + g.height) return i;
+      }
+      return -1;
+    };
+    const buckets = /* @__PURE__ */ new Map();
+    const perBox = /* @__PURE__ */ new Map();
+    for (const n of laid.nodes) {
+      const group = boxOf(n);
+      const key = ((_b = roots.get(n.id)) != null ? _b : n.id) + "|" + group;
+      if (!buckets.has(key)) buckets.set(key, { members: [], group });
+      buckets.get(key).members.push(n);
+      perBox.set(group, ((_c = perBox.get(group)) != null ? _c : 0) + 1);
+    }
+    const out = [];
+    const candidates = [...buckets.keys()].sort((a, b) => buckets.get(b).members.length - buckets.get(a).members.length || (a < b ? -1 : 1));
+    for (const key of candidates) {
+      const { members, group } = buckets.get(key);
+      if (members.length < 2) continue;
+      if (members.length === ((_d = perBox.get(group)) != null ? _d : 0)) continue;
+      const hull = convexHull(members.flatMap((n) => [
+        [n.x - NODE_HALF_W, n.y - NODE_HALF_H],
+        [n.x + NODE_HALF_W, n.y - NODE_HALF_H],
+        [n.x + NODE_HALF_W, n.y + NODE_HALF_H],
+        [n.x - NODE_HALF_W, n.y + NODE_HALF_H]
+      ]));
+      if (hull.length < 3) continue;
+      const mine = new Set(members.map((n) => n.id));
+      const claimsAnother = laid.nodes.some((n) => !mine.has(n.id) && boxOf(n) === group && inPolygon(n.x, n.y, hull));
+      if (claimsAnother) continue;
+      if (out.some((c) => !convexDisjoint(hull, c.points))) continue;
+      out.push({
+        points: hull.map(([x, y]) => [round2(x), round2(y)]),
+        count: members.length,
+        ...group === -1 ? {} : { group }
+      });
+    }
+    return out.sort((a, b) => a.points[0][0] - b.points[0][0] || a.points[0][1] - b.points[0][1]);
+  }
+  function convexDisjoint(a, b) {
+    for (const poly of [a, b]) {
+      for (let i = 0; i < poly.length; i++) {
+        const [x1, y1] = poly[i];
+        const [x2, y2] = poly[(i + 1) % poly.length];
+        const nx = -(y2 - y1);
+        const ny = x2 - x1;
+        let aMin = Infinity;
+        let aMax = -Infinity;
+        let bMin = Infinity;
+        let bMax = -Infinity;
+        for (const [x, y] of a) {
+          const d = x * nx + y * ny;
+          aMin = Math.min(aMin, d);
+          aMax = Math.max(aMax, d);
+        }
+        for (const [x, y] of b) {
+          const d = x * nx + y * ny;
+          bMin = Math.min(bMin, d);
+          bMax = Math.max(bMax, d);
+        }
+        if (aMax <= bMin || bMax <= aMin) return true;
+      }
+    }
+    return false;
+  }
+  var NODE_HALF_W = 196 / 2 + CLUSTER_PAD;
+  var NODE_HALF_H = 56 / 2 + CLUSTER_PAD;
+  function convexHull(pts) {
+    const sorted = [...pts].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    if (sorted.length < 3) return sorted;
+    const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+    const half = (list2) => {
+      const chain = [];
+      for (const pt of list2) {
+        while (chain.length >= 2 && cross(chain[chain.length - 2], chain[chain.length - 1], pt) <= 0) {
+          chain.pop();
+        }
+        chain.push(pt);
+      }
+      return chain;
+    };
+    const lower = half(sorted);
+    const upper = half([...sorted].reverse());
+    return lower.slice(0, -1).concat(upper.slice(0, -1));
+  }
+  function inPolygon(x, y, poly) {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const [xi, yi] = poly[i];
+      const [xj, yj] = poly[j];
+      if (yi > y !== yj > y && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+  }
+  function memberOrder(p, sort) {
+    const cmp2 = comparator(sort);
+    return sort === "smart" ? byComponent(p, cmp2) : cmp2;
+  }
+  function byComponent(p, cmp2) {
+    const roots = componentRoots(p);
+    const rank = /* @__PURE__ */ new Map();
+    [...p.nodes].sort(cmp2).forEach((n) => {
+      var _a5;
+      const root = (_a5 = roots.get(n.id)) != null ? _a5 : n.id;
+      if (!rank.has(root)) rank.set(root, rank.size);
+    });
+    const of = (n) => {
+      var _a5, _b;
+      return (_b = rank.get((_a5 = roots.get(n.id)) != null ? _a5 : n.id)) != null ? _b : rank.size;
+    };
+    return (a, b) => of(a) - of(b) || cmp2(a, b);
   }
 
   // src/domain/graphApiParams.ts
@@ -7374,12 +7874,15 @@ var Server = (() => {
       out.push(key);
       if (key === "asset" || out.length === 2) break;
     }
-    return out.length ? out : ["combo"];
+    return out;
   }
   function resolveLayoutParams(p) {
+    const legacyGrouped = typeof p["layout"] === "string" && p["layout"].toLowerCase() === "grouped";
+    const asked = pickList(p["groupBy"]);
+    const groupBy2 = legacyGrouped && !asked.length ? ["combo"] : asked;
     return {
-      mode: pick(p["layout"], LAYOUT_MODES, "rows"),
-      groupBy: pickList(p["groupBy"]),
+      mode: legacyGrouped ? groupBy2[0] === "asset" ? "radial" : "grid" : pick(p["layout"], LAYOUT_MODES, DEFAULT_LAYOUT),
+      groupBy: groupBy2,
       sort: pick(p["sort"], SORT_KEYS, "smart")
     };
   }
@@ -7436,6 +7939,13 @@ var Server = (() => {
   }
 
   // src/domain/graphQuery.ts
+  function kindsOf(node2) {
+    return Array.isArray(node2.kind) ? node2.kind : [node2.kind];
+  }
+  var KIND_SEP = "-";
+  function kindKey(node2) {
+    return kindsOf(node2).join(KIND_SEP);
+  }
   function isGroup(step) {
     return step.op !== void 0;
   }
@@ -7619,20 +8129,106 @@ var Server = (() => {
     }
   ];
   var FIELD_BY_KEY = new Map(QUERY_FIELDS.map((f) => [f.key, f]));
+  function ev(kind, steps) {
+    return steps ? { kind, show: false, steps } : { kind, show: false };
+  }
+  var WITNESSES = [
+    {
+      // The four-hop chain, which is why "one hop of evidence" was never an option: the data end
+      // sits at RUNS_AS → ALLOWS_ACCESS_TO → BUCKET → HAS_DATA_FINDING. Same shape as the
+      // `reaches-classified` shortcut, carried one hop further to the findings — the shortcut stops
+      // at the bucket because that is where its table column wants to stop, and a canvas does not.
+      key: "sensitiveAccess",
+      when: ["true"],
+      steps: [
+        {
+          edge: "RUNS_AS",
+          optional: true,
+          node: ev("SERVICE_ACCOUNT", [{
+            edge: "ALLOWS_ACCESS_TO",
+            optional: true,
+            node: ev(["BUCKET", "DATABASE"], [
+              { edge: "HAS_DATA_FINDING", optional: true, node: ev("DATA_FINDING") }
+            ])
+          }])
+        },
+        { edge: "HAS_ACCESS_TO_SENSITIVE_DATA", optional: true, node: ev("SENSITIVE_DATA") }
+      ]
+    },
+    {
+      // Holding it rather than reaching it — the other end of the same chain, read from the store.
+      key: "sensitiveData",
+      when: ["true"],
+      steps: [
+        { edge: "HAS_DATA_FINDING", optional: true, node: ev("DATA_FINDING") },
+        { edge: "HAS_SENSITIVE_DATA", optional: true, node: ev("SENSITIVE_DATA") }
+      ]
+    },
+    {
+      key: "internet",
+      when: ["true"],
+      steps: [{ edge: "EXPOSED_TO_INTERNET", optional: true, node: ev("INTERNET_EXPOSURE") }]
+    },
+    {
+      // A choice field, not a boolean: "missing" is the affirmative here and "present" is the
+      // absence of a finding, so only one of its two values arms anything.
+      //
+      // `viaAbsence` because the edge is a NEGATED `PROTECTED_BY` — enrich's own words — and every
+      // ordinary step skips negated edges on purpose. This witness is the one thing that wants it:
+      // the stub is only reachable by the edge that says the guardrail is not there. Without the
+      // flag this row armed correctly and then drew nothing, which is how it was caught.
+      key: "guardrail",
+      when: ["missing"],
+      steps: [{
+        edge: "PROTECTED_BY",
+        optional: true,
+        viaAbsence: true,
+        node: ev("MISSING_GUARDRAIL")
+      }]
+    },
+    ...["highPriv", "adminPriv"].map((key) => ({
+      // Both flags are witnessed by one stub — `conditionState` reads EXCESSIVE_PRIVILEGE as their
+      // disjunction — and `HAS_FINDING` is the second spelling: enrich suppresses its own stub on
+      // an asset already carrying Wiz's real EXCESSIVE_ACCESS_FINDING.
+      //
+      // The two land on different nodes rather than being alternatives for the same one:
+      // `HAS_FINDING` runs identity → finding, so it fires when the filter is on a SERVICE_ACCOUNT,
+      // while the stub is what an AI asset carries. Both listed, so either end of the same claim
+      // draws its evidence.
+      key,
+      when: ["true"],
+      steps: [
+        { edge: "HAS_EXCESSIVE_PRIVILEGE", optional: true, node: ev("EXCESSIVE_PRIVILEGE") },
+        { edge: "HAS_FINDING", optional: true, node: ev("EXCESSIVE_ACCESS_FINDING") }
+      ]
+    }))
+  ];
+  var WITNESS_BY_KEY = new Map(WITNESSES.map((w) => [w.key, w]));
+  var WITNESS_FANOUT_CAP = 6;
+  function witnessFor(node2) {
+    var _a5;
+    const steps = [];
+    for (const f of (_a5 = node2.where) != null ? _a5 : []) {
+      if (f.negate) continue;
+      const w = WITNESS_BY_KEY.get(f.key);
+      if (!w) continue;
+      if (!f.values.some((v) => w.when.includes(String(v).toLowerCase()))) continue;
+      steps.push(...w.steps);
+    }
+    return steps.length ? { kind: "ANY", show: false, steps } : null;
+  }
   function fieldsForKind(kind) {
+    const kinds = Array.isArray(kind) ? kind : [kind];
     return QUERY_FIELDS.filter((f) => {
       if (!f.kinds) return true;
-      if (kind === "ANY") return false;
-      return f.kinds.includes(kind);
+      return kinds.every((k) => k !== "ANY" && f.kinds.includes(k));
     });
   }
   function defaultFieldsForKind(kind) {
-    if (kind !== "ANY" && AI_ASSET_KINDS.includes(kind)) {
-      return ["name", "publisher", "discoveredBy"];
-    }
-    if (kind !== "ANY" && IDENTITY_KINDS.includes(kind)) {
-      return ["name", "displayName", "inactive"];
-    }
+    const kinds = Array.isArray(kind) ? kind : [kind];
+    const all = (family) => kinds.every((k) => k !== "ANY" && family.includes(k));
+    if (all(AI_ASSET_KINDS)) return ["name", "publisher", "discoveredBy"];
+    if (all(IDENTITY_KINDS)) return ["name", "displayName", "inactive"];
     return ["name", "kind", "cloud"];
   }
   var QueryError = class extends Error {
@@ -7647,16 +8243,25 @@ var Server = (() => {
     const q = readNode(raw, 1, counter);
     return q;
   }
+  function readKinds(raw) {
+    const list2 = Array.isArray(raw) ? raw : [raw];
+    if (!list2.length) fail("node names no kind");
+    const out = [];
+    for (const one of list2) {
+      if (typeof one !== "string" || one !== "ANY" && !KIND_SET.has(one)) {
+        fail(`unknown node kind: ${String(one)}`);
+      }
+      if (!out.includes(one)) out.push(one);
+    }
+    if (out.includes("ANY")) return "ANY";
+    return out.length === 1 ? out[0] : out;
+  }
   function readNode(raw, depth, counter) {
     if (!raw || typeof raw !== "object") fail("query node must be an object");
     if (depth > MAX_QUERY_DEPTH) fail(`query nests deeper than ${MAX_QUERY_DEPTH} levels`);
     if (++counter.nodes > MAX_QUERY_NODES) fail(`query has more than ${MAX_QUERY_NODES} nodes`);
     const r = raw;
-    const kind = r["kind"];
-    if (typeof kind !== "string" || kind !== "ANY" && !KIND_SET.has(kind)) {
-      fail(`unknown node kind: ${String(kind)}`);
-    }
-    const node2 = { kind };
+    const node2 = { kind: readKinds(r["kind"]) };
     if (r["show"] === false) node2.show = false;
     const where = r["where"];
     if (where !== void 0) {
@@ -7874,23 +8479,26 @@ var Server = (() => {
     }
   ];
   function shortcutsFor(kind, vocab) {
-    if (kind === "ANY") return [];
-    if (!vocab.kinds.some((k) => k.kind === kind)) return [];
-    return QUERY_SHORTCUTS.filter((s) => {
-      if (!s.kinds.includes(kind)) return false;
-      return s.steps.every((step) => reachable(kind, step, vocab));
-    });
+    const from = kindsOf({ kind }).filter((k) => k !== "ANY");
+    if (!from.length) return [];
+    const present2 = from.filter((k) => vocab.kinds.some((v) => v.kind === k));
+    if (!present2.length) return [];
+    return QUERY_SHORTCUTS.filter((s) => present2.some((k) => s.kinds.includes(k) && s.steps.every((step) => reachable(k, step, vocab))));
   }
   function reachable(from, step, vocab) {
-    var _a5, _b;
+    var _a5;
     if (isGroup(step)) return step.steps.every((s) => reachable(from, s, vocab));
     if (step.negate) return true;
     if (step.edge === "ANY") return true;
-    const target = step.node.kind;
-    const hit = ((_a5 = vocab.stepsFrom[from]) != null ? _a5 : []).some((e) => e.edge === step.edge && e.reverse === !!step.reverse && e.kind === target);
-    if (!hit) return false;
-    if (target === "ANY") return true;
-    return ((_b = step.node.steps) != null ? _b : []).every((s) => reachable(target, s, vocab));
+    const targets = kindsOf(step.node);
+    const from2 = (_a5 = vocab.stepsFrom[from]) != null ? _a5 : [];
+    return targets.some((target) => {
+      var _a6;
+      const hit = from2.some((e) => e.edge === step.edge && e.reverse === !!step.reverse && e.kind === target);
+      if (!hit) return false;
+      if (target === "ANY") return true;
+      return ((_a6 = step.node.steps) != null ? _a6 : []).every((s) => reachable(target, s, vocab));
+    });
   }
   function queryColumnGroups(query, selected) {
     var _a5;
@@ -7905,8 +8513,11 @@ var Server = (() => {
       const keys = picked.length ? picked : defaultFieldsForKind(node2.kind).filter((k) => offeredKeys.has(k));
       groups.push({
         index,
-        kind: node2.kind,
-        label: node2.kind === "ANY" ? "Any node" : node2.kind,
+        // `kindKey`, not `node.kind`: the builder row derives its own identity the same way, and
+        // graphQueryWalk.test.js compares the two by value across the wire. A one-kind node
+        // answers the bare kind, so no existing payload moves.
+        kind: kindKey(node2),
+        label: kindsOf(node2).map((k) => k === "ANY" ? "Any node" : k).join(" or "),
         fields: keys.map((k) => {
           const f = FIELD_BY_KEY.get(k);
           return { key: f.key, label: f.label, numeric: f.numeric };
@@ -7989,7 +8600,8 @@ var Server = (() => {
   }
   function matchesNode(node2, q) {
     var _a5;
-    if (q.kind !== "ANY" && node2.kind !== q.kind) return false;
+    const kinds = kindsOf(q);
+    if (!kinds.includes("ANY") && !kinds.includes(node2.kind)) return false;
     for (const f of (_a5 = q.where) != null ? _a5 : []) {
       if (!matchesFilter(node2, f)) return false;
     }
@@ -8003,7 +8615,7 @@ var Server = (() => {
     const hits = [];
     for (const e of edges2) {
       if (e.type !== step.edge) continue;
-      if (e.negated) continue;
+      if (Boolean(e.negated) !== Boolean(step.viaAbsence)) continue;
       const other = adj.byId.get(step.reverse ? e.src : e.dst);
       if (!other || seen.has(other.id)) continue;
       if (!matchesNode(other, step.node)) continue;
@@ -8139,7 +8751,10 @@ var Server = (() => {
     const scan = { scanned: 0, max: (_b = opts.scanMax) != null ? _b : QUERY_SCAN_MAX, truncated: false };
     const adj = buildAdjacency(doc);
     const groups = queryColumnGroups(query, opts.columns);
-    const shownMask = bindingSlots(query).map((slot) => slot.node.show !== false);
+    const slots = bindingSlots(query);
+    const shownMask = slots.map((slot) => slot.node.show !== false);
+    const witnessOf = slots.map((slot) => witnessFor(slot.node));
+    const anyWitness = witnessOf.some(Boolean);
     const groupFields = groups.map((g) => g.fields.map((f) => f.key));
     const roots = doc.nodes.filter((n) => matchesNode(n, query)).sort((a, b) => {
       var _a6, _b2;
@@ -8148,18 +8763,53 @@ var Server = (() => {
     const rows = [];
     const nodeIds = /* @__PURE__ */ new Set();
     const edgeIds = /* @__PURE__ */ new Set();
+    const witnessNodeIds = /* @__PURE__ */ new Set();
+    const witnessEdgeIds = /* @__PURE__ */ new Set();
+    const paths = [];
     let total2 = 0;
     for (const root of roots) {
       for (const sol of solutions(query, root, adj, scan)) {
         total2 += 1;
         if (rows.length < rowMax) {
           rows.push({ cells: toCells(sol.slots, shownMask, groupFields) });
-          for (const n of sol.slots) if (n) nodeIds.add(n.id);
+          const mine = [];
+          const mineAdd = (id) => {
+            if (!mine.includes(id)) mine.push(id);
+          };
+          for (const n of sol.slots) if (n) {
+            nodeIds.add(n.id);
+            mineAdd(n.id);
+          }
           for (const e of sol.edges) {
             edgeIds.add(e.id);
             nodeIds.add(e.src);
             nodeIds.add(e.dst);
+            mineAdd(e.src);
+            mineAdd(e.dst);
           }
+          if (anyWitness) {
+            sol.slots.forEach((bound, i) => {
+              const witness = witnessOf[i];
+              if (!bound || !witness) return;
+              let taken = 0;
+              for (const found of solutions(witness, bound, adj, scan)) {
+                if (taken++ >= WITNESS_FANOUT_CAP) break;
+                for (const n of found.slots) {
+                  if (!n || n.id === bound.id) continue;
+                  witnessNodeIds.add(n.id);
+                  mineAdd(n.id);
+                }
+                for (const e of found.edges) {
+                  witnessEdgeIds.add(e.id);
+                  for (const end of [e.src, e.dst]) {
+                    if (end !== bound.id) witnessNodeIds.add(end);
+                    mineAdd(end);
+                  }
+                }
+              }
+            });
+          }
+          paths.push(mine);
         }
       }
       if (scan.truncated) break;
@@ -8171,7 +8821,10 @@ var Server = (() => {
       capped: total2 > rows.length,
       truncated: scan.truncated,
       nodeIds: [...nodeIds],
-      edgeIds: [...edgeIds]
+      edgeIds: [...edgeIds],
+      witnessNodeIds: [...witnessNodeIds],
+      witnessEdgeIds: [...witnessEdgeIds],
+      paths
     };
   }
   function toCells(slots, shownMask, groupFields) {
@@ -8978,7 +9631,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "9ca3f756f57d" : "dev";
+  var BUILD_ID = true ? "378883bd4e34" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -10320,8 +10973,11 @@ var Server = (() => {
       failCount: 0,
       // Five categories now, one of which reports nothing. The framework percentage stays
       // 85 and is deliberately NOT the mean of its categories (62/91/78/85/null averages to
-      // 79) — Wiz's aggregation is undocumented and this row exists partly to keep a
-      // recomputation from ever looking correct.
+      // 79) — Wiz's aggregation is undocumented, and this row exists partly to keep a naive
+      // CATEGORY-MEAN recomputation from ever accidentally looking correct. That guard is
+      // unrelated to the AI-scoped posture in fiveRsPosture.ts: that figure is derived from
+      // a different set of inputs (active in-scope policies' own pass/fail counts, not a
+      // mean of category percentages) and is EXPECTED to differ from 85 — see that module.
       passSubCategoryCount: 1,
       failSubCategoryCount: 4,
       emptyPostureReason: null
@@ -12701,7 +13357,7 @@ var Server = (() => {
         const doc = loadGraphDoc();
         if (!doc) return { empty: true };
         const result = runQuery(doc, query, { columns });
-        const projection = inducedProjection(doc, result.nodeIds, result.edgeIds, maxNodes);
+        const projection = inducedProjection(doc, result, maxNodes);
         return {
           rows: result.rows,
           groups: result.groups,
@@ -12723,24 +13379,39 @@ var Server = (() => {
     if (!Array.isArray(raw)) return void 0;
     return raw.map((entry) => Array.isArray(entry) ? entry.map((k) => String(k)) : null);
   }
-  function inducedProjection(doc, nodeIds, edgeIds, maxNodes) {
-    const wantNodes = new Set(nodeIds);
-    const wantEdges = new Set(edgeIds);
-    const all = doc.nodes.filter((n) => wantNodes.has(n.id)).sort(nodeOrder);
-    const nodes = all.slice(0, maxNodes);
-    const admitted = new Set(nodes.map((n) => n.id));
+  function inducedProjection(doc, result, maxNodes) {
+    const wantNodes = /* @__PURE__ */ new Set([...result.nodeIds, ...result.witnessNodeIds]);
+    const wantEdges = /* @__PURE__ */ new Set([...result.edgeIds, ...result.witnessEdgeIds]);
+    const isWitness = new Set(result.witnessNodeIds);
+    const admitted = /* @__PURE__ */ new Set();
+    for (const path of result.paths) {
+      const fresh = path.filter((id) => wantNodes.has(id) && !admitted.has(id));
+      if (!fresh.length) continue;
+      if (admitted.size + fresh.length <= maxNodes) {
+        for (const id of fresh) admitted.add(id);
+        continue;
+      }
+      if (!admitted.size) {
+        const room = fresh.slice().sort((a, b) => Number(isWitness.has(a)) - Number(isWitness.has(b))).slice(0, maxNodes);
+        for (const id of room) admitted.add(id);
+      }
+      break;
+    }
+    const nodes = doc.nodes.filter((n) => admitted.has(n.id)).sort(nodeOrder);
     const allEdges = doc.edges.filter((e) => wantEdges.has(e.id));
     const edges2 = allEdges.filter((e) => admitted.has(e.src) && admitted.has(e.dst));
+    const evidence = nodes.filter((n) => isWitness.has(n.id)).length;
     return {
       nodes,
       edges: edges2,
       summaries: [],
       counts: {
-        totalNodes: all.length,
+        totalNodes: wantNodes.size,
         shownNodes: nodes.length,
         totalEdges: allEdges.length,
         shownEdges: edges2.length,
-        capped: nodes.length < all.length
+        capped: nodes.length < wantNodes.size,
+        ...evidence ? { evidence } : {}
       }
     };
   }
@@ -13227,11 +13898,16 @@ var Server = (() => {
       const params = p != null ? p : {};
       const requested = String((_a5 = params["frameworkId"]) != null ? _a5 : "");
       return cached("getCompliance", { frameworkId: requested }, () => {
+        var _a6, _b;
         const posture = loadPosture();
         const catalogue = loadFrameworks();
         const selected = getSelectedFrameworks2(() => catalogue);
         const { policies, scope: fiveRsScope } = scopedFrameworkPolicies();
         const trees = buildAllFrameworkTrees(posture, policies, catalogue);
+        const fiveRsPosture = fiveRsDerivedPosture(
+          fiveRsScope,
+          (_b = (_a6 = trees.find((t) => t.frameworkId === fiveRsScope.frameworkId)) == null ? void 0 : _a6.posturePct) != null ? _b : null
+        );
         const merged = catalogue.map((f) => ({ ...f, selected: selected.indexOf(f.id) >= 0 }));
         return {
           trees,
@@ -13252,6 +13928,12 @@ var Server = (() => {
           // as a count because the Settings card is the place an operator overturns a
           // derivation, and it cannot argue with a verdict it cannot see.
           fiveRsScope,
+          // Computed server-side for the same reason `rail` / `weakestAreas` / `sharedControls`
+          // above are: the client bundle cannot import the domain layer, so a browser-side
+          // recomputation would be a hand-kept mirror rather than a shared source. This
+          // payload is already shipped whole and cached, so there is no second scope for a
+          // mirror to reconcile against — computing it here instead buys nothing but risk.
+          fiveRsPosture,
           coverage: coverageSummary(trees, merged),
           // Named so the page can open on a framework it was linked to rather than guessing.
           // Null when the requested id has no stored posture, which the page reports as such

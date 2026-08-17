@@ -42,6 +42,7 @@ import {
 } from "../store.js";
 import { openAssetSheet, openIssueSheet } from "../detailSheets.js";
 import { renderGraph } from "../graphView.js";
+import { renderGraphSkeleton } from "../graphSkeleton.js";
 import { queryTable, DEFAULT_PAGE_SIZE } from "../queryTable.js";
 import {
   CATEGORY_LABELS, CATEGORY_ORDER, categoryOf, kindIconSvg, kindLabel,
@@ -53,8 +54,8 @@ import {
 } from "./graphQuery.js";
 import { queryBar } from "./graphQueryBar.js";
 import {
-  clear, confirmDialog, el, emptyState, filterChipRow, helpTip, onPageTeardown,
-  openPopover, portalsOpen, segmented, selectField, sevBadge, skeleton, toast, togglePills,
+  clear, confirmDialog, el, emptyState, filterChipRow, helpTip, motionOk, onPageTeardown,
+  openPopover, portalsOpen, segmented, selectField, sevBadge, toast, togglePills,
   uiIcon,
 } from "../ui.js";
 
@@ -66,6 +67,73 @@ const GROUP_LABELS = {
   kind: "node type",
   severity: "severity",
 };
+
+/**
+ * The layouts, in the order the list offers them — the page's whole vocabulary for `layout=`.
+ *
+ * Every entry names its engine exactly as the domain's `LAYOUT_MODES` does, so the value in the
+ * URL and the row in the list are the same word. The DEFAULT one is simply first, and the hash
+ * carries nothing at all for it: `normalizeLayout` collapses it to "" on the way in and `choose`
+ * writes "" on the way out, so a link says `layout=rows` when someone asked for rows and stays
+ * silent when they took what they were given.
+ *
+ * This used to be spelled `mode: ""` on the default row itself, which read as if one arrangement
+ * had no name. It has one; what it has is no NEED to be named, and that is a fact about the hash
+ * rather than about the engine — so it lives in one constant beside the table.
+ *
+ * The blurb is not decoration. Five rows reading "Grid / Rows / Columns / Organic / Radial"
+ * say nothing about which one answers the question in hand, and a layout picker is exactly
+ * where someone is guessing — so each one says what it arranges BY, in the estate's own terms.
+ */
+const LAYOUTS = [
+  {
+    mode: "grid", label: "Grid", icon: "group",
+    blurb: "Every node packed densely, categories ignored — fits the most on screen",
+  },
+  {
+    mode: "rows", label: "Rows", icon: "rows",
+    blurb: "Category bands across — risk, AI assets, identities, data, compute",
+  },
+  {
+    mode: "lanes", label: "Columns", icon: "lanes",
+    blurb: "The same bands, running down instead of across",
+  },
+  {
+    mode: "organic", label: "Organic", icon: "organic",
+    blurb: "Force-directed — clusters emerge from the connections",
+  },
+  {
+    mode: "radial", label: "Radial", icon: "radial",
+    blurb: "Rings out from the worst-risk agent, one ring per hop",
+  },
+];
+
+/** Every layout the hash may name — all five, since none of them lacks a name. */
+const LAYOUT_MODES = LAYOUTS.map((l) => l.mode);
+
+/**
+ * The arrangement an absent `layout=` means. Mirrors the domain's `DEFAULT_LAYOUT`, and is the one
+ * word to change to move the default; test/graphLayout.test.ts reads both and fails if they part.
+ *
+ * Grid, because a first paint should be legible: measured against a 1180x660 canvas it fits at
+ * 53–66% where the category bands fit at 21–34%, roughly double the zoom on every sample
+ * projection. graphLayout.ts's header carries the table and what the choice costs.
+ */
+const DEFAULT_LAYOUT = "grid";
+
+/**
+ * Old layout values, mapped onto the arrangement that draws what they drew.
+ *
+ * `grouped` was an arrangement before grouping and arrangement came apart, and what it drew was
+ * the compact grid. Mirrors `resolveLayoutParams`, which does the same mapping server-side —
+ * mirrored rather than shared because the client bundle cannot import the domain layer, the same
+ * reason egoLayout.js keeps its own copy of SEVERITY_ORDER. test/graphLayout.test.ts holds the
+ * two together.
+ */
+const LAYOUT_ALIAS = { grouped: "grid" };
+
+/** The key that opens the Layouts list, as the reference screen prints it. */
+const LAYOUT_KEY = "y";
 
 // Legend starts collapsed on each visit; once the user opens it we keep it open
 // across in-place repaints (filter changes rebuild the legend, and a key that
@@ -114,6 +182,21 @@ const VIEW_PARAMS = [
   "layout", "groupBy", "sort", "sortCol", "dir", "pageSize", "maxNodes",
 ];
 
+/**
+ * A hash `layout` value as this page understands it: an alias resolved, anything unknown dropped,
+ * and THE DEFAULT COLLAPSED TO "" so one arrangement has exactly one spelling in the hash.
+ *
+ * That last step is why `layout=grid` and no `layout` at all are the same state everywhere after
+ * this — the row the list marks, the button's label, the request. Without it a hand-written
+ * `layout=grid` would draw the right picture while comparing unequal to the default, so the list
+ * would mark nothing and the button would read whatever the fallback said.
+ */
+function normalizeLayout(raw) {
+  const v = LAYOUT_ALIAS[raw] || raw;
+  if (!LAYOUT_MODES.includes(v)) return "";
+  return v === DEFAULT_LAYOUT ? "" : v;
+}
+
 function graphParams(params, defaults) {
   return {
     // The question. `find` is the structure and `where` the per-node property filters; see
@@ -130,7 +213,12 @@ function graphParams(params, defaults) {
     pageSize: Number(params.pageSize) || DEFAULT_PAGE_SIZE,
     sortCol: params.sortCol || "",
     dir: params.dir === "desc" ? "desc" : "asc",
-    layout: (params.layout === "grouped" || params.layout === "lanes") ? params.layout : "",
+    // Whitelisted against LAYOUTS rather than against a hand-written pair. The literal this
+    // replaces named "grouped" and "lanes" and nothing else, so a new engine in the domain and a
+    // new row in the list both landed — and the URL still carried it — while THIS silently
+    // rewrote it to rows on the way to the request. One list, so a layout cannot be added to
+    // four places and forgotten in the fifth.
+    layout: normalizeLayout(params.layout),
     groupBy: params.groupBy || "",
     sort: params.sort || "",
     view: params.view === "table" ? "table" : "graph",
@@ -285,6 +373,46 @@ export async function renderGraphPage(main, params, _ctx) {
       "severities", "projects", "clouds"]) delete params[k];
     setParams(params);
   }
+  // `layout=grouped` is the other kind of old link, and it is REWRITTEN rather than translated on
+  // every read. Grouping used to be one of the arrangements and chose its own interior — the
+  // compact grid, except under `asset`, where it forced hub-and-spoke. Modernising the hash once,
+  // here, is what keeps a single value flowing through everything after it: the row the list
+  // marks, the badge, the legend, and the request. Left as-is, this page would normalise `layout`
+  // for its own display and send the normalised value on, so the resolver's own migration would
+  // never see the legacy word and a saved view would open with no boxes at all.
+  //
+  // Mirrors `resolveLayoutParams`, which keeps the same mapping as the server-side safety net.
+  // Two copies because the client bundle cannot import the domain layer; the pair is held together
+  // by test/graphLayout.test.ts (the alias) and by the browser walk (the `asset` branch).
+  if (LAYOUT_ALIAS[params.layout]) {
+    params = { ...params };
+    // An absent `groupBy` is what grouped mode defaulted to internally, so it still groups.
+    const groupBy = params.groupBy || "combo";
+    params.groupBy = groupBy;
+    // Through `normalizeLayout` rather than straight from the alias, so what lands in the URL is
+    // the CANONICAL spelling — and the alias's own target is the default, which spells itself as
+    // nothing. Written raw, an old link would modernise into `layout=grid`: the right picture, at
+    // a value the rest of the page then has to keep collapsing.
+    params.layout = normalizeLayout(groupBy.split(",")[0].trim() === "asset"
+      ? "radial"
+      : LAYOUT_ALIAS[params.layout]);
+    setParams(params);
+  }
+  // A `layout=` THAT NAMES THE DEFAULT is rewritten out, and so is one that names nothing real.
+  //
+  // This is the migration for the move of the default itself. `layout=grid` was the honest,
+  // canonical spelling of an explicit choice right up until grid became the value an absent param
+  // means — so every link and saved view written while Rows was the default carries it, and each
+  // one would now arrive redundant. Not merely untidy: `update` merges the RAW hash params, so the
+  // stale value rides along through every later change to the view and only clears if someone
+  // happens to pick a layout again.
+  //
+  // Same posture as the retired `q=` below and as the alias above — modernise the hash once, on
+  // read, so one arrangement has one spelling from here on.
+  if (params.layout != null && params.layout !== normalizeLayout(params.layout)) {
+    params = { ...params, layout: normalizeLayout(params.layout) };
+    setParams(params);
+  }
   // The retired canvas search. Stripped from any link that still names it rather than left
   // sitting inert: a URL that carries `q=agent` reads like a page that does something with it.
   if (params.q != null) {
@@ -359,45 +487,66 @@ export async function renderGraphPage(main, params, _ctx) {
   const panel = el("div", {
     class: "gq-panel", id: "gq-panel", hidden: true, "aria-label": "Query editor",
   }, panelClose, barHost);
-  // ------------------------------------------------------------- layout, in the rail
+  // ------------------------------------------------------- layout + grouping, in the rail
   // Arrange used to be a select up here, fusing the mode and the dimension into one
   // eight-way enum and splitting it back out with a string slice. It is canvas chrome —
   // already hidden in table view — so it moves onto the canvas, beside the zoom it
   // belongs with, and the mode and the dimensions get to be the separate things they are.
-  const layoutBadge = el("span", { class: "graph-tool-badge", "aria-hidden": "true" });
+  //
+  // TWO BUTTONS, AND TWO INDEPENDENT QUESTIONS. One control used to hold the arrangement AND the
+  // grouping dimensions, with a badge counting the dimensions — a single trigger describing two
+  // unrelated things, whose badge answered for only one of them. Splitting them in two was the
+  // first half; the second is that NEITHER constrains the other. Grouping is not one of the
+  // arrangements any more, so this button is always live, and every pair of values means
+  // something: grouping partitions, the arrangement fills each partition.
+  let layoutPop = null;
   const layoutBtn = el("button", {
-    class: "graph-tool", "aria-haspopup": "dialog",
-    onclick: () => openLayout(),
-  }, uiIcon("group", 15), layoutBadge);
+    class: "graph-tool", "aria-haspopup": "listbox",
+    onclick: () => toggleLayout(),
+  }, uiIcon("layout", 15));
 
-  /** How many grouping levels are in force — what the badge counts. */
+  const groupBadge = el("span", { class: "graph-tool-badge", "aria-hidden": "true" });
+  const groupBtn = el("button", {
+    class: "graph-tool", "aria-haspopup": "dialog",
+    onclick: () => openGroups(),
+  }, uiIcon("group", 15), groupBadge);
+
+  /** How many grouping levels are in force — what the badge counts. Zero is a real answer. */
   function groupLevels() {
-    if (state.layout !== "grouped") return [];
     return String(state.groupBy || "").split(",").map((s) => s.trim()).filter(Boolean);
   }
 
   function syncLayoutBtn() {
+    // `state.layout` is "" for the default, so it is resolved to the default's NAME before the
+    // lookup — every row in the table now carries a real engine name, and matching exactly beats
+    // leaning on `LAYOUTS[0]` happening to be the right one.
+    const spec = LAYOUTS.find((l) => l.mode === (state.layout || DEFAULT_LAYOUT)) || LAYOUTS[0];
+    layoutBtn.setAttribute("aria-label", `Layout: ${spec.label}`);
     const levels = groupLevels();
     // "" rather than "0", so `:empty` hides it — the recipe the filter badge uses.
-    layoutBadge.textContent = levels.length ? String(levels.length) : "";
-    const mode = state.layout === "grouped"
-      ? "grouped by " + levels.map((k) => GROUP_LABELS[k] || k).join(", then ")
-      : state.layout === "lanes" ? "columns" : "rows";
-    layoutBtn.setAttribute("aria-label", `Layout: ${mode}`);
+    groupBadge.textContent = levels.length ? String(levels.length) : "";
+    groupBtn.setAttribute("aria-label", levels.length
+      ? "Grouped by " + levels.map((k) => GROUP_LABELS[k] || k).join(", then ")
+      : "Group by");
   }
 
-  // The canvas rail: the page's layout tool on top, the renderer's zoom controls below.
+  // The canvas rail: the page's two canvas tools on top, the renderer's zoom controls below.
   //
   // It hangs off the split rather than the canvas because `renderGraph` clears its own
-  // container on every repaint — and the layout button opens a popover, which measures
-  // its anchor. Rebuilt mid-flight, the anchor detaches, the popover reads a zeroed rect
+  // container on every repaint — and both buttons open popovers, which measure their
+  // anchor. Rebuilt mid-flight, the anchor detaches, the popover reads a zeroed rect
   // and closes itself, so a live-apply control inside the canvas would dismiss on its own
   // first use. Out here it simply persists, and the renderer refills its slot.
   const railZoom = el("div", { class: "graph-rail-zoom" });
-  const rail = el("div", { class: "graph-rail" }, layoutBtn, railZoom);
+  const rail = el("div", { class: "graph-rail" }, layoutBtn, groupBtn, railZoom);
+  // The refetch indicator: a hairline top-edge bar, shown only while `body` carries
+  // `.updating`. A sibling of `body` for the same reason `rail` is one — `renderGraph` clears
+  // `body`'s own children on every repaint (graphView.js:19) and would take this with it.
+  const updatingBar = el("div", { class: "gs-updating-bar", hidden: true, "aria-hidden": "true" },
+    el("div", { class: "progress-track indeterminate" }, el("div", { class: "progress-fill" })));
   // `body` is the containing block for the canvas overlays, the table, the empty states and the
   // boot skeleton; the panel is positioned against the split so it can sit over all of them.
-  const split = el("div", { class: "workbench-split" }, panel, rail, body);
+  const split = el("div", { class: "workbench-split" }, panel, rail, body, updatingBar);
   const root = el("div", { class: "workbench" }, bar, viewbar, chipsRow, split);
   main.append(root);
 
@@ -418,6 +567,12 @@ export async function renderGraphPage(main, params, _ctx) {
   let graphApi = null;
   /** Guards against a slow answer painting over a faster one that was asked for later. */
   let seq = 0;
+  // The ghost graph's handle, non-null from the boot block until the first real paint. `load()`
+  // reads it to know whether THIS is the boot load (advance its phase text) or a refetch (dim
+  // the canvas instead); `releaseCanvas()` is the one place that destroys it, so every path that
+  // tears down the canvas — a successful paint, an empty result, a rejected query — retires it
+  // the same way and its 8s long-wait timer can never outlive the page.
+  let bootSkeleton = null;
 
   const orderSel = el("select", { "aria-label": "Order nodes" },
     el("option", { value: "" }, "Smart order"),
@@ -565,11 +720,37 @@ export async function renderGraphPage(main, params, _ctx) {
     if (portalsOpen()) return;
     setEditing(false, true);
   }
+  /**
+   * `Y` opens the Layouts list — the app's first page-level shortcut, so the guards matter.
+   *
+   * A bare letter on `document` is a key someone is otherwise entitled to TYPE, and this page is
+   * mostly text fields: the query builder's search, the filter editors, the saved-query name. So
+   * it stands down for anything editable, for any modifier (Cmd-Y is the browser's), for an open
+   * portal (a letter aimed at a palette's search box must reach it), and in table view, where the
+   * rail this belongs to is hidden and a layout is not a thing the page is showing.
+   *
+   * Registered here, beside Escape, and torn down the same way — `onPageTeardown` runs on
+   * navigation, and a listener that outlived its page would answer for a canvas that is gone.
+   */
+  function onLayoutKey(e) {
+    if (e.key.toLowerCase() !== LAYOUT_KEY) return;
+    if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+    if (state.view === "table") return;
+    const t = e.target;
+    if (t instanceof Element && (t.closest("input, select, textarea, [contenteditable]"))) return;
+    // The trigger's own popover is the exception to `portalsOpen` — pressing the key again has to
+    // close what the key opened, which is exactly what a toggle means.
+    if (portalsOpen() && !(layoutPop && layoutPop.isOpen())) return;
+    e.preventDefault();
+    toggleLayout();
+  }
   document.addEventListener("pointerdown", onOutsidePointer, true);
   document.addEventListener("keydown", onEscape, true);
+  document.addEventListener("keydown", onLayoutKey, true);
   onPageTeardown(() => {
     document.removeEventListener("pointerdown", onOutsidePointer, true);
     document.removeEventListener("keydown", onEscape, true);
+    document.removeEventListener("keydown", onLayoutKey, true);
   });
 
   // ------------------------------------------------------------ update cycle
@@ -596,17 +777,60 @@ export async function renderGraphPage(main, params, _ctx) {
     }
   }
 
+  /**
+   * The answer landed: advance the ghost's phase one honest step further (boot load only —
+   * `bootSkeleton` is null on every refetch) before handing it to `paint()`. The extra
+   * `requestAnimationFrame` gives the browser a chance to actually paint that phase text
+   * before the synchronous render below blocks the thread, so "Drawing N nodes…" is visible
+   * for at least a frame rather than being overwritten in the same tick it appeared — but it
+   * is also a real await, so `mySeq` gets re-checked after it: an `update()` fired during that
+   * one frame must not let this stale answer paint over whatever it asked for instead.
+   */
+  async function settle(mySeq, data) {
+    if (bootSkeleton) {
+      const n = state.view === "table"
+        ? (data.rows || data.nodes || []).length
+        : (data.nodes || []).length;
+      bootSkeleton.setPhase(state.view === "table" ? `Loading ${n} rows…` : `Drawing ${n} nodes…`);
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      if (mySeq !== seq) return;
+    }
+    paint(data);
+  }
+
   async function load() {
     const mySeq = ++seq;
-    body.classList.add("updating");
+    if (bootSkeleton) {
+      // Already true by the time this runs — the query was prefetched back at the top of
+      // `renderGraphPage`, in parallel with `bootstrap()` — but naming it here rather than at
+      // construction keeps every phase change in the one function responsible for advancing
+      // them.
+      bootSkeleton.setPhase("Running the graph query…");
+    } else {
+      body.classList.add("updating");
+      body.setAttribute("aria-busy", "true");
+      updatingBar.hidden = false;
+    }
     try {
       const data = await swrCall("api_runGraphQuery", rpcParams(state, readColumnDefaults()), (fresh) => {
-        if (mySeq === seq) paint(fresh);
+        if (mySeq === seq) settle(mySeq, fresh);
       });
-      if (mySeq === seq) paint(data);
+      if (mySeq === seq) await settle(mySeq, data);
     } catch (e) {
       if (mySeq !== seq) return;
+      // Retires the ghost (and its long-wait timer) too, so a rejected boot query doesn't
+      // leave either behind — the same chokepoint `paint()` and `emptyCanvas()` use.
+      releaseCanvas();
       body.classList.remove("updating");
+      // Unconditional, not "only if a handoff was in flight": `paint()` can leave this class
+      // on `body` (opacity 0) while it awaits its fade, and if THIS load's rejection is what
+      // supersedes that paint, its own early-return bail already strips the class — but that
+      // is a second, defensive removal, not the only one, precisely so this catch branch never
+      // has to know or trust which state the class is in. Skipping it here is what used to
+      // strand the empty-state message below at opacity 0 with no way back.
+      body.classList.remove("gcanvas-handoff");
+      body.removeAttribute("aria-busy");
+      updatingBar.hidden = true;
       // A rejected query is the common case here now, and its message names the offending
       // kind or relationship — far more use than "couldn't load".
       clear(body).append(el("div", { class: "workbench-empty" },
@@ -671,10 +895,20 @@ export async function renderGraphPage(main, params, _ctx) {
     railZoomHost: railZoom,
   };
 
-  /** Tear down the previous renderer before the canvas is cleared out from under it. */
+  /**
+   * Tear down the previous renderer before the canvas is cleared out from under it — and, the
+   * single chokepoint for it, the ghost graph too. `paint()` and `emptyCanvas()` both call this
+   * before they touch `body`, and `load()`'s catch branch calls it directly, so every path that
+   * replaces the boot skeleton's content retires it the same way: its DOM and its 8s long-wait
+   * timer never outlive whichever of the three outcomes actually happened.
+   */
   function releaseCanvas() {
     if (graphApi && graphApi.destroy) graphApi.destroy();
     graphApi = null;
+    if (bootSkeleton) {
+      bootSkeleton.destroy();
+      bootSkeleton = null;
+    }
   }
 
   /**
@@ -721,10 +955,62 @@ export async function renderGraphPage(main, params, _ctx) {
     updateMeta(payload.empty ? null : payload);
   }
 
-  function paint(payload) {
+  /**
+   * Resolves once `body`'s opacity transition has actually finished (or, failing that, once
+   * `--dur-base` has definitely elapsed — a rapid second filter change can tear this render
+   * down before `transitionend` ever fires, and the fade must not hang waiting for an event
+   * that is never coming).
+   */
+  function fadeOut(node) {
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        node.removeEventListener("transitionend", onEnd);
+        resolve();
+      };
+      const onEnd = (e) => { if (e.target === node && e.propertyName === "opacity") finish(); };
+      node.addEventListener("transitionend", onEnd);
+      setTimeout(finish, 220); // --dur-base (180ms) plus margin
+    });
+  }
+
+  /**
+   * The boot ghost's only exit: `body` fades to fully transparent, the canvas is torn down and
+   * rebuilt while nobody can see the gap, then it fades back in. `renderGraph` opens by
+   * clearing whatever is already in its container (graphView.js:19), so there is no way to
+   * literally cross-fade old content into new — this fades the CONTAINER instead, which reads
+   * the same way from outside it.
+   *
+   * Only the very first paint takes this branch (`bootSkeleton` is null forever after), and
+   * only when motion is allowed — otherwise the swap below runs exactly as it always did,
+   * synchronously and instantly. `paintToken` guards the one async gap this function has: if a
+   * newer `load()` starts while this paint is mid-fade, that faster answer's own `paint()` call
+   * owns the swap, and this one bails without touching the DOM further.
+   */
+  async function paint(payload) {
     if (!payload) return;
+    const paintToken = seq;
+    const handoff = !!bootSkeleton && motionOk();
+    if (handoff) {
+      body.classList.add("gcanvas-handoff");
+      await fadeOut(body);
+      if (paintToken !== seq) {
+        // Bailing before the swap below ever runs, so nothing here will reach the RAF at the
+        // bottom of this function that would otherwise be the one to undo the class — remove
+        // it explicitly rather than leaving `body` stranded at opacity 0 for whichever path
+        // (a newer paint, or load()'s own catch branch) ends up handling `seq` instead. Not a
+        // `finally`: the NORMAL continuation below must keep the class on `body` all the way
+        // through the swap, so only this early exit gets its own cleanup.
+        body.classList.remove("gcanvas-handoff");
+        return;
+      }
+    }
     lastData = payload;
     body.classList.remove("updating");
+    body.removeAttribute("aria-busy");
+    updatingBar.hidden = true;
     // The builder's filter chips read their field LABELS off the answer's column groups, and
     // the answer lands after the repaint that added the filter. Without this the chip shows
     // the raw key ("inactive") until the next unrelated edit. `sync` is idempotent and the
@@ -732,36 +1018,41 @@ export async function renderGraphPage(main, params, _ctx) {
     builder.sync();
     if (payload.empty || (!(payload.nodes || []).length && !(payload.rows || []).length)) {
       emptyCanvas(payload);
-      return;
-    }
-    payload.palette = boot.palette;
-    payload.offsets = parseOffsets(state.pos);
-    releaseCanvas();
-    clear(body);
-    if (state.view === "table") {
-      body.append(el("div", { class: "workbench-table" }, queryTable(payload, {
-        page: state.page,
-        pageSize: state.pageSize,
-        sort: state.sortCol,
-        dir: state.dir,
-        onPage: (p) => update({ page: p === 1 ? "" : String(p) }),
-        onPageSize: (n) => update({ pageSize: String(n), page: "" }),
-        onSort: (key) => update({
-          sortCol: key,
-          dir: state.sortCol === key && state.dir === "asc" ? "desc" : "asc",
-          page: "",
-        }),
-        onOpen: (cell) => handlers.onNodeOpen({ id: cell.id, kind: cell.kind, name: cell.name }),
-      })));
     } else {
-      graphApi = renderGraph(body, payload, handlers);
-      body.append(buildLegend(boot, payload));
+      payload.palette = boot.palette;
+      payload.offsets = parseOffsets(state.pos);
+      releaseCanvas();
+      clear(body);
+      if (state.view === "table") {
+        body.append(el("div", { class: "workbench-table" }, queryTable(payload, {
+          page: state.page,
+          pageSize: state.pageSize,
+          sort: state.sortCol,
+          dir: state.dir,
+          onPage: (p) => update({ page: p === 1 ? "" : String(p) }),
+          onPageSize: (n) => update({ pageSize: String(n), page: "" }),
+          onSort: (key) => update({
+            sortCol: key,
+            dir: state.sortCol === key && state.dir === "asc" ? "desc" : "asc",
+            page: "",
+          }),
+          onOpen: (cell) => handlers.onNodeOpen({ id: cell.id, kind: cell.kind, name: cell.name }),
+        })));
+      } else {
+        graphApi = renderGraph(body, payload, handlers);
+        body.append(buildLegend(boot, payload));
+      }
+      // The counts overlay describes the CANVAS — how much of the match set it managed to
+      // draw. In table view it would float over the table's own footer saying nothing the
+      // result count above has not already said, so it stays with the picture it is about.
+      if (state.view !== "table") body.append(meta);
+      updateMeta(payload);
     }
-    // The counts overlay describes the CANVAS — how much of the match set it managed to
-    // draw. In table view it would float over the table's own footer saying nothing the
-    // result count above has not already said, so it stays with the picture it is about.
-    if (state.view !== "table") body.append(meta);
-    updateMeta(payload);
+    if (handoff) {
+      // One more frame before fading back in, so the browser has actually laid out and
+      // painted the new (still-invisible) content rather than animating from a stale frame.
+      requestAnimationFrame(() => body.classList.remove("gcanvas-handoff"));
+    }
   }
 
   // -------------------------------------------------------------------- meta
@@ -868,6 +1159,12 @@ export async function renderGraphPage(main, params, _ctx) {
    * Both caveats are stated rather than implied: a capped row list still reports the true
    * total, and a truncated enumeration says the total is a floor instead of quietly printing
    * a number it cannot stand behind.
+   *
+   * THE THIRD CAVEAT IS EVIDENCE, and it is the one this count could not previously survive. A
+   * filter naming a risk property makes the canvas draw the subgraph that proves it — the identity
+   * and the classified store behind "reaches classified data" — so "11 results" now sits beside 36
+   * cards. Reconciling that is not the reader's job, and the pill is not decoration: without it the
+   * honest conclusion from the screen is that the count is wrong.
    */
   function updateCount(payload) {
     if (!payload || payload.empty) {
@@ -889,6 +1186,16 @@ export async function renderGraphPage(main, params, _ctx) {
         "Every match is counted, but only the first rows are shown.",
         "They are ordered worst-first, so the top of the list is the interesting end.",
       ], { label: "Why some rows are not listed" }));
+    }
+    // Appended, not an `else` branch: how many results there are and whether their evidence is
+    // drawn are independent facts, and a capped view with evidence has both to report.
+    const evidence = Number((payload.counts || {}).evidence) || 0;
+    if (evidence && state.view !== "table") {
+      countNote.append(helpTip(el("span", { class: "pill neutral" }, "+" + evidence + " evidence"), [
+        "The canvas also draws the proof for each filter in this query — the identity, "
+          + "the classified store, the exposure node — so a result is a path rather than a card.",
+        "These nodes are not rows: the table lists what matched, one row per match.",
+      ], { label: "Why the canvas holds more nodes than results" }));
     }
   }
 
@@ -987,34 +1294,150 @@ export async function renderGraphPage(main, params, _ctx) {
    * forever.
    */
   /**
-   * The canvas's layout: which arrangement, and — when it is groups — by what.
+   * The layouts, as the reference draws it: a flat list of named arrangements, one glyph each,
+   * the one in force marked, and the shortcut printed beside the heading.
    *
-   * The three modes are presented as the exclusive choice the engine actually is. An
-   * earlier draft offered "Arrange: Rows|Columns" beside an independent "Group by",
-   * which reads well and is a lie: grouped is not rows-with-boxes, it is a third mode,
-   * and the Arrange value would have meant nothing while grouping was on.
+   *   Layouts                Shortcut: Y
+   *     ▦  Grid            ✓
+   *     ▤  Rows
+   *     ▥  Columns
+   *     ✳  Organic
+   *     ◌  Radial
+   *
+   * A LIST, not the segmented control this replaces. Segments are for two or three peers that fit
+   * on one line; five do not, and the third of them ("Groups") was carrying two `<select>`s in the
+   * same popover — an arrangement picker and a dimension picker wearing one trigger. The
+   * dimensions moved to their own button, which is what lets this be a list at all.
+   *
+   * The default leads, so the row a fresh visit has ticked is the row the list opens on and the
+   * arrow keys start from the top rather than from the middle.
+   *
+   * The marked row carries BOLD AND A TICK, never the reference's blue alone. Five rows in one
+   * tint with the current one merely coloured is exactly the colour-only signal the design bar
+   * forbids, and the tick is the part a monochrome or forced-colours reader still gets.
+   *
+   * `role="listbox"` with `aria-activedescendant`: the arrangement is a single exclusive choice
+   * out of five, which is what a listbox means, and the arrow keys move the active row without
+   * moving DOM focus off the container.
+   */
+  function toggleLayout() {
+    // Pressing the trigger — or the shortcut — a second time closes. Without this the key would
+    // stack a second popover over the first, and `openSheet`'s singleton rule has no equivalent
+    // for popovers.
+    if (layoutPop && layoutPop.isOpen()) {
+      layoutPop.close(true);
+      return;
+    }
+    openLayout();
+  }
+
+  function openLayout() {
+    const active = state.layout || DEFAULT_LAYOUT;
+    const listId = "graph-layouts-list";
+    const rows = [];
+    let at = Math.max(0, LAYOUTS.findIndex((l) => l.mode === active));
+
+    const list = el("div", {
+      class: "graph-layouts", id: listId, role: "listbox", "aria-label": "Layouts",
+      tabindex: "0",
+    });
+    LAYOUTS.forEach((spec, i) => {
+      const on = spec.mode === active;
+      const row = el("div", {
+        class: "graph-layouts-row" + (on ? " is-on" : ""),
+        id: listId + "-" + i, role: "option", "aria-selected": on ? "true" : "false",
+        onmousedown: (e) => { e.preventDefault(); choose(i); },
+      },
+        el("span", { class: "graph-layouts-glyph", "aria-hidden": "true" }, uiIcon(spec.icon, 15)),
+        el("span", { class: "graph-layouts-text" },
+          el("span", { class: "graph-layouts-label" }, spec.label),
+          el("span", { class: "graph-layouts-blurb" }, spec.blurb)),
+        on ? el("span", { class: "graph-layouts-check" }, uiIcon("check", 13)) : null,
+      );
+      rows.push(row);
+      list.append(row);
+    });
+
+    function highlight() {
+      rows.forEach((row, i) => row.classList.toggle("is-active", i === at));
+      list.setAttribute("aria-activedescendant", listId + "-" + at);
+    }
+
+    /**
+     * Live-apply, and `pos` clears with the layout: a new arrangement recomputes every position,
+     * so the manual nudges `pos` records no longer describe anything on screen.
+     *
+     * `groupBy` IS NOT TOUCHED. Changing the arrangement while grouping is on keeps the boxes and
+     * rearranges what is inside them — which is the whole point of the two being independent.
+     * This used to clear it on every pick, so choosing a layout silently threw the grouping away.
+     */
+    function choose(i) {
+      const spec = LAYOUTS[i];
+      if (layoutPop) layoutPop.close(true);
+      if (spec.mode === active) return;
+      // `normalizeLayout` on the way out, so picking the default row REMOVES `layout=` rather than
+      // writing it: `buildHash` drops empty values, and a link should only spell out an
+      // arrangement that was actually asked for.
+      update({ layout: normalizeLayout(spec.mode), pos: "" });
+    }
+
+    list.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowDown") { e.preventDefault(); at = Math.min(at + 1, rows.length - 1); highlight(); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); at = Math.max(at - 1, 0); highlight(); }
+      else if (e.key === "Home") { e.preventDefault(); at = 0; highlight(); }
+      else if (e.key === "End") { e.preventDefault(); at = rows.length - 1; highlight(); }
+      else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); choose(at); }
+    });
+    highlight();
+
+    const body = el("div", { class: "graph-layout" },
+      el("div", { class: "graph-layouts-head" },
+        el("span", { class: "graph-layouts-title" }, "Layouts"),
+        el("span", { class: "graph-layouts-key" },
+          "Shortcut: ", el("kbd", {}, LAYOUT_KEY.toUpperCase()))),
+      list);
+
+    layoutPop = openPopover({
+      anchor: layoutBtn,
+      className: "graph-layout-pop",
+      ariaLabel: "Layouts",
+      // The trigger sits at the bottom of the viewport, so there is never room below it.
+      // Left at the default this would try downward first and flip only on measurement.
+      position: { width: 320, minWidth: 280, maxHeight: 420, minHeight: 220, flipBelow: 10000 },
+      build: () => body,
+      onClose: () => { layoutPop = null; },
+    });
+    // Focus goes INTO the panel: it is portaled to the end of <body>, so Tab from the trigger
+    // would walk the page behind it rather than its contents. The LIST takes it, not a row —
+    // this is the editable-listbox pattern the palette uses, where the container holds focus and
+    // `aria-activedescendant` carries the cursor.
+    if (layoutPop.isOpen()) list.focus();
+  }
+
+  /**
+   * What grouped mode groups BY — its own control, because it is its own question.
    *
    * Level 2 offers what level 1 has not taken, minus `asset` — hub-and-spoke is an
    * arrangement rather than a partition, with no key of its own to subdivide by, so it
    * is outermost-or-nothing and the resolver drops it anywhere else.
    */
-  function openLayout() {
+  function openGroups() {
     const DIMS = ["asset", "combo", "project", "cloud", "kind", "severity"];
     const levels = groupLevels();
-    let mode = state.layout || "";
-    let g1 = levels[0] || (state.groupBy ? String(state.groupBy).split(",")[0] : "combo");
+    let g1 = levels[0] || "";
     let g2 = levels[1] || "";
 
     // Every change goes straight to the URL — live-apply, no OK button, same as Columns.
-    // `pos` clears with it: a new arrangement recomputes the picture, so manual node
-    // nudges no longer describe anything.
+    // `pos` clears with it: a regrouping recomputes the picture, so manual node nudges no longer
+    // describe anything.
+    //
+    // `layout` IS NOT TOUCHED. Grouping is not an arrangement any more, so choosing a dimension
+    // writes `groupBy` and leaves the arrangement someone picked alone — it used to force
+    // `layout: "grouped"`, which is the coupling this whole change undoes.
     const apply = () => {
-      if (mode !== "grouped") {
-        update({ layout: mode, groupBy: "", pos: "" });
-        return;
-      }
-      const list = g2 && g2 !== g1 && g1 !== "asset" && g2 !== "asset" ? [g1, g2] : [g1];
-      update({ layout: "grouped", groupBy: list.join(","), pos: "" });
+      const list = !g1 ? []
+        : g2 && g2 !== g1 && g1 !== "asset" && g2 !== "asset" ? [g1, g2] : [g1];
+      update({ groupBy: list.join(","), pos: "" });
     };
 
     // Built ONCE, then updated in place. A rebuild-on-every-change draft dismissed the
@@ -1024,11 +1447,14 @@ export async function renderGraphPage(main, params, _ctx) {
     // lines up — rewrite the half that moved, never the container.
     const sel1 = el("select", { "aria-label": "Group by 1" });
     const sel2 = el("select", { "aria-label": "Group by 2" });
-    const fill = (sel, skipAsset) => {
+    const fill = (sel, second) => {
       clear(sel);
-      if (skipAsset) sel.append(el("option", { value: "" }, "Select…"));
+      // Level 1's empty option is how grouping is turned OFF, and it has to live here: the
+      // control that switches grouping on is the only place a reader will look to switch it off,
+      // and there is no longer a layout to leave in order to stop grouping.
+      sel.append(el("option", { value: "" }, second ? "Select…" : "No grouping"));
       for (const k of DIMS) {
-        if (skipAsset && (k === "asset" || k === g1)) continue;
+        if (second && (k === "asset" || k === g1)) continue;
         sel.append(el("option", { value: k }, GROUP_LABELS[k] || k));
       }
     };
@@ -1042,26 +1468,14 @@ export async function renderGraphPage(main, params, _ctx) {
       el("span", { class: "graph-layout-label" }, "Group by 2"), sel2, clear2);
     const note = el("p", { class: "graph-layout-note" },
       "Asset grouping puts each agent at the centre of its own neighbours, so there is nothing inside a group to subdivide.");
-    const modes = segmented({
-      options: [
-        { value: "", label: "Rows" },
-        { value: "lanes", label: "Columns" },
-        { value: "grouped", label: "Groups" },
-      ],
-      value: mode,
-      ariaLabel: "Arrangement",
-      onChange: (v) => { mode = v; apply(); sync(); },
-    });
-    const body = el("div", { class: "graph-layout" }, modes, row1, row2, note);
+    const body = el("div", { class: "graph-layout" }, row1, row2, note);
 
     let panel = null;
     function sync() {
-      const grouping = mode === "grouped";
-      row1.hidden = !grouping;
-      // `asset` is outermost-or-nothing, so the second level is not offered under it —
-      // and the note says why rather than leaving a control mysteriously missing.
-      row2.hidden = !grouping || g1 === "asset";
-      note.hidden = !grouping || g1 !== "asset";
+      // No second level without a first, and none under `asset`, which is outermost-or-nothing —
+      // the note says why rather than leaving a control mysteriously missing.
+      row2.hidden = !g1 || g1 === "asset";
+      note.hidden = g1 !== "asset";
       fill(sel1, false);
       sel1.value = g1;
       fill(sel2, true);
@@ -1070,24 +1484,22 @@ export async function renderGraphPage(main, params, _ctx) {
       if (panel) panel.reposition();
     }
     sel1.addEventListener("change", () => {
-      g1 = sel1.value || "combo";
-      if (g2 === g1 || g1 === "asset") g2 = "";
+      g1 = sel1.value;
+      // Turning level 1 off, or onto `asset`, takes level 2 with it — a nesting with no outer
+      // box is not a nesting, and `asset` has no key to subdivide by.
+      if (!g1 || g2 === g1 || g1 === "asset") g2 = "";
       apply(); sync();
     });
     sel2.addEventListener("change", () => { g2 = sel2.value; apply(); sync(); });
     sync();
 
     panel = openPopover({
-      anchor: layoutBtn,
+      anchor: groupBtn,
       className: "graph-layout-pop",
-      ariaLabel: "Layout",
-      // The trigger sits at the bottom of the viewport, so there is never room below it.
-      // Left at the default this would try downward first and flip only on measurement.
-      position: { width: 300, minWidth: 260, maxHeight: 380, minHeight: 200, flipBelow: 10000 },
+      ariaLabel: "Group by",
+      position: { width: 300, minWidth: 260, maxHeight: 380, minHeight: 160, flipBelow: 10000 },
       build: () => body,
     });
-    // Focus goes INTO the panel: it is portaled to the end of <body>, so Tab from the
-    // trigger would walk the page behind it rather than its contents.
     const first = panel.pop && panel.pop.querySelector("button, select");
     if (first && panel.isOpen()) first.focus();
   }
@@ -1324,13 +1736,15 @@ export async function renderGraphPage(main, params, _ctx) {
   // ---------------------------------------------------------------- boot-up
   // The first load is awaited so the route overlay covers it; later loads are
   // in-place and keep the previous view visible while updating.
-  // A full-bleed skeleton fills the canvas until the first paint, so the boot
-  // splash reveals a laid-out workbench rather than an empty pane; paint()/load()
-  // clear the body and swap in the graph.
-  body.append(el("div", {
-    class: "graph-skeleton", role: "status", "aria-label": "Loading graph",
-    style: "position:absolute; inset:12px; border-radius:var(--radius-lg); overflow:hidden",
-  }, skeleton("chart")));
+  // A ghost of the arrangement about to be drawn fills the canvas until the first paint, so
+  // the boot splash reveals a laid-out workbench rather than an empty pane — one of the five
+  // real arrangements, in the grouping the URL already asked for, since that much is known
+  // before the first byte of an answer is. `load()`'s `settle()` advances its phase; `paint()`
+  // is what finally retires it.
+  bootSkeleton = renderGraphSkeleton(body, {
+    mode: state.layout || DEFAULT_LAYOUT,
+    grouped: groupLevels().length > 0,
+  });
   // The builder renders immediately from whatever vocabulary it has and re-renders when the
   // real one lands, so a slow tenant never blocks the first paint.
   swrCall("api_getQueryVocabulary", {}).then((v) => {
@@ -1351,11 +1765,20 @@ export async function renderGraphPage(main, params, _ctx) {
 
 
 function buildLegend(boot, payload) {
-  const grouped = payload.layout && payload.layout.mode === "grouped";
-  // The server echoes the dimensions it actually grouped by, outermost first — read from
-  // the answer rather than the request, so the legend names what was drawn.
-  const levels = [].concat((payload.options && payload.options.groupBy) || "combo")
-    .filter(Boolean);
+  // Read off the BOXES, which is as close to "what was drawn" as this can get. There is no
+  // longer a mode that means grouped — grouping is orthogonal to the arrangement, so the
+  // presence of boxes is the only thing that says a picture is grouped. And each box names the
+  // dimension IT partitions (`by`), so a two-level nesting needs no second source: the outer
+  // level is any depth-0 box, the inner any depth-1 one.
+  //
+  // The old reading was `options.groupBy || "combo"`, echoing the request. Its own comment said
+  // to read the answer instead, and that `|| "combo"` was the last guess left in it — harmless
+  // while grouping was a layout, and with grouping now defaulting to none it would have printed
+  // a key for a picture that has no boxes at all.
+  const boxes = (payload.layout && payload.layout.groups) || [];
+  const grouped = boxes.length > 0;
+  const byDepth = (d) => (boxes.find((g) => g.depth === d) || {}).by;
+  const levels = [byDepth(0), byDepth(1)].filter(Boolean);
 
   // Native <details> disclosure: standard, keyboard-accessible, and works with
   // no script. Collapsed shows only the toggle; the overlay is bottom-anchored

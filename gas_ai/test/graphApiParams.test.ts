@@ -9,6 +9,7 @@ import {
   toList,
 } from "../src/domain/graphApiParams";
 import { MAX_EDGES_DEFAULT, MAX_NODES_DEFAULT } from "../src/domain/config";
+import { DEFAULT_LAYOUT } from "../src/domain/graphLayout";
 import { SEED_ISSUES } from "../src/server/sampleData";
 
 const CTX = { defaultDepth: 2, maxNodes: 120, issues: SEED_ISSUES };
@@ -112,7 +113,7 @@ describe("graphCacheParams", () => {
     const key = graphCacheParams({ seed: "agent-a", depth: "3", severities: "HIGH,CRITICAL" });
     expect(key["seed"]).toBe("agent-a");
     expect(key["depth"]).toBe("3");
-    expect(key["view"]).toEqual({ mode: "rows", groupBy: ["combo"], sort: "smart" });
+    expect(key["view"]).toEqual({ mode: "grid", groupBy: [], sort: "smart" });
   });
 
   it("sorts list params so either order shares one cache entry", () => {
@@ -135,22 +136,57 @@ describe("graphCacheParams", () => {
 });
 
 describe("resolveLayoutParams", () => {
-  it("defaults to rows / combo / smart", () => {
-    expect(resolveLayoutParams({})).toEqual({ mode: "rows", groupBy: ["combo"], sort: "smart" });
+  // NO GROUPING IS THE DEFAULT, and it has to be expressible at all: grouping and the
+  // arrangement are independent controls, so `groupBy` is read whichever arrangement is in force.
+  // It used to fall back to `["combo"]`, which was harmless only because the one arrangement that
+  // read it was `grouped` — kept now, every default view would silently group by toxic combo.
+  it("defaults to grid, ungrouped, smart", () => {
+    expect(resolveLayoutParams({})).toEqual({ mode: "grid", groupBy: [], sort: "smart" });
   });
 
   it("whitelists known values and normalizes case", () => {
-    expect(resolveLayoutParams({ layout: "grouped", groupBy: "project", sort: "aars" }))
-      .toEqual({ mode: "grouped", groupBy: ["project"], sort: "aars" });
-    expect(resolveLayoutParams({ layout: "GROUPED", groupBy: "Severity", sort: "NAME" }))
-      .toEqual({ mode: "grouped", groupBy: ["severity"], sort: "name" });
     expect(resolveLayoutParams({ layout: "lanes", groupBy: "cloud", sort: "severity" }))
       .toEqual({ mode: "lanes", groupBy: ["cloud"], sort: "severity" });
+    expect(resolveLayoutParams({ layout: "GRID", groupBy: "Severity", sort: "NAME" }))
+      .toEqual({ mode: "grid", groupBy: ["severity"], sort: "name" });
+    expect(resolveLayoutParams({ layout: "radial" }))
+      .toEqual({ mode: "radial", groupBy: [], sort: "smart" });
+    expect(resolveLayoutParams({ layout: "Organic", sort: "name" }))
+      .toEqual({ mode: "organic", groupBy: [], sort: "name" });
+  });
+
+  it("resolves an arrangement and a grouping together, since they are independent", () => {
+    // The pair that could not be asked for before: grouping used to BE the arrangement, so
+    // naming one meant giving up the other.
+    expect(resolveLayoutParams({ layout: "rows", groupBy: "cloud" }))
+      .toEqual({ mode: "rows", groupBy: ["cloud"], sort: "smart" });
+    expect(resolveLayoutParams({ layout: "organic", groupBy: "cloud,kind" }))
+      .toEqual({ mode: "organic", groupBy: ["cloud", "kind"], sort: "smart" });
+  });
+
+  // `layout=grouped` is every link and saved view written before the split. Grouping chose its own
+  // interior back then — the compact grid, except under `asset` where it forced hub-and-spoke —
+  // so the value maps to whichever arrangement draws what it drew, and an absent `groupBy` takes
+  // the "combo" it defaulted to internally.
+  it("maps the retired `grouped` value onto the arrangement that draws what it drew", () => {
+    expect(resolveLayoutParams({ layout: "grouped", groupBy: "project", sort: "aars" }))
+      .toEqual({ mode: "grid", groupBy: ["project"], sort: "aars" });
+    expect(resolveLayoutParams({ layout: "GROUPED", groupBy: "Severity", sort: "NAME" }))
+      .toEqual({ mode: "grid", groupBy: ["severity"], sort: "name" });
+    // No groupBy at all still groups: that is what the old mode did with an empty one.
+    expect(resolveLayoutParams({ layout: "grouped" }))
+      .toEqual({ mode: "grid", groupBy: ["combo"], sort: "smart" });
+    // `asset` was the one dimension grouped mode drew as rings rather than as a grid.
+    expect(resolveLayoutParams({ layout: "grouped", groupBy: "asset" }))
+      .toEqual({ mode: "radial", groupBy: ["asset"], sort: "smart" });
   });
 
   it("garbage falls back to defaults", () => {
     expect(resolveLayoutParams({ layout: "spiral", groupBy: 42, sort: null }))
-      .toEqual({ mode: "rows", groupBy: ["combo"], sort: "smart" });
+      .toEqual({ mode: DEFAULT_LAYOUT, groupBy: [], sort: "smart" });
+    // The page sends "" for an absent `layout`, so the fallback is the ordinary path here, not an
+    // error path — an unnamed arrangement and an unknown one land on the same picture.
+    expect(resolveLayoutParams({ layout: "" }).mode).toBe(DEFAULT_LAYOUT);
   });
 
   // `groupBy` is a list so that nesting needed no second param and every link written
@@ -169,8 +205,9 @@ describe("resolveLayoutParams", () => {
     // nobody asked for. An entirely unreadable value still falls back, as before.
     expect(resolveLayoutParams({ groupBy: "cloud,spiral" }).groupBy).toEqual(["cloud"]);
     expect(resolveLayoutParams({ groupBy: "spiral,cloud" }).groupBy).toEqual(["cloud"]);
-    expect(resolveLayoutParams({ groupBy: "spiral,nonsense" }).groupBy).toEqual(["combo"]);
-    expect(resolveLayoutParams({ groupBy: "" }).groupBy).toEqual(["combo"]);
+    // Nothing readable is nothing — no grouping, rather than a grouping nobody named.
+    expect(resolveLayoutParams({ groupBy: "spiral,nonsense" }).groupBy).toEqual([]);
+    expect(resolveLayoutParams({ groupBy: "" }).groupBy).toEqual([]);
   });
 
   it("caps at two, dedupes, and truncates after `asset`", () => {

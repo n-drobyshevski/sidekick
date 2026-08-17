@@ -48,10 +48,39 @@ const PATHS = {
   // control and the column chooser beside it.
   plus: ["M8 3.5 V12.5", "M3.5 8 H12.5"],
   minus: ["M3.5 8 H12.5"],
-  // Layout + grouping: a box holding a smaller box, which is what grouped mode draws and
-  // what a second level adds. Not `fit` (four corners, and already the button below this
-  // one in the same rail) and not `filter` (a funnel — grouping does not narrow a set).
+  // Grouping: a box holding a smaller box, which is what grouped mode draws and what a second
+  // level adds. Not `fit` (four corners, and already in the same rail) and not `filter` (a
+  // funnel — grouping does not narrow a set).
   group: ["M2.5 2.5 h11 v11 h-11 z", "M5.5 5.5 h5 v5 h-5 z"],
+  // ---------------------------------------------------------------- layouts
+  // The rail's Layouts button, and one glyph per entry in the list it opens. Each DRAWS ITS OWN
+  // ARRANGEMENT in miniature — bands across, bands down, a burst, a ring — because the list is
+  // five rows of near-identical prose ("Rows", "Columns", …) and the picture is what a reader
+  // recognises before reading. Same reason the reference screen puts a glyph on every row.
+  //
+  // `layout` is the trigger: a two-level tree, the neutral "an arrangement exists" mark, distinct
+  // from the specific four so the button never looks like it is already claiming one of them.
+  layout: [
+    "M8 2.5 V5.5", "M3.5 8 H12.5", "M3.5 8 V10.5", "M8 8 V10.5", "M12.5 8 V10.5",
+    "M8 5.5 V8",
+  ],
+  rows: ["M2.5 4 H13.5", "M2.5 8 H13.5", "M2.5 12 H13.5"],
+  lanes: ["M4 2.5 V13.5", "M8 2.5 V13.5", "M12 2.5 V13.5"],
+  // Force-directed: a burst of spokes from a centre, the shape the layout actually settles into.
+  organic: [
+    "M8 6.4 a1.6 1.6 0 1 0 0 3.2 a1.6 1.6 0 0 0 0 -3.2",
+    "M8 2.5 V6.4", "M8 9.6 V13.5", "M2.5 8 H6.4", "M9.6 8 H13.5",
+    "M4.6 4.6 L6.9 6.9", "M11.4 11.4 L9.1 9.1", "M11.4 4.6 L9.1 6.9", "M4.6 11.4 L6.9 9.1",
+  ],
+  // Concentric: a hub and the ring of nodes one hop out. Four satellites rather than a plain
+  // circle, so it reads as "nodes arranged around one" and not as a status dot.
+  radial: [
+    "M8 6.9 a1.1 1.1 0 1 0 0 2.2 a1.1 1.1 0 0 0 0 -2.2",
+    "M8 1.9 a1.1 1.1 0 1 0 0 2.2 a1.1 1.1 0 0 0 0 -2.2",
+    "M8 11.9 a1.1 1.1 0 1 0 0 2.2 a1.1 1.1 0 0 0 0 -2.2",
+    "M2.9 6.9 a1.1 1.1 0 1 0 0 2.2 a1.1 1.1 0 0 0 0 -2.2",
+    "M13.1 6.9 a1.1 1.1 0 1 0 0 2.2 a1.1 1.1 0 0 0 0 -2.2",
+  ],
   // Fit the graph to the view: four corners closing on the content, the frame-it idiom. Not
   // `widen`, which is a one-dimensional "more width" gesture and belongs to the sheet.
   fit: ["M6 2.5 H2.5 V6", "M10 2.5 H13.5 V6", "M6 13.5 H2.5 V10", "M10 13.5 H13.5 V10"],

@@ -21,7 +21,9 @@ import {
   serializeWhere,
   setEdge,
   setHidden,
+  kindsOverlap,
   setKind,
+  setKinds,
   isGroup,
   pathAfterRegroup,
   replaceStep,
@@ -57,8 +59,41 @@ describe("parseQuery / serializeQuery", () => {
       "AI_AGENT(RUNS_AS.SERVICE_ACCOUNT'HOSTED_ON.SERVERLESS)",
       "AI_AGENT(RUNS_AS.SERVICE_ACCOUNT(ALLOWS_ACCESS_TO.BUCKET))",
       "AI_AGENT(~*!RUNS_AS.SERVICE_ACCOUNT)",
+      // Several kinds at one position, joined by `-`: one node asking for either, at the root
+      // and at the far end of a step, hidden and with steps of its own hanging off it.
+      "AI_AGENT-AI_DEPLOYMENT",
+      "AI_AGENT-AI_DEPLOYMENT-AI_TOOL(RUNS_AS.SERVICE_ACCOUNT)",
+      "AI_AGENT(RUNS_AS.SERVICE_ACCOUNT-USER_ACCOUNT)",
+      "AI_AGENT(RUNS_AS.!SERVICE_ACCOUNT-USER_ACCOUNT)",
+      "AI_AGENT-AI_DEPLOYMENT(RUNS_AS.!SERVICE_ACCOUNT(ALLOWS_ACCESS_TO.BUCKET))",
     ];
     for (const s of cases) expect(serializeQuery(parseQuery(s))).toBe(normalizeFlags(s));
+  });
+
+  it("reads several kinds at one position as ONE node, not as two steps", () => {
+    // The user's question — "AI agents AND AI deployments that reach sensitive data" — is one
+    // node looking for either kind. Two nodes would be two columns, two slots and two `where`
+    // indices for what the reader sees as one term.
+    const q = parseQuery("AI_AGENT-AI_DEPLOYMENT(RUNS_AS.SERVICE_ACCOUNT)");
+    expect(q.kind).toEqual(["AI_AGENT", "AI_DEPLOYMENT"]);
+    expect(q.steps).toHaveLength(1);
+    expect(queryRows(q).map((r) => r.index)).toEqual([0, 1]);
+    // One kind stays the bare string it has always been, so every existing query — and every
+    // golden payload — is the same object it was before multi-kind existed.
+    expect(parseQuery("AI_AGENT").kind).toBe("AI_AGENT");
+  });
+
+  it("keeps a written order rather than normalising it", () => {
+    // `kindKey` is compared across the wire by value (graphQueryWalk.test.js), and the server's
+    // validator keeps what it is sent for exactly this reason. Reordering on one side alone
+    // would make a shared link describe two different nodes to the two halves of the app.
+    expect(serializeQuery(parseQuery("AI_DEPLOYMENT-AI_AGENT"))).toBe("AI_DEPLOYMENT-AI_AGENT");
+  });
+
+  it("rejects a kind list the parser cannot read", () => {
+    expect(() => parseQuery("AI_AGENT-")).toThrow();
+    expect(() => parseQuery("AI_AGENT-ai_model")).toThrow();
+    expect(() => parseQuery("-AI_AGENT")).toThrow();
   });
 
   it("reads hop counts and treats a bare ANY as one hop", () => {
@@ -71,6 +106,11 @@ describe("parseQuery / serializeQuery", () => {
   it("survives encodeURIComponent untouched, which is the whole point of the character set", () => {
     const s = "AI_AGENT(!PROTECTED_BY.AI_GUARDRAIL'~*RUNS_AS.!SERVICE_ACCOUNT)";
     expect(encodeURIComponent(s)).toBe(s);
+    // `-` joins a kind list, and it is the ONLY character left that survives this: the spared set
+    // is `A-Z a-z 0-9 - _ . ! ~ * ' ( )`, the grammar has spent `. ' ( ) ! ~ *`, `_` lives inside
+    // tokens, and lowercase has to stay a parse error. A comma would have encoded to %2C.
+    const many = "AI_AGENT-AI_DEPLOYMENT(RUNS_AS.!SERVICE_ACCOUNT-USER_ACCOUNT)";
+    expect(encodeURIComponent(many)).toBe(many);
   });
 
   it("throws on garbage rather than guessing", () => {
@@ -236,6 +276,78 @@ describe("edits", () => {
     expect(serializeQuery(q)).toBe("AI_AGENT(RUNS_AS.ACCESS_KEY)");
   });
 
+  // Entity mode is a live multi-select: widening a selection is now the COMMON edit, so the
+  // drop rule that used to fire on any kind change has to tell widening from replacing.
+  describe("setKinds", () => {
+    const NESTED = "AI_AGENT(RUNS_AS.SERVICE_ACCOUNT(ALLOWS_ACCESS_TO.BUCKET))";
+
+    it("keeps the steps below when the old and new sets OVERLAP", () => {
+      // Widening. The relationships already there are still traversable by the kind still there,
+      // and wiping the query every time someone adds a second kind would make the multi-select
+      // unusable — you would rebuild from scratch after every toggle.
+      const wider = setKinds(parseQuery(NESTED), [], ["AI_AGENT", "AI_DEPLOYMENT"]);
+      expect(serializeQuery(wider)).toBe("AI_AGENT-AI_DEPLOYMENT(RUNS_AS.SERVICE_ACCOUNT(ALLOWS_ACCESS_TO.BUCKET))");
+      // And narrowing back, which is the same edit run the other way.
+      expect(serializeQuery(setKinds(wider, [], ["AI_DEPLOYMENT"]))).toBe(NESTED
+        .replace("AI_AGENT", "AI_DEPLOYMENT"));
+    });
+
+    it("drops them when the sets are DISJOINT, which is the old rule", () => {
+      const q = setKinds(parseQuery(NESTED), [], ["BUCKET", "DATABASE"]);
+      expect(serializeQuery(q)).toBe("BUCKET-DATABASE");
+    });
+
+    it("treats ANY as overlapping everything, in both directions", () => {
+      // ANY is the union of every kind, so AI_AGENT is INSIDE it — by tokens alone the two look
+      // disjoint, and reading them that way meant switching a query to "Any node" deleted the
+      // steps below. Widening a question must never lose work, and `FIND ANY THAT runs as
+      // Service Account` is a shape the app writes for itself.
+      expect(serializeQuery(setKinds(parseQuery(NESTED), [], ["ANY"])))
+        .toBe("ANY(RUNS_AS.SERVICE_ACCOUNT(ALLOWS_ACCESS_TO.BUCKET))");
+      expect(serializeQuery(setKinds(parseQuery("ANY(RUNS_AS.SERVICE_ACCOUNT)"), [], ["AI_AGENT"])))
+        .toBe("AI_AGENT(RUNS_AS.SERVICE_ACCOUNT)");
+      expect(kindsOverlap(["ANY"], ["BUCKET"])).toBe(true);
+      expect(kindsOverlap("AI_AGENT", ["BUCKET", "AI_AGENT"])).toBe(true);
+      expect(kindsOverlap(["AI_AGENT"], ["BUCKET"])).toBe(false);
+    });
+
+    it("normalises what it writes so the tree still round-trips", () => {
+      // One kind is a bare string, duplicates drop, and ANY swallows the rest — the same three
+      // rules the parser and the server's validator apply, applied here so no edit can produce a
+      // tree `parseQuery(serializeQuery(q))` would not reproduce.
+      const one = setKinds(parseQuery("AI_AGENT"), [], ["AI_DEPLOYMENT"]);
+      expect(one.kind).toBe("AI_DEPLOYMENT");
+      expect(setKinds(parseQuery("AI_AGENT"), [], ["BUCKET", "BUCKET"]).kind).toBe("BUCKET");
+      expect(setKinds(parseQuery("AI_AGENT"), [], ["ANY", "BUCKET"]).kind).toBe("ANY");
+      const many = setKinds(parseQuery("AI_AGENT"), [], ["AI_AGENT", "AI_DEPLOYMENT"]);
+      expect(parseQuery(serializeQuery(many))).toEqual(many);
+    });
+
+    it("is a no-op on the same set however it is ordered, and on an empty one", () => {
+      // A re-pick has to be identity: the bar returns before committing, and the page clears
+      // `columns` and `page` on every patch, so an "edit" that changed nothing would still
+      // reset the table.
+      const q = parseQuery("AI_AGENT-AI_DEPLOYMENT(RUNS_AS.SERVICE_ACCOUNT)");
+      // The same set in the other order writes NOTHING — so the node keeps the order it had,
+      // rather than a reorder-only "edit" changing the URL and the node's identity with it.
+      expect(setKinds(q, [], ["AI_DEPLOYMENT", "AI_AGENT"])).toEqual(q);
+      expect(setKinds(q, [], [])).toBe(q);
+    });
+
+    it("edits a kind list on a nested node, not only the root", () => {
+      const q = setKinds(parseQuery(NESTED), [0], ["SERVICE_ACCOUNT", "USER_ACCOUNT"]);
+      expect(serializeQuery(q))
+        .toBe("AI_AGENT(RUNS_AS.SERVICE_ACCOUNT-USER_ACCOUNT(ALLOWS_ACCESS_TO.BUCKET))");
+    });
+
+    it("never mutates the tree it was given", () => {
+      const before = JSON.stringify(AGENT_RUNS_AS_SA);
+      setKinds(AGENT_RUNS_AS_SA, [], ["AI_AGENT", "AI_DEPLOYMENT"]);
+      setKinds(AGENT_RUNS_AS_SA, [0], ["BUCKET"]);
+      expect(JSON.stringify(AGENT_RUNS_AS_SA)).toBe(before);
+    });
+  });
+
   it("toggles hidden and rewrites a relationship in place", () => {
     let q = setHidden(AGENT_RUNS_AS_SA, [0], true);
     expect(serializeQuery(q)).toBe("AI_AGENT(RUNS_AS.!SERVICE_ACCOUNT)");
@@ -320,6 +432,7 @@ describe("groups in the DSL", () => {
       "AI_AGENT(USES_MODEL.AI_MODEL'OR(A.X'B.Y))".replace("A.X", "RUNS_AS.SERVICE_ACCOUNT").replace("B.Y", "HOSTED_ON.SERVERLESS"),
       "AI_AGENT(OR(RUNS_AS.SERVICE_ACCOUNT(ALLOWS_ACCESS_TO.BUCKET)'USES_MODEL.AI_MODEL))",
       "AI_AGENT(OR(AND(RUNS_AS.SERVICE_ACCOUNT'USES_MODEL.AI_MODEL)'HOSTED_ON.SERVERLESS))",
+      "AI_AGENT-AI_DEPLOYMENT(OR(RUNS_AS.SERVICE_ACCOUNT-USER_ACCOUNT'USES_MODEL.AI_MODEL))",
     ];
     for (const s of cases) expect(serializeQuery(parseQuery(s))).toBe(s);
   });
@@ -327,6 +440,8 @@ describe("groups in the DSL", () => {
   it("stays inside the character set encodeURIComponent leaves alone", () => {
     const s = "AI_AGENT(*OR(RUNS_AS.SERVICE_ACCOUNT'!PROTECTED_BY.AI_GUARDRAIL))";
     expect(encodeURIComponent(s)).toBe(s);
+    const many = "AI_AGENT-AI_DEPLOYMENT(*OR(RUNS_AS.SERVICE_ACCOUNT-USER_ACCOUNT'HOSTED_ON.SERVERLESS))";
+    expect(encodeURIComponent(many)).toBe(many);
   });
 
   it("reads a group as a step, not as a relationship called OR", () => {
@@ -473,6 +588,22 @@ describe("group rows and edits", () => {
       const next = replaceStep(parseQuery(NESTED), [0],
         { edge: "USES_TOOL", node: { kind: "AI_TOOL" } });
       expect(serializeQuery(next)).toBe("AI_AGENT(USES_TOOL.AI_TOOL)");
+    });
+
+    it("compares the target by SET, so a multi-kind row keeps what it should", () => {
+      // `s.node.kind === next.node.kind` would have compared an array to a string and answered
+      // false every time, quietly demolishing the query below any node naming several kinds.
+      const q = parseQuery("AI_AGENT(RUNS_AS.SERVICE_ACCOUNT-USER_ACCOUNT(ALLOWS_ACCESS_TO.BUCKET))");
+      // Order-insensitive, because the two spellings are the same question — the replacement
+      // node's own order is what gets written, since nothing here reorders a caller's set.
+      const same = replaceStep(q, [0],
+        { edge: "USES", node: { kind: ["USER_ACCOUNT", "SERVICE_ACCOUNT"] } });
+      expect(serializeQuery(same))
+        .toBe("AI_AGENT(USES.USER_ACCOUNT-SERVICE_ACCOUNT(ALLOWS_ACCESS_TO.BUCKET))");
+      // A set that merely OVERLAPS is still a different question at the far end of this hop, so
+      // the steps chosen against the old one go.
+      const narrower = replaceStep(q, [0], { edge: "USES", node: { kind: "SERVICE_ACCOUNT" } });
+      expect(serializeQuery(narrower)).toBe("AI_AGENT(USES.SERVICE_ACCOUNT)");
     });
 
     it("carries the row's own modifiers across, rather than silently undoing them", () => {

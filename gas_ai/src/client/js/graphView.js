@@ -33,8 +33,19 @@ export function renderGraph(container, data, handlers = {}) {
     }];
   }));
   const byId = new Map(nodes.map((n) => [n.id, n]));
-  const grouped = layout.mode === "grouped";
-  const horizontal = layout.mode === "rows";
+  // GROUPING IS ORTHOGONAL to the arrangement, so `mode` never says "grouped" — the presence of
+  // boxes does. Both facts matter here and they are separate: the boxes decide how edges leave a
+  // card, the arrangement decides which way the picture flows.
+  const grouped = (layout.groups || []).length > 0;
+  // Bands across, and only when they span the canvas. Grouped, they span a box instead and the
+  // boxes are packed in two dimensions, so the picture as a whole has no left-to-right flow and
+  // keyboard walking takes the same branch every other grouped layout takes.
+  const horizontal = layout.mode === "rows" && !grouped;
+  // No dominant flow direction: nodes sit all around each other rather than in bands, so an edge
+  // can leave a card on any side. True of the free-form arrangements, and true of ANY arrangement
+  // once it is inside boxes — an edge between two boxes runs whichever way they were packed.
+  const freeForm = grouped
+    || layout.mode === "radial" || layout.mode === "organic" || layout.mode === "grid";
 
   const width = Math.max(layout.width, 640);
   const height = Math.max(layout.height, 360);
@@ -42,14 +53,38 @@ export function renderGraph(container, data, handlers = {}) {
   // Nesting is drawn as a box inside a box and announced nowhere else, so the one label
   // that describes the canvas has to say it.
   const nested = grouped && (layout.groups || []).some((g) => g.depth === 1);
+  /**
+   * The ARRANGEMENT AND THE GROUPING, in the one label that describes the canvas.
+   *
+   * A sighted reader gets both from the picture; a screen-reader user gets them from here or not
+   * at all — and the arrangement changes what the arrow keys mean, since two of them walk its own
+   * axis (bands in rows/columns, rings in radial/organic, group members when grouped).
+   *
+   * TWO CLAUSES, not one sentence chosen from a list. The two are independent now, so any
+   * arrangement can be grouped and a fixed list of five sentences would have to spell out ten
+   * combinations — and would still say only one of the two things about each.
+   */
+  const arrangement = layout.mode === "radial"
+    ? "nodes on rings by their distance from the highest-risk asset"
+    : layout.mode === "organic"
+      ? "nodes positioned by their connections so clusters sit together"
+      : layout.mode === "grid"
+        ? "nodes packed into a dense grid"
+        : layout.mode === "lanes"
+          ? "nodes in category columns"
+          : "nodes in category bands";
+  // A third clause for the outlines, when there are any. They are the only thing on the canvas
+  // saying which nodes hang together by their edges, and a reader who cannot see them has no other
+  // route to it — the count beside each one is decoration to a screen reader, not information.
+  const outlined = (layout.clusters || []).length;
+  const shape = "Security graph, " + arrangement
+    + (nested
+      ? ", clustered into labelled groups nested two levels deep"
+      : grouped ? ", clustered into labelled groups" : "")
+    + (outlined ? `, with ${outlined} connected clusters outlined. ` : ". ");
   const svg = svgEl("svg", {
     role: "application",
-    "aria-label":
-      (nested
-        ? "Security graph, nodes clustered into labelled groups nested two levels deep. "
-        : grouped
-          ? "Security graph, nodes clustered into labelled groups. "
-          : "Security graph. ") +
+    "aria-label": shape +
       "Tab to enter, arrow keys move between connected nodes, " +
       "Shift plus arrow keys nudge the focused node, " +
       "Enter opens details, Escape leaves the graph.",
@@ -97,12 +132,39 @@ export function renderGraph(container, data, handlers = {}) {
     }
   }
 
+  // ----------------------------------------------------------- cluster outlines
+  // One dashed outline per connected component — the only structure here that is about the EDGES
+  // rather than a property or a position. Grouping's boxes partition by cloud or kind and cut
+  // straight across connectivity; these say "this much of the picture hangs together".
+  //
+  // BELOW THE EDGES, deliberately. The evaluation this follows found group overlays are the best
+  // encoding for judging membership and cost about a quarter of the accuracy on tasks that mean
+  // following a path — which is what this canvas is for. Painting under the links, hairline and
+  // unfilled, is the cheapest way to keep the second without giving up the first. The domain does
+  // the rest by refusing to emit an outline that would not earn its ink.
+  if (Array.isArray(layout.clusters) && layout.clusters.length) {
+    const clusterLayer = svgEl("g");
+    world.append(clusterLayer);
+    for (const cl of layout.clusters) {
+      clusterLayer.append(svgEl("path", { class: "gcluster-hull", d: roundedPolygon(cl.points, 14) }));
+      // The count, at the polygon's topmost vertex. No name: a component has no name to give —
+      // unlike a group box, which is a dimension's value — and "10" beside an outline says the one
+      // thing the outline cannot, which is how much of the picture it holds.
+      const top = cl.points.reduce((a, b) => (b[1] < a[1] ? b : a));
+      const count = svgEl("text", { class: "gcluster-count", x: top[0], y: top[1] - 5 });
+      count.textContent = String(cl.count);
+      clusterLayer.append(count);
+    }
+  }
+
   // ------------------------------------------------------------------- edges
-  // Lanes flow left-to-right, so edges anchor on the sides. In grouped mode a
-  // mostly-vertical edge anchors top/bottom instead, so it leaves the card
-  // through the nearest face rather than looping around it.
+  // Lanes flow left-to-right, so edges anchor on the sides. Where there is no such flow — the
+  // free-form arrangements, and anything inside boxes — a mostly-vertical edge anchors top/bottom
+  // instead, so it leaves the card through the nearest face rather than looping around it. Radial
+  // in particular has edges running in every direction by construction, so side-anchoring alone
+  // would send half of them back around the cards they start from.
   function edgeGeometry(a, b) {
-    if (grouped && Math.abs(b.y - a.y) > Math.abs(b.x - a.x)) {
+    if (freeForm && Math.abs(b.y - a.y) > Math.abs(b.x - a.x)) {
       const topToBottom = a.y <= b.y;
       const y1 = a.y + (topToBottom ? NODE_H / 2 : -NODE_H / 2);
       const y2 = b.y + (topToBottom ? -NODE_H / 2 : NODE_H / 2);
@@ -592,4 +654,41 @@ export function renderGraph(container, data, handlers = {}) {
      */
     destroy() { ro.disconnect(); },
   };
+}
+
+/**
+ * A closed polygon path with its corners cut by quadratic curves.
+ *
+ * A convex hull over card corners is all right angles and long straight runs, and drawn as-is it
+ * reads as a BOX — which is what the group boxes already are, and the two would then say the same
+ * thing in the same shape. Rounding is the whole visual difference between "the cloud you grouped
+ * by" and "these happen to be connected".
+ *
+ * The radius is clamped per corner to a third of the shorter adjacent edge, so a short edge between
+ * two corners cannot have both of them eat past its middle and invert the curve. Same bezier idiom
+ * as `edgeGeometry` above and `egoLayout.js`.
+ */
+function roundedPolygon(points, radius) {
+  const n = points.length;
+  if (n < 3) return "";
+  const at = (i) => points[(i + n) % n];
+  const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+  const parts = [];
+  for (let i = 0; i < n; i++) {
+    const prev = at(i - 1);
+    const cur = at(i);
+    const next = at(i + 1);
+    const lenPrev = Math.hypot(cur[0] - prev[0], cur[1] - prev[1]) || 1;
+    const lenNext = Math.hypot(next[0] - cur[0], next[1] - cur[1]) || 1;
+    const r = Math.min(radius, lenPrev / 3, lenNext / 3);
+    const from = lerp(cur, prev, r / lenPrev);
+    const to = lerp(cur, next, r / lenNext);
+    parts.push(`${i === 0 ? "M" : "L"} ${round1(from[0])} ${round1(from[1])}`);
+    parts.push(`Q ${round1(cur[0])} ${round1(cur[1])}, ${round1(to[0])} ${round1(to[1])}`);
+  }
+  return parts.join(" ") + " Z";
+}
+
+function round1(v) {
+  return Math.round(v * 10) / 10;
 }

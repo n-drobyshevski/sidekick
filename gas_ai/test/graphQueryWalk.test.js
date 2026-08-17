@@ -38,6 +38,11 @@ afterAll(() => teardownServer());
  * Every shape the grammar can make, including the three that carry the slot rules: a negated
  * step (no slot, no descent), a hidden node (a slot, but no column), and an OR group (no slot
  * of its own, every branch reserving one).
+ *
+ * The multi-kind shapes are here for a second reason as well. A node naming several kinds is
+ * still ONE node — one slot, one column group — and the two sides derive its column's `kind`
+ * from their own trees by joining the list. That string is compared below, so these shapes are
+ * what stops the client and the server from spelling one node's identity two ways.
  */
 const SHAPES = [
   "AI_AGENT",
@@ -55,6 +60,13 @@ const SHAPES = [
   "AI_AGENT(OR(RUNS_AS.SERVICE_ACCOUNT(ALLOWS_ACCESS_TO.BUCKET)'USES_MODEL.AI_MODEL))",
   "AI_AGENT(*OR(RUNS_AS.SERVICE_ACCOUNT'USES_MODEL.AI_MODEL))",
   "SERVICE_ACCOUNT(~RUNS_AS.AI_AGENT)",
+  "AI_AGENT-AI_DEPLOYMENT",
+  "AI_AGENT-AI_DEPLOYMENT(RUNS_AS.SERVICE_ACCOUNT)",
+  "AI_AGENT(RUNS_AS.SERVICE_ACCOUNT-USER_ACCOUNT)",
+  "AI_AGENT-AI_DEPLOYMENT(RUNS_AS.!SERVICE_ACCOUNT-USER_ACCOUNT(ALLOWS_ACCESS_TO.BUCKET))",
+  // Written in the order NODE_KINDS does not declare them in. Neither side reorders, so both
+  // spell this node's identity "AI_DEPLOYMENT-AI_AGENT" and the column group still matches.
+  "AI_DEPLOYMENT-AI_AGENT",
 ];
 
 /** The rows that earn a column group: real nodes, bound, not hidden. */

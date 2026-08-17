@@ -137,10 +137,66 @@ const POPULAR_KINDS = 6;
  * swaps it in for the current step in the other. Keeping the payload the same in both is what
  * lets this file stay ignorant of the tree.
  */
+/** Intersect the field lists and union the value lists of several kinds. See `ensureFields`. */
+export function mergeVocab(parts) {
+  if (!parts.length) return null;
+  if (parts.length === 1) return parts[0];
+  const valuesIn = (p, key) => {
+    const hit = ((p && p.values) || []).find((v) => v.key === key);
+    return (hit && hit.values) || [];
+  };
+  const fields = ((parts[0] && parts[0].fields) || []).filter((f) =>
+    parts.every((p) => ((p && p.fields) || []).some((g) => g.key === f.key)));
+  const values = fields.map((f) => {
+    const counts = new Map();
+    for (const p of parts) {
+      for (const v of valuesIn(p, f.key)) {
+        counts.set(v.value, (counts.get(v.value) || 0) + (v.count || 0));
+      }
+    }
+    return { key: f.key, values: [...counts].map(([value, count]) => ({ value, count })) };
+  });
+  return { fields, values };
+}
+
+/** A palette's source kinds, always as a list — the caller may pass one or several. */
+export function kindList(kind) {
+  if (Array.isArray(kind)) return kind.length ? kind : ["ANY"];
+  return [kind || "ANY"];
+}
+
+/**
+ * The relationships reachable from ANY of these kinds — the UNION, counts added up.
+ *
+ * Deduped by (edge, direction, target), which is the same identity the server builds
+ * `stepsFrom` with, so two kinds that share a relationship offer it once with the combined
+ * count rather than twice. Ordered commonest-first over the merged set, because "commonest"
+ * is a fact about the selection and not about whichever kind happened to be picked first.
+ *
+ * Union rather than intersection: a step only some of the selected kinds can take is still a
+ * real question about those, and the count beside it says how many nodes it will find. The
+ * intersection would go empty fast for kinds with little in common and read as "nothing here".
+ */
+export function stepsFromKinds(vocab, kinds) {
+  const from = (vocab || {}).stepsFrom || {};
+  if (kinds.length === 1) return from[kinds[0]] || [];
+  const merged = new Map();
+  for (const k of kinds) {
+    for (const e of (from[k] || [])) {
+      const id = e.edge + "|" + (e.reverse ? "r" : "f") + "|" + e.kind;
+      const hit = merged.get(id);
+      if (hit) hit.count += e.count || 0;
+      else merged.set(id, { edge: e.edge, reverse: e.reverse, kind: e.kind, count: e.count || 0 });
+    }
+  }
+  return [...merged.values()].sort((a, b) => b.count - a.count);
+}
+
 export function paletteEntries(ctx) {
   const { kind, vocab, row } = ctx || {};
   const mode = (ctx && ctx.mode) || "add";
-  const steps = ((vocab || {}).stepsFrom || {})[kind] || [];
+  const from = kindList(kind);
+  const steps = stepsFromKinds(vocab, from);
   const out = [];
 
   // ------------------------------------------------------------------ entities
@@ -215,7 +271,10 @@ export function paletteEntries(ctx) {
   // and a replace has one step to give it, so offering one here would either drop the rest or
   // quietly rewrite the row into something the reader did not ask for.
   for (const s of (mode === "add" ? ((vocab || {}).shortcuts || []) : [])) {
-    if (!(s.kinds || []).includes(kind)) continue;
+    // Offered when ANY of the kinds can answer it — the same union the relationships take.
+    // A shortcut only some of them can answer is still a real question about those; the step it
+    // appends will drop the rest, which is what a required step does and what the count says.
+    if (!from.some((k) => (s.kinds || []).includes(k))) continue;
     out.push({
       id: "sc-" + s.id,
       section: "shortcuts",
@@ -525,15 +584,21 @@ export function literalFor(pick) {
  */
 export function currentEntryId(mode, row) {
   if (!row) return "";
-  if (mode === "entity") return "kind-" + (row.kind || "ANY");
+  const kinds = (row.kinds && row.kinds.length) ? row.kinds : [row.kind || "ANY"];
+  // Entity mode marks EVERY selected kind (see `selected`); this is only the one the panel
+  // opens on, so the first is as good an anchor as any.
+  if (mode === "entity") return "kind-" + kinds[0];
   if (!row.edge) return "";
+  // A step naming several target kinds is not any one of the (edge, direction, target) triples
+  // the list offers, so nothing is current — better than ticking whichever sorted first.
+  if (kinds.length > 1) return "";
   if (row.edge === "ANY") {
     // A hop step that names where it lands has its target in the id, the same way a named
     // relationship does — `ANY2.BUCKET` and `ANY2.ANY` are two different questions.
-    const wide = !row.kind || row.kind === "ANY";
-    return "rel-any-" + (row.hops || 1) + (wide ? "" : "-" + row.kind);
+    const wide = kinds[0] === "ANY";
+    return "rel-any-" + (row.hops || 1) + (wide ? "" : "-" + kinds[0]);
   }
-  return "rel-" + (row.reverse ? "in-" : "out-") + row.edge + "-" + row.kind;
+  return "rel-" + (row.reverse ? "in-" : "out-") + row.edge + "-" + kinds[0];
 }
 
 /**
@@ -640,7 +705,24 @@ let _paletteSeq = 0;
  * cannot be edited.
  */
 export function openQueryPalette(spec) {
-  const { anchor, kind, vocab, row, onPick, title, loadFields, currentFilter, currentId } = spec;
+  const {
+    anchor, kind, vocab, row, onPick, title, loadFields, currentFilter, currentId,
+  } = spec;
+  /**
+   * Called once, whichever way the panel goes.
+   *
+   * Entity mode's toggles commit WITHOUT moving focus — a focus change out of the search field
+   * would dismiss the panel mid-selection — so the caller has nowhere to put focus until the
+   * panel is gone. `close(true)` returns it to the anchor, but a caller that rebuilt itself on
+   * commit no longer has that anchor in the document; this is how it gets focus back.
+   */
+  const onClose = spec.onClose || null;
+  /**
+   * Entity mode only: the kinds this row already looks for, which the list shows as pressed.
+   * Held here rather than re-derived, because the panel STAYS OPEN across toggles and each
+   * one has to see the result of the last.
+   */
+  let selected = (spec.selected || []).slice();
   const mode = spec.mode || "add";
   const seq = ++_paletteSeq;
   const listId = "gq-palette-list-" + seq;
@@ -729,12 +811,20 @@ export function openQueryPalette(spec) {
    * Every kind's fields and values together were most of a 28 KB vocabulary, none of it read
    * unless someone goes looking for a property — and then only for the one kind. `swrCall` keys
    * on the params, so this is one round trip per kind per session.
+   *
+   * Several kinds ask for each and INTERSECT the fields while UNIONING their values: a property
+   * only some of them carry would read as narrowing and actually exclude the rest, since a node
+   * that cannot answer a field matches only "unknown". Where a field IS common, every kind's
+   * values belong in the list with the counts added, because the count is how many nodes the
+   * option would still leave and the row is asking about all of them.
    */
   function ensureFields() {
     if (fields || loading || !loadFields) return;
     loading = true;
     paint();
-    Promise.resolve(loadFields(kind)).then((got) => {
+    Promise.all(kindList(kind).map((k) => Promise.resolve(loadFields(k)).catch(() => null)))
+      .then((parts) => {
+      const got = mergeVocab(parts.filter(Boolean));
       loading = false;
       if (!got || !host) return;
       fields = got.fields || [];
@@ -784,17 +874,24 @@ export function openQueryPalette(spec) {
     // — it carries the keyboard cursor in this listbox — so the state travels as `aria-current`,
     // and a tick renders beside it so it is never the tinted ground alone saying so.
     const isCurrent = !!currentId && entry.id === currentId;
+    // Entity rows TOGGLE — a node can look for several kinds — so they carry pressed state as
+    // well. `aria-selected` is the keyboard cursor in this listbox and `aria-current` is "what
+    // the row opened on", so neither is free; `aria-pressed` is the one that means "chosen".
+    const togglable = isToggle(entry);
+    const on = togglable && selected.indexOf(entry.pick.kind) !== -1;
     const node = el("li", {
-      id: optId, role: "option", class: "gq-pal-option" + (isCurrent ? " is-current" : ""),
+      id: optId, role: "option",
+      class: "gq-pal-option" + (isCurrent ? " is-current" : "") + (on ? " is-on" : ""),
       "aria-selected": "false",
       "aria-current": isCurrent ? "true" : null,
+      "aria-pressed": togglable ? String(on) : null,
       "data-category": entry.category || null,
     },
       el("span", { class: "gq-pal-glyph-wrap" }, glyph),
       el("span", { class: "gq-pal-option-text" },
         el("span", { class: "gq-pal-option-label" }, entry.label),
         el("span", { class: "gq-pal-option-sub" }, entry.sub)),
-      isCurrent
+      (togglable ? on : isCurrent)
         ? el("span", { class: "gq-pal-option-current", title: "Currently selected" },
           uiIcon("check", 13))
         : null,
@@ -976,8 +1073,65 @@ export function openQueryPalette(spec) {
       paint();
       return;
     }
+    // A kind TOGGLES and the panel stays open, because picking several is the point and a panel
+    // that closed after the first would make the second a fresh trip. Every toggle still commits
+    // straight through — live-apply, like every other control on this page.
+    //
+    // The rows that CHANGED are repainted in place; the panel is never rebuilt. `paint()` would
+    // replace the search input, and detaching the focused element fires `focusout` — one of the
+    // seven ways popoverDismiss closes — so the palette would shut itself on the first toggle.
+    if (isToggle(entry)) {
+      const before = selected;
+      const at = before.indexOf(entry.pick.kind);
+      // Never down to nothing — a node has to look for something, and "no kinds" is not a query.
+      if (at !== -1 && before.length === 1) return;
+      let next = at === -1 ? before.concat([entry.pick.kind]) : before.filter((k, i) => i !== at);
+      // ANY is the union of everything, so it cannot be one of several.
+      if (entry.pick.kind === "ANY") next = ["ANY"];
+      else next = next.filter((k) => k !== "ANY");
+      // IN THE LIST'S OWN ORDER, never in click order. The joined kinds are a node's IDENTITY on
+      // both sides of the wire and the key its column preferences are stored under, and the
+      // server keeps the order it is sent (`readKinds` says why) — so ordering the selection here
+      // is what makes one selection one URL however it was assembled.
+      const order = kindOrder();
+      next.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+      selected = next;
+      // Not just the row that was clicked. Turning ANY on clears every other kind, and turning a
+      // kind on clears ANY — so the rows that lost their tick have to lose it on screen too.
+      const flipped = (k) => (before.indexOf(k) !== -1) !== (selected.indexOf(k) !== -1);
+      shown.forEach((e, i) => {
+        if (isToggle(e) && flipped(e.pick.kind)) repaintRow(i);
+      });
+      onPick({ type: "kinds", kinds: selected.slice() });
+      return;
+    }
     if (host) host.close(true);
     onPick(entry.pick);
+  }
+
+  /** An entity row in entity mode — the only thing in this palette that toggles. */
+  function isToggle(entry) {
+    return !!entry && !!entry.pick && entry.pick.type === "kind";
+  }
+
+  /**
+   * Every kind the list offers, in the order it offers them.
+   *
+   * Read off the entries rather than the vocabulary so it cannot disagree with what is on screen,
+   * and off `entries` rather than `shown` so a search that hides half the list does not reorder
+   * the half still selected.
+   */
+  function kindOrder() {
+    return entries.filter(isToggle).map((e) => e.pick.kind);
+  }
+
+  /** Swap one option for a freshly built one, leaving the rest of the list alone. */
+  function repaintRow(idx) {
+    const old = listEl.children[idx];
+    if (!old) return;
+    const next = rowFor(shown[idx], idx);
+    old.replaceWith(next);
+    highlight();
   }
 
   function onSearchKey(e) {
@@ -1027,7 +1181,7 @@ export function openQueryPalette(spec) {
       title: heading,
       width: "min(460px, 94vw)",
       autoFocus: false,
-      onClose: () => { host = null; },
+      onClose: () => { host = null; if (onClose) onClose(); },
     });
     host = { close: () => sheet.close() };
     search.focus();
@@ -1047,7 +1201,7 @@ export function openQueryPalette(spec) {
         panes.style.height = Math.max(240, room) + "px";
       } },
     build: () => body,
-    onClose: () => { host = null; },
+    onClose: () => { host = null; if (onClose) onClose(); },
   });
   search.focus();
   return host;
