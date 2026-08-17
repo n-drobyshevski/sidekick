@@ -42,6 +42,7 @@ import {
 } from "../store.js";
 import { openAssetSheet, openIssueSheet } from "../detailSheets.js";
 import { renderGraph } from "../graphView.js";
+import { renderGraphSkeleton } from "../graphSkeleton.js";
 import { queryTable, DEFAULT_PAGE_SIZE } from "../queryTable.js";
 import {
   CATEGORY_LABELS, CATEGORY_ORDER, categoryOf, kindIconSvg, kindLabel,
@@ -53,8 +54,8 @@ import {
 } from "./graphQuery.js";
 import { queryBar } from "./graphQueryBar.js";
 import {
-  clear, confirmDialog, el, emptyState, filterChipRow, helpTip, onPageTeardown,
-  openPopover, portalsOpen, segmented, selectField, sevBadge, skeleton, toast, togglePills,
+  clear, confirmDialog, el, emptyState, filterChipRow, helpTip, motionOk, onPageTeardown,
+  openPopover, portalsOpen, segmented, selectField, sevBadge, toast, togglePills,
   uiIcon,
 } from "../ui.js";
 
@@ -538,9 +539,14 @@ export async function renderGraphPage(main, params, _ctx) {
   // first use. Out here it simply persists, and the renderer refills its slot.
   const railZoom = el("div", { class: "graph-rail-zoom" });
   const rail = el("div", { class: "graph-rail" }, layoutBtn, groupBtn, railZoom);
+  // The refetch indicator: a hairline top-edge bar, shown only while `body` carries
+  // `.updating`. A sibling of `body` for the same reason `rail` is one — `renderGraph` clears
+  // `body`'s own children on every repaint (graphView.js:19) and would take this with it.
+  const updatingBar = el("div", { class: "gs-updating-bar", hidden: true, "aria-hidden": "true" },
+    el("div", { class: "progress-track indeterminate" }, el("div", { class: "progress-fill" })));
   // `body` is the containing block for the canvas overlays, the table, the empty states and the
   // boot skeleton; the panel is positioned against the split so it can sit over all of them.
-  const split = el("div", { class: "workbench-split" }, panel, rail, body);
+  const split = el("div", { class: "workbench-split" }, panel, rail, body, updatingBar);
   const root = el("div", { class: "workbench" }, bar, viewbar, chipsRow, split);
   main.append(root);
 
@@ -561,6 +567,12 @@ export async function renderGraphPage(main, params, _ctx) {
   let graphApi = null;
   /** Guards against a slow answer painting over a faster one that was asked for later. */
   let seq = 0;
+  // The ghost graph's handle, non-null from the boot block until the first real paint. `load()`
+  // reads it to know whether THIS is the boot load (advance its phase text) or a refetch (dim
+  // the canvas instead); `releaseCanvas()` is the one place that destroys it, so every path that
+  // tears down the canvas — a successful paint, an empty result, a rejected query — retires it
+  // the same way and its 8s long-wait timer can never outlive the page.
+  let bootSkeleton = null;
 
   const orderSel = el("select", { "aria-label": "Order nodes" },
     el("option", { value: "" }, "Smart order"),
@@ -765,17 +777,53 @@ export async function renderGraphPage(main, params, _ctx) {
     }
   }
 
+  /**
+   * The answer landed: advance the ghost's phase one honest step further (boot load only —
+   * `bootSkeleton` is null on every refetch) before handing it to `paint()`. The extra
+   * `requestAnimationFrame` gives the browser a chance to actually paint that phase text
+   * before the synchronous render below blocks the thread, so "Drawing N nodes…" is visible
+   * for at least a frame rather than being overwritten in the same tick it appeared — but it
+   * is also a real await, so `mySeq` gets re-checked after it: an `update()` fired during that
+   * one frame must not let this stale answer paint over whatever it asked for instead.
+   */
+  async function settle(mySeq, data) {
+    if (bootSkeleton) {
+      const n = state.view === "table"
+        ? (data.rows || data.nodes || []).length
+        : (data.nodes || []).length;
+      bootSkeleton.setPhase(state.view === "table" ? `Loading ${n} rows…` : `Drawing ${n} nodes…`);
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      if (mySeq !== seq) return;
+    }
+    paint(data);
+  }
+
   async function load() {
     const mySeq = ++seq;
-    body.classList.add("updating");
+    if (bootSkeleton) {
+      // Already true by the time this runs — the query was prefetched back at the top of
+      // `renderGraphPage`, in parallel with `bootstrap()` — but naming it here rather than at
+      // construction keeps every phase change in the one function responsible for advancing
+      // them.
+      bootSkeleton.setPhase("Running the graph query…");
+    } else {
+      body.classList.add("updating");
+      body.setAttribute("aria-busy", "true");
+      updatingBar.hidden = false;
+    }
     try {
       const data = await swrCall("api_runGraphQuery", rpcParams(state, readColumnDefaults()), (fresh) => {
-        if (mySeq === seq) paint(fresh);
+        if (mySeq === seq) settle(mySeq, fresh);
       });
-      if (mySeq === seq) paint(data);
+      if (mySeq === seq) await settle(mySeq, data);
     } catch (e) {
       if (mySeq !== seq) return;
+      // Retires the ghost (and its long-wait timer) too, so a rejected boot query doesn't
+      // leave either behind — the same chokepoint `paint()` and `emptyCanvas()` use.
+      releaseCanvas();
       body.classList.remove("updating");
+      body.removeAttribute("aria-busy");
+      updatingBar.hidden = true;
       // A rejected query is the common case here now, and its message names the offending
       // kind or relationship — far more use than "couldn't load".
       clear(body).append(el("div", { class: "workbench-empty" },
@@ -840,10 +888,20 @@ export async function renderGraphPage(main, params, _ctx) {
     railZoomHost: railZoom,
   };
 
-  /** Tear down the previous renderer before the canvas is cleared out from under it. */
+  /**
+   * Tear down the previous renderer before the canvas is cleared out from under it — and, the
+   * single chokepoint for it, the ghost graph too. `paint()` and `emptyCanvas()` both call this
+   * before they touch `body`, and `load()`'s catch branch calls it directly, so every path that
+   * replaces the boot skeleton's content retires it the same way: its DOM and its 8s long-wait
+   * timer never outlive whichever of the three outcomes actually happened.
+   */
   function releaseCanvas() {
     if (graphApi && graphApi.destroy) graphApi.destroy();
     graphApi = null;
+    if (bootSkeleton) {
+      bootSkeleton.destroy();
+      bootSkeleton = null;
+    }
   }
 
   /**
@@ -890,10 +948,53 @@ export async function renderGraphPage(main, params, _ctx) {
     updateMeta(payload.empty ? null : payload);
   }
 
-  function paint(payload) {
+  /**
+   * Resolves once `body`'s opacity transition has actually finished (or, failing that, once
+   * `--dur-base` has definitely elapsed — a rapid second filter change can tear this render
+   * down before `transitionend` ever fires, and the fade must not hang waiting for an event
+   * that is never coming).
+   */
+  function fadeOut(node) {
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        node.removeEventListener("transitionend", onEnd);
+        resolve();
+      };
+      const onEnd = (e) => { if (e.target === node && e.propertyName === "opacity") finish(); };
+      node.addEventListener("transitionend", onEnd);
+      setTimeout(finish, 220); // --dur-base (180ms) plus margin
+    });
+  }
+
+  /**
+   * The boot ghost's only exit: `body` fades to fully transparent, the canvas is torn down and
+   * rebuilt while nobody can see the gap, then it fades back in. `renderGraph` opens by
+   * clearing whatever is already in its container (graphView.js:19), so there is no way to
+   * literally cross-fade old content into new — this fades the CONTAINER instead, which reads
+   * the same way from outside it.
+   *
+   * Only the very first paint takes this branch (`bootSkeleton` is null forever after), and
+   * only when motion is allowed — otherwise the swap below runs exactly as it always did,
+   * synchronously and instantly. `paintToken` guards the one async gap this function has: if a
+   * newer `load()` starts while this paint is mid-fade, that faster answer's own `paint()` call
+   * owns the swap, and this one bails without touching the DOM further.
+   */
+  async function paint(payload) {
     if (!payload) return;
+    const paintToken = seq;
+    const handoff = !!bootSkeleton && motionOk();
+    if (handoff) {
+      body.classList.add("gcanvas-handoff");
+      await fadeOut(body);
+      if (paintToken !== seq) return;
+    }
     lastData = payload;
     body.classList.remove("updating");
+    body.removeAttribute("aria-busy");
+    updatingBar.hidden = true;
     // The builder's filter chips read their field LABELS off the answer's column groups, and
     // the answer lands after the repaint that added the filter. Without this the chip shows
     // the raw key ("inactive") until the next unrelated edit. `sync` is idempotent and the
@@ -901,36 +1002,41 @@ export async function renderGraphPage(main, params, _ctx) {
     builder.sync();
     if (payload.empty || (!(payload.nodes || []).length && !(payload.rows || []).length)) {
       emptyCanvas(payload);
-      return;
-    }
-    payload.palette = boot.palette;
-    payload.offsets = parseOffsets(state.pos);
-    releaseCanvas();
-    clear(body);
-    if (state.view === "table") {
-      body.append(el("div", { class: "workbench-table" }, queryTable(payload, {
-        page: state.page,
-        pageSize: state.pageSize,
-        sort: state.sortCol,
-        dir: state.dir,
-        onPage: (p) => update({ page: p === 1 ? "" : String(p) }),
-        onPageSize: (n) => update({ pageSize: String(n), page: "" }),
-        onSort: (key) => update({
-          sortCol: key,
-          dir: state.sortCol === key && state.dir === "asc" ? "desc" : "asc",
-          page: "",
-        }),
-        onOpen: (cell) => handlers.onNodeOpen({ id: cell.id, kind: cell.kind, name: cell.name }),
-      })));
     } else {
-      graphApi = renderGraph(body, payload, handlers);
-      body.append(buildLegend(boot, payload));
+      payload.palette = boot.palette;
+      payload.offsets = parseOffsets(state.pos);
+      releaseCanvas();
+      clear(body);
+      if (state.view === "table") {
+        body.append(el("div", { class: "workbench-table" }, queryTable(payload, {
+          page: state.page,
+          pageSize: state.pageSize,
+          sort: state.sortCol,
+          dir: state.dir,
+          onPage: (p) => update({ page: p === 1 ? "" : String(p) }),
+          onPageSize: (n) => update({ pageSize: String(n), page: "" }),
+          onSort: (key) => update({
+            sortCol: key,
+            dir: state.sortCol === key && state.dir === "asc" ? "desc" : "asc",
+            page: "",
+          }),
+          onOpen: (cell) => handlers.onNodeOpen({ id: cell.id, kind: cell.kind, name: cell.name }),
+        })));
+      } else {
+        graphApi = renderGraph(body, payload, handlers);
+        body.append(buildLegend(boot, payload));
+      }
+      // The counts overlay describes the CANVAS — how much of the match set it managed to
+      // draw. In table view it would float over the table's own footer saying nothing the
+      // result count above has not already said, so it stays with the picture it is about.
+      if (state.view !== "table") body.append(meta);
+      updateMeta(payload);
     }
-    // The counts overlay describes the CANVAS — how much of the match set it managed to
-    // draw. In table view it would float over the table's own footer saying nothing the
-    // result count above has not already said, so it stays with the picture it is about.
-    if (state.view !== "table") body.append(meta);
-    updateMeta(payload);
+    if (handoff) {
+      // One more frame before fading back in, so the browser has actually laid out and
+      // painted the new (still-invisible) content rather than animating from a stale frame.
+      requestAnimationFrame(() => body.classList.remove("gcanvas-handoff"));
+    }
   }
 
   // -------------------------------------------------------------------- meta
@@ -1614,13 +1720,15 @@ export async function renderGraphPage(main, params, _ctx) {
   // ---------------------------------------------------------------- boot-up
   // The first load is awaited so the route overlay covers it; later loads are
   // in-place and keep the previous view visible while updating.
-  // A full-bleed skeleton fills the canvas until the first paint, so the boot
-  // splash reveals a laid-out workbench rather than an empty pane; paint()/load()
-  // clear the body and swap in the graph.
-  body.append(el("div", {
-    class: "graph-skeleton", role: "status", "aria-label": "Loading graph",
-    style: "position:absolute; inset:12px; border-radius:var(--radius-lg); overflow:hidden",
-  }, skeleton("chart")));
+  // A ghost of the arrangement about to be drawn fills the canvas until the first paint, so
+  // the boot splash reveals a laid-out workbench rather than an empty pane — one of the five
+  // real arrangements, in the grouping the URL already asked for, since that much is known
+  // before the first byte of an answer is. `load()`'s `settle()` advances its phase; `paint()`
+  // is what finally retires it.
+  bootSkeleton = renderGraphSkeleton(body, {
+    mode: state.layout || DEFAULT_LAYOUT,
+    grouped: groupLevels().length > 0,
+  });
   // The builder renders immediately from whatever vocabulary it has and re-renders when the
   // real one lands, so a slow tenant never blocks the first paint.
   swrCall("api_getQueryVocabulary", {}).then((v) => {
