@@ -16,7 +16,9 @@ import {
   withMissingGuardrailNodes,
   withSensitiveDataNodes,
 } from "../src/domain/graphEnrich";
-import { DEFAULT_AARS_RULE, gapPointsFor, type AarsRule } from "../src/domain/aars";
+import {
+  DEFAULT_AARS_RULE, derivationSignature, gapPointsFor, type AarsRule,
+} from "../src/domain/aars";
 import { cleanAarsRule } from "../src/domain/aarsRule";
 import type { Severity } from "../src/domain/config";
 import { edgeId } from "../src/domain/graphTypes";
@@ -315,6 +317,81 @@ describe("enrichGraphDoc", () => {
     const agentA = doc.nodes.find((n) => n.id === "agent-a")!;
     expect(agentA.aars).toBe(62);
     expect(agentA.aarsSeverity).toBe("CRITICAL"); // HIGH under the default bands
+  });
+});
+
+describe("enrichGraphDoc — businessImpact (asset-level worst-of)", () => {
+  const doc = (projects: GNode["projects"]): GraphDoc => ({
+    nodes: [{ id: "n", kind: "AI_AGENT", name: "n", projects }],
+    edges: [],
+    syncedAt: T,
+  });
+
+  it("folds the worst of the node's own projects onto businessImpact", () => {
+    const out = enrichGraphDoc(doc([
+      { id: "p1", name: "one", businessImpact: "LBI" },
+      { id: "p2", name: "two", businessImpact: "HBI" },
+    ]), []);
+    expect(out.nodes[0].businessImpact).toBe("HBI");
+  });
+
+  it("leaves it unset for no projects, or projects with no recognised tier", () => {
+    expect(enrichGraphDoc(doc(undefined), []).nodes[0].businessImpact).toBeUndefined();
+    expect(enrichGraphDoc(doc([]), []).nodes[0].businessImpact).toBeUndefined();
+    expect(enrichGraphDoc(doc([{ id: "p1", name: "one" }]), []).nodes[0].businessImpact)
+      .toBeUndefined();
+  });
+
+  it("never moves a score — it is folded independently of the AARS pillars", () => {
+    const withImpact = enrichGraphDoc(
+      doc([{ id: "p1", name: "one", businessImpact: "HBI" }]),
+      SEED_ISSUES,
+      SEED_AARS_HINTS,
+    ).nodes[0];
+    const without = enrichGraphDoc(doc(undefined), SEED_ISSUES, SEED_AARS_HINTS).nodes[0];
+    expect(withImpact.aars).toBe(without.aars);
+    expect(withImpact.aarsPillars).toEqual(without.aarsPillars);
+  });
+});
+
+describe("enrichGraphDoc — aarsInput.derivedUnder", () => {
+  const issue = (over: Partial<IssueRow>): IssueRow => ({
+    id: "iss-1", ruleId: "r", ruleName: "r", comboGroup: "other",
+    nativeSeverity: "LOW" as Severity, adjustedSeverity: "LOW" as Severity,
+    status: "OPEN", assetId: "n", assetName: "n", ...over,
+  });
+  const node: GNode = { id: "n", kind: "AI_AGENT", name: "n" };
+
+  it("a fresh no-hint derivation is stamped with today's signature", () => {
+    const out = enrichGraphDoc({ nodes: [node], edges: [], syncedAt: T }, [issue({})]);
+    expect(out.nodes[0].aarsInput?.derivedUnder).toBe(derivationSignature(DEFAULT_AARS_RULE));
+  });
+
+  it("buildAarsHintsFromFindings' hints are stamped too — they are a fresh derivation", () => {
+    const findings: FindingRow[] = [{
+      id: "f1", resourceId: "n", ruleShortId: "SUB-1", severity: "HIGH" as Severity,
+      frameworkCodes: ["LLM06"], status: "OPEN", result: "FAIL",
+    }];
+    const hints = buildAarsHintsFromFindings(findings, { nodes: [node], edges: [], syncedAt: T }, []);
+    expect(hints["n"]?.derivedUnder).toBe(derivationSignature(DEFAULT_AARS_RULE));
+    const out = enrichGraphDoc({ nodes: [node], edges: [], syncedAt: T }, [], hints);
+    expect(out.nodes[0].aarsInput?.derivedUnder).toBe(derivationSignature(DEFAULT_AARS_RULE));
+  });
+
+  it("a pinned hint with no signature of its own (SEED_AARS_HINTS) stays unstamped", () => {
+    const agentA = enriched().nodes.find((n) => n.id === "agent-a")!;
+    expect(agentA.aarsInput?.derivedUnder).toBeUndefined();
+  });
+
+  it("a reused persisted input keeps ITS OWN signature, not today's", () => {
+    const stale = derivationSignature({
+      ...DEFAULT_AARS_RULE,
+      gapSources: { ...DEFAULT_AARS_RULE.gapSources, fiveRs: true },
+    });
+    const hints = { n: { gaps: [], dataExposure: "NONE" as const, derivedUnder: stale } };
+    const out = enrichGraphDoc({ nodes: [node], edges: [], syncedAt: T }, [], hints);
+    expect(out.nodes[0].aarsInput?.derivedUnder).toBe(stale);
+    expect(out.nodes[0].aarsInput?.derivedUnder).not.toBe(derivationSignature(DEFAULT_AARS_RULE));
   });
 });
 

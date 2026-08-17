@@ -335,7 +335,14 @@ var Server = (() => {
       "display_name",
       "email",
       "publisher",
-      "discovery_methods"
+      "discovery_methods",
+      // Worst business-impact tier across the asset's own projects (HBI/MBI/LBI), folded by
+      // enrichGraphDoc from `projects[].businessImpact` — the signal ai/AARS_ASSESSMENT.md §7
+      // named as dropped at the sheet boundary. Appended, for the usual no-migration reason:
+      // ensureHeaders adds declared-but-missing headers to the right of whatever a tab
+      // already has, and every read maps by header NAME, so an existing ledger picks this up
+      // on its next sync with no migration.
+      "business_impact"
     ],
     [TABS.edges]: ["id", "src", "dst", "type", "negated", "access_type"],
     [TABS.issues]: [
@@ -2688,6 +2695,15 @@ var Server = (() => {
     bands: { critical: 70, high: 50, medium: 30, low: 10 }
   };
   var AARS_MAX_SCORE = 100;
+  function derivationSignature(rule) {
+    const s = rule.gapSources;
+    return [
+      `fiveRs:${s.fiveRs ? 1 : 0}`,
+      `deprecatedModel:${s.deprecatedModel ? 1 : 0}`,
+      `inactiveAgent:${s.inactiveAgent ? 1 : 0}`,
+      `frameworkMapping:${s.frameworkMapping ? 1 : 0}`
+    ].join("|");
+  }
   function gapPointsFor(code, rule = DEFAULT_AARS_RULE) {
     const c = String(code != null ? code : "").trim().toUpperCase();
     for (const row of rule.gapPoints) {
@@ -3833,9 +3849,7 @@ var Server = (() => {
     let best;
     let bestRank = BUSINESS_IMPACT_ORDER.length;
     for (const p of projects) {
-      const profile = p["riskProfile"];
-      if (!profile || typeof profile !== "object") continue;
-      const impact = str3(profile["businessImpact"]);
+      const impact = p.businessImpact;
       if (!impact) continue;
       const rank = BUSINESS_IMPACT_ORDER.indexOf(impact);
       if (rank >= 0 && rank < bestRank) {
@@ -3867,8 +3881,8 @@ var Server = (() => {
       const control = first["control"];
       const resolutionRecommendation = (_c = str3(first["resolutionRecommendation"])) != null ? _c : control && typeof control === "object" ? str3(control["resolutionRecommendation"]) : void 0;
       const assetName = (_d = str3(snap["name"])) != null ? _d : assetId;
-      const projectRows = Array.isArray(raw["projects"]) ? raw["projects"] : [];
-      const projects = projectRows.map((p) => str3(p["name"])).filter((n) => Boolean(n));
+      const projectObjs = projectsOf(raw["projects"]);
+      const projects = projectObjs.map((p) => p.name);
       const assigneeRaw = raw["assignee"];
       const aiAnalysis = raw["aiRemediationAnalysis"];
       const environments = Array.isArray(raw["environments"]) ? raw["environments"].map((e) => str3(e)).filter((e) => Boolean(e)) : void 0;
@@ -3896,7 +3910,7 @@ var Server = (() => {
         resolutionReason: str3(raw["resolutionReason"]),
         resolvedBy: resolvedByName(raw["resolvedBy"]),
         assignee: assigneeRaw && typeof assigneeRaw === "object" ? (_i = str3(assigneeRaw["name"])) != null ? _i : str3(assigneeRaw["primaryEmail"]) : void 0,
-        businessImpact: worstBusinessImpact(projectRows),
+        businessImpact: worstBusinessImpact(projectObjs),
         entityStatus: str3(snap["status"]),
         subscriptionId: str3(snap["subscriptionId"]),
         ignoreNote: ignoreRationale(raw["notes"]),
@@ -3988,6 +4002,7 @@ var Server = (() => {
       const subscription = raw["subscription"];
       const hasSub = !!subscription && typeof subscription === "object";
       const rawProjects = resource && typeof resource === "object" ? resource["projects"] : void 0;
+      const projectObjs = projectsOf(rawProjects);
       part.findings.push({
         id,
         resourceId,
@@ -4020,8 +4035,8 @@ var Server = (() => {
         subscriptionId: hasSub ? str3(subscription["id"]) : void 0,
         subscriptionName: hasSub ? str3(subscription["name"]) : void 0,
         cloudProvider: hasSub ? str3(subscription["cloudProvider"]) : void 0,
-        projects: projectsOf(rawProjects),
-        businessImpact: Array.isArray(rawProjects) ? worstBusinessImpact(rawProjects) : void 0,
+        projects: projectObjs,
+        businessImpact: worstBusinessImpact(projectObjs),
         ignoreRuleIds: idsOf(raw["ignoreRules"]),
         iacFindingIds: idsOf(raw["sourceMappedIacFindings"])
       });
@@ -7303,7 +7318,11 @@ var Server = (() => {
       hints[resourceId] = {
         gaps,
         dataExposure: base.dataExposure,
-        internetExposure: base.internetExposure
+        internetExposure: base.internetExposure,
+        // This hint IS a fresh derivation under `rule` — `base` came straight out of
+        // `deriveAarsInput(rule)` two lines up — so it is stamped exactly like the no-hint
+        // branch of `enrichGraphDoc` would be, and `enrichFromTabs` can trust the signature.
+        derivedUnder: derivationSignature(rule)
       };
     }
     return hints;
@@ -7313,9 +7332,13 @@ var Server = (() => {
     const byAsset = groupBy(open, (i) => i.assetId);
     const reach = dataFindingReach(doc);
     const nodes = doc.nodes.map((raw) => {
-      var _a5, _b;
+      var _a5, _b, _c;
       const node2 = { ...raw };
       const nodeIssues = (_a5 = byAsset.get(node2.id)) != null ? _a5 : [];
+      if ((_b = node2.projects) == null ? void 0 : _b.length) {
+        const impact = worstBusinessImpact(node2.projects);
+        if (impact) node2.businessImpact = impact;
+      }
       if (nodeIssues.length) {
         node2.severity = worstSeverity(nodeIssues.map((i) => i.adjustedSeverity));
         const groups = [];
@@ -7332,7 +7355,7 @@ var Server = (() => {
           ...hint,
           // A hint written before pillar D existed carries no exposure; re-derive it
           // rather than let `undefined` read as NONE.
-          internetExposure: (_b = hint.internetExposure) != null ? _b : internetExposureOf(node2)
+          internetExposure: (_c = hint.internetExposure) != null ? _c : internetExposureOf(node2)
         } : deriveAarsInput(node2, nodeIssues, rule);
         const reached = reach.get(node2.id);
         const input = reached ? { ...base, dataFindingSeverities: reached } : base;
@@ -7343,7 +7366,13 @@ var Server = (() => {
         node2.aarsInput = {
           gaps: input.gaps,
           dataExposure: input.dataExposure,
-          internetExposure: input.internetExposure
+          internetExposure: input.internetExposure,
+          // Propagate the hint's own signature rather than re-stamping today's: a REUSED
+          // persisted input (the hint `enrichFromTabs` passes through when its signature
+          // still matches) must keep saying what it was actually derived under, and a
+          // pinned dry-run hint must keep saying nothing. Only the no-hint branch — a genuine
+          // fresh derivation right here, under `rule` — earns today's signature.
+          derivedUnder: hint ? hint.derivedUnder : derivationSignature(rule)
         };
         if (reached) {
           node2.aarsInput.dataFindings = countBySeverity(reached);
@@ -7920,7 +7949,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "47d716e3baf2" : "dev";
+  var BUILD_ID = true ? "9e12aa2ab8a5" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -9654,8 +9683,18 @@ var Server = (() => {
       return fallback;
     }
   }
+  function parseAssetProjects(v) {
+    const raw = parseJson(v, []);
+    if (typeof raw[0] === "string") {
+      return raw.map((name) => ({
+        id: `proj-${String(name).toLowerCase()}`,
+        name: String(name)
+      }));
+    }
+    return raw;
+  }
   function assetToRow(n) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z;
     return {
       id: n.id,
       kind: n.kind,
@@ -9666,9 +9705,19 @@ var Server = (() => {
       status: (_d = n.status) != null ? _d : null,
       account_id: (_f = (_e = n.cloudAccount) == null ? void 0 : _e.id) != null ? _f : null,
       account_name: (_h = (_g = n.cloudAccount) == null ? void 0 : _g.name) != null ? _h : null,
-      projects_json: JSON.stringify(((_i = n.projects) != null ? _i : []).map((p) => p.name)),
-      first_seen: (_j = n.firstSeen) != null ? _j : null,
-      last_seen: (_k = n.lastSeen) != null ? _k : null,
+      // Full project objects, not just names: `rowToAsset` used to fabricate a `proj-<name>`
+      // id and drop `businessImpact` entirely on the way back in, which is what stranded the
+      // signal ai/AARS_ASSESSMENT.md §7 named as the highest-value follow-up. A row this
+      // writes is always read back through the object branch of `rowToAsset`'s two-branch
+      // reader below; the legacy string-array branch exists only for rows an OLDER version
+      // wrote.
+      projects_json: JSON.stringify((_i = n.projects) != null ? _i : []),
+      // The asset-level worst-of `enrichGraphDoc` folds from `projects[].businessImpact` —
+      // `?? null`, never a default, so an asset Wiz reported no impact for reads back
+      // undefined rather than as a false "LBI".
+      business_impact: (_j = n.businessImpact) != null ? _j : null,
+      first_seen: (_k = n.firstSeen) != null ? _k : null,
+      last_seen: (_l = n.lastSeen) != null ? _l : null,
       internet: triCell(n.isAccessibleFromInternet),
       open_internet: triCell(n.isOpenToAllInternet),
       sensitive_data: boolCell(n.hasSensitiveData),
@@ -9676,23 +9725,23 @@ var Server = (() => {
       high_priv: boolCell(n.hasHighPrivileges),
       admin_priv: boolCell(n.hasAdminPrivileges),
       guardrail_missing: boolCell(n.guardrailMissing),
-      technology_categories: ((_l = n.technologyCategories) != null ? _l : []).join(","),
-      severity: (_m = n.severity) != null ? _m : null,
-      aars: (_n = n.aars) != null ? _n : null,
-      aars_severity: (_o = n.aarsSeverity) != null ? _o : null,
+      technology_categories: ((_m = n.technologyCategories) != null ? _m : []).join(","),
+      severity: (_n = n.severity) != null ? _n : null,
+      aars: (_o = n.aars) != null ? _o : null,
+      aars_severity: (_p = n.aarsSeverity) != null ? _p : null,
       aars_pillars_json: n.aarsPillars ? JSON.stringify(n.aarsPillars) : null,
       aars_input_json: n.aarsInput ? JSON.stringify(n.aarsInput) : null,
-      combo_groups: ((_p = n.comboGroups) != null ? _p : []).join(","),
+      combo_groups: ((_q = n.comboGroups) != null ? _q : []).join(","),
       tags_json: n.tags ? JSON.stringify(n.tags) : null,
-      identity_purpose: (_q = n.identityPurpose) != null ? _q : null,
+      identity_purpose: (_r = n.identityPurpose) != null ? _r : null,
       issue_analytics_json: n.issueAnalytics ? JSON.stringify(n.issueAnalytics) : null,
       // `?? null` rather than `?? 0`: a store the traversal never reached must read back as
       // undefined, not as "zero findings". The graph draws no aggregate for either, but the
       // pillar-C knob and the DSPM coverage state both need to tell them apart.
-      data_finding_count: (_r = n.dataFindingCount) != null ? _r : null,
+      data_finding_count: (_s = n.dataFindingCount) != null ? _s : null,
       data_findings_json: n.dataFindingSeverities ? JSON.stringify(n.dataFindingSeverities) : null,
-      exposure_level: (_s = n.exposureLevel) != null ? _s : null,
-      port_validation: (_t = n.portValidation) != null ? _t : null,
+      exposure_level: (_t = n.exposureLevel) != null ? _t : null,
+      port_validation: (_u = n.portValidation) != null ? _u : null,
       // `null` rather than `"{}"` when there is no evidence, and rowToAsset reads it back as
       // undefined: an asset the exposure steps never reached must not become one they reached
       // and found clean. conditionState falls through to the flags for the first and would
@@ -9701,16 +9750,16 @@ var Server = (() => {
       // `?? null`, never `?? false`: an identity row the tenant reported no dormancy for must
       // read back as undefined. "Not reported" and "in use" are different answers.
       inactive: n.inactive === void 0 ? null : boolCell(n.inactive),
-      inactive_timeframe: (_u = n.inactiveTimeframe) != null ? _u : null,
+      inactive_timeframe: (_v = n.inactiveTimeframe) != null ? _v : null,
       human_access_json: n.humanAccess ? JSON.stringify(n.humanAccess) : null,
-      display_name: (_v = n.displayName) != null ? _v : null,
-      email: (_w = n.email) != null ? _w : null,
-      publisher: (_x = n.publisher) != null ? _x : null,
-      discovery_methods: ((_y = n.discoveryMethods) != null ? _y : []).join(",")
+      display_name: (_w = n.displayName) != null ? _w : null,
+      email: (_x = n.email) != null ? _x : null,
+      publisher: (_y = n.publisher) != null ? _y : null,
+      discovery_methods: ((_z = n.discoveryMethods) != null ? _z : []).join(",")
     };
   }
   function rowToAsset(r) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x;
     const node2 = {
       id: String((_a5 = r["id"]) != null ? _a5 : ""),
       kind: String((_b = r["kind"]) != null ? _b : "AI_AGENT"),
@@ -9728,31 +9777,30 @@ var Server = (() => {
       hasHighPrivileges: parseBool(r["high_priv"]),
       hasAdminPrivileges: parseBool(r["admin_priv"]),
       guardrailMissing: parseBool(r["guardrail_missing"]),
-      projects: parseJson(r["projects_json"], []).map((name) => ({
-        id: `proj-${String(name).toLowerCase()}`,
-        name: String(name)
-      }))
+      projects: parseAssetProjects(r["projects_json"])
     };
     const account = (_j = r["account_id"]) != null ? _j : null;
     if (account) {
       node2.cloudAccount = { id: account, name: String((_k = r["account_name"]) != null ? _k : account) };
     }
-    const severity = (_l = r["severity"]) != null ? _l : null;
+    const businessImpact = (_l = r["business_impact"]) != null ? _l : null;
+    if (businessImpact) node2.businessImpact = businessImpact;
+    const severity = (_m = r["severity"]) != null ? _m : null;
     if (severity) node2.severity = severity;
     if (r["aars"] !== null && r["aars"] !== void 0) node2.aars = Number(r["aars"]);
-    const aarsSev = normalizeAarsSeverity((_m = r["aars_severity"]) != null ? _m : r["aars_band"]);
+    const aarsSev = normalizeAarsSeverity((_n = r["aars_severity"]) != null ? _n : r["aars_band"]);
     if (aarsSev) node2.aarsSeverity = aarsSev;
     const pillars = parseJson(r["aars_pillars_json"], null);
     if (pillars) node2.aarsPillars = pillars;
     const aarsInput = parseJson(r["aars_input_json"], null);
     if (aarsInput) node2.aarsInput = aarsInput;
-    const combos = String((_n = r["combo_groups"]) != null ? _n : "");
+    const combos = String((_o = r["combo_groups"]) != null ? _o : "");
     if (combos) node2.comboGroups = combos.split(",").filter(Boolean);
     const tags = parseJson(r["tags_json"], null);
     if (tags) node2.tags = tags;
-    const techCats = String((_o = r["technology_categories"]) != null ? _o : "").split(",").filter(Boolean);
+    const techCats = String((_p = r["technology_categories"]) != null ? _p : "").split(",").filter(Boolean);
     if (techCats.length) node2.technologyCategories = techCats;
-    const purpose = (_p = r["identity_purpose"]) != null ? _p : null;
+    const purpose = (_q = r["identity_purpose"]) != null ? _q : null;
     if (purpose) node2.identityPurpose = purpose;
     const analytics = parseJson(r["issue_analytics_json"], null);
     if (analytics) node2.issueAnalytics = analytics;
@@ -9762,25 +9810,25 @@ var Server = (() => {
     }
     const findingSevs = parseJson(r["data_findings_json"], null);
     if (findingSevs) node2.dataFindingSeverities = findingSevs;
-    const exposureLevel = (_q = r["exposure_level"]) != null ? _q : null;
+    const exposureLevel = (_r = r["exposure_level"]) != null ? _r : null;
     if (exposureLevel) node2.exposureLevel = exposureLevel;
-    const portValidation = (_r = r["port_validation"]) != null ? _r : null;
+    const portValidation = (_s = r["port_validation"]) != null ? _s : null;
     if (portValidation) node2.portValidation = portValidation;
     const evidence = parseJson(r["exposure_evidence_json"], null);
     if (evidence) node2.exposureEvidence = evidence;
     const inactive = parseTri(r["inactive"]);
     if (inactive !== null) node2.inactive = inactive;
-    const inactiveTimeframe = (_s = r["inactive_timeframe"]) != null ? _s : null;
+    const inactiveTimeframe = (_t = r["inactive_timeframe"]) != null ? _t : null;
     if (inactiveTimeframe) node2.inactiveTimeframe = inactiveTimeframe;
     const humanAccess = parseJson(r["human_access_json"], null);
     if (humanAccess) node2.humanAccess = humanAccess;
-    const displayName = (_t = r["display_name"]) != null ? _t : null;
+    const displayName = (_u = r["display_name"]) != null ? _u : null;
     if (displayName) node2.displayName = displayName;
-    const email = (_u = r["email"]) != null ? _u : null;
+    const email = (_v = r["email"]) != null ? _v : null;
     if (email) node2.email = email;
-    const publisher = (_v = r["publisher"]) != null ? _v : null;
+    const publisher = (_w = r["publisher"]) != null ? _w : null;
     if (publisher) node2.publisher = publisher;
-    const methods = String((_w = r["discovery_methods"]) != null ? _w : "").split(",").filter(Boolean);
+    const methods = String((_x = r["discovery_methods"]) != null ? _x : "").split(",").filter(Boolean);
     if (methods.length) node2.discoveryMethods = methods;
     return node2;
   }
@@ -10257,8 +10305,12 @@ var Server = (() => {
     if (!base) return null;
     const issues2 = loadIssues();
     const hints = { ...buildAarsHintsFromFindings(loadFindings(), base, issues2, rule) };
+    const sig = derivationSignature(rule);
     for (const node2 of base.nodes) {
-      if (node2.aarsInput) hints[node2.id] = node2.aarsInput;
+      const input = node2.aarsInput;
+      if (input && (input.derivedUnder === void 0 || input.derivedUnder === sig)) {
+        hints[node2.id] = input;
+      }
     }
     return enrichGraphDoc(base, issues2, hints, rule);
   }

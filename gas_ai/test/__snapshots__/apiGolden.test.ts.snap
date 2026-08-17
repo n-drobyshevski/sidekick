@@ -679,7 +679,7 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
   "getStorageStats": {
     "data": {
       "archiveBytes": 0,
-      "cellCount": 39300,
+      "cellCount": 39400,
       "rows": {
         "assets": 0,
         "dataFindings": 0,
@@ -8165,6 +8165,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "aars": 0,
         "aarsInput": {
           "dataExposure": "NONE",
+          "derivedUnder": "fiveRs:0|deprecatedModel:0|inactiveAgent:0|frameworkMapping:0",
           "gaps": [],
           "internetExposure": "NONE",
         },
@@ -8246,6 +8247,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "aars": 0,
         "aarsInput": {
           "dataExposure": "NONE",
+          "derivedUnder": "fiveRs:0|deprecatedModel:0|inactiveAgent:0|frameworkMapping:0",
           "gaps": [],
           "internetExposure": "NONE",
         },
@@ -8282,6 +8284,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
         "aars": 22,
         "aarsInput": {
           "dataExposure": "SENSITIVE",
+          "derivedUnder": "fiveRs:0|deprecatedModel:0|inactiveAgent:0|frameworkMapping:0",
           "gaps": [],
           "internetExposure": "NONE",
         },
@@ -12828,8 +12831,8 @@ exports[`read endpoints > getSettings answers the same shape 1`] = `
 exports[`read endpoints > getStorageStats answers the same shape 1`] = `
 {
   "data": {
-    "archiveBytes": 75306,
-    "cellCount": 39300,
+    "archiveBytes": 75938,
+    "cellCount": 39400,
     "rows": {
       "assets": 87,
       "dataFindings": 6,
@@ -15045,6 +15048,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
         "aars": 0,
         "aarsInput": {
           "dataExposure": "NONE",
+          "derivedUnder": "fiveRs:0|deprecatedModel:0|inactiveAgent:0|frameworkMapping:0",
           "gaps": [],
           "internetExposure": "NONE",
         },
@@ -17069,6 +17073,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
         "aars": 0,
         "aarsInput": {
           "dataExposure": "NONE",
+          "derivedUnder": "fiveRs:0|deprecatedModel:0|inactiveAgent:0|frameworkMapping:0",
           "gaps": [],
           "internetExposure": "NONE",
         },
@@ -17357,6 +17362,7 @@ exports[`the persisted ledger > writes the tabs the schema declares 2`] = `
     "account_id": "gcp-account-01",
     "account_name": "gcp-account-01",
     "admin_priv": "false",
+    "business_impact": null,
     "cloud": "GCP",
     "combo_groups": "gcp-managed-privileged",
     "data_finding_count": null,
@@ -17382,7 +17388,7 @@ exports[`the persisted ledger > writes the tabs the schema declares 2`] = `
     "native_type": "aiplatform#ReasoningEngine",
     "open_internet": "false",
     "port_validation": null,
-    "projects_json": "["PROJECT-BETA","PROJECT-ALPHA"]",
+    "projects_json": "[{"id":"proj-project-beta","name":"PROJECT-BETA"},{"id":"proj-project-alpha","name":"PROJECT-ALPHA"}]",
     "publisher": "Platform Engineering",
     "region": "europe-west1",
     "sensitive_access": "true",

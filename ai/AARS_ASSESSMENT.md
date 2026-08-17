@@ -161,6 +161,17 @@ no tenant re-scores on upgrade.
 | `exposurePoints` | all zero | §4. Pillar D, derived through the existing `conditionState` so the tri-state survives: `null` → `UNDETERMINED`, never `CONFIRMED`, never `NONE` |
 | `findingSeverityWeights` | all 1 | §4. A CRITICAL failing control can outrank a LOW one. At weight 1 no override is written, so the persisted input stays byte-identical |
 
+**A `gapSources` change now takes effect on Recompute — it previously did not.**
+`gapSources` decides WHICH GAPS EXIST, not how they price, but the rescore path reused a
+persisted `aarsInput` unconditionally: flip `fiveRs` on and hit Recompute, and nothing moved
+until the next full sync, because the reused gaps were still the ones derived under the old
+flags. `aars.derivationSignature` fingerprints the four `gapSources` flags, `GNode.aarsInput`
+now carries the signature it was derived under (`derivedUnder`), and `syncStore.enrichFromTabs`
+reuses a persisted input only when that signature still matches (or is absent — a legacy row,
+reused so no tenant re-scores on upgrade) — otherwise it lets `deriveAarsInput` re-derive.
+Every other knob above is a PRICING change and is unaffected: reusing the persisted input for
+those is the point, not the bug.
+
 **Diagnostics** (`ruleDiscrimination`, `unreachableGapRules`) now report distinct scores, the
 largest tie group, the range used, empty bands, and per-pillar cap saturation on the Rules
 page. This is the part that matters most: the model can stop discriminating without anything
@@ -196,10 +207,16 @@ was stale before anyone noticed. A claim a test does not hold is a claim that ex
 - **A 12-asset tie remains under v2**, and no scoring function can fix it: those agents have
   genuinely identical inputs — same gap shape, sensitive data, no confirmed exposure, one
   issue. Separating them needs signal the model does not have.
-- **`projects[].businessImpact` is the signal that would break it.** It is queried
-  (`wizQueriesAi.ts:50`), normalized (`syncNormalize.ts:106`) and typed
-  (`graphTypes.ts:136`) — then dropped at `syncStore.ts:67`, which writes project *names*
-  only. Reaching it needs a new `ai_assets` column. This is the highest-value follow-up.
+- **`projects[].businessImpact` now reaches `ai_assets`, and the tie still stands.** It is
+  queried (`wizQueriesAi.ts:104`), normalized once (`syncNormalize.worstBusinessImpact`,
+  exported so `graphEnrich.enrichGraphDoc` shares the same HBI>MBI>LBI ordering) and folded
+  onto `GNode.businessImpact` (`graphTypes.ts:363`) — the asset-level worst-of, persisted in
+  a new `ai_assets.business_impact` column (`syncStore.ts` `assetToRow`/`rowToAsset`), with
+  `projects_json` now carrying the full `{id, name, businessImpact}` objects instead of
+  names a read had to fabricate ids for. It is a DISPLAY signal only: AARS prices nothing
+  from it, by the same "no default rule change" discipline every addition here follows, so
+  the 12-asset tie above is unmoved. Feeding it into a pillar or a new knob — the tie-break
+  this signal was named for — remains the follow-up.
 - **Pillar C is still at its ceiling for 20 of 30 assets** under v2. It is a true fact about
   the estate rather than a modelling error, but it means the pillar ranks little; v2 responds
   by reducing its weight rather than by pretending otherwise.

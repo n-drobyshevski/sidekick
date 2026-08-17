@@ -357,6 +357,35 @@ export const AARS_V2_RULE: AarsRule = {
 /** The AARS scale itself: not tunable, unlike everything in `AarsRule`. */
 export const AARS_MAX_SCORE = 100;
 
+/**
+ * A short, human-readable fingerprint of the knobs that change WHICH GAPS EXIST, as
+ * opposed to how they price — today, `gapSources`'s four flags; it will gain `gapUnit` the
+ * day that knob exists. Persisted on `GNode.aarsInput.derivedUnder` (graphEnrich.ts) so a
+ * rescore can tell a stale DERIVATION apart from a stale PRICE: `enrichFromTabs`
+ * (syncStore.ts) reuses a persisted input to re-PRICE it for free, and that is correct for a
+ * `severityPoints` or cap edit — but reusing it across a `gapSources` change silently keeps
+ * gaps that no longer reflect the rule. An operator flips `fiveRs` on, hits Recompute, and
+ * nothing moves until the next full sync; this signature is what lets `enrichFromTabs` tell
+ * the difference and re-derive only when it has to.
+ *
+ * Deliberately NOT a hash — `sha1.ts` exists and is not used here. This value lands in a
+ * sheet cell and inside `aars_input_json`, read by a human comparing two rows; a digest
+ * would tell them nothing a name doesn't. Extend the function, not its callers, when a
+ * derivation knob is added — and add ONLY derivation knobs. A pricing field
+ * (`severityPoints`, `gapPoints`, any cap, …) must never appear here: including one would
+ * force every tenant to re-derive on a price tweak, throwing away the zero-Wiz-calls
+ * property `enrichFromTabs` exists for.
+ */
+export function derivationSignature(rule: AarsRule): string {
+  const s = rule.gapSources;
+  return [
+    `fiveRs:${s.fiveRs ? 1 : 0}`,
+    `deprecatedModel:${s.deprecatedModel ? 1 : 0}`,
+    `inactiveAgent:${s.inactiveAgent ? 1 : 0}`,
+    `frameworkMapping:${s.frameworkMapping ? 1 : 0}`,
+  ].join("|");
+}
+
 /** Price one gap code against a rule's cascade, falling back to `gapFallbackPoints`. */
 export function gapPointsFor(code: string, rule: AarsRule = DEFAULT_AARS_RULE): number {
   const c = String(code ?? "").trim().toUpperCase();

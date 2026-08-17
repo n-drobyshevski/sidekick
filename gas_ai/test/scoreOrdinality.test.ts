@@ -151,3 +151,24 @@ describe("3. saturation census — the numbers ai/AARS_ASSESSMENT.md publishes",
     expect(unreachableGapRules(AARS_V2_RULE).length).toBe(1);
   });
 });
+
+// Phase 2's real contract: reaching `projects[].businessImpact` (GAS_AI plan phase 2) is a
+// DISPLAY signal, wired onto `GNode.businessImpact` and the `ai_assets.business_impact`
+// column — it must not touch a single pillar. `baseDoc` above already runs the live path
+// with `businessImpact` folded on (enrichGraphDoc computes it unconditionally), so every
+// number `describe("3. …")` pins above IS this regression: if this suite is green, no score
+// moved when the column was added. This block exists so that claim is not merely implied.
+describe("Phase 2 regression: businessImpact never moves a score", () => {
+  it("the exact per-node score vector is unchanged by folding businessImpact on", () => {
+    // Re-run through a doc whose nodes carry NO projects at all — businessImpact can fold
+    // nothing onto any of them — and diff against the baseline computed at module load
+    // (where the seed estate's real `projects` ARE present, per sampleData.ts).
+    const stripped = {
+      ...seedGraphDoc("T"),
+      nodes: seedGraphDoc("T").nodes.map((n) => ({ ...n, projects: undefined })),
+    };
+    const noImpact = enrichGraphDoc(stripped, SEED_ISSUES, undefined, DEFAULT_AARS_RULE);
+    const noImpactVector = scoreVector(noImpact.nodes, scoredIds);
+    expect(noImpactVector).toEqual(baseline);
+  });
+});

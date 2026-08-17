@@ -5,6 +5,7 @@
 import {
   computeAars,
   DEFAULT_AARS_RULE,
+  derivationSignature,
   gap,
   gapPointsFor,
   type AarsGap,
@@ -20,6 +21,7 @@ import type { EffectiveAccessRow } from "./effectiveAccess";
 import { isRatedExposure, worseExposureLevel } from "./exposureQuery";
 import { HUMAN_ACCESS_TYPES } from "./identityQuery";
 import { conditionHolds, conditionState } from "./riskConditions";
+import { worstBusinessImpact } from "./syncNormalize";
 import type { ConditionKey } from "./toxicCombos";
 import {
   AI_ASSET_KINDS,
@@ -45,6 +47,16 @@ export interface AarsHint {
    * does not silently declare the whole estate unreachable.
    */
   internetExposure?: InternetExposure;
+  /**
+   * The `derivationSignature` this hint was computed under, when it was computed by a rule
+   * at all. `buildAarsHintsFromFindings` stamps it, because that hint really is a fresh
+   * derivation under the rule passed in; a pinned dry-run hint from `SEED_AARS_HINTS`
+   * carries none, because it was transcribed from ai/custom_score.md and was never derived
+   * by anything. `enrichGraphDoc` copies whichever of these onto `node.aarsInput`, which is
+   * exactly what lets `syncStore.enrichFromTabs` reuse a persisted input as a hint here
+   * (matching signature) without laundering it into looking freshly derived.
+   */
+  derivedUnder?: string;
 }
 export type AarsHints = Record<string, AarsHint>;
 
@@ -207,6 +219,10 @@ export function buildAarsHintsFromFindings(
       gaps,
       dataExposure: base.dataExposure,
       internetExposure: base.internetExposure,
+      // This hint IS a fresh derivation under `rule` — `base` came straight out of
+      // `deriveAarsInput(rule)` two lines up — so it is stamped exactly like the no-hint
+      // branch of `enrichGraphDoc` would be, and `enrichFromTabs` can trust the signature.
+      derivedUnder: derivationSignature(rule),
     };
   }
   return hints;
@@ -230,6 +246,17 @@ export function enrichGraphDoc(
   const nodes: GNode[] = doc.nodes.map((raw) => {
     const node: GNode = { ...raw };
     const nodeIssues = byAsset.get(node.id) ?? [];
+
+    // Asset-level worst business impact, re-derived from the node's OWN projects on every
+    // enrich pass (not carried over from a previous score) — the same "recompute from the
+    // more primitive persisted fact" treatment `severity` and `comboGroups` already get
+    // from the open issues below. Cheap and side-effect-free: `node.projects` doesn't
+    // change across a rescore, so this is idempotent, and it never touches a pillar —
+    // scoreOrdinality.test.ts pins that adding it moves no score.
+    if (node.projects?.length) {
+      const impact = worstBusinessImpact(node.projects);
+      if (impact) node.businessImpact = impact;
+    }
 
     if (nodeIssues.length) {
       node.severity = worstSeverity(nodeIssues.map((i) => i.adjustedSeverity));
@@ -272,6 +299,12 @@ export function enrichGraphDoc(
         gaps: input.gaps,
         dataExposure: input.dataExposure,
         internetExposure: input.internetExposure,
+        // Propagate the hint's own signature rather than re-stamping today's: a REUSED
+        // persisted input (the hint `enrichFromTabs` passes through when its signature
+        // still matches) must keep saying what it was actually derived under, and a
+        // pinned dry-run hint must keep saying nothing. Only the no-hint branch — a genuine
+        // fresh derivation right here, under `rule` — earns today's signature.
+        derivedUnder: hint ? hint.derivedUnder : derivationSignature(rule),
       };
       if (reached) {
         node.aarsInput.dataFindings = countBySeverity(reached);

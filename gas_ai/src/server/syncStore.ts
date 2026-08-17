@@ -26,7 +26,7 @@ import type {
 } from "../domain/graphTypes";
 import type { EffectiveAccessRow } from "../domain/effectiveAccess";
 import { edgeId } from "../domain/graphTypes";
-import { aarsSeverity, type AarsBands, type AarsRule } from "../domain/aars";
+import { aarsSeverity, derivationSignature, type AarsBands, type AarsRule } from "../domain/aars";
 import { isUnresolvedIssue, normalizeAarsSeverity } from "../domain/config";
 import { OTHER_GROUP_ID } from "../domain/toxicCombos";
 import type { Severity } from "../domain/config";
@@ -63,6 +63,29 @@ export function parseJson<T>(v: unknown, fallback: T): T {
   }
 }
 
+/**
+ * `projects_json` two-branch reader. A cell THIS version wrote holds full objects
+ * (`{id, name, businessImpact}`, from `assetToRow`); a cell an OLDER version wrote holds
+ * bare project names. The shape of the first element tells the two apart — a string means
+ * legacy, an object means current — and an empty array satisfies both branches identically,
+ * so it never has to guess.
+ *
+ * The legacy branch fabricates `proj-<lowercased name>` ids EXACTLY as the old unconditional
+ * code did. That recipe is load-bearing for an existing ledger: it is what those rows'
+ * project ids already are, and a rescore must keep producing the same ones rather than
+ * re-keying every project on an asset a live sync hasn't touched since this shipped.
+ */
+function parseAssetProjects(v: unknown): NonNullable<GNode["projects"]> {
+  const raw = parseJson<unknown[]>(v, []);
+  if (typeof raw[0] === "string") {
+    return (raw as unknown[]).map((name) => ({
+      id: `proj-${String(name).toLowerCase()}`,
+      name: String(name),
+    }));
+  }
+  return raw as NonNullable<GNode["projects"]>;
+}
+
 export function assetToRow(n: GNode): Rec {
   return {
     id: n.id,
@@ -74,7 +97,17 @@ export function assetToRow(n: GNode): Rec {
     status: n.status ?? null,
     account_id: n.cloudAccount?.id ?? null,
     account_name: n.cloudAccount?.name ?? null,
-    projects_json: JSON.stringify((n.projects ?? []).map((p) => p.name)),
+    // Full project objects, not just names: `rowToAsset` used to fabricate a `proj-<name>`
+    // id and drop `businessImpact` entirely on the way back in, which is what stranded the
+    // signal ai/AARS_ASSESSMENT.md §7 named as the highest-value follow-up. A row this
+    // writes is always read back through the object branch of `rowToAsset`'s two-branch
+    // reader below; the legacy string-array branch exists only for rows an OLDER version
+    // wrote.
+    projects_json: JSON.stringify(n.projects ?? []),
+    // The asset-level worst-of `enrichGraphDoc` folds from `projects[].businessImpact` —
+    // `?? null`, never a default, so an asset Wiz reported no impact for reads back
+    // undefined rather than as a false "LBI".
+    business_impact: n.businessImpact ?? null,
     first_seen: n.firstSeen ?? null,
     last_seen: n.lastSeen ?? null,
     internet: triCell(n.isAccessibleFromInternet),
@@ -136,15 +169,16 @@ export function rowToAsset(r: Rec): GNode {
     hasHighPrivileges: parseBool(r["high_priv"]),
     hasAdminPrivileges: parseBool(r["admin_priv"]),
     guardrailMissing: parseBool(r["guardrail_missing"]),
-    projects: parseJson<string[]>(r["projects_json"], []).map((name) => ({
-      id: `proj-${String(name).toLowerCase()}`,
-      name: String(name),
-    })),
+    projects: parseAssetProjects(r["projects_json"]),
   };
   const account = (r["account_id"] as string | null) ?? null;
   if (account) {
     node.cloudAccount = { id: account, name: String(r["account_name"] ?? account) };
   }
+  // `?? null`, not a default: an asset Wiz reported no business impact for (or that
+  // predates this column) must read back as undefined, never as a false "LBI".
+  const businessImpact = (r["business_impact"] as string | null) ?? null;
+  if (businessImpact) node.businessImpact = businessImpact;
   const severity = (r["severity"] as string | null) ?? null;
   if (severity) node.severity = severity as Severity;
   if (r["aars"] !== null && r["aars"] !== undefined) node.aars = Number(r["aars"]);
@@ -820,14 +854,31 @@ export function scoreAssetsWith(rule: AarsRule): GNode[] {
  * Re-enrich the persisted graph under `rule`, feeding each asset the SAME AARS inputs its
  * score was built from. Where a row predates the `aars_input_json` column the inputs are
  * rebuilt from findings, which is what the sync's live path would have derived anyway.
+ *
+ * "Same inputs" is right for a PRICING change (severityPoints, gapPoints, a cap) — that is
+ * the whole point of this function, and why a rescore costs zero Wiz calls. It is wrong for
+ * a DERIVATION change: `rule.gapSources` decides WHICH GAPS EXIST (deriveAarsInput), and a
+ * persisted input built under the old flags does not contain the gaps the new ones would
+ * add. Reusing it unconditionally meant flipping `fiveRs` on and hitting Recompute moved
+ * nothing until the next full sync — the exact bug `derivedUnder` exists to close: a
+ * persisted input is only trusted here when its signature still matches `rule`'s, or it
+ * predates the field entirely (legacy — reused, so no tenant re-scores on upgrade). Anything
+ * else is left OUT of `hints`, so `enrichGraphDoc` falls through to a fresh
+ * `deriveAarsInput` (or to whatever `buildAarsHintsFromFindings` computed above, which is
+ * itself a fresh derivation under the current `rule` and already carries a matching
+ * signature) instead of a stale one wearing the new rule's clothes.
  */
 function enrichFromTabs(rule: AarsRule): GraphDoc | null {
   const base = loadRawGraph();
   if (!base) return null;
   const issues = loadIssues();
   const hints: AarsHints = { ...buildAarsHintsFromFindings(loadFindings(), base, issues, rule) };
+  const sig = derivationSignature(rule);
   for (const node of base.nodes) {
-    if (node.aarsInput) hints[node.id] = node.aarsInput;
+    const input = node.aarsInput;
+    if (input && (input.derivedUnder === undefined || input.derivedUnder === sig)) {
+      hints[node.id] = input;
+    }
   }
   return enrichGraphDoc(base, issues, hints, rule);
 }

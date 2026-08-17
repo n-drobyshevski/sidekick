@@ -18,6 +18,7 @@ import {
   normalizeDataFindingSeverity,
   reconcileIssues,
   withDataFindingCounts,
+  worstBusinessImpact,
 } from "../src/domain/syncNormalize";
 import { COMBO_GROUPS, OTHER_GROUP_ID } from "../src/domain/toxicCombos";
 import type { IssueRow } from "../src/domain/graphTypes";
@@ -77,6 +78,25 @@ describe("normalizeCloudResource", () => {
       id: "y", type: "AI_AGENT", name: "h", isAccessibleFromInternet: null,
     })!;
     expect(hosted.isAccessibleFromInternet).toBeNull();
+  });
+});
+
+describe("worstBusinessImpact", () => {
+  it("HBI beats MBI beats LBI, whatever order the projects arrive in", () => {
+    expect(worstBusinessImpact([
+      { businessImpact: "LBI" },
+      { businessImpact: "HBI" },
+      { businessImpact: "MBI" },
+    ])).toBe("HBI");
+  });
+
+  it("skips a project with no recognised tier rather than treating it as worst", () => {
+    expect(worstBusinessImpact([{ businessImpact: "LBI" }, {}])).toBe("LBI");
+  });
+
+  it("is undefined for an empty list or a list with nothing recognised", () => {
+    expect(worstBusinessImpact([])).toBeUndefined();
+    expect(worstBusinessImpact([{}, { businessImpact: "BOGUS" }])).toBeUndefined();
   });
 });
 

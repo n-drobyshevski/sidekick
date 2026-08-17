@@ -360,6 +360,20 @@ export interface GNode {
     critical: number;
   };
   // Enrichment, computed once at sync time and persisted:
+  /**
+   * Worst business-impact tier across this asset's OWN projects (HBI beats MBI beats LBI),
+   * folded from `projects[].businessImpact` by `enrichGraphDoc` so the register and the
+   * AARS Rules page can read one column instead of walking the project list on every row.
+   *
+   * Absent means Wiz reported NO business impact for any of the asset's projects — an
+   * unattributed project, or an asset with no projects at all — and must NEVER be read as
+   * "low impact": that would silently promote "nobody classified this" into a claim about
+   * the asset's importance. The same "not reported vs not true" split `inactive` and
+   * `dataFindingCount` already keep in this file. Display-only: AARS does not price it
+   * (ai/AARS_ASSESSMENT.md §7), and the score-identity assertions in
+   * scoreOrdinality.test.ts are what pin that this field never moves a score.
+   */
+  businessImpact?: string;
   severity?: Severity;      // worst attached open-issue severity (ISSUE nodes: own severity)
   aars?: number;            // AI Asset Risk Score 0–100 (AI assets only)
   aarsSeverity?: AarsSeverity;
@@ -382,6 +396,21 @@ export interface GNode {
      * is why the pillar-C knob prices an absent list as zero rather than as "no findings".
      */
     dataFindings?: Array<{ severity: string; count: number }>;
+    /**
+     * Fingerprint of the derivation knobs (`aars.derivationSignature`) this input was
+     * computed under — what `syncStore.enrichFromTabs` checks before reusing a persisted
+     * input on a rescore, so a `gapSources` change re-derives instead of silently reusing
+     * gaps priced under the old rule.
+     *
+     * Absent means the row was written before this field existed. It is treated as
+     * reusable rather than forced through a re-derivation — the same grandfather rule
+     * `derivedUnder`'s sibling fields follow — so upgrading to this version never
+     * re-scores a tenant's estate on its own. A pinned dry-run hint
+     * (`sampleData.SEED_AARS_HINTS`) carries no signature for the same reason it is never
+     * stamped with one at enrich time: it was transcribed from ai/custom_score.md, not
+     * derived by any rule, so no signature could honestly describe it.
+     */
+    derivedUnder?: string;
   };
   comboGroups?: string[];   // toxic-combination group ids this node participates in
   // SUMMARY nodes only:

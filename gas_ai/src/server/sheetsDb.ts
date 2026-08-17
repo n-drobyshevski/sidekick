@@ -56,6 +56,13 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // reason: ensureHeaders adds declared-but-missing headers to the right of whatever a tab
     // already has, and every read maps by header NAME.
     "display_name", "email", "publisher", "discovery_methods",
+    // Worst business-impact tier across the asset's own projects (HBI/MBI/LBI), folded by
+    // enrichGraphDoc from `projects[].businessImpact` — the signal ai/AARS_ASSESSMENT.md §7
+    // named as dropped at the sheet boundary. Appended, for the usual no-migration reason:
+    // ensureHeaders adds declared-but-missing headers to the right of whatever a tab
+    // already has, and every read maps by header NAME, so an existing ledger picks this up
+    // on its next sync with no migration.
+    "business_impact",
   ],
   [TABS.edges]: ["id", "src", "dst", "type", "negated", "access_type"],
   [TABS.issues]: [
