@@ -45,7 +45,7 @@ describe("validateQuery", () => {
   });
 
   it("rejects an unknown kind by name rather than returning nothing", () => {
-    // Silently answering zero would read as "your estate is clean", which is the one wrong
+    // Silently answering zero would read as "your landscape is clean", which is the one wrong
     // answer a security tool must never give.
     expect(() => validateQuery({ kind: "AI_ROBOT" })).toThrow(QueryError);
     expect(() => validateQuery({ kind: "AI_ROBOT" })).toThrow(/unknown node kind/);
@@ -576,7 +576,7 @@ describe("filter vocabulary", () => {
     it("negate keeps a node whose field is absent, rather than leaving it in neither half", () => {
       // The tension named on PropFilter.negate: absent is its own answer for a tri-state
       // column, but a node with no cloud at all genuinely is not GCP, and "is" plus "is not"
-      // have to partition the estate or something is silently in neither.
+      // have to partition the landscape or something is silently in neither.
       const noCloud = DOC.nodes.find((n) => n.kind === "AI_AGENT" && !n.cloudPlatform);
       if (noCloud) {
         expect(names(run([{ key: "cloud", values: ["GCP"], negate: true }])))
@@ -629,7 +629,7 @@ describe("filter vocabulary", () => {
   });
 
   // Tags were synced and shown on the asset sheet long before they were askable. The sample
-  // estate now carries three tagged agents with DELIBERATELY OVERLAPPING sets, because that is
+  // landscape now carries three tagged agents with DELIBERATELY OVERLAPPING sets, because that is
   // the only shape that can tell the four readings apart:
   //
   //   Agent-A   env:prod     team:ml       owner:platform
@@ -674,7 +674,7 @@ describe("filter vocabulary", () => {
       expect(hit(["env:prod"], { negate: true })).toContain(bare!.name);
     });
 
-    it("offers no value list, because a real estate has far too many", () => {
+    it("offers no value list, because a real landscape has far too many", () => {
       expect(fieldValuesFor(DOC, "AI_AGENT").map((f) => f.key)).not.toContain("tags");
     });
   });
@@ -736,7 +736,7 @@ describe("filter vocabulary", () => {
     const cloud = forAgent.find((f) => f.key === "cloud");
     if (!cloud) throw new Error("no cloud values offered for AI_AGENT");
     expect(cloud.values.map((v) => v.value)).toContain("GCP");
-    // Counts descend, so the picker leads with what the estate is mostly made of.
+    // Counts descend, so the picker leads with what the landscape is mostly made of.
     for (let i = 1; i < cloud.values.length; i++) {
       expect(cloud.values[i - 1].count).toBeGreaterThanOrEqual(cloud.values[i].count);
     }
@@ -907,7 +907,7 @@ describe("QUERY_SHORTCUTS", () => {
 // bare text box. `FIND ANY(…)` is a shape the app writes for itself when someone focuses an
 // asset, so that was the common case, not a corner.
 describe("value lists for a wildcard node", () => {
-  it("counts across the whole estate, not one kind", () => {
+  it("counts across the whole landscape, not one kind", () => {
     const any = fieldValuesFor(DOC, "ANY").find((v) => v.key === "cloud");
     const agent = fieldValuesFor(DOC, "AI_AGENT").find((v) => v.key === "cloud");
     expect(any).toBeDefined();
@@ -1028,7 +1028,7 @@ describe("a node naming several kinds", () => {
     expect(shortcutsFor(["AI_AGENT", "BUCKET"], VOCAB).map((s) => s.id)).toEqual(agent);
     expect(shortcutsFor("BUCKET", VOCAB)).toEqual([]);
     expect(agent).toContain("reaches-classified");
-    // A set entirely outside the estate is still nothing, not everything.
+    // A set entirely outside the landscape is still nothing, not everything.
     const empty = queryVocabulary({ syncedAt: DOC.syncedAt, nodes: [], edges: [] });
     expect(shortcutsFor(["AI_AGENT", "BUCKET"], empty)).toEqual([]);
   });

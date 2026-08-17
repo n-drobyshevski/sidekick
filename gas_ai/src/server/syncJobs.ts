@@ -157,7 +157,7 @@ interface SyncStepDef {
 function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
   // Resolved against the tenant by default, which needs credentials and is what a real sync
   // must do. `aiTypes` is for DESCRIBING the battery without one — never for running it: a
-  // sync that quietly substituted a guessed type list would query the wrong estate and say
+  // sync that quietly substituted a guessed type list would query the wrong landscape and say
   // nothing about it.
   const types = aiTypes ?? resolveAiResourceTypes().types;
   // Resolved against the last sync's catalogue when nothing has been chosen yet, so a
@@ -230,7 +230,7 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       optional: true,
     },
     // Wiz's cloud-configuration RULE CATALOGUE — reference data, and the only step here whose
-    // contents describe the product rather than the estate. It is what glosses an opaque
+    // contents describe the product rather than the landscape. It is what glosses an opaque
     // `SUB-082` in the AARS cascade, and what the identity-hygiene matchers resolve against
     // instead of hardcoding MFA rule ids that differ per cloud.
     //
@@ -926,7 +926,7 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
         if (!result.hasNextPage) break;
         if (page >= MAX_PAGES) {
           // The cursor is still open and we are the ones who stopped. Recorded, because a
-          // bare break here reports a prefix of the estate as the whole of it — and the
+          // bare break here reports a prefix of the landscape as the whole of it — and the
           // resulting undercount is indistinguishable from a tenant that simply has less.
           params.truncatedSteps.push(step.id);
           console.warn(

@@ -93,7 +93,7 @@ export interface MeasureSpec {
 const NO_PER_ENTITY_HISTORY =
   "Per-sync distribution only; per-entity history requires Drive archive replay, which is " +
   "not implemented. Every data tab this measure reads is overwritten wholesale on each " +
-  "sync — only sync_history is append-only, and it records estate-wide aggregates, never " +
+  "sync — only sync_history is append-only, and it records landscape-wide aggregates, never " +
   "a per-entity trail.";
 
 const REVISION_DUE = "2027-08-13"; // ~1 year past the frozen test clock (2026-08-13)
@@ -103,7 +103,7 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
   {
     id: "aars-score",
     goal:
-      "Give every AI asset a single, comparable risk number so the estate can be ranked "
+      "Give every AI asset a single, comparable risk number so the landscape can be ranked "
       + "and triaged, priced from what a sync actually collected rather than asserted.",
     scope: "Every AI asset in ai_assets carrying a persisted `aars` value as of the last sync.",
     measure: "The AARS score: 0–100, summed across four pillars (toxic-combination "
@@ -164,8 +164,8 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
       + "(previewAarsRule's `after` — every asset re-scored under the rule being evaluated).",
     measure:
       "distinctScores: the count of DIFFERENT score values the scored population takes. "
-      + "This measures the MODEL's separating power, not the estate's risk level — an "
-      + "estate that is genuinely uniform in risk and a model that cannot tell assets apart "
+      + "This measures the MODEL's separating power, not the landscape's risk level — an "
+      + "landscape that is genuinely uniform in risk and a model that cannot tell assets apart "
       + "produce the identical number, and this record's whole job is to keep that "
       + "ambiguity visible rather than let a healthy-looking score list hide it.",
     type: "effectiveness",
@@ -178,7 +178,7 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
       "previewAarsRule's discrimination field is populated (never null) whenever at least "
       + "one asset carries a numeric aars — see EMPTY_DISCRIMINATION's guard for the zero case.",
     timeBasedReference: "Computed fresh on each AARS Rules preview request, over the "
-      + "estate as it reads right now. " + NO_PER_ENTITY_HISTORY,
+      + "landscape as it reads right now. " + NO_PER_ENTITY_HISTORY,
     responsibleParties: "AARS Rules page operator, before saving a rule change.",
     dataSource: "ai_assets.aars",
     reportingFormat: "AARS Rules page, rule-preview Discrimination panel (previewAarsRule).",
@@ -189,11 +189,11 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
     id: "aars-tie-rate",
     goal:
       "Same as aars-distinct-scores — measure the MODEL's discriminative power, not the "
-      + "estate's risk — but at the scale of PAIRS rather than values, which "
+      + "landscape's risk — but at the scale of PAIRS rather than values, which "
       + "distinctScores alone can hide (several small tie groups still look 'distinct').",
     scope: "The same scored population as aars-distinct-scores.",
     measure: "tieRate: the share of asset PAIRS the model cannot separate — 1.0 means "
-      + "every pair of scored assets shares a value, so any ordering within the estate is "
+      + "every pair of scored assets shares a value, so any ordering within the landscape is "
       + "arbitrary; 0 means every score is unique.",
     type: "effectiveness",
     formula: "rankStats.tieRate(scores) = Σ C(n_k,2) / C(N,2) over the distinct-value groups.",
@@ -211,12 +211,12 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
     id: "aars-effective-cardinality",
     goal:
       "Same as aars-distinct-scores and aars-tie-rate — the MODEL's discriminative power, "
-      + "not the estate's risk — weighted by population, so one outlier score does not "
+      + "not the landscape's risk — weighted by population, so one outlier score does not "
       + "claim the same discrimination credit an even split across values would earn.",
     scope: "The same scored population as aars-distinct-scores.",
     measure:
       "effectiveCardinality: exp(Shannon entropy) over the score distribution — how many "
-      + "distinct scores the estate BEHAVES as if it has. Equals distinctScores only when "
+      + "distinct scores the landscape BEHAVES as if it has. Equals distinctScores only when "
       + "every value is taken equally often; a scale of {30: 1 asset, 72: 19 assets} reads "
       + "as barely more than one effective value, not two.",
     type: "effectiveness",
@@ -234,10 +234,10 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
     id: "aars-pillar-saturation",
     goal:
       "Locate WHICH pillar of the MODEL has stopped discriminating, not just that the "
-      + "total score has — a pillar pinned at its cap for most of the estate still renders "
+      + "total score has — a pillar pinned at its cap for most of the landscape still renders "
       + "a plausible total, and nothing about the sum alone points back at the pillar "
       + "responsible. Like the three records above it, this measures the MODEL's own "
-      + "separating power, not the estate's risk level.",
+      + "separating power, not the landscape's risk level.",
     scope: "The same scored population as aars-distinct-scores, per pillar.",
     measure:
       "saturated.{toxic,compliance,data,exposure,score}: count of assets sitting AT or "
@@ -264,7 +264,7 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
   {
     id: "problem-outcome-distribution",
     goal:
-      "Show how the estate's open issues and failing findings split across the four "
+      "Show how the landscape's open issues and failing findings split across the four "
       + "triage queues (ACT/ATTEND/TRACK ★/TRACK), so a lopsided distribution — everything "
       + "landing in TRACK, or an implausibly large ACT count — is visible as a shape rather "
       + "than requiring someone to read every row.",
@@ -286,7 +286,7 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
     timeBasedReference: "Snapshotted at each sync's completion; sync_history.problem_outcome_json "
       + "additionally records this SAME distribution once per sync as an append-only series "
       + "(feeding the AARS trend chart's second series), which is the one figure in this file "
-      + "that DOES have a real, queryable multi-point trend — but still only at the whole-estate "
+      + "that DOES have a real, queryable multi-point trend — but still only at the whole-landscape "
       + "grain, never per-entity. " + NO_PER_ENTITY_HISTORY,
     responsibleParties: "Security analysts (triage); AARS Rules page operator (the Problem tree tab).",
     dataSource: "ai_issues.problem_outcome, ai_findings.problem_outcome, sync_history.problem_outcome_json",
@@ -307,10 +307,10 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
   {
     id: "problem-axis-unknown-rate",
     goal:
-      "THE MOST IMPORTANT RECORD IN THIS FILE. A high value here does NOT mean the estate "
+      "THE MOST IMPORTANT RECORD IN THIS FILE. A high value here does NOT mean the landscape "
       + "is safe — it means the model CANNOT PRIORITISE, because the evidence one of its "
       + "four axes needs was never collected. An unknown exploitation rate of 97% is not "
-      + "97% of the estate confirmed non-exploitable; it is 97% of the estate this tree has "
+      + "97% of the landscape confirmed non-exploitable; it is 97% of the landscape this tree has "
       + "no opinion on, defaulting to the least alarming reading by construction. Reading "
       + "a high unknown rate as reassurance is the single most dangerous misuse this "
       + "product's numbers are exposed to, and this record exists to make that misuse hard "
@@ -334,7 +334,7 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
       + "impact table, exposure traversal evidence (node.exposureEvidence) and business-"
       + "impact tagging are all upstream CONTROLS whose operating rate this measure reports "
       + "on indirectly — a falling unknown rate is evidence those controls are running "
-      + "against more of the estate, not evidence this app changed anything.",
+      + "against more of the landscape, not evidence this app changed anything.",
     timeBasedReference: "Snapshotted at each sync's completion, over the decided population "
       + "as it reads right now. " + NO_PER_ENTITY_HISTORY,
     responsibleParties: "Security analysts (reading the queue); Wiz tenant administrators "
@@ -410,7 +410,7 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
       "Count how many cloud-configuration controls are failing RIGHT NOW — the one "
       + "definition of 'compliance gap' every reader of this app (pillar B's pricing, the "
       + "Cloud Configuration register, this KPI) must agree on, so no two pages can ever "
-      + "report a different count for the same estate.",
+      + "report a different count for the same landscape.",
     scope: "Every row in ai_findings passing isOpenGap: result FAIL, status OPEN, not deleted.",
     measure: "complianceGaps: count of open, failing configuration findings.",
     type: "effectiveness",
@@ -447,7 +447,7 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
     target: "No numeric target — this is a coverage-visibility figure about the AI graph's "
       + "own reach, not a control an operator can directly close.",
     implementationEvidence: "ai_assets.id set built from the same sync this tally reads, so "
-      + "the linkage join always reflects the estate as of the same snapshot.",
+      + "the linkage join always reflects the landscape as of the same snapshot.",
     timeBasedReference: "Snapshotted at each sync's completion. " + NO_PER_ENTITY_HISTORY,
     responsibleParties: "This app's own operators — a rising figure here is a prompt to "
       + "widen what the AI graph models, not a prompt to fix a cloud control.",
@@ -513,7 +513,7 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
   {
     id: "framework-average-posture",
     goal:
-      "Give leadership one number for 'how compliant is the estate' across every synced "
+      "Give leadership one number for 'how compliant is the landscape' across every synced "
       + "framework, while keeping unscored frameworks OUT of the average rather than "
       + "letting them silently read as a zero (compliancePosture.ts's own governing rule).",
     scope: "Every framework-level row in ai_framework_posture whose posture state resolves "

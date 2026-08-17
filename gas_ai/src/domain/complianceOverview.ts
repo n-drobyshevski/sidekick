@@ -1,4 +1,4 @@
-// The Compliance Overview page's cross-framework read model — the estate-wide rollups
+// The Compliance Overview page's cross-framework read model — the landscape-wide rollups
 // (a framework rail, the weakest subcategories, the controls worth fixing once, and what
 // is and is not covered) built ON TOP of the trees compliancePosture.ts already assembles.
 // This file adds no new source of truth: every row below is a projection or a regroup of
@@ -14,7 +14,7 @@
 // directly here would risk re-opening exactly that bug.
 //
 // The second discipline this file adds is SCOPE, widened from "per framework"
-// (compliancePosture.ts) to "across the whole estate": `sharedControls` below applies the
+// (compliancePosture.ts) to "across the whole landscape": `sharedControls` below applies the
 // same distinct-by-policy-id, max-not-sum rule buildFrameworkTree applies WITHIN one
 // framework (see compliancePosture.ts:258-265), but now across every framework a control
 // happens to be mapped into. Get the scope wrong in either direction and the one number
@@ -144,7 +144,7 @@ export function weakestAreas(trees: FrameworkTree[], limit?: number): WeakAreaRo
         // neither is actionable: Wiz wrote no check that maps here, or this app scoped
         // every rule that does out of its view. The second is the sharper case — the 5Rs'
         // "Unlabelled sensitive data" carries Wiz's 62% whether or not we look at its
-        // rules, so without this it sorts to the TOP of the estate's weakest areas while
+        // rules, so without this it sorts to the TOP of the landscape's weakest areas while
         // offering nothing to fix. The percentage stays true and stays visible in the
         // register; it just stops being advice.
         //
@@ -223,7 +223,7 @@ interface ControlAccumulator {
  *
  * Walks every subcategory's already-deduped `policies` list (one row per (framework,
  * subcategory, policy) edge — see FrameworkPolicyRow in graphTypes.ts) and regroups by
- * `policyId` alone, at the scope of the WHOLE estate. That is a wider dedupe than
+ * `policyId` alone, at the scope of the WHOLE landscape. That is a wider dedupe than
  * buildFrameworkTree performs (which only dedupes within one subcategory, deliberately
  * preserving the many-to-many mapping — compliancePosture.ts:184-190), and it is the
  * correct one here: the question this function answers is "if I fix this ONE control,
@@ -275,7 +275,7 @@ export function sharedControls(trees: FrameworkTree[]): SharedControlRow[] {
           }
           acc.subcategoryKeys.add(`${tree.frameworkId}|${sub.externalId}`);
 
-          // MAX, never sum. One policy is evaluated ONCE against the estate; its
+          // MAX, never sum. One policy is evaluated ONCE against the landscape; its
           // pass/fail counts are simply repeated on every (framework, subcategory)
           // mapping row it appears on, which is the exact discipline buildFrameworkTree
           // applies when it dedupes a policy WITHIN one subcategory
@@ -321,7 +321,7 @@ export function sharedControls(trees: FrameworkTree[]): SharedControlRow[] {
   return rows;
 }
 
-/** What the estate is - and is not - measuring. */
+/** What the landscape is - and is not - measuring. */
 export interface CoverageSummary {
   /** Frameworks with stored posture. */
   collected: number;
@@ -337,7 +337,7 @@ export interface CoverageSummary {
  * Counts, not names.
  *
  * This used to return `uncollected` — every catalogue entry with no stored posture, by
- * name — for a Coverage band that listed them. On the sample estate that was one row; on a
+ * name — for a Coverage band that listed them. On the sample landscape that was one row; on a
  * real tenant it was thirty-seven, and the band was deleted for printing a framework
  * catalogue where a finding belonged. With the band went the only reader, and a payload
  * carrying thirty-seven objects nothing renders is not neutral: it ships on every read of
@@ -368,7 +368,7 @@ export function coverageSummary(
     stateCounts.noPolicies += tree.stateCounts.noPolicies;
     stateCounts.unknown += tree.stateCounts.unknown;
     // Summed off stateCounts for the reason frameworkRail is: `tree.categories` lists only
-    // the scored subcategories now, and this band's whole job is to say what the estate
+    // the scored subcategories now, and this band's whole job is to say what the landscape
     // measures AND what it doesn't. Counting the listed nodes would make the two halves of
     // that sentence the same number.
     subcategoryCount += STATE_KEYS.reduce((sum, k) => sum + (tree.stateCounts[k] || 0), 0);

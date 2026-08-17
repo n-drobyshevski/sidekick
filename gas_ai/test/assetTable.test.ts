@@ -257,7 +257,7 @@ describe("facetCounts", () => {
 
   it("counts risk flags against the flags already ticked, because they AND", () => {
     // With `agentic` on, "guardrail" must read as "how many are agentic AND missing one",
-    // not as the whole-estate guardrail count — that number is what ticking it would give.
+    // not as the whole-landscape guardrail count — that number is what ticking it would give.
     const f = counts({ flags: "agentic" });
     expect(f.flags).toEqual([
       { value: "combo", count: 2 }, { value: "guardrail", count: 1 },

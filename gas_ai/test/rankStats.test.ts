@@ -87,7 +87,7 @@ describe("effectiveCardinality", () => {
     // [1,1,1,1,2]: p(1) = 0.8, p(2) = 0.2.
     // H = -(0.8·ln0.8 + 0.2·ln0.2) = -(-0.178515 + -0.321888) = 0.500402 nats.
     // exp(H) ≈ 1.649385 — much closer to 1 (one effective value) than to 2 (two literal
-    // ones), which is the whole point: the outlier barely moves the estate off "constant".
+    // ones), which is the whole point: the outlier barely moves the landscape off "constant".
     expect(effectiveCardinality([1, 1, 1, 1, 2])).toBeCloseTo(1.649385, 5);
   });
 

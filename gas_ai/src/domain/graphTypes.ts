@@ -410,7 +410,7 @@ export interface GNode {
      * Absent means the row was written before this field existed. It is treated as
      * reusable rather than forced through a re-derivation — the same grandfather rule
      * `derivedUnder`'s sibling fields follow — so upgrading to this version never
-     * re-scores a tenant's estate on its own. A pinned dry-run hint
+     * re-scores a tenant's landscape on its own. A pinned dry-run hint
      * (`sampleData.SEED_AARS_HINTS`) carries no signature for the same reason it is never
      * stamped with one at enrich time: it was transcribed from ai/custom_score.md, not
      * derived by any rule, so no signature could honestly describe it.
@@ -535,7 +535,7 @@ export interface IssueRow {
    * UNKNOWN, whether exposure was evidenced, and which door exploitation came through
    * (`problem.ProblemVerdictInput`). Persisted for the same reason `aarsInput` is: it is
    * what lets a rule change RE-DECIDE exactly these facts rather than re-derive a possibly
-   * different set, and it is what makes a whole-estate preview cost zero Wiz calls.
+   * different set, and it is what makes a whole-landscape preview cost zero Wiz calls.
    */
   problemInput?: ProblemVerdictInput;
   /** The `problem_rule` version (settingsLogic.getProblemRule) this verdict was decided under. */
@@ -730,7 +730,7 @@ export interface FrameworkRow {
  *
  * REFERENCE DATA, and the distinction is the whole reason it has its own tab and its own
  * refresh gate: a rule exists whether or not this tenant has a resource it applies to. The
- * catalogue changes when Wiz ships rules; the findings change when the estate moves.
+ * catalogue changes when Wiz ships rules; the findings change when the landscape moves.
  *
  * It answers two questions nothing else could. `shortId → name` is the gloss for a code that
  * otherwise reaches the AARS cascade opaque — codebook.js says so in its own header, and

@@ -33,7 +33,7 @@ import { facetGroup } from "../filters.js";
  */
 export function operatorsFor(field, hasValues) {
   const type = (field && field.type) || "text";
-  // A choice field the estate holds more of than VALUE_CARDINALITY_MAX gets no list — a
+  // A choice field the landscape holds more of than VALUE_CARDINALITY_MAX gets no list — a
   // truncated one "looks complete and is not", so the domain offers none. That leaves a text
   // box, and demanding an EXACT value from someone who cannot see the list is asking them to
   // guess. Substring gets them there; the whole-value readings stay, for a value they know.
@@ -109,14 +109,14 @@ export function valuesText(filter) {
  * @param spec {field, filter, values, onChange}
  *   `field`   {key, label, type, multi} as the vocabulary describes it
  *   `filter`  {values, op, all, negate} — the current reading, or null for a fresh one
- *   `values`  [{value, count}] where the estate offers a list, else empty
+ *   `values`  [{value, count}] where the landscape offers a list, else empty
  *   `onChange`(next) with the whole `{values, op, all, negate}`; an empty `values` means remove
  * @returns {{root: HTMLElement, focus: function}}
  */
 export function filterEditor(spec) {
   const { field, values = [], onChange } = spec;
   const filter = spec.filter || { values: [] };
-  // Whether the estate actually offered a list. It decides both the operator menu and which
+  // Whether the landscape actually offered a list. It decides both the operator menu and which
   // value control is drawn, so it is computed ONCE here rather than asked twice and answered
   // differently — the menu promising "is" over a box that cannot show you what "is" means.
   const hasValues = !((field.type === "choice" || field.type === "boolean") && !values.length);
@@ -228,7 +228,7 @@ export function filterEditor(spec) {
   }
 
   // ---------------------------------------------------------------- free text
-  // Also where a CHOICE field lands when the estate holds more distinct values than
+  // Also where a CHOICE field lands when the landscape holds more distinct values than
   // `VALUE_CARDINALITY_MAX` — the domain has always said such a field "falls back to a contains
   // search", and until now it fell back to a dead end reading "No values to choose from".
   const overCap = !hasValues;
@@ -252,7 +252,7 @@ export function filterEditor(spec) {
   });
   body.append(input, el("p", { class: "gq-fe-hint small muted" },
     overCap
-      ? "This estate holds too many distinct values to list. Type one to match."
+      ? "This landscape holds too many distinct values to list. Type one to match."
       : (op.op === "contains"
         ? "Matched as a substring, case ignored."
         : "Matched exactly, case ignored.")));

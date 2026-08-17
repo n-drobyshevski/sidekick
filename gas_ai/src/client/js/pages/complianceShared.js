@@ -129,7 +129,7 @@ export function postureCell(node) {
 /**
  * Passing checks over assessed checks — or the absence of any evaluation at all.
  *
- * Grouped, because these run to six figures on a real estate (194309 is not a number
+ * Grouped, because these run to six figures on a real landscape (194309 is not a number
  * anyone reads; 194,309 is) and the column's job is to be scanned, not decoded.
  */
 export function checksCell(node) {
@@ -152,7 +152,7 @@ export function checksCell(node) {
  * listed twelve of twenty rows with nothing saying so is the implied confidence PRODUCT.md
  * forbids. Glyph and label per state, never colour alone, exactly as before.
  *
- * `tree` only needs a `.stateCounts` map, so the overview's estate-wide roll-up (which is
+ * `tree` only needs a `.stateCounts` map, so the overview's landscape-wide roll-up (which is
  * not a FrameworkTree) can drive this too by handing it `{ stateCounts }`.
  */
 export function stateStrip(tree) {
@@ -213,7 +213,7 @@ export function stateStrip(tree) {
         : "")));
 }
 
-/** A Control is a graph query over the estate, a cloud rule is a Rego evaluation against one
+/** A Control is a graph query over the landscape, a cloud rule is a Rego evaluation against one
  *  resource type, and a host rule runs on the machine — presenting them as one sort of thing
  *  would misdescribe what failed. */
 function policyKindLabel(kind) {
@@ -283,7 +283,7 @@ export function subcategoryDetail(sub) {
   const kids = [
     el("div", { class: "comp-policy-counts" },
       // Grouped, for the reason checksCell() states one function up: these run to six
-      // figures on a real estate, and 120044 is not a number anyone reads. The sheet
+      // figures on a real landscape, and 120044 is not a number anyone reads. The sheet
       // printed them ungrouped; on the page, beside a Checks column that IS grouped, the
       // mismatch would read as two different quantities.
       el("span", {}, el("b", {}, sub.passCount.toLocaleString()), " passing checks"),
@@ -309,7 +309,7 @@ export function subcategoryDetail(sub) {
     // Not "N further policies": this line has to read correctly when the count above it is
     // zero, which is exactly the subcategory where it matters most.
     kids.push(el("p", { class: "comp-strip-note" },
-      `${n} mapped ${n === 1 ? "policy" : "policies"} evaluated nothing in this estate — ` +
+      `${n} mapped ${n === 1 ? "policy" : "policies"} evaluated nothing in this landscape — ` +
       `neither passing nor failing, so ${n === 1 ? "it is" : "they are"} not listed.`));
   }
 

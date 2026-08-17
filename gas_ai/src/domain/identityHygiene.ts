@@ -2,7 +2,7 @@
 //
 // This app said the opposite until the rule catalogue landed. The Wiz Scans page read "MFA is
 // still not collected: Wiz reports it for human identities sourced from a connected IdP, and
-// every identity in this estate's AI paths is a cloud service account or role, which has
+// every identity in this landscape's AI paths is a cloud service account or role, which has
 // none." The first half is wrong. `cloudConfigurationRules` carries, against
 // `subjectEntityType: USER_ACCOUNT`:
 //
@@ -19,7 +19,7 @@
 //
 // WHY MATCHERS AND NOT AN ID LIST. There are at least three MFA rules in one tenant's
 // catalogue and they are cloud-specific — a hardcoded triple would silently under-report on an
-// estate with a different cloud mix, and silence is the failure mode this codebase spends the
+// landscape with a different cloud mix, and silence is the failure mode this codebase spends the
 // most effort refusing. Matching over the SYNCED catalogue re-resolves on every sync and can
 // find a rule nobody thought of.
 //

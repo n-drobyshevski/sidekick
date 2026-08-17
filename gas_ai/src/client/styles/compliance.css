@@ -163,7 +163,7 @@
    auto-fit grid. Bands B and D follow below, each named for the letter it fills.
 
    There was a band E, "Coverage", and its rules are gone with it. It listed the tenant's
-   uncollected frameworks: one row against seeded data, thirty-seven against a real estate,
+   uncollected frameworks: one row against seeded data, thirty-seven against a real landscape,
    at which point it was a catalogue transcribed rather than a finding. Its one surviving
    part, the 5Rs scope, is now a footnote under the rail. */
 .comp-ov-section { padding: 22px 0 4px; border-top: 1px solid var(--hairline); }
@@ -336,7 +336,7 @@
 .comp-fw-lane--empty[data-state="noPolicies"] .comp-key-glyph { color: var(--warn); }
 .comp-fw-lane--empty[data-state="unknown"] .comp-key-glyph { color: var(--text-3); }
 
-/* The estate mean: a statistic ABOUT the rows, not a value belonging to any one of
+/* The landscape mean: a statistic ABOUT the rows, not a value belonging to any one of
    them, so it draws as a rule crossing the axis rather than a second bar that could be
    mistaken for a framework's own score. It shares the lane's grid-column (2) as an
    independent grid item instead of living inside `.comp-fw-lane`, because an
@@ -509,7 +509,7 @@
 .scope-row-name { font-size: 13px; color: var(--ink); }
 .scope-row-meta { margin-top: 2px; }
 .scope-reason { flex: 0 1 auto; font-size: 12px; color: var(--text-3); text-align: right; }
-/* Pinned means a person decided this, not that the estate did — a different kind of fact
+/* Pinned means a person decided this, not that the landscape did — a different kind of fact
    from crossMapped/linkedFindings/noAiLink, and it earns its own tint so a reader scanning
    the column can tell "derived" from "somebody's call" without reading every word. */
 .scope-reason--pinned { color: var(--accent); font-weight: 600; }

@@ -53,7 +53,7 @@ export interface AarsHint {
    * Optional because persisted `aars_input_json` blobs written before pillar D existed do
    * not carry it. Absent means "not recorded", NOT "not exposed" — enrichGraphDoc falls
    * back to re-deriving it from the node rather than defaulting it to NONE, so an upgrade
-   * does not silently declare the whole estate unreachable.
+   * does not silently declare the whole landscape unreachable.
    */
   internetExposure?: InternetExposure;
   /**
@@ -885,7 +885,7 @@ export function withHumanAccess(
       for (const id of effectiveIds) if (all.indexOf(id) < 0) all.push(id);
       // Only counted when the identity rows actually carry the flag. `undefined` there means
       // the traversal never reported dormancy for that identity, which is not the same as
-      // reporting it active — so an estate where nothing is known contributes 0 and reads as
+      // reporting it active — so a landscape where nothing is known contributes 0 and reads as
       // "none known dormant" rather than manufacturing a clean bill of health.
       const inactiveCount = all.filter((id) => byId.get(id)?.inactive === true).length;
       if (inactiveCount) access.inactiveCount = inactiveCount;

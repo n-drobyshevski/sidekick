@@ -212,7 +212,7 @@ export function facetGroup(spec) {
       }
       row.text = opt.label;
       row.countEl.textContent = String(opt.count);
-      // Bars are scaled within their own group: against the whole estate every option in
+      // Bars are scaled within their own group: against the whole landscape every option in
       // a narrow dimension would be a stub, which tells you nothing about their relation.
       row.fillEl.style.width = max > 0 ? `${Math.round((opt.count / max) * 100)}%` : "0%";
 

@@ -62,7 +62,7 @@ describe("normalizeConfigRulesPage", () => {
       id: "r-1", shortId: "SUB-082", name: "R", subjectEntityType: "REGION",
       externalRefs: ["CKV_GCP_96", "CKV2_GCP_25"],
     }]);
-    // Reference data only: no nodes, no findings, nothing that describes the estate.
+    // Reference data only: no nodes, no findings, nothing that describes the landscape.
     expect(part.nodes).toHaveLength(0);
     expect(part.findings).toHaveLength(0);
   });

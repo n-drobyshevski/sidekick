@@ -11,7 +11,7 @@
 //   2. `frameworkRail` and `weakestAreas` never re-sort what compliancePosture.ts already
 //      decided. Only `sort` itself belongs to this file — a policy's SEVERITY / worst-face
 //      metadata across every framework it is mapped into does not.
-//   3. `sharedControls` dedupes at estate scope (distinct policyId across every
+//   3. `sharedControls` dedupes at landscape scope (distinct policyId across every
 //      framework), which is a WIDER scope than buildFrameworkTree's within-one-framework
 //      dedupe. failCount is the MAX across a control's mapping rows, never the sum — one
 //      control is evaluated once, and its counts are simply repeated on every
@@ -143,7 +143,7 @@ describe("weakestAreas — scored ascending, and nothing that cannot be ranked",
   it("carries each subcategory's postureBand through the flattening", () => {
     // postureCell() tints this row and the register's row from the same field. If the
     // flattening dropped it, one subcategory would be tinted in the per-framework table
-    // and plain in the estate-wide one — the same fact, drawn two ways.
+    // and plain in the landscape-wide one — the same fact, drawn two ways.
     const weak = weakestAreas(trees);
     for (const row of weak) {
       const tree = trees.find((t) => t.frameworkId === row.frameworkId)!;
@@ -188,7 +188,7 @@ describe("weakestAreas — scored ascending, and nothing that cannot be ranked",
   });
 });
 
-describe("sharedControls — estate-wide dedupe, failCount is MAX not sum", () => {
+describe("sharedControls — landscape-wide dedupe, failCount is MAX not sum", () => {
   // The only policy in this fixture that is BOTH cross-framework AND actually failing is
   // the cloud rule AIService-003 (`failingCloudRule` in the fixture): it is mapped under
   // ASI01 and ASI10 in the Agentic framework and under 5Rs' "2.1", each row reporting
@@ -250,7 +250,7 @@ describe("sharedControls — estate-wide dedupe, failCount is MAX not sum", () =
   });
 });
 
-describe("coverageSummary — what the estate is and is not measuring", () => {
+describe("coverageSummary — what the landscape is and is not measuring", () => {
   it("counts a catalogue entry with no tree as catalogued but not collected", () => {
     const extendedCatalogue: FrameworkRow[] = [
       ...frameworks,
@@ -285,7 +285,7 @@ describe("coverageSummary — what the estate is and is not measuring", () => {
     expect(coverage.collected).toBe(coverage.catalogued);
   });
 
-  it("is safe on an empty estate — nothing collected, nothing to sum a division by zero into", () => {
+  it("is safe on an empty landscape — nothing collected, nothing to sum a division by zero into", () => {
     const coverage = coverageSummary([], []);
     expect(coverage).toEqual({
       collected: 0,

@@ -20,11 +20,11 @@
 // 3. A COUNT CARRIES ITS OWN ZERO, AND BEFORE A SYNC THERE IS NO COUNT AT ALL. `n` is the
 //    raw number beside the display string, so the page can refuse to link a zero into an
 //    empty filtered view — the one thing a count-as-link must never do. And two different
-//    kinds of number live in that column: a MEASUREMENT of the estate, which needs a sync,
+//    kinds of number live in that column: a MEASUREMENT of the landscape, which needs a sync,
 //    and a SETTING — the node budget, the pillar caps, the band thresholds — which is the
 //    model in force and is just as true before the first sync as after it. An entry that
 //    reads a setting says so with `fromSettings`; everything else is withheld until a sync
-//    exists, because an estate figure of zero read off an empty ledger is not zero, it is
+//    exists, because a landscape figure of zero read off an empty ledger is not zero, it is
 //    unknown, and reporting it as zero is the implied confidence PRODUCT.md forbids.
 //
 // 4. THE FRAMEWORK CODES ARE INDEXED HERE, NOT COPIED. codebook.js already carries all
@@ -124,7 +124,7 @@ export const ENTRIES = [
       return {
         n: kinds.length,
         value: String(kinds.length),
-        unit: "kinds in this estate",
+        unit: "kinds in this landscape",
         route: "inventory",
         params: { panel: "filters" },
       };
@@ -579,7 +579,7 @@ export const ENTRIES = [
     blurb:
       "Re-runs the enrichment over data already in the sheet and makes ZERO Wiz API calls. " +
       "It writes no sync-history row, because a rescore is not a sync and the trend must " +
-      "not gain a point for an estate that never moved. Trend points carry the rule version " +
+      "not gain a point for a landscape that never moved. Trend points carry the rule version " +
       "they were scored under, so a threshold edit reads as a break rather than as movement.",
     drawnOn: ["aars"],
     mark: () => el("span", { class: "pill neutral" }, "↻"),
@@ -765,13 +765,13 @@ export const ENTRIES = [
   {
     id: "dry-run",
     term: "Dry-run",
-    aka: "the bundled sample estate",
+    aka: "the bundled sample landscape",
     family: "coverage",
     blurb:
       "With no Wiz credentials configured, “Sync now” persists a bundled sample dataset " +
       "instead of querying a tenant, and the whole app works. Every page says which mode " +
       "produced the figures it is showing, because a number from a sample and a number " +
-      "from your estate are not the same kind of thing.",
+      "from your landscape are not the same kind of thing.",
     drawnOn: ["settings", "data"],
     mark: () => statusPill("neutral", "Dry-run"),
     link: { label: "Check the connection", route: "settings", params: {} },
@@ -887,9 +887,9 @@ for (const m of MEASURE_ENTRIES) {
  */
 export function resolveEntry(entry, ctx) {
   if (!entry.count) return { ...entry, resolved: null };
-  // Before the first sync the estate is unknown, not empty. The KPI payload still answers
+  // Before the first sync the landscape is unknown, not empty. The KPI payload still answers
   // — with zeros, off an empty ledger — so without this guard the page would report "0 AI
-  // assets reach classified data" for an estate nobody has looked at yet, and the coverage
+  // assets reach classified data" for a landscape nobody has looked at yet, and the coverage
   // tally would count areas as reporting because their resolvers happened to return a 0.
   // Wiz Scans refuses to draw at all in this state; this is the same refusal, per entry.
   if (!entry.fromSettings && !(ctx.boot && ctx.boot.latestSync)) {

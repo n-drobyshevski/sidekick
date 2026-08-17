@@ -343,7 +343,7 @@ describe.each(["radial", "organic"] as const)("layoutGraph %s mode", (mode) => {
     expect(lanes.length).toBeGreaterThan(2);
     // Contiguous from the centre out: a gap would mean an empty ring was sized and drawn.
     expect(lanes).toEqual(lanes.map((_, i) => i));
-    // Exactly one node at the centre — the estate's worst-risk asset.
+    // Exactly one node at the centre — the landscape's worst-risk asset.
     expect(layout.nodes.filter((n) => n.lane === 0)).toHaveLength(1);
   });
 
@@ -683,7 +683,7 @@ describe("grouping and the arrangement do not constrain each other", () => {
     // holding two categories must be nowhere near six band-gaps tall.
     const flat = layoutGraph(PROJECTION, { mode: "rows" });
     const bandsUsed = [...new Set(flat.nodes.map((n) => n.lane))].sort((a, b) => a - b);
-    expect(bandsUsed.length).toBeLessThan(6);      // the sample estate leaves a band empty…
+    expect(bandsUsed.length).toBeLessThan(6);      // the sample landscape leaves a band empty…
     // …and the canvas still spaces bands by their TRUE index, so the empty one leaves its gap.
     // Read within one shelf, since a wrap adds a whole band set below.
     const firstShelf = flat.nodes.filter((n) => (n.shelf ?? 0) === 0);
@@ -859,7 +859,7 @@ describe("cluster outlines: when nothing is drawn", () => {
     expect(named).toBeLessThan(smart);
   });
 
-  it("outlines the components of the SHOWN graph, not of the estate", () => {
+  it("outlines the components of the SHOWN graph, not of the landscape", () => {
     // Two nodes connected in the document but only one admitted by the projection must not be
     // outlined together — the picture is what is being annotated.
     const shown = layoutGraph(MANY, { mode: "rows" });

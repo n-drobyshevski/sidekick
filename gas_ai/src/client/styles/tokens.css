@@ -79,7 +79,7 @@
 
   /* Detail-sheet geometry. The register's asset record carries issues, compliance
      findings, relationships AND identity, so it runs wider than DESIGN.md's flat
-     per-finding Finding Sheet; the widen step is there for the estates where the
+     per-finding Finding Sheet; the widen step is there for the landscapes where the
      relationship list is the point. */
   --sheet-w: min(600px, 94vw);
   --sheet-w-wide: min(920px, 96vw);

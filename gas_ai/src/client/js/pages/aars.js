@@ -23,6 +23,9 @@
 import { call } from "../api.js";
 import {
   aarsChip,
+  claimOffsets,
+  diagRow,
+  claimRail,
   clear,
   closeActiveSheet,
   confirmDialog,
@@ -33,10 +36,15 @@ import {
   emptyState,
   filterCombobox,
   helpTip,
+  onPageTeardown,
+  openPopover,
   openSheet,
   outcomeBadge,
+  outcomeLabel,
+  paintUnknownRates,
   pointRail,
   railScale,
+  latticeSection,
   segmented,
   select,
   sevBadge,
@@ -46,6 +54,15 @@ import {
   tierBadge,
   toast,
 } from "../ui.js";
+import { POSTURE_LATTICE, PROBLEM_LATTICE } from "../lattice.js";
+import {
+  cellCoverage as mirrorCellCoverage,
+  cellOccupancyByRow as mirrorCellOccupancyByRow,
+  leafOccupancyByRow as mirrorLeafOccupancyByRow,
+  decidePosture as mirrorDecidePosture,
+  decideProblem as mirrorDecideProblem,
+  leafCoverage as mirrorLeafCoverage,
+} from "../decideMirror.js";
 import {
   CODEBOOK,
   gapCodeOptions,
@@ -77,7 +94,7 @@ const EXPOSURE_LABELS = {
   NONE: "No data access",
 };
 const MOVERS_INLINE = 8;
-/** Codes offered as one-tap chips in the sandbox, taken from what the estate actually has. */
+/** Codes offered as one-tap chips in the sandbox, taken from what the landscape actually has. */
 const SANDBOX_QUICK_CODES = 6;
 const MATCH_OPTIONS = [
   { value: "exact", label: "is exactly" },
@@ -227,6 +244,26 @@ export async function renderAarsRules(main, _params, ctx) {
   let aarsControls = null;
   let problemControls = null;
   let postureControls = null;
+  // Assigned once the Problem pane builds. Leaving a lattice popover open across a tab
+  // change would strand a portal against a hidden pane — `portalsOpen()` stays raised and
+  // the sheet's Tab trap keeps deferring to a list nothing can reach.
+  /**
+   * Mark a cascade's rows against one traced walk: everything before the winner was tried
+   * and did not match, the winner is the first that did, and everything after it was never
+   * reached. `idx === null` clears. Shared by both cascades because the walk is the same
+   * shape in each.
+   */
+  function markTracedRows(body, idx) {
+    if (!body) return;
+    body.querySelectorAll("tr[data-idx]").forEach((tr) => {
+      const i = Number(tr.dataset.idx);
+      tr.classList.toggle("rule-tried", idx !== null && idx !== undefined && idx !== -1 && i < idx);
+      tr.classList.toggle("rule-won", idx !== null && idx !== undefined && i === idx);
+    });
+  }
+
+  let closeProblemLatticePop = () => {};
+  let closePostureLatticePop = () => {};
   let activeModelTab = "aars"; // which tab is showing, so an async load can't unhide the wrong one
 
   function selectModelTab(which) {
@@ -240,6 +277,8 @@ export async function renderAarsRules(main, _params, ctx) {
     if (aarsControls) aarsControls.hidden = !isAars;
     if (problemControls) problemControls.hidden = !isProblem;
     if (postureControls) postureControls.hidden = !isPosture;
+    if (!isProblem) closeProblemLatticePop();
+    if (!isPosture) closePostureLatticePop();
     modelTabs.set(which);
     if (isProblem) loadProblemPane();
     if (isPosture) loadPosturePane();
@@ -391,6 +430,36 @@ export async function renderAarsRules(main, _params, ctx) {
     stackTrack.append(node);
   }
   const meterHost = el("div", { class: "model-stack" }, stackTrack);
+
+  /**
+   * The AARS hero gets the same row-to-picture link the two lattices have: hovering or
+   * focusing a pillar's rails lights that pillar's segment in the stacked budget bar, and
+   * hovering a segment lights the rails that fill it.
+   *
+   * The hero is already a picture of the model and the rails are already the controls that
+   * move it, but nothing said which part of the bar a given rail was pushing on. Same
+   * `light(id)` handle the provenance diagram and the lattices use, and hover-OR-focus for
+   * the same reason: a keyboard user is reading the same relationship.
+   */
+  function lightPillar(key) {
+    for (const k of ["a", "b", "c"]) {
+      stackSegs[k].node.classList.toggle("is-lit", k === key);
+      if (pillarHosts[k]) pillarHosts[k].classList.toggle("is-lit", k === key);
+    }
+  }
+  const pillarHosts = {};
+  function linkPillar(key, host) {
+    if (!host) return;
+    pillarHosts[key] = host;
+    const on = () => lightPillar(key);
+    const off = () => lightPillar(null);
+    for (const [node, enter, leave] of [[host, "mouseenter", "mouseleave"], [stackSegs[key].node, "mouseenter", "mouseleave"]]) {
+      node.addEventListener(enter, on);
+      node.addEventListener(leave, off);
+    }
+    host.addEventListener("focusin", on);
+    host.addEventListener("focusout", off);
+  }
   const railTrack = el("div", { class: "band-rail__track" });
   const railStops = el("div", { class: "band-rail__stops" });
   const railInputs = el("div", { class: "band-rail__inputs" });
@@ -503,6 +572,7 @@ export async function renderAarsRules(main, _params, ctx) {
   });
   capARail.classList.add("rail--cap");
   railsA.append(capARail, railScale(P_MAX));
+  linkPillar("a", railsA);
 
   const rowA = el("div", { class: "rule-row", style: "margin-top:14px" });
   const multId = nextId("mult");
@@ -534,6 +604,7 @@ export async function renderAarsRules(main, _params, ctx) {
   // inventory rather than from the rule. A column of empty cells would read as "nothing
   // matches" rather than "not measured yet".
   const pricesTh = el("th", { class: "rule-prices", hidden: true }, "Prices");
+  // Pillar B's host is linked below, once the table element exists.
   const cascadeTable = el(
     "div",
     { class: "table-wrap" },
@@ -560,6 +631,8 @@ export async function renderAarsRules(main, _params, ctx) {
       cascadeBody,
     ),
   );
+
+  linkPillar("b", cascadeTable);
 
   const addBtn = el("button", {}, "Add rule");
   addBtn.addEventListener("click", () => {
@@ -676,6 +749,9 @@ export async function renderAarsRules(main, _params, ctx) {
     railsC.append(rail);
   }
   railsC.append(railScale(P_MAX));
+  // Pillar B keeps number fields rather than rails (its quantity is ORDER, not magnitude),
+  // so its cascade table is the host that lights instead.
+  linkPillar("c", railsC);
 
   const rowC = el("div", { class: "rule-row", style: "margin-top:14px" });
   const ampId = nextId("amp");
@@ -694,7 +770,7 @@ export async function renderAarsRules(main, _params, ctx) {
       [
         "The one number on this page that is not a policy choice.",
         "It is a systemic signal: the 5Rs data-security score sits at 53% across the whole " +
-          "estate, so every data-related point carries the same uplift regardless of asset.",
+          "landscape, so every data-related point carries the same uplift regardless of asset.",
       ],
       { label: "About the 5Rs amplifier", term: "pillar-c" },
     ),
@@ -704,7 +780,7 @@ export async function renderAarsRules(main, _params, ctx) {
     section(
       "Pillar C — data exposure",
       "The amplifier is a systemic signal, not a per-asset one: the 5Rs framework sits at " +
-        "53% across the estate, so every data-related point carries the same uplift.",
+        "53% across the landscape, so every data-related point carries the same uplift.",
       [railsC, rowC],
     ),
   );
@@ -762,8 +838,8 @@ export async function renderAarsRules(main, _params, ctx) {
         "(missing guardrail, excessive privilege, sensitive data, internet exposure) and " +
         "one per distinct toxic-combination group, instead of one per framework code. It " +
         "takes pillar B further off its ceiling than v2's root-sum-square does (0 of 30 " +
-        "assets at cap on the seed estate, vs v2's 1 of 30), but it is not a strict upgrade: " +
-        "v2 currently separates the estate a little better (lower tie rate, higher effective " +
+        "assets at cap on the seed landscape, vs v2's 1 of 30), but it is not a strict upgrade: " +
+        "v2 currently separates the landscape a little better (lower tie rate, higher effective " +
         "cardinality) because its framework-code cascade happens to distinguish toxic-combo " +
         "patterns that v3 correctly prices the same once they cost the same conditions. It " +
         "WILL move scores — the impact panel shows exactly which. Nothing is saved until you " +
@@ -831,7 +907,7 @@ export async function renderAarsRules(main, _params, ctx) {
     moverMore,
   );
 
-  // How well the draft SEPARATES the estate. The band strip above cannot show this: a
+  // How well the draft SEPARATES the landscape. The band strip above cannot show this: a
   // rule that hands every asset the same score still fills a band, and still reads as a
   // confident answer. Only the absences give it away — few distinct scores, empty bands,
   // a pillar pinned at its cap — so they are stated rather than left to be noticed.
@@ -892,31 +968,6 @@ export async function renderAarsRules(main, _params, ctx) {
     node.classList.toggle("gap-gloss--unknown", !g.known);
   }
 
-  /**
-   * How many gap instances in the live inventory this rule actually priced. Absent until
-   * the first preview lands, and hidden rather than zeroed — "not measured yet" and
-   * "matches nothing" are different statements.
-   */
-  function paintPrices(td, count, total) {
-    if (!td) return;
-    if (count === null || count === undefined) {
-      td.hidden = true;
-      return;
-    }
-    if (!td.firstChild) {
-      td.append(
-        el("span", { class: "cover-bar" }, el("i", {})),
-        el("span", { class: "cover-n" }),
-      );
-    }
-    td.hidden = false;
-    const share = total ? Math.round((count / total) * 100) : 0;
-    td.firstChild.firstChild.style.width = `${share}%`;
-    setText(td.lastChild, String(count));
-    setAttr(td, "aria-label", total
-      ? `prices ${count} of ${total} gap instances`
-      : `prices ${count} gap instances`);
-  }
 
   // ------------------------------------------------------------- cascade (structural)
   /** Put the caret in a row's code field — where every structural change should land. */
@@ -1178,7 +1229,7 @@ export async function renderAarsRules(main, _params, ctx) {
     sandboxCodeBox.focusable().id = addId;
     sandboxCodeBox.focusable().removeAttribute("aria-label");
 
-    // Quick-add reflects what the estate actually carries, not a constant somebody typed
+    // Quick-add reflects what the landscape actually carries, not a constant somebody typed
     // once. Empty until the first preview lands, which is honest: before then the page has
     // no idea what is common here.
     sandboxQuick = el("div", { class: "pill-row", style: "margin-top:10px" });
@@ -1401,6 +1452,9 @@ export async function renderAarsRules(main, _params, ctx) {
     const unreachable = (preview && preview.unreachableGapRules) || [];
     const matchCounts = (preview && preview.gapMatchCounts) || null;
     const instanceTotal = (preview && preview.gapInstanceTotal) || 0;
+    // Cumulative starts, so the column reads as the live gap instances being consumed in
+    // cascade order rather than as N unrelated bars.
+    const gapOffsets = claimOffsets(matchCounts || []);
     const rows = cascadeBody.querySelectorAll("tr[data-idx]");
     rows.forEach((tr, i) => {
       const row = draft.gapPoints[i];
@@ -1438,9 +1492,16 @@ export async function renderAarsRules(main, _params, ctx) {
         });
         paintGloss(gloss, g);
       }
-      paintPrices(tr.querySelector(".rule-prices"), priced, instanceTotal);
+      claimRail(tr.querySelector(".rule-prices"), {
+        count: priced, total: instanceTotal, offset: gapOffsets[i] || 0, unit: "gap instances",
+      });
     });
-    paintPrices(fbCount, matchCounts ? preview.gapFallbackCount ?? 0 : null, instanceTotal);
+    claimRail(fbCount, {
+      count: matchCounts ? preview.gapFallbackCount ?? 0 : null,
+      total: instanceTotal,
+      offset: gapOffsets[gapOffsets.length - 1] || 0,
+      unit: "gap instances",
+    });
     pricesTh.hidden = !matchCounts;
     syncSandboxPrices();
 
@@ -1518,7 +1579,7 @@ export async function renderAarsRules(main, _params, ctx) {
       preview = data;
       previewError = "";
       // The census travels with the preview, so this is where the pickers learn what the
-      // estate actually carries — and where codes the codebook never heard of (tenant
+      // landscape actually carries — and where codes the codebook never heard of (tenant
       // finding shortIds) become pickable at all.
       const nextCensus = {};
       for (const row of data.gapCensus || []) nextCensus[row.code] = row.assets;
@@ -1675,14 +1736,7 @@ export async function renderAarsRules(main, _params, ctx) {
     diagSection.hidden = !d || !d.scored;
     if (!d || !d.scored) return;
 
-    const line = (label, value, hint) =>
-      el(
-        "div",
-        { class: "diag-row" },
-        el("span", { class: "diag-row__label" }, label),
-        el("span", { class: "diag-row__value" }, value),
-        hint ? el("span", { class: "diag-row__hint small muted" }, hint) : null,
-      );
+    const line = diagRow;
 
     // Worst first, so an unreachable CRITICAL is named before an empty INFO.
     const ALL_LEVELS = RAIL_ORDER.slice().reverse();
@@ -1898,11 +1952,29 @@ export async function renderAarsRules(main, _params, ctx) {
   window.addEventListener("beforeunload", onBeforeUnload);
 
   // ============================================================================
-  // Problem tree — Phase 5. Same rule 1 as the AARS half of this file: the client NEVER
-  // decides. Every outcome shown below — the occupancy strip, the movers, the leaf
-  // counts, the per-axis unknown rates — comes from api_previewProblemRule, which runs
-  // the real cascade server-side (syncStore.decideProblemsWith) at zero Wiz cost.
-  // Nothing here calls decideProblem or reimplements first-match-wins.
+  // Problem tree — Phase 5.
+  //
+  // THE CLIENT DRAWS THE CASCADE; THE SERVER REMAINS THE ONLY SOURCE OF ANYTHING COUNTED.
+  // This is a narrowing of what this comment used to say ("the client NEVER decides"), and
+  // it is narrower on purpose rather than by erosion. The lattice below has to repaint in
+  // the same frame as a keystroke — after PREVIEW_DEBOUNCE_MS (700ms) plus an Apps Script
+  // round-trip, a picture you are dragging rows around in reads as broken — so
+  // decideMirror.js re-walks the first-match-wins cascade in the browser to decide WHICH
+  // CELL GETS WHICH TINT. That is the whole of what it does.
+  //
+  // Every NUMBER on this tab still comes from api_previewProblemRule, which runs the real
+  // cascade server-side (syncStore.decideProblemsWith) at zero Wiz cost: the leaf counts,
+  // the landscape occupancy, the movers, the per-axis unknown rates, and the validation that
+  // gates Save. Two guards keep the drawn picture and the counted truth from drifting:
+  // test/decideMirror.test.js pins the mirror against domain/problem.ts over all 54 vectors
+  // (and all 27 posture cells) including which row decided, and the section's own reconcile() below
+  // reconciles the mirror's own tally against the server's leafCoverage.byRow on every
+  // preview response — hatching the whole lattice rather than letting it show a confident
+  // wrong answer if they ever disagree.
+  //
+  // Rule 1 at the top of this file is untouched: no score, no points, nothing continuous is
+  // computed here. See decideMirror.js's own header for why a cascade walk is safe to
+  // mirror when a score is not.
 
   const AXIS_DEFS = [
     { key: "exploitation", label: "Exploitation", values: ["ACTIVE", "SUSPECTED", "UNKNOWN"] },
@@ -2065,6 +2137,7 @@ export async function renderAarsRules(main, _params, ctx) {
     }
 
     function renderProblemCascade() {
+      pLattice.close();
       clear(pCascadeBody);
       const max = (problemState.limits && problemState.limits.maxOutcomeRules) || 40;
       problemDraft.outcomeRules.forEach((row, i) => {
@@ -2134,6 +2207,15 @@ export async function renderAarsRules(main, _params, ctx) {
           meta,
           el("td", { class: "rule-rowbtns" }, up, down, del),
         );
+        // The register drives the picture, and focus counts as much as hover — the rule
+        // scans.js's provenance diagram keeps, so a keyboard user gets the same link.
+        const lightCells = () => pLattice.light(i);
+        const dimCells = () => pLattice.light(null);
+        tr.addEventListener("mouseenter", lightCells);
+        tr.addEventListener("mouseleave", dimCells);
+        tr.addEventListener("focusin", lightCells);
+        tr.addEventListener("focusout", dimCells);
+
         pCascadeBody.append(tr);
       });
 
@@ -2291,9 +2373,54 @@ export async function renderAarsRules(main, _params, ctx) {
       });
     }
 
+    // ------------------------------------------------------------------ the lattice hero
+    // The same structural slot the AARS tab opens with: one picture of the whole model,
+    // the only boxed surface in the editor pane, with the parts of the model below it.
+    // Everything about how it behaves lives in ui/latticeSection.js, which the Posture tab
+    // mounts too — see that file for why this is one component and not two.
+    const pLattice = latticeSection({
+      spec: PROBLEM_LATTICE,
+      kind: "problem",
+      unit: "leaves",
+      unitOne: "leaf",
+      decide: (v) => mirrorDecideProblem(v, problemDraft),
+      decideSaved: (v) => mirrorDecideProblem(v, problemSaved),
+      coverageOf: (rule) => mirrorLeafCoverage(rule),
+      getRule: () => problemDraft,
+      getRules: () => problemDraft.outcomeRules,
+      getCeiling: () => problemDraft.actLeafCeiling,
+      getRuleCap: () => (problemState && problemState.limits && problemState.limits.maxOutcomeRules) || 40,
+      getOccupancy: () => {
+        const disc = problemPreview && problemPreview.treeDiscrimination;
+        return { known: !!disc, map: (disc && disc.leafOccupancy) || {} };
+      },
+      whenWords: (row) => {
+        if (!row) return "no condition";
+        const parts = AXIS_DEFS
+          .filter((a) => row.when[a.key] !== undefined)
+          .map((a) => `${a.label.toLowerCase()} ${row.when[a.key]}`);
+        return parts.length ? parts.join(", ") : "no condition, so it matches everything left";
+      },
+      onRowLight: (idx) => lightProblemRow(idx),
+      onTrace: (idx) => markTracedRows(pCascadeBody, idx),
+      onAddRule: (when, outcome) => {
+        // New rows go on TOP — a first-match cascade, same reasoning as pAddBtn.
+        problemDraft.outcomeRules.unshift({ when, outcome });
+        renderProblemCascade();
+        focusProblemRow(0);
+        onProblemEdit();
+      },
+    });
+    // Leaving a lattice popover open across a tab change would strand a portal against a
+    // hidden pane — `portalsOpen()` stays raised and the sheet's Tab trap keeps deferring
+    // to a list nothing can reach.
+    closeProblemLatticePop = pLattice.close;
+    onPageTeardown(pLattice.close);
+
     const pEditor = el(
       "div",
       { class: "rule-editor" },
+      pLattice.node,
       section(
         "Outcome cascade",
         "Each row is tried in order; the first whose conditions ALL match wins. An axis " +
@@ -2386,7 +2513,7 @@ export async function renderAarsRules(main, _params, ctx) {
       );
     }
 
-    function paintUnknownRates(disc) {
+    function paintProblemUnknownRates(disc) {
       clear(pUnknownList);
       clear(pUnknownWarn);
       pUnknownSection.hidden = !disc;
@@ -2396,33 +2523,14 @@ export async function renderAarsRules(main, _params, ctx) {
         `${disc.leavesReached} of 54 leaves reached, across ${disc.decided.length} decided ` +
           `issues and findings.`,
       );
-      for (const key of ["exploitation", "impact", "exposure", "mission"]) {
-        const rate = disc.unknownRate[key] || 0;
-        const pct = Math.round(rate * 1000) / 10;
-        const high = rate >= UNKNOWN_WARN_THRESHOLD;
-        pUnknownList.append(
-          el(
-            "div", { class: "diag-row" },
-            el("span", { class: "diag-row__label" }, AXIS_LABELS[key]),
-            el("span", { class: "diag-row__value" }, `${pct}% unknown`),
-            high
-              ? el("span", { class: "diag-row__hint small muted" },
-                "most reads on this axis could not be established")
-              : null,
-          ),
-        );
-        if (high) {
-          pUnknownWarn.append(
-            el(
-              "p", { class: "diag-warn small" },
-              el("span", { class: "diag-warn__mark", "aria-hidden": "true" }, "▲"),
-              `${AXIS_LABELS[key]} reads UNKNOWN on ${pct}% of decided rows. This axis is not ` +
-                "populated on this tenant, and every rule keyed on it is deciding on the " +
-                "minority it could actually read.",
-            ),
-          );
-        }
-      }
+      paintUnknownRates({
+        listHost: pUnknownList,
+        warnHost: pUnknownWarn,
+        axes: AXIS_DEFS,
+        rates: disc.unknownRate,
+        threshold: UNKNOWN_WARN_THRESHOLD,
+        rowNoun: "rows",
+      });
     }
 
     function paintProblemImpact() {
@@ -2434,7 +2542,7 @@ export async function renderAarsRules(main, _params, ctx) {
         clear(pMoverList);
         clear(pMoverMore);
         pMoverSection.hidden = true;
-        paintUnknownRates(null);
+        paintProblemUnknownRates(null);
         setText(pImpactHeadline, "");
         setText(pLeavesLine, "");
         pImpactState.append(emptyState("Fix the highlighted fields to preview.", errs[0]));
@@ -2443,7 +2551,7 @@ export async function renderAarsRules(main, _params, ctx) {
       if (problemPreviewError) {
         clear(pImpactStrip);
         pMoverSection.hidden = true;
-        paintUnknownRates(null);
+        paintProblemUnknownRates(null);
         setText(pImpactHeadline, "");
         setText(pLeavesLine, "");
         const retry = el("button", { style: "margin-top:10px" }, "Try again");
@@ -2457,7 +2565,7 @@ export async function renderAarsRules(main, _params, ctx) {
       }
       if (!problemPreview) {
         pMoverSection.hidden = true;
-        paintUnknownRates(null);
+        paintProblemUnknownRates(null);
         setText(pImpactHeadline, "");
         setText(pLeavesLine, "");
         clear(pImpactStrip).append(
@@ -2467,7 +2575,7 @@ export async function renderAarsRules(main, _params, ctx) {
       if (!problemPreview.total) {
         clear(pImpactStrip);
         pMoverSection.hidden = true;
-        paintUnknownRates(null);
+        paintProblemUnknownRates(null);
         setText(pImpactHeadline, "");
         setText(pLeavesLine, "");
         pImpactState.append(
@@ -2505,7 +2613,7 @@ export async function renderAarsRules(main, _params, ctx) {
       setText(pImpactHeadline, headline);
       setText(pLiveNote, `Impact updated. ${headline}`);
 
-      paintUnknownRates(problemPreview.treeDiscrimination);
+      paintProblemUnknownRates(problemPreview.treeDiscrimination);
 
       clear(pMoverList);
       clear(pMoverMore);
@@ -2537,9 +2645,22 @@ export async function renderAarsRules(main, _params, ctx) {
       }
     }
 
+    // ----------------------------------------------------------------------- lattice
+    /** Light the cascade row that claims a cell, or clear. Rows are rebuilt structurally, so this re-queries. */
+    function lightProblemRow(idx) {
+      pCascadeBody.querySelectorAll("tr").forEach((tr) => {
+        tr.classList.toggle("is-lit", idx !== null && idx !== undefined && Number(tr.dataset.idx) === idx);
+      });
+    }
+
+    function paintProblemLattice() {
+      pLattice.repaint();
+    }
+
     // -------------------------------------------------------------------------- sync
     function onProblemEdit() {
       syncProblem();
+      paintProblemLattice();
       scheduleProblemPreview();
     }
 
@@ -2562,19 +2683,41 @@ export async function renderAarsRules(main, _params, ctx) {
       const shadowed = (problemPreview && problemPreview.shadowedOutcomeRules) || [];
       const coverage = (problemPreview && problemPreview.leafCoverage) || null;
       const rows = pCascadeBody.querySelectorAll("tr[data-idx]");
+      const problemOffsets = claimOffsets((coverage && coverage.byRow) || []);
+      const pOcc = problemPreview && problemPreview.treeDiscrimination
+        && problemPreview.treeDiscrimination.leafOccupancy;
+      const landscapeByRow = pOcc ? mirrorLeafOccupancyByRow(problemDraft, pOcc) : null;
       rows.forEach((tr, i) => {
         const meta = tr.querySelector(".rule-rowmeta");
         const isShadow = shadowed.indexOf(i) >= 0;
+        // Three zeros, three claims — the vocabulary the AARS gap ladder has always used
+        // and these two cascades could not, because nothing here knew what the landscape
+        // put on the leaves a row claims. See decideMirror.occupancyByRow.
+        const unused = !isShadow && landscapeByRow && coverage
+          && (coverage.byRow[i] || 0) > 0 && landscapeByRow[i] === 0;
         tr.classList.toggle("rule-dead", isShadow);
-        setText(meta, isShadow ? "never fires — an earlier rule already claims every leaf it could match" : "");
-        paintPrices(tr.querySelector(".rule-prices"), coverage ? coverage.byRow[i] || 0 : null, coverage ? coverage.total : 0);
+        tr.classList.toggle("rule-unused", !!unused);
+        setText(meta, isShadow
+          ? "never fires — an earlier rule already claims every leaf it could match"
+          : unused
+            ? "in force — nothing in this tenant carries it"
+            : "");
+        claimRail(tr.querySelector(".rule-prices"), {
+          count: coverage ? coverage.byRow[i] || 0 : null,
+          total: coverage ? coverage.total : 0,
+          offset: problemOffsets[i] || 0,
+          unit: "leaves",
+          dead: isShadow,
+        });
       });
       const fbRow = pCascadeBody.querySelector("tr.rule-fallback");
       if (fbRow) {
-        paintPrices(
-          fbRow.querySelector(".rule-prices"),
-          coverage ? coverage.byFallback : null,
-          coverage ? coverage.total : 0);
+        claimRail(fbRow.querySelector(".rule-prices"), {
+          count: coverage ? coverage.byFallback : null,
+          total: coverage ? coverage.total : 0,
+          offset: problemOffsets[problemOffsets.length - 1] || 0,
+          unit: "leaves",
+        });
       }
       pClaimsTh.hidden = !coverage;
 
@@ -2629,22 +2772,29 @@ export async function renderAarsRules(main, _params, ctx) {
         return;
       }
       pImpact.classList.add("updating");
+      pLattice.setUpdating(true);
       scheduleProblemPreviewRun();
     }
 
     async function runProblemPreview() {
       const seq = ++problemPreviewSeq;
+      // The rule as it stood when the request left, for pLattice.reconcile — see its
+      // own comment for why comparing against the live draft would report races as bugs.
+      const sentDraft = cloneRule(problemDraft);
       try {
-        const data = await call("api_previewProblemRule", { rule: problemDraft });
+        const data = await call("api_previewProblemRule", { rule: sentDraft });
         if (seq !== problemPreviewSeq) return;
         problemPreview = data;
         problemPreviewError = "";
+        pLattice.reconcile(sentDraft, data && data.leafCoverage);
+        paintProblemLattice(); // landscape occupancy only exists once a preview has landed
       } catch (e) {
         if (seq !== problemPreviewSeq) return;
         problemPreview = null;
         problemPreviewError = String(e.message || e);
       }
       pImpact.classList.remove("updating");
+      pLattice.setUpdating(false);
       paintProblemImpact();
       syncProblem(); // row notes and leaf counts come from the preview
     }
@@ -2687,6 +2837,7 @@ export async function renderAarsRules(main, _params, ctx) {
     renderProblemCascade();
     renderExploitationRows();
     syncProblem();
+    paintProblemLattice();
     paintProblemImpact();
     scheduleProblemPreview();
   }
@@ -2864,6 +3015,7 @@ export async function renderAarsRules(main, _params, ctx) {
     }
 
     function renderPostureCascade() {
+      uLattice.close();
       clear(uCascadeBody);
       const max = (postureState.limits && postureState.limits.maxTierRules) || 40;
       postureDraft.tierRules.forEach((row, i) => {
@@ -2933,6 +3085,15 @@ export async function renderAarsRules(main, _params, ctx) {
           meta,
           el("td", { class: "rule-rowbtns" }, up, down, del),
         );
+        // The register drives the picture, and focus counts as much as hover — the rule
+        // scans.js's provenance diagram keeps, so a keyboard user gets the same link.
+        const lightCells = () => uLattice.light(i);
+        const dimCells = () => uLattice.light(null);
+        tr.addEventListener("mouseenter", lightCells);
+        tr.addEventListener("mouseleave", dimCells);
+        tr.addEventListener("focusin", lightCells);
+        tr.addEventListener("focusout", dimCells);
+
         uCascadeBody.append(tr);
       });
 
@@ -2979,9 +3140,62 @@ export async function renderAarsRules(main, _params, ctx) {
       input: uCeilingInput,
     };
 
+    // ------------------------------------------------------------------ the lattice hero
+    // The same component the Problem tree mounts, with a spec and a vocabulary. If this
+    // block ever needs painter code of its own, ui/latticeSection.js is the thing to fix.
+    const uLattice = latticeSection({
+      spec: POSTURE_LATTICE,
+      kind: "posture",
+      views: false,
+      unit: "cells",
+      unitOne: "cell",
+      decide: (v) => mirrorDecidePosture(v, postureDraft),
+      decideSaved: (v) => mirrorDecidePosture(v, postureSaved),
+      coverageOf: (rule) => mirrorCellCoverage(rule),
+      getRule: () => postureDraft,
+      getRules: () => postureDraft.tierRules,
+      getCeiling: () => postureDraft.topTierCeiling,
+      getRuleCap: () => (postureState && postureState.limits && postureState.limits.maxTierRules) || 40,
+      getOccupancy: () => {
+        const disc = posturePreview && posturePreview.postureDiscrimination;
+        return { known: !!disc, map: (disc && disc.cellOccupancy) || {} };
+      },
+      whenWords: (row) => {
+        if (!row) return "no condition";
+        const parts = POSTURE_AXIS_DEFS
+          .filter((a) => row.when[a.key] !== undefined)
+          .map((a) => `${a.label.toLowerCase()} ${row.when[a.key]}`);
+        // The lethal-trifecta row names none of the three lattice axes — it names legs that
+        // sit OFF the 27 cells entirely, which is exactly why it can never fire.
+        const legs = ["privateData", "untrustedIngress", "externalEgress"]
+          .filter((k) => row.when[k] !== undefined);
+        if (!parts.length && legs.length) return `${legs.length} off-lattice signals nothing populates`;
+        return parts.length ? parts.join(", ") : "no condition, so it matches everything left";
+      },
+      onRowLight: (idx) => lightPostureRow(idx),
+      onTrace: (idx) => markTracedRows(uCascadeBody, idx),
+      onAddRule: (when, tier) => {
+        // New rows go on TOP — a first-match cascade, same reasoning as the other two.
+        postureDraft.tierRules.unshift({ when, tier });
+        renderPostureCascade();
+        focusPostureRow(0);
+        onPostureEdit();
+      },
+    });
+    closePostureLatticePop = uLattice.close;
+    onPageTeardown(uLattice.close);
+
+    /** Light the cascade row that claims a cell, or clear. Rows are rebuilt structurally, so this re-queries. */
+    function lightPostureRow(idx) {
+      uCascadeBody.querySelectorAll("tr").forEach((tr) => {
+        tr.classList.toggle("is-lit", idx !== null && idx !== undefined && Number(tr.dataset.idx) === idx);
+      });
+    }
+
     const uEditor = el(
       "div",
       { class: "rule-editor" },
+      uLattice.node,
       section(
         "Tier cascade",
         "Each row is tried in order; the first whose conditions ALL match wins. An axis " +
@@ -3031,7 +3245,7 @@ export async function renderAarsRules(main, _params, ctx) {
       "div",
       { class: "rule-impact" },
       uLiveNote,
-      el("h2", { class: "section-label" }, "Impact on the persisted estate"),
+      el("h2", { class: "section-label" }, "Impact on the persisted landscape"),
       uImpactState,
       uImpactStrip,
       uImpactHeadline,
@@ -3069,33 +3283,14 @@ export async function renderAarsRules(main, _params, ctx) {
         uCellsLine,
         `${disc.cellsReached} of 27 cells reached, across ${disc.decided.length} tiered assets.`,
       );
-      for (const key of ["capability", "containment", "consequence"]) {
-        const rate = disc.unknownRate[key] || 0;
-        const pct = Math.round(rate * 1000) / 10;
-        const high = rate >= POSTURE_UNKNOWN_WARN_THRESHOLD;
-        uUnknownList.append(
-          el(
-            "div", { class: "diag-row" },
-            el("span", { class: "diag-row__label" }, POSTURE_AXIS_LABELS[key]),
-            el("span", { class: "diag-row__value" }, `${pct}% unknown`),
-            high
-              ? el("span", { class: "diag-row__hint small muted" },
-                "most reads on this axis could not be established")
-              : null,
-          ),
-        );
-        if (high) {
-          uUnknownWarn.append(
-            el(
-              "p", { class: "diag-warn small" },
-              el("span", { class: "diag-warn__mark", "aria-hidden": "true" }, "▲"),
-              `${POSTURE_AXIS_LABELS[key]} reads UNKNOWN on ${pct}% of tiered assets. This ` +
-                "axis is not populated on this tenant, and every rule keyed on it is " +
-                "deciding on the minority it could actually read.",
-            ),
-          );
-        }
-      }
+      paintUnknownRates({
+        listHost: uUnknownList,
+        warnHost: uUnknownWarn,
+        axes: POSTURE_AXIS_DEFS,
+        rates: disc.unknownRate,
+        threshold: POSTURE_UNKNOWN_WARN_THRESHOLD,
+        rowNoun: "tiered assets",
+      });
     }
 
     function paintPostureImpact() {
@@ -3213,6 +3408,7 @@ export async function renderAarsRules(main, _params, ctx) {
     // -------------------------------------------------------------------------- sync
     function onPostureEdit() {
       syncPosture();
+      uLattice.repaint();
       schedulePosturePreview();
     }
 
@@ -3234,27 +3430,45 @@ export async function renderAarsRules(main, _params, ctx) {
       const unreachable = (posturePreview && posturePreview.unreachable) || [];
       const coverage = (posturePreview && posturePreview.cellCoverage) || null;
       const rows = uCascadeBody.querySelectorAll("tr[data-idx]");
+      // Cumulative starts, so the column reads as the 27 cells being consumed in cascade order.
+      const postureOffsets = claimOffsets((coverage && coverage.byRow) || []);
+      const uOcc = posturePreview && posturePreview.postureDiscrimination
+        && posturePreview.postureDiscrimination.cellOccupancy;
+      const uLandscapeByRow = uOcc ? mirrorCellOccupancyByRow(postureDraft, uOcc) : null;
       rows.forEach((tr, i) => {
         const meta = tr.querySelector(".rule-rowmeta");
         const isShadow = shadowed.indexOf(i) >= 0;
         const isUnreachable = !isShadow && unreachable.indexOf(i) >= 0;
         tr.classList.toggle("rule-dead", isShadow || isUnreachable);
+        const unused = !isShadow && !isUnreachable && uLandscapeByRow && coverage
+          && (coverage.byRow[i] || 0) > 0 && uLandscapeByRow[i] === 0;
+        tr.classList.toggle("rule-unused", !!unused);
         setText(
           meta,
           isShadow
             ? "never fires — an earlier rule already claims every cell it could match"
             : isUnreachable
               ? "never fires — names something no live signal can produce (see this rule's own header)"
-              : "",
+              : unused
+                ? "in force — nothing in this tenant carries it"
+                : "",
         );
-        paintPrices(tr.querySelector(".rule-prices"), coverage ? coverage.byRow[i] || 0 : null, coverage ? coverage.total : 0);
+        claimRail(tr.querySelector(".rule-prices"), {
+          count: coverage ? coverage.byRow[i] || 0 : null,
+          total: coverage ? coverage.total : 0,
+          offset: postureOffsets[i] || 0,
+          unit: "cells",
+          dead: isShadow || isUnreachable,
+        });
       });
       const fbRow = uCascadeBody.querySelector("tr.rule-fallback");
       if (fbRow) {
-        paintPrices(
-          fbRow.querySelector(".rule-prices"),
-          coverage ? coverage.byFallback : null,
-          coverage ? coverage.total : 0);
+        claimRail(fbRow.querySelector(".rule-prices"), {
+          count: coverage ? coverage.byFallback : null,
+          total: coverage ? coverage.total : 0,
+          offset: postureOffsets[postureOffsets.length - 1] || 0,
+          unit: "cells",
+        });
       }
       uClaimsTh.hidden = !coverage;
 
@@ -3308,22 +3522,29 @@ export async function renderAarsRules(main, _params, ctx) {
         return;
       }
       uImpact.classList.add("updating");
+      uLattice.setUpdating(true);
       schedulePosturePreviewRun();
     }
 
     async function runPosturePreview() {
       const seq = ++posturePreviewSeq;
+      // The rule as it stood when the request left — see uLattice.reconcile for why
+      // comparing against the live draft would report a debounce race as a disagreement.
+      const sentDraft = cloneRule(postureDraft);
       try {
-        const data = await call("api_previewPostureRule", { rule: postureDraft });
+        const data = await call("api_previewPostureRule", { rule: sentDraft });
         if (seq !== posturePreviewSeq) return;
         posturePreview = data;
         posturePreviewError = "";
+        uLattice.reconcile(sentDraft, data && data.cellCoverage);
+        uLattice.repaint(); // landscape occupancy only exists once a preview has landed
       } catch (e) {
         if (seq !== posturePreviewSeq) return;
         posturePreview = null;
         posturePreviewError = String(e.message || e);
       }
       uImpact.classList.remove("updating");
+      uLattice.setUpdating(false);
       paintPostureImpact();
       syncPosture(); // row notes and cell counts come from the preview
     }
@@ -3363,6 +3584,7 @@ export async function renderAarsRules(main, _params, ctx) {
     // --------------------------------------------------------------------- first paint
     renderPostureCascade();
     syncPosture();
+    uLattice.repaint();
     paintPostureImpact();
     schedulePosturePreview();
   }

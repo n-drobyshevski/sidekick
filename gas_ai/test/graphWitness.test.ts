@@ -1,7 +1,7 @@
 // The evidence a filtered query draws, and the budget that keeps a cluster whole.
 //
 // TWO HALVES OF ONE COMPLAINT: "searching for AI agents with sensitive data access loads only
-// agent nodes". Measured on the sample estate before any of this, `FIND AI_AGENT WHERE
+// agent nodes". Measured on the sample landscape before any of this, `FIND AI_AGENT WHERE
 // sensitiveAccess is true` answered 11 agents, 0 edges, 11 isolated components — the answer to a
 // question about a path, drawn with no path in it. And the shortcut carrying the very same label
 // ("Reaches classified data") answered 39 nodes in 5 clusters, so one name gave two pictures.
@@ -209,7 +209,7 @@ describe("the witness stays out of the table", () => {
     for (const key of ["sensitiveAccess", "sensitiveData", "internet", "guardrail",
       "highPriv", "adminPriv"]) {
       expect(keys, `${key} must be a QUERY_FIELDS key`).toContain(key);
-      // And it must actually witness something on this estate, or the row is decoration.
+      // And it must actually witness something on this landscape, or the row is decoration.
       const armed = key === "guardrail" ? "missing" : "true";
       const r = runQuery(DOC, agents([F(key, armed)]));
       if (r.rows.length) {
@@ -281,7 +281,7 @@ describe("the canvas budget admits clusters, not nodes", () => {
     // `runGraphQuery` clamps to MAX_NODES_FLOOR (30), so a budget too small for even one cluster
     // CANNOT be asked for here — a request of 2 comes back as 30. Which means the branch that
     // truncates a first cluster rather than admitting nothing is defensive, not exercised: no
-    // single path on the sample estate reaches 30 nodes (the widest is one match plus
+    // single path on the sample landscape reaches 30 nodes (the widest is one match plus
     // WITNESS_FANOUT_CAP bindings of a three-node chain). It stays because a real tenant can build
     // one — a deep ANY-hops query, or a wider fan-out — and without it that query would answer
     // with rows and a blank canvas.

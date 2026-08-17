@@ -1,5 +1,5 @@
 // Priorities: every unresolved issue and every open configuration finding, ranked
-// together across the whole estate — outcome first, then asset posture, then how soon it
+// together across the whole landscape — outcome first, then asset posture, then how soon it
 // is due, then how much it would amplify. `combos.js` scopes issues to one expanded
 // toxic-combination pattern; `config.js` scopes findings to the Cloud Configuration
 // register. Neither can answer "what do I work on Monday" — this page is the union.
@@ -156,7 +156,7 @@ export async function renderProblems(main, params) {
     );
   }
 
-  // --------------------------------------------------- paged mode: a large estate only
+  // --------------------------------------------------- paged mode: a large landscape only
 
   /**
    * Past PROBLEMS_CLIENT_ALL_MAX the server already applied the outcome filter and the

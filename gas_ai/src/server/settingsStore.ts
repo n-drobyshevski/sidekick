@@ -193,7 +193,7 @@ export function setSelectedFrameworks(ids: unknown): string[] {
  * The operator's overrides on which 5Rs rules this app looks at.
  *
  * Only the pins are stored, never the resolved selection: the default is DERIVED from the
- * estate (does an OWASP framework map this rule, do its findings land on an AI asset), and
+ * landscape (does an OWASP framework map this rule, do its findings land on an AI asset), and
  * freezing that derivation into a stored list would stop it tracking a tenant whose rules
  * and findings move under it. What an operator decided is a decision; what the app worked
  * out is not, and only the first is worth persisting.

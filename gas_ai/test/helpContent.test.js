@@ -276,9 +276,9 @@ describe("the count resolvers", () => {
 
   // Before the first sync the KPI endpoint still answers — with zeros, off an empty
   // ledger. Reporting those as measurements would say "0 AI assets reach classified data"
-  // about an estate nobody has looked at, which is the implied confidence PRODUCT.md
+  // about a landscape nobody has looked at, which is the implied confidence PRODUCT.md
   // forbids. Settings are the exception: they are the model in force, not a measurement.
-  it("withholds every estate figure until a sync exists", () => {
+  it("withholds every landscape figure until a sync exists", () => {
     const noSync = { ...FULL_CTX, boot: { ...FULL_CTX.boot, latestSync: null } };
     const answered = resolveEntries(noSync).filter((e) => e.resolved !== null);
     const ids = answered.map((e) => e.id).sort();
@@ -292,7 +292,7 @@ describe("the count resolvers", () => {
     const settings = ENTRIES.filter((e) => e.fromSettings).map((e) => e.id).sort();
     expect(settings).toEqual(["aars-band", "depth-budget", "pillar-a", "pillar-c"]);
     // A settings entry that reads the KPI payload would be mislabelled, and the guard
-    // would let an estate figure through before the first sync.
+    // would let a landscape figure through before the first sync.
     for (const e of ENTRIES) {
       if (!e.fromSettings) continue;
       expect(String(e.count), e.id + " reads kpis but claims to be a setting")
@@ -415,11 +415,11 @@ describe("lexTally", () => {
 
   // The pre-sync honest state, which is the state the reader most likely to open Help is
   // in. Only the four `fromSettings` terms may answer, because only they read the model in
-  // force rather than the estate; everything else must be "not counted here", never zero.
-  it("withholds every estate figure before the first sync", () => {
+  // force rather than the landscape; everything else must be "not counted here", never zero.
+  it("withholds every landscape figure before the first sync", () => {
     const t = lexTally(resolveEntries(EMPTY_CTX));
     const settings = ENTRIES.filter((e) => e.fromSettings).length;
-    expect(t.zero, "an unknown estate must never report a zero").toBe(0);
+    expect(t.zero, "an unknown landscape must never report a zero").toBe(0);
     expect(t.figure).toBeLessThanOrEqual(settings);
     expect(t.uncounted).toBe(
       ENTRIES.filter((e) => e.count).length - t.figure,

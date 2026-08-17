@@ -414,7 +414,7 @@ export function unreachableGapRules(rule: AarsRule): number[] {
 }
 
 /**
- * How well a rule separates the estate it is applied to.
+ * How well a rule separates the landscape it is applied to.
  *
  * This exists because the model can stop discriminating without anything looking wrong:
  * a pillar pinned at its cap for every asset still renders a confident number, and the
@@ -437,18 +437,18 @@ export interface RuleDiscrimination {
   /**
    * The share of asset PAIRS this model cannot separate — `rankStats.tieRate` over the
    * score list. 1.0 means it ranks nothing: every pair of scored assets shares a value, so
-   * ANY ordering within the estate is arbitrary. `largestTieGroup` names the single worst
-   * block; this measures how much of the whole estate sits in a block at all, which is the
+   * ANY ordering within the landscape is arbitrary. `largestTieGroup` names the single worst
+   * block; this measures how much of the whole landscape sits in a block at all, which is the
    * number that keeps a healthy-looking `distinctScores` (several small groups) from hiding
-   * an estate that is still mostly tied.
+   * a landscape that is still mostly tied.
    */
   tieRate: number;
   /**
    * exp(Shannon entropy) over the score distribution — `rankStats.effectiveCardinality` —
-   * how many distinct scores the estate BEHAVES as if it has, as opposed to how many it
+   * how many distinct scores the landscape BEHAVES as if it has, as opposed to how many it
    * literally has. `distinctScores` counts values; this weights each one by how many assets
    * take it, so a scale of {30: 1 asset, 72: 19 assets} is not credited with "2 distinct
-   * scores" worth of discrimination — one outlier score does not read as the estate being
+   * scores" worth of discrimination — one outlier score does not read as the landscape being
    * spread out. Equal to `distinctScores` only when every value is taken equally often.
    */
   effectiveCardinality: number;
@@ -472,7 +472,7 @@ const EMPTY_DISCRIMINATION: RuleDiscrimination = {
 };
 
 /**
- * Measure a scored estate against the rule that scored it. Pure, and reads only what
+ * Measure a scored landscape against the rule that scored it. Pure, and reads only what
  * `scoreAssetsWith` already returns, so the preview pays no extra Sheets read for it.
  */
 export function ruleDiscrimination(
@@ -491,7 +491,7 @@ export function ruleDiscrimination(
   // the finding term worked: `saturated.data` is the count of assets sitting exactly here,
   // and driving it down is the whole reason the term exists (ai/AARS_ASSESSMENT.md:190).
   // Deriving it from the tier alone would report the pillar saturated at a value it can now
-  // exceed, and so would report success on every estate.
+  // exceed, and so would report success on every landscape.
   const maxData = Math.min(
     rule.pillarCCap,
     Math.round(

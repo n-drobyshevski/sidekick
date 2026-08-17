@@ -719,7 +719,7 @@ for (const assetId of ["agent-j", "agent-k"]) {
 // Transcribed from the applied table in ai/custom_score.md (normative). Live syncs
 // derive these heuristically (graphEnrich.deriveAarsInput); dry-run pins the doc.
 // Only the gap CODES are pinned — their points come from the AARS rule in force, so a
-// tuned deployment sees its own model applied to the sample estate too.
+// tuned deployment sees its own model applied to the sample landscape too.
 
 const HINTS: AarsHints = {
   "agent-a": { gaps: [gap("LLM06"), gap("NO_GUARDRAIL")], dataExposure: "SENSITIVE" },
@@ -935,7 +935,7 @@ const SEED_FINDINGS_DATA: FindingRow[] = [
   },
   {
     id: "cfg-006",
-    // A SERVICE_ACCOUNT no agent in this estate runs as, so still off-inventory.
+    // A SERVICE_ACCOUNT no agent in this landscape runs as, so still off-inventory.
     resourceId: "sa-bigdata-ai-weatherforecast-pp",
     ruleShortId: "IAM-236",
     severity: "HIGH",
@@ -1140,7 +1140,7 @@ export const SEED_POSTURE: PostureRow[] = [
   seedSubCategory("wf-id-275", "ASI01", "ASI01", "ASI01 Agent Goal Hijack", 93, 144, 10),
   seedCategory("wf-id-275", "ASI03", "ASI03 Identity and Privilege Abuse", 99, 6347, 18),
   seedSubCategory("wf-id-275", "ASI03", "ASI03", "ASI03 Identity and Privilege Abuse", 99, 6347, 18),
-  // The empty category: nothing in this estate to assess. Posture null, reason given —
+  // The empty category: nothing in this landscape to assess. Posture null, reason given —
   // the case the page must never render as 0%.
   seedCategory("wf-id-275", "ASI08", "ASI08 Cascading Failures", null, 0, 0, "NO_RESOURCES"),
   seedSubCategory("wf-id-275", "ASI08", "ASI08", "ASI08 Cascading Failures", null, 0, 0, "NO_RESOURCES"),
@@ -1170,11 +1170,11 @@ export const SEED_POSTURE: PostureRow[] = [
   // The other three Rs, and the reason they are seeded at all: this is a DATA-security
   // framework collected by an AI product, and until now the sample carried only the two
   // categories whose rules happen to be about AI (a Bedrock trust policy, a training
-  // bucket). An estate that agrees with the product's focus cannot demonstrate the scope
+  // bucket). A landscape that agrees with the product's focus cannot demonstrate the scope
   // feature, and worse, cannot catch it silently excluding nothing.
   //
   // Note the check counts. 2.1 reports 194,309 passing against ASI01's 144 — three orders
-  // of magnitude, because Wiz is scoring the WHOLE data estate here, not the AI slice of
+  // of magnitude, because Wiz is scoring the WHOLE data landscape here, not the AI slice of
   // it. That gap is the framework's non-AI character showing up in the numbers, and these
   // rows keep it visible.
   seedCategory("wf-id-214", "3", "Relabel", 62, 88412, 1204),
@@ -1258,7 +1258,7 @@ export const SEED_FRAMEWORK_POLICIES: FrameworkPolicyRow[] = [
   seedPolicy("wf-id-214", "2", "2.1", "SUB-047",
     "Training bucket must not allow public write", "CRITICAL", 30, 1),
   // The 5Rs rules this product has no use for: general cloud data governance, evaluated
-  // against the whole estate. None is mapped into an OWASP framework and none has a
+  // against the whole landscape. None is mapped into an OWASP framework and none has a
   // finding on an AI asset, so the derived scope files all four out — which is the point
   // of seeding them. Without these the scope excludes nothing and a broken filter looks
   // exactly like a working one.
@@ -1314,7 +1314,7 @@ export function seedGraphDoc(syncedAt: string): GraphDoc {
  * trend chart has a line to draw without waiting days for real syncs to accumulate.
  * Counts only — the caller dates them one day apart ending at the sync it is running,
  * so the sample trend runs continuously into the live point instead of leaving a gap.
- * The last entry is the estate the seed itself produces, so the trend lands exactly on
+ * The last entry is the landscape the seed itself produces, so the trend lands exactly on
  * the distribution charted beside it.
  */
 export const SEED_TREND: Array<Record<string, number>> = [

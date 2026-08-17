@@ -263,7 +263,7 @@ export const CONFIG_RULES_TTL_MS = 30 * 86_400_000;
  * When the rule catalogue was last collected, as epoch ms; 0 when never.
  *
  * The catalogue is ~3,858 rules — about 39 pages against a battery that is otherwise 10–20
- * calls — and it describes Wiz's rule vocabulary rather than this tenant's estate. Re-walking
+ * calls — and it describes Wiz's rule vocabulary rather than this tenant's landscape. Re-walking
  * it daily would triple the sync to re-collect a list that changes when Wiz ships rules.
  */
 export function getConfigRulesSyncedAt(settings: Rec): number {
@@ -339,7 +339,7 @@ export function withSkippedSteps(settings: Rec, steps: unknown): Rec {
  * check permissions that are fine.
  *
  * It exists because the cap used to be a bare `break`: the sync reported success and the
- * missing rows were indistinguishable from an estate that does not have them.
+ * missing rows were indistinguishable from a landscape that does not have them.
  */
 export function getTruncatedSteps(settings: Rec): string[] {
   const raw = settings["last_truncated_steps"];
@@ -482,9 +482,9 @@ function coercePins(raw: unknown): ScopePins {
  * Explicit operator overrides for which 5Rs policies are in AI scope, keyed by policyId.
  * Store ONLY the decisions an operator actually made — never the resolved selection.
  *
- * scopeFiveRs (complianceScope.ts) re-derives the default every time from the estate's own
+ * scopeFiveRs (complianceScope.ts) re-derives the default every time from the landscape's own
  * hard facts (a cross-mapped policyId, an open gap finding on a synced AI asset), so a
- * policy that starts or stops meeting that derivation as the estate changes keeps tracking
+ * policy that starts or stops meeting that derivation as the landscape changes keeps tracking
  * it automatically — persisting the resolved list instead would freeze today's answer and
  * silently stop following the sync, which is the exact failure DEFAULT_FRAMEWORK_IDS above
  * exists to avoid for framework selection, one section up.

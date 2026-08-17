@@ -115,7 +115,7 @@ describe("projectGraph", () => {
     }
   });
 
-  it("the default budget holds the whole-estate view to 100 nodes", () => {
+  it("the default budget holds the whole-landscape view to 100 nodes", () => {
     // The default view (every toxic-combination asset, depth 2) with no explicit budget.
     const seedIds = [...new Set(SEED_ISSUES.filter((i) => i.status === "OPEN")
       .map((i) => i.assetId))].filter(Boolean) as string[];

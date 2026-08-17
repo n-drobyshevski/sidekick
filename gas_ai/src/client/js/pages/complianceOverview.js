@@ -6,22 +6,22 @@
 //
 // THERE WAS A FIFTH BAND, "Coverage", and what killed it is worth keeping: it enumerated
 // the frameworks in the tenant's catalogue that the sync does not collect. On the sample
-// estate that was one name. On a real tenant it was thirty-seven, printed inline in a
+// landscape that was one name. On a real tenant it was thirty-seven, printed inline in a
 // warning banner AND again as a list — the catalogue transcribed, not a finding. The fact
 // it existed to state is already in the headline strip as "Frameworks 4 of 41", which is
 // the same claim in five characters. The band's one irreplaceable part, the 5Rs scope and
 // its link into Settings, moved to the rail footnote below. Any band that reads well
-// against seeded data and collapses against a real estate has the same defect; count the
+// against seeded data and collapses against a real landscape has the same defect; count the
 // rows a real tenant would produce before adding another.
 //
 // THE HEADLINE NUMBER IS OURS, NOT WIZ'S, AND SAYS SO. Wiz scores a framework; it does not
-// score an estate. kpis.averagePosture is a mean this app takes across the frameworks that
+// score a landscape. kpis.averagePosture is a mean this app takes across the frameworks that
 // happen to be scored, and the sub-line under the hero states that plainly and names the
 // denominator — the one place on this page a number could be mistaken for a vendor figure,
 // so it is the one place that gets a disclaimer.
 //
 // THE RAIL (band B) is where the null-posture invariant most needs to hold and least gets
-// tested: every seeded framework in the dev estate happens to be scored, so an accidental
+// tested: every seeded framework in the dev landscape happens to be scored, so an accidental
 // `posturePct ?? 0` here would draw a perfectly plausible-looking bar for a framework with
 // no bar to draw, and nothing short of a real tenant with a genuinely unscored framework
 // would ever catch it. Treat the unscored branch as the one under test, not the one that
@@ -77,7 +77,7 @@ function policyKindLabel(kind) {
 function reasonBlurb(row) {
   if (row.emptyPostureReason === "NO_POLICIES") return "No check is written for this.";
   if (row.emptyPostureReason === "NO_RESOURCES") {
-    return "There is nothing in this estate for these checks to evaluate.";
+    return "There is nothing in this landscape for these checks to evaluate.";
   }
   return "Wiz did not report a status for this framework.";
 }
@@ -134,8 +134,8 @@ function renderHeadline(host, data) {
   const kpis = data.kpis || {};
   const coverage = data.coverage || {};
   const scored = kpis.averagePosture !== null && kpis.averagePosture !== undefined;
-  // Estate-wide worst — see worstFailingSeverityAcross(). Only meaningful (and only ever
-  // drawn) alongside a scored mean; an unscored estate has no bar to tint either.
+  // Landscape-wide worst — see worstFailingSeverityAcross(). Only meaningful (and only ever
+  // drawn) alongside a scored mean; an unscored landscape has no bar to tint either.
   const worstSeverity = scored ? worstFailingSeverityAcross(data.rail || []) : null;
   // Whether the rail below draws a DERIVED percentage for some row that this mean still
   // averages at Wiz's own score — computed once so the sub-line only names a framework by
@@ -147,13 +147,13 @@ function renderHeadline(host, data) {
     : null;
 
   // Banded by its own number, like every other bar on this page — see postureCell() in
-  // complianceShared.js for why fill colour stopped meaning severity. The estate mean is
+  // complianceShared.js for why fill colour stopped meaning severity. The landscape mean is
   // derived here rather than sent by Wiz, so it is banded here too rather than carrying a
-  // `postureBand` down the wire: there is no server-side node for "the estate".
+  // `postureBand` down the wire: there is no server-side node for "the landscape".
   const heroMeter = scored
     ? meter(kpis.averagePosture, {
         max: 100,
-        label: `Estate compliance posture, ${kpis.averagePosture} percent` +
+        label: `Landscape compliance posture, ${kpis.averagePosture} percent` +
           (worstSeverity ? `, worst failing severity ${worstSeverity}` : ""),
       })
     : null;
@@ -193,11 +193,11 @@ function renderHeadline(host, data) {
     el("div", { class: "comp-hero-sub" }, ...subKids),
   );
 
-  // The shared strip only ever reads `.stateCounts`, so the estate-wide roll-up — which is
+  // The shared strip only ever reads `.stateCounts`, so the landscape-wide roll-up — which is
   // not a FrameworkTree — can drive the exact same component the register uses per
   // framework. It no longer cross-filters the weakest-areas band below: that band lists
   // scored subcategories only now, so every state but one filtered to nothing. The strip
-  // is a summary here, and the estate's only count of what went unscored.
+  // is a summary here, and the landscape's only count of what went unscored.
   const strip = stateStrip({ stateCounts: coverage.stateCounts || {} });
 
   const sharedRows = data.sharedControls || [];
@@ -215,7 +215,7 @@ function renderHeadline(host, data) {
   );
 
   host.append(el("div", { class: "comp-ov-section" },
-    sectionLabel("Estate posture"),
+    sectionLabel("Landscape posture"),
     el("div", { class: "comp-header" }, hero, strip, stats)));
 }
 
@@ -254,7 +254,7 @@ function fiveRsScopeNote(row, fiveRsScope) {
  * app held). That position is reversed as of fiveRsPosture.ts: the percentage IS derived
  * here now, over the active rules in AI scope, and Wiz's own figure is stated beside it
  * because the two answer different questions — a resource-weighted rate over a narrower,
- * AI-scoped set of active rules, against Wiz's aggregation over the whole data estate —
+ * AI-scoped set of active rules, against Wiz's aggregation over the whole data landscape —
  * not because either corrects the other.
  */
 function railAriaLabel(row, meanPct, scopeNote, derived) {
@@ -271,7 +271,7 @@ function railAriaLabel(row, meanPct, scopeNote, derived) {
       `${row.name}, ${pct} percent compliant.`,
       failingClause,
     ];
-    if (meanPct !== null) sentence.push(`Estate mean ${meanPct} percent.`);
+    if (meanPct !== null) sentence.push(`Landscape mean ${meanPct} percent.`);
     if (derived) {
       sentence.push(
         `Derived from ${derived.activePolicyCount} active ` +
@@ -416,10 +416,10 @@ function renderRail(host, data, actions) {
   const key = meanPct !== null
     ? el("p", { class: "comp-rail-key" },
         el("span", { class: "comp-rail-key-swatch", "aria-hidden": "true" }),
-        `The vertical mark on every lane is the estate mean, ${meanPct}% — where each ` +
+        `The vertical mark on every lane is the landscape mean, ${meanPct}% — where each ` +
         "framework sits against it, read left to right.")
     : el("p", { class: "comp-rail-key" },
-        "No estate mean yet — no framework has a compliance posture to average.");
+        "No landscape mean yet — no framework has a compliance posture to average.");
 
   // The 5Rs scope, as a footnote to the rail rather than a control inside it.
   //
@@ -460,7 +460,7 @@ function renderRail(host, data, actions) {
 
 function renderWeakestAreas(host, data, view, actions) {
   // Every row here is scored — weakestAreas() drops what it cannot rank, and the trees it
-  // walks carry nothing unscored to begin with. The estate-wide strip above used to
+  // walks carry nothing unscored to begin with. The landscape-wide strip above used to
   // cross-filter this band by state; with three of the four states now unrepresentable in
   // it, that control is gone rather than left to resolve to an empty table.
   const rows = data.weakestAreas || [];
@@ -585,7 +585,7 @@ function renderSharedControls(host, data) {
     sectionLabel("Shared controls"),
     lede,
     table,
-    // Not cross-filtered by the estate state strip, unlike band C: a control's row does not
+    // Not cross-filtered by the landscape state strip, unlike band C: a control's row does not
     // carry a state of its own, only the subcategories it maps into do, and picking a state
     // that maps to a control only THROUGH a subcategory it may or may not still fail on
     // would be a filter that looks precise and is actually a guess. Left alone rather than

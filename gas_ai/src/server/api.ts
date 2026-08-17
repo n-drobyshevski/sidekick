@@ -447,7 +447,7 @@ export function getQueryVocabulary(p?: unknown): ApiResult {
         ...vocab,
         // ANY gets them too, over every node in the graph. `fieldsForKind("ANY")` already keeps
         // only the kind-agnostic fields, so the union is never one of things that cannot
-        // co-occur — it is "which clouds does this estate use", which is the question.
+        // co-occur — it is "which clouds does this landscape use", which is the question.
         valuesFor: { [kind]: fieldValuesFor(doc, kind) },
         // What the palette's Properties tab lists, and the type that decides which control each
         // field gets. Per-kind for the same reason the value lists are.
@@ -531,7 +531,7 @@ function readColumnSelection(raw: unknown): Array<string[] | null> | undefined {
  * preserve. `nodeOrder` leads on severity, and `severityRank(undefined)` answers
  * `SEVERITY_ORDER.length` — the WORST rank. Service accounts and buckets carry no severity of
  * their own, so a path's connective tissue always sorted last and was always cut first; every
- * edge that lost an endpoint went with it. Measured on the sample estate, dropping 39 wanted
+ * edge that lost an endpoint went with it. Measured on the sample landscape, dropping 39 wanted
  * nodes to a 30-node budget kept 2 of 34 edges and left 27 of 30 cards isolated — a 23% node cut
  * costing 94% of the edges, and a canvas of disconnected dots where the answer was a set of
  * attack paths.
@@ -708,7 +708,7 @@ function assetTableRow(n: GNode, issuesBySeverity?: Record<string, number>): Rec
       || (n.dataFindingCount ?? 0),
     projects: (n.projects ?? []).map((p) => p.name),
   };
-  // Only the rows that have open issues carry the breakdown. Most of a healthy estate has
+  // Only the rows that have open issues carry the breakdown. Most of a healthy landscape has
   // none, and an empty object per row is pure weight in the all-inventory payload.
   if (issuesBySeverity) row["issuesBySeverity"] = issuesBySeverity;
   return row;
@@ -753,7 +753,7 @@ interface AssetsModel {
  * Everything about the inventory that doesn't depend on the request: every table row, the
  * KPI totals, the AARS-severity histogram and the filter vocabulary. The aggregates are
  * computed over the whole inventory on purpose — the KPI row and the chart describe the
- * estate, never the page or the filtered subset, so they stay honest when the client only
+ * landscape, never the page or the filtered subset, so they stay honest when the client only
  * ever holds 50 rows.
  */
 function assetsModel(): AssetsModel {
@@ -834,16 +834,16 @@ function assetsModel(): AssetsModel {
       // has been synced, so the Wiz Scans area degrades to `partial` on its own instead of
       // reporting a confident zero for a question this tenant was never asked.
       // Scoped the same way the Compliance page scopes it. Not an optimisation — the two
-      // pages would otherwise report different failing-control totals for one estate, and
+      // pages would otherwise report different failing-control totals for one landscape, and
       // this KPI is the number the Wiz Scans coverage area prints beside the other one.
       frameworkPosture: complianceKpis(
         syncStore.loadPosture(),
         scopedFrameworkPolicies().policies,
       ),
       agenticIdentities: assets.filter((a) => a.identityPurpose === "AGENTIC").length,
-      // Estate-wide counts for the two risk conditions that had no total. The flags were
+      // Landscape-wide counts for the two risk conditions that had no total. The flags were
       // persisted and drawn on the graph, but `assetTableRow` strips them, so nothing
-      // could say how much of the estate they cover. `internetUnknown` is its own number
+      // could say how much of the landscape they cover. `internetUnknown` is its own number
       // on purpose: a hosted agent inherits exposure from its host and Wiz reports that
       // as undetermined, so folding it into "not exposed" under-reports.
       internetExposed: assets.filter((a) => conditionState(a, "INTERNET_EXPOSURE") === true).length,
@@ -953,7 +953,7 @@ export function getAssets(p?: unknown): ApiResult {
  * hedged number:
  *  - fewer than two points: nothing to compare against;
  *  - the scoring rule changed between them: the two points aren't on the same scale;
- *  - the latest point disagrees with the live counts, which means the estate was rescored
+ *  - the latest point disagrees with the live counts, which means the landscape was rescored
  *    (AARS Rules → Recompute) without a sync — so a delta would explain a figure that
  *    isn't the one on screen.
  */
@@ -1057,7 +1057,7 @@ export function getAssetDetail(p?: unknown): ApiResult {
  * in the inventory?) reads the whole assets tab and must not run per keystroke.
  *
  * The totals are computed over the WHOLE set on purpose — the header describes the
- * estate, never the page or the filtered subset, the same contract the inventory keeps.
+ * landscape, never the page or the filtered subset, the same contract the inventory keeps.
  */
 /**
  * The synced AI assets, as an id set — "did this finding land on something the AI graph
@@ -1077,13 +1077,13 @@ function aiAssetIdSet(): Record<string, true> {
  * ONE definition, called from both readers. `getCompliance` and `getAssets` each count
  * failing controls off these rows, and a filter applied to one and not the other is not a
  * cosmetic difference: the Compliance page and the Wiz Scans coverage area would print
- * different totals for the same estate, which is exactly the "two answers to one question"
+ * different totals for the same landscape, which is exactly the "two answers to one question"
  * failure this codebase spends its comments avoiding.
  *
  * The scope has to be derived from the FULL tree before it can be applied to a filtered
  * one — a 5Rs rule is in scope partly because some OTHER framework maps it, so the trees
  * must exist before the question can be asked. Hence a build to decide and a build to
- * render. The payload is bounded by the framework rather than the estate, so that is cheap.
+ * render. The payload is bounded by the framework rather than the landscape, so that is cheap.
  */
 function scopedFrameworkPolicies(): {
   policies: FrameworkPolicyRow[];
@@ -1251,7 +1251,7 @@ export function getConfigFindingDetail(p?: unknown): ApiResult {
  * Settings picker.
  *
  * Shipped whole rather than paged. The payload is bounded by the FRAMEWORK, not by the
- * estate — ten categories of ten subcategories is the shape of a published Top-10 list,
+ * landscape — ten categories of ten subcategories is the shape of a published Top-10 list,
  * not of a tenant — so the row count cannot run away the way the inventory's or the
  * configuration register's can, and the two-mode all/paged machinery those need would be
  * complexity bought for nothing here.
@@ -1525,7 +1525,7 @@ function problemsModel(): ProblemsModel {
 }
 
 /**
- * The estate-wide Priorities: issues ∪ findings, ranked together — the thing neither
+ * The landscape-wide Priorities: issues ∪ findings, ranked together — the thing neither
  * Toxic Combinations (issues scoped to one pattern) nor Cloud Configuration (findings
  * only) can answer. Same two-mode shape `getAssets` / `getConfigFindings` keep: under
  * `PROBLEMS_CLIENT_ALL_MAX` the browser gets every row, already ranked, and filters and
@@ -1843,11 +1843,11 @@ export function previewAarsRule(p?: unknown): ApiResult {
       // A THIRD state, distinct from both shadowed and unexercised: the row names a code
       // no derivation can raise, so it cannot fire in any tenant, not just this one.
       unreachableGapRules: unreachableGapRules(proposed),
-      // How well the draft separates the estate — the number the band counts above cannot
+      // How well the draft separates the landscape — the number the band counts above cannot
       // show, because a rule that gives every asset the same score still fills a band.
       discrimination: ruleDiscrimination(after, proposed),
       // Coverage: how many gap instances each cascade row priced, what fell through to the
-      // fallback, and the codes the estate carries. A row at 0 here is NOT the same claim
+      // fallback, and the codes the landscape carries. A row at 0 here is NOT the same claim
       // as shadowedGapRules — one can never fire, the other simply is not exercised — and
       // the page reads them as two different sentences.
       gapMatchCounts: tally.perRule,

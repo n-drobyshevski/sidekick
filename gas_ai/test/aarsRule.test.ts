@@ -290,7 +290,7 @@ describe("ruleDiscrimination", () => {
   const asset = (aars: number, sev: string, pillars: { toxic: number; compliance: number; data: number; exposure?: number }) =>
     ({ aars, aarsSeverity: sev, aarsPillars: pillars });
 
-  it("reports nothing measurable for an unscored estate", () => {
+  it("reports nothing measurable for an unscored landscape", () => {
     const d = ruleDiscrimination([{ }, { }], DEFAULT_AARS_RULE);
     expect(d.scored).toBe(0);
     expect(d.distinctScores).toBe(0);
@@ -340,9 +340,9 @@ describe("ruleDiscrimination", () => {
   it("catches the failure this whole diagnostic exists for: a pillar at cap for everyone", () => {
     // The live-path shape: pillar B pinned at 30 for every asset, so the cascade is
     // contributing nothing and the score collapses onto two values.
-    const estate = [72, 72, 72, 76, 76].map((s) =>
+    const landscape = [72, 72, 72, 76, 76].map((s) =>
       asset(s, "CRITICAL", { toxic: s === 72 ? 20 : 24, compliance: 30, data: 22 }));
-    const d = ruleDiscrimination(estate, DEFAULT_AARS_RULE);
+    const d = ruleDiscrimination(landscape, DEFAULT_AARS_RULE);
     expect(d.saturated.compliance).toBe(5);
     expect(d.saturated.compliance).toBe(d.scored); // 100% — no discrimination left
     expect(d.distinctScores).toBe(2);
@@ -420,16 +420,16 @@ describe("rulesEqual / scoringEqual", () => {
 });
 
 describe("gapMatchTally", () => {
-  // Two agents from the sample estate's shape: over-privileged, unguardrailed, one of them
+  // Two agents from the sample landscape's shape: over-privileged, unguardrailed, one of them
   // also carrying the secondary LLM04 carve-out and a tenant finding shortId.
-  const ESTATE = [
+  const LANDSCAPE = [
     ["LLM06", "NO_GUARDRAIL"],
     ["LLM04", "LLM06", "NO_GUARDRAIL"],
     ["ASI03", "SUB-082"],
   ];
 
   it("credits each gap to the FIRST row that matches it, exactly as pricing does", () => {
-    const t = gapMatchTally(DEFAULT_AARS_RULE, ESTATE);
+    const t = gapMatchTally(DEFAULT_AARS_RULE, LANDSCAPE);
     const at = (code: string, match: "exact" | "prefix") =>
       DEFAULT_AARS_RULE.gapPoints.findIndex((r) => r.match === match && r.code === code);
 
@@ -451,7 +451,7 @@ describe("gapMatchTally", () => {
     rows.push(carveOut!);
     const reordered = cleanAarsRule({ ...DEFAULT_AARS_RULE, gapPoints: rows });
 
-    const t = gapMatchTally(reordered, ESTATE);
+    const t = gapMatchTally(reordered, LANDSCAPE);
     const famAt = reordered.gapPoints.findIndex((r) => r.match === "prefix" && r.code === "LLM");
     const nowAt = reordered.gapPoints.findIndex((r) => r.match === "exact" && r.code === "LLM04");
     expect(t.perRule[nowAt]).toBe(0);
@@ -461,7 +461,7 @@ describe("gapMatchTally", () => {
   });
 
   it("scores an unexercised row at zero too — the page must tell the two apart", () => {
-    const t = gapMatchTally(DEFAULT_AARS_RULE, ESTATE);
+    const t = gapMatchTally(DEFAULT_AARS_RULE, LANDSCAPE);
     const at = DEFAULT_AARS_RULE.gapPoints.findIndex(
       (r) => r.match === "exact" && r.code === "DEPRECATED_MODEL",
     );
@@ -476,7 +476,7 @@ describe("gapMatchTally", () => {
   });
 
   it("counts distinct assets per code, which is what the picker's prevalence means", () => {
-    const t = gapMatchTally(DEFAULT_AARS_RULE, ESTATE);
+    const t = gapMatchTally(DEFAULT_AARS_RULE, LANDSCAPE);
     expect(t.byCode).toEqual({
       LLM06: 2, NO_GUARDRAIL: 2, LLM04: 1, ASI03: 1, "SUB-082": 1,
     });
@@ -487,20 +487,20 @@ describe("gapMatchTally", () => {
     expect(t.perRule[DEFAULT_AARS_RULE.gapPoints.findIndex((r) => r.code === "LLM")]).toBe(1);
   });
 
-  it("survives an empty estate, a missing list and a junk row", () => {
+  it("survives an empty landscape, a missing list and a junk row", () => {
     expect(gapMatchTally(DEFAULT_AARS_RULE, []).total).toBe(0);
     expect(gapMatchTally(DEFAULT_AARS_RULE, undefined as never).total).toBe(0);
     expect(gapMatchTally(DEFAULT_AARS_RULE, [null as never, ["", "  "]]).total).toBe(0);
   });
 
-  it("agrees with gapPointsFor about which row won, for every gap in the estate", () => {
-    const t = gapMatchTally(DEFAULT_AARS_RULE, ESTATE);
+  it("agrees with gapPointsFor about which row won, for every gap in the landscape", () => {
+    const t = gapMatchTally(DEFAULT_AARS_RULE, LANDSCAPE);
     let priced = 0;
     DEFAULT_AARS_RULE.gapPoints.forEach((row, i) => {
       priced += t.perRule[i]! * row.points;
     });
     priced += t.fallback * DEFAULT_AARS_RULE.gapFallbackPoints;
-    const direct = ESTATE.flat().reduce((sum, c) => sum + gapPointsFor(c, DEFAULT_AARS_RULE), 0);
+    const direct = LANDSCAPE.flat().reduce((sum, c) => sum + gapPointsFor(c, DEFAULT_AARS_RULE), 0);
     expect(priced).toBe(direct);
   });
 });

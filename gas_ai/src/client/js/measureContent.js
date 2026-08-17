@@ -38,7 +38,7 @@ export const MEASURE_ENTRIES = [
   {
     id: "aars-distinct-scores", measure: "distinctScores", type: "effectiveness",
     measurementMethod: "Objective",
-    goal: "Measures the MODEL's separating power, not the estate's risk — a rule can render "
+    goal: "Measures the MODEL's separating power, not the landscape's risk — a rule can render "
       + "a confident number for every asset while carrying zero ranking information.",
     formula: "new Set(scores).size, over every scored asset in the preview.",
     dataSource: "ai_assets.aars",
@@ -48,7 +48,7 @@ export const MEASURE_ENTRIES = [
   {
     id: "aars-tie-rate", measure: "tieRate", type: "effectiveness", measurementMethod: "Objective",
     goal: "Same as distinctScores, at the scale of PAIRS: 1.0 means every pair of scored "
-      + "assets shares a value, so any ordering within the estate is arbitrary.",
+      + "assets shares a value, so any ordering within the landscape is arbitrary.",
     formula: "Σ C(n_k,2) / C(N,2) over the distinct-value groups (rankStats.tieRate).",
     dataSource: "ai_assets.aars",
     reportingFormat: "AARS Rules page, rule-preview Discrimination panel.",
@@ -68,7 +68,7 @@ export const MEASURE_ENTRIES = [
     id: "aars-pillar-saturation", measure: "Pillar saturation", type: "effectiveness",
     measurementMethod: "Objective",
     goal: "Locates WHICH pillar of the model has stopped discriminating — a pillar pinned "
-      + "at its cap for most of the estate still renders a plausible total score.",
+      + "at its cap for most of the landscape still renders a plausible total score.",
     formula: "Assets at or above each pillar's cap (aarsRule.ts's ruleDiscrimination).",
     dataSource: "ai_assets.aars_pillars_json",
     reportingFormat: "AARS Rules page, rule-preview Discrimination panel.",
@@ -87,7 +87,7 @@ export const MEASURE_ENTRIES = [
   {
     id: "problem-axis-unknown-rate", measure: "Per-axis unknown rate", type: "implementation",
     measurementMethod: "Objective",
-    goal: "THE MOST IMPORTANT MEASURE ON THIS PAGE. A high value does NOT mean the estate "
+    goal: "THE MOST IMPORTANT MEASURE ON THIS PAGE. A high value does NOT mean the landscape "
       + "is safe — it means the model cannot prioritise, because the evidence one axis "
       + "needs was never collected. Reading it as reassurance is the misuse this exists to prevent.",
     formula: "Fraction of the decided population unresolved on each axis (treeDiscrimination.unknownRate).",
@@ -157,7 +157,7 @@ export const MEASURE_ENTRIES = [
   {
     id: "framework-average-posture", measure: "averagePosture", type: "effectiveness",
     measurementMethod: "Objective",
-    goal: "One number for estate-wide compliance across every synced framework — unscored "
+    goal: "One number for landscape-wide compliance across every synced framework — unscored "
       + "frameworks are excluded rather than read as zero.",
     formula: "Mean posture_pct across framework rows whose state resolves to 'scored'.",
     dataSource: "ai_framework_posture.posture_pct",

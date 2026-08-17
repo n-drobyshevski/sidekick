@@ -203,11 +203,11 @@ export async function renderSettings(main, _params, ctx) {
    * `out`; and putting a rule back to whatever its own derivation already says removes it
    * from both lists, rather than leaving a pin that merely restates the default. That keeps
    * the stored decision exactly as large as the real overrides, and it is what lets the
-   * derivation keep tracking the estate afterwards: a rule pinned in because it once had AI
+   * derivation keep tracking the landscape afterwards: a rule pinned in because it once had AI
    * findings falls back out of the pin set the instant someone returns it to "as derived",
    * instead of staying stuck at whatever was true on the day someone touched it. A flat
    * "here is every rule's chosen state" list could not do that — it would have to be pinned
-   * to KEEP tracking the estate, which is exactly backwards.
+   * to KEEP tracking the landscape, which is exactly backwards.
    */
   function fiveRsCard(s) {
     const scope = fiveRsState.scope;
@@ -258,7 +258,7 @@ export async function renderSettings(main, _params, ctx) {
     // different questions and neither should borrow the other's. Rows arrive
     // out-of-scope-first, which is what an operator reviewing a derivation wants to read
     // — but letting the groups inherit that emits them in whatever sequence the first
-    // out-of-scope rule happened to fall in (4.1, 5.1, 3.1, 2.1 on the seeded estate),
+    // out-of-scope rule happened to fall in (4.1, 5.1, 3.1, 2.1 on the seeded landscape),
     // which reads as arbitrary and does not match the register on the Compliance page, so
     // the same framework would have two different shapes in two places. Sorted on the
     // composite key so the category orders before the subcategory within it.
@@ -426,7 +426,7 @@ export async function renderSettings(main, _params, ctx) {
       el("p", { class: "small muted", style: "margin:6px 0 14px" },
         `${scope.frameworkName} · ${scope.selected} of ${scope.total} rules in scope now. ` +
         "Toggling a rule pins it; toggling it back to what is shown below clears the pin " +
-        "and lets the estate keep deciding it."),
+        "and lets the landscape keep deciding it."),
       el("div", { class: "scope-groups" }, ...groupCtrls.map((g) => g.node)),
       bar);
   }
@@ -482,7 +482,7 @@ export async function renderSettings(main, _params, ctx) {
 /**
  * Labels the PolicyScope.policyKind carries — the same three-way split complianceOverview.js
  * and complianceShared.js already spell out for the same reason each time: a Control is a
- * graph query over the estate, a cloud rule a Rego evaluation against one resource type, and
+ * graph query over the landscape, a cloud rule a Rego evaluation against one resource type, and
  * a host rule something that runs on the machine, so presenting them as one kind of thing
  * would misdescribe what a row actually checks. Kept local rather than shared because it is
  * three lines of presentation, not logic — duplicating it costs less than a shared import
