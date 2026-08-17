@@ -46,6 +46,16 @@ export interface ProjectionCounts {
   totalEdges: number;
   shownEdges: number;
   capped: boolean;
+  /**
+   * How many drawn nodes are EVIDENCE rather than matches — the identity, store and findings a
+   * query's own filters implied without naming as steps (see `WITNESSES` in graphQuery.ts).
+   *
+   * Only the query projection sets it, and only when there are any: absent means "this picture is
+   * all answer", which is a different statement from zero and is what every payload the seed/depth
+   * projection builds should make. Same posture as `Layout.clusters` and `groups`, which are also
+   * omitted rather than sent empty.
+   */
+  evidence?: number;
 }
 
 export interface Projection {

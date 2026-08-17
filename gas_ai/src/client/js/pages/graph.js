@@ -1037,6 +1037,12 @@ export async function renderGraphPage(main, params, _ctx) {
    * Both caveats are stated rather than implied: a capped row list still reports the true
    * total, and a truncated enumeration says the total is a floor instead of quietly printing
    * a number it cannot stand behind.
+   *
+   * THE THIRD CAVEAT IS EVIDENCE, and it is the one this count could not previously survive. A
+   * filter naming a risk property makes the canvas draw the subgraph that proves it — the identity
+   * and the classified store behind "reaches classified data" — so "11 results" now sits beside 36
+   * cards. Reconciling that is not the reader's job, and the pill is not decoration: without it the
+   * honest conclusion from the screen is that the count is wrong.
    */
   function updateCount(payload) {
     if (!payload || payload.empty) {
@@ -1058,6 +1064,16 @@ export async function renderGraphPage(main, params, _ctx) {
         "Every match is counted, but only the first rows are shown.",
         "They are ordered worst-first, so the top of the list is the interesting end.",
       ], { label: "Why some rows are not listed" }));
+    }
+    // Appended, not an `else` branch: how many results there are and whether their evidence is
+    // drawn are independent facts, and a capped view with evidence has both to report.
+    const evidence = Number((payload.counts || {}).evidence) || 0;
+    if (evidence && state.view !== "table") {
+      countNote.append(helpTip(el("span", { class: "pill neutral" }, "+" + evidence + " evidence"), [
+        "The canvas also draws the proof for each filter in this query — the identity, "
+          + "the classified store, the exposure node — so a result is a path rather than a card.",
+        "These nodes are not rows: the table lists what matched, one row per match.",
+      ], { label: "Why the canvas holds more nodes than results" }));
     }
   }
 

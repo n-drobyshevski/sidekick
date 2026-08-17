@@ -97,6 +97,7 @@ import {
   fieldValuesFor,
   fieldsForKind,
   type QueryKind,
+  type QueryResult,
   queryVocabulary,
   runQuery,
   validateQuery,
@@ -453,7 +454,7 @@ export function runGraphQuery(p?: unknown): ApiResult {
       const doc = syncStore.loadGraphDoc();
       if (!doc) return { empty: true };
       const result = runQuery(doc, query, { columns });
-      const projection = inducedProjection(doc, result.nodeIds, result.edgeIds, maxNodes);
+      const projection = inducedProjection(doc, result, maxNodes);
       return {
         rows: result.rows,
         groups: result.groups,
@@ -480,41 +481,90 @@ function readColumnSelection(raw: unknown): Array<string[] | null> | undefined {
 }
 
 /**
- * The matched paths as a drawable subgraph.
+ * The matched paths, and the evidence for their filters, as a drawable subgraph.
  *
  * `projectGraph` cannot do this job: it answers "what is within N hops of these seeds", and the
  * whole point of a query is that the answer is a specific set of paths rather than a
  * neighbourhood. So the projection is assembled directly — but in the SAME shape, so
  * `layoutGraph` takes it unchanged.
  *
- * Over budget, nodes are dropped worst-last by `nodeOrder` (the canvas's own ordering, so a
- * capped view keeps the interesting end) and any edge losing an endpoint goes with them. No
- * SUMMARY stubs: a "+N more" pill collapses a fan-out under one parent, and a truncated path
+ * THE UNIT OF ADMISSION IS THE PATH, NOT THE NODE. This used to sort every wanted node by
+ * `nodeOrder` and slice at the budget, and that quietly destroyed the picture it was trying to
+ * preserve. `nodeOrder` leads on severity, and `severityRank(undefined)` answers
+ * `SEVERITY_ORDER.length` — the WORST rank. Service accounts and buckets carry no severity of
+ * their own, so a path's connective tissue always sorted last and was always cut first; every
+ * edge that lost an endpoint went with it. Measured on the sample estate, dropping 39 wanted
+ * nodes to a 30-node budget kept 2 of 34 edges and left 27 of 30 cards isolated — a 23% node cut
+ * costing 94% of the edges, and a canvas of disconnected dots where the answer was a set of
+ * attack paths.
+ *
+ * So each path is admitted whole or not at all, worst-first (the order `runQuery` already
+ * enumerates roots in), stopping at the first that will not fit. This is the same trade
+ * `projectGraph` makes with its seed waves — "the budget is spent on paths first" — and it makes
+ * the drawn set a PREFIX of the rows, so "showing the first N" is literally true of both views.
+ *
+ * Two rules the prefix has to bend for:
+ *   - The first path is admitted even if it alone exceeds the budget, so the canvas is never
+ *     empty while the table has rows. It is truncated matched-nodes-first, which is the one
+ *     place `witnessNodeIds` being a separate set earns its keep: evidence is what to drop when
+ *     something must be.
+ *   - `nodes.length <= maxNodes` still holds. That ceiling is a documented promise of every
+ *     payload, and a cluster that will not fit is a reason to stop rather than to overspend.
+ *
+ * No SUMMARY stubs: a "+N more" pill collapses a fan-out under one parent, and a truncated path
  * set has no parent to hang one off — the counts line says what was dropped instead.
  */
 function inducedProjection(
   doc: GraphDoc,
-  nodeIds: string[],
-  edgeIds: string[],
+  result: Pick<QueryResult,
+    "nodeIds" | "edgeIds" | "witnessNodeIds" | "witnessEdgeIds" | "paths">,
   maxNodes: number,
 ): Projection {
-  const wantNodes = new Set(nodeIds);
-  const wantEdges = new Set(edgeIds);
-  const all = doc.nodes.filter((n) => wantNodes.has(n.id)).sort(nodeOrder);
-  const nodes = all.slice(0, maxNodes);
-  const admitted = new Set(nodes.map((n) => n.id));
+  const wantNodes = new Set([...result.nodeIds, ...result.witnessNodeIds]);
+  const wantEdges = new Set([...result.edgeIds, ...result.witnessEdgeIds]);
+  const isWitness = new Set(result.witnessNodeIds);
+
+  const admitted = new Set<string>();
+  for (const path of result.paths) {
+    const fresh = path.filter((id) => wantNodes.has(id) && !admitted.has(id));
+    if (!fresh.length) continue;                       // wholly covered by an earlier path
+    if (admitted.size + fresh.length <= maxNodes) {
+      for (const id of fresh) admitted.add(id);
+      continue;
+    }
+    // Does not fit. Stop — unless nothing has been admitted at all, in which case take what
+    // this one path can spare, its matched nodes ahead of its evidence.
+    if (!admitted.size) {
+      const room = fresh
+        .slice()
+        .sort((a, b) => Number(isWitness.has(a)) - Number(isWitness.has(b)))
+        .slice(0, maxNodes);
+      for (const id of room) admitted.add(id);
+    }
+    break;
+  }
+
+  // Sorted by `nodeOrder` on the way out, as this has always been: the admission order is a
+  // budget decision and the payload order is the canvas's own worst-first reading. Under budget
+  // the two produce exactly the array they produced before this function knew about paths.
+  const nodes = doc.nodes.filter((n) => admitted.has(n.id)).sort(nodeOrder);
   const allEdges = doc.edges.filter((e) => wantEdges.has(e.id));
   const edges = allEdges.filter((e) => admitted.has(e.src) && admitted.has(e.dst));
+  // Counted, because the canvas now draws nodes the table does not list and a reader deserves to
+  // be told rather than left to reconcile "11 results" against 36 cards. Omitted when there is no
+  // evidence at all, which keeps every unfiltered payload byte-identical to what it was.
+  const evidence = nodes.filter((n) => isWitness.has(n.id)).length;
   return {
     nodes,
     edges,
     summaries: [],
     counts: {
-      totalNodes: all.length,
+      totalNodes: wantNodes.size,
       shownNodes: nodes.length,
       totalEdges: allEdges.length,
       shownEdges: edges.length,
-      capped: nodes.length < all.length,
+      capped: nodes.length < wantNodes.size,
+      ...(evidence ? { evidence } : {}),
     },
   };
 }
