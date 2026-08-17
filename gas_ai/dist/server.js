@@ -5417,14 +5417,14 @@ var Server = (() => {
   function projectGraph(doc, opts) {
     var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j;
     const byId = indexBy(doc.nodes, (n) => n.id);
-    const adjacency = /* @__PURE__ */ new Map();
+    const adjacency2 = /* @__PURE__ */ new Map();
     const sortedEdges = [...doc.edges].sort(cmpBy((e) => e.id));
     for (const edge2 of sortedEdges) {
       if (!byId.has(edge2.src) || !byId.has(edge2.dst)) continue;
-      if (!adjacency.has(edge2.src)) adjacency.set(edge2.src, []);
-      if (!adjacency.has(edge2.dst)) adjacency.set(edge2.dst, []);
-      adjacency.get(edge2.src).push({ edge: edge2, otherId: edge2.dst });
-      adjacency.get(edge2.dst).push({ edge: edge2, otherId: edge2.src });
+      if (!adjacency2.has(edge2.src)) adjacency2.set(edge2.src, []);
+      if (!adjacency2.has(edge2.dst)) adjacency2.set(edge2.dst, []);
+      adjacency2.get(edge2.src).push({ edge: edge2, otherId: edge2.dst });
+      adjacency2.get(edge2.dst).push({ edge: edge2, otherId: edge2.src });
     }
     const maxNodes = (_a5 = opts.maxNodes) != null ? _a5 : MAX_NODES_DEFAULT;
     const maxEdges = (_b = opts.maxEdges) != null ? _b : MAX_EDGES_DEFAULT;
@@ -5460,7 +5460,7 @@ var Server = (() => {
         const { id, depth } = queue.shift();
         if (depth >= opts.depth && !expand.has(id)) continue;
         const groups = /* @__PURE__ */ new Map();
-        for (const { otherId } of (_d = adjacency.get(id)) != null ? _d : []) {
+        for (const { otherId } of (_d = adjacency2.get(id)) != null ? _d : []) {
           if (shown.has(otherId)) continue;
           const other = byId.get(otherId);
           if (!passesFilters(other, opts.filters)) continue;
@@ -5510,7 +5510,7 @@ var Server = (() => {
               summaryCount: hidden.length,
               memberIds: hidden.map((m) => m.id)
             });
-            const viaEdge = (_i = ((_h = adjacency.get(id)) != null ? _h : []).find(
+            const viaEdge = (_i = ((_h = adjacency2.get(id)) != null ? _h : []).find(
               (a) => a.otherId === hidden[0].id
             )) == null ? void 0 : _i.edge;
             summaryEdges.push({
@@ -5553,7 +5553,7 @@ var Server = (() => {
   }
 
   // src/domain/graphLayout.ts
-  var LAYOUT_MODES = ["lanes", "grouped", "rows"];
+  var LAYOUT_MODES = ["lanes", "grouped", "rows", "organic", "radial"];
   var GROUP_KEYS = ["asset", "combo", "project", "cloud", "kind", "severity"];
   var SORT_KEYS = ["smart", "severity", "aars", "name"];
   var GROUP_NONE = "__none__";
@@ -5657,6 +5657,45 @@ var Server = (() => {
       if (parent) parentOf.set(s.id, parent);
     }
     return parentOf;
+  }
+  function adjacency(p) {
+    const adj = /* @__PURE__ */ new Map();
+    for (const e of [...p.edges].sort((a, b) => a.id < b.id ? -1 : 1)) {
+      if (!adj.has(e.src)) adj.set(e.src, []);
+      if (!adj.has(e.dst)) adj.set(e.dst, []);
+      adj.get(e.src).push(e.dst);
+      adj.get(e.dst).push(e.src);
+    }
+    return adj;
+  }
+  function hopDepth(p) {
+    var _a5, _b, _c;
+    const { hubs } = assignToHubs(p, parentIndex(p));
+    const root = (_b = (_a5 = hubs[0]) != null ? _a5 : p.nodes[0]) != null ? _b : null;
+    const depth = /* @__PURE__ */ new Map();
+    if (!root) return { depth, root: null, max: 0 };
+    const adj = adjacency(p);
+    depth.set(root.id, 0);
+    const queue = [root.id];
+    let max = 0;
+    for (let head = 0; head < queue.length; head++) {
+      const id = queue[head];
+      const d = depth.get(id) + 1;
+      for (const next of (_c = adj.get(id)) != null ? _c : []) {
+        if (depth.has(next)) continue;
+        depth.set(next, d);
+        max = Math.max(max, d);
+        queue.push(next);
+      }
+    }
+    const orphanRing = max + 1;
+    let used = max;
+    for (const n of p.nodes) {
+      if (depth.has(n.id)) continue;
+      depth.set(n.id, orphanRing);
+      used = orphanRing;
+    }
+    return { depth, root, max: used };
   }
   function componentRoots(p) {
     const parent = /* @__PURE__ */ new Map();
@@ -5866,6 +5905,8 @@ var Server = (() => {
     var _a5;
     const mode = (_a5 = opts.mode) != null ? _a5 : "rows";
     if (mode === "grouped") return layoutGrouped(p, opts);
+    if (mode === "radial") return layoutRadial(p, opts);
+    if (mode === "organic") return layoutOrganic(p, opts);
     return layoutLanes(p, opts, mode !== "lanes");
   }
   function layoutLanes(p, opts, horizontal) {
@@ -6160,14 +6201,7 @@ var Server = (() => {
       hubs = p.nodes.filter((n) => AI_ASSET_KINDS.includes(n.kind));
     }
     hubs = [...hubs].sort(cmp2);
-    const adj = /* @__PURE__ */ new Map();
-    const sortedEdges = [...p.edges].sort((a, b) => a.id < b.id ? -1 : 1);
-    for (const e of sortedEdges) {
-      if (!adj.has(e.src)) adj.set(e.src, []);
-      if (!adj.has(e.dst)) adj.set(e.dst, []);
-      adj.get(e.src).push(e.dst);
-      adj.get(e.dst).push(e.src);
-    }
+    const adj = adjacency(p);
     const hubOf = /* @__PURE__ */ new Map();
     const queue = [];
     for (const h of hubs) {
@@ -6292,6 +6326,203 @@ var Server = (() => {
       mode: "grouped",
       groups
     };
+  }
+  var FREE_W = CELL_W;
+  var FREE_H = CELL_H;
+  var RING_STEP = 220;
+  var FR_PAIR_BUDGET = 6e3;
+  var FR_MIN_STEPS = 30;
+  var FR_MAX_STEPS = 120;
+  var FR_GRAVITY = 0.06;
+  var SEPARATE_PASSES = 24;
+  function layoutRadial(p, opts) {
+    var _a5, _b, _c, _d;
+    const margin = (_a5 = opts.margin) != null ? _a5 : 120;
+    const cmp2 = comparator((_b = opts.sort) != null ? _b : "smart");
+    const { depth, max } = hopDepth(p);
+    const rings = Array.from({ length: max + 1 }, () => []);
+    for (const node2 of p.nodes) rings[(_c = depth.get(node2.id)) != null ? _c : 0].push(node2);
+    for (const ring of rings) ring.sort(cmp2);
+    const fits = (count2) => count2 < 2 ? 0 : FREE_W / (2 * Math.sin(Math.PI / count2));
+    const radii = [];
+    let prev = 0;
+    for (let d = 0; d < rings.length; d++) {
+      if (d === 0) {
+        prev = fits(rings[0].length);
+        radii.push(round2(prev));
+        continue;
+      }
+      prev = Math.max(prev + RING_STEP, fits(rings[d].length));
+      radii.push(round2(prev));
+    }
+    const outer = (_d = radii[radii.length - 1]) != null ? _d : 0;
+    const half = outer + FREE_W / 2;
+    const cx = round2(margin + half);
+    const cy = round2(margin + outer + FREE_H / 2);
+    const nodes = [];
+    rings.forEach((ring, d) => {
+      if (!ring.length) return;
+      if (d === 0 && ring.length === 1) {
+        nodes.push({ id: ring[0].id, x: cx, y: cy, lane: 0 });
+        return;
+      }
+      const r = radii[d];
+      const step = Math.PI * 2 / ring.length;
+      ring.forEach((node2, k) => {
+        const a = -Math.PI / 2 + k * step;
+        nodes.push({
+          id: node2.id,
+          x: round2(cx + r * Math.cos(a)),
+          y: round2(cy + r * Math.sin(a)),
+          lane: d
+        });
+      });
+    });
+    return {
+      nodes,
+      width: round2(cx + half + margin),
+      height: round2(cy + outer + FREE_H / 2 + margin),
+      // Reported for the renderer's edge routing and keyboard steps, not used for placement here.
+      laneGap: RING_STEP,
+      rowGap: FREE_H,
+      mode: "radial"
+    };
+  }
+  function layoutOrganic(p, opts) {
+    var _a5;
+    const margin = (_a5 = opts.margin) != null ? _a5 : 120;
+    const n = p.nodes.length;
+    const seed = layoutRadial(p, { ...opts, margin: 0 });
+    const at = new Map(seed.nodes.map((s) => [s.id, { x: s.x, y: s.y }]));
+    const lane = new Map(seed.nodes.map((s) => [s.id, s.lane]));
+    const ids = p.nodes.map((node2) => node2.id).filter((id) => at.has(id));
+    if (ids.length > 1) {
+      const area = Math.max(seed.width, 1) * Math.max(seed.height, 1);
+      const k = Math.sqrt(area / ids.length);
+      const cx = seed.width / 2;
+      const cy = seed.height / 2;
+      const steps = Math.min(FR_MAX_STEPS, Math.max(FR_MIN_STEPS, Math.round(FR_PAIR_BUDGET / n)));
+      const disp = new Map(ids.map((id) => [id, { x: 0, y: 0 }]));
+      const springs = p.edges.filter((e) => at.has(e.src) && at.has(e.dst) && e.src !== e.dst).map((e) => [e.src, e.dst]);
+      for (let step = 0; step < steps; step++) {
+        const temp = k / 10 * (1 - step / steps);
+        for (const d of disp.values()) {
+          d.x = 0;
+          d.y = 0;
+        }
+        for (let i = 0; i < ids.length; i++) {
+          const a = at.get(ids[i]);
+          const da = disp.get(ids[i]);
+          for (let j = i + 1; j < ids.length; j++) {
+            const b = at.get(ids[j]);
+            let dx = a.x - b.x;
+            let dy = a.y - b.y;
+            let dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < 0.01) {
+              dx = i - j || 1;
+              dy = 1;
+              dist = Math.sqrt(dx * dx + dy * dy);
+            }
+            const force = k * k / dist;
+            const ux = dx / dist * force;
+            const uy = dy / dist * force;
+            da.x += ux;
+            da.y += uy;
+            const db = disp.get(ids[j]);
+            db.x -= ux;
+            db.y -= uy;
+          }
+        }
+        for (const [src, dst] of springs) {
+          const a = at.get(src);
+          const b = at.get(dst);
+          const dx = a.x - b.x;
+          const dy = a.y - b.y;
+          const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 0.01);
+          const force = dist * dist / k;
+          const ux = dx / dist * force;
+          const uy = dy / dist * force;
+          disp.get(src).x -= ux;
+          disp.get(src).y -= uy;
+          disp.get(dst).x += ux;
+          disp.get(dst).y += uy;
+        }
+        for (const id of ids) {
+          const a = at.get(id);
+          const d = disp.get(id);
+          d.x += (cx - a.x) * FR_GRAVITY * k;
+          d.y += (cy - a.y) * FR_GRAVITY * k;
+          const len = Math.sqrt(d.x * d.x + d.y * d.y);
+          if (len < 0.01) continue;
+          const travel = Math.min(len, temp);
+          a.x += d.x / len * travel;
+          a.y += d.y / len * travel;
+        }
+      }
+    }
+    separate(ids, at);
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const id of ids) {
+      const a = at.get(id);
+      minX = Math.min(minX, a.x);
+      minY = Math.min(minY, a.y);
+      maxX = Math.max(maxX, a.x);
+      maxY = Math.max(maxY, a.y);
+    }
+    if (!ids.length) {
+      minX = 0;
+      minY = 0;
+      maxX = 0;
+      maxY = 0;
+    }
+    const offX = margin + FREE_W / 2 - minX;
+    const offY = margin + FREE_H / 2 - minY;
+    return {
+      nodes: ids.map((id) => {
+        var _a6;
+        return {
+          id,
+          x: round2(at.get(id).x + offX),
+          y: round2(at.get(id).y + offY),
+          lane: (_a6 = lane.get(id)) != null ? _a6 : 0
+        };
+      }),
+      width: round2(maxX - minX + FREE_W + margin * 2),
+      height: round2(maxY - minY + FREE_H + margin * 2),
+      laneGap: RING_STEP,
+      rowGap: FREE_H,
+      mode: "organic"
+    };
+  }
+  function separate(ids, at) {
+    for (let pass = 0; pass < SEPARATE_PASSES; pass++) {
+      let moved = false;
+      for (let i = 0; i < ids.length; i++) {
+        const a = at.get(ids[i]);
+        for (let j = i + 1; j < ids.length; j++) {
+          const b = at.get(ids[j]);
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const overlapX = FREE_W - Math.abs(dx);
+          const overlapY = FREE_H - Math.abs(dy);
+          if (overlapX <= 0 || overlapY <= 0) continue;
+          moved = true;
+          if (overlapX / FREE_W < overlapY / FREE_H) {
+            const push = overlapX / 2 * (dx < 0 ? -1 : 1);
+            a.x -= push;
+            b.x += push;
+          } else {
+            const push = overlapY / 2 * (dy < 0 ? -1 : 1);
+            a.y -= push;
+            b.y += push;
+          }
+        }
+      }
+      if (!moved) return;
+    }
   }
 
   // src/domain/graphApiParams.ts
@@ -7904,7 +8135,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "e46728f51926" : "dev";
+  var BUILD_ID = true ? "95c4018e07a5" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }

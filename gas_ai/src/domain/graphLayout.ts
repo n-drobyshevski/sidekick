@@ -1,4 +1,4 @@
-// Deterministic graph layouts. Three modes, no forces, no randomness:
+// Deterministic graph layouts. Five modes, no randomness anywhere:
 //
 // - "rows" (default): the Wiz security-graph visual language, transposed to run
 //   top-to-bottom instead of left-to-right — 5 category swimlanes become
@@ -16,6 +16,21 @@
 //   key is hub-and-spoke — each AI agent sits at the center of its block with
 //   its BFS-nearest neighbors (issues, identities, data, compute) on rings
 //   around it.
+// - "radial": the whole estate as one ring system. The worst-risk AI agent is
+//   the center and every other node sits on the ring of its BFS distance from
+//   it, so a ring IS "n hops from the thing most likely to hurt you". Ring
+//   radii come from occupancy, never from a constant: the circumference has to
+//   fit its own cards, which is what makes the layout overlap-free at any size.
+// - "organic": force-directed — repulsion between every pair, springs along the
+//   edges, weak gravity toward the center. Clusters emerge from the edges
+//   instead of being declared, which is what finds structure the five fixed
+//   category bands cannot express.
+//
+// "organic" IS forces, and this header used to say there were none. What it was
+// really promising is DETERMINISM — "the same URL always draws the same picture"
+// — and that survives intact: the seed is each node's radial ring position, a
+// computed order, and `Math.random` appears nowhere in this file. Two calls with
+// the same projection and options are byte-identical, which a test asserts.
 //
 // All are reduced-motion friendly by construction (nothing animates), and all
 // support explicit row-ordering ("sort") so the same URL always draws the same
@@ -43,7 +58,7 @@ import type { Projection } from "./graphProject";
 import { nodeOrder } from "./graphProject";
 import { comboGroupById, REGISTER_GROUPS } from "./toxicCombos";
 
-export const LAYOUT_MODES = ["lanes", "grouped", "rows"] as const;
+export const LAYOUT_MODES = ["lanes", "grouped", "rows", "organic", "radial"] as const;
 export type LayoutMode = (typeof LAYOUT_MODES)[number];
 
 export const GROUP_KEYS = ["asset", "combo", "project", "cloud", "kind", "severity"] as const;
@@ -110,8 +125,10 @@ export interface LayoutNode {
   id: string;
   x: number;
   y: number;
-  /** Lane index in "lanes" mode; group index in "grouped" mode (keyboard nav
-   *  walks this axis either way). */
+  /** Lane index in "lanes"/"rows" mode; group index in "grouped"; hops from the hub in
+   *  "radial"/"organic". Whatever the mode calls it, it is the axis keyboard nav walks with
+   *  two of its four arrows — so every mode has to answer with something a reader could
+   *  step along and recognise, never a filler zero. */
   lane: number;
   /** Cluster rank in lanes/rows mode under the smart order — 0 is the worst-severity
    *  cluster, the last rank is the pooled bucket of lone nodes. Absent when clustering
@@ -243,6 +260,74 @@ function parentIndex(p: Projection): Map<string, GNode> {
     if (parent) parentOf.set(s.id, parent);
   }
   return parentOf;
+}
+
+/**
+ * Undirected adjacency over the projected subgraph.
+ *
+ * EDGES ARE WALKED IN ID ORDER, which is not decoration: every BFS built on this map reaches
+ * ties in a fixed sequence, so "which hub claimed this node" and "which ring it landed on" are
+ * facts about the graph rather than about whatever order the projection happened to emit. The
+ * same sort appears in `componentRoots` and `parentIndex` for the same reason.
+ */
+function adjacency(p: Projection): Map<string, string[]> {
+  const adj = new Map<string, string[]>();
+  for (const e of [...p.edges].sort((a, b) => (a.id < b.id ? -1 : 1))) {
+    if (!adj.has(e.src)) adj.set(e.src, []);
+    if (!adj.has(e.dst)) adj.set(e.dst, []);
+    adj.get(e.src)!.push(e.dst);
+    adj.get(e.dst)!.push(e.src);
+  }
+  return adj;
+}
+
+/**
+ * Hops from the estate's worst-risk AI agent — the axis "radial" and "organic" are both built on.
+ *
+ * The root is `assignToHubs`' first hub, which that function has already sorted worst-first by
+ * `nodeOrder`; where the projection holds no AI asset at all it falls back to the first node in
+ * projection order, which is itself severity-sorted. So ring 0 is never an arbitrary node.
+ *
+ * A node BFS cannot reach gets `maxDepth + 1` rather than 0. Filing the unreachable at the centre
+ * would put the nodes with no path to the risk in the position the layout reserves for its
+ * source; one ring beyond the last real hop says what they are. In this product that set is
+ * normally small — see `clusterRanks` on why an unfiltered view is usually one component.
+ *
+ * Returned depths double as `LayoutNode.lane`, which is what keeps the canvas walkable by
+ * keyboard: `graphView.js` moves along `lane` with two arrows and follows edges with the other
+ * two, so the lane axis becomes "distance from the hub" instead of a category band.
+ */
+function hopDepth(p: Projection): { depth: Map<string, number>; root: GNode | null; max: number } {
+  const { hubs } = assignToHubs(p, parentIndex(p));
+  const root = hubs[0] ?? p.nodes[0] ?? null;
+  const depth = new Map<string, number>();
+  if (!root) return { depth, root: null, max: 0 };
+
+  const adj = adjacency(p);
+  depth.set(root.id, 0);
+  const queue = [root.id];
+  let max = 0;
+  for (let head = 0; head < queue.length; head++) {
+    const id = queue[head];
+    const d = depth.get(id)! + 1;
+    for (const next of adj.get(id) ?? []) {
+      if (depth.has(next)) continue;
+      depth.set(next, d);
+      max = Math.max(max, d);
+      queue.push(next);
+    }
+  }
+  // The unreachable ring is `max + 1` even when nothing is unreachable — `max` below is the
+  // outermost ring that actually HAS occupants, computed after the fill, so an empty ring is
+  // never sized or drawn.
+  const orphanRing = max + 1;
+  let used = max;
+  for (const n of p.nodes) {
+    if (depth.has(n.id)) continue;
+    depth.set(n.id, orphanRing);
+    used = orphanRing;
+  }
+  return { depth, root, max: used };
 }
 
 /** Connected components of the projected subgraph, as a node id → root id map. */
@@ -547,6 +632,8 @@ function wrapRun(
 export function layoutGraph(p: Projection, opts: LayoutOptions = {}): Layout {
   const mode = opts.mode ?? "rows";
   if (mode === "grouped") return layoutGrouped(p, opts);
+  if (mode === "radial") return layoutRadial(p, opts);
+  if (mode === "organic") return layoutOrganic(p, opts);
   return layoutLanes(p, opts, mode !== "lanes"); // horizontal unless explicitly "lanes"
 }
 
@@ -929,14 +1016,7 @@ function assignToHubs(
   }
   hubs = [...hubs].sort(cmp);
 
-  const adj = new Map<string, string[]>();
-  const sortedEdges = [...p.edges].sort((a, b) => (a.id < b.id ? -1 : 1));
-  for (const e of sortedEdges) {
-    if (!adj.has(e.src)) adj.set(e.src, []);
-    if (!adj.has(e.dst)) adj.set(e.dst, []);
-    adj.get(e.src)!.push(e.dst);
-    adj.get(e.dst)!.push(e.src);
-  }
+  const adj = adjacency(p);
 
   const hubOf = new Map<string, string>();
   const queue: string[] = [];
@@ -1091,4 +1171,293 @@ function layoutGrouped(p: Projection, opts: LayoutOptions): Layout {
     mode: "grouped",
     groups,
   };
+}
+
+// ------------------------------------------------------------ radial / organic
+
+// Card footprint plus the gutter a reader needs between two of them. The renderer draws
+// 196×56 (graphNode.js NODE_W/NODE_H); these are what the two free-form layouts keep every
+// pair at least, and they are deliberately the grouped-mode cell size — one number for
+// "how much room does a card want", not a second opinion about it.
+const FREE_W = CELL_W;
+const FREE_H = CELL_H;
+// The narrowest a ring may sit inside the one before it.
+//
+// Two cards overlap only when |dx| < 196 AND |dy| < 56, which together put them closer than
+// sqrt(196² + 56²) ≈ 204 — so any pair at least that far apart is clear whatever direction it
+// lies in. Two points on concentric circles are never closer than the radial gap, so a step past
+// 204 makes cross-ring overlap impossible; 220 takes it with a gutter. This floor only binds on
+// sparse rings, since a busy ring is pushed further out by its own occupancy anyway.
+const RING_STEP = 220;
+// Repulsion is all-pairs, so one organic pass costs n². Iterations are traded against that so
+// the 400-node ceiling (MAX_NODES_CEILING) costs about what the 100-node default does; the
+// clamp keeps a tiny graph from being iterated pointlessly and a huge one from being iterated
+// too few times to settle at all.
+const FR_PAIR_BUDGET = 6000;
+const FR_MIN_STEPS = 30;
+const FR_MAX_STEPS = 120;
+// How hard the centre pulls, relative to a spring. Fruchterman–Reingold says nothing about
+// disconnected nodes, so without this term they are pushed outward by repulsion alone and never
+// pulled back — a handful of orphans would fly to the far corners and take the canvas bounds,
+// and therefore the zoom, with them.
+const FR_GRAVITY = 0.06;
+// Overlap resolution after the forces settle. FR gives no non-overlap guarantee at all — it
+// treats nodes as points — so these passes are what actually hold the invariant every layout in
+// this file is tested for. Each pass separates along the axis of LEAST overlap, which moves a
+// pair the shortest distance that frees it.
+const SEPARATE_PASSES = 24;
+
+/**
+ * Ring `d` holds every node `d` hops from the estate's worst-risk agent.
+ *
+ * THE RADIUS COMES FROM THE OCCUPANCY, and that is the whole design. A ring of 30 nodes at a
+ * constant radius overlaps; a constant radius large enough for 30 leaves a ring of 3 floating in
+ * the middle of nowhere. Sizing each ring to exactly what it holds makes the layout overlap-free
+ * for any graph with no cap on ring size, which is what lets this run on the whole 400-node
+ * ceiling rather than on a hand-tuned sample.
+ *
+ * The spacing constraint is on the CHORD between neighbours, not the arc: `2r·sin(π/n) ≥ FREE_W`.
+ * Arc length is the tempting formula and it is wrong — the two agree only for large n, and on a
+ * ring of two the arc is π/2 times the gap that actually exists, which is how a ring that
+ * measured as spaced still drew one card over another.
+ *
+ * Nodes are placed in `sort` order, clockwise from 12 o'clock — the same convention
+ * `radialBlock` uses for the hub-and-spoke groups, so the two radial pictures in this product
+ * read the same way round.
+ */
+function layoutRadial(p: Projection, opts: LayoutOptions): Layout {
+  const margin = opts.margin ?? 120;
+  const cmp = comparator(opts.sort ?? "smart");
+  const { depth, max } = hopDepth(p);
+
+  const rings: GNode[][] = Array.from({ length: max + 1 }, () => []);
+  for (const node of p.nodes) rings[depth.get(node.id) ?? 0].push(node);
+  for (const ring of rings) ring.sort(cmp);
+
+  /** The smallest radius on which `n` cards fit side by side, by chord. One node needs none. */
+  const fits = (count: number) => (count < 2 ? 0 : FREE_W / (2 * Math.sin(Math.PI / count)));
+
+  // Radii first, so the canvas can be sized before anything is placed.
+  const radii: number[] = [];
+  let prev = 0;
+  for (let d = 0; d < rings.length; d++) {
+    if (d === 0) {
+      // Ring 0 is the root alone unless the projection has no edges at all, in which case
+      // everything is an orphan out on the last ring and this one is empty.
+      prev = fits(rings[0].length);
+      radii.push(round2(prev));
+      continue;
+    }
+    prev = Math.max(prev + RING_STEP, fits(rings[d].length));
+    radii.push(round2(prev));
+  }
+
+  const outer = radii[radii.length - 1] ?? 0;
+  const half = outer + FREE_W / 2;
+  const cx = round2(margin + half);
+  const cy = round2(margin + outer + FREE_H / 2);
+
+  const nodes: LayoutNode[] = [];
+  rings.forEach((ring, d) => {
+    if (!ring.length) return;
+    if (d === 0 && ring.length === 1) {
+      nodes.push({ id: ring[0].id, x: cx, y: cy, lane: 0 });
+      return;
+    }
+    const r = radii[d];
+    const step = (Math.PI * 2) / ring.length;
+    ring.forEach((node, k) => {
+      const a = -Math.PI / 2 + k * step;
+      nodes.push({
+        id: node.id,
+        x: round2(cx + r * Math.cos(a)),
+        y: round2(cy + r * Math.sin(a)),
+        lane: d,
+      });
+    });
+  });
+
+  return {
+    nodes,
+    width: round2(cx + half + margin),
+    height: round2(cy + outer + FREE_H / 2 + margin),
+    // Reported for the renderer's edge routing and keyboard steps, not used for placement here.
+    laneGap: RING_STEP,
+    rowGap: FREE_H,
+    mode: "radial",
+  };
+}
+
+/**
+ * Force-directed, and reproducible.
+ *
+ * Fruchterman–Reingold: every pair repels by `k²/d`, every edge pulls by `d²/k`, and a
+ * temperature caps how far a node may travel per step, cooling linearly to nothing so the
+ * picture settles instead of oscillating. Two departures from the paper, both because a security
+ * projection is not the connected graph FR assumes:
+ *
+ * - THE SEED IS THE RADIAL LAYOUT, not random placement. That is what makes this deterministic
+ *   — the property the file header trades on — and it also starts the solver from a picture that
+ *   already encodes hop distance, so the forces refine real structure rather than untangling an
+ *   arbitrary one.
+ * - GRAVITY toward the centre. FR pushes disconnected nodes apart forever; this product's views
+ *   routinely carry a few orphans, and without a restoring term they leave for the corners and
+ *   drag the canvas bounds — and the fit-to-view zoom — out with them.
+ *
+ * Then `separate` resolves the overlaps FR cannot see, since it models nodes as points.
+ */
+function layoutOrganic(p: Projection, opts: LayoutOptions): Layout {
+  const margin = opts.margin ?? 120;
+  const n = p.nodes.length;
+  const seed = layoutRadial(p, { ...opts, margin: 0 });
+  const at = new Map(seed.nodes.map((s) => [s.id, { x: s.x, y: s.y }]));
+  const lane = new Map(seed.nodes.map((s) => [s.id, s.lane]));
+  const ids = p.nodes.map((node) => node.id).filter((id) => at.has(id));
+
+  if (ids.length > 1) {
+    const area = Math.max(seed.width, 1) * Math.max(seed.height, 1);
+    const k = Math.sqrt(area / ids.length);
+    const cx = seed.width / 2;
+    const cy = seed.height / 2;
+    const steps = Math.min(FR_MAX_STEPS, Math.max(FR_MIN_STEPS, Math.round(FR_PAIR_BUDGET / n)));
+    const disp = new Map(ids.map((id) => [id, { x: 0, y: 0 }]));
+    // Edges as index pairs once, rather than re-resolving ids inside the hot loop.
+    const springs = p.edges
+      .filter((e) => at.has(e.src) && at.has(e.dst) && e.src !== e.dst)
+      .map((e) => [e.src, e.dst] as const);
+
+    for (let step = 0; step < steps; step++) {
+      // Temperature starts at a tenth of the ideal separation: the seed is already a sensible
+      // picture, so the first step should refine it rather than throw every node across the
+      // canvas the way a cold-start FR run has to.
+      const temp = (k / 10) * (1 - step / steps);
+      for (const d of disp.values()) { d.x = 0; d.y = 0; }
+
+      for (let i = 0; i < ids.length; i++) {
+        const a = at.get(ids[i])!;
+        const da = disp.get(ids[i])!;
+        for (let j = i + 1; j < ids.length; j++) {
+          const b = at.get(ids[j])!;
+          let dx = a.x - b.x;
+          let dy = a.y - b.y;
+          let dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < 0.01) {
+            // Coincident nodes have no direction to be pushed along. Nudging by INDEX rather
+            // than at random keeps the tie-break deterministic, which is the whole contract.
+            dx = (i - j) || 1;
+            dy = 1;
+            dist = Math.sqrt(dx * dx + dy * dy);
+          }
+          const force = (k * k) / dist;
+          const ux = (dx / dist) * force;
+          const uy = (dy / dist) * force;
+          da.x += ux;
+          da.y += uy;
+          const db = disp.get(ids[j])!;
+          db.x -= ux;
+          db.y -= uy;
+        }
+      }
+
+      for (const [src, dst] of springs) {
+        const a = at.get(src)!;
+        const b = at.get(dst)!;
+        const dx = a.x - b.x;
+        const dy = a.y - b.y;
+        const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 0.01);
+        const force = (dist * dist) / k;
+        const ux = (dx / dist) * force;
+        const uy = (dy / dist) * force;
+        disp.get(src)!.x -= ux;
+        disp.get(src)!.y -= uy;
+        disp.get(dst)!.x += ux;
+        disp.get(dst)!.y += uy;
+      }
+
+      for (const id of ids) {
+        const a = at.get(id)!;
+        const d = disp.get(id)!;
+        d.x += (cx - a.x) * FR_GRAVITY * k;
+        d.y += (cy - a.y) * FR_GRAVITY * k;
+        const len = Math.sqrt(d.x * d.x + d.y * d.y);
+        if (len < 0.01) continue;
+        const travel = Math.min(len, temp);
+        a.x += (d.x / len) * travel;
+        a.y += (d.y / len) * travel;
+      }
+    }
+  }
+
+  separate(ids, at);
+
+  // Translate the settled cloud so its top-left card edge sits exactly at the margin. Bounds are
+  // measured rather than predicted: the forces decide the extent, so anything computed up front
+  // would be a guess that clips.
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const id of ids) {
+    const a = at.get(id)!;
+    minX = Math.min(minX, a.x);
+    minY = Math.min(minY, a.y);
+    maxX = Math.max(maxX, a.x);
+    maxY = Math.max(maxY, a.y);
+  }
+  if (!ids.length) { minX = 0; minY = 0; maxX = 0; maxY = 0; }
+  const offX = margin + FREE_W / 2 - minX;
+  const offY = margin + FREE_H / 2 - minY;
+
+  return {
+    nodes: ids.map((id) => ({
+      id,
+      x: round2(at.get(id)!.x + offX),
+      y: round2(at.get(id)!.y + offY),
+      lane: lane.get(id) ?? 0,
+    })),
+    width: round2(maxX - minX + FREE_W + margin * 2),
+    height: round2(maxY - minY + FREE_H + margin * 2),
+    laneGap: RING_STEP,
+    rowGap: FREE_H,
+    mode: "organic",
+  };
+}
+
+/**
+ * Push apart every pair whose cards intersect, along the axis of least overlap.
+ *
+ * Iterated because separating one pair can push a node into a third; bounded because a
+ * pathological graph must not spin here, and `SEPARATE_PASSES` is generous enough that the loop
+ * exits early on anything real. Pairs are visited in `ids` order and moved symmetrically, so the
+ * result depends only on the input order — no randomness, no `Date`, nothing to make two runs
+ * differ.
+ */
+function separate(ids: string[], at: Map<string, { x: number; y: number }>): void {
+  for (let pass = 0; pass < SEPARATE_PASSES; pass++) {
+    let moved = false;
+    for (let i = 0; i < ids.length; i++) {
+      const a = at.get(ids[i])!;
+      for (let j = i + 1; j < ids.length; j++) {
+        const b = at.get(ids[j])!;
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const overlapX = FREE_W - Math.abs(dx);
+        const overlapY = FREE_H - Math.abs(dy);
+        if (overlapX <= 0 || overlapY <= 0) continue;
+        moved = true;
+        // Least-overlap axis: separating along the other one would move the pair further than
+        // it has to. `|| 1` covers exactly coincident cards, which have no side to be on.
+        if (overlapX / FREE_W < overlapY / FREE_H) {
+          const push = (overlapX / 2) * (dx < 0 ? -1 : 1);
+          a.x -= push;
+          b.x += push;
+        } else {
+          const push = (overlapY / 2) * (dy < 0 ? -1 : 1);
+          a.y -= push;
+          b.y += push;
+        }
+      }
+    }
+    if (!moved) return;
+  }
 }

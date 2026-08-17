@@ -1,9 +1,12 @@
 // The layered layout: lane assignment per kind, no coordinate collisions,
 // positive bounds, and determinism.
 
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { enrichGraphDoc } from "../src/domain/graphEnrich";
-import { laneOf, layoutGraph } from "../src/domain/graphLayout";
+import { LAYOUT_MODES, laneOf, layoutGraph } from "../src/domain/graphLayout";
 import { projectGraph } from "../src/domain/graphProject";
 import { SEED_AARS_HINTS, SEED_ISSUES, seedGraphDoc } from "../src/server/sampleData";
 
@@ -269,5 +272,269 @@ describe("layoutGraph lanes-mode sort variants", () => {
     const a = layoutGraph(PROJECTION, { sort: "severity" });
     const b = layoutGraph(PROJECTION, { sort: "severity" });
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+});
+
+// ------------------------------------------------- the two free-form layouts
+//
+// "radial" and "organic" carry no bands, so almost nothing in the suites above applies to them —
+// and the two invariants that DO apply to every layout in this file (every node placed once, no
+// two cards overlapping) are exactly the ones a new engine is most likely to break. Radial can
+// break them by mis-deriving a ring radius; organic by design, since Fruchterman–Reingold treats
+// nodes as points and knows nothing about the 196×56 card drawn around each one.
+
+/** Every pair of node cards that would visually collide. Empty is the invariant. */
+function collisions(nodes: Array<{ id: string; x: number; y: number }>): string[] {
+  const bad: string[] = [];
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i + 1; j < nodes.length; j++) {
+      const dx = Math.abs(nodes[i].x - nodes[j].x);
+      const dy = Math.abs(nodes[i].y - nodes[j].y);
+      if (dx < 196 && dy < 56) bad.push(`${nodes[i].id}/${nodes[j].id}`);
+    }
+  }
+  return bad;
+}
+
+describe.each(["radial", "organic"] as const)("layoutGraph %s mode", (mode) => {
+  const layout = layoutGraph(PROJECTION, { mode });
+
+  it("places every projected node exactly once", () => {
+    expect(layout.nodes).toHaveLength(PROJECTION.nodes.length);
+    expect(new Set(layout.nodes.map((n) => n.id)).size).toBe(PROJECTION.nodes.length);
+  });
+
+  it("declares its mode and draws no group boxes", () => {
+    expect(layout.mode).toBe(mode);
+    expect(layout.groups).toBeUndefined();
+  });
+
+  it("keeps every card clear of every other", () => {
+    expect(collisions(layout.nodes)).toEqual([]);
+  });
+
+  it("fits inside its own declared bounds", () => {
+    // The canvas is what "fit to view" scales by, so a node outside it is a node that cannot be
+    // reached at any zoom.
+    expect(layout.width).toBeGreaterThan(0);
+    expect(layout.height).toBeGreaterThan(0);
+    for (const n of layout.nodes) {
+      expect(n.x).toBeGreaterThanOrEqual(0);
+      expect(n.y).toBeGreaterThanOrEqual(0);
+      expect(n.x).toBeLessThanOrEqual(layout.width);
+      expect(n.y).toBeLessThanOrEqual(layout.height);
+    }
+  });
+
+  it("is deterministic, forces or not", () => {
+    // The property the file header trades on. Organic runs a force simulation and still has to
+    // answer this: its seed is a computed order, never Math.random.
+    expect(JSON.stringify(layoutGraph(PROJECTION, { mode })))
+      .toBe(JSON.stringify(layoutGraph(PROJECTION, { mode })));
+  });
+
+  it("reports hops from the hub as the lane, so the keyboard has an axis to walk", () => {
+    // graphView.js walks `lane` with two of its four arrows. A layout answering 0 for everything
+    // would leave those two keys stepping through the whole graph in array order.
+    const lanes = [...new Set(layout.nodes.map((n) => n.lane))].sort((a, b) => a - b);
+    expect(lanes.length).toBeGreaterThan(2);
+    // Contiguous from the centre out: a gap would mean an empty ring was sized and drawn.
+    expect(lanes).toEqual(lanes.map((_, i) => i));
+    // Exactly one node at the centre — the estate's worst-risk asset.
+    expect(layout.nodes.filter((n) => n.lane === 0)).toHaveLength(1);
+  });
+
+  it("responds to the sort, so the Order control still means something", () => {
+    // Both modes order by the comparator — radial for its angular sequence, organic for the seed
+    // that sequence becomes. A control that changed nothing would be a lie on the screen.
+    expect(JSON.stringify(layoutGraph(PROJECTION, { mode, sort: "name" })))
+      .not.toBe(JSON.stringify(layoutGraph(PROJECTION, { mode, sort: "aars" })));
+  });
+});
+
+describe("layoutGraph radial mode geometry", () => {
+  const layout = layoutGraph(PROJECTION, { mode: "radial" });
+  const centre = layout.nodes.find((n) => n.lane === 0)!;
+  const radius = (n: { x: number; y: number }) =>
+    Math.sqrt((n.x - centre.x) ** 2 + (n.y - centre.y) ** 2);
+
+  it("puts the highest-risk AI agent at the centre", () => {
+    const byId = new Map(PROJECTION.nodes.map((n) => [n.id, n]));
+    expect(byId.get(centre.id)!.kind).toBe("AI_AGENT");
+  });
+
+  it("holds one ring per hop, each at a single radius", () => {
+    const byLane = new Map<number, number[]>();
+    for (const n of layout.nodes) {
+      if (n.lane === 0) continue;
+      if (!byLane.has(n.lane)) byLane.set(n.lane, []);
+      byLane.get(n.lane)!.push(radius(n));
+    }
+    for (const [lane, radii] of byLane) {
+      const first = radii[0];
+      // Equidistant to within rounding — round2 is the only thing separating them.
+      for (const r of radii) expect(Math.abs(r - first), `lane ${lane}`).toBeLessThan(0.5);
+    }
+  });
+
+  it("orders the rings outward, so a ring is readable as a distance", () => {
+    const radiusOf = new Map<number, number>();
+    for (const n of layout.nodes) if (n.lane > 0) radiusOf.set(n.lane, radius(n));
+    const lanes = [...radiusOf.keys()].sort((a, b) => a - b);
+    for (let i = 1; i < lanes.length; i++) {
+      expect(radiusOf.get(lanes[i])!).toBeGreaterThan(radiusOf.get(lanes[i - 1])!);
+    }
+  });
+
+  it("sizes a busy ring by its occupancy rather than by a constant", () => {
+    // The chord between neighbours has to clear a card width, which is what makes the mode
+    // overlap-free at any ring size. A constant radius could not — and the arc-length formula,
+    // the tempting one, over-estimates the gap on a small ring by up to π/2.
+    const crowded = { syncedAt: DOC.syncedAt, nodes: [{ id: "hub", kind: "AI_AGENT", name: "hub" }],
+      edges: [] as Array<{ id: string; src: string; dst: string; type: string }> };
+    for (let i = 0; i < 40; i++) {
+      crowded.nodes.push({ id: "b" + i, kind: "BUCKET", name: "b" + i });
+      crowded.edges.push({ id: "e" + i, src: "hub", dst: "b" + i, type: "ALLOWS_ACCESS_TO" });
+    }
+    // The per-kind fan-out cap collapses 40 buckets into a SUMMARY stub, which is the
+    // projection's job and not this layout's — lifted here so the ring under test is the crowded
+    // one the formula exists for.
+    const wide = layoutGraph(
+      projectGraph(crowded as never, {
+        seedIds: ["hub"], depth: 2, maxNodes: 60, maxEdges: 60, perKindCap: { BUCKET: 60 },
+      }),
+      { mode: "radial" });
+    expect(wide.nodes).toHaveLength(41);
+    expect(collisions(wide.nodes)).toEqual([]);
+    // 40 cards on one ring need far more room than the sparse-ring floor would have given them.
+    const hub = wide.nodes.find((n) => n.lane === 0)!;
+    const ring = wide.nodes.filter((n) => n.lane === 1)[0];
+    expect(Math.sqrt((ring.x - hub.x) ** 2 + (ring.y - hub.y) ** 2)).toBeGreaterThan(1400);
+  });
+
+  it("puts unreachable nodes on the outermost ring, not at the centre", () => {
+    // A node with no path to the hub is the furthest thing from it, and filing it at distance 0
+    // would put it in the position the layout reserves for its source.
+    const split = { syncedAt: DOC.syncedAt,
+      nodes: [
+        { id: "hub", kind: "AI_AGENT", name: "hub" },
+        { id: "near", kind: "SERVICE_ACCOUNT", name: "near" },
+        { id: "lonely", kind: "BUCKET", name: "lonely" },
+      ],
+      edges: [{ id: "e0", src: "hub", dst: "near", type: "RUNS_AS" }] };
+    const out = layoutGraph(
+      projectGraph(split as never, { seedIds: ["hub", "lonely"], depth: 2, maxNodes: 10, maxEdges: 10 }),
+      { mode: "radial" });
+    const laneOfId = new Map(out.nodes.map((n) => [n.id, n.lane]));
+    expect(laneOfId.get("hub")).toBe(0);
+    expect(laneOfId.get("near")).toBe(1);
+    expect(laneOfId.get("lonely")).toBe(2);
+  });
+});
+
+describe("layoutGraph organic mode forces", () => {
+  it("pulls connected nodes closer than the ring seed put them", () => {
+    // Otherwise this is the radial layout with extra steps. Mean edge length is the honest
+    // measure: individual edges can lengthen as a cluster rotates into place.
+    const mean = (mode: "radial" | "organic") => {
+      const layout = layoutGraph(PROJECTION, { mode });
+      const at = new Map(layout.nodes.map((n) => [n.id, n]));
+      const lengths = PROJECTION.edges
+        .filter((e) => at.has(e.src) && at.has(e.dst))
+        .map((e) => Math.hypot(at.get(e.src)!.x - at.get(e.dst)!.x, at.get(e.src)!.y - at.get(e.dst)!.y));
+      return lengths.reduce((a, b) => a + b, 0) / lengths.length;
+    };
+    expect(mean("organic")).toBeLessThan(mean("radial"));
+  });
+
+  it("keeps disconnected nodes on the canvas instead of letting them fly", () => {
+    // Fruchterman–Reingold says nothing about a node with no springs: repulsion alone pushes it
+    // outward forever, and the bounds — and therefore the zoom — follow it. The gravity term is
+    // what holds it, and this is the case that proves the term is doing its job.
+    const strays = { syncedAt: DOC.syncedAt,
+      nodes: [
+        { id: "hub", kind: "AI_AGENT", name: "hub" },
+        { id: "sa", kind: "SERVICE_ACCOUNT", name: "sa" },
+        { id: "x1", kind: "BUCKET", name: "x1" },
+        { id: "x2", kind: "BUCKET", name: "x2" },
+        { id: "x3", kind: "BUCKET", name: "x3" },
+      ],
+      edges: [{ id: "e0", src: "hub", dst: "sa", type: "RUNS_AS" }] };
+    const p = projectGraph(strays as never,
+      { seedIds: ["hub", "x1", "x2", "x3"], depth: 2, maxNodes: 10, maxEdges: 10 });
+    const out = layoutGraph(p, { mode: "organic" });
+    expect(out.nodes).toHaveLength(p.nodes.length);
+    expect(collisions(out.nodes)).toEqual([]);
+    for (const n of out.nodes) {
+      expect(n.x).toBeLessThanOrEqual(out.width);
+      expect(n.y).toBeLessThanOrEqual(out.height);
+    }
+    // Nothing has run away: the canvas stays within a few screens rather than a few thousand.
+    expect(out.width).toBeLessThan(6000);
+    expect(out.height).toBeLessThan(6000);
+  });
+
+  it("stays inside its budget at the node ceiling", () => {
+    // Repulsion is all-pairs, so one pass costs n². The iteration count is traded against that
+    // (FR_PAIR_BUDGET) precisely so the 400-node ceiling stays usable; without the trade this is
+    // where the mode would quietly time out a request.
+    const big = { syncedAt: DOC.syncedAt,
+      nodes: [{ id: "hub", kind: "AI_AGENT", name: "hub" }] as Array<Record<string, string>>,
+      edges: [] as Array<Record<string, string>> };
+    for (let i = 0; i < 399; i++) {
+      big.nodes.push({ id: "n" + i, kind: i % 3 ? "BUCKET" : "SERVICE_ACCOUNT", name: "n" + i });
+      big.edges.push({
+        id: "e" + i, type: "ALLOWS_ACCESS_TO",
+        src: i < 8 ? "hub" : "n" + Math.floor(i / 8 - 1), dst: "n" + i,
+      });
+    }
+    const p = projectGraph(big as never,
+      { seedIds: ["hub"], depth: 12, maxNodes: 400, maxEdges: 800 });
+    expect(p.nodes.length).toBe(400);
+    const started = Date.now();
+    const out = layoutGraph(p, { mode: "organic" });
+    const ms = Date.now() - started;
+    expect(out.nodes).toHaveLength(400);
+    expect(collisions(out.nodes)).toEqual([]);
+    // Generous — this is a ceiling that catches an O(n³) regression, not a benchmark.
+    expect(ms).toBeLessThan(3000);
+  });
+});
+
+// ANTI-ROT. A layout lives in five places: the domain's LAYOUT_MODES, the engine's dispatch, the
+// page's LAYOUTS table (the list, and the whitelist derived from it), the renderer's free-form
+// test, and the resolver. Adding "radial" and "organic" to four of them and missing the fifth is
+// exactly what happened: `graphParams` carried a hand-written `=== "grouped" || === "lanes"`, so
+// the URL kept the new mode, the domain understood it, and the page quietly rewrote it to rows on
+// the way to the request. No error, no failing type — just a layout that never appeared.
+//
+// graph.js cannot be imported here (it is DOM-shaped and there is no jsdom), so its table is read
+// as source, the way test/icons.test.js reads help.js for its glyph names.
+describe("the page's layout list and the domain agree", () => {
+  const PAGE = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "../src/client/js/pages/graph.js"), "utf8");
+
+  /** The `mode:` values in graph.js's LAYOUTS table. "" is Rows — the absent hash value. */
+  function pageModes(): string[] {
+    const table = PAGE.slice(PAGE.indexOf("const LAYOUTS = ["));
+    const body = table.slice(0, table.indexOf("\n];"));
+    return [...body.matchAll(/mode:\s*"([^"]*)"/g)].map((m) => m[1]);
+  }
+
+  it("offers one row per engine, and no row for an engine that does not exist", () => {
+    const listed = pageModes();
+    expect(listed).toContain("");                          // Rows, as the absent value
+    expect(new Set(listed.filter(Boolean))).toEqual(new Set(LAYOUT_MODES.filter((m) => m !== "rows")));
+  });
+
+  it("keeps the picker's whitelist derived from that table, never hand-written", () => {
+    // The literal that caused the bug. If a comparison against a specific mode name reappears in
+    // graphParams, this is the test that says so.
+    const fn = PAGE.slice(PAGE.indexOf("function graphParams("));
+    const body = fn.slice(0, fn.indexOf("\n}"));
+    expect(body).toContain("LAYOUT_MODES.includes(params.layout)");
+    for (const mode of LAYOUT_MODES) {
+      expect(body, `graphParams must not name ${mode} directly`).not.toContain(`=== "${mode}"`);
+    }
   });
 });

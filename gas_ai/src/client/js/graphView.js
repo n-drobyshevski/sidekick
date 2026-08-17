@@ -35,6 +35,10 @@ export function renderGraph(container, data, handlers = {}) {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const grouped = layout.mode === "grouped";
   const horizontal = layout.mode === "rows";
+  // The layouts with no dominant flow direction: nodes sit all around each other rather than in
+  // bands, so an edge can leave a card on any side. Everything downstream that assumed
+  // left-to-right (edge anchoring, chiefly) branches on this rather than on `grouped` alone.
+  const freeForm = grouped || layout.mode === "radial" || layout.mode === "organic";
 
   const width = Math.max(layout.width, 640);
   const height = Math.max(layout.height, 360);
@@ -42,14 +46,25 @@ export function renderGraph(container, data, handlers = {}) {
   // Nesting is drawn as a box inside a box and announced nowhere else, so the one label
   // that describes the canvas has to say it.
   const nested = grouped && (layout.groups || []).some((g) => g.depth === 1);
-  const svg = svgEl("svg", {
-    role: "application",
-    "aria-label":
-      (nested
+  /**
+   * The ARRANGEMENT, in the one label that describes the canvas.
+   *
+   * A sighted reader gets the layout from the picture; a screen-reader user gets it from here or
+   * not at all — and it changes what the arrow keys mean, since two of them walk the layout's own
+   * axis (bands in rows/columns, rings in radial/organic). So each mode says what that axis is.
+   */
+  const shape = layout.mode === "radial"
+    ? "Security graph, nodes on rings by their distance from the highest-risk asset. "
+    : layout.mode === "organic"
+      ? "Security graph, nodes positioned by their connections so clusters sit together. "
+      : nested
         ? "Security graph, nodes clustered into labelled groups nested two levels deep. "
         : grouped
           ? "Security graph, nodes clustered into labelled groups. "
-          : "Security graph. ") +
+          : "Security graph. ";
+  const svg = svgEl("svg", {
+    role: "application",
+    "aria-label": shape +
       "Tab to enter, arrow keys move between connected nodes, " +
       "Shift plus arrow keys nudge the focused node, " +
       "Enter opens details, Escape leaves the graph.",
@@ -98,11 +113,13 @@ export function renderGraph(container, data, handlers = {}) {
   }
 
   // ------------------------------------------------------------------- edges
-  // Lanes flow left-to-right, so edges anchor on the sides. In grouped mode a
-  // mostly-vertical edge anchors top/bottom instead, so it leaves the card
-  // through the nearest face rather than looping around it.
+  // Lanes flow left-to-right, so edges anchor on the sides. In the free-form modes — grouped,
+  // radial, organic — a mostly-vertical edge anchors top/bottom instead, so it leaves the card
+  // through the nearest face rather than looping around it. Radial in particular has edges
+  // running in every direction by construction, so side-anchoring alone would send half of them
+  // back around the cards they start from.
   function edgeGeometry(a, b) {
-    if (grouped && Math.abs(b.y - a.y) > Math.abs(b.x - a.x)) {
+    if (freeForm && Math.abs(b.y - a.y) > Math.abs(b.x - a.x)) {
       const topToBottom = a.y <= b.y;
       const y1 = a.y + (topToBottom ? NODE_H / 2 : -NODE_H / 2);
       const y2 = b.y + (topToBottom ? -NODE_H / 2 : NODE_H / 2);

@@ -211,6 +211,11 @@
   border-radius: var(--radius-pill);
   background: var(--page); box-shadow: var(--shadow-card);
 }
+/* Restated for the same reason as the rail above: the `display` two lines up is an author
+   declaration and beats the UA sheet's `[hidden] { display: none }`, so `groupBtn.hidden = true`
+   set the attribute, announced the button as hidden, and drew it anyway — a control that
+   screen readers skipped and a mouse could still click into a popover for a layout not in force. */
+.graph-rail button[hidden] { display: none; }
 /* The page's canvas tools at the top of the rail. The circle comes free from
    `.graph-zoom button` above; what is added is a place for the badge to hang. */
 .graph-tool { position: relative; }
@@ -228,10 +233,60 @@
 }
 .graph-tool-badge:empty { display: none; }
 
-/* Layout popover: the arrangement, then the dimensions when it is groups. */
+/* Shared shell for the rail's two popovers: the layouts list, and grouping's dimensions. */
 .graph-layout { display: flex; flex-direction: column; gap: 12px; padding: 12px; }
 .graph-layout .segmented { width: 100%; }
 .graph-layout .segmented > button { flex: 1; }
+
+/* ------------------------------------------------------- the layouts list */
+/* Heading and shortcut on one line, the way the reference prints it — the key is discoverable
+   from the control it opens rather than being folklore. */
+.graph-layouts-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+}
+.graph-layouts-title { font-size: 13px; font-weight: 600; color: var(--ink); }
+.graph-layouts-key { font-size: 11px; color: var(--text-3); }
+.graph-layouts-key kbd {
+  margin-left: 3px; padding: 1px 4px;
+  border: 1px solid var(--hairline); border-radius: 3px;
+  background: var(--track-bg);
+  font: inherit; font-weight: 600; color: var(--text-2);
+}
+/* The listbox itself carries focus (aria-activedescendant moves the cursor), so the ring goes
+   here and not on a row. Never removed — this is the only thing telling a keyboard user which
+   control they are in. */
+.graph-layouts { display: flex; flex-direction: column; gap: 2px; margin: 0 -4px; }
+.graph-layouts:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-md); }
+.graph-layouts-row {
+  /* Top, not centre: the blurb wraps, and a centred glyph beside two lines of text floats
+     between them instead of marking the row it belongs to. */
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 7px 8px; border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.graph-layouts-glyph {
+  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; border-radius: var(--radius-sm);
+  background: var(--track-bg); color: var(--text-2);
+}
+.graph-layouts-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.graph-layouts-label { font-size: 13px; color: var(--ink); }
+/* WRAPS, rather than ellipsising. The blurb is the only thing on the row that tells one layout
+   from another — five near-identical nouns is exactly the list where a reader is guessing — so
+   cutting it at the panel's width would truncate the part that answers the question. Five rows
+   is a short enough list to afford the height. */
+.graph-layouts-blurb { font-size: 11px; line-height: 1.35; color: var(--text-3); }
+/* The keyboard cursor — which row Enter will take. A wash, matching the palette's own
+   `.gq-pal-option.is-active`, so the two lists on this page mean the same thing by it. */
+.graph-layouts-row.is-active { background: var(--wash-hover); }
+/* THE LAYOUT IN FORCE. Weight and the tick, not the reference's blue alone: five rows in one
+   tint with the current one merely coloured is a colour-only signal, and the tick is the half a
+   forced-colours or monochrome reader still receives. */
+.graph-layouts-row.is-on .graph-layouts-label { font-weight: 600; }
+.graph-layouts-row.is-on .graph-layouts-glyph { color: var(--accent); }
+.graph-layouts-check {
+  flex: 0 0 auto; display: inline-flex; align-items: center; color: var(--accent);
+}
 .graph-layout-row { display: flex; align-items: center; gap: 8px; }
 .graph-layout-label {
   flex: 0 0 82px; font-size: 11px; color: var(--text-2);

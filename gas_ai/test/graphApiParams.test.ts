@@ -146,6 +146,12 @@ describe("resolveLayoutParams", () => {
       .toEqual({ mode: "grouped", groupBy: ["severity"], sort: "name" });
     expect(resolveLayoutParams({ layout: "lanes", groupBy: "cloud", sort: "severity" }))
       .toEqual({ mode: "lanes", groupBy: ["cloud"], sort: "severity" });
+    // The two free-form engines. `groupBy` still resolves beside them and is simply unread —
+    // switching layouts must not throw away the dimensions someone chose for grouped mode.
+    expect(resolveLayoutParams({ layout: "radial" }))
+      .toEqual({ mode: "radial", groupBy: ["combo"], sort: "smart" });
+    expect(resolveLayoutParams({ layout: "Organic", sort: "name" }))
+      .toEqual({ mode: "organic", groupBy: ["combo"], sort: "name" });
   });
 
   it("garbage falls back to defaults", () => {
