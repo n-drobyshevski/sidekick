@@ -21,6 +21,7 @@ import { bootstrap, navigate, setParams, swrCall } from "../store.js";
 import { dueChip, fwTags, openAssetSheet, openIssueSheet } from "../detailSheets.js";
 import { kindIconSvg, kindLabel, categoryOf } from "../icons.js";
 import {
+  FINDINGS_SCORE_LABEL, ordinal,
   clear, dataTable, debounce, el, emptyState, errorState, kpiCard, outcomeBadge,
   outcomeLabel, pager, sectionLabel, select,
   selectField, sevBadge, sevKeyRow, sevSegmentBar, sevSpoken, skeleton, statusPill,
@@ -560,14 +561,20 @@ export async function renderCombos(main, params) {
     const chips = group.assets.map((a) => el("button", {
       class: "asset-chip",
       onclick: () => openAsset(a),
-      "aria-label": a.name + ", AARS " + (a.aars === null || a.aars === undefined ? "unscored" : a.aars),
+      "aria-label": a.name + ", " + FINDINGS_SCORE_LABEL.toLowerCase() + " " +
+        (a.aars === null || a.aars === undefined ? "unscored" : a.aars) +
+        (typeof a.aarsPercentile === "number"
+          ? ", " + ordinal(a.aarsPercentile) + " percentile"
+          : ""),
     },
       el("span", { class: "asset-chip-name" }, a.name),
-      a.aarsSeverity
-        ? el("span", {
-          class: "asset-chip-score num sev-" + a.aarsSeverity,
-          "aria-hidden": "true",
-        }, String(a.aars))
+      // The percentile, untinted. This carried the raw score painted in its BAND's severity
+      // token, which put a red pill on an asset chip sitting inches from real issue
+      // severities on the same card — one threshold reading as a finding. The card is a way
+      // into a record; the number on it is placement, not a verdict.
+      typeof a.aarsPercentile === "number"
+        ? el("span", { class: "asset-chip-score num", "aria-hidden": "true" },
+            "p" + a.aarsPercentile)
         : null));
 
     const head = chips.slice(0, ASSET_PREVIEW);

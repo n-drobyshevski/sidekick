@@ -44,6 +44,7 @@ import type { PostureRule } from "../domain/postureRule";
 import { OTHER_GROUP_ID } from "../domain/toxicCombos";
 import type { Severity } from "../domain/config";
 import { countAarsSeverities } from "../domain/aarsTrend";
+import { midrankPercentiles } from "../domain/rankStats";
 import { nowIso, type Rec } from "../domain/util";
 import { readGraphSnapshot, trashGraphSnapshot, writeGraphSnapshot } from "./archiveStore";
 import { bumpDataVersion, bumpWizDataVersion } from "./serverCache";
@@ -1188,6 +1189,9 @@ function stripAarsScore(n: GNode): GNode {
   delete next.aars;
   delete next.aarsSeverity;
   delete next.aarsPillars;
+  // Nothing writes `aarsPercentile` (it is read-derived), but an unscored node must not
+  // carry one either way — a percentile with no score behind it is a rank into nothing.
+  delete next.aarsPercentile;
   return next;
 }
 
@@ -1207,10 +1211,28 @@ let postureMemo: PostureRow[] | undefined;
 let frameworkPoliciesMemo: FrameworkPolicyRow[] | undefined;
 let configRulesMemo: ConfigRuleRow[] | undefined;
 let identityFindingsMemo: IdentityFindingRow[] | undefined;
+/**
+ * `loadAssets`'s output, keyed by what produced it.
+ *
+ * `assetsMemo` above holds the RAW rows, and until the percentile landed that was enough:
+ * `withCurrentBands` returns its input array unchanged whenever every stored band already
+ * agrees with the rule, which for a freshly-scored ledger is every time — so `loadAssets`
+ * cost nothing to call repeatedly and four call sites per request did. Stamping a
+ * percentile always allocates (every scored node gets a field the raw row does not have),
+ * so without this the same estate would be copied once per caller.
+ *
+ * Keyed on the raw array's IDENTITY and on the bands in force, not merely stored, so
+ * settingsStore.saveSettings's invariant survives verbatim: it bumps the data version
+ * without dropping these memos, on the stated grounds that a rule change is picked up
+ * because the bands are read per call. A band edit changes `bandKey`, misses this memo and
+ * re-derives — which is that same promise, kept by the key rather than by luck.
+ */
+let derivedAssetsMemo: { raw: GNode[]; bandKey: string; out: GNode[] } | undefined;
 
 function invalidateReadMemos(): void {
   graphDocMemo = undefined;
   assetsMemo = undefined;
+  derivedAssetsMemo = undefined;
   issuesMemo = undefined;
   findingsMemo = undefined;
   dataFindingsMemo = undefined;
@@ -1316,12 +1338,54 @@ export function withCurrentBands(nodes: GNode[], bands: AarsBands): GNode[] {
   return touched ? out : nodes;
 }
 
+/**
+ * Attach each scored asset's estate percentile — the statistic that carries the ranking
+ * claim now that the BAND does not (ai/AARS_SCORING_ASSESSMENT.md §3: 19 of 30 assets land
+ * CRITICAL, HIGH and MEDIUM empty, so the band names no queue).
+ *
+ * READ PATH ONLY, and the asymmetry with `withCurrentBands` above is deliberate. A band is
+ * re-derivable from ONE asset's stored score, so a persisted `aars_severity` is a usable
+ * fallback for a node the current rule cannot band. A percentile is not: it is computed
+ * against the whole scored population, so it is invalidated by any change to any OTHER
+ * asset. There is therefore no column, no fallback and no write — attaching it here, after
+ * the population is assembled, is the only place it can be correct.
+ *
+ * The population is exactly "nodes carrying a numeric `aars`", which excludes ISSUE nodes
+ * and every unscored asset. Callers publish that count (`api.ts`'s `aarsScored`) rather
+ * than leaving the denominator implied — the S-test AARS_SCORING_ASSESSMENT.md §3 sets for
+ * any published aggregate.
+ */
+export function withAarsPercentile(nodes: GNode[]): GNode[] {
+  const scored: number[] = [];
+  for (const n of nodes) if (typeof n.aars === "number") scored.push(n.aars);
+  if (!scored.length) return nodes;
+  const percentiles = midrankPercentiles(scored);
+  // Whole percent: 1/30 of an estate is ~3.3 points, so a decimal would advertise a
+  // precision the population does not have. Rounded here rather than in rankStats.ts,
+  // which stays a pure-statistics module with no opinion about display.
+  let i = 0;
+  return nodes.map((n) => {
+    if (typeof n.aars !== "number") return n;
+    return { ...n, aarsPercentile: Math.round(percentiles[i++]!) };
+  });
+}
+
 function currentBands(): AarsBands {
   return settingsStore.getAarsRule().rule.bands;
 }
 
+/**
+ * The two read-time AARS derivations, applied together. Both are population- or
+ * rule-dependent and neither is persisted in a usable form, so a read path that ran only
+ * one of them would ship a banded asset with no percentile (or the reverse) and the
+ * surfaces would disagree about the same asset. One helper, three call sites.
+ */
+function withAarsReadDerivations(nodes: GNode[]): GNode[] {
+  return withAarsPercentile(withCurrentBands(nodes, currentBands()));
+}
+
 function withBandsApplied(doc: GraphDoc): GraphDoc {
-  const nodes = withCurrentBands(doc.nodes, currentBands());
+  const nodes = withAarsReadDerivations(doc.nodes);
   return nodes === doc.nodes ? doc : { ...doc, nodes };
 }
 
@@ -1331,7 +1395,7 @@ function loadGraphDocUncached(): GraphDoc | null {
 
   const assetRows = readAll(TABS.assets);
   if (!assetRows.length) return null;
-  const nodes = withCurrentBands(assetRows.map(rowToAsset), currentBands());
+  const nodes = withAarsReadDerivations(assetRows.map(rowToAsset));
   const edges = readAll(TABS.edges).map(rowToEdge);
   const issues = loadIssues().filter(isUnresolvedIssue);
   for (const issue of issues) {
@@ -1370,7 +1434,14 @@ function loadAssetsRaw(): GNode[] {
  * graph would disagree about what "CRITICAL" means.
  */
 export function loadAssets(): GNode[] {
-  return withCurrentBands(loadAssetsRaw(), currentBands());
+  const raw = loadAssetsRaw();
+  const bands = currentBands();
+  const bandKey = `${bands.critical}|${bands.high}|${bands.medium}|${bands.low}`;
+  const memo = derivedAssetsMemo;
+  if (memo && memo.raw === raw && memo.bandKey === bandKey) return memo.out;
+  const out = withAarsReadDerivations(raw);
+  derivedAssetsMemo = { raw, bandKey, out };
+  return out;
 }
 
 export function loadIssues(): IssueRow[] {

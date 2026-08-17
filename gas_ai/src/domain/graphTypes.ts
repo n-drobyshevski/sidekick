@@ -380,8 +380,22 @@ export interface GNode {
    */
   businessImpact?: string;
   severity?: Severity;      // worst attached open-issue severity (ISSUE nodes: own severity)
-  aars?: number;            // AI Asset Risk Score 0–100 (AI assets only)
+  aars?: number;            // findings score 0–100 (AI assets only) — see AARS_DISPLAY_LABEL
   aarsSeverity?: AarsSeverity;
+  /**
+   * Where `aars` sits in the whole scored estate, as a whole-percent midrank percentile.
+   *
+   * DERIVED ON READ, NEVER PERSISTED, and unlike `aarsSeverity` it has no persisted
+   * fallback at all — because it is not a statement about this asset. It is a statement
+   * about this asset's POSITION IN A POPULATION, so it goes stale the instant any other
+   * asset is added, removed or rescored; a stored copy would be wrong far more often than
+   * it was right, and wrong silently. `syncStore.withAarsPercentile` attaches it on every
+   * read path and nothing on the write path sets it, which is what keeps the Drive graph
+   * snapshot free of a number that cannot survive being snapshotted.
+   *
+   * Tied assets share one value on purpose — see `rankStats.midrankPercentiles`.
+   */
+  aarsPercentile?: number;
   aarsPillars?: { toxic: number; compliance: number; data: number; exposure?: number };
   /**
    * What the score was computed FROM, minus the issue severities (those stay in the issues

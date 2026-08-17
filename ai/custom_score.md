@@ -57,13 +57,45 @@ Asset has confirmed access to sensitive data (PII/PHI/PCI)	+20
 Asset has access to data resources (unconfirmed sensitivity)	+10
 Asset has no data access	0
 Global multiplier: 5Rs = 53% → apply ×1.1 to all data-related scores	×1.1
-AARS Score Severity
-Score	Risk Level	Action
-70–100	🔴 CRITICAL	Immediate remediation required
-50–69	🟠 HIGH	Remediate within 7 days
-30–49	🟡 MEDIUM	Remediate within 30 days
-10–29	🔵 LOW	Monitor and review quarterly
-0–9	✅ INFO	No action required
+AARS Score Levels
+Score	Level	What it means
+70–100	🔴 CRITICAL	The top of the score's range
+50–69	🟠 HIGH	Upper range
+30–49	🟡 MEDIUM	Middle range
+10–29	🔵 LOW	Lower range
+0–9	✅ INFO	Nothing priced, or almost nothing
+
+> **These levels are context, not a decision, and this table no longer states remediation
+> SLAs.** It used to: CRITICAL read "immediate remediation required", HIGH "remediate
+> within 7 days", and so on down the table. Those were withdrawn because the model cannot
+> support them, and the measurements are in this repository rather than in an opinion —
+> `gas_ai/test/scoreOrdinality.test.ts` asserts every number below against the live
+> derivation over the seed estate, so they cannot go stale unnoticed:
+>
+> - **19 of 30 scored assets land CRITICAL, and HIGH and MEDIUM are both empty.** An SLA
+>   attached to a level holding the entire working population schedules everything at once,
+>   which is indistinguishable from scheduling nothing.
+> - **Tie rate 0.30, effective cardinality 3.67** against 5 distinct scores. Nearly a third
+>   of asset pairs are unorderable, and the five values behave like three and a half — so a
+>   "top 10" cut out of the 14-asset block tied at 72 is a coin toss, not a priority list.
+> - **Pillar ablation τ-b: A 0.863, B 0.987, C 0.987.** Pillar A does essentially all of the
+>   ranking work; 50 of the 100 points move the ranking by about 1.3% between them.
+> - **A monotone re-encoding of `severityPoints` changes the ranking (τ-b 0.9967).** An
+>   order-preserving change to an ordinal input must not reorder the output, so the
+>   cross-pillar addition is not licensed by the scale type of what it adds.
+>
+> What the product does instead: it publishes each asset's **midrank percentile within the
+> scored estate** beside the score — tied assets share one percentile, so a 14-asset block
+> reads 60 for all fourteen rather than pretending to fourteen positions — and it leads its
+> asset surfaces with the two models that do cut a queue, the posture tier
+> (`gas_ai/src/domain/posture.ts`) and the problem verdict (`gas_ai/src/domain/problem.ts`).
+> The levels survive as a distribution (the trend chart) and as a rule diagnostic (the AARS
+> Rules page's band occupancy), which are the two readings they can carry.
+>
+> **Nothing here changes what a score IS.** `DEFAULT_AARS_RULE` is untouched, the applied
+> table below still reproduces exactly, and `gas_ai/test/aars.test.ts` pins it. The
+> thresholds above are unchanged too — this is a claim about how they are READ.
+
 📊 Applied AARS — Your AI Assets (Top Scored)
 Asset	Toxic Issues	Compliance Gaps	Data Exposure	AARS Score	Risk Level	Parent Project
 Agent-A	MEDIUM ×1 (20)	LLM06 gap +10, No guardrail +10	Sensitive data ×1.1 = +22	62	🟠 HIGH	PROJECT-BETA, PROJECT-ALPHA, gcp-account-01

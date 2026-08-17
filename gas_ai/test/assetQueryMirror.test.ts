@@ -19,6 +19,7 @@ import type { Rec } from "../src/domain/util";
 // A variable specifier on purpose: a literal would make tsc demand type declarations for a
 // plain-JS client module that has no business carrying any.
 const MIRROR_PATH = "../src/client/js/assetQuery.js";
+const LABEL_MIRROR_PATH = "../src/client/js/ui/scoreLabel.js";
 const js = (await import(MIRROR_PATH)) as unknown as typeof ts;
 
 const ROWS: Rec[] = [
@@ -155,5 +156,32 @@ describe("assetQuery.js mirrors assetTable.ts", () => {
           .toEqual(ts.pageOf(ROWS, page, size));
       }
     }
+  });
+});
+
+// The display label is a second, much smaller mirror across the same boundary, and it is
+// pinned here rather than in its own file because the reason is identical: the client
+// bundle cannot import a TS module, so the string exists twice and nothing else would
+// notice one copy moving. It matters more than most strings because the whole point of
+// ai/AARS_SCORING_ASSESSMENT.md's label change is that the model is called ONE thing on
+// every asset surface — a drifted copy would put "Findings score" on the table header and
+// something else on the sheet caption, which is the failure the constant was created to
+// prevent. See AARS_DISPLAY_LABEL's own comment for why the label and the persisted
+// `aars*` identifiers are deliberately different.
+describe("the findings-score display label", () => {
+  it("the client mirror carries exactly the domain constant", async () => {
+    const { AARS_DISPLAY_LABEL } = await import("../src/domain/aars");
+    // A variable specifier, for the same reason MIRROR_PATH above is one: a literal makes
+    // tsc demand type declarations for a plain-JS client module that has no business
+    // carrying any.
+    const { FINDINGS_SCORE_LABEL } = (await import(LABEL_MIRROR_PATH)) as {
+      FINDINGS_SCORE_LABEL: string;
+    };
+    expect(FINDINGS_SCORE_LABEL).toBe(AARS_DISPLAY_LABEL);
+  });
+
+  it("is not the acronym — the AARS Rules page keeps that, asset surfaces do not", async () => {
+    const { AARS_DISPLAY_LABEL } = await import("../src/domain/aars");
+    expect(AARS_DISPLAY_LABEL).not.toMatch(/AARS/i);
   });
 });

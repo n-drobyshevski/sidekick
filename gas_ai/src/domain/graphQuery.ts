@@ -310,8 +310,17 @@ export const QUERY_FIELDS: readonly FieldSpec[] = [
   },
   { key: "status", label: "Status", type: "choice", get: (n) => orNull(n.status) },
   { key: "severity", label: "Issue severity", type: "choice", get: (n) => orNull(n.severity) },
-  { key: "aars", label: "AARS", type: "number", numeric: true, get: (n) => (n.aars ?? null) },
-  { key: "aarsSeverity", label: "AARS level", type: "choice", get: (n) => orNull(n.aarsSeverity) },
+  // Keys are the persisted identifiers and never change; the LABELS are the display name
+  // (aars.AARS_DISPLAY_LABEL) — see its comment for why the two deliberately differ.
+  { key: "aars", label: "Findings score", type: "number", numeric: true, get: (n) => (n.aars ?? null) },
+  {
+    key: "aarsPercentile", label: "Findings percentile", type: "number", numeric: true,
+    get: (n) => (n.aarsPercentile ?? null),
+  },
+  {
+    key: "aarsSeverity", label: "Findings score level", type: "choice",
+    get: (n) => orNull(n.aarsSeverity),
+  },
   {
     key: "projects", label: "Projects", type: "choice", multi: true,
     get: (n) => {

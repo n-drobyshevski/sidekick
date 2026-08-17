@@ -57,7 +57,12 @@ describe("assetSections", () => {
     expect(map.issues).toMatchObject({ label: "Issues", group: "Risk", count: 2, empty: false });
     expect(map.compliance).toMatchObject({ label: "Compliance", group: "Risk", count: 1, empty: false });
     expect(map.combos).toMatchObject({ label: "Toxic combinations", group: "Risk", count: 1, empty: false });
-    expect(map.aars).toMatchObject({ label: "AARS breakdown", group: "Posture", count: null, empty: false });
+    // The section ID stays "aars" (it keys panes.aars in detailSheets.js and the persisted
+    // vocabulary above); only the TITLE takes the display label. That split is the whole
+    // point of AARS_DISPLAY_LABEL — see its comment in src/domain/aars.ts.
+    expect(map.aars).toMatchObject({
+      label: "Findings score breakdown", group: "Posture", count: null, empty: false,
+    });
     expect(map.exposure).toMatchObject({ label: "Exposure", group: "Posture", count: null, empty: false });
     expect(map.guardrails).toMatchObject({ label: "Guardrails", group: "Posture", count: null, empty: false });
     expect(map.relationships).toMatchObject({ label: "Relationships", group: "Context", count: 2, empty: false });

@@ -111,6 +111,7 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
         },
       ],
       "counts": {
+        "aarsScored": 0,
         "aiAssets": 0,
         "byAarsSeverity": {},
         "bySeverity": {},
@@ -648,12 +649,12 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
       },
       "filtered": 0,
       "kpis": {
+        "aarsScored": 0,
         "agenticIdentities": 0,
         "agents": 0,
         "aiAssets": 0,
         "complianceGaps": 0,
         "complianceGapsUnlinked": 0,
-        "criticalAars": 0,
         "dataFindings": 0,
         "frameworkPosture": {
           "averagePosture": null,
@@ -664,7 +665,6 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
           "scoredFrameworks": 0,
         },
         "guardrailCoveragePct": null,
-        "highAars": 0,
         "highPrivilege": 0,
         "humanDormant": 0,
         "humanEffective": 0,
@@ -680,6 +680,8 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
         "protectedAgents": 0,
         "sensitiveAccess": 0,
         "sensitiveDatastores": 0,
+        "tier3Assets": 0,
+        "tier4Assets": 0,
       },
       "page": 0,
       "pageCount": 1,
@@ -1503,6 +1505,7 @@ exports[`read endpoints > bootstrap answers the same shape 1`] = `
       },
     ],
     "counts": {
+      "aarsScored": 30,
       "aiAssets": 22,
       "byAarsSeverity": {
         "CRITICAL": 2,
@@ -2241,6 +2244,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
         },
         "node": {
           "aars": null,
+          "aarsPercentile": null,
           "aarsSeverity": null,
           "adminPriv": false,
           "cloud": "GCP",
@@ -2309,6 +2313,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
         },
         "node": {
           "aars": null,
+          "aarsPercentile": null,
           "aarsSeverity": null,
           "adminPriv": false,
           "cloud": "GCP",
@@ -2384,6 +2389,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
         },
         "node": {
           "aars": null,
+          "aarsPercentile": null,
           "aarsSeverity": null,
           "adminPriv": false,
           "cloud": "GCP",
@@ -2451,6 +2457,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
         },
         "node": {
           "aars": 0,
+          "aarsPercentile": 12,
           "aarsSeverity": "INFO",
           "adminPriv": false,
           "cloud": "GCP",
@@ -2519,6 +2526,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
         },
         "node": {
           "aars": null,
+          "aarsPercentile": null,
           "aarsSeverity": null,
           "adminPriv": false,
           "cloud": "GCP",
@@ -2579,6 +2587,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
         },
         "node": {
           "aars": null,
+          "aarsPercentile": null,
           "aarsSeverity": null,
           "adminPriv": false,
           "cloud": "GCP",
@@ -2639,6 +2648,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
         },
         "node": {
           "aars": null,
+          "aarsPercentile": null,
           "aarsSeverity": null,
           "adminPriv": false,
           "cloud": "GCP",
@@ -2699,6 +2709,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
         },
         "node": {
           "aars": null,
+          "aarsPercentile": null,
           "aarsSeverity": null,
           "adminPriv": false,
           "cloud": "GCP",
@@ -2759,6 +2770,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
         },
         "node": {
           "aars": null,
+          "aarsPercentile": null,
           "aarsSeverity": null,
           "adminPriv": false,
           "cloud": "GCP",
@@ -2819,6 +2831,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
         },
         "node": {
           "aars": null,
+          "aarsPercentile": null,
           "aarsSeverity": null,
           "adminPriv": false,
           "cloud": "GCP",
@@ -2879,6 +2892,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
         },
         "node": {
           "aars": null,
+          "aarsPercentile": null,
           "aarsSeverity": null,
           "adminPriv": false,
           "cloud": "GCP",
@@ -2939,6 +2953,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
         },
         "node": {
           "aars": null,
+          "aarsPercentile": null,
           "aarsSeverity": null,
           "adminPriv": false,
           "cloud": "GCP",
@@ -2999,6 +3014,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
         },
         "node": {
           "aars": null,
+          "aarsPercentile": null,
           "aarsSeverity": null,
           "adminPriv": false,
           "cloud": "GCP",
@@ -3059,6 +3075,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
         },
         "node": {
           "aars": null,
+          "aarsPercentile": null,
           "aarsSeverity": null,
           "adminPriv": false,
           "cloud": "GCP",
@@ -3119,6 +3136,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
         },
         "node": {
           "aars": null,
+          "aarsPercentile": null,
           "aarsSeverity": null,
           "adminPriv": false,
           "cloud": "GCP",
@@ -3179,6 +3197,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
         },
         "node": {
           "aars": null,
+          "aarsPercentile": null,
           "aarsSeverity": null,
           "adminPriv": false,
           "cloud": "GCP",
@@ -3238,6 +3257,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
         },
         "node": {
           "aars": null,
+          "aarsPercentile": null,
           "aarsSeverity": null,
           "adminPriv": false,
           "cloud": null,
@@ -3290,6 +3310,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
         },
         "node": {
           "aars": null,
+          "aarsPercentile": null,
           "aarsSeverity": null,
           "adminPriv": false,
           "cloud": null,
@@ -3342,6 +3363,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
         },
         "node": {
           "aars": null,
+          "aarsPercentile": null,
           "aarsSeverity": null,
           "adminPriv": false,
           "cloud": null,
@@ -3395,6 +3417,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
         },
         "node": {
           "aars": null,
+          "aarsPercentile": null,
           "aarsSeverity": null,
           "adminPriv": false,
           "cloud": null,
@@ -3465,6 +3488,7 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
         ],
         "internetExposure": "CONFIRMED",
       },
+      "aarsPercentile": 95,
       "aarsPillars": {
         "compliance": 25,
         "data": 22,
@@ -4202,12 +4226,12 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
     },
     "filtered": 87,
     "kpis": {
+      "aarsScored": 30,
       "agenticIdentities": 15,
       "agents": 14,
       "aiAssets": 22,
       "complianceGaps": 6,
       "complianceGapsUnlinked": 3,
-      "criticalAars": 2,
       "dataFindings": 6,
       "frameworkPosture": {
         "averagePosture": 94,
@@ -4218,7 +4242,6 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         "scoredFrameworks": 4,
       },
       "guardrailCoveragePct": 21,
-      "highAars": 17,
       "highPrivilege": 34,
       "humanDormant": 1,
       "humanEffective": 1,
@@ -4234,6 +4257,8 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       "protectedAgents": 3,
       "sensitiveAccess": 11,
       "sensitiveDatastores": 5,
+      "tier3Assets": 19,
+      "tier4Assets": 0,
     },
     "page": 0,
     "pageCount": 2,
@@ -4241,6 +4266,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
     "rows": [
       {
         "aars": 76,
+        "aarsPercentile": 98,
         "aarsSeverity": "CRITICAL",
         "agentic": false,
         "cloud": "GCP",
@@ -4264,6 +4290,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": 71,
+        "aarsPercentile": 95,
         "aarsSeverity": "CRITICAL",
         "agentic": false,
         "cloud": "GCP",
@@ -4288,6 +4315,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": 67,
+        "aarsPercentile": 90,
         "aarsSeverity": "HIGH",
         "agentic": false,
         "cloud": "GCP",
@@ -4311,6 +4339,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": 67,
+        "aarsPercentile": 90,
         "aarsSeverity": "HIGH",
         "agentic": false,
         "cloud": "GCP",
@@ -4334,6 +4363,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": 66,
+        "aarsPercentile": 82,
         "aarsSeverity": "HIGH",
         "agentic": false,
         "cloud": "GCP",
@@ -4359,6 +4389,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": 66,
+        "aarsPercentile": 82,
         "aarsSeverity": "HIGH",
         "agentic": false,
         "cloud": "GCP",
@@ -4382,6 +4413,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": 66,
+        "aarsPercentile": 82,
         "aarsSeverity": "HIGH",
         "agentic": false,
         "cloud": "GCP",
@@ -4405,6 +4437,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": 62,
+        "aarsPercentile": 70,
         "aarsSeverity": "HIGH",
         "agentic": false,
         "cloud": "GCP",
@@ -4428,6 +4461,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": 62,
+        "aarsPercentile": 70,
         "aarsSeverity": "HIGH",
         "agentic": false,
         "cloud": "GCP",
@@ -4451,6 +4485,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": 62,
+        "aarsPercentile": 70,
         "aarsSeverity": "HIGH",
         "agentic": false,
         "cloud": "GCP",
@@ -4473,6 +4508,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": 62,
+        "aarsPercentile": 70,
         "aarsSeverity": "HIGH",
         "agentic": false,
         "cloud": "GCP",
@@ -4495,6 +4531,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": 61,
+        "aarsPercentile": 50,
         "aarsSeverity": "HIGH",
         "agentic": false,
         "cloud": "AWS",
@@ -4517,6 +4554,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": 61,
+        "aarsPercentile": 50,
         "aarsSeverity": "HIGH",
         "agentic": false,
         "cloud": "AWS",
@@ -4539,6 +4577,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": 61,
+        "aarsPercentile": 50,
         "aarsSeverity": "HIGH",
         "agentic": false,
         "cloud": "AWS",
@@ -4561,6 +4600,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": 61,
+        "aarsPercentile": 50,
         "aarsSeverity": "HIGH",
         "agentic": false,
         "cloud": "AWS",
@@ -4583,6 +4623,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": 61,
+        "aarsPercentile": 50,
         "aarsSeverity": "HIGH",
         "agentic": false,
         "cloud": "AWS",
@@ -4605,6 +4646,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": 61,
+        "aarsPercentile": 50,
         "aarsSeverity": "HIGH",
         "agentic": false,
         "cloud": "AWS",
@@ -4627,6 +4669,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": 61,
+        "aarsPercentile": 50,
         "aarsSeverity": "HIGH",
         "agentic": false,
         "cloud": "AWS",
@@ -4649,6 +4692,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": 61,
+        "aarsPercentile": 50,
         "aarsSeverity": "HIGH",
         "agentic": false,
         "cloud": "AWS",
@@ -4671,6 +4715,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": 29,
+        "aarsPercentile": 33,
         "aarsSeverity": "LOW",
         "agentic": false,
         "cloud": "GCP",
@@ -4694,6 +4739,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": 29,
+        "aarsPercentile": 33,
         "aarsSeverity": "LOW",
         "agentic": false,
         "cloud": "GCP",
@@ -4717,6 +4763,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": 22,
+        "aarsPercentile": 28,
         "aarsSeverity": "LOW",
         "agentic": false,
         "cloud": "GCP",
@@ -4736,6 +4783,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": 5,
+        "aarsPercentile": 25,
         "aarsSeverity": "INFO",
         "agentic": false,
         "cloud": "GCP",
@@ -4755,6 +4803,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": 0,
+        "aarsPercentile": 12,
         "aarsSeverity": "INFO",
         "agentic": false,
         "cloud": "GCP",
@@ -4774,6 +4823,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": 0,
+        "aarsPercentile": 12,
         "aarsSeverity": "INFO",
         "agentic": false,
         "cloud": "GCP",
@@ -4793,6 +4843,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": 0,
+        "aarsPercentile": 12,
         "aarsSeverity": "INFO",
         "agentic": false,
         "cloud": "GCP",
@@ -4812,6 +4863,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": 0,
+        "aarsPercentile": 12,
         "aarsSeverity": "INFO",
         "agentic": false,
         "cloud": "AWS",
@@ -4831,6 +4883,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": 0,
+        "aarsPercentile": 12,
         "aarsSeverity": "INFO",
         "agentic": false,
         "cloud": "AWS",
@@ -4850,6 +4903,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": 0,
+        "aarsPercentile": 12,
         "aarsSeverity": "INFO",
         "agentic": false,
         "cloud": "GCP",
@@ -4869,6 +4923,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": 0,
+        "aarsPercentile": 12,
         "aarsSeverity": "INFO",
         "agentic": false,
         "cloud": "GCP",
@@ -4888,6 +4943,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -4907,6 +4963,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -4926,6 +4983,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -4945,6 +5003,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -4964,6 +5023,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -4983,6 +5043,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5002,6 +5063,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5021,6 +5083,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5040,6 +5103,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5059,6 +5123,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5078,6 +5143,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5097,6 +5163,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5116,6 +5183,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": null,
@@ -5135,6 +5203,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5152,6 +5221,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5169,6 +5239,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5186,6 +5257,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": true,
         "cloud": "GCP",
@@ -5203,6 +5275,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": true,
         "cloud": "GCP",
@@ -5220,6 +5293,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": true,
         "cloud": "GCP",
@@ -5237,6 +5311,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": true,
         "cloud": "GCP",
@@ -5254,6 +5329,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": true,
         "cloud": "GCP",
@@ -5271,6 +5347,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": true,
         "cloud": "GCP",
@@ -5288,6 +5365,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": true,
         "cloud": "GCP",
@@ -5305,6 +5383,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": true,
         "cloud": "GCP",
@@ -5322,6 +5401,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": true,
         "cloud": "GCP",
@@ -5339,6 +5419,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": true,
         "cloud": "GCP",
@@ -5356,6 +5437,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": true,
         "cloud": "GCP",
@@ -5373,6 +5455,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": true,
         "cloud": "GCP",
@@ -5390,6 +5473,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": true,
         "cloud": "GCP",
@@ -5407,6 +5491,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": true,
         "cloud": "GCP",
@@ -5424,6 +5509,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": true,
         "cloud": "AWS",
@@ -5441,6 +5527,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5460,6 +5547,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5479,6 +5567,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5498,6 +5587,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5517,6 +5607,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5536,6 +5627,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5555,6 +5647,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5574,6 +5667,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5593,6 +5687,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5612,6 +5707,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5631,6 +5727,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5650,6 +5747,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5669,6 +5767,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5688,6 +5787,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5707,6 +5807,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5724,6 +5825,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5741,6 +5843,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5758,6 +5861,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5775,6 +5879,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5792,6 +5897,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5809,6 +5915,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5826,6 +5933,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5843,6 +5951,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5860,6 +5969,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5877,6 +5987,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -5894,6 +6005,7 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
       },
       {
         "aars": null,
+        "aarsPercentile": null,
         "aarsSeverity": null,
         "agentic": false,
         "cloud": "GCP",
@@ -7509,6 +7621,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 70,
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
@@ -7606,6 +7719,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 70,
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
@@ -7705,6 +7819,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 98,
         "aarsPillars": {
           "compliance": 30,
           "data": 22,
@@ -7790,6 +7905,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 90,
         "aarsPillars": {
           "compliance": 25,
           "data": 22,
@@ -7875,6 +7991,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 90,
         "aarsPillars": {
           "compliance": 25,
           "data": 22,
@@ -7967,6 +8084,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           ],
           "internetExposure": "CONFIRMED",
         },
+        "aarsPercentile": 82,
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
@@ -8040,6 +8158,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 70,
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
@@ -8104,6 +8223,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 70,
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
@@ -8168,6 +8288,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 82,
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
@@ -8249,6 +8370,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           ],
           "internetExposure": "CONFIRMED",
         },
+        "aarsPercentile": 95,
         "aarsPillars": {
           "compliance": 25,
           "data": 22,
@@ -8366,6 +8488,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           ],
           "internetExposure": "CONFIRMED",
         },
+        "aarsPercentile": 82,
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
@@ -8441,6 +8564,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 33,
         "aarsPillars": {
           "compliance": 10,
           "data": 11,
@@ -8510,6 +8634,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 33,
         "aarsPillars": {
           "compliance": 10,
           "data": 11,
@@ -8585,6 +8710,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 50,
         "aarsPillars": {
           "compliance": 30,
           "data": 11,
@@ -8649,6 +8775,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 50,
         "aarsPillars": {
           "compliance": 30,
           "data": 11,
@@ -8713,6 +8840,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 50,
         "aarsPillars": {
           "compliance": 30,
           "data": 11,
@@ -8777,6 +8905,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 50,
         "aarsPillars": {
           "compliance": 30,
           "data": 11,
@@ -8841,6 +8970,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 50,
         "aarsPillars": {
           "compliance": 30,
           "data": 11,
@@ -8905,6 +9035,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 50,
         "aarsPillars": {
           "compliance": 30,
           "data": 11,
@@ -8969,6 +9100,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 50,
         "aarsPillars": {
           "compliance": 30,
           "data": 11,
@@ -9033,6 +9165,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 50,
         "aarsPillars": {
           "compliance": 30,
           "data": 11,
@@ -9088,6 +9221,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "gaps": [],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 12,
         "aarsPillars": {
           "compliance": 0,
           "data": 0,
@@ -9141,6 +9275,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 25,
         "aarsPillars": {
           "compliance": 5,
           "data": 0,
@@ -9188,6 +9323,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "gaps": [],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 12,
         "aarsPillars": {
           "compliance": 0,
           "data": 0,
@@ -9234,6 +9370,7 @@ exports[`read endpoints > getGraph answers the same shape 1`] = `
           "gaps": [],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 28,
         "aarsPillars": {
           "compliance": 0,
           "data": 22,
@@ -14839,12 +14976,17 @@ exports[`read endpoints > getQueryVocabulary (values for AI Agent) answers the s
         },
         {
           "key": "aars",
-          "label": "AARS",
+          "label": "Findings score",
+          "type": "number",
+        },
+        {
+          "key": "aarsPercentile",
+          "label": "Findings percentile",
           "type": "number",
         },
         {
           "key": "aarsSeverity",
-          "label": "AARS level",
+          "label": "Findings score level",
           "type": "choice",
         },
         {
@@ -16302,48 +16444,56 @@ exports[`read endpoints > getToxicCombos answers the same shape 1`] = `
         "assets": [
           {
             "aars": 61,
+            "aarsPercentile": 50,
             "aarsSeverity": "HIGH",
             "id": "role-finance-admin-01",
             "name": "AWSReservedSSO_FinanceAdmin_01",
           },
           {
             "aars": 61,
+            "aarsPercentile": 50,
             "aarsSeverity": "HIGH",
             "id": "role-finance-admin-02",
             "name": "AWSReservedSSO_FinanceAdmin_02",
           },
           {
             "aars": 61,
+            "aarsPercentile": 50,
             "aarsSeverity": "HIGH",
             "id": "role-finance-admin-03",
             "name": "AWSReservedSSO_FinanceAdmin_03",
           },
           {
             "aars": 61,
+            "aarsPercentile": 50,
             "aarsSeverity": "HIGH",
             "id": "role-finance-admin-04",
             "name": "AWSReservedSSO_FinanceAdmin_04",
           },
           {
             "aars": 61,
+            "aarsPercentile": 50,
             "aarsSeverity": "HIGH",
             "id": "role-finance-admin-05",
             "name": "AWSReservedSSO_FinanceAdmin_05",
           },
           {
             "aars": 61,
+            "aarsPercentile": 50,
             "aarsSeverity": "HIGH",
             "id": "role-finance-admin-06",
             "name": "AWSReservedSSO_FinanceAdmin_06",
           },
           {
             "aars": 61,
+            "aarsPercentile": 50,
             "aarsSeverity": "HIGH",
             "id": "role-finance-admin-07",
             "name": "AWSReservedSSO_FinanceAdmin_07",
           },
           {
             "aars": 61,
+            "aarsPercentile": 50,
             "aarsSeverity": "HIGH",
             "id": "role-finance-admin-08",
             "name": "AWSReservedSSO_FinanceAdmin_08",
@@ -16386,54 +16536,63 @@ exports[`read endpoints > getToxicCombos answers the same shape 1`] = `
         "assets": [
           {
             "aars": 62,
+            "aarsPercentile": 70,
             "aarsSeverity": "HIGH",
             "id": "agent-a",
             "name": "Agent-A",
           },
           {
             "aars": 62,
+            "aarsPercentile": 70,
             "aarsSeverity": "HIGH",
             "id": "agent-b",
             "name": "Agent-B",
           },
           {
             "aars": 76,
+            "aarsPercentile": 98,
             "aarsSeverity": "CRITICAL",
             "id": "agent-autogen",
             "name": "AGENT_AUTOGEN_DO_NOT_DELETE",
           },
           {
             "aars": 67,
+            "aarsPercentile": 90,
             "aarsSeverity": "HIGH",
             "id": "agent-d-test",
             "name": "dev-agent-D-test",
           },
           {
             "aars": 67,
+            "aarsPercentile": 90,
             "aarsSeverity": "HIGH",
             "id": "agent-d",
             "name": "dev-agent-D",
           },
           {
             "aars": 66,
+            "aarsPercentile": 82,
             "aarsSeverity": "HIGH",
             "id": "agent-e",
             "name": "Agent-E",
           },
           {
             "aars": 62,
+            "aarsPercentile": 70,
             "aarsSeverity": "HIGH",
             "id": "agent-f",
             "name": "agent-F",
           },
           {
             "aars": 62,
+            "aarsPercentile": 70,
             "aarsSeverity": "HIGH",
             "id": "agent-f-preprod",
             "name": "agent-F-preprod",
           },
           {
             "aars": 66,
+            "aarsPercentile": 82,
             "aarsSeverity": "HIGH",
             "id": "agent-g",
             "name": "Agent-G",
@@ -16480,12 +16639,14 @@ exports[`read endpoints > getToxicCombos answers the same shape 1`] = `
         "assets": [
           {
             "aars": 66,
+            "aarsPercentile": 82,
             "aarsSeverity": "HIGH",
             "id": "agent-i",
             "name": "agent-I",
           },
           {
             "aars": 71,
+            "aarsPercentile": 95,
             "aarsSeverity": "CRITICAL",
             "id": "agent-h-chatbot",
             "name": "agent-H-chatbot",
@@ -16533,12 +16694,14 @@ exports[`read endpoints > getToxicCombos answers the same shape 1`] = `
         "assets": [
           {
             "aars": 29,
+            "aarsPercentile": 33,
             "aarsSeverity": "LOW",
             "id": "agent-j",
             "name": "agent-J",
           },
           {
             "aars": 29,
+            "aarsPercentile": 33,
             "aarsSeverity": "LOW",
             "id": "agent-k",
             "name": "agent-K",
@@ -16578,6 +16741,7 @@ exports[`read endpoints > getToxicCombos answers the same shape 1`] = `
         "assets": [
           {
             "aars": 66,
+            "aarsPercentile": 82,
             "aarsSeverity": "HIGH",
             "id": "agent-e",
             "name": "Agent-E",
@@ -16746,11 +16910,15 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
           },
           {
             "key": "aars",
-            "label": "AARS",
+            "label": "Findings score",
+          },
+          {
+            "key": "aarsPercentile",
+            "label": "Findings percentile",
           },
           {
             "key": "aarsSeverity",
-            "label": "AARS level",
+            "label": "Findings score level",
           },
           {
             "key": "projects",
@@ -16858,11 +17026,15 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
           },
           {
             "key": "aars",
-            "label": "AARS",
+            "label": "Findings score",
+          },
+          {
+            "key": "aarsPercentile",
+            "label": "Findings percentile",
           },
           {
             "key": "aarsSeverity",
-            "label": "AARS level",
+            "label": "Findings score level",
           },
           {
             "key": "projects",
@@ -17424,6 +17596,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 98,
         "aarsPillars": {
           "compliance": 30,
           "data": 22,
@@ -17509,6 +17682,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
           ],
           "internetExposure": "CONFIRMED",
         },
+        "aarsPercentile": 95,
         "aarsPillars": {
           "compliance": 25,
           "data": 22,
@@ -17629,6 +17803,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 90,
         "aarsPillars": {
           "compliance": 25,
           "data": 22,
@@ -17724,6 +17899,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 90,
         "aarsPillars": {
           "compliance": 25,
           "data": 22,
@@ -17806,6 +17982,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
           ],
           "internetExposure": "CONFIRMED",
         },
+        "aarsPercentile": 82,
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
@@ -17879,6 +18056,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 82,
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
@@ -17957,6 +18135,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
           ],
           "internetExposure": "CONFIRMED",
         },
+        "aarsPercentile": 82,
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
@@ -18049,6 +18228,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 70,
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
@@ -18146,6 +18326,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 70,
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
@@ -18228,6 +18409,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 70,
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
@@ -18292,6 +18474,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 70,
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
@@ -18353,6 +18536,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 33,
         "aarsPillars": {
           "compliance": 10,
           "data": 11,
@@ -18422,6 +18606,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 33,
         "aarsPillars": {
           "compliance": 10,
           "data": 11,
@@ -18488,6 +18673,7 @@ exports[`read endpoints > runGraphQuery (agent runs as service account) answers 
           "gaps": [],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 12,
         "aarsPillars": {
           "compliance": 0,
           "data": 0,
@@ -19720,11 +19906,15 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
           },
           {
             "key": "aars",
-            "label": "AARS",
+            "label": "Findings score",
+          },
+          {
+            "key": "aarsPercentile",
+            "label": "Findings percentile",
           },
           {
             "key": "aarsSeverity",
-            "label": "AARS level",
+            "label": "Findings score level",
           },
           {
             "key": "projects",
@@ -20095,6 +20285,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 98,
         "aarsPillars": {
           "compliance": 30,
           "data": 22,
@@ -20180,6 +20371,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
           ],
           "internetExposure": "CONFIRMED",
         },
+        "aarsPercentile": 95,
         "aarsPillars": {
           "compliance": 25,
           "data": 22,
@@ -20300,6 +20492,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 90,
         "aarsPillars": {
           "compliance": 25,
           "data": 22,
@@ -20395,6 +20588,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 90,
         "aarsPillars": {
           "compliance": 25,
           "data": 22,
@@ -20477,6 +20671,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
           ],
           "internetExposure": "CONFIRMED",
         },
+        "aarsPercentile": 82,
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
@@ -20550,6 +20745,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 82,
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
@@ -20628,6 +20824,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
           ],
           "internetExposure": "CONFIRMED",
         },
+        "aarsPercentile": 82,
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
@@ -20720,6 +20917,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 70,
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
@@ -20817,6 +21015,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 70,
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
@@ -20899,6 +21098,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 70,
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
@@ -20963,6 +21163,7 @@ exports[`read endpoints > runGraphQuery (agents reaching classified data, with t
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 70,
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
@@ -22037,11 +22238,15 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
           },
           {
             "key": "aars",
-            "label": "AARS",
+            "label": "Findings score",
+          },
+          {
+            "key": "aarsPercentile",
+            "label": "Findings percentile",
           },
           {
             "key": "aarsSeverity",
-            "label": "AARS level",
+            "label": "Findings score level",
           },
           {
             "key": "projects",
@@ -22227,6 +22432,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 98,
         "aarsPillars": {
           "compliance": 30,
           "data": 22,
@@ -22312,6 +22518,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
           ],
           "internetExposure": "CONFIRMED",
         },
+        "aarsPercentile": 95,
         "aarsPillars": {
           "compliance": 25,
           "data": 22,
@@ -22432,6 +22639,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 90,
         "aarsPillars": {
           "compliance": 25,
           "data": 22,
@@ -22527,6 +22735,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 90,
         "aarsPillars": {
           "compliance": 25,
           "data": 22,
@@ -22609,6 +22818,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
           ],
           "internetExposure": "CONFIRMED",
         },
+        "aarsPercentile": 82,
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
@@ -22682,6 +22892,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 82,
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
@@ -22760,6 +22971,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
           ],
           "internetExposure": "CONFIRMED",
         },
+        "aarsPercentile": 82,
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
@@ -22852,6 +23064,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 70,
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
@@ -22949,6 +23162,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 70,
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
@@ -23031,6 +23245,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 70,
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
@@ -23095,6 +23310,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 70,
         "aarsPillars": {
           "compliance": 20,
           "data": 22,
@@ -23156,6 +23372,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 33,
         "aarsPillars": {
           "compliance": 10,
           "data": 11,
@@ -23225,6 +23442,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
           ],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 33,
         "aarsPillars": {
           "compliance": 10,
           "data": 11,
@@ -23291,6 +23509,7 @@ exports[`read endpoints > runGraphQuery (default lens) answers the same shape 1`
           "gaps": [],
           "internetExposure": "NONE",
         },
+        "aarsPercentile": 12,
         "aarsPillars": {
           "compliance": 0,
           "data": 0,

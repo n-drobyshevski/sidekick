@@ -7,6 +7,8 @@
 //   dom.js       el, clear, motionOk, downloadText — the element builder
 //   format.js    dates in the display zone
 //   severity.js  the severity marks (dot + word, never colour alone)
+//   findingsScore.js  the asset-surface reading of the AARS number: percentile first,
+//                band demoted to muted context, and the model's display label
 //   data.js      quantity display: progress track, pager
 //   controls.js  status pills, KPI tiles, stat rows
 //   feedback.js  loading / empty / error / toast / dialog / help tip
@@ -28,6 +30,9 @@ export { DISPLAY_TZ, fmtDate, fmtDateTime, plural, pluralize, sevRank } from "./
 export {
   aarsChip, sevBadge, sevEntries, sevKeyRow, sevSegmentBar, sevSpoken,
 } from "./ui/severity.js";
+export {
+  FINDINGS_SCORE_LABEL, ordinal, percentileText, scoreChip,
+} from "./ui/findingsScore.js";
 export { dataTable, meter, pager, progressBar } from "./ui/data.js";
 export {
   field, filterChipRow, kpiCard, segmented, select, selectField, statRow, statusPill,

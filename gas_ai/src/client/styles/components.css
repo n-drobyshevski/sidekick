@@ -207,6 +207,22 @@
 }
 .aars-chip .sev-dot { margin-right: 0; }
 
+/* The findings-score chip (ui/findingsScore.js) — the ASSET-surface reading of the same
+   number the .aars-chip above shows on the AARS Rules page. Deliberately carries no
+   severity token: a band that holds 19 of 30 scored assets is not a level worth nineteen
+   red chips (ai/AARS_SCORING_ASSESSMENT.md §3). The percentile leads in ink, the score
+   follows in secondary, and the band trails at tertiary — three weights, one neutral
+   surface, so the eye reads them in that order without any colour doing the sorting. */
+.score-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  border-radius: var(--radius-pill); padding: 2px 9px;
+  background: rgba(0, 0, 0, 0.05);
+  font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.score-chip__pct { font-weight: 600; color: var(--ink); }
+.score-chip__score { font-weight: 600; color: var(--text-2); }
+.score-chip__band { font-weight: 500; font-size: 11px; letter-spacing: 0.02em; color: var(--text-3); }
+
 /* status pills */
 .pill { gap: 6px; border-radius: var(--radius-pill); padding: 2px 9px; }
 .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }

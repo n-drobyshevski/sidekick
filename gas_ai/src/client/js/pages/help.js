@@ -512,8 +512,9 @@ const CALLOUTS = [
   },
   {
     parts: ["aars"],
-    title: "The AARS score",
-    text: "0 to 100 across four pillars. Its band is set on the AARS Rules page and applies retroactively.",
+    title: "The findings score",
+    text: "0 to 100 across four pillars. The card shows p<N>, its percentile among the scored " +
+      "assets — the number is on the detail sheet. Levels are set on the AARS Rules page.",
     term: "aars",
   },
   {
@@ -533,7 +534,7 @@ const CALLOUTS = [
 const FIG_LABEL =
   "A worked example of a security graph node. An AI agent named checkout-bot sits inside a " +
   "dashed crimson halo carrying a TC badge, which marks toxic-combination membership. The " +
-  "node shows a High severity dot and label and an AARS score of 78. A dashed edge labelled " +
+  "node shows a High severity dot and label and p92, the findings-score percentile. A dashed edge labelled " +
   "PROTECTED_BY, absent, joins it to a No Guardrail risk node.";
 
 function anatomy() {
@@ -661,7 +662,7 @@ function anatomySvg() {
   add(sev, "text", { class: "help-node-sev", x: 89, y: 94 }, "High");
 
   const aars = group("aars");
-  add(aars, "text", { class: "help-node-aars", x: 230, y: 94, "text-anchor": "end" }, "AARS 78");
+  add(aars, "text", { class: "help-node-aars", x: 230, y: 94, "text-anchor": "end" }, "p92");
 
   // The negated edge, and the node it raises.
   const absent = group("absent");

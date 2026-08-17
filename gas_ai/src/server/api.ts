@@ -290,7 +290,13 @@ function bootstrapCore(): Rec {
       totalAssets: assets.length,
       openIssues: issues.length,
       bySeverity,
+      // A DISTRIBUTION, kept: this is the shape of the score across the estate, which is a
+      // legitimate thing to publish and is the same object the trend charts over time. It
+      // is not the per-asset claim; that moved to `aarsPercentile`.
       byAarsSeverity,
+      // The percentile's denominator, so a surface reading a percentile off a node can
+      // name the population it is a percentile OF without a second round trip.
+      aarsScored: assets.filter((a) => typeof a.aars === "number").length,
     },
     filterOptions: filterOptions(assets),
   };
@@ -625,6 +631,10 @@ function assetRow(n: GNode): Rec {
     severity: n.severity ?? null,
     aars: n.aars ?? null,
     aarsSeverity: n.aarsSeverity ?? null,
+    // The estate percentile, which is what the asset surfaces LEAD with now — the band
+    // beside it is context. Read-derived (syncStore.withAarsPercentile), so null here
+    // means "not in the scored population", never "we have not computed it yet".
+    aarsPercentile: n.aarsPercentile ?? null,
     // Phase 6: the posture tier, BESIDE the AARS score above, never blended into it — see
     // posture.ts's own header for why a tier is not an aggregate of what has been found.
     postureTier: n.postureTier ?? null,
@@ -690,6 +700,8 @@ function assetTableRow(n: GNode, issuesBySeverity?: Record<string, number>): Rec
     severity: n.severity ?? null,
     aars: n.aars ?? null,
     aarsSeverity: n.aarsSeverity ?? null,
+    // What the table's score cell leads with. See assetRow's note.
+    aarsPercentile: n.aarsPercentile ?? null,
     // Phase 6: BESIDE aars — the two must be visibly independent columns, never merged.
     postureTier: n.postureTier ?? null,
     worstOpenProblem: n.worstOpenProblem ?? null,
@@ -785,6 +797,7 @@ function assetsModel(): AssetsModel {
     .map((a) => assetTableRow(a, issueRollup.get(a.id)))
     .sort(ASSET_COMPARATORS.aars);
 
+  const postureTiers = countPostureTiers(assets);
   const aarsSeverityCounts: Record<string, number> = {};
   const kinds = new Set<string>();
   const clouds = new Set<string>();
@@ -809,8 +822,22 @@ function assetsModel(): AssetsModel {
       // "3 of 71 agents"; without this it had to recover the 3 by counting rows, which
       // only works while the client holds every row.
       protectedAgents,
-      criticalAars: assets.filter((a) => a.aarsSeverity === "CRITICAL").length,
-      highAars: assets.filter((a) => a.aarsSeverity === "HIGH").length,
+      // The two asset-level headline counts, and they come from the POSTURE TIER rather
+      // than from the AARS band.
+      //
+      // `criticalAars` / `highAars` used to sit here and were removed, not renamed. They
+      // could not carry a headline: on live data the CRITICAL band holds 19 of 30 scored
+      // assets while HIGH and MEDIUM hold none (ai/AARS_SCORING_ASSESSMENT.md §3, pinned
+      // by test/scoreOrdinality.test.ts), so "criticals" counted the whole working
+      // population and "highs" counted nothing. A KPI that reads as a queue has to be cut
+      // by a model that cuts queues; the tier lattice is that model, and tier 4 is its
+      // worst reading (posture.ts's TIER_VALUES — 4 = worst).
+      tier4Assets: postureTiers[4],
+      tier3Assets: postureTiers[3],
+      // The percentile's DENOMINATOR, published rather than implied — the S-test
+      // AARS_SCORING_ASSESSMENT.md §3 sets for any aggregate this app ships. Without it
+      // "60th percentile" is a number with no population behind it.
+      aarsScored: assets.filter((a) => typeof a.aars === "number").length,
       guardrailCoveragePct: agents.length
         ? Math.round((protectedAgents / agents.length) * 100)
         : null,
@@ -1491,8 +1518,14 @@ export function getToxicCombos(_p?: unknown): ApiResult {
           assets: s.assetIds.map((id) => {
             const a = assets.get(id);
             return a
-              ? { id, name: a.name, aars: a.aars ?? null, aarsSeverity: a.aarsSeverity ?? null }
-              : { id, name: id, aars: null, aarsSeverity: null };
+              ? {
+                  id,
+                  name: a.name,
+                  aars: a.aars ?? null,
+                  aarsSeverity: a.aarsSeverity ?? null,
+                  aarsPercentile: a.aarsPercentile ?? null,
+                }
+              : { id, name: id, aars: null, aarsSeverity: null, aarsPercentile: null };
           }),
         })),
         totalOpen: issues.length,

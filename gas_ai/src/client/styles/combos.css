@@ -145,7 +145,14 @@
   box-shadow: none; color: var(--ink);
 }
 .asset-chip:hover, .asset-more:hover { background: var(--surface); border-color: #d9d9de; }
-.asset-chip-score { font-size: 11px; font-weight: 600; border-radius: var(--radius-pill); padding: 0 6px; }
+/* The percentile on an asset chip. It took its ground from a `sev-*` class until the
+   findings score's band was demoted — see pages/combos.js at this call site. Neutral now,
+   so the only tinted marks on a combo card are the ones that really are severities. */
+.asset-chip-score {
+  font-size: 11px; font-weight: 600; border-radius: var(--radius-pill); padding: 0 6px;
+  color: var(--text-2); background: rgba(0, 0, 0, 0.05);
+  font-variant-numeric: tabular-nums;
+}
 .asset-more { color: var(--text-2); font-weight: 600; border-style: dashed; }
 
 .combo-actions { display: flex; gap: 8px; margin-top: 14px; }
