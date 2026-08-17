@@ -77,16 +77,13 @@
    all — which is what the graph wants now that the row's only remaining chip is a widened
    node budget, and what the inventory has always wanted.
 
-   `display` HAS TO BE RE-STATED under [hidden]. `filterChipRow` sets `row.hidden` and has
-   since it was written, but an author `display: flex` beats the UA sheet's
-   `[hidden] { display: none }` no matter the specificity — so "hidden" left a 37px bordered
-   band with nothing in it, directly under a builder that was plainly showing filters. */
+   This band once rendered 37px tall and empty while `row.hidden` was true, because an
+   author `display` beats the UA sheet's `[hidden]`. base.css now guards that globally. */
 .filter-chips {
   display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
   min-height: 37px;
   padding: 8px 16px; border-bottom: 1px solid var(--hairline);
 }
-.filter-chips[hidden] { display: none; }
 .filter-chips-empty { font-size: 12px; color: var(--text-3); }
 /* Two targets in one pill: the label opens the panel at that filter's section, the ✕
    clears it. The chip used to be a single delete button, so clicking the thing you wanted
@@ -137,10 +134,6 @@
   background: var(--page); border: 1px solid var(--hairline);
   border-radius: var(--radius-lg); box-shadow: var(--shadow-sheet);
 }
-/* Not optional, and not a duplicate of the UA sheet: an author `display` beats `[hidden]`
-   whatever its specificity, which is how .filter-chips below carried a dead `hidden` for
-   months. Anything here that sets `display` has to say this too. */
-.gq-panel[hidden] { display: none; }
 /* No `overflow-x: hidden` to pair with the scroll: the OR-run bracket paints at
    `left: calc(var(--gq-indent) - 7px)`, outside its row's own box, and clipping it is exactly
    why this card is not an openPopover (.popover is `overflow: hidden`). The row list's 16px
@@ -193,7 +186,6 @@
   position: absolute; top: 0; left: 0; right: 0; z-index: var(--z-canvas-chrome);
   overflow: hidden;
 }
-.gs-updating-bar[hidden] { display: none; }
 .gs-updating-bar .progress-track { height: 2px; }
 .workbench-table {
   /* Bottom padding clears the counts overlay, which floats above this in table view. */
@@ -331,9 +323,7 @@
   position: absolute; left: 10px; bottom: 10px; z-index: var(--z-canvas-chrome);
   display: flex; flex-direction: column; align-items: center; gap: 6px;
 }
-/* The rail describes the canvas, so it goes with it in table view. `display` restated
-   under [hidden] for the usual reason: an author `display: flex` beats the UA sheet. */
-.graph-rail[hidden] { display: none; }
+/* The rail describes the canvas, so it goes with it in table view. */
 .graph-rail-zoom:empty { display: none; }
 .graph-zoom {
   display: flex; flex-direction: column; align-items: center; gap: 6px;
@@ -347,11 +337,6 @@
   border-radius: var(--radius-pill);
   background: var(--page); box-shadow: var(--shadow-card);
 }
-/* Restated for the same reason as the rail above: the `display` two lines up is an author
-   declaration and beats the UA sheet's `[hidden] { display: none }`, so `groupBtn.hidden = true`
-   set the attribute, announced the button as hidden, and drew it anyway — a control that
-   screen readers skipped and a mouse could still click into a popover for a layout not in force. */
-.graph-rail button[hidden] { display: none; }
 /* The page's canvas tools at the top of the rail. The circle comes free from
    `.graph-zoom button` above; what is added is a place for the badge to hang. */
 .graph-tool { position: relative; }
@@ -429,10 +414,6 @@
 }
 .graph-layout-row select { flex: 1; min-width: 0; }
 .graph-layout-note { margin: 0; font-size: 11px; color: var(--text-3); }
-/* Every row here toggles, and each sets `display` — so each has to restate the hide. */
-.graph-layout-row[hidden], .graph-layout-note[hidden], .graph-layout .gq-iconbtn[hidden] {
-  display: none;
-}
 
 /* Tabular, or the readout jitters as it crosses 38% → 100% under a live zoom. It carries its
    own ground for the same reason the buttons do — the rail floats over nodes and edges, and

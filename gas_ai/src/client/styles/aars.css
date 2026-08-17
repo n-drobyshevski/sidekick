@@ -190,7 +190,6 @@
 /* A ceiling the model DERIVES rather than one anybody sets: drawn, but lighter, and it
    never gets a thumb. Offering a handle for a number nobody chooses would be a lie. */
 .rail-cap--derived { border-left-style: dotted; border-left-color: var(--text-3); }
-.rail-cap[hidden] { display: none; }
 /* Same recipe as the band rail's stops, and for the same reason: a real range means native
    keyboard and screen-reader support. Height 0 and OUTSIDE the track, so the 26px thumb and
    its focus ring are not clipped by the 20px lane they cut. */

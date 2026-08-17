@@ -190,7 +190,6 @@ h3.sheet-section-title {
    different kind of control. The drawn box supplies the checkbox affordance and is the
    non-colour state cue. */
 .facet-group { display: flex; flex-direction: column; gap: 4px; }
-.facet-group[hidden] { display: none; }
 .facet-group-head { display: flex; align-items: baseline; gap: 8px; }
 .facet-group-label {
   font-size: 12px; font-weight: 600; letter-spacing: 0.05em;
