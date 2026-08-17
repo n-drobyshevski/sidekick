@@ -193,7 +193,7 @@ function buildGrid(spec, cells, ariaLabel, byKey, hooks) {
  *   light(ruleIndex)    — outline every cell that row claims as first match; null clears
  *   pulse(key)          — the tracer's "this vector lands here"; null clears
  *   focusCell(key)      — move the roving tab stop, for restoring focus after a rebuild
- *   setMode(mode)       — stamps `data-mode`, which is what lets only estate mode dim
+ *   setMode(mode)       — stamps `data-mode`, which is what lets only landscape mode dim
  *   setUpdating(on)     — a preview is in flight
  *   setDiverged(on)     — the mirror and the server disagree; the picture stops claiming
  */

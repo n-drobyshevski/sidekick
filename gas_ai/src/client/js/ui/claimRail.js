@@ -33,7 +33,7 @@ import { el } from "./dom.js";
  *
  * `count === null` means NOT MEASURED YET (no preview has landed) and hides the cell
  * entirely, which is a different statement from a measured zero — the same distinction the
- * function this replaces already kept, and the one the lattice's estate mode turns on.
+ * function this replaces already kept, and the one the lattice's landscape mode turns on.
  */
 export function claimRail(td, { count, total, offset = 0, unit = "leaves", dead = false }) {
   if (!td) return;

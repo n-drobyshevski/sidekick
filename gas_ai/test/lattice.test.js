@@ -196,7 +196,7 @@ const decideB = (v) => (v.exploitation === "ACTIVE" ? { outcome: "ATTEND", match
 
 describe("paintCells", () => {
   it("never mints a tone outside the four existing pill kinds", () => {
-    for (const mode of ["rule", "estate", "change", "impact"]) {
+    for (const mode of ["rule", "landscape", "change", "impact"]) {
       const painted = paintCells(CELLS, {
         mode, decide: decideA, savedDecide: decideB, occupancy: {}, occupancyKnown: true,
       });
@@ -216,11 +216,11 @@ describe("paintCells", () => {
     expect(painted.filter((c) => c.ruleIndex === -1)).toHaveLength(36);
   });
 
-  it("estate mode keeps 'not measured yet' and 'zero' apart", () => {
+  it("landscape mode keeps 'not measured yet' and 'zero' apart", () => {
     const someKey = CELLS[0].key;
 
     const unmeasured = paintCells(CELLS, {
-      mode: "estate", decide: decideA, occupancy: {}, occupancyKnown: false,
+      mode: "landscape", decide: decideA, occupancy: {}, occupancyKnown: false,
     });
     for (const cell of unmeasured) {
       expect(cell.unmeasured).toBe(true);
@@ -229,7 +229,7 @@ describe("paintCells", () => {
     }
 
     const measured = paintCells(CELLS, {
-      mode: "estate", decide: decideA, occupancy: { [someKey]: 7 }, occupancyKnown: true,
+      mode: "landscape", decide: decideA, occupancy: { [someKey]: 7 }, occupancyKnown: true,
     });
     const hit = measured.find((c) => c.key === someKey);
     expect(hit.count).toBe(7);
@@ -263,7 +263,7 @@ describe("paintCells", () => {
   });
 
   it("every mode produces a non-empty aria fragment for every cell", () => {
-    for (const mode of ["rule", "estate", "change", "impact"]) {
+    for (const mode of ["rule", "landscape", "change", "impact"]) {
       const painted = paintCells(CELLS, {
         mode, decide: decideA, savedDecide: decideB, occupancy: {}, occupancyKnown: true,
       });

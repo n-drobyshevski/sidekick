@@ -25,7 +25,7 @@
 // that will eventually be mounted without its guard.
 
 import { el, clear } from "./dom.js";
-import { segmented } from "./controls.js";
+import { segmented, select } from "./controls.js";
 import { openPopover } from "./popover.js";
 import { outcomeBadge, outcomeLabel } from "./outcome.js";
 import { tierBadge, tierLabel } from "./posture.js";
@@ -66,7 +66,7 @@ export function latticeSection(opts) {
     // its ordered row array (what a cap check and a row lookup need). Keeping them apart
     // matters: handing the array to a coverage function silently tallies nothing.
     getCeiling, getOccupancy, getRule, getRules, getRuleCap,
-    whenWords, onAddRule, onRowLight,
+    whenWords, onAddRule, onRowLight, onTrace,
   } = opts;
   const K = KINDS[kind];
 
@@ -105,7 +105,7 @@ export function latticeSection(opts) {
   const modeTabs = segmented({
     options: [
       { value: "rule", label: "Rule", title: `What this draft does to every ${unitOne}` },
-      { value: "estate", label: "Estate", title: "Where this tenant's records actually land" },
+      { value: "landscape", label: "Landscape", title: "Where this tenant's records actually land" },
       { value: "change", label: "Change", title: `Only the ${unit} this draft moves` },
     ],
     value: "rule",
@@ -120,6 +120,85 @@ export function latticeSection(opts) {
       repaint();
     },
   });
+
+  // ----------------------------------------------------------------------------- tracer
+  /**
+   * Walk one vector through the cascade and show the walk, not just its answer.
+   *
+   * The cascade table can say WHAT each row decides but never why a particular record got
+   * the verdict it did — that requires reading the rows in order and stopping at the first
+   * match, which is exactly the work a reader should not have to do in their head. Setting
+   * the axes here pulses the cell the vector lands on, lights the row that won, and dims
+   * the rows the walk stepped past with a marker saying they were tried.
+   *
+   * `.rule-tried` must not look like `.rule-dead`: "tried and did not match this vector" is
+   * a fact about ONE walk, while "never fires" is a fact about the rule. Dimming alone would
+   * conflate them, so a tried row carries its own marker.
+   */
+  const traceState = {};
+  for (const axis of spec.axes) traceState[axis.key] = axis.values[axis.values.length - 1];
+
+  const traceReadout = el("p", {
+    class: "small",
+    style: "margin:10px 0 0",
+    role: "status",
+    "aria-live": "polite",
+  });
+  const traceControls = el("div", { class: "lat-trace__axes" });
+  for (const axis of spec.axes) {
+    const ctl = select({
+      options: axis.values,
+      value: traceState[axis.key],
+      ariaLabel: axis.label,
+      onChange: (v) => { traceState[axis.key] = v; runTrace(); },
+    });
+    traceControls.append(el("label", { class: "lat-trace__axis" },
+      el("span", {}, axis.label), ctl));
+  }
+  const traceBox = el(
+    "details",
+    { class: "rule-disclosure lat-trace" },
+    el("summary", {}, `Trace one ${unitOne} through the cascade`),
+    traceControls,
+    traceReadout,
+  );
+  traceBox.addEventListener("toggle", () => {
+    if (traceBox.open) runTrace();
+    else {
+      grid.pulse(null);
+      if (onTrace) onTrace(null);
+    }
+  });
+
+  function runTrace() {
+    if (!traceBox.open) return;
+    const vector = { ...traceState };
+    const decided = decide(vector);
+    const idx = decided.matchedRuleIndex;
+    const verdict = decided[K.verdictKey];
+    const key = spec.keyOf(vector);
+
+    grid.pulse(key);
+    grid.light(idx === -1 ? null : idx);
+    if (onTrace) onTrace(idx);
+
+    const words = vectorSentence(spec, vector);
+    if (idx === -1) {
+      traceReadout.textContent =
+        `${words} → no rule matches, so the fallback decides: ${K.label(verdict)}.`;
+      return;
+    }
+    // The winning row is always named; the rows before it are only mentioned when there
+    // ARE any, because "rules 1–0 were tried" is how the first sentence read before this.
+    const skipped = idx === 0
+      ? ""
+      : idx === 1
+        ? "rule 1 was tried and did not match; "
+        : `rules 1–${idx} were tried and did not match; `;
+    traceReadout.textContent =
+      `${words} → ${skipped}rule ${idx + 1} is the first that matches — `
+      + `${whenWords(getRules()[idx])} → ${K.label(verdict)}.`;
+  }
 
   const massHost = el("div", { class: "lat-mass" });
   const legend = el("p", { class: "small muted", style: "margin:12px 0 0" });
@@ -139,6 +218,7 @@ export function latticeSection(opts) {
     massHost,
     legend,
     note,
+    traceBox,
   );
 
   // ------------------------------------------------------------------------------ paint
@@ -146,7 +226,7 @@ export function latticeSection(opts) {
   /**
    * Repaint from the MIRROR — no server round-trip, so this runs on every keystroke.
    *
-   * Only ESTATE depends on the server, and it is the only mode `.is-updating` may dim: Rule
+   * Only LANDSCAPE depends on the server, and it is the only mode `.is-updating` may dim: Rule
    * and Change are mirror-driven and already current the instant a key goes down, so dimming
    * them while a preview is in flight would say "this is stale" about the one thing on the
    * page that is not.
@@ -170,6 +250,7 @@ export function latticeSection(opts) {
     grid.recede(mode === "change" ? painted.filter((d) => !d.changed).map((d) => d.key) : []);
     paintLegend(painted, occ.known);
     paintMass();
+    runTrace(); // the rule may have moved under an open trace
   }
 
   function paintLegend(painted, occupancyKnown) {
@@ -195,7 +276,7 @@ export function latticeSection(opts) {
     const reached = painted.filter((d) => d.count > 0).length;
     legend.textContent =
       `${reached} of ${painted.length} ${unit} carry at least one record in this tenant. `
-      + `A hatched ${unitOne} is one the estate never reaches — which is not the same as a `
+      + `A hatched ${unitOne} is one the landscape never reaches — which is not the same as a `
       + "rule that cannot fire.";
   }
 

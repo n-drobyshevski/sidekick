@@ -243,6 +243,21 @@ export async function renderAarsRules(main, _params, ctx) {
   // Assigned once the Problem pane builds. Leaving a lattice popover open across a tab
   // change would strand a portal against a hidden pane — `portalsOpen()` stays raised and
   // the sheet's Tab trap keeps deferring to a list nothing can reach.
+  /**
+   * Mark a cascade's rows against one traced walk: everything before the winner was tried
+   * and did not match, the winner is the first that did, and everything after it was never
+   * reached. `idx === null` clears. Shared by both cascades because the walk is the same
+   * shape in each.
+   */
+  function markTracedRows(body, idx) {
+    if (!body) return;
+    body.querySelectorAll("tr[data-idx]").forEach((tr) => {
+      const i = Number(tr.dataset.idx);
+      tr.classList.toggle("rule-tried", idx !== null && idx !== undefined && idx !== -1 && i < idx);
+      tr.classList.toggle("rule-won", idx !== null && idx !== undefined && i === idx);
+    });
+  }
+
   let closeProblemLatticePop = () => {};
   let closePostureLatticePop = () => {};
   let activeModelTab = "aars"; // which tab is showing, so an async load can't unhide the wrong one
@@ -2353,6 +2368,7 @@ export async function renderAarsRules(main, _params, ctx) {
         return parts.length ? parts.join(", ") : "no condition, so it matches everything left";
       },
       onRowLight: (idx) => lightProblemRow(idx),
+      onTrace: (idx) => markTracedRows(pCascadeBody, idx),
       onAddRule: (when, outcome) => {
         // New rows go on TOP — a first-match cascade, same reasoning as pAddBtn.
         problemDraft.outcomeRules.unshift({ when, outcome });
@@ -3128,6 +3144,7 @@ export async function renderAarsRules(main, _params, ctx) {
         return parts.length ? parts.join(", ") : "no condition, so it matches everything left";
       },
       onRowLight: (idx) => lightPostureRow(idx),
+      onTrace: (idx) => markTracedRows(uCascadeBody, idx),
       onAddRule: (when, tier) => {
         // New rows go on TOP — a first-match cascade, same reasoning as the other two.
         postureDraft.tierRules.unshift({ when, tier });

@@ -2,7 +2,7 @@
 /* The Problem tree's 54 leaves and the Posture lattice's 27 cells, drawn. Both tabs edit a
    first-match-wins cascade over a fixed, closed, enumerable space, and until this existed
    neither drew that space at all — a row's claim was a number in a table cell, and the
-   per-leaf estate census the server already sends was read for one scalar and discarded.
+   per-leaf landscape census the server already sends was read for one scalar and discarded.
 
    A GRID OF BUTTONS, NOT AN SVG. The graph, the ego map and the provenance diagram are SVG
    because they draw edges between irregularly placed boxes — Béziers, arrowheads, labels
@@ -17,7 +17,7 @@
    A LEDGER, NOT A HEAT MAP. combos.css says it out loud: tinting cells by magnitude is
    what turns a ledger into a heat map, and the condition matrix declines it. Rule mode
    carries no magnitude at all — four discrete outcome tints off the four .pill kinds
-   outcomeBadge and tierBadge already use, each with its word. Estate mode is the one place
+   outcomeBadge and tierBadge already use, each with its word. Landscape mode is the one place
    a quantity is encoded, and it is BUCKETED rather than continuous, always prints the
    count, and hatches zero — so the number is the reading and the tint is only the sort
    order. No cell ever depends on telling two shades apart. */
@@ -115,7 +115,7 @@
 .lat-cell[data-tone="neutral"] { background: rgba(0, 0, 0, 0.06); color: var(--text-2); }
 .lat-cell[data-tone="ok"]      { background: rgba(21, 128, 61, 0.12); color: var(--ok); }
 
-/* Estate buckets. Four steps, not a ramp, and the count is printed in every one of them. */
+/* Landscape buckets. Four steps, not a ramp, and the count is printed in every one of them. */
 .lat-cell[data-bucket="1"] { background: rgba(0, 0, 0, 0.05); color: var(--text-2); }
 .lat-cell[data-bucket="2"] { background: rgba(0, 0, 0, 0.13); color: var(--ink); }
 .lat-cell[data-bucket="3"] { background: rgba(0, 0, 0, 0.26); color: var(--ink); }
@@ -161,10 +161,10 @@
   50% { box-shadow: 0 0 0 6px rgba(190, 18, 60, 0.28); }
 }
 
-/* Estate is the only mode that goes stale while a preview is in flight — Rule and Change
+/* Landscape is the only mode that goes stale while a preview is in flight — Rule and Change
    are mirror-driven and already current, so they must NOT dim. Same grammar as
    .rule-impact.updating. */
-.lat.is-updating[data-mode="estate"] .lat-cell {
+.lat.is-updating[data-mode="landscape"] .lat-cell {
   opacity: 0.45;
   transition: opacity 120ms var(--ease-out);
 }
@@ -172,7 +172,7 @@
 @media (prefers-reduced-motion: reduce) {
   .lat-cell { transition: none; }
   .lat-cell.is-traced { animation: none; box-shadow: 0 0 0 3px var(--accent); }
-  .lat.is-updating[data-mode="estate"] .lat-cell { transition: none; }
+  .lat.is-updating[data-mode="landscape"] .lat-cell { transition: none; }
 }
 
 /* ------------------------------------------------------------------- outcome mass strip */
@@ -294,3 +294,38 @@ table.data tr.is-lit > td { background: var(--wash-hover); }
 }
 .lat-pop__row { margin: 0 0 8px; }
 .lat-pop button { width: 100%; }
+
+/* ---------------------------------------------------------------------------- tracer */
+/* One vector walked through the cascade, so "why did this get Act" stops being work the
+   reader does in their head against an ordered table. */
+.lat-trace { margin-top: 18px; }
+.lat-trace__axes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin-top: 10px;
+}
+.lat-trace__axis { display: flex; flex-direction: column; gap: 3px; }
+.lat-trace__axis > span {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+/* A row the walk stepped past. Deliberately NOT the same mark as .rule-dead: "tried and did
+   not match THIS vector" is a fact about one walk, "never fires" is a fact about the rule,
+   and dimming alone would conflate them. Hence the glyph as well as the fade. */
+table.data tr.rule-tried > td { opacity: 0.5; }
+table.data tr.rule-tried > td:first-child::before {
+  content: "·";
+  margin-right: 3px;
+  font-weight: 700;
+  color: var(--text-3);
+}
+/* The row that won the walk. */
+table.data tr.rule-won > td { background: rgba(190, 18, 60, 0.07); }
+table.data tr.rule-won > td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent);
+}

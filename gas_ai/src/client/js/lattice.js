@@ -339,7 +339,7 @@ function compareDecide(current, saved) {
 
 function ariaFor(mode, meta, cell) {
   const parts = [meta.word];
-  if (mode === "estate" || mode === "impact") {
+  if (mode === "landscape" || mode === "impact") {
     parts.push(cell.unmeasured ? "not yet measured" : `${cell.count} ${cell.count === 1 ? "asset" : "assets"}`);
   }
   if (mode === "change" || mode === "impact") {
@@ -369,17 +369,17 @@ function ariaFor(mode, meta, cell) {
  * present on every cell; the ones a mode has nothing to say about hold their default):
  *
  *   "rule"     — tone/word/glyph/ruleIndex from `decide` alone. What THIS rule, with no
- *                estate behind it, would do to every leaf. `count` stays null: this mode
+ *                landscape behind it, would do to every leaf. `count` stays null: this mode
  *                counts nothing, on purpose — a "how many leaves" number belongs to
  *                `leafCoverage`/`cellCoverage`, not to a per-cell paint.
- *   "estate"   — adds `count` / `hatched` / `unmeasured` from `opts.occupancy`, read
+ *   "landscape"   — adds `count` / `hatched` / `unmeasured` from `opts.occupancy`, read
  *                through `opts.occupancyKnown`. Three states, not two: `occupancyKnown ===
  *                false` means no preview has landed at all (`unmeasured: true`, `count:
  *                null`); a landed preview with nothing in this leaf is `count: 0, hatched:
  *                true`; anything else is a real, printed count. "Not measured yet" and
  *                "zero" are different claims and this mode is the reason this file exists
  *                to keep them apart — see lattice.css's own "a ledger, not a heat map"
- *                header for why estate counts are the one place a quantity appears at all.
+ *                header for why landscape counts are the one place a quantity appears at all.
  *   "change"   — adds `changed` / `direction` by comparing `opts.decide(vector)` (the
  *                draft) against `opts.savedDecide(vector)` (the last-saved rule). `count`
  *                stays null — this mode answers "did the OUTCOME move", not "how many real
@@ -411,7 +411,7 @@ export function paintCells(cells, opts) {
       direction: null,
     };
 
-    if (mode === "estate" || mode === "impact") {
+    if (mode === "landscape" || mode === "impact") {
       const occ = readOccupancy(occupancy, occupancyKnown, cell.key);
       painted.count = occ.count;
       painted.hatched = occ.hatched;
