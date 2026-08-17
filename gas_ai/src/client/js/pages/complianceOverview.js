@@ -42,7 +42,8 @@
 // uses, not a second implementation of either.
 
 import {
-  checksCell, extChip, findSubcategory, postureCell, STATES, stateStrip, subcategoryDetail,
+  checksCell, extChip, findSubcategory, fiveRsDerived, postureCell, STATES, stateStrip,
+  subcategoryDetail,
 } from "./complianceShared.js";
 import {
   dataTable, el, emptyState, meter, plural, sectionLabel, sevBadge, sevRank, statRow,
@@ -136,6 +137,14 @@ function renderHeadline(host, data) {
   // Estate-wide worst — see worstFailingSeverityAcross(). Only meaningful (and only ever
   // drawn) alongside a scored mean; an unscored estate has no bar to tint either.
   const worstSeverity = scored ? worstFailingSeverityAcross(data.rail || []) : null;
+  // Whether the rail below draws a DERIVED percentage for some row that this mean still
+  // averages at Wiz's own score — computed once so the sub-line only names a framework by
+  // name on a tenant where doing so is actually true, rather than a hard-coded "5Rs". This
+  // hero deliberately keeps averaging Wiz's own per-framework figures (see the file header,
+  // "THE HEADLINE NUMBER IS OURS, NOT WIZ'S") — only the rail row's own number changed.
+  const derivedRow = scored
+    ? (data.rail || []).find((r) => fiveRsDerived(data, r.frameworkId))
+    : null;
 
   // Banded by its own number, like every other bar on this page — see postureCell() in
   // complianceShared.js for why fill colour stopped meaning severity. The estate mean is
@@ -156,8 +165,17 @@ function renderHeadline(host, data) {
   // than opening a new one — a sevBadge beside the sentence that already explains the
   // number, never colour without the word next to it.
   const subKids = [scored
-    ? `Derived here — the mean of ${plural(kpis.scoredFrameworks || 0, "scored framework")}. ` +
-      "Wiz publishes no cross-framework figure."
+    ? `Derived here — the mean of ${plural(kpis.scoredFrameworks || 0, "scored framework")}, ` +
+      "each at Wiz's own score." +
+      (derivedRow
+        // The one place this mean could read as contradicting the rail row beside it: that
+        // row now states an AI-scoped DERIVED figure for this framework, not the Wiz score
+        // this mean is still averaging for it. Different questions, different denominators
+        // — not two answers disagreeing.
+        ? ` ${derivedRow.name} is included here at Wiz's figure; the rail row below states ` +
+          "a different, AI-scoped derived figure for it."
+        : "") +
+      " Wiz publishes no cross-framework figure."
     : "Derived here — no framework has a compliance posture to average yet. " +
       "Wiz publishes no cross-framework figure."];
   if (worstSeverity) subKids.push(sevBadge(worstSeverity));
@@ -226,9 +244,22 @@ function fiveRsScopeNote(row, fiveRsScope) {
  * The button's one accessible name, standing in for everything drawn inside it (which is
  * all `aria-hidden`) — otherwise the name, the percentage and the bar each get announced
  * on their own and the framework's name is read out twice.
+ *
+ * `derived` (fiveRsDerived() in complianceShared.js) is non-null only for the 5Rs row, and
+ * only once the payload carries `fiveRsPosture` — the same predicate the framework hero
+ * uses, so a screen-reader user and a sighted reader looking at the same row can never be
+ * told two different percentages. It USED to be true, and load-bearing, that this row's
+ * percentage was Wiz's own math and "cannot be recomputed here" (a 5Rs category can report
+ * 194,309/71 checks against an 85% posture that is not a ratio of any pair of numbers this
+ * app held). That position is reversed as of fiveRsPosture.ts: the percentage IS derived
+ * here now, over the active rules in AI scope, and Wiz's own figure is stated beside it
+ * because the two answer different questions — a resource-weighted rate over a narrower,
+ * AI-scoped set of active rules, against Wiz's aggregation over the whole data estate —
+ * not because either corrects the other.
  */
-function railAriaLabel(row, meanPct, scopeNote) {
+function railAriaLabel(row, meanPct, scopeNote, derived) {
   if (row.state === "scored" && row.posturePct !== null) {
+    const pct = derived ? derived.posturePct : row.posturePct;
     // The one sentence stating what is failing carries the worst severity too, rather than
     // a second sentence — a screen reader hears "4 of 6 policies failing, worst severity
     // HIGH" as one fact, which is what it is.
@@ -237,18 +268,24 @@ function railAriaLabel(row, meanPct, scopeNote) {
         `failing, worst severity ${row.worstFailingSeverity}.`
       : `${row.failingPolicyCount} of ${row.policyCount} ${policyNoun(row.policyCount)} failing.`;
     const sentence = [
-      `${row.name}, ${row.posturePct} percent compliant.`,
+      `${row.name}, ${pct} percent compliant.`,
       failingClause,
     ];
     if (meanPct !== null) sentence.push(`Estate mean ${meanPct} percent.`);
-    // THE LOAD-BEARING HONESTY POINT of the whole 5Rs feature: this percentage is Wiz's
-    // own, computed against every rule the framework has — Wiz's posture math is opaque
-    // and cannot be recomputed here (a 5Rs category can report 194,309/71 checks against
-    // an 85% posture; that 85 is not a ratio of any pair of numbers this app holds), so
-    // scoping rules in or out of the AI register never touches this number. Say so, or a
-    // reader watching the register below shrink while this percentage stays put reads it
-    // as the app forgetting to update the bar rather than the bar telling the truth.
-    if (scopeNote) {
+    if (derived) {
+      sentence.push(
+        `Derived from ${derived.activePolicyCount} active ` +
+        `${derived.activePolicyCount === 1 ? "rule" : "rules"} in AI scope: ` +
+        `${derived.passCount.toLocaleString()} of ` +
+        `${(derived.passCount + derived.failCount).toLocaleString()} checks passing.` +
+        (derived.wizPosturePct !== null
+          ? ` Wiz scores the full framework ${derived.wizPosturePct} percent.`
+          : ""));
+    } else if (scopeNote) {
+      // Stale-payload fallback: fiveRsDerived() returned null because this payload
+      // predates `fiveRsPosture`, so the row is still drawing Wiz's own figure and that
+      // figure genuinely does not move with the register below — say so, exactly as this
+      // page said before the derived posture shipped.
       sentence.push(
         `This percentage is Wiz's own, computed against all ${scopeNote.total} rules in ` +
         `the framework, including the ${scopeNote.total - scopeNote.selected} scoped out ` +
@@ -260,9 +297,15 @@ function railAriaLabel(row, meanPct, scopeNote) {
   return `${row.name}, not scored: ${state.label.toLowerCase()}. ${reasonBlurb(row)}`;
 }
 
-function railRow(row, meanPct, actions, fiveRsScope) {
+function railRow(row, meanPct, actions, fiveRsScope, data) {
   const scored = row.state === "scored" && row.posturePct !== null;
   const scopeNote = fiveRsScopeNote(row, fiveRsScope);
+  // The derived 5Rs posture for THIS row, or null for every other framework — the same
+  // fiveRsDerived() predicate the framework hero (compliance.js) calls, so the rail and
+  // the hero can never draw two different percentages for the same framework.
+  const derived = fiveRsDerived(data, row.frameworkId);
+  const railPct = derived ? derived.posturePct : row.posturePct;
+  const railBand = derived ? derived.postureBand : row.postureBand;
 
   // The badge pairs with the bar's colour below, so it only draws when the bar itself is
   // going to be tinted — a row with nothing failing gets neither.
@@ -273,7 +316,13 @@ function railRow(row, meanPct, actions, fiveRsScope) {
     scopeNote
       ? el("span", { class: "scope-rail-note" },
           el("span", { class: "scope-rail-glyph", "aria-hidden": "true" }, "◒"),
-          "Scope active — Wiz % unaffected")
+          // "Wiz % unaffected" was true under the old carried-through behaviour. It is
+          // false now whenever a derived posture exists: scoping a rule in or out of the
+          // AI register moves the active-rule set fiveRsPosture.ts computes over, so the
+          // percentage beside this badge moves with it.
+          derived
+            ? "Scope active — this percentage reflects it"
+            : "Scope active — Wiz % unaffected")
       : null,
     el("div", { class: "comp-fw-meta-row" },
       el("span", { class: "comp-fw-meta" }, railMetaText(row)),
@@ -291,9 +340,10 @@ function railRow(row, meanPct, actions, fiveRsScope) {
     // was least wrong — these are a handful of prominent rows, each with a sevBadge beside
     // it — but a bar whose colour means one thing here and another in the register below is
     // a page that has to be learned twice. The severity did not go anywhere: it is the
-    // badge, one line up.
-    if (row.postureBand) bar.dataset.band = row.postureBand;
-    bar.style.width = `${row.posturePct}%`;
+    // badge, one line up. `railPct`/`railBand` are the derived pair for 5Rs, Wiz's own for
+    // every other framework — see the `derived` const above.
+    if (railBand) bar.dataset.band = railBand;
+    bar.style.width = `${railPct}%`;
     laneEl.append(bar);
   } else {
     const state = STATES[row.state] || STATES.unknown;
@@ -325,12 +375,12 @@ function railRow(row, meanPct, actions, fiveRsScope) {
   kids.push(el("span", {
     class: `comp-fw-pct${scored ? "" : " comp-fw-pct--dash"}`,
     "aria-hidden": "true",
-  }, scored ? `${row.posturePct}%` : "—"));
+  }, scored ? `${railPct}%` : "—"));
 
   return el("button", {
     type: "button",
     class: "comp-fw-row",
-    "aria-label": railAriaLabel(row, meanPct, scopeNote),
+    "aria-label": railAriaLabel(row, meanPct, scopeNote, derived),
     onclick: () => actions.openFramework(row.frameworkId),
   }, ...kids);
 }
@@ -356,10 +406,12 @@ function renderRail(host, data, actions) {
   const fiveRsScope = data.fiveRsScope || null;
 
   // Already worst-first with unscored last, from the server — re-sorting here would
-  // second-guess a ranking the read model owns and is tested against.
+  // second-guess a ranking the read model owns and is tested against. `data` is threaded
+  // through so railRow() can call fiveRsDerived() itself, the same way fiveRsScope already
+  // reaches it — one payload, read the same way at every row.
   const rail = el("div", { class: "comp-rail" },
     railAxis(),
-    ...rows.map((row) => railRow(row, meanPct, actions, fiveRsScope)));
+    ...rows.map((row) => railRow(row, meanPct, actions, fiveRsScope, data)));
 
   const key = meanPct !== null
     ? el("p", { class: "comp-rail-key" },
@@ -381,14 +433,22 @@ function renderRail(host, data, actions) {
   // footnote and the marker appear and disappear together rather than drifting into a state
   // where one claims a scope the other does not.
   const scoped = rows.map((row) => fiveRsScopeNote(row, fiveRsScope)).filter(Boolean)[0];
+  // Same fiveRsDerived() predicate railRow() used for this framework's own row, so the
+  // footnote's claim about whether the percentage above moved with the scope matches what
+  // that row actually drew.
+  const scopedDerived = scoped ? fiveRsDerived(data, scoped.frameworkId) : null;
   const scopeKey = scoped
     ? el("p", { class: "comp-rail-key comp-rail-key--scope" },
         el("b", {}, `${scoped.frameworkName}: `),
         `${scoped.selected} of ${scoped.total} rules in scope. `,
         // Restated here and not only in the row's aria-label, because this is the line a
-        // sighted reader lands on when the register below shrinks and the percentage above
-        // does not — without it that reads as the bar failing to update.
-        `The percentage above is Wiz's own and still covers all ${scoped.total}. `,
+        // sighted reader lands on when the register below shrinks. "Still covers all N" was
+        // true of Wiz's own carried-through percentage; it is false once a derived posture
+        // is in play, so the two are now different sentences rather than one that quietly
+        // stopped being true.
+        (scopedDerived
+          ? "The percentage above is derived here, over the active rules in scope. "
+          : `The percentage above is Wiz's own and still covers all ${scoped.total}. `),
         el("a", { href: "#/settings", target: "_self" }, "Choose which rules →"))
     : null;
 

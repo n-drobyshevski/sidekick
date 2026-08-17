@@ -42,6 +42,10 @@
 // exists (ScopePins, below) and why every row reports its own `reason` rather than only its
 // `selected` bit: a default that cannot see everything has to say what it did see, or it is
 // the implied confidence PRODUCT.md forbids.
+//
+// This scope is also the input to a derived POSTURE, not just a register filter — see
+// fiveRsPosture.ts. `passCount` and `enabled` below exist for that consumer alone; the
+// in/out decision above never reads either.
 
 import { SEVERITY_ORDER, isOpenGap, type Severity } from "./config";
 import type { FrameworkTree } from "./compliancePosture";
@@ -102,6 +106,15 @@ export interface PolicyScope {
   /** Open gap findings of this policy sitting on a synced AI asset. */
   aiFindingCount: number;
   failCount: number;
+  /** Same MAX-across-mappings discipline as failCount above — see the comment on that field. */
+  passCount: number;
+  /**
+   * STICKY FALSE: the first mapping row's `enabled` is the initial reading, and any later
+   * row saying `false` overrides it permanently. Mirrors the pinnedOut-beats-pinnedIn
+   * tie-break below (scoping a control OUT is the safer direction to err in when mapping
+   * rows disagree about it).
+   */
+  enabled?: boolean;
 }
 
 export interface FiveRsScope {
@@ -194,6 +207,8 @@ export function scopeFiveRs(
     subcategoryExternalId: string;
     subcategoryTitle: string;
     failCount: number;
+    passCount: number;
+    enabled?: boolean;
   }
 
   // A policy appears once per policyId even when the 5Rs framework maps it under several
@@ -222,6 +237,9 @@ export function scopeFiveRs(
             subcategoryExternalId: sub.externalId,
             subcategoryTitle: sub.title,
             failCount: 0,
+            passCount: 0,
+            // Sticky-false's INITIAL reading — see the PolicyScope.enabled doc comment.
+            enabled: p.enabled,
           };
           byPolicy.set(p.policyId, acc);
         }
@@ -230,6 +248,9 @@ export function scopeFiveRs(
         // evaluated once, and its fail count is simply repeated on every subcategory row it
         // maps to.
         if (p.failCount > acc.failCount) acc.failCount = p.failCount;
+        if (p.passCount > acc.passCount) acc.passCount = p.passCount;
+        // Sticky-false's OVERRIDE step: any later mapping row saying false wins, permanently.
+        if (p.enabled === false) acc.enabled = false;
       }
     }
   }
@@ -292,6 +313,8 @@ export function scopeFiveRs(
       mappedBy,
       aiFindingCount,
       failCount: acc.failCount,
+      passCount: acc.passCount,
+      enabled: acc.enabled,
     });
   }
 

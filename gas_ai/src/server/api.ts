@@ -78,6 +78,7 @@ import {
   weakestAreas,
 } from "../domain/complianceOverview";
 import { scopeFiveRs, unselectedPolicyIds } from "../domain/complianceScope";
+import { fiveRsDerivedPosture } from "../domain/fiveRsPosture";
 import { cleanFiveRsPins } from "../domain/settingsLogic";
 import { buildAllFrameworkTrees, complianceKpis } from "../domain/compliancePosture";
 import { graphCacheParams, resolveGraphParams, resolveLayoutParams } from "../domain/graphApiParams";
@@ -1220,6 +1221,13 @@ export function getCompliance(p?: unknown): ApiResult {
       const selected = settingsStore.getSelectedFrameworks(() => catalogue);
       const { policies, scope: fiveRsScope } = scopedFrameworkPolicies();
       const trees = buildAllFrameworkTrees(posture, policies, catalogue);
+      // The 5Rs framework's derived percentage — see fiveRsPosture.ts for what "derived"
+      // means and why it is a different claim from Wiz's own. Null when there is no 5Rs
+      // framework collected, or the request maps to no scored 5Rs tree at all.
+      const fiveRsPosture = fiveRsDerivedPosture(
+        fiveRsScope,
+        trees.find((t) => t.frameworkId === fiveRsScope.frameworkId)?.posturePct ?? null,
+      );
       // The catalogue with this app's selection folded in — Wiz says what exists, the
       // settings say what is collected, and the picker needs both to render honestly.
       // Built once and shared: `coverageSummary` reads `selected` off these rows, and the
@@ -1246,6 +1254,12 @@ export function getCompliance(p?: unknown): ApiResult {
         // as a count because the Settings card is the place an operator overturns a
         // derivation, and it cannot argue with a verdict it cannot see.
         fiveRsScope,
+        // Computed server-side for the same reason `rail` / `weakestAreas` / `sharedControls`
+        // above are: the client bundle cannot import the domain layer, so a browser-side
+        // recomputation would be a hand-kept mirror rather than a shared source. This
+        // payload is already shipped whole and cached, so there is no second scope for a
+        // mirror to reconcile against — computing it here instead buys nothing but risk.
+        fiveRsPosture,
         coverage: coverageSummary(trees, merged),
         // Named so the page can open on a framework it was linked to rather than guessing.
         // Null when the requested id has no stored posture, which the page reports as such
