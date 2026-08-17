@@ -23,6 +23,8 @@
 import { call } from "../api.js";
 import {
   aarsChip,
+  claimOffsets,
+  claimRail,
   clear,
   closeActiveSheet,
   confirmDialog,
@@ -37,6 +39,7 @@ import {
   openPopover,
   openSheet,
   outcomeBadge,
+  outcomeLabel,
   pointRail,
   railScale,
   latticeGrid,
@@ -49,8 +52,12 @@ import {
   tierBadge,
   toast,
 } from "../ui.js";
-import { PROBLEM_LATTICE, paintCells, vectorSentence } from "../lattice.js";
-import { decideProblem as mirrorDecideProblem, leafCoverage as mirrorLeafCoverage } from "../decideMirror.js";
+import { PROBLEM_LATTICE, outcomeMass, paintCells, toneForKey, vectorSentence } from "../lattice.js";
+import {
+  decideProblem as mirrorDecideProblem,
+  leafCoverage as mirrorLeafCoverage,
+  OUTCOME_VALUES as MIRROR_OUTCOME_VALUES,
+} from "../decideMirror.js";
 import {
   CODEBOOK,
   gapCodeOptions,
@@ -902,31 +909,6 @@ export async function renderAarsRules(main, _params, ctx) {
     node.classList.toggle("gap-gloss--unknown", !g.known);
   }
 
-  /**
-   * How many gap instances in the live inventory this rule actually priced. Absent until
-   * the first preview lands, and hidden rather than zeroed — "not measured yet" and
-   * "matches nothing" are different statements.
-   */
-  function paintPrices(td, count, total) {
-    if (!td) return;
-    if (count === null || count === undefined) {
-      td.hidden = true;
-      return;
-    }
-    if (!td.firstChild) {
-      td.append(
-        el("span", { class: "cover-bar" }, el("i", {})),
-        el("span", { class: "cover-n" }),
-      );
-    }
-    td.hidden = false;
-    const share = total ? Math.round((count / total) * 100) : 0;
-    td.firstChild.firstChild.style.width = `${share}%`;
-    setText(td.lastChild, String(count));
-    setAttr(td, "aria-label", total
-      ? `prices ${count} of ${total} gap instances`
-      : `prices ${count} gap instances`);
-  }
 
   // ------------------------------------------------------------- cascade (structural)
   /** Put the caret in a row's code field — where every structural change should land. */
@@ -1411,6 +1393,9 @@ export async function renderAarsRules(main, _params, ctx) {
     const unreachable = (preview && preview.unreachableGapRules) || [];
     const matchCounts = (preview && preview.gapMatchCounts) || null;
     const instanceTotal = (preview && preview.gapInstanceTotal) || 0;
+    // Cumulative starts, so the column reads as the live gap instances being consumed in
+    // cascade order rather than as N unrelated bars.
+    const gapOffsets = claimOffsets(matchCounts || []);
     const rows = cascadeBody.querySelectorAll("tr[data-idx]");
     rows.forEach((tr, i) => {
       const row = draft.gapPoints[i];
@@ -1448,9 +1433,16 @@ export async function renderAarsRules(main, _params, ctx) {
         });
         paintGloss(gloss, g);
       }
-      paintPrices(tr.querySelector(".rule-prices"), priced, instanceTotal);
+      claimRail(tr.querySelector(".rule-prices"), {
+        count: priced, total: instanceTotal, offset: gapOffsets[i] || 0, unit: "gap instances",
+      });
     });
-    paintPrices(fbCount, matchCounts ? preview.gapFallbackCount ?? 0 : null, instanceTotal);
+    claimRail(fbCount, {
+      count: matchCounts ? preview.gapFallbackCount ?? 0 : null,
+      total: instanceTotal,
+      offset: gapOffsets[gapOffsets.length - 1] || 0,
+      unit: "gap instances",
+    });
     pricesTh.hidden = !matchCounts;
     syncSandboxPrices();
 
@@ -2387,6 +2379,7 @@ export async function renderAarsRules(main, _params, ctx) {
         paintProblemLattice();
       },
     });
+    const pLatticeMass = el("div", { class: "lat-mass" });
     const pLatticeLegend = el("p", { class: "small muted", style: "margin:12px 0 0" });
     const pLatticeHero = el(
       "div",
@@ -2399,6 +2392,7 @@ export async function renderAarsRules(main, _params, ctx) {
         pModeTabs,
       ),
       pLattice.node,
+      pLatticeMass,
       pLatticeLegend,
       pLatticeNote,
     );
@@ -2687,6 +2681,55 @@ export async function renderAarsRules(main, _params, ctx) {
       // legible behind the diff instead of competing with it.
       pLattice.recede(pLatticeMode === "change" ? painted.filter((d) => !d.changed).map((d) => d.key) : []);
       paintProblemLatticeLegend(painted, occupancyKnown);
+      paintProblemMass();
+    }
+
+    /**
+     * The four outcomes over all 54 leaves, with the ACT ceiling drawn ON the axis.
+     *
+     * The ceiling is `actLeafCeiling`, and until now it only ever spoke as a thrown string
+     * AFTER a save was refused (validateProblemRule's mass check, surfaced through
+     * api_setProblemRule) or 700ms later through preview.validation. Drawing it as a
+     * reference marker — the same idiom the compliance rail uses for its estate mean — makes
+     * it answer while you are still dragging the rule that would breach it. Fed from the
+     * MIRROR, so the marker moves with the ceiling field on the same keystroke.
+     */
+    function paintProblemMass() {
+      const coverage = mirrorLeafCoverage(problemDraft);
+      const mass = outcomeMass(coverage.byOutcome, MIRROR_OUTCOME_VALUES, problemDraft.actLeafCeiling);
+      clear(pLatticeMass);
+
+      const bar = el("div", {
+        class: "lat-mass__bar",
+        role: "img",
+        "aria-label": mass.segments
+          .map((seg) => `${seg.count} ${outcomeLabel(seg.key)}`)
+          .join(", ")
+          + ` of ${coverage.total} leaves; ceiling at ${Math.round(problemDraft.actLeafCeiling * 100)} percent`,
+      });
+      for (const seg of mass.segments) {
+        const tone = toneForKey(seg.key);
+        const el2 = el("span", { class: "lat-mass__seg", "data-tone": tone ? tone.tone : "neutral" });
+        el2.style.width = `${seg.share * 100}%`;
+        bar.append(el2);
+      }
+      const mark = el("div", {
+        class: "lat-mass__mark",
+        "data-label": `Act ceiling ${Math.round(problemDraft.actLeafCeiling * 100)}%`,
+      });
+      mark.style.left = `calc(${mass.ceilingShare * 100}% - 1px)`;
+
+      const legend = el("div", { class: "lat-mass__legend" });
+      for (const seg of mass.segments) {
+        legend.append(el("span", {}, outcomeBadge(seg.key), el("b", {}, ` ${seg.count}`)));
+      }
+      pLatticeMass.append(el("div", { class: "lat-mass__frame" }, bar, mark), legend);
+
+      // Over the ceiling is a refusal to save, so it says so here rather than waiting to be
+      // discovered by pressing Save.
+      if (mass.over) {
+        pLatticeMass.append(el("div", { class: "diag-warn", role: "status" }, mass.sentence));
+      }
     }
 
     /** One line under the lattice saying what the tints currently mean, and what is missing. */
@@ -2855,19 +2898,28 @@ export async function renderAarsRules(main, _params, ctx) {
       const shadowed = (problemPreview && problemPreview.shadowedOutcomeRules) || [];
       const coverage = (problemPreview && problemPreview.leafCoverage) || null;
       const rows = pCascadeBody.querySelectorAll("tr[data-idx]");
+      const problemOffsets = claimOffsets((coverage && coverage.byRow) || []);
       rows.forEach((tr, i) => {
         const meta = tr.querySelector(".rule-rowmeta");
         const isShadow = shadowed.indexOf(i) >= 0;
         tr.classList.toggle("rule-dead", isShadow);
         setText(meta, isShadow ? "never fires — an earlier rule already claims every leaf it could match" : "");
-        paintPrices(tr.querySelector(".rule-prices"), coverage ? coverage.byRow[i] || 0 : null, coverage ? coverage.total : 0);
+        claimRail(tr.querySelector(".rule-prices"), {
+          count: coverage ? coverage.byRow[i] || 0 : null,
+          total: coverage ? coverage.total : 0,
+          offset: problemOffsets[i] || 0,
+          unit: "leaves",
+          dead: isShadow,
+        });
       });
       const fbRow = pCascadeBody.querySelector("tr.rule-fallback");
       if (fbRow) {
-        paintPrices(
-          fbRow.querySelector(".rule-prices"),
-          coverage ? coverage.byFallback : null,
-          coverage ? coverage.total : 0);
+        claimRail(fbRow.querySelector(".rule-prices"), {
+          count: coverage ? coverage.byFallback : null,
+          total: coverage ? coverage.total : 0,
+          offset: problemOffsets[problemOffsets.length - 1] || 0,
+          unit: "leaves",
+        });
       }
       pClaimsTh.hidden = !coverage;
 
@@ -3216,6 +3268,7 @@ export async function renderAarsRules(main, _params, ctx) {
           postureDraft.tierRules.splice(i, 1);
           renderPostureCascade();
           const rows = uCascadeBody.querySelectorAll("tr[data-idx]");
+      const postureOffsets = claimOffsets((coverage && coverage.byRow) || []);
           const next = rows[Math.min(i, rows.length - 1)];
           const btn = next && next.querySelector(".link.danger");
           (btn || uAddBtn).focus();
@@ -3548,14 +3601,22 @@ export async function renderAarsRules(main, _params, ctx) {
               ? "never fires — names something no live signal can produce (see this rule's own header)"
               : "",
         );
-        paintPrices(tr.querySelector(".rule-prices"), coverage ? coverage.byRow[i] || 0 : null, coverage ? coverage.total : 0);
+        claimRail(tr.querySelector(".rule-prices"), {
+          count: coverage ? coverage.byRow[i] || 0 : null,
+          total: coverage ? coverage.total : 0,
+          offset: postureOffsets[i] || 0,
+          unit: "cells",
+          dead: isShadow || isUnreachable,
+        });
       });
       const fbRow = uCascadeBody.querySelector("tr.rule-fallback");
       if (fbRow) {
-        paintPrices(
-          fbRow.querySelector(".rule-prices"),
-          coverage ? coverage.byFallback : null,
-          coverage ? coverage.total : 0);
+        claimRail(fbRow.querySelector(".rule-prices"), {
+          count: coverage ? coverage.byFallback : null,
+          total: coverage ? coverage.total : 0,
+          offset: postureOffsets[postureOffsets.length - 1] || 0,
+          unit: "cells",
+        });
       }
       uClaimsTh.hidden = !coverage;
 

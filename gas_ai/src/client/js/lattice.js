@@ -296,6 +296,17 @@ const TONE_BY_TIER = {
   1: { tone: "ok", word: "Tier 1", glyph: "T1" },
 };
 
+/**
+ * The tone/word/glyph triple for one outcome or tier key, for callers that hold a key
+ * rather than a decision — the outcome-mass strip, whose segments come from a coverage
+ * tally and never from a per-vector decision. Reads the SAME two tables `toneOf` does, so
+ * a strip segment and the cells it summarises can never disagree about which of the four
+ * pill kinds an outcome wears.
+ */
+export function toneForKey(key) {
+  return TONE_BY_OUTCOME[key] || TONE_BY_TIER[key] || null;
+}
+
 /** `decideProblem`'s `{outcome,...}` or `decidePosture`'s `{tier,...}` → the tone/word/glyph triple. */
 function toneOf(decideResult) {
   return "outcome" in decideResult ? TONE_BY_OUTCOME[decideResult.outcome] : TONE_BY_TIER[decideResult.tier];
