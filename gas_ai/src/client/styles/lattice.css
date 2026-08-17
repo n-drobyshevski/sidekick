@@ -279,3 +279,16 @@
    focused. Same wash the row hover already uses, so the two directions of the same link
    look like one thing. */
 table.data tr.is-lit > td { background: var(--wash-hover); }
+
+/* ------------------------------------------------------------------- the cell popover */
+/* What decided this leaf, and the one edit that usually follows from reading it. */
+.popover--lattice { padding: 12px 13px; max-width: 320px; }
+.lat-pop__vector {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--ink);
+}
+.lat-pop__row { margin: 0 0 8px; }
+.lat-pop button { width: 100%; }

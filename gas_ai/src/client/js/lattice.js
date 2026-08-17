@@ -305,7 +305,7 @@ function toneOf(decideResult) {
  * A comparable "how bad" rank for a decide result, LOWER IS WORSE — `OUTCOME_VALUES`'s own
  * worst-first order for an outcome, and `4 - tier` for a posture tier (so tier 4, the worst
  * tier, ranks 0, the same worst-is-0 convention the outcome side already uses). Only used to
- * pick a `"better"` / `"worse"` direction in `"change"` / `"diverged"` mode — never surfaced
+ * pick a `"better"` / `"worse"` direction in `"change"` / `"impact"` mode — never surfaced
  * on its own, and never used to average or sum anything (see decideMirror.js's own header
  * for why an ordinal rank must never be treated as an interval-scaled number).
  */
@@ -328,10 +328,10 @@ function compareDecide(current, saved) {
 
 function ariaFor(mode, meta, cell) {
   const parts = [meta.word];
-  if (mode === "estate" || mode === "diverged") {
+  if (mode === "estate" || mode === "impact") {
     parts.push(cell.unmeasured ? "not yet measured" : `${cell.count} ${cell.count === 1 ? "asset" : "assets"}`);
   }
-  if (mode === "change" || mode === "diverged") {
+  if (mode === "change" || mode === "impact") {
     parts.push(cell.changed ? `changed, ${cell.direction}` : "unchanged");
   }
   if (mode === "rule") {
@@ -372,8 +372,8 @@ function ariaFor(mode, meta, cell) {
  *   "change"   — adds `changed` / `direction` by comparing `opts.decide(vector)` (the
  *                draft) against `opts.savedDecide(vector)` (the last-saved rule). `count`
  *                stays null — this mode answers "did the OUTCOME move", not "how many real
- *                assets sit here"; that combination is "diverged" below.
- *   "diverged" — both of the above at once: which leaves have real occupancy AND would move
+ *                assets sit here"; that combination is "impact" below.
+ *   "impact"   — both of the above at once: which leaves have real occupancy AND would move
  *                under the draft. This is the "what would actually change if I saved this"
  *                view — a cell can be `changed` with zero `count` (the rule would move that
  *                leaf, nothing lives there today) or have a real `count` and be unchanged;
@@ -400,14 +400,14 @@ export function paintCells(cells, opts) {
       direction: null,
     };
 
-    if (mode === "estate" || mode === "diverged") {
+    if (mode === "estate" || mode === "impact") {
       const occ = readOccupancy(occupancy, occupancyKnown, cell.key);
       painted.count = occ.count;
       painted.hatched = occ.hatched;
       painted.unmeasured = occ.unmeasured;
     }
 
-    if (mode === "change" || mode === "diverged") {
+    if (mode === "change" || mode === "impact") {
       const cmp = compareDecide(result, savedDecide(cell.vector));
       painted.changed = cmp.changed;
       painted.direction = cmp.direction;

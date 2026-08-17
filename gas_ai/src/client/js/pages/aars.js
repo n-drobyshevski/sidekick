@@ -33,6 +33,8 @@ import {
   emptyState,
   filterCombobox,
   helpTip,
+  onPageTeardown,
+  openPopover,
   openSheet,
   outcomeBadge,
   pointRail,
@@ -230,6 +232,10 @@ export async function renderAarsRules(main, _params, ctx) {
   let aarsControls = null;
   let problemControls = null;
   let postureControls = null;
+  // Assigned once the Problem pane builds. Leaving a lattice popover open across a tab
+  // change would strand a portal against a hidden pane — `portalsOpen()` stays raised and
+  // the sheet's Tab trap keeps deferring to a list nothing can reach.
+  let closeProblemLatticePop = () => {};
   let activeModelTab = "aars"; // which tab is showing, so an async load can't unhide the wrong one
 
   function selectModelTab(which) {
@@ -243,6 +249,7 @@ export async function renderAarsRules(main, _params, ctx) {
     if (aarsControls) aarsControls.hidden = !isAars;
     if (problemControls) problemControls.hidden = !isProblem;
     if (postureControls) postureControls.hidden = !isPosture;
+    if (!isProblem) closeProblemLatticePop();
     modelTabs.set(which);
     if (isProblem) loadProblemPane();
     if (isPosture) loadPosturePane();
@@ -2086,6 +2093,7 @@ export async function renderAarsRules(main, _params, ctx) {
     }
 
     function renderProblemCascade() {
+      closeProblemCellPop();
       clear(pCascadeBody);
       const max = (problemState.limits && problemState.limits.maxOutcomeRules) || 40;
       problemDraft.outcomeRules.forEach((row, i) => {
@@ -2325,6 +2333,23 @@ export async function renderAarsRules(main, _params, ctx) {
     // The same structural slot the AARS tab opens with: one picture of the whole model,
     // the only boxed surface in the editor pane, with the parts of the model below it.
     const pLatticeNote = el("div", {});
+    let pLatticeMode = "rule";
+    let pCellPop = null;
+    /**
+     * Closing the cell popover is not optional bookkeeping. It anchors to a cell, and a
+     * structural rebuild (or a tab change, or leaving the page) discards the thing it points
+     * at; an un-closed portal leaves `portalsOpen()` permanently raised, which defers the
+     * sheet's Tab trap to a list that no longer exists. Same failure this file already
+     * documents for the codebook sheet.
+     */
+    function closeProblemCellPop() {
+      if (pCellPop) {
+        pCellPop.close();
+        pCellPop = null;
+      }
+    }
+    closeProblemLatticePop = closeProblemCellPop;
+    onPageTeardown(closeProblemCellPop);
     const pLattice = latticeGrid({
       spec: PROBLEM_LATTICE,
       ariaLabel: "Decision lattice, 54 leaves",
@@ -2338,10 +2363,31 @@ export async function renderAarsRules(main, _params, ctx) {
           pLattice.light(null);
           lightProblemRow(null);
         },
-        // Step 3 is read-only; the cell popover and "Add a rule for this cell" land next.
-        onActivate: () => {},
+        onActivate: (cell, btn) => {
+          closeProblemCellPop();
+          pCellPop = openProblemCellPopover(cell, btn);
+        },
       },
     });
+    const pModeTabs = segmented({
+      options: [
+        { value: "rule", label: "Rule", title: "What this draft does to every leaf" },
+        { value: "estate", label: "Estate", title: "Where this tenant's issues and findings actually land" },
+        { value: "change", label: "Change", title: "Only the leaves this draft moves" },
+      ],
+      value: "rule",
+      ariaLabel: "What the lattice shows",
+      onChange: (v) => {
+        pLatticeMode = v;
+        closeProblemCellPop();
+        // `segmented` reports the choice but does not move `aria-pressed` itself — the
+        // caller owns that, the same way selectModelTab calls modelTabs.set(). Without this
+        // the buttons keep announcing the previous mode as the active one.
+        pModeTabs.set(v);
+        paintProblemLattice();
+      },
+    });
+    const pLatticeLegend = el("p", { class: "small muted", style: "margin:12px 0 0" });
     const pLatticeHero = el(
       "div",
       { class: "model-hero" },
@@ -2349,8 +2395,11 @@ export async function renderAarsRules(main, _params, ctx) {
         "div",
         { class: "model-hero__head" },
         el("span", { class: "label" }, "The decision space"),
+        el("span", { style: "flex:1 1 auto" }),
+        pModeTabs,
       ),
       pLattice.node,
+      pLatticeLegend,
       pLatticeNote,
     );
 
@@ -2611,15 +2660,131 @@ export async function renderAarsRules(main, _params, ctx) {
 
     /**
      * Repaint the lattice from the MIRROR — no server round-trip, so this runs on every
-     * keystroke. Rule mode only for now; the other three modes land with the paint-mode
-     * control.
+     * keystroke.
+     *
+     * Only ESTATE depends on the server, and it is the only mode `.is-updating` may dim:
+     * Rule and Change are mirror-driven and already current the instant a key goes down, so
+     * dimming them while a preview is in flight would say "this is stale" about the one
+     * thing on the page that is not.
      */
     function paintProblemLattice() {
-      pLattice.setMode("rule");
-      pLattice.paint(paintCells(pLattice.cells, {
-        mode: "rule",
+      const occupancy = (problemPreview && problemPreview.treeDiscrimination
+        && problemPreview.treeDiscrimination.leafOccupancy) || {};
+      // Three states, not two: no preview has landed at all, versus a preview that landed
+      // and found nothing in this leaf. `paintCells` keeps them apart; so must this.
+      const occupancyKnown = !!(problemPreview && problemPreview.treeDiscrimination);
+
+      pLattice.setMode(pLatticeMode);
+      const painted = paintCells(pLattice.cells, {
+        mode: pLatticeMode,
         decide: (v) => mirrorDecideProblem(v, problemDraft),
-      }));
+        savedDecide: (v) => mirrorDecideProblem(v, problemSaved),
+        occupancy,
+        occupancyKnown,
+      });
+      pLattice.paint(painted);
+      // Change mode recedes what the draft does not move, so the unchanged shape stays
+      // legible behind the diff instead of competing with it.
+      pLattice.recede(pLatticeMode === "change" ? painted.filter((d) => !d.changed).map((d) => d.key) : []);
+      paintProblemLatticeLegend(painted, occupancyKnown);
+    }
+
+    /** One line under the lattice saying what the tints currently mean, and what is missing. */
+    function paintProblemLatticeLegend(painted, occupancyKnown) {
+      if (pLatticeMode === "rule") {
+        setText(pLatticeLegend,
+          "Every leaf this draft could ever decide, tinted by the outcome it would get. "
+          + "Hover or focus a cascade row below to light the leaves it claims.");
+        return;
+      }
+      if (pLatticeMode === "change") {
+        const moved = painted.filter((d) => d.changed).length;
+        setText(pLatticeLegend, moved
+          ? `${moved} of ${painted.length} leaves would change outcome if you saved this draft.`
+          : "This draft moves no leaf. Nothing here would decide differently after a save.");
+        return;
+      }
+      if (!occupancyKnown) {
+        setText(pLatticeLegend, "Not measured yet — no preview has landed. This is different from a leaf nothing reaches.");
+        return;
+      }
+      const reached = painted.filter((d) => d.count > 0).length;
+      setText(pLatticeLegend,
+        `${reached} of ${painted.length} leaves carry at least one issue or finding in this tenant. `
+        + "A hatched leaf is one the estate never reaches — which is not the same as a rule that cannot fire.");
+    }
+
+    /**
+     * What decided this leaf, and the one edit that most often follows from reading it.
+     *
+     * "Add a rule for this cell" prepends a FULLY specified `when` — every axis named, so
+     * the new row claims exactly the leaf you clicked and nothing else — at the top of the
+     * cascade, the same place `pAddBtn` puts a new row and for the same reason: in a
+     * first-match-wins list, a new rule that lands at the bottom is usually shadowed on
+     * arrival.
+     */
+    function openProblemCellPopover(cell, anchor) {
+      const d = pLattice.descriptorFor(cell.key);
+      const claimed = d && d.ruleIndex >= 0;
+      const occ = (problemPreview && problemPreview.treeDiscrimination
+        && problemPreview.treeDiscrimination.leafOccupancy) || null;
+      const count = occ ? (occ[cell.key] || 0) : null;
+      const cap = (problemState && problemState.limits && problemState.limits.maxOutcomeRules) || 40;
+      const atCap = problemDraft.outcomeRules.length >= cap;
+      // The raw outcome key comes straight from the mirror; `paintCells` deliberately emits
+      // display fields (tone/word/glyph), not the enum, so read the decision itself.
+      const decided = mirrorDecideProblem(cell.vector, problemDraft);
+
+      return openPopover({
+        anchor,
+        className: "popover--lattice",
+        ariaLabel: vectorSentence(PROBLEM_LATTICE, cell.vector),
+        build: (api) => {
+          const body = el("div", { class: "lat-pop" });
+          body.append(el("p", { class: "lat-pop__vector" }, vectorSentence(PROBLEM_LATTICE, cell.vector)));
+          body.append(el("p", { class: "lat-pop__row" }, outcomeBadge(decided.outcome)));
+          body.append(el(
+            "p", { class: "small muted", style: "margin:0 0 8px" },
+            claimed
+              ? `Claimed by rule ${d.ruleIndex + 1} — ${problemRuleWhenWords(problemDraft.outcomeRules[d.ruleIndex])}.`
+              : "No rule matches this leaf, so the fallback outcome decides it.",
+          ));
+          body.append(el(
+            "p", { class: "small muted", style: "margin:0 0 10px" },
+            count === null
+              ? "Not measured yet — no preview has landed."
+              : count === 0
+                ? "Nothing in this tenant lands here."
+                : `${count} ${count === 1 ? "issue or finding" : "issues and findings"} in this tenant land here.`,
+          ));
+          const add = el("button", {}, "Add a rule for this cell");
+          add.disabled = atCap;
+          if (atCap) add.title = `The cascade is limited to ${cap} rules.`;
+          add.addEventListener("click", () => {
+            problemDraft.outcomeRules.unshift({
+              when: { ...cell.vector },
+              outcome: decided.outcome,
+            });
+            api.close(true);
+            pCellPop = null;
+            renderProblemCascade();
+            focusProblemRow(0);
+            onProblemEdit();
+          });
+          body.append(add);
+          return body;
+        },
+        onClose: () => { pCellPop = null; },
+      });
+    }
+
+    /** A cascade row's condition in words, for the popover — "any vector" when it has none. */
+    function problemRuleWhenWords(row) {
+      if (!row) return "no condition";
+      const parts = AXIS_DEFS
+        .filter((a) => row.when[a.key] !== undefined)
+        .map((a) => `${a.label.toLowerCase()} ${row.when[a.key]}`);
+      return parts.length ? parts.join(", ") : "no condition, so it matches everything left";
     }
 
     /**
@@ -2757,6 +2922,7 @@ export async function renderAarsRules(main, _params, ctx) {
         return;
       }
       pImpact.classList.add("updating");
+      pLattice.setUpdating(true);
       scheduleProblemPreviewRun();
     }
 
@@ -2771,12 +2937,14 @@ export async function renderAarsRules(main, _params, ctx) {
         problemPreview = data;
         problemPreviewError = "";
         checkLatticeAgreement(sentDraft, data && data.leafCoverage);
+        paintProblemLattice(); // estate occupancy only exists once a preview has landed
       } catch (e) {
         if (seq !== problemPreviewSeq) return;
         problemPreview = null;
         problemPreviewError = String(e.message || e);
       }
       pImpact.classList.remove("updating");
+      pLattice.setUpdating(false);
       paintProblemImpact();
       syncProblem(); // row notes and leaf counts come from the preview
     }

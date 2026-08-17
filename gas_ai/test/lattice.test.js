@@ -196,7 +196,7 @@ const decideB = (v) => (v.exploitation === "ACTIVE" ? { outcome: "ATTEND", match
 
 describe("paintCells", () => {
   it("never mints a tone outside the four existing pill kinds", () => {
-    for (const mode of ["rule", "estate", "change", "diverged"]) {
+    for (const mode of ["rule", "estate", "change", "impact"]) {
       const painted = paintCells(CELLS, {
         mode, decide: decideA, savedDecide: decideB, occupancy: {}, occupancyKnown: true,
       });
@@ -251,10 +251,10 @@ describe("paintCells", () => {
     for (const cell of painted) expect(cell.count).toBeNull(); // this mode counts nothing
   });
 
-  it("diverged mode carries occupancy AND change at once", () => {
+  it("impact mode carries occupancy AND change at once", () => {
     const someKey = CELLS[0].key;
     const painted = paintCells(CELLS, {
-      mode: "diverged", decide: decideA, savedDecide: decideB,
+      mode: "impact", decide: decideA, savedDecide: decideB,
       occupancy: { [someKey]: 3 }, occupancyKnown: true,
     });
     const hit = painted.find((c) => c.key === someKey);
@@ -263,7 +263,7 @@ describe("paintCells", () => {
   });
 
   it("every mode produces a non-empty aria fragment for every cell", () => {
-    for (const mode of ["rule", "estate", "change", "diverged"]) {
+    for (const mode of ["rule", "estate", "change", "impact"]) {
       const painted = paintCells(CELLS, {
         mode, decide: decideA, savedDecide: decideB, occupancy: {}, occupancyKnown: true,
       });
