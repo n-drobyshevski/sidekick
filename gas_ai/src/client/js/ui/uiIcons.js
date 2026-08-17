@@ -61,6 +61,10 @@ const PATHS = {
   ],
   table: ["M2.5 3.5 h11 v9 h-11 z", "M2.5 6.5 H13.5", "M6.5 6.5 V12.5"],
   columns: ["M2.5 3.5 h11 v9 h-11 z", "M6.5 3.5 V12.5", "M10.5 3.5 V12.5"],
+  // The graph's "Edit query" toggle. A pencil rather than the funnel `filter` or the field-list
+  // `property`: the control reveals the builder, and the builder writes the whole question —
+  // structure, steps and filters — so a glyph naming only the filtering half would undersell it.
+  pencil: ["M2.5 13.5 L3.4 10.4 L10.8 3 L13 5.2 L5.6 12.6 Z", "M9.4 4.4 L11.6 6.6"],
   // The `+` palette. `search` heads its field; `property` marks a filterable field in the list
   // and `check` a choice already made; `not` is the negation operator — a slashed circle, the
   // one shape that reads as "absent" rather than as "wrong".

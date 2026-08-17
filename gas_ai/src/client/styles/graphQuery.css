@@ -8,11 +8,13 @@
    that purple means an identity and blue means an AI asset. The tint is redundant with the
    kind icon and the kind label beside it, never the only cue. */
 
+/* The row list, inside the floating card that .gq-panel (graph.css) draws. It carries no ground,
+   border or rule of its own any more: those were band chrome, right while this was a permanent
+   strip between two other strips, and a stray line across a card once it stopped being one.
+   The 16px side padding stays — it is what keeps the OR-run bracket's -7px inside the card. */
 .gq {
-  display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 16px;
+  display: flex; flex-direction: column; min-width: 0;
   padding: 10px 16px;
-  border-bottom: 1px solid var(--hairline);
-  background: var(--surface);
 }
 .gq-rows { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .gq-row {
@@ -185,14 +187,15 @@
 .gq-iconbtn:hover { background: var(--wash-hover); color: var(--ink); border-color: transparent; }
 .gq-iconbtn[aria-pressed="false"] { color: var(--text-3); }
 
-/* Result count: right-aligned on the first row's line, tabular so it does not jitter as the
-   number changes under a live filter. */
+/* Result count, at the head of the VIEW row's right-hand cluster. Tabular so it does not jitter
+   as the number changes under a live filter. It has no `margin-left: auto` of its own: the
+   cluster it sits in already carries one, and a second would push it off the pair beside it. */
 .gq-count {
-  margin-left: auto; align-self: flex-start;
   display: flex; align-items: center; gap: 8px;
   font-size: 12px; color: var(--text-2);
   font-variant-numeric: tabular-nums;
-  padding-top: 4px;
+  /* "14 results" broke across two lines once the row got tight enough to wrap. */
+  white-space: nowrap;
 }
 
 /* ------------------------------------------------------------------- header actions */
@@ -208,6 +211,13 @@
 .gq-viewbar-end { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .gq-viewbar .segmented > button { min-height: 30px; }
 .gq-view-icon { display: inline-flex; margin-right: 6px; vertical-align: -2px; }
+/* The query editor's toggle, and the rule that separates changing the question from reading
+   the answer — the two halves this row now holds. */
+.gq-edit-btn { min-height: 30px; padding: 4px 10px; font-size: 13px; }
+/* Pressed-looking while the card is up, so the row says which state it is in without the
+   reader having to look away from it and find the card. */
+.gq-edit-btn[aria-expanded="true"] { background: #f1f1f4; border-color: #d9d9de; }
+.gq-viewbar-sep { width: 1px; align-self: stretch; min-height: 20px; background: var(--hairline); }
 
 /* --------------------------------------------------------------------- path table */
 .gq-results { padding-bottom: 8px; }
@@ -254,12 +264,17 @@
 .gq-columns-group > .label { margin: 0; }
 
 @media (max-width: 800px) {
-  .gq { gap: 6px 10px; }
-  .gq-count { margin-left: 0; padding-top: 0; }
+  .gq { padding: 8px 10px; }
   /* The term is what has to fit; the chip inside it shrinks with it. Both are capped, so a
      long relationship gloss cannot push the row's buttons off the edge. */
   .gq-term { max-width: 100%; }
   .gq-chip { max-width: 150px; }
+  /* base.css dismantles the column flex here: the canvas takes a fixed height and the whole
+     page scrolls. A card floating over a box that scrolls away is worse than a card, so the
+     editor rejoins the flow above the canvas and the zoom capsule keeps its own corner. */
+  .gq-panel {
+    position: static; margin: 8px; max-height: none; overflow: visible;
+  }
 }
 
 /* A boolean block's row: the keyword pill IS the control, so the row carries only the branch

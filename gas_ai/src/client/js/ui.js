@@ -36,6 +36,7 @@ export {
 } from "./ui/sheet.js";
 export { filterCombobox } from "./ui/combobox.js";
 export { openPopover, popoverDismiss, positionPopover } from "./ui/popover.js";
+export { portalsOpen } from "./ui/portals.js";
 export { codeBlock, copyButton, copyText } from "./ui/code.js";
 export { uiIcon } from "./ui/uiIcons.js";
 export { pointRail, railScale } from "./ui/rail.js";

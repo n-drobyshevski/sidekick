@@ -39,7 +39,6 @@
 .workbench-controls__group + .workbench-controls__group {
   padding-left: 14px; border-left: 1px solid var(--hairline);
 }
-.workbench-search input[type="search"] { width: 170px; }
 
 /* A native select with its dimension named beside it, so "Rows" and "Smart order" stop
    floating with nothing attached. The label is aria-hidden — the select keeps its own
@@ -112,11 +111,32 @@
 .filter-chip.is-default .filter-chip-value { font-weight: 500; }
 .filter-clear-all { font-size: 12px; }
 
-/* Canvas and filter panel as flex siblings. The panel narrows the canvas instead of
-   covering it — these filters apply live, so a scrim over the graph being filtered was the
-   one thing the page could not afford. .workbench-body stays the containing block, so the
-   corner overlays, the table, the empty states and the boot skeleton all follow it in. */
-.workbench-split { display: flex; flex: 1; min-height: 0; }
+/* The canvas, and the query editor floating over it. `position: relative` so the editor is
+   positioned against the whole pane; .workbench-body stays the containing block for everything
+   INSIDE the canvas — the corner overlays, the table, the empty states and the boot skeleton. */
+.workbench-split { display: flex; flex: 1; min-height: 0; position: relative; }
+
+/* The query editor. Out of flow on purpose: it must not resize the canvas, or every toggle
+   would fire the renderer's ResizeObserver and re-fit the graph under the reader's hands. */
+.gq-panel {
+  position: absolute; inset: 8px 8px auto 8px; z-index: var(--z-canvas-panel);
+  max-height: calc(100% - 16px); overflow-y: auto;
+  background: var(--page); border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow-sheet);
+}
+/* Not optional, and not a duplicate of the UA sheet: an author `display` beats `[hidden]`
+   whatever its specificity, which is how .filter-chips below carried a dead `hidden` for
+   months. Anything here that sets `display` has to say this too. */
+.gq-panel[hidden] { display: none; }
+/* No `overflow-x: hidden` to pair with the scroll: the OR-run bracket paints at
+   `left: calc(var(--gq-indent) - 7px)`, outside its row's own box, and clipping it is exactly
+   why this card is not an openPopover (.popover is `overflow: hidden`). The row list's 16px
+   left padding is what keeps the bracket inside the scroll box. */
+.gq-panel-close {
+  position: absolute; top: 6px; right: 6px;
+  /* Above the rows it overlaps, since the card scrolls under it. */
+  z-index: 1; background: var(--page);
+}
 
 .workbench-body {
   flex: 1; min-width: 0; min-height: 0; position: relative;
@@ -139,9 +159,29 @@
 .workbench-empty-action { display: flex; justify-content: center; margin-top: 14px; }
 
 /* Zoom: one capsule for the scale (with a readout — zoom was a state you could change but
-   not read), Fit beside it as the separate action it is. */
+   not read), Fit beside it as the separate action it is.
+
+   It sits at the canvas's top-right, directly under the query editor, so it steps below the
+   card by the card's own height — set on .workbench-split by a ResizeObserver, and 0 when the
+   card is away. A variable rather than a fixed offset because the card grows a row at a time
+   and re-wraps on resize. */
 .graph-zoom {
-  position: absolute; top: 10px; right: 10px; display: flex; gap: 6px; z-index: var(--z-canvas-chrome);
+  position: absolute; top: calc(10px + var(--gq-panel-h, 0px)); right: 10px;
+  display: flex; gap: 6px; z-index: var(--z-canvas-chrome);
+  transition: top 120ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) { .graph-zoom { transition: none; } }
+@media (max-width: 800px) {
+  /* Below 800px the editor rejoins the flow (graphQuery.css) and stops covering this corner.
+     The offset has to be dropped HERE rather than by zeroing --gq-panel-h: that variable is
+     written as an inline style, and no stylesheet can outrank one. */
+  .graph-zoom { top: 10px; }
+  /* base.css says this too, and has never once been heard: styles.css imports it BEFORE this
+     file, so the plain `.workbench-split { display: flex }` above wins at every width. It went
+     unnoticed while the split held exactly one child and flex looked like block — and stopped
+     being invisible the moment the editor became the second child, which flex then laid out
+     BESIDE the canvas, 202px wide, with the page scrolling sideways to fit them both. */
+  .workbench-split { display: block; }
 }
 .graph-zoom .segmented, .graph-zoom-fit { background: var(--page); box-shadow: var(--shadow-card); }
 .graph-zoom-scale > button { min-width: 32px; font-weight: 600; }
@@ -154,7 +194,6 @@
 
 .gedge { stroke: rgba(0, 0, 0, 0.22); stroke-width: 1.25; fill: none; }
 .gedge.negated { stroke: var(--sev-high); stroke-dasharray: 5 4; }
-.gedge.dimmed { opacity: 0.18; }
 .gv-arrow-head { fill: rgba(0, 0, 0, 0.3); }
 
 /* Grouped-mode cluster hulls: hairline boxes + muted uppercase labels. Quiet by
@@ -236,8 +275,6 @@
 /* Summary (collapse) pill */
 .gnode.summary .gnode-box { fill: rgba(0, 0, 0, 0.04); stroke-dasharray: 4 3; }
 .gnode.summary .gnode-name { fill: var(--text-2); }
-/* Search: everything that doesn't match dims; matches keep full treatment. */
-.gnode.dimmed { opacity: 0.3; }
 
 /* Legend: a collapsible <details> disclosure, hidden by default. */
 .graph-legend {

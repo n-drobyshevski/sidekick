@@ -101,6 +101,9 @@
      to <body> (the panel body scrolls and would clip it), and at <=800px the filter panel
      IS a real .sheet — a popover below it would open behind the panel that owns it. */
   --z-canvas-chrome: 5;
+  /* The graph's query editor, floating over its own canvas: above the zoom capsule and the
+     legend it must cover, below the scrim so an asset sheet still covers IT. */
+  --z-canvas-panel: 10;
   --z-scrim: 40;
   --z-sheet: 41;
   --z-popover: 52;
