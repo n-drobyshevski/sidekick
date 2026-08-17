@@ -79,7 +79,9 @@
   margin-bottom: 4px;
   border-bottom: 1px solid var(--hairline);
 }
-.lat-hsub { justify-content: center; padding-bottom: 6px; }
+/* Narrow panels put two header words shoulder to shoulder ("PARTIALSTRONG"), so the inner
+   band keeps a gutter of its own rather than relying on the cell width below it. */
+.lat-hsub { justify-content: center; padding: 0 4px 6px; }
 .lat-rgroup { padding-right: 10px; }
 .lat-rsub { padding-right: 10px; font-weight: 600; color: var(--text-2); }
 

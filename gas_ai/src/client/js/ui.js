@@ -48,4 +48,5 @@ export { debounce, onPageTeardown, runPageTeardown } from "./ui/timing.js";
 export { outcomeBadge, outcomeLabel } from "./ui/outcome.js";
 export { tierBadge, tierLabel } from "./ui/posture.js";
 export { latticeGrid } from "./ui/lattice.js";
+export { latticeSection } from "./ui/latticeSection.js";
 export { claimRail, claimOffsets } from "./ui/claimRail.js";

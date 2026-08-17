@@ -42,7 +42,7 @@ import {
   outcomeLabel,
   pointRail,
   railScale,
-  latticeGrid,
+  latticeSection,
   segmented,
   select,
   sevBadge,
@@ -52,11 +52,12 @@ import {
   tierBadge,
   toast,
 } from "../ui.js";
-import { PROBLEM_LATTICE, outcomeMass, paintCells, toneForKey, vectorSentence } from "../lattice.js";
+import { POSTURE_LATTICE, PROBLEM_LATTICE } from "../lattice.js";
 import {
+  cellCoverage as mirrorCellCoverage,
+  decidePosture as mirrorDecidePosture,
   decideProblem as mirrorDecideProblem,
   leafCoverage as mirrorLeafCoverage,
-  OUTCOME_VALUES as MIRROR_OUTCOME_VALUES,
 } from "../decideMirror.js";
 import {
   CODEBOOK,
@@ -243,6 +244,7 @@ export async function renderAarsRules(main, _params, ctx) {
   // change would strand a portal against a hidden pane — `portalsOpen()` stays raised and
   // the sheet's Tab trap keeps deferring to a list nothing can reach.
   let closeProblemLatticePop = () => {};
+  let closePostureLatticePop = () => {};
   let activeModelTab = "aars"; // which tab is showing, so an async load can't unhide the wrong one
 
   function selectModelTab(which) {
@@ -257,6 +259,7 @@ export async function renderAarsRules(main, _params, ctx) {
     if (problemControls) problemControls.hidden = !isProblem;
     if (postureControls) postureControls.hidden = !isPosture;
     if (!isProblem) closeProblemLatticePop();
+    if (!isPosture) closePostureLatticePop();
     modelTabs.set(which);
     if (isProblem) loadProblemPane();
     if (isPosture) loadPosturePane();
@@ -1915,7 +1918,7 @@ export async function renderAarsRules(main, _params, ctx) {
   // the estate occupancy, the movers, the per-axis unknown rates, and the validation that
   // gates Save. Two guards keep the drawn picture and the counted truth from drifting:
   // test/decideMirror.test.js pins the mirror against domain/problem.ts over all 54 vectors
-  // (and all 27 posture cells) including which row decided, and checkLatticeAgreement below
+  // (and all 27 posture cells) including which row decided, and the section's own reconcile() below
   // reconciles the mirror's own tally against the server's leafCoverage.byRow on every
   // preview response — hatching the whole lattice rather than letting it show a confident
   // wrong answer if they ever disagree.
@@ -2085,7 +2088,7 @@ export async function renderAarsRules(main, _params, ctx) {
     }
 
     function renderProblemCascade() {
-      closeProblemCellPop();
+      pLattice.close();
       clear(pCascadeBody);
       const max = (problemState.limits && problemState.limits.maxOutcomeRules) || 40;
       problemDraft.outcomeRules.forEach((row, i) => {
@@ -2324,83 +2327,50 @@ export async function renderAarsRules(main, _params, ctx) {
     // ------------------------------------------------------------------ the lattice hero
     // The same structural slot the AARS tab opens with: one picture of the whole model,
     // the only boxed surface in the editor pane, with the parts of the model below it.
-    const pLatticeNote = el("div", {});
-    let pLatticeMode = "rule";
-    let pCellPop = null;
-    /**
-     * Closing the cell popover is not optional bookkeeping. It anchors to a cell, and a
-     * structural rebuild (or a tab change, or leaving the page) discards the thing it points
-     * at; an un-closed portal leaves `portalsOpen()` permanently raised, which defers the
-     * sheet's Tab trap to a list that no longer exists. Same failure this file already
-     * documents for the codebook sheet.
-     */
-    function closeProblemCellPop() {
-      if (pCellPop) {
-        pCellPop.close();
-        pCellPop = null;
-      }
-    }
-    closeProblemLatticePop = closeProblemCellPop;
-    onPageTeardown(closeProblemCellPop);
-    const pLattice = latticeGrid({
+    // Everything about how it behaves lives in ui/latticeSection.js, which the Posture tab
+    // mounts too — see that file for why this is one component and not two.
+    const pLattice = latticeSection({
       spec: PROBLEM_LATTICE,
-      ariaLabel: "Decision lattice, 54 leaves",
-      hooks: {
-        onCellEnter: (cell) => {
-          const d = pLattice.descriptorFor(cell.key);
-          pLattice.light(d ? d.ruleIndex : null);
-          lightProblemRow(d ? d.ruleIndex : null);
-        },
-        onCellLeave: () => {
-          pLattice.light(null);
-          lightProblemRow(null);
-        },
-        onActivate: (cell, btn) => {
-          closeProblemCellPop();
-          pCellPop = openProblemCellPopover(cell, btn);
-        },
+      kind: "problem",
+      unit: "leaves",
+      unitOne: "leaf",
+      decide: (v) => mirrorDecideProblem(v, problemDraft),
+      decideSaved: (v) => mirrorDecideProblem(v, problemSaved),
+      coverageOf: (rule) => mirrorLeafCoverage(rule),
+      getRule: () => problemDraft,
+      getRules: () => problemDraft.outcomeRules,
+      getCeiling: () => problemDraft.actLeafCeiling,
+      getRuleCap: () => (problemState && problemState.limits && problemState.limits.maxOutcomeRules) || 40,
+      getOccupancy: () => {
+        const disc = problemPreview && problemPreview.treeDiscrimination;
+        return { known: !!disc, map: (disc && disc.leafOccupancy) || {} };
+      },
+      whenWords: (row) => {
+        if (!row) return "no condition";
+        const parts = AXIS_DEFS
+          .filter((a) => row.when[a.key] !== undefined)
+          .map((a) => `${a.label.toLowerCase()} ${row.when[a.key]}`);
+        return parts.length ? parts.join(", ") : "no condition, so it matches everything left";
+      },
+      onRowLight: (idx) => lightProblemRow(idx),
+      onAddRule: (when, outcome) => {
+        // New rows go on TOP — a first-match cascade, same reasoning as pAddBtn.
+        problemDraft.outcomeRules.unshift({ when, outcome });
+        renderProblemCascade();
+        focusProblemRow(0);
+        onProblemEdit();
       },
     });
-    const pModeTabs = segmented({
-      options: [
-        { value: "rule", label: "Rule", title: "What this draft does to every leaf" },
-        { value: "estate", label: "Estate", title: "Where this tenant's issues and findings actually land" },
-        { value: "change", label: "Change", title: "Only the leaves this draft moves" },
-      ],
-      value: "rule",
-      ariaLabel: "What the lattice shows",
-      onChange: (v) => {
-        pLatticeMode = v;
-        closeProblemCellPop();
-        // `segmented` reports the choice but does not move `aria-pressed` itself — the
-        // caller owns that, the same way selectModelTab calls modelTabs.set(). Without this
-        // the buttons keep announcing the previous mode as the active one.
-        pModeTabs.set(v);
-        paintProblemLattice();
-      },
-    });
-    const pLatticeMass = el("div", { class: "lat-mass" });
-    const pLatticeLegend = el("p", { class: "small muted", style: "margin:12px 0 0" });
-    const pLatticeHero = el(
-      "div",
-      { class: "model-hero" },
-      el(
-        "div",
-        { class: "model-hero__head" },
-        el("span", { class: "label" }, "The decision space"),
-        el("span", { style: "flex:1 1 auto" }),
-        pModeTabs,
-      ),
-      pLattice.node,
-      pLatticeMass,
-      pLatticeLegend,
-      pLatticeNote,
-    );
+    // Leaving a lattice popover open across a tab change would strand a portal against a
+    // hidden pane — `portalsOpen()` stays raised and the sheet's Tab trap keeps deferring
+    // to a list nothing can reach.
+    closeProblemLatticePop = pLattice.close;
+    onPageTeardown(pLattice.close);
 
     const pEditor = el(
       "div",
       { class: "rule-editor" },
-      pLatticeHero,
+      pLattice.node,
       section(
         "Outcome cascade",
         "Each row is tried in order; the first whose conditions ALL match wins. An axis " +
@@ -2652,224 +2622,8 @@ export async function renderAarsRules(main, _params, ctx) {
       });
     }
 
-    /**
-     * Repaint the lattice from the MIRROR — no server round-trip, so this runs on every
-     * keystroke.
-     *
-     * Only ESTATE depends on the server, and it is the only mode `.is-updating` may dim:
-     * Rule and Change are mirror-driven and already current the instant a key goes down, so
-     * dimming them while a preview is in flight would say "this is stale" about the one
-     * thing on the page that is not.
-     */
     function paintProblemLattice() {
-      const occupancy = (problemPreview && problemPreview.treeDiscrimination
-        && problemPreview.treeDiscrimination.leafOccupancy) || {};
-      // Three states, not two: no preview has landed at all, versus a preview that landed
-      // and found nothing in this leaf. `paintCells` keeps them apart; so must this.
-      const occupancyKnown = !!(problemPreview && problemPreview.treeDiscrimination);
-
-      pLattice.setMode(pLatticeMode);
-      const painted = paintCells(pLattice.cells, {
-        mode: pLatticeMode,
-        decide: (v) => mirrorDecideProblem(v, problemDraft),
-        savedDecide: (v) => mirrorDecideProblem(v, problemSaved),
-        occupancy,
-        occupancyKnown,
-      });
-      pLattice.paint(painted);
-      // Change mode recedes what the draft does not move, so the unchanged shape stays
-      // legible behind the diff instead of competing with it.
-      pLattice.recede(pLatticeMode === "change" ? painted.filter((d) => !d.changed).map((d) => d.key) : []);
-      paintProblemLatticeLegend(painted, occupancyKnown);
-      paintProblemMass();
-    }
-
-    /**
-     * The four outcomes over all 54 leaves, with the ACT ceiling drawn ON the axis.
-     *
-     * The ceiling is `actLeafCeiling`, and until now it only ever spoke as a thrown string
-     * AFTER a save was refused (validateProblemRule's mass check, surfaced through
-     * api_setProblemRule) or 700ms later through preview.validation. Drawing it as a
-     * reference marker — the same idiom the compliance rail uses for its estate mean — makes
-     * it answer while you are still dragging the rule that would breach it. Fed from the
-     * MIRROR, so the marker moves with the ceiling field on the same keystroke.
-     */
-    function paintProblemMass() {
-      const coverage = mirrorLeafCoverage(problemDraft);
-      const mass = outcomeMass(coverage.byOutcome, MIRROR_OUTCOME_VALUES, problemDraft.actLeafCeiling);
-      clear(pLatticeMass);
-
-      const bar = el("div", {
-        class: "lat-mass__bar",
-        role: "img",
-        "aria-label": mass.segments
-          .map((seg) => `${seg.count} ${outcomeLabel(seg.key)}`)
-          .join(", ")
-          + ` of ${coverage.total} leaves; ceiling at ${Math.round(problemDraft.actLeafCeiling * 100)} percent`,
-      });
-      for (const seg of mass.segments) {
-        const tone = toneForKey(seg.key);
-        const el2 = el("span", { class: "lat-mass__seg", "data-tone": tone ? tone.tone : "neutral" });
-        el2.style.width = `${seg.share * 100}%`;
-        bar.append(el2);
-      }
-      const mark = el("div", {
-        class: "lat-mass__mark",
-        "data-label": `Act ceiling ${Math.round(problemDraft.actLeafCeiling * 100)}%`,
-      });
-      mark.style.left = `calc(${mass.ceilingShare * 100}% - 1px)`;
-
-      const legend = el("div", { class: "lat-mass__legend" });
-      for (const seg of mass.segments) {
-        legend.append(el("span", {}, outcomeBadge(seg.key), el("b", {}, ` ${seg.count}`)));
-      }
-      pLatticeMass.append(el("div", { class: "lat-mass__frame" }, bar, mark), legend);
-
-      // Over the ceiling is a refusal to save, so it says so here rather than waiting to be
-      // discovered by pressing Save.
-      if (mass.over) {
-        pLatticeMass.append(el("div", { class: "diag-warn", role: "status" }, mass.sentence));
-      }
-    }
-
-    /** One line under the lattice saying what the tints currently mean, and what is missing. */
-    function paintProblemLatticeLegend(painted, occupancyKnown) {
-      if (pLatticeMode === "rule") {
-        setText(pLatticeLegend,
-          "Every leaf this draft could ever decide, tinted by the outcome it would get. "
-          + "Hover or focus a cascade row below to light the leaves it claims.");
-        return;
-      }
-      if (pLatticeMode === "change") {
-        const moved = painted.filter((d) => d.changed).length;
-        setText(pLatticeLegend, moved
-          ? `${moved} of ${painted.length} leaves would change outcome if you saved this draft.`
-          : "This draft moves no leaf. Nothing here would decide differently after a save.");
-        return;
-      }
-      if (!occupancyKnown) {
-        setText(pLatticeLegend, "Not measured yet — no preview has landed. This is different from a leaf nothing reaches.");
-        return;
-      }
-      const reached = painted.filter((d) => d.count > 0).length;
-      setText(pLatticeLegend,
-        `${reached} of ${painted.length} leaves carry at least one issue or finding in this tenant. `
-        + "A hatched leaf is one the estate never reaches — which is not the same as a rule that cannot fire.");
-    }
-
-    /**
-     * What decided this leaf, and the one edit that most often follows from reading it.
-     *
-     * "Add a rule for this cell" prepends a FULLY specified `when` — every axis named, so
-     * the new row claims exactly the leaf you clicked and nothing else — at the top of the
-     * cascade, the same place `pAddBtn` puts a new row and for the same reason: in a
-     * first-match-wins list, a new rule that lands at the bottom is usually shadowed on
-     * arrival.
-     */
-    function openProblemCellPopover(cell, anchor) {
-      const d = pLattice.descriptorFor(cell.key);
-      const claimed = d && d.ruleIndex >= 0;
-      const occ = (problemPreview && problemPreview.treeDiscrimination
-        && problemPreview.treeDiscrimination.leafOccupancy) || null;
-      const count = occ ? (occ[cell.key] || 0) : null;
-      const cap = (problemState && problemState.limits && problemState.limits.maxOutcomeRules) || 40;
-      const atCap = problemDraft.outcomeRules.length >= cap;
-      // The raw outcome key comes straight from the mirror; `paintCells` deliberately emits
-      // display fields (tone/word/glyph), not the enum, so read the decision itself.
-      const decided = mirrorDecideProblem(cell.vector, problemDraft);
-
-      return openPopover({
-        anchor,
-        className: "popover--lattice",
-        ariaLabel: vectorSentence(PROBLEM_LATTICE, cell.vector),
-        build: (api) => {
-          const body = el("div", { class: "lat-pop" });
-          body.append(el("p", { class: "lat-pop__vector" }, vectorSentence(PROBLEM_LATTICE, cell.vector)));
-          body.append(el("p", { class: "lat-pop__row" }, outcomeBadge(decided.outcome)));
-          body.append(el(
-            "p", { class: "small muted", style: "margin:0 0 8px" },
-            claimed
-              ? `Claimed by rule ${d.ruleIndex + 1} — ${problemRuleWhenWords(problemDraft.outcomeRules[d.ruleIndex])}.`
-              : "No rule matches this leaf, so the fallback outcome decides it.",
-          ));
-          body.append(el(
-            "p", { class: "small muted", style: "margin:0 0 10px" },
-            count === null
-              ? "Not measured yet — no preview has landed."
-              : count === 0
-                ? "Nothing in this tenant lands here."
-                : `${count} ${count === 1 ? "issue or finding" : "issues and findings"} in this tenant land here.`,
-          ));
-          const add = el("button", {}, "Add a rule for this cell");
-          add.disabled = atCap;
-          if (atCap) add.title = `The cascade is limited to ${cap} rules.`;
-          add.addEventListener("click", () => {
-            problemDraft.outcomeRules.unshift({
-              when: { ...cell.vector },
-              outcome: decided.outcome,
-            });
-            api.close(true);
-            pCellPop = null;
-            renderProblemCascade();
-            focusProblemRow(0);
-            onProblemEdit();
-          });
-          body.append(add);
-          return body;
-        },
-        onClose: () => { pCellPop = null; },
-      });
-    }
-
-    /** A cascade row's condition in words, for the popover — "any vector" when it has none. */
-    function problemRuleWhenWords(row) {
-      if (!row) return "no condition";
-      const parts = AXIS_DEFS
-        .filter((a) => row.when[a.key] !== undefined)
-        .map((a) => `${a.label.toLowerCase()} ${row.when[a.key]}`);
-      return parts.length ? parts.join(", ") : "no condition, so it matches everything left";
-    }
-
-    /**
-     * Guard 2: reconcile the drawn cascade against the server's own walk of the SAME rule.
-     *
-     * The comparison is against the draft that was SENT, never the live one — the preview is
-     * 700ms-debounced, so a live comparison would fire on every keystroke made while a
-     * request was in flight and report a disagreement that is really just a race.
-     *
-     * What this can catch is a per-ROW disagreement, not a per-CELL one: a pathological rule
-     * could in principle tie on every count and still place a leaf differently. byRow,
-     * byFallback and byOutcome agreeing together makes that vanishingly unlikely, and
-     * test/decideMirror.test.js closes the gap properly by comparing the decisions
-     * themselves. When they do disagree the picture stops claiming anything — hatched, not
-     * merely captioned with a warning, because a confident wrong lattice beside a small note
-     * is worse than no lattice.
-     */
-    function checkLatticeAgreement(sentDraft, serverCoverage) {
-      clear(pLatticeNote);
-      if (!serverCoverage) {
-        pLattice.setDiverged(false);
-        return;
-      }
-      const mine = mirrorLeafCoverage(sentDraft);
-      const rowsDisagree = (mine.byRow.length !== serverCoverage.byRow.length)
-        || mine.byRow.some((n, i) => n !== serverCoverage.byRow[i]);
-      const agrees = !rowsDisagree
-        && mine.byFallback === serverCoverage.byFallback
-        && mine.total === serverCoverage.total;
-      pLattice.setDiverged(!agrees);
-      if (agrees) return;
-      const firstBad = mine.byRow.findIndex((n, i) => n !== serverCoverage.byRow[i]);
-      pLatticeNote.append(el(
-        "div",
-        { class: "diag-warn", role: "status" },
-        "The lattice drawn here and the server's own walk of this rule disagree" +
-          (firstBad >= 0
-            ? ` — rule ${firstBad + 1} claims ${mine.byRow[firstBad]} leaves here and ` +
-              `${serverCoverage.byRow[firstBad]} there. `
-            : ". ") +
-          "The server decides; this picture has stopped claiming anything until they agree.",
-      ));
+      pLattice.repaint();
     }
 
     // -------------------------------------------------------------------------- sync
@@ -2980,7 +2734,7 @@ export async function renderAarsRules(main, _params, ctx) {
 
     async function runProblemPreview() {
       const seq = ++problemPreviewSeq;
-      // The rule as it stood when the request left, for checkLatticeAgreement — see its
+      // The rule as it stood when the request left, for pLattice.reconcile — see its
       // own comment for why comparing against the live draft would report races as bugs.
       const sentDraft = cloneRule(problemDraft);
       try {
@@ -2988,7 +2742,7 @@ export async function renderAarsRules(main, _params, ctx) {
         if (seq !== problemPreviewSeq) return;
         problemPreview = data;
         problemPreviewError = "";
-        checkLatticeAgreement(sentDraft, data && data.leafCoverage);
+        pLattice.reconcile(sentDraft, data && data.leafCoverage);
         paintProblemLattice(); // estate occupancy only exists once a preview has landed
       } catch (e) {
         if (seq !== problemPreviewSeq) return;
@@ -3217,6 +2971,7 @@ export async function renderAarsRules(main, _params, ctx) {
     }
 
     function renderPostureCascade() {
+      uLattice.close();
       clear(uCascadeBody);
       const max = (postureState.limits && postureState.limits.maxTierRules) || 40;
       postureDraft.tierRules.forEach((row, i) => {
@@ -3268,7 +3023,6 @@ export async function renderAarsRules(main, _params, ctx) {
           postureDraft.tierRules.splice(i, 1);
           renderPostureCascade();
           const rows = uCascadeBody.querySelectorAll("tr[data-idx]");
-      const postureOffsets = claimOffsets((coverage && coverage.byRow) || []);
           const next = rows[Math.min(i, rows.length - 1)];
           const btn = next && next.querySelector(".link.danger");
           (btn || uAddBtn).focus();
@@ -3287,6 +3041,15 @@ export async function renderAarsRules(main, _params, ctx) {
           meta,
           el("td", { class: "rule-rowbtns" }, up, down, del),
         );
+        // The register drives the picture, and focus counts as much as hover — the rule
+        // scans.js's provenance diagram keeps, so a keyboard user gets the same link.
+        const lightCells = () => uLattice.light(i);
+        const dimCells = () => uLattice.light(null);
+        tr.addEventListener("mouseenter", lightCells);
+        tr.addEventListener("mouseleave", dimCells);
+        tr.addEventListener("focusin", lightCells);
+        tr.addEventListener("focusout", dimCells);
+
         uCascadeBody.append(tr);
       });
 
@@ -3333,9 +3096,60 @@ export async function renderAarsRules(main, _params, ctx) {
       input: uCeilingInput,
     };
 
+    // ------------------------------------------------------------------ the lattice hero
+    // The same component the Problem tree mounts, with a spec and a vocabulary. If this
+    // block ever needs painter code of its own, ui/latticeSection.js is the thing to fix.
+    const uLattice = latticeSection({
+      spec: POSTURE_LATTICE,
+      kind: "posture",
+      unit: "cells",
+      unitOne: "cell",
+      decide: (v) => mirrorDecidePosture(v, postureDraft),
+      decideSaved: (v) => mirrorDecidePosture(v, postureSaved),
+      coverageOf: (rule) => mirrorCellCoverage(rule),
+      getRule: () => postureDraft,
+      getRules: () => postureDraft.tierRules,
+      getCeiling: () => postureDraft.topTierCeiling,
+      getRuleCap: () => (postureState && postureState.limits && postureState.limits.maxTierRules) || 40,
+      getOccupancy: () => {
+        const disc = posturePreview && posturePreview.postureDiscrimination;
+        return { known: !!disc, map: (disc && disc.cellOccupancy) || {} };
+      },
+      whenWords: (row) => {
+        if (!row) return "no condition";
+        const parts = POSTURE_AXIS_DEFS
+          .filter((a) => row.when[a.key] !== undefined)
+          .map((a) => `${a.label.toLowerCase()} ${row.when[a.key]}`);
+        // The lethal-trifecta row names none of the three lattice axes — it names legs that
+        // sit OFF the 27 cells entirely, which is exactly why it can never fire.
+        const legs = ["privateData", "untrustedIngress", "externalEgress"]
+          .filter((k) => row.when[k] !== undefined);
+        if (!parts.length && legs.length) return `${legs.length} off-lattice signals nothing populates`;
+        return parts.length ? parts.join(", ") : "no condition, so it matches everything left";
+      },
+      onRowLight: (idx) => lightPostureRow(idx),
+      onAddRule: (when, tier) => {
+        // New rows go on TOP — a first-match cascade, same reasoning as the other two.
+        postureDraft.tierRules.unshift({ when, tier });
+        renderPostureCascade();
+        focusPostureRow(0);
+        onPostureEdit();
+      },
+    });
+    closePostureLatticePop = uLattice.close;
+    onPageTeardown(uLattice.close);
+
+    /** Light the cascade row that claims a cell, or clear. Rows are rebuilt structurally, so this re-queries. */
+    function lightPostureRow(idx) {
+      uCascadeBody.querySelectorAll("tr").forEach((tr) => {
+        tr.classList.toggle("is-lit", idx !== null && idx !== undefined && Number(tr.dataset.idx) === idx);
+      });
+    }
+
     const uEditor = el(
       "div",
       { class: "rule-editor" },
+      uLattice.node,
       section(
         "Tier cascade",
         "Each row is tried in order; the first whose conditions ALL match wins. An axis " +
@@ -3567,6 +3381,7 @@ export async function renderAarsRules(main, _params, ctx) {
     // -------------------------------------------------------------------------- sync
     function onPostureEdit() {
       syncPosture();
+      uLattice.repaint();
       schedulePosturePreview();
     }
 
@@ -3588,6 +3403,8 @@ export async function renderAarsRules(main, _params, ctx) {
       const unreachable = (posturePreview && posturePreview.unreachable) || [];
       const coverage = (posturePreview && posturePreview.cellCoverage) || null;
       const rows = uCascadeBody.querySelectorAll("tr[data-idx]");
+      // Cumulative starts, so the column reads as the 27 cells being consumed in cascade order.
+      const postureOffsets = claimOffsets((coverage && coverage.byRow) || []);
       rows.forEach((tr, i) => {
         const meta = tr.querySelector(".rule-rowmeta");
         const isShadow = shadowed.indexOf(i) >= 0;
@@ -3670,22 +3487,29 @@ export async function renderAarsRules(main, _params, ctx) {
         return;
       }
       uImpact.classList.add("updating");
+      uLattice.setUpdating(true);
       schedulePosturePreviewRun();
     }
 
     async function runPosturePreview() {
       const seq = ++posturePreviewSeq;
+      // The rule as it stood when the request left — see uLattice.reconcile for why
+      // comparing against the live draft would report a debounce race as a disagreement.
+      const sentDraft = cloneRule(postureDraft);
       try {
-        const data = await call("api_previewPostureRule", { rule: postureDraft });
+        const data = await call("api_previewPostureRule", { rule: sentDraft });
         if (seq !== posturePreviewSeq) return;
         posturePreview = data;
         posturePreviewError = "";
+        uLattice.reconcile(sentDraft, data && data.cellCoverage);
+        uLattice.repaint(); // estate occupancy only exists once a preview has landed
       } catch (e) {
         if (seq !== posturePreviewSeq) return;
         posturePreview = null;
         posturePreviewError = String(e.message || e);
       }
       uImpact.classList.remove("updating");
+      uLattice.setUpdating(false);
       paintPostureImpact();
       syncPosture(); // row notes and cell counts come from the preview
     }
@@ -3725,6 +3549,7 @@ export async function renderAarsRules(main, _params, ctx) {
     // --------------------------------------------------------------------- first paint
     renderPostureCascade();
     syncPosture();
+    uLattice.repaint();
     paintPostureImpact();
     schedulePosturePreview();
   }
