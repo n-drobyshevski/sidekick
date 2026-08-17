@@ -47,8 +47,8 @@ import {
 
 const PROBLEM_AXES = [
   { key: "exploitation", label: "Exploitation", values: EXPLOITATION_VALUES },
-  { key: "impact", label: "Technical impact", values: IMPACT_VALUES },
-  { key: "exposure", label: "System exposure", values: EXPOSURE_VALUES },
+  { key: "impact", label: "Technical impact", shortLabel: "Impact", values: IMPACT_VALUES },
+  { key: "exposure", label: "System exposure", shortLabel: "Exposure", values: EXPOSURE_VALUES },
   { key: "mission", label: "Mission", values: MISSION_VALUES },
 ];
 
@@ -192,7 +192,7 @@ export function latticeCells(spec) {
  * dimension (0-based), so a caller can size a header cell as `grid-column: span N` (or the
  * row equivalent) without recomputing the nesting itself.
  */
-function bandLevels(axisKeys, axisMap) {
+function bandLevels(axisKeys, axisMap, canInline) {
   return axisKeys.map((key, levelIdx) => {
     const axis = axisMap[key];
     const outerAxes = axisKeys.slice(0, levelIdx).map((k) => axisMap[k]);
@@ -211,7 +211,23 @@ function bandLevels(axisKeys, axisMap) {
         });
       });
     }
-    return { axisKey: key, label: axis.label, cells };
+    /**
+     * Whether this band can carry its own axis name inline, e.g. "Exposure Open".
+     *
+     * THE RULE IS ABOUT SPAN, NOT ABOUT WHICH SIDE IT IS ON. Inlining a name is free only
+     * when the band spans more than one cell, because then it borrows width the grid had
+     * already committed. The Problem lattice's outer column band spans three (one exposure
+     * over three missions) and the name costs nothing; the Posture lattice's spans exactly
+     * one, and "Containment Weak" widens every column until the third small-multiple panel
+     * no longer fits its row.
+     *
+     * ROWS NEVER INLINE, whatever their span, and that is not an inconsistency: a row band
+     * spans VERTICALLY, and vertical span buys no horizontal room. A row header column
+     * auto-sizes to its longest label, so inlining there is exactly the widening this rule
+     * exists to avoid. Anything not inlined is named in the key instead.
+     */
+    const inlineName = !!canInline && cells.length > 0 && cells[0].span > 1;
+    return { axisKey: key, label: axis.label, shortLabel: axis.shortLabel || axis.label, inlineName, cells };
   });
 }
 
@@ -223,9 +239,20 @@ function bandLevels(axisKeys, axisMap) {
  */
 export function latticeHeaders(spec) {
   const axisMap = Object.fromEntries(spec.axes.map((a) => [a.key, a]));
+  const rowBands = bandLevels(spec.rows, axisMap, false);
+  const colBands = bandLevels(spec.cols, axisMap, true);
   return {
-    rowBands: bandLevels(spec.rows, axisMap),
-    colBands: bandLevels(spec.cols, axisMap),
+    rowBands,
+    colBands,
+    /**
+     * What the grid does NOT say inline, for the corner key — the row axes always, and any
+     * column axis whose band was too narrow to hold its own name. Nothing is listed twice:
+     * between the inline names and this key, every axis is named exactly once.
+     */
+    key: {
+      rows: rowBands.map((b) => b.shortLabel),
+      cols: colBands.filter((b) => !b.inlineName).map((b) => b.shortLabel),
+    },
   };
 }
 

@@ -375,3 +375,35 @@ table.data tr.rule-unused > td:first-child { box-shadow: inset 2px 0 0 var(--hai
 @media (prefers-reduced-motion: reduce) {
   .model-stack__seg.is-lit, .rails.is-lit, .table-wrap.is-lit { transition: none; }
 }
+
+/* ------------------------------------------------------------------- axis names */
+/* The values were always drawn; the axes they belong to were not, and most of them are
+   generic enough to be ambiguous on their own — TOTAL / PARTIAL could be almost anything,
+   and HIGH / MEDIUM / LOW could be severity, confidence or mission.
+   Named in two places, and between them every axis is named exactly once: inline on any
+   band wide enough to hold it (see lattice.js's span rule), and in the corner key for the
+   rest. The corner was reserved by the row headers and otherwise empty, so the key costs
+   nothing in either dimension and sits directly above the labels it explains. */
+.lat-ax {
+  margin-right: 5px;
+  color: var(--accent);
+  font-weight: 700;
+}
+.lat-key {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 3px;
+  padding: 0 12px 6px 0;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.lat-key__line { display: flex; align-items: center; }
+.lat-key__line b { color: var(--ink); font-weight: 700; }
+/* The arrow says which way to read the axis, and is aria-hidden: a screen reader gets the
+   whole vector in words from every cell's own label, where direction is not a concept. */
+.lat-key__dir { margin-right: 5px; font-weight: 400; color: var(--accent); }

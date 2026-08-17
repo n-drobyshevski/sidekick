@@ -1,3 +1,26 @@
+/* --------------------------------------------------------------------- the reset */
+/* THE `hidden` GUARD, ONCE, FOR EVERYTHING.
+ *
+ * The UA stylesheet's `[hidden] { display: none }` is a bare attribute selector with no
+ * class, so ANY author rule that sets `display` beats it — `.workbench-controls { display:
+ * flex }` is enough. The element then keeps its `hidden` attribute, reports `el.hidden ===
+ * true`, is correctly removed from the accessibility tree, and goes on rendering in full.
+ * It is a nasty one precisely because the JS looks right and a check that reads `el.hidden`
+ * agrees with it; only the computed `display` tells the truth.
+ *
+ * This codebase found that out eight separate times and patched it eight separate ways
+ * (`.filter-chips`, `.gq-panel`, `.gs-updating-bar`, `.graph-rail`, `.graph-rail button`,
+ * `.rail-cap`, `.sheet-pane`, `.facet-group`), each with its own comment explaining the
+ * same mechanism, and the ninth still got through: the AARS Rules toolbar rendered all
+ * three tabs' Save/Revert clusters at once, because `.workbench-controls` sets `display:
+ * flex` and nothing re-stated the guard for it.
+ *
+ * So it is stated here once instead. `!important` is the point rather than a shortcut —
+ * without it this is just a tenth rule losing to the next `display` a component declares.
+ * Nothing in this app ever wants a `hidden` element painted; `hidden` means hidden, and an
+ * element that needs to be present-but-not-displayed has `.sr-only` for that. */
+[hidden] { display: none !important; }
+
 /* ------------------------------------------------------------------ shell / nav */
 /* Fixed viewport-height shell: the rail always fills the viewport (pinning the sync
    zone to the bottom) and the content pane scrolls on its own. */
