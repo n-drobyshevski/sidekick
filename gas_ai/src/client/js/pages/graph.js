@@ -4,6 +4,12 @@
 // builder, and the SVG canvas with its accessible table fallback. All state is hash
 // params, so any view is shareable.
 //
+// THE BUILDER IS AN OVERLAY, not a band. It floats over the canvas from an "Edit query"
+// toggle, so putting the question away gives the answer the whole viewport. It hangs off
+// `.workbench-split` rather than inside the canvas — `renderGraph` opens by clearing its
+// container, which is why the legend and the counts are re-appended on every paint — and
+// being out of flow it never resizes the canvas, so toggling it does not re-fit the graph.
+//
 // THERE IS NO FILTERS PANEL. It offered severity, cloud and project — three of the
 // twenty-three fields the query knows — as a severity pill row and two SINGLE-value
 // selects, with no counts, always on the root node, and only ever as whole-value
@@ -32,8 +38,9 @@ import {
 } from "./graphQuery.js";
 import { queryBar } from "./graphQueryBar.js";
 import {
-  clear, confirmDialog, debounce, el, emptyState, filterChipRow, helpTip, openPopover,
-  segmented, selectField, sevBadge, skeleton, toast, togglePills, uiIcon,
+  clear, confirmDialog, debounce, el, emptyState, filterChipRow, helpTip, onPageTeardown,
+  openPopover, portalsOpen, segmented, selectField, sevBadge, skeleton, toast, togglePills,
+  uiIcon,
 } from "../ui.js";
 
 const GROUP_LABELS = {
@@ -49,6 +56,34 @@ const GROUP_LABELS = {
 // across in-place repaints (filter changes rebuild the legend, and a key that
 // snapped shut on every tweak would be worse than useless).
 let legendOpen = false;
+
+/**
+ * Is the query builder showing? Sticky for the session, and deliberately NOT a hash param.
+ *
+ * `VIEW_PARAMS` below calls itself "the whole page state, minus transient panel/focus intent",
+ * which is exactly what this is — a shared link or a saved view should replay the question, not
+ * whether the person who saved it had the editor open. `sessionStorage` rather than a bare
+ * module variable because replaying a saved view is a `navigate` (store.js), a real hashchange
+ * that rebuilds the page; the choice should survive that and a reload, but not the tab.
+ *
+ * Storage can throw outright inside the Apps Script sandbox iframe, so every access is guarded
+ * and the module variable is the answer when it does.
+ */
+const EDIT_KEY = "sidekickai.graphEdit";
+let editing = true;
+function readEditing() {
+  try {
+    const raw = sessionStorage.getItem(EDIT_KEY);
+    if (raw != null) editing = raw === "1";
+  } catch (_e) { /* storage refused; keep whatever we had */ }
+  return editing;
+}
+function writeEditing(next) {
+  editing = next;
+  try {
+    sessionStorage.setItem(EDIT_KEY, next ? "1" : "0");
+  } catch (_e) { /* storage refused; the module variable still holds for this page */ }
+}
 
 // Params that change the server payload (vs. client-only view/q/panel).
 const DATA_KEYS = ["find", "where", "maxNodes", "layout", "groupBy", "sort", "columns"];
@@ -269,8 +304,10 @@ export async function renderGraphPage(main, params, _ctx) {
   let lastStatusText = "";
   const headActions = el("div", { class: "gq-head-actions" });
   const bar = el("div", { class: "workbench-bar" }, title, headActions);
-  // The result count sits on the builder's first line, right-aligned, the way Wiz puts it:
-  // it describes the question above it, not the picture below.
+  // The result count rides the VIEW strip, not the builder. It used to sit on the builder's
+  // first line, which was right while the builder was always there — and became a way to lose
+  // the count the moment the builder could be put away. It is the one fact the canvas cannot
+  // tell you, so it lives on the row that never leaves.
   const countText = el("span", { class: "num", role: "status" });
   const countNote = el("span", {});
   const countBox = el("div", { class: "gq-count" }, countText, countNote);
@@ -289,14 +326,22 @@ export async function renderGraphPage(main, params, _ctx) {
     fallbackFocus: null, // assigned below, once the Columns button exists
   });
   const body = el("div", { class: "workbench-body" });
-  // The canvas and the filter panel are flex siblings inside the split, so an open panel
-  // narrows the canvas rather than covering it — filters apply live, and a scrim over the
-  // thing being filtered defeats the point. `body` stays the containing block, so the
-  // overlays, the table, the empty states and the boot skeleton all follow it in for free.
-  // The panel host is DOM-ordered after the canvas, matching its position on screen.
-  const split = el("div", { class: "workbench-split" }, body);
   const barHost = el("div", {});
-  const root = el("div", { class: "workbench" }, bar, barHost, viewbar, chipsRow, split);
+  const panelClose = el("button", {
+    class: "gq-iconbtn gq-panel-close",
+    "aria-label": "Close the query editor",
+    onclick: () => setEditing(false, true),
+  }, uiIcon("close", 13));
+  // The builder's own card, floating over the canvas. A sibling of `body` rather than a child:
+  // `renderGraph` clears its container on every repaint, and out of flow it leaves the canvas
+  // box alone, so revealing it neither destroys it nor re-fits the graph underneath.
+  const panel = el("div", {
+    class: "gq-panel", id: "gq-panel", hidden: true, "aria-label": "Query editor",
+  }, panelClose, barHost);
+  // `body` is the containing block for the canvas overlays, the table, the empty states and the
+  // boot skeleton; the panel is positioned against the split so it can sit over all of them.
+  const split = el("div", { class: "workbench-split" }, panel, body);
+  const root = el("div", { class: "workbench" }, bar, viewbar, chipsRow, split);
   main.append(root);
 
   if (!boot.latestSync) {
@@ -315,8 +360,7 @@ export async function renderGraphPage(main, params, _ctx) {
   let vocab = { kinds: [], stepsFrom: {} };
   let graphApi = null;
   let matchIds = null;
-  // The open panel, whichever way it is hosted: { close, docked }. Docked is the desktop
-  // case (a flex sibling of the canvas); the modal sheet is the <=800px fallback.
+  /** Guards against a slow answer painting over a faster one that was asked for later. */
   let seq = 0;
 
   // Search (client-side highlight; graph view only).
@@ -393,14 +437,27 @@ export async function renderGraphPage(main, params, _ctx) {
   // to be the answer; the nearest surviving control on that row is Columns.
   chipsRow.fallbackFocus = columnsBtn;
 
-  // The builder owns the question; this row owns how the answer is read.
+  // Reveals the builder. It lives here rather than in the header actions because the header is
+  // right-aligned and its saved-views control is swapped by positional index below — an
+  // inserted sibling there would silently replace the wrong node.
+  const editBtn = el("button", {
+    class: "gq-edit-btn",
+    "aria-expanded": "false",
+    "aria-controls": "gq-panel",
+    onclick: () => setEditing(!editing, false),
+  }, uiIcon("pencil", 14), el("span", { style: "margin-left:6px" }, "Edit query"));
+
+  // The one row that never leaves: how to change the question, how to read the answer, and how
+  // many there are. The question itself is in the card this row opens.
   viewbar.append(
+    editBtn,
+    el("span", { class: "gq-viewbar-sep", "aria-hidden": "true" }),
     el("span", { class: "gq-kw" }, "View"),
     viewToggle,
     controls,
   );
-  controls.append(searchField, selectField("Arrange", arrangeSel), selectField("Order", orderSel),
-    columnsBtn);
+  controls.append(countBox, searchField, selectField("Arrange", arrangeSel),
+    selectField("Order", orderSel), columnsBtn);
 
   // ------------------------------------------------------------- header actions
   headActions.append(
@@ -447,9 +504,63 @@ export async function renderGraphPage(main, params, _ctx) {
       if (where) patch.where = serializeWhere(where);
       update(patch);
     },
-    countNode: countBox,
   });
   barHost.append(builder.node);
+  readEditing();
+
+  /**
+   * Show or hide the card. `toTrigger` returns focus to the "Edit query" button, which is what
+   * Escape and the card's own ✕ want and what an outside click does not — the same split
+   * openPopover draws between `close(true)` and `close()`.
+   */
+  function setEditing(next, toTrigger) {
+    if (next === editing) return;
+    writeEditing(next);
+    syncControls();
+    // Opening is always a request to edit, so the keyboard goes with it — onto the row that was
+    // last focused, which the bar remembers across a close.
+    if (next) builder.focus();
+    else if (toTrigger) editBtn.focus();
+  }
+
+  // Dismissal. Two listeners by hand rather than `popoverDismiss`, which also closes on scroll,
+  // resize and focusout — anchor semantics for a popover chasing a trigger that can move. This
+  // card is pinned to the layout and is not modal, so tabbing to the View toggle must not shut it.
+  function insidePanel(node) {
+    if (!(node instanceof Element)) return false;
+    // The VIEW strip counts as inside: it holds the trigger and the count, and switching Table
+    // for Graph is not leaving the editor. Without the trigger in particular the toggle is dead
+    // — this handler would close the card and the button's own click would reopen it.
+    // The palette and the filter editors portal themselves to <body>, so a click in one is
+    // geometrically outside the card while being entirely inside the editing task.
+    return !!node.closest(".gq-panel, .gq-viewbar, .popover, .sheet, .sheet-scrim, dialog");
+  }
+  function onOutsidePointer(e) {
+    if (!editing || insidePanel(e.target)) return;
+    setEditing(false, false);
+  }
+  function onEscape(e) {
+    if (e.key !== "Escape" || !editing) return;
+    // Both this and popover.js listen on document in the capture phase, and ours registers
+    // first — at page render, before any popover exists. Without this guard Escape inside an
+    // open palette would close the whole card instead of the palette it was aimed at.
+    if (portalsOpen()) return;
+    setEditing(false, true);
+  }
+  document.addEventListener("pointerdown", onOutsidePointer, true);
+  document.addEventListener("keydown", onEscape, true);
+  onPageTeardown(() => {
+    document.removeEventListener("pointerdown", onOutsidePointer, true);
+    document.removeEventListener("keydown", onEscape, true);
+  });
+
+  // The zoom capsule sits at the canvas's top-right, directly under the card. A variable rather
+  // than a fixed offset because the card grows a row at a time and re-wraps on resize.
+  const panelSize = new ResizeObserver(() => {
+    split.style.setProperty("--gq-panel-h", (editing ? panel.offsetHeight : 0) + "px");
+  });
+  panelSize.observe(panel);
+  onPageTeardown(() => panelSize.disconnect());
 
   // ------------------------------------------------------------ update cycle
   function update(patch) {
@@ -571,11 +682,15 @@ export async function renderGraphPage(main, params, _ctx) {
       host.append(emptyState("The last sync produced no graph.",
         "The sync completed but wrote no nodes. Check the Scans page for what it covered."));
     } else if (isNarrowing()) {
+      // Both ways out leave the reader needing to say something new, so both bring the editor
+      // back up — the alternative is a cleared query and a collapsed card with nothing to act on.
       host.append(
         emptyState("Nothing matches these filters.",
           "Widen one of them, or start from somewhere else in the estate."),
         el("div", { class: "workbench-empty-action" },
-          el("button", { onclick: () => clearAllFilters() }, "Clear all filters")),
+          el("button", {
+            onclick: () => { clearAllFilters(); setEditing(true, false); },
+          }, "Clear all filters")),
       );
     } else {
       // A query that matches nothing is the ordinary outcome of asking a precise question, and
@@ -585,7 +700,10 @@ export async function renderGraphPage(main, params, _ctx) {
           "Every step has to match for a row to exist. Remove the last relationship, or mark it optional to keep the rows it would drop."),
         el("div", { class: "workbench-empty-action" },
           el("button", {
-            onclick: () => update({ find: serializeQuery(defaultQuery()), where: "", columns: "", page: "" }),
+            onclick: () => {
+              update({ find: serializeQuery(defaultQuery()), where: "", columns: "", page: "" });
+              setEditing(true, false);
+            },
           }, "Start a new search")),
       );
     }
@@ -1080,7 +1198,15 @@ export async function renderGraphPage(main, params, _ctx) {
     for (const f of controls.querySelectorAll(".select-field")) f.style.display = graphOnly;
     columnsBtn.style.display = state.view === "table" ? "" : "none";
     viewToggle.set(state.view);
+
+    // The builder. Reflecting the state only — moving focus is `setEditing`'s job, because it
+    // must happen when the READER opens the card and not when the page merely repaints with it
+    // already open, and not on the first render either: the card is up by default, and a page
+    // that grabs the keyboard on arrival drops a screen reader into the middle of itself.
     builder.sync();
+    panel.hidden = !editing;
+    editBtn.setAttribute("aria-expanded", editing ? "true" : "false");
+    split.style.setProperty("--gq-panel-h", (editing ? panel.offsetHeight : 0) + "px");
 
     // Chips + count badge. The badge counts what the USER applied — the AI-agent lens the
     // page seeds on a fresh visit is shown as a chip and clearable, but it is not a filter

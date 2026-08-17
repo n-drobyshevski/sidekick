@@ -56,10 +56,10 @@ import { currentEntryId, openQueryPalette, stepForPick } from "./queryPalette.js
 
 /**
  * @param {object} opts
- *   {getQuery, getVocab, getWhere, onChange(nextQuery, nextWhere), countNode}
+ *   {getQuery, getVocab, getWhere, onChange(nextQuery, nextWhere)}
  *   `getWhere` returns the parsed `where` map (slot index -> key -> values); `onChange`'s
  *   second argument is the map after the edit, which the page serializes back into the URL.
- * @returns {{node: HTMLElement, sync: function}}
+ * @returns {{node: HTMLElement, sync: function, focus: function}}
  */
 export function queryBar(opts) {
   const list = el("div", {
@@ -67,7 +67,7 @@ export function queryBar(opts) {
     role: "tree",
     "aria-label": "Security graph query",
   });
-  const root = el("div", { class: "gq" }, list, opts.countNode || null);
+  const root = el("div", { class: "gq" }, list);
   let focusPath = "";
   /** Set by an edit that knows where focus should land; consumed by the next render. */
   let takeFocus = false;
@@ -803,6 +803,22 @@ export function queryBar(opts) {
     }
   }
 
+  /**
+   * Put the keyboard in the bar. The host calls this when it reveals a bar that was put away,
+   * so the reader lands on the row they left rather than back at FIND every time.
+   *
+   * It goes through `focusPath` rather than `list.firstChild` because that variable IS the
+   * roving tab stop — the one row rendered at tabindex="0" (see the guard above `render`) —
+   * and focusing any other row would leave the tab order pointing somewhere else.
+   */
+  function focus() {
+    const at = focusPath
+      ? Array.prototype.findIndex.call(list.children, (n) => n.tabIndex === 0)
+      : 0;
+    const line = list.children[at >= 0 ? at : 0];
+    if (line) line.focus();
+  }
+
   render();
-  return { node: root, sync: render };
+  return { node: root, sync: render, focus };
 }
