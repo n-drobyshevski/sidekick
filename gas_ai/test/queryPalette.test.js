@@ -163,7 +163,7 @@ describe("entity mode — what to FIND", () => {
     expect(list.every((e) => e.section === "entities")).toBe(true);
   });
 
-  it("says how many of each this estate holds, so an empty corner is visible", () => {
+  it("says how many of each this landscape holds, so an empty corner is visible", () => {
     const agent = inMode("entity", "AI_AGENT").find((e) => e.pick.kind === "AI_AGENT");
     expect(agent.count).toBe(12);
     // The tally is the row's count column; the sub-line names the category instead, so the two

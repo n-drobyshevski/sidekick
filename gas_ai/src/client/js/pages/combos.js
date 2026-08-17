@@ -1,4 +1,4 @@
-// Toxic Combinations: what the estate looks like in combination terms, then one card per
+// Toxic Combinations: what the landscape looks like in combination terms, then one card per
 // pattern, then the issues inside it.
 //
 // The page is built around the thing it was previously only asserting. Wiz rates these

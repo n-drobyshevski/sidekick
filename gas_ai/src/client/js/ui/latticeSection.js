@@ -285,7 +285,7 @@ export function latticeSection(opts) {
    *
    * The ceiling used to speak only as a thrown string AFTER a save was refused, or one
    * debounced round-trip later through `preview.validation`. Drawn as a reference marker —
-   * the idiom the compliance rail already uses for its estate mean — it answers while the
+   * the idiom the compliance rail already uses for its landscape mean — it answers while the
    * rule that would breach it is still being dragged. Fed from the mirror, so the marker
    * moves on the same keystroke as the field.
    */

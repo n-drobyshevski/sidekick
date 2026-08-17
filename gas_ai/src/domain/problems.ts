@@ -1,4 +1,4 @@
-// The estate-wide Priorities: issues UNION findings, ranked together on one scale —
+// The landscape-wide Priorities: issues UNION findings, ranked together on one scale —
 // Phase 7 of the Prioritization-to-Prediction rebuild.
 //
 // Neither existing page can answer "what do I work on Monday". `toxicCombos.ts` scopes

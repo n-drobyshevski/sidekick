@@ -93,7 +93,7 @@ export const READ_APIS: Array<[name: string, params: unknown, label?: string]> =
   ["getAssetOptions", {}],
   ["getIssues", {}],
   ["getToxicCombos", {}],
-  // Phase 7: the estate-wide Priorities page — issues ∪ findings, ranked together.
+  // Phase 7: the landscape-wide Priorities page — issues ∪ findings, ranked together.
   ["getProblems", {}],
   ["getSyncHistory", {}],
   ["getSettings", {}],
@@ -108,7 +108,7 @@ export const READ_APIS: Array<[name: string, params: unknown, label?: string]> =
   ["getPostureRule", {}],
   ["getStorageStats", {}],
   // agent-h-chatbot is the max-degree node in the golden getGraph payload (17 neighbors),
-  // so it exercises the widest neighbour list getAssetDetail can produce in this estate.
+  // so it exercises the widest neighbour list getAssetDetail can produce in this landscape.
   ["getAssetDetail", { id: "agent-h-chatbot" }],
   // One of agent-h-chatbot's own issues, so the two new golden cases are cross-checkable
   // against each other as well as against the dry-run sync snapshot.

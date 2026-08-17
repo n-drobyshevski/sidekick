@@ -83,7 +83,7 @@ const GROUP_LABELS = {
  *
  * The blurb is not decoration. Five rows reading "Grid / Rows / Columns / Organic / Radial"
  * say nothing about which one answers the question in hand, and a layout picker is exactly
- * where someone is guessing — so each one says what it arranges BY, in the estate's own terms.
+ * where someone is guessing — so each one says what it arranges BY, in the landscape's own terms.
  */
 const LAYOUTS = [
   {
@@ -930,7 +930,7 @@ export async function renderGraphPage(main, params, _ctx) {
       // back up — the alternative is a cleared query and a collapsed card with nothing to act on.
       host.append(
         emptyState("Nothing matches these filters.",
-          "Widen one of them, or start from somewhere else in the estate."),
+          "Widen one of them, or start from somewhere else in the landscape."),
         el("div", { class: "workbench-empty-action" },
           el("button", {
             onclick: () => { clearAllFilters(); setEditing(true, false); },
@@ -938,7 +938,7 @@ export async function renderGraphPage(main, params, _ctx) {
       );
     } else {
       // A query that matches nothing is the ordinary outcome of asking a precise question, and
-      // it is a real answer — the estate holds no such path. Say that, and offer the way back.
+      // it is a real answer — the landscape holds no such path. Say that, and offer the way back.
       host.append(
         emptyState("No paths match this query.",
           "Every step has to match for a row to exist. Remove the last relationship, or mark it optional to keep the rows it would drop."),
@@ -1126,7 +1126,7 @@ export async function renderGraphPage(main, params, _ctx) {
           el("span", { class: "pill warn" }, "capped"),
           [
             `This view is capped at ${payload.options?.maxNodes || "its"} nodes to stay light.`,
-            "Some neighbours — or, on a whole-estate view, some starting points — are not drawn.",
+            "Some neighbours — or, on a whole-landscape view, some starting points — are not drawn.",
             "Load more to widen it a step at a time, or narrow the filters, start from a single asset or combination, or raise the node budget in Settings.",
           ],
           { label: "Why this view is capped", term: "depth-budget" },

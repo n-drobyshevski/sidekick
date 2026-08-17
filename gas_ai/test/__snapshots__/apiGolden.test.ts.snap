@@ -1,6 +1,6 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`dry-run sync > produces the sample estate 1`] = `
+exports[`dry-run sync > produces the sample landscape 1`] = `
 {
   "jobId": null,
   "message": "Dry-run sync complete: 119 nodes, 117 edges, 32 issues (sample data).",

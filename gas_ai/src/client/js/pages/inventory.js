@@ -1,8 +1,8 @@
-// AI Inventory: the estate's posture up top, a faceted filter drawer, and the asset
+// AI Inventory: the landscape's posture up top, a faceted filter drawer, and the asset
 // register as a sortable table or a card grid. Row click opens the shared asset sheet;
 // "Open in graph" deep-links.
 //
-// The page never holds the whole estate unless it's cheap to. api_getAssets answers with
+// The page never holds the whole landscape unless it's cheap to. api_getAssets answers with
 // every row (`all: true`) only while the inventory fits under the server's row ceiling —
 // then the filters, the sort, the pager and the facet counts all run in the browser with
 // no further RPCs, which is what a Google Apps Script round trip per keystroke deserves.
@@ -232,7 +232,7 @@ export async function renderInventory(main, params) {
 
   function requestParams() {
     return {
-      all: true, // the server downgrades this to one page when the estate is too big
+      all: true, // the server downgrades this to one page when the landscape is too big
       q: query.q,
       aarsSeverities: query.aarsSeverities, severities: query.severities,
       kinds: query.kinds, clouds: query.clouds, regions: query.regions,
@@ -264,7 +264,7 @@ export async function renderInventory(main, params) {
     const counts = new Map(
       ((facets && facets[key]) || []).map((f) => [f.value, f.count]),
     );
-    // A selected value the vocabulary no longer knows (stale link, re-synced estate) is
+    // A selected value the vocabulary no longer knows (stale link, re-synced landscape) is
     // still listed, so it can be switched off rather than silently filtering the table.
     const values = vocab.slice();
     for (const v of query[key]) if (values.indexOf(v) < 0) values.push(v);
@@ -394,7 +394,7 @@ export async function renderInventory(main, params) {
     renderResults(fresh);
     panel.sync();
     // Rewrite the URL into the canonical spelling: a link carrying ?kind= or ?band= (or a
-    // value the estate no longer has) has already been folded into the plural dimensions,
+    // value the landscape no longer has) has already been folded into the plural dimensions,
     // so leave the address bar describing the filters that are actually applied.
     persistParams();
     if (panelName === "filters") panel.open(false);
@@ -941,7 +941,7 @@ export async function renderInventory(main, params) {
               ? "One sync recorded so far — the trend draws from the second."
               : "No history yet. Each sync adds a point; earlier syncs can't be recovered."),
       // Points scored under different AARS rules are not on the same scale. Rather than
-      // let a threshold edit read as the estate moving, the note names the breaks.
+      // let a threshold edit read as the landscape moving, the note names the breaks.
       trend.length >= 2 && ruleChanges.length
         ? el("p", { class: "chart-note warn" },
             `The scoring rule changed ${ruleChanges.length} time` +

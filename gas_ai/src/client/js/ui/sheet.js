@@ -140,7 +140,7 @@ export function openSheet(renderBody, opts = {}) {
     tabindex: "-1",
   });
   // Label by the visible title where there is one: the accessible name is then the record's
-  // own name, not a constant like "Asset detail" shared by every asset in the estate.
+  // own name, not a constant like "Asset detail" shared by every asset in the landscape.
   if (title) sheet.setAttribute("aria-labelledby", titleId);
   else sheet.setAttribute("aria-label", ariaLabel);
   if (width) sheet.style.setProperty("--sheet-w", width);

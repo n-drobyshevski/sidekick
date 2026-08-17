@@ -11,7 +11,7 @@
 //   3. What the tree LISTS and what it COUNTS are different sets, on purpose. Unscored
 //      subcategories and never-evaluated policies are dropped from the lists and kept in
 //      the counts (`stateCounts`, `unassessedPolicyCount`), because a register that
-//      silently shows a subset of the estate is invariant 1 wearing a tidier face. Every
+//      silently shows a subset of the landscape is invariant 1 wearing a tidier face. Every
 //      assertion below that pairs a shortened list with an unchanged count is pinning that.
 
 import { describe, expect, it } from "vitest";
@@ -370,7 +370,7 @@ describe("complianceKpis", () => {
     const kpis = complianceKpis(withEmpty, policies);
     expect(kpis.frameworks).toBe(3);
     expect(kpis.scoredFrameworks).toBe(2);
-    // Still 86. Counting the empty one as 0 would give 57 and describe an estate that
+    // Still 86. Counting the empty one as 0 would give 57 and describe a landscape that
     // does not exist.
     expect(kpis.averagePosture).toBe(86);
   });
@@ -397,12 +397,12 @@ describe("complianceKpis", () => {
     expect(kpis.failingSubcategories).toBe(3);
   });
 
-  it("is safe on an estate with no posture at all", () => {
+  it("is safe on a landscape with no posture at all", () => {
     expect(complianceKpis([], [])).toEqual({
       frameworks: 0,
       scoredFrameworks: 0,
       averagePosture: null,
-      // Null, not "weak". An estate nobody scored is not an estate scoring badly, and the
+      // Null, not "weak". A landscape nobody scored is not a landscape scoring badly, and the
       // hero draws no bar for it — the same rule the per-row bands follow.
       averagePostureBand: null,
       failingSubcategories: 0,

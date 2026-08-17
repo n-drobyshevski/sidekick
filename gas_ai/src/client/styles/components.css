@@ -158,7 +158,7 @@
   background: var(--page); border: 1px solid var(--hairline);
 }
 /* While filtered the other bands recede but never vanish: the share you picked has to
-   stay readable against the whole estate, which is the point of showing a distribution. */
+   stay readable against the whole landscape, which is the point of showing a distribution. */
 .sevbar--dim .sevbar-seg[data-on="false"] { opacity: 0.22; }
 .sevbar-seg--empty { flex: 1; background: repeating-linear-gradient(
   45deg, transparent, transparent 4px, rgba(0, 0, 0, 0.06) 4px, rgba(0, 0, 0, 0.06) 8px); }

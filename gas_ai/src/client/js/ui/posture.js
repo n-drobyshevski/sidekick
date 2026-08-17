@@ -5,7 +5,7 @@
 // change with it or the Inventory's Posture column reads wrong.
 //
 // Same four .pill kinds `outcomeBadge` reuses, for the same reason: tier 4 is bad, tier 3
-// is warn, tier 2 is neutral (the estate's typical middle, not a verdict either way), and
+// is warn, tier 2 is neutral (the landscape's typical middle, not a verdict either way), and
 // tier 1 — minimal capability inside a confirmed-strong containment — is the one tier that
 // earns "ok".
 

@@ -1,5 +1,5 @@
 // The posture rule as a configurable object: tier cascade, coercion, validation, cell
-// accounting, and the lattice-vs-estate diagnostic — the structural port of
+// accounting, and the lattice-vs-landscape diagnostic — the structural port of
 // problemRule.test.ts onto posture.ts's 27-cell lattice instead of the 54-leaf tree.
 
 import { describe, expect, it } from "vitest";

@@ -294,7 +294,7 @@ describe("withHumanAccess", () => {
     expect(access?.inactiveCount).toBe(1);
   });
 
-  it("leaves an estate with no human bindings byte-identical", () => {
+  it("leaves a landscape with no human bindings byte-identical", () => {
     const before = doc([node("agent", "AI_AGENT"), node("sa", "SERVICE_ACCOUNT")], []);
     expect(withHumanAccess(before)).toBe(before);
   });

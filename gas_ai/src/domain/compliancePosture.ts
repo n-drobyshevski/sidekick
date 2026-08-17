@@ -26,7 +26,7 @@
 // reason the two are separated below. `stateCounts` is still computed over EVERY
 // subcategory Wiz reported, before anything is dropped, and `unassessedPolicyCount` still
 // counts the policies that went — because a page that silently lists fewer rows than the
-// estate has is the implied confidence PRODUCT.md forbids, just wearing a tidier face. The
+// landscape has is the implied confidence PRODUCT.md forbids, just wearing a tidier face. The
 // header states what was left out; the register just doesn't rank it as work.
 
 import { SEVERITY_ORDER, type Severity } from "./config";
@@ -50,7 +50,7 @@ export const POSTURE_STATES = {
   noResources: {
     glyph: "○",
     label: "No resources",
-    blurb: "nothing in this estate the checks apply to",
+    blurb: "nothing in this landscape the checks apply to",
   },
   noPolicies: {
     glyph: "◌",
@@ -279,7 +279,7 @@ function worstOf(a: Severity | null, b: Severity | null): Severity | null {
 /**
  * The worst severity among the FAILING policies of `policies`, or null when none fail.
  *
- * Failing is the whole filter: a CRITICAL control that passes describes the estate's good
+ * Failing is the whole filter: a CRITICAL control that passes describes the landscape's good
  * news, and letting it set this field would paint a clean row with an alarm. Null means
  * "nothing here is failing", never "nothing here is severe".
  */
@@ -520,7 +520,7 @@ export function buildAllFrameworkTrees(
 }
 
 /**
- * The estate-wide compliance figure the Wiz Scans page reports.
+ * The landscape-wide compliance figure the Wiz Scans page reports.
  *
  * `averagePosture` is the mean of the SCORED frameworks only, and `scoredFrameworks` says
  * how many that was — because a mean over three frameworks where one was never assessed is

@@ -112,7 +112,7 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // for one Bedrock rule in the sample tenant. Denormalized on purpose: the register
     // reads them per row, the sync rewrites this tab wholesale, and a rules tab would buy
     // a join to save a few hundred cells on a register the framework filter already
-    // bounds to the AI estate.
+    // bounds to the AI landscape.
     "rule_id", "rule_graph_id", "rule_name", "rule_description",
     "remediation_instructions", "opa_policy", "risks_json", "threats_json",
     "resource_name", "resource_type", "resource_status", "target_external_id", "source",
@@ -174,7 +174,7 @@ export const TAB_HEADERS: Record<string, string[]> = {
   // ---- the rule catalogue + identity hygiene (cloudConfigurationRules) ----
   //
   // `ai_config_rules` is Wiz's VOCABULARY, not this tenant's posture — the only tab here
-  // whose contents do not describe the estate. It is what turns an opaque `SUB-082` in the
+  // whose contents do not describe the landscape. It is what turns an opaque `SUB-082` in the
   // AARS cascade into "Vertex AI Metadata Store should be encrypted with a customer-managed
   // key", and what the identity-hygiene matchers resolve MFA and dormancy rules against
   // instead of hardcoding ids that differ per cloud. ~3,858 rows, refreshed monthly rather

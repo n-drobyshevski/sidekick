@@ -1,4 +1,4 @@
-// Compliance Posture: how the estate scores against each security framework Wiz tracks.
+// Compliance Posture: how the landscape scores against each security framework Wiz tracks.
 //
 // The companion to Cloud Configuration, not a replacement for it. That page answers "which
 // controls are failing, on what resource" — a flat register of evaluations. This one
@@ -28,7 +28,7 @@
 // because the states it filtered to no longer have rows, and the strip's buttons with it.
 // The strip stays as the header's summary and is now the one place the dropped
 // subcategories are counted — a register showing twelve of twenty rows has to say twenty
-// somewhere, or it is quietly claiming the estate is smaller than it is.
+// somewhere, or it is quietly claiming the landscape is smaller than it is.
 //
 // TWO SUB-VIEWS, ONE FETCH, ONE URL. `view.mode` is "overview" (the cross-framework rollup
 // — every framework at once) or "framework" (this file's original register, one framework
@@ -94,7 +94,7 @@ export async function renderCompliance(main, params, ctx) {
   main.append(
     el("h1", {}, "Compliance Posture"),
     el("p", { class: "page-sub" },
-      "How this estate scores against the security frameworks Wiz tracks — by category, " +
+      "How this landscape scores against the security frameworks Wiz tracks — by category, " +
       "subcategory and the policies behind them."),
   );
 

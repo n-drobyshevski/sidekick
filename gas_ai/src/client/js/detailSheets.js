@@ -308,7 +308,7 @@ function propsGrid(node) {
   );
 }
 
-/** When the estate first saw this asset and when it last did — sync provenance, not risk. */
+/** When the landscape first saw this asset and when it last did — sync provenance, not risk. */
 function provStrip(node) {
   const bits = [];
   if (node.firstSeen) bits.push(el("span", {}, "First seen " + fmtDateTime(node.firstSeen)));
@@ -933,7 +933,7 @@ export function openAssetSheet(assetId, opts = {}) {
       if (!detail) {
         clear(body).append(emptyState(
           "Asset not found in the last sync.",
-          "It may have been removed from the estate since the sync ran.",
+          "It may have been removed from the landscape since the sync ran.",
         ));
         return;
       }

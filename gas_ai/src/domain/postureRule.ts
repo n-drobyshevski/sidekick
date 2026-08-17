@@ -260,7 +260,7 @@ export function shadowedTierRules(rule: PostureRule): number[] {
  * `enumeratePostureVectors` builds ever carries `privateData` / `untrustedIngress` /
  * `externalEgress`, and neither does any live-derived vector (`derivePostureInput` never
  * sets them — see `PostureVector`'s own comment), so a `when` naming one is dead under
- * every possible ordering and every possible estate. This is the posture analogue of
+ * every possible ordering and every possible landscape. This is the posture analogue of
  * `aarsRule.unreachableGapRules` — a row naming something nothing in the live pipeline can
  * ever emit — computed the same way: not by inspecting the rule's STRUCTURE, but by
  * checking it against the actual leaf enumeration, because 27 leaves is cheap enough that
@@ -307,7 +307,7 @@ export function cellCoverage(rule: PostureRule): CellCoverage {
 }
 
 /**
- * How much of the lattice a decided ESTATE actually exercises — as opposed to
+ * How much of the lattice a decided LANDSCAPE actually exercises — as opposed to
  * `cellCoverage`, which measures the RULE alone against all 27 cells regardless of any
  * real data. This is the rule run against a population: how the four tiers actually
  * landed, how many of the 27 possible cells any asset actually reached, and how often

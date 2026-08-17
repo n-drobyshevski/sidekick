@@ -81,7 +81,7 @@ export const CONSEQUENCE_VALUES: readonly Consequence[] = ["SEVERE", "MODERATE",
  * why even `privateData`, which technically has a real source (`hasAccessToSensitiveData` /
  * `businessImpact`, the same signals `consequence` already reads), is left undefined here
  * too. This is what makes `DEFAULT_POSTURE_RULE`'s lethal-trifecta row GENUINELY
- * unreachable — not shadowed, not merely unexercised by today's estate, but structurally
+ * unreachable — not shadowed, not merely unexercised by today's landscape, but structurally
  * unable to match any of the 27 canonical leaves OR any live-derived vector, which is what
  * `unreachableTierRules` (postureRule.ts) checks and the Posture tab labels dead.
  */

@@ -10,7 +10,7 @@
 // give the "collapses" claim a magnitude instead of an adjective; cohensKappa is the same
 // question one step removed — do two SEVERITY BANDINGS agree, not just two raw scores; and
 // bootstrapCI puts an honest error bar on any of the above computed from a 30-asset seed
-// estate, which is too small to trust a single point estimate from.
+// landscape, which is too small to trust a single point estimate from.
 //
 // Independently testable on purpose: no import from aars.ts, no Google Apps Script global.
 // These are statistics about a list of numbers, not about AARS, and must stay reusable the
@@ -72,7 +72,7 @@ function tiedPairCount(values: number[]): number {
  * groups. 1.0 means every pair shares a value — the model ranks nothing; 0 means every
  * value is unique — the model separates every pair. This is the pair-counting twin of
  * `largestTieGroup` in aarsRule.ts: that field names the single worst block, this one
- * measures how much of the WHOLE estate sits in blocks at all. 0 for N < 2 (no pairs exist).
+ * measures how much of the WHOLE landscape sits in blocks at all. 0 for N < 2 (no pairs exist).
  */
 export function tieRate(values: number[]): number {
   const n = values.length;
@@ -167,8 +167,8 @@ function mulberry32(seed: number): () => number {
  * Percentile bootstrap: resample `values` with replacement `samples` times, compute `stat`
  * on each resample, and return the 2.5th/97.5th percentiles of that distribution as a 95%
  * confidence interval. This is what turns a single discrimination number (a tau-b, a tie
- * rate) computed on a 30-asset seed estate into an honest claim about how much that number
- * would wobble on a differently-sampled estate the same size, instead of reporting a point
+ * rate) computed on a 30-asset seed landscape into an honest claim about how much that number
+ * would wobble on a differently-sampled landscape the same size, instead of reporting a point
  * estimate as if it were exact.
  *
  * Seeded and deterministic — the whole point of using mulberry32 above instead of

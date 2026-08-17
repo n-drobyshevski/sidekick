@@ -432,7 +432,7 @@ var Server = (() => {
       // for one Bedrock rule in the sample tenant. Denormalized on purpose: the register
       // reads them per row, the sync rewrites this tab wholesale, and a rules tab would buy
       // a join to save a few hundred cells on a register the framework filter already
-      // bounds to the AI estate.
+      // bounds to the AI landscape.
       "rule_id",
       "rule_graph_id",
       "rule_name",
@@ -536,7 +536,7 @@ var Server = (() => {
     // ---- the rule catalogue + identity hygiene (cloudConfigurationRules) ----
     //
     // `ai_config_rules` is Wiz's VOCABULARY, not this tenant's posture — the only tab here
-    // whose contents do not describe the estate. It is what turns an opaque `SUB-082` in the
+    // whose contents do not describe the landscape. It is what turns an opaque `SUB-082` in the
     // AARS cascade into "Vertex AI Metadata Store should be encrypted with a customer-managed
     // key", and what the identity-hygiene matchers resolve MFA and dormancy rules against
     // instead of hardcoding ids that differ per cloud. ~3,858 rows, refreshed monthly rather
@@ -2732,7 +2732,7 @@ var Server = (() => {
     // posture was collected at all, so switching it on would make the preset differ from the
     // measurement that justifies its numbers; and its effect is DATA-DEPENDENT — it does
     // nothing until a posture sync has run, then changes scores — so a preset carrying it
-    // would silently re-score an estate on the strength of an unrelated sync finishing.
+    // would silently re-score a landscape on the strength of an unrelated sync finishing.
     // It is switched on deliberately, through the Rules page, with the same preview.
     gapSources: {
       fiveRs: true,
@@ -2743,7 +2743,7 @@ var Server = (() => {
     findingSeverityWeights: { CRITICAL: 1.5, HIGH: 1.2, MEDIUM: 1, LOW: 0.6 },
     pillarBCap: 25,
     // Split, so the pillar takes more than two values. Reaching sensitive data is worth 6 —
-    // half what it was, because it is what most of the estate shares — and what you reach is
+    // half what it was, because it is what most of the landscape shares — and what you reach is
     // worth up to 6 more. An asset with one MEDIUM finding scores 6+2=8; one with three
     // CRITICALs scores 6+7=13, clamped to the 12 cap. Two values become five.
     dataExposurePoints: { SENSITIVE: 6, DATA_ACCESS: 3, NONE: 0 },
@@ -6699,7 +6699,7 @@ var Server = (() => {
     SERVERLESS: 5,
     CONTAINER_IMAGE: 5,
     REPOSITORY: 5,
-    // Beside the compute that serves it. An endpoint is the far edge of the estate, but it is
+    // Beside the compute that serves it. An endpoint is the far edge of the landscape, but it is
     // inventory rather than evidence, so it belongs in the infrastructure band and not in the
     // risk band where INTERNET_EXPOSURE sits.
     ENDPOINT: 5
@@ -8025,7 +8025,7 @@ var Server = (() => {
     // sheet long before this — `tags_json` round-trips through the ledger — but with no entry here
     // you could read a tag and not ask about it, which is the gap this closes.
     //
-    // `pairs` rather than `choice` because the value space is the estate's, not the schema's: a
+    // `pairs` rather than `choice` because the value space is the landscape's, not the schema's: a
     // real tenant has thousands of distinct `key: value` strings, far past VALUE_CARDINALITY_MAX,
     // so `fieldValuesFor` offers no list and the builder asks for a key and a value instead.
     {
@@ -9631,7 +9631,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "cbd3a63644cf" : "dev";
+  var BUILD_ID = true ? "256b453d807c" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -10788,7 +10788,7 @@ var Server = (() => {
     },
     {
       id: "cfg-006",
-      // A SERVICE_ACCOUNT no agent in this estate runs as, so still off-inventory.
+      // A SERVICE_ACCOUNT no agent in this landscape runs as, so still off-inventory.
       resourceId: "sa-bigdata-ai-weatherforecast-pp",
       ruleShortId: "IAM-236",
       severity: "HIGH",
@@ -10956,7 +10956,7 @@ var Server = (() => {
     seedSubCategory("wf-id-275", "ASI01", "ASI01", "ASI01 Agent Goal Hijack", 93, 144, 10),
     seedCategory("wf-id-275", "ASI03", "ASI03 Identity and Privilege Abuse", 99, 6347, 18),
     seedSubCategory("wf-id-275", "ASI03", "ASI03", "ASI03 Identity and Privilege Abuse", 99, 6347, 18),
-    // The empty category: nothing in this estate to assess. Posture null, reason given —
+    // The empty category: nothing in this landscape to assess. Posture null, reason given —
     // the case the page must never render as 0%.
     seedCategory("wf-id-275", "ASI08", "ASI08 Cascading Failures", null, 0, 0, "NO_RESOURCES"),
     seedSubCategory("wf-id-275", "ASI08", "ASI08", "ASI08 Cascading Failures", null, 0, 0, "NO_RESOURCES"),
@@ -10991,11 +10991,11 @@ var Server = (() => {
     // The other three Rs, and the reason they are seeded at all: this is a DATA-security
     // framework collected by an AI product, and until now the sample carried only the two
     // categories whose rules happen to be about AI (a Bedrock trust policy, a training
-    // bucket). An estate that agrees with the product's focus cannot demonstrate the scope
+    // bucket). A landscape that agrees with the product's focus cannot demonstrate the scope
     // feature, and worse, cannot catch it silently excluding nothing.
     //
     // Note the check counts. 2.1 reports 194,309 passing against ASI01's 144 — three orders
-    // of magnitude, because Wiz is scoring the WHOLE data estate here, not the AI slice of
+    // of magnitude, because Wiz is scoring the WHOLE data landscape here, not the AI slice of
     // it. That gap is the framework's non-AI character showing up in the numbers, and these
     // rows keep it visible.
     seedCategory("wf-id-214", "3", "Relabel", 62, 88412, 1204),
@@ -11148,7 +11148,7 @@ var Server = (() => {
       1
     ),
     // The 5Rs rules this product has no use for: general cloud data governance, evaluated
-    // against the whole estate. None is mapped into an OWASP framework and none has a
+    // against the whole landscape. None is mapped into an OWASP framework and none has a
     // finding on an AI asset, so the derived scope files all four out — which is the point
     // of seeding them. Without these the scope excludes nothing and a broken filter looks
     // exactly like a working one.
@@ -12419,7 +12419,7 @@ var Server = (() => {
         optional: true
       },
       // Wiz's cloud-configuration RULE CATALOGUE — reference data, and the only step here whose
-      // contents describe the product rather than the estate. It is what glosses an opaque
+      // contents describe the product rather than the landscape. It is what glosses an opaque
       // `SUB-082` in the AARS cascade, and what the identity-hygiene matchers resolve against
       // instead of hardcoding MFA rule ids that differ per cloud.
       //
@@ -13321,7 +13321,7 @@ var Server = (() => {
           ...vocab,
           // ANY gets them too, over every node in the graph. `fieldsForKind("ANY")` already keeps
           // only the kind-agnostic fields, so the union is never one of things that cannot
-          // co-occur — it is "which clouds does this estate use", which is the question.
+          // co-occur — it is "which clouds does this landscape use", which is the question.
           valuesFor: { [kind]: fieldValuesFor(doc, kind) },
           // What the palette's Properties tab lists, and the type that decides which control each
           // field gets. Per-kind for the same reason the value lists are.
@@ -13586,16 +13586,16 @@ var Server = (() => {
         // has been synced, so the Wiz Scans area degrades to `partial` on its own instead of
         // reporting a confident zero for a question this tenant was never asked.
         // Scoped the same way the Compliance page scopes it. Not an optimisation — the two
-        // pages would otherwise report different failing-control totals for one estate, and
+        // pages would otherwise report different failing-control totals for one landscape, and
         // this KPI is the number the Wiz Scans coverage area prints beside the other one.
         frameworkPosture: complianceKpis(
           loadPosture(),
           scopedFrameworkPolicies().policies
         ),
         agenticIdentities: assets.filter((a) => a.identityPurpose === "AGENTIC").length,
-        // Estate-wide counts for the two risk conditions that had no total. The flags were
+        // Landscape-wide counts for the two risk conditions that had no total. The flags were
         // persisted and drawn on the graph, but `assetTableRow` strips them, so nothing
-        // could say how much of the estate they cover. `internetUnknown` is its own number
+        // could say how much of the landscape they cover. `internetUnknown` is its own number
         // on purpose: a hosted agent inherits exposure from its host and Wiz reports that
         // as undetermined, so folding it into "not exposed" under-reports.
         internetExposed: assets.filter((a) => conditionState(a, "INTERNET_EXPOSURE") === true).length,
@@ -14331,11 +14331,11 @@ var Server = (() => {
         // A THIRD state, distinct from both shadowed and unexercised: the row names a code
         // no derivation can raise, so it cannot fire in any tenant, not just this one.
         unreachableGapRules: unreachableGapRules(proposed),
-        // How well the draft separates the estate — the number the band counts above cannot
+        // How well the draft separates the landscape — the number the band counts above cannot
         // show, because a rule that gives every asset the same score still fills a band.
         discrimination: ruleDiscrimination(after, proposed),
         // Coverage: how many gap instances each cascade row priced, what fell through to the
-        // fallback, and the codes the estate carries. A row at 0 here is NOT the same claim
+        // fallback, and the codes the landscape carries. A row at 0 here is NOT the same claim
         // as shadowedGapRules — one can never fire, the other simply is not exercised — and
         // the page reads them as two different sentences.
         gapMatchCounts: tally.perRule,

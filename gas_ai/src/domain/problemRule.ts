@@ -8,7 +8,7 @@
 // Where this deliberately does NOT mirror aarsRule.ts: `ruleDiscrimination` there exists
 // to catch a CONTINUOUS score collapsing onto too few values — cap saturation, tie rate,
 // effective cardinality all measure "did the scale stop discriminating". A 4-outcome tree
-// is not failing when most of an estate ties at TRACK; that is the tree WORKING. This
+// is not failing when most of a landscape ties at TRACK; that is the tree WORKING. This
 // file's `treeDiscrimination` measures a different failure: leaves the tree never reaches
 // at all, and axes whose reading was UNKNOWN too often to trust. See that function's own
 // comment for why `tieRate` / `effectiveCardinality` are deliberately not ported here.
@@ -375,7 +375,7 @@ export function leafCoverage(rule: ProblemRule): LeafCoverage {
 }
 
 /**
- * How much of the tree a decided ESTATE actually exercises — as opposed to `leafCoverage`,
+ * How much of the tree a decided LANDSCAPE actually exercises — as opposed to `leafCoverage`,
  * which measures the RULE alone against all 54 leaves regardless of any real data. This is
  * the rule run against a population: how the four outcomes actually landed, how many of
  * the 54 possible leaves any issue actually reached, and how often each axis could not be

@@ -2,7 +2,7 @@
 // answered over a different denominator, and shipped alongside Wiz's figure rather than in
 // place of it.
 //
-// 5Rs is a DATA-security framework Wiz scores against the whole cloud estate (see
+// 5Rs is a DATA-security framework Wiz scores against the whole cloud landscape (see
 // complianceScope.ts's header). This app narrows the 5Rs REGISTER to its AI-relevant rules —
 // scopeFiveRs() derives an in/out verdict per policy — but until this module existed, the
 // PERCENTAGE never followed: the hero kept showing Wiz's 85%, computed by Wiz over all seven

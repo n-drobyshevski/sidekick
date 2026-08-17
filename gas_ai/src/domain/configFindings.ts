@@ -460,7 +460,7 @@ export function configTotals(rows: ConfigFindingView[]): ConfigTotals {
     if (row.ruleShortId) controls.add(row.ruleShortId);
     resources.add(row.resourceId);
     // The mix describes failing controls, not stored rows: counting resolved findings in
-    // a severity bar would draw risk the estate no longer carries.
+    // a severity bar would draw risk the landscape no longer carries.
     if (row.gap) {
       gaps += 1;
       severityMix[row.severity] = (severityMix[row.severity] ?? 0) + 1;

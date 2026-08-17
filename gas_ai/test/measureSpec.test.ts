@@ -134,9 +134,9 @@ describe("the two disciplines this file's own header pins", () => {
   });
 });
 
-describe("effectiveness records about the MODEL say so, distinctly from impact records about the ESTATE", () => {
+describe("effectiveness records about the MODEL say so, distinctly from impact records about the LANDSCAPE", () => {
   it("distinctScores / tieRate / effectiveCardinality / pillar saturation are all type effectiveness "
-    + "and their goal names the model rather than the estate", () => {
+    + "and their goal names the model rather than the landscape", () => {
     const modelIds = [
       "aars-distinct-scores", "aars-tie-rate", "aars-effective-cardinality", "aars-pillar-saturation",
     ];
@@ -156,14 +156,14 @@ describe("effectiveness records about the MODEL say so, distinctly from impact r
   });
 });
 
-describe("problem-axis-unknown-rate reads correctly as the model's warning light, not the estate's safety", () => {
+describe("problem-axis-unknown-rate reads correctly as the model's warning light, not the landscape's safety", () => {
   it("says plainly that a high value means the model cannot prioritise", () => {
     const spec = MEASURE_SPECS.find((s) => s.id === "problem-axis-unknown-rate")!;
     expect(spec).toBeTruthy();
     expect(spec.measurementMethod).toBe("Objective");
     expect(spec.goal).toMatch(/cannot prioritise|CANNOT PRIORITISE/);
     // The goal states the misreading explicitly in order to REJECT it ("does NOT mean the
-    // estate is safe") — so the check is for the rejection, not a bare absence of the phrase.
-    expect(spec.goal).toMatch(/does NOT mean the estate is safe/);
+    // landscape is safe") — so the check is for the rejection, not a bare absence of the phrase.
+    expect(spec.goal).toMatch(/does NOT mean the landscape is safe/);
   });
 });

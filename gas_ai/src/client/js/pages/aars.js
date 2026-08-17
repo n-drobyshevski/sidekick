@@ -90,7 +90,7 @@ const EXPOSURE_LABELS = {
   NONE: "No data access",
 };
 const MOVERS_INLINE = 8;
-/** Codes offered as one-tap chips in the sandbox, taken from what the estate actually has. */
+/** Codes offered as one-tap chips in the sandbox, taken from what the landscape actually has. */
 const SANDBOX_QUICK_CODES = 6;
 const MATCH_OPTIONS = [
   { value: "exact", label: "is exactly" },
@@ -729,7 +729,7 @@ export async function renderAarsRules(main, _params, ctx) {
       [
         "The one number on this page that is not a policy choice.",
         "It is a systemic signal: the 5Rs data-security score sits at 53% across the whole " +
-          "estate, so every data-related point carries the same uplift regardless of asset.",
+          "landscape, so every data-related point carries the same uplift regardless of asset.",
       ],
       { label: "About the 5Rs amplifier", term: "pillar-c" },
     ),
@@ -739,7 +739,7 @@ export async function renderAarsRules(main, _params, ctx) {
     section(
       "Pillar C — data exposure",
       "The amplifier is a systemic signal, not a per-asset one: the 5Rs framework sits at " +
-        "53% across the estate, so every data-related point carries the same uplift.",
+        "53% across the landscape, so every data-related point carries the same uplift.",
       [railsC, rowC],
     ),
   );
@@ -797,8 +797,8 @@ export async function renderAarsRules(main, _params, ctx) {
         "(missing guardrail, excessive privilege, sensitive data, internet exposure) and " +
         "one per distinct toxic-combination group, instead of one per framework code. It " +
         "takes pillar B further off its ceiling than v2's root-sum-square does (0 of 30 " +
-        "assets at cap on the seed estate, vs v2's 1 of 30), but it is not a strict upgrade: " +
-        "v2 currently separates the estate a little better (lower tie rate, higher effective " +
+        "assets at cap on the seed landscape, vs v2's 1 of 30), but it is not a strict upgrade: " +
+        "v2 currently separates the landscape a little better (lower tie rate, higher effective " +
         "cardinality) because its framework-code cascade happens to distinguish toxic-combo " +
         "patterns that v3 correctly prices the same once they cost the same conditions. It " +
         "WILL move scores — the impact panel shows exactly which. Nothing is saved until you " +
@@ -866,7 +866,7 @@ export async function renderAarsRules(main, _params, ctx) {
     moverMore,
   );
 
-  // How well the draft SEPARATES the estate. The band strip above cannot show this: a
+  // How well the draft SEPARATES the landscape. The band strip above cannot show this: a
   // rule that hands every asset the same score still fills a band, and still reads as a
   // confident answer. Only the absences give it away — few distinct scores, empty bands,
   // a pillar pinned at its cap — so they are stated rather than left to be noticed.
@@ -1188,7 +1188,7 @@ export async function renderAarsRules(main, _params, ctx) {
     sandboxCodeBox.focusable().id = addId;
     sandboxCodeBox.focusable().removeAttribute("aria-label");
 
-    // Quick-add reflects what the estate actually carries, not a constant somebody typed
+    // Quick-add reflects what the landscape actually carries, not a constant somebody typed
     // once. Empty until the first preview lands, which is honest: before then the page has
     // no idea what is common here.
     sandboxQuick = el("div", { class: "pill-row", style: "margin-top:10px" });
@@ -1538,7 +1538,7 @@ export async function renderAarsRules(main, _params, ctx) {
       preview = data;
       previewError = "";
       // The census travels with the preview, so this is where the pickers learn what the
-      // estate actually carries — and where codes the codebook never heard of (tenant
+      // landscape actually carries — and where codes the codebook never heard of (tenant
       // finding shortIds) become pickable at all.
       const nextCensus = {};
       for (const row of data.gapCensus || []) nextCensus[row.code] = row.assets;
@@ -1930,7 +1930,7 @@ export async function renderAarsRules(main, _params, ctx) {
   //
   // Every NUMBER on this tab still comes from api_previewProblemRule, which runs the real
   // cascade server-side (syncStore.decideProblemsWith) at zero Wiz cost: the leaf counts,
-  // the estate occupancy, the movers, the per-axis unknown rates, and the validation that
+  // the landscape occupancy, the movers, the per-axis unknown rates, and the validation that
   // gates Save. Two guards keep the drawn picture and the counted truth from drifting:
   // test/decideMirror.test.js pins the mirror against domain/problem.ts over all 54 vectors
   // (and all 27 posture cells) including which row decided, and the section's own reconcile() below
@@ -2759,7 +2759,7 @@ export async function renderAarsRules(main, _params, ctx) {
         problemPreview = data;
         problemPreviewError = "";
         pLattice.reconcile(sentDraft, data && data.leafCoverage);
-        paintProblemLattice(); // estate occupancy only exists once a preview has landed
+        paintProblemLattice(); // landscape occupancy only exists once a preview has landed
       } catch (e) {
         if (seq !== problemPreviewSeq) return;
         problemPreview = null;
@@ -3216,7 +3216,7 @@ export async function renderAarsRules(main, _params, ctx) {
       "div",
       { class: "rule-impact" },
       uLiveNote,
-      el("h2", { class: "section-label" }, "Impact on the persisted estate"),
+      el("h2", { class: "section-label" }, "Impact on the persisted landscape"),
       uImpactState,
       uImpactStrip,
       uImpactHeadline,
@@ -3519,7 +3519,7 @@ export async function renderAarsRules(main, _params, ctx) {
         posturePreview = data;
         posturePreviewError = "";
         uLattice.reconcile(sentDraft, data && data.cellCoverage);
-        uLattice.repaint(); // estate occupancy only exists once a preview has landed
+        uLattice.repaint(); // landscape occupancy only exists once a preview has landed
       } catch (e) {
         if (seq !== posturePreviewSeq) return;
         posturePreview = null;

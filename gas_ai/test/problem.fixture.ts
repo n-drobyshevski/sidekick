@@ -1,13 +1,13 @@
 // Shared builders for problem.test.ts and problemRule.test.ts, plus the one fixture the
-// phase exists to force into being: an estate where MOST agents have never had their
+// phase exists to force into being: a landscape where MOST agents have never had their
 // internet reachability determined.
 //
 // sampleData.ts cannot stand in for this. Its seed sets both `isAccessibleFromInternet`
 // and `isOpenToAllInternet` to `false` unless a seed explicitly overrides them, so the
-// seed estate's UNVERIFIED-exposure rate sits near zero — the exact opposite of what a
+// seed landscape's UNVERIFIED-exposure rate sits near zero — the exact opposite of what a
 // tenant with many hosted (VM/serverless-backed) agents looks like in practice, where
 // reachability is INHERITED from the compute underneath and Wiz reports it `null` until
-// something walks that hop. `NULL_EXPOSURE_ESTATE` below is hand-authored specifically to
+// something walks that hop. `NULL_EXPOSURE_LANDSCAPE` below is hand-authored specifically to
 // make that failure mode visible to a test, the way riskConditions.test.ts's fixtures
 // exist because sampleData.ts could not show the INTERNET_EXPOSURE flag disagreement
 // either.
@@ -56,7 +56,7 @@ export function findingFixture(over: Partial<FindingRow> = {}): FindingRow {
  * 12 hosted agents: 9 carry `isAccessibleFromInternet: null`, `isOpenToAllInternet: null`
  * and no `exposureEvidence` — reachability inherited from a VM/serverless host and never
  * walked, which is `riskConditions.conditionState`'s definition of UNVERIFIED. The other
- * 3 carry a definite reading (2 CONTROLLED, 1 OPEN) so the estate is not a degenerate
+ * 3 carry a definite reading (2 CONTROLLED, 1 OPEN) so the landscape is not a degenerate
  * all-unknown case and the majority-vs-minority shape is the one under test, not the only
  * possible one.
  *
@@ -64,7 +64,7 @@ export function findingFixture(over: Partial<FindingRow> = {}): FindingRow {
  * `DEFAULT_PROBLEM_RULE.totalImpactGroups` names) so every node has something to derive a
  * full vector from.
  */
-export function buildNullExposureEstate(): { nodes: GNode[]; issues: IssueRow[] } {
+export function buildNullExposureLandscape(): { nodes: GNode[]; issues: IssueRow[] } {
   const nodes: GNode[] = [];
   const issues: IssueRow[] = [];
 

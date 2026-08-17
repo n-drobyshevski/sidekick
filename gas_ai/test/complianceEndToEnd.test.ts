@@ -65,7 +65,7 @@ describe("getCompliance after a dry-run sync", () => {
 
   it("leaves the empty category out of the register rather than scoring it a zero", () => {
     const tree = compliance().trees.find((t: any) => t.frameworkId === "wf-id-275");
-    // ASI08 has nothing in the estate to assess. It is not a 0% row and it is not a listed
+    // ASI08 has nothing in the landscape to assess. It is not a 0% row and it is not a listed
     // row — it is a counted one, and every subcategory that IS listed carries a number.
     expect(tree.categories.find((c: any) => c.externalId === "ASI08")).toBeUndefined();
     expect(tree.stateCounts.noResources).toBe(1);
@@ -103,12 +103,12 @@ describe("getCompliance after a dry-run sync", () => {
     expect(compliance({ frameworkId: "nope" }).requested).toBeNull();
   });
 
-  it("computes the estate KPI the Wiz Scans area reads", () => {
+  it("computes the landscape KPI the Wiz Scans area reads", () => {
     const kpis = compliance().kpis;
     expect(kpis.frameworks).toBe(4);
     expect(kpis.scoredFrameworks).toBe(4);
     expect(kpis.averagePosture).toBe(94); // mean(96, 85, 100, 95), rounded
-    // Five, from a seeded estate that holds NINE failing controls. The four missing ones
+    // Five, from a seeded landscape that holds NINE failing controls. The four missing ones
     // are the 5Rs' general data-governance rules — labelling, classification, residency,
     // retention — which the derived scope files out because no OWASP framework maps them
     // and none of their findings land on an AI asset. The previous commit pinned this at
@@ -249,7 +249,7 @@ describe("getCompliance after a dry-run sync", () => {
   });
 });
 
-// The Overview's four bands, against the seeded estate rather than the unit fixture. The
+// The Overview's four bands, against the seeded landscape rather than the unit fixture. The
 // unit tests prove each rollup in isolation; these prove they are actually WIRED into the
 // endpoint the page calls — the same gap complianceEndToEnd exists to close for the trees.
 describe("the Overview bands getCompliance ships beside the trees", () => {
@@ -268,9 +268,9 @@ describe("the Overview bands getCompliance ships beside the trees", () => {
     expect(rows.map((r: any) => r.posturePct))
       .toEqual([...rows.map((r: any) => r.posturePct)].sort((a: number, b: number) => a - b));
 
-    // The invariant, at estate scope, in its current form: a subcategory with no posture
+    // The invariant, at landscape scope, in its current form: a subcategory with no posture
     // is not ranked AND not listed here — `posturePct ?? 0` would file it as the worst
-    // thing in the estate, and appending it unranked to a "weakest areas" band presents a
+    // thing in the landscape, and appending it unranked to a "weakest areas" band presents a
     // coverage gap as a score. It is counted in the coverage strip instead.
     expect(rows.length).toBeGreaterThan(0);
     for (const r of rows) {
@@ -285,7 +285,7 @@ describe("the Overview bands getCompliance ships beside the trees", () => {
   it("counts one failing control once, however many frameworks raise it", () => {
     const data = compliance();
     // Two dedupes over the same question. If they drift, the header and the band below it
-    // report different totals for one estate.
+    // report different totals for one landscape.
     expect(data.sharedControls).toHaveLength(data.kpis.failingPolicies);
 
     for (const c of data.sharedControls) {

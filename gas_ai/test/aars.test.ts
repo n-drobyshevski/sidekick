@@ -365,7 +365,7 @@ describe("AARS_V2_RULE — the calibrated preset", () => {
   });
 
   it("keeps the doc's level thresholds, so the action table still applies", () => {
-    // The bands are deliberately NOT refitted to one sample estate: they carry the
+    // The bands are deliberately NOT refitted to one sample landscape: they carry the
     // remediation SLAs from ai/custom_score.md, and the page's rail moves them per tenant.
     expect(AARS_V2_RULE.bands).toEqual(DEFAULT_AARS_RULE.bands);
   });

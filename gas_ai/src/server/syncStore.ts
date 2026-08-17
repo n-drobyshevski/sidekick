@@ -907,7 +907,7 @@ export function persistSync(
  * every input the score needs is already on the tabs (issue framework codes, finding
  * framework codes, and the asset's own CIEM/DSPM flags). Rewrites the assets tab and the
  * Drive snapshot, and does NOT append a sync_history row — a rescore is not a sync, and
- * inventing a commit record would put a point on the trend for an estate that never moved.
+ * inventing a commit record would put a point on the trend for a landscape that never moved.
  *
  * Caller holds the script lock.
  */
@@ -1066,7 +1066,7 @@ function redecideFromTabs(
  * Re-decide every persisted issue and finding under the current problem rule, and rewrite
  * the two tabs. Same non-negotiable as `rescoreInventory`: NOT a sync — zero Wiz calls, and
  * no `sync_history` row, because inventing a commit record would put a point on the
- * outcome trend for an estate that never moved.
+ * outcome trend for a landscape that never moved.
  *
  * Caller holds the script lock.
  */
@@ -1134,7 +1134,7 @@ export function posturesWith(rule: PostureRule): GNode[] {
  * Re-tier every persisted asset under the current posture rule, and rewrite the assets
  * tab. Same non-negotiable as `rescoreInventory` / `redecideProblems`: NOT a sync — zero
  * Wiz calls, and no `sync_history` row, because inventing a commit record would put a
- * point on a trend for an estate that never moved.
+ * point on a trend for a landscape that never moved.
  *
  * Does NOT rewrite the Drive snapshot — mirrors `redecideProblems`'s choice, not
  * `rescoreInventory`'s: `postureFromTabs` builds its working doc from `loadAssetsRaw()`
@@ -1241,7 +1241,7 @@ export function commit(): void {
 }
 
 /**
- * The real estate: the synthetic ISSUE and SUMMARY nodes are graph furniture, not assets,
+ * The real landscape: the synthetic ISSUE and SUMMARY nodes are graph furniture, not assets,
  * and every asset-facing read drops them. Byte-identical filter, written three times.
  */
 function realNodes(nodes: GNode[]): GNode[] {

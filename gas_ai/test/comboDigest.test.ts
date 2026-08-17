@@ -17,7 +17,7 @@ const NOW = "2026-08-12T00:00:00Z";
 const digest = comboDigest(SEED_ISSUES, SEED_NODES, NOW);
 const byId = Object.fromEntries(digest.groups.map((g) => [g.id, g]));
 
-describe("estate totals", () => {
+describe("landscape totals", () => {
   it("counts every unresolved issue and the assets under them", () => {
     // 32, not 29: the three Other AI risk rows are in the register too. Counting only
     // the modelled patterns is what made this number read lower than the Wiz console.

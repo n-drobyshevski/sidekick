@@ -48,7 +48,7 @@ import {
 // Byte-identical to the constants pages/scans.js, pages/inventory.js and pages/combos.js
 // call with, so swrCall's key is shared: arriving here from any of them costs no round
 // trip at all. Only the HEAD of the assets payload is read (kpis), never `rows`, so a
-// small pageSize keeps this correct AND cheap at any estate size.
+// small pageSize keeps this correct AND cheap at any landscape size.
 const ASSETS_PARAMS = { all: true, pageSize: 25 };
 const COMBOS_PARAMS = {};
 
@@ -228,7 +228,7 @@ function header(boot, tally) {
   const note = sync
     ? "Figures are from the sync of " + fmtDateTime(sync.finished_at) +
       "; the scoring model and view settings are the ones in force now."
-    : "Nothing has been collected, so no term below carries a figure from your estate — " +
+    : "Nothing has been collected, so no term below carries a figure from your landscape — " +
       "the scoring model and view settings shown are still the ones in force. Run " +
       "“Sync now” in the sidebar; without credentials it loads the sample dataset.";
 
@@ -694,7 +694,7 @@ function anatomySvg() {
  *
  * The six headings carry the ids the index rail and the ?term= link scroll to, so they
  * cannot be rebuilt on every count arrival — see rule 4 in this file's header. Their counts
- * are `entries.length`, a property of the book rather than of the estate, so they are known
+ * are `entries.length`, a property of the book rather than of the landscape, so they are known
  * from the synchronous first paint and never move.
  *
  * groupByFamily reads only `.family`, a static field, so the raw ENTRIES give exactly the

@@ -1,4 +1,4 @@
-// Three experiments over the seed estate, run through the EXACT reproduction path
+// Three experiments over the seed landscape, run through the EXACT reproduction path
 // ai/AARS_ASSESSMENT.md §9 documents, that turn §2's prose ("the score collapses") into
 // numbers. Phase 0 of the AARS assessment plan: measure the incumbent, change nothing.
 //
@@ -95,7 +95,7 @@ describe("2. pillar ablation", () => {
 describe("3. saturation census — the numbers ai/AARS_ASSESSMENT.md publishes", () => {
   // This block IS the contract for §2's code fence and §6's comparison table. It exists
   // because those numbers were measured once, by hand, and then went stale underneath the
-  // doc: the seed estate gained three "Other AI risk" issues on `agent-e` (sampleData.ts's
+  // doc: the seed landscape gained three "Other AI risk" issues on `agent-e` (sampleData.ts's
   // Other cohort, all on one asset on purpose), which gave that asset a second issue, which
   // triggered pillar A's >1 multiplier, which moved it from the 72 block to the 76 block.
   // Largest tie group 15 → 14, silently, with the doc still claiming 15.
@@ -126,7 +126,7 @@ describe("3. saturation census — the numbers ai/AARS_ASSESSMENT.md publishes",
     expect(unreachableGapRules(DEFAULT_AARS_RULE).length).toBe(3);
   });
 
-  it("§2: the demo path scores a different, healthier-looking estate", () => {
+  it("§2: the demo path scores a different, healthier-looking landscape", () => {
     // The same seed assets through the dry-run hints, which pin 2–3 codes per asset from
     // ai/custom_score.md instead of deriving 5–6. This contrast IS §2's "the demo and
     // production disagree about the model, and only the demo looks healthy".
@@ -153,7 +153,7 @@ describe("3. saturation census — the numbers ai/AARS_ASSESSMENT.md publishes",
 
   // Phase 6b (ai/AARS_SCORING_ASSESSMENT.md §1): v3 changes what a pillar-B gap COUNTS,
   // not just how the cascade prices it. Measured the same way §6 measured v2 — same seed
-  // estate, same live path, same `ruleDiscrimination` — so the two presets are comparable.
+  // landscape, same live path, same `ruleDiscrimination` — so the two presets are comparable.
   //
   // The honest result: v3 meets the target this phase was written for — pillar-B
   // saturation goes from 19-of-30 (spec) to effectively NONE — but it does NOT beat v2 on
@@ -201,7 +201,7 @@ describe("Phase 2 regression: businessImpact never moves a score", () => {
   it("the exact per-node score vector is unchanged by folding businessImpact on", () => {
     // Re-run through a doc whose nodes carry NO projects at all — businessImpact can fold
     // nothing onto any of them — and diff against the baseline computed at module load
-    // (where the seed estate's real `projects` ARE present, per sampleData.ts).
+    // (where the seed landscape's real `projects` ARE present, per sampleData.ts).
     const stripped = {
       ...seedGraphDoc("T"),
       nodes: seedGraphDoc("T").nodes.map((n) => ({ ...n, projects: undefined })),
