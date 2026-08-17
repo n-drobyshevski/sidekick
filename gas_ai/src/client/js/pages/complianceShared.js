@@ -46,6 +46,40 @@ export function extChip(node) {
 }
 
 /**
+ * The 5Rs derived posture, or null — the one predicate both compliance.js's hero and
+ * complianceOverview.js's rail row call, so the two can never draw two opinions about the
+ * same framework's percentage. `data.fiveRsPosture` is computed server-side
+ * (fiveRsPosture.ts) over the *active* policies — in AI scope and not disabled in Wiz —
+ * which is different arithmetic from Wiz's own framework score, not a correction of it.
+ *
+ * NOT gated on `fiveRsScope.selected < fiveRsScope.total`. `fiveRsScopeNote`
+ * (complianceOverview.js) returns null when nothing is scoped out, because there was
+ * nothing to disclaim — but that guard answers a REGISTER question ("is anything hidden
+ * below this hero"), and this answers an ARITHMETIC question ("is this framework's
+ * percentage computed a different way"). The derived posture differs from Wiz's figure on
+ * its own math even when every rule is in scope, so gating this on `selected < total` would
+ * make the hero flip between two incompatible numbers the instant an operator pinned the
+ * last rule back in — the exact regression this helper exists to make impossible.
+ *
+ * Stale-payload tolerant: `data.fiveRsPosture` is served SWR (see the caching note at
+ * complianceOverview.js's `renderRail`) and a payload cached from before this field shipped
+ * simply won't carry it. Returning null here is indistinguishable from "not the 5Rs
+ * framework" to a caller, so both fall back to Wiz's own percentage and sub-line — the same
+ * degrade `fiveRsScope` already gets.
+ */
+export function fiveRsDerived(data, frameworkId) {
+  const posture = data && data.fiveRsPosture;
+  // Matched on the posture's OWN frameworkId, not the sibling fiveRsScope's — the field
+  // exists so this object identifies itself, and reading the match out of a different
+  // payload field would be a coupling nothing states.
+  if (!posture || posture.frameworkId !== frameworkId) return null;
+  // `== null` covers both the server's explicit null and an older payload that carried the
+  // field without the value. An unscored derived posture is not a zero to draw.
+  if (posture.posturePct == null) return null;
+  return posture;
+}
+
+/**
  * The posture cell. The whole point of the page's honesty lives here.
  *
  * A scored node gets the meter + number. An unscored one gets an em-dash and its reason,

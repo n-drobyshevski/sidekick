@@ -143,11 +143,13 @@ describe("getCompliance after a dry-run sync", () => {
     const data = compliance();
     const fiveRs = data.trees.find((t: any) => t.frameworkId === "wf-id-214");
 
-    // THE invariant. Wiz's posture is opaque — this framework reports 85 while its
-    // Restrict category reports 194,309 passing checks against 71 failing, a ratio of
-    // 99.96% — so it is derivable from nothing this app holds and a scope can never
-    // honestly move it. Scoping changes the registers beneath the number, never the
-    // number. If this ever fails, something has started recomputing a score.
+    // THE invariant, and it survives the arrival of the derived posture. Wiz's own figure
+    // stays exactly as Wiz sent it on the TREE — 85, against a Restrict category reporting
+    // 194,309 passing checks to 71 failing — because scoping changes the registers beneath
+    // the number, never this number. The AI-scoped figure the page now draws instead is a
+    // SEPARATE field (`fiveRsPosture`, asserted in the next case) computed at read time and
+    // never written back over this one. If THIS ever fails, something has started
+    // overwriting Wiz's score rather than deriving beside it.
     expect(fiveRs.posturePct).toBe(85);
     // Four categories, four percentages. The fifth — Reduce, which Wiz sent as a null with
     // a reason — is not listed, and its absence is the one thing about this list that the
@@ -159,6 +161,47 @@ describe("getCompliance after a dry-run sync", () => {
 
     // And the counts the scope DOES own moved: 7 policies map, 3 survive.
     expect(fiveRs.policyCount).toBe(3);
+  });
+
+  it("derives the 5Rs posture over the active rules, beside Wiz's own", () => {
+    const derived = compliance().fiveRsPosture;
+
+    // Self-describing: the rail row and the hero both match on this rather than reaching
+    // into the sibling fiveRsScope, so the payload cannot be split from its own identity.
+    expect(derived.frameworkId).toBe("wf-id-214");
+
+    // The three rules the scope keeps — IAM-236 (1718/18), SUB-047 (30/1), SUB-082 (21/2).
+    // The four DATA-* rules carry 227,342 passing checks between them and contribute
+    // NOTHING here; that omission is the whole feature, and the gap between this
+    // denominator and Wiz's is why the two numbers are stated side by side rather than one
+    // being called a correction of the other.
+    expect(derived.activePolicyCount).toBe(3);
+    expect(derived.passCount).toBe(1769);
+    expect(derived.failCount).toBe(21);
+    expect(derived.posturePct).toBe(99);
+    expect(derived.postureBand).toBe("strong");
+
+    // Nothing in the seed is disabled in Wiz, so the two filters are not confounded here:
+    // this 0 is what makes `activePolicyCount` 3 attributable to the AI scope alone.
+    expect(derived.disabledPolicyCount).toBe(0);
+
+    // A REAL zero, not a missing one. Every active rule has a failing check, so the
+    // control-weighted reading is 0% against a resource-weighted 99% — the two answer
+    // different questions and the page states both rather than picking the flattering one.
+    expect(derived.controlPassPct).toBe(0);
+    expect(derived.cleanPolicyCount).toBe(0);
+    expect(derived.failingPolicyCount).toBe(3);
+
+    // Wiz's own figure travels with it, unchanged, so no consumer has to join two fields
+    // to say what it is comparing against.
+    expect(derived.wizPosturePct).toBe(85);
+
+    // That a PIN moves this number is deliberately NOT asserted here. getCompliance goes
+    // through cached() keyed on dataVersion() — String(Date.now()) against a frozen clock —
+    // so a payload cached by an earlier case in this describe cannot be invalidated
+    // mid-run, exactly as the pin round-trip case below explains. The pin-moves-the-
+    // percentage claim is pinned in complianceScope.test.ts instead, where there is no
+    // cache at all.
   });
 
   it("round-trips a pin through setSettings and back into the scope", () => {

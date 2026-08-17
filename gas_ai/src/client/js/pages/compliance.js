@@ -52,7 +52,8 @@ import {
   sectionLabel, segmented, sevBadge, skeletonStack, statRow,
 } from "../ui.js";
 import {
-  checksCell, extChip, postureCell, STATES, STATE_ORDER, stateStrip, subcategoryDetail,
+  checksCell, extChip, fiveRsDerived, postureCell, STATES, STATE_ORDER, stateStrip,
+  subcategoryDetail,
 } from "./complianceShared.js";
 // STATE_ORDER survives the filter's removal as the key order for summing a stateCounts map
 // — the header's "scored of N" denominator. STATES still names the framework-level state in
@@ -241,48 +242,69 @@ export async function renderCompliance(main, params, ctx) {
     // ---- header ----
     const scored = tree.state === "scored" && tree.posturePct !== null;
     // The 5Rs is the one framework this app scopes down to its AI-relevant rules (Settings
-    // → "5Rs — Wiz for Data Security"). When some of its rules are pinned or derived out,
-    // the register below this hero only lists what is in scope — but the score IN the hero
-    // is still Wiz's, computed against every rule the framework has. The existing sub-line
-    // already carries the first half of that ("carried through unchanged"); this only adds
-    // the half that says what changed underneath it, so a reader watching the register
-    // shrink does not read that as the hero quietly moving too.
-    const fiveRs = data.fiveRsScope;
-    const scopedHere = scored && fiveRs && fiveRs.frameworkId === tree.frameworkId &&
-      fiveRs.selected < fiveRs.total;
+    // → "5Rs — Wiz for Data Security"), and — as of fiveRsPosture.ts — the one framework
+    // whose hero percentage is DERIVED here, over those active in-scope rules, rather than
+    // carried through from Wiz untouched. fiveRsDerived() (complianceShared.js) is the one
+    // guard this hero and the Overview rail row both call, so the two can never disagree
+    // about when that swap applies or what number it produces. Every other framework falls
+    // straight through `derived === null` into the unchanged "carried through" path below.
+    const derived = scored ? fiveRsDerived(data, tree.frameworkId) : null;
 
     // The hero meter takes the same posture band as every bar in the register below it —
     // one meaning for fill colour on this page, so a reader does not have to learn that
-    // the big bar and the small ones are coloured by different facts.
+    // the big bar and the small ones are coloured by different facts. A derived posture
+    // supplies its own band (fiveRsPosture.ts computes it, same as every other
+    // postureBand on this page — thresholds stated once, in the domain).
     //
     // The SEVERITY still has a mark here, and it is the badge in the sub-line below: a fact
     // beside the bar rather than a second encoding on it. That split is what the bar's own
     // comment in complianceShared.js describes, and it is why this line no longer reaches
     // for `worstFailingSeverity`.
     const worstSeverity = scored ? tree.worstFailingSeverity : null;
+    const heroPct = derived ? derived.posturePct : tree.posturePct;
+    const heroBand = derived ? derived.postureBand : tree.postureBand;
     const heroMeter = scored
-      ? meter(tree.posturePct, {
+      ? meter(heroPct, {
         max: 100,
-        label: `${tree.name}, ${tree.posturePct} percent compliant` +
+        // Named for the DERIVED reading, not Wiz's, when one exists — the meter's
+        // accessible name has to match the number sighted readers see beside it.
+        label: `${tree.name}, ${heroPct} percent compliant` +
           (worstSeverity ? `, worst failing severity ${worstSeverity}` : ""),
       })
       : null;
-    if (heroMeter && tree.postureBand) heroMeter.fill.dataset.band = tree.postureBand;
+    if (heroMeter && heroBand) heroMeter.fill.dataset.band = heroBand;
 
     // The severity mark folds into the sub-line's existing sentence rather than a new slot.
     const heroSubKids = [scored
-      ? `${tree.name} · Wiz's own score, carried through unchanged` +
-        (scopedHere
-          ? ` — the register below is scoped to ${fiveRs.selected} of ${fiveRs.total} ` +
-            "AI-relevant rules; this percentage is not."
-          : "")
+      ? (derived
+        // Replaces the old "carried through unchanged" sentence and its scopedHere clause
+        // ("this percentage is not [scoped]") — both false now that the hero states its
+        // own math. Naming both figures, rather than only the derived one, is what keeps
+        // this from reading as a better estimate of Wiz's number instead of an answer to a
+        // different question.
+        ? `${tree.name} · Derived here from the ${derived.activePolicyCount} active ` +
+          `${derived.activePolicyCount === 1 ? "rule" : "rules"} in AI scope: ` +
+          `${derived.passCount.toLocaleString()} of ` +
+          `${(derived.passCount + derived.failCount).toLocaleString()} checks passing.` +
+          (derived.disabledPolicyCount
+            ? ` ${derived.disabledPolicyCount} in-scope ` +
+              `${derived.disabledPolicyCount === 1 ? "rule" : "rules"} ` +
+              `${derived.disabledPolicyCount === 1 ? "is" : "are"} excluded as disabled ` +
+              "in Wiz."
+            : "") +
+          // Dropped, rather than printed as "null%", on a tenant where Wiz reports no
+          // framework-level score at all — the derived figure still stands on its own.
+          (derived.wizPosturePct !== null
+            ? ` Wiz scores the full framework ${derived.wizPosturePct}%.`
+            : "")
+        : `${tree.name} · Wiz's own score, carried through unchanged`)
       : `${tree.name} · ${(STATES[tree.state] || STATES.unknown).label}`];
     if (worstSeverity) heroSubKids.push(sevBadge(worstSeverity));
 
     const hero = el("div", {},
       el("div", { class: "label" }, "Compliance posture"),
       scored
-        ? el("div", { class: "comp-hero-value num" }, `${tree.posturePct}%`)
+        ? el("div", { class: "comp-hero-value num" }, `${heroPct}%`)
         : el("div", { class: "comp-hero-value" }, "—"),
       scored
         ? el("div", { class: "comp-hero-meter" }, heroMeter)
@@ -305,6 +327,18 @@ export async function renderCompliance(main, params, ctx) {
           String(tree.policyCount),
           `${tree.failingPolicyCount} with a failing check`,
         ),
+        // Only alongside a derived posture — this is where "ship both formulas" lands.
+        // The hero above states the resource-weighted number, in the same unit as the
+        // figure it replaced (percent of checks passing); this is the control-weighted
+        // secondary, a labelled fact of its own beside it rather than a second number
+        // competing for the same word.
+        derived
+          ? statRow(
+            "Rules clean",
+            `${derived.cleanPolicyCount} of ${derived.activePolicyCount}`,
+            "active rules with no failing check",
+          )
+          : null,
       )));
 
     // ---- register ----

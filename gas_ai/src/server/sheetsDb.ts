@@ -120,6 +120,9 @@ export const TAB_HEADERS: Record<string, string[]> = {
   // number, and a second locally-derived percentage sitting beside it would be two
   // answers to one question. `empty_posture_reason` (NO_RESOURCES / NO_POLICIES) is what
   // keeps a null posture from being read as a confident 0 — see compliancePosture.ts.
+  // The 5Rs AI-scoped posture (fiveRsPosture.ts) does not break this rule: it is derived
+  // at read time from PolicyScope's own counts and shipped as a separate payload field,
+  // never written back over this column.
   [TABS.frameworkPosture]: [
     "framework_id", "level", "category_external_id", "subcategory_external_id",
     "node_id", "title", "description",
